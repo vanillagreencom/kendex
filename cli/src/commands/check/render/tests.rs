@@ -397,6 +397,68 @@ fn every_global_remediation_command_carries_the_scope_flag() {
     }
 }
 
+/// A local source is a PATH, not a URL: `?` and `#` are a query and a
+/// fragment in one and ordinary characters in a directory name in the other.
+/// The URL redaction was applied to every source, so a local path rendered as
+/// `/sources/x?<redacted>` and both remedy commands built from it named a
+/// directory that does not exist.
+#[test]
+fn a_local_source_path_survives_into_the_report_and_its_remedy_commands() {
+    let dir = tmpdir("local?src#1");
+    let source = dir.to_string_lossy().into_owned();
+    let mut report = ScopeReport {
+        scope: "project",
+        installed: 1,
+        ..Default::default()
+    };
+    report.source_issues.push(SourceIssue {
+        source: scrub_source_credentials(&source),
+        problem: SourceProblem::Unresolvable {
+            entries: vec!["alpha".into()],
+            reason: "source not found".into(),
+        },
+    });
+    report.available.push(AvailableItem {
+        name: "beta".into(),
+        kind: ItemKind::Skill,
+        source: scrub_source_credentials(&source),
+    });
+
+    let mut out = String::new();
+    render_scope(&mut out, &report, false);
+    assert!(
+        !out.contains("<redacted>"),
+        "a local path carries no credential to redact: {out}"
+    );
+    assert!(
+        out.contains(&source),
+        "the prose must name the real directory: {out}"
+    );
+    let arg = command_arg(&source);
+    assert!(
+        out.contains(&format!("`vstack add {arg}`")),
+        "the unreachable-source remedy must name it too: {out}"
+    );
+    assert!(
+        out.contains(&format!("`vstack add {arg} --skill <name>`")),
+        "and so must the available-item remedy: {out}"
+    );
+
+    // The proof is the directory, not the string: the pasted argument has to
+    // resolve to the one that is actually there.
+    let probe = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("test -d {arg} && printf ok"))
+        .output()
+        .expect("sh runs");
+    assert_eq!(
+        String::from_utf8_lossy(&probe.stdout),
+        "ok",
+        "the pasted command must name the directory that exists, got {arg}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A remedy command has to WORK when pasted: an ssh source keeps its
 /// `git@` (the round-4 scrub dropped it and the suggested command died on
 /// publickey), and a long local path is never truncated inside backticks.

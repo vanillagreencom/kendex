@@ -340,6 +340,134 @@ fn remove_hook_from_opencode_removes_an_equivalent_spelling_of_its_own_entry() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// One fact, one predicate: what counts as a live registration for the
+/// presence check counts as one for "does any vstack hook still need the
+/// shared rule". A basename glob over the entry text answered the second
+/// question, so a sibling registered through an equivalent spelling read as
+/// nothing at all — removing the other hook deleted the `permission.bash`
+/// rule they share and left the survivor half-installed, which no command
+/// reports because "installed" is the instruction file plus the entry.
+#[test]
+fn removing_a_sibling_keeps_the_shared_rule_a_hook_registered_by_alias_still_needs() {
+    let base = tmpdir("opencode_sibling_alias");
+    let config_path = base.join("opencode.json");
+    let instructions = base.join("instructions");
+    std::fs::create_dir_all(&instructions).unwrap();
+
+    let survivor = instructions.join("vstack-hook-alpha.md");
+    let leaving = instructions.join("vstack-hook-beta.md");
+    std::fs::write(&survivor, "# Safety: alpha").unwrap();
+    std::fs::write(&leaving, "# Safety: beta").unwrap();
+    // The survivor is registered through a link that names the same file by
+    // another spelling — a registration `opencode_hook_registration` accepts.
+    let alias = instructions.join("alpha-alias.md");
+    std::os::unix::fs::symlink("vstack-hook-alpha.md", &alias).unwrap();
+    let alias_ref = "instructions/alpha-alias.md";
+
+    std::fs::write(
+        &config_path,
+        serde_json::to_string_pretty(&serde_json::json!({
+            "instructions": [alias_ref, "instructions/vstack-hook-beta.md"],
+            "permission": { "bash": { "*": "ask" } },
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    remove_hook_from_opencode_json_at_path(
+        &config_path,
+        &leaving,
+        "instructions/vstack-hook-beta.md",
+        "beta",
+    )
+    .unwrap();
+
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    // The survivor's install is COMPLETE, not merely present: its instruction
+    // file, an entry that resolves to it, and the rule the install writes.
+    assert!(
+        survivor.is_file(),
+        "the survivor's instruction file: {written}"
+    );
+    assert_eq!(
+        written["instructions"],
+        serde_json::json!([alias_ref]),
+        "the survivor's registration: {written}"
+    );
+    assert!(
+        super::entries::InstructionTarget::for_path(&config_path, &survivor).matches(alias_ref),
+        "the fixture must register the survivor by an equivalent spelling"
+    );
+    assert_eq!(
+        written["permission"]["bash"],
+        serde_json::json!({ "*": "ask" }),
+        "removing a sibling took the shared rule with it: {written}"
+    );
+    assert!(!leaving.exists(), "the removed hook's file must go");
+
+    // Control: removing the LAST hook — through that same alias — still takes
+    // the shared rule with it.
+    remove_hook_from_opencode_json_at_path(
+        &config_path,
+        &survivor,
+        "instructions/vstack-hook-alpha.md",
+        "alpha",
+    )
+    .unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    assert!(
+        written.get("instructions").is_none(),
+        "an equivalent spelling of the last registration must go: {written}"
+    );
+    assert!(
+        written.get("permission").is_none(),
+        "the last hook must take the shared rule with it: {written}"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Control: two ordinary registrations, one removed — the survivor keeps its
+/// entry and the rule, exactly as before the predicate changed.
+#[test]
+fn removing_one_of_two_ordinary_registrations_leaves_the_other_whole() {
+    let base = tmpdir("opencode_sibling_plain");
+    let config_path = base.join("opencode.json");
+    let instructions = base.join("instructions");
+    std::fs::create_dir_all(&instructions).unwrap();
+    let survivor_ref = "instructions/vstack-hook-alpha.md";
+    let leaving = instructions.join("vstack-hook-beta.md");
+    std::fs::write(instructions.join("vstack-hook-alpha.md"), "# Safety: alpha").unwrap();
+    std::fs::write(&leaving, "# Safety: beta").unwrap();
+    std::fs::write(
+        &config_path,
+        serde_json::to_string_pretty(&serde_json::json!({
+            "instructions": [survivor_ref, "instructions/vstack-hook-beta.md"],
+            "permission": { "bash": { "*": "ask" } },
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    remove_hook_from_opencode_json_at_path(
+        &config_path,
+        &leaving,
+        "instructions/vstack-hook-beta.md",
+        "beta",
+    )
+    .unwrap();
+
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    assert_eq!(written["instructions"], serde_json::json!([survivor_ref]));
+    assert_eq!(
+        written["permission"]["bash"],
+        serde_json::json!({ "*": "ask" })
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// The file OpenCode actually loads, written back with everything OpenCode
 /// lets the user put in it.
 ///

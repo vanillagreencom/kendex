@@ -9,7 +9,7 @@ use super::checked_child_path;
 mod entries;
 
 use entries::{
-    InstructionTarget, instruction_entry, is_legacy_inline_prose, names_a_vstack_hook_instruction,
+    InstructionTarget, instruction_entry, is_legacy_inline_prose, vstack_hook_instruction_targets,
 };
 
 /// OpenCode: add permission rules based on hook intent
@@ -257,14 +257,28 @@ pub(super) fn remove_hook_from_opencode_json_at_path(
 
     let remove_instruction = instruction_path.exists();
 
-    // If no vstack hook instructions remain, remove the temporary bash restriction we added.
-    let no_vstack_hook_instructions = instructions.as_ref().is_none_or(|instructions| {
-        !instructions
-            .elements()
-            .iter()
-            .filter_map(instruction_entry)
-            .any(|entry| names_a_vstack_hook_instruction(&entry))
-    });
+    // If no vstack hook instructions remain, remove the temporary bash
+    // restriction we added. What remains is asked through the SAME path
+    // identity that decides a registration is PRESENT — the entry above has
+    // already been removed from the array — so presence and removal cannot
+    // disagree about a sibling and strip its half of a shared install.
+    let no_vstack_hook_instructions = match instruction_path
+        .parent()
+        .and_then(|dir| vstack_hook_instruction_targets(config_path, dir))
+    {
+        // The instruction directory could not be listed, so what is still
+        // installed is unknown. Keeping a rule nothing needs is a stale line
+        // in a config; dropping one a live hook needs is a silent partial
+        // uninstall, so the unknown answers "something remains".
+        None => false,
+        Some(targets) => !instructions.as_ref().is_some_and(|instructions| {
+            instructions
+                .elements()
+                .iter()
+                .filter_map(instruction_entry)
+                .any(|entry| targets.iter().any(|target| target.matches(&entry)))
+        }),
+    };
 
     if let Some(instructions) = &instructions
         && instructions.elements().is_empty()

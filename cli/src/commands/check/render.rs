@@ -13,7 +13,7 @@ mod budget;
 use std::collections::HashSet;
 
 pub(crate) use crate::display::{
-    command_arg, display_reason, display_text, scrub_source_credentials,
+    command_arg, display_reason, display_text, scrub_prose, scrub_source_credentials,
 };
 
 /// Human report. `quiet` drops headers and per-item listings and prints

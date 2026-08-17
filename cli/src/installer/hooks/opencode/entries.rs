@@ -56,17 +56,43 @@ impl InstructionTarget {
     }
 }
 
-/// Does this entry name one of vstack's own hook instruction files?
+/// Every vstack hook instruction file installed in `instruction_dir`, as the
+/// targets an `instructions` entry has to RESOLVE to.
 ///
-/// Decided on the entry's FILE NAME, which is what the installer writes
-/// (`vstack-hook-<name>.md`), rather than on the substring appearing anywhere
-/// in the string: `./notes/why-i-dropped-vstack-hook-support.md` is the user's
-/// file, and reading it as vstack's kept a bash restriction nothing needed.
-pub(super) fn names_a_vstack_hook_instruction(entry: &str) -> bool {
-    Path::new(entry)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.starts_with("vstack-hook-") && name.ends_with(".md"))
+/// The names come from the directory the INSTALLER writes into — files vstack
+/// itself created as `vstack-hook-<name>.md` — so the entry is still judged by
+/// the file it names, through the one predicate above, and never by how it is
+/// spelled. Reading the entry's own basename was a second answer to
+/// [`InstructionTarget::matches`]'s question, and the two disagreed: a hook
+/// registered through an equivalent spelling read as nothing at all, so
+/// removing a sibling deleted the `permission.bash` rule they share and left
+/// the survivor half-installed with no command reporting it.
+///
+/// `None` when the directory cannot be listed, which is not the same as
+/// empty: a removal that cannot see what is installed must not conclude
+/// nothing is. A directory that does not exist holds no instruction files and
+/// answers so.
+pub(super) fn vstack_hook_instruction_targets(
+    config_path: &Path,
+    instruction_dir: &Path,
+) -> Option<Vec<InstructionTarget>> {
+    let listing = match std::fs::read_dir(instruction_dir) {
+        Ok(listing) => listing,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Some(Vec::new()),
+        Err(_) => return None,
+    };
+    let mut targets = Vec::new();
+    for entry in listing {
+        let path = entry.ok()?.path();
+        let is_ours = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("vstack-hook-") && name.ends_with(".md"));
+        if is_ours {
+            targets.push(InstructionTarget::for_path(config_path, &path));
+        }
+    }
+    Some(targets)
 }
 
 /// Does this entry hold the inline prose an older vstack wrote instead of a

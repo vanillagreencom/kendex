@@ -28,8 +28,23 @@ const REASON_LIMIT: usize = DISPLAY_LIMIT * 4;
 /// CI log. Which half of a userinfo is a secret is a question about the
 /// transport's grammar, and [`crate::refresh_sources::remote_source_display`]
 /// is where that grammar lives.
+///
+/// Only a REMOTE source is put through that grammar. `?` and `#` are a URL's
+/// query and fragment, where a token lives, but ordinary characters in a
+/// directory name — redacting them out of a local path corrupted the path
+/// instead of protecting anything, and the remedy command built from it named
+/// a directory that does not exist. Which of the two a source is, is
+/// [`crate::refresh_sources::looks_like_remote_source`]'s answer, the same
+/// classifier resolution itself uses: a second notion of remote-looking is how
+/// two readers of one fact disagree. A local path still loses everything a
+/// terminal would act on, and is still quoted by [`shell_arg`] inside a
+/// command — that is what makes it safe.
 pub(crate) fn scrub_source_credentials(text: &str) -> String {
-    crate::refresh_sources::remote_source_display(text)
+    if crate::refresh_sources::looks_like_remote_source(text) {
+        crate::refresh_sources::remote_source_display(text)
+    } else {
+        crate::refresh_sources::escape_unprintable(text)
+    }
 }
 
 /// Characters a shell passes through untouched, so an argument built only
@@ -89,7 +104,11 @@ pub(crate) fn command_arg(text: &str) -> String {
 /// the ones spelled with an authority — and the sentence around them is left
 /// readable. Escaping runs over the WHOLE string first, so a control character
 /// is rendered as its escape rather than splitting a word.
-fn scrub_prose(text: &str) -> String {
+///
+/// This is what a REASON gets scrubbed with, at render time and at report
+/// construction alike — a sentence handed to the source redaction lost
+/// everything after its first question mark.
+pub(crate) fn scrub_prose(text: &str) -> String {
     let escaped = crate::refresh_sources::escape_unprintable(text);
     let carries_authority = |word: &str| word.contains('@') || word.contains("://");
     if !carries_authority(&escaped) {
@@ -199,5 +218,47 @@ mod tests {
     #[test]
     fn prose_escapes_what_a_terminal_would_act_on_without_splitting_words() {
         assert_eq!(display_text("a\x1bb\nc"), r"a\u{1b}b\u{a}c");
+    }
+
+    /// A local source is a PATH, not a URL. `?` and `#` are a query and a
+    /// fragment in one and ordinary characters in the other, so redacting them
+    /// out of a local path corrupted the path rather than protecting anything
+    /// — the remedy command then named a directory that does not exist.
+    #[test]
+    fn a_local_source_path_keeps_the_punctuation_a_url_would_lose() {
+        for local in [
+            "/sources/what?why#now/vstack",
+            "/sources/team#2/vstack",
+            "~/sources/is-it-here?/vstack",
+        ] {
+            assert_eq!(scrub_source_credentials(local), local, "{local}");
+        }
+        assert_eq!(
+            command_arg("/sources/what?why#now/vstack"),
+            "'/sources/what?why#now/vstack'"
+        );
+
+        // Control: a remote URL's query and userinfo are still where a token
+        // lives, and both still go.
+        assert_eq!(
+            scrub_source_credentials("https://github.com/o/r?access_token=ghp_secret"),
+            "https://github.com/o/r?<redacted>"
+        );
+        assert_eq!(
+            command_arg("https://user:ghp_secret@github.com/o/r?k=v"),
+            "'https://user:<redacted>@github.com/o/r?<redacted>'"
+        );
+        // Control: an ssh account is the spelling, not a secret.
+        assert_eq!(
+            command_arg("ssh://git@example.com/o/r"),
+            "ssh://git@example.com/o/r"
+        );
+        // Control: a local path still loses what a terminal would act on, and
+        // is still quoted as one inert shell word.
+        assert!(!scrub_source_credentials("/sources/a\u{1b}[2Kb").contains('\u{1b}'));
+        assert_eq!(
+            command_arg("/sources/$(id)?x/repo"),
+            "'/sources/$(id)?x/repo'"
+        );
     }
 }

@@ -10,7 +10,7 @@ mod render;
 mod report;
 
 pub(crate) use render::display_text;
-use render::{humanize_age, render_report, scrub_source_credentials};
+use render::{humanize_age, render_report, scrub_prose, scrub_source_credentials};
 pub use report::*;
 
 fn skill_disk_path(global: bool, name: &str) -> PathBuf {
@@ -459,9 +459,9 @@ fn source_issues_for(catalogs: &Catalogs<'_>, entries: &[&LockEntry]) -> Vec<Sou
             let problem = match &catalogs[source].resolution {
                 SourceResolution::Refused(reason) => SourceProblem::Unverifiable {
                     entries: named(&|_| true),
-                    // The reason quotes the cache's recorded origin URL,
-                    // which can carry a cloned-with token.
-                    reason: scrub_source_credentials(reason),
+                    // The reason quotes the cache's recorded origin URL, which
+                    // can carry a token — and is a SENTENCE, not a source.
+                    reason: scrub_prose(reason),
                 },
                 // Not a problem with the source at all — see
                 // [`busy_sources_for`], which reports it where it cannot be
@@ -473,7 +473,7 @@ fn source_issues_for(catalogs: &Catalogs<'_>, entries: &[&LockEntry]) -> Vec<Sou
                 resolution @ (SourceResolution::Absent | SourceResolution::Resolved(_)) => {
                     SourceProblem::Unresolvable {
                         entries: named(&|_| true),
-                        reason: scrub_source_credentials(
+                        reason: scrub_prose(
                             &resolution
                                 .unresolved_note(source)
                                 .unwrap_or_else(|| "source not found".to_string()),

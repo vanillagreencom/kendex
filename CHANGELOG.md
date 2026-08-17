@@ -121,7 +121,13 @@
   used to split the hook's name on `-` and drop any entry whose text held
   every fragment, so removing one hook deleted the user's own unrelated
   instructions, and a `vstack-hook-` substring anywhere in a path kept the
-  bash restriction alive after the last vstack hook was gone (VST-258).
+  bash restriction alive after the last vstack hook was gone. Whether any
+  vstack hook still needs the shared bash rule is decided by that same
+  predicate; a file-name glob over the entry text answered it separately, so a
+  hook registered under an equivalent spelling counted as installed for
+  `check` and as nothing at all for removal — removing a sibling took the rule
+  out from under it and left a partial uninstall no command reported
+  (VST-258).
 - cli: every command vstack PRINTS for you to paste is built from one helper,
   which POSIX-quotes each argument, so a source, an item name or a package
   spelled with shell syntax is passed literally instead of executed — a
@@ -133,7 +139,15 @@
   `GIT_SSH_COMMAND` — stay separate so they carry a path byte for byte.
   Diagnostics are no longer scrubbed as if each were a single source URL: a
   message's `?` is a question mark, not a query string, so a refusal is no
-  longer cut off mid-sentence and given a `<redacted>` naming nothing. A
+  longer cut off mid-sentence and given a `<redacted>` naming nothing. Neither
+  is a local source path: `?` and `#` are a URL's query and fragment but
+  ordinary characters in a directory name, so a local source is now shown as
+  itself — still terminal-escaped and still quoted inside a command — and only
+  a remote-shaped source goes through the credential and query redaction, as
+  classified by the resolver itself. A local source directory spelled with
+  either character used to render as `/path/source?<redacted>`, and the
+  restore and add-item commands built from it named a directory that does not
+  exist. A
   subprocess's output and a lock file's names are displayed text and get a
   displayed string's treatment. A hook locked for Pi is only installed when
   the `@vanillagreen/pi-hooks` carrier is deployed AND registered in a scope
