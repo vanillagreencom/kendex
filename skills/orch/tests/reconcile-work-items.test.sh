@@ -20,7 +20,7 @@ mkdir -p "$R/.cache/linear"
 git -C "$R" init -q -b main 2>/dev/null || git -C "$R" init -q
 
 now="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
-old="$(date -u -d '3 days ago' +%Y-%m-%dT%H:%M:%S.000Z)"
+old="$(date -u -d '3 days ago' +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || date -j -u -v-3d +%Y-%m-%dT%H:%M:%S.000Z)"
 
 issue() { # ID TITLE STATE_NAME STATE_TYPE UPDATED [PARENT] [DESC]
   local parent="null"
@@ -88,6 +88,13 @@ OUT=""; RC=0
 OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
 [ "$RC" -eq 0 ] && case "$OUT" in *"clean"*) true ;; *) false ;; esac \
   && ok "a healthy tracker exits 0 with the clean line" || bad "clean run" "rc=$RC out=$OUT"
+
+# A malformed row inside an array-shaped cache: the scan must die loudly,
+# never end early as a clean pass.
+printf '[{"identifier":"T-BAD"}, 42]' >"$R/.cache/linear/issues.json"
+OUT=""; RC=0
+OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && ok "a malformed cache row is a loud collection error" || bad "malformed row" "rc=$RC out=$OUT"
 
 # Missing cache: loud config error, never a clean pass.
 rm "$R/.cache/linear/issues.json"

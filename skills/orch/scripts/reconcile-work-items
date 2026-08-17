@@ -47,10 +47,10 @@ note() { findings=$((findings + 1)); printf '%s\n' "$1"; }
 # --- container-parked --------------------------------------------------------
 # Non-terminal parents whose non-canceled children (by parent identifier) are
 # all completed. Trashed/archived rows never count as children or parents.
-while IFS=$'\t' read -r pid ptitle pstate; do
-  [ -n "$pid" ] || continue
-  note "container-parked: $pid [$pstate] — every non-canceled child is Done; close it or say why it stays open ($ptitle)"
-done < <(jq -r '
+TMPD="$(mktemp -d)" || config_error "could not create a scratch directory"
+trap 'rm -rf -- "$TMPD"' EXIT
+
+jq -r '
   map(select((.trashed // false) == false and .archivedAt == null)) as $live
   | ($live | map(select(.parent.identifier != null))) as $children
   | ($children | group_by(.parent.identifier)) as $broods
@@ -61,10 +61,19 @@ done < <(jq -r '
   | ($live[] | select(.identifier == $pid)) as $parent
   | select($parent.state.type != "completed" and $parent.state.type != "canceled")
   | [$parent.identifier, $parent.title, $parent.state.name] | @tsv
-' "$CACHE") || config_error "container scan failed"
+' "$CACHE" >"$TMPD/containers" || config_error "container scan failed"
+while IFS=$'\t' read -r pid ptitle pstate; do
+  [ -n "$pid" ] || continue
+  note "container-parked: $pid [$pstate] — every non-canceled child is Done; close it or say why it stays open ($ptitle)"
+done <"$TMPD/containers"
 
 # --- started-stale -----------------------------------------------------------
 now_epoch="$(date -u +%s)" || config_error "could not read the clock"
+jq -r '
+  .[] | select((.trashed // false) == false and .archivedAt == null)
+  | select(.state.type == "started")
+  | [.identifier, .title, .state.name, .updatedAt] | @tsv
+' "$CACHE" >"$TMPD/started" || config_error "started scan failed"
 while IFS=$'\t' read -r iid ititle istate iupdated; do
   [ -n "$iid" ] || continue
   updated_epoch="$(date -u -d "$iupdated" +%s 2>/dev/null)" || updated_epoch=""
@@ -96,22 +105,19 @@ while IFS=$'\t' read -r iid ititle istate iupdated; do
     fi
   fi
   note "started-stale: $iid [$istate] — untouched ${age_hours}h, $pr_state; finish the lifecycle or restate the scope ($ititle)"
-done < <(jq -r '
-  .[] | select((.trashed // false) == false and .archivedAt == null)
-  | select(.state.type == "started")
-  | [.identifier, .title, .state.name, .updatedAt] | @tsv
-' "$CACHE") || config_error "started scan failed"
+done <"$TMPD/started"
 
 # --- done-unchecked ----------------------------------------------------------
-while IFS=$'\t' read -r iid ititle; do
-  [ -n "$iid" ] || continue
-  note "done-unchecked: $iid [Done] — the description still carries unchecked \`- [ ]\` acceptance criteria; reopen or check them off with evidence ($ititle)"
-done < <(jq -r '
+jq -r '
   .[] | select((.trashed // false) == false and .archivedAt == null)
   | select(.state.type == "completed")
   | select((.description // "") | test("- \\[ \\]"))
   | [.identifier, .title] | @tsv
-' "$CACHE") || config_error "done scan failed"
+' "$CACHE" >"$TMPD/done" || config_error "done scan failed"
+while IFS=$'\t' read -r iid ititle; do
+  [ -n "$iid" ] || continue
+  note "done-unchecked: $iid [Done] — the description still carries unchecked \`- [ ]\` acceptance criteria; reopen or check them off with evidence ($ititle)"
+done <"$TMPD/done"
 
 if [ "$findings" -gt 0 ]; then
   echo "reconcile-work-items: $findings finding(s) — the tracker disagrees with the work"
