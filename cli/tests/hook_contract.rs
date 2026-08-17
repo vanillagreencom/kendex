@@ -745,6 +745,80 @@ fn a_deregistered_hook_stops_reading_as_enforced() {
 }
 
 #[test]
+fn a_registration_moved_to_another_event_stops_reading_as_enforced() {
+    let sandbox = Sandbox::new("moved-event-registration");
+    assert_success(
+        sandbox.add(&[
+            "--hook",
+            "probe",
+            "--harness",
+            "claude-code",
+            "--copy",
+            "-y",
+        ]),
+        "vstack add",
+    );
+    // The command is still registered, but under a different event than the
+    // hook declares: a PreToolUse guard that actually fires PostToolUse does
+    // not enforce what the contract row claims.
+    let settings_path = sandbox.project.join(".claude/settings.json");
+    let mut settings = read_json(&settings_path);
+    let hooks = settings
+        .get_mut("hooks")
+        .and_then(|h| h.as_object_mut())
+        .expect("hooks object");
+    let entry = hooks.remove("PreToolUse").expect("PreToolUse entry");
+    hooks.insert("PostToolUse".into(), entry);
+    fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&settings).unwrap(),
+    )
+    .unwrap();
+    let list = sandbox
+        .vstack()
+        .args(["list", "--scope", "project"])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&list.stderr).to_string();
+    assert!(
+        text.contains("claude-code: unsupported (artifact missing)"),
+        "a registration under the wrong event still reads as enforced:\n{text}"
+    );
+}
+
+#[test]
+fn an_unreferenced_opencode_instruction_stops_reading_as_advisory() {
+    let sandbox = Sandbox::new("opencode-unreferenced");
+    assert_success(
+        sandbox.add(&["--hook", "probe", "--harness", "opencode", "--copy", "-y"]),
+        "vstack add",
+    );
+    let instruction = sandbox
+        .project
+        .join(".opencode/instructions/vstack-hook-probe.md");
+    assert!(instruction.is_file(), "instruction file was not installed");
+    // The file survives but opencode.json no longer references it: OpenCode
+    // loads nothing, so nothing is advisory.
+    let config_path = sandbox.project.join("opencode.json");
+    let mut config = read_json(&config_path);
+    config
+        .as_object_mut()
+        .expect("config object")
+        .remove("instructions");
+    fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
+    let list = sandbox
+        .vstack()
+        .args(["list", "--scope", "project"])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&list.stderr).to_string();
+    assert!(
+        text.contains("opencode: unsupported (artifact missing)"),
+        "an instruction file opencode.json does not reference still reads as advisory:\n{text}"
+    );
+}
+
+#[test]
 fn a_moved_project_with_a_quoted_path_does_not_accumulate_stale_codex_registrations() {
     let sandbox = Sandbox::new("codex-moved-quoted");
     assert_success(

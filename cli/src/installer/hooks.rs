@@ -11,7 +11,10 @@ mod opencode;
 
 use contract::{ADVISORY_BANNER, Cell, Mechanism};
 use opencode::{install_hook_opencode, remove_hook_from_opencode_json};
-pub(crate) use opencode::{opencode_hook_instruction_contents, opencode_hook_instruction_path};
+pub(crate) use opencode::{
+    opencode_hook_instruction_contents, opencode_hook_instruction_path,
+    opencode_hook_instruction_registered,
+};
 
 fn validate_file_name(file_name: &str) -> Result<()> {
     if file_name.is_empty()
@@ -86,15 +89,19 @@ fn owns_exactly(owned_commands: &[String]) -> impl Fn(&str) -> bool + '_ {
     move |command| owned_commands.iter().any(|owned| owned == command)
 }
 
-fn hooks_object_has_owned_entry(
+fn hooks_object_has_owned_entry_for_event(
     hooks_obj: &serde_json::Map<String, serde_json::Value>,
+    event: &str,
     owns: OwnsCommand<'_>,
 ) -> bool {
     hooks_obj
-        .values()
-        .filter_map(|value| value.as_array())
-        .flatten()
-        .any(|entry| hook_entry_mentions_owned_command(entry, owns))
+        .get(event)
+        .and_then(|value| value.as_array())
+        .is_some_and(|entries| {
+            entries
+                .iter()
+                .any(|entry| hook_entry_mentions_owned_command(entry, owns))
+        })
 }
 
 fn claude_settings_path(global: bool) -> PathBuf {
@@ -107,10 +114,11 @@ fn claude_settings_path(global: bool) -> PathBuf {
     }
 }
 
-/// Whether Claude Code's settings still carry this hook's registration. A
-/// settings file that cannot be read or parsed reports unregistered: a level
-/// is a claim, and a registration nothing can read backs none.
-pub(crate) fn claude_hook_registered(global: bool, name: &str) -> bool {
+/// Whether Claude Code's settings still carry this hook's registration under
+/// its declared event. A settings file that cannot be read or parsed reports
+/// unregistered: a level is a claim, and a registration nothing can read
+/// backs none — and one under another event runs at the wrong time.
+pub(crate) fn claude_hook_registered(global: bool, name: &str, event: &str) -> bool {
     let Some(script_path) = Harness::ClaudeCode
         .hooks_dir(global)
         .map(|dir| dir.join(format!("{name}.sh")))
@@ -127,13 +135,18 @@ pub(crate) fn claude_hook_registered(global: bool, name: &str) -> bool {
     settings
         .get("hooks")
         .and_then(|h| h.as_object())
-        .is_some_and(|hooks| hooks_object_has_owned_entry(hooks, &owns_exactly(&owned)))
+        .is_some_and(|hooks| {
+            hooks_object_has_owned_entry_for_event(hooks, event, &owns_exactly(&owned))
+        })
 }
 
-/// Whether `<scope>/.codex/hooks.json` still carries this hook's handler AND
-/// `config.toml` keeps the `hooks` feature on — both are what make Codex run
-/// the handler, and install writes both.
-pub(crate) fn codex_hook_registered(global: bool, name: &str) -> bool {
+/// Whether `<scope>/.codex/hooks.json` still carries this hook's handler
+/// under its declared event AND `config.toml` keeps the `hooks` feature on —
+/// all of which is what makes Codex run the handler, and install writes.
+pub(crate) fn codex_hook_registered(global: bool, name: &str, event: &str) -> bool {
+    let Some(codex_event) = codex_event_for(event) else {
+        return false;
+    };
     let root = codex_root(global);
     if !codex_hooks_feature_enabled(&root) {
         return false;
@@ -148,7 +161,11 @@ pub(crate) fn codex_hook_registered(global: bool, name: &str) -> bool {
     doc.get("hooks")
         .and_then(|h| h.as_object())
         .is_some_and(|hooks| {
-            hooks_object_has_owned_entry(hooks, &codex_owns_command(global, name, &script_path))
+            hooks_object_has_owned_entry_for_event(
+                hooks,
+                codex_event,
+                &codex_owns_command(global, name, &script_path),
+            )
         })
 }
 

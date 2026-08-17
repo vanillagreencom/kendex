@@ -57,7 +57,7 @@ pub fn resolve(
     }
     if cell
         .mechanism()
-        .is_some_and(|mechanism| !artifact_present(mechanism, &hook.name, global))
+        .is_some_and(|mechanism| !artifact_present(mechanism, &hook.name, &hook.event, global))
     {
         return Some(Resolved {
             cell: Cell::Unsupported,
@@ -68,27 +68,29 @@ pub fn resolve(
 }
 
 /// Whether everything a mechanism installs is in place — the script AND the
-/// registration that makes a harness invoke it, because a script nothing
-/// invokes enforces nothing. `PiHooksExtension` has no per-hook artifact; its
-/// carrier package is checked by the caller.
-fn artifact_present(mechanism: Mechanism, name: &str, global: bool) -> bool {
+/// registration, under the declared event, that makes a harness invoke it,
+/// because a script nothing invokes (or that fires at another time) enforces
+/// nothing. `PiHooksExtension` has no per-hook artifact; its carrier package
+/// is checked by the caller.
+fn artifact_present(mechanism: Mechanism, name: &str, event: &str, global: bool) -> bool {
     match mechanism {
         Mechanism::ClaudeSettingsHook => {
             Harness::ClaudeCode
                 .hooks_dir(global)
                 .is_some_and(|dir| dir.join(format!("{name}.sh")).is_file())
-                && super::claude_hook_registered(global, name)
+                && super::claude_hook_registered(global, name, event)
         }
         Mechanism::CodexHooksJson => {
             super::codex_root(global)
                 .join("hooks")
                 .join(format!("{name}.sh"))
                 .is_file()
-                && super::codex_hook_registered(global, name)
+                && super::codex_hook_registered(global, name, event)
         }
         Mechanism::CursorRule => super::cursor_hook_rule_path(global, name).is_file(),
         Mechanism::OpenCodeInstruction => {
             super::opencode_hook_instruction_path(global, name).is_file()
+                && super::opencode_hook_instruction_registered(global, name)
         }
         Mechanism::CodexInstructions => super::codex_hook_prose_present(global, name),
         Mechanism::PiHooksExtension => true,

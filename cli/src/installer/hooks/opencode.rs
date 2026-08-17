@@ -46,6 +46,31 @@ fn opencode_hook_instruction_ref(global: bool, name: &str) -> String {
     }
 }
 
+/// Whether opencode.json still references this hook's instruction file — an
+/// unreferenced file loads nowhere, so nothing is advisory.
+pub(crate) fn opencode_hook_instruction_registered(global: bool, name: &str) -> bool {
+    let config_path = if global {
+        crate::config::opencode_global_config_path()
+    } else {
+        crate::config::opencode_project_config_path()
+    };
+    let Ok(content) = std::fs::read_to_string(&config_path) else {
+        return false;
+    };
+    let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+    let reference = opencode_hook_instruction_ref(global, name);
+    config
+        .get("instructions")
+        .and_then(|value| value.as_array())
+        .is_some_and(|instructions| {
+            instructions
+                .iter()
+                .any(|entry| entry.as_str() == Some(reference.as_str()))
+        })
+}
+
 pub(crate) fn opencode_hook_instruction_contents(hook: &Hook) -> String {
     format!(
         "{}\n\n# Safety: {}\n\n{}",
