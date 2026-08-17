@@ -80,8 +80,8 @@ SIZE_RATCHET="$SIZE_RATCHET_SKILL/scripts/size-ratchet"
 if [ -e "$SIZE_RATCHET_SKILL" ] || [ -L "$SIZE_RATCHET_SKILL" ]; then
   [ -x "$SIZE_RATCHET" ] || gg_config_error "the size-ratchet skill is installed at $SIZE_RATCHET_SKILL but $SIZE_RATCHET is missing or not executable — reinstall it"
   # A consuming repo may replace the vendored script with its own gate — a
-  # fork without the --staged interface, wired through its own hooks (the
-  # drovr shape). This chain owns only the vstack-shape script, and the ONE
+  # fork without the --staged interface, wired through its own hooks. This
+  # chain owns only the vstack-shape script, and the ONE
   # deterministic signal is the run itself: an argument parser that rejects
   # --staged says so in its own first line. No help-prose inference — two
   # reviewers proved usage-shape detection cannot converge.
