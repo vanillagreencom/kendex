@@ -122,6 +122,11 @@
   An owning checkout's lock file that exists and cannot be parsed no longer
   reads as absent: unknown ownership is not permission to clear another
   checkout's recovery marker (VST-258).
+- settings templates: every key's comment condensed to one-line intent plus
+  landmines (922 → 545 lines across the root and skill templates, zero value
+  changes); refresh's seeded-comment rewrite propagates the terse form to
+  consumer files whose blocks are unedited (VST-317).
+
 - preflight: the code-citation lane leaves installed-artifact subtrees alone
   (`.agents/` and the harness dirs' skills/agents/hooks/rules/instructions/
   packages trees) — a vendored skill's example path is upstream's prose, not

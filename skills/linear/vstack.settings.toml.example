@@ -5,24 +5,16 @@
 # <project>/vstack.settings.toml (never overwriting existing keys). Full key
 # reference: linear README.md.
 
-# Used by: linear (every command). The team every write targets.
-# There is no built-in default. A team name resolves inside whatever workspace
-# LINEAR_API_KEY reaches, so an unset value means "no target": writes refuse
-# with an actionable error and reads drop the team filter instead of guessing.
-# Set this to the project's own team name, then confirm the target with
-# `linear.sh auth-check --strict`. Only the create actions that take a team
-# (issues, projects, cycles, labels) accept `--team <name>` as a per-call
-# override; every other write needs this key.
+# The team every Linear write targets. No default: an empty value refuses
+# writes instead of guessing inside whatever workspace the API key reaches
+# (the create actions still take `--team <name>` per call). Confirm with
+# `linear.sh auth-check --strict`.
 LINEAR_TEAM = ""
 
-# Used by: linear. Issue identifier prefix used in examples (e.g. PROJ-123).
+# Issue identifier prefix used in examples (e.g. PROJ-123).
 LINEAR_TEAM_PREFIX = "PROJ"
 
-# Used by: linear (`issues create`). The project's declared agent-routing
-# label set, comma- or space-separated (e.g. "agent:generalist, agent:rust").
-# When non-empty, `issues create` refuses a create that carries no agent
-# label from this set — an issue without one is invisible to agent routing,
-# while the create prints a URL that looks like success. `--no-agent-label`
-# permits a deliberate bare create (e.g. intake mirroring). Leave empty in
-# projects with no agent-label taxonomy; the guard then stays off.
+# Declared agent-routing label set (e.g. "agent:generalist, agent:rust").
+# Non-empty makes `issues create` refuse a create carrying none of them —
+# such an issue is invisible to agent routing. Empty = guard off.
 LINEAR_AGENT_LABELS = ""

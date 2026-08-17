@@ -6,11 +6,8 @@
 # other GROWTH_GUARDS_* key ships a working default; the full list is in the
 # skill's SKILL.md.
 
-# Repo-local check the pre-commit shim runs LAST, after size-ratchet and the
-# growth-guards batch: a repo-root-relative executable, taking no arguments.
-# It follows the family exit contract — 0 clean, 1 violations, anything else
-# "could not complete" — and any nonzero blocks the commit. A value naming a
-# path that is missing or not executable blocks too, rather than passing a
-# commit the repo expected to be checked. Empty (the default) means the shim
-# runs no repo-local check.
+# Repo-local check the pre-commit shim runs LAST: a repo-root-relative
+# executable following the family exit contract (0 clean, 1 violations,
+# else "could not complete"); any nonzero blocks the commit, and so does a
+# missing or non-executable value. Empty = no repo-local check.
 GROWTH_GUARDS_PRE_COMMIT_LOCAL = ""
