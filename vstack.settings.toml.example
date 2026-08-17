@@ -78,8 +78,8 @@ PR_REVIEW_NUDGE_SECS = "600"
 # Empty = GitHub's native re-review request.
 PR_REVIEW_NUDGE = ""
 
-# Check-run name a trusted review bot publishes on analyzed heads; a success
-# counts as review evidence. SECURITY: checks match by NAME and anyone can
+# Check-run or commit-status name a trusted review bot publishes on
+# analyzed heads; a success counts as review evidence. SECURITY: checks match by NAME and anyone can
 # publish under any name — name only the trusted bot's check. Empty = review
 # objects only.
 PR_REVIEW_CHECK = ""
@@ -94,9 +94,10 @@ PR_REVIEW_QUORUM = ""
 # unresolved threads — a real comment is never bypassed.
 PR_REVIEW_ON_TIMEOUT = "block"
 
-# BOT / COMMIT IDENTITY — used by worktree. BOT_NAME is the gate: empty
-# BOT_NAME = the logged-in user, and the other keys are ignored; once it is
-# set the rest are written verbatim, empty values included.
+# BOT / COMMIT IDENTITY — used by worktree. BOT_NAME gates the identity:
+# empty = the logged-in user (BOT_EMAIL then ignored); set = name and email
+# written verbatim, empty values included. BOT_REMOTE_NAME independently
+# selects the push remote (empty = origin).
 
 BOT_NAME = "automation-bot"
 
@@ -119,8 +120,9 @@ DECISIONS_DIR = "docs/decisions"
 # LINEAR
 
 # The team every Linear write targets. No default: an empty value refuses
-# writes instead of guessing inside whatever workspace the API key reaches.
-# Confirm with `linear.sh auth-check --strict`.
+# writes instead of guessing inside whatever workspace the API key reaches
+# (the create actions still take `--team <name>` per call). Confirm with
+# `linear.sh auth-check --strict`.
 LINEAR_TEAM = ""
 
 # Default output format: safe, table, ids, raw.
@@ -256,8 +258,9 @@ SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.6-sol -s read-only -c model_reas
 # Seconds to wait for the external CLI.
 SECOND_OPINION_TIMEOUT = "300"
 
-# Home for review/audit records written without --output; seeded with a "*"
-# .gitignore so records never dirty the tree.
+# Home for review/audit records written without --output; a directory the
+# script CREATES is seeded with a "*" .gitignore (a pre-existing one is
+# left alone — ignore it yourself).
 SECOND_OPINION_ARTIFACT_DIR = "tmp/second-opinion"
 
 # Repo instruction files appended to the review prompt (repo-rule lens).
