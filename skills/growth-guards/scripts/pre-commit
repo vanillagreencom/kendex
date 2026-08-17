@@ -103,10 +103,22 @@ if [ -e "$SIZE_RATCHET_SKILL" ] || [ -L "$SIZE_RATCHET_SKILL" ]; then
       sr_run_out="$("$SIZE_RATCHET" --staged 2>&1)" || sr_run_status=$?
       [ -n "$sr_run_out" ] && printf '%s
 ' "$sr_run_out"
-      case "$sr_run_status:$sr_run_out" in
+      # The rejection is a PARSER diagnostic: the whole first line, in the
+      # tool-prefixed shapes an argument parser emits. A config diagnostic
+      # that merely ECHOES the phrase inside a longer line never matches.
+      sr_first_line="${sr_run_out%%$'\n'*}"
+      sr_rejects_staged=0
+      if [ "$sr_run_status" -eq 2 ]; then
+        case "$sr_first_line" in
+          "size-ratchet: unknown argument '--staged'"*|"size-ratchet: unrecognized option '--staged'"*|"size-ratchet: unrecognized option: --staged"*|"size-ratchet: invalid option: --staged"*|"size-ratchet: invalid option -- staged"*)
+            sr_rejects_staged=1
+            ;;
+        esac
+      fi
+      case "$sr_run_status:$sr_rejects_staged" in
         0:*) ;;
         1:*) had_violations=1 ;;
-        *"unknown argument '--staged'"*|*"unrecognized option '--staged'"*|*"unrecognized option: --staged"*|*"invalid option: --staged"*|*"invalid option -- staged"*)
+        2:1)
           echo "=== pre-commit: size-ratchet at $SIZE_RATCHET rejects --staged (repo-local replacement) — skipped; this repo's own wiring owns that gate"
           ;;
         *)
