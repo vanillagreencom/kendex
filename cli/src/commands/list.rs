@@ -78,7 +78,11 @@ pub fn run(scope: ScopeFilter, harness_filter: Option<&str>) -> Result<()> {
             }
             eprintln!("  {label}:");
             for entry in items {
-                let harnesses = entry.harnesses.join(", ");
+                // Hooks report what each harness does with them, not only
+                // where they were written: an installed advisory is not a
+                // guard, and the difference has to be visible here.
+                let harnesses = crate::installer::enforcement::summary(entry, global)
+                    .unwrap_or_else(|| entry.harnesses.join(", "));
                 eprintln!("    {} ({}) [{}]", entry.name, entry.method, harnesses);
             }
         }

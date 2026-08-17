@@ -47,7 +47,12 @@ fn opencode_hook_instruction_ref(global: bool, name: &str) -> String {
 }
 
 pub(crate) fn opencode_hook_instruction_contents(hook: &Hook) -> String {
-    format!("# Safety: {}\n\n{}", hook.name, hook.safety_prose())
+    format!(
+        "{}\n\n# Safety: {}\n\n{}",
+        super::contract::ADVISORY_BANNER,
+        hook.name,
+        hook.safety_prose()
+    )
 }
 
 pub(super) fn install_hook_opencode_at_path(

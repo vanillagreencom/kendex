@@ -2,7 +2,7 @@
 
 ![pi-hooks settings panel](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-hooks/assets/hooks-settings.png)
 
-First-class Pi port of the vstack safety hooks. Each hook is independently toggleable.
+First-class Pi port of the vstack safety hooks listed below. Each hook is independently toggleable.
 
 ## Hooks
 
@@ -14,7 +14,9 @@ First-class Pi port of the vstack safety hooks. Each hook is independently toggl
 | Post-edit clippy | `tool_result` (edit/write of `.rs`) | Runs workspace clippy after `.rs` edits and appends issues mentioning the edited file. Advisory only — doesn't undo the edit. |
 | End-of-turn clippy | `turn_end` | If `.rs` files were touched during the turn, runs workspace clippy and surfaces errors via UI notification. Advisory only. |
 
-These implement the same safety goals as the bash hooks in `vstack/hooks/`, with Pi-specific mechanics where the in-process event loop needs different handling: the pre-commit hook runs cargo checks via async child processes and first proves the commit targets the active project repo, so unrelated fixture commits do not freeze the session.
+`block-unsafe-rm` has no Pi port; it declares `harnesses:` without `pi`, so vstack reports Pi as `unsupported` for it rather than claiming enforcement that does not exist.
+
+These implement the same safety goals as their matching bash hooks in `vstack/hooks/`, with Pi-specific mechanics where the in-process event loop needs different handling: the pre-commit hook runs cargo checks via async child processes and first proves the commit targets the active project repo, so unrelated fixture commits do not freeze the session.
 
 ## Install
 

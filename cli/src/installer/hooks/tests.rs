@@ -265,7 +265,7 @@ fn hook_prune_preserves_user_handlers_with_same_basename() {
 
     assert!(remove_hook_entries_from_hooks_object(
         &mut hooks_obj,
-        &owned
+        &super::owns_exactly(&owned)
     ));
     let arr = hooks_obj
         .get("PreToolUse")
@@ -772,4 +772,23 @@ fn remove_hook_from_opencode_preserves_unrelated_permissions() {
     );
 
     let _ = std::fs::remove_dir_all(&base);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_non_utf8_script_path_is_refused_instead_of_registered_lossily() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let bad = PathBuf::from(OsStr::from_bytes(b"/tmp/proj\xff/.codex/hooks/guard.sh"));
+    let err = super::require_utf8_script_path(&bad)
+        .expect_err("a path the JSON config cannot carry must be refused")
+        .to_string();
+    assert!(err.contains("not valid UTF-8"), "unhelpful refusal: {err}");
+
+    let good = PathBuf::from("/tmp/proj/.codex/hooks/guard.sh");
+    assert!(
+        super::require_utf8_script_path(&good).is_ok(),
+        "a valid path must still install"
+    );
 }

@@ -1,11 +1,11 @@
 cli/src/agent.rs	1074
-cli/src/commands/add.rs	3144
+cli/src/commands/add.rs	3147
 cli/src/commands/apply.rs	2778
 cli/src/commands/refresh.rs	1622
 cli/src/commands/refresh/tests.rs	2089
 cli/src/commands/report.rs	1872
 cli/src/config.rs	3895
-cli/src/installer.rs	3819
+cli/src/installer.rs	3821
 cli/src/pi_extension.rs	2857
 cli/src/project_config.rs	4892
 cli/src/refresh_sources.rs	2021

@@ -199,7 +199,13 @@ pub fn run(scope: ScopeFilter) -> Result<()> {
                     ("?", format!("  ← {cause}"))
                 }
             };
-            eprintln!("  {icon} {} ({}){detail}", entry.name, entry.kind);
+            let enforcement = crate::installer::enforcement::summary(entry, global)
+                .map(|summary| format!(" [{summary}]"))
+                .unwrap_or_default();
+            eprintln!(
+                "  {icon} {} ({}){enforcement}{detail}",
+                entry.name, entry.kind
+            );
         }
         if unresolved > 0 {
             eprintln!(
