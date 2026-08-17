@@ -21,8 +21,10 @@ fi
 
 # Syntax-check every shipped script while we are here.
 fail=0
-for f in "$SCRIPTS_DIR"/growth-guards "$SCRIPTS_DIR"/todo-ban "$SCRIPTS_DIR"/byte-ceiling \
-  "$SCRIPTS_DIR"/suppression-ban "$SCRIPTS_DIR"/commit-msg "$SCRIPTS_DIR"/lib/*.sh; do
+# Every shipped script, discovered — a new one must not be able to skip the
+# check by not being listed.
+for f in "$SCRIPTS_DIR"/* "$SCRIPTS_DIR"/lib/*.sh; do
+  [ -f "$f" ] || continue
   if ! bash -n "$f"; then
     echo "FAIL: bash -n $f"
     fail=1

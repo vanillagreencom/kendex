@@ -63,6 +63,22 @@
   one describes no single session — with no count and no positional reference
   to maintain.
 
+- growth-guards installs real git hooks: `scripts/install-git-hooks` writes
+  `.git/hooks/pre-commit` and `.git/hooks/commit-msg` shims (plus the
+  `vstack-guards` helper it owns) so the guard chain — `size-ratchet
+  --staged`, the staged growth-guards batch, and an optional repo-local entry
+  named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL` — blocks a `git commit` from any
+  tool, not only from the harnesses with their own hook system.
+  `core.hooksPath` is never touched, an existing hook keeps its content and
+  its own exit status, and the shims fail closed: a guard that cannot run
+  blocks too. `vstack add` / `vstack refresh` arm and repair them, so
+  consumers get them on their next refresh after adopting growth-guards, and
+  `vstack remove growth-guards` disarms them again — refusing the removal if
+  that cleanup fails; non-git projects are skipped with a note.
+- size-ratchet grows `--staged`: it counts INDEX blobs for every tracked file
+  instead of preferring the worktree copy, so growth that is staged and then
+  reverted on disk cannot pass a pre-commit gate. CI, which checks out a
+  clean tree, needs no flag.
 - orch: `oversee-watch` gains `usage-limit` (the harness is still running but
   its account's limit banner is up — one pass, ahead of `question`, naming the
   config dir when a live lane claim covers the pane it read) and

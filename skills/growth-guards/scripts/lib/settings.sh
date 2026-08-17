@@ -95,6 +95,48 @@ gg_settings_usable() { # PATH — 0 = readable-shaped or absent; 1 + ::error oth
   return 1
 }
 
+# The pre-commit chain judges one commit snapshot, policy included: with
+# GG_SETTINGS_FROM_INDEX=1 a TRACKED settings source is read from the INDEX,
+# a source staged for DELETION governs as absent, and an untracked one (a
+# personal .env.local) is the worktree copy, which is all there is. A tracked
+# SYMLINK fails loud: its index blob is the target name, not settings, and
+# parsing that would silently resolve every key to its built-in default.
+# GG_SETTINGS_INDEX_DIR holds the materialized copies; the caller owns it.
+gg_settings_source() { # FILE — the path to actually read; nonzero + ::error on failure
+  local file="$1" copy=""
+  if [ "${GG_SETTINGS_FROM_INDEX:-0}" != "1" ] || [ -z "${GG_SETTINGS_INDEX_DIR:-}" ]; then
+    printf '%s' "$file"
+    return 0
+  fi
+  if ! git ls-files --error-unmatch -- "$file" >/dev/null 2>&1; then
+    if git cat-file -e "HEAD:$file" 2>/dev/null; then
+      printf '%s' "$GG_SETTINGS_INDEX_DIR/settings.absent"
+      return 0
+    fi
+    printf '%s' "$file"
+    return 0
+  fi
+  case "$(git ls-files -s -- "$file" 2>/dev/null | cut -d' ' -f1)" in
+    120000)
+      echo "::error::$file: tracked as a symlink; staged settings resolution cannot read through it" >&2
+      return 1
+      ;;
+  esac
+  # Percent-encode the path into the cache name: '/' and '.' both collapsing
+  # to '_' let distinct sources alias one another, and the first one
+  # materialized would then answer for the rest. '%' is escaped first, so the
+  # mapping is reversible and collision-free.
+  copy="$GG_SETTINGS_INDEX_DIR/settings.$(printf '%s' "$file" | sed -e 's/%/%25/g' -e 's|/|%2F|g' -e 's/[.]/%2E/g')"
+  if [ ! -f "$copy" ]; then
+    if ! git show ":$file" >"$copy" 2>/dev/null; then
+      rm -f -- "$copy"
+      echo "::error::$file: could not read the staged copy while resolving a setting" >&2
+      return 1
+    fi
+  fi
+  printf '%s' "$copy"
+}
+
 # One read discipline for every settings probe: grep exits 0/1 are
 # measurements, anything else is an unreadable source and fails loud —
 # falling through to a lower-precedence layer would silently change the
@@ -130,10 +172,12 @@ gg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   # Env-file overrides (standard project layering: .env.local beats the
   # committed settings, .env is the base) — LAST matching KEY= line wins (shell-sourcing semantics),
   # optional surrounding quotes stripped. Parsed, never sourced.
-  gg_settings_usable ".env.local" || return 1
-  if [ -f ".env.local" ]; then
+  local local_env=""
+  local_env="$(gg_settings_source ".env.local")" || return 1
+  gg_settings_usable "$local_env" || return 1
+  if [ -f "$local_env" ]; then
     status=0
-    matches="$(gg_settings_grep "^[[:space:]]*(export[[:space:]]+)?${name}=" .env.local)" || status=$?
+    matches="$(gg_settings_grep "^[[:space:]]*(export[[:space:]]+)?${name}=" "$local_env")" || status=$?
     [ "$status" -le 1 ] || return 1
     line="$(printf '%s\n' "$matches" | tail -n 1)"
     if [ -n "$line" ]; then
@@ -153,6 +197,7 @@ gg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     set -- ".vstack/settings.toml" "vstack.settings.toml"
   fi
   for file in "$@"; do
+  file="$(gg_settings_source "$file")" || return 1
   gg_settings_usable "$file" || return 1
   if [ -f "$file" ]; then
     # Key PRESENCE decides, not value non-emptiness: `NAME = ""` is a real
@@ -191,10 +236,12 @@ gg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     fi
   fi
   done
-  gg_settings_usable ".env" || return 1
-  if [ -f ".env" ]; then
+  local base_env=""
+  base_env="$(gg_settings_source ".env")" || return 1
+  gg_settings_usable "$base_env" || return 1
+  if [ -f "$base_env" ]; then
     status=0
-    matches="$(gg_settings_grep "^[[:space:]]*(export[[:space:]]+)?${name}=" .env)" || status=$?
+    matches="$(gg_settings_grep "^[[:space:]]*(export[[:space:]]+)?${name}=" "$base_env")" || status=$?
     [ "$status" -le 1 ] || return 1
     line="$(printf '%s\n' "$matches" | tail -n 1)"
     if [ -n "$line" ]; then

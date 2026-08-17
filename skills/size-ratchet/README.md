@@ -33,6 +33,16 @@ reviewed diff, with the justification on the record.
 - **Diagnostics** name the file, its count, and the threshold or baseline
   row it violated, and state the remedies: *split at a concept seam, or
   raise the baseline row in this diff with justification*.
+- **`--staged`** counts index blobs for every tracked file rather than
+  preferring the worktree copy: what the commit records is the blob, and
+  growth staged then reverted in the worktree is invisible to the default
+  mode. Policy comes from the same snapshot — a TRACKED baseline, exclusion
+  list or settings source is read from the index too, so an unstaged edit to
+  any of them cannot authorize growth the commit does not carry, and a policy
+  file staged for DELETION governs as absent. An untracked source (a personal
+  `.env.local`) is still the worktree copy, and an explicit environment
+  variable still wins over everything. Use it in a pre-commit hook; CI, which
+  checks out a clean tree, does not need it.
 - **`--update`** tightens only: it lowers rows to the actual count and
   removes rows for files now at/under the threshold or no longer counted.
   It never adds a row and never raises a number, then re-checks — so it

@@ -34,6 +34,18 @@ gg_repo_root_cd() { # cd to the repository root; all configured paths are repo-r
   cd "$root" || gg_config_error "cannot cd to repository root '$root'"
 }
 
+# A hook lane judges ONE commit, configuration included: tracked settings
+# sources resolve from the index while this is on, so an unstaged edit cannot
+# change the policy a commit is measured against. Call it after cd-ing to the
+# repository root; the temporary directory dies with the process.
+gg_settings_index_mode() {
+  GG_SETTINGS_INDEX_DIR="$(mktemp -d "${TMPDIR:-/tmp}/gg-settings.XXXXXX")" \
+    || gg_config_error "could not create a temporary directory"
+  trap 'rm -rf -- "$GG_SETTINGS_INDEX_DIR"' EXIT
+  GG_SETTINGS_FROM_INDEX=1
+  export GG_SETTINGS_FROM_INDEX GG_SETTINGS_INDEX_DIR
+}
+
 gg_positive_int() { # VALUE NAME — config error unless VALUE is a positive integer
   case "$1" in
     "" | *[!0-9]* | 0*[0-9] | 0) gg_config_error "$2 must be a positive integer, got '$1'" ;;
@@ -98,19 +110,32 @@ gg_config_path() { # RAW LABEL — normalized on stdout; nonzero + ::error on st
 # is an empty list.
 GG_EXCLUDE_PATTERNS=()
 
-gg_load_excludes() { # FILE — fills GG_EXCLUDE_PATTERNS
-  local file="$1" line lineno pat reason content
-  GG_EXCLUDE_PATTERNS=()
-  # The scans read the INDEX, so the exclusion list comes from the index
-  # too: staged edits to it govern staged scans, and a sparse checkout
-  # that omits the tracked file from disk still applies it. The worktree
-  # copy is only the fallback for an untracked list; absent both places
-  # is an empty list.
+# The scans read the INDEX, so policy files come from the index too: staged
+# edits to one govern staged scans, and a sparse checkout that omits the
+# tracked file from disk still applies it. A path staged for DELETION governs
+# as ABSENT — the commit carries no such file — which is not the same as a
+# never-tracked path, where the worktree copy is all there is.
+gg_policy_content() { # FILE — content on stdout; 1 = the commit has no such file
+  local file="$1"
   if git ls-files --error-unmatch -- "$file" >/dev/null 2>&1; then
-    content="$(git show ":$file")" || gg_collection_error "could not read the staged copy of $file"
-  elif [ -f "$file" ]; then
-    content="$(cat -- "$file")" || gg_collection_error "could not read $file"
-  else
+    git show ":$file" || gg_collection_error "could not read the staged copy of $file"
+    return 0
+  fi
+  if git cat-file -e "HEAD:$file" 2>/dev/null; then
+    return 1
+  fi
+  if [ -f "$file" ]; then
+    cat -- "$file" || gg_collection_error "could not read $file"
+    return 0
+  fi
+  return 1
+}
+
+gg_load_excludes() { # FILE — fills GG_EXCLUDE_PATTERNS
+  local file="$1" line lineno pat reason content status=0
+  GG_EXCLUDE_PATTERNS=()
+  content="$(gg_policy_content "$file")" || status=$?
+  if [ "$status" -ne 0 ]; then
     return 0
   fi
   lineno=0

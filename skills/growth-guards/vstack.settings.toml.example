@@ -1,0 +1,16 @@
+[env]
+
+# GROWTH GUARDS — repo growth checks (growth-guards skill).
+# Project-scope `vstack add` / `vstack refresh` merge these defaults into
+# <project>/vstack.settings.toml (never overwriting existing keys). Every
+# other GROWTH_GUARDS_* key ships a working default; the full list is in the
+# skill's SKILL.md and README.md.
+
+# Repo-local check the pre-commit shim runs LAST, after size-ratchet and the
+# growth-guards batch: a repo-root-relative executable, taking no arguments.
+# It follows the family exit contract — 0 clean, 1 violations, anything else
+# "could not complete" — and any nonzero blocks the commit. A value naming a
+# path that is missing or not executable blocks too, rather than passing a
+# commit the repo expected to be checked. Empty (the default) means the shim
+# runs no repo-local check.
+GROWTH_GUARDS_PRE_COMMIT_LOCAL = ""
