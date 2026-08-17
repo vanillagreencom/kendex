@@ -945,6 +945,44 @@ fn a_delimiter_inside_a_single_line_string_does_not_derail_the_feature_writer() 
 }
 
 #[test]
+fn an_add_with_no_agents_ignores_an_uncovered_hook_it_cannot_consume() {
+    let sandbox = Sandbox::new("add-no-agents-uncovered");
+    assert_success(
+        sandbox.add(&[
+            "--hook",
+            "probe",
+            "--harness",
+            "claude-code",
+            "--copy",
+            "-y",
+        ]),
+        "vstack add",
+    );
+    // No agent is installed or selected, so nothing consumes the broken
+    // definition: an unrelated add must not be held hostage by it.
+    write_probe_hook(&sandbox.source, "probe", "Notification");
+    write_hook_with(&sandbox.source, "extra-hook", "PreToolUse", "");
+    assert_success(
+        sandbox.add(&[
+            "--hook",
+            "extra-hook",
+            "--harness",
+            "claude-code",
+            "--copy",
+            "-y",
+        ]),
+        "vstack add --hook extra-hook",
+    );
+    assert!(
+        sandbox
+            .project
+            .join(".claude/hooks/extra-hook.sh")
+            .is_file(),
+        "the unrelated hook was not installed"
+    );
+}
+
+#[test]
 fn a_filtered_add_refuses_before_installing_anything() {
     let sandbox = Sandbox::new("add-atomic-uncovered");
     assert_success(

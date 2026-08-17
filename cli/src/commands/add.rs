@@ -2368,17 +2368,26 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
     }
     // Reconciliation later renders every agent with every locked hook, so an
     // already-installed hook whose source left the contract fails the add
-    // here, before this add's own items are written.
+    // here, before this add's own items are written. With no agent installed
+    // or selected nothing consumes the definition, and an unrelated add is
+    // not held hostage by it.
     {
         let lock = LockFile::load(&config::lock_file_path(global)).unwrap_or_default();
-        let records = crate::refresh_sources::resolve_source_records_without_update(&lock);
-        let all_hooks = crate::refresh_sources::all_source_hooks(
-            &crate::refresh_sources::load_refresh_sources(&records.sources),
-        );
-        if let Some((name, error)) =
-            crate::commands::refresh::uncovered_hook_event(&lock, &all_hooks, None)
-        {
-            anyhow::bail!("hook {name}: {error}");
+        let reconciles_agents = !selected_agents.is_empty()
+            || lock
+                .entries
+                .values()
+                .any(|entry| entry.kind == config::ItemKind::Agent);
+        if reconciles_agents {
+            let records = crate::refresh_sources::resolve_source_records_without_update(&lock);
+            let all_hooks = crate::refresh_sources::all_source_hooks(
+                &crate::refresh_sources::load_refresh_sources(&records.sources),
+            );
+            if let Some((name, error)) =
+                crate::commands::refresh::uncovered_hook_event(&lock, &all_hooks, None)
+            {
+                anyhow::bail!("hook {name}: {error}");
+            }
         }
     }
     if add_writes_project_skill_root(
