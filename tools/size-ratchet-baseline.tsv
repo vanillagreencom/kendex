@@ -57,7 +57,7 @@ pi-extensions/pi-agents-tmux/extensions/subagent/runner.ts	1327
 pi-extensions/pi-agents-tmux/extensions/subagent/subagent-render.ts	473
 pi-extensions/pi-agents-tmux/extensions/subagent/tasks.ts	1010
 pi-extensions/pi-agents-tmux/extensions/subagent/types.ts	487
-pi-extensions/pi-agents-tmux/tests/dashboard-ux.test.ts	1171
+pi-extensions/pi-agents-tmux/tests/dashboard-ux.test.ts	1169
 pi-extensions/pi-agents-tmux/tests/session-lanes.test.ts	2439
 pi-extensions/pi-background-tasks/extensions/background-tasks.ts	986
 pi-extensions/pi-background-tasks/extensions/wake-events.ts	600
