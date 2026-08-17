@@ -115,9 +115,10 @@ function messageContentRows(message: any): Array<Pick<TimelineRow, "kind" | "det
  * budgeted tail read) is stated up front so a cut transcript never reads as
  * complete.
  */
-export function formatTranscriptForDisplay(raw: string, options?: { droppedEvents?: number; taskTerminal?: boolean }): string {
+export function formatTranscriptForDisplay(raw: string, options?: { droppedEvents?: number; originTs?: unknown; taskTerminal?: boolean }): string {
 	const rows: TimelineRow[] = [];
-	let firstTs: number | undefined;
+	const originMs = typeof options?.originTs === "number" ? options.originTs : Date.parse(String(options?.originTs ?? ""));
+	let firstTs: number | undefined = Number.isFinite(originMs) ? originMs : undefined;
 	// Open tool calls by id (fallback: FIFO per name), pointing at the row to
 	// complete — id-less same-named calls pair first-started-first-ended.
 	const openTools = new Map<string, Array<{ row: TimelineRow; startedAtMs?: number; label: string }>>();

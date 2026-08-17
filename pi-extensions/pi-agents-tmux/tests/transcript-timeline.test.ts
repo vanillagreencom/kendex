@@ -188,6 +188,11 @@ test("droppedEvents is stated up front", () => {
 const TMP = mkdtempSync(join(tmpdir(), "transcript-tail-"));
 after(() => rmSync(TMP, { force: true, recursive: true }));
 
+test("a truncated timeline keeps the session's original elapsed origin", () => {
+	const out = formatTranscriptForDisplay(stream(7200, { type: "turn_end" }), { droppedEvents: 3, originTs: at(0) });
+	assert.match(out, /\[2:00:00\] turn end/);
+});
+
 test("readTranscriptTail cuts on a line boundary and counts dropped events", async () => {
 	const path = join(TMP, "t.jsonl");
 	const records = Array.from({ length: 50 }, (_, index) => line({ index, ts: at(index), type: "turn_end" }));
@@ -196,6 +201,7 @@ test("readTranscriptTail cuts on a line boundary and counts dropped events", asy
 	assert.equal(whole?.droppedLines, 0);
 	const tail = await readTranscriptTail(path, 500);
 	assert.ok(tail && tail.droppedLines > 0, "expected a cut");
+	assert.equal(tail!.originTs, at(0));
 	assert.equal(tail!.droppedLines + tail!.text.split("\n").filter(Boolean).length, 50);
 	for (const kept of tail!.text.split("\n").filter(Boolean)) assert.doesNotThrow(() => JSON.parse(kept));
 	assert.equal(await readTranscriptTail(join(TMP, "missing.jsonl")), undefined);

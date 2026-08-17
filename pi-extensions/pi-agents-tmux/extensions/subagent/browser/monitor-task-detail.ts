@@ -272,7 +272,7 @@ export async function traceViewerItems(record: PaneTaskRecord, taskNumber?: numb
 	const common = { agent: record.agent, createdAt: record.completedAt ?? record.createdAt, ref, status: record.status, summary: summaryText };
 	const transcript = await readTranscriptTail(record.transcriptPath);
 	const transcriptItem = record.transcriptPath
-		? [{ ...common, label: "Transcript", path: record.transcriptPath, text: transcript ? formatTranscriptForDisplay(transcript.text, { droppedEvents: transcript.droppedLines, taskTerminal: monitorStatusIsTerminal(record.status) }) : "Transcript file could not be read.", type: "transcript" as const }]
+		? [{ ...common, label: "Transcript", path: record.transcriptPath, text: transcript ? formatTranscriptForDisplay(transcript.text, { droppedEvents: transcript.droppedLines, originTs: transcript.originTs, taskTerminal: monitorStatusIsTerminal(record.status) }) : "Transcript file could not be read.", type: "transcript" as const }]
 		: [];
 	return [
 		{ ...common, label: "Summary", text: summary, type: "summary" as const },

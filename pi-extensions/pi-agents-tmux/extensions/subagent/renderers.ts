@@ -267,7 +267,7 @@ export async function readTextFileIfExists(filePath: string | undefined, maxByte
  * the cut lands on a line boundary, and the dropped-event count lets the
  * caller say what is not shown instead of rendering a leading fragment.
  */
-export async function readTranscriptTail(filePath: string | undefined, maxBytes = 256_000): Promise<{ text: string; droppedLines: number } | undefined> {
+export async function readTranscriptTail(filePath: string | undefined, maxBytes = 256_000): Promise<{ text: string; droppedLines: number; originTs?: unknown } | undefined> {
 	if (!filePath) return undefined;
 	let handle: fs.promises.FileHandle | undefined;
 	try {
@@ -276,10 +276,28 @@ export async function readTranscriptTail(filePath: string | undefined, maxBytes 
 		if (size <= maxBytes) return { droppedLines: 0, text: (await handle.readFile()).toString("utf-8") };
 		const start = size - maxBytes;
 		let droppedLines = 0;
+		// The first record's stamp survives the cut so elapsed times keep the
+		// session's real origin instead of restarting at the tail.
+		let originTs: unknown;
+		let firstLine: Buffer | undefined;
 		const chunk = Buffer.alloc(64 * 1024);
 		for (let position = 0; position < start; ) {
 			const { bytesRead } = await handle.read(chunk, 0, Math.min(chunk.length, start - position), position);
 			if (bytesRead <= 0) break;
+			if (originTs === undefined && firstLine !== null) {
+				const boundary = chunk.subarray(0, bytesRead).indexOf(10);
+				const piece = chunk.subarray(0, boundary === -1 ? bytesRead : boundary);
+				firstLine = firstLine ? Buffer.concat([firstLine, piece]) : Buffer.from(piece);
+				if (boundary !== -1 || firstLine.length > 1024 * 1024) {
+					try {
+						const parsed = JSON.parse(firstLine.toString("utf-8"));
+						originTs = parsed?.ts ?? parsed?.timestamp;
+					} catch {
+						originTs = undefined;
+					}
+					firstLine = null as never;
+				}
+			}
 			for (let index = 0; index < bytesRead; index += 1) if (chunk[index] === 10) droppedLines += 1;
 			position += bytesRead;
 		}
@@ -299,7 +317,7 @@ export async function readTranscriptTail(filePath: string | undefined, maxBytes 
 				text = text.slice(boundary + 1);
 			}
 		}
-		return { droppedLines, text };
+		return { droppedLines, originTs, text };
 	} catch {
 		return undefined;
 	} finally {
