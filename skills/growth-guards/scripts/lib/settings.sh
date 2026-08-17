@@ -2,10 +2,9 @@
 # Settings resolution for the growth-guards check family. Sourced (not
 # executed) by every scripts/* check.
 #
-# VENDORED from skills/review-gate/scripts/lib/settings.sh (rg_setting),
-# renamed gg_setting: skills are standalone-installable, so a consumer that
-# installs only growth-guards has no review-gate tree to source from. Keep
-# the logic in sync with the original; behavioral fixes belong there first.
+# Standalone by design: a consumer that installs only growth-guards has no
+# review-gate tree to source its settings loader from. This one adds the
+# dotenv layers and the index-scoped resolution the hook lanes need.
 #
 # Resolution order for every key read through gg_setting (the GROWTH_GUARDS_*
 # family):
@@ -23,11 +22,9 @@
 #
 # Keys are matched FILE-WIDE by exact name, with no TOML-table awareness:
 # adopter settings sit under an [env] table, and a table-aware top-level
-# parser would resolve none of them. The consequence is a contract: every
-# key name read through gg_setting is reserved across the whole file — an
-# assignment under an unrelated table would be read as the setting, so
-# callers must keep these names unique file-wide. The one detectable
-# ambiguity, the same name assigned more than once, fails loud below.
+# parser would resolve none of them. So every key name read through
+# gg_setting is reserved across the whole file; the one detectable ambiguity,
+# the same name assigned more than once, fails loud below.
 #
 # The caller cds to the repo root before resolving, so the default settings
 # path is relative.
@@ -95,12 +92,11 @@ gg_settings_usable() { # PATH — 0 = readable-shaped or absent; 1 + ::error oth
   return 1
 }
 
-# The pre-commit chain judges one commit snapshot, policy included: with
-# GG_SETTINGS_FROM_INDEX=1 a TRACKED settings source is read from the INDEX,
-# a source staged for DELETION governs as absent, and an untracked one (a
-# personal .env.local) is the worktree copy, which is all there is. A tracked
-# SYMLINK fails loud: its index blob is the target name, not settings, and
-# parsing that would silently resolve every key to its built-in default.
+# With GG_SETTINGS_FROM_INDEX=1 a TRACKED settings source is read from the
+# INDEX, a source staged for DELETION governs as absent, and an untracked one
+# (a personal .env.local) is the worktree copy, which is all there is. A
+# tracked SYMLINK fails loud: its index blob is the target name, not settings,
+# and parsing that would resolve every key to its built-in default.
 # GG_SETTINGS_INDEX_DIR holds the materialized copies; the caller owns it.
 gg_settings_source() { # FILE — the path to actually read; nonzero + ::error on failure
   local file="$1" copy=""
@@ -151,6 +147,26 @@ gg_settings_grep() { # REGEX FILE — matching lines on stdout; 1 = no match
   return "$status"
 }
 
+# One dotenv layer (.env.local, .env): the LAST matching KEY= line wins
+# (shell-sourcing semantics), optional surrounding quotes stripped. Parsed,
+# never sourced. 0 = value on stdout; 1 = this layer assigns nothing;
+# 2 = the layer is unusable and resolution must fail loud.
+gg_dotenv_layer() { # FILE NAME
+  local file="$1" name="$2" src line val matches status=0
+  src="$(gg_settings_source "$file")" || return 2
+  gg_settings_usable "$src" || return 2
+  [ -f "$src" ] || return 1
+  matches="$(gg_settings_grep "^[[:space:]]*(export[[:space:]]+)?${name}=" "$src")" || status=$?
+  [ "$status" -le 1 ] || return 2
+  line="$(printf '%s\n' "$matches" | tail -n 1)"
+  [ -n "$line" ] || return 1
+  if ! val="$(gg_dotenv_value "${line#*=}")"; then
+    echo "::error::$file: unsupported syntax for $name (a quoted value must end at its closing quote, optionally followed by a comment)" >&2
+    return 2
+  fi
+  printf '%s' "$val"
+}
+
 gg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
                # a present-but-unparseable assignment (callers must propagate)
   local name="$1" default="$2" line val file status matches
@@ -169,25 +185,14 @@ gg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     printf '%s' "${!name}"
     return 0
   fi
-  # Env-file overrides (standard project layering: .env.local beats the
-  # committed settings, .env is the base) — LAST matching KEY= line wins (shell-sourcing semantics),
-  # optional surrounding quotes stripped. Parsed, never sourced.
-  local local_env=""
-  local_env="$(gg_settings_source ".env.local")" || return 1
-  gg_settings_usable "$local_env" || return 1
-  if [ -f "$local_env" ]; then
-    status=0
-    matches="$(gg_settings_grep "^[[:space:]]*(export[[:space:]]+)?${name}=" "$local_env")" || status=$?
-    [ "$status" -le 1 ] || return 1
-    line="$(printf '%s\n' "$matches" | tail -n 1)"
-    if [ -n "$line" ]; then
-      if ! val="$(gg_dotenv_value "${line#*=}")"; then
-        echo "::error::.env.local: unsupported syntax for $name (a quoted value must end at its closing quote, optionally followed by a comment)" >&2
-        return 1
-      fi
-      printf '%s' "$val"
-      return 0
-    fi
+  # Standard project layering: .env.local beats the committed settings, .env
+  # is the base.
+  status=0
+  val="$(gg_dotenv_layer ".env.local" "$name")" || status=$?
+  [ "$status" -ne 2 ] || return 1
+  if [ "$status" -eq 0 ]; then
+    printf '%s' "$val"
+    return 0
   fi
   # Nested project settings override the root file (the standard loader
   # order); an explicit GROWTH_GUARDS_SETTINGS_FILE consults only itself.
@@ -202,30 +207,25 @@ gg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   if [ -f "$file" ]; then
     # Key PRESENCE decides, not value non-emptiness: `NAME = ""` is a real
     # assignment and must override the built-in default, exactly like a
-    # set-but-empty env var does above.
-    # Leading whitespace before a key is valid TOML, so matching is
-    # whitespace-tolerant everywhere (presence, ambiguity guard, extraction)
-    # — anchoring at column one made an indented duplicate bypass the
-    # fail-loud guard and an indented sole assignment collapse silently to
-    # the built-in default (vstack#1059).
+    # set-but-empty env var does above. Leading whitespace before a key is
+    # valid TOML, so matching is whitespace-tolerant everywhere — presence,
+    # ambiguity guard and extraction alike.
     status=0
     matches="$(gg_settings_grep "^[[:space:]]*${name}[[:space:]]*=" "$file")" || status=$?
     [ "$status" -le 1 ] || return 1
     if [ "$status" -eq 0 ]; then
-      # File-wide matching (header contract) makes a re-assigned name
-      # ambiguous — e.g. the same key under two tables. Silently taking the
-      # first could read an unrelated table's value, so ambiguity is a
-      # configuration error.
+      # File-wide matching makes a re-assigned name ambiguous — the same key
+      # under two tables. Taking the first could read an unrelated table's
+      # value, so ambiguity is a configuration error.
       if [ "$(printf '%s\n' "$matches" | grep -c .)" -gt 1 ]; then
         echo "::error::$file: $name is assigned more than once (keys are matched file-wide regardless of TOML table; each name must be unique in the file)" >&2
         return 1
       fi
       line="$(printf '%s\n' "$matches" | head -n 1)"
-      # A PRESENT assignment this parser cannot read must fail LOUDLY, never
-      # collapse to empty. Only the flat single-line basic-string shape is
-      # supported — the value is quote-free ([^"]*), which makes the
-      # extraction exact even with a trailing TOML comment (accepted);
-      # anything else is a configuration error.
+      # A PRESENT assignment this parser cannot read fails LOUDLY, never
+      # collapses to empty. Only the flat single-line basic-string shape is
+      # supported: a quote-free value ([^"]*) makes the extraction exact even
+      # with a trailing TOML comment.
       if ! printf '%s\n' "$line" | grep -Eq -- "^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"[^\"]*\"[[:space:]]*(#.*)?\$"; then
         echo "::error::$file: unsupported syntax for $name (expected a single-line basic string: $name = \"value\")" >&2
         return 1
@@ -236,22 +236,12 @@ gg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     fi
   fi
   done
-  local base_env=""
-  base_env="$(gg_settings_source ".env")" || return 1
-  gg_settings_usable "$base_env" || return 1
-  if [ -f "$base_env" ]; then
-    status=0
-    matches="$(gg_settings_grep "^[[:space:]]*(export[[:space:]]+)?${name}=" "$base_env")" || status=$?
-    [ "$status" -le 1 ] || return 1
-    line="$(printf '%s\n' "$matches" | tail -n 1)"
-    if [ -n "$line" ]; then
-      if ! val="$(gg_dotenv_value "${line#*=}")"; then
-        echo "::error::.env: unsupported syntax for $name (a quoted value must end at its closing quote, optionally followed by a comment)" >&2
-        return 1
-      fi
-      printf '%s' "$val"
-      return 0
-    fi
+  status=0
+  val="$(gg_dotenv_layer ".env" "$name")" || status=$?
+  [ "$status" -ne 2 ] || return 1
+  if [ "$status" -eq 0 ]; then
+    printf '%s' "$val"
+    return 0
   fi
   printf '%s' "$default"
 }

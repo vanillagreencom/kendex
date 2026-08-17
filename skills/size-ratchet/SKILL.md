@@ -1,6 +1,6 @@
 ---
 name: size-ratchet
-description: "Tighten-only file-size gate: every tracked file over the line threshold (default 1000) must be frozen in a baseline TSV at its current size (--staged counts index blobs, for a pre-commit hook), and the baseline only moves down — new offenders, growth of a baselined file, and a baseline looser than reality all fail; --update lowers/removes rows but never adds or raises one, so deliberate growth is a visible hand-edit in review. Load when adding, tuning, or debugging a repo's file-size ratchet, its baseline, its exclusion list, or SIZE_RATCHET_* settings — or when a change grows files in a repo that has a baseline."
+description: "Tighten-only file-size gate: tracked files over the line threshold are frozen in a baseline TSV that only ever moves down. Load to add, tune, or debug the ratchet, its baseline, or SIZE_RATCHET_* settings."
 license: MIT
 user-invocable: true
 metadata:

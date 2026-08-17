@@ -4,7 +4,7 @@
 # Project-scope `vstack add` / `vstack refresh` merge these defaults into
 # <project>/vstack.settings.toml (never overwriting existing keys). Every
 # other GROWTH_GUARDS_* key ships a working default; the full list is in the
-# skill's SKILL.md and README.md.
+# skill's SKILL.md.
 
 # Repo-local check the pre-commit shim runs LAST, after size-ratchet and the
 # growth-guards batch: a repo-root-relative executable, taking no arguments.

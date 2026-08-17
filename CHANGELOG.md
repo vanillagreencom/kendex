@@ -38,6 +38,17 @@
 - orch PR-comment triage batches fix rounds per fully-reviewed head: a push
   restarts every reviewer, so a round pushed into an open review pass buys
   duplicate findings and unanswered threads.
+- Skill `description:` frontmatter is one or two sentences again across the
+  catalog — what the skill is and when to load it, with the sub-feature
+  enumerations that had grown into ten of them left to the body. The longest
+  fell from 810 characters to 214, and every skill now fits in a loader's
+  index without crowding out its neighbours; `vstack refresh` delivers the
+  shorter text to consumers. The growth-guards skill also lost the narration
+  that accumulated around its checks: duplicated scan machinery now has one
+  home in `lib/common.sh`, SKILL.md carries what every load needs and README
+  the adoption depth. Every verdict, remediation and exit code is unchanged;
+  the only text that moves is two collection-error diagnostics, which now name
+  the lane whose scan failed.
 
 - second-opinion settings example: the `SECOND_OPINION_CURRENT_MODEL` block
   announced "three cases, and only the third makes a project file usable at

@@ -11,12 +11,8 @@ const HELPER_NAME: &str = "vstack-guards";
 const HOOK_SENTINEL: &str = "# vstack-guards-hook";
 
 /// Install (or repair) the growth-guards git shims after a project-scope
-/// install.
-///
-/// The guard chain has to fire for every tool that commits — agent harnesses,
-/// editors, scripts, a plain shell — so it lives in real `.git/hooks` files,
-/// not in a harness hook. The skill owns the installer and its idempotence;
-/// this is the call site that keeps a consumer's shims current.
+/// install. The skill owns the installer and its idempotence; this is the
+/// call site that keeps a consumer's shims current.
 ///
 /// Returns the one line to surface, or `None` when the skill is not installed
 /// in this project. Never fails the install: an installer that cannot run is
@@ -25,15 +21,11 @@ pub fn install_growth_guards_hooks(project_root: &Path) -> Option<String> {
     run_installer(project_root, &[]).note
 }
 
-/// Remove the shims before the skill's own files go away.
-///
-/// Without this a `vstack remove growth-guards` would leave hooks that can no
-/// longer reach their guard — and the shims fail closed, so every subsequent
-/// commit in the repository would be blocked.
+/// Remove the shims before the skill's own files go away: left behind they
+/// fail closed, blocking every subsequent commit in the repository.
 pub fn uninstall_growth_guards_hooks(project_root: &Path) -> Result<Option<String>, String> {
-    // What decides is whether shims exist, not whether the skill or the
-    // repository look healthy: only a helper git could actually reach can
-    // block a commit, and only its absence makes skipping safe.
+    // Whether shims exist decides, not whether the skill or the repository
+    // look healthy: only their absence makes skipping safe.
     let Some(shim) = installed_shim(project_root)
         .map_err(|detail| format!("growth-guards git hooks: {detail}"))?
     else {
@@ -56,13 +48,12 @@ pub fn uninstall_growth_guards_hooks(project_root: &Path) -> Result<Option<Strin
 }
 
 /// Any installed shim: the helper, or a hook still carrying the delegating
-/// line — which fails closed on its own and would block every commit if the
-/// helper went without it.
+/// line — which fails closed on its own.
 ///
-/// The COMMON hooks directory is what the installer writes, and it is what a
-/// later `core.hooksPath` hides rather than moves: shims dormant behind that
-/// setting revive the moment it is unset, so they are still shims. `None`
-/// covers every case where nothing can fire.
+/// The COMMON hooks directory is what the installer writes, and what a later
+/// `core.hooksPath` hides rather than moves: shims dormant behind that setting
+/// revive the moment it is unset, so they are still shims. `None` covers every
+/// case where nothing can fire.
 fn installed_shim(project_root: &Path) -> Result<Option<PathBuf>, String> {
     let output = match Command::new("git")
         .arg("-C")
@@ -90,9 +81,8 @@ fn installed_shim(project_root: &Path) -> Result<Option<PathBuf>, String> {
         return Ok(Some(helper));
     }
     // Read as BYTES: a hook is not required to be UTF-8, and one that failed
-    // to decode would otherwise read as carrying no delegate at all. A hook
-    // that exists but cannot be read is UNKNOWN, and unknown must count as a
-    // shim — removing the skill around a live delegate blocks every commit.
+    // to decode would otherwise read as carrying no delegate. A hook that
+    // exists but cannot be read is UNKNOWN, and unknown counts as a shim.
     // Existence is tested on the LINK, so a dangling symlink counts too: its
     // target can come back carrying a delegate.
     Ok(["pre-commit", "commit-msg"].into_iter().find_map(|hook| {
@@ -161,8 +151,8 @@ fn run_installer(project_root: &Path, extra_args: &[&str]) -> InstallerOutcome {
     if output.status.success() {
         return done(summary.unwrap_or_else(|| "growth-guards git hooks: installed".to_string()));
     }
-    // A failed run must name what happened; the installer's own last warning
-    // is the most specific thing available, its summary next.
+    // Name what happened: the installer's own last warning is the most
+    // specific thing available, its summary next.
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     let detail = last_nonempty_line(&stderr)
         .or(summary)
@@ -170,13 +160,12 @@ fn run_installer(project_root: &Path, extra_args: &[&str]) -> InstallerOutcome {
     failed(format!("growth-guards git hooks: not installed — {detail}"))
 }
 
-/// The installer inside whichever skills directory this project's install
-/// method used: the canonical `.agents/skills` for a symlink install, a
-/// harness skills directory for a copy install.
 /// Every project-scope skills directory a vstack install can write, plus the
-/// source layout vstack itself has. Relative by design: resolution must depend
-/// on the root it is given and never on the process working directory. Keep in
-/// step with the shipped installer's own `SKILL_ROOTS`.
+/// source layout vstack itself has: the canonical `.agents/skills` for a
+/// symlink install, a harness skills directory for a copy install. Relative by
+/// design — resolution depends on the root it is given, never on the process
+/// working directory. Kept in step with the shipped installer's `SKILL_ROOTS`
+/// by a test.
 const SKILL_ROOTS: &[&str] = &[
     ".agents/skills",
     ".claude/skills",

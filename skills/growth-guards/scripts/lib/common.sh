@@ -1,31 +1,48 @@
 # shellcheck shell=bash
 # Shared plumbing for the growth-guards check family. Sourced (not executed)
-# by every scripts/* check. Bash 3.2-safe throughout: no Bash 4+ builtins
-# or array kinds, guarded expansion for possibly-empty arrays.
+# by every scripts/* check, which sets GG_CHECK to its own name first so every
+# diagnostic names its producer.
 #
-# Family contract carried here: exit 0 clean, 1 violations, 2
-# usage/config/collection error. The gates distinguish "measured and fine"
-# from "could not measure": any failure to collect (an unreadable file, a
-# git or grep execution failure) goes through gg_collection_error — a loud
-# exit 2, never a silent pass.
+# Family contract: exit 0 clean, 1 violations, 2 usage/config/collection
+# error. A measurement that could not be taken goes through
+# gg_collection_error — a loud exit 2, never a silent pass.
 #
-# Each check sets GG_CHECK to its own name before calling any helper, so
-# every diagnostic names the check that produced it.
+# Bash 3.2-safe throughout: no Bash 4+ builtins or array kinds, guarded
+# expansion for possibly-empty arrays.
 
 set -euo pipefail
 
 GG_TAB="$(printf '\t')"
+GG_VIOLATIONS=0
+# Cleanup state is per-process. An INHERITED value must never decide what a
+# guard deletes on exit: gg_settings_index_mode arms the same trap without
+# creating a scratch directory, and the checks a hook lane runs inherit the
+# exported settings cache their parent is still reading.
+GG_TMP=""
+GG_SETTINGS_INDEX_OWNED=0
 
 gg_config_error() {
   echo "::error::${GG_CHECK:-growth-guards}: $*" >&2
   exit 2
 }
 
-# Same loud exit as a config error, distinct name so call sites read as
-# what they are: a measurement that failed, never a verdict.
-gg_collection_error() {
-  echo "::error::${GG_CHECK:-growth-guards}: $*" >&2
-  exit 2
+# Same loud exit, distinct name so call sites read as what they are: a
+# measurement that failed, never a verdict.
+gg_collection_error() { gg_config_error "$@"; }
+
+# Only what THIS process created: GG_SETTINGS_INDEX_DIR is exported to the
+# checks a hook lane runs, and they must not delete the directory their parent
+# is still resolving settings from.
+gg_cleanup() {
+  [ -z "${GG_TMP:-}" ] || rm -rf -- "$GG_TMP"
+  [ "${GG_SETTINGS_INDEX_OWNED:-0}" = "1" ] && rm -rf -- "$GG_SETTINGS_INDEX_DIR"
+  return 0
+}
+
+gg_tmpdir() { # per-run scratch directory in GG_TMP, removed at exit
+  GG_TMP="$(mktemp -d "${TMPDIR:-/tmp}/gg-${GG_CHECK:-growth-guards}.XXXXXX")" \
+    || gg_config_error "could not create a temporary directory"
+  trap gg_cleanup EXIT
 }
 
 gg_repo_root_cd() { # cd to the repository root; all configured paths are repo-relative
@@ -37,11 +54,12 @@ gg_repo_root_cd() { # cd to the repository root; all configured paths are repo-r
 # A hook lane judges ONE commit, configuration included: tracked settings
 # sources resolve from the index while this is on, so an unstaged edit cannot
 # change the policy a commit is measured against. Call it after cd-ing to the
-# repository root; the temporary directory dies with the process.
+# repository root.
 gg_settings_index_mode() {
   GG_SETTINGS_INDEX_DIR="$(mktemp -d "${TMPDIR:-/tmp}/gg-settings.XXXXXX")" \
     || gg_config_error "could not create a temporary directory"
-  trap 'rm -rf -- "$GG_SETTINGS_INDEX_DIR"' EXIT
+  GG_SETTINGS_INDEX_OWNED=1
+  trap gg_cleanup EXIT
   GG_SETTINGS_FROM_INDEX=1
   export GG_SETTINGS_FROM_INDEX GG_SETTINGS_INDEX_DIR
 }
@@ -103,11 +121,15 @@ gg_config_path() { # RAW LABEL — normalized on stdout; nonzero + ::error on st
   printf '%s' "$norm"
 }
 
+# One resolution order for every configured path: an explicit flag wins, then
+# the setting, then the built-in default — validated and normalized either way.
+gg_resolve_path() { # FLAG-VALUE KEY DEFAULT LABEL — normalized path on stdout
+  local raw="$1"
+  [ -n "$raw" ] || raw="$(gg_setting "$2" "$3")" || return 1
+  gg_config_path "$raw" "$4"
+}
+
 # --- exclusion list: pattern<TAB>reason, reason mandatory --------------------
-# Shell glob matched against the full repo-relative path (`*` crosses `/`);
-# blank lines and `#` comments are ignored; a pattern without a reason is a
-# config error — every exclusion carries its justification. A missing file
-# is an empty list.
 GG_EXCLUDE_PATTERNS=()
 
 # The scans read the INDEX, so policy files come from the index too: staged
@@ -131,6 +153,9 @@ gg_policy_content() { # FILE — content on stdout; 1 = the commit has no such f
   return 1
 }
 
+# Shell glob matched against the full repo-relative path (`*` crosses `/`);
+# blank lines and `#` comments are ignored; a pattern without a reason is a
+# config error. A missing file is an empty list.
 gg_load_excludes() { # FILE — fills GG_EXCLUDE_PATTERNS
   local file="$1" line lineno pat reason content status=0
   GG_EXCLUDE_PATTERNS=()
@@ -165,6 +190,32 @@ gg_is_excluded() { # PATH — 0 when some exclusion glob matches the full path
     esac
   done
   return 1
+}
+
+# One banned shape, scanned over INDEX content in two phases: the offending
+# FILES (-l -z, so a path containing ':' cannot garble parsing), then the
+# numbered hits per file, where the known path prefix strips exactly. Binary
+# files are skipped (-I). The per-file pass is line-oriented, so a path
+# embedding a newline yields no DETAIL lines — the file still fails phase one.
+# Needs GG_TMP (gg_tmpdir) and the excludes already loaded.
+gg_grep_lane() { # LABEL ERE REMEDY PATHSPEC... — numbered violations on stdout
+  local label="$1" ere="$2" remedy="$3" status=0 f hit_status hit
+  shift 3
+  git grep --cached -lIzE "$ere" -- "$@" >"$GG_TMP/lane.z" || status=$?
+  [ "$status" -le 1 ] || gg_collection_error "git grep failed scanning tracked files for $label (exit $status)"
+  while IFS= read -r -d '' f; do
+    gg_is_excluded "$f" && continue
+    hit_status=0
+    git grep --cached -nIE "$ere" -- ":(literal)$f" >"$GG_TMP/lane.hits" || hit_status=$?
+    # This file just listed as containing hits; anything but a clean re-scan
+    # (including "no matches") means the measurement is broken.
+    [ "$hit_status" -eq 0 ] || gg_collection_error "git grep could not detail the $label hits in '$f' (exit $hit_status)"
+    while IFS= read -r hit; do
+      echo "${GG_CHECK:-growth-guards} FAIL $label: $f:${hit#"$f":}"
+      echo "  remedies: $remedy"
+      GG_VIOLATIONS=$((GG_VIOLATIONS + 1))
+    done <"$GG_TMP/lane.hits"
+  done <"$GG_TMP/lane.z"
 }
 
 gg_count_nonempty_lines() { # FILE — count on stdout; loud exit if grep cannot read it

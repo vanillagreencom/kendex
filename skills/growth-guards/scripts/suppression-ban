@@ -1,29 +1,17 @@
 #!/usr/bin/env bash
 # suppression-ban — two gates over lint suppression in tracked files:
 #
-# 1. BLANKET suppressions fail flat (no baseline): the file- or
-#    module-wide pragmas that turn a linter off wholesale —
-#      rust        crate/module-wide inner allow attribute  #![allow(...)]
-#      python      file-level directives  ruff: noqa / flake8: noqa
-#      eslint      the bare block form  /* eslint-disable */  (no rules named)
-#      golangci    nolint with no linter named, or nolint:all
-#    A PER-LINE suppression that names its lint and states its reason
-#    stays legal — the ban is on suppressing everything at once.
+# 1. BLANKET suppressions fail flat (no baseline): the file- or module-wide
+#    pragmas that turn a linter off wholesale. A PER-LINE suppression that
+#    names its lint and states its reason stays legal.
+# 2. BARE ALLOW RATCHET (rust): reasonless dead_code/unused allow attributes
+#    are counted per file against a tighten-only baseline TSV
+#    (path<TAB>count). Rows only go down or away; --update lowers and removes
+#    but never adds or raises, so growth is a visible hand-edit in review.
 #
-# 2. BARE ALLOW RATCHET (rust): reasonless per-item attributes for
-#    dead_code / unused lints are counted per file; a repo with legacy
-#    counts freezes them in a tighten-only baseline TSV (path<TAB>count).
-#    Rows only go down or away: new bare allows, growth past a row, and a
-#    baseline looser than reality all fail; --update lowers/removes rows
-#    but never adds or raises one, so deliberate growth is a visible
-#    hand-edit in review. An attribute carrying `reason = "..."` does not
-#    count — stating the reason is the legal form.
-#
-# Scans INDEX content (git grep --cached), language-scoped by pathspec, so
-# documentation and scripts that QUOTE these pragmas never fire. Exit
-# codes: 0 clean; 1 violations; 2 usage/config/collection error; any git
-# or grep execution failure (exit >= 2) is a collection error, never a
-# silent pass.
+# Scans INDEX content, language-scoped by pathspec, so documentation and
+# scripts that QUOTE these pragmas never fire. Exit codes: 0 clean;
+# 1 violations; 2 usage/config/collection error.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -82,70 +70,39 @@ done
 
 gg_repo_root_cd
 
-if [ -n "$BASELINE_OPT" ]; then
-  BASELINE_FILE="$BASELINE_OPT"
-else
-  BASELINE_FILE="$(gg_setting GROWTH_GUARDS_SUPPRESSION_BASELINE "tools/suppression-baseline.tsv")" || exit 2
-fi
-if [ -n "$EXCLUDES_OPT" ]; then
-  EXCLUDES_FILE="$EXCLUDES_OPT"
-else
-  EXCLUDES_FILE="$(gg_setting GROWTH_GUARDS_SUPPRESSION_EXCLUDES "tools/suppression-ban-excludes")" || exit 2
-fi
-BASELINE_FILE="$(gg_config_path "$BASELINE_FILE" "baseline")" || exit 2
-EXCLUDES_FILE="$(gg_config_path "$EXCLUDES_FILE" "excludes")" || exit 2
+BASELINE_FILE="$(gg_resolve_path "$BASELINE_OPT" GROWTH_GUARDS_SUPPRESSION_BASELINE "tools/suppression-baseline.tsv" baseline)" || exit 2
+EXCLUDES_FILE="$(gg_resolve_path "$EXCLUDES_OPT" GROWTH_GUARDS_SUPPRESSION_EXCLUDES "tools/suppression-ban-excludes" excludes)" || exit 2
 gg_load_excludes "$EXCLUDES_FILE"
 
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+gg_tmpdir
 
 # --- gate 1: blanket suppressions, flat fail ---------------------------------
-BLANKET_VIOLATIONS=0
-
-run_lane() { # LABEL ERE REMEDY PATHSPEC... — numbered violations on stdout
-  local label="$1" ere="$2" remedy="$3" status f hit_status hit
-  shift 3
-  status=0
-  git grep --cached -lIzE "$ere" -- "$@" >"$TMP/lane.z" || status=$?
-  [ "$status" -le 1 ] || gg_collection_error "git grep failed scanning for $label (exit $status)"
-  while IFS= read -r -d '' f; do
-    gg_is_excluded "$f" && continue
-    hit_status=0
-    git grep --cached -nIE "$ere" -- ":(literal)$f" >"$TMP/lane.hits" || hit_status=$?
-    [ "$hit_status" -eq 0 ] || gg_collection_error "git grep could not detail the $label hits in '$f' (exit $hit_status)"
-    while IFS= read -r hit; do
-      echo "suppression-ban FAIL $label: $f:${hit#"$f":}"
-      echo "  remedies: $remedy"
-      BLANKET_VIOLATIONS=$((BLANKET_VIOLATIONS + 1))
-    done <"$TMP/lane.hits"
-  done <"$TMP/lane.z"
-}
-
-run_lane "module-wide rust allow" \
+gg_grep_lane "module-wide rust allow" \
   '^[[:space:]]*#!\[allow\(' \
   "delete the module-wide attribute and fix the findings, or annotate the surviving sites per line with a stated reason; vendored trees belong in $EXCLUDES_FILE with a reason" \
   '*.rs'
 
-run_lane "file-level noqa" \
+gg_grep_lane "file-level noqa" \
   '^[[:space:]]*#[[:space:]]*(ruff|flake8):[[:space:]]*noqa' \
   "drop the file-level directive; a per-line noqa naming its specific codes stays legal" \
   '*.py'
 
-run_lane "blanket eslint-disable" \
+gg_grep_lane "blanket eslint-disable" \
   '/\*[[:space:]]*eslint-disable[[:space:]]*\*/' \
   "name the rules being disabled (and why), or fix the findings; the bare block form turns the linter off wholesale" \
   '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs' '*.mts' '*.cts' '*.vue' '*.svelte'
 
-run_lane "blanket nolint" \
+gg_grep_lane "blanket nolint" \
   '//[[:space:]]*nolint([[:space:]]*$|:[[:space:]]*all([^a-z]|$))' \
   "name the linter per line (nolint:lintname with the reason alongside), or fix the finding" \
   '*.go'
 
+BLANKET_VIOLATIONS="$GG_VIOLATIONS"
+
 # --- gate 2: bare-allow ratchet (rust) ---------------------------------------
 # The whole parenthesized span must be lint names (paths like `clippy::x`
 # included), commas, and spaces — a `reason = "…"` component carries `=`
-# and quotes and keeps the attribute out of the bare count, so the reasoned
-# form is the legal one.
+# and quotes, which keeps the attribute out of the bare count.
 BARE_ERE='#\[allow\([[:space:]]*([a-z_:]+[[:space:]]*,[[:space:]]*)*(dead_code|unused(_[a-z_]+)?)([[:space:]]*,[[:space:]]*[a-z_:]+)*[[:space:]]*\)\]'
 
 # Tracked *.rs paths carrying a tab or newline cannot be represented in the
@@ -153,19 +110,19 @@ BARE_ERE='#\[allow\([[:space:]]*([a-z_:]+[[:space:]]*,[[:space:]]*)*(dead_code|u
 # skip the gate) rather than silently splitting into garbage rows.
 NL='
 '
-git ls-files -z -- '*.rs' >"$TMP/rs.z" || gg_collection_error "git ls-files failed enumerating *.rs"
+git ls-files -z -- '*.rs' >"$GG_TMP/rs.z" || gg_collection_error "git ls-files failed enumerating *.rs"
 while IFS= read -r -d '' f; do
   case "$f" in
     *"$NL"*) gg_config_error "tracked path contains a newline, unrepresentable in line-oriented records (exclude it to skip the gate): '$f'" ;;
     *"$GG_TAB"*) gg_config_error "tracked path contains a tab, unrepresentable in the baseline TSV (exclude it to skip the gate): '$f'" ;;
   esac
-done <"$TMP/rs.z"
+done <"$GG_TMP/rs.z"
 
 status=0
-git grep --cached -cIE "$BARE_ERE" -- '*.rs' >"$TMP/bare.raw" || status=$?
+git grep --cached -cIE "$BARE_ERE" -- '*.rs' >"$GG_TMP/bare.raw" || status=$?
 [ "$status" -le 1 ] || gg_collection_error "git grep failed counting bare allows (exit $status)"
 
-: >"$TMP/counts.raw"
+: >"$GG_TMP/counts.raw"
 while IFS= read -r row; do
   cnt="${row##*:}"
   f="${row%:*}"
@@ -173,9 +130,9 @@ while IFS= read -r row; do
     "" | *[!0-9]*) gg_collection_error "unparseable count row from git grep: '$row'" ;;
   esac
   gg_is_excluded "$f" && continue
-  printf '%s\t%s\n' "$f" "$cnt" >>"$TMP/counts.raw"
-done <"$TMP/bare.raw"
-LC_ALL=C sort "$TMP/counts.raw" >"$TMP/counts.tsv"
+  printf '%s\t%s\n' "$f" "$cnt" >>"$GG_TMP/counts.raw"
+done <"$GG_TMP/bare.raw"
+LC_ALL=C sort "$GG_TMP/counts.raw" >"$GG_TMP/counts.tsv"
 
 # Baseline load + hygiene: worktree file first; a tracked-but-absent
 # baseline (sparse checkout) is read from the index so it cannot degrade to
@@ -199,31 +156,27 @@ validate_baseline() { # FILE LABEL
   fi
 }
 
-# The scan is index-scoped, so the baseline it is judged against must be the
-# index copy too: an unstaged row bump would otherwise authorize growth the
-# commit does not carry. Only a never-tracked baseline comes off disk.
-#
-# --update is the exception, because it REWRITES the worktree copy: reading
-# the index there would drop any unstaged hand-edit from the file it then
-# replaces.
+# The scan is index-scoped, so the baseline it is judged against is the index
+# copy too: an unstaged row bump must not authorize growth the commit does not
+# carry. Only a never-tracked baseline, and --update (which rewrites the
+# worktree copy), read from disk.
 BASELINE_FROM_INDEX=0
 if [ "$MODE" = "update" ] && [ -f "$BASELINE_FILE" ]; then
   validate_baseline "$BASELINE_FILE" "$BASELINE_FILE"
-  cp -- "$BASELINE_FILE" "$TMP/baseline.tsv"
+  cp -- "$BASELINE_FILE" "$GG_TMP/baseline.tsv"
 elif git ls-files --error-unmatch -- "$BASELINE_FILE" >/dev/null 2>&1; then
-  # The flag means "no worktree copy to rewrite", which is what --update
-  # needs to know; reading the index is now the norm, not the exception.
+  # No worktree copy to rewrite — what --update needs to know.
   [ -f "$BASELINE_FILE" ] || BASELINE_FROM_INDEX=1
-  git show ":$BASELINE_FILE" >"$TMP/baseline.tsv" || gg_config_error "failed to read tracked baseline from the index: $BASELINE_FILE"
-  validate_baseline "$TMP/baseline.tsv" "$BASELINE_FILE (index copy)"
+  git show ":$BASELINE_FILE" >"$GG_TMP/baseline.tsv" || gg_config_error "failed to read tracked baseline from the index: $BASELINE_FILE"
+  validate_baseline "$GG_TMP/baseline.tsv" "$BASELINE_FILE (index copy)"
 elif git cat-file -e "HEAD:$BASELINE_FILE" 2>/dev/null; then
   # Staged for deletion: the commit freezes nothing.
-  : >"$TMP/baseline.tsv"
+  : >"$GG_TMP/baseline.tsv"
 elif [ -f "$BASELINE_FILE" ]; then
   validate_baseline "$BASELINE_FILE" "$BASELINE_FILE"
-  cp -- "$BASELINE_FILE" "$TMP/baseline.tsv"
+  cp -- "$BASELINE_FILE" "$GG_TMP/baseline.tsv"
 else
-  : >"$TMP/baseline.tsv"
+  : >"$GG_TMP/baseline.tsv"
 fi
 
 evaluate() { # BASELINE-TSV — violations on stdout, one per line, tab-separated
@@ -239,18 +192,17 @@ evaluate() { # BASELINE-TSV — violations on stdout, one per line, tab-separate
       for (i = 1; i <= bn; i++) {
         p = border[i]
         if (p in seen) continue
-        # "-" placeholder, never an empty field: the report loop reads
-        # these rows with tab-IFS, and whitespace IFS collapses
-        # consecutive tabs, shifting columns.
+        # "-" placeholder, never an empty field: the report loop reads these
+        # rows with tab-IFS, which must not see two tabs in a row.
         print "STALE", p, "-", base[p]
       }
     }
-  ' "$1" "$TMP/counts.tsv"
+  ' "$1" "$GG_TMP/counts.tsv"
 }
 
 # --- --update: tighten only ---------------------------------------------------
 if [ "$MODE" = "update" ]; then
-  awk -F'\t' -v OFS='\t' -v basefile="$TMP/baseline.tsv" '
+  awk -F'\t' -v OFS='\t' -v basefile="$GG_TMP/baseline.tsv" '
     FILENAME == basefile { base[$1] = $2 + 0; border[++bn] = $1; next }
     { act[$1] = $2 + 0 }
     END {
@@ -269,19 +221,17 @@ if [ "$MODE" = "update" ]; then
         }
       }
     }
-  ' "$TMP/baseline.tsv" "$TMP/counts.tsv" | LC_ALL=C sort >"$TMP/baseline.new"
+  ' "$GG_TMP/baseline.tsv" "$GG_TMP/counts.tsv" | LC_ALL=C sort >"$GG_TMP/baseline.new"
   if [ "$BASELINE_FROM_INDEX" = "1" ]; then
     BASELINE_QUOTED="$(printf '%q' "$BASELINE_FILE")"
     gg_config_error "--update cannot rewrite an index-only baseline (sparse checkout omits $BASELINE_FILE); materialize it with: git update-index --no-skip-worktree -- $BASELINE_QUOTED && git checkout-index -- $BASELINE_QUOTED, then rerun"
   fi
   if [ -f "$BASELINE_FILE" ]; then
-    # Every recount runs against the candidate BEFORE it replaces the real
-    # baseline, so a collection failure aborts with the reviewed baseline
-    # byte-identical; the replace is the last step, and its own failure
-    # carries honest sidedness.
-    rows="$(gg_count_nonempty_lines "$TMP/baseline.new")"
-    mv -- "$TMP/baseline.new" "$BASELINE_FILE" || gg_collection_error "could not replace the baseline at $BASELINE_FILE (mv failed) — inspect the file before trusting it"
-    cp -- "$BASELINE_FILE" "$TMP/baseline.tsv" || gg_collection_error "could not re-read the replaced baseline at $BASELINE_FILE (cp failed) — the baseline WAS replaced; rerun suppression-ban to verify it"
+    # The replace is the last step: a failure before it leaves the reviewed
+    # baseline byte-identical.
+    rows="$(gg_count_nonempty_lines "$GG_TMP/baseline.new")"
+    mv -- "$GG_TMP/baseline.new" "$BASELINE_FILE" || gg_collection_error "could not replace the baseline at $BASELINE_FILE (mv failed) — inspect the file before trusting it"
+    cp -- "$BASELINE_FILE" "$GG_TMP/baseline.tsv" || gg_collection_error "could not re-read the replaced baseline at $BASELINE_FILE (cp failed) — the baseline WAS replaced; rerun suppression-ban to verify it"
     echo "suppression-ban --update: baseline tightened at $BASELINE_FILE ($rows row(s))"
   else
     echo "suppression-ban --update: no baseline at $BASELINE_FILE and --update never adds rows; nothing written"
@@ -289,8 +239,8 @@ if [ "$MODE" = "update" ]; then
 fi
 
 # --- ratchet verdict ----------------------------------------------------------
-evaluate "$TMP/baseline.tsv" >"$TMP/violations.tsv"
-ratchet_violations="$(gg_count_nonempty_lines "$TMP/violations.tsv")"
+evaluate "$GG_TMP/baseline.tsv" >"$GG_TMP/violations.tsv"
+ratchet_violations="$(gg_count_nonempty_lines "$GG_TMP/violations.tsv")"
 
 while IFS="$GG_TAB" read -r kind path n b; do
   case "$kind" in
@@ -311,7 +261,7 @@ while IFS="$GG_TAB" read -r kind path n b; do
       echo "  remedy: run suppression-ban --update to drop the row"
       ;;
   esac
-done <"$TMP/violations.tsv"
+done <"$GG_TMP/violations.tsv"
 
 total=$((BLANKET_VIOLATIONS + ratchet_violations))
 if [ "$total" -gt 0 ]; then

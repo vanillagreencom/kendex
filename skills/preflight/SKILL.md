@@ -1,6 +1,6 @@
 ---
 name: preflight
-description: "Diff-scoped deterministic pre-review checks, fail-only and precision-first: unparseable shell, shellcheck errors, masked return values on added lines, fail-open bash (unchecked mktemp without errexit, new scripts without strict mode, a swallowed exit status on `|| true`), new test suites no runner invokes, scratch directories no EXIT trap removes, docs citing repo paths that do not exist, source files citing docs that do not exist, TODO/FIXME markers with no issue reference, reviewer-bot attributions in durable prose, malformed JSON/TOML, and workflow run: blocks their shell cannot parse. Load when running, tuning, or debugging preflight or wiring it into validation/CI."
+description: "Diff-scoped deterministic pre-review checks: shell parse/shellcheck errors, fail-open bash, unwired test suites, untrapped scratch dirs, dead path citations, TODO markers, bot attributions, malformed JSON/TOML/workflows. Load to run, tune, or debug preflight."
 license: MIT
 user-invocable: true
 metadata:

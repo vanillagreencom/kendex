@@ -1,19 +1,12 @@
 #!/usr/bin/env bash
-# growth-guards — dispatcher for the check family. One check by name, or
-# the whole enabled batch:
+# growth-guards — dispatcher for the check family:
 #
-#   growth-guards                 run every enabled repo check (same as 'all')
-#   growth-guards all             ditto
+#   growth-guards [all]           run every check named by GROWTH_GUARDS_CHECKS
 #   growth-guards CHECK [ARGS..]  run one check, flags passed through
 #
-# The batch runs the checks named by GROWTH_GUARDS_CHECKS (default:
-# todo-ban byte-ceiling suppression-ban). commit-msg reads a message, so
-# it never runs in the batch — the commit-msg hook invokes it directly.
-#
-# Batch aggregation fails closed: exit 2 if ANY check could not complete
-# (its own exit 2, or any unexpected status), else exit 1 if any check
-# found violations, else 0. Every check also remains independently
-# invocable as scripts/CHECK for pre-commit shims and CI.
+# commit-msg reads a message, so it never runs in the batch — the commit-msg
+# hook invokes it directly. Batch aggregation fails closed: exit 2 if ANY
+# check could not complete, else 1 if any found violations, else 0.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,16 +40,16 @@ if [ $# -ge 1 ]; then
       usage
       exit 0
       ;;
+    all) ;;
+    *)
+      CHECK="$1"
+      shift
+      case " $KNOWN_CHECKS " in
+        *" $CHECK "*) exec "$SCRIPT_DIR/$CHECK" "$@" ;;
+      esac
+      gg_config_error "unknown check '$CHECK' (known: $KNOWN_CHECKS)"
+      ;;
   esac
-fi
-
-if [ $# -ge 1 ] && [ "$1" != "all" ]; then
-  CHECK="$1"
-  shift
-  case " $KNOWN_CHECKS " in
-    *" $CHECK "*) exec "$SCRIPT_DIR/$CHECK" "$@" ;;
-  esac
-  gg_config_error "unknown check '$CHECK' (known: $KNOWN_CHECKS)"
 fi
 
 [ $# -le 1 ] || gg_config_error "'all' takes no extra arguments; invoke a single check to pass flags"
