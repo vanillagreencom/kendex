@@ -218,16 +218,15 @@ fn executed_token(tokens: &[String]) -> Option<&str> {
 /// time and what the harness expands it to — `$(git rev-parse
 /// --show-toplevel)` for codex, `$CLAUDE_PROJECT_DIR` for claude — so a
 /// command a user reshaped by hand is read the way the shell running it will.
+/// The split sees the placeholder, never its value: [`shell_words`] expands it
+/// as it goes, so a project path is data to the parser the same way it is data
+/// to the shell.
 pub(super) fn command_targets_hook_script(
     command: &str,
     script_path: &Path,
     deferred_root: Option<(&str, &Path)>,
 ) -> bool {
-    let expanded = match deferred_root {
-        Some((placeholder, root)) => command.replace(placeholder, &root.to_string_lossy()),
-        None => command.to_string(),
-    };
-    let Some(words) = shell_words(&expanded) else {
+    let Some(words) = shell_words(command, deferred_root) else {
         return false;
     };
     executed_token(&words)
@@ -242,6 +241,37 @@ const UNRESOLVABLE_BARE: &[char] = &[
 /// Inside double quotes only expansion survives — every operator above is
 /// ordinary text there, and a path is free to contain it.
 const UNRESOLVABLE_QUOTED: &[char] = &['$', '`'];
+/// What still acts on the RESULT of an expansion, and only outside quotes:
+/// field splitting and pathname expansion. Nothing else does — the shell never
+/// re-reads what an expansion produced looking for operators or further
+/// expansions — so `$` and backticks are absent here on purpose.
+const UNRESOLVABLE_EXPANDED: &[char] = &[' ', '\t', '\n', '*', '?', '['];
+
+/// The deferred placeholder standing at this point of the command, consumed off
+/// `chars` and answered with the root it expands to.
+///
+/// Substituting HERE rather than over the command text beforehand is the whole
+/// point: what this returns is pushed into a word, never scanned again. A
+/// project directory holding a `$` or a backtick expands to those characters at
+/// run time, where an expansion's result is data; substituting first fed them
+/// back to this parser as syntax, so a registration the shell runs correctly
+/// read as unparseable and reported drift no reinstall could clear.
+fn take_deferred_root(
+    ch: char,
+    chars: &mut std::str::Chars<'_>,
+    deferred_root: Option<(&str, &Path)>,
+) -> Option<String> {
+    let (placeholder, root) = deferred_root?;
+    let remainder = chars.as_str().strip_prefix(placeholder.strip_prefix(ch)?)?;
+    // An expansion ends where its name does: `$CLAUDE_PROJECT_DIR_2` is some
+    // other variable, not ours with a suffix.
+    let name_char = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    if placeholder.ends_with(name_char) && remainder.starts_with(name_char) {
+        return None;
+    }
+    *chars = remainder.chars();
+    Some(root.to_string_lossy().into_owned())
+}
 
 /// The words a POSIX shell would hand `execve`.
 ///
@@ -251,17 +281,31 @@ const UNRESOLVABLE_QUOTED: &[char] = &['$', '`'];
 /// parsed it" has to answer no — a spurious drift line is inspectable, a false
 /// clean is not.
 ///
+/// The one expansion that CAN be settled is `deferred_root`: the placeholder a
+/// project-scope command carries and the path the harness expands it to. It is
+/// recognized as it is reached and its value pushed into the word being built,
+/// so the value is never read as syntax — only field splitting and pathname
+/// expansion still reach it, and only outside quotes.
+///
 /// The whitespace split this replaces cut `bash '/home/my user/guard.sh'` into
 /// three words and then stripped the quote characters off each, so the command
 /// vstack ITSELF writes for any install path containing a space read as
 /// running something else. That was permanent drift no remedy could clear: the
 /// reinstall the report prescribed wrote the very same command back.
-fn shell_words(command: &str) -> Option<Vec<String>> {
+fn shell_words(command: &str, deferred_root: Option<(&str, &Path)>) -> Option<Vec<String>> {
     let mut words: Vec<String> = Vec::new();
     let mut word = String::new();
     let mut started = false;
     let mut chars = command.chars();
     while let Some(ch) = chars.next() {
+        if let Some(root) = take_deferred_root(ch, &mut chars, deferred_root) {
+            if root.contains(UNRESOLVABLE_EXPANDED) {
+                return None;
+            }
+            started = true;
+            word.push_str(&root);
+            continue;
+        }
         match ch {
             ' ' | '\t' => {
                 if started {
@@ -283,7 +327,14 @@ fn shell_words(command: &str) -> Option<Vec<String>> {
             '"' => {
                 started = true;
                 loop {
-                    match chars.next()? {
+                    let ch = chars.next()?;
+                    // Quoted, an expansion's result is one word's text whatever
+                    // it holds — no splitting, no globbing, no re-reading.
+                    if let Some(root) = take_deferred_root(ch, &mut chars, deferred_root) {
+                        word.push_str(&root);
+                        continue;
+                    }
+                    match ch {
                         '"' => break,
                         // Inside double quotes a backslash escapes only these;
                         // before anything else it is itself a character.

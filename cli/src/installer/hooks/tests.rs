@@ -30,6 +30,49 @@ pub(super) fn tmpdir(label: &str) -> PathBuf {
     dir
 }
 
+/// What the cursor rule WRITES has to read back as what it wrote. The
+/// frontmatter is a YAML document to cursor and to `cursor_hook_switch`, and a
+/// description is prose: `pre-commit-check` names an `"off"` setting, and
+/// splicing that into `description: "…"` closed the scalar early and left
+/// frontmatter no parser could read. Every shipped hook is checked, so the
+/// next description carrying a quote, a colon or a backslash is caught here
+/// rather than by a user whose rule reports unverifiable forever.
+#[test]
+fn every_shipped_hooks_cursor_rule_reads_back_as_the_frontmatter_it_wrote() {
+    let hooks_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../hooks");
+    let hooks = crate::hook::discover_hooks(&hooks_dir).unwrap();
+    assert!(!hooks.is_empty(), "no shipped hooks discovered");
+    // The one whose description already carries a quote — a control that this
+    // test would still fail if the hook's own prose were tidied up.
+    assert!(
+        hooks
+            .iter()
+            .any(|hook| hook.description.contains('"') || hook.description.contains('\'')),
+        "no shipped hook description carries a quote; keep one that does or this test proves nothing"
+    );
+    for hook in hooks {
+        let rendered = cursor_hook_rule_contents(&hook);
+        let (frontmatter, _) = crate::frontmatter::split_yaml_frontmatter(&rendered)
+            .unwrap_or_else(|err| panic!("{}: {err:#}\n{rendered}", hook.name));
+        let doc: serde_yaml::Mapping = serde_yaml::from_str(&frontmatter)
+            .unwrap_or_else(|err| panic!("{}: {err}\n{frontmatter}", hook.name));
+        assert_eq!(
+            doc.get("description").and_then(serde_yaml::Value::as_str),
+            Some(format!("Safety: {} — {}", hook.name, hook.description).as_str()),
+            "{}: the description must survive the round trip whole",
+            hook.name
+        );
+        // The switch reads the same bytes; a rule cursor always applies must
+        // never report as off or unverifiable.
+        assert_eq!(
+            cursor_always_apply(&rendered),
+            Ok(Some(true)),
+            "{}",
+            hook.name
+        );
+    }
+}
+
 #[test]
 fn codex_event_for_known_events() {
     assert_eq!(codex_event_for("PreToolUse"), Some("PreToolUse"));

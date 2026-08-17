@@ -135,3 +135,59 @@ fn codex_registration_requires_an_executable_position() {
         format!("nohup {}", managed_script(dir).display())
     });
 }
+
+/// The registration a claude project install writes, read back from a project
+/// whose path carries shell syntax. `$CLAUDE_PROJECT_DIR` is expanded by the
+/// harness at run time, where a quoted expansion's result is text — so a
+/// checkout under `…/$weird`root` runs its hooks fine, and reporting it
+/// unregistered was drift with no user action that could clear it: reinstalling
+/// wrote the identical registration back.
+#[test]
+fn claude_registration_holds_when_the_project_path_looks_like_shell_syntax() {
+    let dir = tmpdir("claude_reg_$weird`root");
+    let hook = super::tests::hook_fixture("guard", "PreToolUse", Some("Bash"));
+    let slot = RegistrationSlot {
+        event: "PreToolUse",
+        matcher: Some("Bash"),
+    };
+    let settings_path = dir.join(".claude").join("settings.json");
+
+    let registration = |command: Option<&str>| {
+        crate::test_util::with_project_root(&dir, || {
+            if let Some(command) = command {
+                let body = std::fs::read_to_string(&settings_path).unwrap();
+                let mut doc: serde_json::Value = serde_json::from_str(&body).unwrap();
+                *doc.pointer_mut("/hooks/PreToolUse/0/hooks/0/command")
+                    .expect("the install wrote one PreToolUse handler") =
+                    serde_json::Value::String(command.to_string());
+                std::fs::write(&settings_path, serde_json::to_string_pretty(&doc).unwrap())
+                    .unwrap();
+            }
+            claude_hook_registration(false, "guard", Some(slot))
+        })
+    };
+
+    crate::test_util::with_project_root(&dir, || install_hook_claude(&hook, false).unwrap());
+    // Control: the command vstack itself wrote round-trips.
+    assert_eq!(registration(None), HookRegistration::Registered);
+    // The same registration reshaped by hand — the shape no exact-command
+    // match answers for, so only reading the command settles it.
+    assert_eq!(
+        registration(Some(
+            "timeout 30 bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.sh\" --strict"
+        )),
+        HookRegistration::Registered
+    );
+    // Control: a neighbour script under the same root is not this hook.
+    assert_eq!(
+        registration(Some("bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/other.sh\"")),
+        HookRegistration::Absent
+    );
+    // Control: a command nothing can parse stays unregistered.
+    assert_eq!(
+        registration(Some("bash \"$SOMEWHERE/.claude/hooks/guard.sh\" | tee log")),
+        HookRegistration::Absent
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

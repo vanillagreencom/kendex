@@ -662,14 +662,25 @@ fn install_hook_claude(hook: &Hook, global: bool) -> Result<()> {
     Ok(())
 }
 
+/// The frontmatter is SERIALIZED from its values, never spliced together as
+/// text: cursor reads it as YAML and so does [`cursor_always_apply`], and a
+/// description is prose — one shipped hook's carries a double quote. Written
+/// into `description: "…"` that quote ENDED the scalar, leaving frontmatter
+/// neither parser could read, so the rule cursor always applies reported as
+/// unverifiable and reinstalling wrote the same bytes back.
 pub(crate) fn cursor_hook_rule_contents(hook: &Hook) -> String {
+    let mut frontmatter = serde_yaml::Mapping::new();
+    frontmatter.insert(
+        "description".into(),
+        format!("Safety: {} — {}", hook.name, hook.description).into(),
+    );
+    frontmatter.insert("alwaysApply".into(), true.into());
     let mut output = String::new();
     output.push_str("---\n");
-    output.push_str(&format!(
-        "description: \"Safety: {} — {}\"\n",
-        hook.name, hook.description
-    ));
-    output.push_str("alwaysApply: true\n");
+    output.push_str(
+        &serde_yaml::to_string(&frontmatter)
+            .expect("a mapping of plain strings and a bool always serializes"),
+    );
     output.push_str("---\n\n");
     output.push_str(ADVISORY_BANNER);
     output.push_str("\n\n");

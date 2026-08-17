@@ -1,5 +1,6 @@
 //! Reading back the commands vstack writes, and the ones a user reshaped.
 
+use super::super::CLAUDE_PROJECT_DIR;
 use super::*;
 
 fn targets(command: &str, script: &str) -> bool {
@@ -55,7 +56,7 @@ fn words_are_split_the_way_a_shell_splits_them() {
         ("bash \"/a\\nb/c.sh\"", vec!["bash", "/a\\nb/c.sh"]),
     ] {
         assert_eq!(
-            shell_words(command),
+            shell_words(command, None),
             Some(expected.iter().map(|s| s.to_string()).collect::<Vec<_>>()),
             "{command}"
         );
@@ -86,25 +87,126 @@ fn a_command_that_cannot_be_settled_is_refused_not_guessed() {
         "bash /a/*/guard.sh",
         "bash /a/guard?.sh",
     ] {
-        assert_eq!(shell_words(command), None, "{command}");
+        assert_eq!(shell_words(command, None), None, "{command}");
         assert!(!targets(command, "/a/b.sh"), "{command}");
     }
 }
 
-/// The deferred placeholder is expanded BEFORE the split, so the one
-/// substitution vstack itself writes is the only one that survives.
+/// The project path is the placeholder's VALUE, and a value is never syntax.
+/// Substituting it into the command before the split handed the parser
+/// whatever the directory was named: a project under `/srv/pay$day` produced a
+/// `$` inside the quoted word, the split refused the line, and a hook claude
+/// runs correctly reported as missing from every read — drift no reinstall
+/// could clear, because the reinstall wrote the same registration back.
 #[test]
-fn the_deferred_root_placeholder_is_expanded_before_the_split() {
-    let root = Path::new("/srv/my project");
+fn the_deferred_root_is_substituted_after_the_split_never_into_it() {
+    let command = format!("bash \"{CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh\"");
+    for root in [
+        // The reported paths: shell syntax a quoted expansion makes text.
+        "/srv/pay$day",
+        "/srv/back`tick",
+        "/srv/$both`weird",
+        // Control: an ordinary path reads as it always did.
+        "/srv/project",
+        // Control: quoted, a space is still one word's text.
+        "/srv/my project",
+    ] {
+        let root = Path::new(root);
+        let script = root.join(".claude/hooks/guard.sh");
+        let deferred = Some((CLAUDE_PROJECT_DIR, root));
+        assert!(
+            command_targets_hook_script(&command, &script, deferred),
+            "{}",
+            root.display()
+        );
+        // …and it is still THIS script, not any other.
+        assert!(
+            !command_targets_hook_script(&command, &root.join(".claude/hooks/other.sh"), deferred),
+            "{}",
+            root.display()
+        );
+        // Control: with no placeholder to expand, the `$` is an expansion
+        // like any other and nothing can be settled.
+        assert!(!command_targets_hook_script(&command, &script, None));
+    }
+}
+
+/// Expanding the placeholder settles that one expansion, not the line. What a
+/// shell does to the RESULT still applies — field splitting and globbing
+/// outside quotes — and what the shell would not expand at all must not be
+/// expanded here.
+#[test]
+fn only_the_placeholder_the_shell_would_expand_is_expanded() {
+    let root = Path::new("/srv/project");
     let script = root.join(".claude/hooks/guard.sh");
-    let command = "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.sh\"";
-    assert!(command_targets_hook_script(
-        command,
-        &script,
-        Some(("$CLAUDE_PROJECT_DIR", root))
+    let deferred = Some((CLAUDE_PROJECT_DIR, root));
+    // Unquoted, the expansion is still subject to word splitting; only a root
+    // that survives it names one word.
+    for (command, registered) in [
+        (
+            format!("bash {CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh"),
+            true,
+        ),
+        // Quoting is what makes a spacey root one word — see the split test.
+        (
+            format!("bash \"{CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh\""),
+            true,
+        ),
+        // A command reshaped by hand around the placeholder still counts.
+        (
+            format!("timeout 30 bash \"{CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh\" --strict"),
+            true,
+        ),
+        // Single quotes and a backslash both stop the expansion, so the shell
+        // looks for a directory literally named `$CLAUDE_PROJECT_DIR`.
+        (
+            format!("bash '{CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh'"),
+            false,
+        ),
+        (
+            format!("bash \"\\{CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh\""),
+            false,
+        ),
+        // A longer name is a different variable, not ours with a suffix.
+        (
+            format!("bash \"{CLAUDE_PROJECT_DIR}_OLD/.claude/hooks/guard.sh\""),
+            false,
+        ),
+        // Control: an expansion that is not the placeholder settles nothing.
+        (
+            "bash \"$OTHER_ROOT/.claude/hooks/guard.sh\"".to_string(),
+            false,
+        ),
+        (
+            format!("bash \"$(dirname {CLAUDE_PROJECT_DIR})/.claude/hooks/guard.sh\""),
+            false,
+        ),
+        // Control: a glob is still unresolvable with the root in hand.
+        (
+            format!("bash {CLAUDE_PROJECT_DIR}/.claude/hooks/*.sh"),
+            false,
+        ),
+        // Control: the path as another program's argument is data.
+        (
+            format!("echo \"{CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh\""),
+            false,
+        ),
+    ] {
+        assert_eq!(
+            command_targets_hook_script(&command, &script, deferred),
+            registered,
+            "{command}"
+        );
+    }
+
+    // Outside quotes, a root the shell would split into fields cannot be
+    // settled — the words it produces are not this one path.
+    let spacey = Path::new("/srv/my project");
+    assert!(!command_targets_hook_script(
+        &format!("bash {CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh"),
+        &spacey.join(".claude/hooks/guard.sh"),
+        Some((CLAUDE_PROJECT_DIR, spacey))
     ));
-    // Without the expansion the `$` is an expansion like any other.
-    assert!(!command_targets_hook_script(command, &script, None));
 }
 
 /// An option one exec prefix defines is not an option the others ignore.
