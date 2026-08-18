@@ -111,7 +111,7 @@ fn required_skills_section(skills: &[(String, String)], global: bool) -> String 
 
     let mut section = String::from("## Required Skills\n\n");
     section.push_str(
-        "These skills govern this agent's workflows. Load a skill's SKILL.md at the moment a task first touches its domain — do not pre-read the list upfront. Prefer the listed local path when it exists; if a path is missing, report the missing install instead of substituting a stale global path.\n\n",
+        "These skills govern this agent's workflows. Open a skill's SKILL.md at the moment a task first touches its domain — do not open every listed SKILL.md at startup. Prefer the listed local path when it exists; if a path is missing, report the missing install instead of substituting a stale global path.\n\n",
     );
     for (name, description) in skills {
         section.push_str(&format!(
