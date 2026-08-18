@@ -33,6 +33,7 @@ Any per-knob value you set in `vstack.extensionManager.config["@vanillagreen/pi-
 - Preserves oversized tool output to disk and includes the artifact path in results.
 - Head truncation for search/listing tools; tail truncation for command/log tools.
 - Explicit truncation notices show size, line count, direction, artifact path, per-turn/session bytes saved, and continuation guidance.
+- Sanitized `details` carry a `vstackOutputPolicySanitized` marker (capped arrays/objects include a sentinel string) so integrators inspecting tool-result payloads can detect it — shape details in `DEVELOPMENT.md`.
 - File reads and edit/write results pass through unmodified by default — opt in per category.
 - Tool-result `details` are sanitized by default in `balanced`/`compact` (off in `compat`); state-bearing tools (`tasks_write`, `bg_task`, `subagent`, …) bypass sanitization so sidecar restore semantics stay safe.
 - Shell output minimizer compresses noisy git/npm/cargo/test output before truncation while preserving warnings, errors, and summaries.

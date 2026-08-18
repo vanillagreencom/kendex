@@ -40,11 +40,13 @@ vstack add vanillagreencom/vstack --pi-extension pi-qol --harness pi -y
 
 | Command | Action |
 | --- | --- |
-| `/qol` | Open settings (or print status if extension-manager isn't installed). `/qol notify-test` sends a test notification. |
+| `/qol` | Open settings (or print status if extension-manager isn't installed). |
+| `/qol notify-test` | Send a test notification. |
 | `/rename [name]` | Set or show the current session's name. |
 | `/qol:rename` / `/qol:rename:full` | Regenerate the session name from the first prompt, or from the full conversation. |
 | `/context` | Show a Claude-style context-window usage breakdown by category. |
-| `/search [query]` | Open previous-session search with snippet previews; the configured shortcut opens it instantly. `/search:refresh` refreshes the session cache. |
+| `/search [query]` | Open previous-session search with snippet previews; the configured shortcut opens it instantly. |
+| `/search:refresh` | Refresh the session cache. |
 | `/handoff <goal>` | Draft a focused handoff prompt for a new session. |
 | `/schedule <delay> <message>` | Send a user message after a timer without invoking the model now. Example: `/schedule 1h45m retry the previous request`. |
 
