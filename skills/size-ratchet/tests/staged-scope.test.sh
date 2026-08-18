@@ -164,6 +164,50 @@ OUT=""; RC=0
 OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=10 "$SR" --staged 2>&1)" || RC=$?
 [ "$RC" -eq 0 ] && ok "an explicit environment override still wins" || bad "env override wins" "rc=$RC out=$OUT"
 
+new_repo settings-probe-failure
+mkfile big.txt 200
+printf '[env]\nSIZE_RATCHET_THRESHOLD = "100"\n' >"$R/vstack.settings.toml"
+git -C "$R" add -A
+git -C "$R" commit -q -m seed
+OUT=""; RC=0
+OUT="$(cd "$R" && "$SR" --staged 2>&1)" || RC=$?
+[ "$RC" -eq 1 ] && case "$OUT" in *"threshold 100"*) true ;; *) false ;; esac \
+  && ok "control: the committed threshold of 100 rejects the 200-line blob" \
+  || bad "committed threshold rejects (probe control)" "rc=$RC out=$OUT"
+# The staged-source probe asks the index whether a settings file is tracked.
+# `--error-unmatch` reserves exit 1 for "no such path"; reading EVERY nonzero
+# status as "untracked" let a broken git drop the committed threshold back to
+# the built-in 400 and pass the 200-line offender.
+REAL_GIT="$(command -v git)"
+GIT_TRACKED_SHIM="$TMP/git-tracked-shim"
+mkdir -p "$GIT_TRACKED_SHIM"
+cat >"$GIT_TRACKED_SHIM/git" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = "ls-files" ] && [ "\${2:-}" = "--error-unmatch" ]; then
+  echo "fatal: simulated index-probe failure" >&2
+  exit 71
+fi
+exec "$REAL_GIT" "\$@"
+EOF
+chmod +x "$GIT_TRACKED_SHIM/git"
+OUT=""; RC=0
+OUT="$(cd "$R" && PATH="$GIT_TRACKED_SHIM:$PATH" "$SR" --staged 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not query the index while resolving a setting"*) true ;; *) false ;; esac \
+  && ok "a failing tracked-source probe is exit 2, never a silent fall back to the built-in threshold" \
+  || bad "settings probe failure" "rc=$RC out=$OUT"
+# A settings source that cannot be an index entry — absolute, or escaping the
+# root — draws git's "outside repository" refusal, which carries the same 128
+# an operational failure does. It is answered before the probe, so such a
+# source still reads from the worktree instead of failing the run.
+printf '[env]\nSIZE_RATCHET_THRESHOLD = "5"\n' >"$TMP/outside-settings.toml"
+for path in "$TMP/outside-settings.toml" "../outside-settings.toml"; do
+  OUT=""; RC=0
+  OUT="$(cd "$R" && SIZE_RATCHET_SETTINGS_FILE="$path" "$SR" --staged 2>&1)" || RC=$?
+  [ "$RC" -eq 1 ] && case "$OUT" in *"threshold 5"*) true ;; *) false ;; esac \
+    && ok "an out-of-repo settings source still reads under --staged ($path)" \
+    || bad "out-of-repo settings source" "path=$path rc=$RC out=$OUT"
+done
+
 new_repo settings-deleted
 mkfile big.txt 8
 printf '[env]\nSIZE_RATCHET_THRESHOLD = "10"\n' >"$R/vstack.settings.toml"

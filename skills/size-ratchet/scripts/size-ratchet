@@ -327,6 +327,31 @@ read_index_file_mode() { # PATH — sets INDEX_FILE_MODE ("" when untracked)
   [ -n "$entry" ] || INDEX_FILE_MODE=""
 }
 
+# The same probe against the COMMITTED tree, for the one state the index
+# cannot answer: a path whose DELETION is staged is gone from the index, so an
+# index-only look reads a committed file as "never there". `git ls-tree` reads
+# the named tree and exits 0 whether or not the path matches — printing the
+# entry only when it does — so, exactly as above, a nonzero status is a real
+# failure and never "not there". An UNBORN HEAD carries nothing by definition
+# (a repository before its first commit, which is where a bootstrap runs);
+# rev-parse reserves exit 1 for that, and any other status is a failure too.
+# Same call discipline as read_index_file_mode: a plain command, never `$(...)`.
+HEAD_FILE_MODE=""
+read_head_file_mode() { # PATH — sets HEAD_FILE_MODE ("" when HEAD carries no such path)
+  local entry status=0 head_status=0
+  HEAD_FILE_MODE=""
+  git rev-parse --verify --quiet HEAD >/dev/null 2>&1 || head_status=$?
+  case "$head_status" in
+    0) ;;
+    1) return 0 ;;
+    *) collection_error "could not resolve HEAD while probing for $1 (git rev-parse exit $head_status) — refusing to treat it as absent" ;;
+  esac
+  entry="$(git ls-tree HEAD -- ":(literal)$1")" || status=$?
+  [ "$status" -eq 0 ] || collection_error "could not query HEAD for $1 (git ls-tree exit $status) — refusing to treat it as absent"
+  HEAD_FILE_MODE="${entry%% *}"
+  [ -n "$entry" ] || HEAD_FILE_MODE=""
+}
+
 read_policy_from_index() { # PATH — stages the index copy of the list at $TMP/excludes
   case "$INDEX_FILE_MODE" in
     100*) ;;
@@ -845,15 +870,40 @@ if [ "$MODE" = "seed" ]; then
   if [ -e "$BASELINE_FILE" ] && [ -e "$EXCLUDES_FILE" ] && [ "$BASELINE_FILE" -ef "$EXCLUDES_FILE" ]; then
     config_error "--seed refuses: the baseline and exclusion list are the same file (aliased through a link) — seeding would turn every row into an exclusion on the next run"
   fi
-  # Bootstrap-only holds against the committed record too: rows in the INDEX
+  # Bootstrap-only holds against the recorded copies too: rows in the INDEX
   # copy mean the ratchet is live even when the worktree copy was truncated,
   # and a regenerated baseline must be a reviewed hand-edit, never a reseed.
-  if git ls-files --error-unmatch -- "$BASELINE_FILE" >/dev/null 2>&1; then
+  # The probe is the collector's own, so a failing git terminates here rather
+  # than reading as "no such path" and clearing the way for a reseed.
+  read_index_file_mode "$BASELINE_FILE"
+  if [ -n "$INDEX_FILE_MODE" ]; then
+    case "$INDEX_FILE_MODE" in
+      100*) ;;
+      *) config_error "--seed refuses: the index carries $BASELINE_FILE as a non-regular entry (mode $INDEX_FILE_MODE); seeding cannot read it to prove the ratchet is not live" ;;
+    esac
     git show ":$BASELINE_FILE" >"$TMP/baseline.index" 2>/dev/null \
       || collection_error "could not read the index copy of $BASELINE_FILE — seeding cannot prove the ratchet is not live"
     rows_index="$(count_nonempty_lines "$TMP/baseline.index")"
     if [ "$rows_index" -gt 0 ]; then
       config_error "--seed refuses: the INDEX copy of $BASELINE_FILE carries $rows_index row(s) — the ratchet is live; restore the file (git checkout -- $BASELINE_FILE) or hand-edit it"
+    fi
+  fi
+  # …and against the COMMITTED copy, which is what the index probe above
+  # cannot see: staging the baseline's DELETION (or a truncation) empties it
+  # from the index, and an index-only look then reads a live ratchet as "no
+  # baseline" and reseeds every row at today's sizes — laundering growth into
+  # a fresh freeze with nothing said.
+  read_head_file_mode "$BASELINE_FILE"
+  if [ -n "$HEAD_FILE_MODE" ]; then
+    case "$HEAD_FILE_MODE" in
+      100*) ;;
+      *) config_error "--seed refuses: HEAD carries $BASELINE_FILE as a non-regular entry (mode $HEAD_FILE_MODE); seeding cannot read it to prove the ratchet is not live" ;;
+    esac
+    git show "HEAD:$BASELINE_FILE" >"$TMP/baseline.head" 2>/dev/null \
+      || collection_error "could not read the committed copy of $BASELINE_FILE — seeding cannot prove the ratchet is not live"
+    rows_head="$(count_nonempty_lines "$TMP/baseline.head")"
+    if [ "$rows_head" -gt 0 ]; then
+      config_error "--seed refuses: the COMMITTED copy of $BASELINE_FILE carries $rows_head row(s) — the ratchet is live even though the worktree and index copies no longer carry them; restore the file (git checkout HEAD -- $BASELINE_FILE) or hand-edit it"
     fi
   fi
   rows_existing="$(count_nonempty_lines "$TMP/baseline.tsv")"

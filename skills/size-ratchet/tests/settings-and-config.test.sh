@@ -244,6 +244,38 @@ run_raw SIZE_RATCHET_SETTINGS_FILE=absent.settings.toml || true
   && ok "an ABSENT plain file still falls back to the built-in default (control)" \
   || bad "an ABSENT plain file still falls back to the built-in default (control)" "rc=$RC out=$OUT"
 
+echo "=== the /dev/null sentinel selects NO settings source, dotenv layers included ==="
+# It named only the settings file, so .env.local (read before it) and .env
+# (read after it) kept deciding: a caller asking for built-in defaults got
+# whatever the repository's env files said.
+new_repo devnull
+mkfile f.txt 10
+git -C "$R" add -A
+printf 'SIZE_RATCHET_THRESHOLD=5\n' >"$R/.env"
+run_raw || true
+[ "$RC" -eq 1 ] && case "$OUT" in *"threshold 5"*) true ;; *) false ;; esac \
+  && ok "control: without the sentinel .env supplies 5 and the 10-line file fails" \
+  || bad "devnull control (.env)" "rc=$RC out=$OUT"
+run_raw SIZE_RATCHET_SETTINGS_FILE=/dev/null || true
+[ "$RC" -eq 0 ] && case "$OUT" in *"threshold 400"*) true ;; *) false ;; esac \
+  && ok "the sentinel skips .env (read AFTER the settings file) and the built-in 400 decides" \
+  || bad "sentinel skips .env" "rc=$RC out=$OUT"
+
+printf 'SIZE_RATCHET_THRESHOLD=6\n' >"$R/.env.local"
+run_raw || true
+[ "$RC" -eq 1 ] && case "$OUT" in *"threshold 6"*) true ;; *) false ;; esac \
+  && ok "control: without the sentinel .env.local supplies 6" \
+  || bad "devnull control (.env.local)" "rc=$RC out=$OUT"
+run_raw SIZE_RATCHET_SETTINGS_FILE=/dev/null || true
+[ "$RC" -eq 0 ] && case "$OUT" in *"threshold 400"*) true ;; *) false ;; esac \
+  && ok "the sentinel skips .env.local (read BEFORE the settings file) too" \
+  || bad "sentinel skips .env.local" "rc=$RC out=$OUT"
+
+run_raw SIZE_RATCHET_SETTINGS_FILE=/dev/null SIZE_RATCHET_THRESHOLD=5 || true
+[ "$RC" -eq 1 ] && case "$OUT" in *"threshold 5"*) true ;; *) false ;; esac \
+  && ok "an explicit environment variable still wins over the sentinel" \
+  || bad "sentinel vs environment" "rc=$RC out=$OUT"
+
 echo "=== an EXISTING non-regular ENV-FILE source never falls through ==="
 # .env.local and .env are probed with -f like the settings file, so a
 # directory or an unresolvable symlink there is skipped exactly like an

@@ -197,6 +197,114 @@ run_sr --seed
   && ok "--seed refuses while the index copy carries rows" \
   || bad "index-rows refusal" "rc=$RC out=$OUT"
 
+echo "=== a committed ratchet refuses reseeding when its deletion or truncation is STAGED ==="
+# The index probe above cannot see this: staging the baseline's deletion drops
+# it from the index, so an index-only look read a live ratchet as "no baseline
+# yet" and reseeded every row at today's size — laundering growth into a fresh
+# freeze at exit 0.
+R="$TMP/staged-delete"
+mkdir -p "$R/tools"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+mkfile big.txt 15
+printf 'big.txt\t15\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+git -C "$R" commit -qm base
+mkfile big.txt 30 # the growth a reseed would freeze at its new size
+git -C "$R" add big.txt
+git -C "$R" rm -q --cached tools/size-ratchet-baseline.tsv
+rm "$R/tools/size-ratchet-baseline.tsv"
+run_sr --seed
+[ "$RC" -eq 2 ] && case "$OUT" in *"COMMITTED copy"*) true ;; *) false ;; esac \
+  && ok "--seed refuses while HEAD carries rows the staged deletion hid" \
+  || bad "staged-deletion refusal" "rc=$RC out=$OUT"
+[ ! -e "$R/tools/size-ratchet-baseline.tsv" ] && ok "and no baseline was written" \
+  || bad "staged-deletion wrote a baseline" "$(cat "$R/tools/size-ratchet-baseline.tsv")"
+
+# Same bypass one shape over: an emptied baseline staged as the new content.
+R="$TMP/staged-truncate"
+mkdir -p "$R/tools"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+mkfile big.txt 15
+printf 'big.txt\t15\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+git -C "$R" commit -qm base
+mkfile big.txt 30
+: >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+run_sr --seed
+[ "$RC" -eq 2 ] && case "$OUT" in *"COMMITTED copy"*) true ;; *) false ;; esac \
+  && ok "--seed refuses while HEAD carries rows a staged truncation hid" \
+  || bad "staged-truncation refusal" "rc=$RC out=$OUT"
+[ ! -s "$R/tools/size-ratchet-baseline.tsv" ] && ok "and the emptied file stays empty" \
+  || bad "staged-truncation wrote rows" "$(cat "$R/tools/size-ratchet-baseline.tsv")"
+
+# Control: with the deletion COMMITTED there is no live ratchet anywhere, and
+# the bootstrap this mode exists for must still run.
+R="$TMP/committed-delete"
+mkdir -p "$R/tools"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+mkfile big.txt 15
+printf 'big.txt\t15\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+git -C "$R" commit -qm base
+git -C "$R" rm -q tools/size-ratchet-baseline.tsv
+git -C "$R" commit -qm drop
+run_sr --seed
+[ "$RC" -eq 0 ] && [ "$(cat "$R/tools/size-ratchet-baseline.tsv")" = "$(printf 'big.txt\t15')" ] \
+  && ok "control: a committed deletion leaves nothing live and --seed writes the first baseline" \
+  || bad "committed-deletion control" "rc=$RC out=$OUT"
+
+echo "=== a failing index probe never clears the way for a reseed ==="
+# The probe that decides whether the index carries a baseline must fail LOUD:
+# a nonzero status read as "no such path" let an operational failure pass for
+# "no baseline yet" and the mode reseeded over live rows. Only the BASELINE's
+# own index query is shimmed, so the refusal has to come from this probe
+# rather than from another fail-closed read on the way in.
+REAL_GIT="$(command -v git)"
+GIT_PROBE_SHIM="$TMP/git-probe-shim"
+mkdir -p "$GIT_PROBE_SHIM"
+cat >"$GIT_PROBE_SHIM/git" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = "ls-files" ]; then
+  for a in "\$@"; do
+    case "\$a" in
+      *tools/size-ratchet-baseline.tsv)
+        echo "fatal: simulated index-probe failure" >&2
+        exit 71
+        ;;
+    esac
+  done
+fi
+exec "$REAL_GIT" "\$@"
+EOF
+chmod +x "$GIT_PROBE_SHIM/git"
+R="$TMP/probe-failure"
+mkdir -p "$R/tools"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+mkfile big.txt 30
+printf 'big.txt\t15\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+: >"$R/tools/size-ratchet-baseline.tsv" # rows live in the index only
+OUT=""; RC=0
+OUT="$(cd "$R" && PATH="$GIT_PROBE_SHIM:$PATH" SIZE_RATCHET_THRESHOLD=10 "$SR" --seed 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"refusing to treat it as absent"*) true ;; *) false ;; esac \
+  && ok "a nonzero index probe is exit 2, not a green light to reseed" \
+  || bad "index probe failure" "rc=$RC out=$OUT"
+[ ! -s "$R/tools/size-ratchet-baseline.tsv" ] && ok "and nothing was written over the baseline" \
+  || bad "probe failure wrote rows" "$(cat "$R/tools/size-ratchet-baseline.tsv")"
+run_sr --seed
+[ "$RC" -eq 2 ] && case "$OUT" in *"INDEX copy"*) true ;; *) false ;; esac \
+  && ok "control: unshimmed, the same tree refuses on the index rows it can read" \
+  || bad "index probe control" "rc=$RC out=$OUT"
+
 echo "=== an exclusion list hard-linked to the baseline refuses ==="
 R="$TMP/hardlink-alias"
 mkdir -p "$R/tools"

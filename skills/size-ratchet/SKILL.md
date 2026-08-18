@@ -74,8 +74,9 @@ offenders remain.
 `--seed` writes the FIRST baseline from the gate's own collector: every
 tracked, non-excluded file over its deciding threshold enters at its
 current count, sorted, with a self-row when the baseline outgrows its own
-threshold. A baseline that already has rows refuses — the ratchet is live
-there, and growth stays a reviewed hand-edit. Commit the seeded file.
+threshold. A baseline that already has rows in the worktree, the index or
+`HEAD` refuses — the ratchet is live there, and growth stays a reviewed
+hand-edit. Commit the seeded file.
 
 ## Configuration
 
@@ -85,7 +86,9 @@ Resolution order for every key: explicit environment > `.env.local`
 built-in default. Only an ABSENT source is skipped: a source that exists
 but is unusable — unreadable, a directory, FIFO, socket or device, or a
 symlink that does not resolve — is a config error (exit 2), never a
-fall-through to the next layer. `/dev/null` forces the built-in defaults.
+fall-through to the next layer. `SIZE_RATCHET_SETTINGS_FILE=/dev/null`
+selects no settings source at all (`.env.local`, the settings file and
+`.env` are all skipped), leaving environment variables and the defaults.
 
 | Key | Default | Meaning |
 |---|---|---|

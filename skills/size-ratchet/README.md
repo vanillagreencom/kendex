@@ -84,8 +84,10 @@ then rerun.
 deciding threshold at its current count — collected by the same pass the
 gate itself trusts (index blobs, symlink skipping, tab/newline refusal),
 `LC_ALL=C` sorted, with a self-row when the baseline outgrows its own
-threshold. It refuses a baseline that already has rows: the ratchet is
-live there, and growth stays a reviewed hand-edit. The seeded file lands
+threshold. It refuses a baseline that already has rows in the worktree, the
+index **or** `HEAD`: the ratchet is live there, and growth stays a reviewed
+hand-edit — staging the baseline's deletion or truncation is not a reseed
+ticket. The seeded file lands
 uncommitted, so the initial freeze is still a reviewed diff — every frozen
 offender enters the record deliberately.
 
@@ -159,7 +161,10 @@ Each key resolves environment > `.env.local` > `.vstack/settings.toml` > committ
 never sourced). Only an ABSENT source is skipped: a source that exists but
 is unusable — unreadable, a directory, FIFO, socket or device, or a symlink
 that does not resolve — is a config error (exit 2), never a fall-through to
-the next layer; `/dev/null` forces the built-in defaults. `--baseline` /
+the next layer. `SIZE_RATCHET_SETTINGS_FILE=/dev/null` selects no settings
+source at all — `.env.local`, the settings file and `.env` are all skipped —
+leaving explicit environment variables and the built-in defaults.
+`--baseline` /
 `--excludes` flags override every source for the paths; supplying one with
 an empty value (`--baseline=`, `--baseline ""`) is a config error, never a
 silent fall back to the default path. All relative paths

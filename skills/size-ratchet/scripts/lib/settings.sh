@@ -14,9 +14,13 @@
 #   2. .env.local (KEY=value, quotes optional — parsed, never sourced);
 #   3. .vstack/settings.toml, then the repo's committed vstack.settings.toml
 #      (sole uncommented `KEY = "value"` assignment; an explicit
-#      SIZE_RATCHET_SETTINGS_FILE consults only itself, e.g. /dev/null);
+#      SIZE_RATCHET_SETTINGS_FILE consults only itself);
 #   4. .env (same shape);
 #   5. the built-in default passed by the caller.
+#
+# SIZE_RATCHET_SETTINGS_FILE=/dev/null is the force-defaults handle and means
+# NO settings source at all: layers 2-4 are skipped whole, leaving explicit
+# environment variables and the built-in defaults.
 #
 # The parser reads flat single-line basic-string TOML assignments only —
 # exactly the shape vstack.settings.toml [env] blocks use.
@@ -79,10 +83,10 @@ sr_dotenv_value() { # RAW — value on stdout; nonzero on an unsupported shape
 # something else — directory, FIFO, socket, device — fails -f exactly like
 # an absent one, and a symlink that does not resolve fails -e as well as -f,
 # so -L is what sees it at all: either shape would skip a configured source
-# with nothing said and let a lower-precedence value decide. /dev/null is
-# the documented force-defaults handle and stays exempt.
+# with nothing said and let a lower-precedence value decide. The /dev/null
+# force-defaults handle never reaches here — sr_setting answers it before any
+# source is consulted.
 sr_settings_usable() { # PATH — 0 = readable-shaped or absent; 1 + ::error otherwise
-  [ "$1" != "/dev/null" ] || return 0
   { [ -e "$1" ] || [ -L "$1" ]; } || return 0
   [ ! -f "$1" ] || return 0
   if [ ! -e "$1" ]; then
@@ -99,25 +103,58 @@ sr_settings_usable() { # PATH — 0 = readable-shaped or absent; 1 + ::error oth
 # (a personal .env.local) is the worktree copy, which is all there is.
 # SR_SETTINGS_INDEX_DIR holds the materialized copies; the caller owns it.
 sr_settings_source() { # FILE — the path to actually read; nonzero + ::error on failure
-  local file="$1" copy=""
+  local file="$1" copy="" status=0 entry=""
   if [ "${SR_SETTINGS_FROM_INDEX:-0}" != "1" ] || [ -z "${SR_SETTINGS_INDEX_DIR:-}" ]; then
     printf '%s' "$file"
     return 0
   fi
-  if ! git ls-files --error-unmatch -- "$file" >/dev/null 2>&1; then
-    if git cat-file -e "HEAD:$file" 2>/dev/null; then
-      # Staged for deletion: the commit carries no such source, so it must
-      # govern as ABSENT rather than through a recreated worktree copy. A
-      # path that cannot exist is how the probes below read "not there".
-      printf '%s' "$SR_SETTINGS_INDEX_DIR/settings.absent"
+  # A path that cannot BE an index entry — absolute, or escaping the root
+  # through a `..` segment — makes git refuse with the same 128 an operational
+  # failure returns, so it is answered before the probes below: the worktree
+  # copy is all such a source ever has.
+  case "$file" in
+    /* | "../"* | *"/../"* | *"/..")
+      printf '%s' "$file"
       return 0
-    fi
-    printf '%s' "$file"
-    return 0
-  fi
+      ;;
+  esac
+  # --error-unmatch reserves exit 1 for the one expected answer, "the index
+  # has no such path"; every other nonzero status is a FAILING git, not a
+  # measurement. Reading them alike let an operational failure pass for
+  # "untracked", which resolved the key from the worktree copy or the
+  # built-in default — a committed threshold silently swapped for a looser
+  # one, admitting staged content the commit does not authorize.
+  git ls-files --error-unmatch -- "$file" >/dev/null 2>&1 || status=$?
+  case "$status" in
+    0) ;;
+    1)
+      if git cat-file -e "HEAD:$file" 2>/dev/null; then
+        # Staged for deletion: the commit carries no such source, so it must
+        # govern as ABSENT rather than through a recreated worktree copy. A
+        # path that cannot exist is how the probes below read "not there".
+        printf '%s' "$SR_SETTINGS_INDEX_DIR/settings.absent"
+        return 0
+      fi
+      printf '%s' "$file"
+      return 0
+      ;;
+    *)
+      echo "::error::$file: could not query the index while resolving a setting (git ls-files exit $status); refusing to treat it as untracked" >&2
+      return 1
+      ;;
+  esac
   # A symlink's index blob is its TARGET NAME, not settings content: parsing
-  # it would silently resolve every key to its built-in default.
-  case "$(git ls-files -s -- "$file" 2>/dev/null | cut -d' ' -f1)" in
+  # it would silently resolve every key to its built-in default. `ls-files -s`
+  # exits 0 whether or not the path matches, so a nonzero status here is a
+  # failing invocation and gets the same refusal — an unread mode would let
+  # the symlink shape through to exactly that silent resolution.
+  status=0
+  entry="$(git ls-files -s -- "$file" 2>/dev/null)" || status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "::error::$file: could not read its index mode while resolving a setting (git ls-files exit $status)" >&2
+    return 1
+  fi
+  case "${entry%% *}" in
     120000)
       echo "::error::$file: tracked as a symlink; staged settings resolution cannot read through it" >&2
       return 1
@@ -168,6 +205,15 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   # ${!name+x} tests set-ness of the variable NAMED by $name (Bash 3.2-safe).
   if [ -n "${!name+x}" ]; then
     printf '%s' "${!name}"
+    return 0
+  fi
+  # /dev/null is the force-defaults handle: it selects NO settings source at
+  # all, so the dotenv layers around the settings file are skipped with it.
+  # Skipping only the TOML layer left .env.local and .env still deciding, so
+  # a caller asking for built-in defaults got whatever the repository's env
+  # files happened to say.
+  if [ "${SIZE_RATCHET_SETTINGS_FILE:-}" = "/dev/null" ]; then
+    printf '%s' "$default"
     return 0
   fi
   # Env-file overrides (standard project layering: .env.local beats the
