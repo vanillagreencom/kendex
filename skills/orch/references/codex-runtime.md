@@ -14,7 +14,7 @@ rg -n '\x60vstack refresh\x60' skills/
 
 Rewrites:
 
-- Polling loops → the orch waiters `ci-wait`, `approval-wait`, `queue-wait`.
+- Polling loops → the orch waiters `ci-wait`, `approval-wait`, `queue-wait`. Launch a waiter ONCE as a single blocking command and stay on it until it returns — when the harness `exec` yields early, keep issuing `wait` at the harness's maximum duration against the same command rather than re-running the waiter or slicing the wait into short polls; every slice burns a model turn on a state that has not changed.
 - Multi-item sweeps → one simple command per item.
 - Derived values → helper scripts (`git-context`, `workflow-state`), never substitution.
 - File writes → harness file tools or `apply_patch`, never redirection.
