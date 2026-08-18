@@ -90,9 +90,12 @@ if [ -e "$SIZE_RATCHET_SKILL" ] || [ -L "$SIZE_RATCHET_SKILL" ]; then
   sr_run_out="$("$SIZE_RATCHET" --staged 2>&1)" || sr_run_status=$?
   [ -n "$sr_run_out" ] && printf '%s\n' "$sr_run_out"
   # The rejection is a PARSER diagnostic: the whole first line, in the
-  # tool-prefixed shapes an argument parser emits. A config diagnostic that
+  # tool-prefixed shapes an argument parser emits. Guard-family tools stamp
+  # diagnostics with the ::error:: annotation; strip exactly that prefix so
+  # the shapes below see the tool's own line. A config diagnostic that
   # merely ECHOES the phrase inside a longer line never matches.
   sr_first_line="${sr_run_out%%$'\n'*}"
+  sr_first_line="${sr_first_line#::error::}"
   sr_rejects_staged=0
   if [ "$sr_run_status" -eq 2 ]; then
     case "$sr_first_line" in

@@ -973,7 +973,7 @@ cat >"$R31/.agents/skills/size-ratchet/scripts/size-ratchet" <<'FORK'
 # A consumer's own gate: usage text names size-ratchet, no --staged mode.
 case "${1:-}" in
   --help) echo "size-ratchet — repo-local gate. Usage: size-ratchet [--update]"; exit 0 ;;
-  --staged) echo "size-ratchet: unknown argument '--staged' (see --help)" >&2; exit 2 ;;
+  --staged) echo "::error::size-ratchet: unknown argument '--staged' (see --help)" >&2; exit 2 ;;
 esac
 exit 0
 FORK
@@ -993,7 +993,7 @@ cat >"$R31/.agents/skills/size-ratchet/scripts/size-ratchet" <<'NEGHELP'
 #!/usr/bin/env bash
 case "${1:-}" in
   --help) echo "size-ratchet — repo-local gate. Usage: size-ratchet [--update]. This build does not support --staged."; exit 0 ;;
-  --staged) echo "size-ratchet: unknown argument '--staged' (see --help)" >&2; exit 2 ;;
+  --staged) echo "::error::size-ratchet: unknown argument '--staged' (see --help)" >&2; exit 2 ;;
 esac
 exit 0
 NEGHELP
