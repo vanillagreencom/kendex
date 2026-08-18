@@ -167,7 +167,9 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/size-ratchet.XXXXXX")" || config_error "could 
 # up here because every abort between its creation and the rename must leave no
 # debris in a tracked directory.
 STAGED_BASELINE=""
-trap 'rm -rf -- "$TMP"; [ -z "$STAGED_BASELINE" ] || rm -f -- "$STAGED_BASELINE"' EXIT
+# The trap re-exits with the status it interrupted: under errexit a failing rm
+# would otherwise replace the contract exit code (0/1/2) with its own.
+trap 'status=$?; rm -rf -- "$TMP" || :; [ -n "$STAGED_BASELINE" ] && rm -f -- "$STAGED_BASELINE" || :; exit "$status"' EXIT
 # Not in update mode: it rewrites the worktree policy, and the settings that
 # name WHICH file it rewrites have to come from the same place.
 if [ "$STAGED" -eq 1 ] && [ "$MODE" != "update" ]; then

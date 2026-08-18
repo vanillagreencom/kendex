@@ -84,7 +84,7 @@ echo "=== dash-prefixed settings path is a filename, never grep options ==="
 # qodo). Red-first: fails against a build without the -- terminators.
 printf 'REVIEW_GATE_TD = "dashfile"\n' > "$TMP/-e"
 OUT=""; RC=0
-OUT="$(cd "$TMP" && unset REVIEW_GATE_TD 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="-e" rg_setting REVIEW_GATE_TD "dflt" 2>"$TMP/err")" || RC=$?
+OUT="$(cd "$TMP" && { unset REVIEW_GATE_TD 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="-e" rg_setting REVIEW_GATE_TD "dflt" 2>"$TMP/err"; })" || RC=$?
 [[ "$RC" -eq 0 && "$OUT" == "dashfile" ]] && ok "dash-prefixed settings path reads its value (no option-injection fallback)" || bad "dash-prefixed settings path reads its value (no option-injection fallback)" "rc=$RC out=$OUT"
 
 echo "=== an EXISTING non-regular settings path never falls back to defaults ==="
@@ -164,11 +164,11 @@ echo "=== the /dev/null sentinel selects NO settings source ==="
 mkdir -p "$TMP/sentinel"
 printf '[env]\nREVIEW_GATE_TS = "fromfile"\n' >"$TMP/sentinel/vstack.settings.toml"
 OUT=""; RC=0
-OUT="$(cd "$TMP/sentinel" && unset REVIEW_GATE_TS REVIEW_GATE_SETTINGS_FILE 2>/dev/null; rg_setting REVIEW_GATE_TS "dflt" 2>"$TMP/err")" || RC=$?
+OUT="$(cd "$TMP/sentinel" && { unset REVIEW_GATE_TS REVIEW_GATE_SETTINGS_FILE 2>/dev/null; rg_setting REVIEW_GATE_TS "dflt" 2>"$TMP/err"; })" || RC=$?
 [[ "$RC" -eq 0 && "$OUT" == "fromfile" ]] && ok "control: without the sentinel the settings file at the default path supplies the value" || bad "sentinel control" "rc=$RC out=$OUT"
 
 OUT=""; RC=0
-OUT="$(cd "$TMP/sentinel" && unset REVIEW_GATE_TS 2>/dev/null; REVIEW_GATE_SETTINGS_FILE=/dev/null rg_setting REVIEW_GATE_TS "dflt" 2>"$TMP/err")" || RC=$?
+OUT="$(cd "$TMP/sentinel" && { unset REVIEW_GATE_TS 2>/dev/null; REVIEW_GATE_SETTINGS_FILE=/dev/null rg_setting REVIEW_GATE_TS "dflt" 2>"$TMP/err"; })" || RC=$?
 [[ "$RC" -eq 0 && "$OUT" == "dflt" ]] && ok "the sentinel skips a populated settings file and the built-in default decides" || bad "sentinel skips the settings file" "rc=$RC out=$OUT"
 
 OUT=""; RC=0
