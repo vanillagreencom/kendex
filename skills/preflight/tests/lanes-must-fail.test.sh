@@ -121,11 +121,12 @@ fires "an mktemp with no arguments is the same finding" "scripts/scratchfile.sh:
 echo "=== lane hardcoded-temp-path: directory creation at a literal absolute temp path ==="
 seed tmppath
 mkdir -p "$R/src"
-# Trip paths are substituted at run time, so this suite's committed bytes
-# never join a creation call to a temp-path literal.
+# Trip paths are substituted at run time: the generated FIXTURE repo carries
+# the literals by design, while this suite's own committed bytes never join
+# a creation call to one.
 printf '#!/usr/bin/env bash\nset -euo pipefail\nmkdir -p %s/cache\n' /tmp >"$R/scripts/shellmk.sh"
 printf 'const fs = require("fs");\nfs.mkdirSync("%s/out");\nfs.mkdtempSync("%s/app-");\n' /tmp /tmp >"$R/src/mk.js"
-printf 'import os, tempfile\nos.makedirs("%s/state")\ntempfile.mkdtemp(dir="%s/keep")\n' /tmp /tmp >"$R/src/mk.py"
+printf 'import os, tempfile\nos.makedirs("%s/state")\ntempfile.mkdtemp(dir="%s/keep")\ntempfile.mkdtemp(dir="%s")\n' /tmp /tmp /tmp >"$R/src/mk.py"
 printf 'fn main() {\n    std::fs::create_dir_all("%s/rust").unwrap();\n}\n' /tmp >"$R/src/mk.rs"
 printf 'import os\nos.mkdir("%s/persist")\n' /var/tmp >"$R/src/mkvar.py"
 git -C "$R" add -A
@@ -135,6 +136,7 @@ fires "a JS mkdirSync taking the literal fails" "src/mk.js:2: [hardcoded-temp-pa
 fires "a JS mkdtempSync prefix under /tmp is the same finding" "src/mk.js:3: [hardcoded-temp-path]"
 fires "a Python makedirs taking the literal fails" "src/mk.py:2: [hardcoded-temp-path]"
 fires "a Python mkdtemp aimed at /tmp by keyword fails" "src/mk.py:3: [hardcoded-temp-path]"
+fires "a bare-root mkdtemp keyword (dir=/tmp, no trailing slash) fails" "src/mk.py:4: [hardcoded-temp-path]"
 fires "a Rust create_dir_all taking the literal fails" "src/mk.rs:2: [hardcoded-temp-path]"
 fires "/var/tmp is the same literal" "src/mkvar.py:2: [hardcoded-temp-path]"
 

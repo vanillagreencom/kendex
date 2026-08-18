@@ -547,6 +547,11 @@ has_exit_trap() { # FILE
 # real creation sites, and a lane that flags the fixtures is noise that
 # buries the finding.
 TMPPATH_CREATE_RE='(mkdtemp|mkdtempSync|mkdir|mkdirSync|makedirs|create_dir_all)[[:space:]]*\([^,)]*["'\''`]/(var/)?tmp/'
+# The mkdtemp family ALWAYS creates, so a bare quoted temp root anywhere in
+# its arguments is the same leak (tempfile.mkdtemp(dir="/tmp")) — or worse,
+# a root-level sibling (mkdtempSync("/tmp") makes /tmpXXXXXX). Plain mkdir
+# of the bare root stays out: creating /tmp itself is a no-op.
+TMPPATH_CREATE_RE="$TMPPATH_CREATE_RE"'|(mkdtemp|mkdtempSync)[[:space:]]*\([^)]*["'\''`]/(var/)?tmp["'\''`]'
 TMPPATH_CREATE_RE="$TMPPATH_CREATE_RE"'|(^[[:space:]]*|[;|&(`{][[:space:]]*)mkdir[[:space:]]+-p[[:space:]]+["'\'']?/(var/)?tmp/'
 
 # The marker form only: the word immediately followed by a colon or by an
@@ -926,7 +931,7 @@ while IFS= read -r f; do
     # nothing.
     if [ "$is_md" = 0 ]; then
       case "$content" in
-        *"/tmp/"*)
+        *"/tmp"*)
           case "${content#"${content%%[![:space:]]*}"}" in
             '#'* | '//'* | '/*'* | '*'*) ;;
             *)
