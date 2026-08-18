@@ -969,7 +969,21 @@ if [ "$MODE" = "seed" ]; then
   if [ -L "$BASELINE_FILE" ] || { [ -e "$BASELINE_FILE" ] && [ ! -f "$BASELINE_FILE" ]; }; then
     config_error "--seed refuses: $BASELINE_FILE exists but is not a regular file — the baseline must be a plain file this repository owns"
   fi
-  mv -- "$TMP/baseline.new" "$BASELINE_FILE" || collection_error "could not write the baseline at $BASELINE_FILE (mv failed)"
+  # Same atomic-staging contract as --update: a $TMP on another filesystem
+  # degrades mv to copy-then-remove, and an interruption mid-copy would
+  # leave a truncated baseline the next --seed run refuses to repair (rows
+  # exist). A sibling temp makes the final step a real rename(2); the mode
+  # is what the plain redirect writing baseline.new produces, and the same
+  # EXIT trap owns the staging file until the rename consumes it.
+  case "$BASELINE_FILE" in
+    */*) baseline_dir="${BASELINE_FILE%/*}" ;;
+    *) baseline_dir=. ;;
+  esac
+  STAGED_BASELINE="$(mktemp -- "$baseline_dir/.size-ratchet-baseline.XXXXXX")" || collection_error "could not create a staging file beside $BASELINE_FILE — seed aborted, nothing written"
+  chmod -- "$(printf '%03o' "$((0666 & ~8#$(umask)))")" "$STAGED_BASELINE" || collection_error "could not set the staging file's mode beside $BASELINE_FILE — seed aborted, nothing written"
+  cat -- "$TMP/baseline.new" >"$STAGED_BASELINE" || collection_error "could not write the staged baseline beside $BASELINE_FILE — seed aborted, nothing written"
+  mv -- "$STAGED_BASELINE" "$BASELINE_FILE" || collection_error "could not write the baseline at $BASELINE_FILE (mv failed) — inspect the file before trusting it"
+  STAGED_BASELINE="" # renamed away; nothing left for the EXIT trap to remove
   cp -- "$BASELINE_FILE" "$TMP/baseline.tsv" || collection_error "could not re-read the seeded baseline at $BASELINE_FILE — the file WAS written; rerun size-ratchet to verify it"
   # The file this mode just wrote is about to be judged by the trailing
   # verdict; give the counts its row at the written length so the verdict

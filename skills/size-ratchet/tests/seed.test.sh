@@ -327,3 +327,77 @@ run_sr --seed --update
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
+
+echo "=== --seed stages its baseline beside the destination, atomically ==="
+MKTEMP_SHIM="$TMP/mktemp-shim"
+mkdir -p "$MKTEMP_SHIM"
+REAL_MKTEMP="$(command -v mktemp)"
+MKTEMP_LOG="$TMP/seed-mktemp-templates.log"
+: >"$MKTEMP_LOG"
+cat >"$MKTEMP_SHIM/mktemp" <<SHIM
+#!/usr/bin/env bash
+# Record the template of every FILE mktemp (never the -d scratch dir), then
+# defer to the real mktemp so the run behaves normally.
+for arg in "\$@"; do
+  [ "\$arg" = "-d" ] && exec "$REAL_MKTEMP" "\$@"
+done
+for arg in "\$@"; do
+  case "\$arg" in
+    -*) ;;
+    *) printf '%s\n' "\$arg" >>"$MKTEMP_LOG" ;;
+  esac
+done
+exec "$REAL_MKTEMP" "\$@"
+SHIM
+chmod +x "$MKTEMP_SHIM/mktemp"
+
+R="$TMP/seed-staging"
+mkdir -p "$R"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+mkfile big.txt 15
+mkdir -p "$R/tools"
+git -C "$R" add -A
+
+OUT=""
+RC=0
+OUT="$(cd "$R" && umask 022 && PATH="$MKTEMP_SHIM:$PATH" SIZE_RATCHET_THRESHOLD=10 "$SR" --seed 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && grep -q "^big.txt" "$R/tools/size-ratchet-baseline.tsv" \
+  && ok "control: the shimmed --seed really wrote the baseline" \
+  || bad "control: shimmed --seed writes" "rc=$RC out=$OUT"
+
+# Vacuity anchor: an empty log would satisfy every "no template outside
+# tools/" phrasing of the assertion below.
+templates="$(cat "$MKTEMP_LOG")"
+[ -n "$templates" ] \
+  && ok "control: the mktemp shim recorded a file template, so the location assertion has something to read" \
+  || bad "the mktemp shim recorded nothing" "log is empty"
+
+# The property: every staging template sits in the baseline's OWN directory.
+outside="$(printf '%s\n' "$templates" | grep -v '^tools/' || true)"
+[ -z "$outside" ] \
+  && ok "--seed stages the baseline inside tools/, its own directory (rename is same-filesystem)" \
+  || bad "--seed stages outside the baseline's directory" "templates outside tools/: $outside"
+
+# rename(2) carries the SOURCE's mode, and mktemp creates at 0600 — so the
+# seeded baseline must not come out private.
+mode="$(ls -l "$R/tools/size-ratchet-baseline.tsv" | cut -c1-10)"
+[ "$mode" = "-rw-r--r--" ] \
+  && ok "the seeded baseline carries the umask-implied mode (0644), not mktemp's 0600" \
+  || bad "the seeded baseline's mode" "got $mode, want -rw-r--r--"
+
+# Globbed, not `ls | grep`: the staging file is a DOTFILE, so the dot glob is
+# load-bearing — a plain `*` would report "clean" while debris sat there.
+leftovers=""
+for entry in "$R"/tools/* "$R"/tools/.*; do
+  [ -e "$entry" ] || continue # unmatched glob expands to itself
+  base="${entry##*/}"
+  case "$base" in
+    . | .. | size-ratchet-baseline.tsv) ;;
+    *) leftovers="$leftovers $base" ;;
+  esac
+done
+[ -z "$leftovers" ] \
+  && ok "--seed leaves no staging debris in tools/" \
+  || bad "--seed staging debris" "leftover:$leftovers"
