@@ -1063,7 +1063,7 @@ case "$OUT" in
   *) bad "broken install named" "out=$OUT" ;;
 esac
 
-echo "=== --check answers whether the shims are armed, and writes nothing ==="
+echo "=== --check answers whether the shims are armed, and modifies nothing on disk ==="
 check_in() { # REPO — sets OUT and RC
   local installer="$1/.agents/skills/growth-guards/scripts/install-git-hooks"
   [ -x "$installer" ] || installer="$INSTALL"

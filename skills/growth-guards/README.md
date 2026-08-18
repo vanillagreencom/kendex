@@ -57,10 +57,9 @@ track it and delete the marker; vendored trees go in excludes with a reason.
 ## byte-ceiling
 
 Newly added tracked files over the ceiling (default 200 KB, KB = 1024
-bytes) fail. Growth-oriented like size-ratchet: legacy files already in
-history are not gated by the default modes, so adoption needs no cleanup
-first. Lockfiles are exempt built-in, by exact basename; declared asset
-trees go in the excludes list with a reason.
+bytes) fail. Growth-oriented like size-ratchet — default modes gate no
+legacy file, so adoption needs no cleanup first. Lockfiles are exempt
+built-in by exact basename; declared asset trees go in excludes with a reason.
 
 - `--staged` (default) — files added in the staged diff (pre-commit).
 - `--base REF` — files added since the merge-base with REF (CI on a PR).
@@ -73,8 +72,8 @@ that quote a pragma never fire. **Blanket suppressions fail flat** —
 module/crate-wide rust `#![allow(...)]` inner attributes, file-level
 `# ruff: noqa` / `# flake8: noqa`, the bare `/* eslint-disable */` block
 form, and `//nolint` bare or `:all`. A per-line suppression naming its lint
-with a stated reason stays legal (`// eslint-disable-next-line rule -- why`,
-`# noqa: E501`, `//nolint:gosec // why`, a per-item rust attribute).
+with a stated reason stays legal (`# noqa: E501`, `//nolint:gosec // why`,
+a per-item rust attribute, `// eslint-disable-next-line rule -- why`).
 
 **Bare-allow ratchet (Rust)** — reasonless `#[allow(dead_code)]` /
 `#[allow(unused…)]` attributes are counted per file; an attribute carrying
@@ -107,8 +106,8 @@ scope class `[#A-Za-z0-9 _.,/-]+` passes uppercase issue keys
 Every key, its default and its meaning: [SKILL.md](SKILL.md). Each resolves
 environment > `.env.local` > `.vstack/settings.toml` > committed
 `vstack.settings.toml` (flat `KEY = "value"` under `[env]`) > `.env` >
-default. Per-check flags (`--excludes`, `--baseline`) override every source
-for the paths. All relative paths are repo-root-relative.
+default. Per-check flags (`--excludes`, `--baseline`) override every
+source; relative paths are repo-root-relative.
 
 ```toml
 [env]

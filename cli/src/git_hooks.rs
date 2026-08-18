@@ -107,7 +107,10 @@ pub fn check_growth_guards_hooks(project_root: &Path) -> Option<HooksVerdict> {
         // verdict line on stdout already names itself; anything else — a
         // usage error on stderr, silence — gets the naming added here.
         _ => match last_nonempty_line(&stdout) {
-            Some(line) => HooksVerdict::Undetermined(line),
+            Some(line) if line.starts_with("growth-guards git hooks:") => {
+                HooksVerdict::Undetermined(line)
+            }
+            Some(line) => undetermined(line),
             None => undetermined(
                 last_nonempty_line(&stderr)
                     .unwrap_or_else(|| format!("installer exited with {}", output.status)),

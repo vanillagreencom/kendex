@@ -15,7 +15,7 @@ cli/src/commands/update_pi.rs	603
 cli/src/config.rs	2064
 cli/src/config/remote_cache/fetch.rs	724
 cli/src/config/tests.rs	1255
-cli/src/git_hooks.rs	812
+cli/src/git_hooks.rs	815
 cli/src/harness/claude.rs	572
 cli/src/harness/mod.rs	728
 cli/src/harness/pi.rs	717
