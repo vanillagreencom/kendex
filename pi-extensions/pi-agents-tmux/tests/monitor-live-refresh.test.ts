@@ -176,15 +176,15 @@ test("terminal transcripts whose usage never persists are parsed once per task, 
 		return item("planner", `planner-${index}`, "2026-05-14T05:02:00.000Z", { status: "completed", transcriptPath });
 	});
 	const fingerprints = new Map<string, string>();
-	let parses = 0;
+	let persistCalls = 0;
 	const persistUsage = async () => {
-		parses += 1;
+		persistCalls += 1;
 		return false;
 	};
 	try {
 		for (let poll = 0; poll < pollCount; poll += 1) await refreshTranscriptUsage(completed, fingerprints, persistUsage);
 
-		assert.equal(parses, taskCount);
+		assert.equal(persistCalls, taskCount);
 	} finally {
 		rmSync(runtimeRoot, { force: true, recursive: true });
 	}
