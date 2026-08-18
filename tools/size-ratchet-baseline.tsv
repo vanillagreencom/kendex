@@ -148,7 +148,6 @@ skills/orch/scripts/lanes	550
 skills/orch/scripts/open-terminal	639
 skills/orch/scripts/oversee-watch	545
 skills/orch/scripts/queue-wait	1025
-skills/orch/scripts/review-artifact-check	405
 skills/orch/scripts/workflow-state	470
 skills/orch/tests/approval_wait.sh	1634
 skills/orch/tests/ci_wait.sh	930

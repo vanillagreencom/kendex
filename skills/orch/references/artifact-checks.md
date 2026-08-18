@@ -8,6 +8,7 @@ Validates a reviewer's on-disk JSON artifact — exists, `mtime >=` the delegati
 
 - An artifact whose `qa_metadata` admits no review happened (`review_performed: false`, or a no-scope reason) is rejected with reason `no_review` whatever its verdict says.
 - An artifact declaring `qa_metadata` whose `blockers[]`/`suggestions[]` are missing or not arrays, or whose present items omit a required `review-finding` field — including the routing-critical `category ∈ {fix,issue}` on suggestions — is rejected with reason `incomplete` plus a `detail` field naming the item and field. Artifacts without `qa_metadata` are unaffected.
+- An artifact citing a measurement that produced no samples — a mutation/stability citation with a zero sample or thread count, or an empty/all-zero perf percentile block — is rejected with reason `zero_sample` plus a `detail` field quoting the citation. This gate applies to every artifact, `qa_metadata` or not.
 - `--file <path> [delegated_at_epoch]` validates one explicit artifact; the optional boundary applies the same freshness gate, so a stale or misdated external review is rejected.
 
 ## `dev-return-write`

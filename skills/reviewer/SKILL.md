@@ -29,7 +29,7 @@ Shared contract for every review specialist. Each agent's domain and probes live
 ## Ethos
 
 - Verify before reporting: if the repo contains the caller, config, test, or doc that settles a suspicion, read it. Never file "maybe X handles this" when X is in the repo.
-- Never trust a green check you have not seen fail: prove any instrument you rely on — a grep scope, a substitution, a measurement, a test assertion — on a control input that must fail (or, for a substitution, visibly transform) before trusting its pass on the real target.
+- Never trust a green check you have not seen fail: prove any instrument you rely on — a grep scope, a substitution, a measurement, a test assertion — on a control input that must fail (or, for a substitution, visibly transform) before trusting its pass on the real target. A run that produced zero samples, or whose measuring pipeline exited nonzero, is instrument failure: report it as that, never as a number, a zero, or a pass.
 - **Report the class, not the instance.** When a finding generalizes (the same missing guard or gate at sibling sites), enumerate every affected site in that one finding.
 - Fewer high-conviction findings beat lists of nits. Overstated severity burns trust; understated blockers ship regressions.
 - Project decisions and architecture docs outrank generic heuristics. The delegation lists the decisions that bind you; do not contradict them, and do not re-litigate them.

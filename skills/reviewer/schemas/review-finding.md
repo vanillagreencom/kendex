@@ -94,6 +94,8 @@ Every item requires all of these; one missing field rejects the whole artifact.
 
 Per-agent QA payload (`workflows/qa-review.md`); `{}` when there is none. A reviewer that could not actually perform its review must set `{"review_performed": false, "reason": "<snake_case_reason>"}` instead of a bare pass — `review-artifact-check` rejects such artifacts (`no_review`) regardless of verdict.
 
+A measurement cited anywhere in the artifact must carry samples: `review-artifact-check` rejects it (`zero_sample`) when a mutation/stability citation reports a zero sample count or zero threads, or when the perf QA percentile block is empty or all-zero. Report such a run as instrument failure in prose, never as a numeric citation.
+
 Declaring a `qa_metadata` object also commits the artifact to usable findings: `review-artifact-check` rejects it (`incomplete`) when `blockers[]`/`suggestions[]` are missing or not arrays, or when a present item omits a required field above (`questions[]` is exempt). Artifacts without `qa_metadata` keep the tolerant existence + `verdict` validation. Full rejection semantics: `review-artifact-check --help`.
 
 Example per-agent payloads:
