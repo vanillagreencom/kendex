@@ -197,5 +197,37 @@ OUT="$(cd "$RI" && printf 'feat: not in the outside list\n' | GROWTH_GUARDS_SETT
   || bad "normalized escape stays out-of-repo" "rc=$RC out=$OUT"
 git -C "$RI" checkout -q -- vstack.settings.toml
 
+echo "=== a failing HEAD probe never hands authority to a recreated list ==="
+# Staged deletion + worktree recreation: the commit carries "docs", the
+# deletion is staged, the recreated worktree copy allows "feat". The HEAD
+# probe proves the commit once carried the source; a broken git there must
+# fail closed, never read as "never tracked".
+RH="$TMP/repo-headprobe"
+mkdir -p "$RH"
+git -C "$RH" -c init.defaultBranch=main init -q
+git -C "$RH" config user.email test@example.com
+git -C "$RH" config user.name test
+printf '[env]\nGROWTH_GUARDS_COMMIT_TYPES = "docs"\n' >"$RH/vstack.settings.toml"
+git -C "$RH" add -A
+git -C "$RH" commit -qm "docs: base" --no-verify
+git -C "$RH" rm -q --cached vstack.settings.toml
+printf '[env]\nGROWTH_GUARDS_COMMIT_TYPES = "feat"\n' >"$RH/vstack.settings.toml"
+GIT_HTREE_SHIM="$TMP/git-htree-shim"
+mkdir -p "$GIT_HTREE_SHIM"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'if [ "${1:-}" = "ls-tree" ]; then\n'
+  printf '  echo "fatal: simulated HEAD-tree failure" >&2\n'
+  printf '  exit 71\n'
+  printf 'fi\n'
+  printf 'exec %s "$@"\n' "$REAL_GIT"
+} >"$GIT_HTREE_SHIM/git"
+chmod +x "$GIT_HTREE_SHIM/git"
+OUT=""; RC=0
+OUT="$(cd "$RH" && printf 'feat: recreated list must not authorize\n' | PATH="$GIT_HTREE_SHIM:$PATH" "$CM" 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"(git ls-tree exit 71)"*) true ;; *) false ;; esac \
+  && ok "a failing HEAD probe is exit 2, never authority for the recreated list" \
+  || bad "gg HEAD-probe failure" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

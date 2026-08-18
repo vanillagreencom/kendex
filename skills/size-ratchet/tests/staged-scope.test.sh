@@ -337,5 +337,87 @@ case "$OUT" in
   *) bad "--help documents --staged" "out=$OUT" ;;
 esac
 
+echo "=== a failing HEAD probe cannot hand authority to a recreated source ==="
+# Staged deletion + worktree recreation: the commit carries threshold 100,
+# the deletion is staged, and a recreated worktree copy says 300. The HEAD
+# probe is what proves the commit once carried the source; a broken git
+# there must fail closed, never read as "never tracked" and let the
+# recreated copy authorize the staged 200-line blob.
+new_repo settings-recreated
+mkfile big.txt 200
+printf '[env]\nSIZE_RATCHET_THRESHOLD = "100"\n' >"$R/vstack.settings.toml"
+git -C "$R" add -A
+git -C "$R" commit -q -m seed
+git -C "$R" rm -q --cached vstack.settings.toml
+printf '[env]\nSIZE_RATCHET_THRESHOLD = "300"\n' >"$R/vstack.settings.toml"
+OUT=""; RC=0
+OUT="$(cd "$R" && "$SR" --staged 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] \
+  && ok "control: a staged settings deletion governs as absent (built-in 400 passes the 200-line blob)" \
+  || bad "staged-deletion control" "rc=$RC out=$OUT"
+REAL_GIT="$(command -v git)"
+GIT_HEAD_SHIM="$TMP/git-head-shim"
+mkdir -p "$GIT_HEAD_SHIM"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'if [ "${1:-}" = "ls-tree" ]; then\n'
+  printf '  echo "fatal: simulated HEAD-tree failure" >&2\n'
+  printf '  exit 71\n'
+  printf 'fi\n'
+  printf 'exec %s "$@"\n' "$REAL_GIT"
+} >"$GIT_HEAD_SHIM/git"
+chmod +x "$GIT_HEAD_SHIM/git"
+OUT=""; RC=0
+OUT="$(cd "$R" && PATH="$GIT_HEAD_SHIM:$PATH" "$SR" --staged 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not probe HEAD while resolving a setting (git ls-tree"*) true ;; *) false ;; esac \
+  && ok "a failing settings HEAD probe is exit 2, never authority for the recreated copy" \
+  || bad "settings HEAD-probe failure" "rc=$RC out=$OUT"
+
+echo "=== the policy HEAD leg fails closed too ==="
+# Same shape for the baseline: staged deletion + recreated worktree copy.
+# The classified probe (ls-tree) failing must be exit 2; the old bare
+# cat-file read a broken git as "never tracked" and let the recreated
+# baseline absorb staged growth.
+new_repo baseline-recreated
+mkfile big.txt 30
+mkdir -p "$R/tools"
+printf 'big.txt\t15\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+git -C "$R" commit -q -m seed
+git -C "$R" rm -q --cached tools/size-ratchet-baseline.tsv
+printf 'big.txt\t30\n' >"$R/tools/size-ratchet-baseline.tsv"
+OUT=""; RC=0
+GIT_CATFILE_SHIM="$TMP/git-catfile-shim"
+mkdir -p "$GIT_CATFILE_SHIM"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'if [ "${1:-}" = "cat-file" ]; then\n'
+  printf '  echo "fatal: simulated HEAD-probe failure" >&2\n'
+  printf '  exit 71\n'
+  printf 'fi\n'
+  printf 'exec %s "$@"\n' "$REAL_GIT"
+} >"$GIT_CATFILE_SHIM/git"
+chmod +x "$GIT_CATFILE_SHIM/git"
+OUT="$(cd "$R" && PATH="$GIT_CATFILE_SHIM:$PATH" SIZE_RATCHET_THRESHOLD=10 "$SR" --staged 2>&1)" || RC=$?
+[ "$RC" -eq 1 ] \
+  && ok "a broken cat-file no longer hands authority to the recreated baseline (the staged snapshot judges without it)" \
+  || bad "recreated baseline under cat-file failure" "rc=$RC out=$OUT"
+GIT_TREE_SHIM="$TMP/git-tree-shim"
+mkdir -p "$GIT_TREE_SHIM"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'if [ "${1:-}" = "ls-tree" ]; then\n'
+  printf '  echo "fatal: simulated HEAD-tree failure" >&2\n'
+  printf '  exit 71\n'
+  printf 'fi\n'
+  printf 'exec %s "$@"\n' "$REAL_GIT"
+} >"$GIT_TREE_SHIM/git"
+chmod +x "$GIT_TREE_SHIM/git"
+OUT=""; RC=0
+OUT="$(cd "$R" && PATH="$GIT_TREE_SHIM:$PATH" SIZE_RATCHET_THRESHOLD=10 "$SR" --staged 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"(git ls-tree exit 71)"*) true ;; *) false ;; esac \
+  && ok "a failing HEAD-tree query is exit 2, never \"never tracked\"" \
+  || bad "policy HEAD-probe failure" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

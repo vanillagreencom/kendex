@@ -298,7 +298,12 @@ staged_policy_state() { # PATH
   [ "$MODE" != "update" ] || return 1
   read_index_file_mode "$1"
   [ -z "$INDEX_FILE_MODE" ] || return 0
-  git cat-file -e "HEAD:$1" 2>/dev/null && return 2
+  # The HEAD leg goes through the classified probe: cat-file -e exits 128
+  # both for "HEAD carries no such path" and for an operational failure, so
+  # a bare probe here read a broken git as "never tracked" and let a
+  # recreated worktree policy govern the staged snapshot.
+  read_head_file_mode "$1"
+  [ -z "$HEAD_FILE_MODE" ] || return 2
   return 1
 }
 

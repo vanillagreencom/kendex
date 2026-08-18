@@ -130,7 +130,7 @@ sr_settings_normalize_path() { # PATH — normalized path on stdout ("" when it 
 # (a personal .env.local) is the worktree copy, which is all there is.
 # SR_SETTINGS_INDEX_DIR holds the materialized copies; the caller owns it.
 sr_settings_source() { # FILE — the path to actually read; nonzero + ::error on failure
-  local file="$1" copy="" status=0 entry="" norm=""
+  local file="$1" copy="" status=0 entry="" norm="" head_status=0 cf_status=0
   if [ "${SR_SETTINGS_FROM_INDEX:-0}" != "1" ] || [ -z "${SR_SETTINGS_INDEX_DIR:-}" ]; then
     printf '%s' "$file"
     return 0
@@ -169,13 +169,41 @@ sr_settings_source() { # FILE — the path to actually read; nonzero + ::error o
   case "$status" in
     0) ;;
     1)
-      if git cat-file -e "HEAD:$file" 2>/dev/null; then
-        # Staged for deletion: the commit carries no such source, so it must
-        # govern as ABSENT rather than through a recreated worktree copy. A
-        # path that cannot exist is how the probes below read "not there".
-        printf '%s' "$SR_SETTINGS_INDEX_DIR/settings.absent"
-        return 0
-      fi
+      # The HEAD probe is classified like the index probe above: cat-file -e
+      # exits 128 both for "no such path" and for an operational failure, so
+      # a bare probe read a broken git as "never tracked" and let a
+      # recreated worktree copy authorize staged content. An unborn HEAD
+      # carries nothing by definition (rev-parse reserves exit 1 for it).
+      git rev-parse --verify --quiet HEAD >/dev/null 2>&1 || head_status=$?
+      case "$head_status" in
+        0)
+          # ls-tree, never cat-file -e: with rev:path syntax git answers
+          # "no such path in HEAD" with the same 128 an operational failure
+          # returns, so only ls-tree (exit 0, empty output for an absent
+          # path) can tell the two apart.
+          entry="$(git ls-tree HEAD -- ":(literal)$file" 2>/dev/null)" || cf_status=$?
+          if [ "$cf_status" -ne 0 ]; then
+            echo "::error::$file: could not probe HEAD while resolving a setting (git ls-tree exit $cf_status); refusing to treat it as untracked" >&2
+            return 1
+          fi
+          case "${entry:+tracked}" in
+            tracked)
+              # Staged for deletion: the commit carries no such source, so it
+              # must govern as ABSENT rather than through a recreated worktree
+              # copy. A path that cannot exist is how the probes below read
+              # "not there".
+              printf '%s' "$SR_SETTINGS_INDEX_DIR/settings.absent"
+              return 0
+              ;;
+            *) ;;
+          esac
+          ;;
+        1) ;;
+        *)
+          echo "::error::$file: could not resolve HEAD while resolving a setting (git rev-parse exit $head_status); refusing to treat it as untracked" >&2
+          return 1
+          ;;
+      esac
       printf '%s' "$file"
       return 0
       ;;

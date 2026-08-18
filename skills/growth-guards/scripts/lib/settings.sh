@@ -130,7 +130,7 @@ gg_settings_normalize_path() { # PATH — normalized path on stdout ("" when it 
 # and parsing that would resolve every key to its built-in default.
 # GG_SETTINGS_INDEX_DIR holds the materialized copies; the caller owns it.
 gg_settings_source() { # FILE — the path to actually read; nonzero + ::error on failure
-  local file="$1" copy="" status=0 entry="" norm=""
+  local file="$1" copy="" status=0 entry="" norm="" head_status=0 cf_status=0
   if [ "${GG_SETTINGS_FROM_INDEX:-0}" != "1" ] || [ -z "${GG_SETTINGS_INDEX_DIR:-}" ]; then
     printf '%s' "$file"
     return 0
@@ -169,10 +169,37 @@ gg_settings_source() { # FILE — the path to actually read; nonzero + ::error o
   case "$status" in
     0) ;;
     1)
-      if git cat-file -e "HEAD:$file" 2>/dev/null; then
-        printf '%s' "$GG_SETTINGS_INDEX_DIR/settings.absent"
-        return 0
-      fi
+      # The HEAD probe is classified like the index probe above: cat-file -e
+      # exits 128 both for "no such path" and for an operational failure, so
+      # a bare probe read a broken git as "never tracked" and let a
+      # recreated worktree copy authorize staged content. An unborn HEAD
+      # carries nothing by definition (rev-parse reserves exit 1 for it).
+      git rev-parse --verify --quiet HEAD >/dev/null 2>&1 || head_status=$?
+      case "$head_status" in
+        0)
+          # ls-tree, never cat-file -e: with rev:path syntax git answers
+          # "no such path in HEAD" with the same 128 an operational failure
+          # returns, so only ls-tree (exit 0, empty output for an absent
+          # path) can tell the two apart.
+          entry="$(git ls-tree HEAD -- ":(literal)$file" 2>/dev/null)" || cf_status=$?
+          if [ "$cf_status" -ne 0 ]; then
+            echo "::error::$file: could not probe HEAD while resolving a setting (git ls-tree exit $cf_status); refusing to treat it as untracked" >&2
+            return 1
+          fi
+          case "${entry:+tracked}" in
+            tracked)
+              printf '%s' "$GG_SETTINGS_INDEX_DIR/settings.absent"
+              return 0
+              ;;
+            *) ;;
+          esac
+          ;;
+        1) ;;
+        *)
+          echo "::error::$file: could not resolve HEAD while resolving a setting (git rev-parse exit $head_status); refusing to treat it as untracked" >&2
+          return 1
+          ;;
+      esac
       printf '%s' "$file"
       return 0
       ;;
