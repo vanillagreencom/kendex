@@ -4,8 +4,9 @@ Five checks that stop quiet repo decay, one family beside `size-ratchet`:
 work markers, oversized additions, blanket lint suppression, conflict
 markers, and non-conventional commit messages. One idiom, one exit contract
 — `0` clean, `1` violations, `2` usage/config/collection error. Scans read
-INDEX content and skip binaries. `SKILL.md` is the agent-facing reference;
-`DEVELOPMENT.md` covers internals.
+INDEX content and skip binaries. Requirements: `git`, `awk`, the usual
+POSIX userland; Bash 3.2 compatible (macOS bash). `SKILL.md` is the
+agent-facing reference; `DEVELOPMENT.md` covers internals.
 
 ## Invocation
 
@@ -71,9 +72,12 @@ Two gates, both scanned language-scoped by pathspec, so docs and scripts
 that quote a pragma never fire. **Blanket suppressions fail flat** —
 module/crate-wide rust `#![allow(...)]` inner attributes, file-level
 `# ruff: noqa` / `# flake8: noqa`, the bare `/* eslint-disable */` block
-form, and `//nolint` bare or `:all`. A per-line suppression naming its lint
-with a stated reason stays legal (`# noqa: E501`, `//nolint:gosec // why`,
-a per-item rust attribute, `// eslint-disable-next-line rule -- why`).
+form, `//nolint` bare or `:all`, and — over biome's JS/TS family plus CSS
+and JSONC — `biome-ignore-all`, unscoped `biome-ignore-start`, and
+rule-less `biome-ignore lint` / group forms. A per-line suppression naming
+its lint with a stated reason stays legal (`# noqa: E501`,
+`// eslint-disable-next-line rule -- why`, `//nolint:gosec // why`,
+`// biome-ignore lint/<group>/<rule>: why`, a per-item rust attribute).
 
 **Bare-allow ratchet (Rust)** — reasonless `#[allow(dead_code)]` /
 `#[allow(unused…)]` attributes are counted per file; an attribute carrying
@@ -114,7 +118,3 @@ source; relative paths are repo-root-relative.
 GROWTH_GUARDS_BYTE_CEILING_KB = "500"
 GROWTH_GUARDS_CHECKS = "todo-ban suppression-ban"
 ```
-
-## Requirements
-
-`git`, `awk`, the usual POSIX userland; Bash 3.2 compatible (macOS bash).

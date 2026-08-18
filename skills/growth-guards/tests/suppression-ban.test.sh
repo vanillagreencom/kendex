@@ -180,6 +180,68 @@ git -C "$R" add -A
 run_sb
 [ "$RC" -eq 0 ] && ok "nolint naming its linter with a reason passes" || bad "named nolint passes" "rc=$RC out=$OUT"
 
+echo "=== biome: file scope, unscoped regions, and rule-less forms fail; the full rule path passes ==="
+printf '// biome-ignore-all lint/style/noVar: legacy file\nvar x = 1;\n' >"$R/ok.ts"
+git -C "$R" add -A
+run_sb
+[ "$RC" -eq 1 ] && case "$OUT" in *"file-wide biome-ignore-all: ok.ts:1:"*) true ;; *) false ;; esac \
+  && ok "biome-ignore-all fails even fully qualified — file scope is the offense" \
+  || bad "biome-ignore-all fails" "rc=$RC out=$OUT"
+printf '/* biome-ignore-all lint: legacy sheet */\nbody { color: red; }\n' >"$R/ok.css"
+git -C "$R" add -A
+run_sb
+[ "$RC" -eq 1 ] && case "$OUT" in *"file-wide biome-ignore-all: ok.css:1:"*) true ;; *) false ;; esac \
+  && ok "biome scans beyond the JS family: the css file-wide form fails" \
+  || bad "css biome-ignore-all fails" "rc=$RC out=$OUT"
+printf 'body { color: red; }\n' >"$R/ok.css"
+
+printf '// biome-ignore-start\nconst y = 1;\n' >"$R/ok.ts"
+git -C "$R" add -A
+run_sb
+[ "$RC" -eq 1 ] && case "$OUT" in *"unscoped biome-ignore-start: ok.ts:1:"*) true ;; *) false ;; esac \
+  && ok "a bare biome-ignore-start (no rule path) fails" || bad "bare biome-ignore-start fails" "rc=$RC out=$OUT"
+printf '/* biome-ignore-start */\nconst y = 1;\n' >"$R/ok.ts"
+git -C "$R" add -A
+run_sb
+[ "$RC" -eq 1 ] && ok "the block-comment bare start fails too" || bad "block-comment bare start fails" "rc=$RC out=$OUT"
+printf '// biome-ignore-start lint: sweep\nconst y = 1;\n' >"$R/ok.ts"
+git -C "$R" add -A
+run_sb
+[ "$RC" -eq 1 ] && case "$OUT" in *"unscoped biome-ignore-start: ok.ts:1:"*) true ;; *) false ;; esac \
+  && ok "a category-only start (lint, no rule path) fails" || bad "category-only start fails" "rc=$RC out=$OUT"
+printf '// biome-ignore-start lint/suspicious: sweep\nconst y = 1;\n' >"$R/ok.ts"
+git -C "$R" add -A
+run_sb
+[ "$RC" -eq 1 ] && ok "a group-only start (no rule) fails" || bad "group-only start fails" "rc=$RC out=$OUT"
+printf '// biome-ignore-start lint/suspicious/noExplicitAny: generated block\nconst z: any = 1;\n// biome-ignore-end\n' >"$R/ok.ts"
+git -C "$R" add -A
+run_sb
+[ "$RC" -eq 0 ] && ok "a region scoped to its full rule path (and its end marker) passes" \
+  || bad "rule-scoped region passes" "rc=$RC out=$OUT"
+
+printf 'debugger; // biome-ignore lint: hush\n' >"$R/ok.ts"
+git -C "$R" add -A
+run_sb
+[ "$RC" -eq 1 ] && case "$OUT" in *"blanket biome-ignore: ok.ts:1:"*) true ;; *) false ;; esac \
+  && ok "the category-wide per-line form (lint, no group, no rule) fails" \
+  || bad "category-wide biome-ignore fails" "rc=$RC out=$OUT"
+case "$OUT" in *"name the full rule path"*) ok "diagnostic carries the full-rule-path remedy" ;; *) bad "diagnostic carries the full-rule-path remedy" "$OUT" ;; esac
+printf 'debugger; // biome-ignore lint/suspicious: hush\n' >"$R/ok.ts"
+git -C "$R" add -A
+run_sb
+[ "$RC" -eq 1 ] && ok "the group-wide per-line form (group, no rule) fails" \
+  || bad "group-wide biome-ignore fails" "rc=$RC out=$OUT"
+printf 'const a: any = 1; // biome-ignore lint/suspicious/noExplicitAny: third-party shape\n' >"$R/ok.ts"
+git -C "$R" add -A
+run_sb
+[ "$RC" -eq 0 ] && ok "the per-line form naming its full rule path with a reason passes" \
+  || bad "fully qualified per-line biome-ignore passes" "rc=$RC out=$OUT"
+printf 'Prose naming biome-ignore-all or biome-ignore lint: shapes never fires.\n' >"$R/NOTES.md"
+git -C "$R" add -A
+run_sb
+[ "$RC" -eq 0 ] && ok "prose quoting the biome directives never fires (pathspec scope)" \
+  || bad "prose mention does not fire" "rc=$RC out=$OUT"
+
 echo "=== excludes: vendored trees, reason mandatory ==="
 new_repo exc
 mkdir -p -- "$R/vendor" "$R/tools"
