@@ -103,5 +103,74 @@ run_stdin 'feat: settings-rejected type'
   || bad "control: settings-restricted list rejects" "rc=$RC out=$OUT"
 rm "$R/vstack.settings.toml"
 
+echo "=== the /dev/null sentinel selects NO settings source, dotenv layers included ==="
+# It named only the settings file, so .env.local (read before it) and .env
+# (read after it) kept deciding: a caller asking for built-in defaults got
+# whatever the repository's env files said.
+printf 'GROWTH_GUARDS_COMMIT_TYPES=docs\n' >"$R/.env"
+run_stdin 'feat: base type'
+[ "$RC" -eq 1 ] && ok "control: without the sentinel .env restricts the list to docs" \
+  || bad "sentinel control (.env)" "rc=$RC out=$OUT"
+run_stdin 'feat: base type' "GROWTH_GUARDS_SETTINGS_FILE=/dev/null"
+[ "$RC" -eq 0 ] && ok "the sentinel skips .env (read AFTER the settings file) and the built-in list decides" \
+  || bad "sentinel skips .env" "rc=$RC out=$OUT"
+
+printf 'GROWTH_GUARDS_COMMIT_TYPES=chore\n' >"$R/.env.local"
+run_stdin 'feat: base type'
+[ "$RC" -eq 1 ] && ok "control: without the sentinel .env.local restricts the list to chore" \
+  || bad "sentinel control (.env.local)" "rc=$RC out=$OUT"
+run_stdin 'feat: base type' "GROWTH_GUARDS_SETTINGS_FILE=/dev/null"
+[ "$RC" -eq 0 ] && ok "the sentinel skips .env.local (read BEFORE the settings file) too" \
+  || bad "sentinel skips .env.local" "rc=$RC out=$OUT"
+rm -f "$R/.env" "$R/.env.local"
+
+echo "=== a failing index probe never loosens the committed type list ==="
+# The hook lane resolves tracked settings from the INDEX so a commit is judged
+# by its own configuration. `--error-unmatch` reserves exit 1 for "no such
+# path"; reading EVERY nonzero status as "untracked" let a broken git drop the
+# committed list back to the built-in one and admit a type it rejects.
+RI="$TMP/repo-index"
+mkdir -p "$RI"
+git -C "$RI" -c init.defaultBranch=main init -q
+git -C "$RI" config user.email test@example.com
+git -C "$RI" config user.name test
+printf '[env]\nGROWTH_GUARDS_COMMIT_TYPES = "docs"\n' >"$RI/vstack.settings.toml"
+git -C "$RI" add -A
+git -C "$RI" commit -qm "docs: base" --no-verify
+OUT=""; RC=0
+OUT="$(cd "$RI" && printf 'feat: not in the committed list\n' | "$CM" 2>&1)" || RC=$?
+[ "$RC" -eq 1 ] && ok "control: the committed list rejects the header" \
+  || bad "committed list rejects (probe control)" "rc=$RC out=$OUT"
+
+REAL_GIT="$(command -v git)"
+GIT_TRACKED_SHIM="$TMP/git-tracked-shim"
+mkdir -p "$GIT_TRACKED_SHIM"
+cat >"$GIT_TRACKED_SHIM/git" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = "ls-files" ] && [ "\${2:-}" = "--error-unmatch" ]; then
+  echo "fatal: simulated index-probe failure" >&2
+  exit 71
+fi
+exec "$REAL_GIT" "\$@"
+EOF
+chmod +x "$GIT_TRACKED_SHIM/git"
+OUT=""; RC=0
+OUT="$(cd "$RI" && printf 'feat: not in the committed list\n' | PATH="$GIT_TRACKED_SHIM:$PATH" "$CM" 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not query the index while resolving a setting"*) true ;; *) false ;; esac \
+  && ok "a failing tracked-source probe is exit 2, never a silent fall back to the built-in list" \
+  || bad "settings probe failure" "rc=$RC out=$OUT"
+
+# A settings source that cannot be an index entry — absolute, or escaping the
+# root — draws git's "outside repository" refusal, which carries the same 128
+# an operational failure does. It is answered before the probe, so such a
+# source still reads from the worktree instead of failing the run.
+printf '[env]\nGROWTH_GUARDS_COMMIT_TYPES = "docs"\n' >"$TMP/outside-settings.toml"
+for path in "$TMP/outside-settings.toml" "../outside-settings.toml"; do
+  OUT=""; RC=0
+  OUT="$(cd "$RI" && printf 'feat: not in the outside list\n' | GROWTH_GUARDS_SETTINGS_FILE="$path" "$CM" 2>&1)" || RC=$?
+  [ "$RC" -eq 1 ] && ok "an out-of-repo settings source still reads in the hook lane ($path)" \
+    || bad "out-of-repo settings source" "path=$path rc=$RC out=$OUT"
+done
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

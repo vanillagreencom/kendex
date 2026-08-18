@@ -155,5 +155,25 @@ OUT=""; RC=0
 OUT="$(unset REVIEW_GATE_TN 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="$TMP/absent.settings.toml" rg_setting REVIEW_GATE_TN "dflt" 2>"$TMP/err")" || RC=$?
 [[ "$RC" -eq 0 && "$OUT" == "dflt" ]] && ok "an ABSENT plain file still falls back to the default (control)" || bad "an ABSENT plain file still falls back to the default (control)" "rc=$RC out=$OUT"
 
+echo "=== the /dev/null sentinel selects NO settings source ==="
+# The handle means "no source at all", so it must beat a populated settings
+# file sitting at the default path, and lose only to an explicit environment
+# variable. The copies vendored from this loader layer dotenv sources around
+# it and answer the sentinel the same way, so the contract is pinned here
+# where the shared logic lives.
+mkdir -p "$TMP/sentinel"
+printf '[env]\nREVIEW_GATE_TS = "fromfile"\n' >"$TMP/sentinel/vstack.settings.toml"
+OUT=""; RC=0
+OUT="$(cd "$TMP/sentinel" && unset REVIEW_GATE_TS REVIEW_GATE_SETTINGS_FILE 2>/dev/null; rg_setting REVIEW_GATE_TS "dflt" 2>"$TMP/err")" || RC=$?
+[[ "$RC" -eq 0 && "$OUT" == "fromfile" ]] && ok "control: without the sentinel the settings file at the default path supplies the value" || bad "sentinel control" "rc=$RC out=$OUT"
+
+OUT=""; RC=0
+OUT="$(cd "$TMP/sentinel" && unset REVIEW_GATE_TS 2>/dev/null; REVIEW_GATE_SETTINGS_FILE=/dev/null rg_setting REVIEW_GATE_TS "dflt" 2>"$TMP/err")" || RC=$?
+[[ "$RC" -eq 0 && "$OUT" == "dflt" ]] && ok "the sentinel skips a populated settings file and the built-in default decides" || bad "sentinel skips the settings file" "rc=$RC out=$OUT"
+
+OUT=""; RC=0
+OUT="$(cd "$TMP/sentinel" && REVIEW_GATE_TS="fromenv" REVIEW_GATE_SETTINGS_FILE=/dev/null rg_setting REVIEW_GATE_TS "dflt" 2>"$TMP/err")" || RC=$?
+[[ "$RC" -eq 0 && "$OUT" == "fromenv" ]] && ok "an explicit environment variable still wins over the sentinel" || bad "sentinel vs environment" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

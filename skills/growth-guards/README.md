@@ -224,7 +224,10 @@ default (env files use `KEY=value` or `export KEY=value`; parsed, never
 sourced). Only an ABSENT source is skipped: a source that exists but is
 unusable — unreadable, a directory, FIFO, socket or device, or a symlink
 that does not resolve — is a config error (exit 2), never a fall-through to
-the next layer; `/dev/null` forces the built-in defaults. Per-check flags
+the next layer. `GROWTH_GUARDS_SETTINGS_FILE=/dev/null` selects no settings
+source at all — `.env.local`, the settings file and `.env` are all skipped —
+leaving explicit environment variables and the built-in defaults. Per-check
+flags
 (`--excludes`, `--baseline`) override every source for the paths. All
 relative paths are repo-root-relative; the scripts `cd` to
 `git rev-parse --show-toplevel` before resolving anything.

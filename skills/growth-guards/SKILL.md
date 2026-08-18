@@ -82,7 +82,9 @@ Resolution order for every key: explicit environment > `.env.local` >
 `.vstack/settings.toml` > the repo's committed `vstack.settings.toml` (flat
 `KEY = "value"` under `[env]`) > `.env` > built-in default. Only an ABSENT
 source is skipped: one that exists but is unusable is a config error (exit
-2), never a fall-through. `/dev/null` forces the built-in defaults.
+2), never a fall-through. `GROWTH_GUARDS_SETTINGS_FILE=/dev/null` selects no
+settings source at all (`.env.local`, the settings file and `.env` are all
+skipped), leaving environment variables and the defaults.
 
 **Excludes format** — `pattern<TAB>reason` per line (shell glob against the
 full repo-relative path; `*` crosses `/`); a pattern without a reason is a

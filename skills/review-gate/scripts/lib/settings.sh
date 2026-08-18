@@ -8,8 +8,12 @@
 #      string, so a caller (or the selftest) can force "explicitly empty";
 #   2. the repo's committed vstack.settings.toml (the file's sole uncommented
 #      `KEY = "value"` assignment; the file path can be overridden with
-#      REVIEW_GATE_SETTINGS_FILE, e.g. /dev/null to force built-in defaults);
+#      REVIEW_GATE_SETTINGS_FILE);
 #   3. the built-in default passed by the caller.
+#
+# REVIEW_GATE_SETTINGS_FILE=/dev/null is the force-defaults handle and means
+# NO settings source at all: layer 2 is skipped whole, leaving explicit
+# environment variables and the built-in defaults.
 #
 # The parser reads flat single-line basic-string TOML assignments only —
 # exactly the shape vstack.settings.toml [env] blocks use. List-valued keys
@@ -30,10 +34,10 @@
 # something else — directory, FIFO, socket, device — fails -f exactly like
 # an absent one, and a symlink that does not resolve fails -e as well as -f,
 # so -L is what sees it at all: either shape would skip a configured source
-# with nothing said and let a lower-precedence value decide. /dev/null is
-# the documented force-defaults handle and stays exempt.
+# with nothing said and let a lower-precedence value decide. The /dev/null
+# force-defaults handle never reaches here — rg_setting answers it before any
+# source is consulted.
 rg_settings_usable() { # PATH — 0 = readable-shaped or absent; 1 + ::error otherwise
-  [ "$1" != "/dev/null" ] || return 0
   { [ -e "$1" ] || [ -L "$1" ]; } || return 0
   [ ! -f "$1" ] || return 0
   if [ ! -e "$1" ]; then
@@ -74,6 +78,15 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   # ${!name+x} tests set-ness of the variable NAMED by $name (Bash 3.2-safe).
   if [ -n "${!name+x}" ]; then
     printf '%s' "${!name}"
+    return 0
+  fi
+  # /dev/null is the force-defaults handle: it selects NO settings source at
+  # all. Keeping that in one place — here, ahead of every source — is what
+  # keeps this loader and the copies vendored from it (size-ratchet,
+  # growth-guards, which layer dotenv sources around this one) answering the
+  # sentinel identically.
+  if [ "${REVIEW_GATE_SETTINGS_FILE:-}" = "/dev/null" ]; then
+    printf '%s' "$default"
     return 0
   fi
   file="${REVIEW_GATE_SETTINGS_FILE:-vstack.settings.toml}"
