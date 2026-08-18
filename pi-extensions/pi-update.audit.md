@@ -2,7 +2,7 @@
 
 Marker `0.84.1` → `0.84.2`. Audited against base `82ecc517`. Sources fetched: `agent`, `ai`, `coding-agent`, `server`, `storage` (at `packages/session-backends/sqlite-node/` — the pre-0.84.0 `packages/storage/sqlite-node/` path 404s), `tui`, plus the curated release notes. `Unreleased` blocks scanned for heads-up only and excluded from the marker.
 
-One released version is newer than the marker: `0.84.2` (2026-08-14). After deduping the curated notes and the `inherited` restatements `coding-agent` publishes for `ai`/`agent`/`tui` changes, ~35 unique items. `server` and `storage` 0.84.2 sections are empty; `agent` 0.84.2 carries a single fix.
+In scope since the previous marker (`0.84.1`): one release, `0.84.2` (2026-08-14). After deduping the curated notes and the `inherited` restatements `coding-agent` publishes for `ai`/`agent`/`tui` changes, ~35 unique items. `server` and `storage` 0.84.2 sections are empty; `agent` 0.84.2 carries a single fix.
 
 ## Counts
 
