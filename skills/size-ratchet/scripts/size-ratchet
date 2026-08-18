@@ -90,8 +90,14 @@ collection_error() {
 count_nonempty_lines() { # FILE — count on stdout; loud exit if grep cannot read it
   # grep -c exits 1 on zero matches but still prints 0 — only exit >= 2
   # (execution/read failure) means the count is unknown.
+  #
+  # `--` goes BEFORE the pattern at every grep call site here. Option scanning
+  # stops at the first non-option argument, which for grep is the PATTERN, so a
+  # trailing `--` is read as a literal filename by any non-permuting (BSD/POSIX)
+  # grep and the invocation fails on a clean repo. Leading `--` is valid under
+  # GNU, BSD and POSIX alike.
   local n status=0
-  n="$(grep -c . -- "$1")" || status=$?
+  n="$(grep -c -- . "$1")" || status=$?
   [ "$status" -le 1 ] || collection_error "could not count lines in $1 (grep exit $status)"
   printf '%s\n' "$n"
 }
@@ -99,6 +105,13 @@ count_nonempty_lines() { # FILE — count on stdout; loud exit if grep cannot re
 MODE="check"
 BASELINE_OPT=""
 EXCLUDES_OPT=""
+# Whether the flag was SUPPLIED is tracked apart from its value: testing the
+# value alone made `--baseline=` and `--baseline ""` indistinguishable from an
+# absent flag, so automation passing a path that came out of a bad substitution
+# silently checked the repository default and passed. Supplied-but-empty is a
+# config error below.
+BASELINE_SET=0
+EXCLUDES_SET=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --update)
@@ -113,14 +126,22 @@ while [ $# -gt 0 ]; do
       [ $# -ge 2 ] || config_error "--baseline requires a path"
       shift
       BASELINE_OPT="$1"
+      BASELINE_SET=1
       ;;
-    --baseline=*) BASELINE_OPT="${1#--baseline=}" ;;
+    --baseline=*)
+      BASELINE_OPT="${1#--baseline=}"
+      BASELINE_SET=1
+      ;;
     --excludes)
       [ $# -ge 2 ] || config_error "--excludes requires a path"
       shift
       EXCLUDES_OPT="$1"
+      EXCLUDES_SET=1
       ;;
-    --excludes=*) EXCLUDES_OPT="${1#--excludes=}" ;;
+    --excludes=*)
+      EXCLUDES_OPT="${1#--excludes=}"
+      EXCLUDES_SET=1
+      ;;
     -h | --help)
       usage
       exit 0
@@ -133,10 +154,20 @@ done
 
 # All configured paths (settings file, baseline, excludes) are repo-relative.
 REPO_ROOT="$(git rev-parse --show-toplevel)" || config_error "not inside a git repository"
-cd "$REPO_ROOT"
+# Every collection-path operation below routes its failure through
+# config_error/collection_error. Unguarded, `set -e` killed the script with the
+# failing tool's own status — usually 1, which this script's contract reserves
+# for "a size violation was measured", so a broken environment reached callers
+# as a failing gate rather than a broken one.
+cd "$REPO_ROOT" || config_error "could not enter the repository root $REPO_ROOT"
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/size-ratchet.XXXXXX")" || config_error "could not create a temporary directory"
-trap 'rm -rf -- "$TMP"' EXIT
+# STAGED_BASELINE is the --update replacement file, created NEXT TO the baseline
+# (below) so its rename into place is a same-filesystem rename(2). It is cleaned
+# up here because every abort between its creation and the rename must leave no
+# debris in a tracked directory.
+STAGED_BASELINE=""
+trap 'rm -rf -- "$TMP"; [ -z "$STAGED_BASELINE" ] || rm -f -- "$STAGED_BASELINE"' EXIT
 # Not in update mode: it rewrites the worktree policy, and the settings that
 # name WHICH file it rewrites have to come from the same place.
 if [ "$STAGED" -eq 1 ] && [ "$MODE" != "update" ]; then
@@ -201,12 +232,14 @@ while [ -n "$classes_rest" ]; do
 done
 [ "$CLASS_COUNT" -eq 0 ] || CLASSES_NOTE=", classes $CLASSES_NOTE"
 
-if [ -n "$BASELINE_OPT" ]; then
+if [ "$BASELINE_SET" = "1" ]; then
+  [ -n "$BASELINE_OPT" ] || config_error "--baseline was given an empty path; pass a real path or omit the flag to use the configured default"
   BASELINE_FILE="$BASELINE_OPT"
 else
   BASELINE_FILE="$(sr_setting SIZE_RATCHET_BASELINE "tools/size-ratchet-baseline.tsv")" || exit 2
 fi
-if [ -n "$EXCLUDES_OPT" ]; then
+if [ "$EXCLUDES_SET" = "1" ]; then
+  [ -n "$EXCLUDES_OPT" ] || config_error "--excludes was given an empty path; pass a real path or omit the flag to use the configured default"
   EXCLUDES_FILE="$EXCLUDES_OPT"
 else
   EXCLUDES_FILE="$(sr_setting SIZE_RATCHET_EXCLUDES "tools/size-ratchet-excludes")" || exit 2
@@ -263,28 +296,86 @@ staged_policy_state() { # PATH
   # --update REWRITES the worktree policy file, so it must read that copy or
   # the rewrite would drop every unstaged hand-edit from it.
   [ "$MODE" != "update" ] || return 1
-  [ "$(git cat-file -t ":$1" 2>/dev/null)" = "blob" ] && return 0
+  read_index_file_mode "$1"
+  [ -z "$INDEX_FILE_MODE" ] || return 0
   git cat-file -e "HEAD:$1" 2>/dev/null && return 2
   return 1
 }
 
+# Index presence is probed with `git ls-files`, not by comparing `git cat-file
+# -t` output to "blob". cat-file exits 128 BOTH for "not in the index" and for a
+# corrupt or unavailable object, so with its status discarded a broken object
+# read looked exactly like an untracked file and the gate fell through to an
+# empty baseline / zero exclusions and reported OK — the fail-open direction, in
+# which a stale row that should have failed the run simply vanishes. ls-files
+# answers from the index alone and exits 0 whether or not it matches, so a
+# nonzero status here is unambiguously a real failure, and the index MODE it
+# prints also tells us whether the entry is a regular file — which is what
+# cat-file's type check was for. `:(literal)` keeps a path carrying glob
+# metacharacters an exact match.
+#
+# Publishes through INDEX_FILE_MODE rather than stdout, and must be called as a
+# plain command: inside `$(...)` collection_error's `exit 2` would terminate only
+# the subshell, the caller would read an empty mode, and the fall-through to
+# "absent" this guard exists to remove would be right back.
+INDEX_FILE_MODE=""
+read_index_file_mode() { # PATH — sets INDEX_FILE_MODE ("" when untracked)
+  local entry status=0
+  entry="$(git ls-files -s -- ":(literal)$1")" || status=$?
+  [ "$status" -eq 0 ] || collection_error "could not query the index for $1 (git ls-files exit $status) — refusing to treat it as absent"
+  INDEX_FILE_MODE="${entry%% *}"
+  [ -n "$entry" ] || INDEX_FILE_MODE=""
+}
+
+read_policy_from_index() { # PATH — stages the index copy of the list at $TMP/excludes
+  case "$INDEX_FILE_MODE" in
+    100*) ;;
+    *) config_error "$1 is tracked but is not a regular file in the index (mode $INDEX_FILE_MODE); it cannot be read as an exclusion list" ;;
+  esac
+  git show ":$1" >"$TMP/excludes" \
+    || collection_error "could not read the tracked exclusion list from the index: $1 — refusing to run with zero exclusions"
+}
+
 EXCLUDES_SOURCE="$EXCLUDES_FILE"
+# Diagnostics name the CONFIGURED path plus where it was read from, so a
+# malformed row in a partial tree still points at the file to fix.
+EXCLUDES_LABEL="$EXCLUDES_FILE"
 excludes_state=0
 staged_policy_state "$EXCLUDES_FILE" || excludes_state=$?
 case "$excludes_state" in
   0)
-    git show ":$EXCLUDES_FILE" >"$TMP/excludes" \
-      || config_error "failed to read tracked excludes from the index: $EXCLUDES_FILE"
+    read_policy_from_index "$EXCLUDES_FILE"
     EXCLUDES_SOURCE="$TMP/excludes"
+    EXCLUDES_LABEL="$EXCLUDES_FILE (index copy)"
+    ;;
+  1)
+    # The worktree copy governs but is not materialized (fresh or sparse
+    # checkout): fall back to the tracked INDEX blob, mirroring the baseline's
+    # fallback below. Running with ZERO exclusions counted the vendored and
+    # generated files the tracked policy excludes and reported violations
+    # against them — "every tracked file minus the exclusion list" held only in
+    # its first half. The list is read-only here, so unlike the baseline there
+    # is no --update interaction to refuse.
+    if [ ! -f "$EXCLUDES_FILE" ]; then
+      read_index_file_mode "$EXCLUDES_FILE"
+      if [ -n "$INDEX_FILE_MODE" ]; then
+        read_policy_from_index "$EXCLUDES_FILE"
+        EXCLUDES_SOURCE="$TMP/excludes"
+        EXCLUDES_LABEL="$EXCLUDES_FILE (index copy)"
+      fi
+    fi
     ;;
   2)
-    : >"$TMP/excludes"
+    : >"$TMP/excludes" || collection_error "could not initialize the excludes scratch file"
     EXCLUDES_SOURCE="$TMP/excludes"
     ;;
 esac
 
 EXCLUDE_PATTERNS=()
 if [ -f "$EXCLUDES_SOURCE" ]; then
+  # The read loop below redirects from this file; an unreadable one would kill
+  # the script on the redirect, with bash's status rather than the contract's.
+  [ -r "$EXCLUDES_SOURCE" ] || config_error "$EXCLUDES_LABEL: exists but cannot be read"
   lineno=0
   while IFS= read -r line || [ -n "$line" ]; do
     lineno=$((lineno + 1))
@@ -294,7 +385,7 @@ if [ -f "$EXCLUDES_SOURCE" ]; then
     pat="${line%%"$TAB"*}"
     reason="${line#*"$TAB"}"
     if [ "$pat" = "$line" ] || [ -z "$pat" ] || [ -z "$reason" ]; then
-      config_error "$EXCLUDES_FILE:$lineno: expected 'pattern<TAB>reason' (every exclusion carries its justification)"
+      config_error "$EXCLUDES_LABEL:$lineno: expected 'pattern<TAB>reason' (every exclusion carries its justification)"
     fi
     EXCLUDE_PATTERNS+=("$pat")
   done <"$EXCLUDES_SOURCE"
@@ -348,12 +439,12 @@ baseline_state=0
 staged_policy_state "$BASELINE_FILE" || baseline_state=$?
 if [ "$baseline_state" -eq 2 ]; then
   # Staged for deletion: the commit freezes nothing, so nothing is frozen.
-  : >"$TMP/baseline.tsv"
+  : >"$TMP/baseline.tsv" || collection_error "could not initialize the empty baseline scratch file"
 elif [ "$baseline_state" -eq 1 ] && [ -f "$BASELINE_FILE" ]; then
   # grep exit 1 = every row well-formed; exit >= 2 = the validation itself
   # broke, which must never read as a clean baseline.
   grep_status=0
-  bad_rows="$(grep -nEv "^[^${TAB}]+${TAB}[1-9][0-9]*\$" -- "$BASELINE_FILE")" || grep_status=$?
+  bad_rows="$(grep -nEv -- "^[^${TAB}]+${TAB}[1-9][0-9]*\$" "$BASELINE_FILE")" || grep_status=$?
   [ "$grep_status" -le 1 ] || collection_error "could not validate $BASELINE_FILE (grep exit $grep_status)"
   if [ -n "$bad_rows" ]; then
     printf '%s\n' "$bad_rows" >&2
@@ -362,13 +453,17 @@ elif [ "$baseline_state" -eq 1 ] && [ -f "$BASELINE_FILE" ]; then
   if ! LC_ALL=C sort -c -- "$BASELINE_FILE" 2>/dev/null; then
     config_error "$BASELINE_FILE: rows must be LC_ALL=C sorted (LC_ALL=C sort -o $BASELINE_FILE $BASELINE_FILE)"
   fi
-  dup_paths="$(cut -f1 -- "$BASELINE_FILE" | LC_ALL=C uniq -d)"
+  dup_paths="$(cut -f1 -- "$BASELINE_FILE" | LC_ALL=C uniq -d)" || collection_error "could not scan $BASELINE_FILE for duplicate paths"
   if [ -n "$dup_paths" ]; then
     printf '%s\n' "$dup_paths" >&2
     config_error "$BASELINE_FILE: duplicate path row(s) above"
   fi
-  cp -- "$BASELINE_FILE" "$TMP/baseline.tsv"
-elif [ "$(git cat-file -t ":$BASELINE_FILE" 2>/dev/null)" = "blob" ]; then
+  cp -- "$BASELINE_FILE" "$TMP/baseline.tsv" || collection_error "could not stage a working copy of $BASELINE_FILE"
+elif read_index_file_mode "$BASELINE_FILE"; [ -n "$INDEX_FILE_MODE" ]; then
+  case "$INDEX_FILE_MODE" in
+    100*) ;;
+    *) config_error "$BASELINE_FILE is tracked but is not a regular file in the index (mode $INDEX_FILE_MODE); it cannot be read as a baseline" ;;
+  esac
   # Staged mode, or a sparse checkout where the accepted baseline is tracked
   # but not materialized: read it from the index rather than degrading to an
   # empty baseline (which would report every frozen offender as new). Full
@@ -379,7 +474,7 @@ elif [ "$(git cat-file -t ":$BASELINE_FILE" 2>/dev/null)" = "blob" ]; then
   [ -f "$BASELINE_FILE" ] || BASELINE_FROM_INDEX=1
   git show ":$BASELINE_FILE" >"$TMP/baseline.tsv" || config_error "failed to read tracked baseline from the index: $BASELINE_FILE"
   grep_status=0
-  bad_rows="$(grep -nEv "^[^${TAB}]+${TAB}[1-9][0-9]*\$" -- "$TMP/baseline.tsv")" || grep_status=$?
+  bad_rows="$(grep -nEv -- "^[^${TAB}]+${TAB}[1-9][0-9]*\$" "$TMP/baseline.tsv")" || grep_status=$?
   [ "$grep_status" -le 1 ] || collection_error "could not validate $BASELINE_FILE (index copy) (grep exit $grep_status)"
   if [ -n "$bad_rows" ]; then
     printf '%s\n' "$bad_rows" >&2
@@ -388,13 +483,13 @@ elif [ "$(git cat-file -t ":$BASELINE_FILE" 2>/dev/null)" = "blob" ]; then
   if ! LC_ALL=C sort -c -- "$TMP/baseline.tsv" 2>/dev/null; then
     config_error "$BASELINE_FILE (index copy): rows must be LC_ALL=C sorted"
   fi
-  dup_paths="$(cut -f1 -- "$TMP/baseline.tsv" | LC_ALL=C uniq -d)"
+  dup_paths="$(cut -f1 -- "$TMP/baseline.tsv" | LC_ALL=C uniq -d)" || collection_error "could not scan $BASELINE_FILE (index copy) for duplicate paths"
   if [ -n "$dup_paths" ]; then
     printf '%s\n' "$dup_paths" >&2
     config_error "$BASELINE_FILE (index copy): duplicate path row(s) above"
   fi
 else
-  : >"$TMP/baseline.tsv"
+  : >"$TMP/baseline.tsv" || collection_error "could not initialize the empty baseline scratch file"
 fi
 
 # --- count every tracked, non-excluded, regular file -------------------------
@@ -404,7 +499,7 @@ fi
 # directory, sparse absence) never decides what a path IS — the index does.
 git ls-files -sz >"$TMP/files.z" || config_error "git ls-files failed"
 checked=0
-: >"$TMP/counts.raw"
+: >"$TMP/counts.raw" || collection_error "could not initialize the counts scratch file"
 # Worktree reads are batched: one `wc -l` invocation per bounded group of
 # files instead of one per file (a large repo materializes thousands).
 # wc emits its counts in argument order, so every output row is matched to
@@ -422,7 +517,7 @@ WT_BATCH_CHARS=0
 flush_batch() { # — appends one "<path><TAB><count>" row per pending file
   local status=0 idx=0 extra=0 want_extra=0 line count path n f
   [ "${#WT_BATCH[@]}" -gt 0 ] || return 0
-  : >"$TMP/batch.tsv"
+  : >"$TMP/batch.tsv" || collection_error "could not initialize the batch scratch file"
   wc -l -- "${WT_BATCH[@]}" >"$TMP/wc.out" || status=$?
   # A multi-file invocation appends exactly one summary row and a
   # single-file one appends none, so the whole output is accounted for:
@@ -446,17 +541,17 @@ flush_batch() { # — appends one "<path><TAB><count>" row per pending file
       case "$count" in "" | *[!0-9]*) idx=-1 ;; esac
       [ "$idx" -ge 0 ] || break
       [ "$path" = "${WT_BATCH[$idx]}" ] || { idx=-1; break; }
-      printf '%s\t%s\n' "$path" "$count" >>"$TMP/batch.tsv"
+      printf '%s\t%s\n' "$path" "$count" >>"$TMP/batch.tsv" || collection_error "could not record the batched count for '$path' — the measurement is incomplete, refusing to report a verdict"
       idx=$((idx + 1))
     done <"$TMP/wc.out"
     if [ "$idx" -eq "${#WT_BATCH[@]}" ] && [ "$extra" -eq "$want_extra" ]; then
-      cat "$TMP/batch.tsv" >>"$TMP/counts.raw"
+      cat "$TMP/batch.tsv" >>"$TMP/counts.raw" || collection_error "could not append the batched counts — the measurement is incomplete, refusing to report a verdict"
       WT_BATCH=()
       WT_BATCH_CHARS=0
       return 0
     fi
   fi
-  : >"$TMP/batch.tsv"
+  : >"$TMP/batch.tsv" || collection_error "could not initialize the batch scratch file"
   for f in "${WT_BATCH[@]}"; do
     # Same contract as the index path: a worktree file that exists but
     # cannot be read (permissions, I/O error) is a collection failure with
@@ -466,9 +561,9 @@ flush_batch() { # — appends one "<path><TAB><count>" row per pending file
     case "$n" in
       "" | *[!0-9]*) collection_error "line count for tracked file '$f' came back as '$n', not a number — its size is unmeasurable, refusing to skip it" ;;
     esac
-    printf '%s\t%s\n' "$f" "$n" >>"$TMP/batch.tsv"
+    printf '%s\t%s\n' "$f" "$n" >>"$TMP/batch.tsv" || collection_error "could not record the count for '$f' — the measurement is incomplete, refusing to report a verdict"
   done
-  cat "$TMP/batch.tsv" >>"$TMP/counts.raw"
+  cat "$TMP/batch.tsv" >>"$TMP/counts.raw" || collection_error "could not append the re-measured counts — the measurement is incomplete, refusing to report a verdict"
   WT_BATCH=()
   WT_BATCH_CHARS=0
 }
@@ -509,7 +604,7 @@ while IFS= read -r -d '' rec; do
       collection_error "cannot read index blob for tracked file '$f' — its size is unmeasurable, refusing to skip it"
     fi
     n=$((n)) # strip wc's leading whitespace (BSD wc pads)
-    printf '%s\t%s\n' "$f" "$n" >>"$TMP/counts.raw"
+    printf '%s\t%s\n' "$f" "$n" >>"$TMP/counts.raw" || collection_error "could not record the count for '$f' — the measurement is incomplete, refusing to report a verdict"
   else
     WT_BATCH+=("$f")
     WT_BATCH_CHARS=$((WT_BATCH_CHARS + ${#f} + 1))
@@ -528,14 +623,14 @@ counted="$(count_nonempty_lines "$TMP/counts.raw")"
 # Stamp each measured row with the threshold its path class carries. A pass
 # over the rows, not a step inside collection: counting is batched and the
 # batch writer knows nothing about classes.
-: >"$TMP/counts.classed"
+: >"$TMP/counts.classed" || collection_error "could not initialize the classified-counts scratch file"
 while IFS="$TAB" read -r cf cn; do
   path_threshold "$cf"
-  printf '%s\t%s\t%s\n' "$cf" "$cn" "$PT" >>"$TMP/counts.classed"
+  printf '%s\t%s\t%s\n' "$cf" "$cn" "$PT" >>"$TMP/counts.classed" || collection_error "could not record the threshold for '$cf' — the measurement is incomplete, refusing to report a verdict"
 done <"$TMP/counts.raw"
 classed="$(count_nonempty_lines "$TMP/counts.classed")"
 [ "$classed" -eq "$counted" ] || collection_error "classified $classed of the $counted measured row(s) — refusing to report a verdict over a subset"
-LC_ALL=C sort -- "$TMP/counts.classed" >"$TMP/counts.tsv"
+LC_ALL=C sort -- "$TMP/counts.classed" >"$TMP/counts.tsv" || collection_error "could not sort the collected counts — the measurement is incomplete, refusing to report a verdict"
 
 # --- evaluate a baseline against the counts ----------------------------------
 # Counts rows are `path<TAB>lines<TAB>threshold` — the class resolver already
@@ -619,7 +714,7 @@ if [ "$MODE" = "update" ]; then
         }
       }
     }
-  ' "$TMP/baseline.tsv" "$TMP/counts.tsv" | LC_ALL=C sort >"$TMP/baseline.new"
+  ' "$TMP/baseline.tsv" "$TMP/counts.tsv" | LC_ALL=C sort >"$TMP/baseline.new" || collection_error "could not build the tightened baseline — update aborted, baseline unchanged"
   if [ "$BASELINE_FROM_INDEX" = "1" ]; then
     # printf %q shell-escapes the configured path so the suggested command
     # survives copy-paste. update-index/checkout-index take literal file
@@ -631,6 +726,38 @@ if [ "$MODE" = "update" ]; then
     config_error "--update cannot rewrite an index-only baseline (sparse checkout omits $BASELINE_FILE); materialize it with: git update-index --no-skip-worktree -- $BASELINE_QUOTED && git checkout-index -- $BASELINE_QUOTED, then rerun (a later git sparse-checkout reapply re-hides it; checkout-index without -f refuses to overwrite anything unexpectedly occupying the path)"
   fi
   if [ -f "$BASELINE_FILE" ]; then
+    # Reconcile the baseline's OWN row against the file it is about to become.
+    # The pipeline above wrote that row from the PRE-update counts, so once
+    # other rows were pruned the row disagreed with the file's new length and
+    # the very next check failed — --update contradicting its own one-run
+    # tightening guarantee, and logging "tightened: 50 -> 2" for a file that
+    # ended up 1 line long.
+    #
+    # One pass suffices, no iteration: a row's own file length is the ROW COUNT
+    # of this candidate, and editing a value in place cannot change that count.
+    # Dropping the row lowers the count by one, but only happens when the count
+    # is already at/under the threshold, so the result stays under it. The
+    # deciding threshold is the baseline path's own class, not the base one.
+    path_threshold "$BASELINE_FILE"
+    self_lines="$(wc -l <"$TMP/baseline.new" | tr -d ' ')" || collection_error "could not measure the candidate baseline for its own row — update aborted, baseline unchanged"
+    BASELINE_PATH="$BASELINE_FILE" SELF_LINES="$self_lines" SELF_THR="$PT" awk -F'\t' -v OFS='\t' '
+      BEGIN { p = ENVIRON["BASELINE_PATH"]; n = ENVIRON["SELF_LINES"] + 0; thr = ENVIRON["SELF_THR"] + 0 }
+      $1 != p { print; next }
+      {
+        # The pipeline above already logged this row from the PRE-update counts,
+        # so its verdict is restated here rather than left contradicting reality.
+        if (n <= thr) {
+          printf "removed (the baseline'"'"'s own row: it is now %d line(s), at/under threshold %d): %s\n", n, thr, p > "/dev/stderr"
+          next
+        }
+        v = ($2 + 0 > n ? n : $2 + 0)                     # tighten only, never raise
+        if (v != $2 + 0) {
+          printf "re-tightened (the baseline'"'"'s own row against its new length): %s %d -> %d\n", p, $2 + 0, v > "/dev/stderr"
+        }
+        print p, v
+      }
+    ' "$TMP/baseline.new" >"$TMP/baseline.self" || collection_error "could not reconcile the baseline's own row — update aborted, baseline unchanged"
+    mv "$TMP/baseline.self" "$TMP/baseline.new" || collection_error "could not stage the reconciled baseline — update aborted, baseline unchanged"
     # Every check and recount that can fail runs against the candidate
     # BEFORE it replaces the real baseline, so any collection failure
     # aborts the update with the reviewed baseline byte-identical — and
@@ -658,12 +785,34 @@ if [ "$MODE" = "update" ]; then
       BASELINE_PATH="$BASELINE_FILE" NEW_N="$new_n" awk -F'\t' -v OFS='\t' 'BEGIN { p = ENVIRON["BASELINE_PATH"]; n = ENVIRON["NEW_N"] } $1 == p { print p, n, $3; next } { print }' "$TMP/counts.tsv" >"$TMP/counts.rewrite" || collection_error "could not rewrite the counts row for $BASELINE_FILE — update aborted, baseline unchanged"
       mv "$TMP/counts.rewrite" "$TMP/counts.tsv" || collection_error "could not stage the refreshed counts — update aborted, baseline unchanged"
     fi
+    # The replacement is staged NEXT TO the baseline, not in $TMP. `mktemp -d`
+    # honours TMPDIR, so on the common layout where /tmp is a separate
+    # filesystem from the checkout, `mv` could not rename and fell back to
+    # copy-then-remove — an interruption mid-copy left the tracked baseline
+    # truncated or missing, defeating the atomic-replace intent stated above. A
+    # sibling temp is on the destination's own filesystem by construction, so
+    # the final step is a real rename(2).
+    STAGED_BASELINE="$(mktemp -- "$(dirname -- "$BASELINE_FILE")/.size-ratchet-baseline.XXXXXX")" || collection_error "could not create a staging file beside $BASELINE_FILE — update aborted, baseline unchanged"
+    # rename(2) carries the SOURCE file's mode, and mktemp creates at 0600 — so
+    # without this the replace would silently narrow a world-readable tracked
+    # file. 0666 masked by the umask is exactly the mode the plain shell
+    # redirect that writes $TMP/baseline.new produces.
+    #
+    # `--` goes BEFORE the mode, not after it. BSD/macOS chmod parses options
+    # with getopt(3), which stops at the first non-option argument — the mode —
+    # so a trailing `--` is read as a literal filename and chmod fails on the
+    # nonexistent file `--`, aborting every --update on macOS. GNU chmod
+    # permutes and accepts either order, which is why the mistake survives a
+    # Linux-only run.
+    chmod -- "$(printf '%03o' "$((0666 & ~8#$(umask)))")" "$STAGED_BASELINE" || collection_error "could not set the staging file's mode beside $BASELINE_FILE — update aborted, baseline unchanged"
+    cat -- "$TMP/baseline.new" >"$STAGED_BASELINE" || collection_error "could not write the staged baseline beside $BASELINE_FILE — update aborted, baseline unchanged"
     # The replace and the re-read carry the contract too, with honest
     # sidedness: mv failing means the original may not have been replaced
     # cleanly — inspect it; cp failing AFTER a successful mv means the
     # baseline on disk WAS replaced and only the re-read for the
     # post-update check is missing.
-    mv -- "$TMP/baseline.new" "$BASELINE_FILE" || collection_error "could not replace the baseline at $BASELINE_FILE (mv failed) — inspect the file before trusting it"
+    mv -- "$STAGED_BASELINE" "$BASELINE_FILE" || collection_error "could not replace the baseline at $BASELINE_FILE (mv failed) — inspect the file before trusting it"
+    STAGED_BASELINE="" # renamed away; nothing left for the EXIT trap to remove
     cp -- "$BASELINE_FILE" "$TMP/baseline.tsv" || collection_error "could not re-read the replaced baseline at $BASELINE_FILE (cp failed) — the baseline WAS replaced; rerun size-ratchet to verify it"
     echo "size-ratchet --update: baseline tightened at $BASELINE_FILE ($rows row(s))"
   else
@@ -781,9 +930,9 @@ if [ "$MODE" = "seed" ]; then
 fi
 
 # --- verdict -------------------------------------------------------------------
-evaluate "$TMP/baseline.tsv" >"$TMP/violations.tsv"
+evaluate "$TMP/baseline.tsv" >"$TMP/violations.tsv" || collection_error "could not evaluate the baseline against the collected counts"
 violations="$(count_nonempty_lines "$TMP/violations.tsv")"
-report "$TMP/violations.tsv"
+report "$TMP/violations.tsv" || collection_error "could not read the violations scratch file to report them"
 if [ "$violations" -gt 0 ]; then
   echo "size-ratchet: $violations violation(s) — threshold $THRESHOLD$CLASSES_NOTE, baseline $BASELINE_FILE"
   exit 1

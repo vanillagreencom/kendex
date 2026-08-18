@@ -117,6 +117,65 @@ run_sr
   && ok "control: the STAGED deletion is stale — only index-listed-but-absent is preserved" \
   || bad "control: the STAGED deletion is stale" "rc=$RC out=$OUT"
 
+echo "=== a tracked-but-absent exclusion list still applies, from the index ==="
+# Same sparse-checkout shape as the baseline case above, for the OTHER tracked
+# policy file. A worktree missing the list used to mean zero exclusions, so a
+# fresh or partial tree reported violations against the vendored and generated
+# files the tracked list excludes — the opposite direction from the baseline
+# fallback (noise, not a smuggled offender), but equally a broken scope
+# contract: "every tracked file minus the exclusion list" held only in its
+# first half.
+new_repo excl-absent
+mkfile vendor/big.txt 40
+git -C "$R" add -A
+
+# Control 1, the failing direction: with no exclusion list, the file IS a
+# violation. Without this the passes below could come from the file being
+# under threshold or uncounted rather than from the exclusion.
+run_sr
+[ "$RC" -eq 1 ] && case "$OUT" in *"vendor/big.txt"*) true ;; *) false ;; esac \
+  && ok "control: with no exclusion list, vendor/big.txt is a new offender" \
+  || bad "control: with no exclusion list, vendor/big.txt is a new offender" "rc=$RC out=$OUT"
+
+mkdir -p "$R/tools"
+printf 'vendor/*\tvendored third-party — size is not a design signal\n' >"$R/tools/size-ratchet-excludes"
+git -C "$R" add -A
+
+# Control 2: the exclusion works when the list is materialized.
+run_sr
+[ "$RC" -eq 0 ] && ok "control: a worktree exclusion list excludes vendor/big.txt" \
+  || bad "control: a worktree exclusion list excludes vendor/big.txt" "rc=$RC out=$OUT"
+
+rm "$R/tools/size-ratchet-excludes" # unstaged: the index still lists it
+run_sr
+[ "$RC" -eq 0 ] && ok "a tracked-but-absent exclusion list is read from the index and still applies" \
+  || bad "a tracked-but-absent exclusion list is read from the index" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"vendor/big.txt"*) bad "the index-read exclusion must keep vendor/big.txt out of the report" "$OUT" ;;
+  *) ok "no violation is reported against the index-excluded path" ;;
+esac
+
+git -C "$R" add -A # stage the deletion: the list truly left the tracked set
+run_sr
+[ "$RC" -eq 1 ] && case "$OUT" in *"vendor/big.txt"*) true ;; *) false ;; esac \
+  && ok "control: a STAGED deletion of the list really removes the exclusions" \
+  || bad "control: a STAGED deletion of the list removes the exclusions" "rc=$RC out=$OUT"
+
+echo "=== the index copy of the exclusion list gets the same validation ==="
+# A malformed row must fail loud from the index exactly as from the worktree —
+# otherwise the fallback would be a hole in the reason-is-mandatory contract —
+# and the diagnostic must say WHICH copy it read.
+new_repo excl-index-bad
+mkfile vendor/big.txt 40
+mkdir -p "$R/tools"
+printf 'vendor/* missing-tab-so-no-reason\n' >"$R/tools/size-ratchet-excludes"
+git -C "$R" add -A
+rm "$R/tools/size-ratchet-excludes"
+run_sr
+[ "$RC" -eq 2 ] && case "$OUT" in *"(index copy):1: expected 'pattern<TAB>reason'"*) true ;; *) false ;; esac \
+  && ok "a malformed index-copy row is a config error naming the copy and the line" \
+  || bad "a malformed index-copy row is a config error" "rc=$RC out=$OUT"
+
 echo "=== newline-containing tracked paths are refused loudly ==="
 new_repo nl
 mkfile ok.txt 3

@@ -329,5 +329,36 @@ git -C "$R" add -A
 run_raw SIZE_RATCHET_BASELINE=-b || true
 if [ "$RC" -eq 2 ]; then ok "option-like baseline path refuses as config (no cut/sort option injection)"; else bad "option-like baseline path" "rc=$RC out=$OUT"; fi
 
+echo "=== a supplied-but-empty path flag is an error, not the default ==="
+# Testing the flag's VALUE alone made `--baseline=` and `--baseline ""`
+# indistinguishable from an absent flag, so automation whose path came out of a
+# bad substitution silently checked the repository's default baseline and
+# passed. Whether the flag was supplied is now tracked apart from its value.
+new_repo emptyflag
+mkfile f.txt 20
+mkfile huge.txt 405
+mkdir -p "$R/tools"
+# The DEFAULT baseline freezes huge.txt, so falling back to it exits 0 — the
+# false pass this case exists to catch. A correct refusal is exit 2.
+printf 'huge.txt\t405\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+
+run_raw
+[ "$RC" -eq 0 ] \
+  && ok "control: the default baseline is present and passes, so a silent fallback would read as success" \
+  || bad "control: default baseline passes" "rc=$RC out=$OUT"
+
+for flag in --baseline --excludes; do
+  run_raw -- "$flag" "" || true
+  [ "$RC" -eq 2 ] && case "$OUT" in *"was given an empty path"*) true ;; *) false ;; esac \
+    && ok "split form '$flag \"\"' exits 2 instead of falling back to the default" \
+    || bad "split form '$flag \"\"' refuses" "rc=$RC out=$OUT"
+
+  run_raw -- "$flag=" || true
+  [ "$RC" -eq 2 ] && case "$OUT" in *"was given an empty path"*) true ;; *) false ;; esac \
+    && ok "equals form '$flag=' exits 2 instead of falling back to the default" \
+    || bad "equals form '$flag=' refuses" "rc=$RC out=$OUT"
+done
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

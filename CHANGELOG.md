@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+- size-ratchet: seven fixes absorbed from the forked copy drovr has been
+  running (DRO-201), each with its own regression pin.
+  `--update` converges in ONE run: the baseline's own row is reconciled
+  against the file it is about to become, so a self-referential row no
+  longer contradicts the rewrite that just produced it and fails the very
+  next check.
+  A broken gate exits 2, never 1. The repository `cd`, every scratch-file
+  write, the baseline working copy, the counts sort and the `--update`
+  sort pipeline route through the collection-error path instead of dying
+  under `set -e` with the failing tool's own status — 1 is the code
+  reserved for "a size violation was measured", so a full or read-only
+  TMPDIR reached callers as a failing repository rather than a broken gate.
+  A tracked exclusion list the worktree does not carry is read from the
+  index, as the baseline already was: a sparse or fresh checkout ran with
+  ZERO exclusions and reported violations against the vendored and
+  generated files the tracked policy exempts.
+  Index presence is probed with `git ls-files -s` and its status is
+  checked. `git cat-file -t` exits 128 both for "not in the index" and for
+  a corrupt or unavailable object, so with the status discarded a broken
+  read looked exactly like an untracked file and the gate fell through to
+  an empty baseline — losing every frozen row and any stale row that
+  should have failed the run.
+  A supplied-but-empty `--baseline` / `--excludes` is a config error;
+  automation whose path came out of a bad substitution used to check the
+  repository default and pass.
+  `--update` stages its replacement beside the baseline instead of in
+  `$TMPDIR`, so the final step is a real `rename(2)` rather than a
+  cross-filesystem copy that can leave the tracked baseline truncated
+  mid-write; the replaced file keeps its umask-implied mode.
+  `--` moves before the pattern in the remaining greps (and before the
+  mode in `chmod`) — non-permuting BSD/POSIX option scanning stops at the
+  first operand, so the trailing form failed every invocation on macOS.
+
 - pi-agents-tmux: the idle-stall watchdog skips panes with a pending
   rate-limit retry instead of condemning a merely-throttled agent as a
   post-compaction stall; its synthetic summary no longer asserts a cause it

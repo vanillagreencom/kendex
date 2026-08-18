@@ -58,6 +58,15 @@ run_sr() { # [args...] — run in $R at threshold 10; sets OUT and RC
   OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=10 "$SR" "$@" 2>&1)" || RC=$?
 }
 
+run_wc_failing_from() { # N [args...] — run_sr with the wc shim failing from call N
+  local from="$1"
+  shift
+  rm -f "$TMP/wc-calls"
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && PATH="$WC_RECOUNT_SHIM:$PATH" SR_WC_FAIL_FROM="$from" SIZE_RATCHET_THRESHOLD=10 "$SR" "$@" 2>&1)" || RC=$?
+}
+
 run_sr_shimmed() { # SHIMDIR [args...] — run_sr with SHIMDIR first on PATH
   local shimdir="$1"
   shift
@@ -125,11 +134,17 @@ exit 1
 EOF
 chmod +x "$WC_SHIM/wc"
 
-# wc shim: pass the first call through (the collection loop's single
-# batched count for the fixture's two tracked files), fail from the second
-# on — which in --update is the recount of the candidate baseline. Exit 7
-# on purpose: a raw tool status escaping instead of the contract's exit 2
-# must be visible. Reset $TMP/wc-calls before each run.
+# wc shim: pass calls through until $SR_WC_FAIL_FROM, then fail. Exit 7 on
+# purpose: a raw tool status escaping instead of the contract's exit 2 must be
+# visible. Reset $TMP/wc-calls before each run.
+#
+# The ordinal is COUPLED to how many times a run measures things, so it is
+# passed in per case rather than hardcoded. For the two-tracked-file fixtures
+# below the collection loop burns call 1 (both files in one batch), then
+# --update measures the candidate TWICE: call 2 reconciles the baseline's own
+# row against the candidate's length, call 3 recounts it afterwards for the
+# counts row. Each of those two sites gets its own case, so adding a third
+# measurement fails a named assertion here instead of silently retargeting one.
 WC_RECOUNT_SHIM="$TMP/wc-recount-shim"
 mkdir -p "$WC_RECOUNT_SHIM"
 cat >"$WC_RECOUNT_SHIM/wc" <<EOF
@@ -137,7 +152,7 @@ cat >"$WC_RECOUNT_SHIM/wc" <<EOF
 n="\$(cat "$TMP/wc-calls" 2>/dev/null)" || n=0
 n=\$((n + 1))
 printf '%s\n' "\$n" >"$TMP/wc-calls"
-if [ "\$n" -ge 2 ]; then
+if [ "\$n" -ge "\${SR_WC_FAIL_FROM:-3}" ]; then
   echo "wc: simulated recount failure" >&2
   exit 7
 fi
@@ -354,12 +369,23 @@ mkfile big.txt 15
 mkdir -p "$R/tools"
 printf 'big.txt\t20\n' >"$R/tools/size-ratchet-baseline.tsv"
 git -C "$R" add -A
-rm -f "$TMP/wc-calls"
-run_sr_shimmed "$WC_RECOUNT_SHIM" --update
+run_wc_failing_from 3 --update
 [ "$RC" -eq 2 ] && case "$OUT" in *"could not recount the updated baseline tools/size-ratchet-baseline.tsv"*) true ;; *) false ;; esac \
   && ok "a wc failure on the recount is a collection error: exit 2 with the update-aborted diagnostic" \
   || bad "a wc failure on the recount is a collection error, exit 2 (never raw status 7)" "rc=$RC out=$OUT"
-case "$OUT" in *"wc: simulated recount failure"*) ok "the shim fired on the recount call (2nd wc), pinning the cause" ;; *) bad "the shim fired on the recount call" "$OUT" ;; esac
+case "$OUT" in *"wc: simulated recount failure"*) ok "the shim fired on the recount call (3rd wc), pinning the cause" ;; *) bad "the shim fired on the recount call" "$OUT" ;; esac
+
+# The OTHER candidate measurement, added with the self-row reconciliation: it
+# runs first, so it needs its own case or a failure there would surface as this
+# one and quietly retarget the assertion above.
+run_wc_failing_from 2 --update
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not measure the candidate baseline for its own row"*) true ;; *) false ;; esac \
+  && ok "a wc failure measuring the candidate for its own row is exit 2 with its own diagnostic" \
+  || bad "a wc failure on the self-row measurement is exit 2 with its own diagnostic" "rc=$RC out=$OUT"
+row_selfmeasure="$(cat "$R/tools/size-ratchet-baseline.tsv")"
+[ "$row_selfmeasure" = "$(printf 'big.txt\t20')" ] \
+  && ok "the aborted self-row measurement leaves the original row byte-identical" \
+  || bad "the aborted self-row measurement leaves the original row byte-identical" "row=$row_selfmeasure"
 row="$(cat "$R/tools/size-ratchet-baseline.tsv")"
 [ "$row" = "$(printf 'big.txt\t20')" ] && ok "the aborted recount leaves the original loose row byte-identical" \
   || bad "the aborted recount leaves the original loose row byte-identical" "row=$row"

@@ -132,7 +132,10 @@ pattern<TAB>reason
 
 The pattern is a shell glob matched against the full repo-relative path
 (`*` crosses `/`). Blank lines and `#` comments are ignored; a pattern
-without a reason is a config error. Typical entries:
+without a reason is a config error. A tracked list the worktree does not
+carry (sparse or partial checkout) is read from the index, like the
+baseline, and gets the same row validation — the exclusions hold on partial
+trees rather than collapsing to none. Typical entries:
 
 ```
 Cargo.lock	lockfile — generated, size is not a design signal
@@ -157,7 +160,9 @@ never sourced). Only an ABSENT source is skipped: a source that exists but
 is unusable — unreadable, a directory, FIFO, socket or device, or a symlink
 that does not resolve — is a config error (exit 2), never a fall-through to
 the next layer; `/dev/null` forces the built-in defaults. `--baseline` /
-`--excludes` flags override every source for the paths. All relative paths
+`--excludes` flags override every source for the paths; supplying one with
+an empty value (`--baseline=`, `--baseline ""`) is a config error, never a
+silent fall back to the default path. All relative paths
 are
 repo-root-relative; the script `cd`s to `git rev-parse --show-toplevel`
 before resolving anything.

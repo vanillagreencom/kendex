@@ -126,5 +126,214 @@ run_sr --update
   && ok "--update without a baseline writes nothing and the new offender still fails" \
   || bad "--update without a baseline writes nothing" "rc=$RC out=$OUT"
 
+echo "=== --update stages the replacement on the destination's own filesystem ==="
+# The replacement used to be built under `mktemp -d` (i.e. TMPDIR, commonly a
+# separate filesystem from the checkout), so the final `mv` could not rename and
+# fell back to copy-then-remove — an interruption mid-copy left the tracked
+# baseline truncated or missing, defeating the stated atomic-replace intent.
+#
+# Asserted by WHERE the staging file is created, not by running across a real
+# device boundary: a cross-device run SUCCEEDS under both the old and the new
+# code (mv's copy fallback is correct, just not atomic), so a success assertion
+# would be vacuous for this bug. Same-directory staging is the property that
+# makes the rename atomic, and it is directly observable.
+MKTEMP_SHIM="$TMP/mktemp-shim"
+mkdir -p "$MKTEMP_SHIM"
+REAL_MKTEMP="$(command -v mktemp)"
+MKTEMP_LOG="$TMP/mktemp-templates.log"
+: >"$MKTEMP_LOG"
+cat >"$MKTEMP_SHIM/mktemp" <<EOF
+#!/usr/bin/env bash
+# Record the template of every FILE mktemp (never the -d scratch dir), then
+# defer to the real mktemp so the run behaves normally.
+for arg in "\$@"; do
+  [ "\$arg" = "-d" ] && exec "$REAL_MKTEMP" "\$@"
+done
+for arg in "\$@"; do
+  case "\$arg" in
+    -*) ;;
+    *) printf '%s\n' "\$arg" >>"$MKTEMP_LOG" ;;
+  esac
+done
+exec "$REAL_MKTEMP" "\$@"
+EOF
+chmod +x "$MKTEMP_SHIM/mktemp"
+
+R="$TMP/staging"
+mkdir -p "$R"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+mkfile loose.txt 15
+mkdir -p "$R/tools"
+printf 'loose.txt\t30\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+
+OUT=""
+RC=0
+OUT="$(cd "$R" && umask 022 && PATH="$MKTEMP_SHIM:$PATH" SIZE_RATCHET_THRESHOLD=10 "$SR" --update 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && [ "$(cat "$R/tools/size-ratchet-baseline.tsv")" = "$(printf 'loose.txt\t15')" ] \
+  && ok "control: the shimmed --update really tightened the baseline (30 -> 15)" \
+  || bad "control: shimmed --update tightens" "rc=$RC out=$OUT"
+
+# Vacuity anchor: an empty log would satisfy every "no template outside tools/"
+# phrasing of the assertion below.
+templates="$(cat "$MKTEMP_LOG")"
+[ -n "$templates" ] \
+  && ok "control: the mktemp shim recorded a file template, so the location assertion has something to read" \
+  || bad "the mktemp shim recorded nothing" "log is empty"
+
+# The property: every staging template sits in the baseline's OWN directory.
+outside="$(printf '%s\n' "$templates" | grep -v '^tools/' || true)"
+[ -z "$outside" ] \
+  && ok "--update stages the replacement inside tools/, the baseline's own directory (rename is same-filesystem)" \
+  || bad "--update stages outside the baseline's directory" "templates outside tools/: $outside"
+
+# rename(2) carries the SOURCE's mode, and mktemp creates at 0600 — so the
+# replaced baseline must not come back private.
+mode="$(ls -l "$R/tools/size-ratchet-baseline.tsv" | cut -c1-10)"
+[ "$mode" = "-rw-r--r--" ] \
+  && ok "the replaced baseline keeps the umask-implied mode (0644), not mktemp's 0600" \
+  || bad "the replaced baseline's mode" "got $mode, want -rw-r--r--"
+
+# Globbed, not `ls | grep`: the staging file is a DOTFILE, so the dot glob is
+# load-bearing — a plain `*` would report "clean" while debris sat right there.
+leftovers=""
+for entry in "$R"/tools/* "$R"/tools/.*; do
+  [ -e "$entry" ] || continue # unmatched glob expands to itself
+  base="${entry##*/}"
+  case "$base" in
+    "." | ".." | "size-ratchet-baseline.tsv") continue ;;
+  esac
+  leftovers="${leftovers:+$leftovers }$base"
+done
+[ -z "$leftovers" ] \
+  && ok "no staging debris is left beside the baseline" \
+  || bad "no staging debris is left beside the baseline" "$leftovers"
+
+echo "=== the staging chmod survives BSD/macOS option parsing ==="
+# BSD chmod parses options with getopt(3), which stops at the first non-option
+# argument — the mode — so `chmod 644 -- FILE` reads `--` as a literal filename
+# and fails on the nonexistent file `--`, aborting every --update on macOS. GNU
+# chmod permutes and accepts either order, so a Linux-only run cannot see it.
+# BSD chmod is not available on this runner, so the RULE is modelled in a shim
+# rather than the binary: options are honoured only until the first operand.
+CHMOD_SHIM="$TMP/chmod-shim"
+mkdir -p "$CHMOD_SHIM"
+REAL_CHMOD="$(command -v chmod)"
+cat >"$CHMOD_SHIM/chmod" <<EOF
+#!/usr/bin/env bash
+args=()
+seen_operand=0
+for arg in "\$@"; do
+  if [ "\$seen_operand" -eq 0 ]; then
+    case "\$arg" in
+      --) seen_operand=1; continue ;; # end-of-options, consumed
+      -*) args+=("\$arg"); continue ;; # an option
+      *) seen_operand=1 ;;             # the mode: BSD stops scanning here
+    esac
+  fi
+  if [ "\$arg" = "--" ]; then
+    echo "chmod: --: No such file or directory" >&2
+    exit 1
+  fi
+  args+=("\$arg")
+done
+exec "$REAL_CHMOD" "\${args[@]}"
+EOF
+chmod +x "$CHMOD_SHIM/chmod"
+
+# The shim proven in the FAILING direction first, on a real file: without this
+# the shim could be a pass-through and the case below would prove nothing.
+probe="$TMP/chmod-probe"
+: >"$probe"
+if "$CHMOD_SHIM/chmod" 644 -- "$probe" 2>/dev/null; then
+  bad "the BSD chmod shim models the option-parsing rule" "trailing -- was accepted; the shim is inert"
+else
+  ok "control: the BSD chmod shim rejects 'chmod MODE -- FILE', the form macOS breaks on"
+fi
+"$CHMOD_SHIM/chmod" -- 644 "$probe" 2>/dev/null \
+  && ok "control: the same shim accepts 'chmod -- MODE FILE', so it is not rejecting everything" \
+  || bad "the BSD chmod shim accepts the leading -- form" "the shim rejects the correct form too"
+
+R="$TMP/bsd-chmod"
+mkdir -p "$R"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+mkfile loose.txt 15
+mkdir -p "$R/tools"
+printf 'loose.txt\t30\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+
+OUT=""
+RC=0
+OUT="$(cd "$R" && umask 022 && PATH="$CHMOD_SHIM:$PATH" SIZE_RATCHET_THRESHOLD=10 "$SR" --update 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && [ "$(cat "$R/tools/size-ratchet-baseline.tsv")" = "$(printf 'loose.txt\t15')" ] \
+  && ok "--update completes under BSD chmod option parsing (the mode's -- comes first)" \
+  || bad "--update completes under BSD chmod option parsing" "rc=$RC out=$OUT"
+
+echo "=== a self-referential baseline row converges in ONE --update ==="
+# The baseline file is itself tracked, so when it is over its threshold it earns
+# a row — whose correct value is this file's own final length. The pipeline wrote
+# that row from the PRE-update counts, so pruning any other row left the row
+# disagreeing with reality and the very next check failed: --update contradicting
+# its own one-run tightening guarantee, logging "tightened: … 50 -> 2" for a file
+# that ended up 1 line long. Measured before the fix: a baseline holding one
+# to-be-removed row plus a self-referential row needed TWO runs to converge.
+
+# Case A: the candidate lands at/under the threshold, so the row must GO.
+R="$TMP/selfrow-drop"
+mkdir -p "$R/tools"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+mkfile shrunk.txt 1
+printf 'shrunk.txt\t50\ntools/size-ratchet-baseline.tsv\t50\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+OUT=""; RC=0
+OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=1 "$SR" --update 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "one --update converges: no violation remains on the same run" \
+  || bad "one --update converges (self-row dropped)" "rc=$RC out=$OUT"
+# The verdict must be reachable a second time without another rewrite.
+OUT2=""; RC2=0
+OUT2="$(cd "$R" && SIZE_RATCHET_THRESHOLD=1 "$SR" 2>&1)" || RC2=$?
+[ "$RC2" -eq 0 ] && ok "the immediately following CHECK is clean — the fixed point really was reached" \
+  || bad "the immediately following check is clean" "rc=$RC2 out=$OUT2"
+case "$OUT" in
+  *"stale baseline row"*) bad "--update must not leave the stale self-row it just wrote" "$OUT" ;;
+  *) ok "no stale-row violation is reported by the run that wrote the baseline" ;;
+esac
+# The log must not claim a tighten for a row it removed.
+case "$OUT" in
+  *"removed (the baseline's own row"*) ok "the dropped self-row is announced honestly, correcting the earlier line" ;;
+  *) bad "the dropped self-row is announced" "$OUT" ;;
+esac
+
+# Case B: the candidate stays OVER the threshold, so the row is re-tightened to
+# the real length rather than dropped — the other branch of the same fix.
+R="$TMP/selfrow-tighten"
+mkdir -p "$R/tools"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+mkfile keep.txt 5
+mkfile shrunk.txt 1
+printf 'keep.txt\t9\nshrunk.txt\t50\ntools/size-ratchet-baseline.tsv\t50\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+OUT=""; RC=0
+OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=1 "$SR" --update 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "one --update converges when the self-row survives" \
+  || bad "one --update converges (self-row tightened)" "rc=$RC out=$OUT"
+# Two rows survive (keep.txt and the baseline itself), so the self-row must read
+# exactly 2 — the candidate's own line count, not the pre-update 3.
+expected_self="$(printf 'keep.txt\t5\ntools/size-ratchet-baseline.tsv\t2')"
+actual_self="$(cat "$R/tools/size-ratchet-baseline.tsv")"
+[ "$actual_self" = "$expected_self" ] && ok "the surviving self-row equals the file's final length (2), not its pre-update length" \
+  || bad "the surviving self-row equals the final length" "$(printf 'expected:\n%s\ngot:\n%s' "$expected_self" "$actual_self")"
+rows_on_disk="$(wc -l <"$R/tools/size-ratchet-baseline.tsv" | tr -d ' ')"
+[ "$rows_on_disk" = "2" ] && ok "the row and the on-disk line count agree — self-consistent by construction" \
+  || bad "the row and the on-disk line count agree" "on disk: $rows_on_disk"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
