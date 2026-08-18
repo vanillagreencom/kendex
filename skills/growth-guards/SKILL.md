@@ -22,6 +22,7 @@ sharing its idiom and its exit contract.
 .agents/skills/growth-guards/scripts/growth-guards              # batch: every enabled repo check
 .agents/skills/growth-guards/scripts/growth-guards todo-ban     # one check by name, flags pass through
 .agents/skills/growth-guards/scripts/install-git-hooks          # arm the git pre-commit/commit-msg shims
+.agents/skills/growth-guards/scripts/install-git-hooks --check  # read-only: are the shims still armed?
 ```
 
 Every check is also independently invocable as `scripts/CHECK` — wire CI at
@@ -61,10 +62,14 @@ content, then the repo-root-relative executable named by
 `commit-msg` runs this family's message gate. They BLOCK on the family's exit
 contract, fail closed on a guard that could not run, and `git commit
 --no-verify` is the deliberate bypass. `vstack add` and `vstack refresh` run
-the installer, `vstack remove growth-guards` runs `--uninstall` first. Repeat
-runs are no-ops and repairs; `core.hooksPath` is never set, existing hooks
-keep their content and their own exit status. Full behaviour, including what
-the installer refuses to touch: [DEVELOPMENT.md](DEVELOPMENT.md).
+the installer, `vstack remove growth-guards` runs `--uninstall` first, and
+`vstack check` folds in `--check`'s read-only verdict (0 armed; 1 drifted,
+absent, or dormant behind a `core.hooksPath` that redirects git away from
+the shims; 2 could not determine — an unreadable hooks directory is 2, never
+a pass). Repeat runs are no-ops and repairs; `core.hooksPath` is never set,
+existing hooks keep their content and their own exit status. Full behaviour,
+including what the installer refuses to touch:
+[DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Configuration
 

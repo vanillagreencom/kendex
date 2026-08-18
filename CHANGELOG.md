@@ -18,6 +18,22 @@
   whether it was created somewhere cleanup can reach at all. Zero hits
   across the repo at HEAD (`preflight --all`), so the lane lands
   zero-pinned. (#1481)
+- growth-guards + CLI: `install-git-hooks --check` answers, read-only,
+  whether the git shims are armed, and `vstack check` folds the verdict in
+  for projects with the skill installed (#1482). The hook file is a shared
+  surface — any other writer to `.git/hooks/pre-commit` replaces it and
+  silently drops the marked line — and until now no command could see that:
+  `check` reported asset state only, so every commit between the disarm and
+  the next `refresh` went ungated with nothing recording it. `--check` exits
+  0 armed; 1 drifted, absent, or armed-but-dormant behind a `core.hooksPath`
+  that redirects git away from the shims (its own wording, but the same exit:
+  no commit runs a guard right now, and the safe failure direction for an
+  ungated commit is a failing check); 2 could not determine — an unreadable
+  hooks directory is 2, matching the family's rule that failure to measure
+  is never a clean measurement, while provable drift outranks an unmeasured
+  component. The CLI relays the verdict line rather than re-deriving it, so
+  `check` and the installer cannot disagree about what "armed" means; a
+  non-armed verdict makes `vstack check` exit 1 like any other drift.
 
 - size-ratchet: three fail-closed fixes, each with its own regression pin.
   `--seed` stays bootstrap-only against the COMMITTED baseline too: its

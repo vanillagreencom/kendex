@@ -10,7 +10,7 @@ docs live in README.md.
   `scripts/conflict-markers`, `scripts/commit-msg` — the five checks, each a
   standalone executable
 - `scripts/pre-commit` — the chain the git `pre-commit` shim runs
-- `scripts/install-git-hooks` — hook installer and remover
+- `scripts/install-git-hooks` — hook installer, remover, and `--check` verdict
 - `scripts/lib/common.sh`, `scripts/lib/settings.sh` — shared helpers and
   layered settings resolution
 - `vstack.settings.toml.example` — settings template for consumers
@@ -78,6 +78,19 @@ away. A delegating line it may not edit (a symlinked hook) keeps the helper
 in place and fails the removal rather than stranding a hook with no guard to
 reach. `vstack remove growth-guards` refuses the removal if that cleanup
 fails, so removing the skill never leaves hooks that block every commit.
+
+`--check` is the read-only counterpart: it writes nothing — not even the
+hooks directory — and answers whether the shims are armed. `0`: the helper
+and both hooks pass the same predicate an install trusts (regular file, our
+marker or exact line at its position, POSIX-sh shebang, executable). `1`:
+some shim is drifted or absent, or every shim is intact but a
+`core.hooksPath` redirects git away from them — armed-but-dormant, reported
+with its own wording and remedy, and still `1` because no commit runs a
+guard right now. `2`: the question could not be answered (an unreadable
+hooks directory, a hook file that cannot be read); failure to measure is
+never a pass, and definitive drift outranks an unmeasured component. The
+one stdout line carries every component finding, and `vstack check` folds
+it in for projects with the skill installed.
 
 ## The pre-commit chain
 

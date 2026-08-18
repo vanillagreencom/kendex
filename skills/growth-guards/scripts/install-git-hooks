@@ -12,7 +12,8 @@
 # directory and would disable hooks the repo already has.
 #
 # Exit codes: 0 shims in place (or deliberately skipped, stated on stdout);
-# 1 one or more shims could not be installed; 2 usage error.
+# 1 one or more shims could not be installed; 2 usage error. --check is
+# read-only: 0 armed, 1 drifted/absent/dormant, 2 could not determine.
 set -euo pipefail
 
 HELPER_NAME="vstack-guards"
@@ -28,11 +29,14 @@ CREATED_MARKER="# vstack-guards-hook created this file"
 # Every project-scope skills directory a vstack install can write, plus the
 # source layout vstack itself has. Keep in step with the CLI's skills_dir.
 SKILL_ROOTS=".agents/skills .claude/skills .cursor/rules .opencode/skills skills"
+# Whole interpreter names only: '.*sh' would match #!/usr/bin/fish and treat
+# POSIX-sh syntax as runnable by a hook that cannot run it.
+SH_SHEBANG_RE='^#![[:space:]]*([^[:space:]]*/)?(env[[:space:]]+)?(sh|bash|dash|ksh|zsh)([[:space:]]|$)'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   cat <<'EOF'
-usage: install-git-hooks [--repo PATH] [--uninstall]
+usage: install-git-hooks [--repo PATH] [--uninstall | --check]
 
 Installs (or repairs) the .git/hooks/pre-commit and .git/hooks/commit-msg
 shims that run the growth-guards chain. Idempotent: re-running is a no-op
@@ -42,10 +46,16 @@ when the install is current. --repo defaults to the current directory.
 hook file this installer created outright and leaving every other line of a
 consumer's own hook untouched.
 
+--check writes nothing and answers whether the shims are armed: 0 armed,
+1 not armed (drifted, absent, or dormant behind a core.hooksPath that
+redirects git away from them), 2 the question could not be answered — an
+unreadable hooks directory is 2, because failure to measure is not a clean
+measurement. The verdict line on stdout names what is wrong and the remedy.
+
 Prints one summary line on stdout; warnings go to stderr.
 
 Exit codes: 0 installed/removed or deliberately skipped; 1 a shim could not
-be installed or removed; 2 usage error.
+be installed or removed; 2 usage error. Under --check: the verdict above.
 EOF
 }
 
@@ -71,7 +81,12 @@ REPO="."
 MODE="install"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --uninstall) MODE="uninstall" ;;
+    --uninstall | --check)
+      WANT="${1#--}"
+      [ "$MODE" = "install" ] || [ "$MODE" = "$WANT" ] \
+        || die "--uninstall and --check are mutually exclusive"
+      MODE="$WANT"
+      ;;
     --repo)
       [ $# -ge 2 ] || die "--repo requires a path"
       shift
@@ -121,7 +136,10 @@ if [ "$HOOKS_PATH_SET" -eq 1 ] && [ "$MODE" = "install" ]; then
   exit 0
 fi
 
-mkdir -p -- "$HOOKS_DIR" || die "could not create $HOOKS_DIR"
+# --check is read-only down to the hooks directory itself.
+if [ "$MODE" != "check" ]; then
+  mkdir -p -- "$HOOKS_DIR" || die "could not create $HOOKS_DIR"
+fi
 
 # The helper is POSIX sh and self-contained. It takes this install's own
 # scripts directory first, then rediscovers one from the MAIN checkout (linked
@@ -267,11 +285,10 @@ install_hook() { # HOOK
     hook_warn "$path exists and is not a regular file — the $hook guard is NOT installed"
     return 0
   fi
-  # Whole interpreter names only: '.*sh' would match #!/usr/bin/fish and let
-  # POSIX-sh syntax into a hook that cannot run it. Checked BEFORE the
-  # already-current fast path: our line under an interpreter that cannot run
-  # it is not an armed hook, whoever changed the shebang.
-  if ! head -n 1 "$path" | grep -qE '^#![[:space:]]*([^[:space:]]*/)?(env[[:space:]]+)?(sh|bash|dash|ksh|zsh)([[:space:]]|$)'; then
+  # Checked BEFORE the already-current fast path: our line under an
+  # interpreter that cannot run it is not an armed hook, whoever changed the
+  # shebang.
+  if ! head -n 1 "$path" | grep -qE "$SH_SHEBANG_RE"; then
     hook_warn "$path is not a POSIX-shell script; not modifying it — the $hook guard is NOT installed"
     return 0
   fi
@@ -515,6 +532,132 @@ other_worktree_still_installed() {
   done
   return 1
 }
+
+# --check: nothing below this comment's section writes. Component findings
+# are folded into the single stdout verdict line, so a caller that sees only
+# the summary still learns what is wrong and where.
+CHECK_REASONS=""
+add_reason() { # MESSAGE
+  if [ -n "$CHECK_REASONS" ]; then
+    CHECK_REASONS="$CHECK_REASONS; $*"
+  else
+    CHECK_REASONS="$*"
+  fi
+}
+
+check_helper() { # -> 0 armed, 1 not armed, 2 could not determine
+  local helper="$HOOKS_DIR/$HELPER_NAME" status=0
+  if [ ! -e "$helper" ] && [ ! -L "$helper" ]; then
+    add_reason "helper $HELPER_NAME is missing"
+    return 1
+  fi
+  if [ -L "$helper" ] || [ ! -f "$helper" ]; then
+    add_reason "helper $HELPER_NAME is not a regular file"
+    return 1
+  fi
+  grep -qF -- "$HELPER_MARKER" "$helper" 2>/dev/null || status=$?
+  if [ "$status" -gt 1 ]; then
+    add_reason "helper $HELPER_NAME could not be read"
+    return 2
+  fi
+  if [ "$status" -eq 1 ]; then
+    add_reason "helper $HELPER_NAME was not written by this installer"
+    return 1
+  fi
+  if [ ! -x "$helper" ]; then
+    add_reason "helper $HELPER_NAME is not executable (commits are blocked, not guarded)"
+    return 1
+  fi
+  return 0
+}
+
+check_hook() { # HOOK -> 0 armed, 1 not armed, 2 could not determine
+  local hook="$1" path="$HOOKS_DIR/$1" line="" second=""
+  line="$(call_line "$hook")"
+  if [ ! -e "$path" ] && [ ! -L "$path" ]; then
+    add_reason "$hook is missing"
+    return 1
+  fi
+  # Follows a symlink on purpose: git runs whatever the path resolves to, so
+  # a link to a well-formed shim is armed and a dangling one is not.
+  if [ ! -f "$path" ]; then
+    add_reason "$hook is not a file git can run"
+    return 1
+  fi
+  if ! second="$(sed -n '2p' "$path" 2>/dev/null)"; then
+    add_reason "$hook could not be read"
+    return 2
+  fi
+  if ! head -n 1 "$path" 2>/dev/null | grep -qE "$SH_SHEBANG_RE"; then
+    add_reason "$hook is not a POSIX-shell script, so the guard line cannot run"
+    return 1
+  fi
+  if [ "$second" != "$line" ]; then
+    add_reason "$hook does not carry the guard line at line 2"
+    return 1
+  fi
+  if [ ! -x "$path" ]; then
+    add_reason "$hook is not executable, so git ignores it"
+    return 1
+  fi
+  return 0
+}
+
+# The armed predicate over every artifact. Definitive drift outranks a
+# component that could not be measured — "some shim is provably gone" already
+# answers the question — while unmeasured-only stays "could not determine".
+check_shims() { # -> 0 armed, 1 not armed, 2 could not determine
+  local drifted=0 unknown=0 status=0
+  if [ ! -e "$HOOKS_DIR" ]; then
+    add_reason "$HOOKS_DIR does not exist"
+    return 1
+  fi
+  if [ ! -d "$HOOKS_DIR" ]; then
+    add_reason "$HOOKS_DIR is not a directory"
+    return 1
+  fi
+  # An unsearchable directory makes every probe below read as absent, which
+  # would misreport failure-to-measure as drift.
+  if [ ! -r "$HOOKS_DIR" ] || [ ! -x "$HOOKS_DIR" ]; then
+    add_reason "$HOOKS_DIR cannot be read"
+    return 2
+  fi
+  status=0
+  check_helper || status=$?
+  case "$status" in 1) drifted=1 ;; 2) unknown=1 ;; esac
+  status=0
+  check_hook pre-commit || status=$?
+  case "$status" in 1) drifted=1 ;; 2) unknown=1 ;; esac
+  status=0
+  check_hook commit-msg || status=$?
+  case "$status" in 1) drifted=1 ;; 2) unknown=1 ;; esac
+  [ "$drifted" -eq 0 ] || return 1
+  [ "$unknown" -eq 0 ] || return 2
+  return 0
+}
+
+if [ "$MODE" = "check" ]; then
+  VERDICT=0
+  check_shims || VERDICT=$?
+  if [ "$HOOKS_PATH_SET" -eq 1 ]; then
+    # Armed-but-dormant is neither armed nor drifted, but it exits 1 like
+    # drift: git reads hooks from core.hooksPath, so the next commit runs no
+    # guard, and the safe failure direction for an ungated commit is a
+    # failing check. The wording carries the distinction and the remedy.
+    if [ "$VERDICT" -eq 0 ]; then
+      echo "growth-guards git hooks: dormant — core.hooksPath ('$CUSTOM_HOOKS') redirects git away from $HOOKS_DIR, so commits are NOT gated; wire that directory's hooks to $SCRIPT_DIR, or unset core.hooksPath"
+    else
+      echo "growth-guards git hooks: NOT armed — core.hooksPath ('$CUSTOM_HOOKS') redirects git away from $HOOKS_DIR, and the shims there are not intact either ($CHECK_REASONS); wire that directory's hooks to $SCRIPT_DIR, or unset core.hooksPath and run 'vstack refresh'"
+    fi
+    exit 1
+  fi
+  case "$VERDICT" in
+    0) echo "growth-guards git hooks: armed — pre-commit and commit-msg gate commits in $HOOKS_DIR" ;;
+    1) echo "growth-guards git hooks: NOT armed — $CHECK_REASONS ($HOOKS_DIR); run 'vstack refresh' (or this installer) to re-arm" ;;
+    *) echo "growth-guards git hooks: could not determine whether the shims are armed — $CHECK_REASONS" ;;
+  esac
+  exit "$VERDICT"
+fi
 
 if [ "$MODE" = "uninstall" ]; then
   other=""

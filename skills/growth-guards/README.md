@@ -2,10 +2,10 @@
 
 Five checks that stop quiet repo decay, one family beside `size-ratchet`:
 work markers, oversized additions, blanket lint suppression, conflict
-markers, and non-conventional commit messages. One idiom, one exit contract:
-`0` clean, `1` violations, `2` usage/config/collection error. All scans read
-INDEX content; binary files are skipped by the text scans. `SKILL.md` is the
-agent-facing reference; `DEVELOPMENT.md` covers internals.
+markers, and non-conventional commit messages. One idiom, one exit contract
+— `0` clean, `1` violations, `2` usage/config/collection error. Scans read
+INDEX content and skip binaries. `SKILL.md` is the agent-facing reference;
+`DEVELOPMENT.md` covers internals.
 
 ## Invocation
 
@@ -17,26 +17,27 @@ scripts/CHECK [ARGS]                # each check is a standalone executable
 
 The batch runs `GROWTH_GUARDS_CHECKS` (default
 `todo-ban byte-ceiling suppression-ban conflict-markers`) and fails closed:
-exit 2 if any check could not complete, else 1 if any found violations.
-`commit-msg` reads a message, so it never runs in the batch. In an installed
-project the scripts live under `.agents/skills/growth-guards/scripts/`; wire
-CI at whichever grain fits — `byte-ceiling --base origin/main` gates a PR's
-additions, and local commits are covered by the git hooks below.
+exit 2 if any check could not complete, else 1 on violations. `commit-msg`
+reads a message, so it never runs in the batch. Installed scripts live under
+`.agents/skills/growth-guards/scripts/`; wire CI at whichever grain fits
+(`byte-ceiling --base origin/main` gates a PR's additions); the git hooks
+below cover local commits.
 
 ## Git hooks
 
 ```bash
 .agents/skills/growth-guards/scripts/install-git-hooks [--repo PATH]
 .agents/skills/growth-guards/scripts/install-git-hooks --uninstall
+.agents/skills/growth-guards/scripts/install-git-hooks --check
 ```
 
-The installer writes a helper into the repository's `.git/hooks` plus one
-marked delegating line in `pre-commit` and `commit-msg` — never
-`core.hooksPath`; an existing hook keeps its content and its own exit
-status. Repeat runs are no-ops, and repairs. `--uninstall` drops the helper
-and our line, leaving a consumer's own hook otherwise untouched. `vstack
-add` and `vstack refresh` run the installer (non-git projects are a noted
-skip); `vstack remove growth-guards` runs `--uninstall` first.
+The installer writes a helper into `.git/hooks` plus one marked delegating
+line in `pre-commit` and `commit-msg` — never `core.hooksPath`; an existing
+hook keeps its content and exit status; repeat runs are no-ops and repairs.
+`--uninstall` drops only the helper and our line. `--check` writes nothing:
+`0` armed, `1` drifted/absent/dormant behind a `core.hooksPath` redirect,
+`2` could not determine — never a silent pass. `vstack add`/`refresh` arm,
+`remove` disarms, `check` folds the verdict in.
 
 `pre-commit` judges ONE commit snapshot: `size-ratchet --staged` and
 `preflight --staged` when installed beside this skill, the `growth-guards`

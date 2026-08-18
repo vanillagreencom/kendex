@@ -5,8 +5,9 @@ cli/src/commands/add.rs	1681
 cli/src/commands/add/source_option_tests.rs	913
 cli/src/commands/add/source_option_tests/project_install_tests.rs	438
 cli/src/commands/apply.rs	2743
-cli/src/commands/check.rs	790
-cli/src/commands/check/tests.rs	911
+cli/src/commands/check.rs	809
+cli/src/commands/check/render.rs	405
+cli/src/commands/check/tests.rs	958
 cli/src/commands/refresh.rs	1681
 cli/src/commands/refresh/tests.rs	2089
 cli/src/commands/report.rs	1861
@@ -14,7 +15,7 @@ cli/src/commands/update_pi.rs	603
 cli/src/config.rs	2064
 cli/src/config/remote_cache/fetch.rs	724
 cli/src/config/tests.rs	1255
-cli/src/git_hooks.rs	626
+cli/src/git_hooks.rs	812
 cli/src/harness/claude.rs	572
 cli/src/harness/mod.rs	728
 cli/src/harness/pi.rs	717
@@ -106,8 +107,8 @@ skills/github/scripts/lib/gh-auth.sh	479
 skills/github/scripts/lib/github-api.sh	872
 skills/github/scripts/lib/verify-lib.sh	415
 skills/github/tests/git-diff-summary-cfg-test-declaration.test.sh	2128
-skills/growth-guards/scripts/install-git-hooks	574
-skills/growth-guards/tests/install-git-hooks.test.sh	1067
+skills/growth-guards/scripts/install-git-hooks	717
+skills/growth-guards/tests/install-git-hooks.test.sh	1174
 skills/iced-rs/examples/README.md	122
 skills/iced-rs/examples/changelog/src/changelog.rs	418
 skills/iced-rs/examples/color_palette/src/main.rs	479

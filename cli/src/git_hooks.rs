@@ -47,6 +47,75 @@ pub fn uninstall_growth_guards_hooks(project_root: &Path) -> Result<Option<Strin
         .unwrap_or_else(|| "growth-guards git hooks: removal failed".to_string()))
 }
 
+/// The read-only shim verdict, carrying the checker's own summary line.
+///
+/// `Unarmed` covers drifted, absent, and dormant-behind-`core.hooksPath`
+/// alike — in each the next commit runs no guard — with the line saying
+/// which. `Undetermined` is a failed measurement, and never a pass.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HooksVerdict {
+    Armed(String),
+    Unarmed(String),
+    Undetermined(String),
+}
+
+/// Whether the shims are armed, for `vstack check`: the skill's own
+/// `install-git-hooks --check`, relayed, so the drift report and the
+/// installer cannot disagree about what "armed" means.
+///
+/// `None` when the skill is not installed in this project or the project is
+/// not a git work tree — no shim can fire and none is expected, so there is
+/// no verdict to report.
+pub fn check_growth_guards_hooks(project_root: &Path) -> Option<HooksVerdict> {
+    let installer = locate_installer(project_root)?;
+    let undetermined = |detail: String| {
+        HooksVerdict::Undetermined(format!(
+            "growth-guards git hooks: could not determine — {detail}"
+        ))
+    };
+    match git_work_tree_state(project_root) {
+        Ok(true) => {}
+        Ok(false) => return None,
+        Err(detail) => return Some(undetermined(detail)),
+    }
+    let output = match Command::new(&installer)
+        .arg("--repo")
+        .arg(project_root)
+        .arg("--check")
+        .output()
+    {
+        Ok(output) => output,
+        Err(err) => {
+            return Some(undetermined(format!(
+                "could not run {}: {err}",
+                crate::config::display_path(&installer)
+            )));
+        }
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let summary = last_nonempty_line(&stdout).or_else(|| last_nonempty_line(&stderr));
+    Some(match output.status.code() {
+        Some(0) => HooksVerdict::Armed(
+            summary.unwrap_or_else(|| "growth-guards git hooks: armed".to_string()),
+        ),
+        Some(1) => HooksVerdict::Unarmed(summary.unwrap_or_else(|| {
+            "growth-guards git hooks: NOT armed — run `vstack refresh` to re-arm".to_string()
+        })),
+        // Exit 2, a signal death, or an installed copy of the skill too old
+        // to know --check: each is a measurement that did not happen. A
+        // verdict line on stdout already names itself; anything else — a
+        // usage error on stderr, silence — gets the naming added here.
+        _ => match last_nonempty_line(&stdout) {
+            Some(line) => HooksVerdict::Undetermined(line),
+            None => undetermined(
+                last_nonempty_line(&stderr)
+                    .unwrap_or_else(|| format!("installer exited with {}", output.status)),
+            ),
+        },
+    })
+}
+
 /// Any installed shim: the helper, or a hook still carrying the delegating
 /// line — which fails closed on its own.
 ///
@@ -556,6 +625,123 @@ mod tests {
         let bare = sandbox("no-repo");
         install_skill(&bare);
         assert_eq!(uninstall_growth_guards_hooks(&bare), Ok(None));
+        let _ = fs::remove_dir_all(&project);
+        let _ = fs::remove_dir_all(&bare);
+    }
+
+    #[test]
+    fn an_armed_install_checks_armed() {
+        let project = sandbox("check-armed");
+        install_skill(&project);
+        git(&project, &["-c", "init.defaultBranch=main", "init", "-q"]);
+        install_growth_guards_hooks(&project).expect("installed");
+
+        match check_growth_guards_hooks(&project) {
+            Some(HooksVerdict::Armed(note)) => {
+                assert!(note.contains("armed"), "unexpected note: {note}");
+            }
+            other => panic!("expected Armed, got {other:?}"),
+        }
+        let _ = fs::remove_dir_all(&project);
+    }
+
+    #[test]
+    fn an_absent_hook_file_checks_unarmed() {
+        let project = sandbox("check-absent");
+        install_skill(&project);
+        git(&project, &["-c", "init.defaultBranch=main", "init", "-q"]);
+        install_growth_guards_hooks(&project).expect("installed");
+        fs::remove_file(project.join(".git/hooks/pre-commit")).unwrap();
+
+        match check_growth_guards_hooks(&project) {
+            Some(HooksVerdict::Unarmed(note)) => {
+                assert!(note.contains("pre-commit is missing"), "{note}");
+            }
+            other => panic!("expected Unarmed, got {other:?}"),
+        }
+        let _ = fs::remove_dir_all(&project);
+    }
+
+    #[test]
+    fn a_hook_without_the_marked_line_checks_unarmed() {
+        let project = sandbox("check-stripped");
+        install_skill(&project);
+        git(&project, &["-c", "init.defaultBranch=main", "init", "-q"]);
+        install_growth_guards_hooks(&project).expect("installed");
+        // The issue's scenario: another writer replaces the hook file and the
+        // marked line silently goes with it. The file is present, executable,
+        // and runnable — only the guard is gone.
+        let hook = project.join(".git/hooks/pre-commit");
+        fs::write(&hook, "#!/bin/sh\nexit 0\n").unwrap();
+        let mut perms = fs::metadata(&hook).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+        fs::set_permissions(&hook, perms).unwrap();
+
+        match check_growth_guards_hooks(&project) {
+            Some(HooksVerdict::Unarmed(note)) => {
+                assert!(note.contains("guard line"), "{note}");
+            }
+            other => panic!("expected Unarmed, got {other:?}"),
+        }
+        let _ = fs::remove_dir_all(&project);
+    }
+
+    #[test]
+    fn an_unreadable_hooks_directory_is_undetermined_never_a_pass() {
+        let project = sandbox("check-unreadable-dir");
+        install_skill(&project);
+        git(&project, &["-c", "init.defaultBranch=main", "init", "-q"]);
+        install_growth_guards_hooks(&project).expect("installed");
+        let hooks = project.join(".git/hooks");
+        let mut perms = fs::metadata(&hooks).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o000);
+        fs::set_permissions(&hooks, perms).unwrap();
+
+        let verdict = check_growth_guards_hooks(&project);
+        let mut perms = fs::metadata(&hooks).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+        let _ = fs::set_permissions(&hooks, perms);
+        match verdict {
+            Some(HooksVerdict::Undetermined(note)) => {
+                assert!(note.contains("could not determine"), "{note}");
+            }
+            other => panic!("expected Undetermined, got {other:?}"),
+        }
+        let _ = fs::remove_dir_all(&project);
+    }
+
+    #[test]
+    fn shims_behind_a_custom_hooks_path_check_dormant_not_armed() {
+        let project = sandbox("check-dormant");
+        install_skill(&project);
+        git(&project, &["-c", "init.defaultBranch=main", "init", "-q"]);
+        install_growth_guards_hooks(&project).expect("installed");
+        fs::create_dir_all(project.join("myhooks")).unwrap();
+        git(&project, &["config", "core.hooksPath", "myhooks"]);
+
+        // Unarmed, because no commit runs the shims right now — with the
+        // dormant state's own wording, not the drifted one's.
+        match check_growth_guards_hooks(&project) {
+            Some(HooksVerdict::Unarmed(note)) => {
+                assert!(
+                    note.contains("dormant") && note.contains("core.hooksPath"),
+                    "{note}"
+                );
+            }
+            other => panic!("expected Unarmed, got {other:?}"),
+        }
+        let _ = fs::remove_dir_all(&project);
+    }
+
+    #[test]
+    fn no_skill_or_no_work_tree_yields_no_verdict() {
+        let project = sandbox("check-no-skill");
+        git(&project, &["-c", "init.defaultBranch=main", "init", "-q"]);
+        assert_eq!(check_growth_guards_hooks(&project), None);
+
+        let bare = sandbox("check-no-repo");
+        install_skill(&bare);
+        assert_eq!(check_growth_guards_hooks(&bare), None);
         let _ = fs::remove_dir_all(&project);
         let _ = fs::remove_dir_all(&bare);
     }

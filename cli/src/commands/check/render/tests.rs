@@ -310,6 +310,10 @@ fn populated_scope(scope: &'static str) -> ScopeReport {
             reason: "another vstack process is refreshing this source's cache".into(),
         }],
         invalid_names: vec![Item::new("bad\nname", ItemKind::Hook)],
+        git_hooks: Some(GitHooksStatus {
+            state: GitHooksState::Unarmed,
+            detail: "growth-guards git hooks: NOT armed — pre-commit is missing".into(),
+        }),
         available: vec![
             AvailableItem {
                 name: "kappa".into(),

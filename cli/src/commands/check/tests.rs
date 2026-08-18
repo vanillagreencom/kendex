@@ -909,3 +909,50 @@ fn json_shape_carries_every_case_and_drift_flag() {
     assert!(scope.get("current").is_none(), "current is human-only");
     assert_eq!(report.outcome(), CheckOutcome::Drift);
 }
+
+/// #1482: the git-shim verdict is drift unless armed, renders as one line in
+/// the state's mark, and serializes under `git_hooks` with its state tag —
+/// while a project with no verdict to give omits the key entirely.
+#[test]
+fn the_git_hook_verdict_is_drift_unless_armed() {
+    let mut report = ScopeReport {
+        scope: "project",
+        installed: 1,
+        ..ScopeReport::default()
+    };
+    assert!(!report.has_drift(), "no verdict is not drift");
+    let json = serde_json::to_value(&report).unwrap();
+    assert!(json.get("git_hooks").is_none(), "{json}");
+
+    report.git_hooks = Some(GitHooksStatus {
+        state: GitHooksState::Armed,
+        detail: "growth-guards git hooks: armed — pre-commit and commit-msg gate commits".into(),
+    });
+    assert!(!report.has_drift());
+    let mut out = String::new();
+    render_scope(&mut out, &report, false);
+    assert!(out.contains("✓ growth-guards git hooks: armed"), "{out}");
+    let mut quiet = String::new();
+    render_scope(&mut quiet, &report, true);
+    assert!(quiet.is_empty(), "armed is not news in quiet mode: {quiet}");
+
+    for (state, mark) in [
+        (GitHooksState::Unarmed, "✗"),
+        (GitHooksState::Undetermined, "?"),
+    ] {
+        report.git_hooks = Some(GitHooksStatus {
+            state,
+            detail: "growth-guards git hooks: NOT armed — pre-commit is missing".into(),
+        });
+        assert!(report.has_drift(), "{state:?} must count as drift");
+        let mut out = String::new();
+        render_scope(&mut out, &report, true);
+        assert!(
+            out.contains(mark) && out.contains("NOT armed"),
+            "{state:?}: {out}"
+        );
+        let json = serde_json::to_value(&report).unwrap();
+        let tag = json["git_hooks"]["state"].as_str().unwrap();
+        assert_eq!(tag, format!("{state:?}").to_lowercase(), "{json}");
+    }
+}

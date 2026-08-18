@@ -766,6 +766,24 @@ fn check_scope(global: bool, lock: &LockFile, opts: CheckOptions) -> Option<Scop
         available_for(&catalogs, &entries, &lock_names)
     };
 
+    // The shims are per-repository, so only the project scope answers for
+    // them. The verdict is the skill's own `--check`, relayed — this command
+    // and the installer cannot disagree about what "armed" means.
+    let git_hooks = if global {
+        None
+    } else {
+        crate::git_hooks::check_growth_guards_hooks(&config::project_root()).map(|verdict| {
+            let (state, detail) = match verdict {
+                crate::git_hooks::HooksVerdict::Armed(note) => (GitHooksState::Armed, note),
+                crate::git_hooks::HooksVerdict::Unarmed(note) => (GitHooksState::Unarmed, note),
+                crate::git_hooks::HooksVerdict::Undetermined(note) => {
+                    (GitHooksState::Undetermined, note)
+                }
+            };
+            GitHooksStatus { state, detail }
+        })
+    };
+
     Some(ScopeReport {
         scope: if global { "global" } else { "project" },
         installed: lock.entries.len(),
@@ -779,6 +797,7 @@ fn check_scope(global: bool, lock: &LockFile, opts: CheckOptions) -> Option<Scop
         source_issues,
         busy_sources,
         invalid_names,
+        git_hooks,
         available,
         current,
     })

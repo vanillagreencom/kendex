@@ -134,6 +134,29 @@ pub struct BusySource {
     pub reason: String,
 }
 
+/// The growth-guards git-shim verdict for the project repository —
+/// `install-git-hooks --check`, relayed. The shims are the one per-repository
+/// artifact `refresh` maintains that no lock entry records, so without this
+/// row a hook another writer disarmed reads as clean at every session start.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct GitHooksStatus {
+    pub state: GitHooksState,
+    /// The checker's own summary line: the state and its remedy.
+    pub detail: String,
+}
+
+/// `Unarmed` covers drifted, absent, and dormant-behind-`core.hooksPath`
+/// alike — in each the next commit runs no guard — with `detail` saying
+/// which. `Undetermined` is a failed measurement and still drift: failure to
+/// measure is not a clean measurement.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum GitHooksState {
+    Armed,
+    Unarmed,
+    Undetermined,
+}
+
 /// A remote source cache that is not up to date; the report was computed
 /// against whatever the cache already held.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -193,6 +216,12 @@ pub struct ScopeReport {
     /// Lock entries whose names fail [`is_safe_item_name`]; they are excluded
     /// from every other list and rendered as `<invalid name>`.
     pub invalid_names: Vec<Item>,
+    /// Whether the growth-guards git shims are armed in this repository.
+    /// `None` when the skill is not installed here, the project is not a git
+    /// work tree, or the scope is global — states with no verdict to give,
+    /// as opposed to a verdict that could not be measured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_hooks: Option<GitHooksStatus>,
     /// Items a declared source ships that this scope never installed —
     /// `vstack add --<kind> <name>`, pending user approval. A suggestion, not
     /// drift: it never affects [`has_drift`](Self::has_drift).
@@ -223,7 +252,11 @@ impl ScopeReport {
             && self.disabled.is_empty()
             && self.missing_skill_refs.is_empty()
             && self.source_issues.is_empty()
-            && self.invalid_names.is_empty())
+            && self.invalid_names.is_empty()
+            && self
+                .git_hooks
+                .as_ref()
+                .is_none_or(|hooks| hooks.state == GitHooksState::Armed))
     }
 }
 

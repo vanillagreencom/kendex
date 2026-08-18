@@ -2,7 +2,7 @@
 //! credential-, control- and length-scrubbing helpers in [`crate::display`],
 //! which every displayed string in the CLI passes through.
 
-use super::{AvailableItem, CATALOG_KINDS, CheckReport, ScopeReport, SourceProblem};
+use super::{AvailableItem, CATALOG_KINDS, CheckReport, GitHooksState, ScopeReport, SourceProblem};
 use budget::{
     BlockPriority, QUIET_REPORT_BYTE_BUDGET, QUIET_REPORT_LINE_BUDGET, overflow_line,
     render_entry_names, section, shown_count, spend_report_budget,
@@ -163,6 +163,25 @@ fn render_scope_drift(out: &mut String, report: &ScopeReport, quiet: bool) {
                 display_text(&item.name),
                 item.kind
             );
+        }
+    }
+
+    // The git-shim verdict rides as one line either way: an armed one in the
+    // ✓ listing, anything else as the drift it is — the detail is the
+    // checker's own line and already carries the remedy.
+    if let Some(hooks) = &report.git_hooks {
+        match hooks.state {
+            GitHooksState::Armed => {
+                if !quiet {
+                    let _ = writeln!(out, "  ✓ {}", display_reason(&hooks.detail));
+                }
+            }
+            GitHooksState::Unarmed => {
+                let _ = writeln!(out, "\n  ✗ {}", display_reason(&hooks.detail));
+            }
+            GitHooksState::Undetermined => {
+                let _ = writeln!(out, "\n  ? {}", display_reason(&hooks.detail));
+            }
         }
     }
 

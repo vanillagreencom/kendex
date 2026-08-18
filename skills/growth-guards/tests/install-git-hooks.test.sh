@@ -1063,5 +1063,112 @@ case "$OUT" in
   *) bad "broken install named" "out=$OUT" ;;
 esac
 
+echo "=== --check answers whether the shims are armed, and writes nothing ==="
+check_in() { # REPO — sets OUT and RC
+  local installer="$1/.agents/skills/growth-guards/scripts/install-git-hooks"
+  [ -x "$installer" ] || installer="$INSTALL"
+  OUT=""
+  RC=0
+  OUT="$("$installer" --repo "$1" --check 2>&1)" || RC=$?
+}
+R32="$(new_repo checkmode)"
+install_in "$R32"
+check_in "$R32"
+[ "$RC" -eq 0 ] && ok "an armed install checks 0" || bad "armed checks 0" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"armed — pre-commit and commit-msg"*) ok "and the verdict line says armed" ;;
+  *) bad "verdict says armed" "out=$OUT" ;;
+esac
+
+rm "$R32/.git/hooks/pre-commit"
+check_in "$R32"
+[ "$RC" -eq 1 ] && ok "an absent hook file checks 1" || bad "absent hook checks 1" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"pre-commit is missing"*) ok "and the missing hook is named" ;;
+  *) bad "missing hook named" "out=$OUT" ;;
+esac
+[ -e "$R32/.git/hooks/pre-commit" ] && bad "--check must not write the hook back" || ok "--check did not write the hook back"
+
+install_in "$R32"
+printf '#!/bin/sh\nexit 0\n' >"$R32/.git/hooks/pre-commit"
+chmod +x "$R32/.git/hooks/pre-commit"
+check_in "$R32"
+[ "$RC" -eq 1 ] && ok "a hook without the marked line checks 1" || bad "stripped line checks 1" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"does not carry the guard line"*) ok "and the dropped guard line is named" ;;
+  *) bad "dropped guard line named" "out=$OUT" ;;
+esac
+grep -qF 'vstack-guards' "$R32/.git/hooks/pre-commit" && bad "--check must not repair the hook" || ok "--check did not repair the hook"
+
+install_in "$R32"
+chmod -x "$R32/.git/hooks/pre-commit"
+check_in "$R32"
+[ "$RC" -eq 1 ] && ok "a cleared executable bit checks 1" || bad "cleared exec bit checks 1" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"not executable"*) ok "and says git ignores it" ;;
+  *) bad "exec bit named" "out=$OUT" ;;
+esac
+chmod +x "$R32/.git/hooks/pre-commit"
+
+printf '#!/bin/sh\nexit 0\n' >"$R32/.git/hooks/vstack-guards"
+check_in "$R32"
+[ "$RC" -eq 1 ] && ok "a foreign file at the helper path checks 1" || bad "foreign helper checks 1" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"not written by this installer"*) ok "and the foreign helper is named" ;;
+  *) bad "foreign helper named" "out=$OUT" ;;
+esac
+rm "$R32/.git/hooks/vstack-guards"
+install_in "$R32"
+
+if [ "$(id -u)" != "0" ]; then
+  chmod 000 "$R32/.git/hooks"
+  check_in "$R32"
+  chmod 755 "$R32/.git/hooks"
+  [ "$RC" -eq 2 ] && ok "an unreadable hooks directory checks 2, never a pass" \
+    || bad "unreadable hooks dir checks 2" "rc=$RC out=$OUT"
+  case "$OUT" in
+    *"could not determine"*) ok "and the verdict says it could not determine" ;;
+    *) bad "could-not-determine stated" "out=$OUT" ;;
+  esac
+else
+  ok "unreadable hooks dir case skipped (running as root)"
+  ok "unreadable hooks dir wording skipped (running as root)"
+fi
+
+echo "=== --check reports dormant-behind-core.hooksPath distinctly ==="
+R33="$(new_repo checkdormant)"
+install_in "$R33"
+mkdir -p "$R33/myhooks"
+git -C "$R33" config core.hooksPath myhooks
+check_in "$R33"
+[ "$RC" -eq 1 ] && ok "intact shims behind core.hooksPath check 1 (no commit runs them)" \
+  || bad "dormant checks 1" "rc=$RC out=$OUT"
+case "$OUT" in
+  *dormant*core.hooksPath*) ok "the verdict names the dormant state and its cause" ;;
+  *) bad "dormant state named" "out=$OUT" ;;
+esac
+case "$OUT" in
+  *"NOT armed —"*) bad "dormant is not conflated with drifted" "out=$OUT" ;;
+  *) ok "dormant is not conflated with drifted" ;;
+esac
+
+R34="$(new_repo checkhookspathempty)"
+mkdir -p "$R34/myhooks"
+git -C "$R34" config core.hooksPath myhooks
+check_in "$R34"
+[ "$RC" -eq 1 ] && ok "core.hooksPath with no shims installed checks 1" \
+  || bad "hooksPath-no-shims checks 1" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"NOT armed"*core.hooksPath*) ok "and states both the redirect and the missing shims" ;;
+  *) bad "redirect and missing shims stated" "out=$OUT" ;;
+esac
+
+echo "=== --check usage lanes ==="
+OUT=""; RC=0; OUT="$("$INSTALL" --check --uninstall 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && ok "--check with --uninstall is exit 2" || bad "check+uninstall is exit 2" "rc=$RC out=$OUT"
+mkdir -p "$TMP/checknotgit"
+OUT=""; RC=0; OUT="$("$INSTALL" --repo "$TMP/checknotgit" --check 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && ok "--check outside a git work tree is exit 2" || bad "check outside work tree" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

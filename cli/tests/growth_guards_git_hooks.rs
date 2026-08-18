@@ -138,6 +138,14 @@ impl Sandbox {
     fn hook(&self, name: &str) -> PathBuf {
         self.project.join(".git/hooks").join(name)
     }
+
+    fn check(&self, args: &[&str]) -> std::process::Output {
+        self.vstack()
+            .args(["check", "--offline", "--scope", "project"])
+            .args(args)
+            .output()
+            .unwrap()
+    }
 }
 
 impl Drop for Sandbox {
@@ -190,6 +198,85 @@ fn add_and_refresh_arm_the_git_shims_in_a_git_project() {
     assert!(
         String::from_utf8_lossy(&config.stdout).trim().is_empty(),
         "the install set core.hooksPath"
+    );
+}
+
+/// #1482: the drift the shims can suffer — another writer replacing the hook
+/// file and silently dropping the marked line — must be visible to the drift
+/// command, not only to someone who notices an ungated commit.
+#[test]
+fn vstack_check_folds_in_the_shim_verdict() {
+    let sandbox = Sandbox::new("gg-hooks-check");
+    sandbox.git_init();
+    sandbox.add();
+
+    let clean = sandbox.check(&[]);
+    let stderr = String::from_utf8_lossy(&clean.stderr);
+    assert!(
+        clean.status.success(),
+        "an armed repository must check clean\n{stderr}"
+    );
+    assert!(
+        stderr.contains("git hooks: armed"),
+        "the listing must show the verdict\n{stderr}"
+    );
+
+    // A second hook manager's install step: the file is replaced whole, still
+    // a perfectly runnable hook, only the guard line is gone.
+    let hook = sandbox.hook("pre-commit");
+    fs::write(&hook, "#!/bin/sh\nexit 0\n").unwrap();
+    let mut perms = fs::metadata(&hook).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    fs::set_permissions(&hook, perms).unwrap();
+
+    let drifted = sandbox.check(&[]);
+    let stderr = String::from_utf8_lossy(&drifted.stderr);
+    assert_eq!(
+        drifted.status.code(),
+        Some(1),
+        "a disarmed shim is drift and must exit like it\n{stderr}"
+    );
+    assert!(stderr.contains("NOT armed"), "{stderr}");
+
+    let json_run = sandbox.check(&["--json"]);
+    assert_eq!(json_run.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_slice(&json_run.stdout).unwrap();
+    assert_eq!(report["drift"], true, "{report}");
+    let hooks = &report["scopes"][0]["git_hooks"];
+    assert_eq!(hooks["state"], "unarmed", "{report}");
+    assert!(
+        hooks["detail"].as_str().unwrap().contains("guard line"),
+        "{report}"
+    );
+}
+
+/// Shims hidden behind a later `core.hooksPath` are armed-but-dormant: no
+/// commit runs them, so `check` fails — with that state's own wording, not
+/// the drifted one's.
+#[test]
+fn a_dormant_shim_behind_core_hooks_path_fails_check_with_its_own_wording() {
+    let sandbox = Sandbox::new("gg-hooks-check-dormant");
+    sandbox.git_init();
+    sandbox.add();
+    fs::create_dir_all(sandbox.project.join("myhooks")).unwrap();
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(&sandbox.project)
+        .args(["config", "core.hooksPath", "myhooks"])
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let out = sandbox.check(&[]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "dormant shims gate nothing and must not check clean\n{stderr}"
+    );
+    assert!(
+        stderr.contains("dormant") && stderr.contains("core.hooksPath"),
+        "{stderr}"
     );
 }
 
