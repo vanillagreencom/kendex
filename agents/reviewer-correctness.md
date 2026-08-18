@@ -37,6 +37,21 @@ For each changed predicate, parser, or guard, mentally execute:
 - **Teardown symmetry** — for every install/enable/claim path, walk uninstall/disable/release under: another worktree still installed, the helper already missing, a partially applied prior run, and a foreign tool owning the same file.
 - **Staged vs worktree** — a `--staged` or index-reading mode reads its policy inputs (baseline, excludes, settings) from the index too, never from the worktree.
 
+## Removed Behavior
+
+For every line the diff deletes or replaces, name the invariant or behavior it enforced, then find where the new code re-establishes it. Not re-established → a finding: a removed guard, a dropped error path, a narrowed validation, a deleted test that covered a real case.
+
+## Wrapper Routing
+
+When a change adds or modifies a type wrapping another (cache, proxy, decorator, adapter):
+
+- **Delegation target** — every method routes to the wrapped instance, never back through a registry, session, or global (`delegate.get(...)`, not `session.get(...)` — re-entry/recursion hazard).
+- **Forwarding coverage** — the wrapper forwards every method its callers actually use.
+
+## Plausible by Default
+
+Never refute a finding as "speculative" or "depends on runtime state" when the state is realistic: a concurrency race; nil/undefined on a rare-but-reachable path (error handler, cold cache, missing optional field); a falsy zero treated as missing; an off-by-one on a boundary the code does not exclude; retry storms and partial failures; a regex or allowlist that lost an anchor. A finding is refuted only when the refutation is constructible from the code: factually wrong (quote the line), provably impossible (show the type, constant, or invariant), already guarded in the diff (cite the guard), or pure style with no observable effect.
+
 ## Output
 
 Regressions, boundary defects, compatibility/contract breaks, feature leaks, state/migration issues → `blockers[]`. Non-blocking risks and follow-up hardening → `suggestions[]`.
