@@ -360,4 +360,16 @@ describe("parked early results", () => {
 		assert.equal(takeQueuedOrParkedResult(c, "a").content[0].text, "queued");
 		assert.equal(takeQueuedOrParkedResult(c, "a").content[0].text, "parked");
 	});
+
+	it("an id present in both stores is one claim candidate, not an ambiguous pair", () => {
+		const c = ctx();
+		c.recordToolCall("a", "web_fetch", { url: "https://a.example" });
+		c.pendingResults.set("a", { toolCallId: "a", content: [{ type: "text", text: "queued" }] });
+		c.reapedResults.set("a", { toolCallId: "a", content: [{ type: "text", text: "parked" }] });
+		c.resetToolTracking();
+
+		const claim = c.claimToolCall("web_fetch", { url: "https://a.example" });
+		assert.equal(claim.toolCallId, "a");
+		assert.equal(claim.ambiguous, false, "duplicate store membership must not inflate ambiguity");
+	});
 });

@@ -28494,7 +28494,7 @@ var QueryContext = class {
     const unclaimed = this.turnToolCalls.filter((call) => !this.claimedToolCallIds.has(call.id));
     const byName = unclaimed.filter((call) => call.toolName === toolName);
     const exact = byName.filter((call) => sameArgs(call.arguments, args));
-    const resultBacked = [...this.pendingResults.keys(), ...this.reapedResults.keys()].filter((id) => !this.claimedToolCallIds.has(id) && this.queryToolNames.get(id) === toolName);
+    const resultBacked = [.../* @__PURE__ */ new Set([...this.pendingResults.keys(), ...this.reapedResults.keys()])].filter((id) => !this.claimedToolCallIds.has(id) && this.queryToolNames.get(id) === toolName);
     const backedExact = resultBacked.filter((id) => sameArgs(this.queryToolArgs.get(id), args));
     const claimBacked = (id, viaExact) => {
       this.claimedToolCallIds.add(id);

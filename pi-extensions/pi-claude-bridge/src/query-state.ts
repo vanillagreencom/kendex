@@ -522,7 +522,7 @@ export class QueryContext {
 		// exact-args match here outranks the live sole-same-name fallback below,
 		// so a late handler can never steal a live sibling's id while its own
 		// result waits; without an exact match it is only a last resort.
-		const resultBacked = [...this.pendingResults.keys(), ...this.reapedResults.keys()]
+		const resultBacked = [...new Set([...this.pendingResults.keys(), ...this.reapedResults.keys()])]
 			.filter((id) => !this.claimedToolCallIds.has(id) && this.queryToolNames.get(id) === toolName);
 		const backedExact = resultBacked.filter((id) => sameArgs(this.queryToolArgs.get(id), args));
 		const claimBacked = (id: string, viaExact: boolean): ClaimedToolCall => {
