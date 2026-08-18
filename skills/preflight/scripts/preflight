@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # preflight — diff-scoped, fail-only checks: fail-open bash, new suites no
-# runner invokes, scratch directories no EXIT trap removes, docs citing
-# repo paths that do not exist, source files citing docs that do not exist,
-# work markers with no issue behind them, reviewer-bot attributions in
-# durable prose, malformed JSON/TOML, workflow run: blocks their shell
-# cannot parse.
+# runner invokes, scratch directories no EXIT trap removes, directories
+# created at literal absolute temp paths, docs citing repo paths that do
+# not exist, source files citing docs that do not exist, work markers with
+# no issue behind them, reviewer-bot attributions in durable prose,
+# malformed JSON/TOML, workflow run: blocks their shell cannot parse.
 #
 # Precision before coverage: a lane that cannot decide says nothing. The
 # line-scoped lanes report only on lines this diff ADDED, so a pre-existing
@@ -35,8 +35,8 @@ non-ignored untracked files; --staged sees only the index.
   --repo PATH   run against the repository containing PATH (default: cwd)
 
 Lanes: shell-syntax, shellcheck-errors, masked-returns, fail-open,
-unwired-suite, mktemp-trap, docs-cited-paths, todo-links,
-reviewer-attribution, data-syntax, workflow-run-syntax.
+unwired-suite, mktemp-trap, hardcoded-temp-path, docs-cited-paths,
+todo-links, reviewer-attribution, data-syntax, workflow-run-syntax.
 
 Exit codes: 0 clean; 1 findings; 2 usage/environment error.
 EOF
@@ -538,6 +538,17 @@ TRAP_EXIT_RE='(^[[:space:]]*|[;|&(`{][[:space:]]*)trap[[:space:]].*[[:space:]](E
 has_exit_trap() { # FILE
   grep -Ev -- '^[[:space:]]*#' "$1" 2>/dev/null | grep -Eq -- "$TRAP_EXIT_RE"
 }
+# A directory-CREATING call taking a literal absolute temp path (/tmp,
+# /var/tmp) as (part of) its first argument: mkdtemp/mkdir and their Sync
+# variants (JS/TS), mkdtemp/makedirs/mkdir (Python), create_dir_all (Rust),
+# plus a shell mkdir -p at a command position. The same literal as a VALUE
+# — a config field, a fixture string, a path nothing creates — is not the
+# shape: repos carry fixture literals by the hundred against a handful of
+# real creation sites, and a lane that flags the fixtures is noise that
+# buries the finding.
+TMPPATH_CREATE_RE='(mkdtemp|mkdtempSync|mkdir|mkdirSync|makedirs|create_dir_all)[[:space:]]*\([^,)]*["'\''`]/(var/)?tmp/'
+TMPPATH_CREATE_RE="$TMPPATH_CREATE_RE"'|(^[[:space:]]*|[;|&(`{][[:space:]]*)mkdir[[:space:]]+-p[[:space:]]+["'\'']?/(var/)?tmp/'
+
 # The marker form only: the word immediately followed by a colon or by an
 # owner in parentheses. Prose that merely uses the word ("TODO hygiene is
 # preflight's job") and scaffolding placeholders ("description: TODO —
@@ -904,6 +915,26 @@ while IFS= read -r f; do
             mktemp_reported=1
             emit "$f" "$n" mktemp-trap "mktemp without an EXIT trap — scratch is never removed"
           fi
+          ;;
+      esac
+    fi
+
+    # Creation at a literal absolute temp path escapes a TMPDIR redirect by
+    # construction, so the directory outlives every run that makes one — and
+    # leaks silently, because the code works. Only a creation call whose
+    # first argument opens the literal fires; a commented-out call runs
+    # nothing.
+    if [ "$is_md" = 0 ]; then
+      case "$content" in
+        *"/tmp/"*)
+          case "${content#"${content%%[![:space:]]*}"}" in
+            '#'* | '//'*) ;;
+            *)
+              if printf '%s' "$content" | grep -Eq -- "$TMPPATH_CREATE_RE"; then
+                emit "$f" "$n" hardcoded-temp-path "directory creation at a literal absolute temp path — it escapes TMPDIR redirection and leaks past the run"
+              fi
+              ;;
+          esac
           ;;
       esac
     fi

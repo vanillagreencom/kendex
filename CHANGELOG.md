@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- preflight: new `hardcoded-temp-path` lane — an added directory-creating
+  call taking a literal `/tmp/…` or `/var/tmp/…` as (part of) its first
+  argument fails. A literal absolute temp path escapes TMPDIR redirection
+  by construction, so the directory outlives every run and leaks silently;
+  one consumer accumulated roughly 159,000 stale directories before ENOSPC
+  surfaced it, months of commits from the cause. Anchored to creation-call
+  shapes — `mkdtemp`/`mkdir`(+`Sync`) (JS/TS), `mkdtemp`/`makedirs`/`mkdir`
+  (Python), `create_dir_all` (Rust), shell `mkdir -p` at a command
+  position — because the same repo counts literal temp-path FIXTURES by
+  the hundred against a handful of real creation sites: a value in a
+  config field or fixture string never fires, nor does a TMPDIR-derived
+  path or a commented-out call. Complementary to `mktemp-trap`: that lane
+  asks whether a correctly-created scratch dir is cleaned up, this one
+  whether it was created somewhere cleanup can reach at all. Zero hits
+  across the repo at HEAD (`preflight --all`), so the lane lands
+  zero-pinned. (#1481)
+
 - size-ratchet: three fail-closed fixes, each with its own regression pin.
   `--seed` stays bootstrap-only against the COMMITTED baseline too: its
   existence probe read the index alone, so staging the baseline's deletion

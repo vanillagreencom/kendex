@@ -118,6 +118,26 @@ run_pf
 fires "a new script with mktemp and no EXIT trap fails as mktemp-trap" "scripts/scratch.sh:3: [mktemp-trap] mktemp without an EXIT trap"
 fires "an mktemp with no arguments is the same finding" "scripts/scratchfile.sh:3: [mktemp-trap] mktemp without an EXIT trap"
 
+echo "=== lane hardcoded-temp-path: directory creation at a literal absolute temp path ==="
+seed tmppath
+mkdir -p "$R/src"
+# Trip paths are substituted at run time, so this suite's committed bytes
+# never join a creation call to a temp-path literal.
+printf '#!/usr/bin/env bash\nset -euo pipefail\nmkdir -p %s/cache\n' /tmp >"$R/scripts/shellmk.sh"
+printf 'const fs = require("fs");\nfs.mkdirSync("%s/out");\nfs.mkdtempSync("%s/app-");\n' /tmp /tmp >"$R/src/mk.js"
+printf 'import os, tempfile\nos.makedirs("%s/state")\ntempfile.mkdtemp(dir="%s/keep")\n' /tmp /tmp >"$R/src/mk.py"
+printf 'fn main() {\n    std::fs::create_dir_all("%s/rust").unwrap();\n}\n' /tmp >"$R/src/mk.rs"
+printf 'import os\nos.mkdir("%s/persist")\n' /var/tmp >"$R/src/mkvar.py"
+git -C "$R" add -A
+run_pf
+fires "a shell mkdir -p at a literal /tmp path fails" "scripts/shellmk.sh:3: [hardcoded-temp-path]"
+fires "a JS mkdirSync taking the literal fails" "src/mk.js:2: [hardcoded-temp-path]"
+fires "a JS mkdtempSync prefix under /tmp is the same finding" "src/mk.js:3: [hardcoded-temp-path]"
+fires "a Python makedirs taking the literal fails" "src/mk.py:2: [hardcoded-temp-path]"
+fires "a Python mkdtemp aimed at /tmp by keyword fails" "src/mk.py:3: [hardcoded-temp-path]"
+fires "a Rust create_dir_all taking the literal fails" "src/mk.rs:2: [hardcoded-temp-path]"
+fires "/var/tmp is the same literal" "src/mkvar.py:2: [hardcoded-temp-path]"
+
 echo "=== lane unwired-suite: a new suite no runner invokes ==="
 seed unwired
 mkdir -p "$R/tests" "$R/.github/workflows"
