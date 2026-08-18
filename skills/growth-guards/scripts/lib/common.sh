@@ -197,7 +197,9 @@ gg_is_excluded() { # PATH — 0 when some exclusion glob matches the full path
 # `error:` line on stderr while the status still says 1 (nothing matched) or
 # 0 (something else matched), so status alone can bless a scan that skipped
 # content — and a status-0 run that also errored must not fold as an
-# ordinary violation verdict over a partial scan.
+# ordinary violation verdict over a partial scan. The `error:` prefix is
+# git's C-locale spelling, so every call feeding this guard runs under
+# LC_ALL=C — a translated prefix would slip past the match.
 gg_grep_guard() { # STATUS ERRFILE CONTEXT — returns only when the scan is complete
   local status="$1" errfile="$2" context="$3" first_err
   [ ! -s "$errfile" ] || cat -- "$errfile" >&2
@@ -215,12 +217,12 @@ gg_grep_guard() { # STATUS ERRFILE CONTEXT — returns only when the scan is com
 gg_grep_lane() { # LABEL ERE REMEDY PATHSPEC... — numbered violations on stdout
   local label="$1" ere="$2" remedy="$3" status=0 f hit_status hit
   shift 3
-  git grep --cached -lIzE "$ere" -- "$@" >"$GG_TMP/lane.z" 2>"$GG_TMP/lane.err" || status=$?
+  LC_ALL=C git grep --cached -lIzE "$ere" -- "$@" >"$GG_TMP/lane.z" 2>"$GG_TMP/lane.err" || status=$?
   gg_grep_guard "$status" "$GG_TMP/lane.err" "scanning tracked files for $label"
   while IFS= read -r -d '' f; do
     gg_is_excluded "$f" && continue
     hit_status=0
-    git grep --cached -nIE "$ere" -- ":(literal)$f" >"$GG_TMP/lane.hits" 2>"$GG_TMP/lane.err" || hit_status=$?
+    LC_ALL=C git grep --cached -nIE "$ere" -- ":(literal)$f" >"$GG_TMP/lane.hits" 2>"$GG_TMP/lane.err" || hit_status=$?
     gg_grep_guard "$hit_status" "$GG_TMP/lane.err" "detailing the $label hits in '$f'"
     # This file just listed as containing hits; anything but a clean re-scan
     # (including "no matches") means the measurement is broken.

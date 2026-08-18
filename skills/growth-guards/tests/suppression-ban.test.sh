@@ -360,7 +360,8 @@ run_sb
 [ "$RC" -eq 1 ] && ok "control: the staged bare allow trips while its blob is readable" \
   || bad "control: readable blob trips" "rc=$RC out=$OUT"
 OID="$(git -C "$R" rev-parse :bare.rs)"
-rm "$R/.git/objects/${OID:0:2}/${OID:2}"
+[ -f "$R/.git/objects/${OID:0:2}/${OID:2}" ] || bad "fixture: the staged blob is not a loose object at the expected path" "$OID"
+rm -f -- "$R/.git/objects/${OID:0:2}/${OID:2}"
 run_sb
 [ "$RC" -eq 2 ] && case "$OUT" in *"error: "*"unable to read"*) true ;; *) false ;; esac \
   && ok "a vanished staged blob is exit 2 carrying git's own error line" \
