@@ -266,12 +266,17 @@ printf '#!/usr/bin/env bash\nset -euo pipefail\necho "logs land under /tmp/app b
 printf 'const os = require("os");\nconst fs = require("fs");\nconst d = fs.mkdtempSync(require("path").join(os.tmpdir(), "app-"));\n' >"$R/src/accessor.js"
 printf 'import tempfile\nd = tempfile.mkdtemp(prefix="app-")\n' >"$R/src/accessor.py"
 printf '#!/usr/bin/env bash\nset -euo pipefail\nmkdir -p "$TMPDIR/work"\nmkdir -p "${TMPDIR:-/tmp}/work"\n' >"$R/scripts/accessor.sh"
-# Commented-out calls run nothing.
+# Commented-out calls run nothing — line and block comment forms alike.
 printf 'import os\n# os.makedirs("%s/x")\n' /tmp >"$R/src/commented.py"
 printf '// fs.mkdirSync("%s/x");\nmodule.exports = {};\n' /tmp >"$R/src/commented.js"
+printf '/* fs.mkdirSync("%s/x"); */\n * fs.mkdirSync("%s/y");\nmodule.exports = {};\n' /tmp /tmp >"$R/src/blockcommented.js"
+# The bare root is not the leak shape: creating /tmp itself is a no-op on
+# every real system, and the leak is a run-scoped SUBDIRECTORY outliving
+# the run.
+printf 'import os\nos.makedirs("%s", exist_ok=True)\n' /tmp >"$R/src/bareroot.py"
 git -C "$R" add -A
 run_pf
-clean "temp-path literals as config values, fixture strings, messages, TMPDIR-accessor creations, and commented-out calls are nobody's finding"
+clean "temp-path literals as config values, fixture strings, messages, TMPDIR-accessor creations, commented-out calls (line and block), and bare-root creation are nobody's finding"
 
 echo "=== control: a real creation beside those values still fails ==="
 printf 'import os\nos.makedirs("%s/real")\n' /tmp >"$R/src/creates.py"

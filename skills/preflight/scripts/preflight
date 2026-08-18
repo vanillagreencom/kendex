@@ -928,7 +928,7 @@ while IFS= read -r f; do
       case "$content" in
         *"/tmp/"*)
           case "${content#"${content%%[![:space:]]*}"}" in
-            '#'* | '//'*) ;;
+            '#'* | '//'* | '/*'* | '*'*) ;;
             *)
               if printf '%s' "$content" | grep -Eq -- "$TMPPATH_CREATE_RE"; then
                 emit "$f" "$n" hardcoded-temp-path "directory creation at a literal absolute temp path — it escapes TMPDIR redirection and leaks past the run"
