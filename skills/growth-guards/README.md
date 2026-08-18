@@ -41,12 +41,12 @@ hook keeps its content and exit status; repeat runs are no-ops and repairs.
 `remove` disarms, `check` folds the verdict in.
 
 `pre-commit` judges ONE commit snapshot: `size-ratchet --staged` and
-`preflight --staged` when installed beside this skill, the `growth-guards`
-batch over the staged content, then the repo-root-relative executable named
-by `GROWTH_GUARDS_PRE_COMMIT_LOCAL` (empty means none). `commit-msg` runs
-this family's message gate on git's message file. Both shims BLOCK and fail
-closed on the exit contract — `1` carries the check's remediation text, `2`
-names a guard that could not run; `git commit --no-verify` is the bypass.
+`preflight --staged` when the committing work tree or this install
+carries them (work tree first), the `growth-guards` batch, then the
+repo-root-relative executable named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL`
+(empty means none). `commit-msg` runs this family's message gate. Both
+shims BLOCK and fail closed — `1` carries the check's remediation text,
+`2` a guard that could not run; `git commit --no-verify` is the bypass.
 
 ## todo-ban
 

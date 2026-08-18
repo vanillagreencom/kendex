@@ -97,7 +97,9 @@ it in for projects with the skill installed.
 `scripts/pre-commit` judges ONE commit snapshot — staged content, and
 tracked configuration read from the index, so an unstaged edit cannot switch
 a check off for content the commit keeps. It runs `size-ratchet --staged`
-and `preflight --staged` when those skills are installed beside this one (a
+and `preflight --staged` when the committing work tree or this install
+carries those skills — the work tree's copy wins, so a shim execing a shared
+install in another checkout still gates on this tree's own copies (a
 repository's first commit skips preflight with a note — nothing to diff
 against; a size-ratchet that rejects `--staged` in its own first-line parser
 diagnostic is a repo-local replacement — stated skip, that repo's own wiring

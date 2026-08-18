@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # pre-commit — the staged-scope guard chain, shaped for the git pre-commit
 # hook (the installed .git/hooks/vstack-guards shim execs it): size-ratchet
-# and preflight when those sibling skills are installed, then
-# `growth-guards all`, then the repo-local entry named by
-# GROWTH_GUARDS_PRE_COMMIT_LOCAL.
+# and preflight when the committing work tree or this install carries those
+# sibling skills, then `growth-guards all`, then the repo-local entry named
+# by GROWTH_GUARDS_PRE_COMMIT_LOCAL. Every lane announces itself, a skipped
+# or unconfigured one included.
 #
 # Every step runs before the verdict, so one commit attempt reports every
 # blocker. Aggregation fails CLOSED: exit 2 if any step could not complete,
@@ -21,9 +22,9 @@ usage() {
   cat <<'EOF'
 usage: pre-commit
 
-Runs the staged-scope guard chain: size-ratchet and preflight (each when
-installed beside this skill), the growth-guards batch, then the optional
-repo-local entry. Takes no
+Runs the staged-scope guard chain: size-ratchet and preflight (each resolved
+from the committing work tree first, then from the install beside this
+skill), the growth-guards batch, then the optional repo-local entry. Takes no
 arguments — git passes none to pre-commit. Wire it through the installed shim:
 `install-git-hooks --repo <root>`.
 
@@ -68,16 +69,38 @@ run_step() { # LABEL COMMAND [ARGS...] — runs one step and folds its verdict
   esac
 }
 
-# One relative path for both install shapes: a consumer's
-# .agents/skills/<skill>/scripts and vstack's own skills/<skill>/scripts are
-# the same two levels up.
-SIZE_RATCHET_SKILL="$SCRIPT_DIR/../../size-ratchet"
-SIZE_RATCHET="$SIZE_RATCHET_SKILL/scripts/size-ratchet"
-# Whether the SKILL is installed decides, not whether its script happens to be
-# runnable: an installed skill with a missing, dangling or unexecutable script
+# Sibling gates resolve against the COMMITTING work tree first: the shim may
+# exec this script from a shared install in another checkout (linked worktrees
+# share one hooks directory), whose branch state must not decide which gates
+# exist for this commit — and a re-vendored copy in this tree gates it, not
+# the install it replaces. The roots mirror the shim's rediscovery list, which
+# covers a consumer's .agents/skills shape and vstack's own skills/ layout;
+# the install beside this script serves only a tree carrying no copy.
+SKILL_ROOTS=".agents/skills .claude/skills .cursor/rules .opencode/skills skills"
+
+# Whether the SKILL is present decides, not whether its script happens to be
+# runnable: a present skill with a missing, dangling or unexecutable script
 # is a broken install, and the chain must never pass by losing a gate. -L
 # catches a dangling symlink, which -e reports as absent.
-if [ -e "$SIZE_RATCHET_SKILL" ] || [ -L "$SIZE_RATCHET_SKILL" ]; then
+resolve_sibling() { # SKILL — skill directory on stdout; 1 when no side carries it
+  local skill="$1" base="" dir=""
+  for base in $SKILL_ROOTS; do
+    dir="$PWD/$base/$skill"
+    if [ -e "$dir" ] || [ -L "$dir" ]; then
+      printf '%s\n' "$dir"
+      return 0
+    fi
+  done
+  dir="$SCRIPT_DIR/../../$skill"
+  if [ -e "$dir" ] || [ -L "$dir" ]; then
+    printf '%s\n' "$dir"
+    return 0
+  fi
+  return 1
+}
+
+if SIZE_RATCHET_SKILL="$(resolve_sibling size-ratchet)"; then
+  SIZE_RATCHET="$SIZE_RATCHET_SKILL/scripts/size-ratchet"
   [ -x "$SIZE_RATCHET" ] || gg_config_error "the size-ratchet skill is installed at $SIZE_RATCHET_SKILL but $SIZE_RATCHET is missing or not executable — reinstall it"
   # A consuming repo may replace the vendored script with its own gate — a
   # fork without the --staged interface, wired through its own hooks. This
@@ -116,15 +139,14 @@ if [ -e "$SIZE_RATCHET_SKILL" ] || [ -L "$SIZE_RATCHET_SKILL" ]; then
       ;;
   esac
 else
-  echo "=== pre-commit: size-ratchet not installed — skipped"
+  echo "=== pre-commit: size-ratchet not installed — skipped (no size-ratchet skill under $PWD ($SKILL_ROOTS), nor at $SCRIPT_DIR/../../size-ratchet)"
 fi
 
 # Same sibling contract for preflight: its --staged lanes judge the same
 # blobs, and a human committing outside any harness gets the deterministic
 # checks CI would otherwise report first.
-PREFLIGHT_SKILL="$SCRIPT_DIR/../../preflight"
-PREFLIGHT="$PREFLIGHT_SKILL/scripts/preflight"
-if [ -e "$PREFLIGHT_SKILL" ] || [ -L "$PREFLIGHT_SKILL" ]; then
+if PREFLIGHT_SKILL="$(resolve_sibling preflight)"; then
+  PREFLIGHT="$PREFLIGHT_SKILL/scripts/preflight"
   [ -x "$PREFLIGHT" ] || gg_config_error "the preflight skill is installed at $PREFLIGHT_SKILL but $PREFLIGHT is missing or not executable — reinstall it"
   if git rev-parse --verify --quiet HEAD >/dev/null; then
     run_step preflight "$PREFLIGHT" --staged
@@ -134,7 +156,7 @@ if [ -e "$PREFLIGHT_SKILL" ] || [ -L "$PREFLIGHT_SKILL" ]; then
     echo "=== pre-commit: first commit — preflight --staged has no base; skipped"
   fi
 else
-  echo "=== pre-commit: preflight not installed — skipped"
+  echo "=== pre-commit: preflight not installed — skipped (no preflight skill under $PWD ($SKILL_ROOTS), nor at $SCRIPT_DIR/../../preflight)"
 fi
 
 BATCH="$SCRIPT_DIR/growth-guards"
@@ -148,6 +170,10 @@ if [ -n "$LOCAL_RAW" ]; then
   # The family contract applies: 0 clean, 1 violations, anything else "could
   # not complete". Every nonzero blocks either way.
   run_step "repo-local: $LOCAL_ENTRY" "./$LOCAL_ENTRY"
+else
+  # Announced like every ran or skipped lane: silence here is
+  # indistinguishable from a lane the chain lost.
+  echo "=== pre-commit: repo-local entry: none configured"
 fi
 
 if [ "$had_errors" -eq 1 ]; then
