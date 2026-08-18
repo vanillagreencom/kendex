@@ -418,6 +418,11 @@ span stay required until taken:
   (→ `references/finding-disposition.md`); project-management
   `workflows/tpm-audit-project-order.md` (→ a `workflows/tpm-audit.md` mode)
   and `schemas/audit-project-order-output.md` (→ `schemas/audit-output.md`).
+- **Items named `all` must be renamed or removed before refresh:** `all` is
+  now the shared instruction key, so an agent, skill, or hook actually named
+  `all` — possible in pre-release installs, whose removal stays supported —
+  is rejected by `refresh`; rename or `vstack remove` it first or the
+  refresh fails without explaining itself.
 - **Roadmap plans need their JSON sidecar:** roadmap-create's legacy
   markdown-parsing fallback is removed — the plan JSON is the contract, and
   `roadmap create` on a markdown-only plan now halts naming the missing
