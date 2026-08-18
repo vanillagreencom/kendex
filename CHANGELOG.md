@@ -405,7 +405,19 @@ span stay required until taken:
   `PR_REVIEW_REFIX_MAX_LINES`, `ORCH_CACHE_DIR`, and
   `ORCH_LANE_CLAUDE_PERMISSION_ARG` from `vstack.settings.toml`; add
   `ORCH_LANE_ALIASES` if you alias lanes. Automation calling any removed orch
-  script or passing `github.sh label-add --reason` must update.
+  script or passing `github.sh label-add --reason` must update. The retired
+  entry points, for sweeping project-owned instructions and automation:
+  orch scripts `review-init`, `review-risk`, `refix-route`,
+  `local-review-budget`, `list-review-agents`, `tracker-for-issue`,
+  `codex-app-agent-preflight` (no replacements); the session-kickstart layer
+  `session-init`, `parallel-groups`, `workflows/initialize.md`,
+  `workflows/parallel-check.md` (a session picks up the issue and goes; the
+  worktree lease claim lives in `start-worktree.md` § 1); orch workflows
+  `fix-reconcile.md` (→ TPM audit pipeline + `Closes` linkage),
+  `agent-sequencing.md` (→ SKILL.md § Coordination), `recommendation-bias.md`
+  (→ `references/finding-disposition.md`); project-management
+  `workflows/tpm-audit-project-order.md` (→ a `workflows/tpm-audit.md` mode)
+  and `schemas/audit-project-order-output.md` (→ `schemas/audit-output.md`).
 - **Removed skills and pack (breaking):** before your next `vstack refresh`,
   delete any `iced-shadcn` or `html-artifact` entries from your project's
   `vstack.toml` (`[skill-instructions]`, `[agent-skills]`, `[role-skills]`).
