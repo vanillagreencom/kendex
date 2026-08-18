@@ -149,7 +149,7 @@ describe("integrity entries persisted to the pi session", () => {
 		assert.equal(appendIntegrityEntry("anything", { count: 1 }), false);
 	});
 
-	it("reaping stale queued results drops them, diags, notifies, and persists", () => {
+	it("reaping stale queued results parks them consumably, diags, notifies, and persists", () => {
 		const queryCtx = new QueryContext();
 		queryCtx.recordToolCall("bash-lost", "bash", { command: "echo should-not-leak" });
 		queryCtx.pendingResults.set("bash-lost", { toolCallId: "bash-lost", content: [{ type: "text", text: "should-not-leak" }] });
@@ -158,12 +158,16 @@ describe("integrity entries persisted to the pi session", () => {
 		reapStaleQueuedResults(queryCtx);
 
 		assert.equal(queryCtx.pendingResults.size, 0);
+		// Parked, not destroyed: a handler firing after the boundary still gets
+		// its real result (vstack#1469).
+		assert.equal(queryCtx.reapedResults.size, 1);
+		assert.equal(queryCtx.reapedResults.get("bash-lost").content[0].text, "should-not-leak");
 		const diag = readDiagEntries();
 		assert.equal(diag.length, 1);
-		assert.equal(diag[0].label, "stale_queued_tool_results_dropped");
+		assert.equal(diag[0].label, "stale_queued_tool_results_parked");
 		assert.deepEqual(diag[0].stale, [{ id: "bash-lost", toolName: "bash" }]);
 		assert.equal(sessionEntries.length, 1);
-		assert.equal(sessionEntries[0].data.label, "stale_queued_tool_results_dropped");
+		assert.equal(sessionEntries[0].data.label, "stale_queued_tool_results_parked");
 		assert.equal(notifications.length, 1);
 		assert.equal(notifications[0].level, "warning");
 		assert.match(notifications[0].message, /bash/);

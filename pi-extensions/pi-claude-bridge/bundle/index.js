@@ -7,7 +7,7 @@ var __export = (target, all) => {
 // src/index.ts
 import * as piAi from "@earendil-works/pi-ai";
 
-// node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs
 import { createRequire as DW } from "node:module";
 import woe from "url";
 import Toe from "crypto";
@@ -26856,7 +26856,7 @@ function rW(e, t) {
   return null;
 }
 
-// node_modules/change-case/dist/index.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/change-case/dist/index.js
 var SPLIT_LOWER_UPPER_RE = new RegExp("([\\p{Ll}\\d])(\\p{Lu})", "gu");
 var SPLIT_UPPER_UPPER_RE = new RegExp("(\\p{Lu})([\\p{Lu}][\\p{Ll}])", "gu");
 var SPLIT_SEPARATE_NUMBER_RE = new RegExp("(\\d)\\p{Ll}|(\\p{L})\\d", "u");
@@ -28170,6 +28170,49 @@ function drainPendingToolCalls(queryCtx, cause) {
   queryCtx.pendingToolCalls.clear();
   return drained;
 }
+function strandedToolCallResult() {
+  return {
+    content: [{ type: "text", text: "Claude bridge: this tool call was never forwarded to Pi before its turn ended, so it did not execute and no result can arrive. Re-run the tool." }],
+    isError: true
+  };
+}
+function failStrandedToolCall(queryCtx, id) {
+  if (queryCtx.forwardedToolCallIds.has(id)) return false;
+  const pending = queryCtx.pendingToolCalls.get(id);
+  if (!pending) return false;
+  queryCtx.pendingToolCalls.delete(id);
+  queryCtx.deadToolCallIds.add(id);
+  pending.resolve(strandedToolCallResult());
+  return true;
+}
+function drainStrandedToolCalls(queryCtx) {
+  const stranded = [];
+  for (const [id, pending] of queryCtx.pendingToolCalls) {
+    if (pending.generation >= queryCtx.callbackGeneration) continue;
+    if (queryCtx.forwardedToolCallIds.has(id)) continue;
+    stranded.push({ id, toolName: pending.toolName });
+  }
+  for (const { id } of stranded) {
+    const pending = queryCtx.pendingToolCalls.get(id);
+    queryCtx.pendingToolCalls.delete(id);
+    queryCtx.deadToolCallIds.add(id);
+    pending.resolve(strandedToolCallResult());
+  }
+  return stranded;
+}
+function takeQueuedOrParkedResult(queryCtx, id) {
+  const queued = queryCtx.pendingResults.get(id);
+  if (queued !== void 0) {
+    queryCtx.pendingResults.delete(id);
+    return queued;
+  }
+  const parked = queryCtx.reapedResults.get(id);
+  if (parked !== void 0) {
+    queryCtx.reapedResults.delete(id);
+    return parked;
+  }
+  return void 0;
+}
 function normalizeForCompare(value) {
   if (Array.isArray(value)) return value.map(normalizeForCompare);
   if (value && typeof value === "object") {
@@ -28208,6 +28251,33 @@ var QueryContext = class {
   latestCursor = 0;
   pendingToolCalls = /* @__PURE__ */ new Map();
   pendingResults = /* @__PURE__ */ new Map();
+  /** Results a message-boundary reap moved OUT of pendingResults so they stop
+   *  poisoning mismatch reports, kept CONSUMABLE for a handler that fires later.
+   *  The 2026-08-17 deadlock session showed the reap's "no consumer will ever
+   *  come" assumption failing routinely: Pi delivers a turn's results in one
+   *  callback while the SDK staggers handler invocations past the next message
+   *  boundary. Query-scoped, bounded by the query's tool-call count. */
+  reapedResults = /* @__PURE__ */ new Map();
+  /** Every tool-call id this query has handed to Pi inside an ENDED turn — the
+   *  set endToolUseTurn stamps from the turn's content. A forwarded id is one Pi
+   *  will execute and answer; it must never be emitted again (a lagging stream
+   *  replays the same tool_use into the NEXT turn, and per-message turnBlocks
+   *  dedup cannot see across turns — vstack#1469's duplicate executions), and a
+   *  handler waiting on it must be left waiting at the stranded-handler drains.
+   *  Query-scoped, never reset per message. */
+  forwardedToolCallIds = /* @__PURE__ */ new Set();
+  /** Ids whose waiting handler was resolved with strandedToolCallResult. The
+   *  model has been told these calls failed; forwarding one later would execute
+   *  it behind the model's back, so every forward path skips them. */
+  deadToolCallIds = /* @__PURE__ */ new Set();
+  /** Streamed block indexes suppressed as duplicate or dead tool_use blocks —
+   *  their deltas and stops must be ignored the same way child-executed indexes
+   *  are. Per message; reset by resetToolTracking. */
+  suppressedStreamIndexes = /* @__PURE__ */ new Set();
+  /** Bumped at every provider callback for this query. Stamped onto handlers at
+   *  registration so the stranded-handler drain can tell "registered before this
+   *  callback, provably settled" from "racing this callback's own stream". */
+  callbackGeneration = 0;
   turnToolCallIds = [];
   turnToolCalls = [];
   /**
@@ -28365,6 +28435,7 @@ var QueryContext = class {
     this.reportedToolResultMismatch = false;
     this.childExecutedToolCalls.clear();
     this.childExecutedStreamIndexes.clear();
+    this.suppressedStreamIndexes.clear();
   }
   /** Note a tool_use the child runs itself. `streamIndex` is present only on the
    *  streamed path, where later deltas/stops for that block must be skipped —
@@ -28433,23 +28504,25 @@ var QueryContext = class {
     return { toolCallId: chosen.id, match, ambiguous, available: unclaimed.length, ...argsMismatch ? { argsMismatch } : {} };
   }
   /**
-   * Drain results still queued in `pendingResults` and report what was dropped.
+   * Move results still queued in `pendingResults` into the parked store and
+   * report what moved.
    *
    * Called at a child MESSAGE boundary (message_start / the no-stream-events
-   * assistant fallback): by then the child has necessarily received every tool
-   * result for the previous message — a handler that matched resolved its result
-   * directly or from this queue, and one that never matched already returned an
-   * error. Whatever is still queued therefore belongs to a call whose handler
-   * gave up, and no consumer will ever come for it. Left in place, each entry
-   * poisons every later mismatch report for the whole query (queued>0 with 0/0
-   * counters and no tool names) and forces a session rebuild per turn.
+   * assistant fallback). Left in pendingResults, each entry poisons every later
+   * mismatch report for the whole query (queued>0 with 0/0 counters and no tool
+   * names) and forces a session rebuild per turn. But the boundary does NOT
+   * prove the handler gave up — the SDK staggers handler invocations, and the
+   * 2026-08-17 deadlock session (vstack#1469) had three of five parallel
+   * handlers fire after this reap destroyed their results. So the reap parks
+   * instead of dropping: reports stay clean, and a late handler still gets its
+   * real result through takeQueuedOrParkedResult.
    */
   takeStaleQueuedResults() {
     if (this.pendingResults.size === 0) return [];
-    const stale = [...this.pendingResults.keys()].map((id) => ({
-      id,
-      toolName: this.queryToolNames.get(id) ?? "unknown"
-    }));
+    const stale = [...this.pendingResults.entries()].map(([id, result]) => {
+      this.reapedResults.set(id, result);
+      return { id, toolName: this.queryToolNames.get(id) ?? "unknown" };
+    });
     this.pendingResults.clear();
     return stale;
   }
@@ -29011,7 +29084,7 @@ function buildNativeProvider(piAi2, models, streamSimple, env = process.env, has
   });
 }
 
-// node_modules/zod/v4/classic/external.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/classic/external.js
 var external_exports = {};
 __export(external_exports, {
   $brand: () => $brand,
@@ -29254,7 +29327,7 @@ __export(external_exports, {
   xor: () => xor
 });
 
-// node_modules/zod/v4/core/index.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/index.js
 var core_exports2 = {};
 __export(core_exports2, {
   $ZodAny: () => $ZodAny,
@@ -29533,7 +29606,7 @@ __export(core_exports2, {
   version: () => version
 });
 
-// node_modules/zod/v4/core/core.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/core.js
 var _a2;
 var NEVER = /* @__PURE__ */ Object.freeze({
   status: "aborted"
@@ -29610,7 +29683,7 @@ function config(newConfig) {
   return globalConfig;
 }
 
-// node_modules/zod/v4/core/util.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/util.js
 var util_exports = {};
 __export(util_exports, {
   BIGINT_FORMAT_RANGES: () => BIGINT_FORMAT_RANGES,
@@ -30306,7 +30379,7 @@ var Class = class {
   }
 };
 
-// node_modules/zod/v4/core/errors.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/errors.js
 var initializer = (inst, def) => {
   inst.name = "$ZodError";
   Object.defineProperty(inst, "_zod", {
@@ -30445,7 +30518,7 @@ function prettifyError(error51) {
   return lines.join("\n");
 }
 
-// node_modules/zod/v4/core/parse.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/parse.js
 var _parse = (_Err) => (schema, value, _ctx, _params) => {
   const ctx2 = _ctx ? { ..._ctx, async: false } : { async: false };
   const result = schema._zod.run({ value, issues: [] }, ctx2);
@@ -30533,7 +30606,7 @@ var _safeDecodeAsync = (_Err) => async (schema, value, _ctx) => {
 };
 var safeDecodeAsync = /* @__PURE__ */ _safeDecodeAsync($ZodRealError);
 
-// node_modules/zod/v4/core/regexes.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/regexes.js
 var regexes_exports = {};
 __export(regexes_exports, {
   base64: () => base64,
@@ -30692,7 +30765,7 @@ var sha512_hex = /^[0-9a-fA-F]{128}$/;
 var sha512_base64 = /* @__PURE__ */ fixedBase64(86, "==");
 var sha512_base64url = /* @__PURE__ */ fixedBase64url(86);
 
-// node_modules/zod/v4/core/checks.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/checks.js
 var $ZodCheck = /* @__PURE__ */ $constructor("$ZodCheck", (inst, def) => {
   var _a4;
   inst._zod ?? (inst._zod = {});
@@ -31240,7 +31313,7 @@ var $ZodCheckOverwrite = /* @__PURE__ */ $constructor("$ZodCheckOverwrite", (ins
   };
 });
 
-// node_modules/zod/v4/core/doc.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/doc.js
 var Doc = class {
   constructor(args = []) {
     this.content = [];
@@ -31276,14 +31349,14 @@ var Doc = class {
   }
 };
 
-// node_modules/zod/v4/core/versions.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/versions.js
 var version = {
   major: 4,
   minor: 4,
   patch: 3
 };
 
-// node_modules/zod/v4/core/schemas.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/schemas.js
 var $ZodType = /* @__PURE__ */ $constructor("$ZodType", (inst, def) => {
   var _a4;
   inst ?? (inst = {});
@@ -33376,7 +33449,7 @@ function handleRefineResult(result, payload, input, inst) {
   }
 }
 
-// node_modules/zod/v4/locales/index.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/index.js
 var locales_exports = {};
 __export(locales_exports, {
   ar: () => ar_default,
@@ -33433,7 +33506,7 @@ __export(locales_exports, {
   zhTW: () => zh_TW_default
 });
 
-// node_modules/zod/v4/locales/ar.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ar.js
 var error = () => {
   const Sizable = {
     string: { unit: "\u062D\u0631\u0641", verb: "\u0623\u0646 \u064A\u062D\u0648\u064A" },
@@ -33540,7 +33613,7 @@ function ar_default() {
   };
 }
 
-// node_modules/zod/v4/locales/az.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/az.js
 var error2 = () => {
   const Sizable = {
     string: { unit: "simvol", verb: "olmal\u0131d\u0131r" },
@@ -33646,7 +33719,7 @@ function az_default() {
   };
 }
 
-// node_modules/zod/v4/locales/be.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/be.js
 function getBelarusianPlural(count, one, few, many) {
   const absCount = Math.abs(count);
   const lastDigit = absCount % 10;
@@ -33803,7 +33876,7 @@ function be_default() {
   };
 }
 
-// node_modules/zod/v4/locales/bg.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/bg.js
 var error4 = () => {
   const Sizable = {
     string: { unit: "\u0441\u0438\u043C\u0432\u043E\u043B\u0430", verb: "\u0434\u0430 \u0441\u044A\u0434\u044A\u0440\u0436\u0430" },
@@ -33924,7 +33997,7 @@ function bg_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ca.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ca.js
 var error5 = () => {
   const Sizable = {
     string: { unit: "car\xE0cters", verb: "contenir" },
@@ -34033,7 +34106,7 @@ function ca_default() {
   };
 }
 
-// node_modules/zod/v4/locales/cs.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/cs.js
 var error6 = () => {
   const Sizable = {
     string: { unit: "znak\u016F", verb: "m\xEDt" },
@@ -34145,7 +34218,7 @@ function cs_default() {
   };
 }
 
-// node_modules/zod/v4/locales/da.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/da.js
 var error7 = () => {
   const Sizable = {
     string: { unit: "tegn", verb: "havde" },
@@ -34261,7 +34334,7 @@ function da_default() {
   };
 }
 
-// node_modules/zod/v4/locales/de.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/de.js
 var error8 = () => {
   const Sizable = {
     string: { unit: "Zeichen", verb: "zu haben" },
@@ -34370,7 +34443,7 @@ function de_default() {
   };
 }
 
-// node_modules/zod/v4/locales/el.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/el.js
 var error9 = () => {
   const Sizable = {
     string: { unit: "\u03C7\u03B1\u03C1\u03B1\u03BA\u03C4\u03AE\u03C1\u03B5\u03C2", verb: "\u03BD\u03B1 \u03AD\u03C7\u03B5\u03B9" },
@@ -34480,7 +34553,7 @@ function el_default() {
   };
 }
 
-// node_modules/zod/v4/locales/en.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/en.js
 var error10 = () => {
   const Sizable = {
     string: { unit: "characters", verb: "to have" },
@@ -34593,7 +34666,7 @@ function en_default() {
   };
 }
 
-// node_modules/zod/v4/locales/eo.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/eo.js
 var error11 = () => {
   const Sizable = {
     string: { unit: "karaktrojn", verb: "havi" },
@@ -34703,7 +34776,7 @@ function eo_default() {
   };
 }
 
-// node_modules/zod/v4/locales/es.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/es.js
 var error12 = () => {
   const Sizable = {
     string: { unit: "caracteres", verb: "tener" },
@@ -34836,7 +34909,7 @@ function es_default() {
   };
 }
 
-// node_modules/zod/v4/locales/fa.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/fa.js
 var error13 = () => {
   const Sizable = {
     string: { unit: "\u06A9\u0627\u0631\u0627\u06A9\u062A\u0631", verb: "\u062F\u0627\u0634\u062A\u0647 \u0628\u0627\u0634\u062F" },
@@ -34951,7 +35024,7 @@ function fa_default() {
   };
 }
 
-// node_modules/zod/v4/locales/fi.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/fi.js
 var error14 = () => {
   const Sizable = {
     string: { unit: "merkki\xE4", subject: "merkkijonon" },
@@ -35064,7 +35137,7 @@ function fi_default() {
   };
 }
 
-// node_modules/zod/v4/locales/fr.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/fr.js
 var error15 = () => {
   const Sizable = {
     string: { unit: "caract\xE8res", verb: "avoir" },
@@ -35190,7 +35263,7 @@ function fr_default() {
   };
 }
 
-// node_modules/zod/v4/locales/fr-CA.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/fr-CA.js
 var error16 = () => {
   const Sizable = {
     string: { unit: "caract\xE8res", verb: "avoir" },
@@ -35298,7 +35371,7 @@ function fr_CA_default() {
   };
 }
 
-// node_modules/zod/v4/locales/he.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/he.js
 var error17 = () => {
   const TypeNames = {
     string: { label: "\u05DE\u05D7\u05E8\u05D5\u05D6\u05EA", gender: "f" },
@@ -35493,7 +35566,7 @@ function he_default() {
   };
 }
 
-// node_modules/zod/v4/locales/hr.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/hr.js
 var error18 = () => {
   const Sizable = {
     string: { unit: "znakova", verb: "imati" },
@@ -35616,7 +35689,7 @@ function hr_default() {
   };
 }
 
-// node_modules/zod/v4/locales/hu.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/hu.js
 var error19 = () => {
   const Sizable = {
     string: { unit: "karakter", verb: "legyen" },
@@ -35725,7 +35798,7 @@ function hu_default() {
   };
 }
 
-// node_modules/zod/v4/locales/hy.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/hy.js
 function getArmenianPlural(count, one, many) {
   return Math.abs(count) === 1 ? one : many;
 }
@@ -35873,7 +35946,7 @@ function hy_default() {
   };
 }
 
-// node_modules/zod/v4/locales/id.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/id.js
 var error21 = () => {
   const Sizable = {
     string: { unit: "karakter", verb: "memiliki" },
@@ -35980,7 +36053,7 @@ function id_default() {
   };
 }
 
-// node_modules/zod/v4/locales/is.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/is.js
 var error22 = () => {
   const Sizable = {
     string: { unit: "stafi", verb: "a\xF0 hafa" },
@@ -36090,7 +36163,7 @@ function is_default() {
   };
 }
 
-// node_modules/zod/v4/locales/it.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/it.js
 var error23 = () => {
   const Sizable = {
     string: { unit: "caratteri", verb: "avere" },
@@ -36199,7 +36272,7 @@ function it_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ja.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ja.js
 var error24 = () => {
   const Sizable = {
     string: { unit: "\u6587\u5B57", verb: "\u3067\u3042\u308B" },
@@ -36307,7 +36380,7 @@ function ja_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ka.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ka.js
 var error25 = () => {
   const Sizable = {
     string: { unit: "\u10E1\u10D8\u10DB\u10D1\u10DD\u10DA\u10DD", verb: "\u10E3\u10DC\u10D3\u10D0 \u10E8\u10D4\u10D8\u10EA\u10D0\u10D5\u10D3\u10D4\u10E1" },
@@ -36420,7 +36493,7 @@ function ka_default() {
   };
 }
 
-// node_modules/zod/v4/locales/km.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/km.js
 var error26 = () => {
   const Sizable = {
     string: { unit: "\u178F\u17BD\u17A2\u1780\u17D2\u179F\u179A", verb: "\u1782\u17BD\u179A\u1798\u17B6\u1793" },
@@ -36531,12 +36604,12 @@ function km_default() {
   };
 }
 
-// node_modules/zod/v4/locales/kh.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/kh.js
 function kh_default() {
   return km_default();
 }
 
-// node_modules/zod/v4/locales/ko.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ko.js
 var error27 = () => {
   const Sizable = {
     string: { unit: "\uBB38\uC790", verb: "to have" },
@@ -36648,7 +36721,7 @@ function ko_default() {
   };
 }
 
-// node_modules/zod/v4/locales/lt.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/lt.js
 var capitalizeFirstCharacter = (text) => {
   return text.charAt(0).toUpperCase() + text.slice(1);
 };
@@ -36852,7 +36925,7 @@ function lt_default() {
   };
 }
 
-// node_modules/zod/v4/locales/mk.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/mk.js
 var error29 = () => {
   const Sizable = {
     string: { unit: "\u0437\u043D\u0430\u0446\u0438", verb: "\u0434\u0430 \u0438\u043C\u0430\u0430\u0442" },
@@ -36962,7 +37035,7 @@ function mk_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ms.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ms.js
 var error30 = () => {
   const Sizable = {
     string: { unit: "aksara", verb: "mempunyai" },
@@ -37070,7 +37143,7 @@ function ms_default() {
   };
 }
 
-// node_modules/zod/v4/locales/nl.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/nl.js
 var error31 = () => {
   const Sizable = {
     string: { unit: "tekens", verb: "heeft" },
@@ -37181,7 +37254,7 @@ function nl_default() {
   };
 }
 
-// node_modules/zod/v4/locales/no.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/no.js
 var error32 = () => {
   const Sizable = {
     string: { unit: "tegn", verb: "\xE5 ha" },
@@ -37290,7 +37363,7 @@ function no_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ota.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ota.js
 var error33 = () => {
   const Sizable = {
     string: { unit: "harf", verb: "olmal\u0131d\u0131r" },
@@ -37400,7 +37473,7 @@ function ota_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ps.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ps.js
 var error34 = () => {
   const Sizable = {
     string: { unit: "\u062A\u0648\u06A9\u064A", verb: "\u0648\u0644\u0631\u064A" },
@@ -37515,7 +37588,7 @@ function ps_default() {
   };
 }
 
-// node_modules/zod/v4/locales/pl.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/pl.js
 var error35 = () => {
   const Sizable = {
     string: { unit: "znak\xF3w", verb: "mie\u0107" },
@@ -37625,7 +37698,7 @@ function pl_default() {
   };
 }
 
-// node_modules/zod/v4/locales/pt.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/pt.js
 var error36 = () => {
   const Sizable = {
     string: { unit: "caracteres", verb: "ter" },
@@ -37734,7 +37807,7 @@ function pt_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ro.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ro.js
 var error37 = () => {
   const Sizable = {
     string: { unit: "caractere", verb: "s\u0103 aib\u0103" },
@@ -37854,7 +37927,7 @@ function ro_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ru.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ru.js
 function getRussianPlural(count, one, few, many) {
   const absCount = Math.abs(count);
   const lastDigit = absCount % 10;
@@ -38011,7 +38084,7 @@ function ru_default() {
   };
 }
 
-// node_modules/zod/v4/locales/sl.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/sl.js
 var error39 = () => {
   const Sizable = {
     string: { unit: "znakov", verb: "imeti" },
@@ -38121,7 +38194,7 @@ function sl_default() {
   };
 }
 
-// node_modules/zod/v4/locales/sv.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/sv.js
 var error40 = () => {
   const Sizable = {
     string: { unit: "tecken", verb: "att ha" },
@@ -38232,7 +38305,7 @@ function sv_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ta.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ta.js
 var error41 = () => {
   const Sizable = {
     string: { unit: "\u0B8E\u0BB4\u0BC1\u0BA4\u0BCD\u0BA4\u0BC1\u0B95\u0BCD\u0B95\u0BB3\u0BCD", verb: "\u0B95\u0BCA\u0BA3\u0BCD\u0B9F\u0BBF\u0BB0\u0BC1\u0B95\u0BCD\u0B95 \u0BB5\u0BC7\u0BA3\u0BCD\u0B9F\u0BC1\u0BAE\u0BCD" },
@@ -38343,7 +38416,7 @@ function ta_default() {
   };
 }
 
-// node_modules/zod/v4/locales/th.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/th.js
 var error42 = () => {
   const Sizable = {
     string: { unit: "\u0E15\u0E31\u0E27\u0E2D\u0E31\u0E01\u0E29\u0E23", verb: "\u0E04\u0E27\u0E23\u0E21\u0E35" },
@@ -38454,7 +38527,7 @@ function th_default() {
   };
 }
 
-// node_modules/zod/v4/locales/tr.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/tr.js
 var error43 = () => {
   const Sizable = {
     string: { unit: "karakter", verb: "olmal\u0131" },
@@ -38560,7 +38633,7 @@ function tr_default() {
   };
 }
 
-// node_modules/zod/v4/locales/uk.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/uk.js
 var error44 = () => {
   const Sizable = {
     string: { unit: "\u0441\u0438\u043C\u0432\u043E\u043B\u0456\u0432", verb: "\u043C\u0430\u0442\u0438\u043C\u0435" },
@@ -38669,12 +38742,12 @@ function uk_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ua.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ua.js
 function ua_default() {
   return uk_default();
 }
 
-// node_modules/zod/v4/locales/ur.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ur.js
 var error45 = () => {
   const Sizable = {
     string: { unit: "\u062D\u0631\u0648\u0641", verb: "\u06C1\u0648\u0646\u0627" },
@@ -38785,7 +38858,7 @@ function ur_default() {
   };
 }
 
-// node_modules/zod/v4/locales/uz.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/uz.js
 var error46 = () => {
   const Sizable = {
     string: { unit: "belgi", verb: "bo\u2018lishi kerak" },
@@ -38896,7 +38969,7 @@ function uz_default() {
   };
 }
 
-// node_modules/zod/v4/locales/vi.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/vi.js
 var error47 = () => {
   const Sizable = {
     string: { unit: "k\xFD t\u1EF1", verb: "c\xF3" },
@@ -39005,7 +39078,7 @@ function vi_default() {
   };
 }
 
-// node_modules/zod/v4/locales/zh-CN.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/zh-CN.js
 var error48 = () => {
   const Sizable = {
     string: { unit: "\u5B57\u7B26", verb: "\u5305\u542B" },
@@ -39115,7 +39188,7 @@ function zh_CN_default() {
   };
 }
 
-// node_modules/zod/v4/locales/zh-TW.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/zh-TW.js
 var error49 = () => {
   const Sizable = {
     string: { unit: "\u5B57\u5143", verb: "\u64C1\u6709" },
@@ -39223,7 +39296,7 @@ function zh_TW_default() {
   };
 }
 
-// node_modules/zod/v4/locales/yo.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/yo.js
 var error50 = () => {
   const Sizable = {
     string: { unit: "\xE0mi", verb: "n\xED" },
@@ -39331,7 +39404,7 @@ function yo_default() {
   };
 }
 
-// node_modules/zod/v4/core/registries.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/registries.js
 var _a3;
 var $output = /* @__PURE__ */ Symbol("ZodOutput");
 var $input = /* @__PURE__ */ Symbol("ZodInput");
@@ -39381,7 +39454,7 @@ function registry() {
 (_a3 = globalThis).__zod_globalRegistry ?? (_a3.__zod_globalRegistry = registry());
 var globalRegistry = globalThis.__zod_globalRegistry;
 
-// node_modules/zod/v4/core/api.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/api.js
 // @__NO_SIDE_EFFECTS__
 function _string(Class2, params) {
   return new Class2({
@@ -40420,7 +40493,7 @@ function _stringFormat(Class2, format, fnOrRegex, _params = {}) {
   return inst;
 }
 
-// node_modules/zod/v4/core/to-json-schema.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/to-json-schema.js
 function initializeContext(params) {
   let target = params?.target ?? "draft-2020-12";
   if (target === "draft-4")
@@ -40779,7 +40852,7 @@ var createStandardJSONSchemaMethod = (schema, io2, processors = {}) => (params) 
   return finalize(ctx2, schema);
 };
 
-// node_modules/zod/v4/core/json-schema-processors.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/json-schema-processors.js
 var formatMap = {
   guid: "uuid",
   url: "uri",
@@ -41323,7 +41396,7 @@ function toJSONSchema(input, params) {
   return finalize(ctx2, input);
 }
 
-// node_modules/zod/v4/core/json-schema-generator.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/json-schema-generator.js
 var JSONSchemaGenerator = class {
   /** @deprecated Access via ctx instead */
   get metadataRegistry() {
@@ -41398,10 +41471,10 @@ var JSONSchemaGenerator = class {
   }
 };
 
-// node_modules/zod/v4/core/json-schema.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/json-schema.js
 var json_schema_exports = {};
 
-// node_modules/zod/v4/classic/schemas.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/classic/schemas.js
 var schemas_exports2 = {};
 __export(schemas_exports2, {
   ZodAny: () => ZodAny,
@@ -41572,7 +41645,7 @@ __export(schemas_exports2, {
   xor: () => xor
 });
 
-// node_modules/zod/v4/classic/checks.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/classic/checks.js
 var checks_exports2 = {};
 __export(checks_exports2, {
   endsWith: () => _endsWith,
@@ -41606,7 +41679,7 @@ __export(checks_exports2, {
   uppercase: () => _uppercase
 });
 
-// node_modules/zod/v4/classic/iso.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/classic/iso.js
 var iso_exports = {};
 __export(iso_exports, {
   ZodISODate: () => ZodISODate,
@@ -41647,7 +41720,7 @@ function duration2(params) {
   return _isoDuration(ZodISODuration, params);
 }
 
-// node_modules/zod/v4/classic/errors.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/classic/errors.js
 var initializer2 = (inst, issues) => {
   $ZodError.init(inst, issues);
   inst.name = "ZodError";
@@ -41687,7 +41760,7 @@ var ZodRealError = /* @__PURE__ */ $constructor("ZodError", initializer2, {
   Parent: Error
 });
 
-// node_modules/zod/v4/classic/parse.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/classic/parse.js
 var parse3 = /* @__PURE__ */ _parse(ZodRealError);
 var parseAsync2 = /* @__PURE__ */ _parseAsync(ZodRealError);
 var safeParse2 = /* @__PURE__ */ _safeParse(ZodRealError);
@@ -41701,7 +41774,7 @@ var safeDecode2 = /* @__PURE__ */ _safeDecode(ZodRealError);
 var safeEncodeAsync2 = /* @__PURE__ */ _safeEncodeAsync(ZodRealError);
 var safeDecodeAsync2 = /* @__PURE__ */ _safeDecodeAsync(ZodRealError);
 
-// node_modules/zod/v4/classic/schemas.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/classic/schemas.js
 var _installedGroups = /* @__PURE__ */ new WeakMap();
 function _installLazyMethods(inst, group, methods) {
   const proto = Object.getPrototypeOf(inst);
@@ -42991,7 +43064,7 @@ function preprocess(fn, schema) {
   });
 }
 
-// node_modules/zod/v4/classic/compat.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/classic/compat.js
 var ZodIssueCode = {
   invalid_type: "invalid_type",
   too_big: "too_big",
@@ -43017,7 +43090,7 @@ var ZodFirstPartyTypeKind;
 /* @__PURE__ */ (function(ZodFirstPartyTypeKind2) {
 })(ZodFirstPartyTypeKind || (ZodFirstPartyTypeKind = {}));
 
-// node_modules/zod/v4/classic/from-json-schema.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/classic/from-json-schema.js
 var z2 = {
   ...schemas_exports2,
   ...checks_exports2,
@@ -43497,7 +43570,7 @@ function fromJSONSchema(schema, params) {
   return convertSchema(normalized, ctx2);
 }
 
-// node_modules/zod/v4/classic/coerce.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/classic/coerce.js
 var coerce_exports = {};
 __export(coerce_exports, {
   bigint: () => bigint3,
@@ -43522,7 +43595,7 @@ function date4(params) {
   return _coercedDate(ZodDate, params);
 }
 
-// node_modules/zod/v4/classic/external.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/zod/v4/classic/external.js
 config(en_default());
 
 // src/typebox-to-zod.ts
@@ -43944,7 +44017,7 @@ function spawnClaudeCodeWithDiagnostics(options) {
   };
 }
 
-// node_modules/cc-session-io/dist/chunk-7RWUSC7F.js
+// ../../../../../vstack/pi-extensions/pi-claude-bridge/node_modules/cc-session-io/dist/chunk-7RWUSC7F.js
 import { randomUUID } from "crypto";
 import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync2, appendFileSync as appendFileSync3, existsSync as existsSync4, rmSync as rmSync2 } from "fs";
 import { dirname as dirname4 } from "path";
@@ -45240,6 +45313,9 @@ var TOOL_USE_END_GRACE_MS = 1500;
 function endToolUseTurn(c) {
   if (!c.currentPiStream || !c.turnOutput) return;
   cancelScheduledToolUseEnd(c);
+  for (const block of c.turnOutput.content) {
+    if (block?.type === "toolCall" && typeof block.id === "string") c.forwardedToolCallIds.add(block.id);
+  }
   c.turnOutput.stopReason = "toolUse";
   c.currentPiStream.push({ type: "done", reason: "toolUse", message: c.turnOutput });
   c.currentPiStream.end();
@@ -45268,11 +45344,11 @@ function reapStaleQueuedResults(c) {
   const stale = c.takeStaleQueuedResults();
   if (stale.length === 0) return;
   const names = stale.map((entry) => entry.toolName);
-  debug(`reapStaleQueuedResults: dropping ${stale.length} queued tool result(s) with no possible consumer:`, names.join(", "));
-  diagDump("stale_queued_tool_results_dropped", { count: stale.length, stale });
-  appendIntegrityEntry("stale_queued_tool_results_dropped", { count: stale.length, stale });
+  debug(`reapStaleQueuedResults: parked ${stale.length} early tool result(s) awaiting a late handler:`, names.join(", "));
+  diagDump("stale_queued_tool_results_parked", { count: stale.length, stale });
+  appendIntegrityEntry("stale_queued_tool_results_parked", { count: stale.length, stale });
   safeNotify(
-    `Claude bridge: dropped ${stale.length} tool result(s) whose handler never matched (${names.slice(0, 6).join(", ")}${names.length > 6 ? ", \u2026" : ""}). The model saw an error for these calls and may retry them.`,
+    `Claude bridge: parked ${stale.length} early tool result(s) whose handler has not arrived (${names.slice(0, 6).join(", ")}${names.length > 6 ? ", \u2026" : ""}). A late handler can still consume them.`,
     "warning"
   );
 }
@@ -45282,24 +45358,61 @@ function updateTurnOutputModel(modelId, c = ctx()) {
   debug(`provider: active Claude model changed ${c.turnOutput.model} -> ${modelId}`);
   c.turnOutput.model = modelId;
 }
-function finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, toolName, mappedArgs) {
-  if (!queryCtx.currentPiStream || !queryCtx.turnOutput) return;
+var FINALIZE_MAX_REARMS = 3;
+function finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, toolName, mappedArgs, rearmCount = 0) {
+  if (!queryCtx.currentPiStream || !queryCtx.turnOutput) {
+    if (failStrandedToolCall(queryCtx, toolCallId)) {
+      debug(`mcp handler: ${toolName} [${toolCallId}] stranded \u2014 turn ended before its call reached Pi; resolved with error`);
+      diagDump("tool_handler_stranded", { toolCallId, toolName, site: "finalize-no-stream" });
+      appendIntegrityEntry("tool_handler_stranded", { toolCallId, toolName, site: "finalize-no-stream" });
+    }
+    return;
+  }
   let idx = queryCtx.turnBlocks.findIndex((b) => b.type === "toolCall" && b.id === toolCallId);
   if (idx >= 0) {
     const block = queryCtx.turnBlocks[idx];
     if ("partialJson" in block) {
-      block.arguments = mapToolArgs(block.name, parsePartialJson(block.partialJson, block.arguments));
+      block.arguments = mappedArgs;
       queryCtx.updateToolCallArgs(block.id, block.arguments);
       delete block.partialJson;
       delete block.index;
       queryCtx.currentPiStream.push({ type: "toolcall_end", contentIndex: idx, toolCall: block, partial: queryCtx.turnOutput });
     }
+  } else if (queryCtx.forwardedToolCallIds.has(toolCallId) || queryCtx.deadToolCallIds.has(toolCallId)) {
+    debug(`mcp handler: ${toolName} [${toolCallId}] already ${queryCtx.forwardedToolCallIds.has(toolCallId) ? "forwarded" : "dead"} \u2014 not re-emitting`);
+    return;
   } else {
     queryCtx.turnBlocks.push({ type: "toolCall", id: toolCallId, name: toolName, arguments: mappedArgs });
     idx = queryCtx.turnBlocks.length - 1;
     const block = queryCtx.turnBlocks[idx];
     queryCtx.currentPiStream.push({ type: "toolcall_start", contentIndex: idx, partial: queryCtx.turnOutput });
     queryCtx.currentPiStream.push({ type: "toolcall_end", contentIndex: idx, toolCall: block, partial: queryCtx.turnOutput });
+  }
+  for (let i = 0; i < queryCtx.turnBlocks.length; i++) {
+    const sibling = queryCtx.turnBlocks[i];
+    if (sibling.type !== "toolCall" || !("partialJson" in sibling)) continue;
+    const waiting = queryCtx.pendingToolCalls.get(sibling.id);
+    if (!waiting) continue;
+    sibling.arguments = waiting.args;
+    queryCtx.updateToolCallArgs(sibling.id, sibling.arguments);
+    delete sibling.partialJson;
+    delete sibling.index;
+    queryCtx.currentPiStream.push({ type: "toolcall_end", contentIndex: i, toolCall: sibling, partial: queryCtx.turnOutput });
+  }
+  const unsettled = queryCtx.turnBlocks.filter((b) => b.type === "toolCall" && "partialJson" in b);
+  if (unsettled.length > 0 && rearmCount < FINALIZE_MAX_REARMS) {
+    debug(`mcp handler: ${unsettled.length} sibling tool call(s) still streaming \u2014 re-arming grace (${rearmCount + 1}/${FINALIZE_MAX_REARMS})`);
+    scheduleToolUseTurnEnd(
+      queryCtx,
+      () => finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, toolName, mappedArgs, rearmCount + 1),
+      `finalize-rearm:${toolName}`
+    );
+    return;
+  }
+  if (unsettled.length > 0) {
+    diagDump("partial_tool_calls_pruned", { count: unsettled.length, ids: unsettled.map((b) => b.id) });
+    appendIntegrityEntry("partial_tool_calls_pruned", { count: unsettled.length, toolNames: unsettled.map((b) => b.name) });
+    queryCtx.turnOutput.content = queryCtx.turnBlocks.filter((b) => !(b.type === "toolCall" && "partialJson" in b));
   }
   queryCtx.turnSawToolCall = true;
   debug(`mcp handler: finalizing tool_use turn from MCP invocation [${toolCallId}] (${toolName}) \u2014 terminal stream events never arrived`);
@@ -45337,6 +45450,12 @@ function processStreamEvent(message, customToolNameToPi, model, c = ctx()) {
       c.turnBlocks.push({ type: "thinking", thinking: "", thinkingSignature: "", index: event.index });
       c.currentPiStream.push({ type: "thinking_start", contentIndex: c.turnBlocks.length - 1, partial: c.turnOutput });
     } else if (event.content_block?.type === "tool_use") {
+      const streamedId = event.content_block.id;
+      if (typeof streamedId === "string" && (c.forwardedToolCallIds.has(streamedId) || c.deadToolCallIds.has(streamedId))) {
+        c.suppressedStreamIndexes.add(event.index);
+        debug(`processStreamEvent: tool_use ${streamedId} already ${c.forwardedToolCallIds.has(streamedId) ? "forwarded" : "dead"} \u2014 suppressing duplicate stream block`);
+        return;
+      }
       c.turnSawToolCall = true;
       const mappedName = mapToolName(event.content_block.name, customToolNameToPi);
       c.recordToolCall(event.content_block.id, mappedName, {});
@@ -45355,7 +45474,7 @@ function processStreamEvent(message, customToolNameToPi, model, c = ctx()) {
     return;
   }
   if (event?.type === "content_block_delta") {
-    if (c.childExecutedStreamIndexes.has(event.index)) {
+    if (c.childExecutedStreamIndexes.has(event.index) || c.suppressedStreamIndexes.has(event.index)) {
       c.turnSawStreamEvent = true;
       return;
     }
@@ -45384,7 +45503,7 @@ function processStreamEvent(message, customToolNameToPi, model, c = ctx()) {
     return;
   }
   if (event?.type === "content_block_stop") {
-    if (c.childExecutedStreamIndexes.has(event.index)) {
+    if (c.childExecutedStreamIndexes.has(event.index) || c.suppressedStreamIndexes.has(event.index)) {
       c.turnSawStreamEvent = true;
       return;
     }
@@ -45435,8 +45554,12 @@ function appendMissingToolUsesFromAssistant(assistantMsg, model, customToolNameT
       debug(`assistant message: child-executed tool ${block.name} [${block.id}] \u2014 not mirrored as a Pi tool call`);
       continue;
     }
-    sawToolUse = true;
     const existingIdx = c.turnBlocks.findIndex((b) => b.type === "toolCall" && b.id === block.id);
+    if (existingIdx < 0 && (c.forwardedToolCallIds.has(block.id) || c.deadToolCallIds.has(block.id))) {
+      debug(`assistant message: tool_use ${block.id} already ${c.forwardedToolCallIds.has(block.id) ? "forwarded" : "dead"} \u2014 skipping duplicate`);
+      continue;
+    }
+    sawToolUse = true;
     const name = mapToolName(block.name, customToolNameToPi);
     const mappedArgs = mapToolArgs(name, block.input);
     c.recordToolCall(block.id, name, mappedArgs);
@@ -45521,6 +45644,10 @@ function processAssistantMessage(message, model, customToolNameToPi, c = ctx()) 
       if (isChildExecutedTool(block.name)) {
         c.noteChildExecutedToolCall(block.id, block.name);
         debug(`processAssistantMessage fallback: child-executed tool ${block.name} [${block.id}] \u2014 not mirrored as a Pi tool call`);
+        continue;
+      }
+      if (!c.turnBlocks.some((b) => b.type === "toolCall" && b.id === block.id) && (c.forwardedToolCallIds.has(block.id) || c.deadToolCallIds.has(block.id))) {
+        debug(`processAssistantMessage fallback: tool_use ${block.id} already ${c.forwardedToolCallIds.has(block.id) ? "forwarded" : "dead"} \u2014 skipping duplicate`);
         continue;
       }
       ensureTurnStarted(c);
@@ -46315,12 +46442,11 @@ function buildMcpServers(tools, queryCtx) {
       } else if (claim.match !== "tool-args" || claim.ambiguous) {
         debug(`mcp handler: ${tool.name} [${toolCallId}] claimed by ${claim.match}${claim.ambiguous ? " (ambiguous)" : ""}`);
       }
-      if (toolCallId && queryCtx.pendingResults.has(toolCallId)) {
-        const result = queryCtx.pendingResults.get(toolCallId);
-        queryCtx.pendingResults.delete(toolCallId);
+      const earlyResult = toolCallId ? takeQueuedOrParkedResult(queryCtx, toolCallId) : void 0;
+      if (earlyResult !== void 0) {
         queryCtx.markToolResultResolved(toolCallId);
-        debug(`mcp handler: ${tool.name} [${toolCallId}] \u2192 resolved from queue (${queryCtx.pendingResults.size} remaining)`);
-        return result;
+        debug(`mcp handler: ${tool.name} [${toolCallId}] \u2192 resolved from queue/parked (${queryCtx.pendingResults.size} queued, ${queryCtx.reapedResults.size} parked remaining)`);
+        return earlyResult;
       }
       debug(`mcp handler: ${tool.name} [${toolCallId}] \u2192 waiting`);
       scheduleToolUseTurnEnd(
@@ -46331,6 +46457,8 @@ function buildMcpServers(tools, queryCtx) {
       return new Promise((resolve5) => {
         queryCtx.pendingToolCalls.set(toolCallId, {
           toolName: tool.name,
+          args: mappedArgs,
+          generation: queryCtx.callbackGeneration,
           resolve: (result) => {
             queryCtx.markToolResultResolved(toolCallId);
             resolve5(result);
@@ -46422,6 +46550,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     const queryCtx = ctx();
     queryCtx.currentPiStream = stream;
     queryCtx.resetTurnState(model);
+    queryCtx.callbackGeneration += 1;
     activeStreamIdleWatchdogs.get(queryCtx)?.refresh();
     const allResults = extractAllToolResults2(context);
     debug(`provider: tool results, ${allResults.length} results, ${queryCtx.pendingToolCalls.size} waiting handlers, ctx.msgs=${context.messages.length}`);
@@ -46460,8 +46589,18 @@ function streamClaudeAgentSdkInLane(model, context, options) {
       reportToolResultMismatch(queryCtx, "unmatched tool result", cwd);
     }
     if (queryCtx.pendingToolCalls.size > 0) {
-      debug(`WARNING: ${queryCtx.pendingToolCalls.size} MCP handlers still waiting after delivering ${allResults.length} results`);
-      safeNotify(`Claude bridge: ${queryCtx.pendingToolCalls.size} tool handler(s) still waiting \u2014 provider may be stuck`, "warning");
+      const stranded = drainStrandedToolCalls(queryCtx);
+      if (stranded.length > 0) {
+        const names = stranded.map((entry) => entry.toolName).join(", ");
+        debug(`provider: failed ${stranded.length} stranded MCP handler(s) never forwarded to Pi: ${names}`);
+        diagDump("tool_handlers_stranded", { count: stranded.length, stranded });
+        appendIntegrityEntry("tool_handlers_stranded", { count: stranded.length, stranded });
+        safeNotify(`Claude bridge: failed ${stranded.length} tool call(s) that never reached Pi before their turn ended (${names}). The model saw a retryable error.`, "warning");
+      }
+      if (queryCtx.pendingToolCalls.size > 0) {
+        debug(`WARNING: ${queryCtx.pendingToolCalls.size} MCP handlers still waiting after delivering ${allResults.length} results`);
+        safeNotify(`Claude bridge: ${queryCtx.pendingToolCalls.size} tool handler(s) still waiting \u2014 provider may be stuck`, "warning");
+      }
     }
     let capturedThrough = context.messages.length;
     if (lastMsgRole === "user") {
@@ -46538,6 +46677,10 @@ function streamClaudeAgentSdkInLane(model, context, options) {
   ctx().currentPiStream = stream;
   ctx().pendingToolCalls.clear();
   ctx().pendingResults.clear();
+  ctx().reapedResults.clear();
+  ctx().forwardedToolCallIds.clear();
+  ctx().deadToolCallIds.clear();
+  ctx().callbackGeneration = 0;
   ctx().deferredUserMessages = [];
   ctx().resetTurnState(model);
   ctx().resetToolTracking();

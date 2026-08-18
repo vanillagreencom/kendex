@@ -4,7 +4,7 @@ import { appendIntegrityEntry, safeNotify } from "./bridge-state.js";
 import { connectorResultByteSize, recordConnectorCallResult } from "./connector-audit.js";
 import { isChildExecutedTool } from "./connectors.js";
 import { debug, diagDump } from "./debug.js";
-import { ctx, type QueryContext } from "./query-state.js";
+import { ctx, failStrandedToolCall, type QueryContext } from "./query-state.js";
 import { mapToolArgs, mapToolName } from "./tool-mapping.js";
 
 // --- Usage helpers ---
@@ -91,6 +91,12 @@ const TOOL_USE_END_GRACE_MS = 1500;
 export function endToolUseTurn(c: QueryContext): void {
 	if (!c.currentPiStream || !c.turnOutput) return;
 	cancelScheduledToolUseEnd(c);
+	// Every tool call Pi is about to execute from this turn is owed a result and
+	// must never be dispatched again: a lagging stream replays the same tool_use
+	// into the NEXT turn, whose per-message dedup cannot see it (vstack#1469).
+	for (const block of c.turnOutput.content as Array<{ type?: string; id?: unknown }>) {
+		if (block?.type === "toolCall" && typeof block.id === "string") c.forwardedToolCallIds.add(block.id);
+	}
 	c.turnOutput.stopReason = "toolUse";
 	c.currentPiStream.push({ type: "done", reason: "toolUse", message: c.turnOutput });
 	c.currentPiStream.end();
@@ -125,24 +131,26 @@ export function scheduleToolUseTurnEnd(c: QueryContext, action: () => void, sour
 }
 
 /**
- * Drop queued tool results that no handler can ever consume again, and say so
- * everywhere it matters. Runs at a child message boundary — by then every
- * handler for the previous message has either resolved (directly or from this
- * queue) or already returned an error, so anything still queued is the real
- * output of a call whose handler gave up. See takeStaleQueuedResults for why
- * leaving them queued poisoned every later mismatch report and forced a
- * session rebuild per turn.
+ * Park queued tool results whose handler has not fired by a child message
+ * boundary, and say so everywhere it matters. The boundary is where stale
+ * entries would start poisoning mismatch reports — but it does NOT prove the
+ * handler gave up: the SDK staggers handler invocations, and in the 2026-08-17
+ * deadlock session three of five parallel handlers fired after this point
+ * (vstack#1469). Parked results stay consumable through
+ * takeQueuedOrParkedResult; one that is never consumed belongs to a call the
+ * SDK abandoned client-side (permission denial), which is exactly what the
+ * notice describes.
  */
 export function reapStaleQueuedResults(c: QueryContext): void {
 	const stale = c.takeStaleQueuedResults();
 	if (stale.length === 0) return;
 	const names = stale.map((entry) => entry.toolName);
-	debug(`reapStaleQueuedResults: dropping ${stale.length} queued tool result(s) with no possible consumer:`, names.join(", "));
-	diagDump("stale_queued_tool_results_dropped", { count: stale.length, stale });
-	appendIntegrityEntry("stale_queued_tool_results_dropped", { count: stale.length, stale });
+	debug(`reapStaleQueuedResults: parked ${stale.length} early tool result(s) awaiting a late handler:`, names.join(", "));
+	diagDump("stale_queued_tool_results_parked", { count: stale.length, stale });
+	appendIntegrityEntry("stale_queued_tool_results_parked", { count: stale.length, stale });
 	safeNotify(
-		`Claude bridge: dropped ${stale.length} tool result(s) whose handler never matched (${names.slice(0, 6).join(", ")}${names.length > 6 ? ", …" : ""}). ` +
-		`The model saw an error for these calls and may retry them.`,
+		`Claude bridge: parked ${stale.length} early tool result(s) whose handler has not arrived (${names.slice(0, 6).join(", ")}${names.length > 6 ? ", …" : ""}). ` +
+		`A late handler can still consume them.`,
 		"warning",
 	);
 }
@@ -166,25 +174,50 @@ export function updateTurnOutputModel(modelId: unknown, c: QueryContext = ctx())
  *  the handler blocks on a result pi will never deliver (deadlock). No-op when
  *  the turn already ended (stream null) or the tool call isn't part of the
  *  currently streamed turn. */
+export const FINALIZE_MAX_REARMS = 3;
+
 export function finalizeToolUseTurnFromMcpInvocation(
 	queryCtx: QueryContext,
 	toolCallId: string,
 	toolName: string,
 	mappedArgs: Record<string, unknown>,
+	rearmCount = 0,
 ): void {
-	if (!queryCtx.currentPiStream || !queryCtx.turnOutput) return;
+	if (!queryCtx.currentPiStream || !queryCtx.turnOutput) {
+		// The turn ended without this call. An unforwarded handler here can never
+		// be answered — the yield that could have replayed its call was consumed
+		// against a null stream, and the dead-mark below suppresses any replay
+		// that has not happened yet. Failing it now is what turns the observed
+		// multi-hour session deadlock into one retryable error (vstack#1469).
+		if (failStrandedToolCall(queryCtx, toolCallId)) {
+			debug(`mcp handler: ${toolName} [${toolCallId}] stranded — turn ended before its call reached Pi; resolved with error`);
+			diagDump("tool_handler_stranded", { toolCallId, toolName, site: "finalize-no-stream" });
+			appendIntegrityEntry("tool_handler_stranded", { toolCallId, toolName, site: "finalize-no-stream" });
+		}
+		return;
+	}
 	let idx = queryCtx.turnBlocks.findIndex((b: any) => b.type === "toolCall" && b.id === toolCallId);
 	if (idx >= 0) {
 		const block = queryCtx.turnBlocks[idx] as any;
 		if ("partialJson" in block) {
-			// Stream ended before content_block_stop — settle the args from the
-			// partial JSON the same way content_block_stop would have.
-			block.arguments = mapToolArgs(block.name, parsePartialJson(block.partialJson, block.arguments));
+			// Stream ended before content_block_stop. The SDK invoked this handler
+			// with the COMPLETE schema-validated input, so the handler's copy is
+			// authoritative — the streamed partial JSON is by definition behind it.
+			// Settling from the partial is what forwarded `{}`-argument calls that
+			// Pi then executed and errored (vstack#1469), exactly the divergence
+			// the synthesize branch below never had.
+			block.arguments = mappedArgs;
 			queryCtx.updateToolCallArgs(block.id, block.arguments);
 			delete block.partialJson;
 			delete block.index;
 			queryCtx.currentPiStream.push({ type: "toolcall_end", contentIndex: idx, toolCall: block, partial: queryCtx.turnOutput });
 		}
+	} else if (queryCtx.forwardedToolCallIds.has(toolCallId) || queryCtx.deadToolCallIds.has(toolCallId)) {
+		// Pi already executed this call in an earlier turn (its result arrives or
+		// sits parked), or the handler was already failed — either way a second
+		// dispatch is the one outcome worse than waiting.
+		debug(`mcp handler: ${toolName} [${toolCallId}] already ${queryCtx.forwardedToolCallIds.has(toolCallId) ? "forwarded" : "dead"} — not re-emitting`);
+		return;
 	} else {
 		// The invocation can arrive before the tool_use is streamed at all
 		// (observed after a tool-result+steer provider call reset the turn):
@@ -195,6 +228,43 @@ export function finalizeToolUseTurnFromMcpInvocation(
 		const block = queryCtx.turnBlocks[idx] as any;
 		queryCtx.currentPiStream.push({ type: "toolcall_start", contentIndex: idx, partial: queryCtx.turnOutput });
 		queryCtx.currentPiStream.push({ type: "toolcall_end", contentIndex: idx, toolCall: block, partial: queryCtx.turnOutput });
+	}
+	// Settle every OTHER still-partial block whose handler has fired: each
+	// waiting handler carries the authoritative args for its own call.
+	for (let i = 0; i < queryCtx.turnBlocks.length; i++) {
+		const sibling = queryCtx.turnBlocks[i] as any;
+		if (sibling.type !== "toolCall" || !("partialJson" in sibling)) continue;
+		const waiting = queryCtx.pendingToolCalls.get(sibling.id);
+		if (!waiting) continue;
+		sibling.arguments = waiting.args;
+		queryCtx.updateToolCallArgs(sibling.id, sibling.arguments);
+		delete sibling.partialJson;
+		delete sibling.index;
+		queryCtx.currentPiStream.push({ type: "toolcall_end", contentIndex: i, toolCall: sibling, partial: queryCtx.turnOutput });
+	}
+	// A block still partial here has NO fired handler: its complete arguments
+	// exist nowhere on this side of the boundary yet. Ending the turn now would
+	// hand Pi truncated arguments to execute — a truncated bash command is not a
+	// hypothetical hazard — so give the lagging stream more grace first.
+	const unsettled = queryCtx.turnBlocks.filter((b: any) => b.type === "toolCall" && "partialJson" in b);
+	if (unsettled.length > 0 && rearmCount < FINALIZE_MAX_REARMS) {
+		debug(`mcp handler: ${unsettled.length} sibling tool call(s) still streaming — re-arming grace (${rearmCount + 1}/${FINALIZE_MAX_REARMS})`);
+		scheduleToolUseTurnEnd(
+			queryCtx,
+			() => finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, toolName, mappedArgs, rearmCount + 1),
+			`finalize-rearm:${toolName}`,
+		);
+		return;
+	}
+	if (unsettled.length > 0) {
+		// Grace exhausted: drop the inexecutable blocks from the turn instead of
+		// executing garbage. Each replays complete on the SDK's assistant yield in
+		// a later turn (appendMissingToolUsesFromAssistant, with authoritative
+		// input), or its handler eventually fires and the stranded drain fails it
+		// with a retryable error.
+		diagDump("partial_tool_calls_pruned", { count: unsettled.length, ids: unsettled.map((b: any) => b.id) });
+		appendIntegrityEntry("partial_tool_calls_pruned", { count: unsettled.length, toolNames: unsettled.map((b: any) => b.name) });
+		queryCtx.turnOutput.content = queryCtx.turnBlocks.filter((b: any) => !(b.type === "toolCall" && "partialJson" in b));
 	}
 	queryCtx.turnSawToolCall = true;
 	debug(`mcp handler: finalizing tool_use turn from MCP invocation [${toolCallId}] (${toolName}) — terminal stream events never arrived`);
@@ -256,6 +326,15 @@ export function processStreamEvent(
 			c.turnBlocks.push({ type: "thinking", thinking: "", thinkingSignature: "", index: event.index });
 			c.currentPiStream!.push({ type: "thinking_start", contentIndex: c.turnBlocks.length - 1, partial: c.turnOutput });
 		} else if (event.content_block?.type === "tool_use") {
+			const streamedId: unknown = event.content_block.id;
+			if (typeof streamedId === "string" && (c.forwardedToolCallIds.has(streamedId) || c.deadToolCallIds.has(streamedId))) {
+				// A lagging stream replaying a call Pi already executed — or one whose
+				// handler was already failed as stranded — into a later turn. Mirroring
+				// it would make Pi dispatch it a second time (vstack#1469).
+				c.suppressedStreamIndexes.add(event.index);
+				debug(`processStreamEvent: tool_use ${streamedId} already ${c.forwardedToolCallIds.has(streamedId) ? "forwarded" : "dead"} — suppressing duplicate stream block`);
+				return;
+			}
 			c.turnSawToolCall = true;
 			const mappedName = mapToolName(event.content_block.name, customToolNameToPi);
 			c.recordToolCall(event.content_block.id, mappedName, {});
@@ -277,7 +356,8 @@ export function processStreamEvent(
 		// them here rather than letting the lookup below miss, so the "unmatched"
 		// warning keeps meaning "something is wrong". Unlike that stale-event case
 		// this IS a live event for the current message, so it still counts as one.
-		if (c.childExecutedStreamIndexes.has(event.index)) {
+		// Suppressed duplicate/dead blocks skip identically.
+		if (c.childExecutedStreamIndexes.has(event.index) || c.suppressedStreamIndexes.has(event.index)) {
 			c.turnSawStreamEvent = true;
 			return;
 		}
@@ -309,7 +389,7 @@ export function processStreamEvent(
 	if (event?.type === "content_block_stop") {
 		// Same as the delta case: the block was never mirrored, so there is nothing
 		// to seal and nothing unmatched about it.
-		if (c.childExecutedStreamIndexes.has(event.index)) {
+		if (c.childExecutedStreamIndexes.has(event.index) || c.suppressedStreamIndexes.has(event.index)) {
 			c.turnSawStreamEvent = true;
 			return;
 		}
@@ -386,8 +466,15 @@ function appendMissingToolUsesFromAssistant(
 			debug(`assistant message: child-executed tool ${block.name} [${block.id}] — not mirrored as a Pi tool call`);
 			continue;
 		}
-		sawToolUse = true;
 		const existingIdx = c.turnBlocks.findIndex((b: any) => b.type === "toolCall" && b.id === block.id);
+		if (existingIdx < 0 && (c.forwardedToolCallIds.has(block.id) || c.deadToolCallIds.has(block.id))) {
+			// Completed-message replay of a call Pi already executed in an earlier
+			// turn (or one already failed as stranded). Not a live Pi turn boundary:
+			// sawToolUse stays false for it, and no block is emitted (vstack#1469).
+			debug(`assistant message: tool_use ${block.id} already ${c.forwardedToolCallIds.has(block.id) ? "forwarded" : "dead"} — skipping duplicate`);
+			continue;
+		}
+		sawToolUse = true;
 		const name = mapToolName(block.name, customToolNameToPi);
 		const mappedArgs = mapToolArgs(name, block.input);
 		c.recordToolCall(block.id, name, mappedArgs);
@@ -528,6 +615,17 @@ export function processAssistantMessage(message: SDKMessage, model: Model<any>, 
 				// becomes a Pi tool call and never ends the turn.
 				c.noteChildExecutedToolCall(block.id, block.name);
 				debug(`processAssistantMessage fallback: child-executed tool ${block.name} [${block.id}] — not mirrored as a Pi tool call`);
+				continue;
+			}
+			if (!c.turnBlocks.some((b: any) => b.type === "toolCall" && b.id === block.id)
+				&& (c.forwardedToolCallIds.has(block.id) || c.deadToolCallIds.has(block.id))) {
+				// A cross-turn replay of a call Pi already executed (or one whose
+				// handler was already failed as stranded). This exact path produced
+				// the observed duplicate dispatches: the completed-message yield lands
+				// in the callback AFTER a grace finalize already ended the call's
+				// turn, and per-message dedup cannot see across turns (vstack#1469).
+				// Not recorded either — a forwarded call must not be claimable again.
+				debug(`processAssistantMessage fallback: tool_use ${block.id} already ${c.forwardedToolCallIds.has(block.id) ? "forwarded" : "dead"} — skipping duplicate`);
 				continue;
 			}
 			ensureTurnStarted(c);

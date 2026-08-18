@@ -7,7 +7,7 @@ import { PROVIDER_ID, messageContentToText } from "./convert.js";
 import { buildModels, modelDisplayName } from "./models.js";
 import { MCP_SERVER_NAME, MCP_TOOL_PREFIX } from "./skills.js";
 import { extractAllToolResults as _extractAllToolResults, type McpResult } from "./extract-tool-results.js";
-import { QueryContext, ctx, deleteQueryLane, drainPendingToolCalls, popContext, stackDepth, pushContext, summarizeDroppedUserMessages, toolCallDrainCause, type DeferredUserMessage } from "./query-state.js";
+import { QueryContext, ctx, deleteQueryLane, drainPendingToolCalls, drainStrandedToolCalls, popContext, stackDepth, pushContext, summarizeDroppedUserMessages, takeQueuedOrParkedResult, toolCallDrainCause, type DeferredUserMessage } from "./query-state.js";
 import { teardownQuery } from "./query-teardown.js";
 import { loadConfig, recordProjectTrust, registerExternalConfigResolver } from "./config.js";
 import { hasClaudeCredentials } from "./auth-presence.js";
@@ -378,12 +378,11 @@ function buildMcpServers(tools: Tool[], queryCtx: QueryContext): Record<string, 
 			} else if (claim.match !== "tool-args" || claim.ambiguous) {
 				debug(`mcp handler: ${tool.name} [${toolCallId}] claimed by ${claim.match}${claim.ambiguous ? " (ambiguous)" : ""}`);
 			}
-			if (toolCallId && queryCtx.pendingResults.has(toolCallId)) {
-				const result = queryCtx.pendingResults.get(toolCallId)!;
-				queryCtx.pendingResults.delete(toolCallId);
+			const earlyResult = toolCallId ? takeQueuedOrParkedResult(queryCtx, toolCallId) : undefined;
+			if (earlyResult !== undefined) {
 				queryCtx.markToolResultResolved(toolCallId);
-				debug(`mcp handler: ${tool.name} [${toolCallId}] → resolved from queue (${queryCtx.pendingResults.size} remaining)`);
-				return result;
+				debug(`mcp handler: ${tool.name} [${toolCallId}] → resolved from queue/parked (${queryCtx.pendingResults.size} queued, ${queryCtx.reapedResults.size} parked remaining)`);
+				return earlyResult;
 			}
 			debug(`mcp handler: ${tool.name} [${toolCallId}] → waiting`);
 			// Don't end the pi turn here — message_delta (real output tokens) and
@@ -397,6 +396,8 @@ function buildMcpServers(tools: Tool[], queryCtx: QueryContext): Record<string, 
 			return new Promise<McpResult>((resolve) => {
 				queryCtx.pendingToolCalls.set(toolCallId, {
 					toolName: tool.name,
+					args: mappedArgs,
+					generation: queryCtx.callbackGeneration,
 					resolve: (result) => {
 						queryCtx.markToolResultResolved(toolCallId);
 						resolve(result);
@@ -564,6 +565,10 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 		const queryCtx = ctx();
 		queryCtx.currentPiStream = stream;
 		queryCtx.resetTurnState(model);
+		// A fresh callback separates handlers registered for settled turns from
+		// ones racing this callback's own stream — the stranded drain below only
+		// ever touches the former.
+		queryCtx.callbackGeneration += 1;
 		activeStreamIdleWatchdogs.get(queryCtx)?.refresh();
 		const allResults = extractAllToolResults(context);
 		debug(`provider: tool results, ${allResults.length} results, ${queryCtx.pendingToolCalls.size} waiting handlers, ctx.msgs=${context.messages.length}`);
@@ -602,8 +607,23 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			reportToolResultMismatch(queryCtx, "unmatched tool result", cwd);
 		}
 		if (queryCtx.pendingToolCalls.size > 0) {
-			debug(`WARNING: ${queryCtx.pendingToolCalls.size} MCP handlers still waiting after delivering ${allResults.length} results`);
-			safeNotify(`Claude bridge: ${queryCtx.pendingToolCalls.size} tool handler(s) still waiting — provider may be stuck`, "warning");
+			// A waiting handler whose call never reached Pi can never be answered —
+			// fail it now with a retryable error instead of letting the SDK await it
+			// forever (the 2026-08-17 five-and-a-half-hour deadlock, vstack#1469).
+			// Forwarded-but-unanswered handlers stay: steer-split batches legitimately
+			// deliver their results in a later callback.
+			const stranded = drainStrandedToolCalls(queryCtx);
+			if (stranded.length > 0) {
+				const names = stranded.map((entry) => entry.toolName).join(", ");
+				debug(`provider: failed ${stranded.length} stranded MCP handler(s) never forwarded to Pi: ${names}`);
+				diagDump("tool_handlers_stranded", { count: stranded.length, stranded });
+				appendIntegrityEntry("tool_handlers_stranded", { count: stranded.length, stranded });
+				safeNotify(`Claude bridge: failed ${stranded.length} tool call(s) that never reached Pi before their turn ended (${names}). The model saw a retryable error.`, "warning");
+			}
+			if (queryCtx.pendingToolCalls.size > 0) {
+				debug(`WARNING: ${queryCtx.pendingToolCalls.size} MCP handlers still waiting after delivering ${allResults.length} results`);
+				safeNotify(`Claude bridge: ${queryCtx.pendingToolCalls.size} tool handler(s) still waiting — provider may be stuck`, "warning");
+			}
 		}
 
 		// Detect user messages (steer/followUp) that pi injected into context
@@ -726,6 +746,10 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	ctx().currentPiStream = stream;
 	ctx().pendingToolCalls.clear();
 	ctx().pendingResults.clear();
+	ctx().reapedResults.clear();
+	ctx().forwardedToolCallIds.clear();
+	ctx().deadToolCallIds.clear();
+	ctx().callbackGeneration = 0;
 	ctx().deferredUserMessages = [];
 	ctx().resetTurnState(model);
 	ctx().resetToolTracking();
