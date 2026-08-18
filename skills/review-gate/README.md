@@ -23,14 +23,11 @@ keeping the two separate is what makes this small enough to trust.
   ┌──────────────────────────────────────────────────────────────────┐
   │  YOU OPEN A PR                                                   │
   └───────────────────────────────┬──────────────────────────────────┘
-                                  │
               ┌───────────────────┴───────────────────┐
-              │                                       │
      ╔════════▼═════════╗                    ╔════════▼═════════╗
      ║  YOUR CI         ║                    ║  YOUR REVIEWERS  ║
      ║ runs your checks ║                    ║  bots + humans   ║
      ╚════════╤═════════╝                    ╚════════╤═════════╝
-              │                                       │
               │                          approval, or a clean-analysis
               │                          check, or an operator override
               │                                       │
@@ -39,19 +36,16 @@ keeping the two separate is what makes this small enough to trust.
               │                              │ is this exact    │
               │                              │ head reviewed? * │
               │                              └────────┬─────────┘
-              │                                       │
               │                              ┌────────▼─────────┐
               │                              │   THE WRITER     │
               │                              │ posts the answer │
               │                              └────────┬─────────┘
-              │                                       │
      ┌────────▼────────┐                     ┌────────▼─────────┐
      │ "tests" ✓/✗     │                     │ "Review gate"    │
      │ (your checks)   │                     │ ✓ reviewed *     │
      │                 │                     │ … awaiting       │
      │                 │                     │ ✗ changes wanted │
      └────────┬────────┘                     └────────┬─────────┘
-              │                                       │
               └───────────────────┬───────────────────┘
                                   │  BOTH must be green
                     ┌─────────────▼──────────────┐
@@ -66,84 +60,59 @@ keeping the two separate is what makes this small enough to trust.
                     └────────────────────────────┘
 ```
 
-\* Two greens do NOT prove a review happened. With `REVIEW_GATE_MODE = "off"`
-the writer posts green with a "gate disabled by settings" description — it
-attests only that the gate is off; and merge-group (queue) statuses bypass
-the predicate entirely, always posting green as
-"merge-queue entry: post-approval by construction". Caveats:
+\* Two greens do NOT prove a review happened: under `REVIEW_GATE_MODE = "off"`
+the green attests only that the gate is off, and merge-group (queue) statuses
+bypass the predicate entirely, always posting green as "merge-queue entry:
+post-approval by construction". Caveats:
 [references/settings.md](references/settings.md) § `REVIEW_GATE_MODE`.
 
-The two columns are independent on purpose. The gate never inspects your CI,
-and your CI never waits on the gate. Your branch rules require both.
-
-**Where the CI savings come from:** the left column does not have to be your
-full test suite. The recommended shape runs only fast, cheap checks on each
-push — so multiple rounds of bot review never re-bill the expensive tests —
-and lets the merge queue run the full suite exactly once, on the merged
-result, after review is done. Repos that want maximum signal per push can
-still run everything on every push; that is a per-repo CI choice this engine
-deliberately stays out of.
+The two columns are independent on purpose: the gate never inspects your CI,
+and your CI never waits on the gate. The left column need not be your full
+test suite either — the fast/full split, and where the savings come from:
+[references/adoption.md](references/adoption.md) § Recommended CI shape.
 
 ## What the gate accepts as "reviewed"
 
 Different reviewers signal differently, so the predicate accepts any of:
 
-- a **review approval** at the exact head from a trusted login;
-- a **clean-analysis check or status** succeeding on that head — for bots that
-  only file a review when they have complaints (a "pass" that says *rate
-  limited* or *skipped* is treated as silence, not approval). On both
-  surfaces only the NEWEST row/run per name is considered: a reviewer
-  starting a fresh round withdraws its own older clean success, so a newer
-  pending, failed, or skip-marked run reads as silence, never as the old
-  approval;
-- a **comment-form pass** binding a trusted bot's comment to that head's sha;
-- an **operator override** status carrying a written reason — the escape
-  hatch for when every reviewer is down. It substitutes for *missing*
-  evidence only: it can never override a changes-requested or an unresolved
-  thread.
+| Signal | What counts |
+|---|---|
+| Review approval | At the exact head, from a trusted login. |
+| Clean-analysis check or status | A success on that head — for bots that only file a review when they have complaints. A "pass" that says *rate limited* or *skipped* is treated as silence, not approval. |
+| Comment-form pass | A trusted bot's comment bound to that head's sha. |
+| Operator override | A status carrying a written reason — the escape hatch for when every reviewer is down. It substitutes for *missing* evidence only: it can never override a changes-requested or an unresolved thread. |
 
 A standing changes-requested or any unresolved review thread always blocks,
-whatever else is present. If an evidence read fails, the gate says so loudly
-and posts nothing rather than guessing.
-
-Push a new commit and evidence resets — it is bound to the exact head. The
-one exception is opt-in **carry-forward**: a docs-only or comment-only change
-can carry the previous head's review, so fixing a typo after review doesn't
-restart the whole cycle.
+whatever else is present, and a failed evidence read says so loudly and posts
+nothing rather than guessing. Push a new commit and evidence resets — it is
+bound to the exact head. The one exception is opt-in **carry-forward**: a
+docs-only or comment-only change can carry the previous head's review, so
+fixing a typo after review doesn't restart the whole cycle.
 
 ## Before you adopt it
 
 Your repo must satisfy **one** of these, or untested code can reach main and
-this engine will not stop it:
-
-1. **A merge queue** whose required checks include your test suite
-   (recommended). The queue runs the suite on the merged result — once, on
-   the code that actually ships.
-2. **No held-back jobs** — every required check runs on every push.
-
-The failure mode this prevents: if you hold tests back until review and have
-no queue, GitHub records the held-back tests as *skipped*, and skipped counts
-as satisfied. A reviewed PR would merge untested.
+this engine will not stop it: **a merge queue** whose required checks include
+your test suite (recommended — the suite runs once, on the merged result), or
+**no held-back jobs**, every required check running on every push. Held back
+with no queue, tests record as *skipped*, which GitHub counts as satisfied: a
+reviewed PR would merge untested. Wiring, and the sandbox proof of it:
+[references/adoption.md](references/adoption.md) § The precondition.
 
 ## Files
 
-Paths are as installed in a consuming repo, under
-`.agents/skills/review-gate/`.
+Paths are as installed under `.agents/skills/review-gate/` in a consuming
+repo; the engine's own files and internals: [DEVELOPMENT.md](DEVELOPMENT.md).
 
 | File | What it is |
 |---|---|
-| `.agents/skills/review-gate/SKILL.md` | The agent-facing contract: decision table, settings, operations. |
-| `.agents/skills/review-gate/scripts/review-predicate.sh` | Answers "is this head reviewed?" — verdict on stdout, exit 2 means no verdict, take no action. |
-| `.agents/skills/review-gate/scripts/review-writer.sh` | Posts that answer as the commit status. The whole writer. |
-| `.agents/skills/review-gate/scripts/pr-watch.sh` | The agent-side reducer: "does any open PR need attention right now?" Silence on stdout + exit 0 means nothing needs you, which makes it a one-line loop/cron predicate; `--heal` also dispatches the writer once on a stale gate. |
-| `.agents/skills/review-gate/scripts/review-predicate-selftest.sh` | Offline proof of the decision table; runs ungated in CI so a broken predicate reds its own job instead of approving everything. |
-| `.agents/skills/review-gate/templates/review-gate-writer.yml` | The one workflow to copy in. Repo-owned after copying. |
-| `.agents/skills/review-gate/templates/vendored-paths.instructions.md` | Reviewer instruction for a byte-pinned vendored tree, so re-vendor PRs stop collecting duplicate blocking threads. Copy and fill; repo-owned after copying. |
-| `.agents/skills/review-gate/tests/e2e-sandbox.sh` | Live replay against a throwaway repo — re-run it before changing the engine. |
-| `.agents/skills/review-gate/references/adoption.md` | Wiring, branch rules, per-repo settings. |
-| `.agents/skills/review-gate/references/settings.md` | Every `REVIEW_GATE_*` key and the security reasoning behind the trust ones. |
-| `.agents/skills/review-gate/references/vendored-paths.md` | Why reviewer path exclusions starve the gate, and the remedy-locus rule that suppresses duplicate findings without doing so. |
+| `SKILL.md` | The agent-facing contract: decision table, settings, operations. |
+| `templates/review-gate-writer.yml` | The one workflow to copy in. Repo-owned after copying. |
+| `templates/vendored-paths.instructions.md` | Reviewer instruction for a byte-pinned vendored tree, so re-vendor PRs stop collecting duplicate blocking threads. Copy and fill; repo-owned after copying. |
+| `references/adoption.md` | Wiring, branch rules, per-repo settings. |
+| `references/settings.md` | Every `REVIEW_GATE_*` key and the security reasoning behind the trust ones. |
+| `references/vendored-paths.md` | Why reviewer path exclusions starve the gate, and the remedy-locus rule that suppresses duplicate findings without doing so. |
 
-Nothing repo-specific is hard-coded: consumers vendor the skill at
-`.agents/skills/review-gate/` via `vstack refresh` and configure trust in
-their own `vstack.settings.toml`.
+Nothing repo-specific is hard-coded: consumers vendor the skill via `vstack
+refresh` and set every per-repo `REVIEW_GATE_*` value in their own
+`vstack.settings.toml` (env wins over the file, which wins over the default).

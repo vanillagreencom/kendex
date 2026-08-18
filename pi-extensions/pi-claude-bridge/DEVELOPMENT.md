@@ -58,6 +58,16 @@ The audit map is query-scoped and is NOT cleared by `resetToolTracking` — that
 
 Note that pi/core's `createBranchedSession` copies every non-label entry root→leaf, so a fork inherits the parent's connector-call records. Harmless for an audit trail, unlike the `claude-bridge-session` marker it sits beside, which needed a `piSessionId` guard for exactly that reason.
 
+That entry needs a pi session to be written into. A host that embeds the bridge **without** one — loading it through a bare resource loader, so `extensionApi` is undefined — gets no record at all, and nothing in the bridge can tell. Such a host can install its own destination:
+
+```ts
+import { setConnectorCallAuditSink } from "@vanillagreen/pi-claude-bridge";
+
+setConnectorCallAuditSink((record) => myOwnAuditTrail(record));  // pass undefined to clear
+```
+
+The sink **adds** a destination; it never replaces the session entry. A session-backed host that installs one gets both, so turning it on can never cost you the record you already had. Same payload-free shape as the entry (`name`, `toolUseId`, `outcome`, and where known `byteSize` / `childSessionId` / `reason`), and the same never-fails-a-turn rule: a sink that throws is caught and dropped. It is process-global, like the bridge's other host handles, so a host running several conversations in one process must route by `childSessionId` itself.
+
 ## Optional account-router contract
 
 The bridge remains usable by itself. A companion may publish `vstack.pi.claude-account-router.v1` on `globalThis` to supply a subscription profile for each fresh request. The bridge passes only an opaque profile id, display label, and optional `CLAUDE_CONFIG_DIR`; credentials remain owned by the official Claude CLI.
@@ -73,6 +83,10 @@ Account selection affects every account-scoped surface together:
 A failed pre-output attempt is buffered (`RetryEventBuffer`) so protocol setup frames do not leak into Pi, then retried with the failed profile excluded (16-attempt cap per request). Text/thinking deltas, Pi tool calls, and child-executed connector dispatches commit the request permanently; failures after that point are surfaced and never replayed, but are still recorded for the next request's routing decision. `rate_limit_event` reset timestamps are sent back to the router before reranking. The commit flag is stamped on the query context CAPTURED at buffer creation — never the live `ctx()`, which can be a pushed reentrant subagent context at commit time — and rotation additionally checks the buffer's own committed flag.
 
 Pi session persistence stores only the opaque `accountProfileId`; the config dir is re-derived through the router's `resolveProfile` on restore (router absent → default rule), so account-identifying paths never travel with shared session archives.
+
+A rotation rebuilds the Claude session from Pi history under the next profile before retrying the prompt. Retries are deliberately limited to failures before visible output or any tool dispatch, so a request can never duplicate tool side effects on a second account. Managed subscription subprocesses drop inherited Anthropic API credentials and third-party provider flags, which keeps the selected Claude CLI profile the request's billing identity.
+
+The companion owns profile metadata, utilization ranking, and cooldown persistence; the bridge stays the SDK/stream/session engine and can continue updating independently through the small versioned adapter.
 
 The reciprocal `vstack.pi.claude-bridge.account-host.v1` service exposes a local `/usage` probe for account-management commands. Both symbols carry `version: 1`; incompatible future shapes must use a new symbol/version instead of mutating this contract in place.
 
@@ -116,6 +130,18 @@ Each `claude-bridge.json` is read by `legacyFileConfig`, which accepts both the 
 
 `resolveExternalConfigValue(key, cwd)` reports what those files — and only those files — resolve for one manifest key, plus the concrete file that supplied it. It shares `legacyLayers`/`mergeLayers` with `loadConfig` and applies the same normalization, so the two cannot drift. `registerExternalConfigResolver` publishes it under `Symbol.for("vstack.pi.extension-config-resolver")` keyed by `PACKAGE_ID`; the vstack extension manager calls it when neither of its own scopes holds a key, and renders the value with its source file. Registration happens before the `config.enabled === false` early return, because a bridge disabled by `claude-bridge.json` is precisely the case the settings editor has to explain. The contract itself is documented in [`pi-extension-manager/DEVELOPMENT.md`](../pi-extension-manager/DEVELOPMENT.md).
 
+## Isolated mode (embedding hosts)
+
+Host apps that embed the bridge and own every config dir explicitly can set `CLAUDE_BRIDGE_ISOLATED=1` in the bridge process env (`isolatedFromEnv` in `src/config.ts`). Isolated mode disables every cwd/home discovery fallback so nothing outside the host-owned dirs is read:
+
+- no context-file discovery (`AGENTS.override.md` / `AGENTS.md` / `AGENTS.MD`), including cwd ancestors and the shared `<PI_CODING_AGENT_DIR>` fallback;
+- no extension-manager overlay from `<PI_CODING_AGENT_DIR>/settings.json`;
+- no project `.pi/settings.json` / `.pi/claude-bridge.json` reads (even for trusted projects);
+- no project `.pi/APPEND_SYSTEM.md`;
+- no `$PATH` search for the `claude` executable — the host either pins `pathToClaudeCodeExecutable` or gets the Claude Agent SDK's bundled default.
+
+Bridge settings come only from the authoritative `<piUserDir>/claude-bridge.json`; logs still resolve under `PI_CODING_AGENT_DIR`. This matters when an in-process host must share `PI_CODING_AGENT_DIR` with Pi but still needs an authoritative executable/connector policy. Normal Pi CLI usage (flag unset) is unchanged.
+
 ## Connector write enforcement
 
 Write denial with `connectorWriteMode: "deny"` is two-layered:
@@ -123,13 +149,29 @@ Write denial with `connectorWriteMode: "deny"` is two-layered:
 - **Model context:** the known write tools are passed as `disallowedTools` (exact tool ids). The CLI's MCP permission matcher only supports exact tool names or a whole-server `mcp__server__*` glob — partial tool-segment globs are inert — so exact ids are what actually removes today's writes.
 - **Runtime:** a `PreToolUse` hook blocks any connector tool classified as a write at call time, regardless of permission mode. Classification is fail-closed over the whole `mcp__claude_ai_<Server>__` space: a tool there is a write unless its name *begins* with a known read verb (`list`, `search`, `get`, `read`, `fetch`, …). The verb is matched as a word across naming styles — `search_threads` (Gmail), `slack_read_channel` (Slack, server-prefixed), and `getJiraIssue` (Atlassian, camelCase) are all reads; a leading word that merely repeats the server name is skipped first. A name that opens with a read verb but also names a mutation (`getOrCreateChannel`) is a write, and so is a name that does not parse as `<server>__<tool>`.
 
-Independent of write mode, every connectors-mode child also carries a fail-closed **builtin allowlist** `PreToolUse` hook (`connectorBuiltinAllowlistHook` in `src/connectors.ts`): only `mcp__custom-tools__*`, `mcp__claude_ai_*`, and the discovery built-ins (`CONNECTOR_DISCOVERY_TOOLS`) may execute; everything else — including CLI built-ins that postdate `DISALLOWED_BUILTIN_TOOLS` — is denied, and a hook exception converts to a deny (the CLI treats a thrown hook as empty output, i.e. fail-open, so every catch path must deny). The account probe child gets the harsher `denyAllToolsHook` — a `/usage` probe executes nothing.
+Independent of write mode, every connectors-mode child also carries a fail-closed **builtin allowlist** `PreToolUse` hook (`connectorBuiltinAllowlistHook` in `src/connectors.ts`): only `mcp__custom-tools__*`, `mcp__claude_ai_*`, and the discovery built-ins (`CONNECTOR_DISCOVERY_TOOLS`) may execute; everything else — including CLI built-ins that postdate `DISALLOWED_BUILTIN_TOOLS` — is denied, and a hook exception converts to a deny (the CLI treats a thrown hook as empty output, i.e. fail-open, so every catch path must deny). Connector sessions ingest untrusted third-party content (mail bodies, tickets, documents); a denylist of today's built-ins would fail open on tomorrow's. The account probe child gets the harsher `denyAllToolsHook` — a `/usage` probe executes nothing.
+
+`connectorWriteMode: "allow"` is per-process, not global. A host's approved-write executor should set `CLAUDE_BRIDGE_CONNECTOR_WRITE=allow` in the **child env of a dedicated one-shot process** that runs the single approved write and exits. Setting `connectorWriteMode: "allow"` in persistent `settings.json` (or `allow` process-globally) for a shared/long-lived sidecar makes every connector session in that process write-capable, defeating the approval gate.
 
 ## Connector setting-source lockdown
 
 The SDK treats `settingSources: undefined` as isolation (no filesystem settings), and isolation drops claude.ai cloud connectors even with `ENABLE_CLAUDEAI_MCP_SERVERS=1` — so connectors mode must pass some source list. That list is `["user"]` and nothing more (`settingSourcesForQuery` in `src/connectors.ts`; vstack#990). Connector state is user-scope (the account's config dir, `CLAUDE_CONFIG_DIR` for managed router profiles), so user scope is sufficient; `"project"`/`"local"` would let a checkout's `.claude/settings.json` use the settings-file `env`/`apiKeyHelper` channels to reintroduce exactly the provider-override env `subscriberProfileEnv` scrubs from managed children (`ANTHROPIC_BASE_URL` → traffic redirection) on any query whose cwd is a hostile repo. An explicit `provider.settingSources` in bridge config wins verbatim (that channel is user-scope/trust-gated via `loadConfig`); the README warns that adding project/local there reopens the surface.
 
 ## Connector inventory build artifacts
+
+`listAccountConnectors()` is the programmatic form of `/pi-claude:connectors` for host apps. Import it from the package's `./connector-inventory` entry point:
+
+```ts
+import { listAccountConnectors, resolveClaudeOAuth } from "@vanillagreen/pi-claude-bridge/connector-inventory";
+```
+
+The same functions are re-exported from the package root for consuming apps whose vendored `package.json` uses a closed exports map (`{".": "./bundle/index.js"}`), which blocks every subpath:
+
+```ts
+import { listAccountConnectors } from "@vanillagreen/pi-claude-bridge";
+```
+
+It returns a discriminated result: on success `{ ok: true, complete: true, connectors }`, and on any transport or protocol failure `{ ok: false, reason }`. An account with no connectors is a successful empty list; a failure is never reported as an empty inventory. Credentials resolve from `CLAUDE_CONFIG_DIR` before `$HOME`, so a host running one sidecar per Claude account reads the right account.
 
 The `./connector-inventory` entry point is a separate build output. It cannot come from `bundle/index.js`, which exports only pi's extension registration and is tree-shaken against what `index.ts` itself calls — `connectorServerNamespace` was dropped from it entirely for that reason, which is why the root bundle explicitly re-exports the connector API. `tests/unit-connector-inventory-artifact.mjs` loads the built artifacts rather than `src/` so a source change without a rebuild fails.
 
@@ -139,7 +181,8 @@ The `./connector-inventory` entry point is a separate build output. It cannot co
 - Stream-idle stalls close the stalled Claude Code subprocess and return a retryable assistant error. `CLAUDE_BRIDGE_STREAM_IDLE_TIMEOUT` accepts bare seconds or `ms`, `s`, and `m` suffixes.
 - The watchdog deliberately monitors only PRE-first-output silence (`shouldMonitor` requires `!turnStarted && !turnSawStreamEvent`). Every observed stall class — spawn hang, rate-limit stall, steer-drain — happens before the first stream event, and those are covered. Once output has started, 90s SDK-message gaps have legitimate causes that must not be killed: a child-executed connector call blocks the SDK message flow while the Pi turn stays open (`currentPiStream` non-null, unlike Pi-executed tool waits), and a long extended-thinking stretch can be delta-sparse. A child that dies mid-message is not silent either — the SDK generator throws and the query `.catch` surfaces it — so mid-turn coverage would mostly convert slow-but-alive turns into spurious aborts. Revisit only with evidence of a mid-turn stall the generator did not turn into an error.
 - Integrity diagnostics are written to `<piUserDir>/claude-bridge-diag.log` (`PI_CODING_AGENT_DIR` when set, else `~/.pi/agent`) with counts, affected tool names, and sampled tool-call IDs — only when `CLAUDE_BRIDGE_DEBUG=1`, the same gate as the debug log, and never with user-authored message content (VST-15).
-- `CLAUDE_BRIDGE_ISOLATED=1` (embedding hosts) disables all `AGENTS.md` discovery and all extension-manager/project config overlays, so bridge settings come only from `<piUserDir>/claude-bridge.json`. It also disables project `APPEND_SYSTEM.md` and the `$PATH` Claude executable search. This matters when an in-process host must share `PI_CODING_AGENT_DIR` with Pi but still needs an authoritative executable/connector policy. See `isolatedFromEnv` in `src/config.ts`.
+- `normalizeRateLimitUtilization` (`src/rate-limit.ts`) reads `0 < value <= 1` as the fractional form and `1 < value <= 100` as percent; exactly 1 is unit-ambiguous and resolves to 100%, the fail-closed direction (VST-16). `formatAllowedRateLimitWarning` emits its neutral toast only at or above `ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD` (80) and never quotes a `% used` value.
+- `CLAUDE_BRIDGE_ISOLATED=1` (embedding hosts) removes every cwd/home discovery fallback — see the Isolated mode section above.
 - Startup preflight failures preserve the underlying `code`, `errno`, `syscall`, `path`, `cwd`, and detected executable file type before handing the error back to the SDK.
 
 ## Importing the package root

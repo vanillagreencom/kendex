@@ -223,7 +223,8 @@ Each canonical agent declares its own `effort:` (`low` | `medium` | `high` | `xh
 - **New tmux windows, never split the active pane.** Prefer `skills/orch/scripts/open-terminal` for issue handoff.
 - **Create vstack worktrees via the worktree skill** (`skills/worktree/scripts/worktree create <id>`), never raw `git worktree add`. Bare `create` is a new-work claim and exits 75 when a worktree, branch, or PR already owns the ID — inspect that work instead of duplicating it. Rebase or republish only through `create --reuse`/`--restack` and `worktree restack continue|skip|abort`, never a manual rebase or force-push.
 - **Worktree scratch goes in `<worktree>/tmp/`**, not the worktree root or `/tmp/`. Worktree root is for tracked content only.
-- **READMEs are user-facing only.** What it is, how to use it, features, settings/options, install. Technical/development detail goes in `DEVELOPMENT.md`; agent instructions live in `SKILL.md`.
+- **Three-file doc contract.** A nested `README.md` is the consumer's page — overview, feature list, setup and config need-to-know — and caps at 120 lines, enforced by the `*/README.md=120` size-ratchet class (the repo-root `README.md` is the product landing page and keeps the default class).
+- **`SKILL.md` is agent directives only** — concise, need-to-know, no historical prose or changelog narration. Everything needed to develop or maintain the thing goes in `DEVELOPMENT.md` beside it, long reference material in `references/`.
 - **Pi hook parity.** Any change to a hook script lands in the same commit as the matching change in `pi-extensions/pi-hooks/extensions/hooks.ts` so all five harnesses stay behaviorally aligned.
 - **Pi upstream lifecycle fix.** When touching pi-agents-tmux completion or print/json lifecycle workarounds, recheck `earendil-works/pi#2023` for upstream fixes.
 - **Cross-repo conventions live in [`docs/cross-repo.md`](./docs/cross-repo.md).** Fact-provenance tagging and the shared review-gate shape.

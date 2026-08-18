@@ -23,6 +23,14 @@ Spawn options:
 
 `notifyMode: "transition"` wakes only when the new output tail hash changes — polling loops can print state each pass without waking the agent on identical snapshots. `notifyMode: "first-match-only"` wakes once for `notifyPattern` then suppresses later output wakes.
 
+## Auto-background interception
+
+Interception covers the agent's `bash` tool, interactive `!`/`!!` commands, and — since Pi 0.83.0 — bash issued directly over RPC. An RPC caller gets the same acknowledgement text in place of the command output, and the interactive task widget keeps tracking the session that owns it.
+
+## Process model
+
+Shells start in their own process group so `/bg:stop` and shutdown terminate children. When resource controls are enabled, `systemd-run` tasks persist their transient service unit so `/bg:stop`, timeouts, and shutdown stop the actual workload, not just the wrapper process.
+
 ## Resource controls (vstack#300)
 
 Resource controls are opt-in through extension-manager settings. `resourceControlEnabled=false` preserves the old spawn path exactly: `getShellConfig()` plus the original command as a single shell argument, detached process group on POSIX, same stdout/stderr pipes, same timeout/stop/orphan handling.
@@ -53,7 +61,7 @@ Wake messages reach the transcript through `pi.sendMessage(...)` and skip `pi-ou
 
 ## Activity broker publication
 
-When `pi-session-bridge` has installed `globalThis[Symbol.for("vstack.pi.activity")]`, task lifecycle code publishes best-effort broker events in addition to existing wake messages. `start` maps to `bg_task.started`; output match wake points map to `bg_task.output_matched`; terminal statuses map to `bg_task.completed`, `bg_task.failed`, `bg_task.timed_out`, or `bg_task.stopped`. Payload refs use `bg_task_id`; details include truncated command, output byte count, exit code, matched pattern/output tail when present, status, and wake `sequence`.
+When `pi-session-bridge` has installed `globalThis[Symbol.for("vstack.pi.activity")]`, task lifecycle code publishes best-effort broker events in addition to existing wake messages. `start` maps to `bg_task.started`; output match wake points map to `bg_task.output_matched`; terminal statuses map to `bg_task.completed`, `bg_task.failed`, `bg_task.timed_out`, or `bg_task.stopped`. Payload refs use `bg_task_id`; details include truncated command, output byte count, exit code, matched pattern/output tail when present, status, and wake `sequence`. Publication is best-effort and requires `pi-session-bridge` in the same Pi runtime; broker events are side-channel `vstack_activity` stream rows, not chat messages.
 
 Broker publication must never affect task control flow. Keep it isolated behind `publishBackgroundTaskActivity` / `publishBackgroundTaskStarted`, catch publisher errors, and preserve exit wake durability independently of broker success.
 
@@ -77,6 +85,10 @@ Orphans rehydrate as `running` rather than synthetically `stopped`, and a period
 ## Bounded tool-result details (vstack#187)
 
 `bg_task list` and `bg_status list` also write their `details.tasks` into Pi's tool-result JSONL path, separate from custom session entries. `bgToolResultTasks()` keeps small lists as full snapshots for legacy restore fallback, but once the list exceeds the task-count threshold or 64 KiB serialized size it emits a `version: 2, fullSnapshot: false` manifest with counts and a small id sample. `restoreSnapshots()` treats that manifest as a sidecar barrier, re-applying sidecar state if it was loaded so an older full tool-result snapshot earlier in the branch cannot regress resumed state.
+
+## Diagnostics
+
+Routine wake/persistence diagnostics are written only when `PI_BG_TASK_DEBUG=1`, `PI_BG_TASK_DIAGNOSTICS=1`, or `PI_BG_TASK_DIAGNOSTIC_LOG=/path/to/log` is set. They go to a log file (default: `$TMPDIR/vstack-pi-bg/diagnostics.log`) instead of stdout/stderr so active TUI widgets cannot be corrupted by raw terminal output.
 
 ## Tests
 

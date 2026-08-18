@@ -73,9 +73,11 @@ while still reporting `skipped` contexts everywhere else — which satisfies
 rulesets while the pending gate status blocks the merge. Review rounds then
 bill zero heavy runner-minutes, and the full suite runs exactly once, on
 the merged result, after review is done (a default-branch push re-run would
-re-test the exact sha the queue just tested). Jobs must NOT read the
-predicate to decide whether to run — that coupling is the v1 machinery this
-engine deleted.
+re-test the exact sha the queue just tested). Repos that want maximum signal
+per push can still run everything on every push; that is a per-repo CI choice
+this engine deliberately stays out of. Jobs must NOT read the predicate to
+decide whether to run — that coupling is the v1 machinery this engine
+deleted.
 
 ## The ungated selftest job
 

@@ -30,7 +30,7 @@ human editing the row in a reviewed diff.
 ```
 
 `--staged` judges the commit's snapshot: index blobs, and index policy.
-Details in [README.md](README.md).
+Details in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Verdicts
 
@@ -120,5 +120,6 @@ blank lines and `#` comments are ignored, and a pattern without a reason is
 a config error — every exclusion carries its justification (generated,
 vendored, fixtures, lockfiles).
 
-Formats, seeding a first baseline, and the migration note for repos already
-using this format: [README.md](README.md).
+Formats, path classes, and seeding a first baseline: [README.md](README.md).
+Collection internals and the migration note for repos already using this
+format: [DEVELOPMENT.md](DEVELOPMENT.md).

@@ -11,16 +11,7 @@ Streaming assistant responses are aborted when either safety condition fires:
 - the same substantial line repeats 24 times and contributes at least 1,536 repeated characters; or
 - one response reaches 96,000 streamed characters.
 
-This targets model decoding collapse such as thousands of identical planning sentences or malformed tool tags. Blank lines and recognized syntax-only lines (tool/XML tags, code fences, and Markdown separators) do not reset or trigger repetition streaks; other short content resets the streak. All lines still count toward the hard response-size cap. Pi keeps the partial response and marks it interrupted; Output Policy shows a warning telling the user to retry or switch models. All thresholds are live settings; changes apply to the next assistant message. The whole model-output guard, repetition detection, and the hard character cap can each be disabled independently.
-
-## Two budgets, one policy
-
-Output policy enforces two related but distinct budgets:
-
-- **Compact renderer UI** — how big a tool block can be without breaking Pi's TUI. Caps line width, hard line count, and absolute block size.
-- **Model transcript / session JSONL** — how much each tool result adds to the request body that gets resent on every turn. Long runs with many individually "fine" 50–200 KB results can exceed provider request-buffer limits even when no single block is UI-pathological.
-
-The default `balanced` policy mode constrains both budgets while leaving the full text on disk via per-session artifacts.
+Pi keeps the partial response and marks it interrupted; Output Policy shows a warning telling the user to retry or switch models. All thresholds are live settings; changes apply to the next assistant message. The whole model-output guard, repetition detection, and the hard character cap can each be disabled independently.
 
 ## Policy modes
 
@@ -44,7 +35,6 @@ Any per-knob value you set in `vstack.extensionManager.config["@vanillagreen/pi-
 - Explicit truncation notices show size, line count, direction, artifact path, per-turn/session bytes saved, and continuation guidance.
 - File reads and edit/write results pass through unmodified by default — opt in per category.
 - Tool-result `details` are sanitized by default in `balanced`/`compact` (off in `compat`); state-bearing tools (`tasks_write`, `bg_task`, `subagent`, …) bypass sanitization so sidecar restore semantics stay safe.
-- When `details` are sanitized, the result carries a `vstackOutputPolicySanitized` marker (and capped arrays/objects include a sentinel string) so consumers can detect the truncation.
 - Shell output minimizer compresses noisy git/npm/cargo/test output before truncation while preserving warnings, errors, and summaries.
 
 ## Install
@@ -70,62 +60,35 @@ Open `/extensions:settings`; settings appear under the **Output Policy** tab.
 
 Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted; before trust, vstack Pi extensions read user/global settings only.
 
-### General
-
-| Setting | What it does |
-| --- | --- |
-| Enable output policy | Master toggle. |
-| Policy mode | `balanced` (default), `compact`, or `compat`. See [Policy modes](#policy-modes). |
-
-### Model output guard
-
-| Setting | What it does |
-| --- | --- |
-| Stop runaway model output | Enable repetition detection and the hard response-size cap. |
-| Maximum streamed characters | Abort one assistant response at this character count; `0` disables only this cap. |
-| Detect repeated output | Enable repetition detection independently from the hard character cap. |
-| Maximum repeated blocks | Consecutive identical substantial lines required before aborting. |
-| Minimum repeated block length | Exclude shorter lines from repetition detection; only blank or recognized syntax-only lines preserve an existing substantial streak. |
-| Minimum repeated characters | Repeated-text floor that must also be reached before aborting. |
-
-### Truncation
-
-| Setting | What it does |
-| --- | --- |
-| Truncate file reads | Apply spill/truncation to `read` results. |
-| Truncate edits/writes | Apply spill/truncation to `edit`/`write` results. |
-| Output spill threshold (KB) | Preserve full output externally above this size. Unset = mode default. |
-| Inline tail size (KB) | Bytes kept inline for tail-truncated command/log output. Unset = mode default. |
-| Inline tail lines | Lines kept inline for tail-truncated command/log output. Unset = mode default. |
-
-### UI safety
-
-| Setting | What it does |
-| --- | --- |
-| Max UI-safe text block (KB) | Hard cap on text blocks even when spill is off. Unset = mode default. |
-| Max UI-safe line count | Hard line cap for rendered text. Unset = mode default. |
-| Max UI-safe line width | Truncate pathological wide lines. Unset = mode default. |
-| Sanitize details payloads | Cap nested tool-result details. Unset = mode default (`balanced`/`compact` on, `compat` off). |
-| Sanitize details allowlist | Comma-separated tool names whose details bypass sanitization. Empty = built-in list (`tasks_write`, `tasks_read`, `bg_task`, `bg_status`, `subagent`, `subagent_run`, `stop_subagent`, `steer_subagent`, `get_subagent_result`). |
-
-### Storage
-
-| Setting | What it does |
-| --- | --- |
-| Preserve full output externally | Write oversized output to an artifact file when possible. |
-
-### Shell minimizer
-
-| Setting | What it does |
-| --- | --- |
-| Reduce verbose shell output | Compress git/npm/cargo/test output before truncation. On by default; disable when you need full successful build logs inline. |
-| Allowlist | Comma-separated command families to minimize. |
-| Denylist | Comma-separated command families to leave alone. |
-| Max capture bytes | Skip minimizer on output larger than this; truncate directly. |
+| Group | Setting | What it does |
+| --- | --- | --- |
+| General | Enable output policy | Master toggle. |
+| General | Policy mode | `balanced` (default), `compact`, or `compat`. See [Policy modes](#policy-modes). |
+| Model output guard | Stop runaway model output | Enable repetition detection and the hard response-size cap. |
+| Model output guard | Maximum streamed characters | Abort one assistant response at this character count; `0` disables only this cap. |
+| Model output guard | Detect repeated output | Enable repetition detection independently from the hard character cap. |
+| Model output guard | Maximum repeated blocks | Consecutive identical substantial lines required before aborting. |
+| Model output guard | Minimum repeated block length | Exclude shorter lines from repetition detection; only blank or recognized syntax-only lines preserve an existing substantial streak. |
+| Model output guard | Minimum repeated characters | Repeated-text floor that must also be reached before aborting. |
+| Truncation | Truncate file reads | Apply spill/truncation to `read` results. |
+| Truncation | Truncate edits/writes | Apply spill/truncation to `edit`/`write` results. |
+| Truncation | Output spill threshold (KB) | Preserve full output externally above this size. Unset = mode default. |
+| Truncation | Inline tail size (KB) | Bytes kept inline for tail-truncated command/log output. Unset = mode default. |
+| Truncation | Inline tail lines | Lines kept inline for tail-truncated command/log output. Unset = mode default. |
+| UI safety | Max UI-safe text block (KB) | Hard cap on text blocks even when spill is off. Unset = mode default. |
+| UI safety | Max UI-safe line count | Hard line cap for rendered text. Unset = mode default. |
+| UI safety | Max UI-safe line width | Truncate pathological wide lines. Unset = mode default. |
+| UI safety | Sanitize details payloads | Cap nested tool-result details. Unset = mode default (`balanced`/`compact` on, `compat` off). |
+| UI safety | Sanitize details allowlist | Comma-separated tool names whose details bypass sanitization. Empty = built-in list (`tasks_write`, `tasks_read`, `bg_task`, `bg_status`, `subagent`, `subagent_run`, `stop_subagent`, `steer_subagent`, `get_subagent_result`). |
+| Storage | Preserve full output externally | Write oversized output to an artifact file when possible. |
+| Shell minimizer | Reduce verbose shell output | Compress git/npm/cargo/test output before truncation. On by default; disable when you need full successful build logs inline. |
+| Shell minimizer | Allowlist | Comma-separated command families to minimize. |
+| Shell minimizer | Denylist | Comma-separated command families to leave alone. |
+| Shell minimizer | Max capture bytes | Skip minimizer on output larger than this; truncate directly. |
 
 ## Switching back to verbatim behavior
 
-`compat` mode restores the legacy generous UI-safety caps (200 KB block, 8 000 lines, 20 000-char lines) and turns off `sanitizeDetails`, but it is **not** "fully untruncated" — anything above those caps still spills. Pick it when those caps are wide enough for your workflow:
+`compat` mode restores the legacy generous UI-safety caps (200 KB block, 8 000 lines, 20 000-char lines) and turns off `sanitizeDetails`, but it is **not** "fully untruncated" — anything above those caps still spills. Pick it when those caps are wide enough for your workflow; for truly untruncated inline output (no spill, no minimizer, no sanitization), disable the policy entirely with `"enabled": false` in place of `"policyMode": "compat"`.
 
 ```json
 {
@@ -141,24 +104,10 @@ Project settings in `.pi/settings.json` apply only after Pi marks the workspace 
 }
 ```
 
-For truly untruncated inline output (no spill, no minimizer, no sanitization), disable the policy entirely:
-
-```json
-{
-  "vstack": {
-    "extensionManager": {
-      "config": {
-        "@vanillagreen/pi-output-policy": { "enabled": false }
-      }
-    }
-  }
-}
-```
-
 ## Notes
 
 Pi's built-in tools may truncate before reaching this extension. Custom tools that return full large text benefit most from spill preservation.
 
 For truncated file reads, continue reading the original file with `offset`/`limit`. For truncated command output, the inline notice points at the artifact file on disk and reports per-turn and per-session bytes saved so users can see the transcript impact at a glance.
 
-Extension-produced custom messages (`pi.sendMessage`) are not policed by this extension; add per-package caps in extensions that emit large custom messages.
+Contributor-facing budget design, guard mechanics, and sanitization markers are in [`DEVELOPMENT.md`](./DEVELOPMENT.md).

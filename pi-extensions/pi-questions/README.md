@@ -34,49 +34,6 @@ vstack add vanillagreencom/vstack --pi-extension pi-questions --harness pi -y
 
 Restart Pi after installation.
 
-## Payload
-
-```json
-{
-  "id": "que_example",
-  "header": "Choose next action",
-  "questions": [
-    {
-      "header": "Issue Missing",
-      "question": "How should I proceed?",
-      "options": [
-        { "label": "Use current branch", "description": "Continue without a tracker issue." },
-        { "label": "Stop here", "description": "Wait for operator guidance." }
-      ],
-      "multiple": false,
-      "customLabel": "Something else"
-    }
-  ]
-}
-```
-
-Result:
-
-```json
-{ "requestId": "que_example", "answers": [["Stop here"]] }
-```
-
-Cancelled:
-
-```json
-{ "requestId": "que_example", "cancelled": true }
-```
-
-Every tab includes a bottom free-text fallback row by default, labelled `Something else` unless `customLabel` overrides it. Agents no longer need to set `allowCustom` for a basic escape hatch; the legacy flag is still accepted for compatibility, and `allowCustom: false` does not disable the fallback. `customPlaceholder` customizes the input hint.
-
-When the user types fallback text, the result uses the same answer shape as fixed options:
-
-```json
-{ "requestId": "que_example", "answers": [["Use issue ABC-123 instead"]] }
-```
-
-Do not include a final `Confirm`, `Submit`, `Review`, or `Done` question tab in the payload; the UI adds its own submit tab when needed.
-
 ## RPC hosts
 
 Interactive Pi sessions render the questionnaire with the custom TUI described above. RPC hosts (Paseo, pi-web, VS Code-based bridges) cannot render custom TUI components, so when `ctx.mode === "rpc"` — or when `ctx.ui.custom()` resolves without producing a result — the extension walks the questions one at a time through the host's native dialogs instead:
@@ -128,3 +85,5 @@ pi-bridge questions
 pi-bridge answer --request-id que_example --answers '[["Stop here"]]'
 pi-bridge reject --request-id que_example
 ```
+
+See [`DEVELOPMENT.md`](./DEVELOPMENT.md) for the `question` tool payload, result shapes, and free-text fallback semantics.

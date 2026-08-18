@@ -63,7 +63,7 @@ contract, fail closed on a guard that could not run, and `git commit
 the installer, `vstack remove growth-guards` runs `--uninstall` first. Repeat
 runs are no-ops and repairs; `core.hooksPath` is never set, existing hooks
 keep their content and their own exit status. Full behaviour, including what
-the installer refuses to touch: [README.md](README.md).
+the installer refuses to touch: [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Configuration
 
@@ -91,6 +91,6 @@ full repo-relative path; `*` crosses `/`); a pattern without a reason is a
 config error. **Baseline format** — `path<TAB>count`, `LC_ALL=C` sorted,
 unique paths, positive counts.
 
-Marker shapes, per-language suppression patterns, the hook install and
-removal contract, seeding a first baseline, and CI wiring:
-[README.md](README.md).
+Per-check consumer detail, seeding a first baseline, and CI wiring:
+[README.md](README.md). Marker shapes, per-language suppression patterns,
+and the hook install and removal contract: [DEVELOPMENT.md](DEVELOPMENT.md).

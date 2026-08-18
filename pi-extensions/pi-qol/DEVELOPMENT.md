@@ -39,13 +39,23 @@ Every reset increments a non-reusable generation. Pending, satisfied, and in-fli
 
 `extensions/qol.ts` associates the active generation with the current `ctx.sessionManager`. Event handlers resolve their context back to that active session before staging, dispatching, resetting, changing budget-guard status, or accepting `session_compact`. Stale callbacks and delayed host events from replaced sessions therefore cannot consume or satisfy a newer session's trigger.
 
+A satisfied threshold suppresses repeat work until usage drops or advances to a new key; transient failures leave nothing suppressed, so a later cycle retries.
+
 The exact `Already compacted` error is benign only when the current generation observed a later `session_compact` after QOL dispatched. Without that same-session evidence, the error remains visible and clears suppression so a later cycle can retry.
 
 ### Bounded-handler routing
 
 Budget-guard dispatch adds `QOL_BUDGET_GUARD_SENTINEL` to its custom instructions. `session_before_compact` detects that sentinel and routes the request through QOL's bounded summarizer even when the general custom-compaction setting is off. The same handler invokes the handoff writer, which creates the stamped and latest artifacts only when `compaction.handoffArtifactEnabled` is on. Non-budget session compactions, including manual/user-triggered and idle compaction, use this handler only when `compaction.customEnabled` is on and follow the same handoff-artifact toggle.
 
+The handoff writer stamps `~/.pi/agent/vstack/sessions/<session>/pi-qol/handoff/<timestamp>.json` plus a `latest.json` pointer, each containing the previous summary, last task state, and referenced files/artifacts. A write failure surfaces as a QOL warning notification and a `handoffArtifactError` field in the compaction details.
+
 `session_before_tree` is a separate path. When `compaction.branchSummaryEnabled` is on, `handleQolBranchSummary()` uses `generateQolSummary()` and therefore the same bounded chunk/reduce summarization machinery, but it does not call `buildBudgetHandoff()` or `writeBudgetHandoffArtifact()`. Branch summaries never create pre-compaction handoff artifacts.
+
+### Bounded summarization
+
+Long transcripts are chunked at the **Chunked compaction input cap**, summarized chunk-by-chunk, then tree-reduced — every model/remote request (chunk + every reduce pass) is bounded so the compaction call itself cannot exceed provider buffer limits.
+
+`/context` estimates the serialized payload of the messages that would be sent on the next request and warns above **Transcript-risk warn budget (chars)**. If that estimation itself errors, `/context` shows a sanitized error in the `Transcript risk` block rather than silently hiding the warning.
 
 ### Regression coverage
 

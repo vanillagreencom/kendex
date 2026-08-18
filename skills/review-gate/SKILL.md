@@ -204,13 +204,10 @@ default). Full table and the security reasoning:
 ## Selftest — the engine's portable proof
 
 `.agents/skills/review-gate/scripts/review-predicate-selftest.sh` pins the
-decision table offline: a `gh` shim answers from fixtures and applies
-`--jq` through real jq, so the
-real predicate runs unmodified. Every case ending `approved` is paired with a
-near-miss that must not. Two layers: a mechanism layer with forced
-configurations, and a configured layer that re-derives the battery from the
-invoking repo's own resolved settings — so a repo trusting a different bot
-tests its own trust list.
+decision table offline, running the real predicate against the invoking
+repo's own resolved settings — so a repo trusting a different bot tests its
+own trust list. How it does that: [DEVELOPMENT.md](DEVELOPMENT.md) § How the
+selftest pins the decision table.
 
 Every consumer's CI must run it as a deliberately **ungated** job (own job,
 no `needs`): a broken predicate approves nothing, so a selftest behind the
