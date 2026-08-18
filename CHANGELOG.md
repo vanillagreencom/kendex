@@ -394,6 +394,18 @@
 No release boundary has passed, so these migration steps from the condensed
 span stay required until taken:
 
+- **size-ratchet default threshold drop, 1000 → 400 (breaking):** for a repo
+  on the default, in this order: declare `SIZE_RATCHET_CLASSES` for the
+  repo's test layouts FIRST, then run the check and turn each reported
+  `new offender` line into a `path<TAB>lines` baseline row — freezing before
+  declaring would baseline 401–800-line test files the test class then makes
+  stale. Declaring `SIZE_RATCHET_THRESHOLD = "1000"` keeps the old number;
+  repos already pinning the threshold are unaffected.
+- **Retired settings and commands:** delete `REVIEW_RISK_COMMAND`,
+  `PR_REVIEW_REFIX_MAX_LINES`, `ORCH_CACHE_DIR`, and
+  `ORCH_LANE_CLAUDE_PERMISSION_ARG` from `vstack.settings.toml`; add
+  `ORCH_LANE_ALIASES` if you alias lanes. Automation calling any removed orch
+  script or passing `github.sh label-add --reason` must update.
 - **Removed skills and pack (breaking):** before your next `vstack refresh`,
   delete any `iced-shadcn` or `html-artifact` entries from your project's
   `vstack.toml` (`[skill-instructions]`, `[agent-skills]`, `[role-skills]`).
@@ -406,8 +418,11 @@ span stay required until taken:
   every file it was seeded into (`vstack.settings.toml`, `.env.local`, and any
   `.env.local.example`/`.env.example` a new checkout copies from), and drop a
   `SECOND_OPINION_TARGET` naming the session's own model — both are now
-  refused. Pi/OpenCode/Cursor and undetected sessions must export
-  `SECOND_OPINION_CURRENT_MODEL`. Seeding never overwrites an existing
+  refused. Move `SECOND_OPINION_CURRENT_MODEL` out of every project file
+  that carries it (`vstack.settings.toml`, `.env`, `.vstack/settings.toml`,
+  `.env.local`, and any `.env.local.example`) — a project-file value is
+  refused — and export it in the sessions that need it; Pi/OpenCode/Cursor
+  and undetected sessions require it. Seeding never overwrites an existing
   `SECOND_OPINION_REVIEW_INSTRUCTIONS` key, so a settings file carrying the
   previous default keeps the old list — update the pinned value to
   `"AGENTS.md review-bots.md .github/instructions/*.instructions.md .github/copilot-instructions.md"`
