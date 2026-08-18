@@ -982,7 +982,7 @@ if [ "$MODE" = "seed" ]; then
   STAGED_BASELINE="$(mktemp -- "$baseline_dir/.size-ratchet-baseline.XXXXXX")" || collection_error "could not create a staging file beside $BASELINE_FILE — seed aborted, nothing written"
   chmod -- "$(printf '%03o' "$((0666 & ~8#$(umask)))")" "$STAGED_BASELINE" || collection_error "could not set the staging file's mode beside $BASELINE_FILE — seed aborted, nothing written"
   cat -- "$TMP/baseline.new" >"$STAGED_BASELINE" || collection_error "could not write the staged baseline beside $BASELINE_FILE — seed aborted, nothing written"
-  mv -- "$STAGED_BASELINE" "$BASELINE_FILE" || collection_error "could not write the baseline at $BASELINE_FILE (mv failed) — inspect the file before trusting it"
+  mv -- "$STAGED_BASELINE" "$BASELINE_FILE" || collection_error "could not seed the baseline at $BASELINE_FILE (rename failed) — the destination is unchanged; the staging file is removed on exit"
   STAGED_BASELINE="" # renamed away; nothing left for the EXIT trap to remove
   cp -- "$BASELINE_FILE" "$TMP/baseline.tsv" || collection_error "could not re-read the seeded baseline at $BASELINE_FILE — the file WAS written; rerun size-ratchet to verify it"
   # The file this mode just wrote is about to be judged by the trailing

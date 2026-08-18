@@ -325,8 +325,6 @@ echo "=== mode exclusivity ==="
 run_sr --seed --update
 [ "$RC" -eq 2 ] && ok "--seed with --update is a config error" || bad "exclusivity" "rc=$RC out=$OUT"
 
-printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
-[ "$FAIL" -eq 0 ]
 
 echo "=== --seed stages its baseline beside the destination, atomically ==="
 MKTEMP_SHIM="$TMP/mktemp-shim"
@@ -401,3 +399,6 @@ done
 [ -z "$leftovers" ] \
   && ok "--seed leaves no staging debris in tools/" \
   || bad "--seed staging debris" "leftover:$leftovers"
+
+printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]
