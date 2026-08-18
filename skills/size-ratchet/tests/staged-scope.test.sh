@@ -114,7 +114,7 @@ mkdir -p "$R/tools"
 mkfile big.txt 30
 printf '# nothing excluded\n' >"$R/tools/size-ratchet-excludes"
 git -C "$R" add -A
-git -C "$R" commit -q -m seed 2>/dev/null || true
+git -C "$R" commit -q -m seed
 printf 'big.txt\tunstaged exclusion\n' >"$R/tools/size-ratchet-excludes"
 run_sr --staged
 [ "$RC" -eq 1 ] && ok "an unstaged exclusion does not silence the staged blob" \
