@@ -130,7 +130,7 @@ gg_settings_normalize_path() { # PATH — normalized path on stdout ("" when it 
 # and parsing that would resolve every key to its built-in default.
 # GG_SETTINGS_INDEX_DIR holds the materialized copies; the caller owns it.
 gg_settings_source() { # FILE — the path to actually read; nonzero + ::error on failure
-  local file="$1" copy="" status=0 entry="" norm="" head_status=0 cf_status=0
+  local file="$1" copy="" status=0 entry="" norm="" head_status=0 tree_status=0
   if [ "${GG_SETTINGS_FROM_INDEX:-0}" != "1" ] || [ -z "${GG_SETTINGS_INDEX_DIR:-}" ]; then
     printf '%s' "$file"
     return 0
@@ -181,9 +181,9 @@ gg_settings_source() { # FILE — the path to actually read; nonzero + ::error o
           # "no such path in HEAD" with the same 128 an operational failure
           # returns, so only ls-tree (exit 0, empty output for an absent
           # path) can tell the two apart.
-          entry="$(git ls-tree HEAD -- ":(literal)$file" 2>/dev/null)" || cf_status=$?
-          if [ "$cf_status" -ne 0 ]; then
-            echo "::error::$file: could not probe HEAD while resolving a setting (git ls-tree exit $cf_status); refusing to treat it as untracked" >&2
+          entry="$(git ls-tree HEAD -- ":(literal)$file" 2>/dev/null)" || tree_status=$?
+          if [ "$tree_status" -ne 0 ]; then
+            echo "::error::$file: could not probe HEAD while resolving a setting (git ls-tree exit $tree_status); refusing to treat it as untracked" >&2
             return 1
           fi
           case "${entry:+tracked}" in

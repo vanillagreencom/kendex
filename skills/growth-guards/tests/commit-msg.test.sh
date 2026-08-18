@@ -212,6 +212,7 @@ git -C "$RH" add -A
 git -C "$RH" commit -qm "docs: base" --no-verify
 git -C "$RH" rm -q --cached vstack.settings.toml
 printf '[env]\nGROWTH_GUARDS_COMMIT_TYPES = "feat"\n' >"$RH/vstack.settings.toml"
+REAL_GIT="$(command -v git)"
 GIT_HTREE_SHIM="$TMP/git-htree-shim"
 mkdir -p "$GIT_HTREE_SHIM"
 {
