@@ -389,6 +389,31 @@
 
 ## Earlier (condensed, through 2026-08-16)
 
+### Still-pending consumer actions
+
+No release boundary has passed, so these migration steps from the condensed
+span stay required until taken:
+
+- **Removed skills and pack (breaking):** before your next `vstack refresh`,
+  delete any `iced-shadcn` or `html-artifact` entries from your project's
+  `vstack.toml` (`[skill-instructions]`, `[agent-skills]`, `[role-skills]`).
+  If you applied the `vanillagreen-themes` pack, run
+  `vstack apply vanillagreen-themes --revert` **before** upgrading, while the
+  pack is still resolvable; afterwards the managed blocks in Ghostty/tmux
+  configs must be removed by hand and the VS Code extension uninstalled
+  manually.
+- **second-opinion key sweep:** drop `SECOND_OPINION_REVIEW_TARGETS` from
+  every file it was seeded into (`vstack.settings.toml`, `.env.local`, and any
+  `.env.local.example`/`.env.example` a new checkout copies from), and drop a
+  `SECOND_OPINION_TARGET` naming the session's own model — both are now
+  refused. Pi/OpenCode/Cursor and undetected sessions must export
+  `SECOND_OPINION_CURRENT_MODEL`.
+- **Vendored guard scripts:** repos vendoring review-gate, size-ratchet, or
+  growth-guards must re-vendor to pick up the settings-resolution and
+  measurement changes.
+
+### Component rollups
+
 - cli: every git process runs through one hardened constructor — the
   environment's git-config and program-naming variables are dropped, a cache
   entry must prove it is vstack's own clone before any fetch or
