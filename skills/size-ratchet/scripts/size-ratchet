@@ -605,7 +605,7 @@ while IFS= read -r -d '' rec; do
     if ! n="$(git show ":$f" | wc -l)"; then
       collection_error "cannot read index blob for tracked file '$f' — its size is unmeasurable, refusing to skip it"
     fi
-    n="${n//[[:space:]]/}" # strip wc's padding (BSD wc pads)
+    n="${n#"${n%%[![:space:]]*}"}" # strip wc's leading whitespace (BSD wc pads)
     case "$n" in
       "" | *[!0-9]*) collection_error "line count for index blob of '$f' came back as '$n', not a number — its size is unmeasurable, refusing to skip it" ;;
     esac
