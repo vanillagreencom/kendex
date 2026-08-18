@@ -208,6 +208,36 @@ for path in "$TMP/outside-settings.toml" "../outside-settings.toml"; do
     || bad "out-of-repo settings source" "path=$path rc=$RC out=$OUT"
 done
 
+# …but a `..` that NORMALIZES back inside is an ordinary index entry, and the
+# answer-before-probe shortcut must not swallow it: sub/../vstack.settings.toml
+# IS the committed settings file, so reading the worktree copy there handed
+# the unstaged threshold bump exactly the authority --staged removes.
+new_repo settings-dotdot
+mkdir -p "$R/sub"
+mkfile big.txt 200
+mkfile sub/keep.txt 1
+printf '[env]\nSIZE_RATCHET_THRESHOLD = "100"\n' >"$R/vstack.settings.toml"
+git -C "$R" add -A
+git -C "$R" commit -q -m seed
+# Raised on disk only: the commit still carries 100, so the 200-line blob
+# fails however the settings path is spelled.
+printf '[env]\nSIZE_RATCHET_THRESHOLD = "300"\n' >"$R/vstack.settings.toml"
+for path in "vstack.settings.toml" "sub/../vstack.settings.toml" "./vstack.settings.toml" "a/b/../../vstack.settings.toml"; do
+  OUT=""; RC=0
+  OUT="$(cd "$R" && SIZE_RATCHET_SETTINGS_FILE="$path" "$SR" --staged 2>&1)" || RC=$?
+  [ "$RC" -eq 1 ] && case "$OUT" in *"threshold 100"*) true ;; *) false ;; esac \
+    && ok "the committed threshold governs a path spelled '$path'" \
+    || bad "dot-dot settings path resolves to the index" "path=$path rc=$RC out=$OUT"
+done
+# Control: a path that STILL escapes once normalized keeps the worktree lane
+# — it reads the out-of-repo file ($TMP/outside-settings.toml, threshold 5,
+# written above) rather than resolving to anything in the index.
+OUT=""; RC=0
+OUT="$(cd "$R" && SIZE_RATCHET_SETTINGS_FILE="sub/../../outside-settings.toml" "$SR" --staged 2>&1)" || RC=$?
+[ "$RC" -eq 1 ] && case "$OUT" in *"threshold 5"*) true ;; *) false ;; esac \
+  && ok "control: a path that still escapes once normalized reads the out-of-repo file" \
+  || bad "normalized escape stays out-of-repo" "rc=$RC out=$OUT"
+
 new_repo settings-deleted
 mkfile big.txt 8
 printf '[env]\nSIZE_RATCHET_THRESHOLD = "10"\n' >"$R/vstack.settings.toml"

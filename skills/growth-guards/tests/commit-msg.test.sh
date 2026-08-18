@@ -172,5 +172,30 @@ for path in "$TMP/outside-settings.toml" "../outside-settings.toml"; do
     || bad "out-of-repo settings source" "path=$path rc=$RC out=$OUT"
 done
 
+echo "=== a '..' that normalizes back inside is an ordinary index entry ==="
+# The answer-before-probe shortcut for out-of-repo paths must not swallow
+# sub/../vstack.settings.toml, which IS the committed settings file: reading
+# the worktree copy there handed an unstaged edit exactly the authority the
+# hook lane removes.
+mkdir -p "$RI/sub"
+echo keep >"$RI/sub/keep.txt"
+git -C "$RI" add -A
+git -C "$RI" commit -qm "docs: subdir" --no-verify
+# Loosened on disk only: the commit still carries the docs-only list.
+printf '[env]\nGROWTH_GUARDS_COMMIT_TYPES = "docs feat"\n' >"$RI/vstack.settings.toml"
+for path in "vstack.settings.toml" "sub/../vstack.settings.toml" "./vstack.settings.toml" "a/b/../../vstack.settings.toml"; do
+  OUT=""; RC=0
+  OUT="$(cd "$RI" && printf 'feat: not in the committed list\n' | GROWTH_GUARDS_SETTINGS_FILE="$path" "$CM" 2>&1)" || RC=$?
+  [ "$RC" -eq 1 ] && ok "the committed type list governs a path spelled '$path'" \
+    || bad "dot-dot settings path resolves to the index" "path=$path rc=$RC out=$OUT"
+done
+# Control: still escaping once normalized, so it reads the out-of-repo file
+# (docs-only, written above) instead of anything in the index.
+OUT=""; RC=0
+OUT="$(cd "$RI" && printf 'feat: not in the outside list\n' | GROWTH_GUARDS_SETTINGS_FILE="sub/../../outside-settings.toml" "$CM" 2>&1)" || RC=$?
+[ "$RC" -eq 1 ] && ok "control: a path that still escapes once normalized reads the out-of-repo file" \
+  || bad "normalized escape stays out-of-repo" "rc=$RC out=$OUT"
+git -C "$RI" checkout -q -- vstack.settings.toml
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

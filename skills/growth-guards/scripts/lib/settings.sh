@@ -96,6 +96,33 @@ gg_settings_usable() { # PATH — 0 = readable-shaped or absent; 1 + ::error oth
   return 1
 }
 
+# Lexically normalize a repo-relative path: drop empty and `.` segments, and
+# let `..` pop the segment before it. Pure string surgery — no symlink
+# resolution, Bash 3.2-safe. The index records canonical paths, so a source
+# named `sub/../vstack.settings.toml` is the same entry as
+# `vstack.settings.toml` and has to probe, and materialize, as that one. A
+# `..` with nothing left to pop ACCUMULATES rather than vanishing, so a path
+# that really does leave the repository stays visible as one to the caller.
+gg_settings_normalize_path() { # PATH — normalized path on stdout ("" when it cancels out)
+  local rest="$1" out="" seg
+  while [ -n "$rest" ]; do
+    seg="${rest%%/*}"
+    if [ "$seg" = "$rest" ]; then rest=""; else rest="${rest#*/}"; fi
+    case "$seg" in
+      "" | ".") ;;
+      "..")
+        case "$out" in
+          "" | ".." | */..) out="${out:+$out/}.." ;;
+          */*) out="${out%/*}" ;;
+          *) out="" ;;
+        esac
+        ;;
+      *) out="${out:+$out/}$seg" ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+
 # With GG_SETTINGS_FROM_INDEX=1 a TRACKED settings source is read from the
 # INDEX, a source staged for DELETION governs as absent, and an untracked one
 # (a personal .env.local) is the worktree copy, which is all there is. A
@@ -103,21 +130,35 @@ gg_settings_usable() { # PATH — 0 = readable-shaped or absent; 1 + ::error oth
 # and parsing that would resolve every key to its built-in default.
 # GG_SETTINGS_INDEX_DIR holds the materialized copies; the caller owns it.
 gg_settings_source() { # FILE — the path to actually read; nonzero + ::error on failure
-  local file="$1" copy="" status=0 entry=""
+  local file="$1" copy="" status=0 entry="" norm=""
   if [ "${GG_SETTINGS_FROM_INDEX:-0}" != "1" ] || [ -z "${GG_SETTINGS_INDEX_DIR:-}" ]; then
     printf '%s' "$file"
     return 0
   fi
-  # A path that cannot BE an index entry — absolute, or escaping the root
-  # through a `..` segment — makes git refuse with the same 128 an operational
-  # failure returns, so it is answered before the probes below: the worktree
-  # copy is all such a source ever has.
+  # An ABSOLUTE path is never an index entry, and git refuses such a pathspec
+  # with the same 128 an operational failure returns — so it is answered here,
+  # before the probes below: the worktree copy is all it ever has.
   case "$file" in
-    /* | "../"* | *"/../"* | *"/..")
+    /*)
       printf '%s' "$file"
       return 0
       ;;
   esac
+  # Everything else is judged by what it NORMALIZES to, not by whether it
+  # spells a `..`: `sub/../vstack.settings.toml` is the committed settings
+  # file, and treating any `..` as an escape read it from the worktree — the
+  # unstaged-edit bypass the hook lane exists to close. Only a path that still
+  # leaves the repository once normalized (or cancels out to nothing) keeps
+  # the worktree copy, and it keeps the ORIGINAL spelling, which is what the
+  # caller's own file tests and diagnostics name.
+  norm="$(gg_settings_normalize_path "$file")"
+  case "$norm" in
+    "" | ".." | "../"*)
+      printf '%s' "$file"
+      return 0
+      ;;
+  esac
+  file="$norm"
   # --error-unmatch reserves exit 1 for the one expected answer, "the index
   # has no such path"; every other nonzero status is a FAILING git, not a
   # measurement. Reading them alike let an operational failure pass for
