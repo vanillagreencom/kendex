@@ -71,12 +71,19 @@ wait_for_installs() {
 }
 
 install_log_path() { # WT — the install log inside that worktree's own gitdir
-  printf '%s/npm-install.log\n' "$(git -C "$1" rev-parse --absolute-git-dir)"
+  # An unresolvable gitdir must fail the caller, not degrade the assertion
+  # into a check against /npm-install.log at the filesystem root.
+  local gitdir
+  gitdir="$(git -C "$1" rev-parse --absolute-git-dir)" || return 1
+  case "$gitdir" in
+    /*) printf '%s/npm-install.log\n' "$gitdir" ;;
+    *) return 1 ;;
+  esac
 }
 
 wait_for_install_log() { # WT — the backgrounded install has written its log
   local log deadline=$((SECONDS + 10))
-  log="$(install_log_path "$1")"
+  log="$(install_log_path "$1")" || return 1
   while [ "$SECONDS" -lt "$deadline" ]; do
     [ -s "$log" ] && return 0
     sleep 0.2
@@ -86,7 +93,7 @@ wait_for_install_log() { # WT — the backgrounded install has written its log
 
 wait_for_install_log_removal() { # WT — a clean install cleared its log
   local log deadline=$((SECONDS + 10))
-  log="$(install_log_path "$1")"
+  log="$(install_log_path "$1")" || return 1
   while [ "$SECONDS" -lt "$deadline" ]; do
     [ -e "$log" ] || return 0
     sleep 0.2

@@ -1784,12 +1784,16 @@ install_worktree_dependencies() {
       cd "$wt" || exit 0
       # The log lands in this worktree's own gitdir: private to one worktree
       # and owner-controlled by construction, so nothing is shared with
-      # other users and there is no predictable path to pre-plant. An
-      # unresolvable or unwritable gitdir → install still runs, just
-      # unlogged.
+      # other users and there is no predictable path to pre-plant. The
+      # gitdir itself is commonly 0755 on a traversable host, so the log is
+      # created owner-only — npm output must not be readable by other
+      # accounts. An unresolvable or unwritable gitdir → install still
+      # runs, just unlogged.
+      umask 077
       log=""
       if gitdir="$(git rev-parse --absolute-git-dir 2>/dev/null)" &&
         [ -n "$gitdir" ] && [ -d "$gitdir" ] &&
+        rm -f -- "$gitdir/npm-install.log" 2>/dev/null &&
         : >"$gitdir/npm-install.log" 2>/dev/null; then
         log="$gitdir/npm-install.log"
       fi
