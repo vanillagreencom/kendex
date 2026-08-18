@@ -407,7 +407,11 @@ span stay required until taken:
   `.env.local.example`/`.env.example` a new checkout copies from), and drop a
   `SECOND_OPINION_TARGET` naming the session's own model — both are now
   refused. Pi/OpenCode/Cursor and undetected sessions must export
-  `SECOND_OPINION_CURRENT_MODEL`.
+  `SECOND_OPINION_CURRENT_MODEL`. Seeding never overwrites an existing
+  `SECOND_OPINION_REVIEW_INSTRUCTIONS` key, so a settings file carrying the
+  previous default keeps the old list — update the pinned value to
+  `"AGENTS.md review-bots.md .github/instructions/*.instructions.md .github/copilot-instructions.md"`
+  (or delete the key to track the default) to pick up AGENTS.md coverage.
 - **Vendored guard scripts:** repos vendoring review-gate, size-ratchet, or
   growth-guards must re-vendor to pick up the settings-resolution and
   measurement changes.
