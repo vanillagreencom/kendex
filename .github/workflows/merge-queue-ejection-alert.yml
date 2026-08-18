@@ -191,8 +191,17 @@ jobs:
           # An unidentified ejecting run must not collapse successive
           # ejections into one marker: fall back to this alert run's own id.
           marker="ejection-alert:pr-${PR_NUMBER}:run-${run_id:-alert-${GITHUB_RUN_ID}}"
-          existing="$(gh issue list --search "\"$marker\" in:body" --state open --json number --jq 'length')"
-          if [ "$create_intake_issue" = "1" ] && [ "$existing" = "0" ]; then
+          # The dedupe lookup runs only when an issue could be created: a
+          # transient Issues API failure must not kill a deliberately
+          # non-intake run under set -e.
+          if [ "$create_intake_issue" = "1" ]; then
+            existing="$(gh issue list --search "\"$marker\" in:body" --state open --json number --jq 'length')"
+            if [ "$existing" != "0" ]; then
+              echo "intake issue for $marker already open; skipping create"
+              create_intake_issue=0
+            fi
+          fi
+          if [ "$create_intake_issue" = "1" ]; then
             issue_file="$(mktemp)"
             cat > "$issue_file" <<BODY
           PR #${PR_NUMBER} was ejected from the merge queue (reason: \`${DEQUEUE_REASON}\`); its auto-merge arm is dropped and it will sit unmerged until re-armed.
@@ -209,6 +218,4 @@ jobs:
             gh issue create \
               --title "merge-queue ejection: PR #${PR_NUMBER} — ${run_name:-failing required check}" \
               --body-file "$issue_file"
-          else
-            echo "intake issue for $marker already open; skipping create"
           fi
