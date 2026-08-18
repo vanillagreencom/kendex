@@ -411,6 +411,11 @@ span stay required until taken:
 - **Vendored guard scripts:** repos vendoring review-gate, size-ratchet, or
   growth-guards must re-vendor to pick up the settings-resolution and
   measurement changes.
+- **review-gate v2 CI upgrade:** workflow YAML is repo-owned — `vstack
+  refresh` delivers the skill but never the workflows, so refreshing alone
+  does not complete the breaking CI upgrade. Replace the rerun/sweep and
+  predicate-reading jobs and adopt the relay/converge writer split per
+  `skills/review-gate/references/adoption.md`.
 
 ### Component rollups
 
