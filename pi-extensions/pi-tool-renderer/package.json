@@ -20,6 +20,9 @@
     ],
     "image": "https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-tool-renderer/assets/tool-batch.png"
   },
+  "scripts": {
+    "test": "bun test ./extensions/__tests__"
+  },
   "vstack": {
     "extensionManager": {
       "displayName": "Tool Renderer",

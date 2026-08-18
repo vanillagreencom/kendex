@@ -119,7 +119,7 @@ tr '\0' '\n' <"$RAW_FILE" | LC_ALL=C sort -u >"$CHANGED_FILE"
 # does not depend on path sort order. Indexed (not associative) arrays keep
 # this runnable on bash 3.2.
 LINT_SHELL_DESC="executable bits + \`vstack report\` guidance (shell shard lints)"
-PI_SUITES=(pi-qol pi-output-policy pi-agents-tmux pi-codex-minimal-tools pi-questions pi-claude-bridge)
+PI_SUITES=(pi-qol pi-output-policy pi-agents-tmux pi-codex-minimal-tools pi-questions pi-tool-renderer pi-claude-bridge)
 
 want_lint=0
 want_hooks=0
@@ -293,6 +293,7 @@ for name in "${PI_SUITES[@]}"; do
     pi-agents-tmux) add_lane "pi:pi-agents-tmux" "npm install (pinned pi 0.84.1) && bun test ./tests ./extensions/subagent/__tests__  [pi-extensions/pi-agents-tmux]" ;;
     pi-codex-minimal-tools) add_lane "pi:pi-codex-minimal-tools" "npm install (pinned pi 0.84.1, undici@^7.25.0) && npm test  [pi-extensions/pi-codex-minimal-tools]" ;;
     pi-questions) add_lane "pi:pi-questions" "bun test ./extensions/__tests__  [pi-extensions/pi-questions]" ;;
+    pi-tool-renderer) add_lane "pi:pi-tool-renderer" "npm install (pinned pi 0.84.1) && bun test ./extensions/__tests__  [pi-extensions/pi-tool-renderer]" ;;
     pi-claude-bridge) add_lane "pi:pi-claude-bridge" "npm ci && npm run build && npm run test:unit && bundle/ matches a fresh build  [pi-extensions/pi-claude-bridge]" ;;
   esac
 done
@@ -471,6 +472,11 @@ run_lane() { # id -> exit status of the lane
       ;;
     pi:pi-questions)
       run_in pi-extensions/pi-questions bun test ./extensions/__tests__
+      ;;
+    pi:pi-tool-renderer)
+      run_in pi-extensions/pi-tool-renderer bash -c '
+        npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1 &&
+        bun test ./extensions/__tests__'
       ;;
     pi:pi-claude-bridge)
       # The bundle the author is about to commit — the working-tree bytes,

@@ -94,7 +94,7 @@ pi-extensions/pi-task-panel/extensions/task-panel.ts	1315
 pi-extensions/pi-tool-renderer/extensions/tool-renderer/diff.ts	1035
 pi-extensions/pi-tool-renderer/extensions/tool-renderer/generic.ts	452
 pi-extensions/pi-tool-renderer/extensions/tool-renderer/messages.ts	530
-pi-extensions/pi-tool-renderer/package.json	588
+pi-extensions/pi-tool-renderer/package.json	591
 pi-extensions/pi-web-tools/src/tools/web-fetch.ts	634
 pi-extensions/pi-web-tools/src/tools/web-research.ts	445
 pi-extensions/pi-web-tools/tests/youtube-video.test.ts	844
@@ -171,4 +171,4 @@ skills/size-ratchet/scripts/size-ratchet	1013
 skills/worktree/scripts/worktree	4148
 skills/worktree/scripts/worktree-session-guard	1194
 skills/worktree/tests/worktree_session_guard.sh	1284
-tools/validate-changed	513
+tools/validate-changed	519
