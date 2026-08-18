@@ -417,7 +417,18 @@ span stay required until taken:
   `agent-sequencing.md` (→ SKILL.md § Coordination), `recommendation-bias.md`
   (→ `references/finding-disposition.md`); project-management
   `workflows/tpm-audit-project-order.md` (→ a `workflows/tpm-audit.md` mode)
-  and `schemas/audit-project-order-output.md` (→ `schemas/audit-output.md`).
+  and `schemas/audit-project-order-output.md` (→ `schemas/audit-output.md`);
+  the legacy orch CI pair `scripts/ci/review-predicate.sh` and
+  `scripts/ci/approval-refire.sh` (→ the review-gate skill's predicate +
+  single writer, vendored via refresh; v1 consumers migrate per its
+  `references/adoption.md`); project-management `references/issues.md`,
+  `references/initiatives-projects.md`, `references/prioritization.md`
+  (their few real constraints relocated into the templates and
+  roadmap-create).
+- **Hooks with an unsupported `event:` block refresh:** a hook whose `event:`
+  is not a row of the execution contract is refused before any mutation —
+  the refusal lists the supported events. Change such a hook's event to a
+  supported row (or remove the hook) before refreshing.
 - **Items named `all` must be renamed or removed before refresh:** `all` is
   now the shared instruction key, so an agent, skill, or hook actually named
   `all` — possible in pre-release installs, whose removal stays supported —
