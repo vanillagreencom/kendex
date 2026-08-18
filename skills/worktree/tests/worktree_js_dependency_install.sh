@@ -8,7 +8,9 @@
 # Asserted here:
 #   1. a pnpm-lock.yaml beside package.json skips the npm install entirely;
 #   2. a packageManager pin naming pnpm skips it too, lockfile or not;
-#   3. a plain npm package.json still gets the historical install.
+#   3. a plain npm package.json still gets the historical install;
+#   4. a failed install leaves its log in the worktree's own gitdir, and a
+#      clean one leaves none behind.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,12 +25,19 @@ FAIL=0
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
-# Stubs: gh quiet; npm records every invocation to a per-run marker file.
+# Stubs: gh quiet; npm records every invocation to a per-run marker file and
+# fails loudly in the one fixture whose worktree is named for it.
 mkdir -p "$TMP_ROOT/bin"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$TMP_ROOT/bin/gh"
 cat >"$TMP_ROOT/bin/npm" <<'STUB'
 #!/usr/bin/env bash
 echo "npm $* in $PWD" >>"$NPM_CALL_LOG"
+case "$PWD" in
+  *issue-fail*)
+    echo "npm ERR! stub install failure"
+    exit 1
+    ;;
+esac
 exit 0
 STUB
 chmod +x "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/npm"
@@ -59,6 +68,30 @@ wait_for_installs() {
     sleep 0.2
   done
   return 0
+}
+
+install_log_path() { # WT — the install log inside that worktree's own gitdir
+  printf '%s/npm-install.log\n' "$(git -C "$1" rev-parse --absolute-git-dir)"
+}
+
+wait_for_install_log() { # WT — the backgrounded install has written its log
+  local log deadline=$((SECONDS + 10))
+  log="$(install_log_path "$1")"
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    [ -s "$log" ] && return 0
+    sleep 0.2
+  done
+  return 1
+}
+
+wait_for_install_log_removal() { # WT — a clean install cleared its log
+  local log deadline=$((SECONDS + 10))
+  log="$(install_log_path "$1")"
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    [ -e "$log" ] || return 0
+    sleep 0.2
+  done
+  return 1
 }
 
 assert_log_stays_empty() { # NAME — watch 2s and fail the moment npm logs
@@ -221,6 +254,28 @@ if grep -q "issue-npm" "$NPM_CALL_LOG" 2>/dev/null; then
   ok "npm repo still gets its install"
 else
   bad "npm repo still installs" "log: $(cat "$NPM_CALL_LOG" 2>/dev/null)"
+fi
+WT_NPM="$ROOT/.worktrees/repo/issue-npm"
+if wait_for_install_log_removal "$WT_NPM"; then
+  ok "a clean install leaves no npm-install.log behind"
+else
+  bad "clean install clears its log" "$(install_log_path "$WT_NPM") still exists"
+fi
+
+echo "=== a failed install leaves its log in the worktree's own gitdir ==="
+ROOT="$TMP_ROOT/faillog"
+make_repo "$ROOT" repo
+printf '{ "name": "app", "devDependencies": {} }\n' >"$ROOT/repo/package.json"
+git -C "$ROOT/repo" add package.json
+git -C "$ROOT/repo" commit -q -m "js: npm app whose install fails"
+git -C "$ROOT/repo" push -q origin main
+(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-fail >/dev/null)
+WT_FAIL="$ROOT/.worktrees/repo/issue-fail"
+if wait_for_install_log "$WT_FAIL" &&
+  grep -q "stub install failure" "$(install_log_path "$WT_FAIL")"; then
+  ok "a failed install keeps its full output at <gitdir>/npm-install.log"
+else
+  bad "failed install log" "$(install_log_path "$WT_FAIL") missing, empty, or truncated"
 fi
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

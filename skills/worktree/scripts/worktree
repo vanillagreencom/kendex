@@ -1782,24 +1782,18 @@ install_worktree_dependencies() {
     # install leaves its full log at a stable per-worktree path.
     (
       cd "$wt" || exit 0
-      # A user-private 0700 dir (never a symlink another local user planted)
-      # holds the logs; path-keyed names so same-named worktrees of
-      # different repos never share one. Unusable dir → install still runs,
-      # just unlogged.
-      log_dir="${TMPDIR:-/tmp}/worktree-npm-install-$(id -u)"
-      # The subshell cd-s into the worktree: a relative TMPDIR would drop
-      # the log INSIDE the fresh checkout — the exact dirty-tree hazard this
-      # change removes. Absolute or no logging.
-      case "$log_dir" in /*) ;; *) log_dir="" ;; esac
-      # Order matters on shared /tmp: prove the path is OUR real directory
-      # (never a pre-planted symlink) BEFORE chmod — a chmod through a
-      # symlink would re-mode the target. -m 700 covers creation; the
-      # explicit chmod re-tightens a pre-existing permissive dir; any
-      # failure disables logging rather than trusting the path.
-      mkdir -m 700 -p -- "$log_dir" 2>/dev/null || log_dir=""
-      if [ -n "$log_dir" ] && [ ! -L "$log_dir" ] && [ -d "$log_dir" ] && [ -O "$log_dir" ] &&
-        chmod 700 -- "$log_dir" 2>/dev/null && [ ! -L "$log_dir" ]; then
-        log="$log_dir/$(basename "$wt")-$(printf '%s' "$wt" | cksum | cut -d' ' -f1).log"
+      # The log lands in this worktree's own gitdir: private to one worktree
+      # and owner-controlled by construction, so nothing is shared with
+      # other users and there is no predictable path to pre-plant. An
+      # unresolvable or unwritable gitdir → install still runs, just
+      # unlogged.
+      log=""
+      if gitdir="$(git rev-parse --absolute-git-dir 2>/dev/null)" &&
+        [ -n "$gitdir" ] && [ -d "$gitdir" ] &&
+        : >"$gitdir/npm-install.log" 2>/dev/null; then
+        log="$gitdir/npm-install.log"
+      fi
+      if [ -n "$log" ]; then
         if npm install --no-audit --no-fund >"$log" 2>&1; then
           rm -f -- "$log"
         fi
