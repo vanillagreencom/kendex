@@ -155,7 +155,7 @@ skills/orch/tests/lanes.sh	890
 skills/orch/tests/oversee_watch.sh	814
 skills/orch/tests/queue_wait.sh	943
 skills/orch/workflows/review-pr.md	450
-skills/preflight/scripts/preflight	968
+skills/preflight/scripts/preflight	973
 skills/review-gate/scripts/pr-watch.sh	820
 skills/review-gate/scripts/review-predicate-selftest.sh	2607
 skills/review-gate/scripts/review-predicate.sh	1149
@@ -168,7 +168,7 @@ skills/second-opinion/scripts/second-opinion	2506
 skills/second-opinion/tests/cli-failure-gate.test.sh	1211
 skills/second-opinion/tests/lane-scratch-durability.test.sh	999
 skills/second-opinion/tests/review-dual-model.test.sh	1516
-skills/size-ratchet/scripts/size-ratchet	1020
+skills/size-ratchet/scripts/size-ratchet	1026
 skills/worktree/scripts/worktree	4148
 skills/worktree/scripts/worktree-session-guard	1194
 skills/worktree/tests/worktree_session_guard.sh	1284

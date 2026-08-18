@@ -71,9 +71,14 @@ REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || env_error "not insid
 cd "$REPO_ROOT"
 
 TMP="$(mktemp -d)" || env_error "could not create a temporary directory"
-# The trap re-exits with the status it interrupted: under errexit a failing rm
+# cleanup re-exits with the status it interrupted: under errexit a failing rm
 # would otherwise replace the contract exit code with its own.
-trap 'status=$?; rm -rf "$TMP" || :; exit "$status"' EXIT
+cleanup() {
+  cleanup_status=$?
+  rm -rf -- "$TMP" || :
+  exit "$cleanup_status"
+}
+trap cleanup EXIT
 : >"$TMP/findings.tsv"
 : >"$TMP/added.tsv"
 : >"$TMP/newfiles.list"
