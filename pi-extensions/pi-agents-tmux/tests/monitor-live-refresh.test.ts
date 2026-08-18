@@ -10,7 +10,15 @@ import {
 	monitorTreeRows,
 	restoreMonitorSelectionByKey,
 } from "../extensions/subagent/browser.js";
-import { patchTaskRecordUsage, refreshTranscriptUsage, taskNeedsTranscriptUsageRestore, transcriptUsageRefreshSnapshot } from "../extensions/subagent/index.js";
+import {
+	claimSummaryBackfill,
+	claimTranscriptParse,
+	patchTaskRecordUsage,
+	pruneTranscriptFingerprints,
+	refreshTranscriptUsage,
+	taskNeedsTranscriptUsageRestore,
+	transcriptUsageRefreshSnapshot,
+} from "../extensions/subagent/index.js";
 import { sortedMonitorRecords } from "../extensions/subagent/task-records.js";
 import type { AgentBrowserUiState, PaneTaskRecord, PaneTaskRegistry, SubagentDashboardItem, UsageStats } from "../extensions/subagent/types.js";
 
@@ -128,35 +136,125 @@ test("usage persistence remains retryable until the task record exists", () => {
 	assert.equal(registry["planner-1"]?.model, "test-model");
 });
 
-test("terminal usage refresh retries failed persistence and reparses appended final usage", async () => {
+test("terminal usage refresh stops re-parsing a failed persistence and rearms on appended final usage", async () => {
 	const runtimeRoot = mkdtempSync(join(tmpdir(), "subagent-usage-refresh-"));
 	const transcriptPath = join(runtimeRoot, "task.jsonl");
 	const completed = item("planner", "planner-1", "2026-05-14T05:02:00.000Z", { status: "completed", transcriptPath });
 	const fingerprints = new Map([["stale-2", "stale-fingerprint"]]);
 	const persistedInputs: number[] = [];
-	let allowPersistence = false;
 	const persistUsage = async (_taskId: string, parsed: { usage: UsageStats }) => {
 		persistedInputs.push(parsed.usage.input);
-		return allowPersistence;
+		return false;
 	};
 	try {
 		writeFileSync(transcriptPath, JSON.stringify({ event: { type: "message_end", message: { usage: { input: 2, output: 3 } } } }));
 		await refreshTranscriptUsage([completed], fingerprints, persistUsage);
 		assert.deepEqual(persistedInputs, [2]);
-		assert.equal(fingerprints.has("planner-1"), false);
+		assert.equal(fingerprints.has("planner-1"), true);
 		assert.equal(fingerprints.has("stale-2"), false);
 
-		allowPersistence = true;
 		await refreshTranscriptUsage([completed], fingerprints, persistUsage);
-		assert.deepEqual(persistedInputs, [2, 2]);
-		assert.equal(fingerprints.has("planner-1"), true);
+		assert.deepEqual(persistedInputs, [2]);
 
 		appendFileSync(transcriptPath, `\n${JSON.stringify({ event: { type: "message_end", message: { usage: { input: 5, output: 7 } } } })}`);
 		await refreshTranscriptUsage([completed], fingerprints, persistUsage);
-		assert.deepEqual(persistedInputs, [2, 2, 7]);
+		assert.deepEqual(persistedInputs, [2, 7]);
+		await refreshTranscriptUsage([completed], fingerprints, persistUsage);
+		assert.deepEqual(persistedInputs, [2, 7]);
 	} finally {
 		rmSync(runtimeRoot, { force: true, recursive: true });
 	}
+});
+
+test("terminal transcripts whose usage never persists are parsed once per task, not once per poll", async () => {
+	const runtimeRoot = mkdtempSync(join(tmpdir(), "subagent-usage-poll-cost-"));
+	const taskCount = 5;
+	const pollCount = 20;
+	const completed = Array.from({ length: taskCount }, (_unused, index) => {
+		const transcriptPath = join(runtimeRoot, `task-${index}.jsonl`);
+		writeFileSync(transcriptPath, JSON.stringify({ event: { type: "message_end", message: { usage: { input: index + 1, output: 1 } } } }));
+		return item("planner", `planner-${index}`, "2026-05-14T05:02:00.000Z", { status: "completed", transcriptPath });
+	});
+	const fingerprints = new Map<string, string>();
+	let parses = 0;
+	const persistUsage = async () => {
+		parses += 1;
+		return false;
+	};
+	try {
+		for (let poll = 0; poll < pollCount; poll += 1) await refreshTranscriptUsage(completed, fingerprints, persistUsage);
+
+		assert.equal(parses, taskCount);
+	} finally {
+		rmSync(runtimeRoot, { force: true, recursive: true });
+	}
+});
+
+test("a transcript parse is claimed once per byte change and never for a missing file", async () => {
+	const runtimeRoot = mkdtempSync(join(tmpdir(), "subagent-claim-parse-"));
+	const transcriptPath = join(runtimeRoot, "task.jsonl");
+	const fingerprints = new Map<string, string>();
+	try {
+		assert.equal(await claimTranscriptParse(transcriptPath, "planner-1", fingerprints), false);
+		assert.equal(fingerprints.size, 0);
+
+		writeFileSync(transcriptPath, "first\n");
+		assert.equal(await claimTranscriptParse(transcriptPath, "planner-1", fingerprints), true);
+		assert.equal(await claimTranscriptParse(transcriptPath, "planner-1", fingerprints), false);
+
+		appendFileSync(transcriptPath, "second\n");
+		assert.equal(await claimTranscriptParse(transcriptPath, "planner-1", fingerprints), true);
+		assert.equal(await claimTranscriptParse(transcriptPath, "planner-1", fingerprints), false);
+	} finally {
+		rmSync(runtimeRoot, { force: true, recursive: true });
+	}
+});
+
+test("summary backfill of a terminal transcript is attempted once per task, not once per poll", async () => {
+	const runtimeRoot = mkdtempSync(join(tmpdir(), "subagent-backfill-poll-cost-"));
+	const taskCount = 3;
+	const pollCount = 20;
+	// These records stay backfill-eligible for every poll — a failing backfill
+	// never writes a summary — so only the claim can bound the transcript reads.
+	const backfillable = Array.from({ length: taskCount }, (_unused, index) => {
+		const transcriptPath = join(runtimeRoot, `task-${index}.jsonl`);
+		writeFileSync(transcriptPath, JSON.stringify({ event: { type: "message_end", message: { usage: { input: 1, output: 1 } } } }));
+		return record("planner", `planner-${index}`, "2026-05-14T05:00:00.000Z", { status: "completed", transcriptPath });
+	});
+	const summarized = record("scout", "scout-9", "2026-05-14T05:00:00.000Z", { status: "completed", summary: "done", transcriptPath: backfillable[0]!.transcriptPath });
+	const running = record("rust", "rust-8", "2026-05-14T05:00:00.000Z", { transcriptPath: backfillable[0]!.transcriptPath });
+	const transcriptless = record("doc", "doc-7", "2026-05-14T05:00:00.000Z", { status: "completed" });
+	const fingerprints = new Map<string, string>();
+	let attempts = 0;
+	try {
+		for (let poll = 0; poll < pollCount; poll += 1) {
+			for (const candidate of [...backfillable, summarized, running, transcriptless]) {
+				if (await claimSummaryBackfill(candidate, fingerprints)) attempts += 1;
+			}
+		}
+		assert.equal(attempts, taskCount);
+		assert.deepEqual([...fingerprints.keys()], ["planner-0", "planner-1", "planner-2"]);
+
+		appendFileSync(backfillable[1]!.transcriptPath!, `\n${JSON.stringify({ event: { type: "message_end", message: { usage: { input: 2, output: 2 } } } })}`);
+		for (const candidate of backfillable) {
+			if (await claimSummaryBackfill(candidate, fingerprints)) attempts += 1;
+		}
+
+		assert.equal(attempts, taskCount + 1);
+	} finally {
+		rmSync(runtimeRoot, { force: true, recursive: true });
+	}
+});
+
+test("fingerprint pruning drops tasks that left the registry", () => {
+	const fingerprints = new Map([
+		["planner-1", "planner-fingerprint"],
+		["stale-3", "stale-fingerprint"],
+	]);
+
+	pruneTranscriptFingerprints(fingerprints, new Set(["planner-1"]));
+
+	assert.deepEqual([...fingerprints.keys()], ["planner-1"]);
 });
 
 test("Monitor selection stays on the same task when a refresh inserts rows above it", () => {

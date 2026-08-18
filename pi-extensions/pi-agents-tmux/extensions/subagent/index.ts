@@ -384,15 +384,18 @@ function appendRuntimeDiagnostic(runtimeRoot: string | undefined, source: string
 	void fs.promises.appendFile(logFile, `${JSON.stringify(entry)}\n`, { encoding: "utf-8", mode: 0o600 }).catch(() => undefined);
 }
 
+export function pruneTranscriptFingerprints(fingerprintsByTask: Map<string, string>, retainedTaskIds: Set<string>): void {
+	for (const taskId of fingerprintsByTask.keys()) {
+		if (!retainedTaskIds.has(taskId)) fingerprintsByTask.delete(taskId);
+	}
+}
+
 export function transcriptUsageRefreshSnapshot(
 	items: Iterable<SubagentDashboardItem>,
 	fingerprintsByTask: Map<string, string>,
 ): Array<{ item: SubagentDashboardItem; transcriptPath: string }> {
 	const snapshot = Array.from(items).flatMap((item) => (item.transcriptPath ? [{ item, transcriptPath: item.transcriptPath }] : []));
-	const retainedTaskIds = new Set(snapshot.map(({ item }) => item.taskId));
-	for (const taskId of fingerprintsByTask.keys()) {
-		if (!retainedTaskIds.has(taskId)) fingerprintsByTask.delete(taskId);
-	}
+	pruneTranscriptFingerprints(fingerprintsByTask, new Set(snapshot.map(({ item }) => item.taskId)));
 	return snapshot;
 }
 
@@ -420,6 +423,21 @@ async function transcriptUsageFingerprint(transcriptPath: string): Promise<strin
 	}
 }
 
+// Records the fingerprint as ATTEMPTED, not as parsed: a terminal transcript's
+// bytes never change, so re-parsing one can only repeat the previous answer.
+// Growth moves the fingerprint, which arms exactly one fresh attempt.
+export async function claimTranscriptParse(transcriptPath: string, taskId: string, fingerprintsByTask: Map<string, string>): Promise<boolean> {
+	const fingerprint = await transcriptUsageFingerprint(transcriptPath);
+	if (!fingerprint || fingerprintsByTask.get(taskId) === fingerprint) return false;
+	fingerprintsByTask.set(taskId, fingerprint);
+	return true;
+}
+
+export async function claimSummaryBackfill(record: PaneTaskRecord, fingerprintsByTask: Map<string, string>): Promise<boolean> {
+	if (!taskNeedsSummaryBackfill(record) || !record.transcriptPath) return false;
+	return claimTranscriptParse(record.transcriptPath, record.taskId, fingerprintsByTask);
+}
+
 export async function refreshTranscriptUsage(
 	items: Iterable<SubagentDashboardItem>,
 	fingerprintsByTask: Map<string, string>,
@@ -427,15 +445,9 @@ export async function refreshTranscriptUsage(
 ): Promise<void> {
 	const snapshot = transcriptUsageRefreshSnapshot(items, fingerprintsByTask);
 	for (const { item, transcriptPath } of snapshot) {
-		const fingerprint = await transcriptUsageFingerprint(transcriptPath);
-		if (!fingerprint || fingerprintsByTask.get(item.taskId) === fingerprint) continue;
+		if (!(await claimTranscriptParse(transcriptPath, item.taskId, fingerprintsByTask))) continue;
 		const parsed = await parseTranscriptUsage(transcriptPath).catch(() => undefined);
-		// Fingerprint only a parse that persisted: `parsed === undefined` also
-		// covers a transient read failure (EMFILE, permission blip), and a
-		// terminal task's file never changes again — fingerprinting the
-		// failure would permanently skip a recoverable transcript. Re-parsing
-		// a genuinely usage-less transcript each poll matches main's cost.
-		if (parsed && (await persistUsage(item.taskId, parsed))) fingerprintsByTask.set(item.taskId, fingerprint);
+		if (parsed) await persistUsage(item.taskId, parsed);
 	}
 }
 
@@ -482,6 +494,7 @@ export default function (pi: ExtensionAPI) {
 	let childCurrentTaskFile: string | undefined;
 	let agentCommandCompletions: Array<{ value: string; label: string; description: string; pane: boolean }> = [];
 	const usageTranscriptFingerprintsByTask = new Map<string, string>();
+	const summaryBackfillFingerprintsByTask = new Map<string, string>();
 	const pendingTranscriptUsagePersistences = new Set<Promise<void>>();
 	const trackTranscriptUsagePersistence = (work: Promise<void>) => {
 		let tracked: Promise<void>;
@@ -990,13 +1003,14 @@ export default function (pi: ExtensionAPI) {
 		await withDashboardBatch(async () => {
 			const records = await readTaskRegistry(runtimeRoot);
 			const registry = await readPaneRegistry(runtimeRoot);
+			pruneTranscriptFingerprints(summaryBackfillFingerprintsByTask, new Set(Object.keys(records)));
 			const sorted = Object.values(records).sort((a, b) => (a.createdAt ?? a.completedAt ?? a.updatedAt).localeCompare(b.createdAt ?? b.completedAt ?? b.updatedAt));
 			for (const record of sorted) {
 				if (!record.taskId || !record.agent) continue;
 				if (inferTaskRecordKind(runtimeRoot, record) === "pane" && record.paneId && isTerminalTaskStatus(record.status) && !registry[record.agent]) continue;
 				try {
 					const refreshed = await refreshTaskDiagnostics(runtimeRoot, record);
-					const backfilled = taskNeedsSummaryBackfill(refreshed.record)
+					const backfilled = (await claimSummaryBackfill(refreshed.record, summaryBackfillFingerprintsByTask))
 						? await backfillTaskSummaryFromTranscript(runtimeRoot, refreshed.record)
 						: { record: refreshed.record, updated: false };
 					updateDashboardFromTaskRecord(backfilled.record, runtimeRoot);
@@ -1206,7 +1220,8 @@ export default function (pi: ExtensionAPI) {
 				const fingerprint = await transcriptUsageFingerprint(transcriptPath);
 				const parsed = await parseTranscriptUsage(transcriptPath).catch(() => undefined);
 				const persisted = await patchDashboardUsage(runtimeRoot, taskId, parsed);
-				// Only a persisted parse is fingerprinted — see refreshTranscriptUsage.
+				// Leaving the fingerprint unset on failure buys the poll loop one
+				// retry — its own claim then caps this transcript at that attempt.
 				if (dashboardCtx?.hasUI && fingerprint && parsed && persisted) usageTranscriptFingerprintsByTask.set(taskId, fingerprint);
 			})());
 		}
@@ -1429,7 +1444,7 @@ export default function (pi: ExtensionAPI) {
 				for (const record of sortedRecords) {
 					if (!record.taskId || !record.agent) continue;
 					const refreshed = await refreshTaskDiagnostics(runtimeRoot, record);
-					const backfilled = taskNeedsSummaryBackfill(refreshed.record)
+					const backfilled = (await claimSummaryBackfill(refreshed.record, summaryBackfillFingerprintsByTask))
 						? await backfillTaskSummaryFromTranscript(runtimeRoot, refreshed.record)
 						: { record: refreshed.record, updated: false };
 					updateDashboardFromTaskRecord(backfilled.record, runtimeRoot);
@@ -1438,7 +1453,8 @@ export default function (pi: ExtensionAPI) {
 						const fingerprint = await transcriptUsageFingerprint(backfilled.record.transcriptPath);
 						const parsed = await parseTranscriptUsage(backfilled.record.transcriptPath).catch(() => undefined);
 						const persisted = await patchDashboardUsage(runtimeRoot, capturedTaskId, parsed);
-						// Only a persisted parse is fingerprinted — see refreshTranscriptUsage.
+						// Leaving the fingerprint unset on failure buys the poll loop one
+						// retry — its own claim then caps this transcript at that attempt.
 						if (ctx.hasUI && fingerprint && parsed && persisted) usageTranscriptFingerprintsByTask.set(capturedTaskId, fingerprint);
 					}
 				}
@@ -1449,6 +1465,7 @@ export default function (pi: ExtensionAPI) {
 		syncDashboard(ctx);
 		if (!ctx.hasUI) {
 			usageTranscriptFingerprintsByTask.clear();
+			summaryBackfillFingerprintsByTask.clear();
 			return;
 		}
 		const refreshLiveUsage = async () => {
