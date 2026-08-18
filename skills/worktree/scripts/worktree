@@ -1787,14 +1787,15 @@ install_worktree_dependencies() {
       # other users and there is no predictable path to pre-plant. The
       # gitdir itself is commonly 0755 on a traversable host, so the log is
       # created owner-only — npm output must not be readable by other
-      # accounts. An unresolvable or unwritable gitdir → install still
-      # runs, just unlogged.
-      umask 077
+      # accounts. The umask is scoped to that creation alone: npm and its
+      # lifecycle scripts keep the caller's umask for node_modules. The
+      # redirect below reuses the 0600 file. An unresolvable or unwritable
+      # gitdir → install still runs, just unlogged.
       log=""
       if gitdir="$(git rev-parse --absolute-git-dir 2>/dev/null)" &&
         [ -n "$gitdir" ] && [ -d "$gitdir" ] &&
-        rm -f -- "$gitdir/npm-install.log" 2>/dev/null &&
-        : >"$gitdir/npm-install.log" 2>/dev/null; then
+        (umask 077 && rm -f -- "$gitdir/npm-install.log" &&
+          : >"$gitdir/npm-install.log") 2>/dev/null; then
         log="$gitdir/npm-install.log"
       fi
       if [ -n "$log" ]; then
