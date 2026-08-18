@@ -178,6 +178,20 @@ OUT="$(cd "$R" && PATH="$GIT_SHIM:$PATH" "$TB" 2>&1)" && RC=0 || RC=$?
   || bad "a git grep execution failure is a collection error" "rc=$RC out=$OUT"
 case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany a broken scan" "$OUT" ;; *) ok "no OK verdict accompanies the broken scan" ;; esac
 
+echo "=== fail-closed: an unreadable staged blob is a collection error ==="
+new_repo unreadable
+printf '// %s: stranded work\n' "$TD" >"$R/a.rs"
+git -C "$R" add -A
+run_tb
+[ "$RC" -eq 1 ] && ok "control: the staged marker trips while its blob is readable" \
+  || bad "control: readable blob trips" "rc=$RC out=$OUT"
+OID="$(git -C "$R" rev-parse :a.rs)"
+rm "$R/.git/objects/${OID:0:2}/${OID:2}"
+run_tb
+[ "$RC" -eq 2 ] && case "$OUT" in *"error: "*"unable to read"*) true ;; *) false ;; esac \
+  && ok "a vanished staged blob is exit 2 carrying git's own error line" \
+  || bad "vanished blob is exit 2 with git's error line" "rc=$RC out=$OUT"
+case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany an unread blob" "$OUT" ;; *) ok "no OK verdict accompanies the unread blob" ;; esac
 
 echo "=== a URL is not a comment leader ==="
 new_repo url

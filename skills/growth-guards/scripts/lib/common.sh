@@ -192,6 +192,20 @@ gg_is_excluded() { # PATH — 0 when some exclusion glob matches the full path
   return 1
 }
 
+# Judge one `git grep` run from its exit status AND captured stderr. The
+# status carries only the MATCH result: a staged blob git cannot read is an
+# `error:` line on stderr while the status still says 1 (nothing matched) or
+# 0 (something else matched), so status alone can bless a scan that skipped
+# content — and a status-0 run that also errored must not fold as an
+# ordinary violation verdict over a partial scan.
+gg_grep_guard() { # STATUS ERRFILE CONTEXT — returns only when the scan is complete
+  local status="$1" errfile="$2" context="$3" first_err
+  [ ! -s "$errfile" ] || cat -- "$errfile" >&2
+  [ "$status" -le 1 ] || gg_collection_error "git grep failed $context (exit $status)"
+  first_err="$(grep -E '^error:' -- "$errfile" | head -n 1 || true)"
+  [ -z "$first_err" ] || gg_collection_error "git grep could not read staged content while $context ($first_err)"
+}
+
 # One banned shape, scanned over INDEX content in two phases: the offending
 # FILES (-l -z, so a path containing ':' cannot garble parsing), then the
 # numbered hits per file, where the known path prefix strips exactly. Binary
@@ -201,12 +215,13 @@ gg_is_excluded() { # PATH — 0 when some exclusion glob matches the full path
 gg_grep_lane() { # LABEL ERE REMEDY PATHSPEC... — numbered violations on stdout
   local label="$1" ere="$2" remedy="$3" status=0 f hit_status hit
   shift 3
-  git grep --cached -lIzE "$ere" -- "$@" >"$GG_TMP/lane.z" || status=$?
-  [ "$status" -le 1 ] || gg_collection_error "git grep failed scanning tracked files for $label (exit $status)"
+  git grep --cached -lIzE "$ere" -- "$@" >"$GG_TMP/lane.z" 2>"$GG_TMP/lane.err" || status=$?
+  gg_grep_guard "$status" "$GG_TMP/lane.err" "scanning tracked files for $label"
   while IFS= read -r -d '' f; do
     gg_is_excluded "$f" && continue
     hit_status=0
-    git grep --cached -nIE "$ere" -- ":(literal)$f" >"$GG_TMP/lane.hits" || hit_status=$?
+    git grep --cached -nIE "$ere" -- ":(literal)$f" >"$GG_TMP/lane.hits" 2>"$GG_TMP/lane.err" || hit_status=$?
+    gg_grep_guard "$hit_status" "$GG_TMP/lane.err" "detailing the $label hits in '$f'"
     # This file just listed as containing hits; anything but a clean re-scan
     # (including "no matches") means the measurement is broken.
     [ "$hit_status" -eq 0 ] || gg_collection_error "git grep could not detail the $label hits in '$f' (exit $hit_status)"

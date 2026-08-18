@@ -187,5 +187,30 @@ OUT="$(cd "$R" && PATH="$GIT_SHIM:$PATH" "$CM" 2>&1)" && RC=0 || RC=$?
   || bad "a git grep execution failure is a collection error" "rc=$RC out=$OUT"
 case "$OUT" in *"conflict-markers: OK"*) bad "no OK verdict may accompany a broken scan" "$OUT" ;; *) ok "no OK verdict accompanies the broken scan" ;; esac
 
+echo "=== fail-closed: an unreadable staged blob is a collection error ==="
+new_repo unreadable
+printf '%s HEAD\n' "$OPEN" >"$R/marker.txt"
+git -C "$R" add -A
+run_cm
+[ "$RC" -eq 1 ] && ok "control: the staged marker trips while its blob is readable" \
+  || bad "control: readable blob trips" "rc=$RC out=$OUT"
+OID="$(git -C "$R" rev-parse :marker.txt)"
+rm "$R/.git/objects/${OID:0:2}/${OID:2}"
+run_cm
+[ "$RC" -eq 2 ] && case "$OUT" in *"error: "*"unable to read"*) true ;; *) false ;; esac \
+  && ok "a vanished staged blob is exit 2 carrying git's own error line" \
+  || bad "vanished blob is exit 2 with git's error line" "rc=$RC out=$OUT"
+case "$OUT" in *"conflict-markers: OK"*) bad "no OK verdict may accompany an unread blob" "$OUT" ;; *) ok "no OK verdict accompanies the unread blob" ;; esac
+
+# Status 0 + stderr error: a second, readable file matches while the first
+# stays unread — a partial scan must not fold as an ordinary violation.
+printf '%s theirs\n' "$CLOSE" >"$R/readable.txt"
+git -C "$R" add readable.txt
+run_cm
+[ "$RC" -eq 2 ] && case "$OUT" in *"unable to read"*) true ;; *) false ;; esac \
+  && ok "a scan that matches one file but cannot read another is exit 2, never a violation verdict" \
+  || bad "match + unreadable blob is exit 2, not 1" "rc=$RC out=$OUT"
+case "$OUT" in *"conflict marker(s) — excludes"*) bad "no violation summary may accompany a partial scan" "$OUT" ;; *) ok "no violation summary accompanies the partial scan" ;; esac
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

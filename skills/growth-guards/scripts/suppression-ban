@@ -142,8 +142,8 @@ while IFS= read -r -d '' f; do
 done <"$GG_TMP/rs.z"
 
 status=0
-git grep --cached -cIE "$BARE_ERE" -- '*.rs' >"$GG_TMP/bare.raw" || status=$?
-[ "$status" -le 1 ] || gg_collection_error "git grep failed counting bare allows (exit $status)"
+git grep --cached -cIE "$BARE_ERE" -- '*.rs' >"$GG_TMP/bare.raw" 2>"$GG_TMP/bare.err" || status=$?
+gg_grep_guard "$status" "$GG_TMP/bare.err" "counting bare allows"
 
 : >"$GG_TMP/counts.raw"
 while IFS= read -r row; do

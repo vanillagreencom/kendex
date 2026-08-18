@@ -352,5 +352,48 @@ OUT="$(cd "$R" && PATH="$GIT_SHIM:$PATH" "$SB" 2>&1)" && RC=0 || RC=$?
   || bad "a git grep execution failure is a collection error" "rc=$RC out=$OUT"
 case "$OUT" in *"suppression-ban: OK"*) bad "no OK verdict may accompany a broken scan" "$OUT" ;; *) ok "no OK verdict accompanies the broken scan" ;; esac
 
+echo "=== fail-closed: an unreadable staged blob is a collection error ==="
+new_repo unreadable
+printf '#[allow(dead_code)]\nfn f() {}\n' >"$R/bare.rs"
+git -C "$R" add -A
+run_sb
+[ "$RC" -eq 1 ] && ok "control: the staged bare allow trips while its blob is readable" \
+  || bad "control: readable blob trips" "rc=$RC out=$OUT"
+OID="$(git -C "$R" rev-parse :bare.rs)"
+rm "$R/.git/objects/${OID:0:2}/${OID:2}"
+run_sb
+[ "$RC" -eq 2 ] && case "$OUT" in *"error: "*"unable to read"*) true ;; *) false ;; esac \
+  && ok "a vanished staged blob is exit 2 carrying git's own error line" \
+  || bad "vanished blob is exit 2 with git's error line" "rc=$RC out=$OUT"
+case "$OUT" in *"suppression-ban: OK"*) bad "no OK verdict may accompany an unread blob" "$OUT" ;; *) ok "no OK verdict accompanies the unread blob" ;; esac
+
+# The bare-allow count call bypasses the shared lane helper; a shim erroring
+# ONLY that call proves its own guard (a real unreadable .rs blob is caught
+# earlier, by the gate-1 lane scan above).
+new_repo countfail
+printf 'fn main() {}\n' >"$R/ok.rs"
+git -C "$R" add -A
+run_sb
+[ "$RC" -eq 0 ] && ok "shim-free control: the countfail fixture passes with the real git" \
+  || bad "shim-free countfail control passes" "rc=$RC out=$OUT"
+COUNT_SHIM="$TMP/git-shim-count"
+mkdir -p "$COUNT_SHIM"
+cat >"$COUNT_SHIM/git" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [ "\$a" = "-cIE" ]; then
+    echo "error: 'phantom.rs': unable to read 0000000000000000000000000000000000000000" >&2
+    exit 1
+  fi
+done
+exec "$REAL_GIT" "\$@"
+EOF
+chmod +x "$COUNT_SHIM/git"
+OUT="$(cd "$R" && PATH="$COUNT_SHIM:$PATH" "$SB" 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"unable to read"*) true ;; *) false ;; esac \
+  && ok "an error-carrying no-match count is exit 2, never a clean zero" \
+  || bad "error-carrying count is exit 2" "rc=$RC out=$OUT"
+case "$OUT" in *"suppression-ban: OK"*) bad "no OK verdict may accompany a broken count" "$OUT" ;; *) ok "no OK verdict accompanies the broken count" ;; esac
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
