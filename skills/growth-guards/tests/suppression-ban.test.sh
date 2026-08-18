@@ -203,7 +203,8 @@ run_sb
 printf '/* biome-ignore-start */\nconst y = 1;\n' >"$R/ok.ts"
 git -C "$R" add -A
 run_sb
-[ "$RC" -eq 1 ] && ok "the block-comment bare start fails too" || bad "block-comment bare start fails" "rc=$RC out=$OUT"
+[ "$RC" -eq 1 ] && case "$OUT" in *"unscoped biome-ignore-start: ok.ts:1:"*) true ;; *) false ;; esac \
+  && ok "the block-comment bare start fails too" || bad "block-comment bare start fails" "rc=$RC out=$OUT"
 printf '// biome-ignore-start lint: sweep\nconst y = 1;\n' >"$R/ok.ts"
 git -C "$R" add -A
 run_sb

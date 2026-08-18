@@ -26,8 +26,8 @@ usage() {
 usage: suppression-ban [--update] [--baseline FILE] [--excludes FILE]
 
 Blanket lint suppressions (module-wide rust allow, file-level noqa, bare
-eslint-disable, bare/`all` nolint, biome's file-wide `-all`, unscoped
-`-start`, and rule-less `lint` forms) fail flat. Bare rust allow(dead_code)/
+eslint-disable, bare/`all` nolint, biome-ignore-all, unscoped
+biome-ignore-start, and rule-less `biome-ignore lint` forms) fail flat. Bare rust allow(dead_code)/
 allow(unused*) attributes are counted per file against a tighten-only
 baseline; --update lowers/removes rows to current reality (never adds,
 never raises) and then re-checks.
@@ -102,20 +102,23 @@ gg_grep_lane "blanket nolint" \
 # the fully qualified per-line or region form — lint/<group>/<rule> with a
 # stated reason; file scope, unscoped regions, and category- or group-wide
 # forms fail flat.
+# The languages biome lints: the eslint lane's JS family plus CSS and JSONC.
+BIOME_LANGS=('*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs' '*.mts' '*.cts' '*.vue' '*.svelte' '*.css' '*.jsonc')
+
 gg_grep_lane "file-wide biome-ignore-all" \
   '(//|/\*+)[[:space:]]*biome-ignore-all([^A-Za-z0-9-]|$)' \
   "delete the file-wide directive and suppress per line with the full rule path and a reason (biome-ignore lint/<group>/<rule>: why), or fix the findings" \
-  '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs' '*.mts' '*.cts' '*.vue' '*.svelte' '*.css' '*.jsonc'
+  "${BIOME_LANGS[@]}"
 
 gg_grep_lane "unscoped biome-ignore-start" \
   '(//|/\*+)[[:space:]]*biome-ignore-start([[:space:]]*(\*/.*)?$|[[:space:]]+lint(/[A-Za-z0-9_-]+)?[[:space:]]*:)' \
   "scope the region to one rule (biome-ignore-start lint/<group>/<rule>: why, closed by biome-ignore-end), or fix the findings; a start without a full rule path suppresses everything until the end marker" \
-  '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs' '*.mts' '*.cts' '*.vue' '*.svelte' '*.css' '*.jsonc'
+  "${BIOME_LANGS[@]}"
 
 gg_grep_lane "blanket biome-ignore" \
   '(//|/\*+)[[:space:]]*biome-ignore[[:space:]]+lint(/[A-Za-z0-9_-]+)?[[:space:]]*:' \
   "name the full rule path (biome-ignore lint/<group>/<rule>: why); the bare lint or group form silences every rule beneath it" \
-  '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs' '*.mts' '*.cts' '*.vue' '*.svelte' '*.css' '*.jsonc'
+  "${BIOME_LANGS[@]}"
 
 BLANKET_VIOLATIONS="$GG_VIOLATIONS"
 
