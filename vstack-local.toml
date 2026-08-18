@@ -144,7 +144,7 @@ linear = ""
 orch = """
 ## Benchmarking orchestration changes
 
-The orch-drill ablation rig (`~/dev/orch-drill`) A/B-benchmarks orchestration
+The orch-drill ablation rig (`bmethod/orch-drill`; checked out at `~/dev/orch-drill` in this workspace) A/B-benchmarks orchestration
 changes: launch a drill per its README and compare wall clock and phase
 timings against the recorded baselines before shipping a workflow change.
 """
