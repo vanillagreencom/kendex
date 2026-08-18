@@ -72,7 +72,8 @@ run_cm
 printf '%s theirs\n' "$CLOSE" >"$R/a.rs"
 git -C "$R" add -A
 run_cm
-[ "$RC" -eq 1 ] && ok "the close marker with its label fails" \
+[ "$RC" -eq 1 ] && case "$OUT" in *"conflict marker: a.rs:1:"*) true ;; *) false ;; esac \
+  && ok "the close marker with its label fails, naming file:line" \
   || bad "close marker fails" "rc=$RC out=$OUT"
 
 echo "=== indented, quoted, and glued occurrences never fire ==="
@@ -133,6 +134,8 @@ OUT="$(cd "$R" && GROWTH_GUARDS_CONFLICT_EXCLUDES=alt-excludes "$CM" 2>&1)" && R
   || bad "excludes path resolves through the environment key" "rc=$RC out=$OUT"
 run_cm --excludes alt-excludes
 [ "$RC" -eq 0 ] && ok "--excludes flag points at the same list" || bad "--excludes flag" "rc=$RC out=$OUT"
+run_cm --excludes=alt-excludes
+[ "$RC" -eq 0 ] && ok "the equals form of --excludes resolves the same list" || bad "--excludes= equals form" "rc=$RC out=$OUT"
 run_cm
 [ "$RC" -eq 1 ] && ok "control: without either, the fixture marker still fails" \
   || bad "control: default excludes path has no file, marker fails" "rc=$RC out=$OUT"
