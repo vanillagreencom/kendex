@@ -124,7 +124,7 @@ sr_settings_source() { # FILE — the path to actually read; nonzero + ::error o
   # "untracked", which resolved the key from the worktree copy or the
   # built-in default — a committed threshold silently swapped for a looser
   # one, admitting staged content the commit does not authorize.
-  git ls-files --error-unmatch -- "$file" >/dev/null 2>&1 || status=$?
+  git ls-files --error-unmatch -- ":(literal)$file" >/dev/null 2>&1 || status=$?
   case "$status" in
     0) ;;
     1)
@@ -149,7 +149,7 @@ sr_settings_source() { # FILE — the path to actually read; nonzero + ::error o
   # failing invocation and gets the same refusal — an unread mode would let
   # the symlink shape through to exactly that silent resolution.
   status=0
-  entry="$(git ls-files -s -- "$file" 2>/dev/null)" || status=$?
+  entry="$(git ls-files -s -- ":(literal)$file" 2>/dev/null)" || status=$?
   if [ "$status" -ne 0 ]; then
     echo "::error::$file: could not read its index mode while resolving a setting (git ls-files exit $status)" >&2
     return 1
