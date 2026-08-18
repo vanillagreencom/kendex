@@ -198,6 +198,143 @@ describe("stranded handler resolution", () => {
 	});
 });
 
+describe("post-boundary claim recovery (production path)", () => {
+	beforeEach(() => resetStack());
+
+	it("a late handler claims its parked result through claimToolCall after the boundary wiped the records", () => {
+		const c = ctx();
+		c.recordToolCall("x", "web_fetch", { url: "https://a.example" });
+		c.pendingResults.set("x", { toolCallId: "x", content: [{ type: "text", text: "real" }] });
+		c.takeStaleQueuedResults();
+		c.resetToolTracking();
+
+		const claim = c.claimToolCall("web_fetch", { url: "https://a.example" });
+		assert.equal(claim.toolCallId, "x", "claim pairs the late handler with its own parked result");
+		assert.equal(claim.match, "tool-args");
+		assert.equal(takeQueuedOrParkedResult(c, claim.toolCallId).content[0].text, "real");
+	});
+
+	it("a late handler with a parked result never steals a live same-name call", () => {
+		const c = ctx();
+		c.recordToolCall("x", "bash", { command: "make deploy" });
+		c.pendingResults.set("x", { toolCallId: "x", content: [{ type: "text", text: "deployed" }] });
+		c.takeStaleQueuedResults();
+		c.resetToolTracking();
+		// Next turn streams a NEW same-name call Y — the sole live candidate.
+		c.recordToolCall("y", "bash", { command: "echo other" });
+
+		const lateClaim = c.claimToolCall("bash", { command: "make deploy" });
+		assert.equal(lateClaim.toolCallId, "x", "exact-args parked pairing outranks the sole live fallback");
+		const liveClaim = c.claimToolCall("bash", { command: "echo other" });
+		assert.equal(liveClaim.toolCallId, "y", "the live call keeps its own id");
+	});
+
+	it("a sole result-backed candidate is claimable without exact args, several are refused", () => {
+		const c = ctx();
+		c.recordToolCall("x", "edit", { path: "a", edits: [] });
+		c.pendingResults.set("x", { toolCallId: "x", content: [{ type: "text", text: "ok" }] });
+		c.takeStaleQueuedResults();
+		c.resetToolTracking();
+
+		const sole = c.claimToolCall("edit", { path: "a", edits: [{ oldText: "1", newText: "2" }] });
+		assert.equal(sole.toolCallId, "x");
+		assert.equal(sole.match, "tool-name");
+		assert.equal(sole.argsMismatch, true);
+
+		resetStack();
+		const c2 = ctx();
+		for (const id of ["p", "q"]) {
+			c2.recordToolCall(id, "read", { path: id });
+			c2.pendingResults.set(id, { toolCallId: id, content: [{ type: "text", text: id }] });
+		}
+		c2.takeStaleQueuedResults();
+		c2.resetToolTracking();
+		const refused = c2.claimToolCall("read", { path: "neither" });
+		assert.equal(refused.match, "none", "two candidates and no exact match: cross-pairing refused");
+	});
+});
+
+describe("turn-end safety invariants", () => {
+	beforeEach(() => resetStack());
+
+	it("endToolUseTurn never ships a still-partial block", () => {
+		const c = ctx();
+		c.resetTurnState(model);
+		const events = installFakeStream();
+		c.recordToolCall("sealed", "bash", { command: "ls" });
+		c.turnBlocks.push({ type: "toolCall", id: "sealed", name: "bash", arguments: { command: "ls" } });
+		c.recordToolCall("partial", "bash", {});
+		c.turnBlocks.push({ type: "toolCall", id: "partial", name: "bash", arguments: {}, partialJson: "{\"comman", index: 1 });
+
+		endToolUseTurn(c);
+
+		const done = events.find((e) => e.type === "done");
+		assert.deepEqual(done.message.content.map((b) => b.id), ["sealed"]);
+		assert.ok(c.forwardedToolCallIds.has("sealed"));
+		assert.equal(c.forwardedToolCallIds.has("partial"), false, "a pruned call is not owed a result");
+	});
+
+	it("a completed-message block suppresses its lagging same-turn stream twin", () => {
+		const c = ctx();
+		c.resetTurnState(model);
+		const events = installFakeStream();
+		c.turnSawStreamEvent = true;
+		// Completed yield beat the stream: block recorded complete.
+		processAssistantMessage({ type: "assistant", message: {
+			content: [{ type: "tool_use", id: "t1", name: "mcp__custom-tools__bash", input: { command: "echo hi" } }],
+		} }, model, new Map([["mcp__custom-tools__bash", "bash"]]));
+		assert.equal(c.turnBlocks.length, 1);
+
+		// The same call's stream twin arrives afterwards.
+		processStreamEvent({ type: "stream_event", event: {
+			type: "content_block_start", index: 0,
+			content_block: { type: "tool_use", id: "t1", name: "mcp__custom-tools__bash" },
+		} }, new Map([["mcp__custom-tools__bash", "bash"]]), model);
+		processStreamEvent({ type: "stream_event", event: { type: "content_block_stop", index: 0 } }, new Map(), model);
+
+		assert.equal(c.turnBlocks.length, 1, "no second copy of the block");
+		assert.equal("partialJson" in c.turnBlocks[0], false, "the complete copy is untouched");
+		endToolUseTurn(c);
+		const done = events.find((e) => e.type === "done");
+		assert.deepEqual(done.message.content.map((b) => b.id), ["t1"], "the id ships exactly once");
+	});
+
+	it("finalize for a forwarded id still ends the turn for its executable siblings", () => {
+		const c = ctx();
+		c.forwardedToolCallIds.add("old");
+		c.resetTurnState(model);
+		const events = installFakeStream();
+		c.recordToolCall("live", "bash", { command: "ls" });
+		c.turnBlocks.push({ type: "toolCall", id: "live", name: "bash", arguments: { command: "ls" } });
+
+		finalizeToolUseTurnFromMcpInvocation(c, "old", "bash", { command: "x" });
+
+		const done = events.find((e) => e.type === "done");
+		assert.ok(done, "the consumed grace timer still ends the turn");
+		assert.deepEqual(done.message.content.map((b) => b.id), ["live"], "the forwarded id is not re-emitted");
+	});
+
+	it("a completed-message yield on a dead stream never mutates the delivered turn", () => {
+		const c = ctx();
+		c.resetTurnState(model);
+		installFakeStream();
+		c.recordToolCall("t1", "bash", { command: "ls" });
+		c.turnBlocks.push({ type: "toolCall", id: "t1", name: "bash", arguments: { command: "ls" } });
+		endToolUseTurn(c);
+		const deliveredContent = c.turnOutput.content;
+		const lengthAtDelivery = deliveredContent.length;
+		c.turnSawStreamEvent = true;
+
+		processAssistantMessage({ type: "assistant", message: {
+			content: [
+				{ type: "tool_use", id: "t1", name: "mcp__custom-tools__bash", input: { command: "ls" } },
+				{ type: "tool_use", id: "t2", name: "mcp__custom-tools__bash", input: { command: "pwd" } },
+			] } }, model, new Map([["mcp__custom-tools__bash", "bash"]]));
+
+		assert.equal(deliveredContent.length, lengthAtDelivery, "Pi's delivered message is never appended to behind its back");
+	});
+});
+
 describe("parked early results", () => {
 	beforeEach(() => resetStack());
 

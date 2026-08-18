@@ -575,7 +575,10 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 		const unmatchedResultIds: string[] = [];
 		for (const result of allResults) {
 			const id = result.toolCallId;
-			if (id && !queryCtx.hasRecordedToolCall(id)) {
+			if (id && !queryCtx.hasRecordedToolCall(id) && !queryCtx.forwardedToolCallIds.has(id)) {
+				// A forwarded id is always legitimate even after the per-message
+				// records reset — Pi only answers calls it was handed (steer-split
+				// results land here after a boundary wiped the turn records).
 				queryCtx.markToolResultUnmatched(id);
 				unmatchedResultIds.push(id);
 				debug(`ERROR: tool result [${id}] has no registered tool_call id; refusing to queue or deliver`);
@@ -594,7 +597,9 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 				debug(`WARNING: tool result without toolCallId, cannot match`);
 			}
 			if (queryCtx.pendingToolCalls.size > 0 && queryCtx.pendingResults.size > 0) {
-				debug(`BUG: both maps non-empty! handlers=${queryCtx.pendingToolCalls.size} results=${queryCtx.pendingResults.size}`);
+				// Legitimate under staggered SDK invocation (a waiting steer-split
+				// handler while a sibling's result queues) — informational only.
+				debug(`note: handlers and queued results coexist: handlers=${queryCtx.pendingToolCalls.size} results=${queryCtx.pendingResults.size}`);
 			}
 		}
 		if (unmatchedResultIds.length > 0) {
@@ -602,7 +607,12 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 				content: [{ type: "text", text: `Claude bridge internal error: ${unmatchedResultIds.length} tool result(s) did not match any registered tool_call id. The turn was stopped to avoid delivering tool output to the wrong call. Unmatched ids: ${unmatchedResultIds.slice(0, 8).join(", ")}${unmatchedResultIds.length > 8 ? ", ..." : ""}` }],
 				isError: true,
 			};
-			for (const pending of queryCtx.pendingToolCalls.values()) pending.resolve(errorResult);
+			for (const [pendingId, pending] of queryCtx.pendingToolCalls) {
+				// The model is told these calls were stopped; an unforwarded one must
+				// never be dispatched by a later replay behind that message’s back.
+				if (!queryCtx.forwardedToolCallIds.has(pendingId)) queryCtx.deadToolCallIds.add(pendingId);
+				pending.resolve(errorResult);
+			}
 			queryCtx.pendingToolCalls.clear();
 			reportToolResultMismatch(queryCtx, "unmatched tool result", cwd);
 		}

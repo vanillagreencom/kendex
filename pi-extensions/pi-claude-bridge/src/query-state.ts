@@ -291,6 +291,12 @@ export class QueryContext {
 	 * showed. Bounded by the number of tool calls in one query.
 	 */
 	queryToolNames = new Map<string, string>();
+	/** id → last-known arguments, query-scoped like queryToolNames and for the
+	 *  same reason: a late handler firing after resetToolTracking wiped the
+	 *  per-message records must still be able to exact-match the parked/queued
+	 *  result of ITS OWN call — without stored args the only fallback is
+	 *  sole-same-name, which can hand it a LIVE sibling's id (vstack#1469). */
+	queryToolArgs = new Map<string, Record<string, unknown>>();
 	claimedToolCallIds = new Set<string>();
 	deliveredToolResultIds = new Set<string>();
 	resolvedToolResultIds = new Set<string>();
@@ -478,6 +484,7 @@ export class QueryContext {
 	recordToolCall(id: string | undefined, toolName: string, args: Record<string, unknown> = {}): void {
 		if (!id) return;
 		this.queryToolNames.set(id, toolName);
+		this.queryToolArgs.set(id, args);
 		if (!this.turnToolCallIds.includes(id)) this.turnToolCallIds.push(id);
 		const existing = this.turnToolCalls.find((call) => call.id === id);
 		if (existing) {
@@ -490,6 +497,7 @@ export class QueryContext {
 
 	updateToolCallArgs(id: string | undefined, args: Record<string, unknown>): void {
 		if (!id) return;
+		this.queryToolArgs.set(id, args);
 		const existing = this.turnToolCalls.find((call) => call.id === id);
 		if (existing) existing.arguments = args;
 	}
@@ -506,6 +514,27 @@ export class QueryContext {
 		const unclaimed = this.turnToolCalls.filter((call) => !this.claimedToolCallIds.has(call.id));
 		const byName = unclaimed.filter((call) => call.toolName === toolName);
 		const exact = byName.filter((call) => sameArgs(call.arguments, args));
+		// Ids whose RESULT already sits queued or parked. A handler can fire after
+		// the message boundary wiped the per-message records — by then Pi has
+		// executed its call and only these query-scoped stores still know it
+		// (vstack#1469: the boundary reap used to make such a handler error out
+		// and the model re-run an already-executed side-effectful call). An
+		// exact-args match here outranks the live sole-same-name fallback below,
+		// so a late handler can never steal a live sibling's id while its own
+		// result waits; without an exact match it is only a last resort.
+		const resultBacked = [...this.pendingResults.keys(), ...this.reapedResults.keys()]
+			.filter((id) => !this.claimedToolCallIds.has(id) && this.queryToolNames.get(id) === toolName);
+		const backedExact = resultBacked.filter((id) => sameArgs(this.queryToolArgs.get(id), args));
+		const claimBacked = (id: string, viaExact: boolean): ClaimedToolCall => {
+			this.claimedToolCallIds.add(id);
+			return {
+				toolCallId: id,
+				match: viaExact ? "tool-args" : "tool-name",
+				ambiguous: viaExact && backedExact.length > 1,
+				available: unclaimed.length,
+				...(!viaExact && hasRecordedArgs(this.queryToolArgs.get(id)) ? { argsMismatch: true } : {}),
+			};
+		};
 		let chosen: TurnToolCallRecord | undefined;
 		let match: ClaimedToolCall["match"] = "none";
 		let ambiguous = false;
@@ -515,6 +544,8 @@ export class QueryContext {
 			chosen = exact[0];
 			match = "tool-args";
 			ambiguous = exact.length > 1;
+		} else if (backedExact.length > 0) {
+			return claimBacked(backedExact[0], true);
 		} else if (byName.length === 1) {
 			// A single unclaimed call of this tool type is the only call this
 			// handler can possibly belong to, so claim it even when the recorded
@@ -535,6 +566,11 @@ export class QueryContext {
 			match = "tool-name";
 			argsMismatch = hasRecordedArgs(byName[0].arguments);
 		}
+
+		// Last resort: nothing live matched and no exact result-backed pairing —
+		// a sole result-backed same-name id is still this handler's only possible
+		// owner, same reasoning as the live sole-candidate fallback above.
+		if (!chosen && resultBacked.length === 1) return claimBacked(resultBacked[0], false);
 
 		if (!chosen) return { match: "none", ambiguous: false, available: unclaimed.length };
 		this.claimedToolCallIds.add(chosen.id);

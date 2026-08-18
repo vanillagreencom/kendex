@@ -176,9 +176,13 @@ describe("assistant tool-use boundary fallback", () => {
 
 		assert.equal(c.currentPiStream, null);
 		assert.deepEqual(c.turnToolCallIds, ["toolu_streamed", "toolu_missing_after_stop"]);
-		assert.equal(c.turnBlocks.length, 2);
-		assert.equal(c.turnBlocks[1].name, "write");
-		assert.equal(c.turnBlocks[1].arguments.path, "out.txt");
+		// Ids are recorded (claims and result matching need them), but the content
+		// array is NOT appended to: after endToolUseTurn it is the message Pi
+		// already holds by reference, and a push would land a call in a delivered
+		// message behind Pi's back (vstack#1469). The unforwarded call reaches Pi
+		// through its next-turn replay instead.
+		assert.equal(c.turnBlocks.length, 1);
+		assert.equal(c.turnBlocks[0].name, "bash");
 	});
 
 	it("ignores a late bare message_stop so the next assistant fallback still renders text", () => {

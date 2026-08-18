@@ -63,11 +63,11 @@ pi-extensions/pi-background-tasks/extensions/background-tasks.ts	986
 pi-extensions/pi-background-tasks/extensions/wake-events.ts	600
 pi-extensions/pi-background-tasks/package.json	420
 pi-extensions/pi-caveman/extensions/caveman.ts	406
-pi-extensions/pi-claude-bridge/src/assistant-stream.ts	671
+pi-extensions/pi-claude-bridge/src/assistant-stream.ts	713
 pi-extensions/pi-claude-bridge/src/config.ts	478
 pi-extensions/pi-claude-bridge/src/connectors.ts	746
-pi-extensions/pi-claude-bridge/src/index.ts	1467
-pi-extensions/pi-claude-bridge/src/query-state.ts	735
+pi-extensions/pi-claude-bridge/src/index.ts	1477
+pi-extensions/pi-claude-bridge/src/query-state.ts	771
 pi-extensions/pi-claude-bridge/src/session-persistence.ts	649
 pi-extensions/pi-claude-bridge/tests/unit-account-rotation-stream.mjs	1042
 pi-extensions/pi-codex-minimal-tools/src/background-image-generation.ts	525

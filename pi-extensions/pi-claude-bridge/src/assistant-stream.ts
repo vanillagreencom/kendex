@@ -87,10 +87,22 @@ export function finalizeCurrentStream(stopReason?: string, c: QueryContext = ctx
 const TOOL_USE_END_GRACE_MS = 1500;
 
 /** End the current pi stream as a tool_use turn boundary. Safe to call when the
- *  turn already ended (no-op). */
+ *  turn already ended (no-op). Every end path funnels here, so this is where
+ *  two invariants are enforced by construction (vstack#1469): a block still
+ *  carrying partialJson never ships — Pi executes the done message's content,
+ *  and truncated arguments must never execute — and every call that DOES ship
+ *  is stamped forwarded so no lagging replay can dispatch it again. */
 export function endToolUseTurn(c: QueryContext): void {
 	if (!c.currentPiStream || !c.turnOutput) return;
 	cancelScheduledToolUseEnd(c);
+	const partial = (c.turnOutput.content as Array<any>).filter((b) => b?.type === "toolCall" && "partialJson" in b);
+	if (partial.length > 0) {
+		const calls = partial.map((b) => ({ id: b.id, name: b.name }));
+		debug(`endToolUseTurn: pruning ${partial.length} still-partial tool call(s) — truncated arguments never execute:`, calls.map((entry) => `${entry.name} [${entry.id}]`).join(", "));
+		diagDump("partial_tool_calls_pruned", { count: partial.length, calls });
+		appendIntegrityEntry("partial_tool_calls_pruned", { count: partial.length, calls });
+		c.turnOutput.content = (c.turnOutput.content as Array<any>).filter((b) => !(b?.type === "toolCall" && "partialJson" in b));
+	}
 	// Every tool call Pi is about to execute from this turn is owed a result and
 	// must never be dispatched again: a lagging stream replays the same tool_use
 	// into the NEXT turn, whose per-message dedup cannot see it (vstack#1469).
@@ -162,6 +174,8 @@ export function updateTurnOutputModel(modelId: unknown, c: QueryContext = ctx())
 	c.turnOutput.model = modelId;
 }
 
+export const FINALIZE_MAX_REARMS = 3;
+
 /** Force-finalizes the current pi turn as a tool_use boundary when its terminal
  *  stream events never arrived (the grace-timer action armed by an MCP handler
  *  invocation — see scheduleToolUseTurnEnd).
@@ -170,12 +184,15 @@ export function updateTurnOutputModel(modelId: unknown, c: QueryContext = ctx())
  *  drained steer arrive in one provider call): the NEXT tool turn's tool_use
  *  streams in, the SDK invokes the MCP handler — and neither terminal event
  *  ever arrives. The invocation itself proves the assistant turn is committed,
- *  so end the pi stream here exactly like the `message_stop` path; otherwise
- *  the handler blocks on a result pi will never deliver (deadlock). No-op when
- *  the turn already ended (stream null) or the tool call isn't part of the
- *  currently streamed turn. */
-export const FINALIZE_MAX_REARMS = 3;
-
+ *  so end the pi stream like the `message_stop` path — with this handler's
+ *  schema-validated arguments, never a partial parse — after settling every
+ *  sibling whose handler has fired and giving a merely-lagging stream up to
+ *  FINALIZE_MAX_REARMS extra grace periods for the rest (vstack#1469).
+ *
+ *  The dead-stream guard is a backstop: the grace timer's own stream-identity
+ *  check means this normally never runs after the turn ended. The primary
+ *  recovery for a handler whose call missed its turn is the generation-guarded
+ *  drainStrandedToolCalls at the next provider callback. */
 export function finalizeToolUseTurnFromMcpInvocation(
 	queryCtx: QueryContext,
 	toolCallId: string,
@@ -215,9 +232,12 @@ export function finalizeToolUseTurnFromMcpInvocation(
 	} else if (queryCtx.forwardedToolCallIds.has(toolCallId) || queryCtx.deadToolCallIds.has(toolCallId)) {
 		// Pi already executed this call in an earlier turn (its result arrives or
 		// sits parked), or the handler was already failed — either way a second
-		// dispatch is the one outcome worse than waiting.
+		// dispatch is the one outcome worse than waiting. Do NOT return: this
+		// firing consumed the stream's only grace timer, so the current turn's own
+		// blocks must still be settled and the turn still ended below, or a turn
+		// that loses its terminal events afterwards has no backstop left and Pi
+		// sits busy until manual abort.
 		debug(`mcp handler: ${toolName} [${toolCallId}] already ${queryCtx.forwardedToolCallIds.has(toolCallId) ? "forwarded" : "dead"} — not re-emitting`);
-		return;
 	} else {
 		// The invocation can arrive before the tool_use is streamed at all
 		// (observed after a tool-result+steer provider call reset the turn):
@@ -256,15 +276,18 @@ export function finalizeToolUseTurnFromMcpInvocation(
 		);
 		return;
 	}
-	if (unsettled.length > 0) {
-		// Grace exhausted: drop the inexecutable blocks from the turn instead of
-		// executing garbage. Each replays complete on the SDK's assistant yield in
-		// a later turn (appendMissingToolUsesFromAssistant, with authoritative
-		// input), or its handler eventually fires and the stranded drain fails it
-		// with a retryable error.
-		diagDump("partial_tool_calls_pruned", { count: unsettled.length, ids: unsettled.map((b: any) => b.id) });
-		appendIntegrityEntry("partial_tool_calls_pruned", { count: unsettled.length, toolNames: unsettled.map((b: any) => b.name) });
-		queryCtx.turnOutput.content = queryCtx.turnBlocks.filter((b: any) => !(b.type === "toolCall" && "partialJson" in b));
+	// Grace exhausted with blocks still partial: endToolUseTurn prunes them —
+	// truncated arguments never execute; each pruned call replays complete on
+	// the SDK's assistant yield in a later turn, or its handler eventually
+	// fires and the stranded drain fails it with a retryable error. When the
+	// turn holds NOTHING executable (this call suppressed as forwarded/dead and
+	// no settled siblings), leave the stream to its own terminal events — an
+	// empty tool_use turn would make Pi execute nothing and record an empty
+	// assistant message for it.
+	const executable = queryCtx.turnBlocks.some((b: any) => b.type === "toolCall" && !("partialJson" in b));
+	if (!executable) {
+		debug(`mcp handler: nothing executable in this turn after suppression — leaving the stream to its own terminal events (${toolName} [${toolCallId}])`);
+		return;
 	}
 	queryCtx.turnSawToolCall = true;
 	debug(`mcp handler: finalizing tool_use turn from MCP invocation [${toolCallId}] (${toolName}) — terminal stream events never arrived`);
@@ -308,9 +331,11 @@ export function processStreamEvent(
 		c.turnSawStreamEvent = true;
 		ensureTurnStarted(c);
 		// A new block owns this index from here on, so release any child-executed
-		// claim on it. Belt-and-braces against a missed message_start: without this
-		// a stale index could silently swallow a later text block's deltas.
+		// or suppressed claim on it. Belt-and-braces against a missed
+		// message_start: without this a stale index could silently swallow a later
+		// text block's deltas.
 		c.childExecutedStreamIndexes.delete(event.index);
+		c.suppressedStreamIndexes.delete(event.index);
 		if (event.content_block?.type === "tool_use" && isChildExecutedTool(event.content_block.name)) {
 			// The child runs this one itself — mirroring it into the Pi stream would
 			// make Pi's agent loop dispatch a tool it does not have. See
@@ -333,6 +358,15 @@ export function processStreamEvent(
 				// it would make Pi dispatch it a second time (vstack#1469).
 				c.suppressedStreamIndexes.add(event.index);
 				debug(`processStreamEvent: tool_use ${streamedId} already ${c.forwardedToolCallIds.has(streamedId) ? "forwarded" : "dead"} — suppressing duplicate stream block`);
+				return;
+			}
+			if (typeof streamedId === "string" && c.turnBlocks.some((b: any) => b.type === "toolCall" && b.id === streamedId)) {
+				// Same turn, same id: the completed-message yield beat the stream (its
+				// block is already recorded with complete arguments). A second
+				// partialJson copy would ship the id twice in one done message — and
+				// if its stop never arrives, ship it truncated (vstack#1469).
+				c.suppressedStreamIndexes.add(event.index);
+				debug(`processStreamEvent: tool_use ${streamedId} already recorded in this turn — suppressing duplicate stream block`);
 				return;
 			}
 			c.turnSawToolCall = true;
@@ -455,6 +489,13 @@ function appendMissingToolUsesFromAssistant(
 	c: QueryContext,
 ): boolean {
 	if (!assistantMsg?.content) return false;
+	// With a dead stream, ids are still RECORDED (claims and result matching
+	// need them) but the content is never touched: turnBlocks IS the content
+	// array of a turnOutput that endToolUseTurn already handed Pi BY REFERENCE
+	// in its done event, so a push here appends calls into a delivered message
+	// behind Pi's back — whether Pi's dispatch enumerates before or after the
+	// push is a microtask race (vstack#1469).
+	const streamLive = Boolean(c.currentPiStream && c.turnOutput);
 	let sawToolUse = false;
 	for (const block of assistantMsg.content) {
 		if (block.type !== "tool_use") continue;
@@ -478,6 +519,7 @@ function appendMissingToolUsesFromAssistant(
 		const name = mapToolName(block.name, customToolNameToPi);
 		const mappedArgs = mapToolArgs(name, block.input);
 		c.recordToolCall(block.id, name, mappedArgs);
+		if (!streamLive) continue;
 		if (existingIdx >= 0) {
 			const existing = c.turnBlocks[existingIdx] as any;
 			existing.name = name;
