@@ -418,6 +418,11 @@ span stay required until taken:
   (→ `references/finding-disposition.md`); project-management
   `workflows/tpm-audit-project-order.md` (→ a `workflows/tpm-audit.md` mode)
   and `schemas/audit-project-order-output.md` (→ `schemas/audit-output.md`).
+- **Roadmap plans need their JSON sidecar:** roadmap-create's legacy
+  markdown-parsing fallback is removed — the plan JSON is the contract, and
+  `roadmap create` on a markdown-only plan now halts naming the missing
+  `**Plan data**` path. Regenerate a pre-sidecar approved plan (or add the
+  JSON sidecar) before running roadmap workflows against it.
 - **Removed skills and pack (breaking):** before your next `vstack refresh`,
   delete any `iced-shadcn` or `html-artifact` entries from your project's
   `vstack.toml` (`[skill-instructions]`, `[agent-skills]`, `[role-skills]`).
