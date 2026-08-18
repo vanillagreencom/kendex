@@ -16,8 +16,8 @@ source "$SCRIPT_DIR/lib/common.sh"
 # shellcheck source=lib/settings.sh
 source "$SCRIPT_DIR/lib/settings.sh"
 
-KNOWN_CHECKS="todo-ban byte-ceiling suppression-ban commit-msg"
-BATCH_DEFAULT="todo-ban byte-ceiling suppression-ban"
+KNOWN_CHECKS="todo-ban byte-ceiling suppression-ban conflict-markers commit-msg"
+BATCH_DEFAULT="todo-ban byte-ceiling suppression-ban conflict-markers"
 
 usage() {
   cat <<EOF

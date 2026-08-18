@@ -7,7 +7,8 @@ docs live in README.md.
 
 - `scripts/growth-guards` — batch dispatcher and single-check router
 - `scripts/todo-ban`, `scripts/byte-ceiling`, `scripts/suppression-ban`,
-  `scripts/commit-msg` — the four checks, each a standalone executable
+  `scripts/conflict-markers`, `scripts/commit-msg` — the five checks, each a
+  standalone executable
 - `scripts/pre-commit` — the chain the git `pre-commit` shim runs
 - `scripts/install-git-hooks` — hook installer and remover
 - `scripts/lib/common.sh`, `scripts/lib/settings.sh` — shared helpers and
@@ -156,7 +157,7 @@ leaving explicit environment variables and the built-in defaults. The
 scripts `cd` to `git rev-parse --show-toplevel` before resolving anything,
 so all relative paths are repo-root-relative.
 
-**Excludes format** (all three lists): `pattern<TAB>reason` per line — shell
+**Excludes format** (all four lists): `pattern<TAB>reason` per line — shell
 glob matched against the full repo-relative path (`*` crosses `/`); blank
 lines and `#` comments ignored; a pattern without a reason is a config
 error. **Baseline format**: `path<TAB>count`, `LC_ALL=C` sorted, unique

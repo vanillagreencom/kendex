@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# conflict-markers — flat ban on unresolved merge-conflict markers in
+# tracked files, scanned from the index: the open/base/close trio at column
+# 0, each exactly seven characters followed by a space or end of line. The
+# seven-equals separator is deliberately not matched — a real conflict
+# always carries the open and close markers, and a bare seven-equals line
+# is a valid Markdown setext underline.
+#
+# Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GG_CHECK="conflict-markers"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=lib/settings.sh
+source "$SCRIPT_DIR/lib/settings.sh"
+
+usage() {
+  cat <<'EOF'
+usage: conflict-markers [--excludes FILE]
+
+Flat ban on unresolved merge-conflict markers across all tracked files,
+scanned from the index: the open/base/close trio (seven '<', seven '|',
+seven '>') at column 0, each followed by a space or end of line. Indented
+or quoted occurrences do not fire, and neither does the seven-equals
+separator (a valid Markdown setext underline; a real conflict always
+carries the open and close markers).
+
+Configuration (env > .env.local > .vstack/settings.toml >
+vstack.settings.toml [env] > .env > default):
+  GROWTH_GUARDS_CONFLICT_EXCLUDES   exclusion-list path (default tools/conflict-markers-excludes)
+Flag --excludes overrides the path setting.
+
+Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
+EOF
+}
+
+EXCLUDES_OPT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --excludes)
+      [ $# -ge 2 ] || gg_config_error "--excludes requires a path"
+      shift
+      EXCLUDES_OPT="$1"
+      ;;
+    --excludes=*) EXCLUDES_OPT="${1#--excludes=}" ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *) gg_config_error "unknown argument '$1' (see --help)" ;;
+  esac
+  shift
+done
+
+gg_repo_root_cd
+
+EXCLUDES_FILE="$(gg_resolve_path "$EXCLUDES_OPT" GROWTH_GUARDS_CONFLICT_EXCLUDES "tools/conflict-markers-excludes" excludes)" || exit 2
+gg_load_excludes "$EXCLUDES_FILE"
+gg_tmpdir
+
+# The trio at column 0, each exactly seven characters followed by a space
+# or end of line — the shape git writes into a file it could not merge.
+# Interval counts keep the literal runs out of this script's own bytes, so
+# the scan never fires on its producer.
+MARKER_ERE='^(<{7}|[|]{7}|>{7})( |$)'
+
+gg_grep_lane "conflict marker" "$MARKER_ERE" \
+  "finish the merge and delete the marker lines; a file that legitimately carries the trio at column 0 belongs in $EXCLUDES_FILE with a reason" \
+  .
+
+if [ "$GG_VIOLATIONS" -gt 0 ]; then
+  echo "conflict-markers: $GG_VIOLATIONS conflict marker(s) — excludes $EXCLUDES_FILE"
+  exit 1
+fi
+echo "conflict-markers: OK — no conflict markers in tracked files"

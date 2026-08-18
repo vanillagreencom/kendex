@@ -16,8 +16,8 @@ trap 'rm -rf "$TMP"' EXIT
 
 unset GROWTH_GUARDS_CHECKS GROWTH_GUARDS_TODO_EXCLUDES GROWTH_GUARDS_BYTE_CEILING_KB \
   GROWTH_GUARDS_BYTE_EXCLUDES GROWTH_GUARDS_SUPPRESSION_EXCLUDES \
-  GROWTH_GUARDS_SUPPRESSION_BASELINE GROWTH_GUARDS_COMMIT_TYPES \
-  GROWTH_GUARDS_SETTINGS_FILE 2>/dev/null || true
+  GROWTH_GUARDS_SUPPRESSION_BASELINE GROWTH_GUARDS_CONFLICT_EXCLUDES \
+  GROWTH_GUARDS_COMMIT_TYPES GROWTH_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
 TD="TO""DO"
 
@@ -58,9 +58,9 @@ printf 'fn main() {}\n' >"$R/ok.rs"
 git -C "$R" add -A
 run_gg
 [ "$RC" -eq 0 ] \
-  && case "$OUT" in *"growth-guards: todo-ban"*"growth-guards: byte-ceiling"*"growth-guards: suppression-ban"*"growth-guards: OK"*) true ;; *) false ;; esac \
-  && ok "the batch runs todo-ban, byte-ceiling, suppression-ban and reports OK" \
-  || bad "batch runs the three default checks" "rc=$RC out=$OUT"
+  && case "$OUT" in *"growth-guards: todo-ban"*"growth-guards: byte-ceiling"*"growth-guards: suppression-ban"*"growth-guards: conflict-markers"*"growth-guards: OK"*) true ;; *) false ;; esac \
+  && ok "the batch runs todo-ban, byte-ceiling, suppression-ban, conflict-markers and reports OK" \
+  || bad "batch runs the four default checks" "rc=$RC out=$OUT"
 run_gg -- all
 [ "$RC" -eq 0 ] && ok "'all' is the same batch" || bad "'all' is the same batch" "rc=$RC out=$OUT"
 

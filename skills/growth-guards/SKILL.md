@@ -1,6 +1,6 @@
 ---
 name: growth-guards
-description: "Four repo growth guards beside size-ratchet — todo-ban, byte-ceiling, suppression-ban, commit-msg — and the git hook shims that run them. Load to add, tune, or debug a check, the hooks, or GROWTH_GUARDS_* settings."
+description: "Five repo growth guards beside size-ratchet — todo-ban, byte-ceiling, suppression-ban, conflict-markers, commit-msg — and the git hook shims that run them. Load to add, tune, or debug a check, the hooks, or GROWTH_GUARDS_* settings."
 license: MIT
 user-invocable: true
 metadata:
@@ -15,7 +15,7 @@ metadata:
 
 > **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
 
-Four checks that stop quiet repo decay, one family beside `size-ratchet`,
+Five checks that stop quiet repo decay, one family beside `size-ratchet`,
 sharing its idiom and its exit contract.
 
 ```bash
@@ -34,6 +34,7 @@ whichever grain fits.
 | **todo-ban** | Any work marker (the words TODO, FIXME, HACK, XXX in comment-marker shapes) in a tracked, non-excluded file fails. No baseline. Prose that quotes or names a marker word does not fire. |
 | **byte-ceiling** | A newly added tracked file over the ceiling (default 200 KB) fails. `--staged` (default) gates the staged diff, `--base REF` the additions since merge-base, `--all` sweeps every tracked file. Lockfiles are exempt built-in. |
 | **suppression-ban** | Blanket lint suppressions fail flat: module-wide rust `allow` inner attributes, file-level ruff/flake8 noqa, the bare `eslint-disable` block form, bare or `all` nolint. Bare rust `allow(dead_code)`/`allow(unused*)` attributes are counted per file against a tighten-only baseline; `--update` lowers/removes rows, never adds or raises one. A per-line suppression naming its lint with a stated reason stays legal. |
+| **conflict-markers** | An unresolved merge-conflict marker in a tracked, non-excluded file fails: the open/base/close trio (seven `<`, seven vertical bars, seven `>`) at column 0, each followed by a space or end of line. No baseline. Indented or quoted occurrences do not fire; the bare seven-equals separator is deliberately unmatched (a valid Markdown setext underline — a real conflict always carries the open and close markers). |
 | **commit-msg** | Header must be `type(scope)!: subject` (scope and `!` optional). Uppercase issue keys (`fix(ABC-123)`) and `#`-number scopes pass; git-generated messages (Merge/Revert/Reapply, fixup!/squash!/amend!) pass unchanged. Takes the message file or stdin. |
 
 Exit codes everywhere: `0` clean, `1` violations, `2`
@@ -69,12 +70,13 @@ the installer refuses to touch: [DEVELOPMENT.md](DEVELOPMENT.md).
 
 | Key | Default | Meaning |
 |---|---|---|
-| `GROWTH_GUARDS_CHECKS` | `todo-ban byte-ceiling suppression-ban` | Batch check list (`commit-msg` never batches). |
+| `GROWTH_GUARDS_CHECKS` | `todo-ban byte-ceiling suppression-ban conflict-markers` | Batch check list (`commit-msg` never batches). |
 | `GROWTH_GUARDS_TODO_EXCLUDES` | `tools/todo-ban-excludes` | todo-ban exclusion list. |
 | `GROWTH_GUARDS_BYTE_CEILING_KB` | `200` | Byte ceiling in KB. |
 | `GROWTH_GUARDS_BYTE_EXCLUDES` | `tools/byte-ceiling-excludes` | byte-ceiling exclusion list (declared asset trees). |
 | `GROWTH_GUARDS_SUPPRESSION_EXCLUDES` | `tools/suppression-ban-excludes` | suppression-ban exclusion list. |
 | `GROWTH_GUARDS_SUPPRESSION_BASELINE` | `tools/suppression-baseline.tsv` | Bare-allow ratchet baseline. |
+| `GROWTH_GUARDS_CONFLICT_EXCLUDES` | `tools/conflict-markers-excludes` | conflict-markers exclusion list. |
 | `GROWTH_GUARDS_COMMIT_TYPES` | `build chore ci docs feat fix perf refactor revert style test` | Accepted commit types. |
 | `GROWTH_GUARDS_PRE_COMMIT_LOCAL` | *(empty)* | Repo-root-relative executable the pre-commit shim runs last. |
 
