@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-tool-renderer",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "description": "Compact Claude/opencode-style renderers for Pi tools with rich diffs, apply_patch, generic/MCP rendering, and optional global chrome.",
   "license": "MIT",
   "keywords": [
