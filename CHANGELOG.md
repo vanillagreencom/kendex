@@ -435,6 +435,24 @@ span stay required until taken:
   does not complete the breaking CI upgrade. Replace the rerun/sweep and
   predicate-reading jobs and adopt the relay/converge writer split per
   `skills/review-gate/references/adoption.md`.
+- **Remote cache re-clone:** the cache key now derives from repository
+  identity, so caches created under the previous scheme are not reused. The
+  first `vstack refresh` after upgrading reports each remote source as not
+  present and names the `vstack add <source>` that re-clones it — run those,
+  or every remote-backed install stays stale; the obsolete directory under
+  `~/.vstack/cache/` can be deleted.
+- **open-terminal launch flags:** the hardcoded model/effort defaults and
+  `ORCH_LANE_CLAUDE_PERMISSION_ARG` are gone, and nothing in scripts,
+  settings, or templates supplies a replacement — callers invoking
+  `open-terminal` directly must pass model, effort, and permission flags via
+  `--launch-flags`, sized to the task, or an unattended handoff launches and
+  stalls at its first tool call.
+- **Reviewer overhaul opt-in:** `[agent-skills]`/`[role-skills]` are
+  project-owned after install, so the retirement of `reviewer-structure` and
+  the new deterministic checks do not arrive by refresh alone. Remove
+  `reviewer-structure` from your config, add `preflight` and `code-quality`,
+  then run `vstack refresh`; CI use of preflight requires the installed
+  skill committed to the repo.
 
 ### Component rollups
 
