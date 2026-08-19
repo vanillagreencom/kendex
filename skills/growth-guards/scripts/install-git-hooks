@@ -13,7 +13,8 @@
 #
 # Exit codes: 0 shims in place (or deliberately skipped, stated on stdout);
 # 1 one or more shims could not be installed; 2 usage error. --check is
-# read-only: 0 armed, 1 drifted/absent/dormant, 2 could not determine.
+# read-only: 0 armed — in .git/hooks, or in the directory core.hooksPath
+# redirects to — 1 drifted/absent/dormant, 2 could not determine.
 set -euo pipefail
 
 HELPER_NAME="vstack-guards"
@@ -50,7 +51,10 @@ consumer's own hook untouched.
 1 not armed (drifted, absent, or dormant behind a core.hooksPath that
 redirects git away from them), 2 the question could not be answered — an
 unreadable hooks directory is 2, because failure to measure is not a clean
-measurement. The verdict line on stdout names what is wrong and the remedy.
+measurement. Under core.hooksPath the redirected directory is what decides:
+hooks there that run this skill's pre-commit and commit-msg are armed, and
+anything else is 1. The verdict line on stdout names what is wrong and the
+remedy.
 
 Prints one summary line on stdout; warnings go to stderr.
 
@@ -545,8 +549,8 @@ add_reason() { # MESSAGE
   fi
 }
 
-check_helper() { # -> 0 armed, 1 not armed, 2 could not determine
-  local helper="$HOOKS_DIR/$HELPER_NAME" status=0
+check_helper() { # DIR -> 0 armed, 1 not armed, 2 could not determine
+  local helper="$1/$HELPER_NAME" status=0
   if [ ! -e "$helper" ] && [ ! -L "$helper" ]; then
     add_reason "helper $HELPER_NAME is missing"
     return 1
@@ -571,8 +575,34 @@ check_helper() { # -> 0 armed, 1 not armed, 2 could not determine
   return 0
 }
 
-check_hook() { # HOOK -> 0 armed, 1 not armed, 2 could not determine
-  local hook="$1" path="$HOOKS_DIR/$1" line="" second=""
+# The shape the stand-down message prescribes for a core.hooksPath directory:
+# a hook that runs this skill's own entry point for that hook. Matched by
+# path, so a hook wired to some other tool never reads as ours.
+hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no, 2 could not determine
+  local hook="$1" path="$2" status=0 re=""
+  re='(^|[^[:alnum:]_.-])([^[:space:]]*/)?growth-guards/scripts/'"$hook"'([^[:alnum:]_.-]|$)'
+  grep -qF -- "$SCRIPT_DIR/$hook" "$path" 2>/dev/null || status=$?
+  if [ "$status" -gt 1 ]; then
+    return 2
+  fi
+  if [ "$status" -eq 0 ]; then
+    return 0
+  fi
+  status=0
+  grep -qE -- "$re" "$path" 2>/dev/null || status=$?
+  if [ "$status" -gt 1 ]; then
+    return 2
+  fi
+  return "$status"
+}
+
+# Set by a hook outside $HOOKS_DIR that carries the delegating line instead of
+# naming an entry point: that line resolves its helper with `git rev-parse
+# --git-path hooks`, which under core.hooksPath is the hook's own directory.
+CHECK_NEEDS_HELPER=0
+
+check_hook() { # DIR HOOK -> 0 armed, 1 not armed, 2 could not determine
+  local dir="$1" hook="$2" path="$1/$2" line="" second="" status=0
   line="$(call_line "$hook")"
   if [ ! -e "$path" ] && [ ! -L "$path" ]; then
     add_reason "$hook is missing"
@@ -592,9 +622,24 @@ check_hook() { # HOOK -> 0 armed, 1 not armed, 2 could not determine
     add_reason "$hook is not a POSIX-shell script, so the guard line cannot run"
     return 1
   fi
-  if [ "$second" != "$line" ]; then
+  if [ "$second" = "$line" ]; then
+    if [ "$dir" != "$HOOKS_DIR" ]; then
+      CHECK_NEEDS_HELPER=1
+    fi
+  elif [ "$dir" = "$HOOKS_DIR" ]; then
     add_reason "$hook does not carry the guard line at line 2"
     return 1
+  else
+    status=0
+    hook_runs_entry_point "$hook" "$path" || status=$?
+    if [ "$status" -eq 2 ]; then
+      add_reason "$hook could not be read"
+      return 2
+    fi
+    if [ "$status" -ne 0 ]; then
+      add_reason "$hook does not run this skill's $hook"
+      return 1
+    fi
   fi
   if [ ! -x "$path" ]; then
     add_reason "$hook is not executable, so git ignores it"
@@ -606,31 +651,42 @@ check_hook() { # HOOK -> 0 armed, 1 not armed, 2 could not determine
 # The armed predicate over every artifact. Definitive drift outranks a
 # component that could not be measured — "some shim is provably gone" already
 # answers the question — while unmeasured-only stays "could not determine".
-check_shims() { # -> 0 armed, 1 not armed, 2 could not determine
-  local drifted=0 unknown=0 status=0
-  if [ ! -e "$HOOKS_DIR" ]; then
-    add_reason "$HOOKS_DIR does not exist"
+check_hooks_dir() { # DIR -> 0 armed, 1 not armed, 2 could not determine
+  local dir="$1" drifted=0 unknown=0 status=0
+  if [ ! -e "$dir" ]; then
+    add_reason "$dir does not exist"
     return 1
   fi
-  if [ ! -d "$HOOKS_DIR" ]; then
-    add_reason "$HOOKS_DIR is not a directory"
+  if [ ! -d "$dir" ]; then
+    add_reason "$dir is not a directory"
     return 1
   fi
   # An unsearchable directory makes every probe below read as absent, which
   # would misreport failure-to-measure as drift.
-  if [ ! -r "$HOOKS_DIR" ] || [ ! -x "$HOOKS_DIR" ]; then
-    add_reason "$HOOKS_DIR cannot be read"
+  if [ ! -r "$dir" ] || [ ! -x "$dir" ]; then
+    add_reason "$dir cannot be read"
     return 2
   fi
+  # The helper is part of this installer's own install, so its absence from
+  # $HOOKS_DIR is drift. A hand-wired directory only needs one when a hook
+  # there delegates through it.
+  if [ "$dir" = "$HOOKS_DIR" ]; then
+    status=0
+    check_helper "$dir" || status=$?
+    case "$status" in 1) drifted=1 ;; 2) unknown=1 ;; esac
+  fi
+  CHECK_NEEDS_HELPER=0
   status=0
-  check_helper || status=$?
+  check_hook "$dir" pre-commit || status=$?
   case "$status" in 1) drifted=1 ;; 2) unknown=1 ;; esac
   status=0
-  check_hook pre-commit || status=$?
+  check_hook "$dir" commit-msg || status=$?
   case "$status" in 1) drifted=1 ;; 2) unknown=1 ;; esac
-  status=0
-  check_hook commit-msg || status=$?
-  case "$status" in 1) drifted=1 ;; 2) unknown=1 ;; esac
+  if [ "$CHECK_NEEDS_HELPER" -eq 1 ]; then
+    status=0
+    check_helper "$dir" || status=$?
+    case "$status" in 1) drifted=1 ;; 2) unknown=1 ;; esac
+  fi
   [ "$drifted" -eq 0 ] || return 1
   [ "$unknown" -eq 0 ] || return 2
   return 0
@@ -638,12 +694,35 @@ check_shims() { # -> 0 armed, 1 not armed, 2 could not determine
 
 if [ "$MODE" = "check" ]; then
   VERDICT=0
-  check_shims || VERDICT=$?
   if [ "$HOOKS_PATH_SET" -eq 1 ]; then
-    # Armed-but-dormant is neither armed nor drifted, but it exits 1 like
-    # drift: git reads hooks from core.hooksPath, so the next commit runs no
-    # guard, and the safe failure direction for an ungated commit is a
-    # failing check. The wording carries the distinction and the remedy.
+    # git owns the resolution of core.hooksPath — absolute, ~-prefixed, or
+    # relative to the work-tree root where hooks run — and answers relative
+    # to the directory it was invoked in, so that is what it is absolutized
+    # against.
+    REDIRECT_DIR="$(git -C "$REPO_ABS" rev-parse --git-path hooks 2>/dev/null || true)"
+    if [ -n "$REDIRECT_DIR" ]; then
+      case "$REDIRECT_DIR" in
+        /*) ;;
+        *) REDIRECT_DIR="$REPO_ABS/$REDIRECT_DIR" ;;
+      esac
+      # git answers relative to the invocation directory, so from a
+      # subdirectory the path carries traversal; the directory names itself.
+      if REDIRECT_RESOLVED="$(cd "$REDIRECT_DIR" 2>/dev/null && pwd)"; then
+        REDIRECT_DIR="$REDIRECT_RESOLVED"
+      fi
+      REDIRECT_VERDICT=0
+      check_hooks_dir "$REDIRECT_DIR" || REDIRECT_VERDICT=$?
+      if [ "$REDIRECT_VERDICT" -eq 0 ]; then
+        echo "growth-guards git hooks: armed — pre-commit and commit-msg gate commits in $REDIRECT_DIR, where core.hooksPath ('$CUSTOM_HOOKS') sends git"
+        exit 0
+      fi
+    fi
+    # Nothing in the redirected directory gates a commit, so the shims in
+    # $HOOKS_DIR only decide the wording. Armed-but-dormant is neither armed
+    # nor drifted, and exits 1 like drift: the next commit runs no guard, and
+    # the safe failure direction for an ungated commit is a failing check.
+    CHECK_REASONS=""
+    check_hooks_dir "$HOOKS_DIR" || VERDICT=$?
     if [ "$VERDICT" -eq 0 ]; then
       echo "growth-guards git hooks: dormant — core.hooksPath ('$CUSTOM_HOOKS') redirects git away from $HOOKS_DIR, so commits are NOT gated; wire that directory's hooks to $SCRIPT_DIR, or unset core.hooksPath"
     else
@@ -651,6 +730,7 @@ if [ "$MODE" = "check" ]; then
     fi
     exit 1
   fi
+  check_hooks_dir "$HOOKS_DIR" || VERDICT=$?
   case "$VERDICT" in
     0) echo "growth-guards git hooks: armed — pre-commit and commit-msg gate commits in $HOOKS_DIR" ;;
     1) echo "growth-guards git hooks: NOT armed — $CHECK_REASONS ($HOOKS_DIR); run 'vstack refresh' (or this installer) to re-arm" ;;

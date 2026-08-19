@@ -36,9 +36,9 @@ The installer writes a helper into `.git/hooks` plus one marked delegating
 line in `pre-commit` and `commit-msg` — never `core.hooksPath`; an existing
 hook keeps its content and exit status; repeat runs are no-ops and repairs.
 `--uninstall` drops only the helper and our line. `--check` writes nothing:
-`0` armed, `1` drifted/absent/dormant behind a `core.hooksPath` redirect,
-`2` could not determine — never a silent pass. `vstack add`/`refresh` arm,
-`remove` disarms, `check` folds the verdict in.
+`0` armed — in `.git/hooks` or a `core.hooksPath` directory hand-wired to this
+skill's hooks — `1` drifted/absent/dormant, `2` could not determine, never a
+silent pass. `vstack add`/`refresh` arm, `remove` disarms, `check` folds it in.
 
 `pre-commit` judges ONE commit snapshot: `size-ratchet --staged` and
 `preflight --staged` when the committing work tree or this install

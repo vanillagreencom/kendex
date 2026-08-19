@@ -67,10 +67,11 @@ content, then the repo-root-relative executable named by
 contract, fail closed on a guard that could not run, and `git commit
 --no-verify` is the deliberate bypass. `vstack add` and `vstack refresh` run
 the installer, `vstack remove growth-guards` runs `--uninstall` first, and
-`vstack check` folds in `--check`'s read-only verdict (0 armed; 1 drifted,
-absent, or dormant behind a `core.hooksPath` that redirects git away from
-the shims; 2 could not determine — an unreadable hooks directory is 2, never
-a pass). Repeat runs are no-ops and repairs; `core.hooksPath` is never set,
+`vstack check` folds in `--check`'s read-only verdict (0 armed — in
+`.git/hooks`, or in a `core.hooksPath` directory hand-wired to this skill's
+`pre-commit` and `commit-msg`; 1 drifted, absent, or dormant behind a
+`core.hooksPath` that redirects git away from the shims; 2 could not
+determine — an unreadable hooks directory is 2, never a pass). Repeat runs are no-ops and repairs; `core.hooksPath` is never set,
 existing hooks keep their content and their own exit status. Full behaviour,
 including what the installer refuses to touch:
 [DEVELOPMENT.md](DEVELOPMENT.md).

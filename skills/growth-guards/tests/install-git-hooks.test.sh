@@ -1163,6 +1163,152 @@ case "$OUT" in
   *) bad "redirect and missing shims stated" "out=$OUT" ;;
 esac
 
+echo "=== --check probes the directory core.hooksPath redirects to ==="
+# The wiring the installer's own stand-down message prescribes.
+wire_hooks_dir() { # REPO DIR
+  local scripts="$1/.agents/skills/growth-guards/scripts"
+  mkdir -p "$2"
+  printf '#!/bin/sh\nexec %s/pre-commit "$@"\n' "$scripts" >"$2/pre-commit"
+  printf '#!/bin/sh\nexec %s/commit-msg "$1"\n' "$scripts" >"$2/commit-msg"
+  chmod +x "$2/pre-commit" "$2/commit-msg"
+}
+check_from() { # REPO CWD — --check with no --repo, run from CWD
+  local installer="$1/.agents/skills/growth-guards/scripts/install-git-hooks"
+  [ -x "$installer" ] || installer="$INSTALL"
+  OUT=""
+  RC=0
+  OUT="$(cd "$2" && "$installer" --check 2>&1)" || RC=$?
+}
+
+R35="$(new_repo checkhookspathwired)"
+install_in "$R35"
+wire_hooks_dir "$R35" "$R35/customhooks"
+git -C "$R35" config core.hooksPath customhooks
+check_in "$R35"
+[ "$RC" -eq 0 ] && ok "a hand-wired core.hooksPath directory checks 0" \
+  || bad "hand-wired hooksPath checks 0" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"NOT gated"* | *"NOT armed"* | *dormant*) bad "a wired redirect is never called ungated" "out=$OUT" ;;
+  *) ok "a wired redirect is never called ungated" ;;
+esac
+case "$OUT" in
+  *armed*"$R35/customhooks"*core.hooksPath*) ok "and the verdict names the directory the gating comes from" ;;
+  *) bad "wired redirect names its directory" "out=$OUT" ;;
+esac
+
+# The verdict is only true if commits really are gated there.
+printf 'ok\n' >"$R35/w.txt"
+git -C "$R35" add w.txt
+commit_in "$R35" "feat: add w"
+[ "$RC" -eq 0 ] && ok "control: a clean commit passes through the hand-wired directory" \
+  || bad "hand-wired clean commit passes" "rc=$RC out=$OUT"
+printf '# %s: finish this\n' "$TD" >"$R35/w.py"
+git -C "$R35" add w.py
+commit_in "$R35" "feat: add w.py"
+[ "$RC" -ne 0 ] && ok "and a violation is really blocked through the hand-wired directory" \
+  || bad "hand-wired directory blocks" "rc=$RC out=$OUT"
+git -C "$R35" rm -q --cached w.py
+rm -f "$R35/w.py"
+
+git -C "$R35" config core.hooksPath nosuchdir
+check_in "$R35"
+[ "$RC" -eq 1 ] && ok "a core.hooksPath directory that does not exist checks 1" \
+  || bad "absent hooksPath dir checks 1" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"wire that directory's hooks"*) ok "and the hand-wiring remedy is still stated" ;;
+  *) bad "remedy stated for absent hooksPath dir" "out=$OUT" ;;
+esac
+
+mkdir -p "$R35/barehooks"
+git -C "$R35" config core.hooksPath barehooks
+check_in "$R35"
+[ "$RC" -eq 1 ] && ok "a core.hooksPath directory with no shims checks 1" \
+  || bad "unwired hooksPath dir checks 1" "rc=$RC out=$OUT"
+
+mkdir -p "$R35/foreignhooks"
+printf '#!/bin/sh\nexec "$(git rev-parse --show-toplevel)/tools/other-tool" "$@"\n' >"$R35/foreignhooks/pre-commit"
+printf '#!/bin/sh\nexec "$(git rev-parse --show-toplevel)/tools/other-tool" "$1"\n' >"$R35/foreignhooks/commit-msg"
+chmod +x "$R35/foreignhooks/pre-commit" "$R35/foreignhooks/commit-msg"
+git -C "$R35" config core.hooksPath foreignhooks
+check_in "$R35"
+[ "$RC" -eq 1 ] && ok "a core.hooksPath directory wired to another tool checks 1" \
+  || bad "foreign hooksPath dir checks 1" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"NOT gated"* | *"NOT armed"*) ok "and it is called ungated" ;;
+  *) bad "foreign hooksPath dir called ungated" "out=$OUT" ;;
+esac
+
+wire_hooks_dir "$R35" "$R35/halfhooks"
+rm -f "$R35/halfhooks/commit-msg"
+git -C "$R35" config core.hooksPath halfhooks
+check_in "$R35"
+[ "$RC" -eq 1 ] && ok "a core.hooksPath directory with only pre-commit wired checks 1" \
+  || bad "half-wired hooksPath dir checks 1" "rc=$RC out=$OUT"
+wire_hooks_dir "$R35" "$R35/halfhooks"
+rm -f "$R35/halfhooks/pre-commit"
+check_in "$R35"
+[ "$RC" -eq 1 ] && ok "a core.hooksPath directory with only commit-msg wired checks 1" \
+  || bad "half-wired hooksPath dir checks 1 (other half)" "rc=$RC out=$OUT"
+
+wire_hooks_dir "$R35" "$R35/nonexechooks"
+chmod -x "$R35/nonexechooks/pre-commit"
+git -C "$R35" config core.hooksPath nonexechooks
+check_in "$R35"
+[ "$RC" -eq 1 ] && ok "a wired core.hooksPath hook git cannot execute checks 1" \
+  || bad "non-executable hooksPath hook checks 1" "rc=$RC out=$OUT"
+chmod +x "$R35/nonexechooks/pre-commit"
+check_in "$R35"
+[ "$RC" -eq 0 ] && ok "control: restoring the executable bit checks 0 again" \
+  || bad "control: exec bit restored checks 0" "rc=$RC out=$OUT"
+
+echo "=== --check resolves core.hooksPath the way git does ==="
+R36="$(new_repo checkhookspathabs)"
+install_in "$R36"
+ABS_HOOKS="$TMP/abs-hooks"
+wire_hooks_dir "$R36" "$ABS_HOOKS"
+git -C "$R36" config core.hooksPath "$ABS_HOOKS"
+check_in "$R36"
+[ "$RC" -eq 0 ] && ok "an absolute core.hooksPath resolves and checks 0" \
+  || bad "absolute hooksPath checks 0" "rc=$RC out=$OUT"
+case "$OUT" in
+  *armed*"$ABS_HOOKS"*) ok "and the verdict names the absolute directory" ;;
+  *) bad "absolute hooksPath named" "out=$OUT" ;;
+esac
+rm -f "$ABS_HOOKS/pre-commit"
+check_in "$R36"
+[ "$RC" -eq 1 ] && ok "control: unwiring the absolute directory checks 1" \
+  || bad "control: unwired absolute hooksPath checks 1" "rc=$RC out=$OUT"
+
+# git resolves a relative core.hooksPath against the work-tree root, where it
+# runs hooks — never against the caller's directory.
+R37="$(new_repo checkhookspathsubdir)"
+install_in "$R37"
+wire_hooks_dir "$R37" "$R37/customhooks"
+git -C "$R37" config core.hooksPath customhooks
+mkdir -p "$R37/deep/nested"
+check_from "$R37" "$R37/deep/nested"
+[ "$RC" -eq 0 ] && ok "a relative core.hooksPath resolves from a subdirectory too" \
+  || bad "relative hooksPath from subdir checks 0" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"$R37/customhooks"*) ok "and it names the work-tree-rooted directory, not one under the subdirectory" ;;
+  *) bad "subdir resolution names the work-tree-rooted directory" "out=$OUT" ;;
+esac
+# A decoy at the naive resolution the caller's directory would produce.
+mkdir -p "$R37/deep/nested/customhooks"
+printf '#!/bin/sh\nexit 0\n' >"$R37/deep/nested/customhooks/pre-commit"
+printf '#!/bin/sh\nexit 0\n' >"$R37/deep/nested/customhooks/commit-msg"
+chmod +x "$R37/deep/nested/customhooks/pre-commit" "$R37/deep/nested/customhooks/commit-msg"
+rm -f "$R37/customhooks/pre-commit"
+check_from "$R37" "$R37/deep/nested"
+[ "$RC" -eq 1 ] && ok "must-fail: a decoy directory beside the caller cannot answer for the redirect" \
+  || bad "decoy directory answers the redirect" "rc=$RC out=$OUT"
+ABS_SUB="$TMP/abs-hooks-sub"
+wire_hooks_dir "$R37" "$ABS_SUB"
+git -C "$R37" config core.hooksPath "$ABS_SUB"
+check_from "$R37" "$R37/deep/nested"
+[ "$RC" -eq 0 ] && ok "an absolute core.hooksPath resolves from a subdirectory too" \
+  || bad "absolute hooksPath from subdir checks 0" "rc=$RC out=$OUT"
+
 echo "=== --check usage lanes ==="
 OUT=""; RC=0; OUT="$("$INSTALL" --check --uninstall 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && ok "--check with --uninstall is exit 2" || bad "check+uninstall is exit 2" "rc=$RC out=$OUT"
