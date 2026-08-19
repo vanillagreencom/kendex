@@ -63,8 +63,12 @@ impl Item {
 pub struct AvailableItem {
     pub name: String,
     pub kind: ItemKind,
-    /// The lock `source` string the item was found in.
+    /// The lock `source` string the item was found in, as it may be SHOWN.
     pub source: String,
+    /// The same source as a `vstack add` argument, or `None` when it cannot be
+    /// one. Decided from the raw string, because `source` above is already
+    /// redacted for display and a redacted spelling names nothing.
+    pub add_argument: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

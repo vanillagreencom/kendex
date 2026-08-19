@@ -157,3 +157,52 @@ fn the_printed_command_carries_the_scope_it_repairs() {
     assert_eq!(scope_flag(true), " -g");
     assert_eq!(scope_flag(false), "");
 }
+
+/// A BARE relative spelling is a path like any other, so its `?` and `#` are
+/// ordinary characters. The gate's hand-written prefix list omitted it, and a
+/// source directory named `cat?x` was cut to `cat?<redacted>` — offered as a
+/// command naming a directory that does not exist.
+#[test]
+fn a_bare_relative_source_keeps_the_punctuation_a_url_would_lose() {
+    for local in ["cat?x", "team#2", "is-it-here?", ".", "./cat?x", "../cat?x"] {
+        assert_eq!(
+            crate::display::scrub_source_credentials(local),
+            local,
+            "{local}"
+        );
+        assert!(is_pasteable_source_argument(local), "{local}");
+    }
+    // Control: the shapes that CAN carry a token in a query are still cut,
+    // which is why the gate asks the resolver's own predicates instead of
+    // exempting everything without a scheme.
+    for carrying in [
+        "owner/repo?access_token=ghp_SECRET",
+        "https://host.example/o/r?access_token=ghp_SECRET",
+        "git@host.example:o/r?access_token=ghp_SECRET",
+    ] {
+        let shown = crate::display::scrub_source_credentials(carrying);
+        assert!(!shown.contains("ghp_SECRET"), "{carrying}: {shown}");
+        assert!(!is_pasteable_source_argument(carrying), "{carrying}");
+    }
+    // And the absent-source remedy follows the same answer, so a bare source
+    // with a `?` gets its command back.
+    assert_eq!(
+        absent_source_note("cat?x", None, false),
+        "source not found: cat?x — run `vstack add 'cat?x'`"
+    );
+}
+
+/// A scp-like spelling carries no separator, so it reaches the bare-source
+/// question — which parses, and parsing builds a display through the very
+/// function asking. Left unguarded this recurses until the stack goes.
+#[test]
+fn a_scp_like_spelling_settles_without_recursing_through_its_own_display() {
+    for scp in [
+        "git@host.example:repo",
+        "git@host.example:repo?token=ghp_SECRET",
+    ] {
+        let shown = crate::display::scrub_source_credentials(scp);
+        assert!(!shown.contains("ghp_SECRET"), "{scp}: {shown}");
+        assert!(!shown.is_empty(), "{scp}");
+    }
+}

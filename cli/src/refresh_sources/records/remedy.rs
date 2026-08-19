@@ -40,14 +40,23 @@ pub(crate) fn restore_source_argument(source: &str, source_repo: Option<&str>) -
         Some(_) => None,
         None => Some(source.to_string()),
     };
-    // The last word on whether a string may be handed back as a COMMAND, for
-    // every surface — a report field and a printed line alike. A pasteable
-    // argument is the raw string, so a spelling whose display has to hide part
-    // of itself would print in the remedy exactly what the cause took care
-    // not to. This lived in `absent_source_note`, which is why `check` — which
-    // composes the argument itself — leaked a token two of three surfaces
-    // withheld.
-    argument.filter(|arg| remote_source_display(arg) == *arg)
+    argument.filter(|arg| is_pasteable_source_argument(arg))
+}
+
+/// Whether a source string may be handed back as a pasteable COMMAND
+/// argument.
+///
+/// The last word on that question, for every surface — a remedy for a source
+/// that is GONE and an offer to add from one that is fine, a report field and
+/// a printed line alike. A pasteable argument is the raw string, so a spelling
+/// whose display has to hide part of itself cannot be one: printing it would
+/// put in a command exactly what the display took care to withhold, and
+/// printing the display instead names something that does not exist.
+///
+/// It lived inside one caller's formatting, which is how `check` came to leak
+/// a token that two other surfaces withheld.
+pub(crate) fn is_pasteable_source_argument(source: &str) -> bool {
+    remote_source_display(source) == source
 }
 
 /// The scope flag a printed command needs.

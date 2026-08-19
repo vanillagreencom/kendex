@@ -113,7 +113,13 @@
   paste-ready command in full while the same string rendered redacted two
   clauses away. A local path keeps its `?` and `#`, which are ordinary
   characters there and were being redacted into a directory that does not
-  exist.
+  exist — the bare relative spelling included, which the gate asks the
+  resolver's own predicates about so the two cannot drift. Every surface that
+  prints a `vstack add` now takes its argument from the one place that decides
+  whether a string may be one: the offer to install an available item was
+  composing its own, so a healthy source directory named `cat?x` was offered as
+  `vstack add 'cat?<redacted>'` — a paste-ready command naming a directory that
+  does not exist.
 
   The command every surface prints carries the scope it repairs. Pasted from a
   global entry's `verify` or `refresh` output, a remedy without `-g` installs

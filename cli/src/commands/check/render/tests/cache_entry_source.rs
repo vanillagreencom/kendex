@@ -393,3 +393,77 @@ fn a_token_a_parser_cannot_read_reaches_no_part_of_the_report() {
         assert!(report.has_drift());
     });
 }
+
+/// The available-items line was the last surface composing its own `vstack
+/// add` outside the one place that decides whether a source may BE an
+/// argument. On a healthy source whose bare name carries a `?`, it printed a
+/// paste-ready command naming a directory that does not exist, while the scope
+/// reported ✓ and exited 0.
+#[test]
+fn an_offer_to_add_names_a_source_that_can_actually_be_pasted() {
+    with_sandbox("available-offer", |project, _source| {
+        // A real project source directory whose bare name carries a `?`.
+        let odd = project.join("cat?x");
+        write_skill(&odd, "beta", "one");
+        std::fs::create_dir_all(odd.join("agents")).unwrap();
+        let mut lock = LockFile::default();
+        lock.add(locked(
+            std::path::Path::new("cat?x"),
+            ItemKind::Skill,
+            "beta",
+        ));
+
+        let report = crate::test_util::with_project_root(project, || {
+            check_scope(false, &lock, CheckOptions::default()).unwrap()
+        });
+        let mut out = String::new();
+        render_scope(&mut out, &report, false);
+        assert!(
+            !out.contains("cat?<redacted>"),
+            "a healthy source must not be offered under a mangled name: {out}"
+        );
+
+        // A source that genuinely cannot be an argument is still ANNOUNCED —
+        // the items are available — just without a command that would name
+        // nothing. Read off the offer line alone: other drift lines carry a
+        // `vstack add` of their own, legitimately.
+        let offer_line = |report: &ScopeReport| {
+            let mut out = String::new();
+            render_scope(&mut out, report, false);
+            out.lines()
+                .find(|l| l.trim_start().starts_with("+ "))
+                .map(str::to_string)
+                .unwrap_or_else(|| panic!("no offer line in:\n{out}"))
+        };
+        let mut report = ScopeReport {
+            scope: "project",
+            installed: 1,
+            ..Default::default()
+        };
+        report.available = vec![AvailableItem {
+            name: "beta".into(),
+            kind: ItemKind::Skill,
+            source: "https://host.example/o/r?<redacted>".into(),
+            add_argument: None,
+        }];
+        let line = offer_line(&report);
+        assert!(
+            line.contains("beta"),
+            "the offer still names the item: {line}"
+        );
+        assert!(
+            !line.contains("vstack add"),
+            "but not under a command that names nothing: {line}"
+        );
+
+        // Control: the same offer with a pasteable source DOES carry one, so
+        // the rule is about the spelling and not about withholding offers.
+        report.available[0].source = "owner/repo".into();
+        report.available[0].add_argument = Some("owner/repo".into());
+        let line = offer_line(&report);
+        assert!(
+            line.contains("`vstack add owner/repo --skill <name>`"),
+            "{line}"
+        );
+    });
+}

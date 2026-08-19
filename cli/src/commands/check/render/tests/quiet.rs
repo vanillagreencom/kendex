@@ -33,6 +33,7 @@ fn quiet_render_is_empty_for_a_clean_scope_and_names_the_scope_on_drift() {
             name: "beta".into(),
             kind: ItemKind::Skill,
             source: "owner/repo".into(),
+            add_argument: Some("owner/repo".into()),
         }],
         ..ScopeReport::default()
     };
@@ -77,6 +78,7 @@ fn quiet_report_stays_silent_when_only_suggestions_and_cache_warnings_exist() {
                 name: "beta".into(),
                 kind: ItemKind::Skill,
                 source: "owner/repo".into(),
+                add_argument: Some("owner/repo".into()),
             }],
             ..ScopeReport::default()
         }],
@@ -184,6 +186,7 @@ fn the_whole_quiet_report_is_bounded_and_names_what_it_left_out() {
                 name: format!("offer-{n:02}"),
                 kind: ItemKind::Skill,
                 source: format!("/sources/{n:02}"),
+                add_argument: Some(format!("/sources/{n:02}")),
             })
             .collect(),
         ..ScopeReport::default()
@@ -261,6 +264,7 @@ fn the_whole_quiet_report_is_bounded_and_names_what_it_left_out() {
                 name: "beta".into(),
                 kind: ItemKind::Skill,
                 source: "owner/repo".into(),
+                add_argument: Some("owner/repo".into()),
             }],
             ..ScopeReport::default()
         }],
@@ -298,6 +302,7 @@ fn no_single_line_can_carry_an_unbounded_name_into_the_quiet_report() {
                     name: format!("{long}-{n:02}"),
                     kind: ItemKind::Skill,
                     source: "owner/repo".into(),
+                    add_argument: Some("owner/repo".into()),
                 })
                 .collect(),
             ..ScopeReport::default()

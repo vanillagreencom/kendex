@@ -6,9 +6,11 @@ use anyhow::{Context, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+mod available;
 mod render;
 mod report;
 mod sources;
+use available::available_for;
 use sources::*;
 
 pub(crate) use render::display_text;
@@ -440,63 +442,6 @@ fn missing_skill_refs_for(
         }
     }
     (missing, invalid)
-}
-
-/// Items a declared source ships that this scope never installed — lock keys
-/// are bare names, so a name absent from them is absent under every kind. A
-/// kind is offered only where the scope already installs that kind: a global
-/// scope holding nothing but Pi packages is not asking for agents, and a
-/// project without Pi packages is not asking for them.
-fn available_for(
-    catalogs: &Catalogs<'_>,
-    entries: &[&LockEntry],
-    lock_names: &HashSet<&str>,
-) -> Vec<AvailableItem> {
-    let mut available = Vec::new();
-    let installed_kinds: HashSet<ItemKind> = entries.iter().map(|e| e.kind).collect();
-    let mut sources: Vec<&str> = catalogs.keys().copied().collect();
-    sources.sort();
-    // Dedupe on the OFFER, not the name: two sources shipping a skill of the
-    // same name are two different implementations, and the add command is
-    // source-qualified precisely so the user picks which one.
-    let mut seen: HashSet<(&str, ItemKind, &str)> = HashSet::new();
-    for source in sources {
-        let Some(catalog) = &catalogs[source].catalog else {
-            continue;
-        };
-        for kind in CATALOG_KINDS {
-            if kind.add_filter_flag().is_none() || !installed_kinds.contains(&kind) {
-                continue;
-            }
-            let Some(inventory) = catalog.readable(kind) else {
-                continue;
-            };
-            for name in &inventory.names {
-                let installed = lock_names.contains(name.as_str())
-                    || crate::pi_extension::legacy_names_for(name)
-                        .iter()
-                        .any(|legacy| lock_names.contains(legacy));
-                if installed
-                    || !is_safe_item_name(kind, name)
-                    || !seen.insert((source, kind, name.as_str()))
-                {
-                    continue;
-                }
-                available.push(AvailableItem {
-                    name: name.clone(),
-                    kind,
-                    source: scrub_source_credentials(source),
-                });
-            }
-        }
-    }
-    available.sort_by(|a, b| {
-        a.name
-            .cmp(&b.name)
-            .then_with(|| a.kind.label_short().cmp(b.kind.label_short()))
-            .then_with(|| a.source.cmp(&b.source))
-    });
-    available
 }
 
 fn check_scope(global: bool, lock: &LockFile, opts: CheckOptions) -> Option<ScopeReport> {

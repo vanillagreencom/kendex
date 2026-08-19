@@ -77,6 +77,7 @@ fn has_drift_is_true_for_each_field_alone_and_available_is_not_drift() {
             name: "beta".into(),
             kind: ItemKind::Skill,
             source: "owner/repo".into(),
+            add_argument: None,
         }],
         ..ScopeReport::default()
     };

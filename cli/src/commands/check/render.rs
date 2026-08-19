@@ -312,11 +312,11 @@ fn render_available(out: &mut String, report: &ScopeReport, quiet: bool) {
             sources.sort();
             sources.dedup();
             for source in sources {
-                let names: Vec<&str> = offered
-                    .iter()
-                    .filter(|a| a.source == source)
-                    .map(|a| a.name.as_str())
-                    .collect();
+                let from_source = || offered.iter().filter(|a| a.source == source);
+                let names: Vec<&str> = from_source().map(|a| a.name.as_str()).collect();
+                // Decided upstream, from the raw string: `source` here is the
+                // redacted display, and a redacted spelling names nothing.
+                let add_argument = from_source().find_map(|a| a.add_argument.as_deref());
                 let shown = shown_count(quiet, names.len());
                 let overflow = if names.len() > shown {
                     format!(", … and {} more", names.len() - shown)
@@ -331,12 +331,18 @@ fn render_available(out: &mut String, report: &ScopeReport, quiet: bool) {
                 // The source is part of the command, not a footnote: with
                 // two sources offering the same name, an unqualified `vstack
                 // add --skill <name>` installs whichever one resolution
-                // happens to pick.
+                // happens to pick. Which is why a source that cannot BE an
+                // argument is offered without one rather than with a command
+                // naming a directory that does not exist — the items really
+                // are available, so the line still says so.
+                let offer = match add_argument {
+                    Some(arg) => format!("`vstack add{g} {} {flag} <name>`", command_arg(arg)),
+                    None => format!("available from {}", display_text(source)),
+                };
                 let _ = writeln!(
                     out,
-                    "    + {} (`vstack add{g} {} {flag} <name>`): {}{overflow}",
+                    "    + {} ({offer}): {}{overflow}",
                     kind.label_plural(),
-                    command_arg(source),
                     listed.join(", ")
                 );
             }
