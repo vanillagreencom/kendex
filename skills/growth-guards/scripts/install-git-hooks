@@ -644,6 +644,14 @@ hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecogni
       continue
     fi
     named=1
+    # A path ENDING in growth-guards/scripts/<hook> identifies the guard only
+    # while that last component is the guard. A symlink there can point at
+    # anything — /bin/true passes -f and -x and gates nothing — and the suffix
+    # no longer says what runs. Only the final component is tested, so a
+    # symlinked parent directory still resolves to a real installation.
+    if [ -L "$cmd" ]; then
+      continue
+    fi
     # The command word is the entry point; the TAIL decides whether running
     # it can still fail the commit. `--help` returns 0 without checking
     # anything and `|| true` throws the status away, so both leave the entry

@@ -1382,6 +1382,23 @@ unverifiable_shape "a tail that only resembles || exit \$? under globbing"
 arm_pair '#!/bin/sh\n%s/pre-commit "$@" || exit 0\n' '#!/bin/sh\n%s/commit-msg "$1" || exit 0\n'
 unverifiable_shape "a tail that exits 0 on failure"
 
+# A path ending in growth-guards/scripts/<hook> identifies the guard only
+# while that last component IS the guard: a symlink there passes -f and -x
+# while running anything at all.
+mkdir -p "$R38/fake/growth-guards/scripts"
+ln -sf /bin/true "$R38/fake/growth-guards/scripts/pre-commit"
+ln -sf /bin/true "$R38/fake/growth-guards/scripts/commit-msg"
+arm_pair "#!/bin/sh\nexec $R38/fake/growth-guards/scripts/pre-commit \"\$@\"\n" \
+  "#!/bin/sh\nexec $R38/fake/growth-guards/scripts/commit-msg \"\$1\"\n"
+unverifiable_shape "an entry-point path that is a symlink to another program"
+printf '# %s: finish this\n' "$TD" >"$R38/sl.py"
+git -C "$R38" add sl.py
+commit_in "$R38" "feat: add sl"
+[ "$RC" -eq 0 ] && ok "and that wiring really does bypass the guard, which is why it is never armed" \
+  || bad "symlinked entry point bypasses" "rc=$RC out=$OUT"
+git -C "$R38" rm -q --cached sl.py
+rm -f "$R38/sl.py"
+
 # One passing control per shape the check does accept.
 arm_pair '#!/bin/sh\n%s/pre-commit "$@" || exit $?\n' \
   '#!/bin/sh\n%s/commit-msg "$1" || exit $?\n'
