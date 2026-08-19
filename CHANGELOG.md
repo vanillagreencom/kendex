@@ -203,7 +203,11 @@
   pre-commit failure while `--check` reported armed. An entry-point path
   whose final component is a SYMLINK is unverifiable for the same reason the
   suffix alone never was enough — two links to `/bin/true` passed every file
-  test and reported `armed` while every commit bypassed the guard. A tail must
+  test and reported `armed` while every commit bypassed the guard. The
+  candidate is now compared by PHYSICAL LOCATION against this install's own
+  entry point rather than by the shape of its path — a path is a name, and a
+  regular executable copy of `/bin/true` can wear it — while a symlinked
+  parent directory still resolves to the real install and stays armed. A tail must
   be separated from the command by a real blank, since the shell concatenates
   `"…/commit-msg""$1"` into one unrunnable word; and only blanks are trimmed,
   because `[[:space:]]` would eat a trailing CR that the shell keeps as part

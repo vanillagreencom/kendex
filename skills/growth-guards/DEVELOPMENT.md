@@ -130,7 +130,11 @@ An entry-point path whose FINAL COMPONENT is a symlink is `2` as well. The
 path suffix identifies the guard only while that component is the guard, and
 a link to `/bin/true` passes every file test while gating nothing. Only the
 final component is tested, so a symlinked parent directory still resolves to
-a real installation.
+a real installation, because the candidate is compared by PHYSICAL LOCATION
+against this install's own entry point, not by the shape of its path. A path
+is a name and any executable can wear it: a copy of `/bin/true` at
+`…/growth-guards/scripts/pre-commit` passes every file test and gates
+nothing.
 
 A tail counts only when a space or tab separates it from the command — the
 shell concatenates `"…/commit-msg""$1"` into a single word git cannot run —

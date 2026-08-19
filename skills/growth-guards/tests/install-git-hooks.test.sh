@@ -1391,6 +1391,23 @@ ln -sf /bin/true "$R38/fake/growth-guards/scripts/commit-msg"
 arm_pair "#!/bin/sh\nexec $R38/fake/growth-guards/scripts/pre-commit \"\$@\"\n" \
   "#!/bin/sh\nexec $R38/fake/growth-guards/scripts/commit-msg \"\$1\"\n"
 unverifiable_shape "an entry-point path that is a symlink to another program"
+
+# And the same name worn by a REGULAR executable. A path is a name, not an
+# identity: this one passes every file test and is not a symlink either.
+rm -f "$R38/fake/growth-guards/scripts/pre-commit" "$R38/fake/growth-guards/scripts/commit-msg"
+cp /bin/true "$R38/fake/growth-guards/scripts/pre-commit"
+cp /bin/true "$R38/fake/growth-guards/scripts/commit-msg"
+chmod +x "$R38/fake/growth-guards/scripts/pre-commit" "$R38/fake/growth-guards/scripts/commit-msg"
+arm_pair "#!/bin/sh\nexec $R38/fake/growth-guards/scripts/pre-commit \"\$@\"\n" \
+  "#!/bin/sh\nexec $R38/fake/growth-guards/scripts/commit-msg \"\$1\"\n"
+must_fail_shape "another program wearing the entry point's name"
+printf '# %s: finish this\n' "$TD" >"$R38/im.py"
+git -C "$R38" add im.py
+commit_in "$R38" "feat: add im"
+[ "$RC" -eq 0 ] && ok "and that impostor really does let a violation through" \
+  || bad "impostor bypasses" "rc=$RC out=$OUT"
+git -C "$R38" rm -q --cached im.py
+rm -f "$R38/im.py"
 printf '# %s: finish this\n' "$TD" >"$R38/sl.py"
 git -C "$R38" add sl.py
 commit_in "$R38" "feat: add sl"
@@ -1410,6 +1427,20 @@ must_fail_shape "a quoted command with no separator before its tail"
 # tail the shell never sees.
 arm_pair '#!/bin/sh\nexec %s/pre-commit "$@"\r\n' '#!/bin/sh\nexec %s/commit-msg "$1"\r\n'
 unverifiable_shape "a hook whose command line ends in a carriage return"
+
+# `exec -a NAME cmd` runs cmd under another argv[0]: the command word is two
+# tokens further along, and reading the option as the command would report a
+# hook that gates perfectly well as NOT gated — the false negative this
+# grammar reserves exit 2 for.
+arm_pair '#!/bin/sh\nexec -a guard %s/pre-commit "$@"\n' '#!/bin/sh\nexec -a guard %s/commit-msg "$1"\n'
+unverifiable_shape "wiring behind an exec option"
+printf 'clean\n' >"$R38/ea.txt"
+git -C "$R38" add ea.txt
+commit_in "$R38" "feat: add ea"
+[ "$RC" -eq 0 ] && ok "and that hook really does gate, so it is not called ungated" \
+  || bad "exec -a hook gates" "rc=$RC out=$OUT"
+git -C "$R38" rm -q --cached ea.txt
+rm -f "$R38/ea.txt"
 
 # One passing control per shape the check does accept.
 arm_pair '#!/bin/sh\n%s/pre-commit "$@" || exit $?\n' \

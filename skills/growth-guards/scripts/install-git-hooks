@@ -594,12 +594,21 @@ check_helper() { # DIR -> 0 armed, 1 not armed, 2 could not determine
 # executes no guard and every commit passes. The shared shebang check accepts
 # options because a repo's own hooks may legitimately carry them; a hook this
 # tool is about to call ARMED may not.
+# Canonical directory of a path: symlinked parents resolve, so an install
+# reached through `.agents/` or any other link compares equal to itself.
+canonical_dir() { # PATH -> physical directory on stdout, nonzero if unreachable
+  local d
+  d="$(dirname -- "$1")" || return 1
+  (cd -- "$d" 2>/dev/null && pwd -P) || return 1
+}
+
 NOARG_SHEBANG_RE='^#![[:space:]]*([^[:space:]]*/)?(env[[:space:]]+)?(sh|bash|dash|ksh|zsh)[[:space:]]*$'
 
 hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecognized
-  local hook="$1" path="$2" line="" body="" cmd="" tail="" rest="" seen=0 matched=0 named=0 re=""
-  re='^(.*/)?growth-guards/scripts/'"$hook"'$'
+  local hook="$1" path="$2" line="" body="" cmd="" tail="" rest="" cmd_dir="" own_dir=""
+  local seen=0 matched=0 named=0 opaque=0
   [ -r "$path" ] || return 2
+  own_dir="$(canonical_dir "$SCRIPT_DIR/$hook")" || return 2
   head -n 1 "$path" 2>/dev/null | grep -qE "$NOARG_SHEBANG_RE" || return 1
   while IFS= read -r line || [ -n "$line" ]; do
     body="${line%%[![:space:]]*}"
@@ -613,6 +622,15 @@ hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecogni
       exec[[:blank:]]*)
         rest="${rest#exec}"
         rest="${rest#"${rest%%[![:blank:]]*}"}"
+        # `exec -a NAME cmd` runs cmd under another argv[0]. The command word
+        # is then two tokens further along, and reading the option as the
+        # command would report a hook that gates correctly as not gated.
+        case "$rest" in
+          -*)
+            opaque=1
+            continue
+            ;;
+        esac
         ;;
     esac
     # Split off the command word, honouring one layer of quoting so a path
@@ -641,25 +659,29 @@ hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecogni
       "" | [[:blank:]]*) ;;
       *) continue ;;
     esac
-    if [ "$cmd" != "$SCRIPT_DIR/$hook" ] && ! printf '%s\n' "$cmd" | grep -qE -- "$re"; then
-      continue
-    fi
-    # The path SHAPE is not the entry point. A moved or removed install leaves
-    # a hook whose command resolves to nothing, and git answers every commit —
-    # clean ones included — with command-not-found rather than a verdict.
-    # -x follows symlinks, which is what git runs.
+    # A path is not an identity. `growth-guards/scripts/pre-commit` is a
+    # NAME, and an executable copy of /bin/true can wear it — passing every
+    # file test while gating nothing. The only thing that settles it is
+    # WHICH FILE this resolves to, so the candidate is compared against this
+    # install's own entry point by physical location.
+    case "$cmd" in
+      */"$hook") ;;
+      *) continue ;;
+    esac
     if [ ! -f "$cmd" ] || [ ! -x "$cmd" ]; then
       continue
     fi
-    named=1
-    # A path ENDING in growth-guards/scripts/<hook> identifies the guard only
-    # while that last component is the guard. A symlink there can point at
-    # anything — /bin/true passes -f and -x and gates nothing — and the suffix
-    # no longer says what runs. Only the final component is tested, so a
-    # symlinked parent directory still resolves to a real installation.
+    # A symlinked final component points wherever it likes; the parent may
+    # still be a link to the real install, which resolves below.
     if [ -L "$cmd" ]; then
+      named=1
       continue
     fi
+    cmd_dir="$(canonical_dir "$cmd")" || { named=1; continue; }
+    if [ "$cmd_dir" != "$own_dir" ]; then
+      continue
+    fi
+    named=1
     # The command word is the entry point; the TAIL decides whether running
     # it can still fail the commit. `--help` returns 0 without checking
     # anything and `|| true` throws the status away, so both leave the entry
@@ -703,7 +725,7 @@ hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecogni
   # The entry point IS the command and only its argument list is outside the
   # allowlist — a trailing comment, an extra argument. That may well gate;
   # this tool cannot say, so it says so, rather than calling it ungated.
-  if [ "$named" -eq 1 ]; then
+  if [ "$named" -eq 1 ] || [ "$opaque" -eq 1 ]; then
     return 3
   fi
   # Exactly one command, and it is not our entry point at all: recognizable,
