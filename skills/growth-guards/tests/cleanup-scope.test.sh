@@ -10,8 +10,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 TB="$SKILL_DIR/scripts/todo-ban"
 PC="$SKILL_DIR/scripts/pre-commit"
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/gg-cleanup-scope.XXXXXX")"
-trap 'rm -rf -- "$TMP"' EXIT
+. "$TEST_DIR/lib/harness.bash"
 
 unset GROWTH_GUARDS_CHECKS GROWTH_GUARDS_SETTINGS_FILE GG_TMP \
   GG_SETTINGS_INDEX_OWNED GG_SETTINGS_INDEX_DIR GG_SETTINGS_FROM_INDEX 2>/dev/null || true

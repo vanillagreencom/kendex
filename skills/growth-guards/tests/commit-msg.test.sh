@@ -9,8 +9,7 @@ set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 CM="$SKILL_DIR/scripts/commit-msg"
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+. "$TEST_DIR/lib/harness.bash"
 
 unset GROWTH_GUARDS_COMMIT_TYPES GROWTH_GUARDS_SETTINGS_FILE 2>/dev/null || true
 

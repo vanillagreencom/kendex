@@ -7,6 +7,7 @@ set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/../scripts" && pwd)"
+. "$TEST_DIR/lib/harness.bash"
 
 PATTERN='mapfile|readarray|declare -A|declare -gA|local -A'
 PATTERN="$PATTERN"'|(^|[^$])\{[A-Za-z_][A-Za-z0-9_]*\}[<>]'

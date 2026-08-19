@@ -16,7 +16,10 @@ docs live in README.md.
 - `vstack.settings.toml.example` — settings template for consumers
 - `SKILL.md` — agent-facing skill definition
 - `README.md` — consumer documentation
-- `tests/` — run any file directly; each is self-contained
+- `tests/` — run any file directly; every suite sources the harness first
+- `tests/lib/harness.bash` — the scratch root a suite owns, a `TMPDIR`
+  inside it, and git-config isolation; sourced, so the name stays outside
+  the `tests/*.sh` glob runners execute
 
 `bash tests/*.sh` is the lane `tools/validate-changed` derives for a change
 under this skill.

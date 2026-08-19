@@ -114,6 +114,25 @@
   settings cache renames inline, because it answers a failure by returning 1
   for its caller to propagate rather than by the family's exit 2, and routing
   it through the helper would change that contract.
+- growth-guards: every test suite now runs against a neutralized git
+  configuration, from one shared `tests/lib/harness.bash` rather than four
+  lines repeated per file (#1500). Nine of the ten suites ran `git init` and
+  `git commit` against fixture repos while inheriting the caller's global and
+  system configuration, so a machine carrying `core.hooksPath` executed the
+  developer's own hooks against generated fixtures, `init.templateDir` seeded
+  them, and `commit.gpgsign` failed the commits outright — measured against a
+  hostile global config, `byte-ceiling`, `suppression-ban` and `commit-msg`
+  went red while nothing in the diff had changed. The harness points `HOME`,
+  `XDG_CONFIG_HOME`, `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` at the
+  suite's own scratch dir, exports `GIT_CONFIG_NOSYSTEM`, and clears
+  `GIT_TEMPLATE_DIR`, the `GIT_AUTHOR_*`/`GIT_COMMITTER_*` family and the
+  repo-location variables (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and
+  siblings) that git exports into every hook — so a suite run from inside a
+  commit hook operates on its fixture, not on the committing repository.
+  Adoption is pinned by `tests/harness-adoption.test.sh`, which fails when a
+  suite neither sources the harness nor isolates itself: the tenth suite
+  cannot forget. The harness is `.bash`, not `.sh`, because runners and the
+  exec-bit lint glob `tests/*.sh` and git's pathspec matches nested paths.
 
 - CLI: a lock `source` recorded as a path inside `~/.vstack/cache/` now
   resolves as the remote that cache entry clones, instead of as an ordinary

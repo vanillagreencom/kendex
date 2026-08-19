@@ -13,8 +13,7 @@ set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 SB="$SKILL_DIR/scripts/suppression-ban"
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+. "$TEST_DIR/lib/harness.bash"
 
 unset GROWTH_GUARDS_SUPPRESSION_EXCLUDES GROWTH_GUARDS_SUPPRESSION_BASELINE GROWTH_GUARDS_SETTINGS_FILE 2>/dev/null || true
 

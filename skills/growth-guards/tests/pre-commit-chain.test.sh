@@ -11,16 +11,11 @@ set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/gg-pre-commit-chain.XXXXXX")"
-trap 'rm -rf -- "$TMP"' EXIT
+. "$TEST_DIR/lib/harness.bash"
 
 unset GROWTH_GUARDS_CHECKS GROWTH_GUARDS_PRE_COMMIT_LOCAL \
   GROWTH_GUARDS_SETTINGS_FILE GG_TMP GG_SETTINGS_INDEX_OWNED \
   GG_SETTINGS_INDEX_DIR GG_SETTINGS_FROM_INDEX 2>/dev/null || true
-# Neutralize the caller's git configuration: global hooks, templates or
-# signing would decide these results instead of the chain.
-export HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/xdg" GIT_CONFIG_NOSYSTEM=1
-mkdir -p "$HOME" "$XDG_CONFIG_HOME"
 
 PASS=0
 FAIL=0

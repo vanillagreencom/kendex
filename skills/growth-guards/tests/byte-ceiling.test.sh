@@ -9,8 +9,7 @@ set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 BC="$SKILL_DIR/scripts/byte-ceiling"
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+. "$TEST_DIR/lib/harness.bash"
 
 unset GROWTH_GUARDS_BYTE_CEILING_KB GROWTH_GUARDS_BYTE_EXCLUDES GROWTH_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
