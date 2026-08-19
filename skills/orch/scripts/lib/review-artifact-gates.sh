@@ -19,16 +19,71 @@
 
 set -euo pipefail
 
+# Last-resort emitter: no jq, no substitution, nothing that can fail. It lives
+# here rather than in review-artifact-check because the error channel below is
+# created at SOURCE time, before any of the script's own helpers are guaranteed
+# to be reachable — a failure there used to exit empty with status 1, which is
+# the status a legitimate rejection uses, so a caller reading .ok got an empty
+# parse and a caller reading the status read "artifact rejected".
+emit_unavailable() {
+  local detail="${1:-review-artifact-check could not run, so no artifact could be validated}"
+  detail="${detail//\\/}"
+  detail="${detail//\"/}"
+  printf '{"ok":false,"path":null,"reason":"invalid","detail":"%s"}\n' "$detail"
+}
+
 # jq's stderr lands here and is read only when the gate's exit status says the
 # gate failed. Never printed as an answer.
-review_artifact_gate_err="$(mktemp)"
-trap 'rm -f "$review_artifact_gate_err"' EXIT
+review_artifact_gate_err="$(mktemp 2>/dev/null)" || {
+  emit_unavailable "review-artifact-check could not create its temporary error channel (mktemp failed; check TMPDIR and free space), so no artifact could be validated"
+  exit 1
+}
+review_artifact_gate_cleanup() { rm -f "$review_artifact_gate_err"; }
+# INT/TERM as well as EXIT: this orchestrator arms backgrounded --wait
+# watchdogs on every round and kills them at their deadline, and an untrapped
+# signal leaks the file.
+trap 'review_artifact_gate_cleanup' EXIT
+trap 'review_artifact_gate_cleanup; exit 130' INT
+trap 'review_artifact_gate_cleanup; exit 143' TERM
 
 # The rejecting reason and its detail, set by artifact_content_gates. Every
 # rejection carries a detail: a reason with no cause is a dead end for the agent
 # that has to fix it, which review-pr.md § 3.1 spends its one re-delegation on.
 review_artifact_reason=""
 review_artifact_detail=""
+
+# Whether glob mode may answer this rejection with an older sibling.
+#
+# THE RULE, stated once here instead of as a list of reason names elsewhere: a
+# rejection that is the artifact's SELF-REPORT ABOUT THIS RUN is terminal — no
+# earlier file answers "did this review happen, did it measure anything, are
+# these findings routable", and the reviewer's own self-check is prescribed with
+# boundary 0, which makes every prior artifact fresh by construction. Only a
+# rejection that could be an artifact of a TORN OR TRUNCATED WRITE justifies
+# looking at a sibling, because there the older file may be the same review
+# written intact.
+#
+# Reason names cannot carry this: qa_shaped_incomplete (arrays lost wholesale —
+# a truncated write) and finding_item_detail (items using wrong field names —
+# this run's output shape) both reject as `incomplete` and fall on opposite
+# sides of the rule. The disposition is therefore a property of the GATE, chosen
+# at the rejection site through the two helpers below, and a gate added later
+# has to state it rather than inheriting a list edit somebody forgot.
+review_artifact_disposition=""
+
+# reject_terminal <reason> <detail>   — a self-report about THIS run.
+# reject_torn_write <reason> <detail> — could be this write being damaged.
+# Both return 1 so a gate reads `reject_terminal ... ; return 1` at its site.
+reject_terminal() {
+  review_artifact_disposition="terminal"
+  review_artifact_reason="$1"
+  review_artifact_detail="$2"
+}
+reject_torn_write() {
+  review_artifact_disposition="torn_write"
+  review_artifact_reason="$1"
+  review_artifact_detail="$2"
+}
 
 # The artifact's validated instrument-failure declaration; empty when it makes
 # none.
@@ -200,87 +255,97 @@ finding_item_detail() {
 }
 
 # artifact_content_gates <json_path>
-# Runs every content gate in precedence order and reports the first rejection
-# through review_artifact_reason / review_artifact_detail; reason is
-# "valid" or "valid_undermeasured" when the artifact passes.
+# Runs every content gate and reports the first rejection through
+# review_artifact_reason / review_artifact_detail / review_artifact_disposition;
+# reason is "valid" or "valid_undermeasured" when the artifact passes.
 # review_artifact_measurement_failed carries a validated declaration.
 # Returns 0 when the artifact passes every gate, 1 when one rejected it.
+#
+# GATE ORDER IS NOT LOAD-BEARING. The declaration is adjudicated in one place
+# but suppresses exactly ONE gate, and it does so through a flag consumed at
+# that gate rather than by returning early. Short-circuiting made the escape's
+# blast radius a function of where its block happened to sit: hoisting it turned
+# `review_performed: false` into an accepted verdict, and the bypass arrived as
+# a legitimate-looking `valid_undermeasured` rather than as an anomaly. A flag
+# cannot reach past the gate that reads it, wherever the block moves.
 artifact_content_gates() {
-  local file="$1" rc out
+  local file="$1" rc out declared=""
   review_artifact_reason=""
   review_artifact_detail=""
+  review_artifact_disposition=""
   review_artifact_measurement_failed=""
 
+  # A gate that could not run at all is the torn-read shape the lib header
+  # names, so it is the one failure that may still be answered by a sibling.
   rc=0; out="$(self_reports_no_review "$file")" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
-    review_artifact_reason="invalid"
-    review_artifact_detail="$(gate_failure_detail "$rc")"
+    reject_torn_write "invalid" "$(gate_failure_detail "$rc")"
     return 1
   fi
   if [[ -n "$out" ]]; then
-    review_artifact_reason="no_review"
-    review_artifact_detail="$out"
+    reject_terminal "no_review" "$out"
     return 1
   fi
 
+  # The one content rejection that IS the truncated-write shape: the arrays did
+  # not survive the write, so the same review written intact may sit beside it.
   rc=0; out="$(qa_shaped_incomplete "$file")" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
-    review_artifact_reason="invalid"
-    review_artifact_detail="$(gate_failure_detail "$rc")"
+    reject_torn_write "invalid" "$(gate_failure_detail "$rc")"
     return 1
   fi
   if [[ -n "$out" ]]; then
-    review_artifact_reason="incomplete"
-    review_artifact_detail="$out"
+    reject_torn_write "incomplete" "$out"
     return 1
   fi
 
+  # Same reason word, opposite disposition: a truncated write does not rename
+  # fields. Items carrying `detail`/`severity` instead of the schema's names are
+  # what this run produced, and no earlier artifact answers for them.
   rc=0; out="$(finding_item_detail "$file")" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
-    review_artifact_reason="invalid"
-    review_artifact_detail="$(gate_failure_detail "$rc")"
+    reject_torn_write "invalid" "$(gate_failure_detail "$rc")"
     return 1
   fi
   if [[ -n "$out" ]]; then
-    review_artifact_reason="incomplete"
-    review_artifact_detail="$out"
+    reject_terminal "incomplete" "$out"
     return 1
   fi
 
   rc=0; out="$(measurement_declaration "$file")" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
-    review_artifact_reason="invalid"
-    review_artifact_detail="$(gate_failure_detail "$rc")"
+    reject_torn_write "invalid" "$(gate_failure_detail "$rc")"
     return 1
   fi
   case "$out" in
     invalid:*)
-      review_artifact_reason="invalid_declaration"
-      review_artifact_detail="${out#invalid:} — $REVIEW_DECLARATION_BAR"
+      reject_terminal "invalid_declaration" "${out#invalid:} — $REVIEW_DECLARATION_BAR"
       return 1
       ;;
     declared:*)
-      # An adjudicated declaration replaces the zero-sample gate rather than
-      # being re-read inside it, and the accepting reason says so: a caller
-      # branching on reason cannot record an undermeasured domain as clean.
-      review_artifact_measurement_failed="${out#declared:}"
-      review_artifact_reason="valid_undermeasured"
-      return 0
+      declared="${out#declared:}"
       ;;
   esac
 
-  rc=0; out="$(zero_sample_detail "$file")" || rc=$?
-  if [[ "$rc" -ne 0 ]]; then
-    review_artifact_reason="invalid"
-    review_artifact_detail="$(gate_failure_detail "$rc")"
-    return 1
-  fi
-  if [[ -n "$out" ]]; then
-    review_artifact_reason="zero_sample"
-    review_artifact_detail="$out"
-    return 1
+  # The declaration's entire blast radius: this gate, and only while the flag
+  # is set.
+  if [[ -z "$declared" ]]; then
+    rc=0; out="$(zero_sample_detail "$file")" || rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+      reject_torn_write "invalid" "$(gate_failure_detail "$rc")"
+      return 1
+    fi
+    if [[ -n "$out" ]]; then
+      reject_terminal "zero_sample" "$out"
+      return 1
+    fi
   fi
 
-  review_artifact_reason="valid"
+  if [[ -n "$declared" ]]; then
+    review_artifact_measurement_failed="$declared"
+    review_artifact_reason="valid_undermeasured"
+  else
+    review_artifact_reason="valid"
+  fi
   return 0
 }

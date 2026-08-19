@@ -174,7 +174,7 @@ Validate it like a reviewer JSON, with `review_delegated_at` as the freshness bo
 .agents/skills/orch/scripts/review-artifact-check --file "$EXTERNAL_OUTPUT" [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND]
 ```
 
-`ok == true` → append the path to `json_paths`. `ok == false`, or any non-zero exit, → report the `reason` (and `detail` when present) and continue: external review is advisory, never blocking, and never substitutes a pass.
+`ok == true` → append the path to `json_paths`; `reason == "valid_undermeasured"` means that review's own instrument produced nothing, so report its `measurement_failed` string beside the path instead of presenting the external pass as clean. `ok == false`, or any non-zero exit, → report the `reason` (and `detail` when present) and continue: external review is advisory, never blocking, and never substitutes a pass.
 
 ## 3. Collect Results
 

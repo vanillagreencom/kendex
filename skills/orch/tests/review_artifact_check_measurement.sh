@@ -583,6 +583,102 @@ set -e
 assert_eq "$rc" "0" "--wait with a working emit accepts the same artifact"
 assert_eq "$(jq -r '.ok' <<<"$out")" "true" "--wait with a working emit reports ok=true"
 
+# --- the escape suppresses ONE gate, wherever its block sits ---
+# The declaration's blast radius used to be a consequence of statement order:
+# hoisting its block to the first step of artifact_content_gates turned
+# `review_performed: false` into an ACCEPTED valid_undermeasured, and a consumer
+# reading the contract saw a legitimate state rather than an anomaly. These
+# assertions state the radius as behavior, so the containment survives any
+# reordering — and they go red the moment the escape short-circuits again.
+DECLARATION='"measurement_failed":"cargo-mutants selected 0 mutants for the changed file"'
+
+zs_radius() {
+  local name="$1" body="$2" want="$3" path out
+  path="$worktree/tmp/review-external-20260816-01$(printf '%04d' "$RADIUS_N").json"
+  RADIUS_N=$((RADIUS_N + 1))
+  printf '%s' "$body" > "$path"
+  set +e
+  out="$("$CHECK" --file "$path")"
+  set -e
+  assert_eq "$(jq -r '.reason' <<<"$out")" "$want" "--file a valid declaration does NOT suppress $name"
+}
+RADIUS_N=1
+zs_radius "the no-review gate" \
+  "{\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",\"blockers\":[],\"suggestions\":[],$DECLARATION,\"qa_metadata\":{\"review_performed\":false,\"reason\":\"no_scope_provided\"}}" \
+  no_review
+zs_radius "the finding-item gate" \
+  "{\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",\"blockers\":[],\"suggestions\":[{\"title\":\"t\",\"detail\":\"d\"}],$DECLARATION,\"qa_metadata\":{}}" \
+  incomplete
+zs_radius "the qa-shape gate" \
+  "{\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",$DECLARATION,\"qa_metadata\":{}}" \
+  incomplete
+zs_radius "the missing-verdict gate" \
+  "{\"agent\":\"r\",\"summary\":\"mutation: killed 0/0\",$DECLARATION}" \
+  invalid
+
+# ...and the ONE gate it does suppress, so the radius is bounded on both sides.
+zs_radius "(control) the zero-sample gate, which it DOES replace" \
+  "{\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",\"blockers\":[],\"suggestions\":[],$DECLARATION,\"qa_metadata\":{}}" \
+  valid_undermeasured
+
+# --- glob mode reaches invalid_declaration too, and it is terminal ---
+# The most likely reviewer behavior after a zeroed instrument: reach for the
+# escape, write something under the bar. Falling back handed that reviewer an
+# older artifact and called it valid.
+zs_decl_glob_ok="$worktree/tmp/review-reviewer-decl-20260816-100000.json"
+printf '{"agent":"reviewer-decl","verdict":"pass","summary":"mutation: killed 3/3; stability: 10/10 at 16 threads","blockers":[],"suggestions":[]}' > "$zs_decl_glob_ok"
+zs_decl_glob_bad="$worktree/tmp/review-reviewer-decl-20260816-110000.json"
+printf '{"agent":"reviewer-decl","verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"measurement_failed":"n/a"}' > "$zs_decl_glob_bad"
+touch -d "@$after" "$zs_decl_glob_ok"
+touch -d "@$later" "$zs_decl_glob_bad"
+set +e
+out="$("$CHECK" "$worktree" reviewer-decl "$delegated_at")"
+rc=$?
+set -e
+assert_eq "$rc" "1" "glob invalid_declaration is terminal, not rescued by an older sibling"
+assert_eq "$(jq -r '.reason' <<<"$out")" "invalid_declaration" "glob terminal invalid_declaration keeps its reason"
+assert_eq "$(jq -r '.path' <<<"$out")" "$zs_decl_glob_bad" "glob terminal invalid_declaration points at the rejected artifact"
+
+touch -d "@$before" "$zs_decl_glob_bad"
+expect_glob_valid "$worktree" reviewer-decl "$delegated_at" "$zs_decl_glob_ok" "a STALE invalid_declaration artifact does not block a fresh measured one"
+touch -d "@$later" "$zs_decl_glob_bad"
+
+# --- the check answers even when it cannot create its error channel ---
+# The gates' error file is made at SOURCE time, before any mode runs and before
+# the jq-free emitter was reachable. mktemp failing there exited empty with
+# status 1 — the same status a legitimate rejection uses.
+set +e
+out="$(TMPDIR=/nonexistent-dir-for-review-artifact-check "$CHECK" --file "$zs_ok" 2>/dev/null)"
+rc=$?
+set -e
+assert_eq "$rc" "1" "an unusable TMPDIR exits 1"
+assert_eq "$(jq -r '.ok' <<<"$out" 2>/dev/null || printf 'unparseable')" "false" "an unusable TMPDIR still prints a parseable rejection"
+assert_eq "$(jq -r '.reason' <<<"$out" 2>/dev/null || printf 'unparseable')" "invalid" "an unusable TMPDIR reports reason=invalid"
+assert_substr "$(jq -r '.detail' <<<"$out" 2>/dev/null || printf '')" "mktemp" "the TMPDIR rejection names its real cause, not jq"
+
+# every mode, not just --file
+set +e
+out="$(TMPDIR=/nonexistent-dir-for-review-artifact-check "$CHECK" "$worktree" reviewer-zs "$delegated_at" 2>/dev/null)"
+rc=$?
+set -e
+assert_eq "$rc" "1" "an unusable TMPDIR exits 1 in glob mode"
+assert_eq "$(jq -r '.reason' <<<"$out" 2>/dev/null || printf 'unparseable')" "invalid" "an unusable TMPDIR prints a parseable rejection in glob mode"
+
+# MUST-FAIL CONTROL: a writable TMPDIR leaves the same artifact valid.
+set +e
+out="$(TMPDIR="$TMP_ROOT" "$CHECK" --file "$zs_ok")"
+rc=$?
+set -e
+assert_eq "$rc" "0" "a writable TMPDIR leaves the same artifact valid"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "a writable TMPDIR reports the real verdict"
+
+# NOT ASSERTED: the INT/TERM traps beside the EXIT trap. On the bash this suite
+# runs under, a --wait watchdog killed with SIGTERM already cleans up through
+# the EXIT trap alone, so removing the signal traps changes nothing observable
+# and any assertion here would pass for the wrong reason. The traps are kept as
+# correct-by-construction for shells that do not run EXIT on a signal; they are
+# deliberately unpinned rather than pinned by a test that cannot fail.
+
 # --- glob mode: zero_sample is TERMINAL, not advisory ---
 # On a zero_sample hit the search used to record the rejection and keep walking,
 # so any older-but-fresh sibling was returned ok=true — and the reviewer's own

@@ -369,14 +369,16 @@ assert_eq "$rc" "1" "glob qa-shaped artifact without arrays exits 1"
 assert_eq "$(jq -r '.reason' <<<"$out")" "incomplete" "glob qa-shaped without arrays reports reason=incomplete"
 assert_eq "$(jq -r '.path' <<<"$out")" "$glob_inc" "glob incomplete report points at the artifact"
 
-# ...and an older fresh complete sibling still wins over a newer incomplete one
+# ...and an older fresh complete sibling still wins over a newer incomplete one.
+# Arrays lost wholesale IS the truncated-write shape, so this is the side of the
+# disposition rule that may still fall back. Captured rather than bare, so a
+# regression that made every rejection terminal names this assertion instead of
+# aborting the run at it.
 glob_inc_valid="$worktree/tmp/review-reviewer-inc-20260718-000000.json"
 printf '{"verdict":"pass","blockers":[],"suggestions":[],"qa_metadata":{}}' > "$glob_inc_valid"
 touch -d "@$after" "$glob_inc_valid"
 touch -d "@$later" "$glob_inc"
-out="$("$CHECK" "$worktree" reviewer-inc "$delegated_at")"
-assert_eq "$(jq -r '.ok' <<<"$out")" "true" "glob falls back past incomplete to older complete artifact"
-assert_eq "$(jq -r '.path' <<<"$out")" "$glob_inc_valid" "glob fallback selects the complete sibling"
+expect_glob_valid "$worktree" reviewer-inc "$delegated_at" "$glob_inc_valid" "glob falls back past a truncated write to the older complete artifact"
 
 # --- incomplete: qa-shaped artifacts must carry USABLE finding items (vstack#810) ---
 # qa_shaped_incomplete only catches arrays lost wholesale. An artifact can carry
@@ -543,14 +545,62 @@ assert_eq "$(jq -r '.reason' <<<"$out")" "incomplete" "glob malformed-item repor
 assert_eq "$(jq -r '.path' <<<"$out")" "$glob_item_bad" "glob malformed-item report points at the artifact"
 assert_substr "$(jq -r '.detail' <<<"$out")" "suggestions[0]" "glob malformed-item detail names the item"
 
-# ...and an older fresh well-formed sibling still wins over a newer malformed one
+# ...and it is TERMINAL, not answered by an older sibling. Items carrying wrong
+# field names are what THIS run produced — a truncated write does not rename
+# fields — so the disposition rule puts this on the self-report side. Falling
+# back here told a reviewer whose items were unroutable that someone else's
+# artifact was valid, and it never saw a reason at all.
 glob_item_ok="$worktree/tmp/review-reviewer-item-20260810-000000.json"
 printf '{"verdict":"pass","blockers":[],"suggestions":[{"id":1,"title":"t","location":"l","description":"d","recommendation":"r","priority":3,"estimate":2,"category":"issue","impact":"nightly importers hit it on every run"}],"qa_metadata":{}}' > "$glob_item_ok"
 touch -d "@$after" "$glob_item_ok"
 touch -d "@$later" "$glob_item_bad"
+set +e
 out="$("$CHECK" "$worktree" reviewer-item "$delegated_at")"
-assert_eq "$(jq -r '.ok' <<<"$out")" "true" "glob falls back past malformed-item to older well-formed artifact"
-assert_eq "$(jq -r '.path' <<<"$out")" "$glob_item_ok" "glob fallback selects the well-formed sibling"
+rc=$?
+set -e
+assert_eq "$rc" "1" "glob malformed-item is terminal, not rescued by an older sibling"
+assert_eq "$(jq -r '.reason' <<<"$out")" "incomplete" "glob terminal malformed-item keeps reason=incomplete"
+assert_eq "$(jq -r '.path' <<<"$out")" "$glob_item_bad" "glob terminal malformed-item points at the rejected artifact"
+
+# MUST-FAIL CONTROL: with the malformed artifact STALE, the fresh well-formed
+# one is the answer — terminal refuses THIS run, not the agent forever.
+touch -d "@$before" "$glob_item_bad"
+expect_glob_valid "$worktree" reviewer-item "$delegated_at" "$glob_item_ok" "a STALE malformed-item artifact does not block a fresh well-formed one"
+touch -d "@$later" "$glob_item_bad"
+
+# THE OTHER SIDE OF THE RULE. Arrays missing wholesale IS the truncated-write
+# shape, so that one still falls back — the same reason word, the opposite
+# disposition, which is why the disposition belongs to the gate and not to the
+# reason name.
+glob_trunc_ok="$worktree/tmp/review-reviewer-trunc-20260810-000000.json"
+printf '{"verdict":"pass","blockers":[],"suggestions":[],"qa_metadata":{}}' > "$glob_trunc_ok"
+glob_trunc_bad="$worktree/tmp/review-reviewer-trunc-20260810-111111.json"
+printf '{"verdict":"pass","summary":"truncated","qa_metadata":{}}' > "$glob_trunc_bad"
+touch -d "@$after" "$glob_trunc_ok"
+touch -d "@$later" "$glob_trunc_bad"
+expect_glob_valid "$worktree" reviewer-trunc "$delegated_at" "$glob_trunc_ok" "glob still falls back past a truncated write to an intact sibling"
+
+# ...and that fallback is a real answer, not an absence of gating: alone, the
+# truncated artifact is still rejected.
+set +e
+out="$("$CHECK" --file "$glob_trunc_bad")"
+rc=$?
+set -e
+assert_eq "$rc" "1" "the truncated-write artifact is itself still rejected"
+assert_eq "$(jq -r '.reason' <<<"$out")" "incomplete" "the truncated-write artifact reports reason=incomplete"
+
+# --- valid_undermeasured is named at every site that consumes the check ---
+# Making the undermeasured state machine-readable only helps where a caller
+# reads it. All three call sites take a result that may carry the reason; a
+# site that names only ok/true records a review whose own instrument produced
+# nothing as an ordinary one.
+review_pr_sites="$REPO_ROOT/skills/orch/workflows/review-pr.md"
+submit_pr="$REPO_ROOT/skills/orch/workflows/submit-pr.md"
+assert_file_contains "$review_pr_sites" "valid_undermeasured" "review-pr.md names the undermeasured reason"
+assert_file_contains "$submit_pr" "valid_undermeasured" "submit-pr.md § 1 names the undermeasured reason"
+assert_eq "$(grep -c 'valid_undermeasured' "$review_pr_sites")" "2" "review-pr.md names it at BOTH its call sites (§ 2.5 external, § 3.1 completion)"
+assert_file_contains "$review_pr_sites" "measurement_failed" "review-pr.md relays the declaration string"
+assert_file_contains "$submit_pr" "measurement_failed" "submit-pr.md relays the declaration string"
 
 # --- usage errors ---
 set +e

@@ -94,12 +94,16 @@ an artifact states its OWN measurements. blockers[]/suggestions[]/questions[]
 describe the code under review, so a reviewer quoting a fixture, a log line, or
 another tool's zeroed run puts it there and the gate stays out of its way.
 
-TERMINAL vs per-file rejections (glob mode): `no_review` and `zero_sample` are
-the reviewer's self-report about the RUN, so the newest fresh artifact carrying
-one ends the search — an older sibling does not answer them, and the prescribed
-self-check boundary of 0 makes every prior artifact fresh. `stale`, `invalid`
-and `incomplete` describe one WRITE, so the search falls back past them to an
-intact sibling as before.
+WHEN AN OLDER SIBLING MAY ANSWER (glob mode): a rejection that is the
+artifact's SELF-REPORT ABOUT THIS RUN ends the search — no earlier file answers
+"did this review happen, did it measure anything, are these findings routable",
+and the prescribed self-check boundary of 0 makes every prior artifact fresh.
+Only a rejection that could be a TORN OR TRUNCATED WRITE falls back. Reason
+names do not decide this: `incomplete` is terminal when finding items use wrong
+field names (this run's output) and falls back when the arrays are missing
+wholesale (the write was truncated). Each gate states its own disposition; see
+lib/review-artifact-gates.sh. `stale` and a missing `.verdict` describe one
+write and fall back.
 
 Every ok=false result carries a `detail` naming its cause: a reason with no
 cause is a dead end for the agent that has to fix it, and review-pr.md § 3.1
@@ -107,19 +111,14 @@ spends its one permitted re-delegation relaying that text. The {ok, path,
 reason} fields are always present; `detail` and `measurement_failed` are
 additive.
 
-When jq cannot run at all, every mode still prints a parseable rejection
-({"ok":false,...,"reason":"invalid"}) rather than exiting empty — a caller
-reading .ok gets a refusal, never a parse it has to guess about.
+When the check cannot run at all — jq missing or broken, or mktemp unable to
+create the gates' error channel — every mode still prints a parseable rejection
+({"ok":false,...,"reason":"invalid"}) rather than exiting empty. Exit 1 is the
+status a legitimate rejection uses, so an empty stdout beside it would read as
+"artifact rejected" to a caller checking only the status.
 
 Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error.
 EOF
-}
-
-# Last-resort emitter: no jq, no substitution, no way to fail. Every mode ends
-# in a parseable result even when jq is missing or broken, so a caller reading
-# .ok gets a rejection rather than an empty parse it has to guess about.
-emit_unavailable() {
-  printf '{"ok":false,"path":null,"reason":"invalid","detail":"review-artifact-check could not run jq, so no artifact could be validated"}\n'
 }
 
 # A declared instrument failure rides along on every result for the artifact
@@ -136,7 +135,7 @@ emit() {
         else {measurement_failed: $measurement_failed} end)' 2>/dev/null)"; then
     printf '%s\n' "$out"
   else
-    emit_unavailable
+    emit_unavailable "review-artifact-check could not run jq, so no artifact could be validated"
   fi
 }
 
@@ -253,16 +252,12 @@ if ! [[ "$delegated_at" =~ ^[0-9]+$ ]]; then
   exit 2
 fi
 
-# A rejection is TERMINAL when it is the reviewer's self-report about the RUN
-# rather than a property of the file: `no_review` says no review happened,
-# `zero_sample` says the measurement behind it produced nothing. Neither is
-# answered by an older sibling, and the reviewer's own self-check is prescribed
-# with boundary 0 (reviewer SKILL.md § Output Contract), which makes every
-# prior artifact fresh by construction — so falling back would hand a reviewer
-# ok=true for a review it did not perform, and hand review-pr.md § 3.1 an
-# earlier round's path to record. `stale`, `invalid` and `incomplete` stay
-# per-file: those describe THIS write (missed deadline, torn, truncated), and
-# an intact sibling is a legitimate answer to them.
+# Whether an older sibling may answer a rejection is decided by the gate that
+# rejected, not by this loop matching reason names — see the disposition rule in
+# lib/review-artifact-gates.sh. Anything a gate did not mark `torn_write` stops
+# the search here. `stale` and a missing `.verdict` are judged below and are
+# per-file by nature: they describe THIS write, and an intact sibling is a
+# legitimate answer to them.
 glob_check() {
 reason="missing"
 fail_path=""
@@ -296,12 +291,10 @@ while IFS= read -r file; do
     emit true "$file" "$review_artifact_reason"
     return 0
   fi
-  case "$review_artifact_reason" in
-    no_review|zero_sample)
-      emit false "$file" "$review_artifact_reason" "$review_artifact_detail"
-      return 1
-      ;;
-  esac
+  if [[ "$review_artifact_disposition" != "torn_write" ]]; then
+    emit false "$file" "$review_artifact_reason" "$review_artifact_detail"
+    return 1
+  fi
   if [[ -z "$fail_path" ]]; then
     fail_path="$file"
     reason="$review_artifact_reason"

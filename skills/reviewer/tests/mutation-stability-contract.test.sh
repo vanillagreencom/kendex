@@ -45,6 +45,15 @@ require_fixed "$skill" 'then reverting' 'mutation is reverted before reporting'
 require_fixed "$skill" 'default N=10' 'default repeat count'
 require_fixed "$skill" '--test-threads' 'concrete elevated-parallelism example'
 require_fixed "$skill" 'mutation: killed X/X; stability: Y/N at T threads' 'fixed two-number report format'
+
+# The rule that PRODUCES the citation has to name the carrier the gate SCOPES
+# to, or a reviewer following the pairing rule writes its own numbers into the
+# finding they validate — where they are read as quoted evidence and never
+# checked. That is the original incident shape reading green by placement.
+require_fixed "$skill" "artifact's \`summary\`" 'pairing citation is required in the summary'
+require_fixed "$skill" 'is not checked' 'pairing rule says a finding-only citation is unchecked'
+require_fixed "$SKILL_DIR/schemas/review-finding.md" 'Mutation-Stability Pairing' 'schema doc points back at the producing rule'
+require_fixed "$SKILL_DIR/schemas/review-finding.md" 'belongs in `.summary`' 'schema doc names the carrier for the pairing citation'
 require_fixed "$skill" 'concurrency-sensitive' 'finding classification for stability failures'
 require_fixed "$skill" 'never a pass' 'stability-fail-is-a-finding rule'
 

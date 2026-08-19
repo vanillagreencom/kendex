@@ -97,7 +97,9 @@ Per-agent QA payload (`workflows/qa-review.md`); `{}` when there is none. A revi
 ## Measurement Claims
 
 `.summary` and `.qa_metadata` are where you state your OWN measurements, and only those two are
-scanned. A measurement cited there must carry samples: `review-artifact-check` rejects the
+scanned. Your mutation-stability pairing citation (reviewer SKILL.md § Mutation-Stability Pairing)
+therefore belongs in `.summary`: the same numbers written only into a blocker or suggestion are read
+as evidence you are quoting, are not checked, and so hide your own measurement from the gate. A measurement cited there must carry samples: `review-artifact-check` rejects the
 artifact (`zero_sample`) when a mutation/stability citation's SAMPLE COUNT — the denominator, or
 the thread count — is zero, or when `qa_metadata.perf_qa` carries no `percentiles` value above
 zero. A zero RESULT is not a zero sample: `stability: 0/10` is ten measured runs that all failed,
