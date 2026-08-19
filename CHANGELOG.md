@@ -14,6 +14,31 @@
   is now REFUSED at install rather than written (VST-283).
 
 ### Added
+  The suite now restores the default disposition for INT and QUIT before it
+  measures anything, re-execing itself once through `env --default-signal` or
+  perl, and fails loud naming the cause where neither can restore them rather
+  than running arms that cannot be measured. The once-marker is dropped after
+  the re-exec, so the nested runs re-exec on their own terms. A new arm pins
+  it: the suite is launched by a no-job-control shell that backgrounds it —
+  the shape every parallel runner has — and must still exit 130 on an
+  interrupt. That arm fails on the previous code even in a serial foreground
+  run, so CI catches the defect where the runs are sequential.
+- review-gate: `settings-example-sync.test.sh` can no longer report success
+  for comparisons it never made (#1507). Its assertion helper ran each
+  expression through `eval` in the CURRENT shell, so the absent-root guard —
+  `[ -f "$ROOT_TEMPLATE" ] || exit 0` — ended the whole SUITE with status 0
+  instead of skipping the one comparison it guarded. In any consumer that
+  vendors the skill without the repo-root template, all 17 REVIEW_GATE
+  key-presence and default-drift comparisons went unmade and the run printed
+  zero bytes, which a CI job wiring the suites in counts as a passing suite.
+  Assertions now run as commands rather than eval'd expression strings, so
+  there is no expression for an `exit` to hide in and no later assertion has
+  to remember the hazard. An absent root template is a counted, printed
+  `  skip  ` per key — the same shape review-gate's other suites already use
+  — the skill-side assertions still run, and every run ends with a
+  `N passed, N failed, N skipped` summary, so an unmeasured run cannot read
+  as a clean one. The absent SKILL template, which ships beside the suite and
+  is a broken checkout rather than a downstream condition, fails loud.
 
 - growth-guards: `scripts/install-git-hooks` writes the `.git/hooks` shims and
   the `vstack-guards` helper, so the guard chain runs at commit time.
@@ -64,7 +89,6 @@
   `U`, `--diff-filter=A` drops that record, and the run reported
   `OK — 0 staged addition(s) checked` — a file of any size past the ceiling. Same failure class as #1492 — a measurement that could
   not be taken must never report as a clean measurement.
-
 - growth-guards: policy reads fail closed on a probe git could not answer, and
   a configured policy path is matched literally (#1508). `gg_policy_content`
   discarded the exit status of both its probes, so exit 1 ("no such path") and
@@ -86,7 +110,6 @@
   arrives as a bare status, so an unreadable list was becoming an EMPTY list
   and the gate then returned a verdict — reporting as a violation the very
   file the unread policy excluded.
-
 - growth-guards: policy writes land by same-directory rename (#1502). The
   settings cache was materialized by redirecting straight onto its final path,
   so an interrupt left a TRUNCATED cache that the next run read as the
@@ -121,7 +144,6 @@
   `GIT_CONFIG_COUNT` it exited 128 with a foreign `pre-commit` running twenty
   times. The adoption pin now requires an actual `.` of the harness rather
   than a grep for either token, which a comment satisfied.
-
 - growth-guards: a green suite run is silent (#1503). `todo-ban.test.sh`
   redirected into `stagedx/tools/` before that directory existed and recovered
   through a fallback, so every passing run printed a `No such file or
@@ -131,7 +153,6 @@
   class: all now emit nothing on stdout beyond their assertions and nothing at
   all on stderr, except `install-git-hooks.test.sh`, which passes real hook
   output through.
-
 - growth-guards: `cleanup-scope.test.sh` asserts cleanup over a scratch root
   the suite owns instead of counting entries in the shared temp namespace
   (#1501). The old count compared `gg-todo-ban.*` entries in `$TMPDIR` before
@@ -143,7 +164,6 @@
   harness now points `TMPDIR` inside each suite's own scratch root, which is
   where the check under test creates its directory, and the count is a glob
   over that root paired with a decoy control proving it can see one.
-
 - growth-guards: every test suite now runs against a neutralized git
   configuration, from one shared `tests/lib/harness.bash` rather than four
   lines repeated per file (#1500). Nine of the ten suites ran `git init` and
@@ -163,115 +183,14 @@
   suite neither sources the harness nor isolates itself: the tenth suite
   cannot forget. The harness is `.bash`, not `.sh`, because runners and the
   exec-bit lint glob `tests/*.sh` and git's pathspec matches nested paths.
-- growth-guards: `install-git-hooks --check` recognizes a hand-wired
-  `core.hooksPath` directory by a CLOSED grammar, and answers `2` for anything
-  outside it. An earlier pass read the hook line by line and armed on the
-  entry point wherever it stood in command position; that still reported
-  `armed`, exit 0, for `if false; then exec …/pre-commit; fi`, for the same
-  line inside a function nothing calls, and for a `<<-` heredoc whose
-  terminator is indented — three clones whose commits git does not gate at
-  all, each confirmed by a `git commit` that went straight through. Deciding
-  which lines a shell reaches needs a shell parser, and the failure direction
-  of guessing is OPEN, which is the one direction this answer must never
-  fail in. `--check` now accepts a hook that is a shebang, comments, and
-  exactly one command that is this skill's entry point (through `exec` or
-  not, quoted or not), plus the delegating line the installer itself writes
-  beside its helper. Anything else is `2`, `could not determine`, naming the
-  recognized shape — not `1`, because a hook that runs `set -e` before the
-  entry point does gate and calling it ungated is the same lie reversed. The
-  accepted TAIL is checked too, not just the command word: `exec
-  …/pre-commit --help` and `…/pre-commit "$@" || true` both name the entry
-  point in command position and both let every violation through. The
-  accepted forms are per hook — `pre-commit` takes no arguments, `commit-msg`
-  needs git's message-file path — because swapping them breaks the gate
-  rather than loosening it: `pre-commit "$1"` exits 2 on the argument it
-  refuses and a bare `commit-msg` reads inherited stdin and calls every
-  message empty, so both reject valid commits while validating nothing.
-  `armed` additionally requires that the entry point resolve to a real
-  executable — a path shaped like one but pointing at a moved install leaves
-  git answering every commit with command-not-found — and that the hook's
-  shebang carry no interpreter option, since `#!/bin/sh -n` syntax-checks the
-  body, exits 0, and runs no guard while every violating commit passes. Where the command is the
-  entry point and only its argument list is unrecognized, the answer is `2`
-  rather than `1`: `exec …/pre-commit "$@" # run the guard` does gate, and
-  calling it ungated would be the same false answer this fix exists to
-  remove. `1` is reserved for a single command that is not the entry point,
-  or an entry-point path with nothing executable at it. The accepted-tail
-  comparison escapes its own pattern metacharacters, since an unescaped `?`
-  matched `|| exit $#` as though it were `|| exit $?` — and git gives
-  pre-commit no arguments, so that is `exit 0` and swallowed every
-  pre-commit failure while `--check` reported armed. An entry-point path
-  whose final component is a SYMLINK is unverifiable for the same reason the
-  suffix alone never was enough — two links to `/bin/true` passed every file
-  test and reported `armed` while every commit bypassed the guard. The
-  candidate is now compared by PHYSICAL LOCATION against this install's own
-  entry point rather than by the shape of its path — a path is a name, and a
-  regular executable copy of `/bin/true` can wear it — while a symlinked
-  parent directory still resolves to the real install and stays armed. A tail must
-  be separated from the command by a real blank, since the shell concatenates
-  `"…/commit-msg""$1"` into one unrunnable word; and only blanks are trimmed,
-  because `[[:space:]]` would eat a trailing CR that the shell keeps as part
-  of the word. The shebang grammar uses blanks for the same reason: a
-  `#!/bin/sh` line ending in CR makes the kernel look for an interpreter
-  named `/bin/sh\r`, so git cannot run the hook at all and a clean commit
-  dies with `cannot exec`. The interpreter itself is checked by full path
-  against a short trusted list, since `#!/tmp/fake/sh` can be a copy of
-  `/bin/true` — git runs it, ignores the hook body, and gates nothing — and
-  an `env` shebang resolves through PATH, which is no more knowable. A listed path must also EXIST and be executable:
-  `/bin/dash` and `/bin/ksh` are absent from plenty of hosts, and git answers
-  `cannot exec` for every commit there rather than running the hook. A shim in
-  `.git/hooks` carrying the guard line somewhere other than line 2 is `2`
-  rather than `1`: it still gates, and calling a gated repository ungated is
-  the same false answer pointing the other way. INSTALL applies the same
-  interpreter predicate as the check, refusing to wire a hook it could not
-  then vouch for and saying which `#!` to use, so an install can no longer
-  report success that the next `vstack check` contradicts. Indentation is
-  stripped as blanks rather than whitespace for the same reason as the tail:
-  a line beginning with CR runs a command named `\rexec`. The
-  delegating shape's helper is verified the same way: outside the
-  installer-owned hooks directory it is a copy someone made, and the marker
-  it was recognized by is a comment anyone can type — an executable
-  `# vstack growth-guards git hooks` plus `exit 0` carried it while bypassing
-  every guard. The bytes are now compared against the helper this installer
-  generates, through one `helper_body` that the writer and the verifier
-  share, so the two cannot drift apart. That comparison applies in
-  `.git/hooks` too, not only in a redirected directory: `--check` is
-  READ-ONLY, so "the installer rewrites this file" says nothing about the
-  copy sitting there now, and a marker-carrying stub in the ordinary install
-  reported `armed` while every violation went through. The interpreter is
-  judged in `.git/hooks` for the same reason: a shim rewritten to
-  `#!/bin/sh -n` reads the guard line and executes nothing, and that is the
-  ordinary install, not a hand-wired one. The
-  suite asserts the property directly rather than the wording: exit 0 is
-  claimed only where a real violating commit is really blocked AND a clean
-  one still passes, which is the half that separates a working gate from a
-  hook that refuses everything.
-
-- growth-guards: `install-git-hooks --check` now probes the directory
-  `core.hooksPath` redirects git to, instead of judging a redirected clone
-  solely by `.git/hooks` (#1509). The installer stands down under
-  `core.hooksPath` and prints hand-wiring instructions, but `--check` never
-  read the directory those instructions name: a clone wired exactly as told
-  was reported `dormant … commits are NOT gated` and exited 1, and a
-  consumer with `--check` first in its canonical verify command was
-  permanently red for the configuration the tool itself prescribed. The
-  redirect target is resolved through git, so an absolute, `~`-prefixed or
-  work-tree-relative value all land where git lands, including when
-  `--check` runs from a subdirectory. Hooks there that run this skill's
-  `pre-commit` and `commit-msg` — by naming the entry point, or by carrying
-  the delegating line beside a helper in that same directory — are `armed`
-  and exit 0, and the verdict names the directory the gating comes from.
-  Everything short of that stays exit 1 with the hand-wiring remedy, which
-  is then accurate: a target that is missing, empty, wired to another tool,
-  wired for only one of the two hooks, or left without the executable bit.
-  A target that cannot be read is exit 2, not a verdict — the remedy would
-  otherwise tell the user to wire a directory that may already be wired and
-  merely unreadable. Only executable lines count as wiring: a comment, a
-  heredoc body, an argument to another command, and anything past an
-  unconditional `exit` name the entry point without ever running it, and a
-  check that read a mention as wiring would report gating that no commit
-  gets. The unredirected case is untouched.
-
+- growth-guards: `install-git-hooks --check` reports `armed` only when it has
+  verified the shims really gate — the entry point and helper are compared by
+  location and bytes against this install, the interpreter against a trusted
+  list, and the command spelling must survive shell evaluation. Anything it
+  cannot verify is exit `2`, never a verdict, and `install` refuses what
+  `--check` could not vouch for. Previously a lookalike path, a copied helper,
+  a fake interpreter or an expandable path all read as `armed` while commits
+  bypassed every guard (#1509).
 - CLI: a lock `source` recorded as a path inside `~/.vstack/cache/` now
   resolves as the remote that cache entry clones, instead of as an ordinary
   local checkout (#1495). vstack's cache is its own TTL-managed state, but
@@ -403,7 +322,6 @@
   `.` and bare names are recorded resolvably as) is named instead of walked
   past: silently reaching the next source installed from one the project never
   chose and failed with an error naming it.
-
 - preflight: installed-artifact subtrees are now out of scope for every lane
   that judges how a file is AUTHORED, not just `docs-cited-paths`. The
   `vendored_mirror` classification already knew those paths are upstream
@@ -423,7 +341,6 @@
   malformed config, a leaked temp directory or an unreferenced work marker
   becomes invisible. Both directions are pinned in `precision.test.sh`, per
   guard. (#1498)
-
 - preflight: new `hardcoded-temp-path` lane — an added directory-creating
   call taking a literal `/tmp/…` or `/var/tmp/…` as (part of) its first
   argument fails. A literal absolute temp path escapes TMPDIR redirection
@@ -456,7 +373,6 @@
   component. The CLI relays the verdict line rather than re-deriving it, so
   `check` and the installer cannot disagree about what "armed" means; a
   non-armed verdict makes `vstack check` exit 1 like any other drift.
-
 - size-ratchet: three fail-closed fixes, each with its own regression pin.
   `--seed` stays bootstrap-only against the COMMITTED baseline too: its
   existence probe read the index alone, so staging the baseline's deletion
@@ -474,7 +390,6 @@
   and a caller asking for built-in defaults got whatever the repository's
   env files said; the dotenv layers are skipped with it now, leaving
   explicit environment variables and the defaults.
-
 - growth-guards: the same two settings fixes, which its vendored copy of the
   loader carried. A hook lane resolving tracked settings from the index no
   longer reads a broken `git` as "untracked" — a committed commit-type list
@@ -482,13 +397,11 @@
   own configuration rejects — and
   `GROWTH_GUARDS_SETTINGS_FILE=/dev/null` selects no settings source at all
   rather than leaving `.env.local` and `.env` deciding.
-
 - review-gate: the `/dev/null` force-defaults handle is answered in
   `rg_setting`, ahead of every source, rather than through an exemption in
   the source-shape check. Behavior is unchanged there — the loader has no
   dotenv layers to leak — and the copies vendored from it now answer the
   sentinel through the same construct.
-
 - size-ratchet: seven fixes absorbed from the forked copy drovr has been
   running (DRO-201), each with its own regression pin.
   `--update` converges in ONE run: the baseline's own row is reconciled
@@ -521,7 +434,6 @@
   `--` moves before the pattern in the remaining greps (and before the
   mode in `chmod`) — non-permuting BSD/POSIX option scanning stops at the
   first operand, so the trailing form failed every invocation on macOS.
-
 - pi-agents-tmux: the idle-stall watchdog skips panes with a pending
   rate-limit retry instead of condemning a merely-throttled agent as a
   post-compaction stall; its synthetic summary no longer asserts a cause it
@@ -541,7 +453,6 @@
   the PR comment only; failure-shaped reasons (CI_FAILURE, plus anything
   unrecognized, fail-closed) still file into triage. Cuts ~85% of the
   ejection-issue noise the GH→Linear sync was mirroring.
-
 - cli: A shared config is read with the parser its OWN harness uses, never the
   one its file extension suggests. OpenCode hands `opencode.json`,
   `opencode.jsonc`, its global config and whatever `$OPENCODE_CONFIG` names to
@@ -563,7 +474,6 @@
   that is actually on disk too, so a user who keeps `opencode.jsonc` gets the
   registration written into the file they use instead of a second one beside
   it.
-
 - cli: `vstack check` is a process contract a session can branch on — exit `0`
   clean, `1` drift, `2` the check itself failed, `--quiet` silent when clean,
   `--json` on stdout, `--offline` skipping every network call. Items a source
@@ -708,13 +618,11 @@
   (paired tool rows, capped previews, `✖`-marked failures, line-boundary tail
   with a dropped-events note) instead of raw JSONL, and `e` opens the raw
   file in `$VISUAL`/`$EDITOR` (VST-327).
-
 - pi-agents-tmux: Monitor tree task rows show elapsed/total run-time instead
   of a jumpy local `HH:MM` clock (`updatedAt` is no longer a time source);
   detail-pane timestamps render local human time instead of UTC ISO, and the
   Task Summary gains a Duration line once terminal; running elapsed keeps
   ticking even with spinner animation off (VST-316).
-
 - growth-guards: the pre-commit shim chain runs `preflight --staged` when
   that skill is installed beside it — a human committing outside any harness
   gets the deterministic checks CI would report, first; a repository's first
@@ -804,6 +712,151 @@
   dequeues and conflict re-evaluations get a PR comment only.
 - pi-agents-tmux: the idle-stall watchdog skips panes with a pending rate-limit
   retry instead of condemning a throttled agent as stalled (VST-361).
+  acceptance boxes; oversee's close-out and audit-issues' preflight run it, so
+  a skipped close step or a partial-scope `Closes` cannot stay silent (VST-318).
+- settings templates: every key's comment condensed to one-line intent plus
+  landmines (922 → 545 lines across the root and skill templates, zero value
+  changes); refresh's seeded-comment rewrite propagates the terse form to
+  consumer files whose blocks are unedited (VST-317).
+- linear: a truncated `cache issues list` announces itself on stderr with
+  both counts instead of returning a bare 75-row array that reads as
+  complete; `--max`/`--limit` are documented in SKILL.md (VST-320).
+- size-ratchet: `--seed` writes the FIRST baseline from the gate's own
+  collector (exact counts, class thresholds, excludes, sorted, self-row) and
+  refuses a live one — installing the skill no longer leaves a gate that can
+  never be turned on; the two stale built-in-1000 test messages read 400
+  (VST-328).
+- preflight: the code-citation lane leaves installed-artifact subtrees alone
+  (`.agents/` and the harness dirs' skills/agents/hooks/rules/instructions/
+  packages trees) — a vendored skill's example path is upstream's prose, not
+  the consuming repo's claim, so committing the installed copy no longer
+  trips `docs-cited-paths`; authored files elsewhere under the harness dirs
+  keep the lane (VST-312).
+- preflight gains three added-line lanes taken from the classes review bots
+  keep finding first: `unwired-suite` (a new `tests/*.test.sh`,
+  `tests/test-*.sh` or `*.test.ts`/`.js`/`.mjs` that no tracked runner
+  invokes — suites have shipped that CI never ran), `mktemp-trap` (a new
+  shell file whose scratch directory no `trap ... EXIT` ever removes), and a
+  `fail-open` extension for `grep`/`find`/`git`/`jq`/`diff`/`cmp` whose
+  status a trailing `|| true` erases, which turns "could not read the input"
+  into a clean empty answer. Wiring evidence for the first lane is read from
+  the tracked runners themselves — the workflows, `tools/validate*`,
+  `scripts/validate*`, the package/build manifests, and a `run-all.sh`
+  beside the suite — through the same index-vs-worktree resolution the rest
+  of the tool uses, so `--staged` judges the staged runner. Both new-file
+  queries now disable rename detection like the rest of the change-set
+  queries: a file that arrives by `git mv` is the new file it now is, which
+  also un-blinds the existing strict-mode check.
+- Reviewer agents gain five probes for the classes that were being caught
+  downstream instead of in review: surface enumeration and teardown symmetry
+  and staged-vs-worktree policy reads (`reviewer-correctness`), enumerations
+  of named repo objects re-derived in both directions (`reviewer-doc`), the
+  satisfied-but-inert control forms a text-matching guard must be shown to
+  reject (`reviewer-test`), and read-then-write-back files proven regular and
+  non-symlink at the point of write (`reviewer-safety`).
+- The `--` rule now says which paths it governs: values sourced from
+  configuration, argv, or the environment, never a path the script built
+  itself. The unqualified wording drove more declined review threads than
+  real fixes, so the qualifier ships in `skills/code-quality/SKILL.md` and
+  `AGENTS.md`, and the same carve-out — with the test-owned `mktemp -d`
+  scratch and the `${arr[@]+"${arr[@]}"}` empty-array idiom — is published
+  where the review bots read it, in the new
+  `.github/instructions/tests.instructions.md` and `.pr_agent.toml`.
+- orch PR-comment triage batches fix rounds per fully-reviewed head: a push
+  restarts every reviewer, so a round pushed into an open review pass buys
+  duplicate findings and unanswered threads.
+- Skill `description:` frontmatter is one or two sentences again across the
+  catalog — what the skill is and when to load it, with the sub-feature
+  enumerations that had grown into ten of them left to the body. The longest
+  fell from 810 characters to 214, and every skill now fits in a loader's
+  index without crowding out its neighbours; `vstack refresh` delivers the
+  shorter text to consumers. The growth-guards skill also lost the narration
+  that accumulated around its checks: duplicated scan machinery now has one
+  home in `lib/common.sh`, SKILL.md carries what every load needs and README
+  the adoption depth. Every verdict, remediation and exit code is unchanged;
+  the only text that moves is two collection-error diagnostics, which now name
+  the lane whose scan failed.
+- hooks: one execution contract decides what installing a hook means. An
+  event × harness matrix (`cli/src/installer/hooks/contract.rs`) names the
+  mechanism, and every install path, `vstack list`/`check` label, and the
+  table published in the README derive from it — a test fails when the
+  published copy drifts. `list` and `check` now print `enforced` /
+  `advisory` / `unsupported` per harness per installed hook, advisory
+  artifacts (Cursor rules, OpenCode instructions, the Codex prose fallback)
+  carry `advisory — this harness cannot execute hooks`, and Pi reports
+  `unsupported` until `@vanillagreen/pi-hooks` — which carries all Pi hook
+  behavior — is actually installed. Breaking: a hook whose `event:` is not a
+  row of the contract is refused at install instead of registering something
+  no harness runs; supported events are listed in the refusal (VST-283).
+- hooks: registered commands resolve from any working directory in a project
+  that is not a git repository. Project-scope Codex hooks resolved through
+  `$(git rev-parse --show-toplevel)`, so in a non-git project every hook
+  command expanded to `/.codex/hooks/<name>.sh` and failed silently; they now
+  carry the install-time absolute path, which is the only anchor Codex can
+  resolve — it sets no project-root variable and runs the command from the
+  session cwd. Claude Code agent frontmatter took the project anchor even for
+  global installs, pointing at a project path that does not exist; it now
+  takes the same command the installer registers. A reinstall replaces a
+  git-anchored registration instead of adding a second handler beside it
+  (VST-283).
+- hooks: `block-unsafe-rm` declares `harnesses:` without `pi`. The
+  `pi-hooks` package has no port of it, and without the exclusion the
+  contract would report Pi enforcement that does not exist (VST-283).
+- hooks: a Codex registration is recognised by the script it runs, not by the
+  literal command string, so a project that moved no longer accumulates a
+  second handler pointing at a script that is gone — and removal takes the
+  old one with it. Handlers naming a script outside `<root>/.codex/hooks/`
+  are still left alone. A script path that is not valid UTF-8 is refused
+  instead of registered lossily as a command that resolves to nothing
+  (VST-283).
+- hooks: `vstack add` checks every selected hook's event against the contract
+  before its first write, so a refused event leaves no lock, agent, settings
+  or config behind (VST-283).
+- hooks: one predicate per harness decides which registered command is
+  vstack's, and install, removal and every presence report ask it. A Claude
+  Code or Codex command you reshaped by hand around vstack's script — an
+  `env`/`timeout` prefix, extra flags, a different quoting of the same path —
+  was already counted as installed, but `vstack remove` matched the literal
+  string only and left it registered, so the harness kept running a hook the
+  lock no longer knew about. The enforcement level `list` and `check` print
+  now comes from the same reader `verify` reports the gap from, so a hook
+  cannot read `enforced` on one command and drifted on another (VST-258,
+  VST-283).
+- growth-guards installs real git hooks: `scripts/install-git-hooks` writes
+  `.git/hooks/pre-commit` and `.git/hooks/commit-msg` shims (plus the
+  `vstack-guards` helper it owns) so the guard chain — `size-ratchet
+  --staged`, the staged growth-guards batch, and an optional repo-local entry
+  named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL` — blocks a `git commit` from any
+  tool, not only from the harnesses with their own hook system.
+  `core.hooksPath` is never touched, an existing hook keeps its content and
+  its own exit status, and the shims fail closed: a guard that cannot run
+  blocks too. `vstack add` / `vstack refresh` arm and repair them, so
+  consumers get them on their next refresh after adopting growth-guards, and
+  `vstack remove growth-guards` disarms them again — refusing the removal if
+  that cleanup fails; non-git projects are skipped with a note.
+- size-ratchet grows `--staged`: it counts INDEX blobs for every tracked file
+  instead of preferring the worktree copy, so growth that is staged and then
+  reverted on disk cannot pass a pre-commit gate. CI, which checks out a
+  clean tree, needs no flag.
+- size-ratchet: thresholds are per path class. `SIZE_RATCHET_CLASSES` maps
+  globs to thresholds (`"tests/*=800;*/tests/*=800"`, first match wins,
+  the exclusion list's glob semantics); a path matching none takes
+  `SIZE_RATCHET_THRESHOLD`, and everything else — new-offender, growth and
+  stale-row detection, tighten-only `--update` — runs per file against that
+  file's own number. Diagnostics now name the threshold that judged the
+  path and whether it came from a class or the default. A malformed entry
+  is a config error naming it; unset or empty is exact single-threshold
+  behavior.
+- **BREAKING** size-ratchet: the default `SIZE_RATCHET_THRESHOLD` drops
+  from 1000 to 400 (the fleet's two-tier ruling: implementation 400, tests
+  800). Migration for a repo on the default, in this order: declare
+  `SIZE_RATCHET_CLASSES` for the repo's test layouts FIRST, then run the
+  check and turn each reported `new offender` line into a `path<TAB>lines`
+  baseline row — freezing before declaring would baseline 401–800-line test
+  files that the test class then makes stale. `--update` never adds rows, so
+  that freeze is the one hand-edit. Declaring `SIZE_RATCHET_THRESHOLD =
+  "1000"` keeps the old number instead. Repos that already pin the threshold
+  are unaffected.
 
 ## Earlier (condensed, through 2026-08-16)
 
