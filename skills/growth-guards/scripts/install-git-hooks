@@ -692,6 +692,17 @@ hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecogni
     esac
     # Split off the command word, honouring one layer of quoting so a path
     # containing a space stays one word.
+    # `NAME=value cmd` runs cmd with an env prefix, so the command word is
+    # further along. Reading the assignment as the command reported a hook
+    # that gates as NOT gated, so the shape is unverifiable instead.
+    case "$rest" in
+      [A-Za-z_]*=*)
+        case "${rest%%=*}" in
+          *[!A-Za-z0-9_]*) ;;
+          *) opaque=1; continue ;;
+        esac
+        ;;
+    esac
     quoting=none
     case "$rest" in
       \"*)

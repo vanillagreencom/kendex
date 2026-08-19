@@ -1435,7 +1435,10 @@ unverifiable_shape "a hook whose command line ends in a carriage return"
 # tokens further along, and reading the option as the command would report a
 # hook that gates perfectly well as NOT gated — the false negative this
 # grammar reserves exit 2 for.
-arm_pair '#!/bin/sh\nexec -a guard %s/pre-commit "$@"\n' '#!/bin/sh\nexec -a guard %s/commit-msg "$1"\n'
+# `#!/bin/bash` deliberately: `exec -a` is a bash extension, and /bin/sh is
+# dash on the CI runner, where this hook would fail to run at all rather than
+# demonstrate the case.
+arm_pair '#!/bin/bash\nexec -a guard %s/pre-commit "$@"\n' '#!/bin/bash\nexec -a guard %s/commit-msg "$1"\n'
 unverifiable_shape "wiring behind an exec option"
 printf 'clean\n' >"$R38/ea.txt"
 git -C "$R38" add ea.txt
@@ -1562,6 +1565,18 @@ arm_pair '#!/bin/sh\nexec\t%s/pre-commit "$@"\n' '#!/bin/sh\nexec\t%s/commit-msg
 check_in "$R38"
 [ "$RC" -eq 0 ] && ok "control: a tab between exec and the entry point is armed" \
   || bad "tab-separated entry point armed" "rc=$RC out=$OUT"
+
+# `NAME=value cmd` really runs cmd; reading the assignment as the command
+# reported a gating hook as NOT gated.
+arm_pair '#!/bin/sh\nFLAG=1 %s/pre-commit "$@"\n' '#!/bin/sh\nFLAG=1 %s/commit-msg "$1"\n'
+unverifiable_shape "an environment assignment before the entry point"
+printf 'clean\n' >"$R38/ap.txt"
+git -C "$R38" add ap.txt
+commit_in "$R38" "feat: add ap"
+[ "$RC" -eq 0 ] && ok "and that hook really does gate, so it is not called ungated" \
+  || bad "assignment-prefixed hook gates" "rc=$RC out=$OUT"
+git -C "$R38" rm -q --cached ap.txt
+rm -f "$R38/ap.txt"
 
 # One passing control per shape the check does accept.
 arm_pair '#!/bin/sh\n%s/pre-commit "$@" || exit $?\n' \
