@@ -219,7 +219,10 @@
   `/bin/true` — git runs it, ignores the hook body, and gates nothing — and
   an `env` shebang resolves through PATH, which is no more knowable. A listed path must also EXIST and be executable:
   `/bin/dash` and `/bin/ksh` are absent from plenty of hosts, and git answers
-  `cannot exec` for every commit there rather than running the hook. The
+  `cannot exec` for every commit there rather than running the hook. A shim in
+  `.git/hooks` carrying the guard line somewhere other than line 2 is `2`
+  rather than `1`: it still gates, and calling a gated repository ungated is
+  the same false answer pointing the other way. The
   delegating shape's helper is verified the same way: outside the
   installer-owned hooks directory it is a copy someone made, and the marker
   it was recognized by is a comment anyone can type — an executable
