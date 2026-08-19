@@ -217,7 +217,9 @@
   dies with `cannot exec`. The interpreter itself is checked by full path
   against a short trusted list, since `#!/tmp/fake/sh` can be a copy of
   `/bin/true` — git runs it, ignores the hook body, and gates nothing — and
-  an `env` shebang resolves through PATH, which is no more knowable. The
+  an `env` shebang resolves through PATH, which is no more knowable. A listed path must also EXIST and be executable:
+  `/bin/dash` and `/bin/ksh` are absent from plenty of hosts, and git answers
+  `cannot exec` for every commit there rather than running the hook. The
   delegating shape's helper is verified the same way: outside the
   installer-owned hooks directory it is a copy someone made, and the marker
   it was recognized by is a comment anyone can type — an executable

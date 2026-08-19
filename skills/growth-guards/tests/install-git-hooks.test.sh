@@ -1491,6 +1491,27 @@ check_in "$R38"
   || bad "copied real helper armed" "rc=$RC out=$OUT"
 rm -f "$R38/shapehooks/vstack-guards" "$R38/shapehooks/pre-commit" "$R38/shapehooks/commit-msg"
 
+# On the trusted list is not on the disk. Pick whichever listed shell this
+# host lacks; if it has all of them the case cannot arise here and is
+# reported as skipped rather than silently dropped.
+GG_ABSENT_SH=""
+for gg_c in /bin/dash /bin/ksh /bin/zsh /usr/bin/dash /usr/bin/ksh; do
+  if [ ! -x "$gg_c" ]; then GG_ABSENT_SH="$gg_c"; break; fi
+done
+if [ -n "$GG_ABSENT_SH" ]; then
+  arm_pair "#!$GG_ABSENT_SH\nexec %s/pre-commit \"\$@\"\n" "#!$GG_ABSENT_SH\nexec %s/commit-msg \"\$1\"\n"
+  unverifiable_shape "a trusted interpreter path that is absent on this host"
+  printf 'clean\n' >"$R38/ai.txt"
+  git -C "$R38" add ai.txt
+  commit_in "$R38" "feat: add ai"
+  [ "$RC" -ne 0 ] && ok "and git really cannot exec that hook, so even a clean commit fails" \
+    || bad "absent interpreter blocks" "rc=$RC out=$OUT"
+  git -C "$R38" rm -q --cached ai.txt
+  rm -f "$R38/ai.txt"
+else
+  printf '  skip  a trusted interpreter path that is absent on this host (all are installed)\n'
+fi
+
 # One passing control per shape the check does accept.
 arm_pair '#!/bin/sh\n%s/pre-commit "$@" || exit $?\n' \
   '#!/bin/sh\n%s/commit-msg "$1" || exit $?\n'

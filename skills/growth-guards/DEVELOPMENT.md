@@ -138,7 +138,8 @@ nothing. The INTERPRETER is identified the same way — by full path against a
 short trusted list (`/bin` and `/usr/bin` shells) — because an executable
 named `sh` anywhere can be a copy of `/bin/true`, and git then runs it and
 ignores the hook body entirely. An `env` shebang resolves through PATH, so
-it is unverifiable rather than armed. The delegating shape's helper is
+it is unverifiable rather than armed, and a listed path that does not exist
+on this host is unverifiable too — git cannot exec such a hook at all. The delegating shape's helper is
 compared BYTE FOR BYTE against what this installer generates whenever it
 sits outside the installer-owned hooks directory, because there the marker
 is only a comment; `helper_body` is the single definition both the writer
