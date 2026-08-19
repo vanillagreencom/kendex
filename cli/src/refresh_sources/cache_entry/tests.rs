@@ -396,3 +396,60 @@ fn a_legacy_key_source_is_never_migrated_onto_a_second_clone() {
     });
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// A clone that is genuinely there but cannot be READ is reported as exactly
+/// that. `Path::exists` answers false for a permission error the same way it
+/// does for a missing file, so a valid clone whose directory went unreadable
+/// fell to the not-a-clone arm — which still passes, because `is_dir` only
+/// needs the parent readable — and was refused with a definite cause nothing
+/// had established, plus advice to DELETE it.
+#[test]
+fn an_unreadable_cache_entry_is_not_reported_as_missing_its_git() {
+    // Root ignores the mode bits, so the state under test cannot be built.
+    // SAFETY: `geteuid` reads the calling process's effective uid; it takes no
+    // arguments, touches no memory, and cannot fail.
+    if unsafe { libc::geteuid() } == 0 {
+        return;
+    }
+    let root = tmpdir("cache-path-unreadable");
+    let home = root.join("home");
+    let origin = root.join("origin");
+    init_git_repo(&origin);
+
+    crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+        let source = cache_entry_source(&origin, "legacy_key");
+        let entry = PathBuf::from(&source);
+        // Control: readable, this fixture resolves — so the refusal below is
+        // the permissions' doing and not the fixture's.
+        assert_eq!(
+            source_path_resolution(&source),
+            SourceResolution::Resolved(entry.clone())
+        );
+
+        let mut perms = std::fs::metadata(&entry).unwrap().permissions();
+        let restore = perms.clone();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o000);
+        std::fs::set_permissions(&entry, perms).unwrap();
+
+        let refusal = source_path_resolution(&source);
+        std::fs::set_permissions(&entry, restore).unwrap();
+
+        let SourceResolution::Refused(reason) = &refusal else {
+            panic!("expected a refusal, got {refusal:?}");
+        };
+        assert!(reason.contains(&source), "must name the entry: {reason}");
+        assert!(
+            reason.contains("could not be read"),
+            "must report the read it could not complete: {reason}"
+        );
+        assert!(
+            !reason.contains("is not one of its clones"),
+            "must not claim a cause nothing established: {reason}"
+        );
+        assert!(
+            !reason.contains("Remove it from"),
+            "must not advise deleting a clone it could not look at: {reason}"
+        );
+    });
+    let _ = std::fs::remove_dir_all(root);
+}

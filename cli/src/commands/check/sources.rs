@@ -118,6 +118,8 @@ pub(super) fn source_issues_for(
                     // The reason quotes the cache's recorded origin URL, which
                     // can carry a token — and is a SENTENCE, not a source.
                     reason: scrub_prose(reason),
+                    restore: crate::refresh_sources::restore_refused_source_argument(source)
+                        .map(|arg| scrub_source_credentials(&arg)),
                 },
                 // Not a problem with the source at all — see
                 // [`busy_sources_for`], which reports it where it cannot be

@@ -531,3 +531,58 @@ fn add_refuses_a_cache_root_directory_that_is_not_a_clone() {
     });
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// What the remembered chain records for a source that is NOT a cache path:
+/// the spelling, unchanged. Only the cache branch rewrites what goes in the
+/// lock — canonicalizing here too would turn a relative `./src`, which stays
+/// supported for a legacy or hand-edited lock, into a machine-specific
+/// absolute path in a file that is committed.
+#[test]
+fn a_remembered_local_source_is_recorded_as_spelled() {
+    let root = tmproot("add-remembered-spelling");
+    let home = root.join("home");
+    let config_dir = root.join("config");
+    let project_root = root.join("project");
+    for dir in [&home, &config_dir, &project_root] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    // A source the project can name relatively, and a symlink to it.
+    let src = project_root.join("src");
+    std::fs::create_dir_all(src.join("agents")).unwrap();
+    std::fs::create_dir_all(src.join("skills")).unwrap();
+    let link = project_root.join("link");
+    std::os::unix::fs::symlink(&src, &link).unwrap();
+
+    crate::test_util::with_home_and_config(&home, &config_dir, || {
+        crate::test_util::with_project_root(&project_root, || {
+            for spelled in ["./src", link.to_string_lossy().as_ref()] {
+                let mut lock = config::LockFile::default();
+                lock.add(config::LockEntry {
+                    name: "alpha".into(),
+                    kind: config::ItemKind::Skill,
+                    source: spelled.into(),
+                    source_repo: None,
+                    harnesses: vec!["claude-code".into()],
+                    method: config::InstallMethod::Copy,
+                    installed_at: "2026-08-18T00:00:00Z".into(),
+                    source_hash: String::new(),
+                });
+                lock.save(&project_root.join(".vstack-lock.json")).unwrap();
+
+                let registry = config::SourceRegistry::default();
+                let resolved = resolve_source_for_app(
+                    None,
+                    &registry,
+                    &project_root,
+                    SourceFetch::for_invocation(None, false),
+                )
+                .unwrap_or_else(|err| panic!("{spelled}: {err:#}"));
+                assert_eq!(
+                    resolved.source, spelled,
+                    "a local source must be recorded as the lock spelled it"
+                );
+            }
+        });
+    });
+    let _ = std::fs::remove_dir_all(root);
+}

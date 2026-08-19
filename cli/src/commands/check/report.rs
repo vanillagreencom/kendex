@@ -110,6 +110,12 @@ pub enum SourceProblem {
     Unverifiable {
         entries: Vec<String>,
         reason: String,
+        /// The argument `vstack add` must be given to clear it, `None` when
+        /// re-adding refuses again — which most refusals do, and which is why
+        /// this branch used to offer nothing at all. The redirect shapes are
+        /// the exception: they have a genuine one-command repair, and staying
+        /// silent about it left a permanent exit 1.
+        restore: Option<String>,
     },
 }
 

@@ -54,7 +54,7 @@ fn a_cache_entry_recorded_as_a_path_is_verified_through_its_remote() {
         assert!(
             matches!(
                 &report.source_issues[0].problem,
-                SourceProblem::Unverifiable { entries, reason }
+                SourceProblem::Unverifiable { entries, reason, .. }
                     if entries == &vec!["alpha".to_string()]
                         && reason.contains(&cache.to_string_lossy().into_owned())
                         && reason.contains("is not a remote vstack can fetch")
@@ -133,7 +133,7 @@ fn a_path_below_a_cache_entry_is_verified_through_that_entry() {
         assert!(
             matches!(
                 &report.source_issues[0].problem,
-                SourceProblem::Unverifiable { entries, reason }
+                SourceProblem::Unverifiable { entries, reason, .. }
                     if entries == &vec!["alpha".to_string()]
                         && reason.contains(&cache.to_string_lossy().into_owned())
                         && reason.contains("is not a remote vstack can fetch")
@@ -212,10 +212,7 @@ fn a_vanished_cache_entry_is_restored_from_the_identity_the_lock_records() {
         );
         let mut out = String::new();
         render_scope(&mut out, &report, false);
-        assert!(
-            out.contains("no source is recorded to restore it from"),
-            "{out}"
-        );
+        assert!(out.contains("nothing recorded can restore it"), "{out}");
         assert!(
             !out.contains(&format!("vstack add {}", cache.display())),
             "the dead path must never be prescribed: {out}"
@@ -233,5 +230,129 @@ fn a_vanished_cache_entry_is_restored_from_the_identity_the_lock_records() {
             out.contains(&format!("`vstack add {}`", elsewhere.display())),
             "{out}"
         );
+    });
+}
+
+/// A wiped cache entry beneath which the lock recorded a SUBDIRECTORY. The
+/// recorded identity names the repository, not the directory inside it, so
+/// offering it would install the repository ROOT over the subtree the lock
+/// chose — failing outright when the root carries no catalog, and worse when
+/// it carries a same-named item: exit 0, `source` rewritten to the repository,
+/// check green, and the item now propagating from a subtree the user never
+/// chose. No command is offered instead.
+#[test]
+fn a_wiped_subpath_source_is_never_offered_its_repository_identity() {
+    with_sandbox("cache-subpath-vanished", |project, _source| {
+        let cache = clone_at_cache_key("owner/repo", "https://github.com/owner/repo.git");
+        let nested = cache.join("nested");
+        install_skill_on_disk(project, "alpha");
+        let locked_at = |source: &std::path::Path| {
+            let mut lock = LockFile::default();
+            let mut entry = locked(source, ItemKind::Skill, "alpha");
+            entry.source_repo = Some("owner/repo".into());
+            lock.add(entry);
+            lock
+        };
+        std::fs::remove_dir_all(&cache).unwrap();
+
+        let report = check_scope(false, &locked_at(&nested), CheckOptions::default()).unwrap();
+        assert!(
+            matches!(
+                &report.source_issues[0].problem,
+                SourceProblem::Unresolvable { restore, .. } if restore.is_none()
+            ),
+            "{report:?}"
+        );
+        let mut out = String::new();
+        render_scope(&mut out, &report, false);
+        assert!(
+            !out.contains("vstack add owner/repo"),
+            "a repository identity cannot restore a directory inside it: {out}"
+        );
+        assert!(
+            !out.contains(&format!("vstack add {}", nested.display())),
+            "and the dead path is no remedy either: {out}"
+        );
+        // The reader is told WHY the identity their lock plainly records was
+        // not offered.
+        assert!(
+            out.contains("which no repository identity restores"),
+            "{out}"
+        );
+        assert!(
+            !out.contains("vstack add"),
+            "the no-remedy line must offer no `vstack add` shape at all: {out}"
+        );
+        assert!(report.has_drift());
+
+        // Control: the same identity, the same wiped entry, but the lock
+        // recorded the ENTRY — where the identity does restore it. Only the
+        // subpath changes the answer.
+        let report = check_scope(false, &locked_at(&cache), CheckOptions::default()).unwrap();
+        let mut out = String::new();
+        render_scope(&mut out, &report, false);
+        assert!(out.contains("`vstack add owner/repo`"), "{out}");
+    });
+}
+
+/// A refusal a re-add provably clears is named. Most refusals are circular —
+/// `add` asks the same questions and reaches the same answer — but a cache
+/// entry that redirects elsewhere still yields a remote, and `add` given that
+/// path installs from the remote's OWN entry instead. That was the one state
+/// the report stayed silent about, leaving a permanent exit 1 under a refusal
+/// whose own text says to remove the entry, which is not what fixes it.
+#[test]
+fn a_refusal_a_re_add_clears_names_the_command_that_clears_it() {
+    with_sandbox("cache-refused-remedy", |project, _source| {
+        // A legacy-key entry whose `.git` is a file redirect: refused, but its
+        // origin still reads, and its remote's own entry is a different
+        // directory.
+        let real = clone_at_cache_key("owner/repo", "https://github.com/owner/repo.git");
+        let legacy = crate::refresh_sources::remote_cache_root().join("legacy_key");
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(
+            legacy.join(".git"),
+            format!("gitdir: {}\n", real.join(".git").display()),
+        )
+        .unwrap();
+        install_skill_on_disk(project, "alpha");
+        let mut lock = LockFile::default();
+        lock.add(locked(&legacy, ItemKind::Skill, "alpha"));
+
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        let restore = match &report.source_issues[0].problem {
+            SourceProblem::Unverifiable { restore, .. } => restore.clone(),
+            other => panic!("expected a refusal, got {other:?}"),
+        };
+        assert_eq!(
+            restore.as_deref(),
+            Some(legacy.to_string_lossy().as_ref()),
+            "re-adding this path installs from the remote's own entry"
+        );
+        let mut out = String::new();
+        render_scope(&mut out, &report, false);
+        assert!(out.contains("cannot be verified"), "{out}");
+        assert!(
+            out.contains(&format!("`vstack add {}`", legacy.display())),
+            "{out}"
+        );
+
+        // Control: an entry whose origin cannot be established at all has no
+        // one-command repair, and none is invented for it.
+        let dead = crate::refresh_sources::remote_cache_root().join("dead_key");
+        std::fs::create_dir_all(dead.join(".git")).unwrap();
+        let mut lock = LockFile::default();
+        lock.add(locked(&dead, ItemKind::Skill, "alpha"));
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert!(
+            matches!(
+                &report.source_issues[0].problem,
+                SourceProblem::Unverifiable { restore, .. } if restore.is_none()
+            ),
+            "{report:?}"
+        );
+        let mut out = String::new();
+        render_scope(&mut out, &report, false);
+        assert!(!out.contains("vstack add"), "no remedy is invented: {out}");
     });
 }

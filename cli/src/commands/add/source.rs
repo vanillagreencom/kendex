@@ -112,10 +112,13 @@ fn resolve_remembered_source(
     if let Some(resolved) = resolve_cache_path_source(source, fetch) {
         return resolved.map(Some);
     }
-    let local = |dir: PathBuf| {
-        let recorded = dir.to_string_lossy().into_owned();
-        Ok(Some((LeasedSourceDir::local(dir), recorded)))
-    };
+    // The SPELLING, not the canonicalized directory: only the cache branch
+    // above changes what gets recorded, which is what makes the rule above
+    // true. Canonicalizing here would also rewrite every non-canonical local
+    // spelling — and a relative `./src`, which stays supported for a legacy or
+    // hand-edited lock, would become a machine-specific absolute path in a
+    // file that is committed, resolving on one checkout and not another.
+    let local = |dir: PathBuf| Ok(Some((LeasedSourceDir::local(dir), source.to_string())));
     if path.is_absolute() && path.is_dir() {
         return local(std::fs::canonicalize(source)?);
     }

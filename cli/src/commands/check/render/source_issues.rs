@@ -30,8 +30,19 @@ pub(super) fn render_source_issues(out: &mut String, report: &ScopeReport, quiet
                         "run `vstack add{g} {}` to restore it, or `vstack remove{g} <name>` if it is gone for good",
                         command_arg(arg)
                     ),
+                    // Deliberately silent about the CAUSE — the reason
+                    // printed just above already carries it, and the two
+                    // absent-with-no-remedy states have different ones: no
+                    // identity recorded at all, and an identity that names a
+                    // repository where the lock recorded a directory inside
+                    // it.
+                    // The second half is deliberately NOT a backticked
+                    // command: there is no argument to give it, and a
+                    // `vstack add <source>` shape here reads as something to
+                    // paste in a report whose whole contract is that what it
+                    // prints can be.
                     None => format!(
-                        "no source is recorded to restore it from — run `vstack remove{g} <name>`, or `vstack add{g} <source>` to install these from one"
+                        "nothing recorded can restore it — run `vstack remove{g} <name>`, or re-add these items from a source you choose"
                     ),
                 };
                 let _ = writeln!(
@@ -63,10 +74,25 @@ pub(super) fn render_source_issues(out: &mut String, report: &ScopeReport, quiet
             // step. It is relayed rather than reworded, and no `vstack add` is
             // prescribed on top of it: a source vstack REFUSED refuses again
             // when re-added, which sends the user in a circle.
-            SourceProblem::Unverifiable { entries, reason } => {
+            SourceProblem::Unverifiable {
+                entries,
+                reason,
+                restore,
+            } => {
+                // The refusal's own text is relayed verbatim and no second
+                // remedy is invented for it — except where re-adding provably
+                // clears the state, which the refusal wording does not say and
+                // the reader has no other way to discover.
+                let remedy = match restore {
+                    Some(arg) => format!(
+                        "; run `vstack add{g} {}` to install these from its remote instead",
+                        command_arg(arg)
+                    ),
+                    None => String::new(),
+                };
                 let _ = writeln!(
                     out,
-                    "\n  source {source} — {} item(s) cannot be verified: {}",
+                    "\n  source {source} — {} item(s) cannot be verified: {}{remedy}",
                     entries.len(),
                     display_reason(reason),
                 );

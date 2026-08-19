@@ -228,7 +228,7 @@ fn an_unverifiable_cache_is_reported_with_its_own_remedy() {
         assert!(
             matches!(
                 &report.source_issues[0].problem,
-                SourceProblem::Unverifiable { entries, reason }
+                SourceProblem::Unverifiable { entries, reason, .. }
                     if entries == &vec!["alpha".to_string()]
                         && reason.contains("other/repo")
             ),
@@ -297,6 +297,7 @@ fn populated_scope(scope: &'static str) -> ScopeReport {
                 problem: SourceProblem::Unverifiable {
                     entries: vec!["theta".into()],
                     reason: "origin mismatch".into(),
+                    restore: None,
                 },
             },
             SourceIssue {

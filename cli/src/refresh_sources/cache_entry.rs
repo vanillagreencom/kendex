@@ -76,17 +76,33 @@ pub(crate) fn is_remote_cache_entry_path(path: &Path) -> bool {
 ///
 /// `Ok(false)` is the absent case; `Err` is the refusal.
 fn cache_entry_is_present(entry: &Path) -> Result<bool> {
-    if entry.join(".git").exists() {
-        return Ok(true);
+    // `Path::exists` collapses "not there" into "could not be looked at":
+    // it answers false for a permission or I/O error exactly as it does for a
+    // missing file. A valid clone whose directory has become unreadable — a
+    // root-owned entry left by a sudo run, a transient error on the cache —
+    // then fell to the not-a-clone arm below, which still passes because
+    // `is_dir` only needs the PARENT readable, and was refused with a
+    // definite cause nothing had established plus advice to delete it. The
+    // error kind is the whole difference, so it is read rather than discarded.
+    match std::fs::metadata(entry.join(".git")) {
+        Ok(_) => Ok(true),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            if !entry.is_dir() {
+                return Ok(false);
+            }
+            bail!(
+                "refusing source {}: it is inside vstack's cache but is not one of its clones — it has no `.git`, so no remote can be established for it. Remove it from {} and re-add the source it should come from",
+                entry.display(),
+                remote_cache_root().display()
+            )
+        }
+        // A read that could not be completed, reported as exactly that — no
+        // verdict on what is there, and no advice to remove anything.
+        Err(err) => bail!(
+            "refusing source {}: its `.git` could not be read: {err}",
+            entry.display()
+        ),
     }
-    if !entry.is_dir() {
-        return Ok(false);
-    }
-    bail!(
-        "refusing source {}: it is inside vstack's cache but is not one of its clones — it has no `.git`, so no remote can be established for it. Remove it from {} and re-add the source it should come from",
-        entry.display(),
-        remote_cache_root().display()
-    )
 }
 
 /// The remote a cache entry is a clone of, read from the entry's own `origin`.
@@ -278,6 +294,35 @@ pub(super) fn resolve_remote_source(remote: RemoteSource, update_remote: bool) -
         return SourceResolution::refused(&err).into();
     }
     SourceResolution::Resolved(remote.cache_dir).into()
+}
+
+/// The argument `vstack add` must be given to clear a REFUSED cache source, or
+/// `None` when re-adding it refuses again.
+///
+/// Most refusals are circular — `add` asks the same questions resolution did
+/// and reaches the same answer — which is why the report stays silent about
+/// them. The redirect shapes are not: a cache entry that is a symlink out of
+/// the cache, or one carrying a `.git` file redirect, still yields a remote
+/// when asked for its origin, and `add` given that path installs from the
+/// remote's OWN entry instead, records the remote spec, and leaves the refused
+/// directory referenced by nothing. That is a genuine one-command repair, and
+/// it was the one state the report said nothing about — a permanent exit 1
+/// under a refusal whose own text says to remove the entry, which is not what
+/// fixes it.
+///
+/// Two conditions, both the same questions this module already asks elsewhere.
+/// The path must BE the entry: below one, `add` pins to that same refused
+/// entry and refuses again. And the remote's own entry must be a DIFFERENT
+/// directory: a refused entry sitting at its own canonical key is the one
+/// `add` would act on, so it refuses again there too.
+pub(crate) fn restore_refused_source_argument(source: &str) -> Option<String> {
+    let (entry, below) = remote_cache_entry_for_path(Path::new(source))?;
+    if !below.as_os_str().is_empty() {
+        return None;
+    }
+    let remote = cache_entry_remote(&entry).ok()?;
+    let canonical = RemoteSource::parse(&remote.git_url).ok()??;
+    (!same_path(&canonical.cache_dir, &entry)).then(|| source.to_string())
 }
 
 /// What `add` must install a cache path from: the remote its entry clones,

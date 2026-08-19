@@ -18,13 +18,23 @@ use std::path::Path;
 /// same-tree migration rule a legacy-key entry keeps its cache path in the
 /// lock permanently, which makes a wiped cache the durable steady state for
 /// exactly the population this defect was found on — so the remedy comes from
-/// the identity the lock still records, and when it records none, no command
-/// is offered rather than one that cannot work.
+/// the identity the lock still records.
+///
+/// Only for a path that IS the entry, though. A repository identity names the
+/// repository, and a source recorded at `<entry>/<subdir>` named one directory
+/// inside it — the same reason migration never rewrites a subpath onto a
+/// remote spec. Offering the identity there installs the repository ROOT over
+/// the subtree the lock recorded: it fails outright when the root carries no
+/// catalog, and when the root happens to carry a same-named item it exits 0,
+/// rewrites `source` to the repository and reports green, with the item now
+/// propagating from a subtree the user never chose. That is the silent
+/// under-propagation this whole issue is about, so no command is offered.
 pub(crate) fn restore_source_argument(source: &str, source_repo: Option<&str>) -> Option<String> {
-    if is_remote_cache_entry_path(Path::new(source)) {
-        return source_repo.map(str::to_string);
+    match remote_cache_entry_for_path(Path::new(source)) {
+        Some((_, below)) if below.as_os_str().is_empty() => source_repo.map(str::to_string),
+        Some(_) => None,
+        None => Some(source.to_string()),
     }
-    Some(source.to_string())
 }
 
 /// Why a recorded source produced nothing, for a caller holding no refusal map
@@ -48,6 +58,14 @@ pub(crate) fn absent_source_reason(source: &str) -> String {
         // URL malformed enough to evade `parse_remote_url` classifies as a
         // local path and reaches here, and a lock file records the string
         // verbatim.
-        format!("source not found: {}", remote_source_display(source))
+        let named = format!("source not found: {}", remote_source_display(source));
+        match remote_cache_entry_for_path(Path::new(source)) {
+            // Otherwise the reader is left wondering why the identity their
+            // lock plainly records was not offered as the repair.
+            Some((_, below)) if !below.as_os_str().is_empty() => format!(
+                "{named} — a directory inside a vstack cache entry, which no repository identity restores"
+            ),
+            _ => named,
+        }
     }
 }

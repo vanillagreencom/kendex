@@ -70,6 +70,20 @@
   then disagreed about one state — and announced a fetched remote as
   `local: <path>`.
 
+  The remedy is offered only where it is true. A wiped entry beneath a source
+  recorded at `<entry>/<subdir>` is NOT offered the repository identity: an
+  identity names the repository, not a directory inside it, and installing the
+  root over the recorded subtree either fails outright or — where the root
+  carries a same-named item — exits 0, rewrites `source` to the repository and
+  reports green with the item propagating from a subtree nobody chose. A
+  refusal that a re-add provably clears now names it: an entry redirecting
+  elsewhere still yields a remote, and `vstack add <that path>` installs from
+  the remote's own entry instead, where the report used to say nothing and
+  leave a permanent exit 1. And a clone that cannot be READ is reported as
+  that — `Path::exists` answers false for a permission error exactly as for a
+  missing file, so an unreadable entry was refused as "not one of its clones"
+  with advice to delete it.
+
 - preflight: new `hardcoded-temp-path` lane — an added directory-creating
   call taking a literal `/tmp/…` or `/var/tmp/…` as (part of) its first
   argument fails. A literal absolute temp path escapes TMPDIR redirection
