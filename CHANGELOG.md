@@ -180,7 +180,13 @@
   Everything short of that stays exit 1 with the hand-wiring remedy, which
   is then accurate: a target that is missing, empty, wired to another tool,
   wired for only one of the two hooks, or left without the executable bit.
-  The unredirected case is untouched.
+  A target that cannot be read is exit 2, not a verdict — the remedy would
+  otherwise tell the user to wire a directory that may already be wired and
+  merely unreadable. Only executable lines count as wiring: a comment, a
+  heredoc body, an argument to another command, and anything past an
+  unconditional `exit` name the entry point without ever running it, and a
+  check that read a mention as wiring would report gating that no commit
+  gets. The unredirected case is untouched.
 
 - CLI: a lock `source` recorded as a path inside `~/.vstack/cache/` now
   resolves as the remote that cache entry clones, instead of as an ordinary

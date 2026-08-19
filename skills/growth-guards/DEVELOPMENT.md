@@ -86,14 +86,30 @@ fails, so removing the skill never leaves hooks that block every commit.
 hooks directory — and answers whether the shims are armed. `0`: the helper
 and both hooks pass the same predicate an install trusts (regular file, our
 marker or exact line at its position, POSIX-sh shebang, executable). `1`:
-some shim is drifted or absent, or every shim is intact but a
-`core.hooksPath` redirects git away from them — armed-but-dormant, reported
-with its own wording and remedy, and still `1` because no commit runs a
-guard right now. `2`: the question could not be answered (an unreadable
-hooks directory, a hook file that cannot be read); failure to measure is
-never a pass, and definitive drift outranks an unmeasured component. The
-one stdout line carries every component finding, and `vstack check` folds
-it in for projects with the skill installed.
+some shim is drifted or absent. `2`: the question could not be answered (an
+unreadable hooks directory, a hook file that cannot be read); failure to
+measure is never a pass, and definitive drift outranks an unmeasured
+component. The one stdout line carries every component finding, and `vstack
+check` folds it in for projects with the skill installed.
+
+Under `core.hooksPath` the redirected directory is what `--check` probes,
+because it is the only one git reads. The target is resolved with `git
+rev-parse --git-path hooks` — git's own hook resolver, so an absolute, a
+`~`-prefixed and a work-tree-relative value all land where git lands, from a
+subdirectory as well as from the root. Its `pre-commit` and `commit-msg` are
+armed in exactly two shapes: a line whose COMMAND is this skill's entry
+point for that hook (optionally through `exec`, optionally quoted), or the
+delegating line this installer writes beside a helper in that same directory
+— that line resolves its helper through git, which under `core.hooksPath`
+answers with this directory and not `.git/hooks`. Only executable lines are
+read: a comment, a heredoc body, an argument to another command, and
+anything past an unconditional `exit` name the entry point without running
+it, and a check that took a mention for wiring would report gating that no
+commit gets. Anything short of both hooks armed is `1`, keeping the
+hand-wiring remedy, and a target that cannot be read is `2` rather than a
+verdict — including the case where every shim in `.git/hooks` is intact but
+dormant behind the redirect, which stays `1` with its own wording because no
+commit runs a guard right now.
 
 ## The pre-commit chain
 

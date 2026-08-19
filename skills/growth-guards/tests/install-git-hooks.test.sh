@@ -1261,6 +1261,123 @@ check_in "$R35"
 [ "$RC" -eq 0 ] && ok "control: restoring the executable bit checks 0 again" \
   || bad "control: exec bit restored checks 0" "rc=$RC out=$OUT"
 
+echo "=== --check reads only EXECUTABLE wiring in a core.hooksPath directory ==="
+# A mention of the entry point that no commit ever runs — a comment, a heredoc
+# body, an argument, anything past an unconditional exit — must never read as
+# gated: a verification tool that fails open is worse than one that fails shut.
+R38="$(new_repo checkhookspathshapes)"
+install_in "$R38"
+SC38="$R38/.agents/skills/growth-guards/scripts"
+mkdir -p "$R38/shapehooks"
+git -C "$R38" config core.hooksPath shapehooks
+arm_pair() { # PRE_FORMAT MSG_FORMAT — printf formats taking the scripts dir
+  printf "$1" "$SC38" >"$R38/shapehooks/pre-commit"
+  printf "$2" "$SC38" >"$R38/shapehooks/commit-msg"
+  chmod +x "$R38/shapehooks/pre-commit" "$R38/shapehooks/commit-msg"
+}
+must_fail_shape() { # LABEL
+  check_in "$R38"
+  [ "$RC" -eq 1 ] && ok "must-fail: $1 is not armed" || bad "must-fail: $1 is not armed" "rc=$RC out=$OUT"
+  case "$OUT" in
+    *"NOT gated"* | *"NOT armed"*) ok "and $1 is stated as ungated" ;;
+    *) bad "$1 stated as ungated" "out=$OUT" ;;
+  esac
+}
+
+arm_pair '#!/bin/sh\n# see %s/pre-commit for what this used to do\nexit 0\n' \
+  '#!/bin/sh\n# see %s/commit-msg\nexit 0\n'
+must_fail_shape "the entry point named only in a line-2 comment"
+
+arm_pair '#!/bin/sh\nexit 0\nexec %s/pre-commit "$@"\n' \
+  '#!/bin/sh\nexit 0\nexec %s/commit-msg "$1"\n'
+must_fail_shape "wiring left unreachable after an unconditional exit"
+
+arm_pair '#!/bin/sh\ncat <<EOF\nexec %s/pre-commit "$@"\nEOF\nexit 0\n' \
+  '#!/bin/sh\ncat <<EOF\nexec %s/commit-msg "$1"\nEOF\nexit 0\n'
+must_fail_shape "the entry point inside a heredoc body"
+
+arm_pair '#!/bin/sh\necho "%s/pre-commit"\nexit 0\n' \
+  '#!/bin/sh\necho "%s/commit-msg"\nexit 0\n'
+must_fail_shape "the entry point as a quoted argument to another command"
+
+arm_pair '#!/bin/sh\n#%s/pre-commit\n' '#!/bin/sh\n#%s/commit-msg\n'
+must_fail_shape "a hook whose only content is the commented entry point"
+
+# One passing control per shape the check does accept.
+arm_pair '#!/bin/sh\n%s/pre-commit "$@" || exit $?\n' \
+  '#!/bin/sh\n%s/commit-msg "$1" || exit $?\n'
+check_in "$R38"
+[ "$RC" -eq 0 ] && ok "control: a bare invocation of the entry point is armed" \
+  || bad "bare invocation armed" "rc=$RC out=$OUT"
+
+arm_pair '#!/bin/sh\nexec "%s/pre-commit" "$@"\n' '#!/bin/sh\nexec "%s/commit-msg" "$1"\n'
+check_in "$R38"
+[ "$RC" -eq 0 ] && ok "control: a quoted exec of the entry point is armed" \
+  || bad "quoted exec armed" "rc=$RC out=$OUT"
+
+arm_pair '#!/bin/sh\nset -e\ncat <<EOF >/dev/null\nnoise\nEOF\n  exec %s/pre-commit "$@"\n' \
+  '#!/bin/sh\nset -e\ncat <<EOF >/dev/null\nnoise\nEOF\n  exec %s/commit-msg "$1"\n'
+check_in "$R38"
+[ "$RC" -eq 0 ] && ok "control: wiring indented after a heredoc that closed is armed" \
+  || bad "wiring after a closed heredoc armed" "rc=$RC out=$OUT"
+
+# A second install elsewhere on disk: the generic entry-point shape, wired to
+# scripts that really run, so "armed" is proved against an actual commit.
+mkdir -p "$TMP/elsewhere/growth-guards"
+ln -s "$SC38" "$TMP/elsewhere/growth-guards/scripts"
+printf '#!/bin/sh\nexec %s/elsewhere/growth-guards/scripts/pre-commit "$@"\n' "$TMP" >"$R38/shapehooks/pre-commit"
+printf '#!/bin/sh\nexec %s/elsewhere/growth-guards/scripts/commit-msg "$1"\n' "$TMP" >"$R38/shapehooks/commit-msg"
+chmod +x "$R38/shapehooks/pre-commit" "$R38/shapehooks/commit-msg"
+check_in "$R38"
+[ "$RC" -eq 0 ] && ok "control: an entry point from another install on disk is armed" \
+  || bad "other-install entry point armed" "rc=$RC out=$OUT"
+printf '# %s: finish this\n' "$TD" >"$R38/s.py"
+git -C "$R38" add s.py
+commit_in "$R38" "feat: add s"
+[ "$RC" -ne 0 ] && ok "and a violation is really blocked through it" || bad "other-install wiring blocks" "rc=$RC out=$OUT"
+git -C "$R38" rm -q --cached s.py
+rm -f "$R38/s.py"
+
+# The delegating line resolves its helper with `git rev-parse --git-path
+# hooks`, which under core.hooksPath is this directory — so the helper has to
+# be here, and a copy without it is not gated.
+cp "$R38/.git/hooks/pre-commit" "$R38/.git/hooks/commit-msg" "$R38/.git/hooks/vstack-guards" "$R38/shapehooks/"
+check_in "$R38"
+[ "$RC" -eq 0 ] && ok "control: the delegating line beside its helper is armed" \
+  || bad "delegating line with helper armed" "rc=$RC out=$OUT"
+rm -f "$R38/shapehooks/vstack-guards"
+check_in "$R38"
+[ "$RC" -eq 1 ] && ok "must-fail: the delegating line without its helper is not armed" \
+  || bad "delegating line without helper" "rc=$RC out=$OUT"
+
+echo "=== a core.hooksPath directory that cannot be read is 'could not determine' ==="
+R39="$(new_repo checkhookspathunreadable)"
+install_in "$R39"
+wire_hooks_dir "$R39" "$R39/customhooks"
+git -C "$R39" config core.hooksPath customhooks
+if [ "$(id -u)" != "0" ]; then
+  chmod 000 "$R39/customhooks"
+  check_in "$R39"
+  chmod 755 "$R39/customhooks"
+  [ "$RC" -eq 2 ] && ok "an unreadable core.hooksPath directory checks 2, never a verdict" \
+    || bad "unreadable redirect checks 2" "rc=$RC out=$OUT"
+  case "$OUT" in
+    *"could not determine"*"$R39/customhooks"*) ok "and the verdict names the directory it could not read" ;;
+    *) bad "unreadable redirect named" "out=$OUT" ;;
+  esac
+  case "$OUT" in
+    *"wire that directory's hooks"*) bad "an unreadable redirect is not given the hand-wiring remedy" "out=$OUT" ;;
+    *) ok "an unreadable redirect is not given the hand-wiring remedy" ;;
+  esac
+else
+  ok "unreadable redirect case skipped (running as root)"
+  ok "unreadable redirect wording skipped (running as root)"
+  ok "unreadable redirect remedy skipped (running as root)"
+fi
+check_in "$R39"
+[ "$RC" -eq 0 ] && ok "control: the same directory readable again checks 0" \
+  || bad "control: readable redirect checks 0" "rc=$RC out=$OUT"
+
 echo "=== --check resolves core.hooksPath the way git does ==="
 R36="$(new_repo checkhookspathabs)"
 install_in "$R36"

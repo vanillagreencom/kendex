@@ -575,25 +575,78 @@ check_helper() { # DIR -> 0 armed, 1 not armed, 2 could not determine
   return 0
 }
 
-# The shape the stand-down message prescribes for a core.hooksPath directory:
-# a hook that runs this skill's own entry point for that hook. Matched by
-# path, so a hook wired to some other tool never reads as ours.
+# The one shape the stand-down message prescribes for a core.hooksPath
+# directory: a line whose COMMAND is this skill's entry point for that hook,
+# optionally through `exec` and optionally quoted. Only executable lines are
+# read — a comment, a heredoc body, an argument to some other command, and
+# anything past an unconditional `exit` all mention the path without ever
+# running it, and a check that took a mention for wiring would fail open.
 hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no, 2 could not determine
-  local hook="$1" path="$2" status=0 re=""
-  re='(^|[^[:alnum:]_.-])([^[:space:]]*/)?growth-guards/scripts/'"$hook"'([^[:alnum:]_.-]|$)'
-  grep -qF -- "$SCRIPT_DIR/$hook" "$path" 2>/dev/null || status=$?
-  if [ "$status" -gt 1 ]; then
-    return 2
-  fi
-  if [ "$status" -eq 0 ]; then
-    return 0
-  fi
-  status=0
-  grep -qE -- "$re" "$path" 2>/dev/null || status=$?
-  if [ "$status" -gt 1 ]; then
-    return 2
-  fi
-  return "$status"
+  local hook="$1" path="$2" line="" body="" cmd="" rest="" heredoc="" re=""
+  re='^(.*/)?growth-guards/scripts/'"$hook"'$'
+  [ -r "$path" ] || return 2
+  while IFS= read -r line || [ -n "$line" ]; do
+    body="${line%%[![:space:]]*}"
+    body="${line#"$body"}"
+    if [ -n "$heredoc" ]; then
+      # <<- lets the terminator be indented, which the trim above has undone.
+      if [ "$body" = "$heredoc" ]; then
+        heredoc=""
+      fi
+      continue
+    fi
+    case "$body" in
+      "" | "#"*) continue ;;
+      exit | exit[[:space:]]*) return 1 ;;
+    esac
+    cmd="$body"
+    case "$cmd" in
+      exec[[:space:]]*)
+        cmd="${cmd#exec}"
+        rest="${cmd%%[![:space:]]*}"
+        cmd="${cmd#"$rest"}"
+        ;;
+    esac
+    # One layer of quoting comes off first, so a path containing a space is
+    # still one word.
+    case "$cmd" in
+      \"*)
+        cmd="${cmd#\"}"
+        cmd="${cmd%%\"*}"
+        ;;
+      \'*)
+        cmd="${cmd#\'}"
+        cmd="${cmd%%\'*}"
+        ;;
+      *) cmd="${cmd%%[[:space:]]*}" ;;
+    esac
+    if [ "$cmd" = "$SCRIPT_DIR/$hook" ]; then
+      return 0
+    fi
+    if printf '%s\n' "$cmd" | grep -qE -- "$re"; then
+      return 0
+    fi
+    # A heredoc opened here makes every line up to its terminator data. `<<<`
+    # is a herestring and opens nothing.
+    case "$body" in
+      *"<<"*)
+        rest="${body#*<<}"
+        case "$rest" in
+          "<"*) ;;
+          *)
+            rest="${rest#-}"
+            heredoc="${rest#"${rest%%[![:space:]]*}"}"
+            heredoc="${heredoc%%[[:space:]]*}"
+            heredoc="${heredoc#\"}"
+            heredoc="${heredoc%\"}"
+            heredoc="${heredoc#\'}"
+            heredoc="${heredoc%\'}"
+            ;;
+        esac
+        ;;
+    esac
+  done <"$path"
+  return 1
 }
 
 # Set by a hook outside $HOOKS_DIR that carries the delegating line instead of
@@ -716,6 +769,17 @@ if [ "$MODE" = "check" ]; then
         echo "growth-guards git hooks: armed — pre-commit and commit-msg gate commits in $REDIRECT_DIR, where core.hooksPath ('$CUSTOM_HOOKS') sends git"
         exit 0
       fi
+      # The redirected directory decides, so a redirect that could not be
+      # measured leaves the question open — never the dormant verdict, whose
+      # remedy would tell the user to wire a directory that may already be
+      # wired and merely unreadable.
+      if [ "$REDIRECT_VERDICT" -eq 2 ]; then
+        echo "growth-guards git hooks: could not determine whether the shims are armed — core.hooksPath ('$CUSTOM_HOOKS') sends git to $REDIRECT_DIR, and $CHECK_REASONS"
+        exit 2
+      fi
+    else
+      echo "growth-guards git hooks: could not determine whether the shims are armed — core.hooksPath ('$CUSTOM_HOOKS') is set and git could not resolve the directory it names"
+      exit 2
     fi
     # Nothing in the redirected directory gates a commit, so the shims in
     # $HOOKS_DIR only decide the wording. Armed-but-dormant is neither armed
