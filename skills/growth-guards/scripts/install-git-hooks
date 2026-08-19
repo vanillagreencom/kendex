@@ -149,29 +149,18 @@ fi
 # scripts directory first, then rediscovers one from the MAIN checkout (linked
 # worktrees share this hooks directory and may carry no skills of their own),
 # so a moved or re-installed checkout repairs itself.
-write_helper() { # PATH
-  local helper="$1" tmp=""
-  # Non-destructive even against a name collision: never write through a
-  # symlink, never replace a non-regular file, never overwrite content
-  # missing our marker.
-  if [ -L "$helper" ] || { [ -e "$helper" ] && [ ! -f "$helper" ]; }; then
-    warn "$helper exists and is not a regular file; refusing to replace it"
-    return 1
-  fi
-  if [ -f "$helper" ] && ! grep -qF -- "$HELPER_MARKER" "$helper" 2>/dev/null; then
-    warn "$helper exists but was not written by this installer; refusing to overwrite it"
-    return 1
-  fi
-  tmp="$(mktemp "$helper.tmp.XXXXXX")" || return 1
-  # Single-quote the baked path for the generated sh, escaping any quote in it.
+# The exact bytes this installer writes as the helper. Generating and
+# VERIFYING both go through here, so a checker cannot drift from a writer
+# and start blessing a helper that only resembles one.
+helper_body() { # -> the helper this installer would write, on stdout
   local sq="'" escaped=""
   escaped="${SCRIPT_DIR//$sq/$sq\\$sq$sq}"
-  cat >"$tmp" <<HELPER_HEAD || { rm -f -- "$tmp"; return 1; }
+  cat <<HELPER_HEAD
 #!/bin/sh
 # Scripts directory of the install that wrote this file.
 installed_scripts='$escaped'
 HELPER_HEAD
-  cat >>"$tmp" <<'HELPER' || { rm -f -- "$tmp"; return 1; }
+  cat <<'HELPER'
 # vstack growth-guards git hooks. Managed by the growth-guards skill and
 # rewritten on every install — do not edit.
 #
@@ -220,6 +209,25 @@ for root in "$main" "$top"; do
 done
 fail "no executable growth-guards $mode script at $installed_scripts, nor under $main or $top ($skill_roots)"
 HELPER
+}
+write_helper() { # PATH
+  local helper="$1" tmp=""
+  # Non-destructive even against a name collision: never write through a
+  # symlink, never replace a non-regular file, never overwrite content
+  # missing our marker.
+  if [ -L "$helper" ] || { [ -e "$helper" ] && [ ! -f "$helper" ]; }; then
+    warn "$helper exists and is not a regular file; refusing to replace it"
+    return 1
+  fi
+  if [ -f "$helper" ] && ! grep -qF -- "$HELPER_MARKER" "$helper" 2>/dev/null; then
+    warn "$helper exists but was not written by this installer; refusing to overwrite it"
+    return 1
+  fi
+  tmp="$(mktemp "$helper.tmp.XXXXXX")" || return 1
+  # Single-quote the baked path for the generated sh, escaping any quote in it.
+  local sq="'" escaped=""
+  escaped="${SCRIPT_DIR//$sq/$sq\\$sq$sq}"
+  helper_body >"$tmp" || { rm -f -- "$tmp"; return 1; }
   # mktemp creates 0600; a hook must be readable and executable by whoever
   # git runs as, which on a shared repository is not only its owner.
   chmod 0755 "$tmp" 2>/dev/null && mv -f -- "$tmp" "$helper" || {
@@ -549,7 +557,7 @@ add_reason() { # MESSAGE
   fi
 }
 
-check_helper() { # DIR -> 0 armed, 1 not armed, 2 could not determine
+check_helper() { # DIR -> 0 armed, 1 not armed, 3 unverifiable
   local helper="$1/$HELPER_NAME" status=0
   if [ ! -e "$helper" ] && [ ! -L "$helper" ]; then
     add_reason "helper $HELPER_NAME is missing"
@@ -571,6 +579,17 @@ check_helper() { # DIR -> 0 armed, 1 not armed, 2 could not determine
   if [ ! -x "$helper" ]; then
     add_reason "helper $HELPER_NAME is not executable (commits are blocked, not guarded)"
     return 1
+  fi
+  # Inside the installer-owned hooks directory the marker is enough: this
+  # installer wrote the file and rewrites it on every run. Anywhere else it
+  # is a copy someone made, and the marker is just a comment anyone can
+  # type — an executable `# vstack growth-guards git hooks` + `exit 0`
+  # carries it while bypassing every guard. There, only the bytes settle it.
+  if [ "$1" != "$HOOKS_DIR" ]; then
+    if ! helper_body 2>/dev/null | cmp -s - "$helper"; then
+      add_reason "helper $HELPER_NAME is not the one this installer generates, so what it runs cannot be verified"
+      return 3
+    fi
   fi
   return 0
 }
@@ -857,7 +876,9 @@ check_hooks_dir() { # DIR -> 0 armed, 1 not armed, 2 could not determine
   if [ "$CHECK_NEEDS_HELPER" -eq 1 ]; then
     status=0
     check_helper "$dir" || status=$?
-    case "$status" in 1) drifted=1 ;; 2) unknown=1 ;; esac
+    # 3 is the copied helper this installer cannot vouch for: unknown, never
+    # drift, and never a pass.
+    case "$status" in 1) drifted=1 ;; 2 | 3) unknown=1 ;; esac
   fi
   [ "$drifted" -eq 0 ] || return 1
   [ "$unknown" -eq 0 ] || return 2

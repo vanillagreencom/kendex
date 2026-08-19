@@ -218,6 +218,13 @@
   against a short trusted list, since `#!/tmp/fake/sh` can be a copy of
   `/bin/true` — git runs it, ignores the hook body, and gates nothing — and
   an `env` shebang resolves through PATH, which is no more knowable. The
+  delegating shape's helper is verified the same way: outside the
+  installer-owned hooks directory it is a copy someone made, and the marker
+  it was recognized by is a comment anyone can type — an executable
+  `# vstack growth-guards git hooks` plus `exit 0` carried it while bypassing
+  every guard. The bytes are now compared against the helper this installer
+  generates, through one `helper_body` that the writer and the verifier
+  share, so the two cannot drift apart. The
   suite asserts the property directly rather than the wording: exit 0 is
   claimed only where a real violating commit is really blocked AND a clean
   one still passes, which is the half that separates a working gate from a

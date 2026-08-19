@@ -1470,6 +1470,27 @@ rm -f "$R38/fi.py"
 arm_pair '#!/usr/bin/env bash\nexec %s/pre-commit "$@"\n' '#!/usr/bin/env bash\nexec %s/commit-msg "$1"\n'
 unverifiable_shape "a shebang resolving its interpreter through env"
 
+# The delegating shape resolves its helper in the redirected directory, and
+# outside the installer-owned hooks directory that helper is a copy someone
+# made. The marker is a comment anyone can type.
+cp "$R38/.git/hooks/pre-commit" "$R38/.git/hooks/commit-msg" "$R38/shapehooks/"
+printf '#!/bin/sh\n# vstack growth-guards git hooks\nexit 0\n' >"$R38/shapehooks/vstack-guards"
+chmod +x "$R38/shapehooks/vstack-guards"
+unverifiable_shape "a helper carrying the marker but none of the behaviour"
+printf '# %s: finish this\n' "$TD" >"$R38/fh.py"
+git -C "$R38" add fh.py
+commit_in "$R38" "feat: add fh"
+[ "$RC" -eq 0 ] && ok "and that helper really does bypass every guard" \
+  || bad "fake helper bypasses" "rc=$RC out=$OUT"
+git -C "$R38" rm -q --cached fh.py
+rm -f "$R38/fh.py"
+# Control: the helper this installer actually wrote, copied across, is armed.
+cp "$R38/.git/hooks/vstack-guards" "$R38/shapehooks/"
+check_in "$R38"
+[ "$RC" -eq 0 ] && ok "control: the installer's own helper, copied across, is armed" \
+  || bad "copied real helper armed" "rc=$RC out=$OUT"
+rm -f "$R38/shapehooks/vstack-guards" "$R38/shapehooks/pre-commit" "$R38/shapehooks/commit-msg"
+
 # One passing control per shape the check does accept.
 arm_pair '#!/bin/sh\n%s/pre-commit "$@" || exit $?\n' \
   '#!/bin/sh\n%s/commit-msg "$1" || exit $?\n'
