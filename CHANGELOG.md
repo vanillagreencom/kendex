@@ -191,7 +191,12 @@
   executable — a path shaped like one but pointing at a moved install leaves
   git answering every commit with command-not-found — and that the hook's
   shebang carry no interpreter option, since `#!/bin/sh -n` syntax-checks the
-  body, exits 0, and runs no guard while every violating commit passes. The
+  body, exits 0, and runs no guard while every violating commit passes. Where the command is the
+  entry point and only its argument list is unrecognized, the answer is `2`
+  rather than `1`: `exec …/pre-commit "$@" # run the guard` does gate, and
+  calling it ungated would be the same false answer this fix exists to
+  remove. `1` is reserved for a single command that is not the entry point,
+  or an entry-point path with nothing executable at it. The
   suite asserts the property directly rather than the wording: exit 0 is
   claimed only where a real violating commit is really blocked AND a clean
   one still passes, which is the half that separates a working gate from a

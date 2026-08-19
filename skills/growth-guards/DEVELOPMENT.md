@@ -120,6 +120,12 @@ interpreter option, because `#!/bin/sh -n` syntax-checks the body and exits
 0, running no guard at all. The shared shebang check stays permissive for a
 repo's own hooks; this one does not.
 
+When the command IS the entry point and only the argument list falls outside
+the allowlist — a trailing comment, an extra argument — the answer is `2`,
+not `1`. Such a hook may gate perfectly well, and `1` would state the
+opposite. `1` is reserved for a hook whose single command is not the entry
+point at all, or whose entry-point path resolves to nothing.
+
 The grammar is closed on purpose. Accepting the entry point anywhere it
 looks executable means ruling on reachability, which needs a shell parser:
 `if false; then … fi`, a function body nothing calls, and a `<<-` heredoc

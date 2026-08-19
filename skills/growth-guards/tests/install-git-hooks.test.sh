@@ -1321,23 +1321,23 @@ must_fail_shape "a hook whose only content is the commented entry point"
 # whether running it can still fail the commit. Each of these names the entry
 # point in command position and gates nothing.
 arm_pair '#!/bin/sh\nexec "%s/pre-commit" --help\n' '#!/bin/sh\nexec "%s/commit-msg" --help\n'
-must_fail_shape "the entry point invoked with --help"
+unverifiable_shape "the entry point invoked with --help"
 
 arm_pair '#!/bin/sh\n%s/pre-commit "$@" || true\n' '#!/bin/sh\n%s/commit-msg "$1" || true\n'
-must_fail_shape "the entry point with its status thrown away by || true"
+unverifiable_shape "the entry point with its status thrown away by || true"
 
 arm_pair '#!/bin/sh\n%s/pre-commit "$@" &\n' '#!/bin/sh\n%s/commit-msg "$1" &\n'
-must_fail_shape "the entry point backgrounded, so its status never lands"
+unverifiable_shape "the entry point backgrounded, so its status never lands"
 
 # The two hooks do not take the same arguments, and swapping them breaks the
 # gate rather than loosening it: pre-commit exits 2 on any argument, and a
 # bare commit-msg reads inherited stdin and calls every message empty. Both
 # reject valid commits while validating nothing, so "armed" describes neither.
 arm_pair '#!/bin/sh\nexec %s/pre-commit "$1"\n' '#!/bin/sh\nexec %s/commit-msg "$1"\n'
-must_fail_shape "pre-commit handed an argument it refuses"
+unverifiable_shape "pre-commit handed an argument it refuses"
 
 arm_pair '#!/bin/sh\nexec %s/pre-commit "$@"\n' '#!/bin/sh\nexec %s/commit-msg\n'
-must_fail_shape "commit-msg without git's message-file argument"
+unverifiable_shape "commit-msg without git's message-file argument"
 
 # A path SHAPE is not an entry point. A moved or removed install leaves a
 # hook whose command resolves to nothing: git answers every commit, clean
@@ -1357,6 +1357,20 @@ must_fail_shape "an entry-point path that is not executable"
 # and exits 0, so the hook executes no guard and passes every commit.
 arm_pair '#!/bin/sh -n\nexec %s/pre-commit "$@"\n' '#!/bin/sh -n\nexec %s/commit-msg "$1"\n'
 must_fail_shape "a shebang whose option stops the body running"
+
+# The tail rule cuts both ways, and this is the case that proves `2` is not a
+# synonym for ungated: a trailing comment leaves the tail outside the
+# allowlist, but the hook runs the entry point and really does gate.
+arm_pair '#!/bin/sh\nexec %s/pre-commit "$@" # run the guard\n' \
+  '#!/bin/sh\nexec %s/commit-msg "$1" # run the guard\n'
+unverifiable_shape "a gating hook whose tail carries a trailing comment"
+printf '# %s: finish this\n' "$TD" >"$R38/t.py"
+git -C "$R38" add t.py
+commit_in "$R38" "feat: add t"
+[ "$RC" -ne 0 ] && ok "and that unverifiable hook really does gate, so 2 is not 'ungated'" \
+  || bad "trailing-comment hook gates" "rc=$RC out=$OUT"
+git -C "$R38" rm -q --cached t.py
+rm -f "$R38/t.py"
 
 # One passing control per shape the check does accept.
 arm_pair '#!/bin/sh\n%s/pre-commit "$@" || exit $?\n' \

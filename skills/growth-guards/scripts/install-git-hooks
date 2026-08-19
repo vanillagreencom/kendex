@@ -597,7 +597,7 @@ check_helper() { # DIR -> 0 armed, 1 not armed, 2 could not determine
 NOARG_SHEBANG_RE='^#![[:space:]]*([^[:space:]]*/)?(env[[:space:]]+)?(sh|bash|dash|ksh|zsh)[[:space:]]*$'
 
 hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecognized
-  local hook="$1" path="$2" line="" body="" cmd="" tail="" rest="" seen=0 matched=0 re=""
+  local hook="$1" path="$2" line="" body="" cmd="" tail="" rest="" seen=0 matched=0 named=0 re=""
   re='^(.*/)?growth-guards/scripts/'"$hook"'$'
   [ -r "$path" ] || return 2
   head -n 1 "$path" 2>/dev/null | grep -qE "$NOARG_SHEBANG_RE" || return 1
@@ -643,6 +643,7 @@ hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecogni
     if [ ! -f "$cmd" ] || [ ! -x "$cmd" ]; then
       continue
     fi
+    named=1
     # The command word is the entry point; the TAIL decides whether running
     # it can still fail the commit. `--help` returns 0 without checking
     # anything and `|| true` throws the status away, so both leave the entry
@@ -677,9 +678,15 @@ hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecogni
   if [ "$seen" -eq 1 ] && [ "$matched" -eq 1 ]; then
     return 0
   fi
-  # Exactly one command and it does not gate: recognizable, and recognizably
-  # not a guard. Everything else — several commands, or none — is a shape
-  # whose reachability this tool does not get to guess at.
+  # The entry point IS the command and only its argument list is outside the
+  # allowlist — a trailing comment, an extra argument. That may well gate;
+  # this tool cannot say, so it says so, rather than calling it ungated.
+  if [ "$named" -eq 1 ]; then
+    return 3
+  fi
+  # Exactly one command, and it is not our entry point at all: recognizable,
+  # and recognizably not a guard. Everything else — several commands, or
+  # none — is a shape whose reachability this tool does not get to guess at.
   if [ "$seen" -le 1 ]; then
     return 1
   fi
