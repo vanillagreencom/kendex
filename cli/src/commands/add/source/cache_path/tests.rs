@@ -288,3 +288,109 @@ fn add_from_a_local_directory_outside_the_cache_is_unchanged() {
     });
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// The lease, which this PR is what makes load-bearing. Before it, a
+/// cache-path source was in no list vstack fetched, so nothing ever rewrote
+/// that entry while `add` read it. Now `check` enumerates it and spawns the
+/// detached `cache-refresh` that fetches and `reset --hard`s that exact
+/// directory — and a `RefreshOnly` acquire stands down only for a lease that
+/// is actually held. The local-directory branch held `CacheLease::none()`, so
+/// the refresher saw the path free and could rewrite the tree mid-copy.
+///
+/// Asserted against the tree `add` READS and the source it RECORDS, which is
+/// the pair a later refresher acts on: at an entry root both are the remote's
+/// own entry, below one they are the named entry and the path into it.
+#[test]
+fn add_holds_the_lease_on_the_tree_it_reads() {
+    let root = tmproot("add-cache-lease");
+    let origin = root.join("origin");
+    let home = root.join("home");
+    let config_dir = root.join("config");
+    let project_root = root.join("project");
+    for dir in [&origin, &home, &config_dir, &project_root] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let origin_url = origin_repo(&origin);
+    std::fs::create_dir_all(origin.join("nested").join("agents")).unwrap();
+    publish_skill(&origin.join("nested"), "alpha");
+    git(&origin, &["add", "-A"]);
+    git(&origin, &["commit", "-q", "-m", "nested"]);
+
+    crate::test_util::with_home_and_config(&home, &config_dir, || {
+        let entry = cache_entry_clone(&origin_url, "legacy_key");
+        for (label, source) in [
+            ("entry root", entry.to_string_lossy().into_owned()),
+            (
+                "below the entry",
+                entry.join("nested").to_string_lossy().into_owned(),
+            ),
+        ] {
+            let registry = config::SourceRegistry::default();
+            let resolved = resolve_source_for_app(
+                Some(&source),
+                &registry,
+                &project_root,
+                SourceFetch::for_invocation(Some(&source), false),
+            )
+            .unwrap_or_else(|err| panic!("{label}: {err:#}"));
+            assert!(
+                resolved.lease.is_held(),
+                "{label}: the tree `add` copies out of must be leased"
+            );
+
+            // The entry a later refresher acts on for the source `add`
+            // recorded — the same directory `add` is reading right now.
+            let read_entry = crate::refresh_sources::remote_cache_entry_for_path(&resolved.dir)
+                .expect("the resolved dir is in the cache")
+                .0;
+            let mut lock = config::LockFile::default();
+            lock.add(config::LockEntry {
+                name: "alpha".into(),
+                kind: config::ItemKind::Skill,
+                source: resolved.source.clone(),
+                source_repo: None,
+                harnesses: vec!["claude-code".into()],
+                method: config::InstallMethod::Copy,
+                installed_at: "2026-08-18T00:00:00Z".into(),
+                source_hash: String::new(),
+            });
+            let landed = |name: &str| read_entry.join("skills").join(name).exists();
+
+            // Upstream moves and the TTL is off, so the only thing that can
+            // stop the refresher is the lease.
+            let marker = format!("beta-{}", label.replace(' ', "-"));
+            publish_skill(&origin, &marker);
+            config::refresh_remote_caches_older_than(&lock, None, config::FetchBound::BACKGROUND);
+            assert!(
+                !landed(&marker),
+                "{label}: a leased tree must not be reset under the install reading it"
+            );
+            drop(resolved);
+
+            // Control: released, the very same call DOES fetch — so the
+            // assertion above is the lease's doing and not the fixture's.
+            config::refresh_remote_caches_older_than(&lock, None, config::FetchBound::BACKGROUND);
+            assert!(
+                landed(&marker),
+                "{label}: without the lease the refresher fetches this entry"
+            );
+        }
+
+        // Control: a local checkout outside the cache leases nothing, because
+        // no vstack process rewrites one.
+        let outside = root.join("checkout");
+        std::fs::create_dir_all(outside.join("agents")).unwrap();
+        std::fs::create_dir_all(outside.join("skills")).unwrap();
+        let source = outside.to_string_lossy().into_owned();
+        let registry = config::SourceRegistry::default();
+        let resolved = resolve_source_for_app(
+            Some(&source),
+            &registry,
+            &project_root,
+            SourceFetch::for_invocation(Some(&source), false),
+        )
+        .expect("a local directory resolves");
+        assert!(!resolved.lease.is_held());
+    });
+    let _ = std::fs::remove_dir_all(root);
+}

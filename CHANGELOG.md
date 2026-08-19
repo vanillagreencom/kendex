@@ -36,15 +36,18 @@
   leased before the subdirectory is read out of it.
 
   `refresh` migrates the recorded source onto the remote spec in the same
-  pass that repairs `source_repo`, so existing consumers cross over without a
-  manual re-add. The rewrite waits until vstack's own entry for that remote
-  is present and a fetch of it has actually RUN and landed — a fetch that ran
-  and failed, and a cache that could not be locked or stamped at all, both
-  leave the clone where it was and are both declined. Accepting them wrote
-  the lock a `source_hash` taken from a stale clone while the install had
-  come from the fetched one, after which the next refresh reinstalled the
-  older content over the newer with every command reporting success. A source
-  naming a subdirectory is never migrated: a remote spec names a repository
+  pass that repairs `source_repo` — but only where the recorded path IS the
+  directory that spec resolves to. Then resolution, the fetch, the hash and
+  the spec all name one tree, and the lease resolution already holds covers
+  the whole of it. A path naming a DIFFERENT clone of the same repository —
+  every pre-`-<digest>` entry on disk is one — keeps its path, which costs it
+  nothing now that it resolves through its own entry and is fetched on every
+  refresh; `vstack add` is what moves it, and given that path it records the
+  remote spec. Rewriting it instead would commit the lock to a clone the
+  install did not come from, closable only by a second unbounded fetch run
+  inside the lock-write loop, once per entry, on an answer that reports `Ok`
+  for a fetch that failed and for a cache it could not write. A source naming
+  a subdirectory is never migrated either: a remote spec names a repository
   and cannot carry one.
 
 - preflight: new `hardcoded-temp-path` lane — an added directory-creating

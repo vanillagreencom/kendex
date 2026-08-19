@@ -298,103 +298,100 @@ fn a_path_below_a_cache_entry_resolves_through_that_entry() {
     let _ = std::fs::remove_dir_all(root);
 }
 
-/// The migration `refresh` performs: a source recorded as a cache-entry path
-/// becomes the remote spec, so every later reader reaches it through the
-/// ordinary remote path — but only once vstack's own entry for that remote
-/// exists, because a lock naming a remote with no clone on this machine
-/// resolves to nothing, and only once that entry has been brought to the
-/// revision the caller is about to hash it at.
+/// The migration `refresh` performs, and the one shape it is sound for: a
+/// source recorded at the entry the remote spec itself resolves to. Then
+/// resolution, the fetch, the hash and the rewritten spec all name ONE
+/// directory, and the lease resolution already holds covers the whole of it.
+///
+/// It must hold under that lease, which is the state every real refresh is in
+/// — a gate that asked the cache whether it had just been fetched answered
+/// `Fresh` here and refused the one migration that was free and correct.
 #[test]
-fn cache_entry_path_source_migrates_to_its_remote_spec_once_the_canonical_entry_is_current() {
-    let root = tmpdir("cache-path-migrate");
+fn a_source_at_the_canonical_entry_migrates_to_its_remote_spec() {
+    let root = tmpdir("cache-path-migrate-canonical");
     let home = root.join("home");
     let origin = root.join("origin");
     init_git_repo(&origin);
     let local = make_vstack_source(&root, "local-checkout");
 
     crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
-        let source = cache_entry_source(&origin, "legacy_key");
         let canonical = RemoteSource::parse(&file_url(&origin)).unwrap().unwrap();
-        assert_ne!(canonical.cache_dir, PathBuf::from(&source));
-
-        assert_eq!(
-            migrated_cache_entry_source(&source),
-            None,
-            "no rewrite while the remote has no clone to resolve to"
-        );
-
-        // The canonical entry exists but is BEHIND the revision the recorded
-        // path resolves to. Rewriting without fetching it would hand the
-        // caller a source whose tree the install never came from.
         clone_into(&origin, &canonical.cache_dir);
-        std::fs::write(origin.join("README.md"), "newer\n").unwrap();
-        git(&origin, &["commit", "-q", "-am", "advance"]);
-        assert_eq!(
-            std::fs::read_to_string(canonical.cache_dir.join("README.md")).unwrap(),
-            "upstream\n",
-            "the canonical entry must start behind, or the fetch below proves nothing"
-        );
+        let source = canonical.cache_dir.to_string_lossy().into_owned();
 
+        // Under the lease a refresh holds across its whole lock-write pass.
+        let records = resolve_source_records(&lock_of(&source));
+        assert!(same_path(&records.sources[0].root, &canonical.cache_dir));
         assert_eq!(
             migrated_cache_entry_source(&source),
-            Some(file_url(&origin))
+            Some(file_url(&origin)),
+            "the entry the spec resolves to is the entry resolution just leased"
         );
-        assert_eq!(
-            std::fs::read_to_string(canonical.cache_dir.join("README.md")).unwrap(),
-            "newer\n",
-            "the entry the rewritten source names must be current"
-        );
+        drop(records);
 
         // Controls: neither a local checkout nor an already-remote source is
-        // a cache-entry path, so neither is rewritten.
+        // a cache path, so neither is rewritten.
         assert_eq!(migrated_cache_entry_source(&local.to_string_lossy()), None);
         assert_eq!(migrated_cache_entry_source(&file_url(&origin)), None);
     });
     let _ = std::fs::remove_dir_all(root);
 }
 
-/// The guard that decides the migration is about the FETCH, not about the
-/// call returning `Ok`. A fetch that ran and failed leaves the canonical clone
-/// at whatever revision it already held, and `lease_remote_cache` reports that
-/// as `Ok(FetchFailed)` — accepting it rewrote the lock to a spec whose clone
-/// was behind the tree the install came from, after which `refresh` said
-/// `(unchanged)`, `check` and `verify` agreed, and the next refresh reinstalled
-/// the older content over the newer with every command reporting success.
+/// A legacy-key entry is NEVER migrated, however current the current-key entry
+/// beside it is. Every key vstack mints today carries a `-<digest>` suffix, so
+/// every pre-suffix entry on disk is this case — including the seventeen-entry
+/// install this defect was found on.
+///
+/// Rewriting it would commit the lock to a directory the install did not come
+/// from, and the only thing that could close that gap is a fetch of the other
+/// clone run inside the lock-write loop, once per entry. The recorded path
+/// costs nothing where it is: it resolves through its own entry and is fetched
+/// on every refresh. `vstack add` is what moves it.
 #[test]
-fn a_cache_entry_source_is_not_migrated_onto_a_clone_no_fetch_reached() {
-    let root = tmpdir("cache-path-migrate-unreachable");
+fn a_legacy_key_source_is_never_migrated_onto_a_second_clone() {
+    let root = tmpdir("cache-path-migrate-legacy");
     let home = root.join("home");
     let origin = root.join("origin");
     init_git_repo(&origin);
 
     crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
         let source = cache_entry_source(&origin, "legacy_key");
+        let legacy = PathBuf::from(&source);
         let canonical = RemoteSource::parse(&file_url(&origin)).unwrap().unwrap();
-        clone_into(&origin, &canonical.cache_dir);
-
-        // Control: reachable, this fixture migrates — so the refusal below is
-        // the origin's doing and not the fixture's.
-        assert_eq!(
-            migrated_cache_entry_source(&source),
-            Some(file_url(&origin))
+        assert_ne!(
+            canonical.cache_dir, legacy,
+            "the fixture must be two clones"
         );
 
-        // Now unreachable. The recorded path is left exactly as it was, which
-        // costs the entry nothing: it keeps resolving and keeps fetching.
-        std::fs::remove_dir_all(&origin).unwrap();
         assert_eq!(
             migrated_cache_entry_source(&source),
             None,
-            "a failed fetch must not be read as a current clone"
+            "no rewrite while the remote has no clone of its own"
         );
 
+        // Present AND at the same revision changes nothing: the objection is
+        // that it is a different DIRECTORY, not that it is behind.
+        clone_into(&origin, &canonical.cache_dir);
+        assert_eq!(migrated_cache_entry_source(&source), None);
+
+        // And the entry keeps working: it resolves through its own path and
+        // is fetched, which is what makes leaving it alone free.
+        std::fs::write(origin.join("README.md"), "newer\n").unwrap();
+        git(&origin, &["commit", "-q", "-am", "advance"]);
+        let records = resolve_source_records(&lock_of(&source));
+        assert!(same_path(&records.sources[0].root, &legacy));
+        assert_eq!(
+            std::fs::read_to_string(legacy.join("README.md")).unwrap(),
+            "newer\n"
+        );
+        drop(records);
+
+        // The recorded source and the hashed tree stay the same directory, so
+        // no refresh can report an outcome the install did not have.
         let mut entry = lock_entry("demo", &source);
         entry.source_hash = "recorded".into();
         crate::commands::refresh::sync_lock_entry_source(&[], &mut entry);
-        assert_eq!(
-            entry.source, source,
-            "the recorded source must be untouched"
-        );
+        assert_eq!(entry.source, source);
         assert_eq!(entry.source_hash, "recorded");
     });
     let _ = std::fs::remove_dir_all(root);

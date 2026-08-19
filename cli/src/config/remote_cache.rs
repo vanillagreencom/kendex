@@ -20,9 +20,8 @@ mod problems;
 mod test_support;
 
 pub use fetch::{
-    CacheLease, FetchAttempt, FetchBound, lease_cached_source, lease_remote_cache,
-    refresh_remote_caches, refresh_remote_caches_older_than, remote_cache_fetch_in_flight,
-    spawn_detached_cache_refresh,
+    CacheLease, FetchBound, lease_cached_source, lease_remote_cache, refresh_remote_caches,
+    refresh_remote_caches_older_than, remote_cache_fetch_in_flight, spawn_detached_cache_refresh,
 };
 use fetch::{GuardAcquire, RemoteCacheFetchGuard};
 pub(crate) use problems::recorded_remote_cache_problems;

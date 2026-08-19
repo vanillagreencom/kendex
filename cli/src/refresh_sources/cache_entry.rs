@@ -112,40 +112,35 @@ fn cache_entry_remote(path: &Path) -> Result<RemoteSource> {
 }
 
 /// The remote spec a source recorded as a cache-entry path should be rewritten
-/// to, so the lock records the remote rather than one machine's clone of it —
-/// with vstack's own entry for that remote brought to the revision the caller
-/// is about to hash it at.
+/// to, so the lock records the remote rather than one machine's clone of it.
 ///
-/// `None` unless every condition holds.
+/// Only when the recorded path IS the entry the spec resolves to. That makes
+/// the rewrite correct by CONSTRUCTION rather than by a freshness check:
+/// resolution has already fetched and leased that directory this run, the
+/// caller hashes that same directory next, and the spec names it too — one
+/// tree throughout, with no window in which they can disagree.
 ///
-/// The path must be the ENTRY, not something beneath it: a remote spec names a
-/// repository and cannot carry a subdirectory, so rewriting a
-/// `<cache>/<entry>/<subdir>` source to a URL would silently install a
-/// different tree. Such a source keeps its path, which resolves through its
-/// entry and fetches with it.
+/// The alternative was to rewrite a legacy-key path onto the current key's
+/// entry once a fetch of THAT entry succeeded. It cannot be made sound at
+/// acceptable cost. The two clones are different directories, so the lock
+/// would be committed to one while the install came from the other, and the
+/// only thing standing between them is a fetch this pass would have to run —
+/// unbounded, inside the lock-write loop, once per migrating entry. The
+/// production case for this defect had seventeen of them, each able to stall
+/// on another process's guard. And the check is only as good as its answer:
+/// `lease_remote_cache` reports `Ok` for a fetch that ran and failed and for a
+/// cache it could not write, both of which leave the clone where it was, while
+/// a cache this process already holds reports `Fresh` — which is the state the
+/// correct case is in, so gating on `Updated` refused the one migration that
+/// was free and sound.
 ///
-/// The canonical entry must already be on this machine, because nothing short
-/// of `vstack add` mints one and a lock naming a remote with no clone resolves
-/// to nothing.
+/// So a legacy-key path is left exactly as recorded. That costs it nothing:
+/// it resolves through its own entry and is fetched on every refresh like any
+/// other remote. `vstack add` is what moves it — given that path it now
+/// records the remote spec — and the entry it leaves behind is inert.
 ///
-/// And the fetch must have RUN and landed — [`config::FetchAttempt::Updated`],
-/// nothing else. This is not the same question as "did the call return `Ok`":
-/// [`config::lease_remote_cache`] answers `Ok` for a fetch that ran and failed
-/// and for a cache it could not write or lock at all, both of which leave the
-/// clone at whatever revision it already held. Accepting those wrote the lock
-/// a `source_hash` taken from a stale clone while the install had come from
-/// the fetched one — `refresh` then reported `(unchanged)`, `check` and
-/// `verify` agreed, and the NEXT refresh reinstalled the older content over
-/// the newer with every command still reporting success. A cache another read
-/// in this same process is holding answers `Fresh` and is declined for the
-/// same reason: that holder's own bound may have served it from inside a TTL,
-/// so nothing here proves it current.
-///
-/// Declining costs the entry nothing: the recorded path keeps resolving and
-/// keeps fetching, and the next run asks again. Past the rewrite the question
-/// cannot arise again — resolution and hashing name the same one directory,
-/// where before they named two clones free to sit at different revisions with
-/// nothing to converge them.
+/// A path BELOW an entry is never rewritten either: a remote spec names a
+/// repository and cannot carry a subdirectory.
 pub(crate) fn migrated_cache_entry_source(source: &str) -> Option<String> {
     let (entry, below) = remote_cache_entry_for_path(Path::new(source))?;
     if !below.as_os_str().is_empty() {
@@ -153,18 +148,7 @@ pub(crate) fn migrated_cache_entry_source(source: &str) -> Option<String> {
     }
     let remote = cache_entry_remote(&entry).ok()?;
     let canonical = RemoteSource::parse(&remote.git_url).ok()??;
-    if !cache_entry_present(&canonical) {
-        return None;
-    }
-    // Unbounded and TTL-free: this is the one fetch whose OUTCOME decides
-    // whether the lock is rewritten, so a cache served from inside somebody
-    // else's freshness window is not an answer. The lease is released at once
-    // — what the caller reads next is this entry's hash, through the same
-    // unleased read every `source_hash` takes.
-    let (attempt, lease) =
-        config::lease_remote_cache(&canonical, None, config::FetchBound::Unbounded).ok()?;
-    drop(lease);
-    matches!(attempt, config::FetchAttempt::Updated).then_some(canonical.git_url)
+    same_path(&canonical.cache_dir, &entry).then_some(canonical.git_url)
 }
 
 /// The remote a recorded source names, whether it is spelled as a URL, as

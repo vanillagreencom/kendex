@@ -81,14 +81,16 @@ fn sync_lock_entry_source_preserves_identity_when_source_unavailable() {
 }
 
 /// The migration a refresh performs in the same pass that repairs
-/// `source_repo`: an entry whose source is a path into vstack's own cache is
-/// rewritten to the remote that entry clones, so an already-installed consumer
-/// crosses over without a manual re-add.
+/// `source_repo`: an entry recorded at the cache directory the remote spec
+/// itself resolves to is rewritten to that spec, so an already-installed
+/// consumer crosses over without a manual re-add.
 ///
-/// It runs BEFORE the caller recomputes `source_hash`, so the hash is taken
-/// against the source the entry now records.
+/// It runs BEFORE the caller recomputes `source_hash`, and it rewrites only
+/// when the spec resolves to the same directory the path named — so the hash
+/// is taken against the source the entry now records, by construction rather
+/// than by a freshness check.
 #[test]
-fn sync_lock_entry_source_rewrites_a_cache_entry_path_to_its_remote_spec() {
+fn sync_lock_entry_source_rewrites_a_canonical_cache_path_to_its_remote_spec() {
     let root = tmpdir("refresh-source-cache-migration");
     let home = root.join("home");
     let origin = root.join("origin");
@@ -96,17 +98,23 @@ fn sync_lock_entry_source_rewrites_a_cache_entry_path_to_its_remote_spec() {
     let origin_url = format!("file://{}", origin.display());
 
     crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
-        let cache_root = crate::refresh_sources::remote_cache_root();
-        let legacy = cache_root.join("legacy_key");
-        crate::refresh_sources::tests::clone_into(&origin, &legacy);
         let canonical = crate::refresh_sources::RemoteSource::parse(&origin_url)
             .unwrap()
             .unwrap();
         crate::refresh_sources::tests::clone_into(&origin, &canonical.cache_dir);
 
-        let mut entry = lock_entry("rust", ItemKind::Agent, &legacy, vec!["codex"]);
+        let mut entry = lock_entry("rust", ItemKind::Agent, &canonical.cache_dir, vec!["codex"]);
         sync_lock_entry_source(&[], &mut entry);
         assert_eq!(entry.source, origin_url);
+
+        // Control: a legacy-key entry beside it is a DIFFERENT directory, so
+        // it keeps its path — rewriting it would commit the lock to a clone
+        // the install did not come from.
+        let legacy = crate::refresh_sources::remote_cache_root().join("legacy_key");
+        crate::refresh_sources::tests::clone_into(&origin, &legacy);
+        let mut entry = lock_entry("rust", ItemKind::Agent, &legacy, vec!["codex"]);
+        sync_lock_entry_source(&[], &mut entry);
+        assert_eq!(entry.source, legacy.to_string_lossy());
 
         // Control: a source that is not a cache entry keeps whatever it
         // recorded — the rewrite is keyed on the cache root, not on being a
