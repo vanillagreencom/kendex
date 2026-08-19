@@ -4,16 +4,24 @@
 
 ### 3.2.2
 
-- **A tool call can no longer wedge the session by never reaching Pi, and a lagging stream can no longer dispatch the same call twice (vstack#1469).** From the 2026-08-17 session that sat deadlocked 5h39m behind one `web_fetch`, five related fixes to the MCP↔stream pairing machinery:
-  - The grace-timer finalize settles a still-streaming block's arguments from the MCP handler's schema-validated copy — the SDK only invokes handlers with complete input — instead of parsing truncated partial JSON, which forwarded `{}`-argument calls that Pi executed and errored (`Validation failed … Received arguments: {}`).
-  - Sibling calls whose handler has fired are settled the same way; a sibling with no fired handler re-arms the grace (up to 3×) and, once grace is exhausted, is pruned (`partial_tool_calls_pruned` diagnostic) rather than executed with truncated arguments — a truncated bash command must never run.
-  - Every id an ended turn hands Pi is stamped forwarded, and the streamed, completed-message, no-stream-events fallback, and finalize paths all suppress a cross-turn replay of a forwarded id — previously the replay re-dispatched the same call in the next turn (the observed duplicate executions under one tool-call id). Within one turn, a completed-message block also suppresses its lagging stream twin, and `endToolUseTurn` prunes any block still carrying partial JSON, so truncated arguments can never reach execution on any end path. A completed-message yield arriving after its turn already ended records ids only — it no longer appends calls into the content array Pi already holds by reference.
-  - A handler whose call never reached Pi is failed with a retryable error — at the delivery site for settled callback generations, with a grace-finalize backstop (`tool_handler_stranded` / `tool_handlers_stranded` diagnostics) — instead of waiting forever behind the "provider may be stuck" warning; failed ids are marked dead so no late replay can execute them behind the model's back. A grace timer consumed by an already-forwarded id still settles and ends the turn for its executable siblings instead of leaving the stream with no backstop.
-  - Message-boundary reaping of early tool results now PARKS them consumably instead of destroying them (label `stale_queued_tool_results_dropped` → `stale_queued_tool_results_parked`), and `claimToolCall` can pair a late-firing handler with its own queued or parked result — exact arguments first, so it can never steal a live same-name sibling's id — because the SDK staggers handler invocations and "still queued at the boundary" never proved the handler gave up. Previously such a handler errored with "no matching tool_call id" and the model re-ran an already-executed call.
+- **A tool call can no longer wedge the session, and a lagging stream can no
+  longer dispatch the same call twice (vstack#1469).** From a session that sat
+  deadlocked 5h39m behind one `web_fetch`: the grace-timer finalize settles a
+  still-streaming block from the MCP handler's schema-validated copy rather
+  than parsing truncated partial JSON, a sibling with no fired handler is
+  pruned once grace is exhausted rather than executed with truncated
+  arguments, and every id an ended turn hands Pi is stamped forwarded so a
+  cross-turn replay cannot re-dispatch it.
 
 ### 3.2.1
 
-- **Parallel Pi conversations and subagents no longer share mutable bridge request state.** The provider's process-global active query, Pi stream, context stack, watchdog ownership, and persisted Claude session bookkeeping could be overwritten when two `streamSimple` calls overlapped in one process. That allowed one conversation to abort, resume, or deliver tool results through another conversation's state, most visibly as hanging parallel subagents and stalled independent tool loops. Each request now runs in an `AsyncLocalStorage` lane keyed by Pi's stable provider `sessionId`; promise continuations, nested tool continuations, and the abort handler (which re-enters its lane explicitly, since an abort issued from another conversation's context would otherwise mark that conversation's record) all act on that lane, while direct hosts that omit `sessionId` keep the previous single-lane behavior. Lane registries are shared across separately loaded extension module instances so child lifecycle events persist and clean up the primary provider's state; each session's entries are pruned on its own shutdown without disturbing concurrent siblings, including an in-memory (`--no-session`) fork, which mutates the session id before shutdown; the lane a session started in and its pending persist timer are recorded per `SessionManager` on the same shared registries, so a shutdown handled by a reloaded module instance still prunes the right lane and cancels only that session's persist (`cancelScheduledSessionPersistence` now takes the manager). Requests sent with `cacheRetention: "none"` — Pi's `/compact` and branch-summary one-shots, which carry a fresh `sessionId` per call — release their lane as soon as they settle, so a long-lived process does not accumulate one lane per compaction; a host that sets `cacheRetention: "none"` on ordinary turns therefore gets no Claude-session continuity across them, matching the hint's meaning. An empty `sessionId` remains a distinct lane rather than being treated as missing, and named lanes can never claim the direct-host default session. Concurrent parent/child requests, sibling aborts, aborts issued from another lane's context, cross-module state access, lifecycle cleanup, foreign-conversation protection, and independent parallel tool-result loops are covered by regression tests.
+- **Parallel Pi conversations and subagents no longer share mutable bridge
+  request state.** A process-global active query, stream, context stack and
+  watchdog ownership could be overwritten when two `streamSimple` calls
+  overlapped, letting one conversation abort or resume another — most visibly
+  as hanging parallel subagents. Each request now runs in an
+  `AsyncLocalStorage` lane keyed by Pi's provider `sessionId`; hosts that omit
+  `sessionId` keep the previous single-lane behavior.
 
 ### 3.2.0
 
