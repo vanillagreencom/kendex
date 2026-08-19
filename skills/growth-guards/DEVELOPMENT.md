@@ -142,7 +142,9 @@ it is unverifiable rather than armed. The delegating shape's helper is
 compared BYTE FOR BYTE against what this installer generates whenever it
 sits outside the installer-owned hooks directory, because there the marker
 is only a comment; `helper_body` is the single definition both the writer
-and the verifier use.
+and the verifier use. The comparison runs in `.git/hooks` as well: `--check`
+writes nothing, so it cannot assume the installer has just refreshed the
+copy it is looking at.
 
 A tail counts only when a space or tab separates it from the command — the
 shell concatenates `"…/commit-msg""$1"` into a single word git cannot run —

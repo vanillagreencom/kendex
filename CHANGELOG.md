@@ -224,7 +224,11 @@
   `# vstack growth-guards git hooks` plus `exit 0` carried it while bypassing
   every guard. The bytes are now compared against the helper this installer
   generates, through one `helper_body` that the writer and the verifier
-  share, so the two cannot drift apart. The
+  share, so the two cannot drift apart. That comparison applies in
+  `.git/hooks` too, not only in a redirected directory: `--check` is
+  READ-ONLY, so "the installer rewrites this file" says nothing about the
+  copy sitting there now, and a marker-carrying stub in the ordinary install
+  reported `armed` while every violation went through. The
   suite asserts the property directly rather than the wording: exit 0 is
   claimed only where a real violating commit is really blocked AND a clean
   one still passes, which is the half that separates a working gate from a

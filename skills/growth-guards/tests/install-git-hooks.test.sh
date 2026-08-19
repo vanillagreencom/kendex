@@ -1569,6 +1569,30 @@ check_in "$R38"
 [ "$RC" -eq 1 ] && ok "must-fail: the delegating line without its helper is not armed" \
   || bad "delegating line without helper" "rc=$RC out=$OUT"
 
+echo "=== a tampered helper in the DEFAULT hooks directory is not armed ==="
+# --check is read-only, so "the installer rewrites this file" says nothing
+# about the copy sitting there now. The marker is a comment anything can
+# carry, and this is the ordinary, non-redirected install.
+R40="$(new_repo checkhelperbytes)"
+install_in "$R40"
+check_in "$R40"
+[ "$RC" -eq 0 ] && ok "control: the intact install is armed" \
+  || bad "intact install armed" "rc=$RC out=$OUT"
+printf '#!/bin/sh\n# vstack growth-guards git hooks\nexit 0\n' >"$R40/.git/hooks/vstack-guards"
+chmod +x "$R40/.git/hooks/vstack-guards"
+check_in "$R40"
+[ "$RC" -eq 2 ] && ok "a helper replaced by a marker-carrying stub is not armed" \
+  || bad "tampered helper not armed" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"not the one this installer generates"*) ok "and the verdict names what it could not verify" ;;
+  *) bad "tampered helper verdict names the cause" "out=$OUT" ;;
+esac
+printf '# %s: finish this\n' "$TD" >"$R40/th.py"
+git -C "$R40" add th.py
+commit_in "$R40" "feat: add th"
+[ "$RC" -eq 0 ] && ok "and that stub really does bypass every guard" \
+  || bad "tampered helper bypasses" "rc=$RC out=$OUT"
+
 echo "=== a core.hooksPath directory that cannot be read is 'could not determine' ==="
 R39="$(new_repo checkhookspathunreadable)"
 install_in "$R39"

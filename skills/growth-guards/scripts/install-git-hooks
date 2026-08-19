@@ -580,16 +580,15 @@ check_helper() { # DIR -> 0 armed, 1 not armed, 3 unverifiable
     add_reason "helper $HELPER_NAME is not executable (commits are blocked, not guarded)"
     return 1
   fi
-  # Inside the installer-owned hooks directory the marker is enough: this
-  # installer wrote the file and rewrites it on every run. Anywhere else it
-  # is a copy someone made, and the marker is just a comment anyone can
-  # type — an executable `# vstack growth-guards git hooks` + `exit 0`
-  # carries it while bypassing every guard. There, only the bytes settle it.
-  if [ "$1" != "$HOOKS_DIR" ]; then
-    if ! helper_body 2>/dev/null | cmp -s - "$helper"; then
-      add_reason "helper $HELPER_NAME is not the one this installer generates, so what it runs cannot be verified"
-      return 3
-    fi
+  # The marker is a comment, and anything can carry one: an executable
+  # `# vstack growth-guards git hooks` plus `exit 0` passes every test above
+  # while bypassing every guard. That holds in `.git/hooks` too — `--check`
+  # is READ-ONLY, so "the installer rewrites this file" is not something it
+  # gets to assume about the copy sitting there right now. Only the bytes
+  # settle what the helper does, so they are compared wherever it lives.
+  if ! helper_body 2>/dev/null | cmp -s - "$helper"; then
+    add_reason "helper $HELPER_NAME is not the one this installer generates, so what it runs cannot be verified"
+    return 3
   fi
   return 0
 }
@@ -864,7 +863,7 @@ check_hooks_dir() { # DIR -> 0 armed, 1 not armed, 2 could not determine
   if [ "$dir" = "$HOOKS_DIR" ]; then
     status=0
     check_helper "$dir" || status=$?
-    case "$status" in 1) drifted=1 ;; 2) unknown=1 ;; esac
+    case "$status" in 1) drifted=1 ;; 2 | 3) unknown=1 ;; esac
   fi
   CHECK_NEEDS_HELPER=0
   status=0
