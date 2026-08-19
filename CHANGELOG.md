@@ -114,6 +114,16 @@
   settings cache renames inline, because it answers a failure by returning 1
   for its caller to propagate rather than by the family's exit 2, and routing
   it through the helper would change that contract.
+- growth-guards: a green suite run is silent (#1503). `todo-ban.test.sh`
+  redirected into `stagedx/tools/` before that directory existed and recovered
+  through a fallback, so every passing run printed a `No such file or
+  directory` line — the one message that would announce a genuine
+  fixture-setup failure, taught to readers and log scanners as noise. The
+  directory is created first, and the other suites were swept for the same
+  class: all now emit nothing on stdout beyond their assertions and nothing at
+  all on stderr, except `install-git-hooks.test.sh`, which passes real hook
+  output through.
+
 - growth-guards: `cleanup-scope.test.sh` asserts cleanup over a scratch root
   the suite owns instead of counting entries in the shared temp namespace
   (#1501). The old count compared `gg-todo-ban.*` entries in `$TMPDIR` before

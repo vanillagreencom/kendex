@@ -210,7 +210,8 @@ run_tb
 echo "=== the exclusion list is read from the index ==="
 new_repo stagedx
 printf '// %s: vendored\n' "$TD" >"$R/v.rs"
-printf 'v.rs\tvendored fixture\n' >"$R/tools/growth-guards-todo-excludes" 2>/dev/null || { mkdir -p "$R/tools"; printf 'v.rs\tvendored fixture\n' >"$R/tools/growth-guards-todo-excludes"; }
+mkdir -p "$R/tools"
+printf 'v.rs\tvendored fixture\n' >"$R/tools/growth-guards-todo-excludes"
 git -C "$R" add -A
 # Worktree copy now DROPS the exclusion; the staged copy must still govern.
 : >"$R/tools/growth-guards-todo-excludes"
