@@ -51,7 +51,21 @@ clean empty diff.
 Shell files are `*.sh`, `*.bash`, or anything with a `sh`/`bash` shebang.
 Deleted files, and files under `tests/` or `fixtures/`, are out of scope
 for the lanes that judge whole files — `unwired-suite`, whose subject is
-the suite itself, is the exception. A lane whose tool is missing skips
+the suite itself, is the exception.
+
+Installed-artifact subtrees (`.agents/` and the harness dirs'
+skills/agents/hooks/rules/instructions/packages trees) hold vendored
+tooling a refresh rewrites wholesale, so the lanes judging how a file is
+AUTHORED — `masked-returns`, `fail-open`, `unwired-suite`, `mktemp-trap`,
+`docs-cited-paths` — are out of scope there: the finding names an upstream
+authoring choice this repo cannot fix, and an edit is reverted by the next
+refresh. The lanes judging what those bytes DO to this repo stay on —
+`shell-syntax`, `shellcheck-errors`, `hardcoded-temp-path`, `todo-links`,
+`reviewer-attribution`, `data-syntax`, `workflow-run-syntax`. A file
+authored elsewhere under a harness dir (a `prompts/` or `commands/` tree)
+keeps every lane, and markdown inside a mirror needs no exemption of its
+own: a mirror-internal token is dot-leading and a foreign one fails the
+subtree guard. A lane whose tool is missing skips
 silently — an absent shellcheck never fails a run and never passes one.
 
 Exit codes: `0` clean, `1` findings, `2` usage/environment error (bad flag,

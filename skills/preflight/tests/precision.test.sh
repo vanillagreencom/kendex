@@ -23,6 +23,7 @@ bad() {
   FAIL=$((FAIL + 1))
   printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"
 }
+skipped() { printf '  skip  %s (%s)\n' "$1" "$2"; }
 
 seed() { # NAME — fixture in $R: committed baseline, origin/main, feature branch
   R="$TMP/$1"
@@ -332,6 +333,65 @@ mkdir -p "$R/.pi/prompts"
 printf '#!/usr/bin/env bash\nset -euo pipefail\n# See docs/gone.md for background.\necho prompt\n' >"$R/.pi/prompts/release.sh"
 run_pf
 fires "an authored file under a harness dir keeps the lane" ".pi/prompts/release.sh:3: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
+
+echo "=== a mirror's authoring choices are the upstream project's, not this repo's ==="
+seed mirrorlanes
+mkdir -p "$R/.github/workflows"
+printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash tests/other.test.sh\n' >"$R/.github/workflows/ci.yml"
+git -C "$R" add -A
+git -C "$R" commit -qm "a runner set complete enough to prove a suite unwired"
+mkdir -p "$R/.agents/skills/foo/scripts" "$R/.agents/skills/foo/tests"
+# Every authoring-lane shape at once, in bytes the next refresh rewrites: no
+# strict mode, an unchecked and untrapped mktemp, a masking local-and-assign,
+# a swallowed grep status, and a suite this repo's runners never name.
+cat >"$R/.agents/skills/foo/scripts/run" <<'EOF'
+#!/usr/bin/env bash
+D="$(mktemp -d)"
+f() {
+  local d="$(mktemp -d)"
+  echo "$d"
+}
+grep -q x -- "$D" || true
+f
+EOF
+printf '#!/usr/bin/env bash\nset -euo pipefail\necho vendored\n' >"$R/.agents/skills/foo/tests/foo.test.sh"
+run_pf
+clean "a vendored skill's strict mode, scratch cleanup, masked returns and suite wiring are upstream's to fix"
+
+echo "=== control: the same bytes this repo authors itself still fail ==="
+cp "$R/.agents/skills/foo/scripts/run" "$R/scripts/run.sh"
+cp "$R/.agents/skills/foo/tests/foo.test.sh" "$R/tests/foo.test.sh"
+run_pf
+fires "an authored script without strict mode still fails" "scripts/run.sh:0: [fail-open] new shell file without strict mode"
+fires "an authored unchecked mktemp still fails" "scripts/run.sh:2: [fail-open] unchecked mktemp"
+fires "an authored untrapped mktemp still fails" "scripts/run.sh:2: [mktemp-trap]"
+fires "an authored swallowed status still fails" "scripts/run.sh:7: [fail-open] grep || true swallows exit 2"
+fires "an authored unwired suite still fails" "tests/foo.test.sh:0: [unwired-suite]"
+if command -v shellcheck >/dev/null 2>&1; then
+  fires "an authored masking local-and-assign still fails" "scripts/run.sh:4: [masked-returns] SC2155"
+else
+  skipped "an authored masking local-and-assign still fails" "shellcheck not on PATH"
+fi
+
+echo "=== what vendored bytes DO to this repo is still this repo's problem ==="
+seed mirrorkeep
+mkdir -p "$R/.agents/skills/foo/scripts"
+printf '#!/usr/bin/env bash\nif [ 1 -eq 1 ]\necho broken\n' >"$R/.agents/skills/foo/scripts/broken"
+printf '#!/usr/bin/env bash\nset -euo pipefail\nexit 300\n' >"$R/.agents/skills/foo/scripts/exitcode"
+printf 'import os\nos.makedirs("%s/vendored-leak")\n' /tmp >"$R/.agents/skills/foo/scripts/leak.py"
+printf '{\n  "a":\n}\n' >"$R/.agents/skills/foo/data.json"
+printf '# Notes\n\nTODO: no issue behind it.\n\nHardened per qodo review.\n' >"$R/.agents/skills/foo/NOTES.md"
+run_pf
+fires "a vendored script bash cannot parse still fails" ".agents/skills/foo/scripts/broken:4: [shell-syntax]"
+fires "a vendored creation at a literal temp path still fails" ".agents/skills/foo/scripts/leak.py:2: [hardcoded-temp-path]"
+fires "vendored malformed JSON still fails" ".agents/skills/foo/data.json:3: [data-syntax]"
+fires "a vendored work marker still fails" ".agents/skills/foo/NOTES.md:3: [todo-links]"
+fires "a vendored reviewer credit still fails" ".agents/skills/foo/NOTES.md:5: [reviewer-attribution]"
+if command -v shellcheck >/dev/null 2>&1; then
+  fires "a vendored shellcheck error still fails" ".agents/skills/foo/scripts/exitcode:3: [shellcheck-errors] SC2242"
+else
+  skipped "a vendored shellcheck error still fails" "shellcheck not on PATH"
+fi
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

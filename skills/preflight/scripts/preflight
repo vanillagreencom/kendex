@@ -780,11 +780,11 @@ while IFS= read -r f; do
   is_new=0
   if [ "$MODE" = "all" ] || grep -qxF -- "$f" "$TMP/newfiles.list"; then is_new=1; fi
   # Installed-artifact subtrees hold vendored tooling a refresh rewrites
-  # wholesale: their text is the upstream project's prose, not this repo's
-  # claims, so the code-citation lane leaves them alone. Authored files
-  # elsewhere under the harness dirs (a prompts/ or commands/ tree) keep the
-  # lane. Markdown inside a mirror needs no gate — a mirror-internal token
-  # is dot-leading and a foreign one fails the subtree guard.
+  # wholesale: the prose is upstream's claims and the code its authoring
+  # choices, so the citation lane and the lanes judging how a file is
+  # written skip them — what those bytes DO here still fails. Authored
+  # files elsewhere under the harness dirs keep every lane; a mirror's
+  # markdown needs no gate (its own tokens are dot-leading).
   vendored_mirror=0
   case "$f" in
     .agents/* | .claude/skills/* | .claude/agents/* | .claude/hooks/* | \
@@ -848,7 +848,7 @@ while IFS= read -r f; do
         parse_gcc "$raw" "$cpath"
         if [ "$GCC_SEV" = "error" ]; then
           emit "$f" "$GCC_LINE" shellcheck-errors "$GCC_MSG"
-        elif [ "$GCC_LINE" != 0 ] && is_masked_code "$GCC_CODE"; then
+        elif [ "$GCC_LINE" != 0 ] && [ "$vendored_mirror" = 0 ] && is_masked_code "$GCC_CODE"; then
           if [ "$MODE" = "all" ] || grep -qxF -- "$GCC_LINE" "$(added_lines_of "$IDX")"; then
             emit "$f" "$GCC_LINE" masked-returns "$GCC_MSG"
           fi
@@ -859,14 +859,14 @@ while IFS= read -r f; do
     # A brand-new script that never turns on errexit, nounset and pipefail
     # fails open at its first unchecked command. Test trees and fixtures set
     # their own rules.
-    if [ "$own_rules" = 0 ] && [ "$is_new" = 1 ]; then
+    if [ "$own_rules" = 0 ] && [ "$vendored_mirror" = 0 ] && [ "$is_new" = 1 ]; then
       if [ "$has_ee" = 0 ] || ! file_matches "$cpath" "$NOUNSET_RE" || ! file_matches "$cpath" "$PIPEFAIL_RE"; then
         emit "$f" 0 fail-open "new shell file without strict mode (set -euo pipefail)"
       fi
     fi
   fi
 
-  if [ "$is_new" = 1 ] && is_suite_path "$f" && ! suite_is_wired "$f"; then
+  if [ "$is_new" = 1 ] && [ "$vendored_mirror" = 0 ] && is_suite_path "$f" && ! suite_is_wired "$f"; then
     emit "$f" 0 unwired-suite "new suite is not invoked by any runner"
   fi
 
@@ -907,13 +907,13 @@ while IFS= read -r f; do
     n="${rec%%"$TAB"*}"
     content="${rec#*"$TAB"}"
 
-    if [ "$is_sh" = 1 ] && [ "$has_ee" = 0 ] && printf '%s' "$content" | grep -Eq -- "$MKTEMP_ASSIGN"; then
+    if [ "$is_sh" = 1 ] && [ "$vendored_mirror" = 0 ] && [ "$has_ee" = 0 ] && printf '%s' "$content" | grep -Eq -- "$MKTEMP_ASSIGN"; then
       emit "$f" "$n" fail-open "unchecked mktemp in a file without errexit — a failed mktemp leaves the variable empty and the script runs on"
     fi
 
     # The literal prefilters keep the regex passes off the lines that cannot
     # carry either shape — most of them.
-    if [ "$is_sh" = 1 ] && [ "$own_rules" = 0 ] && [ "$is_new" = 1 ] && [ "$has_trap" = 0 ] && [ "$mktemp_reported" = 0 ]; then
+    if [ "$is_sh" = 1 ] && [ "$own_rules" = 0 ] && [ "$vendored_mirror" = 0 ] && [ "$is_new" = 1 ] && [ "$has_trap" = 0 ] && [ "$mktemp_reported" = 0 ]; then
       case "$content" in
         *mktemp*)
           if ! is_comment_line "$content" && printf '%s' "$content" | grep -Eq -- "$MKTEMP_CALL_RE"; then
@@ -944,7 +944,7 @@ while IFS= read -r f; do
       esac
     fi
 
-    if [ "$is_sh" = 1 ] && [ "$own_rules" = 0 ] && [ "$is_testname" = 0 ]; then
+    if [ "$is_sh" = 1 ] && [ "$own_rules" = 0 ] && [ "$vendored_mirror" = 0 ] && [ "$is_testname" = 0 ]; then
       case "$content" in
         *"||"*)
           if ! is_comment_line "$content"; then

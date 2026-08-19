@@ -134,6 +134,25 @@
   past: silently reaching the next source installed from one the project never
   chose and failed with an error naming it.
 
+- preflight: installed-artifact subtrees are now out of scope for every lane
+  that judges how a file is AUTHORED, not just `docs-cited-paths`. The
+  `vendored_mirror` classification already knew those paths are upstream
+  bytes a `vstack refresh` rewrites wholesale, but only the citation lane
+  read it, so `mktemp-trap`, `fail-open`, `unwired-suite` and
+  `masked-returns` still judged them — and a consumer repo that TRACKS a
+  vendored skill had no way out: preflight reads no settings file, has no
+  exclusion list, no lane selector and no inline suppression, and editing
+  the vendored file is reverted by the next refresh. The live case was
+  `growth-guards/scripts/install-git-hooks`, whose four `mktemp` sites clean
+  up per branch with `rm -f` instead of `trap … EXIT`: a required check red
+  on an upstream authoring choice the consumer cannot change. Lanes that
+  judge what those bytes DO to the repo carrying them are unchanged and
+  still fire inside a mirror — `shell-syntax`, `shellcheck-errors`,
+  `data-syntax`, `workflow-run-syntax`, `hardcoded-temp-path`, `todo-links`,
+  `reviewer-attribution` — because a mirror is no reason a broken parse, a
+  malformed config, a leaked temp directory or an unreferenced work marker
+  becomes invisible. Both directions are pinned in `precision.test.sh`, per
+  guard. (#1498)
 - preflight: new `hardcoded-temp-path` lane — an added directory-creating
   call taking a literal `/tmp/…` or `/var/tmp/…` as (part of) its first
   argument fails. A literal absolute temp path escapes TMPDIR redirection
