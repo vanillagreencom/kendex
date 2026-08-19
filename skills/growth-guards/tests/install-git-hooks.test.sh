@@ -1543,6 +1543,26 @@ unverifiable_shape "an unquoted command carrying a glob character"
 arm_pair '#!/bin/sh\n\rexec %s/pre-commit "$@"\n' '#!/bin/sh\n\rexec %s/commit-msg "$1"\n'
 unverifiable_shape "a command line beginning with a carriage return"
 
+# A line this function cannot read still RUNS. Counting it only after
+# classification let an unreadable line be skipped silently, leaving a later
+# entry point looking like the only command in the file.
+arm_pair "#!/bin/sh\nexit\t0\nexec %s/pre-commit \"\$@\"\n" "#!/bin/sh\nexit\t0\nexec %s/commit-msg \"\$1\"\n"
+unverifiable_shape "an unreadable line before the entry point"
+printf '# %s: finish this\n' "$TD" >"$R38/tb.py"
+git -C "$R38" add tb.py
+commit_in "$R38" "feat: add tb"
+[ "$RC" -eq 0 ] && ok "and that hook really does exit before the guard runs" \
+  || bad "tab-exit hook bypasses" "rc=$RC out=$OUT"
+git -C "$R38" rm -q --cached tb.py
+rm -f "$R38/tb.py"
+
+# Control: a TAB is an ordinary separator, not a control character — this
+# hook gates, and must not be swept up by the rule above.
+arm_pair '#!/bin/sh\nexec\t%s/pre-commit "$@"\n' '#!/bin/sh\nexec\t%s/commit-msg "$1"\n'
+check_in "$R38"
+[ "$RC" -eq 0 ] && ok "control: a tab between exec and the entry point is armed" \
+  || bad "tab-separated entry point armed" "rc=$RC out=$OUT"
+
 # One passing control per shape the check does accept.
 arm_pair '#!/bin/sh\n%s/pre-commit "$@" || exit $?\n' \
   '#!/bin/sh\n%s/commit-msg "$1" || exit $?\n'

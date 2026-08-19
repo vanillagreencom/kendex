@@ -19,6 +19,7 @@ set -euo pipefail
 
 HELPER_NAME="vstack-guards"
 HELPER_MARKER="vstack growth-guards git hooks"
+GG_HT="$(printf '\t')"
 # Trailing marker on our hook line; only this installer ever writes it, so a
 # foreign hook that merely mentions the helper by name is not mistaken for an
 # install that is already current.
@@ -661,9 +662,18 @@ hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecogni
     body="${line#"$body"}"
     case "$body" in
       "" | "#"*) continue ;;
+    esac
+    # An executable line, whatever it turns out to be. Counted BEFORE any
+    # classification: a line this function cannot read still runs, and one
+    # skipped without counting left a later entry point looking like the only
+    # command in the file.
+    seen=$((seen + 1))
+    # `[:cntrl:]` includes TAB, which is an ordinary separator — `exit<TAB>0`
+    # is a normal command. Only control characters the shell keeps inside a
+    # word make a line unreadable, so tabs are neutralized before the test.
+    case "${body//"$GG_HT"/ }" in
       *[[:cntrl:]]*) opaque=1; continue ;;
     esac
-    seen=$((seen + 1))
     rest="$body"
     case "$rest" in
       exec[[:blank:]]*)
@@ -792,7 +802,7 @@ hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecogni
   # The verdict waits for the whole file. Deciding on the first command
   # instead would call a hook that runs `set -e` before the entry point
   # ungated, which is the false-negative mirror of the bug this closes.
-  if [ "$seen" -eq 1 ] && [ "$matched" -eq 1 ]; then
+  if [ "$seen" -eq 1 ] && [ "$matched" -eq 1 ] && [ "$opaque" -eq 0 ]; then
     return 0
   fi
   # The entry point IS the command and only its argument list is outside the
