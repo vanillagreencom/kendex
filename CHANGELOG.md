@@ -196,7 +196,11 @@
   rather than `1`: `exec …/pre-commit "$@" # run the guard` does gate, and
   calling it ungated would be the same false answer this fix exists to
   remove. `1` is reserved for a single command that is not the entry point,
-  or an entry-point path with nothing executable at it. The
+  or an entry-point path with nothing executable at it. The accepted-tail
+  comparison escapes its own pattern metacharacters, since an unescaped `?`
+  matched `|| exit $#` as though it were `|| exit $?` — and git gives
+  pre-commit no arguments, so that is `exit 0` and swallowed every
+  pre-commit failure while `--check` reported armed. The
   suite asserts the property directly rather than the wording: exit 0 is
   claimed only where a real violating commit is really blocked AND a clean
   one still passes, which is the half that separates a working gate from a

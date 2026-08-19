@@ -1372,6 +1372,16 @@ commit_in "$R38" "feat: add t"
 git -C "$R38" rm -q --cached t.py
 rm -f "$R38/t.py"
 
+# The accepted-tail comparison is a shell PATTERN, so its metacharacters have
+# to be escaped or it matches more than it names: an unescaped `?` made
+# `|| exit $#` pass for `|| exit $?`, and git gives pre-commit no arguments,
+# so `$#` is 0 and the wrapper swallowed every pre-commit failure.
+arm_pair '#!/bin/sh\n%s/pre-commit "$@" || exit $#\n' '#!/bin/sh\n%s/commit-msg "$1" || exit $#\n'
+unverifiable_shape "a tail that only resembles || exit \$? under globbing"
+
+arm_pair '#!/bin/sh\n%s/pre-commit "$@" || exit 0\n' '#!/bin/sh\n%s/commit-msg "$1" || exit 0\n'
+unverifiable_shape "a tail that exits 0 on failure"
+
 # One passing control per shape the check does accept.
 arm_pair '#!/bin/sh\n%s/pre-commit "$@" || exit $?\n' \
   '#!/bin/sh\n%s/commit-msg "$1" || exit $?\n'

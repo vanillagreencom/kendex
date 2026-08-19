@@ -658,7 +658,10 @@ hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecogni
     # and `armed` would be a false description of both.
     tail="${tail#"${tail%%[![:space:]]*}"}"
     tail="${tail%"${tail##*[![:space:]]}"}"
-    tail="${tail% || exit \$?}"
+    # `?` is a one-character wildcard in this pattern, so an unescaped one
+    # also strips `|| exit $#` — which for pre-commit, where git supplies no
+    # arguments, is `exit 0` and swallows every failure.
+    tail="${tail% || exit \$\?}"
     case "$hook" in
       pre-commit)
         case "$tail" in
