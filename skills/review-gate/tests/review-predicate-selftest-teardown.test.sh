@@ -19,6 +19,43 @@ set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WRAPPER="$TEST_DIR/review-predicate-selftest.test.sh"
+SELF_PATH="$TEST_DIR/${BASH_SOURCE[0]##*/}"
+
+# The signal arms below need INT and QUIT DELIVERABLE — to this shell's own
+# traps, to the variants it runs, and to the nested run it interrupts. A
+# shell without job control hands every async child SIG_IGN for both; bash
+# refuses to install a trap for a signal ignored at startup, and SIG_IGN
+# survives exec. So a runner that backgrounds this suite — every parallel
+# one does — would otherwise run those arms against signals that can never
+# be delivered, and the fixtures would report the undelivered signal as a
+# teardown leak. Neither `set -m` nor `setsid` clears an inherited SIG_IGN;
+# only a helper that restores SIG_DFL before exec does. Re-exec through one,
+# once: the guard is idempotent, so the nested runs below pass straight
+# through it.
+sig_ignored_at_startup() {
+  case "$(trap -p "$1")" in
+    *"-- ''"*) return 0 ;;
+  esac
+  return 1
+}
+if sig_ignored_at_startup INT || sig_ignored_at_startup QUIT; then
+  if [ -z "${RG_TEARDOWN_SIGDFL:-}" ]; then
+    export RG_TEARDOWN_SIGDFL=1
+    if env --default-signal=INT,QUIT true 2>/dev/null; then
+      exec env --default-signal=INT,QUIT bash "$SELF_PATH" ${1+"$@"}
+    fi
+    if command -v perl >/dev/null 2>&1; then
+      exec perl -e '$SIG{INT} = "DEFAULT"; $SIG{QUIT} = "DEFAULT"; exec @ARGV or die "exec: $!\n"' \
+        bash "$SELF_PATH" ${1+"$@"}
+    fi
+  fi
+  echo "FAIL: SIGINT/SIGQUIT are ignored and could not be restored to their default disposition — the signal arms measure nothing"
+  exit 1
+fi
+# Restored, or never ignored. The once-marker must not travel any further:
+# the nested run below is launched INTO the ignored state on purpose and has
+# to be able to re-exec out of it exactly as this one did.
+unset RG_TEARDOWN_SIGDFL
 
 fail=0
 note() { echo "FAIL: $1"; fail=1; }
@@ -38,7 +75,6 @@ export RG_TEARDOWN_EXPECT=4
 export RG_TEARDOWN_ZOMBIE_PGID="${RG_TEARDOWN_ZOMBIE_PGID:-$work/zombie.pgid}"
 export RG_TEARDOWN_PROBE_READY="${RG_TEARDOWN_PROBE_READY:-$work/probe.ready}"
 export RG_TEARDOWN_ZOMBIE_KEEPER="${RG_TEARDOWN_ZOMBIE_KEEPER:-$work/zombie.keeper}"
-SELF_PATH="$TEST_DIR/${BASH_SOURCE[0]##*/}"
 : >"$RG_TEARDOWN_PIDS"
 JOBCONTROL_MARK="JOBCONTROL-LEFT-ENABLED"
 
@@ -129,6 +165,7 @@ waiter="$work/bin/$marker-wait"
 stubborn="$work/bin/$marker-stubborn-probe"
 zkeeper="$work/bin/$marker-zombie-keeper"
 zwait="$work/bin/$marker-zombie-wait"
+nojc="$work/bin/$marker-nojobcontrol-launcher"
 
 # The selftest stand-in. Its descendant stands for the gh-shim/jq layer:
 # a child of the selftest, two levels below the job the wrapper signals.
@@ -199,7 +236,19 @@ while [ "$i" -le 200 ]; do
 done
 : >"$RG_TEARDOWN_TIMEOUT"
 ZWAIT
-chmod +x "$probe" "$descendant" "$waiter" "$stubborn" "$zkeeper" "$zwait"
+# A launcher with NO job control that backgrounds its argument — the shape
+# every parallel test runner has, and the one that hands the child SIG_IGN
+# for INT and QUIT.
+cat >"$nojc" <<'NOJC'
+#!/usr/bin/env bash
+"$@" &
+p=$!
+echo "$p" >"$RG_TEARDOWN_BGPID"
+rc=0
+wait "$p" || rc=$?
+exit "$rc"
+NOJC
+chmod +x "$probe" "$descendant" "$waiter" "$stubborn" "$zkeeper" "$zwait" "$nojc"
 
 # The exact wrapper lines each edit rewrites. A miss is not silent: awk
 # records how many times each fired and the counts are asserted per variant.
@@ -441,6 +490,38 @@ if [ "$fail" -eq 0 ]; then
     wait "$probe_pid" 2>/dev/null || prc=$?
     if [ "$prc" -ne 130 ]; then
       note "an interrupted run exited $prc rather than 130 — the interrupt never reached cleanup"
+    fi
+  fi
+
+  # (a2) and the interrupt has to arrive when this suite is launched the way
+  # a parallel runner launches it: as a background job of a shell with no job
+  # control, which is what hands an async child SIG_IGN for INT and QUIT.
+  # Without the disposition guard at the top of this file the nested run
+  # cannot trap the interrupt at all, sails past it, and every signal arm
+  # above reports an undeliverable signal as a teardown leak.
+  rm -f "$probe_ready"
+  bgpid="$work/bg.pid"
+  RG_TEARDOWN_BGPID="$bgpid" \
+  RG_TEARDOWN_LEAK_PROBE=1 RG_TEARDOWN_PROBE_READY="$probe_ready" \
+    "$nojc" bash "$SELF_PATH" >"$work/nojc.out" 2>&1 &
+  nojc_pid=$!
+  i=0
+  while { [ ! -e "$probe_ready" ] || [ ! -s "$bgpid" ]; } && [ "$i" -lt 200 ]; do
+    i=$((i + 1))
+    sleep 0.05
+  done
+  if [ ! -e "$probe_ready" ] || [ ! -s "$bgpid" ]; then
+    cat "$work/nojc.out"
+    note "the background-launched run never signalled readiness, so it proves nothing about a runner that backgrounds this suite"
+    kill -KILL "$nojc_pid" 2>/dev/null || true
+    kill -KILL "$(cat "$bgpid" 2>/dev/null || echo 0)" 2>/dev/null || true
+  else
+    kill -INT "$(cat "$bgpid")" 2>/dev/null || true
+    nrc=0
+    wait "$nojc_pid" 2>/dev/null || nrc=$?
+    if [ "$nrc" -ne 130 ]; then
+      cat "$work/nojc.out"
+      note "a run backgrounded by a shell without job control exited $nrc rather than 130 — INT was ignored at startup and its traps never installed"
     fi
   fi
 

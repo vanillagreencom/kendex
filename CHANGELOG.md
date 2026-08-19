@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+- review-gate: `review-predicate-selftest-teardown.test.sh` no longer fails
+  when a runner launches it in the background — measured 0/4 passing at four
+  concurrent instances, against 4/4 for every other skill (#1506). The cause
+  is signal DISPOSITION, not process groups. A shell without job control
+  gives every async child `SIG_IGN` for SIGINT and SIGQUIT; bash refuses to
+  install a trap for a signal that was ignored when it started, and `SIG_IGN`
+  survives `exec`. So every instance a parallel runner backgrounded ran its
+  `sigquit` variant and its interrupt arm against signals that could never be
+  delivered, and the fixtures reported the undelivered signal as a teardown
+  leak — `expected exit 130, got 99`. The four failures were identical
+  because nothing crossed between instances: ONE instance backgrounded from
+  such a shell fails the same way, and the group signalling the suite proves
+  is already scoped to what it owns, each replay leading its own process
+  group under `set -m` and the leaders read from that instance's own job
+  table. Neither `setsid` nor `set -m` clears an inherited `SIG_IGN`; both
+  were measured.
+
+  The suite now restores the default disposition for INT and QUIT before it
+  measures anything, re-execing itself once through `env --default-signal` or
+  perl, and fails loud naming the cause where neither can restore them rather
+  than running arms that cannot be measured. The once-marker is dropped after
+  the re-exec, so the nested runs re-exec on their own terms. A new arm pins
+  it: the suite is launched by a no-job-control shell that backgrounds it —
+  the shape every parallel runner has — and must still exit 130 on an
+  interrupt. That arm fails on the previous code even in a serial foreground
+  run, so CI catches the defect where the runs are sequential.
+
 - review-gate: `settings-example-sync.test.sh` can no longer report success
   for comparisons it never made (#1507). Its assertion helper ran each
   expression through `eval` in the CURRENT shell, so the absent-root guard —
