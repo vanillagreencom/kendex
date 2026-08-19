@@ -13,10 +13,13 @@ FAIL=0
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
-# A suite is neutralized either by sourcing the harness or, like
-# install-git-hooks, by exporting the isolation itself.
+# Sourcing the harness is the only accepted answer, and it has to be a
+# SOURCE, not a mention: a grep for either token passed on a comment, and it
+# passed install-git-hooks.test.sh — which set GIT_CONFIG_NOSYSTEM and was
+# still not hermetic, exiting 128 with a foreign hook running twenty times
+# under an injected GIT_CONFIG_COUNT. One isolation flag is not the invariant.
 neutralized() { # FILE
-  grep -q 'lib/harness\.bash' "$1" || grep -q 'GIT_CONFIG_NOSYSTEM' "$1"
+  grep -qE '^[[:space:]]*(\.|source)[[:space:]]+"?\$(\{)?TEST_DIR(\})?/lib/harness\.bash"?[[:space:]]*$' "$1"
 }
 
 echo "=== every suite is isolated from the caller's git configuration ==="
@@ -38,6 +41,16 @@ printf '#!/usr/bin/env bash\ngit init -q fixture\n' >"$TMP/forgot.test.sh"
 neutralized "$TMP/forgot.test.sh" \
   && bad "control: a suite that neutralizes nothing is rejected" "the predicate accepted it" \
   || ok "control: a suite that neutralizes nothing is rejected"
+
+# The two shapes the old grep accepted and this one must not.
+printf '#!/usr/bin/env bash\n# see lib/harness.bash for the isolation\ngit init -q f\n' >"$TMP/mention.test.sh"
+neutralized "$TMP/mention.test.sh" \
+  && bad "control: a comment mentioning the harness is rejected" "the predicate accepted it" \
+  || ok "control: a comment mentioning the harness is rejected"
+printf '#!/usr/bin/env bash\nexport GIT_CONFIG_NOSYSTEM=1\ngit init -q f\n' >"$TMP/oneflag.test.sh"
+neutralized "$TMP/oneflag.test.sh" \
+  && bad "control: one isolation flag is not enough" "the predicate accepted it" \
+  || ok "control: one isolation flag is not enough"
 
 echo "=== the harness neutralizes configuration carried in the ENVIRONMENT ==="
 # A private HOME and GIT_CONFIG_NOSYSTEM do not stop these: git reads

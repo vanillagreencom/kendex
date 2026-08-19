@@ -7,17 +7,17 @@
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# TMP, TMPDIR and the git isolation come from the harness. This suite carried
+# its own HOME/XDG_CONFIG_HOME/GIT_CONFIG_NOSYSTEM and was still not hermetic:
+# GIT_CONFIG_GLOBAL, GIT_TEMPLATE_DIR, GIT_DIR and the environment-borne
+# GIT_CONFIG_* channels all reached its fixtures.
+# shellcheck source=lib/harness.bash
+. "$TEST_DIR/lib/harness.bash"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 INSTALL="$SKILL_DIR/scripts/install-git-hooks"
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/gg-install-hooks.XXXXXX")"
-trap 'rm -rf -- "$TMP"' EXIT
 
 unset GROWTH_GUARDS_CHECKS GROWTH_GUARDS_PRE_COMMIT_LOCAL GROWTH_GUARDS_SETTINGS_FILE \
   GROWTH_GUARDS_COMMIT_TYPES SIZE_RATCHET_THRESHOLD 2>/dev/null || true
-# Neutralize the caller's git configuration: a global core.hooksPath, hook
-# templates or identity would decide these results instead of the installer.
-export HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/xdg" GIT_CONFIG_NOSYSTEM=1
-mkdir -p "$HOME" "$XDG_CONFIG_HOME"
 
 # Marker words are assembled from split tokens so this file never contains a
 # marker shape itself — the vstack repo runs todo-ban over its own tree.

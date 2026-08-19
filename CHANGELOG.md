@@ -124,6 +124,12 @@
   them. Verified both shapes running a foreign `pre-commit` against a fixture
   repo before the scrub, and neither reaching it after, with the unscrubbed
   control alongside so the assertion cannot pass vacuously.
+  `install-git-hooks.test.sh`, the one suite that had isolated itself, is
+  migrated to the harness: it set `HOME`, `XDG_CONFIG_HOME` and
+  `GIT_CONFIG_NOSYSTEM` and was still not hermetic — under an injected
+  `GIT_CONFIG_COUNT` it exited 128 with a foreign `pre-commit` running twenty
+  times. The adoption pin now requires an actual `.` of the harness rather
+  than a grep for either token, which a comment satisfied.
 
 - growth-guards: a green suite run is silent (#1503). `todo-ban.test.sh`
   redirected into `stagedx/tools/` before that directory existed and recovered
