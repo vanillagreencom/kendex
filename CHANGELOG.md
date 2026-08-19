@@ -114,6 +114,18 @@
   settings cache renames inline, because it answers a failure by returning 1
   for its caller to propagate rather than by the family's exit 2, and routing
   it through the helper would change that contract.
+- growth-guards: `cleanup-scope.test.sh` asserts cleanup over a scratch root
+  the suite owns instead of counting entries in the shared temp namespace
+  (#1501). The old count compared `gg-todo-ban.*` entries in `$TMPDIR` before
+  and after the run, so any concurrent process creating or removing one moved
+  the number, and the `find` that took it exited nonzero when a sibling's
+  directory vanished mid-traversal — under `set -euo pipefail` that aborted
+  the run before it reached its own summary. Measured 18-up on a loaded
+  machine: 0, 6 and 0 of 18 runs passed before; 18, 18 and 18 after. The
+  harness now points `TMPDIR` inside each suite's own scratch root, which is
+  where the check under test creates its directory, and the count is a glob
+  over that root paired with a decoy control proving it can see one.
+
 - growth-guards: every test suite now runs against a neutralized git
   configuration, from one shared `tests/lib/harness.bash` rather than four
   lines repeated per file (#1500). Nine of the ten suites ran `git init` and

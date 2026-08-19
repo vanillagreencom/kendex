@@ -93,12 +93,26 @@ OUT="$(cd "$R3" && "$PC" 2>&1)" || RC=$?
   || bad "control: clean-environment chain passes" "rc=$RC out=$OUT"
 
 echo "=== the scratch directory a check DOES create is still removed ==="
+# Counted inside the scratch root the harness owns and points TMPDIR at, so
+# the number answers for this run alone and no concurrent run moves it.
+scratch_dirs() { # -> count of gg-todo-ban.* directories in the owned root
+  local n=0 d
+  for d in "$TMPDIR"/gg-todo-ban.*; do
+    if [ -d "$d" ]; then n=$((n + 1)); fi
+  done
+  printf '%s' "$n"
+}
+mkdir -p "$TMPDIR/gg-todo-ban.decoy"
+[ "$(scratch_dirs)" -eq 1 ] && ok "control: the count sees a scratch directory in the owned root" \
+  || bad "control: the count sees a scratch directory in the owned root" "count=$(scratch_dirs)"
+rmdir "$TMPDIR/gg-todo-ban.decoy"
+
 R4="$(new_repo owncleanup)"
-BEFORE="$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'gg-todo-ban.*' 2>/dev/null | wc -l)"
+BEFORE="$(scratch_dirs)"
 RC=0
 OUT="$(cd "$R4" && "$TB" 2>&1)" || RC=$?
-AFTER="$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'gg-todo-ban.*' 2>/dev/null | wc -l)"
-[ "$RC" -eq 0 ] && [ "$AFTER" -eq "$BEFORE" ] \
+AFTER="$(scratch_dirs)"
+[ "$RC" -eq 0 ] && [ "$BEFORE" -eq 0 ] && [ "$AFTER" -eq 0 ] \
   && ok "a check leaves no scratch directory behind" \
   || bad "check cleans up its own scratch directory" "rc=$RC before=$BEFORE after=$AFTER"
 
