@@ -132,9 +132,12 @@ Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error.
 EOF
 }
 
-# A declared instrument failure rides along on every result for the artifact
-# that declared it — the orchestrator has to see that a review ran on a broken
-# instrument, whether or not the artifact was otherwise acceptable.
+# A declared instrument failure rides along on every result the artifact is
+# ACCEPTED on, which is what `valid_undermeasured` names — the orchestrator has
+# to see that the review it is about to record ran on a broken instrument. A
+# rejected artifact carries no declaration: the gates reset the field and only
+# populate it on the accepting path, and a rejection sends the reviewer back to
+# rewrite the artifact anyway.
 emit() {
   local ok="$1" path="$2" reason="$3" detail="${4:-}"
   local measurement_failed="${review_artifact_measurement_failed:-}" out

@@ -291,6 +291,49 @@ set -e
 assert_eq "$rc" "0" "--wait with a working emit accepts the same artifact"
 assert_eq "$(jq -r '.ok' <<<"$out")" "true" "--wait with a working emit reports ok=true"
 
+# --- the last-resort emitter cannot emit unparseable JSON ---
+# emit_unavailable interpolates its detail into a JSON literal with no encoder
+# available, on purpose: it runs when jq or mktemp has already failed. The
+# details it carries are jq's stderr and mktemp's failure text — exactly the
+# strings full of newlines and tabs, which JSON cannot carry raw. Asserted by
+# PARSING the output, not by matching substrings: a substring check would pass
+# on the broken form.
+emit_probe="$TMP_ROOT/emit-probe.sh"
+cat > "$emit_probe" <<PROBE
+source "$REPO_ROOT/skills/orch/scripts/lib/review-artifact-gates.sh"
+emit_unavailable "\$1"
+PROBE
+emit_case() {
+  local name="$1" detail="$2" out
+  set +e
+  out="$(bash "$emit_probe" "$detail" 2>/dev/null)"
+  set -e
+  local parsed="unparseable"
+  printf '%s' "$out" | jq -e . >/dev/null 2>&1 && parsed="parses"
+  assert_eq "$parsed" "parses" "emit_unavailable output parses as JSON: $name"
+  assert_eq "$(printf '%s' "$out" | jq -r '.ok' 2>/dev/null || printf 'unparseable')" "false" "emit_unavailable reports ok=false: $name"
+  assert_eq "$(printf '%s' "$out" | jq -r '.reason' 2>/dev/null || printf 'unparseable')" "invalid" "emit_unavailable reports reason=invalid: $name"
+}
+emit_case "a plain message" "nothing special here"
+emit_case "a newline" "$(printf 'jq: error at line 3\nCannot iterate over null')"
+emit_case "a tab" "$(printf 'jq: parse error:\tunexpected token')"
+emit_case "a carriage return" "$(printf 'mktemp: failed\rretrying')"
+emit_case "all three plus DEL" "$(printf 'a\nb\tc\rd\177e')"
+emit_case "a double quote" 'mktemp: cannot create "/nonexistent/tmp.XXXX"'
+emit_case "a backslash" 'jq: error: bad escape \q in string'
+emit_case "every hazard at once" "$(printf 'jq: \\ error "here"\nand\tthere\rgone\177')"
+
+# ...and the message still says something: normalising must not empty it.
+set +e
+emit_out="$(bash "$emit_probe" "$(printf 'jq: error at line 3\nCannot iterate over null')" 2>/dev/null)"
+set -e
+assert_substr "$(printf '%s' "$emit_out" | jq -r '.detail')" "Cannot iterate over null" "the normalised detail still carries jq's words"
+assert_substr "$(printf '%s' "$emit_out" | jq -r '.detail')" "jq: error at line 3" "the normalised detail still carries the first line"
+# Counted with grep, not with a jq regex: `[\u0000-\u001f]` inside a jq string
+# is a literal character set (it matches the "u" in "null"), so that spelling
+# reports a control character in a string that has none.
+assert_eq "$(printf '%s' "$emit_out" | jq -r '.detail' | LC_ALL=C grep -o '[[:cntrl:]]' | wc -l | tr -d ' ')" "0" "the normalised detail carries no control characters"
+
 # --- the check answers even when it cannot create its error channel ---
 # The gates' error file is made at SOURCE time, before any mode runs and before
 # the jq-free emitter was reachable. mktemp failing there exited empty with

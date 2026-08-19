@@ -27,8 +27,17 @@ set -euo pipefail
 # parse and a caller reading the status read "artifact rejected".
 emit_unavailable() {
   local detail="${1:-review-artifact-check could not run, so no artifact could be validated}"
+  # The detail is interpolated into a JSON literal with no encoder available —
+  # by design, since this runs when jq or mktemp has already failed — so it is
+  # made safe by REMOVING what JSON cannot carry raw, never by escaping it in
+  # shell. Backslashes and quotes go; control characters become spaces, because
+  # the diagnostics this emitter carries (jq's stderr, mktemp's failure text)
+  # are exactly the ones full of newlines and tabs, and a fallback that emits
+  # unparseable JSON is the failure it exists to prevent.
   detail="${detail//\\/}"
   detail="${detail//\"/}"
+  detail="${detail//[[:cntrl:]]/ }"
+  while [[ "$detail" == *"  "* ]]; do detail="${detail//  / }"; done
   printf '{"ok":false,"path":null,"reason":"invalid","detail":"%s"}\n' "$detail"
 }
 
@@ -73,7 +82,8 @@ review_artifact_disposition=""
 
 # reject_terminal <reason> <detail>   — a self-report about THIS run.
 # reject_torn_write <reason> <detail> — could be this write being damaged.
-# Both return 1 so a gate reads `reject_terminal ... ; return 1` at its site.
+# Both only RECORD the disposition, reason and detail; the calling gate writes
+# its own `return 1`, so neither is usable as a conditional.
 reject_terminal() {
   review_artifact_disposition="terminal"
   review_artifact_reason="$1"

@@ -48,9 +48,17 @@ artifact() {
   printf '%s' "$path"
 }
 
+# The reasons that mean "accepted". Exit status is the other half of the
+# contract — review-pr.md and submit-pr.md branch on it and orch's waiters use
+# it directly — so a regression that exits 0 while reporting a rejection, or
+# non-zero on an acceptance, has to fail here and not just look odd.
+is_accepting_reason() {
+  [[ "$1" == "valid" || "$1" == "valid_undermeasured" ]]
+}
+
 # expect_reason <artifact-path> <expected-reason> <desc>
 expect_reason() {
-  local path="$1" want="$2" desc="$3" out rc=0 got
+  local path="$1" want="$2" desc="$3" out rc=0 got want_rc
   set +e
   out="$("$CHECK" --file "$path" 2>/dev/null)"
   rc=$?
@@ -61,19 +69,35 @@ expect_reason() {
   else
     fail "$desc — expected reason=$want, got reason=$got (rc=$rc)"
   fi
+  if is_accepting_reason "$want"; then
+    want_rc="exit 0"
+    [[ "$rc" -eq 0 ]] && pass "$desc (exits 0)" || fail "$desc — reason=$want is an acceptance but the check exited $rc"
+  else
+    want_rc="a non-zero exit"
+    [[ "$rc" -ne 0 ]] && pass "$desc (exits non-zero)" || fail "$desc — reason=$want is a rejection but the check exited 0"
+  fi
 }
 
 # expect_field <artifact-path> <jq-filter> <expected> <desc>
+# No expected reason here, so the status is checked against the result's own
+# `.ok` — exit 0 exactly when the artifact was accepted.
 expect_field() {
-  local path="$1" filter="$2" want="$3" desc="$4" out got
+  local path="$1" filter="$2" want="$3" desc="$4" out got rc=0 ok
   set +e
   out="$("$CHECK" --file "$path" 2>/dev/null)"
+  rc=$?
   set -e
   got="$(jq -r "$filter" <<<"$out" 2>/dev/null || printf 'unparseable')"
   if [[ "$got" == "$want" ]]; then
     pass "$desc"
   else
     fail "$desc — expected '$want', got '$got'"
+  fi
+  ok="$(jq -r '.ok' <<<"$out" 2>/dev/null || printf 'unparseable')"
+  if { [[ "$ok" == "true" && "$rc" -eq 0 ]] || [[ "$ok" == "false" && "$rc" -ne 0 ]]; }; then
+    pass "$desc (exit status agrees with .ok)"
+  else
+    fail "$desc — .ok=$ok but the check exited $rc"
   fi
 }
 
