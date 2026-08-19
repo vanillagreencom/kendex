@@ -1231,11 +1231,14 @@ printf '#!/bin/sh\nexec "$(git rev-parse --show-toplevel)/tools/other-tool" "$1"
 chmod +x "$R35/foreignhooks/pre-commit" "$R35/foreignhooks/commit-msg"
 git -C "$R35" config core.hooksPath foreignhooks
 check_in "$R35"
-[ "$RC" -eq 1 ] && ok "a core.hooksPath directory wired to another tool checks 1" \
-  || bad "foreign hooksPath dir checks 1" "rc=$RC out=$OUT"
+# The command is a substitution, so what it runs is not knowable from the
+# text — including the claim that it is another tool. Unverifiable, not a
+# verdict either way; both are non-zero and both fail a verify command.
+[ "$RC" -eq 2 ] && ok "a core.hooksPath directory wired through a substitution checks 2" \
+  || bad "foreign hooksPath dir checks 2" "rc=$RC out=$OUT"
 case "$OUT" in
-  *"NOT gated"* | *"NOT armed"*) ok "and it is called ungated" ;;
-  *) bad "foreign hooksPath dir called ungated" "out=$OUT" ;;
+  *"could not determine"*) ok "and it is called unverifiable rather than judged" ;;
+  *) bad "foreign hooksPath dir called unverifiable" "out=$OUT" ;;
 esac
 
 wire_hooks_dir "$R35" "$R35/halfhooks"
@@ -1511,6 +1514,29 @@ if [ -n "$GG_ABSENT_SH" ]; then
 else
   printf '  skip  a trusted interpreter path that is absent on this host (all are installed)\n'
 fi
+
+# The word the SHELL runs, not the one written down. A checkout path that
+# literally contains `$slot` passes every file test while /bin/sh expands it
+# at commit time — so the same bytes name a different program.
+mkdir -p "$R38/dollar/\$slot"
+# A LINK to the real install, so the physical-location test still resolves
+# and the only thing under examination is the spelling.
+ln -s "$SC38" "$R38/dollar/\$slot/scripts"
+arm_pair "#!/bin/sh\nexec \"$R38/dollar/\$slot/scripts/pre-commit\" \"\$@\"\n" \
+  "#!/bin/sh\nexec \"$R38/dollar/\$slot/scripts/commit-msg\" \"\$1\"\n"
+unverifiable_shape "a double-quoted command that the shell would expand"
+
+# Control: the SAME literal path, single-quoted, survives evaluation
+# unchanged — so it is verifiable and stays armed.
+arm_pair "#!/bin/sh\nexec '$R38/dollar/\$slot/scripts/pre-commit' \"\$@\"\n" \
+  "#!/bin/sh\nexec '$R38/dollar/\$slot/scripts/commit-msg' \"\$1\"\n"
+check_in "$R38"
+[ "$RC" -eq 0 ] && ok "control: single-quoting the same path keeps it verifiable" \
+  || bad "single-quoted dollar path armed" "rc=$RC out=$OUT"
+
+# An unquoted word globs as well, so a glob character is unverifiable too.
+arm_pair '#!/bin/sh\nexec %s/pre-comm?t "$@"\n' '#!/bin/sh\nexec %s/commit-ms? "$1"\n'
+unverifiable_shape "an unquoted command carrying a glob character"
 
 # One passing control per shape the check does accept.
 arm_pair '#!/bin/sh\n%s/pre-commit "$@" || exit $?\n' \

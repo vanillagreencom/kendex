@@ -643,7 +643,7 @@ gg_trusted_interpreter() { # SHEBANG-LINE -> 0 trusted
 
 hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecognized
   local hook="$1" path="$2" line="" body="" cmd="" tail="" rest="" cmd_dir="" own_dir="" shebang=""
-  local seen=0 matched=0 named=0 opaque=0
+  local quoting="" seen=0 matched=0 named=0 opaque=0
   [ -r "$path" ] || return 2
   own_dir="$(canonical_dir "$SCRIPT_DIR/$hook")" || return 2
   while IFS= read -r line || [ -n "$line" ]; do
@@ -671,13 +671,16 @@ hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecogni
     esac
     # Split off the command word, honouring one layer of quoting so a path
     # containing a space stays one word.
+    quoting=none
     case "$rest" in
       \"*)
+        quoting=double
         cmd="${rest#\"}"
         cmd="${cmd%%\"*}"
         tail="${rest#\"$cmd\"}"
         ;;
       \'*)
+        quoting=single
         cmd="${rest#\'}"
         cmd="${cmd%%\'*}"
         tail="${rest#\'$cmd\'}"
@@ -685,6 +688,29 @@ hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecogni
       *)
         cmd="${rest%%[[:blank:]]*}"
         tail="${rest#"$cmd"}"
+        ;;
+    esac
+    # The word the SHELL runs, not the one written down. A spelling that
+    # survives evaluation unchanged is the only one this check can compare
+    # against a file on disk: single quotes make everything literal, double
+    # quotes still expand $ and backticks and honour backslashes, and an
+    # unquoted word additionally globs and expands ~. A checkout path that
+    # literally contains `$slot` passed every file test here while /bin/sh
+    # ran whatever `slot` pointed at.
+    case "$quoting" in
+      single) ;;
+      double)
+        case "$cmd" in
+          *'$'* | *'`'* | *'\\'*) opaque=1; continue ;;
+        esac
+        ;;
+      *)
+        case "$cmd" in
+          *'$'* | *'`'* | *'\\'* | *'*'* | *'?'* | *'['* | *']'* | *'{'* | *'}'* | *'~'*)
+            opaque=1
+            continue
+            ;;
+        esac
         ;;
     esac
     # A tail has to be SEPARATED from the command by a real blank. The shell
