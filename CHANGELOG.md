@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+- review-gate: `settings-example-sync.test.sh` can no longer report success
+  for comparisons it never made (#1507). Its assertion helper ran each
+  expression through `eval` in the CURRENT shell, so the absent-root guard —
+  `[ -f "$ROOT_TEMPLATE" ] || exit 0` — ended the whole SUITE with status 0
+  instead of skipping the one comparison it guarded. In any consumer that
+  vendors the skill without the repo-root template, all 17 REVIEW_GATE
+  key-presence and default-drift comparisons went unmade and the run printed
+  zero bytes, which a CI job wiring the suites in counts as a passing suite.
+  Assertions now run as commands rather than eval'd expression strings, so
+  there is no expression for an `exit` to hide in and no later assertion has
+  to remember the hazard. An absent root template is a counted, printed
+  `  skip  ` per key — the same shape review-gate's other suites already use
+  — the skill-side assertions still run, and every run ends with a
+  `N passed, N failed, N skipped` summary, so an unmeasured run cannot read
+  as a clean one. The absent SKILL template, which ships beside the suite and
+  is a broken checkout rather than a downstream condition, fails loud.
+
+  A second vacuous path went with it: the presence check accepted any
+  assignment while the value reader read only the quoted form, so a key
+  written unquoted in BOTH templates parsed to an empty default on both sides
+  and two different values compared equal. Presence now requires the quoted
+  form the reader actually parses. New `settings-example-sync-controls.test.sh`
+  drives the suite against planted trees and asserts its verdict, counts and
+  skip lines: in-sync passes with `56 passed, 0 failed, 0 skipped`, an absent
+  root reports `22 passed, 0 failed, 17 skipped`, and a drifted default, a
+  dropped key, two drifted unquoted defaults, a stripped SECURITY caveat and
+  an absent skill template each fail. Against the previous suite the absent-root
+  and unquoted-drift fixtures both exited 0.
+
 - CLI: a lock `source` recorded as a path inside `~/.vstack/cache/` now
   resolves as the remote that cache entry clones, instead of as an ordinary
   local checkout (#1495). vstack's cache is its own TTL-managed state, but
