@@ -93,28 +93,49 @@ review_artifact_measurement_failed=""
 # rejection and the documentation cannot drift apart.
 REVIEW_DECLARATION_BAR="a declaration must name the instrument and what it did — at least 20 characters and 3 words, not a null token (n/a, none, unknown, ...) or bare punctuation"
 
+# Appended to a zero-sample FINDING when it is the reason for a rejection. Kept
+# apart from the finding itself so the same finding can be reported as
+# suppressed-by-declaration without carrying instructions for a rejection that
+# did not happen.
+REVIEW_ZERO_SAMPLE_REMEDY="a measurement that produced no samples, or whose measuring pipeline exited nonzero, is instrument failure, not a result. If the instrument was YOURS, keep the evidence and declare it: set the TOP-LEVEL measurement_failed to a string naming the instrument and what it did. If you are QUOTING someone else's zeroed run, put it in the blocker or suggestion it belongs to — only the summary and qa_metadata count as your own measurement."
+
+# What a declaration silenced, when it silenced something. A blanket suppression
+# that nobody can see is the shape this issue is about.
+review_artifact_measurement_suppressed=""
+
 # gate_filter <json_path> <jq_program>
 # stdout: the gate's answer, and nothing else. Empty means the gate found
-# nothing wrong. Exit 0 = the gate ran, 2 = it could not; on 2 the caller reads
-# gate_failure_detail. Callers invoke this through a command substitution, whose
-# subshell discards globals, so the exit status is the only signal that crosses
-# back — which is exactly why the diagnostic must not ride on stdout.
+# nothing wrong. Exit 0 = the gate ran; any other status is jq's OWN, passed
+# through rather than collapsed to a sentinel — a filter has no third answer to
+# reserve a code for, and a sentinel meant every gate failure was reported as
+# jq's 2 ("usage or system error") whatever really happened. Callers invoke this
+# through a command substitution, whose subshell discards globals, so the status
+# is the only signal that crosses back — which is why the diagnostic must not
+# ride on stdout.
 gate_filter() {
   local file="$1" program="$2" out rc=0
   out="$(jq -r "$program" "$file" 2>"$review_artifact_gate_err")" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
-    return 2
+    return "$rc"
   fi
   printf '%s' "$out"
   return 0
 }
 
-# gate_failure_detail <exit_code>
+# gate_failure_detail <jq_exit_code>
 # The diagnostic for a gate that could not run, read from the error channel.
 gate_failure_detail() {
   local rc="$1" err=""
   err="$(tr '\n\t' '  ' < "$review_artifact_gate_err" 2>/dev/null || printf '')"
   printf 'gate could not run: jq exited %s%s' "$rc" "${err:+: $err}"
+}
+
+# disposition_allows_fallback
+# True only for an explicit torn_write. An unset or unrecognised disposition is
+# terminal: a gate added later that forgets to classify itself must fail closed,
+# never hand an older artifact back as this run's answer.
+disposition_allows_fallback() {
+  [[ "${review_artifact_disposition:-}" == "torn_write" ]]
 }
 
 # shellcheck source=review-artifact-measurement.sh
@@ -151,13 +172,16 @@ self_reports_no_review() {
 qa_shaped_incomplete() {
   gate_filter "$1" '
     # gate:qa-shape
+    def shape($k): (.[$k]? | type) as $t
+      | if $t == "array" then empty
+        elif $t == "null" then "\($k)[] is absent"
+        else "\($k)[] is \($t), not an array" end ;
     if ((.qa_metadata? | type) == "object") then
-      ( [ (if (.blockers? | type) != "array" then "blockers[]" else empty end),
-          (if (.suggestions? | type) != "array" then "suggestions[]" else empty end) ] ) as $missing
-      | if ($missing | length) > 0
-        then "\($missing | join(" and ")) missing or not an array — declaring qa_metadata commits the"
-             + " artifact to both finding arrays, empty ones included. An artifact with no qa_metadata"
-             + " does not have to carry them."
+      ( [ shape("blockers"), shape("suggestions") ] ) as $bad
+      | if ($bad | length) > 0
+        then "\($bad | join("; ")) — declaring qa_metadata commits the artifact to both finding"
+             + " arrays, empty ones included: a review with nothing to say writes []. An artifact"
+             + " with no qa_metadata does not have to carry them."
         else "" end
     else "" end
   '
@@ -274,6 +298,7 @@ artifact_content_gates() {
   review_artifact_detail=""
   review_artifact_disposition=""
   review_artifact_measurement_failed=""
+  review_artifact_measurement_suppressed=""
 
   # A gate that could not run at all is the torn-read shape the lib header
   # names, so it is the one failure that may still be answered by a sibling.
@@ -287,15 +312,19 @@ artifact_content_gates() {
     return 1
   fi
 
-  # The one content rejection that IS the truncated-write shape: the arrays did
-  # not survive the write, so the same review written intact may sit beside it.
+  # Also terminal, though it was filed as the truncated-write shape until the
+  # argument was checked: a truncated JSON object is not a JSON object, so every
+  # torn or partial write fails the `.verdict` parse before any content gate
+  # runs. What reaches this gate is always well-formed JSON the writer produced
+  # — arrays absent, or present with the wrong type — which is this run's output
+  # shape and is not answered by an older artifact.
   rc=0; out="$(qa_shaped_incomplete "$file")" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
     reject_torn_write "invalid" "$(gate_failure_detail "$rc")"
     return 1
   fi
   if [[ -n "$out" ]]; then
-    reject_torn_write "incomplete" "$out"
+    reject_terminal "incomplete" "$out"
     return 1
   fi
 
@@ -327,18 +356,23 @@ artifact_content_gates() {
       ;;
   esac
 
-  # The declaration's entire blast radius: this gate, and only while the flag
-  # is set.
-  if [[ -z "$declared" ]]; then
-    rc=0; out="$(zero_sample_detail "$file")" || rc=$?
-    if [[ "$rc" -ne 0 ]]; then
-      reject_torn_write "invalid" "$(gate_failure_detail "$rc")"
+  # The declaration's entire blast radius: this gate. It runs either way — a
+  # declaration converts its finding from a rejection into a recorded
+  # suppression rather than deleting it, because one declaration covers whatever
+  # this gate would have said, including a perf payload the named instrument has
+  # nothing to do with. Silencing a measurement is allowed; silencing it
+  # invisibly is the shape this whole issue is about.
+  rc=0; out="$(zero_sample_detail "$file")" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    reject_torn_write "invalid" "$(gate_failure_detail "$rc")"
+    return 1
+  fi
+  if [[ -n "$out" ]]; then
+    if [[ -z "$declared" ]]; then
+      reject_terminal "zero_sample" "$out — $REVIEW_ZERO_SAMPLE_REMEDY"
       return 1
     fi
-    if [[ -n "$out" ]]; then
-      reject_terminal "zero_sample" "$out"
-      return 1
-    fi
+    review_artifact_measurement_suppressed="$out"
   fi
 
   if [[ -n "$declared" ]]; then

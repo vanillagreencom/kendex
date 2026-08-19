@@ -50,7 +50,7 @@ Use the epoch output as `LOCAL_STARTED_AT` — captured *before* the review writ
 .agents/skills/orch/scripts/review-artifact-check --file "$LOCAL_OUTPUT" [LOCAL_STARTED_AT]
 ```
 
-`ok == false`, or any non-zero exit, → report the `reason` and continue to § 2; `reason == "valid_undermeasured"` is an acceptance whose own instrument produced nothing, so report its `measurement_failed` string with the findings rather than treating the local pass as clean. Local review is advisory, never a submission blocker, and none of those outcomes is a pass.
+`ok == true` → route the findings below; `reason == "valid_undermeasured"` additionally means the local review's own instrument produced nothing, so report its `measurement_failed` string (and `measurement_suppressed` when present) with the findings rather than treating the local pass as clean. `ok == false`, or any non-zero exit, → report the `reason` and its `detail` and continue to § 2. Local review is advisory, never a submission blocker, and none of those outcomes is a pass.
 
 Route the findings per the `review-finding` schema. No blockers and no `category: "fix"` suggestions → § 2, the diff is drained. Otherwise delegate: `⤵ workflows/dev-fix.md § 1-3 → § 1.2 tail` with context `worktree`, `lifecycle: "managed"`, `issue_id`, `items` (blockers plus fix-category suggestions), `source: local-review`. `category: "issue"` suggestions that clear the filing bar ([references/finding-disposition.md](../references/finding-disposition.md)) go through `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9`, with the created IDs listed in the PR body.
 

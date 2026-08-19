@@ -369,16 +369,42 @@ assert_eq "$rc" "1" "glob qa-shaped artifact without arrays exits 1"
 assert_eq "$(jq -r '.reason' <<<"$out")" "incomplete" "glob qa-shaped without arrays reports reason=incomplete"
 assert_eq "$(jq -r '.path' <<<"$out")" "$glob_inc" "glob incomplete report points at the artifact"
 
-# ...and an older fresh complete sibling still wins over a newer incomplete one.
-# Arrays lost wholesale IS the truncated-write shape, so this is the side of the
-# disposition rule that may still fall back. Captured rather than bare, so a
-# regression that made every rejection terminal names this assertion instead of
-# aborting the run at it.
+# ...and it is TERMINAL. This gate was filed as the truncated-write shape until
+# the argument was checked: a truncated JSON object is not a JSON object, so
+# every torn or partial write fails the `.verdict` parse before any content gate
+# runs. What reaches this gate is well-formed JSON the writer produced, which no
+# older artifact answers for.
 glob_inc_valid="$worktree/tmp/review-reviewer-inc-20260718-000000.json"
 printf '{"verdict":"pass","blockers":[],"suggestions":[],"qa_metadata":{}}' > "$glob_inc_valid"
 touch -d "@$after" "$glob_inc_valid"
 touch -d "@$later" "$glob_inc"
-expect_glob_valid "$worktree" reviewer-inc "$delegated_at" "$glob_inc_valid" "glob falls back past a truncated write to the older complete artifact"
+set +e
+out="$("$CHECK" "$worktree" reviewer-inc "$delegated_at")"
+rc=$?
+set -e
+assert_eq "$rc" "1" "glob qa-shape incomplete is terminal, not rescued by an older sibling"
+assert_eq "$(jq -r '.path' <<<"$out")" "$glob_inc" "glob terminal qa-shape points at the rejected artifact"
+
+# MUST-FAIL CONTROL: stale, and the fresh complete one is the answer again.
+touch -d "@$before" "$glob_inc"
+expect_glob_valid "$worktree" reviewer-inc "$delegated_at" "$glob_inc_valid" "a STALE qa-shape artifact does not block a fresh complete one"
+touch -d "@$later" "$glob_inc"
+
+# THE PREMISE, ASSERTED: no prefix truncation of a review artifact ever reaches
+# a content gate, because it is not parseable JSON. If this ever stopped
+# holding, the disposition above would be wrong.
+trunc_src='{"agent":"r","verdict":"pass","summary":"s","blockers":[{"id":1,"title":"t","location":"l","description":"d","recommendation":"r","priority":1,"estimate":1}],"suggestions":[],"qa_metadata":{"x":1}}'
+trunc_bad=""
+for pct in 20 40 60 80 90 95 99; do
+  trunc_path="$worktree/tmp/review-external-20260813-0000$pct.json"
+  printf '%s' "${trunc_src:0:$(( ${#trunc_src} * pct / 100 ))}" > "$trunc_path"
+  set +e
+  trunc_out="$("$CHECK" --file "$trunc_path")"
+  set -e
+  trunc_reason="$(jq -r '.reason' <<<"$trunc_out" 2>/dev/null || printf 'unparseable')"
+  [[ "$trunc_reason" == "invalid" ]] || trunc_bad="$trunc_bad ${pct}%:$trunc_reason"
+done
+assert_eq "$trunc_bad" "" "every prefix truncation is rejected as invalid before any content gate"
 
 # --- incomplete: qa-shaped artifacts must carry USABLE finding items (vstack#810) ---
 # qa_shaped_incomplete only catches arrays lost wholesale. An artifact can carry
@@ -505,8 +531,44 @@ out="$("$CHECK" --file "$arrays_lost")"
 rc=$?
 set -e
 assert_eq "$(jq -r '.reason' <<<"$out")" "incomplete" "--file arrays-lost still reason=incomplete"
-assert_substr "$(jq -r '.detail' <<<"$out")" "blockers[] and suggestions[]" "--file arrays-lost detail names both missing arrays"
+assert_substr "$(jq -r '.detail' <<<"$out")" "blockers[] is absent" "--file arrays-lost detail names the first missing array and what it was"
+assert_substr "$(jq -r '.detail' <<<"$out")" "suggestions[] is absent" "--file arrays-lost detail names the second"
 assert_substr "$(jq -r '.detail' <<<"$out")" "no qa_metadata" "--file arrays-lost detail says the tolerant shape is exempt"
+
+# A field PRESENT with the wrong type is this run's output shape, not a damaged
+# write, and the detail has to say which it was — an agent that wrote `null`
+# meaning "no findings" needs to be told to write [].
+qa_shape_case() {
+  local name="$1" literal="$2" want_detail="$3" path out
+  path="$worktree/tmp/review-external-20260812-$(printf '%06d' "$SHAPE_N").json"
+  SHAPE_N=$((SHAPE_N + 1))
+  printf '{"verdict":"pass","blockers":%s,"suggestions":[],"qa_metadata":{}}' "$literal" > "$path"
+  set +e
+  out="$("$CHECK" --file "$path")"
+  rc=$?
+  set -e
+  assert_eq "$rc" "1" "--file blockers:$name exits 1"
+  assert_eq "$(jq -r '.reason' <<<"$out")" "incomplete" "--file blockers:$name reports reason=incomplete"
+  assert_substr "$(jq -r '.detail' <<<"$out")" "$want_detail" "--file blockers:$name detail names what it found"
+  assert_substr "$(jq -r '.detail' <<<"$out")" "writes []" "--file blockers:$name detail says what an empty review writes"
+}
+SHAPE_N=1
+qa_shape_case "null"    'null'     "blockers[] is absent"
+qa_shape_case "object"  '{}'       "blockers[] is object, not an array"
+qa_shape_case "string"  '"none"'   "blockers[] is string, not an array"
+qa_shape_case "number"  '3'        "blockers[] is number, not an array"
+# the same shapes on the OTHER array, so neither is checked by accident
+sugg_shape="$worktree/tmp/review-external-20260812-900001.json"
+printf '{"verdict":"pass","blockers":[],"suggestions":null,"qa_metadata":{}}' > "$sugg_shape"
+set +e
+out="$("$CHECK" --file "$sugg_shape")"
+set -e
+assert_substr "$(jq -r '.detail' <<<"$out")" "suggestions[] is absent" "--file suggestions:null is reported on its own"
+printf '{"verdict":"pass","blockers":[],"suggestions":"x","qa_metadata":{}}' > "$sugg_shape"
+set +e
+out="$("$CHECK" --file "$sugg_shape")"
+set -e
+assert_substr "$(jq -r '.detail' <<<"$out")" "suggestions[] is string, not an array" "--file suggestions with a wrong type is reported on its own"
 
 # EVERY rejection in the chain names its cause. A reason with no detail is a
 # dead end for the agent that has to fix it.
@@ -531,6 +593,25 @@ chain_case '{"verdict":"pass","blockers":[],"suggestions":[{"title":"t"}],"qa_me
 chain_case '{"verdict":"pass","blockers":[],"suggestions":[],"measurement_failed":"n/a"}' bad-declaration
 chain_case '{"verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"qa_metadata":{}}' zero-sample
 assert_eq "$chain_no_detail" "" "every content-gate rejection names its cause in detail"
+
+# ...and the two reasons an agent reads BEFORE it knows what it did wrong. The
+# --help claim is unconditional, and these were the two carrying nothing.
+detail_of() {
+  set +e
+  local out
+  out="$("$CHECK" "$@")"
+  set -e
+  jq -r '.detail // ""' <<<"$out"
+}
+empty_wt="$TMP_ROOT/emptywt"
+mkdir -p "$empty_wt/tmp"
+assert_substr "$(detail_of "$empty_wt" ghost-agent 0)" "review-ghost-agent-" "glob missing names the glob that matched nothing"
+stale_only="$empty_wt/tmp/review-staleonly-20200101-000000.json"
+printf '{"verdict":"pass"}' > "$stale_only"
+touch -d "@$before" "$stale_only"
+assert_substr "$(detail_of "$empty_wt" staleonly "$delegated_at")" "predates the boundary" "glob stale names the mtime against the boundary"
+assert_substr "$(detail_of --file "$TMP_ROOT/definitely-not-here.json")" "no file at" "--file missing names the path"
+assert_substr "$(detail_of --file "$stale_only" "$delegated_at")" "predates the boundary" "--file stale names the mtime against the boundary"
 
 # glob mode applies the same item gate: a fresh malformed-item artifact is rejected...
 glob_item_bad="$worktree/tmp/review-reviewer-item-20260810-111111.json"
@@ -568,39 +649,9 @@ touch -d "@$before" "$glob_item_bad"
 expect_glob_valid "$worktree" reviewer-item "$delegated_at" "$glob_item_ok" "a STALE malformed-item artifact does not block a fresh well-formed one"
 touch -d "@$later" "$glob_item_bad"
 
-# THE OTHER SIDE OF THE RULE. Arrays missing wholesale IS the truncated-write
-# shape, so that one still falls back — the same reason word, the opposite
-# disposition, which is why the disposition belongs to the gate and not to the
-# reason name.
-glob_trunc_ok="$worktree/tmp/review-reviewer-trunc-20260810-000000.json"
-printf '{"verdict":"pass","blockers":[],"suggestions":[],"qa_metadata":{}}' > "$glob_trunc_ok"
-glob_trunc_bad="$worktree/tmp/review-reviewer-trunc-20260810-111111.json"
-printf '{"verdict":"pass","summary":"truncated","qa_metadata":{}}' > "$glob_trunc_bad"
-touch -d "@$after" "$glob_trunc_ok"
-touch -d "@$later" "$glob_trunc_bad"
-expect_glob_valid "$worktree" reviewer-trunc "$delegated_at" "$glob_trunc_ok" "glob still falls back past a truncated write to an intact sibling"
-
-# ...and that fallback is a real answer, not an absence of gating: alone, the
-# truncated artifact is still rejected.
-set +e
-out="$("$CHECK" --file "$glob_trunc_bad")"
-rc=$?
-set -e
-assert_eq "$rc" "1" "the truncated-write artifact is itself still rejected"
-assert_eq "$(jq -r '.reason' <<<"$out")" "incomplete" "the truncated-write artifact reports reason=incomplete"
-
-# --- valid_undermeasured is named at every site that consumes the check ---
-# Making the undermeasured state machine-readable only helps where a caller
-# reads it. All three call sites take a result that may carry the reason; a
-# site that names only ok/true records a review whose own instrument produced
-# nothing as an ordinary one.
-review_pr_sites="$REPO_ROOT/skills/orch/workflows/review-pr.md"
-submit_pr="$REPO_ROOT/skills/orch/workflows/submit-pr.md"
-assert_file_contains "$review_pr_sites" "valid_undermeasured" "review-pr.md names the undermeasured reason"
-assert_file_contains "$submit_pr" "valid_undermeasured" "submit-pr.md § 1 names the undermeasured reason"
-assert_eq "$(grep -c 'valid_undermeasured' "$review_pr_sites")" "2" "review-pr.md names it at BOTH its call sites (§ 2.5 external, § 3.1 completion)"
-assert_file_contains "$review_pr_sites" "measurement_failed" "review-pr.md relays the declaration string"
-assert_file_contains "$submit_pr" "measurement_failed" "submit-pr.md relays the declaration string"
+# THE OTHER SIDE OF THE RULE now has exactly one member — a gate that could not
+# run — and it is pinned in review_artifact_check_measurement.sh, where the
+# selective jq shim lives.
 
 # --- usage errors ---
 set +e
@@ -617,122 +668,6 @@ assert_eq "$?" "2" "--file non-numeric boundary exits 2"
 "$CHECK" --file "$ext_valid" "$delegated_at" extra-arg >/dev/null 2>&1
 assert_eq "$?" "2" "--file with too many args exits 2"
 set -e
-
-# --- review-pr.md wires the deterministic acceptance ---
-review_pr="$REPO_ROOT/skills/orch/workflows/review-pr.md"
-assert_file_contains "$review_pr" ".agents/skills/orch/scripts/review-artifact-check [WORKTREE_PATH] [AGENT]" "review-pr acceptance runs review-artifact-check"
-assert_file_not_contains "$review_pr" 'A return message arrives with `Verdict:` and `File:` lines, *or*' "review-pr no longer accepts return-message-only completion"
-assert_file_contains "$review_pr" "never sufficient" "review-pr states a return message alone cannot complete a reviewer"
-assert_file_contains "$review_pr" "exactly one" "review-pr limits incomplete returns to one re-delegation"
-assert_file_contains "$review_pr" "using your harness file-write tool" "review-pr re-delegation instructs harness file-write tool"
-assert_file_contains "$review_pr" 'review-artifact-check --file "$EXTERNAL_OUTPUT"' "review-pr validates external output via --file mode"
-assert_file_not_contains "$review_pr" "if jq -e '.verdict'" "review-pr no longer prescribes inline if/redirection for external verdict check"
-assert_file_contains "$review_pr" 'review-artifact-check --file "$EXTERNAL_OUTPUT" [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND]' "review-pr passes review_delegated_at as the --file freshness boundary"
-# The reason vocabulary belongs to the script (behaviourally covered above);
-# the workflow's obligation is to surface whatever reason it reports, with the
-# detail field that pinpoints the offending item, instead of silently passing.
-assert_file_contains "$review_pr" 'report the `reason` (and `detail` when present)' "review-pr surfaces the rejection reason and detail"
-
-# --- submit-pr.md wires the --file freshness boundary for the local review ---
-submit_pr="$REPO_ROOT/skills/orch/workflows/submit-pr.md"
-assert_file_contains "$submit_pr" 'review-artifact-check --file "$LOCAL_OUTPUT" [LOCAL_STARTED_AT]' "submit-pr passes a delegated-at boundary to the --file freshness check"
-assert_file_contains "$submit_pr" "git-context timestamp epoch" "submit-pr captures an epoch boundary before running the local review"
-assert_file_contains "$submit_pr" 'report the `reason`' "submit-pr surfaces the rejection reason"
-assert_file_contains "$submit_pr" "none of those outcomes is a pass" "submit-pr states a rejected local review is not a pass"
-
-# --- vstack#885: the rejection has to teach the schema, not just flag it ---
-# Four artifacts were rejected in one session by agents that followed the
-# workflow text without opening the schema file. Two reached for `priority: 5`;
-# two used plausible-but-wrong field names (`detail`, `remediation`, `file`+
-# `line`). The rejection is relayed verbatim to the agent that must redo the
-# work, so it names the whole expected item shape.
-REQ_SPEC="every blockers[]/suggestions[] item requires: id, title, location (path plus symbol, no line numbers), description, recommendation, priority (integer 1-4), estimate (1-5); suggestions also category (fix|issue), and category:issue also impact (who hits this, on what real path)"
-
-# category:issue items require a non-empty impact line; fix items do not.
-impact_wt=$(mktemp -d); mkdir -p "$impact_wt/tmp"
-impact_art="$impact_wt/tmp/review-reviewer-impact-20260101-000000.json"
-printf '%s' '{"agent":"reviewer-impact","timestamp":"2026-01-01T00:00:00Z","verdict":"pass","summary":"s","qa_metadata":{"review_performed":true},"blockers":[],"suggestions":[{"id":1,"title":"t","location":"l (sym)","description":"d","recommendation":"r","priority":3,"estimate":2,"category":"issue"}]}' > "$impact_art"
-r=$("$CHECK" "$impact_wt" reviewer-impact 0 || true)
-assert_eq "$(jq -r '.ok' <<<"$r")" "false" "category:issue without impact is rejected"
-assert_substr "$(jq -r '.detail // ""' <<<"$r")" "impact" "the rejection names the missing impact field"
-jq '.suggestions[0].impact = "operators running the nightly import hit it on every run"' "$impact_art" > "$impact_art.n" && mv "$impact_art.n" "$impact_art"
-assert_eq "$("$CHECK" "$impact_wt" reviewer-impact 0 | jq -r '.ok')" "true" "category:issue with impact passes"
-jq '.suggestions[0].category = "fix" | del(.suggestions[0].impact)' "$impact_art" > "$impact_art.n" && mv "$impact_art.n" "$impact_art"
-assert_eq "$("$CHECK" "$impact_wt" reviewer-impact 0 | jq -r '.ok')" "true" "category:fix needs no impact"
-rm -rf "$impact_wt"
-
-# The check exits 1 on a rejected artifact, which is the case under test here —
-# swallow it so `set -e`/`pipefail` do not abort the suite on an expected failure.
-detail_of() { "$CHECK" --file "$1" 2>/dev/null | jq -r '.detail // ""' || true; }
-
-# priority: 5 — the "lower than the lowest" instinct.
-p5="$TMP_ROOT/p5.json"
-jq -n '{agent:"reviewer-safety",timestamp:"t",verdict:"pass",summary:"s",blockers:[],
-  suggestions:[{id:1,title:"t",location:"a.rs (`f`)",description:"d",recommendation:"r",
-  priority:5,estimate:2,category:"fix"}],qa_metadata:{safety:{}}}' > "$p5"
-d="$(detail_of "$p5")"
-assert_substr "$d" "suggestions[0]: missing/invalid priority(not 1..4)" \
-  "priority 5 is still reported as out of range"
-assert_substr "$d" "$REQ_SPEC" "the priority rejection states the 1-4 range and the full item shape"
-
-# `detail` instead of `description`, with id/estimate/category omitted.
-alias1="$TMP_ROOT/alias1.json"
-jq -n '{agent:"reviewer-arch",timestamp:"t",verdict:"pass",summary:"s",blockers:[],
-  suggestions:[{title:"t",location:"a.rs",detail:"d",recommendation:"r",priority:3}],
-  qa_metadata:{arch_review:{}}}' > "$alias1"
-d="$(detail_of "$alias1")"
-assert_substr "$d" "suggestions[0]: missing/invalid id, description, estimate, category" \
-  "a detail/description swap is reported by field name"
-assert_substr "$d" "$REQ_SPEC" "the swap rejection names the correct field set"
-
-# file+line instead of location, remediation instead of recommendation.
-alias2="$TMP_ROOT/alias2.json"
-jq -n '{agent:"reviewer-safety",timestamp:"t",verdict:"pass",summary:"s",blockers:[],
-  suggestions:[{title:"t",file:"a.rs",line:12,description:"d",remediation:"r",priority:3}],
-  qa_metadata:{safety:{}}}' > "$alias2"
-d="$(detail_of "$alias2")"
-assert_substr "$d" "suggestions[0]: missing/invalid id, location, recommendation, estimate, category" \
-  "file/line and remediation are reported as the missing canonical fields"
-assert_substr "$d" "no line numbers" "the rejection states that location carries no line numbers"
-
-# Aliases are NOT accepted — one canonical spelling, taught rather than guessed.
-assert_eq "$("$CHECK" --file "$alias1" 2>/dev/null | jq -r '.reason' || true)" "incomplete" \
-  "an aliased field name is still rejected, not silently accepted"
-
-# A well-formed item produces no detail at all.
-good="$TMP_ROOT/good.json"
-jq -n '{agent:"reviewer-safety",timestamp:"t",verdict:"pass",summary:"s",blockers:[],
-  suggestions:[{id:1,title:"t",location:"a.rs (`f`)",description:"d",recommendation:"r",
-  priority:4,estimate:2,category:"issue",
-  impact:"anyone auditing unsafe blocks hits it on the next sweep"}],qa_metadata:{safety:{}}}' > "$good"
-assert_eq "$("$CHECK" --file "$good" | jq -r '.reason')" "valid" "a schema-correct artifact is still valid"
-assert_eq "$(detail_of "$good")" "" "a valid artifact carries no detail"
-
-# --- The authoring path must carry the requirements, not just the recovery path ---
-# vstack#885's defect was an authoring path with strictly less information than
-# the rejection it would then receive. The current answer is mechanical, not
-# duplicated prose: the schema file is the single field authority, and every
-# review workflow + the reviewer SKILL require a pre-return self-check with this
-# same validator, so a rejection can never first surface at the orchestrator.
-reviewer_skill="$REPO_ROOT/skills/reviewer/SKILL.md"
-schema_doc="$REPO_ROOT/skills/reviewer/schemas/review-finding.md"
-assert_file_contains "$reviewer_skill" "Output Contract" "reviewer SKILL has an output-contract section"
-assert_file_contains "$reviewer_skill" "review-artifact-check" "reviewer SKILL mandates the pre-return self-check"
-assert_file_contains "$schema_doc" "1-4" "schema states the priority range"
-assert_file_contains "$schema_doc" "no P5" "schema says there is no P5"
-assert_file_contains "$schema_doc" "no line numbers" "schema states the location shape"
-assert_file_contains "$schema_doc" "recommendation" "schema names the recommendation field"
-for wf in review codebase-review qa-review; do
-  wf_file="$REPO_ROOT/skills/reviewer/workflows/$wf.md"
-  assert_file_contains "$wf_file" "schemas/review-finding.md" "$wf workflow points at the schema authority"
-  assert_file_contains "$wf_file" "review-artifact-check" "$wf workflow carries the pre-return self-check"
-done
-
-review_pr_recovery="$REPO_ROOT/skills/orch/workflows/review-pr.md"
-# The required-field list lives in the schema, so the re-delegation points the
-# reviewer there rather than restating a field list that would drift from it.
-assert_file_contains "$review_pr_recovery" "every required field of \`review-finding.md\`" \
-  "review-pr's re-delegation routes the reviewer to the schema's required fields"
 
 echo "=== --wait blocking mode (glob) ==="
 

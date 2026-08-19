@@ -123,14 +123,5 @@ zero_sample_detail() {
         | "stability citation \"\(.label)\" in the summary or qa_metadata reports zero threads" ]
       + perf_zero )
     | (first(.[]) // "")
-    | if . == "" then ""
-      else . + " — a measurement that produced no samples, or whose measuring"
-             + " pipeline exited nonzero, is instrument failure, not a result."
-             + " If the instrument was YOURS, keep the evidence and declare it:"
-             + " set the TOP-LEVEL measurement_failed to a string naming the"
-             + " instrument and what it did. If you are QUOTING someone else s"
-             + " zeroed run, put it in the blocker or suggestion it belongs to —"
-             + " only the summary and qa_metadata count as your own measurement."
-      end
   '
 }

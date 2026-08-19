@@ -59,12 +59,11 @@ reason meanings when ok=false:
              Artifacts without qa_metadata are unaffected.
   incomplete artifact declares the qa/second-opinion shape (a qa_metadata
              object is present) but its findings are unusable — either
-             blockers[]/suggestions[] are missing or not arrays (the arrays
-             were lost in the write), OR a present blockers[]/suggestions[]
+             blockers[]/suggestions[] are absent or not arrays, OR a present
              item is missing a required review-finding field so the
-             orchestrator cannot route it. The `detail` field names the first
-             offending item and field. Artifacts without qa_metadata are
-             unaffected.
+             orchestrator cannot route it. `detail` names the array and what it
+             was, or the first offending item and field. Artifacts without
+             qa_metadata are unaffected.
 
   zero_sample artifact reports a measurement that produced no samples — a
              mutation/stability citation whose SAMPLE COUNT (denominator) or
@@ -78,6 +77,12 @@ reason meanings when ok=false:
              reader could act on (wrong type, blank, a null token such as n/a
              or none, bare punctuation, or too short/too few words). `detail`
              names what a declaration has to contain.
+
+`measurement_suppressed`: what the declaration silenced, when it silenced
+something. One declaration covers whatever the measurement gate would have said
+— including a perf payload the named instrument has nothing to do with — so the
+finding is recorded rather than dropped. Silencing a measurement is allowed;
+silencing it invisibly is not.
 
 `measurement_failed`: a TOP-LEVEL string declaring an instrument that produced
 nothing, naming the instrument and what it did. It replaces the zero_sample
@@ -98,18 +103,22 @@ WHEN AN OLDER SIBLING MAY ANSWER (glob mode): a rejection that is the
 artifact's SELF-REPORT ABOUT THIS RUN ends the search — no earlier file answers
 "did this review happen, did it measure anything, are these findings routable",
 and the prescribed self-check boundary of 0 makes every prior artifact fresh.
-Only a rejection that could be a TORN OR TRUNCATED WRITE falls back. Reason
-names do not decide this: `incomplete` is terminal when finding items use wrong
-field names (this run's output) and falls back when the arrays are missing
-wholesale (the write was truncated). Each gate states its own disposition; see
-lib/review-artifact-gates.sh. `stale` and a missing `.verdict` describe one
-write and fall back.
+Only a rejection that could be a TORN OR TRUNCATED WRITE falls back, and after
+measurement the single content rejection on that side is a gate that could not
+run: a truncated JSON object is not a JSON object, so every torn or partial
+write fails the `.verdict` parse before any content gate sees it. Each gate
+states its own disposition, and an unset one is treated as terminal so a gate
+added later fails closed; see lib/review-artifact-gates.sh. `stale` and a
+missing `.verdict` describe one write and fall back.
 
-Every ok=false result carries a `detail` naming its cause: a reason with no
-cause is a dead end for the agent that has to fix it, and review-pr.md § 3.1
-spends its one permitted re-delegation relaying that text. The {ok, path,
-reason} fields are always present; `detail` and `measurement_failed` are
-additive.
+Every ok=false result carries a `detail` naming its cause — including `missing`
+(the glob or path that matched nothing) and `stale` (the artifact mtime against
+the boundary), which are the two an agent reads BEFORE it knows what it did
+wrong. A reason with no cause is a dead end for the agent that has to fix it,
+and review-pr.md § 3.1 spends its one permitted re-delegation relaying that
+text. The {ok, path,
+reason} fields are always present; `detail`, `measurement_failed` and
+`measurement_suppressed` are additive.
 
 When the check cannot run at all — jq missing or broken, or mktemp unable to
 create the gates' error channel — every mode still prints a parseable rejection
@@ -127,12 +136,16 @@ EOF
 emit() {
   local ok="$1" path="$2" reason="$3" detail="${4:-}"
   local measurement_failed="${review_artifact_measurement_failed:-}" out
+  local measurement_suppressed="${review_artifact_measurement_suppressed:-}"
   if out="$(jq -n --argjson ok "$ok" --arg path "$path" --arg reason "$reason" \
     --arg detail "$detail" --arg measurement_failed "$measurement_failed" \
+    --arg measurement_suppressed "$measurement_suppressed" \
     '{ok: $ok, path: (if $path == "" then null else $path end), reason: $reason}
      + (if $detail == "" then {} else {detail: $detail} end)
      + (if $measurement_failed == "" then {}
-        else {measurement_failed: $measurement_failed} end)' 2>/dev/null)"; then
+        else {measurement_failed: $measurement_failed} end)
+     + (if $measurement_suppressed == "" then {}
+        else {measurement_suppressed: $measurement_suppressed} end)' 2>/dev/null)"; then
     printf '%s\n' "$out"
   else
     emit_unavailable "review-artifact-check could not run jq, so no artifact could be validated"
@@ -189,13 +202,13 @@ if [[ "${1:-}" == "--file" ]]; then
     exit 2
   fi
   if [[ ! -f "$file" ]]; then
-    emit false "" "missing"
+    emit false "" "missing" "no file at $file"
     exit 1
   fi
   if [[ -n "$delegated_at" ]]; then
     mtime="$(file_mtime "$file")"
     if (( mtime < delegated_at )); then
-      emit false "$file" "stale"
+      emit false "$file" "stale" "artifact mtime $mtime predates the boundary $delegated_at, so it is an earlier round's file"
       exit 1
     fi
   fi
@@ -261,7 +274,7 @@ fi
 glob_check() {
 reason="missing"
 fail_path=""
-fail_detail=""
+fail_detail="no artifact matched $worktree/tmp/review-$agent-*.json"
 
 while IFS= read -r file; do
   [[ -n "$file" ]] || continue
@@ -270,6 +283,7 @@ while IFS= read -r file; do
     if [[ -z "$fail_path" ]]; then
       fail_path="$file"
       reason="stale"
+      fail_detail="artifact mtime $mtime predates the boundary $delegated_at, so it is an earlier round's file"
     fi
     continue
   fi
@@ -291,7 +305,7 @@ while IFS= read -r file; do
     emit true "$file" "$review_artifact_reason"
     return 0
   fi
-  if [[ "$review_artifact_disposition" != "torn_write" ]]; then
+  if ! disposition_allows_fallback; then
     emit false "$file" "$review_artifact_reason" "$review_artifact_detail"
     return 1
   fi

@@ -42,6 +42,8 @@ qa_review="$SKILL_DIR/workflows/qa-review.md"
 
 require_pattern "$skill" '^## Mutation-Stability Pairing' 'canonical Mutation-Stability Pairing section'
 require_fixed "$skill" 'then reverting' 'mutation is reverted before reporting'
+require_fixed "$skill" 'git archive' 'mutations that outlive one tool call run on a copy'
+require_fixed "$skill" 'never the shared tree' 'the shared worktree is named as off limits'
 require_fixed "$skill" 'default N=10' 'default repeat count'
 require_fixed "$skill" '--test-threads' 'concrete elevated-parallelism example'
 require_fixed "$skill" 'mutation: killed X/X; stability: Y/N at T threads' 'fixed two-number report format'

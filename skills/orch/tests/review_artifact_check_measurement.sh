@@ -94,6 +94,7 @@ delegated_at=1750000000
 before=$((delegated_at - 100))
 after=$((delegated_at + 100))
 later=$((delegated_at + 200))
+REAL_JQ="$(command -v jq)"
 
 # --- zero_sample: a measurement that produced no samples is not a result (vstack#1497) ---
 # The gate reads the SAMPLE COUNT, never the result. A zero denominator or zero
@@ -358,6 +359,10 @@ zs_decl_case "bare punctuation"       '"---"'          invalid_declaration "punc
 zs_decl_case "long bare punctuation"  '"---------------------------"' invalid_declaration "punctuation only"
 zs_decl_case "whitespace only"        '"   "'          invalid_declaration "is blank"
 zs_decl_case "one long word"          '"instrumentfailedbadly"' invalid_declaration "is 1 word(s)"
+# Two words past the 20-character floor: only the word bar can refuse this, so
+# it is what pins the constant. The three-word counterpart is the other side.
+zs_decl_case "two words past the length floor" '"cargo-mutants produced-no-samples-at-all"' invalid_declaration "is 2 word(s)"
+zs_decl_case "three words past the floor"      '"cargo-mutants selected zero-mutants"'      valid_undermeasured
 zs_decl_case "three tiny words"       '"a b c"'        invalid_declaration "is 5 characters"
 zs_decl_case "a boolean"              'true'           invalid_declaration "must be a string"
 zs_decl_case "a number"               '0'              invalid_declaration "must be a string"
@@ -393,195 +398,6 @@ set +e
 out="$("$CHECK" --file "$zs_ok")"
 set -e
 assert_eq "$(jq -r 'has("measurement_failed")' <<<"$out")" "false" "--file an undeclared artifact carries no measurement_failed field"
-
-# --- a gate that could not run is never silence (vstack#1497 review) ---
-# Both gate helpers used to signal "no problem" with an empty string, so a jq
-# failure — a torn read of a non-atomically written artifact — was
-# indistinguishable from a clean artifact, and --wait's `out="$(glob_check)"`
-# capture suspends errexit for the whole body, turning it into ok=true.
-SHIM_DIR="$TMP_ROOT/jqshim"
-mkdir -p "$SHIM_DIR"
-REAL_JQ="$(command -v jq)"
-printf '#!/usr/bin/env bash\nfor a in "$@"; do\n  case "$a" in\n    *"gate:zero-sample"*) echo "jq: error (at file): simulated torn read" >&2; exit 5 ;;\n  esac\ndone\nexec %s "$@"\n' "$REAL_JQ" > "$SHIM_DIR/jq"
-chmod +x "$SHIM_DIR/jq"
-
-set +e
-out="$(PATH="$SHIM_DIR:$PATH" "$CHECK" --file "$zs_mut")"
-rc=$?
-set -e
-assert_eq "$rc" "1" "--file a jq failure in a gate exits 1, not 0"
-assert_eq "$(jq -r '.ok' <<<"$out")" "false" "--file a gate that could not run reports ok=false"
-assert_eq "$(jq -r '.reason' <<<"$out")" "invalid" "--file a gate that could not run reports reason=invalid"
-assert_substr "$(jq -r '.detail' <<<"$out")" "simulated torn read" "--file the gate failure carries jq's own diagnostic"
-
-# ...and the --wait driver, where the capture-and-|| shape hid it
-gwt="$TMP_ROOT/gatefail"
-mkdir -p "$gwt/tmp"
-printf '{"agent":"gf","verdict":"pass","summary":"mutation: killed 0/0; stability: 10/10 at 16 threads"}' > "$gwt/tmp/review-gf-20260101-000001.json"
-set +e
-out="$(PATH="$SHIM_DIR:$PATH" "$CHECK" "$gwt" gf 0 --wait 4 --interval 1 2>/dev/null)"
-rc=$?
-set -e
-assert_eq "$(jq -r '.ok' <<<"$out")" "false" "--wait does NOT return ok=true when a gate could not run"
-assert_eq "$(jq -r '.reason' <<<"$out")" "invalid" "--wait reports the gate failure as invalid"
-assert_eq "$rc" "1" "--wait exits 1 on a gate failure"
-
-# The same collapse exists on the PREDICATE side, where jq exit 1 (the answer
-# is "no") and exit >=2 (the gate could not answer) would otherwise both read
-# as "no problem". A jq that breaks only the no-review gate must not let the
-# artifact fall through to some later gate's verdict.
-PRED_SHIM="$TMP_ROOT/jqshim-pred"
-mkdir -p "$PRED_SHIM"
-printf '#!/usr/bin/env bash\nfor a in "$@"; do\n  case "$a" in\n    *"gate:no-review"*) echo "jq: error: simulated torn read" >&2; exit 5 ;;\n  esac\ndone\nexec %s "$@"\n' "$REAL_JQ" > "$PRED_SHIM/jq"
-chmod +x "$PRED_SHIM/jq"
-zs_pred="$worktree/tmp/review-external-20260815-091919.json"
-printf '{"verdict":"pass","qa_metadata":{"review_performed":false,"reason":"no_scope_provided"}}' > "$zs_pred"
-set +e
-out="$(PATH="$PRED_SHIM:$PATH" "$CHECK" --file "$zs_pred")"
-rc=$?
-set -e
-assert_eq "$rc" "1" "--file a broken predicate gate exits 1"
-assert_eq "$(jq -r '.reason' <<<"$out")" "invalid" "--file a broken predicate gate reports invalid, not a later gate's verdict"
-assert_substr "$(jq -r '.detail' <<<"$out")" "simulated torn read" "--file the predicate failure carries jq's own diagnostic"
-
-# ...and with real jq the same artifact reports the predicate's real answer
-set +e
-out="$("$CHECK" --file "$zs_pred")"
-set -e
-assert_eq "$(jq -r '.reason' <<<"$out")" "no_review" "with real jq the predicate answers no_review"
-
-# CONTROLS. The shim must be selective, or "invalid" above would just be jq
-# being broken for everything: an artifact rejected by an EARLIER gate still
-# reports that gate's own reason under the same shim.
-zs_shim_ctl="$worktree/tmp/review-external-20260815-090909.json"
-printf '{"verdict":"pass","qa_metadata":{"review_performed":false,"reason":"no_scope_provided"}}' > "$zs_shim_ctl"
-set +e
-out="$(PATH="$SHIM_DIR:$PATH" "$CHECK" --file "$zs_shim_ctl")"
-set -e
-assert_eq "$(jq -r '.reason' <<<"$out")" "no_review" "the shim breaks only the zero-sample gate; earlier gates still answer"
-
-# ...and with real jq the same artifact and invocation report the real verdicts.
-expect_valid "$zs_ok" "with real jq the clean artifact is valid, not invalid"
-set +e
-out="$("$CHECK" "$gwt" gf 0 --wait 4 --interval 1 2>/dev/null)"
-set -e
-assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "--wait with real jq still reports the real rejection"
-
-# --- jq's stderr never reaches the answer channel ---
-# gate_filter merged stderr into stdout, so ANY jq diagnostic that leaves the
-# exit status alone became the gate's finding. JQ_COLORS=zz is a documented jq
-# variable that prints "Failed to set $JQ_COLORS" and exits 0: every artifact
-# checked in that environment was rejected with a wrong cause, and the same
-# string was echoed back as a FABRICATED instrument-failure declaration.
-STDERR_SHIM="$TMP_ROOT/jqshim-stderr"
-mkdir -p "$STDERR_SHIM"
-printf '#!/usr/bin/env bash\necho "chatty jq: a diagnostic that changes no exit status" >&2\nexec %s "$@"\n' "$REAL_JQ" > "$STDERR_SHIM/jq"
-chmod +x "$STDERR_SHIM/jq"
-
-zs_chatty="$worktree/tmp/review-external-20260815-095959.json"
-printf '{"agent":"reviewer-quality","verdict":"pass","summary":"no measurement in scope","blockers":[],"suggestions":[],"qa_metadata":{}}' > "$zs_chatty"
-set +e
-out="$(PATH="$STDERR_SHIM:$PATH" "$CHECK" --file "$zs_chatty")"
-rc=$?
-set -e
-assert_eq "$rc" "0" "--file a clean artifact still validates under a jq that writes to stderr"
-assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file a stderr diagnostic is not read as a finding"
-assert_eq "$(jq -r 'has("measurement_failed")' <<<"$out")" "false" "--file a stderr diagnostic is not echoed as a fabricated declaration"
-
-# the real variable from the report, not just a hand-built shim
-set +e
-out="$(JQ_COLORS=zz "$CHECK" --file "$zs_chatty" 2>/dev/null)"
-rc=$?
-set -e
-assert_eq "$rc" "0" "--file JQ_COLORS=zz does not turn a clean artifact into a rejection"
-assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file JQ_COLORS=zz leaves the verdict alone"
-assert_eq "$(jq -r 'has("measurement_failed")' <<<"$out")" "false" "--file JQ_COLORS=zz fabricates no declaration"
-
-# ...and a REAL rejection is still reported under the same chatty jq, so the
-# fix is channel separation and not a gate that stopped answering.
-set +e
-out="$(PATH="$STDERR_SHIM:$PATH" "$CHECK" --file "$zs_mut")"
-rc=$?
-set -e
-assert_eq "$rc" "1" "--file a real rejection survives a chatty jq"
-assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "--file the chatty jq does not mask a genuine zero_sample"
-assert_substr "$(jq -r '.detail' <<<"$out")" "killed 0/0" "--file the detail is the gate's finding, not jq's chatter"
-
-# --- no mode exits without a parseable result ---
-# emit needs jq too, so when jq is unavailable the script used to exit 127 with
-# empty stdout (or, in --wait, a blank line): a caller reading .ok got a parse
-# error rather than a refusal.
-NOJQ_BIN="$TMP_ROOT/nojq-bin"
-mkdir -p "$NOJQ_BIN"
-for b in bash env dirname mktemp rm tr stat date sleep ls cat sed grep basename touch mkdir printf; do
-  bp="$(command -v "$b" 2>/dev/null)" && ln -sf "$bp" "$NOJQ_BIN/$b"
-done
-if [[ -n "$(PATH="$NOJQ_BIN" command -v jq 2>/dev/null || printf '')" ]]; then
-  fail "the no-jq fixture PATH still resolves jq"
-else
-  nojq_wt="$TMP_ROOT/nojq-wt"
-  mkdir -p "$nojq_wt/tmp"
-  cp "$zs_chatty" "$nojq_wt/tmp/review-nojq-20260101-000001.json"
-  nojq_case() {
-    local label="$1"
-    shift
-    local out rc=0
-    set +e
-    out="$(PATH="$NOJQ_BIN" "$CHECK" "$@" 2>/dev/null)"
-    rc=$?
-    set -e
-    assert_eq "$rc" "1" "no jq: $label exits 1, not 127"
-    assert_eq "$(jq -r '.ok' <<<"$out" 2>/dev/null || printf 'unparseable')" "false" "no jq: $label prints a parseable rejection"
-    assert_eq "$(jq -r '.reason' <<<"$out" 2>/dev/null || printf 'unparseable')" "invalid" "no jq: $label reports reason=invalid"
-  }
-  nojq_case "--file mode" --file "$zs_chatty"
-  nojq_case "glob mode" "$nojq_wt" nojq 0
-  nojq_case "--wait mode" "$nojq_wt" nojq 0 --wait 2 --interval 1
-
-  # a jq that is PRESENT but fails every call takes the same route: the entry
-  # probe passes, so this exercises emit's own fallback rather than the probe.
-  BROKEN_BIN="$TMP_ROOT/brokenjq-bin"
-  mkdir -p "$BROKEN_BIN"
-  cp -a "$NOJQ_BIN/." "$BROKEN_BIN/"
-  printf '#!/usr/bin/env bash\nexit 3\n' > "$BROKEN_BIN/jq"
-  chmod +x "$BROKEN_BIN/jq"
-  set +e
-  out="$(PATH="$BROKEN_BIN" "$CHECK" --file "$zs_chatty" 2>/dev/null)"
-  rc=$?
-  set -e
-  assert_eq "$rc" "1" "a jq that fails every call exits 1"
-  assert_eq "$(jq -r '.reason' <<<"$out" 2>/dev/null || printf 'unparseable')" "invalid" "a jq that fails every call still prints a parseable rejection"
-fi
-
-# --- --wait never exits 0 without an acceptance behind it ---
-# Capturing glob_check's stdout suspends errexit for its body, so a path that
-# failed part-way still returns 0. Construct exactly that: a jq that works for
-# every gate but fails emit's own `jq -n`, so the accept path falls through to
-# the jq-free emitter and glob_check returns 0 carrying a REJECTION. Without the
-# guard the driver prints that body under exit 0 — an approval exit code on a
-# refusal.
-EMIT_SHIM="$TMP_ROOT/jqshim-emit"
-mkdir -p "$EMIT_SHIM"
-printf '#!/usr/bin/env bash\nif [ "$1" = "-n" ]; then exit 4; fi\nexec %s "$@"\n' "$REAL_JQ" > "$EMIT_SHIM/jq"
-chmod +x "$EMIT_SHIM/jq"
-ewt="$TMP_ROOT/emitwt"
-mkdir -p "$ewt/tmp"
-printf '{"agent":"ew","verdict":"pass","summary":"clean","blockers":[],"suggestions":[],"qa_metadata":{}}' > "$ewt/tmp/review-ew-20260101-000001.json"
-set +e
-out="$(PATH="$EMIT_SHIM:$PATH" "$CHECK" "$ewt" ew 0 --wait 3 --interval 1 2>/dev/null)"
-rc=$?
-set -e
-assert_eq "$rc" "1" "--wait exits 1 when the accept path could not emit an acceptance"
-assert_eq "$(jq -r '.ok' <<<"$out" 2>/dev/null || printf 'unparseable')" "false" "--wait reports ok=false rather than an exit-0 refusal"
-assert_eq "$(jq -r '.reason' <<<"$out" 2>/dev/null || printf 'unparseable')" "invalid" "--wait reports the emit failure as invalid"
-
-# MUST-FAIL CONTROL: the same shim, the same artifact, real jq — accepted.
-set +e
-out="$("$CHECK" "$ewt" ew 0 --wait 3 --interval 1 2>/dev/null)"
-rc=$?
-set -e
-assert_eq "$rc" "0" "--wait with a working emit accepts the same artifact"
-assert_eq "$(jq -r '.ok' <<<"$out")" "true" "--wait with a working emit reports ok=true"
 
 # --- the escape suppresses ONE gate, wherever its block sits ---
 # The declaration's blast radius used to be a consequence of statement order:
@@ -643,41 +459,115 @@ touch -d "@$before" "$zs_decl_glob_bad"
 expect_glob_valid "$worktree" reviewer-decl "$delegated_at" "$zs_decl_glob_ok" "a STALE invalid_declaration artifact does not block a fresh measured one"
 touch -d "@$later" "$zs_decl_glob_bad"
 
-# --- the check answers even when it cannot create its error channel ---
-# The gates' error file is made at SOURCE time, before any mode runs and before
-# the jq-free emitter was reachable. mktemp failing there exited empty with
-# status 1 — the same status a legitimate rejection uses.
+# --- a declaration records what it silenced ---
+# The declaration covers whatever the measurement gate would have said,
+# including a perf payload the named instrument has nothing to do with. That is
+# allowed; doing it invisibly is the shape this issue is about.
+zs_sup="$worktree/tmp/review-external-20260817-010101.json"
+printf '{"agent":"reviewer-perf","verdict":"pass","summary":"s","blockers":[],"suggestions":[],"measurement_failed":"cargo-mutants selected 0 mutants for the changed file","qa_metadata":{"perf_qa":{"percentiles":{"p50":0,"p99":0}}}}' > "$zs_sup"
 set +e
-out="$(TMPDIR=/nonexistent-dir-for-review-artifact-check "$CHECK" --file "$zs_ok" 2>/dev/null)"
+out="$("$CHECK" --file "$zs_sup")"
 rc=$?
 set -e
-assert_eq "$rc" "1" "an unusable TMPDIR exits 1"
-assert_eq "$(jq -r '.ok' <<<"$out" 2>/dev/null || printf 'unparseable')" "false" "an unusable TMPDIR still prints a parseable rejection"
-assert_eq "$(jq -r '.reason' <<<"$out" 2>/dev/null || printf 'unparseable')" "invalid" "an unusable TMPDIR reports reason=invalid"
-assert_substr "$(jq -r '.detail' <<<"$out" 2>/dev/null || printf '')" "mktemp" "the TMPDIR rejection names its real cause, not jq"
+assert_eq "$rc" "0" "a declaration still accepts an artifact whose perf payload measured nothing"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid_undermeasured" "the suppressed-perf artifact is undermeasured, not plain valid"
+assert_substr "$(jq -r '.measurement_suppressed // ""' <<<"$out")" "percentiles carries no measured value above zero" "the result names the perf measurement the mutation declaration silenced"
 
-# every mode, not just --file
+# a citation silenced by the declaration is recorded the same way
+zs_sup_cite="$worktree/tmp/review-external-20260817-020202.json"
+printf '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"measurement_failed":"cargo-mutants selected 0 mutants for the changed file"}' > "$zs_sup_cite"
 set +e
-out="$(TMPDIR=/nonexistent-dir-for-review-artifact-check "$CHECK" "$worktree" reviewer-zs "$delegated_at" 2>/dev/null)"
+out="$("$CHECK" --file "$zs_sup_cite")"
+set -e
+assert_substr "$(jq -r '.measurement_suppressed // ""' <<<"$out")" "killed 0/0" "the result names the citation the declaration silenced"
+# ...and the recorded finding is the finding, not the rejection's instructions
+assert_eq "$(jq -r '.measurement_suppressed | test("measurement_failed")' <<<"$out")" "false" "the suppression record carries the finding, not remedy text for a rejection that did not happen"
+
+# MUST-FAIL CONTROL: a declaration with nothing to silence records nothing.
+zs_sup_none="$worktree/tmp/review-external-20260817-030303.json"
+printf '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 3/3; stability: 10/10 at 16 threads","blockers":[],"suggestions":[],"measurement_failed":"cargo-mutants selected 0 mutants for the changed file"}' > "$zs_sup_none"
+set +e
+out="$("$CHECK" --file "$zs_sup_none")"
+set -e
+assert_eq "$(jq -r 'has("measurement_suppressed")' <<<"$out")" "false" "a declaration with nothing to silence carries no suppression record"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid_undermeasured" "that artifact is still undermeasured"
+
+# ...and an artifact with no declaration never carries one either.
+set +e
+out="$("$CHECK" --file "$zs_ok")"
+set -e
+assert_eq "$(jq -r 'has("measurement_suppressed")' <<<"$out")" "false" "an undeclared artifact carries no suppression record"
+
+# --- THE FALLBACK CONTRACT, which is now a single case ---
+# After the qa-shape gate was reclassified, "the gate could not run" is the only
+# content rejection that may be answered by an older sibling — so this one case
+# IS the torn-write half of the disposition rule. It is also the case the rule
+# was written around: reviewer artifacts are written non-atomically, a torn read
+# makes jq fail on THAT file, and the intact sibling beside it is the same
+# review written whole.
+TORN_SHIM="$TMP_ROOT/jqshim-torn"
+mkdir -p "$TORN_SHIM"
+# Fails one CONTENT gate, and only for the newest artifact — so this exercises
+# the gate's disposition rather than the per-file `.verdict` branch.
+printf '#!/usr/bin/env bash\nprog=""; target=""\nfor a in "$@"; do\n  case "$a" in\n    *"gate:no-review"*) prog=1 ;;\n    *torn-newest*) target=1 ;;\n  esac\ndone\nif [ -n "$prog" ] && [ -n "$target" ]; then echo "jq: error: simulated torn read" >&2; exit 5; fi\nexec %s "$@"\n' "$REAL_JQ" > "$TORN_SHIM/jq"
+chmod +x "$TORN_SHIM/jq"
+
+twt="$TMP_ROOT/tornwt"
+mkdir -p "$twt/tmp"
+torn_ok="$twt/tmp/review-torn-20260101-000001.json"
+printf '{"agent":"torn","verdict":"pass","summary":"mutation: killed 3/3; stability: 10/10 at 16 threads","blockers":[],"suggestions":[],"qa_metadata":{}}' > "$torn_ok"
+torn_new="$twt/tmp/review-torn-newest-20260101-000002.json"
+printf '{"agent":"torn","verdict":"pass","summary":"clean","blockers":[],"suggestions":[],"qa_metadata":{}}' > "$torn_new"
+touch -d "@$after" "$torn_ok"
+touch -d "@$later" "$torn_new"
+
+# The torn artifact ALONE is rejected — the fallback is a real answer, not an
+# absence of gating.
+set +e
+out="$(PATH="$TORN_SHIM:$PATH" "$CHECK" --file "$torn_new")"
 rc=$?
 set -e
-assert_eq "$rc" "1" "an unusable TMPDIR exits 1 in glob mode"
-assert_eq "$(jq -r '.reason' <<<"$out" 2>/dev/null || printf 'unparseable')" "invalid" "an unusable TMPDIR prints a parseable rejection in glob mode"
+assert_eq "$rc" "1" "a gate that could not run rejects the artifact on its own"
+assert_eq "$(jq -r '.reason' <<<"$out")" "invalid" "a gate that could not run reports reason=invalid"
 
-# MUST-FAIL CONTROL: a writable TMPDIR leaves the same artifact valid.
+# ...and in glob mode it falls back to the intact sibling, because THIS file may
+# simply have been read mid-write.
 set +e
-out="$(TMPDIR="$TMP_ROOT" "$CHECK" --file "$zs_ok")"
+out="$(PATH="$TORN_SHIM:$PATH" "$CHECK" "$twt" torn "$delegated_at")"
 rc=$?
 set -e
-assert_eq "$rc" "0" "a writable TMPDIR leaves the same artifact valid"
-assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "a writable TMPDIR reports the real verdict"
+assert_eq "$rc" "0" "glob falls back past a gate that could not run"
+assert_eq "$(jq -r '.ok' <<<"$out")" "true" "glob accepts the intact sibling beside a torn artifact"
+assert_eq "$(jq -r '.path' <<<"$out")" "$torn_ok" "glob fallback selects the intact sibling"
 
-# NOT ASSERTED: the INT/TERM traps beside the EXIT trap. On the bash this suite
-# runs under, a --wait watchdog killed with SIGTERM already cleans up through
-# the EXIT trap alone, so removing the signal traps changes nothing observable
-# and any assertion here would pass for the wrong reason. The traps are kept as
-# correct-by-construction for shells that do not run EXIT on a signal; they are
-# deliberately unpinned rather than pinned by a test that cannot fail.
+# MUST-FAIL CONTROL: with real jq the newest artifact answers for itself, so the
+# fallback above is the shim's doing and not the sibling always winning.
+set +e
+out="$("$CHECK" "$twt" torn "$delegated_at")"
+set -e
+assert_eq "$(jq -r '.path' <<<"$out")" "$torn_new" "with real jq the newest artifact is the answer"
+
+# --- the fail-closed default behind the rule ---
+# The predicate is what protects a gate added later that forgets to classify
+# itself. Asserted directly, because every gate present does classify itself so
+# no artifact can reach the default. Run in a child shell: sourcing the lib here
+# would install its own EXIT trap over this suite's and leak $TMP_ROOT.
+disp_out="$(bash -c '
+  source "$1/skills/orch/scripts/lib/review-artifact-gates.sh"
+  for d in torn_write terminal "" typo_write; do
+    review_artifact_disposition="$d"
+    if disposition_allows_fallback; then
+      printf "%s=fallback\n" "${d:-unset}"
+    else
+      printf "%s=terminal\n" "${d:-unset}"
+    fi
+  done
+' _ "$REPO_ROOT" 2>/dev/null)"
+assert_eq "$(printf '%s' "$disp_out" | grep -c .)" "4" "the disposition predicate answered for all four inputs"
+assert_substr "$disp_out" "torn_write=fallback" "an explicit torn_write allows the fallback"
+assert_substr "$disp_out" "terminal=terminal" "an explicit terminal refuses the fallback"
+assert_substr "$disp_out" "unset=terminal" "an UNSET disposition is treated as terminal — a gate that forgets to classify itself fails closed"
+assert_substr "$disp_out" "typo_write=terminal" "an unrecognised disposition is treated as terminal"
 
 # --- glob mode: zero_sample is TERMINAL, not advisory ---
 # On a zero_sample hit the search used to record the rejection and keep walking,
