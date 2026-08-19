@@ -1656,6 +1656,44 @@ check_in "$R38"
 [ "$RC" -eq 1 ] && ok "must-fail: the delegating line without its helper is not armed" \
   || bad "delegating line without helper" "rc=$RC out=$OUT"
 
+echo "=== install corrects a stale shebang in a hook IT wrote ==="
+# Older versions of this installer emitted `#!/usr/bin/env bash`. Refusing
+# there strands a working install reporting NOT installed forever, so a file
+# carrying the created-marker is corrected rather than refused.
+R44="$(new_repo installstaleshebang)"
+install_in "$R44"
+# Exactly the drovr shape: the file this installer wrote, with only its
+# shebang reverted to what an older version emitted.
+{
+  printf '#!/usr/bin/env bash\n'
+  tail -n +2 "$R44/.git/hooks/pre-commit"
+} >"$TMP/stale" && mv "$TMP/stale" "$R44/.git/hooks/pre-commit"
+chmod +x "$R44/.git/hooks/pre-commit"
+grep -qF -- "vstack_gg_h" "$R44/.git/hooks/pre-commit" \
+  && ok "the fixture really carries the guard line under the stale shebang" \
+  || bad "stale fixture carries the guard line" "$(sed -n '2p' "$R44/.git/hooks/pre-commit")"
+check_in "$R44"
+[ "$RC" -eq 2 ] && ok "and it reads as unverifiable before the fix" \
+  || bad "stale fixture unverifiable first" "rc=$RC out=$OUT"
+install_in "$R44"
+[ "$(head -n 1 "$R44/.git/hooks/pre-commit")" = "#!/bin/sh" ] \
+  && ok "a hook this installer wrote has its stale shebang corrected" \
+  || bad "stale shebang corrected" "line1=$(head -n 1 "$R44/.git/hooks/pre-commit")"
+check_in "$R44"
+[ "$RC" -eq 0 ] && ok "and it checks armed afterwards" \
+  || bad "corrected hook checks armed" "rc=$RC out=$OUT"
+
+# Control: a hook the CONSUMER wrote is still refused and left untouched.
+printf '#!/usr/bin/env bash\necho mine\n' >"$R44/.git/hooks/commit-msg"
+chmod +x "$R44/.git/hooks/commit-msg"
+install_in "$R44"
+[ "$(sed -n '2p' "$R44/.git/hooks/commit-msg")" = "echo mine" ] \
+  && ok "control: a consumer's own hook is refused, not rewritten" \
+  || bad "consumer hook untouched" "line2=$(sed -n '2p' "$R44/.git/hooks/commit-msg")"
+[ "$(head -n 1 "$R44/.git/hooks/commit-msg")" = "#!/usr/bin/env bash" ] \
+  && ok "and its shebang is left alone" \
+  || bad "consumer shebang untouched" "line1=$(head -n 1 "$R44/.git/hooks/commit-msg")"
+
 echo "=== install refuses what --check could not vouch for ==="
 # Installing under a shebang the check calls unverifiable would report a
 # successful install that the very next `vstack check` contradicts.

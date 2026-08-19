@@ -61,6 +61,13 @@
 
 ### Fixed
 
+- growth-guards: `install-git-hooks` corrects a stale shebang in a hook it
+  wrote itself rather than refusing it. Older versions emitted
+  `#!/usr/bin/env bash`, which the new trusted-interpreter rule cannot vouch
+  for, so a working install reported `NOT installed` on refresh and drift on
+  `vstack check` while still gating every commit. A hook the CONSUMER wrote is
+  still refused and left untouched.
+
 - cli: a lock `source` inside `~/.vstack/cache/` resolves as the remote that
   entry clones, not as a local checkout. Every freshness mechanism had been
   skipped at once while each command still reported success (#1495).
