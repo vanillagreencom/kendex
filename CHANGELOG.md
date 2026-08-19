@@ -68,7 +68,10 @@
   over the paths it is about to read and, finding any, exits 2 naming them and
   the only remedy there is: finish or abort the merge. The guard is scoped to
   the lane's own pathspec, so an unmerged path a lane does not scan leaves
-  that scan complete. Same failure class as #1492 — a measurement that could
+  that scan complete. `byte-ceiling`'s index modes refuse too, for a
+  different mechanism with the same shape: an add/add conflict is classified
+  `U`, `--diff-filter=A` drops that record, and the run reported
+  `OK — 0 staged addition(s) checked` — a file of any size past the ceiling. Same failure class as #1492 — a measurement that could
   not be taken must never report as a clean measurement.
 
 - growth-guards: policy reads fail closed on a probe git could not answer, and

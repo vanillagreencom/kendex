@@ -105,6 +105,11 @@ emit_candidate() { # SHA PATH
 
 case "$MODE" in
   staged)
+    # An add/add conflict is classified U, which --diff-filter=A drops: the
+    # addition disappears from the record set and the run reports "0 staged
+    # addition(s) checked", so a file of any size passes the ceiling. The
+    # index modes refuse an unresolved merge rather than measure around it.
+    gg_require_merged_index
     git -c diff.renames=true diff --cached --raw --no-abbrev -z --diff-filter=A >"$GG_TMP/raw.z" || gg_collection_error "git diff --cached failed collecting staged additions"
     ;;
   base)
@@ -112,6 +117,9 @@ case "$MODE" in
     git -c diff.renames=true diff --raw --no-abbrev -z --diff-filter=A "$BASE_REF...HEAD" >"$GG_TMP/raw.z" || gg_collection_error "git diff $BASE_REF...HEAD failed collecting added files (no merge base?)"
     ;;
   all)
+    # ls-files -s emits one record per STAGE for an unmerged path, so the
+    # walk below would size two or three rival blobs as separate files.
+    gg_require_merged_index
     git ls-files -sz >"$GG_TMP/files.z" || gg_collection_error "git ls-files failed"
     while IFS= read -r -d '' rec; do
       # Record shape: "<mode> <sha> <stage>\t<path>".

@@ -210,6 +210,69 @@ OUT="$(cd "$R" && "$SCRIPTS/conflict-markers" 2>&1)" || RC=$?
   && ok "a resolved tree passes" \
   || bad "a resolved tree passes" "rc=$RC out=$OUT"
 
+echo "=== byte-ceiling: an add/add conflict is not a zero-addition diff ==="
+
+# An add/add conflict is status U, which --diff-filter=A drops entirely: the
+# addition vanishes from the record set and the ceiling measures nothing.
+new_repo bc-addadd
+printf 'seed\n' >"$R/seed.txt"
+git -C "$R" add -A
+git -C "$R" commit -qm base
+git -C "$R" checkout -q -b other
+head -c 400000 /dev/zero | tr '\0' 'b' >"$R/big.txt"
+git -C "$R" add -A
+git -C "$R" commit -qm other
+git -C "$R" checkout -q main
+head -c 400000 /dev/zero | tr '\0' 'a' >"$R/big.txt"
+git -C "$R" add -A
+git -C "$R" commit -qm ours
+git -C "$R" merge other >/dev/null 2>&1 || true
+[ "$(git -C "$R" diff --cached --raw --diff-filter=A | wc -l)" -eq 0 ] \
+  && ok "the fixture really does hide the addition from --diff-filter=A" \
+  || bad "the fixture really does hide the addition from --diff-filter=A" "$(git -C "$R" diff --cached --raw --diff-filter=A)"
+
+RC=0
+OUT="$(cd "$R" && "$SCRIPTS/byte-ceiling" 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] \
+  && ok "byte-ceiling refuses the unmerged index instead of measuring around it" \
+  || bad "byte-ceiling refuses the unmerged index instead of measuring around it" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"0 staged addition(s) checked"* | *"byte-ceiling: OK"*)
+    bad "the refusal is not dressed as a clean measurement" "out=$OUT"
+    ;;
+  *) ok "the refusal is not dressed as a clean measurement" ;;
+esac
+
+RC=0
+OUT="$(cd "$R" && "$SCRIPTS/byte-ceiling" --all 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] \
+  && ok "--all refuses it too, where ls-files emits one record per stage" \
+  || bad "--all refuses it too, where ls-files emits one record per stage" "rc=$RC out=$OUT"
+
+# Control: the guard did not replace the measurement. A merged index with a
+# genuinely new oversized file still fails the ceiling, and a merged index
+# with nothing oversized still passes.
+new_repo bc-merged
+printf 'seed\n' >"$R/seed.txt"
+git -C "$R" add -A
+git -C "$R" commit -qm base
+head -c 400000 /dev/zero | tr '\0' 'a' >"$R/big.txt"
+git -C "$R" add -A
+RC=0
+OUT="$(cd "$R" && "$SCRIPTS/byte-ceiling" 2>&1)" || RC=$?
+[ "$RC" -eq 1 ] && case "$OUT" in *big.txt*) true ;; *) false ;; esac \
+  && ok "a merged index still fails an oversized addition" \
+  || bad "a merged index still fails an oversized addition" "rc=$RC out=$OUT"
+git -C "$R" rm -q --cached big.txt
+rm -f "$R/big.txt"
+printf 'small\n' >"$R/small.txt"
+git -C "$R" add -A
+RC=0
+OUT="$(cd "$R" && "$SCRIPTS/byte-ceiling" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && case "$OUT" in *"byte-ceiling: OK"*) true ;; *) false ;; esac \
+  && ok "a merged index with nothing oversized still passes" \
+  || bad "a merged index with nothing oversized still passes" "rc=$RC out=$OUT"
+
 echo "=== a failed policy read stops the gate, it does not become an empty list ==="
 
 # gg_policy_content runs inside a command substitution, so its exit 2 dies in
