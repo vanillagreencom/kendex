@@ -181,11 +181,16 @@
   entry point does gate and calling it ungated is the same lie reversed. The
   accepted TAIL is checked too, not just the command word: `exec
   …/pre-commit --help` and `…/pre-commit "$@" || true` both name the entry
-  point in command position and both let every violation through, so the
-  argument list must be one of the forms that actually forwards git's
-  arguments and keeps the exit status. The suite asserts the property
-  directly rather than the wording: exit 0 is claimed only where a real
-  commit is really blocked.
+  point in command position and both let every violation through. The
+  accepted forms are per hook — `pre-commit` takes no arguments, `commit-msg`
+  needs git's message-file path — because swapping them breaks the gate
+  rather than loosening it: `pre-commit "$1"` exits 2 on the argument it
+  refuses and a bare `commit-msg` reads inherited stdin and calls every
+  message empty, so both reject valid commits while validating nothing. The
+  suite asserts the property directly rather than the wording: exit 0 is
+  claimed only where a real violating commit is really blocked AND a clean
+  one still passes, which is the half that separates a working gate from a
+  hook that refuses everything.
 
 - growth-guards: `install-git-hooks --check` now probes the directory
   `core.hooksPath` redirects git to, instead of judging a redirected clone
