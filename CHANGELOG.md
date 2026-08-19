@@ -222,7 +222,12 @@
   `cannot exec` for every commit there rather than running the hook. A shim in
   `.git/hooks` carrying the guard line somewhere other than line 2 is `2`
   rather than `1`: it still gates, and calling a gated repository ungated is
-  the same false answer pointing the other way. The
+  the same false answer pointing the other way. INSTALL applies the same
+  interpreter predicate as the check, refusing to wire a hook it could not
+  then vouch for and saying which `#!` to use, so an install can no longer
+  report success that the next `vstack check` contradicts. Indentation is
+  stripped as blanks rather than whitespace for the same reason as the tail:
+  a line beginning with CR runs a command named `\rexec`. The
   delegating shape's helper is verified the same way: outside the
   installer-owned hooks directory it is a copy someone made, and the marker
   it was recognized by is a comment anyone can type — an executable

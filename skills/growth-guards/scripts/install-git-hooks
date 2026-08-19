@@ -304,6 +304,14 @@ install_hook() { # HOOK
     hook_warn "$path is not a POSIX-shell script; not modifying it — the $hook guard is NOT installed"
     return 0
   fi
+  # The SAME predicate --check applies. Installing under a shebang the check
+  # cannot vouch for would report a successful install that the very next
+  # `vstack check` calls unverifiable, so the guard is not inserted at all
+  # and the reason says which interpreter to use.
+  if ! gg_trusted_interpreter "$(head -n 1 "$path")"; then
+    hook_warn "$path runs under an interpreter that cannot be verified ($(head -n 1 "$path")); not modifying it — the $hook guard is NOT installed. Use a #! naming a shell in /bin or /usr/bin directly."
+    return 0
+  fi
   # Idempotence keys on the EXACT delegate AT ITS POSITION — line 2, straight
   # after the shebang. Content alone is not enough: a line that was commented
   # out, truncated, left by an older version, or moved below hook content that
@@ -647,10 +655,13 @@ hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecogni
   [ -r "$path" ] || return 2
   own_dir="$(canonical_dir "$SCRIPT_DIR/$hook")" || return 2
   while IFS= read -r line || [ -n "$line" ]; do
-    body="${line%%[![:space:]]*}"
+    # Blanks, not all whitespace: the shell separates tokens on blanks, so a
+    # line starting with CR runs a command named `\rexec`, not `exec`.
+    body="${line%%[![:blank:]]*}"
     body="${line#"$body"}"
     case "$body" in
       "" | "#"*) continue ;;
+      *[[:cntrl:]]*) opaque=1; continue ;;
     esac
     seen=$((seen + 1))
     rest="$body"

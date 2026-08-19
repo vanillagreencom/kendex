@@ -1538,6 +1538,11 @@ check_in "$R38"
 arm_pair '#!/bin/sh\nexec %s/pre-comm?t "$@"\n' '#!/bin/sh\nexec %s/commit-ms? "$1"\n'
 unverifiable_shape "an unquoted command carrying a glob character"
 
+# Indentation is BLANKS. A line starting with CR runs a command named
+# `\rexec`, so normalizing it away would accept a hook that git cannot run.
+arm_pair '#!/bin/sh\n\rexec %s/pre-commit "$@"\n' '#!/bin/sh\n\rexec %s/commit-msg "$1"\n'
+unverifiable_shape "a command line beginning with a carriage return"
+
 # One passing control per shape the check does accept.
 arm_pair '#!/bin/sh\n%s/pre-commit "$@" || exit $?\n' \
   '#!/bin/sh\n%s/commit-msg "$1" || exit $?\n'
@@ -1615,6 +1620,25 @@ rm -f "$R38/shapehooks/vstack-guards"
 check_in "$R38"
 [ "$RC" -eq 1 ] && ok "must-fail: the delegating line without its helper is not armed" \
   || bad "delegating line without helper" "rc=$RC out=$OUT"
+
+echo "=== install refuses what --check could not vouch for ==="
+# Installing under a shebang the check calls unverifiable would report a
+# successful install that the very next `vstack check` contradicts.
+R43="$(new_repo installshebangparity)"
+mkdir -p "$R43/.git/hooks"
+printf '#!/usr/bin/env bash\necho existing\n' >"$R43/.git/hooks/pre-commit"
+chmod +x "$R43/.git/hooks/pre-commit"
+install_in "$R43"
+case "$OUT" in
+  *"cannot be verified"*) ok "install says why it did not wire the hook" ;;
+  *) bad "install refuses unverifiable shebang" "out=$OUT" ;;
+esac
+[ "$(sed -n '2p' "$R43/.git/hooks/pre-commit")" = "echo existing" ] \
+  && ok "and it left the consumer's hook untouched" \
+  || bad "install left the hook untouched" "line2=$(sed -n '2p' "$R43/.git/hooks/pre-commit")"
+check_in "$R43"
+[ "$RC" -ne 0 ] && ok "and --check agrees rather than contradicting the install" \
+  || bad "check agrees with install" "rc=$RC out=$OUT"
 
 echo "=== a shim carrying the guard line elsewhere is unverifiable, not ungated ==="
 # --check writes nothing, so it does not get to assume the shim in front of
