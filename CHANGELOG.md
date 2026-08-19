@@ -22,13 +22,30 @@
   whose remote cannot be established fails closed — `check` reports the
   entries as unverifiable, naming the file and the reason, and never counts
   them clean — and one that is simply not on disk is reported absent, as it
-  always was. `refresh` migrates the recorded source onto the remote spec in
-  the same pass that repairs `source_repo`, so existing consumers cross over
-  without a manual re-add; the rewrite waits until vstack's own entry for
-  that remote is present AND has been brought to the revision the entry is
-  about to be hashed at, because a lock naming a remote with no clone
-  resolves to nothing and a hash taken against an older clone reads as drift
-  in the wrong direction on the next `check`.
+  always was. `vstack add` takes the same branch, so a cache path is fetched,
+  leased and proved vstack's own there too rather than installed as whatever
+  bytes were sitting in it — and an entry `check` refuses is an error in
+  `add` as well, instead of `add` exiting 0 having installed from the entry
+  `check` had just told the user to re-add. `vstack cache-refresh` reports a
+  source it cannot map and exits nonzero, where it printed nothing and
+  exited 0 on the same state.
+
+  Membership is the whole cache SUBTREE, not its top row: a source recorded
+  as `<cache>/<entry>/<subdir>` — what `vstack add` writes for a repository
+  whose catalog is nested — resolves through its entry, which is fetched and
+  leased before the subdirectory is read out of it.
+
+  `refresh` migrates the recorded source onto the remote spec in the same
+  pass that repairs `source_repo`, so existing consumers cross over without a
+  manual re-add. The rewrite waits until vstack's own entry for that remote
+  is present and a fetch of it has actually RUN and landed — a fetch that ran
+  and failed, and a cache that could not be locked or stamped at all, both
+  leave the clone where it was and are both declined. Accepting them wrote
+  the lock a `source_hash` taken from a stale clone while the install had
+  come from the fetched one, after which the next refresh reinstalled the
+  older content over the newer with every command reporting success. A source
+  naming a subdirectory is never migrated: a remote spec names a repository
+  and cannot carry one.
 
 - preflight: new `hardcoded-temp-path` lane — an added directory-creating
   call taking a literal `/tmp/…` or `/var/tmp/…` as (part of) its first

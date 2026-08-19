@@ -20,8 +20,9 @@ mod problems;
 mod test_support;
 
 pub use fetch::{
-    CacheLease, FetchBound, lease_cached_source, lease_remote_cache, refresh_remote_caches,
-    refresh_remote_caches_older_than, remote_cache_fetch_in_flight, spawn_detached_cache_refresh,
+    CacheLease, FetchAttempt, FetchBound, lease_cached_source, lease_remote_cache,
+    refresh_remote_caches, refresh_remote_caches_older_than, remote_cache_fetch_in_flight,
+    spawn_detached_cache_refresh,
 };
 use fetch::{GuardAcquire, RemoteCacheFetchGuard};
 pub(crate) use problems::recorded_remote_cache_problems;
@@ -257,38 +258,63 @@ fn cache_refresh_unwritable_reason(cache_dir: &Path) -> Option<String> {
 }
 
 /// Every distinct lock source whose clone is on this machine, as the remote
-/// it names. Local reads only — nothing here fetches, so the session-start
-/// report never waits on the network. A source recorded as a path into the
-/// cache costs one local `git remote get-url` to establish which remote its
-/// entry clones; every other shape is answered from the string alone.
+/// it names, and the ones it must refuse. Local reads only — nothing here
+/// fetches, so the session-start report never waits on the network. A source
+/// recorded as a path into the cache costs one local `git remote get-url` to
+/// establish which remote its entry clones; every other shape is answered from
+/// the string alone.
 ///
 /// Which entry belongs to a source is [`remote_for_source`]'s answer, not this
 /// module's, so an entry a fetch mutates and an entry a report reads can never
 /// be two different directories — including for a source recorded as a path
 /// into the cache, which resolves to the remote its entry clones rather than
-/// to a local directory nothing ever fetches. A source that is REFUSED is not
-/// listed: it has no entry vstack would use, and the refusal is reported by
-/// the resolution path that names it.
-pub(crate) fn cached_remote_sources(lock: &LockFile) -> Vec<(String, RemoteSource)> {
+/// to a local directory nothing ever fetches.
+///
+/// A refusal is RETURNED rather than dropped. Dropping it made the one command
+/// whose entire job is making the caches current — `vstack cache-refresh` —
+/// print nothing and exit 0 on a source it could not have refreshed, while
+/// `check` and `verify` exited 1 on that same state. Which callers report it
+/// is theirs to decide: the refresher owes the user an account of a cache it
+/// left un-current, while the session-start report reads recorded disk state
+/// and has the refusal already, from the resolution path that names it.
+pub(crate) struct LockRemotes {
+    /// Distinct lock sources whose clone is on this machine, as the remote
+    /// each names, sorted by source.
+    pub present: Vec<(String, RemoteSource)>,
+    /// Distinct lock sources that name a remote vstack must not use, with the
+    /// refusal, sorted by source.
+    pub refused: Vec<(String, String)>,
+}
+
+pub(crate) fn cached_remote_sources(lock: &LockFile) -> LockRemotes {
     let mut seen = std::collections::HashSet::new();
-    let mut out = Vec::new();
+    let mut present = Vec::new();
+    let mut refused = Vec::new();
     for entry in lock.entries.values() {
         if !seen.insert(entry.source.clone()) {
             continue;
         }
-        if let Ok(Some(remote)) = remote_for_source(&entry.source)
-            && cache_entry_present(&remote)
-        {
-            out.push((entry.source.clone(), remote));
+        match remote_for_source(&entry.source) {
+            Ok(Some(remote)) if cache_entry_present(&remote) => {
+                present.push((entry.source.clone(), remote));
+            }
+            Ok(_) => {}
+            Err(err) => refused.push((entry.source.clone(), format!("{err:#}"))),
         }
     }
-    out.sort_by(|a, b| a.0.cmp(&b.0));
-    out
+    present.sort_by(|a, b| a.0.cmp(&b.0));
+    refused.sort_by(|a, b| a.0.cmp(&b.0));
+    LockRemotes { present, refused }
 }
 
 /// True when any of this lock's caches is due for a refresh.
+///
+/// A refused source is not due: no fetch of it is possible, so spawning a
+/// refresher for one would achieve nothing. It is reported by the resolution
+/// path that names it.
 pub(crate) fn any_remote_cache_due(lock: &LockFile, max_age: Option<std::time::Duration>) -> bool {
     cached_remote_sources(lock)
+        .present
         .iter()
         .any(|(_, remote)| remote_cache_fetch_due(&remote.cache_dir, max_age))
 }

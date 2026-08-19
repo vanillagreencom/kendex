@@ -65,7 +65,7 @@ fn cache_entry_path_source_resolves_and_fetches_as_its_remote() {
 
         // `vstack cache-refresh` and `check`'s dueness probe both walk this
         // list; the entry was missing from it entirely.
-        let listed = config::cached_remote_sources(&lock);
+        let listed = config::cached_remote_sources(&lock).present;
         assert_eq!(listed.len(), 1, "the cache-root source must be listed");
         assert_eq!(listed[0].0, source);
         assert_eq!(
@@ -93,7 +93,9 @@ fn cache_entry_path_source_resolves_and_fetches_as_its_remote() {
         let local_source = local.to_string_lossy().into_owned();
         let local_lock = lock_of(&local_source);
         assert!(
-            config::cached_remote_sources(&local_lock).is_empty(),
+            config::cached_remote_sources(&local_lock)
+                .present
+                .is_empty(),
             "a local checkout must never be listed as a remote cache"
         );
         assert_eq!(
@@ -134,10 +136,27 @@ fn cache_entry_path_source_whose_remote_cannot_be_established_is_refused() {
             reason.contains("is not a remote vstack can fetch"),
             "must give the reason: {reason}"
         );
-        assert!(
-            config::cached_remote_sources(&lock_of(&source)).is_empty(),
-            "an unmappable entry has no remote to refresh"
+        // It is not something `cache-refresh` can fetch, and it is not
+        // something `cache-refresh` may pass over in silence either.
+        let listed = config::cached_remote_sources(&lock_of(&source));
+        assert!(listed.present.is_empty(), "there is no remote to refresh");
+        assert_eq!(listed.refused.len(), 1, "{:?}", listed.refused);
+        assert_eq!(listed.refused[0].0, source);
+        let problems = config::refresh_remote_caches_older_than(
+            &lock_of(&source),
+            None,
+            config::FetchBound::BACKGROUND,
         );
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(
+            matches!(
+                &problems[0].kind,
+                config::RemoteCacheProblemKind::Refused { reason }
+                    if reason.contains("is not a remote vstack can fetch")
+            ),
+            "{problems:?}"
+        );
+        assert!(problems[0].kind.is_persistent(), "no rerun clears this");
 
         // An origin git cannot report at all fails the same way.
         git(&cache, &["remote", "remove", "origin"]);
@@ -179,25 +198,102 @@ fn missing_cache_entry_path_source_is_absent_not_refused() {
     let _ = std::fs::remove_dir_all(root);
 }
 
-/// Only a direct child of the cache root is a cache entry. Everything else
-/// that merely lives near one — the root itself, a grandchild, a sibling whose
-/// name starts with `cache` — stays on the local-directory branch it has
-/// always taken.
+/// Cache membership is ANCESTRY: the whole subtree belongs to the entry it
+/// sits in, and the split says which entry and how far below it. A predicate
+/// that matched only direct children left `<cache>/<entry>/<subdir>` on the
+/// local-directory branch, reproducing the original defect verbatim.
+///
+/// Everything genuinely outside — the root itself, a sibling whose name merely
+/// starts the same way, a relative spelling — stays where it has always been.
 #[test]
-fn only_direct_children_of_the_cache_root_are_cache_entries() {
+fn every_path_under_the_cache_root_belongs_to_its_entry() {
     let root = tmpdir("cache-path-boundary");
     let home = root.join("home");
     crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
         let cache_root = remote_cache_root();
-        assert!(is_remote_cache_entry_path(&cache_root.join("owner_repo")));
-        assert!(!is_remote_cache_entry_path(&cache_root));
-        assert!(!is_remote_cache_entry_path(
-            &cache_root.join("owner_repo").join("skills")
-        ));
-        assert!(!is_remote_cache_entry_path(
-            &cache_root.parent().unwrap().join("cache-sibling")
-        ));
-        assert!(!is_remote_cache_entry_path(Path::new("owner_repo")));
+        let entry = cache_root.join("owner_repo");
+        assert_eq!(
+            remote_cache_entry_for_path(&entry),
+            Some((entry.clone(), PathBuf::new()))
+        );
+        assert_eq!(
+            remote_cache_entry_for_path(&entry.join("skills")),
+            Some((entry.clone(), PathBuf::from("skills")))
+        );
+        assert_eq!(
+            remote_cache_entry_for_path(&entry.join("a").join("b")),
+            Some((entry, PathBuf::from("a").join("b")))
+        );
+        assert_eq!(remote_cache_entry_for_path(&cache_root), None);
+        assert_eq!(
+            remote_cache_entry_for_path(&cache_root.parent().unwrap().join("cache-sibling")),
+            None
+        );
+        assert_eq!(remote_cache_entry_for_path(Path::new("owner_repo")), None);
+    });
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// #1495's defect, one directory deeper. A source recorded as
+/// `<cache>/<entry>/<subdir>` — what `vstack add <cache>/<entry>/sub` writes
+/// for a repository whose catalog is nested — was read as an ordinary local
+/// checkout, so nothing fetched it and every command called the stale bytes
+/// clean. It resolves through its ENTRY: the entry is fetched and leased, and
+/// the subdirectory is taken inside the tree that fetch left behind.
+#[test]
+fn a_path_below_a_cache_entry_resolves_through_that_entry() {
+    let root = tmpdir("cache-path-subdir");
+    let home = root.join("home");
+    let origin = root.join("origin");
+    init_git_repo(&origin);
+    std::fs::create_dir_all(origin.join("nested")).unwrap();
+    std::fs::write(origin.join("nested").join("README.md"), "upstream\n").unwrap();
+    git(&origin, &["add", "-A"]);
+    git(&origin, &["commit", "-q", "-m", "nested"]);
+    // The must-fail control: the same shape OUTSIDE the cache is still an
+    // ordinary local directory, so only the location decides the branch.
+    let outside = make_vstack_source(&root, "local-checkout");
+    std::fs::create_dir_all(outside.join("nested")).unwrap();
+
+    crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+        let entry = PathBuf::from(cache_entry_source(&origin, "legacy_key"));
+        let sub = entry.join("nested");
+        let source = sub.to_string_lossy().into_owned();
+        std::fs::write(origin.join("nested").join("README.md"), "newer\n").unwrap();
+        git(&origin, &["commit", "-q", "-am", "advance"]);
+        assert_eq!(
+            std::fs::read_to_string(sub.join("README.md")).unwrap(),
+            "upstream\n",
+            "the fixture must start behind, or the fetch below proves nothing"
+        );
+
+        // `cache-refresh` and `check`'s dueness probe reach it through the
+        // entry, which is the clone git actually fetches.
+        let listed = config::cached_remote_sources(&lock_of(&source)).present;
+        assert_eq!(listed.len(), 1, "the subdirectory source must be listed");
+        assert_eq!(listed[0].1.cache_dir, entry);
+
+        let records = resolve_source_records(&lock_of(&source));
+        assert!(records.refused.reason(&source).is_none());
+        assert_eq!(records.sources.len(), 1);
+        assert!(same_path(&records.sources[0].root, &sub));
+        assert_eq!(
+            std::fs::read_to_string(sub.join("README.md")).unwrap(),
+            "newer\n",
+            "resolving a path below a cache entry must fetch that entry"
+        );
+
+        // A subdirectory the fetch removed is absent, not a resolved path
+        // that is not a directory.
+        let gone = entry.join("no-such-dir").to_string_lossy().into_owned();
+        assert_eq!(source_path_resolution(&gone), SourceResolution::Absent);
+
+        // Control: a subdirectory of a local checkout is still local.
+        let local_sub = outside.join("nested");
+        assert_eq!(
+            source_path_resolution(&local_sub.to_string_lossy()),
+            SourceResolution::Resolved(local_sub)
+        );
     });
     let _ = std::fs::remove_dir_all(root);
 }
@@ -253,6 +349,53 @@ fn cache_entry_path_source_migrates_to_its_remote_spec_once_the_canonical_entry_
         // a cache-entry path, so neither is rewritten.
         assert_eq!(migrated_cache_entry_source(&local.to_string_lossy()), None);
         assert_eq!(migrated_cache_entry_source(&file_url(&origin)), None);
+    });
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// The guard that decides the migration is about the FETCH, not about the
+/// call returning `Ok`. A fetch that ran and failed leaves the canonical clone
+/// at whatever revision it already held, and `lease_remote_cache` reports that
+/// as `Ok(FetchFailed)` — accepting it rewrote the lock to a spec whose clone
+/// was behind the tree the install came from, after which `refresh` said
+/// `(unchanged)`, `check` and `verify` agreed, and the next refresh reinstalled
+/// the older content over the newer with every command reporting success.
+#[test]
+fn a_cache_entry_source_is_not_migrated_onto_a_clone_no_fetch_reached() {
+    let root = tmpdir("cache-path-migrate-unreachable");
+    let home = root.join("home");
+    let origin = root.join("origin");
+    init_git_repo(&origin);
+
+    crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+        let source = cache_entry_source(&origin, "legacy_key");
+        let canonical = RemoteSource::parse(&file_url(&origin)).unwrap().unwrap();
+        clone_into(&origin, &canonical.cache_dir);
+
+        // Control: reachable, this fixture migrates — so the refusal below is
+        // the origin's doing and not the fixture's.
+        assert_eq!(
+            migrated_cache_entry_source(&source),
+            Some(file_url(&origin))
+        );
+
+        // Now unreachable. The recorded path is left exactly as it was, which
+        // costs the entry nothing: it keeps resolving and keeps fetching.
+        std::fs::remove_dir_all(&origin).unwrap();
+        assert_eq!(
+            migrated_cache_entry_source(&source),
+            None,
+            "a failed fetch must not be read as a current clone"
+        );
+
+        let mut entry = lock_entry("demo", &source);
+        entry.source_hash = "recorded".into();
+        crate::commands::refresh::sync_lock_entry_source(&[], &mut entry);
+        assert_eq!(
+            entry.source, source,
+            "the recorded source must be untouched"
+        );
+        assert_eq!(entry.source_hash, "recorded");
     });
     let _ = std::fs::remove_dir_all(root);
 }

@@ -5,7 +5,7 @@ use super::*;
 use crate::config::REMOTE_CACHE_TTL;
 use std::path::Path;
 
-fn tmproot(label: &str) -> PathBuf {
+pub(super) fn tmproot(label: &str) -> PathBuf {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system clock before epoch")
@@ -34,7 +34,7 @@ fn git(repo: &Path, args: &[&str]) {
 /// A committed vstack source repository, and the `file://` URL naming it. Two
 /// item roots, because that is what makes a directory a vstack source — and
 /// the clone is refused otherwise, before any of this is reached.
-fn origin_repo(dir: &Path) -> String {
+pub(super) fn origin_repo(dir: &Path) -> String {
     std::fs::create_dir_all(dir.join("agents")).unwrap();
     std::fs::write(
         dir.join("agents").join("scout.md"),
@@ -52,7 +52,7 @@ fn origin_repo(dir: &Path) -> String {
 }
 
 /// Move upstream on: one more skill, committed.
-fn publish_skill(dir: &Path, name: &str) {
+pub(super) fn publish_skill(dir: &Path, name: &str) {
     let skill = dir.join("skills").join(name);
     std::fs::create_dir_all(&skill).unwrap();
     std::fs::write(

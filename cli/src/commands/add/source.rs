@@ -3,9 +3,11 @@
 //! `add` is being run from.
 
 use super::ResolvedSource;
+mod cache_path;
 use crate::config::{self, CacheLease};
 use crate::resolve::{same_path, source_from_project_lock};
 use anyhow::{Context, Result};
+use cache_path::resolve_cache_path_source;
 use std::path::{Path, PathBuf};
 
 /// Whether `add` must fetch a cached remote source before reading it, or may
@@ -130,6 +132,9 @@ fn resolve_remembered_source(source: &str, fetch: SourceFetch) -> Result<Option<
     // are read out of, so a regular file at a remembered path is a local
     // candidate that names nothing — the one outcome that may walk on.
     let path = Path::new(source);
+    if let Some(resolved) = resolve_cache_path_source(source, fetch) {
+        return resolved.map(|(leased, _)| Some(leased));
+    }
     if path.is_absolute() && path.is_dir() {
         return Ok(Some(LeasedSourceDir::local(std::fs::canonicalize(source)?)));
     }
@@ -157,6 +162,11 @@ fn resolve_remembered_source(source: &str, fetch: SourceFetch) -> Result<Option<
 }
 
 fn resolve_source(source: Option<&str>, fetch: SourceFetch) -> Result<LeasedSourceDir> {
+    if let Some(source) = source
+        && let Some(resolved) = resolve_cache_path_source(source, fetch)
+    {
+        return resolved.map(|(leased, _)| leased);
+    }
     match source {
         Some(path) if Path::new(path).is_dir() => {
             Ok(LeasedSourceDir::local(std::fs::canonicalize(path)?))
@@ -260,6 +270,19 @@ pub(super) fn resolve_source_for_app(
     project_root: &Path,
     fetch: SourceFetch,
 ) -> Result<ResolvedSource> {
+    if let Some(named) = source
+        && let Some(resolved) = resolve_cache_path_source(named, fetch)
+    {
+        let (leased, recorded) = resolved?;
+        return Ok(ResolvedSource {
+            source_repo: config::source_repo_for_source(Some(&leased.dir), &recorded),
+            label: source_label(&recorded),
+            source: recorded,
+            dir: leased.dir,
+            persist: true,
+            lease: leased.lease,
+        });
+    }
     match source {
         // A local source is a DIRECTORY. Anything else that happens to exist
         // at that path names no source, and reading a catalog out of it yields

@@ -40,6 +40,21 @@ impl RemoteCacheProblemKind {
             Self::Unwritable { .. } | Self::Refused { .. } => true,
         }
     }
+
+    /// One line, for a command that reports this as it happens rather than
+    /// building a report out of it. `check` renders its own report-shaped
+    /// wording, which carries the humanized ages and the `--offline` caveat a
+    /// live refresher has no use for.
+    pub fn describe(&self) -> String {
+        match self {
+            Self::Failing { cause, .. } => cause
+                .map_or("the refresh did not complete", FetchFailure::describe)
+                .to_string(),
+            Self::Unwritable { reason } => format!("cache cannot be written: {reason}"),
+            // The refusal already names the entry and the next step.
+            Self::Refused { reason } => reason.clone(),
+        }
+    }
 }
 
 /// One cache's problem, tagged with the lock `source` string it came from.
@@ -151,8 +166,13 @@ fn stamp_epoch(cache_dir: &Path) -> Option<u64> {
 /// Problems recorded on disk for this lock's caches, without fetching
 /// anything. This is what the session-start check reports: the news is at
 /// most one refresh late, and a permanently broken remote still surfaces.
+/// A refused source is deliberately absent: `check` is this function's caller
+/// and already reports the refusal as an unverifiable source, from the
+/// resolution path that names the entries it leaves unanswered. Repeating it
+/// here would give one state two vocabularies in one report.
 pub(crate) fn recorded_remote_cache_problems(lock: &LockFile) -> Vec<RemoteCacheProblem> {
     let mut problems: Vec<RemoteCacheProblem> = cached_remote_sources(lock)
+        .present
         .into_iter()
         .filter_map(|(source, remote)| {
             let kind = cache_problem(&remote.cache_dir)?;

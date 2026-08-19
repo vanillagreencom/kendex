@@ -13,7 +13,7 @@ cli/src/commands/refresh/tests.rs	2020
 cli/src/commands/report.rs	1861
 cli/src/commands/update_pi.rs	603
 cli/src/config.rs	2064
-cli/src/config/remote_cache/fetch.rs	724
+cli/src/config/remote_cache/fetch.rs	634
 cli/src/config/tests.rs	1255
 cli/src/git_hooks.rs	815
 cli/src/harness/claude.rs	572
@@ -24,14 +24,14 @@ cli/src/installer/hooks.rs	752
 cli/src/installer/hooks/codex.rs	581
 cli/src/installer/hooks/codex/prose.rs	431
 cli/src/installer/hooks/prose_tests.rs	475
-cli/src/main.rs	525
+cli/src/main.rs	513
 cli/src/mapping.rs	414
 cli/src/path_safety.rs	802
 cli/src/pi_extension.rs	2630
 cli/src/pi_extension/settings.rs	475
 cli/src/project_config.rs	4671
 cli/src/project_settings.rs	780
-cli/src/refresh_sources.rs	1360
+cli/src/refresh_sources.rs	1351
 cli/src/refresh_sources/tests.rs	2842
 cli/src/resolve.rs	685
 cli/src/skill.rs	499

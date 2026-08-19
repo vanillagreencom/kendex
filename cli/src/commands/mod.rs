@@ -1,5 +1,6 @@
 pub mod add;
 pub mod apply;
+pub mod cache_refresh;
 pub mod check;
 pub mod init;
 pub mod list;

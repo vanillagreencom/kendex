@@ -344,10 +344,10 @@ fn push_resolved_source(
 /// source stopped propagating.
 fn resolve_recorded_source_resolution(source: &str) -> LeasedResolution {
     let path = Path::new(source);
-    // A path into vstack's own cache is excluded from the local-directory
-    // shortcut for the same reason the shared resolver excludes it: the cache
-    // is fetched state, and reading it as a stable checkout is what stopped
-    // `refresh` from ever updating it.
+    // A path anywhere in vstack's own cache is excluded from the
+    // local-directory shortcut for the same reason the shared resolver
+    // excludes it: the cache is fetched state, and reading it as a stable
+    // checkout is what stopped `refresh` from ever updating it.
     if path.is_absolute() && path.is_dir() && !is_remote_cache_entry_path(path) {
         return SourceResolution::Resolved(path.to_path_buf()).into();
     }

@@ -59,24 +59,15 @@ fn resolve_single_source_with(
 ) -> LeasedResolution {
     let p = std::path::Path::new(source);
 
-    // A path inside vstack's own cache is a remote source spelled as a path,
-    // and is resolved as one BEFORE the local-directory branch below. The
-    // cache is state vstack fetches and `reset --hard`s on a TTL, not a
+    // A path anywhere inside vstack's own cache is a remote source spelled as
+    // a path, and is resolved as one BEFORE the local-directory branch below.
+    // The cache is state vstack fetches and `reset --hard`s on a TTL, not a
     // checkout a user maintains, so reading one as an ordinary local directory
     // took the entry out of the fetch, the TTL, the lease, the ownership
     // proofs and every drift report at once — silently, because the stale tree
     // it read still matched what had been installed from it.
-    if is_remote_cache_entry_path(p) {
-        return match remote_for_source(source) {
-            Ok(Some(remote)) => resolve_remote_source(remote, update_remote),
-            // An entry that is not there is absent, not refused, and
-            // `vstack add` is what puts one back.
-            Ok(None) => SourceResolution::Absent.into(),
-            // Fail closed. A cache entry whose remote cannot be established is
-            // a source whose freshness cannot be established either, and every
-            // caller reports that rather than counting its bytes clean.
-            Err(err) => SourceResolution::refused(&err).into(),
-        };
+    if let Some((entry, below)) = remote_cache_entry_for_path(p) {
+        return resolve_cache_path_source(&entry, &below, update_remote);
     }
 
     // Absolute local path that exists.

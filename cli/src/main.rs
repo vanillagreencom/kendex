@@ -410,19 +410,7 @@ fn main() -> Result<()> {
         Some(Commands::CacheRefresh { scope }) => {
             let scope =
                 scope::ScopeFilter::resolve(scope.as_deref(), false, scope::ScopeFilter::All)?;
-            for &global in scope.globals() {
-                let lock =
-                    config::LockFile::load(&config::lock_file_path(global)).unwrap_or_default();
-                // The detached refresher, and the ONE caller for which a
-                // guard held elsewhere is a success: somebody else is already
-                // doing this job.
-                config::refresh_remote_caches_older_than(
-                    &lock,
-                    Some(config::REMOTE_CACHE_TTL),
-                    config::FetchBound::BACKGROUND,
-                );
-            }
-            Ok(())
+            commands::cache_refresh::run(scope)
         }
         Some(Commands::Check {
             global,
