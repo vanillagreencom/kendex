@@ -57,6 +57,32 @@ assert_file_not_contains() {
   fi
 }
 
+# expect_valid <artifact-path> <desc> — accepting-direction assertion that
+# survives a mutant. A bare `out="$("$CHECK" ...)"` aborts the whole run under
+# set -e the moment a guard starts over-rejecting, which truncates the suite
+# instead of naming what broke; the accepting direction is exactly where that
+# matters, because it is what pins WHICH number a guard reads.
+expect_valid() {
+  local path="$1" desc="$2" out rc=0
+  set +e
+  out="$("$CHECK" --file "$path")"
+  rc=$?
+  set -e
+  assert_eq "$rc" "0" "$desc (exits 0)"
+  assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "$desc"
+}
+
+# expect_glob_valid <worktree> <agent> <boundary> <expected-path> <desc>
+expect_glob_valid() {
+  local wt="$1" ag="$2" bound="$3" want="$4" desc="$5" out rc=0
+  set +e
+  out="$("$CHECK" "$wt" "$ag" "$bound")"
+  rc=$?
+  set -e
+  assert_eq "$rc" "0" "$desc (exits 0)"
+  assert_eq "$(jq -r '.path' <<<"$out")" "$want" "$desc"
+}
+
 echo "=== review-artifact-check ==="
 
 worktree="$TMP_ROOT/wt"
@@ -266,14 +292,28 @@ assert_eq "$rc" "1" "glob no-review artifact exits 1"
 assert_eq "$(jq -r '.reason' <<<"$out")" "no_review" "glob no-review artifact reports reason=no_review"
 assert_eq "$(jq -r '.path' <<<"$out")" "$glob_noreview" "glob no-review report points at the artifact"
 
-# ...and an older fresh valid sibling still wins over a newer no-review one
+# ...and it is TERMINAL: an older fresh sibling does NOT rescue it. no_review is
+# the reviewer's self-report about the RUN, and the prescribed self-check
+# boundary of 0 makes every prior artifact fresh, so falling back would answer
+# "did some earlier round leave a file?" instead of "did this review happen?"
 glob_valid="$worktree/tmp/review-reviewer-ext-20260718-000000.json"
 printf '{"verdict":"pass","blockers":[],"suggestions":[],"qa_metadata":{}}' > "$glob_valid"
 touch -d "@$after" "$glob_valid"
 touch -d "@$later" "$glob_noreview"
+set +e
 out="$("$CHECK" "$worktree" reviewer-ext "$delegated_at")"
-assert_eq "$(jq -r '.ok' <<<"$out")" "true" "glob falls back past no-review to older valid artifact"
-assert_eq "$(jq -r '.path' <<<"$out")" "$glob_valid" "glob fallback selects the valid sibling"
+rc=$?
+set -e
+assert_eq "$rc" "1" "glob no-review is terminal, not rescued by an older sibling"
+assert_eq "$(jq -r '.reason' <<<"$out")" "no_review" "glob terminal no-review keeps reason=no_review"
+assert_eq "$(jq -r '.path' <<<"$out")" "$glob_noreview" "glob terminal no-review points at the rejected artifact"
+
+# MUST-FAIL CONTROL for the terminal rule: with the no-review artifact STALE
+# (not fresh), the older-but-fresh valid sibling is still the answer — terminal
+# means "this run is refused", not "this agent is refused forever".
+touch -d "@$before" "$glob_noreview"
+expect_glob_valid "$worktree" reviewer-ext "$delegated_at" "$glob_valid" "a STALE no-review artifact does not block a fresh valid one"
+touch -d "@$later" "$glob_noreview"
 
 # --- incomplete: qa-shaped artifacts must carry the finding arrays (vstack#678) ---
 # A truncated write can keep verdict/summary while losing blockers/suggestions —
@@ -482,119 +522,6 @@ touch -d "@$later" "$glob_item_bad"
 out="$("$CHECK" "$worktree" reviewer-item "$delegated_at")"
 assert_eq "$(jq -r '.ok' <<<"$out")" "true" "glob falls back past malformed-item to older well-formed artifact"
 assert_eq "$(jq -r '.path' <<<"$out")" "$glob_item_ok" "glob fallback selects the well-formed sibling"
-
-# --- zero_sample: a measurement that produced no samples is not a result (vstack#1497) ---
-# A stability/mutation run whose pipeline silently selected nothing still emits
-# a number, and a zero reads as green. Any artifact citing the reviewer skill's
-# fixed format with a zero sample count or zero thread count is rejected, as is
-# an empty/all-zero benchmark percentile block. Gated on nothing: the pairing
-# binds every reviewer, not only the qa-shaped ones.
-
-zs_mut="$worktree/tmp/review-external-20260815-010101.json"
-printf '{"agent":"reviewer-test","verdict":"pass","summary":"validated: mutation: killed 0/0; stability: 10/10 at 16 threads"}' > "$zs_mut"
-set +e
-out="$("$CHECK" --file "$zs_mut")"
-rc=$?
-set -e
-assert_eq "$rc" "1" "--file zero-mutant citation exits 1"
-assert_eq "$(jq -r '.ok' <<<"$out")" "false" "--file zero-mutant citation reports ok=false"
-assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "--file zero-mutant citation reports reason=zero_sample"
-assert_substr "$(jq -r '.detail' <<<"$out")" "killed 0/0" "--file zero-mutant detail quotes the offending citation"
-assert_substr "$(jq -r '.detail' <<<"$out")" "instrument failure" "--file zero-mutant detail names the rule"
-
-zs_stab="$worktree/tmp/review-external-20260815-020202.json"
-printf '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 3/3; stability: 0/0 at 16 threads"}' > "$zs_stab"
-set +e
-out="$("$CHECK" --file "$zs_stab")"
-rc=$?
-set -e
-assert_eq "$rc" "1" "--file zero-run stability citation exits 1"
-assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "--file zero-run stability reports reason=zero_sample"
-assert_substr "$(jq -r '.detail' <<<"$out")" "stability: 0/0" "--file zero-run detail quotes the stability citation"
-
-# elevated parallelism of zero threads is the same instrument failure
-zs_thr="$worktree/tmp/review-external-20260815-030303.json"
-printf '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 3/3; stability: 10/10 at 0 threads"}' > "$zs_thr"
-set +e
-out="$("$CHECK" --file "$zs_thr")"
-rc=$?
-set -e
-assert_eq "$rc" "1" "--file zero-thread stability citation exits 1"
-assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "--file zero-thread stability reports reason=zero_sample"
-assert_substr "$(jq -r '.detail' <<<"$out")" "zero threads" "--file zero-thread detail names the thread count"
-
-# the citation is caught wherever it lives, not only in .summary
-zs_deep="$worktree/tmp/review-external-20260815-040404.json"
-printf '{"agent":"reviewer-test","verdict":"action_required","summary":"s","blockers":[{"id":1,"title":"t","location":"src/x.rs (`f`)","description":"evidence: mutation: killed 0/0; stability: 10/10 at 16 threads","recommendation":"r","priority":2,"estimate":2}],"suggestions":[],"qa_metadata":{}}' > "$zs_deep"
-set +e
-out="$("$CHECK" --file "$zs_deep")"
-rc=$?
-set -e
-assert_eq "$rc" "1" "--file zero-sample citation inside a blocker description exits 1"
-assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "--file nested citation reports reason=zero_sample"
-
-# MUST-FAIL CONTROL, other direction: a real two-number citation still validates
-zs_ok="$worktree/tmp/review-external-20260815-050505.json"
-printf '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 3/3; stability: 10/10 at 16 threads"}' > "$zs_ok"
-out="$("$CHECK" --file "$zs_ok")"
-assert_eq "$(jq -r '.ok' <<<"$out")" "true" "--file a nonzero mutation/stability citation stays valid"
-assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file nonzero citation reports reason=valid"
-
-# an artifact citing no measurement at all is untouched by the guard
-zs_none="$worktree/tmp/review-external-20260815-060606.json"
-printf '{"agent":"reviewer-quality","verdict":"pass","summary":"no measurement was needed for this domain"}' > "$zs_none"
-out="$("$CHECK" --file "$zs_none")"
-assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file artifact with no measurement citation stays valid"
-
-# benchmark percentiles: empty and all-zero blocks are instrument failure
-zs_pempty="$worktree/tmp/review-external-20260815-070707.json"
-printf '{"agent":"reviewer-perf","verdict":"pass","summary":"s","blockers":[],"suggestions":[],"qa_metadata":{"perf_qa":{"percentiles":{},"regression_pct":0,"regressions":[],"platform":"linux","baseline_sha":"abc"}}}' > "$zs_pempty"
-set +e
-out="$("$CHECK" --file "$zs_pempty")"
-rc=$?
-set -e
-assert_eq "$rc" "1" "--file empty percentile block exits 1"
-assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "--file empty percentile block reports reason=zero_sample"
-
-zs_pzero="$worktree/tmp/review-external-20260815-080808.json"
-printf '{"agent":"reviewer-perf","verdict":"pass","summary":"s","blockers":[],"suggestions":[],"qa_metadata":{"perf_qa":{"percentiles":{"p50":0,"p99":0},"regression_pct":0,"regressions":[],"platform":"linux","baseline_sha":"abc"}}}' > "$zs_pzero"
-set +e
-out="$("$CHECK" --file "$zs_pzero")"
-rc=$?
-set -e
-assert_eq "$rc" "1" "--file all-zero percentile block exits 1"
-assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "--file all-zero percentile block reports reason=zero_sample"
-assert_substr "$(jq -r '.detail' <<<"$out")" "percentiles" "--file all-zero percentile detail names the block"
-
-# MUST-FAIL CONTROL: one real percentile is enough to make the block a result
-zs_pok="$worktree/tmp/review-external-20260815-090909.json"
-printf '{"agent":"reviewer-perf","verdict":"pass","summary":"s","blockers":[],"suggestions":[],"qa_metadata":{"perf_qa":{"percentiles":{"p50":0,"p99":4.2},"regression_pct":0,"regressions":[],"platform":"linux","baseline_sha":"abc"}}}' > "$zs_pok"
-out="$("$CHECK" --file "$zs_pok")"
-assert_eq "$(jq -r '.ok' <<<"$out")" "true" "--file a percentile block with real numbers stays valid"
-
-# glob mode applies the same guard, and falls back past a zero-sample artifact
-zs_glob_bad="$worktree/tmp/review-reviewer-zs-20260815-110000.json"
-printf '{"agent":"reviewer-zs","verdict":"pass","summary":"mutation: killed 0/0; stability: 0/0 at 16 threads"}' > "$zs_glob_bad"
-touch -d "@$after" "$zs_glob_bad"
-set +e
-out="$("$CHECK" "$worktree" reviewer-zs "$delegated_at")"
-rc=$?
-set -e
-assert_eq "$rc" "1" "glob zero-sample artifact exits 1"
-assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "glob zero-sample reports reason=zero_sample"
-assert_eq "$(jq -r '.path' <<<"$out")" "$zs_glob_bad" "glob zero-sample report points at the artifact"
-
-zs_glob_ok="$worktree/tmp/review-reviewer-zs-20260815-100000.json"
-printf '{"agent":"reviewer-zs","verdict":"pass","summary":"mutation: killed 3/3; stability: 10/10 at 16 threads"}' > "$zs_glob_ok"
-touch -d "@$after" "$zs_glob_ok"
-touch -d "@$later" "$zs_glob_bad"
-out="$("$CHECK" "$worktree" reviewer-zs "$delegated_at")"
-assert_eq "$(jq -r '.ok' <<<"$out")" "true" "glob falls back past a zero-sample artifact to a measured sibling"
-assert_eq "$(jq -r '.path' <<<"$out")" "$zs_glob_ok" "glob fallback selects the measured sibling"
-
-# the rejection reason is documented where reviewers read the rules
-finding_schema="$REPO_ROOT/skills/reviewer/schemas/review-finding.md"
-assert_file_contains "$finding_schema" "zero_sample" "review-finding.md documents the zero_sample rejection"
 
 # --- usage errors ---
 set +e

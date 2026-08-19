@@ -44,7 +44,10 @@ reason meanings when ok=false:
   missing    no matching artifact found (glob) / file does not exist (--file)
   stale      artifact mtime < delegated_at_epoch (glob mode, or --file when the
              optional boundary is supplied)
-  invalid    artifact fails `jq -e '.verdict'`
+  invalid    artifact fails `jq -e '.verdict'`, OR a content gate could not
+             run at all (a torn read of a non-atomically written artifact, a
+             broken jq) — `detail` carries jq's own diagnostic. A gate that
+             could not answer is never reported as "nothing found".
   no_review  artifact self-reports that no review was performed
              (qa_metadata.review_performed == false, or qa_metadata.reason is a
              no-scope/no-review admission) — rejected regardless of verdict.
@@ -59,10 +62,26 @@ reason meanings when ok=false:
              unaffected.
 
   zero_sample artifact reports a measurement that produced no samples — a
-             mutation/stability citation whose sample count or thread count is
-             zero, or an all-zero/empty benchmark percentile block. A run with
-             no samples is instrument failure, never a numeric or green result.
-             The `detail` field names the offending citation.
+             mutation/stability citation whose SAMPLE COUNT (denominator) or
+             thread count is zero, or a perf_qa payload whose percentiles carry
+             no numeric value above zero. A zero RESULT is not a zero sample:
+             `stability: 0/10` is ten measured runs that all failed and stays
+             valid. `detail` names the offending citation. Suppressed for an
+             artifact declaring qa_metadata.measurement_failed (see below).
+
+`measurement_failed`: an artifact may declare a non-empty
+qa_metadata.measurement_failed string naming an instrument that produced no
+samples. It suppresses the zero_sample gate — the reviewer keeps its numbers as
+evidence instead of deleting them to get past a rejection — and is echoed as an
+additive `measurement_failed` field on every result for that artifact, so the
+caller sees that the review ran on a broken instrument.
+
+TERMINAL vs per-file rejections (glob mode): `no_review` and `zero_sample` are
+the reviewer's self-report about the RUN, so the newest fresh artifact carrying
+one ends the search — an older sibling does not answer them, and the prescribed
+self-check boundary of 0 makes every prior artifact fresh. `stale`, `invalid`
+and `incomplete` describe one WRITE, so the search falls back past them to an
+intact sibling as before.
 
 When ok=false with reason=incomplete because of a malformed item, or with
 reason=zero_sample, an extra `detail` string field is included — for
@@ -75,12 +94,18 @@ Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error.
 EOF
 }
 
+# A declared instrument failure rides along on every result for the artifact
+# that declared it — the orchestrator has to see that a review ran on a broken
+# instrument, whether or not the artifact was otherwise acceptable.
 emit() {
   local ok="$1" path="$2" reason="$3" detail="${4:-}"
+  local measurement_failed="${review_artifact_measurement_failed:-}"
   jq -n --argjson ok "$ok" --arg path "$path" --arg reason "$reason" \
-    --arg detail "$detail" \
+    --arg detail "$detail" --arg measurement_failed "$measurement_failed" \
     '{ok: $ok, path: (if $path == "" then null else $path end), reason: $reason}
-     + (if $detail == "" then {} else {detail: $detail} end)'
+     + (if $detail == "" then {} else {detail: $detail} end)
+     + (if $measurement_failed == "" then {}
+        else {measurement_failed: $measurement_failed} end)'
 }
 
 file_mtime() {
@@ -147,26 +172,12 @@ if [[ "${1:-}" == "--file" ]]; then
     emit false "$file" "invalid"
     exit 1
   fi
-  if self_reports_no_review "$file"; then
-    emit false "$file" "no_review"
-    exit 1
+  if artifact_content_gates "$file"; then
+    emit true "$file" "valid"
+    exit 0
   fi
-  if qa_shaped_incomplete "$file"; then
-    emit false "$file" "incomplete"
-    exit 1
-  fi
-  detail="$(finding_item_detail "$file")"
-  if [[ -n "$detail" ]]; then
-    emit false "$file" "incomplete" "$detail"
-    exit 1
-  fi
-  detail="$(zero_sample_detail "$file")"
-  if [[ -n "$detail" ]]; then
-    emit false "$file" "zero_sample" "$detail"
-    exit 1
-  fi
-  emit true "$file" "valid"
-  exit 0
+  emit false "$file" "$review_artifact_reason" "$review_artifact_detail"
+  exit 1
 fi
 
 wait_secs=0
@@ -203,6 +214,16 @@ if ! [[ "$delegated_at" =~ ^[0-9]+$ ]]; then
   exit 2
 fi
 
+# A rejection is TERMINAL when it is the reviewer's self-report about the RUN
+# rather than a property of the file: `no_review` says no review happened,
+# `zero_sample` says the measurement behind it produced nothing. Neither is
+# answered by an older sibling, and the reviewer's own self-check is prescribed
+# with boundary 0 (reviewer SKILL.md § Output Contract), which makes every
+# prior artifact fresh by construction — so falling back would hand a reviewer
+# ok=true for a review it did not perform, and hand review-pr.md § 3.1 an
+# earlier round's path to record. `stale`, `invalid` and `incomplete` stay
+# per-file: those describe THIS write (missed deadline, torn, truncated), and
+# an intact sibling is a legitimate answer to them.
 glob_check() {
 reason="missing"
 fail_path=""
@@ -225,42 +246,25 @@ while IFS= read -r file; do
     fi
     continue
   fi
-  if self_reports_no_review "$file"; then
-    if [[ -z "$fail_path" ]]; then
-      fail_path="$file"
-      reason="no_review"
-    fi
-    continue
+  if artifact_content_gates "$file"; then
+    emit true "$file" "valid"
+    return 0
   fi
-  if qa_shaped_incomplete "$file"; then
-    if [[ -z "$fail_path" ]]; then
-      fail_path="$file"
-      reason="incomplete"
-    fi
-    continue
+  case "$review_artifact_reason" in
+    no_review|zero_sample)
+      emit false "$file" "$review_artifact_reason" "$review_artifact_detail"
+      return 1
+      ;;
+  esac
+  if [[ -z "$fail_path" ]]; then
+    fail_path="$file"
+    reason="$review_artifact_reason"
+    fail_detail="$review_artifact_detail"
   fi
-  detail="$(finding_item_detail "$file")"
-  if [[ -n "$detail" ]]; then
-    if [[ -z "$fail_path" ]]; then
-      fail_path="$file"
-      reason="incomplete"
-      fail_detail="$detail"
-    fi
-    continue
-  fi
-  detail="$(zero_sample_detail "$file")"
-  if [[ -n "$detail" ]]; then
-    if [[ -z "$fail_path" ]]; then
-      fail_path="$file"
-      reason="zero_sample"
-      fail_detail="$detail"
-    fi
-    continue
-  fi
-  emit true "$file" "valid"
-  return 0
 done < <(ls -1t "$worktree/tmp/review-$agent-"*.json 2>/dev/null)
 
+# No artifact was accepted, so no artifact's marker is being reported on.
+review_artifact_measurement_failed=""
 emit false "$fail_path" "$reason" "$fail_detail"
 return 1
 }
@@ -281,6 +285,15 @@ if (( wait_secs > 0 )); then
   while :; do
     rc=0
     out="$(glob_check)" || rc=$?
+    # Capturing glob_check's stdout suspends errexit for its whole body, so an
+    # accept path that failed part-way still returns 0 with unusable output.
+    # Acceptance is only acceptance when a well-formed ok=true result came with
+    # it; anything else is the check failing, never an approval.
+    if [[ "$rc" == "0" ]] && ! jq -e '.ok == true' <<<"$out" >/dev/null 2>&1; then
+      review_artifact_measurement_failed=""
+      emit false "" "invalid" "the artifact check produced no usable result: $(printf '%s' "$out" | tr '\n\t' '  ')"
+      exit 1
+    fi
     landed_reason="$(jq -r '.reason // ""' <<<"$out" 2>/dev/null || printf '')"
     if [[ "$rc" == "0" ]]; then
       printf '%s\n' "$out"
