@@ -630,16 +630,30 @@ hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecogni
     fi
     # The command word is the entry point; the TAIL decides whether running
     # it can still fail the commit. `--help` returns 0 without checking
-    # anything, and `|| true` throws the status away — both leave the entry
+    # anything and `|| true` throws the status away, so both leave the entry
     # point named on a line that gates nothing.
+    #
+    # The accepted arguments differ PER HOOK, and swapping them does not
+    # merely weaken the gate, it breaks it: `pre-commit` takes none and exits
+    # 2 on any, so `pre-commit "$1"` fails every commit with "takes no
+    # arguments"; `commit-msg` needs git's message-file path, so a bare
+    # `commit-msg` reads inherited stdin and rejects every commit — valid
+    # ones included — as an empty message. Either way nothing is validated
+    # and `armed` would be a false description of both.
     tail="${tail#"${tail%%[![:space:]]*}"}"
     tail="${tail%"${tail##*[![:space:]]}"}"
-    case "$tail" in
-      "" | '"$@"' | '"$1"' | \
-        '|| exit $?' | '"$@" || exit $?' | '"$1" || exit $?')
-        matched=1
+    tail="${tail% || exit \$?}"
+    case "$hook" in
+      pre-commit)
+        case "$tail" in
+          "" | '"$@"') matched=1 ;;
+        esac
         ;;
-      *) ;;
+      *)
+        case "$tail" in
+          '"$1"' | '"$@"') matched=1 ;;
+        esac
+        ;;
     esac
   done <"$path"
   # The verdict waits for the whole file. Deciding on the first command

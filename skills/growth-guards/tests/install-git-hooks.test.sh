@@ -1329,6 +1329,16 @@ must_fail_shape "the entry point with its status thrown away by || true"
 arm_pair '#!/bin/sh\n%s/pre-commit "$@" &\n' '#!/bin/sh\n%s/commit-msg "$1" &\n'
 must_fail_shape "the entry point backgrounded, so its status never lands"
 
+# The two hooks do not take the same arguments, and swapping them breaks the
+# gate rather than loosening it: pre-commit exits 2 on any argument, and a
+# bare commit-msg reads inherited stdin and calls every message empty. Both
+# reject valid commits while validating nothing, so "armed" describes neither.
+arm_pair '#!/bin/sh\nexec %s/pre-commit "$1"\n' '#!/bin/sh\nexec %s/commit-msg "$1"\n'
+must_fail_shape "pre-commit handed an argument it refuses"
+
+arm_pair '#!/bin/sh\nexec %s/pre-commit "$@"\n' '#!/bin/sh\nexec %s/commit-msg\n'
+must_fail_shape "commit-msg without git's message-file argument"
+
 # One passing control per shape the check does accept.
 arm_pair '#!/bin/sh\n%s/pre-commit "$@" || exit $?\n' \
   '#!/bin/sh\n%s/commit-msg "$1" || exit $?\n'
@@ -1386,6 +1396,14 @@ commit_in "$R38" "feat: add s"
 [ "$RC" -ne 0 ] && ok "and a violation is really blocked through it" || bad "other-install wiring blocks" "rc=$RC out=$OUT"
 git -C "$R38" rm -q --cached s.py
 rm -f "$R38/s.py"
+# Armed has to mean the gate JUDGES, not that it refuses everything: a
+# mis-wired hook blocks a clean commit too, and only this half tells them
+# apart.
+printf 'clean\n' >"$R38/clean.txt"
+git -C "$R38" add clean.txt
+commit_in "$R38" "feat: add a clean file"
+[ "$RC" -eq 0 ] && ok "and a clean commit still passes through it" \
+  || bad "clean commit passes armed wiring" "rc=$RC out=$OUT"
 
 # The delegating line resolves its helper with `git rev-parse --git-path
 # hooks`, which under core.hooksPath is this directory — so the helper has to
