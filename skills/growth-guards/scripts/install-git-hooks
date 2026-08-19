@@ -646,14 +646,6 @@ hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecogni
   local seen=0 matched=0 named=0 opaque=0
   [ -r "$path" ] || return 2
   own_dir="$(canonical_dir "$SCRIPT_DIR/$hook")" || return 2
-  shebang="$(head -n 1 "$path" 2>/dev/null)" || return 2
-  # A control character in the shebang means the kernel looks for an
-  # interpreter whose name contains it: git cannot exec the hook at all, and
-  # that is definitive rather than merely unverifiable.
-  case "$shebang" in
-    *[[:cntrl:]]*) return 1 ;;
-  esac
-  gg_trusted_interpreter "$shebang" || return 3
   while IFS= read -r line || [ -n "$line" ]; do
     body="${line%%[![:space:]]*}"
     body="${line#"$body"}"
@@ -787,7 +779,7 @@ hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecogni
 CHECK_NEEDS_HELPER=0
 
 check_hook() { # DIR HOOK -> 0 armed, 1 not armed, 2 could not determine
-  local dir="$1" hook="$2" path="$1/$2" line="" second="" status=0
+  local dir="$1" hook="$2" path="$1/$2" line="" second="" shebang="" status=0
   line="$(call_line "$hook")"
   if [ ! -e "$path" ] && [ ! -L "$path" ]; then
     add_reason "$hook is missing"
@@ -806,6 +798,23 @@ check_hook() { # DIR HOOK -> 0 armed, 1 not armed, 2 could not determine
   if ! head -n 1 "$path" 2>/dev/null | grep -qE "$SH_SHEBANG_RE"; then
     add_reason "$hook is not a POSIX-shell script, so the guard line cannot run"
     return 1
+  fi
+  # The interpreter decides whether the body runs AT ALL, so it is judged the
+  # same way in .git/hooks as in a hand-wired directory. `#!/bin/sh -n` reads
+  # the guard line and executes nothing; a control character or a path that
+  # is not on this host means git cannot exec the hook. `--check` writes
+  # nothing, so the shims it is looking at are not assumed to be the ones the
+  # installer last wrote.
+  shebang="$(head -n 1 "$path" 2>/dev/null)" || { add_reason "$hook could not be read"; return 2; }
+  case "$shebang" in
+    *[[:cntrl:]]*)
+      add_reason "$hook has a control character in its shebang, so git cannot exec it"
+      return 1
+      ;;
+  esac
+  if ! gg_trusted_interpreter "$shebang"; then
+    add_reason "$hook runs under an interpreter this check cannot vouch for ($shebang)"
+    return 2
   fi
   if [ "$second" = "$line" ]; then
     if [ "$dir" != "$HOOKS_DIR" ]; then

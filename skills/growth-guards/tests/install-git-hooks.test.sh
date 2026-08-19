@@ -1590,6 +1590,47 @@ check_in "$R38"
 [ "$RC" -eq 1 ] && ok "must-fail: the delegating line without its helper is not armed" \
   || bad "delegating line without helper" "rc=$RC out=$OUT"
 
+echo "=== a tampered shebang in the DEFAULT hooks directory is not armed ==="
+# The interpreter decides whether the guard line runs at all, and --check
+# writes nothing, so the shim it is reading is not assumed to be the one the
+# installer last wrote.
+R41="$(new_repo checkshimshebang)"
+install_in "$R41"
+tail -n +2 "$R41/.git/hooks/pre-commit" >"$TMP/shimbody"
+reshebang() { # LINE1
+  { printf '%s\n' "$1"; cat "$TMP/shimbody"; } >"$R41/.git/hooks/pre-commit"
+  chmod +x "$R41/.git/hooks/pre-commit"
+}
+check_in "$R41"
+[ "$RC" -eq 0 ] && ok "control: the intact shim is armed" || bad "intact shim armed" "rc=$RC out=$OUT"
+
+reshebang '#!/bin/sh -n'
+check_in "$R41"
+[ "$RC" -eq 2 ] && ok "a shim whose shebang stops the body running is not armed" \
+  || bad "shim -n not armed" "rc=$RC out=$OUT"
+printf '# %s: finish this\n' "$TD" >"$R41/sn.py"
+git -C "$R41" add sn.py
+commit_in "$R41" "feat: add sn"
+[ "$RC" -eq 0 ] && ok "and that shim really does let a violation through" \
+  || bad "shim -n bypasses" "rc=$RC out=$OUT"
+git -C "$R41" rm -q --cached sn.py
+rm -f "$R41/sn.py"
+
+reshebang '#!/nonexistent/sh'
+check_in "$R41"
+[ "$RC" -eq 2 ] && ok "a shim naming an interpreter that is not here is not armed" \
+  || bad "shim absent interpreter" "rc=$RC out=$OUT"
+
+reshebang "$(printf '#!/bin/sh\r')"
+check_in "$R41"
+[ "$RC" -eq 1 ] && ok "a shim with a CR shebang is not armed" \
+  || bad "shim CR shebang" "rc=$RC out=$OUT"
+
+reshebang '#!/bin/sh'
+check_in "$R41"
+[ "$RC" -eq 0 ] && ok "control: restoring the shebang makes it armed again" \
+  || bad "shim restored armed" "rc=$RC out=$OUT"
+
 echo "=== a tampered helper in the DEFAULT hooks directory is not armed ==="
 # --check is read-only, so "the installer rewrites this file" says nothing
 # about the copy sitting there now. The marker is a comment anything can

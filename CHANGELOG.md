@@ -230,7 +230,10 @@
   `.git/hooks` too, not only in a redirected directory: `--check` is
   READ-ONLY, so "the installer rewrites this file" says nothing about the
   copy sitting there now, and a marker-carrying stub in the ordinary install
-  reported `armed` while every violation went through. The
+  reported `armed` while every violation went through. The interpreter is
+  judged in `.git/hooks` for the same reason: a shim rewritten to
+  `#!/bin/sh -n` reads the guard line and executes nothing, and that is the
+  ordinary install, not a hand-wired one. The
   suite asserts the property directly rather than the wording: exit 0 is
   claimed only where a real violating commit is really blocked AND a clean
   one still passes, which is the half that separates a working gate from a
