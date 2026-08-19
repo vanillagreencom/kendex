@@ -114,6 +114,17 @@
   settings cache renames inline, because it answers a failure by returning 1
   for its caller to propagate rather than by the family's exit 2, and routing
   it through the helper would change that contract.
+- growth-guards: the test harness scrubs git configuration carried in the
+  ENVIRONMENT, not just on disk. A private `HOME`, `XDG_CONFIG_HOME` and
+  `GIT_CONFIG_NOSYSTEM` do not stop `GIT_CONFIG_PARAMETERS` or the
+  `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` family: either
+  still sets `core.hooksPath` or `commit.gpgsign` for every fixture, and git
+  exports `GIT_CONFIG_PARAMETERS` into hooks whenever the caller used
+  `git -c` — which is exactly how a suite run from inside a hook inherits
+  them. Verified both shapes running a foreign `pre-commit` against a fixture
+  repo before the scrub, and neither reaching it after, with the unscrubbed
+  control alongside so the assertion cannot pass vacuously.
+
 - growth-guards: a green suite run is silent (#1503). `todo-ban.test.sh`
   redirected into `stagedx/tools/` before that directory existed and recovered
   through a fallback, so every passing run printed a `No such file or

@@ -34,6 +34,20 @@ export GIT_CONFIG_SYSTEM=/dev/null
 export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
 : >"$GIT_CONFIG_GLOBAL"
 
+# GIT_CONFIG_PARAMETERS and the GIT_CONFIG_COUNT/KEY_n/VALUE_n family carry
+# configuration in the ENVIRONMENT, so a private HOME and GIT_CONFIG_NOSYSTEM
+# do not stop them: either one still sets core.hooksPath or commit.gpgsign
+# for every fixture below. git exports GIT_CONFIG_PARAMETERS into hooks
+# whenever a caller used `git -c`, which is exactly how a suite run from a
+# hook inherits them. The CLI scrubs the same names in refresh_sources.rs.
+unset GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT 2>/dev/null || true
+gg_kv=0
+while [ "$gg_kv" -lt 64 ]; do
+  unset "GIT_CONFIG_KEY_$gg_kv" "GIT_CONFIG_VALUE_$gg_kv" 2>/dev/null || true
+  gg_kv=$((gg_kv + 1))
+done
+unset gg_kv
+
 unset GIT_TEMPLATE_DIR GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR \
   GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE GIT_PREFIX \
   GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_AUTHOR_DATE \
