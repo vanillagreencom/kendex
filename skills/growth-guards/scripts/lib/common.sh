@@ -202,10 +202,17 @@ gg_install_file() { # SRC DEST LABEL
 gg_load_excludes() { # FILE — fills GG_EXCLUDE_PATTERNS
   local file="$1" line lineno pat reason content status=0
   GG_EXCLUDE_PATTERNS=()
+  # The read runs in a command substitution, so a gg_collection_error inside
+  # it dies in that SUBSHELL and arrives here as a status. Only status 1 is
+  # the answer "the commit has no such file" (an empty list); anything else
+  # is the failed measurement that already named itself on stderr, and
+  # reading it as an empty list would let the gate run on no policy at all.
   content="$(gg_policy_content "$file")" || status=$?
-  if [ "$status" -ne 0 ]; then
-    return 0
-  fi
+  case "$status" in
+    0) ;;
+    1) return 0 ;;
+    *) gg_collection_error "refusing to run on an unread exclusion list: $file (exit $status, cause above)" ;;
+  esac
   lineno=0
   while IFS= read -r line || [ -n "$line" ]; do
     lineno=$((lineno + 1))

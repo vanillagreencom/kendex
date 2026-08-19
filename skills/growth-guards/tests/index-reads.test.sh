@@ -210,6 +210,58 @@ OUT="$(cd "$R" && "$SCRIPTS/conflict-markers" 2>&1)" || RC=$?
   && ok "a resolved tree passes" \
   || bad "a resolved tree passes" "rc=$RC out=$OUT"
 
+echo "=== a failed policy read stops the gate, it does not become an empty list ==="
+
+# gg_policy_content runs inside a command substitution, so its exit 2 dies in
+# that subshell and reaches gg_load_excludes as a bare status. This shim fails
+# ONLY the index probe, so nothing later in the run can mask the propagation.
+mkdir -p "$ROOT/gitstub"
+cat >"$ROOT/gitstub/git" <<'STUB'
+#!/usr/bin/env bash
+for a in "$@"; do
+  [ "$a" = "--error-unmatch" ] || continue
+  echo "fatal: simulated index failure" >&2
+  exit 128
+done
+exec "$GG_REAL_GIT" "$@"
+STUB
+chmod +x "$ROOT/gitstub/git"
+GG_REAL_GIT="$(command -v git)"
+export GG_REAL_GIT
+
+new_repo excludes-unread
+printf 'seed\n' >"$R/seed.txt"
+mkdir -p "$R/tools"
+printf '# notes\n\nTODO: an unlinked work marker\n' >"$R/bad.md"
+printf 'bad.md\tallowed to carry markers\n' >"$R/tools/todo-ban-excludes"
+git -C "$R" add -A
+git -C "$R" commit -qm base
+
+RC=0
+OUT="$(cd "$R" && "$SCRIPTS/todo-ban" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && case "$OUT" in *"todo-ban: OK"*) true ;; *) false ;; esac \
+  && ok "control: with the excludes readable, the excluded marker passes" \
+  || bad "control: with the excludes readable, the excluded marker passes" "rc=$RC out=$OUT"
+
+RC=0
+OUT="$(cd "$R" && PATH="$ROOT/gitstub:$PATH" "$SCRIPTS/todo-ban" 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] \
+  && ok "an unreadable exclusion list stops the run at exit 2" \
+  || bad "an unreadable exclusion list stops the run at exit 2" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"refusing to run on an unread exclusion list"*)
+    ok "the refusal names the unread exclusion list"
+    ;;
+  *) bad "the refusal names the unread exclusion list" "out=$OUT" ;;
+esac
+# The failure mode this closes: an empty list is not "no exclusions apply".
+case "$OUT" in
+  *"work marker(s)"* | *"todo-ban: OK"*)
+    bad "the failed read never produces a verdict" "out=$OUT"
+    ;;
+  *) ok "the failed read never produces a verdict" ;;
+esac
+
 echo "=== gg_install_file: the destination is replaced whole, or not at all ==="
 
 new_repo install-file
@@ -278,7 +330,7 @@ OUT="$(cd "$R" && GG_CHECK=probe bash -c '
   gg_settings_index_mode
   src="$(gg_settings_source vstack.settings.toml)"
   cat "$src"
-  find "$GG_SETTINGS_INDEX_DIR" -name "*.part" -printf "PART:%p\n"
+  find "$GG_SETTINGS_INDEX_DIR" -name "*.part" -print | sed "s/^/PART:/"
 ' _ "$COMMON" "$SETTINGS" 2>&1)" || RC=$?
 [ "$RC" -eq 0 ] && case "$OUT" in *GROWTH_GUARDS_TODO_MAX=7*) true ;; *) false ;; esac \
   && ok "the cache resolves the staged value when the rename succeeds" \

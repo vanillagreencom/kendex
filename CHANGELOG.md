@@ -86,7 +86,12 @@
   `git show ":tools/ex?.tsv"` as a REVISION and loaded a commit diff as the
   exclusion list. `suppression-ban`'s baseline read carried the same two
   defects and gets the same treatment; a ratchet that cannot read its own
-  baseline must not fall through to a looser one.
+  baseline must not fall through to a looser one. `gg_load_excludes` now
+  propagates the failure too: it reads the policy through a command
+  substitution, where a `gg_collection_error` dies in the subshell and
+  arrives as a bare status, so an unreadable list was becoming an EMPTY list
+  and the gate then returned a verdict — reporting as a violation the very
+  file the unread policy excluded.
 
 - growth-guards: policy writes land by same-directory rename (#1502). The
   settings cache was materialized by redirecting straight onto its final path,
@@ -96,9 +101,12 @@
   --update` replaced the baseline with a `mv` from `$TMPDIR`, which degrades to
   copy-then-unlink across filesystems, leaving a truncated RATCHET file that
   silently loosens the gate rather than failing it. Both now write to a temp
-  file beside the destination and rename, through one shared `gg_install_file`
-  helper: the destination carries the complete new bytes or the complete old
-  ones, never a prefix of either.
+  file beside the destination and rename: the destination carries the complete
+  new bytes or the complete old ones, never a prefix of either.
+  `suppression-ban` goes through a shared `gg_install_file` helper; the
+  settings cache renames inline, because it answers a failure by returning 1
+  for its caller to propagate rather than by the family's exit 2, and routing
+  it through the helper would change that contract.
 
 - CLI: a lock `source` recorded as a path inside `~/.vstack/cache/` now
   resolves as the remote that cache entry clones, instead of as an ordinary
