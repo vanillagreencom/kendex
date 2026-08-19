@@ -85,10 +85,12 @@ finding is recorded rather than dropped. Silencing a measurement is allowed;
 silencing it invisibly is not.
 
 `measurement_failed`: a TOP-LEVEL string declaring an instrument that produced
-nothing, naming the instrument and what it did. It replaces the zero_sample
-gate for that artifact — the reviewer keeps its numbers as evidence instead of
-deleting them to get past a rejection — turns the result's reason into
-`valid_undermeasured`, and is echoed as an additive `measurement_failed` field.
+nothing, naming the instrument and what it did. The zero_sample gate still runs
+for that artifact; what changes is the outcome — anything it finds is recorded
+as `measurement_suppressed` instead of rejecting, so the reviewer keeps its
+numbers as evidence instead of deleting them to get past a rejection. The
+result's reason becomes `valid_undermeasured` and the declaration is echoed as
+an additive `measurement_failed` field.
 Top-level rather than inside qa_metadata for two reasons: reaching it must not
 require adopting the qa shape and its finding-array contract, and it must stay
 outside the citation scan so a declaration naming the zeros it observed cannot
@@ -216,6 +218,7 @@ if [[ "${1:-}" == "--file" ]]; then
   jq -e '.verdict' "$file" >/dev/null 2>"$review_artifact_gate_err" || verdict_rc=$?
   if [[ "$verdict_rc" -ne 0 ]]; then
     review_artifact_measurement_failed=""
+    review_artifact_measurement_suppressed=""
     if [[ "$verdict_rc" -eq 1 ]]; then
       emit false "$file" "invalid" "the artifact has no .verdict field (or it is null) — every review artifact must carry verdict: pass or action_required"
     else
@@ -316,8 +319,9 @@ while IFS= read -r file; do
   fi
 done < <(ls -1t "$worktree/tmp/review-$agent-"*.json 2>/dev/null)
 
-# No artifact was accepted, so no artifact's marker is being reported on.
+# No artifact was accepted, so no artifact's declaration is being reported on.
 review_artifact_measurement_failed=""
+review_artifact_measurement_suppressed=""
 emit false "$fail_path" "$reason" "$fail_detail"
 return 1
 }
@@ -346,6 +350,7 @@ if (( wait_secs > 0 )); then
     if ! jq -e 'has("ok")' <<<"$out" >/dev/null 2>&1 \
        || { [[ "$rc" == "0" ]] && ! jq -e '.ok == true' <<<"$out" >/dev/null 2>&1; }; then
       review_artifact_measurement_failed=""
+      review_artifact_measurement_suppressed=""
       emit false "" "invalid" "the artifact check produced no usable result: $(printf '%s' "$out" | tr '\n\t' '  ')"
       exit 1
     fi

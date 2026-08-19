@@ -533,6 +533,20 @@ set -e
 assert_eq "$(jq -r '.reason' <<<"$out")" "incomplete" "--file arrays-lost still reason=incomplete"
 assert_substr "$(jq -r '.detail' <<<"$out")" "blockers[] is absent" "--file arrays-lost detail names the first missing array and what it was"
 assert_substr "$(jq -r '.detail' <<<"$out")" "suggestions[] is absent" "--file arrays-lost detail names the second"
+# A key that is missing and a key written as null are different things an agent
+# did; `has()` is what tells them apart, and the remedy reads better for both
+# when the report says which one it saw.
+qa_absent_vs_null="$worktree/tmp/review-external-20260812-950001.json"
+printf '{"verdict":"pass","blockers":null,"suggestions":[],"qa_metadata":{}}' > "$qa_absent_vs_null"
+set +e
+out="$("$CHECK" --file "$qa_absent_vs_null")"
+set -e
+assert_substr "$(jq -r '.detail' <<<"$out")" "blockers[] is null" "--file a null array is reported as null, not as absent"
+printf '{"verdict":"pass","suggestions":[],"qa_metadata":{}}' > "$qa_absent_vs_null"
+set +e
+out="$("$CHECK" --file "$qa_absent_vs_null")"
+set -e
+assert_substr "$(jq -r '.detail' <<<"$out")" "blockers[] is absent" "--file a missing key is reported as absent, not as null"
 assert_substr "$(jq -r '.detail' <<<"$out")" "no qa_metadata" "--file arrays-lost detail says the tolerant shape is exempt"
 
 # A field PRESENT with the wrong type is this run's output shape, not a damaged
@@ -553,7 +567,7 @@ qa_shape_case() {
   assert_substr "$(jq -r '.detail' <<<"$out")" "writes []" "--file blockers:$name detail says what an empty review writes"
 }
 SHAPE_N=1
-qa_shape_case "null"    'null'     "blockers[] is absent"
+qa_shape_case "null"    'null'     "blockers[] is null"
 qa_shape_case "object"  '{}'       "blockers[] is object, not an array"
 qa_shape_case "string"  '"none"'   "blockers[] is string, not an array"
 qa_shape_case "number"  '3'        "blockers[] is number, not an array"
@@ -563,7 +577,7 @@ printf '{"verdict":"pass","blockers":[],"suggestions":null,"qa_metadata":{}}' > 
 set +e
 out="$("$CHECK" --file "$sugg_shape")"
 set -e
-assert_substr "$(jq -r '.detail' <<<"$out")" "suggestions[] is absent" "--file suggestions:null is reported on its own"
+assert_substr "$(jq -r '.detail' <<<"$out")" "suggestions[] is null" "--file suggestions:null is reported on its own"
 printf '{"verdict":"pass","blockers":[],"suggestions":"x","qa_metadata":{}}' > "$sugg_shape"
 set +e
 out="$("$CHECK" --file "$sugg_shape")"

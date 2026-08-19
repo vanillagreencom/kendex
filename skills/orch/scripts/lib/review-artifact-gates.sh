@@ -172,10 +172,12 @@ self_reports_no_review() {
 qa_shaped_incomplete() {
   gate_filter "$1" '
     # gate:qa-shape
-    def shape($k): (.[$k]? | type) as $t
-      | if $t == "array" then empty
-        elif $t == "null" then "\($k)[] is absent"
-        else "\($k)[] is \($t), not an array" end ;
+    def shape($k): if (has($k) | not) then "\($k)[] is absent"
+      else (.[$k] | type) as $t
+        | if $t == "array" then empty
+          elif $t == "null" then "\($k)[] is null"
+          else "\($k)[] is \($t), not an array" end
+      end ;
     if ((.qa_metadata? | type) == "object") then
       ( [ shape("blockers"), shape("suggestions") ] ) as $bad
       | if ($bad | length) > 0
@@ -285,13 +287,15 @@ finding_item_detail() {
 # review_artifact_measurement_failed carries a validated declaration.
 # Returns 0 when the artifact passes every gate, 1 when one rejected it.
 #
-# GATE ORDER IS NOT LOAD-BEARING. The declaration is adjudicated in one place
-# but suppresses exactly ONE gate, and it does so through a flag consumed at
-# that gate rather than by returning early. Short-circuiting made the escape's
-# blast radius a function of where its block happened to sit: hoisting it turned
-# `review_performed: false` into an accepted verdict, and the bypass arrived as
-# a legitimate-looking `valid_undermeasured` rather than as an anomaly. A flag
-# cannot reach past the gate that reads it, wherever the block moves.
+# THE ESCAPE REACHES EXACTLY ONE GATE. The declaration is adjudicated in one
+# place and consumed at the measurement gate through a flag, never by returning
+# early. Short-circuiting made its blast radius a function of where its block
+# happened to sit: hoisting it turned `review_performed: false` into an accepted
+# verdict, and the bypass arrived as a legitimate-looking `valid_undermeasured`
+# rather than as an anomaly. A flag cannot reach past the gate that reads it.
+# (The flag must still be set before that gate reads it, so the declaration
+# block stays above the measurement block — an ordering the suppression needs,
+# not one any other gate's outcome depends on.)
 artifact_content_gates() {
   local file="$1" rc out declared=""
   review_artifact_reason=""

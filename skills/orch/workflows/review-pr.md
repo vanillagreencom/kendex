@@ -174,7 +174,7 @@ Validate it like a reviewer JSON, with `review_delegated_at` as the freshness bo
 .agents/skills/orch/scripts/review-artifact-check --file "$EXTERNAL_OUTPUT" [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND]
 ```
 
-`ok == true` → append the path to `json_paths`; `reason == "valid_undermeasured"` means that review's own instrument produced nothing, so report its `measurement_failed` string beside the path instead of presenting the external pass as clean. `ok == false`, or any non-zero exit, → report the `reason` (and `detail` when present) and continue: external review is advisory, never blocking, and never substitutes a pass.
+`ok == true` → append the path to `json_paths`; `reason == "valid_undermeasured"` means that review's own instrument produced nothing, so report its `measurement_failed` string — and `measurement_suppressed` when present — beside the path instead of presenting the external pass as clean. `ok == false`, or any non-zero exit, → report the `reason` (and `detail` when present) and continue: external review is advisory, never blocking, and never substitutes a pass.
 
 ## 3. Collect Results
 
@@ -189,7 +189,7 @@ Validate it like a reviewer JSON, with `review_delegated_at` as the freshness bo
 .agents/skills/orch/scripts/review-artifact-check [WORKTREE_PATH] [AGENT] [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND]
 ```
 
-Run it on every return message and every watchdog sweep. `ok == true` → drop the agent from `OUTSTANDING` and append its path; `reason == "valid_undermeasured"` additionally means that agent's own instrument produced nothing, so its verdict covers less than it appears to — carry the result's `measurement_failed` string into the review summary beside that verdict, and never present the domain as clean.
+Run it on every return message and every watchdog sweep. `ok == true` → drop the agent from `OUTSTANDING` and append its path; `reason == "valid_undermeasured"` additionally means that agent's own instrument produced nothing, so its verdict covers less than it appears to — carry the result's `measurement_failed` string into the review summary beside that verdict, with `measurement_suppressed` when present naming whatever else that one declaration silenced, and never present the domain as clean.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] json_paths "[PATH]"

@@ -110,6 +110,18 @@ assert_eq "$(undermeasured_mentions "$submit_pr")" "1" "submit-pr.md § 1 names 
 assert_file_contains "$review_pr_sites" "measurement_failed" "review-pr.md relays the declaration string"
 assert_file_contains "$submit_pr" "measurement_failed" "submit-pr.md relays the declaration string"
 
+# measurement_suppressed exists so a suppression is not invisible, which makes a
+# suppression invisible to its readers the one failure it cannot have. Pinned
+# the same way as its sibling: a count per file, and the off-branch check — an
+# ok=TRUE field named under a failure branch is documented where the reader
+# never arrives, which is exactly what submit-pr.md § 1 did before.
+suppressed_mentions() { grep 'measurement_suppressed' "$1" | wc -l | tr -d ' '; }
+suppressed_offbranch() { grep 'measurement_suppressed' "$1" | grep -v 'ok == true' | wc -l | tr -d ' '; }
+assert_eq "$(suppressed_offbranch "$review_pr_sites")" "0" "review-pr.md: every measurement_suppressed mention sits in an ok == true branch"
+assert_eq "$(suppressed_offbranch "$submit_pr")" "0" "submit-pr.md: every measurement_suppressed mention sits in an ok == true branch"
+assert_eq "$(suppressed_mentions "$review_pr_sites")" "2" "review-pr.md relays the suppression record at BOTH its call sites"
+assert_eq "$(suppressed_mentions "$submit_pr")" "1" "submit-pr.md § 1 relays the suppression record"
+
 # --- review-pr.md wires the deterministic acceptance ---
 review_pr="$REPO_ROOT/skills/orch/workflows/review-pr.md"
 assert_file_contains "$review_pr" ".agents/skills/orch/scripts/review-artifact-check [WORKTREE_PATH] [AGENT]" "review-pr acceptance runs review-artifact-check"
