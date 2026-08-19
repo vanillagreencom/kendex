@@ -126,6 +126,12 @@ not `1`. Such a hook may gate perfectly well, and `1` would state the
 opposite. `1` is reserved for a hook whose single command is not the entry
 point at all, or whose entry-point path resolves to nothing.
 
+An entry-point path whose FINAL COMPONENT is a symlink is `2` as well. The
+path suffix identifies the guard only while that component is the guard, and
+a link to `/bin/true` passes every file test while gating nothing. Only the
+final component is tested, so a symlinked parent directory still resolves to
+a real installation.
+
 The grammar is closed on purpose. Accepting the entry point anywhere it
 looks executable means ruling on reachability, which needs a shell parser:
 `if false; then … fi`, a function body nothing calls, and a `<<-` heredoc

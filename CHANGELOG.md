@@ -200,7 +200,10 @@
   comparison escapes its own pattern metacharacters, since an unescaped `?`
   matched `|| exit $#` as though it were `|| exit $?` — and git gives
   pre-commit no arguments, so that is `exit 0` and swallowed every
-  pre-commit failure while `--check` reported armed. The
+  pre-commit failure while `--check` reported armed. An entry-point path
+  whose final component is a SYMLINK is unverifiable for the same reason the
+  suffix alone never was enough — two links to `/bin/true` passed every file
+  test and reported `armed` while every commit bypassed the guard. The
   suite asserts the property directly rather than the wording: exit 0 is
   claimed only where a real violating commit is really blocked AND a clean
   one still passes, which is the half that separates a working gate from a
