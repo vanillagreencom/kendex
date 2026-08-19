@@ -154,10 +154,24 @@ and an unquoted word additionally globs and expands `~`. A checkout path
 literally containing `$slot` passed every file test while `/bin/sh` ran
 whatever `slot` pointed at.
 
-A tail counts only when a space or tab separates it from the command — the
-shell concatenates `"…/commit-msg""$1"` into a single word git cannot run —
-and only those blanks are trimmed, so a line ending in a carriage return is
-unverifiable rather than accepted for a tail the shell never sees.
+Everywhere this grammar treats whitespace, it means BLANKS — space and tab —
+never `[[:space:]]`. The shell separates tokens on blanks and keeps every
+other whitespace character as part of the word, so treating them alike
+silently repairs a hook that git cannot run. It matters in three places, and
+the reasoning is the same in all three:
+
+- the TAIL — a tail counts only when a blank separates it from the command,
+  because `"…/commit-msg""$1"` is a single word git cannot run, and a line
+  ending in CR is unverifiable rather than accepted for a tail the shell
+  never sees;
+- the SHEBANG — `#!/bin/sh` followed by CR makes the kernel look for an
+  interpreter named `/bin/sh\r`;
+- the INDENTATION — a line beginning with CR runs a command named `\rexec`,
+  so stripping it as leading whitespace would accept a hook that fails every
+  commit.
+
+A control character anywhere in a command line makes the shape unverifiable
+outright, for the same reason.
 
 The grammar is closed on purpose. Accepting the entry point anywhere it
 looks executable means ruling on reachability, which needs a shell parser:
