@@ -20,6 +20,9 @@ GG_VIOLATIONS=0
 # exported settings cache their parent is still reading.
 GG_TMP=""
 GG_SETTINGS_INDEX_OWNED=0
+# In-flight staging file for gg_install_file, so an interrupt between its
+# creation and its rename leaves nothing beside the destination.
+GG_INSTALL_TMP=""
 
 gg_config_error() {
   echo "::error::${GG_CHECK:-growth-guards}: $*" >&2
@@ -34,6 +37,7 @@ gg_collection_error() { gg_config_error "$@"; }
 # checks a hook lane runs, and they must not delete the directory their parent
 # is still resolving settings from.
 gg_cleanup() {
+  [ -z "${GG_INSTALL_TMP:-}" ] || rm -f -- "$GG_INSTALL_TMP"
   [ -z "${GG_TMP:-}" ] || rm -rf -- "$GG_TMP"
   [ "${GG_SETTINGS_INDEX_OWNED:-0}" = "1" ] && rm -rf -- "$GG_SETTINGS_INDEX_DIR"
   return 0
@@ -184,16 +188,25 @@ gg_policy_content() { # FILE — content on stdout; 1 = the commit has no such f
 # and a truncated policy file is read as a complete one, which for a ratchet
 # baseline loosens the gate instead of failing it.
 gg_install_file() { # SRC DEST LABEL
-  local src="$1" dest="$2" label="$3" tmp
-  tmp="$(dirname -- "$dest")/.gg-install.$$.$(basename -- "$dest")"
-  if ! cp -- "$src" "$tmp"; then
-    rm -f -- "$tmp"
+  local src="$1" dest="$2" label="$3"
+  # mktemp, never a name derived from the pid: the staging file lands in a
+  # directory the repository controls, a predictable name can already be
+  # sitting there, and `cp` writes THROUGH a symlink — so a planted
+  # `.gg-install.<pid>.<name>` link would redirect the write anywhere the
+  # user can reach. mktemp creates the file itself, exclusively.
+  GG_INSTALL_TMP="$(mktemp "$dest.gg-install.XXXXXX")" \
+    || gg_collection_error "could not stage the replacement for $label beside $dest"
+  if ! cat -- "$src" >"$GG_INSTALL_TMP"; then
+    rm -f -- "$GG_INSTALL_TMP"
+    GG_INSTALL_TMP=""
     gg_collection_error "could not stage the replacement for $label beside $dest"
   fi
-  if ! mv -- "$tmp" "$dest"; then
-    rm -f -- "$tmp"
+  if ! mv -- "$GG_INSTALL_TMP" "$dest"; then
+    rm -f -- "$GG_INSTALL_TMP"
+    GG_INSTALL_TMP=""
     gg_collection_error "could not replace $label at $dest — inspect the file before trusting it"
   fi
+  GG_INSTALL_TMP=""
 }
 
 # Shell glob matched against the full repo-relative path (`*` crosses `/`);

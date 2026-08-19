@@ -104,8 +104,12 @@
   --update` replaced the baseline with a `mv` from `$TMPDIR`, which degrades to
   copy-then-unlink across filesystems, leaving a truncated RATCHET file that
   silently loosens the gate rather than failing it. Both now write to a temp
-  file beside the destination and rename: the destination carries the complete
-  new bytes or the complete old ones, never a prefix of either.
+  file beside the destination and rename. The staging file is created by
+  `mktemp`, never at a name derived from the pid: it lands in a directory the
+  repository controls, `cp` writes THROUGH a symlink, and a planted
+  `.gg-install.<pid>.<name>` link would therefore redirect the write to any
+  path the user can reach. Either way the destination carries the complete new
+  bytes or the complete old ones, never a prefix of either.
   `suppression-ban` goes through a shared `gg_install_file` helper; the
   settings cache renames inline, because it answers a failure by returning 1
   for its caller to propagate rather than by the family's exit 2, and routing

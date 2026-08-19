@@ -339,6 +339,49 @@ call 'gg_install_file "'"$ROOT"'/src.tsv" tools/dest.tsv "the fixture"'
   && ok "a successful install leaves no residue beside the destination" \
   || bad "a successful install leaves no residue beside the destination" "$(find "$R/tools" -name '.gg-install*')"
 
+# A planted staging file must not redirect the write. cp writes THROUGH a
+# symlink, so a staging name the repository can predict is an arbitrary-file
+# overwrite waiting for the next --update. The writer publishes its own pid
+# and waits, so the symlink is planted at the EXACT name a pid-derived
+# scheme would choose — the control is aimed, not a guess.
+new_repo install-symlink
+mkdir -p "$R/tools"
+printf 'ORIGINAL\n' >"$R/tools/dest.tsv"
+printf 'VICTIM\n' >"$ROOT/victim.txt"
+pidfile="$ROOT/writer.pid"
+gofile="$ROOT/writer.go"
+rm -f "$pidfile" "$gofile"
+(
+  cd "$R" && GG_CHECK=probe bash -c '
+    set -euo pipefail
+    echo "$$" >"$2"
+    i=0
+    while [ ! -e "$3" ] && [ "$i" -lt 200 ]; do i=$((i + 1)); sleep 0.05; done
+    . "$1"
+    gg_install_file "$4" tools/dest.tsv "the fixture"
+  ' _ "$COMMON" "$pidfile" "$gofile" "$ROOT/src.tsv"
+) >"$ROOT/writer.out" 2>&1 &
+writer=$!
+i=0
+while [ ! -s "$pidfile" ] && [ "$i" -lt 200 ]; do i=$((i + 1)); sleep 0.05; done
+if [ -s "$pidfile" ]; then
+  ln -s "$ROOT/victim.txt" "$R/tools/.gg-install.$(cat "$pidfile").dest.tsv"
+  ok "the control is aimed at the pid the writer actually uses"
+else
+  bad "the control is aimed at the pid the writer actually uses" "no pid published"
+fi
+: >"$gofile"
+wait "$writer" || true
+[ "$(cat "$ROOT/victim.txt")" = "VICTIM" ] \
+  && ok "a planted staging symlink does not redirect the write" \
+  || bad "a planted staging symlink does not redirect the write" "victim=$(cat "$ROOT/victim.txt")"
+[ "$(cat "$R/tools/dest.tsv")" = "REPLACEMENT" ] \
+  && ok "the install still lands on its real destination" \
+  || bad "the install still lands on its real destination" "content=$(cat "$R/tools/dest.tsv") out=$(cat "$ROOT/writer.out")"
+[ -z "$(find "$R/tools" -name '.gg-install.*.XXXXXX' -o -name '*.gg-install.??????')" ] \
+  && ok "no staging file is left behind beside the destination" \
+  || bad "no staging file is left behind beside the destination" "$(find "$R/tools" -name '*gg-install*')"
+
 # Control: interrupt the install at the rename. The destination must still
 # carry the reviewed bytes — a truncated ratchet file loosens the gate
 # instead of failing it, so a half-done replace is worse than none.
