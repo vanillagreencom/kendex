@@ -106,7 +106,11 @@ fn check_and_verify_name_the_same_cause_as_refresh() {
     )
     .unwrap();
 
-    let expected = "remote cache not present — run `vstack add owner/repo`";
+    // The cause and the command, asserted separately rather than as one
+    // substring: `check` builds a report and spends its own clause on the
+    // remedy, while `verify` and `refresh` print a line that carries both.
+    // What the contract requires is that all three name the same two things.
+    let expected = ["remote cache not present", "`vstack add owner/repo`"];
     for command in ["check", "verify", "refresh"] {
         let output = Command::new(env!("CARGO_BIN_EXE_vstack"))
             .arg(command)
@@ -118,7 +122,12 @@ fn check_and_verify_name_the_same_cause_as_refresh() {
             .unwrap();
         let combined = String::from_utf8_lossy(&output.stderr).into_owned()
             + &String::from_utf8_lossy(&output.stdout);
-        assert!(combined.contains(expected), "vstack {command}:\n{combined}");
+        for want in expected {
+            assert!(
+                combined.contains(want),
+                "vstack {command} omits {want}:\n{combined}"
+            );
+        }
         assert!(
             !combined.contains("outdated"),
             "vstack {command} calls an unresolved source outdated:\n{combined}"

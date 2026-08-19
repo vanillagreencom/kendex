@@ -13,6 +13,10 @@
 
 use super::*;
 use crate::config;
+
+mod presence;
+use presence::cache_entry_is_present;
+pub(crate) use presence::cache_entry_present;
 use std::path::{Path, PathBuf};
 
 /// The cache entry `path` lies in, and the part of `path` below it — empty
@@ -75,36 +79,6 @@ pub(crate) fn is_remote_cache_entry_path(path: &Path) -> bool {
 /// that `check` prescribed re-ran that same no-op forever.
 ///
 /// `Ok(false)` is the absent case; `Err` is the refusal.
-fn cache_entry_is_present(entry: &Path) -> Result<bool> {
-    // `Path::exists` collapses "not there" into "could not be looked at":
-    // it answers false for a permission or I/O error exactly as it does for a
-    // missing file. A valid clone whose directory has become unreadable — a
-    // root-owned entry left by a sudo run, a transient error on the cache —
-    // then fell to the not-a-clone arm below, which still passes because
-    // `is_dir` only needs the PARENT readable, and was refused with a
-    // definite cause nothing had established plus advice to delete it. The
-    // error kind is the whole difference, so it is read rather than discarded.
-    match std::fs::metadata(entry.join(".git")) {
-        Ok(_) => Ok(true),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            if !entry.is_dir() {
-                return Ok(false);
-            }
-            bail!(
-                "refusing source {}: it is inside vstack's cache but is not one of its clones — it has no `.git`, so no remote can be established for it. Remove it from {} and re-add the source it should come from",
-                entry.display(),
-                remote_cache_root().display()
-            )
-        }
-        // A read that could not be completed, reported as exactly that — no
-        // verdict on what is there, and no advice to remove anything.
-        Err(err) => bail!(
-            "refusing source {}: its `.git` could not be read: {err}",
-            entry.display()
-        ),
-    }
-}
-
 /// The remote a cache entry is a clone of, read from the entry's own `origin`.
 ///
 /// The origin is the only reliable answer. A cache key is derived FROM the
@@ -259,8 +233,11 @@ pub(super) fn resolve_cache_path_source(
 /// both arrive at the same fetch, the same lease and the same ownership
 /// proofs, and neither can be given a freshness the other is denied.
 pub(super) fn resolve_remote_source(remote: RemoteSource, update_remote: bool) -> LeasedResolution {
-    if !cache_entry_present(&remote) {
-        return SourceResolution::Absent.into();
+    match cache_entry_present(&remote) {
+        Ok(true) => {}
+        Ok(false) => return SourceResolution::Absent.into(),
+        // A clone that cannot be looked at is not a clone that is missing.
+        Err(err) => return SourceResolution::refused(&err).into(),
     }
     if update_remote {
         eprintln!("Updating cached repo {}...", remote.display);

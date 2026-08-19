@@ -82,7 +82,28 @@
   leave a permanent exit 1. And a clone that cannot be READ is reported as
   that — `Path::exists` answers false for a permission error exactly as for a
   missing file, so an unreadable entry was refused as "not one of its clones"
-  with advice to delete it.
+  with advice to delete it. That probe is now the only one: the sibling
+  answering the same question for URL-recorded sources still collapsed the two,
+  so one directory with one permission bit read as unreadable or as absent
+  depending only on how the lock spelled it — and the absent spelling
+  prescribed a `vstack add` that failed by telling the user to delete a valid
+  clone, pointing a local permission problem at their credentials.
+
+  `add` resolves a remembered relative source against the PROJECT ROOT, which
+  is where every reader resolves one. Bound to the process CWD, running from a
+  subdirectory that held a same-named source installed one tree and hashed
+  another with every surface green. The rule the recorded string follows is
+  stated where it lives now: it must name the tree that was read, resolved the
+  way later readers will resolve it — recording the spelling is what that
+  requires for a local source, not the rule itself.
+
+  `check`, `verify` and `refresh` name the same command for the same state.
+  Only `check` used to name one; the cause and the remedy are separate pieces
+  now, composed by each surface, so `check` also stopped printing the same
+  `vstack add` twice in one line. No command is offered where none can be both
+  correct and safe: a source whose display has to redact part of itself is
+  never handed back as a pasteable argument, and a lock that recorded no
+  source at all is not offered `vstack add ''`.
 
 - preflight: new `hardcoded-temp-path` lane — an added directory-creating
   call taking a literal `/tmp/…` or `/var/tmp/…` as (part of) its first

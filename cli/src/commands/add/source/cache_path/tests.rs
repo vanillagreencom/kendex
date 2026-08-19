@@ -586,3 +586,86 @@ fn a_remembered_local_source_is_recorded_as_spelled() {
     });
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// The invariant, on the branch that broke it: a relative recorded source is
+/// resolved the way later readers resolve it — against the PROJECT ROOT — so
+/// the tree `add` installs from is the tree `refresh`, `check` and `verify`
+/// find under that same string.
+///
+/// Bound to the process CWD instead, running from a subdirectory that happens
+/// to hold a same-named source installed one tree and hashed the other, with
+/// check and verify both reporting clean and the next refresh silently
+/// swapping the installed copy while printing `(changed)` between two equal
+/// hashes.
+#[test]
+fn a_relative_remembered_source_resolves_where_readers_resolve_it() {
+    let root = tmproot("add-relative-project-root");
+    let home = root.join("home");
+    let config_dir = root.join("config");
+    let project_root = root.join("project");
+    for dir in [&home, &config_dir] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    // Two same-named sources: one at the project root, one under a nested CWD.
+    let write_source = |dir: &std::path::Path, skill: &str| {
+        std::fs::create_dir_all(dir.join("agents")).unwrap();
+        let s = dir.join("skills").join(skill);
+        std::fs::create_dir_all(&s).unwrap();
+        std::fs::write(
+            s.join("SKILL.md"),
+            format!("---\nname: {skill}\ndescription: {skill}\n---\nbody\n"),
+        )
+        .unwrap();
+    };
+    write_source(&project_root.join("src"), "root_variant");
+    write_source(&project_root.join("nested").join("src"), "nested_variant");
+
+    crate::test_util::with_home_and_config(&home, &config_dir, || {
+        crate::test_util::with_project_root(&project_root, || {
+            let mut lock = config::LockFile::default();
+            lock.add(config::LockEntry {
+                name: "alpha".into(),
+                kind: config::ItemKind::Skill,
+                source: "./src".into(),
+                source_repo: None,
+                harnesses: vec!["claude-code".into()],
+                method: config::InstallMethod::Copy,
+                installed_at: "2026-08-18T00:00:00Z".into(),
+                source_hash: String::new(),
+            });
+            lock.save(&project_root.join(".vstack-lock.json")).unwrap();
+
+            // Resolution runs with the process CWD wherever the harness left
+            // it, which is NOT the project root — exactly the divergence.
+            let registry = config::SourceRegistry::default();
+            let resolved = resolve_source_for_app(
+                None,
+                &registry,
+                &project_root,
+                SourceFetch::for_invocation(None, false),
+            )
+            .expect("a remembered relative source resolves");
+
+            assert_eq!(
+                resolved.source, "./src",
+                "the spelling is still what gets recorded"
+            );
+            assert_eq!(
+                skills_in(&resolved.dir),
+                vec!["root_variant".to_string()],
+                "the tree read must be the one readers resolve `./src` to"
+            );
+            // The invariant itself: what readers find under the recorded
+            // string is the tree the install came from.
+            let read_back = crate::refresh_sources::resolve_source_path(&resolved.source)
+                .expect("readers resolve the recorded string");
+            assert!(
+                crate::resolve::same_path(&read_back, &resolved.dir),
+                "recorded {:?} resolves to {read_back:?}, installed from {:?}",
+                resolved.source,
+                resolved.dir
+            );
+        });
+    });
+    let _ = std::fs::remove_dir_all(root);
+}

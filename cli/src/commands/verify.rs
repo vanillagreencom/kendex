@@ -164,7 +164,17 @@ fn verify_entry(entry: &LockEntry, global: bool, disk_skills: &HashSet<String>) 
     // leaves the user to guess between changed content, a cache that is not on
     // this machine, and a source vstack refused — each fixed by a different
     // command, and only one of them by `vstack add`.
-    let note = match (resolution.unresolved_note(&entry.source), note) {
+    // The ABSENT case carries the command that repairs it, the same one
+    // `check` prints; every other unresolved state already names its own next
+    // step inside its reason.
+    let cause = match &resolution {
+        SourceResolution::Absent => Some(crate::refresh_sources::absent_source_note(
+            &entry.source,
+            entry.source_repo.as_deref(),
+        )),
+        resolution => resolution.unresolved_note(&entry.source),
+    };
+    let note = match (cause, note) {
         (Some(cause), Some(note)) => Some(format!("{cause}; {note}")),
         (Some(cause), None) => Some(cause),
         (None, note) => note,

@@ -82,13 +82,26 @@ impl LeasedSourceDir {
 /// Resolve a source the project remembered — the registry's selection, or the
 /// one its lock records — for the fallback chain.
 ///
-/// Returns the directory AND the string that names it, because the two can
-/// differ: a remembered path into vstack's cache resolves through the remote
-/// its entry clones, and the caller must record the source it actually read
-/// rather than the one it started from. Recording the remembered string
-/// instead put a legacy-key path in the lock beside a `source_hash` taken
-/// against the canonical entry the install had really come from — `check` then
-/// passed and `verify` failed on one state.
+/// Returns the directory AND the string that names it, under one invariant:
+/// **the recorded string must name the tree that was read, resolved the way
+/// later readers will resolve it.** `refresh`, `check` and `verify` all
+/// re-resolve that string later, and any spelling whose resolution here
+/// differs from theirs puts a `source_hash` in the lock for a tree the install
+/// did not come from — with every surface reporting green, which is this
+/// issue's whole defect class.
+///
+/// Two branches used to break it, in opposite directions. A remembered path
+/// into vstack's cache resolves through the remote its entry clones, so
+/// recording the string it started FROM named a different clone than the one
+/// read. And a relative spelling was tested against the process CWD while
+/// every reader joins it to [`config::project_root`], so running from a
+/// subdirectory that happened to hold a same-named source installed one tree
+/// and hashed another.
+///
+/// Recording the spelling is not the invariant and never was — it is what the
+/// invariant happens to require for a local source, whose spelling readers
+/// resolve to the same directory. Where the two differ, the tree that was read
+/// is what gets recorded.
 ///
 /// `Ok(None)` is the one outcome that may walk on: a local candidate that names
 /// nothing. A remote that is refused, an unowned cache entry or a failed clone
@@ -112,12 +125,11 @@ fn resolve_remembered_source(
     if let Some(resolved) = resolve_cache_path_source(source, fetch) {
         return resolved.map(Some);
     }
-    // The SPELLING, not the canonicalized directory: only the cache branch
-    // above changes what gets recorded, which is what makes the rule above
-    // true. Canonicalizing here would also rewrite every non-canonical local
-    // spelling — and a relative `./src`, which stays supported for a legacy or
-    // hand-edited lock, would become a machine-specific absolute path in a
-    // file that is committed, resolving on one checkout and not another.
+    // The SPELLING, because readers resolve it to this same directory — an
+    // absolute path is itself, and the relative branch below now resolves the
+    // way they do. Canonicalizing instead would put a machine-specific
+    // absolute path in a lock file that is committed, resolving on one
+    // checkout and not another.
     let local = |dir: PathBuf| Ok(Some((LeasedSourceDir::local(dir), source.to_string())));
     if path.is_absolute() && path.is_dir() {
         return local(std::fs::canonicalize(source)?);
@@ -132,8 +144,13 @@ fn resolve_remembered_source(
                 )
             });
     }
-    if path.is_dir() {
-        return local(std::fs::canonicalize(source)?);
+    // Against the PROJECT ROOT, which is where every reader resolves a
+    // relative or bare recorded source — never against the process CWD, whose
+    // answer nothing downstream would agree with. A spelling readers cannot
+    // resolve at all (`a/b/c` is neither explicitly relative nor bare) walks
+    // on rather than installing from a tree no later command could find.
+    if let Some(dir) = crate::refresh_sources::resolve_recorded_local_source(source) {
+        return local(dir);
     }
     // A spelling that opens with a scheme is an attempt at a URL, so it names
     // something even when the strict parser cannot read it. Walking on would
@@ -196,7 +213,7 @@ fn clone_or_update(source: &str, fetch: SourceFetch) -> Result<LeasedSourceDir> 
         .ok_or_else(|| anyhow::anyhow!("Source not found: {source}"))?;
     let display = &remote.display;
 
-    let lease = if crate::refresh_sources::cache_entry_present(&remote) {
+    let lease = if crate::refresh_sources::cache_entry_present(&remote)? {
         // Update existing clone (handles force-pushed histories). A refusal —
         // the entry is not vstack's own clone — is an error; a failed fetch
         // keeps the stale clone.

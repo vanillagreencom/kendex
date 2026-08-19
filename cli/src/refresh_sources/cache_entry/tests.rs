@@ -453,3 +453,75 @@ fn an_unreadable_cache_entry_is_not_reported_as_missing_its_git() {
     });
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// The same clone, the same permission bit, spelled two ways in the lock. Both
+/// spellings ask "is this entry present?" and the answer must not depend on
+/// which one the lock happens to carry: fixing the probe for the path spelling
+/// and leaving the URL spelling on `Path::exists` reported an unreadable clone
+/// as absent, with a cause that is false and a remedy that deletes it.
+#[test]
+fn an_unreadable_entry_reads_the_same_for_both_spellings_of_its_source() {
+    // Root ignores the mode bits, so the state under test cannot be built.
+    // SAFETY: `geteuid` reads the calling process's effective uid; it takes no
+    // arguments, touches no memory, and cannot fail.
+    if unsafe { libc::geteuid() } == 0 {
+        return;
+    }
+    let root = tmpdir("cache-path-unreadable-both");
+    let home = root.join("home");
+    let origin = root.join("origin");
+    init_git_repo(&origin);
+
+    crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+        let url = file_url(&origin);
+        let canonical = RemoteSource::parse(&url).unwrap().unwrap();
+        clone_into(&origin, &canonical.cache_dir);
+        let as_path = canonical.cache_dir.to_string_lossy().into_owned();
+
+        // Control: readable, both spellings resolve to the same tree.
+        for source in [&url, &as_path] {
+            assert_eq!(
+                source_path_resolution(source),
+                SourceResolution::Resolved(canonical.cache_dir.clone()),
+                "{source}"
+            );
+        }
+
+        let mut perms = std::fs::metadata(&canonical.cache_dir)
+            .unwrap()
+            .permissions();
+        let restore = perms.clone();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o000);
+        std::fs::set_permissions(&canonical.cache_dir, perms).unwrap();
+
+        let answers: Vec<SourceResolution> = [&url, &as_path]
+            .iter()
+            .map(|source| source_path_resolution(source))
+            .collect();
+        let listed = config::cached_remote_sources(&lock_of(&url));
+        std::fs::set_permissions(&canonical.cache_dir, restore).unwrap();
+
+        for (source, answer) in [&url, &as_path].iter().zip(&answers) {
+            let SourceResolution::Refused(reason) = answer else {
+                panic!("{source}: expected a refusal, got {answer:?}");
+            };
+            assert!(
+                reason.contains("could not be read"),
+                "{source}: must report the read it could not complete: {reason}"
+            );
+            assert!(
+                !reason.contains("not present"),
+                "{source}: a clone that is right there is not absent: {reason}"
+            );
+            assert!(
+                !reason.contains("Remove"),
+                "{source}: must not advise deleting a clone it could not look at: {reason}"
+            );
+        }
+        // And the enumeration every refresher walks carries it too, rather
+        // than dropping the entry as if it had nothing to fetch.
+        assert!(listed.present.is_empty(), "{:?}", listed.present);
+        assert_eq!(listed.refused.len(), 1, "{:?}", listed.refused);
+    });
+    let _ = std::fs::remove_dir_all(root);
+}

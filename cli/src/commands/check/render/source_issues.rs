@@ -70,19 +70,18 @@ pub(super) fn render_source_issues(out: &mut String, report: &ScopeReport, quiet
                 overflow_line(out, "    ", shown, reasons.len());
                 render_entry_names(out, entries, quiet);
             }
-            // The refusal already names the entry, the cause and the next
-            // step. It is relayed rather than reworded, and no `vstack add` is
-            // prescribed on top of it: a source vstack REFUSED refuses again
-            // when re-added, which sends the user in a circle.
             SourceProblem::Unverifiable {
                 entries,
                 reason,
                 restore,
             } => {
-                // The refusal's own text is relayed verbatim and no second
-                // remedy is invented for it — except where re-adding provably
-                // clears the state, which the refusal wording does not say and
-                // the reader has no other way to discover.
+                // The refusal already names the entry, the cause and the
+                // next step, and is relayed verbatim rather than reworded. No
+                // second remedy is invented on top of it — most refused
+                // sources refuse again when re-added, which sends the reader
+                // in a circle — EXCEPT where re-adding provably clears the
+                // state, which the refusal wording does not say and the reader
+                // has no other way to discover.
                 let remedy = match restore {
                     Some(arg) => format!(
                         "; run `vstack add{g} {}` to install these from its remote instead",

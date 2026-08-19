@@ -131,8 +131,13 @@ pub(crate) fn refresh_remote_caches(lock: &config::LockFile) {
                 continue;
             }
         };
-        if !cache_entry_present(&remote) {
-            continue;
+        match cache_entry_present(&remote) {
+            Ok(true) => {}
+            Ok(false) => continue,
+            Err(err) => {
+                warn_once(&entry.source, &format!("{err:#}"));
+                continue;
+            }
         }
         if let Err(err) = update_cached_repo(&remote) {
             warn_once(&entry.source, &format!("{err:#}"));
@@ -178,7 +183,11 @@ fn is_bare_local_source(source: &str) -> bool {
         && !looks_like_remote_source(source)
 }
 
-fn resolve_recorded_local_source(source: &str) -> Option<PathBuf> {
+/// A recorded relative or bare source, resolved the way every READER resolves
+/// one — joined to the project root. `add` resolves a remembered source
+/// through this too, so the tree it installs from is the tree later commands
+/// find under the same string.
+pub(crate) fn resolve_recorded_local_source(source: &str) -> Option<PathBuf> {
     if !is_explicit_relative_local_source(source) && !is_bare_local_source(source) {
         return None;
     }
@@ -416,15 +425,6 @@ fn cache_key_for_identity(identity: &str) -> String {
         "" => digest,
         prefix => format!("{prefix}-{digest}"),
     }
-}
-
-/// Whether `remote`'s clone is on this machine.
-///
-/// A cache entry written by an earlier vstack under a different key is not
-/// reused: the key derives from the repository identity now, and re-cloning is
-/// one `vstack add` away. Every caller reports the absence with that command.
-pub(crate) fn cache_entry_present(remote: &RemoteSource) -> bool {
-    remote.cache_dir.join(".git").exists()
 }
 
 // ---------------------------------------------------------------------------

@@ -986,8 +986,8 @@ fn inline_update_reports_an_entry_whose_source_is_gone() {
     assert_eq!(
         report.failed,
         vec![format!(
-            "guard-gone: not refreshed: source not found: {}",
-            gone.display()
+            "guard-gone: not refreshed: source not found: {p} — run `vstack add {p}`",
+            p = gone.display()
         )],
         "a requested item names its vanished source: {report:?}"
     );

@@ -293,11 +293,13 @@ pub(crate) fn cached_remote_sources(lock: &LockFile) -> LockRemotes {
         if !seen.insert(entry.source.clone()) {
             continue;
         }
-        match remote_for_source(&entry.source) {
-            Ok(Some(remote)) if cache_entry_present(&remote) => {
-                present.push((entry.source.clone(), remote));
-            }
-            Ok(_) => {}
+        let mapped = remote_for_source(&entry.source).and_then(|remote| match remote {
+            Some(remote) => cache_entry_present(&remote).map(|present| present.then_some(remote)),
+            None => Ok(None),
+        });
+        match mapped {
+            Ok(Some(remote)) => present.push((entry.source.clone(), remote)),
+            Ok(None) => {}
             Err(err) => refused.push((entry.source.clone(), format!("{err:#}"))),
         }
     }

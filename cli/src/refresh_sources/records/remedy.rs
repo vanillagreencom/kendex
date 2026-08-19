@@ -30,6 +30,11 @@ use std::path::Path;
 /// propagating from a subtree the user never chose. That is the silent
 /// under-propagation this whole issue is about, so no command is offered.
 pub(crate) fn restore_source_argument(source: &str, source_repo: Option<&str>) -> Option<String> {
+    // A lock that recorded no source names nothing to re-add: `vstack add ''`
+    // is not a command, and the pre-1.0 placeholder shapes reach here.
+    if source.trim().is_empty() {
+        return None;
+    }
     match remote_cache_entry_for_path(Path::new(source)) {
         Some((_, below)) if below.as_os_str().is_empty() => source_repo.map(str::to_string),
         Some(_) => None,
@@ -37,19 +42,50 @@ pub(crate) fn restore_source_argument(source: &str, source_repo: Option<&str>) -
     }
 }
 
+/// The cause AND the command that repairs it, as one sentence.
+///
+/// For a surface that prints a LINE — `verify`'s per-row note, `refresh`'s
+/// missing-item summary. `check` builds a report instead, carrying the two in
+/// separate fields so it can spend its own budget on them and offer the
+/// `vstack remove` alternative beside them; it composes the same two pieces.
+/// Before this, only `check` named a command at all, so one state had three
+/// different answers across the three surfaces.
+///
+/// The remedy is meant to be pasted, so the source arrives as a shell WORD and
+/// not as prose spliced into one: `https://host/team/$(id).git` is a source
+/// `RemoteSource` accepts, and interpolating its display form handed the
+/// reader a command that runs the substitution.
+///
+/// And no command at all for a source the CAUSE had to redact. A pasteable
+/// argument is the raw string, so emitting one for a spelling whose display
+/// hides part of itself — a query carrying a token, a userinfo secret
+/// malformed enough that credential scrubbing does not recognise it — would
+/// print in the remedy exactly what the cause took care not to. Withholding
+/// the command is the same answer this module already gives wherever no
+/// command can be both correct and safe.
+pub(crate) fn absent_source_note(source: &str, source_repo: Option<&str>) -> String {
+    let cause = absent_source_reason(source);
+    let arg = restore_source_argument(source, source_repo)
+        .filter(|arg| remote_source_display(arg) == *arg);
+    match arg {
+        Some(arg) => format!(
+            "{cause} — run `vstack add {}`",
+            crate::display::command_arg(&arg)
+        ),
+        None => cause,
+    }
+}
+
 /// Why a recorded source produced nothing, for a caller holding no refusal map
-/// of its own. One wording, so `refresh`, `check` and `verify` name the same
-/// cause and the same command for the same state.
+/// of its own. One wording for the CAUSE, so `refresh`, `check` and `verify`
+/// name the same one for the same state.
+///
+/// The remedy is [`restore_source_argument`]'s, because it depends on what the
+/// lock records and not on the source string alone; each surface composes the
+/// two.
 pub(crate) fn absent_source_reason(source: &str) -> String {
     if looks_like_remote_source(source) {
-        // The remedy is meant to be pasted, so the source arrives as a shell
-        // WORD, not as prose spliced into one: `https://host/team/$(id).git`
-        // is a source `RemoteSource` accepts, and interpolating its display
-        // form handed the reader a command that runs the substitution.
-        format!(
-            "remote cache not present — run `vstack add {}`",
-            crate::display::command_arg(source)
-        )
+        "remote cache not present".to_string()
     } else if source.trim().is_empty() {
         "source not found (none recorded)".to_string()
     } else {
@@ -69,3 +105,6 @@ pub(crate) fn absent_source_reason(source: &str) -> String {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
