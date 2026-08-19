@@ -66,19 +66,6 @@ pub(crate) fn is_remote_cache_entry_path(path: &Path) -> bool {
     remote_cache_entry_for_path(path).is_some()
 }
 
-/// Whether a cache entry is on disk at all, and refusing one that is there but
-/// is not a clone.
-///
-/// The two are different states and every command must agree on which is
-/// which. NOTHING at the path is absent: `vstack add` re-mints it, and `check`
-/// says so. A DIRECTORY with no `.git` is not a clone vstack can fetch, reset
-/// or establish a remote for — but it is also inside the tree vstack wipes and
-/// resets, so reading it as a stable checkout is the whole defect this module
-/// closes. `add` used to install from one and exit 0 while every other command
-/// called the same string absent and exited 1, and the `vstack add <path>`
-/// that `check` prescribed re-ran that same no-op forever.
-///
-/// `Ok(false)` is the absent case; `Err` is the refusal.
 /// The remote a cache entry is a clone of, read from the entry's own `origin`.
 ///
 /// The origin is the only reliable answer. A cache key is derived FROM the
@@ -94,7 +81,7 @@ pub(crate) fn is_remote_cache_entry_path(path: &Path) -> bool {
 /// entries were installed from, and resolution never redirects an install to a
 /// different clone — or to one that was never cloned at all. Migrating the
 /// recorded source onto the URL itself is `refresh`'s job, and it happens only
-/// once the canonical entry is present and current: see
+/// where the recorded path IS the directory that spec resolves to: see
 /// [`migrated_cache_entry_source`].
 fn cache_entry_remote(path: &Path) -> Result<RemoteSource> {
     let entry = path.display();

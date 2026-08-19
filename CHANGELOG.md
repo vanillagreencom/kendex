@@ -103,7 +103,30 @@
   `vstack add` twice in one line. No command is offered where none can be both
   correct and safe: a source whose display has to redact part of itself is
   never handed back as a pasteable argument, and a lock that recorded no
-  source at all is not offered `vstack add ''`.
+  source at all is not offered `vstack add ''`. That filter lives in
+  `restore_source_argument`, so it holds for the report `check` builds as well
+  as the lines `verify` and `refresh` print — `check` composed its own argument
+  and leaked a token the other two withheld. The redactor behind it stopped
+  asking whether a PARSER can use a spelling, which is not the same question as
+  whether one carries a secret: `https:/TOKEN@host/repo` parses as neither URL
+  nor scp-like, so it fell to bare escaping and reached a report header and a
+  paste-ready command in full while the same string rendered redacted two
+  clauses away. A local path keeps its `?` and `#`, which are ordinary
+  characters there and were being redacted into a directory that does not
+  exist.
+
+  The command every surface prints carries the scope it repairs. Pasted from a
+  global entry's `verify` or `refresh` output, a remedy without `-g` installs
+  into the PROJECT scope, exits 0, and leaves the entry exactly as broken.
+
+  Two diagnoses stopped pointing at the wrong thing. A cache entry a clone
+  cannot be written into is refused as what it is — a directory in the way with
+  no `.git` — rather than under `add`'s private-repo access hint, which sent
+  users to check `gh auth login` about a folder on their own disk. And a
+  remembered source no reader can resolve (`a/b/c`, which only `./…`, `../…`,
+  `.` and bare names are recorded resolvably as) is named instead of walked
+  past: silently reaching the next source installed from one the project never
+  chose and failed with an error naming it.
 
 - preflight: new `hardcoded-temp-path` lane — an added directory-creating
   call taking a literal `/tmp/…` or `/var/tmp/…` as (part of) its first

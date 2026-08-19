@@ -7,7 +7,7 @@ cli/src/commands/add/source_option_tests/project_install_tests.rs	438
 cli/src/commands/apply.rs	2743
 cli/src/commands/check.rs	632
 cli/src/commands/check/tests.rs	877
-cli/src/commands/refresh.rs	1558
+cli/src/commands/refresh.rs	1525
 cli/src/commands/refresh/tests.rs	1749
 cli/src/commands/report.rs	1861
 cli/src/commands/update_pi.rs	603
@@ -30,8 +30,8 @@ cli/src/pi_extension.rs	2630
 cli/src/pi_extension/settings.rs	475
 cli/src/project_config.rs	4671
 cli/src/project_settings.rs	780
-cli/src/refresh_sources.rs	1351
-cli/src/refresh_sources/tests.rs	2776
+cli/src/refresh_sources.rs	1252
+cli/src/refresh_sources/tests.rs	2703
 cli/src/resolve.rs	685
 cli/src/skill.rs	499
 cli/src/tui/disk_mutations.rs	790

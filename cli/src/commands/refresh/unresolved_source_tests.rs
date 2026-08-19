@@ -301,3 +301,37 @@ fn refresh_reports_a_refused_remote_cache_instead_of_substituting_another_source
 
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// The same contract on `refresh`'s side: the remedy it prints for a global
+/// entry has to repair the global scope. `RefreshStats` carries the scope it
+/// ran in for exactly this, because the reason is built well below the layer
+/// that knows one.
+#[test]
+fn a_global_refreshs_missing_reason_carries_the_global_flag() {
+    let entry = lock_entry(
+        "rust",
+        ItemKind::Agent,
+        Path::new("/no/such/dir/plain"),
+        vec!["codex"],
+    );
+    let mut global = RefreshStats {
+        global: true,
+        ..RefreshStats::default()
+    };
+    global.mark_source_missing("rust", &entry);
+    let reason = global.missing.get("rust").expect("marked missing");
+    assert!(
+        reason.contains("`vstack add -g /no/such/dir/plain`"),
+        "{reason}"
+    );
+
+    // Control: the project scope prints the same command without the flag.
+    let mut project = RefreshStats::default();
+    project.mark_source_missing("rust", &entry);
+    let reason = project.missing.get("rust").expect("marked missing");
+    assert!(
+        reason.contains("`vstack add /no/such/dir/plain`"),
+        "{reason}"
+    );
+    assert!(!reason.contains(" -g "), "{reason}");
+}

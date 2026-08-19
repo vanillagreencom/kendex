@@ -356,3 +356,40 @@ fn a_refusal_a_re_add_clears_names_the_command_that_clears_it() {
         assert!(!out.contains("vstack add"), "no remedy is invented: {out}");
     });
 }
+
+/// The report HEADER and the pasteable command are both built from a recorded
+/// string, so both go through the redactor that answers for an arbitrary one.
+/// A spelling no parser accepts — `https:/TOKEN@host/repo` — used to reach the
+/// weaker one, and the token appeared twice in a single line with a correctly
+/// redacted form between them.
+#[test]
+fn a_token_a_parser_cannot_read_reaches_no_part_of_the_report() {
+    with_sandbox("credential-in-report", |project, _source| {
+        install_skill_on_disk(project, "alpha");
+        let hostile = "https:/s3cr3ttoken@example.invalid/team/repo";
+        let mut lock = LockFile::default();
+        lock.add(locked(
+            std::path::Path::new(hostile),
+            ItemKind::Skill,
+            "alpha",
+        ));
+
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        let mut out = String::new();
+        render_scope(&mut out, &report, false);
+
+        assert!(
+            !out.contains("s3cr3ttoken"),
+            "rendered report leaks it: {out}"
+        );
+        assert!(
+            !format!("{report:?}").contains("s3cr3ttoken"),
+            "the report itself carries it: {report:?}"
+        );
+        assert!(out.contains("<redacted>"), "and it is still named: {out}");
+        // No command either: a pasteable argument is the raw string, so there
+        // is none that both works and withholds the token.
+        assert!(!out.contains("vstack add"), "{out}");
+        assert!(report.has_drift());
+    });
+}

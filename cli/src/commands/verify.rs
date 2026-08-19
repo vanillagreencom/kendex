@@ -171,6 +171,7 @@ fn verify_entry(entry: &LockEntry, global: bool, disk_skills: &HashSet<String>) 
         SourceResolution::Absent => Some(crate::refresh_sources::absent_source_note(
             &entry.source,
             entry.source_repo.as_deref(),
+            global,
         )),
         resolution => resolution.unresolved_note(&entry.source),
     };
@@ -367,3 +368,6 @@ fn verify_agent_install(
         )
     }
 }
+
+#[cfg(test)]
+mod scope_tests;

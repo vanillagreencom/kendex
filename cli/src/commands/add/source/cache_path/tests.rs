@@ -669,3 +669,68 @@ fn a_relative_remembered_source_resolves_where_readers_resolve_it() {
     });
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// A remembered spelling no reader can resolve is named, not walked past. The
+/// resolver answers only for `./…`, `../…`, `.` and a bare name, so `a/b/c`
+/// returns None — and walking on when that directory really exists reached a
+/// DIFFERENT source and failed with an error naming one the project never
+/// chose. "Names nothing" may walk on; "names something nothing downstream can
+/// find" may not.
+#[test]
+fn a_remembered_source_no_reader_can_resolve_is_named_rather_than_skipped() {
+    let root = tmproot("add-unresolvable-relative");
+    let home = root.join("home");
+    let config_dir = root.join("config");
+    let project_root = root.join("project");
+    for dir in [&home, &config_dir] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let nested = project_root.join("a").join("b").join("c");
+    std::fs::create_dir_all(nested.join("agents")).unwrap();
+    std::fs::create_dir_all(nested.join("skills")).unwrap();
+
+    crate::test_util::with_home_and_config(&home, &config_dir, || {
+        crate::test_util::with_project_root(&project_root, || {
+            let lock_with = |source: &str| {
+                let mut lock = config::LockFile::default();
+                lock.add(config::LockEntry {
+                    name: "alpha".into(),
+                    kind: config::ItemKind::Skill,
+                    source: source.into(),
+                    source_repo: None,
+                    harnesses: vec!["claude-code".into()],
+                    method: config::InstallMethod::Copy,
+                    installed_at: "2026-08-18T00:00:00Z".into(),
+                    source_hash: String::new(),
+                });
+                lock.save(&project_root.join(".vstack-lock.json")).unwrap();
+            };
+            let resolve = || {
+                resolve_source_for_app(
+                    None,
+                    &config::SourceRegistry::default(),
+                    &project_root,
+                    SourceFetch::for_invocation(None, false),
+                )
+            };
+
+            lock_with("a/b/c");
+            let err = match resolve() {
+                Ok(resolved) => panic!("walked past it to {:?}", resolved.source),
+                Err(err) => format!("{err:#}"),
+            };
+            assert!(err.contains("a/b/c"), "must name the source: {err}");
+            assert!(err.contains("cannot be resolved"), "must say why: {err}");
+
+            // Control: the same directory under a spelling readers DO resolve
+            // is installed from, so the refusal is about the spelling and not
+            // about the directory.
+            std::fs::create_dir_all(project_root.join("src").join("agents")).unwrap();
+            std::fs::create_dir_all(project_root.join("src").join("skills")).unwrap();
+            lock_with("./src");
+            let resolved = resolve().expect("a resolvable spelling still installs");
+            assert_eq!(resolved.source, "./src");
+        });
+    });
+    let _ = std::fs::remove_dir_all(root);
+}

@@ -201,10 +201,31 @@ pub(crate) fn reject_credential_bearing_git_url(url: &str) -> Result<()> {
 /// Replace a URL query/fragment with a marker. Git clone URLs have no
 /// legitimate use for either, and both are places a token gets carried.
 fn redact_remote_query(url: &str) -> String {
+    // A local PATH has no query and no fragment: `?` and `#` are ordinary
+    // characters in one, and redacting them corrupted the path rather than
+    // protecting anything — a remedy command then named a directory that does
+    // not exist. Every other spelling can carry a token there, including the
+    // ones no parser accepts, which is why this asks about the shape and not
+    // about whether a parser succeeded.
+    if spelling_is_a_local_path(url) {
+        return url.to_string();
+    }
     match url.find(['?', '#']) {
         Some(index) => format!("{}<redacted>", &url[..=index]),
         None => url.to_string(),
     }
+}
+
+/// The spellings that name a filesystem path and therefore carry no query:
+/// absolute for the running platform, `~`-tilde, or explicitly relative. The
+/// same shapes [`crate::config`] treats as local when it reads a registry
+/// entry.
+fn spelling_is_a_local_path(source: &str) -> bool {
+    std::path::Path::new(source).is_absolute()
+        || source.starts_with('/')
+        || source.starts_with('~')
+        || source.starts_with("./")
+        || source.starts_with("../")
 }
 
 /// One parse of the remote-URL grammar, for every question asked about a

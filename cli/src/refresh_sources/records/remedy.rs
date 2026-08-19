@@ -35,11 +35,30 @@ pub(crate) fn restore_source_argument(source: &str, source_repo: Option<&str>) -
     if source.trim().is_empty() {
         return None;
     }
-    match remote_cache_entry_for_path(Path::new(source)) {
+    let argument = match remote_cache_entry_for_path(Path::new(source)) {
         Some((_, below)) if below.as_os_str().is_empty() => source_repo.map(str::to_string),
         Some(_) => None,
         None => Some(source.to_string()),
-    }
+    };
+    // The last word on whether a string may be handed back as a COMMAND, for
+    // every surface — a report field and a printed line alike. A pasteable
+    // argument is the raw string, so a spelling whose display has to hide part
+    // of itself would print in the remedy exactly what the cause took care
+    // not to. This lived in `absent_source_note`, which is why `check` — which
+    // composes the argument itself — leaked a token two of three surfaces
+    // withheld.
+    argument.filter(|arg| remote_source_display(arg) == *arg)
+}
+
+/// The scope flag a printed command needs.
+///
+/// One place, because a remedy without it is not the same command: pasted from
+/// a global entry's report, `vstack add <source>` installs into the PROJECT
+/// scope, exits 0, and leaves the global entry exactly as broken. `check`
+/// carried the flag from the start; the two surfaces that began prescribing
+/// commands this round did not.
+pub(crate) fn scope_flag(global: bool) -> &'static str {
+    if global { " -g" } else { "" }
 }
 
 /// The cause AND the command that repairs it, as one sentence.
@@ -63,13 +82,12 @@ pub(crate) fn restore_source_argument(source: &str, source_repo: Option<&str>) -
 /// print in the remedy exactly what the cause took care not to. Withholding
 /// the command is the same answer this module already gives wherever no
 /// command can be both correct and safe.
-pub(crate) fn absent_source_note(source: &str, source_repo: Option<&str>) -> String {
+pub(crate) fn absent_source_note(source: &str, source_repo: Option<&str>, global: bool) -> String {
     let cause = absent_source_reason(source);
-    let arg = restore_source_argument(source, source_repo)
-        .filter(|arg| remote_source_display(arg) == *arg);
-    match arg {
+    match restore_source_argument(source, source_repo) {
         Some(arg) => format!(
-            "{cause} — run `vstack add {}`",
+            "{cause} — run `vstack add{} {}`",
+            scope_flag(global),
             crate::display::command_arg(&arg)
         ),
         None => cause,

@@ -15,41 +15,6 @@ use anyhow::Result;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-/// Result counts from one invocation of [`refresh_items_in_scope`].
-#[derive(Default)]
-pub struct RefreshStats {
-    pub agents_refreshed: usize,
-    pub skills_refreshed: usize,
-    pub hooks_refreshed: usize,
-    pub pi_refreshed: usize,
-    pub successful_items: HashSet<String>,
-    pub failures: Vec<RefreshFailure>,
-    /// Map of agent_name → (full merged required-skills list, newly added skill names).
-    pub upstream_skill_updates: HashMap<String, (Vec<String>, Vec<String>)>,
-    /// Names of items whose generated/installed on-disk content actually
-    /// changed during this refresh. Distinct from source-hash equality: an
-    /// agent re-renders when the installed skill set (or injected project
-    /// instructions) changes even though the agent's own source hash is
-    /// unchanged, and a rendered skill can differ from its source via injected
-    /// instructions/notice. Tracked for agents and skills (the artifacts that
-    /// derive from external state); hooks and Pi packages rely on source-hash
-    /// equality alone.
-    pub content_changed: HashSet<String>,
-    /// Canonical project-owned skills managed through `[skill-instructions]`
-    /// despite having no vstack lock entry or upstream package source.
-    pub project_owned_skills: HashSet<String>,
-    /// Locked items that could not be refreshed because their source is gone
-    /// or no longer carries the asset, mapped to the reason. Tracked
-    /// separately from [`Self::failures`] (a failed install attempt) so the
-    /// report can never fall through to "unchanged" with the stored hash —
-    /// that silently masked an entry whose source had stopped providing it.
-    pub missing: BTreeMap<String, String>,
-    /// What source resolution refused, and whether it ran. Handed in once by
-    /// the caller so an entry backed by a refused source is reported as
-    /// refused rather than as absent.
-    refused_sources: crate::refresh_sources::SourceRefusals,
-}
-
 /// A locked hook the run could not read, and why. Every agent installed for
 /// one of its harnesses is left exactly as installed rather than regenerated
 /// without it.
@@ -169,6 +134,7 @@ pub fn refresh_items_in_scope(
 ) -> RefreshStats {
     let mut stats = RefreshStats {
         refused_sources: refused_sources.clone(),
+        global,
         ..RefreshStats::default()
     };
     let pass = |name: &str| name_filter.is_none_or(|f| f.iter().any(|n| n == name));
@@ -1550,6 +1516,7 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
 mod lock_repair;
 mod stats;
 pub(crate) use lock_repair::*;
+pub use stats::RefreshStats;
 
 #[cfg(test)]
 mod tests;

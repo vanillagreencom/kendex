@@ -85,10 +85,7 @@ pub(super) fn humanize_age(secs: u64) -> String {
 /// wrong one. `vstack refresh` deliberately never takes it: unflagged, it
 /// reinstalls at every scope an item is locked at.
 pub(super) fn scope_flag(scope: &str) -> &'static str {
-    match scope {
-        "global" => " -g",
-        _ => "",
-    }
+    crate::refresh_sources::scope_flag(scope == "global")
 }
 
 /// One scope's rendering, whole — drift followed by the suggestions that

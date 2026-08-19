@@ -48,6 +48,19 @@ pub(crate) fn cache_entry_present(remote: &RemoteSource) -> Result<bool> {
     })
 }
 
+/// [`cache_git_dir_presence`] for a source a USER named, which owes a verdict
+/// on what is there as well as on whether it is a clone.
+///
+/// The two states are different and every command must agree on which is
+/// which. NOTHING at the path is absent: `vstack add` re-mints it, and `check`
+/// says so. A DIRECTORY with no `.git` is not a clone vstack can fetch, reset
+/// or establish a remote for — but it is also inside the tree vstack wipes and
+/// resets, so reading it as a stable checkout is the whole defect this module
+/// closes. `add` used to install from one and exit 0 while every other command
+/// called the same string absent and exited 1, and the `vstack add <path>`
+/// that `check` prescribed re-ran that same no-op forever.
+///
+/// `Ok(false)` is the absent case; `Err` is the refusal.
 pub(super) fn cache_entry_is_present(entry: &Path) -> Result<bool> {
     match cache_git_dir_presence(entry) {
         Ok(true) => Ok(true),

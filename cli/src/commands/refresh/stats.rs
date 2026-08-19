@@ -8,6 +8,45 @@
 
 use super::*;
 
+// Result counts from one invocation of [`refresh_items_in_scope`].
+#[derive(Default)]
+pub struct RefreshStats {
+    pub agents_refreshed: usize,
+    pub skills_refreshed: usize,
+    pub hooks_refreshed: usize,
+    pub pi_refreshed: usize,
+    pub successful_items: HashSet<String>,
+    pub failures: Vec<RefreshFailure>,
+    /// Map of agent_name → (full merged required-skills list, newly added skill names).
+    pub upstream_skill_updates: HashMap<String, (Vec<String>, Vec<String>)>,
+    /// Names of items whose generated/installed on-disk content actually
+    /// changed during this refresh. Distinct from source-hash equality: an
+    /// agent re-renders when the installed skill set (or injected project
+    /// instructions) changes even though the agent's own source hash is
+    /// unchanged, and a rendered skill can differ from its source via injected
+    /// instructions/notice. Tracked for agents and skills (the artifacts that
+    /// derive from external state); hooks and Pi packages rely on source-hash
+    /// equality alone.
+    pub content_changed: HashSet<String>,
+    /// Canonical project-owned skills managed through `[skill-instructions]`
+    /// despite having no vstack lock entry or upstream package source.
+    pub project_owned_skills: HashSet<String>,
+    /// Locked items that could not be refreshed because their source is gone
+    /// or no longer carries the asset, mapped to the reason. Tracked
+    /// separately from [`Self::failures`] (a failed install attempt) so the
+    /// report can never fall through to "unchanged" with the stored hash —
+    /// that silently masked an entry whose source had stopped providing it.
+    pub missing: BTreeMap<String, String>,
+    /// What source resolution refused, and whether it ran. Handed in once by
+    /// the caller so an entry backed by a refused source is reported as
+    /// refused rather than as absent.
+    pub(super) refused_sources: crate::refresh_sources::SourceRefusals,
+    /// Which scope this refresh ran in, so a remedy it prints repairs THAT
+    /// scope — a global entry's `vstack add` needs `-g` or it installs into
+    /// the project and leaves the entry broken.
+    pub(super) global: bool,
+}
+
 impl RefreshStats {
     /// Persist any required-skill upstream additions back to the project's
     /// `vstack.toml`. No-op for global scope (no project config).
@@ -79,7 +118,7 @@ impl RefreshStats {
         if let Some(refusal) = self.refused_sources.reason(recorded_source) {
             return refusal.to_string();
         }
-        crate::refresh_sources::absent_source_note(recorded_source, source_repo)
+        crate::refresh_sources::absent_source_note(recorded_source, source_repo, self.global)
     }
 
     pub fn has_failures(&self) -> bool {

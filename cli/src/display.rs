@@ -40,11 +40,19 @@ const REASON_LIMIT: usize = DISPLAY_LIMIT * 4;
 /// terminal would act on, and is still quoted by [`shell_arg`] inside a
 /// command — that is what makes it safe.
 pub(crate) fn scrub_source_credentials(text: &str) -> String {
-    if crate::refresh_sources::looks_like_remote_source(text) {
-        crate::refresh_sources::remote_source_display(text)
-    } else {
-        crate::refresh_sources::escape_unprintable(text)
-    }
+    // UNCONDITIONALLY, because the gate that used to stand here asked the
+    // wrong question. `looks_like_remote_source` answers whether the parser
+    // can USE a spelling, not whether it carries a secret — and a spelling
+    // malformed enough to parse as neither URL nor scp-like is exactly the one
+    // that carries a secret nothing has refused yet. `https:/TOKEN@host/repo`
+    // failed the gate and fell to bare escaping, so the token reached a
+    // report header and a paste-ready command in full while the same string
+    // rendered redacted two clauses away.
+    //
+    // Safe for a plain local path: `redact_stray_userinfo` only rewrites a
+    // bare `user@` where the spelling says a username cannot appear, and a
+    // path has no scheme, so its `@` is left alone.
+    crate::refresh_sources::remote_source_display(text)
 }
 
 /// Characters a shell passes through untouched, so an argument built only
