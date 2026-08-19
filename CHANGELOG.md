@@ -10,6 +10,8 @@
   and turn each `new offender` line into a `path<TAB>lines` baseline row.
   Freezing before declaring baselines files the test class then makes stale.
   Pinning `SIZE_RATCHET_THRESHOLD = "1000"` keeps the old number.
+- hooks: a selected hook whose `event:` is absent from the execution contract
+  is now REFUSED at install rather than written (VST-283).
 
 ### Added
 
