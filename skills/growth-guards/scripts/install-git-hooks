@@ -602,17 +602,36 @@ canonical_dir() { # PATH -> physical directory on stdout, nonzero if unreachable
   (cd -- "$d" 2>/dev/null && pwd -P) || return 1
 }
 
-# Horizontal blanks only, exactly as the tail parser does: `[[:space:]]`
-# treats a trailing carriage return as harmless, but the kernel looks for an
-# interpreter literally named `/bin/sh\r` and git cannot run the hook at all.
-NOARG_SHEBANG_RE='^#![[:blank:]]*([^[:blank:]]*/)?(env[[:blank:]]+)?(sh|bash|dash|ksh|zsh)[[:blank:]]*$'
+# The interpreter a hand-wired hook may run, by FULL PATH. A basename is not
+# an identity here either: `#!/tmp/fake/sh` can be a copy of /bin/true, and
+# then git runs true, ignores the body, and the hook gates nothing. An `env`
+# form resolves through PATH, which is no more knowable, so it is not on the
+# list — such a hook is unverifiable rather than armed.
+gg_trusted_interpreter() { # SHEBANG-LINE -> 0 trusted
+  local rest="$1"
+  rest="${rest#\#!}"
+  rest="${rest#"${rest%%[![:blank:]]*}"}"
+  rest="${rest%"${rest##*[![:blank:]]}"}"
+  case "$rest" in
+    /bin/sh | /bin/bash | /bin/dash | /bin/ksh | /bin/zsh) return 0 ;;
+    /usr/bin/sh | /usr/bin/bash | /usr/bin/dash | /usr/bin/ksh | /usr/bin/zsh) return 0 ;;
+  esac
+  return 1
+}
 
 hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecognized
-  local hook="$1" path="$2" line="" body="" cmd="" tail="" rest="" cmd_dir="" own_dir=""
+  local hook="$1" path="$2" line="" body="" cmd="" tail="" rest="" cmd_dir="" own_dir="" shebang=""
   local seen=0 matched=0 named=0 opaque=0
   [ -r "$path" ] || return 2
   own_dir="$(canonical_dir "$SCRIPT_DIR/$hook")" || return 2
-  head -n 1 "$path" 2>/dev/null | grep -qE "$NOARG_SHEBANG_RE" || return 1
+  shebang="$(head -n 1 "$path" 2>/dev/null)" || return 2
+  # A control character in the shebang means the kernel looks for an
+  # interpreter whose name contains it: git cannot exec the hook at all, and
+  # that is definitive rather than merely unverifiable.
+  case "$shebang" in
+    *[[:cntrl:]]*) return 1 ;;
+  esac
+  gg_trusted_interpreter "$shebang" || return 3
   while IFS= read -r line || [ -n "$line" ]; do
     body="${line%%[![:space:]]*}"
     body="${line#"$body"}"

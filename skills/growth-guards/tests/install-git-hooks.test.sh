@@ -1356,7 +1356,7 @@ must_fail_shape "an entry-point path that is not executable"
 # A shebang option can stop the body running at all: `sh -n` syntax-checks
 # and exits 0, so the hook executes no guard and passes every commit.
 arm_pair '#!/bin/sh -n\nexec %s/pre-commit "$@"\n' '#!/bin/sh -n\nexec %s/commit-msg "$1"\n'
-must_fail_shape "a shebang whose option stops the body running"
+unverifiable_shape "a shebang whose option stops the body running"
 
 # The tail rule cuts both ways, and this is the case that proves `2` is not a
 # synonym for ungated: a trailing comment leaves the tail outside the
@@ -1447,6 +1447,28 @@ rm -f "$R38/ea.txt"
 # all — a clean commit dies with "cannot exec".
 arm_pair '#!/bin/sh\r\nexec %s/pre-commit "$@"\n' '#!/bin/sh\r\nexec %s/commit-msg "$1"\n'
 must_fail_shape "a shebang line ending in a carriage return"
+
+# The interpreter is identified by FULL PATH, not by basename: an executable
+# named `sh` anywhere at all can be a copy of /bin/true, and then git runs
+# true, ignores the hook body, and nothing is gated.
+mkdir -p "$R38/fakebin"
+cp /bin/true "$R38/fakebin/sh"
+chmod +x "$R38/fakebin/sh"
+arm_pair "#!$R38/fakebin/sh\nexec %s/pre-commit \"\$@\"\n" \
+  "#!$R38/fakebin/sh\nexec %s/commit-msg \"\$1\"\n"
+unverifiable_shape "a shebang naming an untrusted interpreter"
+printf '# %s: finish this\n' "$TD" >"$R38/fi.py"
+git -C "$R38" add fi.py
+commit_in "$R38" "feat: add fi"
+[ "$RC" -eq 0 ] && ok "and that interpreter really does swallow the hook body" \
+  || bad "fake interpreter bypasses" "rc=$RC out=$OUT"
+git -C "$R38" rm -q --cached fi.py
+rm -f "$R38/fi.py"
+
+# `env` resolves the interpreter through PATH, which is no more knowable than
+# a custom path — unverifiable, even though such a hook usually does gate.
+arm_pair '#!/usr/bin/env bash\nexec %s/pre-commit "$@"\n' '#!/usr/bin/env bash\nexec %s/commit-msg "$1"\n'
+unverifiable_shape "a shebang resolving its interpreter through env"
 
 # One passing control per shape the check does accept.
 arm_pair '#!/bin/sh\n%s/pre-commit "$@" || exit $?\n' \

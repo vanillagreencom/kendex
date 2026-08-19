@@ -134,7 +134,11 @@ a real installation, because the candidate is compared by PHYSICAL LOCATION
 against this install's own entry point, not by the shape of its path. A path
 is a name and any executable can wear it: a copy of `/bin/true` at
 `…/growth-guards/scripts/pre-commit` passes every file test and gates
-nothing.
+nothing. The INTERPRETER is identified the same way — by full path against a
+short trusted list (`/bin` and `/usr/bin` shells) — because an executable
+named `sh` anywhere can be a copy of `/bin/true`, and git then runs it and
+ignores the hook body entirely. An `env` shebang resolves through PATH, so
+it is unverifiable rather than armed.
 
 A tail counts only when a space or tab separates it from the command — the
 shell concatenates `"…/commit-msg""$1"` into a single word git cannot run —

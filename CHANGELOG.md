@@ -214,7 +214,10 @@
   of the word. The shebang grammar uses blanks for the same reason: a
   `#!/bin/sh` line ending in CR makes the kernel look for an interpreter
   named `/bin/sh\r`, so git cannot run the hook at all and a clean commit
-  dies with `cannot exec`. The
+  dies with `cannot exec`. The interpreter itself is checked by full path
+  against a short trusted list, since `#!/tmp/fake/sh` can be a copy of
+  `/bin/true` — git runs it, ignores the hook body, and gates nothing — and
+  an `env` shebang resolves through PATH, which is no more knowable. The
   suite asserts the property directly rather than the wording: exit 0 is
   claimed only where a real violating commit is really blocked AND a clean
   one still passes, which is the half that separates a working gate from a
