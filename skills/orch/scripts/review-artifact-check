@@ -36,9 +36,14 @@ when the optional delegated_at_epoch is supplied it ALSO applies glob mode's
 freshness gate against filesystem mtime.
 
 Both modes print JSON:
-  {ok: bool, path: string|null,
-   reason: "valid"|"missing"|"stale"|"invalid"|"no_review"|"incomplete"
-           |"zero_sample"}
+  {ok: bool, path: string|null, reason: <see below>}
+
+reason when ok=true:
+  valid              accepted
+  valid_undermeasured accepted, but the artifact declares an instrument that
+             produced nothing (see `measurement_failed` below). Distinct on
+             purpose: a caller branching on reason cannot record an
+             undermeasured domain as a clean one.
 
 reason meanings when ok=false:
   missing    no matching artifact found (glob) / file does not exist (--file)
@@ -66,15 +71,28 @@ reason meanings when ok=false:
              thread count is zero, or a perf_qa payload whose percentiles carry
              no numeric value above zero. A zero RESULT is not a zero sample:
              `stability: 0/10` is ten measured runs that all failed and stays
-             valid. `detail` names the offending citation. Suppressed for an
-             artifact declaring qa_metadata.measurement_failed (see below).
+             valid. Only `.summary` and `.qa_metadata` are scanned — see
+             CARRIERS below. `detail` names the offending citation.
+  invalid_declaration
+             a top-level `measurement_failed` is present but says nothing a
+             reader could act on (wrong type, blank, a null token such as n/a
+             or none, bare punctuation, or too short/too few words). `detail`
+             names what a declaration has to contain.
 
-`measurement_failed`: an artifact may declare a non-empty
-qa_metadata.measurement_failed string naming an instrument that produced no
-samples. It suppresses the zero_sample gate — the reviewer keeps its numbers as
-evidence instead of deleting them to get past a rejection — and is echoed as an
-additive `measurement_failed` field on every result for that artifact, so the
-caller sees that the review ran on a broken instrument.
+`measurement_failed`: a TOP-LEVEL string declaring an instrument that produced
+nothing, naming the instrument and what it did. It replaces the zero_sample
+gate for that artifact — the reviewer keeps its numbers as evidence instead of
+deleting them to get past a rejection — turns the result's reason into
+`valid_undermeasured`, and is echoed as an additive `measurement_failed` field.
+Top-level rather than inside qa_metadata for two reasons: reaching it must not
+require adopting the qa shape and its finding-array contract, and it must stay
+outside the citation scan so a declaration naming the zeros it observed cannot
+trip the gate it exists to release.
+
+CARRIERS: the zero_sample scan reads `.summary` and `.qa_metadata` only — where
+an artifact states its OWN measurements. blockers[]/suggestions[]/questions[]
+describe the code under review, so a reviewer quoting a fixture, a log line, or
+another tool's zeroed run puts it there and the gate stays out of its way.
 
 TERMINAL vs per-file rejections (glob mode): `no_review` and `zero_sample` are
 the reviewer's self-report about the RUN, so the newest fresh artifact carrying
@@ -83,15 +101,25 @@ self-check boundary of 0 makes every prior artifact fresh. `stale`, `invalid`
 and `incomplete` describe one WRITE, so the search falls back past them to an
 intact sibling as before.
 
-When ok=false with reason=incomplete because of a malformed item, or with
-reason=zero_sample, an extra `detail` string field is included — for
-incomplete, identifying the array, index, and missing or invalid fields (e.g.
-"suggestions[0]: missing/invalid category, description"); for zero_sample, the
-citation that measured nothing. The {ok, path, reason} fields are always
-present and unchanged; `detail` is additive.
+Every ok=false result carries a `detail` naming its cause: a reason with no
+cause is a dead end for the agent that has to fix it, and review-pr.md § 3.1
+spends its one permitted re-delegation relaying that text. The {ok, path,
+reason} fields are always present; `detail` and `measurement_failed` are
+additive.
+
+When jq cannot run at all, every mode still prints a parseable rejection
+({"ok":false,...,"reason":"invalid"}) rather than exiting empty — a caller
+reading .ok gets a refusal, never a parse it has to guess about.
 
 Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error.
 EOF
+}
+
+# Last-resort emitter: no jq, no substitution, no way to fail. Every mode ends
+# in a parseable result even when jq is missing or broken, so a caller reading
+# .ok gets a rejection rather than an empty parse it has to guess about.
+emit_unavailable() {
+  printf '{"ok":false,"path":null,"reason":"invalid","detail":"review-artifact-check could not run jq, so no artifact could be validated"}\n'
 }
 
 # A declared instrument failure rides along on every result for the artifact
@@ -99,13 +127,17 @@ EOF
 # instrument, whether or not the artifact was otherwise acceptable.
 emit() {
   local ok="$1" path="$2" reason="$3" detail="${4:-}"
-  local measurement_failed="${review_artifact_measurement_failed:-}"
-  jq -n --argjson ok "$ok" --arg path "$path" --arg reason "$reason" \
+  local measurement_failed="${review_artifact_measurement_failed:-}" out
+  if out="$(jq -n --argjson ok "$ok" --arg path "$path" --arg reason "$reason" \
     --arg detail "$detail" --arg measurement_failed "$measurement_failed" \
     '{ok: $ok, path: (if $path == "" then null else $path end), reason: $reason}
      + (if $detail == "" then {} else {detail: $detail} end)
      + (if $measurement_failed == "" then {}
-        else {measurement_failed: $measurement_failed} end)'
+        else {measurement_failed: $measurement_failed} end)' 2>/dev/null)"; then
+    printf '%s\n' "$out"
+  else
+    emit_unavailable
+  fi
 }
 
 file_mtime() {
@@ -168,12 +200,19 @@ if [[ "${1:-}" == "--file" ]]; then
       exit 1
     fi
   fi
-  if ! jq -e '.verdict' "$file" >/dev/null 2>&1; then
-    emit false "$file" "invalid"
+  verdict_rc=0
+  jq -e '.verdict' "$file" >/dev/null 2>"$review_artifact_gate_err" || verdict_rc=$?
+  if [[ "$verdict_rc" -ne 0 ]]; then
+    review_artifact_measurement_failed=""
+    if [[ "$verdict_rc" -eq 1 ]]; then
+      emit false "$file" "invalid" "the artifact has no .verdict field (or it is null) — every review artifact must carry verdict: pass or action_required"
+    else
+      emit false "$file" "invalid" "$(gate_failure_detail "$verdict_rc")"
+    fi
     exit 1
   fi
   if artifact_content_gates "$file"; then
-    emit true "$file" "valid"
+    emit true "$file" "$review_artifact_reason"
     exit 0
   fi
   emit false "$file" "$review_artifact_reason" "$review_artifact_detail"
@@ -239,15 +278,22 @@ while IFS= read -r file; do
     fi
     continue
   fi
-  if ! jq -e '.verdict' "$file" >/dev/null 2>&1; then
+  verdict_rc=0
+  jq -e '.verdict' "$file" >/dev/null 2>"$review_artifact_gate_err" || verdict_rc=$?
+  if [[ "$verdict_rc" -ne 0 ]]; then
     if [[ -z "$fail_path" ]]; then
       fail_path="$file"
       reason="invalid"
+      if [[ "$verdict_rc" -eq 1 ]]; then
+        fail_detail="the artifact has no .verdict field (or it is null) — every review artifact must carry verdict: pass or action_required"
+      else
+        fail_detail="$(gate_failure_detail "$verdict_rc")"
+      fi
     fi
     continue
   fi
   if artifact_content_gates "$file"; then
-    emit true "$file" "valid"
+    emit true "$file" "$review_artifact_reason"
     return 0
   fi
   case "$review_artifact_reason" in
@@ -285,11 +331,13 @@ if (( wait_secs > 0 )); then
   while :; do
     rc=0
     out="$(glob_check)" || rc=$?
-    # Capturing glob_check's stdout suspends errexit for its whole body, so an
-    # accept path that failed part-way still returns 0 with unusable output.
-    # Acceptance is only acceptance when a well-formed ok=true result came with
-    # it; anything else is the check failing, never an approval.
-    if [[ "$rc" == "0" ]] && ! jq -e '.ok == true' <<<"$out" >/dev/null 2>&1; then
+    # Capturing glob_check's stdout suspends errexit for its whole body, so a
+    # path that failed part-way still returns with unusable output. BOTH
+    # directions are covered: an accept is only an accept when a well-formed
+    # ok=true came with it, and a rejection still has to be a parseable result
+    # rather than whatever happened to be on stdout.
+    if ! jq -e 'has("ok")' <<<"$out" >/dev/null 2>&1 \
+       || { [[ "$rc" == "0" ]] && ! jq -e '.ok == true' <<<"$out" >/dev/null 2>&1; }; then
       review_artifact_measurement_failed=""
       emit false "" "invalid" "the artifact check produced no usable result: $(printf '%s' "$out" | tr '\n\t' '  ')"
       exit 1

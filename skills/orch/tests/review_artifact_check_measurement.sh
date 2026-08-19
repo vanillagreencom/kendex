@@ -152,15 +152,44 @@ zs_mut_partial="$worktree/tmp/review-external-20260815-037373.json"
 printf '{"agent":"reviewer-test","verdict":"action_required","summary":"mutation: killed 2/3; stability: 9/10 at 16 threads"}' > "$zs_mut_partial"
 expect_valid "$zs_mut_partial" "--file partial kill / partial stability stays valid"
 
-# the citation is caught wherever it lives, not only in .summary
+# --- CARRIERS: .summary and .qa_metadata are the artifact's own measurements ---
+# Scanning every string leaf left no honest route for quoting somebody else's
+# zeroed run: the reviewer had to delete its evidence or declare an instrument
+# failure that was not its own. The same text is a rejection in the summary and
+# fine inside the finding it is evidence for — both directions pinned, or the
+# scope is a comment rather than a rule.
 zs_deep="$worktree/tmp/review-external-20260815-040404.json"
-printf '{"agent":"reviewer-test","verdict":"action_required","summary":"s","blockers":[{"id":1,"title":"t","location":"src/x.rs (`f`)","description":"evidence: mutation: killed 0/0; stability: 10/10 at 16 threads","recommendation":"r","priority":2,"estimate":2}],"suggestions":[],"qa_metadata":{}}' > "$zs_deep"
+printf '{"agent":"reviewer-test","verdict":"action_required","summary":"s","blockers":[{"id":1,"title":"t","location":"src/x.rs (`f`)","description":"the fixture proves the gate rejects mutation: killed 0/0; stability: 0/0 at 16 threads","recommendation":"r","priority":2,"estimate":2}],"suggestions":[],"qa_metadata":{}}' > "$zs_deep"
+expect_valid "$zs_deep" "--file a zeroed citation QUOTED in a blocker description is out of scope"
+
+zs_deep_sugg="$worktree/tmp/review-external-20260815-041414.json"
+printf '{"agent":"reviewer-test","verdict":"pass","summary":"s","blockers":[],"suggestions":[{"id":1,"title":"t","location":"tests/x.sh","description":"the fixture uses mutation: killed 0/0 as its control","recommendation":"r","priority":3,"estimate":1,"category":"fix"}],"qa_metadata":{}}' > "$zs_deep_sugg"
+expect_valid "$zs_deep_sugg" "--file a zeroed citation quoted in a suggestion is out of scope"
+
+zs_deep_q="$worktree/tmp/review-external-20260815-042424.json"
+printf '{"agent":"reviewer-test","verdict":"pass","summary":"s","blockers":[],"suggestions":[],"questions":[{"id":1,"location":"general","question":"is mutation: killed 0/0 expected here?","draft_response":"d","source":"@x","source_id":"1","source_type":"inline"}],"qa_metadata":{}}' > "$zs_deep_q"
+expect_valid "$zs_deep_q" "--file a zeroed citation quoted in a question is out of scope"
+
+# ...and the SAME text in the artifact's own carriers still rejects, or the
+# scoping would have disarmed the gate rather than aimed it.
+zs_own_summary="$worktree/tmp/review-external-20260815-043434.json"
+printf '{"agent":"reviewer-test","verdict":"pass","summary":"the fixture proves the gate rejects mutation: killed 0/0; stability: 0/0 at 16 threads","blockers":[],"suggestions":[],"qa_metadata":{}}' > "$zs_own_summary"
 set +e
-out="$("$CHECK" --file "$zs_deep")"
+out="$("$CHECK" --file "$zs_own_summary")"
 rc=$?
 set -e
-assert_eq "$rc" "1" "--file zero-sample citation inside a blocker description exits 1"
-assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "--file nested citation reports reason=zero_sample"
+assert_eq "$rc" "1" "--file the same text in .summary still exits 1"
+assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "--file a citation in .summary is the artifact's own measurement"
+assert_substr "$(jq -r '.detail' <<<"$out")" "blocker or suggestion" "--file the rejection points at the honest route for quoted numbers"
+
+zs_own_qa="$worktree/tmp/review-external-20260815-044444.json"
+printf '{"agent":"reviewer-test","verdict":"pass","summary":"s","blockers":[],"suggestions":[],"qa_metadata":{"test_qa":{"note":"mutation: killed 0/0"}}}' > "$zs_own_qa"
+set +e
+out="$("$CHECK" --file "$zs_own_qa")"
+rc=$?
+set -e
+assert_eq "$rc" "1" "--file a citation nested in qa_metadata still exits 1"
+assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "--file qa_metadata is the artifact's own measurement payload"
 
 # whitespace between citation tokens is not one fixed spelling: a citation the
 # reviewer's own formatting wrapped across a newline must still count
@@ -238,40 +267,126 @@ zs_perf_case "one real number among zeros"    '{"percentiles":{"p50":0,"p99":4.2
 zs_perf_case "percentiles as a populated array" '{"percentiles":[1.5,2.5]}'         valid
 zs_perf_case "no perf_qa payload at all"      'null'                                valid
 
-# --- declared instrument failure keeps the evidence and stays visible ---
-# The gate must not suppress the finding class it exists to promote: a reviewer
-# whose harness produced nothing declares it, keeps its numbers, and the
-# declaration rides back out on the result.
+# --- the declaration: top-level, substantive, and mechanically visible ---
+# The escape must not require adopting the qa shape (that made following the
+# rejection's own instruction dead-end in a second refusal), must not be
+# satisfiable by any single character, and must not read as a plain green.
 zs_declared="$worktree/tmp/review-external-20260815-080808.json"
-printf '{"agent":"reviewer-test","verdict":"action_required","summary":"harness produced nothing: mutation: killed 0/0","blockers":[],"suggestions":[],"qa_metadata":{"measurement_failed":"cargo-mutants selected 0 mutants for the changed file"}}' > "$zs_declared"
-expect_valid "$zs_declared" "--file a declared measurement failure keeps its zero citation"
+printf '{"agent":"reviewer-test","verdict":"action_required","summary":"harness produced nothing: mutation: killed 0/0","blockers":[],"suggestions":[],"measurement_failed":"cargo-mutants selected 0 mutants for the changed file"}' > "$zs_declared"
 set +e
 out="$("$CHECK" --file "$zs_declared")"
+rc=$?
 set -e
+assert_eq "$rc" "0" "--file a declared measurement failure is accepted"
+assert_eq "$(jq -r '.ok' <<<"$out")" "true" "--file a declared measurement failure keeps its zero citation"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid_undermeasured" "--file a declaration gets its own reason, not a plain valid"
 assert_eq "$(jq -r '.measurement_failed' <<<"$out")" "cargo-mutants selected 0 mutants for the changed file" "--file the declaration is echoed on the result"
 
+# THE DEAD END: an artifact in the tolerant shape (no qa_metadata) that adopts
+# the escape must validate. Reaching the declaration used to require adding
+# qa_metadata, which then demanded the finding arrays.
+zs_tolerant="$worktree/tmp/review-external-20260815-080909.json"
+printf '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 0/0","measurement_failed":"cargo-mutants selected 0 mutants for this module"}' > "$zs_tolerant"
+set +e
+out="$("$CHECK" --file "$zs_tolerant")"
+rc=$?
+set -e
+assert_eq "$rc" "0" "--file the tolerant shape can adopt the escape without adding qa_metadata"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid_undermeasured" "--file the tolerant-shape declaration is accepted as undermeasured"
+
 zs_declared_perf="$worktree/tmp/review-external-20260815-081818.json"
-printf '{"agent":"reviewer-perf","verdict":"action_required","summary":"s","blockers":[],"suggestions":[],"qa_metadata":{"measurement_failed":"bench runner emitted no samples","perf_qa":{"percentiles":{}}}}' > "$zs_declared_perf"
-expect_valid "$zs_declared_perf" "--file a declared failure also covers an empty perf payload"
-
-# MUST-FAIL CONTROLS on the escape: it is a declaration, not a field that exists
-zs_blank="$worktree/tmp/review-external-20260815-082828.json"
-printf '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"qa_metadata":{"measurement_failed":"   "}}' > "$zs_blank"
+printf '{"agent":"reviewer-perf","verdict":"action_required","summary":"s","blockers":[],"suggestions":[],"measurement_failed":"the bench runner emitted no samples for any lane","qa_metadata":{"perf_qa":{"percentiles":{}}}}' > "$zs_declared_perf"
 set +e
-out="$("$CHECK" --file "$zs_blank")"
-rc=$?
+out="$("$CHECK" --file "$zs_declared_perf")"
 set -e
-assert_eq "$rc" "1" "--file a blank measurement_failed does not suppress the gate"
-assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "--file blank declaration still reports zero_sample"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid_undermeasured" "--file a declared failure also covers an empty perf payload"
 
-zs_nonstr="$worktree/tmp/review-external-20260815-083838.json"
-printf '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"qa_metadata":{"measurement_failed":true}}' > "$zs_nonstr"
+# A declaration alongside verdict "pass" is still not a plain green — the reason
+# is what an orchestrator branches on, and it says undermeasured.
+zs_declared_pass="$worktree/tmp/review-external-20260815-082020.json"
+printf '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"measurement_failed":"cargo-mutants selected 0 mutants for the changed file"}' > "$zs_declared_pass"
 set +e
-out="$("$CHECK" --file "$zs_nonstr")"
-rc=$?
+out="$("$CHECK" --file "$zs_declared_pass")"
 set -e
-assert_eq "$rc" "1" "--file a non-string measurement_failed does not suppress the gate"
-assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "--file non-string declaration still reports zero_sample"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid_undermeasured" "--file verdict pass plus a declaration is never reported as plain valid"
+assert_eq "$(jq -r '.ok' <<<"$out")" "true" "--file verdict pass plus a declaration is still an accepted artifact"
+
+# MUST-FAIL CONTROLS on the escape: it has to SAY something. Any single
+# character used to open it.
+# zs_decl_case <name> <json-literal> <expected-reason> [expected-detail-substring]
+# The detail argument is load-bearing: these rejection branches OVERLAP (a null
+# token is also short, bare punctuation is also short), so a verdict-only
+# assertion lets any one of them be deleted while the suite stays green — the
+# message is the only thing that distinguishes which branch answered, and the
+# message is what the reviewer has to act on.
+zs_decl_case() {
+  local name="$1" literal="$2" want="$3" want_detail="${4:-}" path
+  path="$worktree/tmp/review-external-20260815-083$(printf '%03d' "$DECL_N").json"
+  DECL_N=$((DECL_N + 1))
+  printf '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"measurement_failed":%s}' "$literal" > "$path"
+  set +e
+  local out
+  out="$("$CHECK" --file "$path")"
+  set -e
+  assert_eq "$(jq -r '.reason' <<<"$out")" "$want" "--file declaration $name -> $want"
+  # The detail is "<what this branch found> — <the shared requirement>". The
+  # requirement sentence necessarily quotes the very tokens the branches match
+  # on ("null token", "characters", "bare punctuation"), so a needle tested
+  # against the WHOLE string matches the boilerplate and pins nothing. Split on
+  # the first em-dash and test each half against what only it can say.
+  local detail branch bar
+  detail="$(jq -r '.detail // ""' <<<"$out")"
+  branch="${detail%% — *}"
+  bar="${detail#* — }"
+  if [[ "$want" == "invalid_declaration" ]]; then
+    assert_eq "$(jq -r 'has("measurement_failed")' <<<"$out")" "false" "--file declaration $name is not echoed as a real declaration"
+    assert_substr "$bar" "name the instrument" "--file declaration $name is told what a declaration must contain"
+  fi
+  if [[ -n "$want_detail" ]]; then
+    assert_substr "$branch" "$want_detail" "--file declaration $name is refused by the right branch"
+  fi
+}
+DECL_N=1
+zs_decl_case "a single period"        '"."'            invalid_declaration "punctuation only"
+zs_decl_case "n/a"                    '"n/a"'          invalid_declaration "null token"
+zs_decl_case "N/A with punctuation"   '"N/A."'         invalid_declaration "null token"
+zs_decl_case "none"                   '"none"'         invalid_declaration "null token"
+zs_decl_case "unknown"                '"unknown"'      invalid_declaration "null token"
+zs_decl_case "unavailable"            '"unavailable"'  invalid_declaration "null token"
+zs_decl_case "tbd"                    '"tbd"'          invalid_declaration "null token"
+zs_decl_case "bare punctuation"       '"---"'          invalid_declaration "punctuation only"
+zs_decl_case "long bare punctuation"  '"---------------------------"' invalid_declaration "punctuation only"
+zs_decl_case "whitespace only"        '"   "'          invalid_declaration "is blank"
+zs_decl_case "one long word"          '"instrumentfailedbadly"' invalid_declaration "is 1 word(s)"
+zs_decl_case "three tiny words"       '"a b c"'        invalid_declaration "is 5 characters"
+zs_decl_case "a boolean"              'true'           invalid_declaration "must be a string"
+zs_decl_case "a number"               '0'              invalid_declaration "must be a string"
+zs_decl_case "an object"              '{"why":"broke"}' invalid_declaration "must be a string"
+zs_decl_case "an array"               '["broke"]'      invalid_declaration "must be a string"
+zs_decl_case "null"                   'null'           zero_sample
+# ...and the accepting direction: a real sentence naming the instrument
+zs_decl_case "a real declaration"     '"cargo-mutants selected 0 mutants"' valid_undermeasured
+
+# The declaration is read in ONE place, so the echoed value and the decision to
+# skip the gate cannot disagree. Walk the boundary either side of the bar.
+zs_boundary() {
+  local literal="$1" want_reason="$2" want_echo="$3" name="$4" path out
+  path="$worktree/tmp/review-external-20260815-084$(printf '%03d' "$DECL_N").json"
+  DECL_N=$((DECL_N + 1))
+  printf '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"measurement_failed":%s}' "$literal" > "$path"
+  set +e
+  out="$("$CHECK" --file "$path")"
+  set -e
+  assert_eq "$(jq -r '.reason' <<<"$out")" "$want_reason" "--file boundary $name reason"
+  assert_eq "$(jq -r '.measurement_failed // "-"' <<<"$out")" "$want_echo" "--file boundary $name echo agrees with the decision"
+}
+# 19 characters, 3 words: one short of the bar. A present-but-inadequate
+# declaration is refused on its OWN terms rather than silently ignored — the
+# reviewer meant to declare something, and dropping it would hide the
+# instrument failure the same way deleting the numbers would.
+zs_boundary '"aa bbbb ccccccccccc"' invalid_declaration - "19 characters"
+# 20 characters, 3 words: exactly the bar
+zs_boundary '"aa bbbb cccccccccccc"' valid_undermeasured "aa bbbb cccccccccccc" "20 characters"
 
 # an artifact with no declaration carries no measurement_failed field
 set +e
@@ -351,6 +466,122 @@ set +e
 out="$("$CHECK" "$gwt" gf 0 --wait 4 --interval 1 2>/dev/null)"
 set -e
 assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "--wait with real jq still reports the real rejection"
+
+# --- jq's stderr never reaches the answer channel ---
+# gate_filter merged stderr into stdout, so ANY jq diagnostic that leaves the
+# exit status alone became the gate's finding. JQ_COLORS=zz is a documented jq
+# variable that prints "Failed to set $JQ_COLORS" and exits 0: every artifact
+# checked in that environment was rejected with a wrong cause, and the same
+# string was echoed back as a FABRICATED instrument-failure declaration.
+STDERR_SHIM="$TMP_ROOT/jqshim-stderr"
+mkdir -p "$STDERR_SHIM"
+printf '#!/usr/bin/env bash\necho "chatty jq: a diagnostic that changes no exit status" >&2\nexec %s "$@"\n' "$REAL_JQ" > "$STDERR_SHIM/jq"
+chmod +x "$STDERR_SHIM/jq"
+
+zs_chatty="$worktree/tmp/review-external-20260815-095959.json"
+printf '{"agent":"reviewer-quality","verdict":"pass","summary":"no measurement in scope","blockers":[],"suggestions":[],"qa_metadata":{}}' > "$zs_chatty"
+set +e
+out="$(PATH="$STDERR_SHIM:$PATH" "$CHECK" --file "$zs_chatty")"
+rc=$?
+set -e
+assert_eq "$rc" "0" "--file a clean artifact still validates under a jq that writes to stderr"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file a stderr diagnostic is not read as a finding"
+assert_eq "$(jq -r 'has("measurement_failed")' <<<"$out")" "false" "--file a stderr diagnostic is not echoed as a fabricated declaration"
+
+# the real variable from the report, not just a hand-built shim
+set +e
+out="$(JQ_COLORS=zz "$CHECK" --file "$zs_chatty" 2>/dev/null)"
+rc=$?
+set -e
+assert_eq "$rc" "0" "--file JQ_COLORS=zz does not turn a clean artifact into a rejection"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file JQ_COLORS=zz leaves the verdict alone"
+assert_eq "$(jq -r 'has("measurement_failed")' <<<"$out")" "false" "--file JQ_COLORS=zz fabricates no declaration"
+
+# ...and a REAL rejection is still reported under the same chatty jq, so the
+# fix is channel separation and not a gate that stopped answering.
+set +e
+out="$(PATH="$STDERR_SHIM:$PATH" "$CHECK" --file "$zs_mut")"
+rc=$?
+set -e
+assert_eq "$rc" "1" "--file a real rejection survives a chatty jq"
+assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "--file the chatty jq does not mask a genuine zero_sample"
+assert_substr "$(jq -r '.detail' <<<"$out")" "killed 0/0" "--file the detail is the gate's finding, not jq's chatter"
+
+# --- no mode exits without a parseable result ---
+# emit needs jq too, so when jq is unavailable the script used to exit 127 with
+# empty stdout (or, in --wait, a blank line): a caller reading .ok got a parse
+# error rather than a refusal.
+NOJQ_BIN="$TMP_ROOT/nojq-bin"
+mkdir -p "$NOJQ_BIN"
+for b in bash env dirname mktemp rm tr stat date sleep ls cat sed grep basename touch mkdir printf; do
+  bp="$(command -v "$b" 2>/dev/null)" && ln -sf "$bp" "$NOJQ_BIN/$b"
+done
+if [[ -n "$(PATH="$NOJQ_BIN" command -v jq 2>/dev/null || printf '')" ]]; then
+  fail "the no-jq fixture PATH still resolves jq"
+else
+  nojq_wt="$TMP_ROOT/nojq-wt"
+  mkdir -p "$nojq_wt/tmp"
+  cp "$zs_chatty" "$nojq_wt/tmp/review-nojq-20260101-000001.json"
+  nojq_case() {
+    local label="$1"
+    shift
+    local out rc=0
+    set +e
+    out="$(PATH="$NOJQ_BIN" "$CHECK" "$@" 2>/dev/null)"
+    rc=$?
+    set -e
+    assert_eq "$rc" "1" "no jq: $label exits 1, not 127"
+    assert_eq "$(jq -r '.ok' <<<"$out" 2>/dev/null || printf 'unparseable')" "false" "no jq: $label prints a parseable rejection"
+    assert_eq "$(jq -r '.reason' <<<"$out" 2>/dev/null || printf 'unparseable')" "invalid" "no jq: $label reports reason=invalid"
+  }
+  nojq_case "--file mode" --file "$zs_chatty"
+  nojq_case "glob mode" "$nojq_wt" nojq 0
+  nojq_case "--wait mode" "$nojq_wt" nojq 0 --wait 2 --interval 1
+
+  # a jq that is PRESENT but fails every call takes the same route: the entry
+  # probe passes, so this exercises emit's own fallback rather than the probe.
+  BROKEN_BIN="$TMP_ROOT/brokenjq-bin"
+  mkdir -p "$BROKEN_BIN"
+  cp -a "$NOJQ_BIN/." "$BROKEN_BIN/"
+  printf '#!/usr/bin/env bash\nexit 3\n' > "$BROKEN_BIN/jq"
+  chmod +x "$BROKEN_BIN/jq"
+  set +e
+  out="$(PATH="$BROKEN_BIN" "$CHECK" --file "$zs_chatty" 2>/dev/null)"
+  rc=$?
+  set -e
+  assert_eq "$rc" "1" "a jq that fails every call exits 1"
+  assert_eq "$(jq -r '.reason' <<<"$out" 2>/dev/null || printf 'unparseable')" "invalid" "a jq that fails every call still prints a parseable rejection"
+fi
+
+# --- --wait never exits 0 without an acceptance behind it ---
+# Capturing glob_check's stdout suspends errexit for its body, so a path that
+# failed part-way still returns 0. Construct exactly that: a jq that works for
+# every gate but fails emit's own `jq -n`, so the accept path falls through to
+# the jq-free emitter and glob_check returns 0 carrying a REJECTION. Without the
+# guard the driver prints that body under exit 0 — an approval exit code on a
+# refusal.
+EMIT_SHIM="$TMP_ROOT/jqshim-emit"
+mkdir -p "$EMIT_SHIM"
+printf '#!/usr/bin/env bash\nif [ "$1" = "-n" ]; then exit 4; fi\nexec %s "$@"\n' "$REAL_JQ" > "$EMIT_SHIM/jq"
+chmod +x "$EMIT_SHIM/jq"
+ewt="$TMP_ROOT/emitwt"
+mkdir -p "$ewt/tmp"
+printf '{"agent":"ew","verdict":"pass","summary":"clean","blockers":[],"suggestions":[],"qa_metadata":{}}' > "$ewt/tmp/review-ew-20260101-000001.json"
+set +e
+out="$(PATH="$EMIT_SHIM:$PATH" "$CHECK" "$ewt" ew 0 --wait 3 --interval 1 2>/dev/null)"
+rc=$?
+set -e
+assert_eq "$rc" "1" "--wait exits 1 when the accept path could not emit an acceptance"
+assert_eq "$(jq -r '.ok' <<<"$out" 2>/dev/null || printf 'unparseable')" "false" "--wait reports ok=false rather than an exit-0 refusal"
+assert_eq "$(jq -r '.reason' <<<"$out" 2>/dev/null || printf 'unparseable')" "invalid" "--wait reports the emit failure as invalid"
+
+# MUST-FAIL CONTROL: the same shim, the same artifact, real jq — accepted.
+set +e
+out="$("$CHECK" "$ewt" ew 0 --wait 3 --interval 1 2>/dev/null)"
+rc=$?
+set -e
+assert_eq "$rc" "0" "--wait with a working emit accepts the same artifact"
+assert_eq "$(jq -r '.ok' <<<"$out")" "true" "--wait with a working emit reports ok=true"
 
 # --- glob mode: zero_sample is TERMINAL, not advisory ---
 # On a zero_sample hit the search used to record the rejection and keep walking,

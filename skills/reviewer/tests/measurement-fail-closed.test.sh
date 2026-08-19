@@ -77,6 +77,8 @@ expect_field() {
   fi
 }
 
+DEGEN_N=1
+
 echo "=== reviewer measurement fail-closed contract ==="
 
 skill="$SKILL_DIR/SKILL.md"
@@ -90,9 +92,13 @@ require_fixed "$skill" 'produced zero samples' 'Ethos states the zero-sample rul
 require_fixed "$skill" 'exited nonzero' 'Ethos covers a measuring pipeline that failed'
 require_fixed "$skill" 'instrument failure' 'Ethos names the classification'
 require_fixed "$skill" 'measurement_failed' 'Ethos names the declaration, so evidence is kept not deleted'
+require_fixed "$skill" 'top-level' 'Ethos says where the declaration goes'
 require_fixed "$skill" 'stability: 0/10' 'Ethos distinguishes a zero result from a zero sample'
 require_fixed "$schema" 'zero_sample' 'schema doc names the rejection reason'
 require_fixed "$schema" 'measurement_failed' 'schema doc specifies the declaration field'
+require_fixed "$schema" 'invalid_declaration' 'schema doc names the bar a declaration must clear'
+require_fixed "$schema" 'valid_undermeasured' 'schema doc names the state a declaration produces'
+require_fixed "$schema" 'are never scanned' 'schema doc says where quoted numbers belong'
 require_fixed "$schema" 'Omitting the numbers is never the way past this gate' 'schema doc forbids the omission shortcut'
 
 # --- b. the gate enforces it, in both directions ---
@@ -145,24 +151,49 @@ else
     "$(artifact uncited '{"agent":"reviewer-quality","verdict":"pass","summary":"no measurement in scope for this domain"}')" \
     valid "gate leaves an artifact citing no measurement alone"
 
-  # THE FINDING CLASS THE GATE EXISTS TO PROMOTE. A reviewer that discovers the
-  # harness generated nothing must be able to report it WITH the numbers; the
-  # declaration is the route, and it travels back out to the orchestrator so the
-  # broken instrument is visible rather than quietly tolerated.
-  declared="$(artifact declared-failure '{"agent":"reviewer-test","verdict":"action_required","summary":"harness produced nothing: mutation: killed 0/0","blockers":[],"suggestions":[],"qa_metadata":{"measurement_failed":"cargo-mutants selected 0 mutants for the changed file"}}')"
-  expect_reason "$declared" valid "a declared instrument failure keeps its zero citation"
+  # QUOTING SOMEBODY ELSE'S ZEROED RUN. .summary and .qa_metadata carry the
+  # artifact's own measurements; the finding arrays describe the code under
+  # review, so numbers a reviewer is quoting go there and the gate stays out of
+  # the way. Both directions, or the scope is a comment rather than a rule.
+  expect_reason \
+    "$(artifact quoted-in-blocker '{"agent":"reviewer-test","verdict":"action_required","summary":"reviewed the gate","blockers":[{"id":1,"title":"t","location":"tests/x.sh","description":"the fixture uses mutation: killed 0/0 to prove the gate rejects","recommendation":"r","priority":3,"estimate":1}],"suggestions":[],"qa_metadata":{}}')" \
+    valid "a zeroed citation quoted inside a blocker is out of scope"
+  expect_reason \
+    "$(artifact same-text-in-summary '{"agent":"reviewer-test","verdict":"pass","summary":"the fixture uses mutation: killed 0/0 to prove the gate rejects","blockers":[],"suggestions":[],"qa_metadata":{}}')" \
+    zero_sample "the same text in .summary is the artifact's own measurement"
+
+  # THE FINDING CLASS THE GATE EXISTS TO PROMOTE. A reviewer whose OWN harness
+  # generated nothing must be able to report it WITH the numbers. The
+  # declaration is top-level — reaching it must not require adopting the qa
+  # shape and its finding-array contract — and it produces its own reason, so
+  # an orchestrator branching on reason cannot record the domain as clean.
+  declared="$(artifact declared-failure '{"agent":"reviewer-test","verdict":"action_required","summary":"harness produced nothing: mutation: killed 0/0","blockers":[],"suggestions":[],"measurement_failed":"cargo-mutants selected 0 mutants for the changed file"}')"
+  expect_reason "$declared" valid_undermeasured "a declared instrument failure keeps its zero citation"
   expect_field "$declared" '.measurement_failed' \
     "cargo-mutants selected 0 mutants for the changed file" \
     "the declaration is echoed back on the check's result"
+  expect_field "$declared" '.ok' true "a declared instrument failure is still an accepted artifact"
 
-  # MUST-FAIL CONTROLS on the escape: it is a declaration, not a field that
-  # merely exists. Neither blank nor non-string suppresses the gate.
+  # Following the rejection's instruction from the tolerant shape must not
+  # dead-end in a second, different refusal.
   expect_reason \
-    "$(artifact blank-declaration '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"qa_metadata":{"measurement_failed":"   "}}')" \
-    zero_sample "a blank measurement_failed does not suppress the gate"
+    "$(artifact tolerant-adopts-escape '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 0/0","measurement_failed":"cargo-mutants selected 0 mutants for this module"}')" \
+    valid_undermeasured "an artifact with no qa_metadata can adopt the escape"
+
+  # A declaration next to verdict "pass" is not a plain green.
   expect_reason \
-    "$(artifact nonstring-declaration '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"qa_metadata":{"measurement_failed":true}}')" \
-    zero_sample "a non-string measurement_failed does not suppress the gate"
+    "$(artifact declared-and-pass '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"measurement_failed":"cargo-mutants selected 0 mutants for the changed file"}')" \
+    valid_undermeasured "verdict pass beside a declaration is never reported as plain valid"
+
+  # MUST-FAIL CONTROLS on the escape: it has to SAY something, and it is
+  # refused on its own terms rather than silently ignored.
+  for degenerate in '"."' '"n/a"' '"none"' '"unknown"' '"   "' '"---"' 'true' '0'; do
+    expect_reason \
+      "$(artifact "degenerate-$DEGEN_N" "{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",\"blockers\":[],\"suggestions\":[],\"measurement_failed\":$degenerate}")" \
+      invalid_declaration "a declaration of $degenerate names no instrument and is refused"
+    DEGEN_N=$((DEGEN_N + 1))
+  done
+
   expect_field \
     "$(artifact undeclared '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 3/3; stability: 10/10 at 16 threads"}')" \
     'has("measurement_failed")' false \
@@ -183,6 +214,25 @@ else
   printf '#!/usr/bin/env bash\nfor a in "$@"; do\n  case "$a" in\n    *"gate:zero-sample"*) echo "jq: error: simulated torn read" >&2; exit 5 ;;\n  esac\ndone\nexec %s "$@"\n' "$real_jq" > "$shim_dir/jq"
   chmod +x "$shim_dir/jq"
   clean="$(artifact clean-for-shim '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 3/3; stability: 10/10 at 16 threads"}')"
+
+  # A jq diagnostic that leaves the exit status alone is not a finding: it used
+  # to be merged into the answer and echoed as a fabricated declaration.
+  chatty_dir="$TMP_ROOT/jqchatty"
+  mkdir -p "$chatty_dir"
+  printf '#!/usr/bin/env bash\necho "chatty jq diagnostic" >&2\nexec %s "$@"\n' "$(command -v jq)" > "$chatty_dir/jq"
+  chmod +x "$chatty_dir/jq"
+  set +e
+  chatty_out="$(PATH="$chatty_dir:$PATH" "$CHECK" --file "$clean" 2>/dev/null)"
+  chatty_rc=$?
+  set -e
+  chatty_reason="$(jq -r '.reason' <<<"$chatty_out" 2>/dev/null || printf 'unparseable')"
+  chatty_decl="$(jq -r 'has("measurement_failed")' <<<"$chatty_out" 2>/dev/null || printf 'unparseable')"
+  if [[ "$chatty_reason" == "valid" && "$chatty_rc" -eq 0 && "$chatty_decl" == "false" ]]; then
+    pass "jq stderr on a successful call is neither a finding nor a fabricated declaration"
+  else
+    fail "a jq stderr diagnostic leaked into the answer (reason=$chatty_reason, rc=$chatty_rc, declared=$chatty_decl)"
+  fi
+
   set +e
   shim_out="$(PATH="$shim_dir:$PATH" "$CHECK" --file "$clean" 2>/dev/null)"
   shim_rc=$?

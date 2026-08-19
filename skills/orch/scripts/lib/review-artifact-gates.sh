@@ -3,12 +3,14 @@
 # answer "is what this artifact SAYS usable?", as opposed to review-artifact-check's
 # own job of locating an artifact, judging its freshness, and dispatching modes.
 #
-# Every gate runs through gate_predicate/gate_filter, which separate the gate's
-# ANSWER from the gate's ability to answer at all. A jq failure — a torn read of
-# a non-atomically written artifact, a jq that is broken or missing — is never
-# reported as "no problem found": it surfaces as reason `invalid` carrying jq's
-# own diagnostic. Silence and cleanliness must never share an encoding here,
-# because this file is the thing that decides whether a review counts.
+# THREE CHANNELS, NEVER SHARED. Every gate runs through gate_filter, which keeps
+# them apart: the gate's ANSWER is stdout, jq's DIAGNOSTIC is a file the parent
+# reads, and whether the gate ran at all is the exit status. They were shared
+# before and each sharing became a way to read green — an empty answer meaning
+# both "clean" and "could not run", then jq's stderr merged into stdout and read
+# as a finding (and echoed as a fabricated instrument-failure declaration) by any
+# diagnostic that leaves the exit status alone. A gate that cannot answer says so
+# on its own channel; nothing it writes can be mistaken for what it found.
 #
 # artifact_content_gates is the single entry point; the individual gates below
 # are its steps and are not called directly by review-artifact-check.
@@ -17,66 +19,67 @@
 
 set -euo pipefail
 
-# jq's own diagnostic when a gate could not run; empty otherwise.
-review_artifact_gate_error=""
+# jq's stderr lands here and is read only when the gate's exit status says the
+# gate failed. Never printed as an answer.
+review_artifact_gate_err="$(mktemp)"
+trap 'rm -f "$review_artifact_gate_err"' EXIT
 
-# The rejecting reason and its detail, set by artifact_content_gates.
+# The rejecting reason and its detail, set by artifact_content_gates. Every
+# rejection carries a detail: a reason with no cause is a dead end for the agent
+# that has to fix it, which review-pr.md § 3.1 spends its one re-delegation on.
 review_artifact_reason=""
 review_artifact_detail=""
 
-# The artifact's declared instrument-failure marker, set by
-# artifact_content_gates; empty when it declares none.
+# The artifact's validated instrument-failure declaration; empty when it makes
+# none.
 review_artifact_measurement_failed=""
 
-# gate_predicate <json_path> <jq_program>
-# 0 = predicate true, 1 = predicate false, 2 = the gate could not run.
-# jq exits 1 for a false/null result and >=2 for a usage, compile, or runtime
-# error, so the two are distinguishable and must be kept that way.
-gate_predicate() {
-  local file="$1" program="$2" out rc=0
-  review_artifact_gate_error=""
-  out="$(jq -e "$program" "$file" 2>&1)" || rc=$?
-  case "$rc" in
-    0) return 0 ;;
-    1) return 1 ;;
-    *)
-      review_artifact_gate_error="gate could not run: jq exited $rc: $(printf '%s' "$out" | tr '\n\t' '  ')"
-      return 2
-      ;;
-  esac
-}
+# What a declaration has to say for the gate to accept it. Named once so the
+# rejection and the documentation cannot drift apart.
+REVIEW_DECLARATION_BAR="a declaration must name the instrument and what it did — at least 20 characters and 3 words, not a null token (n/a, none, unknown, ...) or bare punctuation"
 
 # gate_filter <json_path> <jq_program>
-# Prints the filter's diagnostic on stdout, empty when the gate found nothing.
-# 0 = the gate ran, 2 = the gate could not run — in which case jq's own
-# diagnostic is what gets printed. Filters are read through a command
-# substitution, whose subshell discards any global the callee sets, so the
-# failure message has to travel out the same channel as the answer.
+# stdout: the gate's answer, and nothing else. Empty means the gate found
+# nothing wrong. Exit 0 = the gate ran, 2 = it could not; on 2 the caller reads
+# gate_failure_detail. Callers invoke this through a command substitution, whose
+# subshell discards globals, so the exit status is the only signal that crosses
+# back — which is exactly why the diagnostic must not ride on stdout.
 gate_filter() {
   local file="$1" program="$2" out rc=0
-  review_artifact_gate_error=""
-  out="$(jq -r "$program" "$file" 2>&1)" || rc=$?
+  out="$(jq -r "$program" "$file" 2>"$review_artifact_gate_err")" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
-    review_artifact_gate_error="gate could not run: jq exited $rc: $(printf '%s' "$out" | tr '\n\t' '  ')"
-    printf '%s' "$review_artifact_gate_error"
     return 2
   fi
   printf '%s' "$out"
   return 0
 }
 
+# gate_failure_detail <exit_code>
+# The diagnostic for a gate that could not run, read from the error channel.
+gate_failure_detail() {
+  local rc="$1" err=""
+  err="$(tr '\n\t' '  ' < "$review_artifact_gate_err" 2>/dev/null || printf '')"
+  printf 'gate could not run: jq exited %s%s' "$rc" "${err:+: $err}"
+}
+
+# shellcheck source=review-artifact-measurement.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review-artifact-measurement.sh"
+
 # vstack#652: a schema-valid artifact can carry verdict "pass" while its
 # qa_metadata admits no review happened (external second-opinion invoked with
 # no scope). Such a self-reported no-review is rejected regardless of verdict.
 # Artifacts without qa_metadata (internal reviewers) are unaffected.
 self_reports_no_review() {
-  gate_predicate "$1" '
+  gate_filter "$1" '
     # gate:no-review
     (.qa_metadata? // {}) as $qa
-    | (($qa | type) == "object")
-      and (($qa.review_performed == false)
-           or ((($qa.reason // "") | tostring)
-               | test("no[ _-]?(scope|review)|not[ _-]?reviewed"; "i")))
+    | if (($qa | type) == "object") then
+        if ($qa.review_performed == false)
+          then "qa_metadata.review_performed is false — the artifact states no review happened, which no verdict overrides"
+        elif ((($qa.reason // "") | tostring) | test("no[ _-]?(scope|review)|not[ _-]?reviewed"; "i"))
+          then "qa_metadata.reason admits no review happened: \"\($qa.reason)\""
+        else "" end
+      else "" end
   '
 }
 
@@ -91,11 +94,17 @@ self_reports_no_review() {
 # before. questions[] is not required here: it is PR-comment-triage-only and
 # the QA standard fields omit it.
 qa_shaped_incomplete() {
-  gate_predicate "$1" '
+  gate_filter "$1" '
     # gate:qa-shape
-    ((.qa_metadata? | type) == "object")
-      and (((.blockers? | type) != "array")
-           or ((.suggestions? | type) != "array"))
+    if ((.qa_metadata? | type) == "object") then
+      ( [ (if (.blockers? | type) != "array" then "blockers[]" else empty end),
+          (if (.suggestions? | type) != "array" then "suggestions[]" else empty end) ] ) as $missing
+      | if ($missing | length) > 0
+        then "\($missing | join(" and ")) missing or not an array — declaring qa_metadata commits the"
+             + " artifact to both finding arrays, empty ones included. An artifact with no qa_metadata"
+             + " does not have to carry them."
+        else "" end
+    else "" end
   '
 }
 
@@ -190,163 +199,88 @@ finding_item_detail() {
   '
 }
 
-# The artifact's declared instrument-failure marker: a non-empty
-# qa_metadata.measurement_failed string naming the instrument and what it did.
-# Prints it, or the empty string when the artifact declares none.
-measurement_failed_marker() {
-  gate_filter "$1" '
-    # gate:measurement-marker
-    ((.qa_metadata? // {}) | if type == "object" then (.measurement_failed? // null) else null end)
-    | if (type == "string") and ((gsub("\\s"; "")) != "") then . else "" end
-  '
-}
-
-# vstack#1497: a measurement instrument that produced no samples still emits a
-# number, and a zero reads as green. Two shapes are refused.
-#
-# The SAMPLE COUNT — the denominator of the reviewer skill's fixed citation
-# format (`mutation: killed X/X; stability: Y/N at T threads`) and its thread
-# count. Only the count: `stability: 0/10` is ten runs of which none passed, a
-# fully measured concurrency failure that SKILL.md calls "never a pass" and
-# this gate must therefore let through as a finding. Reading the numerator
-# would suppress exactly that.
-#
-# The PERF PAYLOAD — checked by requiring evidence rather than by detecting its
-# absence, because absence has too many spellings (missing key, [], null
-# leaves, "0ms" strings) and every one of them is what a harness that produced
-# nothing most naturally emits. A perf_qa payload must carry a percentiles
-# block with at least one numeric leaf above zero.
-#
-# Scanned over every string leaf, so a citation counts wherever the reviewer put
-# it, and — unlike the qa-shape gates above — gated on nothing, because the
-# pairing binds every reviewer. The escape is a declaration, not an omission:
-# qa_metadata.measurement_failed suppresses this gate, so a reviewer whose
-# instrument died keeps its numbers as evidence and the failure becomes visible
-# to the orchestrator instead of being deleted to get past a rejection.
-zero_sample_detail() {
-  gate_filter "$1" '
-    # gate:zero-sample
-    def declared_failure:
-      ((.qa_metadata? // {}) | if type == "object" then (.measurement_failed? // null) else null end)
-      | (type == "string") and ((gsub("\\s"; "")) != "") ;
-
-    def cites:
-      [ .. | strings ]
-      | map(
-          ( [ scan("(?i)killed\\s*([0-9]+)\\s*/\\s*([0-9]+)") ]
-            | map({kind: "mutation",
-                   label: ("killed " + .[0] + "/" + .[1]),
-                   den: (.[1] | tonumber),
-                   threads: null}) )
-          + ( [ scan("(?i)stability:\\s*([0-9]+)\\s*/\\s*([0-9]+)(?:\\s*at\\s*([0-9]+)\\s*threads?)?") ]
-            | map({kind: "stability",
-                   label: ("stability: " + .[0] + "/" + .[1]),
-                   den: (.[1] | tonumber),
-                   threads: (if .[2] == null then null else (.[2] | tonumber) end)}) )
-        )
-      | (add // []) ;
-
-    def perf_zero:
-      ((.qa_metadata? // {}) | if type == "object" then (.perf_qa? // null) else null end) as $pq
-      | if ($pq == null) then []
-        elif (($pq | type) != "object")
-          then ["qa_metadata.perf_qa is not an object, so it carries no benchmark evidence"]
-        else ($pq.percentiles?) as $p
-          | if ($p == null)
-              then ["qa_metadata.perf_qa declares no percentiles block (a required field)"]
-            elif ((($p | type) != "object") and (($p | type) != "array"))
-              then ["qa_metadata.perf_qa.percentiles is neither an object nor an array"]
-            elif (($p | length) == 0)
-              then ["qa_metadata.perf_qa.percentiles is empty"]
-            elif (([$p | .. | numbers | select(. > 0)] | length) == 0)
-              then ["qa_metadata.perf_qa.percentiles carries no measured value above zero"]
-            else [] end
-        end ;
-
-    if declared_failure then "" else
-      ( [ cites[] | select(.den == 0)
-          | "\(.kind) citation \"\(.label)\" reports zero samples" ]
-        + [ cites[] | select(.threads != null and .threads == 0)
-          | "stability citation \"\(.label)\" reports zero threads" ]
-        + perf_zero )
-      | (first(.[]) // "")
-      | if . == "" then ""
-        else . + " — a measurement that produced no samples, or whose measuring"
-               + " pipeline exited nonzero, is instrument failure, not a result."
-               + " Keep the evidence and declare it: set"
-               + " qa_metadata.measurement_failed to a non-empty string naming"
-               + " the instrument and what it did. Never report a zero-sample"
-               + " run as a number, a zero, or a pass."
-        end
-    end
-  '
-}
-
 # artifact_content_gates <json_path>
 # Runs every content gate in precedence order and reports the first rejection
-# through review_artifact_reason / review_artifact_detail; both are empty when
-# the artifact passes. review_artifact_measurement_failed carries the
-# artifact's declared instrument-failure marker either way.
+# through review_artifact_reason / review_artifact_detail; reason is
+# "valid" or "valid_undermeasured" when the artifact passes.
+# review_artifact_measurement_failed carries a validated declaration.
 # Returns 0 when the artifact passes every gate, 1 when one rejected it.
 artifact_content_gates() {
-  local file="$1" rc detail
+  local file="$1" rc out
   review_artifact_reason=""
   review_artifact_detail=""
   review_artifact_measurement_failed=""
 
-  rc=0; detail="$(measurement_failed_marker "$file")" || rc=$?
+  rc=0; out="$(self_reports_no_review "$file")" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
     review_artifact_reason="invalid"
-    review_artifact_detail="$detail"
+    review_artifact_detail="$(gate_failure_detail "$rc")"
     return 1
   fi
-  review_artifact_measurement_failed="$detail"
-
-  rc=0; self_reports_no_review "$file" || rc=$?
-  if [[ "$rc" -eq 2 ]]; then
-    review_artifact_reason="invalid"
-    review_artifact_detail="$review_artifact_gate_error"
-    return 1
-  fi
-  if [[ "$rc" -eq 0 ]]; then
+  if [[ -n "$out" ]]; then
     review_artifact_reason="no_review"
+    review_artifact_detail="$out"
     return 1
   fi
 
-  rc=0; qa_shaped_incomplete "$file" || rc=$?
-  if [[ "$rc" -eq 2 ]]; then
-    review_artifact_reason="invalid"
-    review_artifact_detail="$review_artifact_gate_error"
-    return 1
-  fi
-  if [[ "$rc" -eq 0 ]]; then
-    review_artifact_reason="incomplete"
-    return 1
-  fi
-
-  rc=0; detail="$(finding_item_detail "$file")" || rc=$?
+  rc=0; out="$(qa_shaped_incomplete "$file")" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
     review_artifact_reason="invalid"
-    review_artifact_detail="$detail"
+    review_artifact_detail="$(gate_failure_detail "$rc")"
     return 1
   fi
-  if [[ -n "$detail" ]]; then
+  if [[ -n "$out" ]]; then
     review_artifact_reason="incomplete"
-    review_artifact_detail="$detail"
+    review_artifact_detail="$out"
     return 1
   fi
 
-  rc=0; detail="$(zero_sample_detail "$file")" || rc=$?
+  rc=0; out="$(finding_item_detail "$file")" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
     review_artifact_reason="invalid"
-    review_artifact_detail="$detail"
+    review_artifact_detail="$(gate_failure_detail "$rc")"
     return 1
   fi
-  if [[ -n "$detail" ]]; then
+  if [[ -n "$out" ]]; then
+    review_artifact_reason="incomplete"
+    review_artifact_detail="$out"
+    return 1
+  fi
+
+  rc=0; out="$(measurement_declaration "$file")" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    review_artifact_reason="invalid"
+    review_artifact_detail="$(gate_failure_detail "$rc")"
+    return 1
+  fi
+  case "$out" in
+    invalid:*)
+      review_artifact_reason="invalid_declaration"
+      review_artifact_detail="${out#invalid:} — $REVIEW_DECLARATION_BAR"
+      return 1
+      ;;
+    declared:*)
+      # An adjudicated declaration replaces the zero-sample gate rather than
+      # being re-read inside it, and the accepting reason says so: a caller
+      # branching on reason cannot record an undermeasured domain as clean.
+      review_artifact_measurement_failed="${out#declared:}"
+      review_artifact_reason="valid_undermeasured"
+      return 0
+      ;;
+  esac
+
+  rc=0; out="$(zero_sample_detail "$file")" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    review_artifact_reason="invalid"
+    review_artifact_detail="$(gate_failure_detail "$rc")"
+    return 1
+  fi
+  if [[ -n "$out" ]]; then
     review_artifact_reason="zero_sample"
-    review_artifact_detail="$detail"
+    review_artifact_detail="$out"
     return 1
   fi
 
+  review_artifact_reason="valid"
   return 0
 }

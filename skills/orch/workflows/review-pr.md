@@ -189,7 +189,7 @@ Validate it like a reviewer JSON, with `review_delegated_at` as the freshness bo
 .agents/skills/orch/scripts/review-artifact-check [WORKTREE_PATH] [AGENT] [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND]
 ```
 
-Run it on every return message and every watchdog sweep. `ok == true` → drop the agent from `OUTSTANDING` and append its path; when the result also carries `measurement_failed`, that agent's domain ran on an instrument that produced nothing — record the string beside its verdict in the review summary, since the domain is undermeasured rather than clean.
+Run it on every return message and every watchdog sweep. `ok == true` → drop the agent from `OUTSTANDING` and append its path; `reason == "valid_undermeasured"` additionally means that agent's own instrument produced nothing, so its verdict covers less than it appears to — carry the result's `measurement_failed` string into the review summary beside that verdict, and never present the domain as clean.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] json_paths "[PATH]"

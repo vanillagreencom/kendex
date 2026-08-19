@@ -94,22 +94,34 @@ Every item requires all of these; one missing field rejects the whole artifact.
 
 Per-agent QA payload (`workflows/qa-review.md`); `{}` when there is none. A reviewer that could not actually perform its review must set `{"review_performed": false, "reason": "<snake_case_reason>"}` instead of a bare pass — `review-artifact-check` rejects such artifacts (`no_review`) regardless of verdict.
 
-A measurement cited anywhere in the artifact must carry samples. `review-artifact-check`
-rejects the artifact (`zero_sample`) when a mutation/stability citation's SAMPLE COUNT — the
-denominator, or the thread count — is zero, or when `qa_metadata.perf_qa` carries no
-`percentiles` value above zero. A zero RESULT is not a zero sample: `stability: 0/10` is ten
-measured runs that all failed, and stays valid because it is the finding.
+## Measurement Claims
 
-When an instrument genuinely produced nothing, keep the evidence and declare it — set
-`qa_metadata.measurement_failed` to a non-empty string naming the instrument and what it did:
+`.summary` and `.qa_metadata` are where you state your OWN measurements, and only those two are
+scanned. A measurement cited there must carry samples: `review-artifact-check` rejects the
+artifact (`zero_sample`) when a mutation/stability citation's SAMPLE COUNT — the denominator, or
+the thread count — is zero, or when `qa_metadata.perf_qa` carries no `percentiles` value above
+zero. A zero RESULT is not a zero sample: `stability: 0/10` is ten measured runs that all failed,
+and stays valid because it is the finding.
+
+Numbers you are QUOTING — a fixture, a log line, another tool's zeroed run — belong in the
+`blockers[]`/`suggestions[]` item they are evidence for. Those arrays describe the code under
+review, are never scanned, and are the honest route for reporting somebody else's dead
+instrument.
+
+When YOUR OWN instrument produced nothing, keep the evidence and declare it — set the
+**top-level** `measurement_failed` to a string naming the instrument and what it did:
 
 ```json
-"qa_metadata": {"measurement_failed": "cargo-mutants selected 0 mutants for the changed file"}
+{"agent": "reviewer-test", "verdict": "action_required",
+ "measurement_failed": "cargo-mutants selected 0 mutants for the changed file"}
 ```
 
-The declaration suppresses the gate for that artifact and is echoed back on the check's result,
-so the instrument failure reaches the orchestrator instead of being deleted to get past a
-rejection. Omitting the numbers is never the way past this gate.
+It must be substantive: at least 20 characters and 3 words, and never a null token (`n/a`,
+`none`, `unknown`, ...) or bare punctuation — those are rejected as `invalid_declaration`. The
+declaration replaces the gate for that artifact, turns the check's reason into
+`valid_undermeasured`, and is echoed back on the result, so the instrument failure reaches the
+orchestrator as a machine-readable state instead of being deleted to get past a rejection.
+Omitting the numbers is never the way past this gate.
 
 Declaring a `qa_metadata` object also commits the artifact to usable findings: `review-artifact-check` rejects it (`incomplete`) when `blockers[]`/`suggestions[]` are missing or not arrays, or when a present item omits a required field above (`questions[]` is exempt). Artifacts without `qa_metadata` keep the tolerant existence + `verdict` validation. Full rejection semantics: `review-artifact-check --help`.
 

@@ -491,7 +491,11 @@ out="$("$CHECK" --file "$noqa_bad")"
 assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file malformed items without qa_metadata stay tolerant (valid)"
 
 # array-lost incomplete still precedes the item check: a qa-shaped artifact whose
-# arrays are entirely missing is reason=incomplete with no item detail
+# arrays are entirely missing is reason=incomplete, and it names WHICH arrays.
+# This was the chain's one detail-free rejection, so an artifact that adopted
+# qa_metadata to reach the measurement declaration got a second, unexplained
+# refusal after doing exactly what the first rejection instructed — and § 3.1
+# permits one re-delegation before `unresponsive`.
 arrays_lost="$worktree/tmp/review-external-20260810-090909.json"
 printf '{"verdict":"pass","summary":"truncated","qa_metadata":{}}' > "$arrays_lost"
 set +e
@@ -499,7 +503,32 @@ out="$("$CHECK" --file "$arrays_lost")"
 rc=$?
 set -e
 assert_eq "$(jq -r '.reason' <<<"$out")" "incomplete" "--file arrays-lost still reason=incomplete"
-assert_eq "$(jq -r '.detail' <<<"$out")" "null" "--file arrays-lost incomplete carries no item detail"
+assert_substr "$(jq -r '.detail' <<<"$out")" "blockers[] and suggestions[]" "--file arrays-lost detail names both missing arrays"
+assert_substr "$(jq -r '.detail' <<<"$out")" "no qa_metadata" "--file arrays-lost detail says the tolerant shape is exempt"
+
+# EVERY rejection in the chain names its cause. A reason with no detail is a
+# dead end for the agent that has to fix it.
+chain_no_detail=""
+chain_case() {
+  local body="$1" label="$2" path out
+  path="$worktree/tmp/review-external-20260811-$(printf '%06d' "$CHAIN_N").json"
+  CHAIN_N=$((CHAIN_N + 1))
+  printf '%s' "$body" > "$path"
+  set +e
+  out="$("$CHECK" --file "$path")"
+  set -e
+  if [[ "$(jq -r '.ok' <<<"$out")" == "false" ]] && [[ "$(jq -r '.detail // ""' <<<"$out")" == "" ]]; then
+    chain_no_detail="$chain_no_detail $label($(jq -r '.reason' <<<"$out"))"
+  fi
+}
+CHAIN_N=1
+chain_case '{"agent":"r","summary":"no verdict field"}' missing-verdict
+chain_case '{"verdict":"pass","qa_metadata":{"review_performed":false}}' no-review
+chain_case '{"verdict":"pass","summary":"s","qa_metadata":{}}' qa-shape
+chain_case '{"verdict":"pass","blockers":[],"suggestions":[{"title":"t"}],"qa_metadata":{}}' finding-item
+chain_case '{"verdict":"pass","blockers":[],"suggestions":[],"measurement_failed":"n/a"}' bad-declaration
+chain_case '{"verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"qa_metadata":{}}' zero-sample
+assert_eq "$chain_no_detail" "" "every content-gate rejection names its cause in detail"
 
 # glob mode applies the same item gate: a fresh malformed-item artifact is rejected...
 glob_item_bad="$worktree/tmp/review-reviewer-item-20260810-111111.json"
