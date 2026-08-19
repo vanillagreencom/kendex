@@ -84,9 +84,15 @@ pub enum SourceProblem {
     ///
     /// `reason` comes from resolution itself, so `check`, `verify` and
     /// `refresh` name the same cause and the same remedy for the same state.
+    ///
+    /// `restore` is the argument `vstack add` must be given to bring it back,
+    /// and is `None` when nothing can: a path into vstack's own cache names a
+    /// clone vstack mints rather than a source a user keeps, so re-adding the
+    /// PATH fails outright — which is what the report used to print.
     Unresolvable {
         entries: Vec<String>,
         reason: String,
+        restore: Option<String>,
     },
     /// The source resolves but cannot be inventoried: its catalog
     /// configuration is unusable, or a whole kind root is missing. `refresh`
@@ -290,3 +296,6 @@ impl CheckReport {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

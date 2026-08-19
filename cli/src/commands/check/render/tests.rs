@@ -282,6 +282,7 @@ fn populated_scope(scope: &'static str) -> ScopeReport {
                 problem: SourceProblem::Unresolvable {
                     entries: vec!["zeta".into()],
                     reason: "source not found".into(),
+                    restore: Some("/sources/one".into()),
                 },
             },
             SourceIssue {
@@ -421,6 +422,7 @@ fn a_local_source_path_survives_into_the_report_and_its_remedy_commands() {
         problem: SourceProblem::Unresolvable {
             entries: vec!["alpha".into()],
             reason: "source not found".into(),
+            restore: Some(source.clone()),
         },
     });
     report.available.push(AvailableItem {
@@ -480,6 +482,7 @@ fn remedy_commands_are_pasteable_for_ssh_and_long_sources() {
         problem: SourceProblem::Unresolvable {
             entries: vec!["alpha".into()],
             reason: "source not found".into(),
+            restore: Some(ssh.to_string()),
         },
     });
     let mut out = String::new();
@@ -500,6 +503,7 @@ fn remedy_commands_are_pasteable_for_ssh_and_long_sources() {
         problem: SourceProblem::Unresolvable {
             entries: vec!["alpha".into()],
             reason: "source not found".into(),
+            restore: Some(long.clone()),
         },
     });
     let mut out = String::new();

@@ -9,6 +9,8 @@ use budget::{
 };
 
 mod budget;
+mod source_issues;
+use source_issues::render_source_issues;
 
 use std::collections::HashSet;
 
@@ -82,7 +84,7 @@ pub(super) fn humanize_age(secs: u64) -> String {
 /// clears nothing or — when a project install shares the name — removes the
 /// wrong one. `vstack refresh` deliberately never takes it: unflagged, it
 /// reinstalls at every scope an item is locked at.
-fn scope_flag(scope: &str) -> &'static str {
+pub(super) fn scope_flag(scope: &str) -> &'static str {
     match scope {
         "global" => " -g",
         _ => "",
@@ -270,63 +272,7 @@ fn render_scope_drift(out: &mut String, report: &ScopeReport, quiet: bool) {
         overflow_line(out, "    ", shown, report.missing_skill_refs.len());
     }
 
-    for issue in &report.source_issues {
-        let source = display_text(&issue.source);
-        match &issue.problem {
-            SourceProblem::Unresolvable { entries, reason } => {
-                let _ = writeln!(
-                    out,
-                    "\n  source {source} is unreachable — {} — {} item(s) cannot be verified; run `vstack add{g} {}` to restore it, or `vstack remove{g} <name>` if it is gone for good:",
-                    display_reason(reason),
-                    entries.len(),
-                    command_arg(&issue.source),
-                );
-                render_entry_names(out, entries, quiet);
-            }
-            SourceProblem::Unreadable { entries, reasons } => {
-                let _ = writeln!(
-                    out,
-                    "\n  source {source} cannot be inventoried — {} item(s) cannot be verified; fix the source layout, refresh cannot:",
-                    entries.len()
-                );
-                let shown = shown_count(quiet, reasons.len());
-                for reason in &reasons[..shown] {
-                    // A layout reason is a full path plus what was found there,
-                    // and the prose bound cut it off after the path — leaving a
-                    // line that named a root without saying what was wrong with
-                    // it. This IS the remedy, so it gets the reason bound.
-                    let _ = writeln!(out, "    ✗ {}", display_reason(reason));
-                }
-                overflow_line(out, "    ", shown, reasons.len());
-                render_entry_names(out, entries, quiet);
-            }
-            // The refusal already names the entry, the cause and the next
-            // step. It is relayed rather than reworded, and no `vstack add` is
-            // prescribed on top of it: a source vstack REFUSED refuses again
-            // when re-added, which sends the user in a circle.
-            SourceProblem::Unverifiable { entries, reason } => {
-                let _ = writeln!(
-                    out,
-                    "\n  source {source} — {} item(s) cannot be verified: {}",
-                    entries.len(),
-                    display_reason(reason),
-                );
-                render_entry_names(out, entries, quiet);
-            }
-            SourceProblem::Discovery { failures } => {
-                let _ = writeln!(
-                    out,
-                    "\n  source {source} has {} asset(s) that could not be read — fix them upstream before trusting refresh:",
-                    failures.len()
-                );
-                let shown = shown_count(quiet, failures.len());
-                for failure in &failures[..shown] {
-                    let _ = writeln!(out, "    ✗ {}", display_text(failure));
-                }
-                overflow_line(out, "    ", shown, failures.len());
-            }
-        }
-    }
+    render_source_issues(out, report, quiet);
 
     if !report.invalid_names.is_empty() {
         let _ = writeln!(

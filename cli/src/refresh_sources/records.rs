@@ -357,30 +357,8 @@ fn resolve_recorded_source_resolution(source: &str) -> LeasedResolution {
     resolve_single_source_with(source, true, true)
 }
 
-/// Why a recorded source produced nothing, for a caller holding no refusal map
-/// of its own. One wording, so `refresh`, `check` and `verify` name the same
-/// cause and the same command for the same state.
-pub(crate) fn absent_source_reason(source: &str) -> String {
-    if looks_like_remote_source(source) {
-        // The remedy is meant to be pasted, so the source arrives as a shell
-        // WORD, not as prose spliced into one: `https://host/team/$(id).git`
-        // is a source `RemoteSource` accepts, and interpolating its display
-        // form handed the reader a command that runs the substitution.
-        format!(
-            "remote cache not present — run `vstack add {}`",
-            crate::display::command_arg(source)
-        )
-    } else if source.trim().is_empty() {
-        "source not found (none recorded)".to_string()
-    } else {
-        // Named so the user can see WHICH source vanished, through the same
-        // redacting display every other source diagnostic uses: a credential
-        // URL malformed enough to evade `parse_remote_url` classifies as a
-        // local path and reaches here, and a lock file records the string
-        // verbatim.
-        format!("source not found: {}", remote_source_display(source))
-    }
-}
+mod remedy;
+pub(crate) use remedy::*;
 
 #[cfg(test)]
 pub(super) mod tests;

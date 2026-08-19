@@ -394,3 +394,140 @@ fn add_holds_the_lease_on_the_tree_it_reads() {
     });
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// The remembered chain must record the tree it READ, not the string it
+/// started from. A remembered legacy-key path resolves through the remote its
+/// entry clones, which is the CANONICAL entry — so recording the remembered
+/// string put one clone in the lock beside a `source_hash` taken against the
+/// other, and `check` then passed while `verify` failed on one state.
+#[test]
+fn a_remembered_cache_path_records_the_tree_the_install_came_from() {
+    let root = tmproot("add-remembered-records");
+    let origin = root.join("origin");
+    let home = root.join("home");
+    let config_dir = root.join("config");
+    let project_root = root.join("project");
+    for dir in [&origin, &home, &config_dir, &project_root] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let origin_url = origin_repo(&origin);
+
+    crate::test_util::with_home_and_config(&home, &config_dir, || {
+        let legacy = cache_entry_clone(&origin_url, "legacy_key");
+        let canonical = RemoteSource::parse(&origin_url).unwrap().unwrap();
+        // Upstream moves while the legacy clone stays behind: the two trees
+        // are now distinguishable, so recording the wrong one is visible.
+        publish_skill(&origin, "beta");
+
+        let mut lock = config::LockFile::default();
+        lock.add(config::LockEntry {
+            name: "alpha".into(),
+            kind: config::ItemKind::Skill,
+            source: legacy.to_string_lossy().into_owned(),
+            source_repo: None,
+            harnesses: vec!["claude-code".into()],
+            method: config::InstallMethod::Copy,
+            installed_at: "2026-08-18T00:00:00Z".into(),
+            source_hash: String::new(),
+        });
+        lock.save(&project_root.join(".vstack-lock.json")).unwrap();
+
+        let registry = config::SourceRegistry::default();
+        let resolved = resolve_source_for_app(
+            None,
+            &registry,
+            &project_root,
+            SourceFetch::for_invocation(None, false),
+        )
+        .expect("a remembered cache entry resolves");
+
+        assert_eq!(
+            resolved.dir, canonical.cache_dir,
+            "the install comes from the entry the remote resolves to"
+        );
+        assert_eq!(
+            resolved.source, origin_url,
+            "and the lock must record that same tree, not the remembered path"
+        );
+        assert_eq!(
+            skills_in(&resolved.dir),
+            vec!["alpha".to_string(), "beta".to_string()],
+            "the recorded source must be the fetched one"
+        );
+        // The label follows the source, so a fetched remote is not announced
+        // as `local:`.
+        assert!(
+            !resolved.label.starts_with("local:"),
+            "a fetched remote must not be labelled local: {}",
+            resolved.label
+        );
+        assert_ne!(
+            legacy, canonical.cache_dir,
+            "the fixture must be two clones"
+        );
+    });
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A directory sitting in the cache root with no `.git` is not one of vstack's
+/// clones, and `add` must refuse it exactly as every other command does.
+/// Falling through to the local-directory shortcut installed it, exit 0, while
+/// `check` exited 1 calling the same string absent — and the `vstack add
+/// <path>` `check` prescribed re-ran that same no-op forever.
+#[test]
+fn add_refuses_a_cache_root_directory_that_is_not_a_clone() {
+    let root = tmproot("add-cache-not-a-clone");
+    let home = root.join("home");
+    let config_dir = root.join("config");
+    let project_root = root.join("project");
+    for dir in [&home, &config_dir, &project_root] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+
+    crate::test_util::with_home_and_config(&home, &config_dir, || {
+        // A source layout, so nothing but the missing `.git` can decide this.
+        let junk = remote_cache_root().join("junk");
+        std::fs::create_dir_all(junk.join("agents")).unwrap();
+        std::fs::create_dir_all(junk.join("skills").join("alpha")).unwrap();
+        std::fs::write(
+            junk.join("skills").join("alpha").join("SKILL.md"),
+            "---\nname: alpha\ndescription: alpha\n---\nbody\n",
+        )
+        .unwrap();
+        let source = junk.to_string_lossy().into_owned();
+        let registry = config::SourceRegistry::default();
+        let resolve = || {
+            resolve_source_for_app(
+                Some(&source),
+                &registry,
+                &project_root,
+                SourceFetch::for_invocation(Some(&source), false),
+            )
+        };
+
+        let err = match resolve() {
+            Ok(_) => panic!("a cache-root directory with no .git must be refused"),
+            Err(err) => format!("{err:#}"),
+        };
+        assert!(err.contains(&source), "must name the path: {err}");
+        assert!(
+            err.contains("is not one of its clones"),
+            "must give the reason: {err}"
+        );
+
+        // Control: the identical layout OUTSIDE the cache is an ordinary local
+        // source and still installs — only the location decides this.
+        let outside = root.join("checkout");
+        std::fs::create_dir_all(outside.join("agents")).unwrap();
+        std::fs::create_dir_all(outside.join("skills")).unwrap();
+        let source = outside.to_string_lossy().into_owned();
+        resolve_source_for_app(
+            Some(&source),
+            &registry,
+            &project_root,
+            SourceFetch::for_invocation(Some(&source), false),
+        )
+        .expect("a local directory outside the cache still resolves");
+    });
+    let _ = std::fs::remove_dir_all(root);
+}

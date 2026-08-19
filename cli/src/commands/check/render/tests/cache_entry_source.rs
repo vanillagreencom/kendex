@@ -156,3 +156,82 @@ fn a_path_below_a_cache_entry_is_verified_through_that_entry() {
         );
     });
 }
+
+/// A vanished cache entry. Under the same-tree migration rule a legacy-key
+/// source keeps its cache path in the lock permanently, so a wiped cache is
+/// the durable steady state for exactly the population this defect was found
+/// on — and the report used to answer it with ``run `vstack add <that path>` ``,
+/// which cannot work: there is nothing at the path to read. The remedy comes
+/// from the identity the lock still records instead.
+#[test]
+fn a_vanished_cache_entry_is_restored_from_the_identity_the_lock_records() {
+    with_sandbox("cache-path-vanished", |project, _source| {
+        let cache = clone_at_cache_key("owner/repo", "https://github.com/owner/repo.git");
+        install_skill_on_disk(project, "alpha");
+        let locked_entry = |source_repo: Option<&str>| {
+            let mut lock = LockFile::default();
+            let mut entry = locked(&cache, ItemKind::Skill, "alpha");
+            entry.source_repo = source_repo.map(str::to_string);
+            lock.add(entry);
+            lock
+        };
+        // Gone: cache wipe, new machine, dotfile restore.
+        std::fs::remove_dir_all(&cache).unwrap();
+
+        let report = check_scope(
+            false,
+            &locked_entry(Some("owner/repo")),
+            CheckOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(report.source_issues.len(), 1, "{report:?}");
+        assert!(
+            matches!(
+                &report.source_issues[0].problem,
+                SourceProblem::Unresolvable { restore, .. } if restore.as_deref() == Some("owner/repo")
+            ),
+            "{report:?}"
+        );
+        let mut out = String::new();
+        render_scope(&mut out, &report, false);
+        assert!(out.contains("`vstack add owner/repo`"), "{out}");
+        assert!(
+            !out.contains(&format!("vstack add {}", cache.display())),
+            "the dead path must never be prescribed: {out}"
+        );
+
+        // No identity recorded: no `add` is offered at all, rather than one
+        // that cannot succeed.
+        let report = check_scope(false, &locked_entry(None), CheckOptions::default()).unwrap();
+        assert!(
+            matches!(
+                &report.source_issues[0].problem,
+                SourceProblem::Unresolvable { restore, .. } if restore.is_none()
+            ),
+            "{report:?}"
+        );
+        let mut out = String::new();
+        render_scope(&mut out, &report, false);
+        assert!(
+            out.contains("no source is recorded to restore it from"),
+            "{out}"
+        );
+        assert!(
+            !out.contains(&format!("vstack add {}", cache.display())),
+            "the dead path must never be prescribed: {out}"
+        );
+
+        // Control: an ordinary source that vanishes IS restored by re-adding
+        // itself, so the rule is keyed on the cache root and nothing else.
+        let elsewhere = project.join("gone-source");
+        let mut lock = LockFile::default();
+        lock.add(locked(&elsewhere, ItemKind::Skill, "alpha"));
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        let mut out = String::new();
+        render_scope(&mut out, &report, false);
+        assert!(
+            out.contains(&format!("`vstack add {}`", elsewhere.display())),
+            "{out}"
+        );
+    });
+}

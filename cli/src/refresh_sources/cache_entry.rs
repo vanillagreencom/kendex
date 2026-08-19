@@ -62,6 +62,33 @@ pub(crate) fn is_remote_cache_entry_path(path: &Path) -> bool {
     remote_cache_entry_for_path(path).is_some()
 }
 
+/// Whether a cache entry is on disk at all, and refusing one that is there but
+/// is not a clone.
+///
+/// The two are different states and every command must agree on which is
+/// which. NOTHING at the path is absent: `vstack add` re-mints it, and `check`
+/// says so. A DIRECTORY with no `.git` is not a clone vstack can fetch, reset
+/// or establish a remote for — but it is also inside the tree vstack wipes and
+/// resets, so reading it as a stable checkout is the whole defect this module
+/// closes. `add` used to install from one and exit 0 while every other command
+/// called the same string absent and exited 1, and the `vstack add <path>`
+/// that `check` prescribed re-ran that same no-op forever.
+///
+/// `Ok(false)` is the absent case; `Err` is the refusal.
+fn cache_entry_is_present(entry: &Path) -> Result<bool> {
+    if entry.join(".git").exists() {
+        return Ok(true);
+    }
+    if !entry.is_dir() {
+        return Ok(false);
+    }
+    bail!(
+        "refusing source {}: it is inside vstack's cache but is not one of its clones — it has no `.git`, so no remote can be established for it. Remove it from {} and re-add the source it should come from",
+        entry.display(),
+        remote_cache_root().display()
+    )
+}
+
 /// The remote a cache entry is a clone of, read from the entry's own `origin`.
 ///
 /// The origin is the only reliable answer. A cache key is derived FROM the
@@ -164,7 +191,7 @@ pub(crate) fn remote_for_source(source: &str) -> Result<Option<RemoteSource>> {
         // named: the entry is the clone git fetches and resets, so a source
         // pointing at a subdirectory is kept fresh by fetching the whole of
         // the tree it sits in.
-        if !entry.join(".git").exists() {
+        if !cache_entry_is_present(&entry)? {
             return Ok(None);
         }
         return cache_entry_remote(&entry).map(Some);
@@ -181,10 +208,11 @@ pub(super) fn resolve_cache_path_source(
     below: &Path,
     update_remote: bool,
 ) -> LeasedResolution {
-    if !entry.join(".git").exists() {
-        // Nothing to map: an entry that is not there is absent, not refused,
-        // and `vstack add` is what puts one back.
-        return SourceResolution::Absent.into();
+    match cache_entry_is_present(entry) {
+        // Nothing there: absent, not refused, and `vstack add` puts one back.
+        Ok(false) => return SourceResolution::Absent.into(),
+        Ok(true) => {}
+        Err(err) => return SourceResolution::refused(&err).into(),
     }
     let remote = match cache_entry_remote(entry) {
         Ok(remote) => remote,
@@ -256,17 +284,22 @@ pub(super) fn resolve_remote_source(remote: RemoteSource, update_remote: bool) -
 /// the part of the path below that entry, and — when the path IS the entry —
 /// the remote spec to record in place of one machine's clone of it.
 ///
-/// `None` for every source that is not a path in a cache entry this machine
-/// holds — including a path in the cache root whose entry is not there, which
-/// resolution calls ABSENT and `add`'s ordinary chain answers for. `Err` for
-/// an entry whose remote cannot be established, which `add` refuses exactly as
+/// `None` for a source that is not a cache path at all, and for a cache path
+/// with nothing at it — which resolution calls ABSENT and `add`'s ordinary
+/// chain already errors on. `Err` for every cache path that EXISTS and cannot
+/// be established as a clone of some remote, which `add` refuses exactly as
 /// `check` does: without that, `check` could exit 1 telling a user to re-add a
 /// source while the `vstack add` it prescribed exited 0 having installed from
-/// the very entry `check` had just refused.
+/// the very path `check` had just rejected.
 pub(crate) fn cache_path_install_source(source: &str) -> Option<Result<CachePathSource>> {
     let (entry, below) = remote_cache_entry_for_path(Path::new(source))?;
-    if !entry.join(".git").exists() {
-        return None;
+    match cache_entry_is_present(&entry) {
+        // Nothing at the path: `add`'s ordinary chain answers for it, and it
+        // already errors "Source not found" — the same verdict resolution
+        // reaches by calling it absent.
+        Ok(false) => return None,
+        Ok(true) => {}
+        Err(err) => return Some(Err(err)),
     }
     Some(cache_entry_remote(&entry).map(|remote| CachePathSource {
         remote,

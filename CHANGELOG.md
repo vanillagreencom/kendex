@@ -50,6 +50,26 @@
   a subdirectory is never migrated either: a remote spec names a repository
   and cannot carry one.
 
+  `add` and `check` agree on every path under the cache root, and every
+  command `check` prints works when pasted. A directory in the cache root
+  that is not one of vstack's clones — no `.git`, from a half-deleted entry
+  or a hand-made one — is refused everywhere, where `add` used to install it
+  and exit 0 while every other command called the same string absent: the
+  `vstack add <path>` `check` prescribed then re-ran that same no-op forever,
+  and only `vstack remove` broke out. A cache entry that has VANISHED is
+  answered from the identity the lock still records — `vstack add
+  <owner/repo>` — because re-adding a dead cache path cannot work, and under
+  the same-tree rule a wiped cache is the durable steady state for every
+  legacy-key entry. When the lock records no identity, no `add` is offered
+  rather than one that fails.
+
+  The remembered-source chain records the tree it READ rather than the string
+  it started from. A remembered legacy-key path resolves through the remote
+  its entry clones, so recording the remembered string put one clone in the
+  lock beside a `source_hash` taken against the other — `check` and `verify`
+  then disagreed about one state — and announced a fetched remote as
+  `local: <path>`.
+
 - preflight: new `hardcoded-temp-path` lane — an added directory-creating
   call taking a literal `/tmp/…` or `/var/tmp/…` as (part of) its first
   argument fails. A literal absolute temp path escapes TMPDIR redirection

@@ -5,9 +5,8 @@ cli/src/commands/add.rs	1681
 cli/src/commands/add/source_option_tests.rs	913
 cli/src/commands/add/source_option_tests/project_install_tests.rs	438
 cli/src/commands/apply.rs	2743
-cli/src/commands/check.rs	809
-cli/src/commands/check/render.rs	405
-cli/src/commands/check/tests.rs	958
+cli/src/commands/check.rs	632
+cli/src/commands/check/tests.rs	877
 cli/src/commands/refresh.rs	1652
 cli/src/commands/refresh/tests.rs	2020
 cli/src/commands/report.rs	1861
