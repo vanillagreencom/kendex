@@ -142,6 +142,7 @@ while IFS= read -r -d '' f; do
 done <"$GG_TMP/rs.z"
 
 status=0
+gg_require_merged_index '*.rs'
 LC_ALL=C git grep --cached -cIE "$BARE_ERE" -- '*.rs' >"$GG_TMP/bare.raw" 2>"$GG_TMP/bare.err" || status=$?
 gg_grep_guard "$status" "$GG_TMP/bare.err" "counting bare allows"
 
@@ -183,16 +184,45 @@ validate_baseline() { # FILE LABEL
 # copy too: an unstaged row bump must not authorize growth the commit does not
 # carry. Only a never-tracked baseline, and --update (which rewrites the
 # worktree copy), read from disk.
+# Both probes reserve one status for their one expected answer; anything else
+# is git failing to answer, and a ratchet that cannot read its own baseline
+# must not fall through to a looser source than the index carries.
+baseline_in_index() { # 0 = the index has it, 1 = it does not
+  local status=0
+  git ls-files --error-unmatch -- ":(literal)$BASELINE_FILE" >/dev/null 2>&1 || status=$?
+  case "$status" in
+    0) return 0 ;;
+    1) return 1 ;;
+    *) gg_collection_error "could not query the index for $BASELINE_FILE (git ls-files exit $status); refusing to treat it as untracked" ;;
+  esac
+}
+
+baseline_in_head() { # 0 = HEAD has it (so an index miss is a staged deletion)
+  local head_status=0 tree_status=0 entry=""
+  # ls-tree, never `cat-file -e`: with rev:path syntax git answers "no such
+  # path in HEAD" with the same 128 an operational failure returns.
+  git rev-parse --verify --quiet HEAD >/dev/null 2>&1 || head_status=$?
+  case "$head_status" in
+    0) ;;
+    1) return 1 ;;
+    *) gg_collection_error "could not resolve HEAD while reading $BASELINE_FILE (git rev-parse exit $head_status); refusing to treat it as untracked" ;;
+  esac
+  entry="$(git ls-tree HEAD -- ":(literal)$BASELINE_FILE" 2>/dev/null)" || tree_status=$?
+  [ "$tree_status" -eq 0 ] \
+    || gg_collection_error "could not probe HEAD for $BASELINE_FILE (git ls-tree exit $tree_status); refusing to treat it as untracked"
+  [ -n "$entry" ]
+}
+
 BASELINE_FROM_INDEX=0
 if [ "$MODE" = "update" ] && [ -f "$BASELINE_FILE" ]; then
   validate_baseline "$BASELINE_FILE" "$BASELINE_FILE"
   cp -- "$BASELINE_FILE" "$GG_TMP/baseline.tsv"
-elif git ls-files --error-unmatch -- "$BASELINE_FILE" >/dev/null 2>&1; then
+elif baseline_in_index; then
   # No worktree copy to rewrite — what --update needs to know.
   [ -f "$BASELINE_FILE" ] || BASELINE_FROM_INDEX=1
   git show ":$BASELINE_FILE" >"$GG_TMP/baseline.tsv" || gg_config_error "failed to read tracked baseline from the index: $BASELINE_FILE"
   validate_baseline "$GG_TMP/baseline.tsv" "$BASELINE_FILE (index copy)"
-elif git cat-file -e "HEAD:$BASELINE_FILE" 2>/dev/null; then
+elif baseline_in_head; then
   # Staged for deletion: the commit freezes nothing.
   : >"$GG_TMP/baseline.tsv"
 elif [ -f "$BASELINE_FILE" ]; then
@@ -253,7 +283,7 @@ if [ "$MODE" = "update" ]; then
     # The replace is the last step: a failure before it leaves the reviewed
     # baseline byte-identical.
     rows="$(gg_count_nonempty_lines "$GG_TMP/baseline.new")"
-    mv -- "$GG_TMP/baseline.new" "$BASELINE_FILE" || gg_collection_error "could not replace the baseline at $BASELINE_FILE (mv failed) — inspect the file before trusting it"
+    gg_install_file "$GG_TMP/baseline.new" "$BASELINE_FILE" "the baseline"
     cp -- "$BASELINE_FILE" "$GG_TMP/baseline.tsv" || gg_collection_error "could not re-read the replaced baseline at $BASELINE_FILE (cp failed) — the baseline WAS replaced; rerun suppression-ban to verify it"
     echo "suppression-ban --update: baseline tightened at $BASELINE_FILE ($rows row(s))"
   else

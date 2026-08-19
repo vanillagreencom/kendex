@@ -130,7 +130,7 @@ gg_settings_normalize_path() { # PATH — normalized path on stdout ("" when it 
 # and parsing that would resolve every key to its built-in default.
 # GG_SETTINGS_INDEX_DIR holds the materialized copies; the caller owns it.
 gg_settings_source() { # FILE — the path to actually read; nonzero + ::error on failure
-  local file="$1" copy="" status=0 entry="" norm="" head_status=0 tree_status=0
+  local file="$1" copy="" status=0 entry="" norm="" head_status=0 tree_status=0 tmp=""
   if [ "${GG_SETTINGS_FROM_INDEX:-0}" != "1" ] || [ -z "${GG_SETTINGS_INDEX_DIR:-}" ]; then
     printf '%s' "$file"
     return 0
@@ -230,9 +230,20 @@ gg_settings_source() { # FILE — the path to actually read; nonzero + ::error o
   # mapping is reversible and collision-free.
   copy="$GG_SETTINGS_INDEX_DIR/settings.$(printf '%s' "$file" | sed -e 's/%/%25/g' -e 's|/|%2F|g' -e 's/[.]/%2E/g')"
   if [ ! -f "$copy" ]; then
-    if ! git show ":$file" >"$copy" 2>/dev/null; then
-      rm -f -- "$copy"
+    # Write-then-rename inside the cache directory. A direct redirect onto
+    # $copy leaves a TRUNCATED cache behind an interrupt, and the next run
+    # reads it as the complete staged copy — resolving keys to wrong or empty
+    # values, which for a key naming a check to run means the check runs
+    # nowhere while the chain still reports OK.
+    tmp="$copy.$$.part"
+    if ! git show ":$file" >"$tmp" 2>/dev/null; then
+      rm -f -- "$tmp"
       echo "::error::$file: could not read the staged copy while resolving a setting" >&2
+      return 1
+    fi
+    if ! mv -- "$tmp" "$copy"; then
+      rm -f -- "$tmp"
+      echo "::error::$file: could not materialize the staged copy while resolving a setting" >&2
       return 1
     fi
   fi

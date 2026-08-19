@@ -57,6 +57,48 @@
   dropped key, two drifted unquoted defaults, a stripped SECURITY caveat and
   an absent skill template each fail. Against the previous suite the absent-root
   and unquoted-drift fixtures both exited 0.
+- growth-guards: a `git grep --cached` scan now refuses an UNMERGED index
+  instead of reporting it clean (#1510). `git grep --cached` skips unmerged
+  index entries entirely — no error status, no `error:` line on stderr — so
+  `gg_grep_guard` saw a complete scan and `conflict-markers` printed
+  `OK — no conflict markers in tracked files`, exit 0, over a work tree whose
+  files carried the marker trio. That is the exact state the check exists for,
+  and the state a developer or agent is in when they run a validation command
+  mid-resolution. Every `--cached` scan now asks `git ls-files --unmerged`
+  over the paths it is about to read and, finding any, exits 2 naming them and
+  the only remedy there is: finish or abort the merge. The guard is scoped to
+  the lane's own pathspec, so an unmerged path a lane does not scan leaves
+  that scan complete. Same failure class as #1492 — a measurement that could
+  not be taken must never report as a clean measurement.
+
+- growth-guards: policy reads fail closed on a probe git could not answer, and
+  a configured policy path is matched literally (#1508). `gg_policy_content`
+  discarded the exit status of both its probes, so exit 1 ("no such path") and
+  exit 128 (unreadable index, corrupt object, not a repository) were
+  indistinguishable and both fell through — judging a commit against the
+  unstaged worktree copy of a policy file, or against no file at all, while
+  saying nothing. It now mirrors the classification `gg_settings_source`
+  already applies: exit 1 is the answer, anything else is `gg_collection_error`,
+  and HEAD is probed with `git ls-tree` rather than `cat-file -e`, which cannot
+  tell an absent path from a broken repository. Both probes now pass
+  `:(literal)`, so a policy path spelling a glob matches itself instead of
+  whatever the glob reaches — before, a configured `tools/ex?.tsv` resolved
+  `git show ":tools/ex?.tsv"` as a REVISION and loaded a commit diff as the
+  exclusion list. `suppression-ban`'s baseline read carried the same two
+  defects and gets the same treatment; a ratchet that cannot read its own
+  baseline must not fall through to a looser one.
+
+- growth-guards: policy writes land by same-directory rename (#1502). The
+  settings cache was materialized by redirecting straight onto its final path,
+  so an interrupt left a TRUNCATED cache that the next run read as the
+  complete staged copy — and a key resolving to an empty value means the check
+  it names runs nowhere while the chain still reports OK. `suppression-ban
+  --update` replaced the baseline with a `mv` from `$TMPDIR`, which degrades to
+  copy-then-unlink across filesystems, leaving a truncated RATCHET file that
+  silently loosens the gate rather than failing it. Both now write to a temp
+  file beside the destination and rename, through one shared `gg_install_file`
+  helper: the destination carries the complete new bytes or the complete old
+  ones, never a prefix of either.
 
 - CLI: a lock `source` recorded as a path inside `~/.vstack/cache/` now
   resolves as the remote that cache entry clones, instead of as an ordinary

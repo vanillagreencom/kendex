@@ -46,7 +46,9 @@ batch dispatcher exits 2 if any check could not complete.
 
 Scans read INDEX content (`git grep --cached`, staged blobs): what is
 staged is what gets committed, and a sparse checkout cannot hide a tracked
-file from a gate.
+file from a gate. An UNMERGED index cannot be scanned that way — git skips
+unmerged entries and spends no error status doing it — so a scan whose paths
+include one exits 2 naming them: finish or abort the merge, then re-run.
 
 ## Git hooks
 

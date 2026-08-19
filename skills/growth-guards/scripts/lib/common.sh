@@ -137,20 +137,63 @@ GG_EXCLUDE_PATTERNS=()
 # tracked file from disk still applies it. A path staged for DELETION governs
 # as ABSENT — the commit carries no such file — which is not the same as a
 # never-tracked path, where the worktree copy is all there is.
+#
+# Each probe reserves one status for its one expected answer and routes every
+# other status through gg_collection_error. A probe git could not answer must
+# not fall through to the worktree copy: that judges the commit against looser
+# policy than the index carries, and says nothing while doing it.
 gg_policy_content() { # FILE — content on stdout; 1 = the commit has no such file
-  local file="$1"
-  if git ls-files --error-unmatch -- "$file" >/dev/null 2>&1; then
-    git show ":$file" || gg_collection_error "could not read the staged copy of $file"
-    return 0
-  fi
-  if git cat-file -e "HEAD:$file" 2>/dev/null; then
-    return 1
-  fi
+  local file="$1" status=0 head_status=0 tree_status=0 entry=""
+  # :(literal) — a path spelling a glob (`*`, `?`, `[`) must match itself in
+  # the index, never whatever the glob happens to reach.
+  git ls-files --error-unmatch -- ":(literal)$file" >/dev/null 2>&1 || status=$?
+  case "$status" in
+    0)
+      git show ":$file" || gg_collection_error "could not read the staged copy of $file"
+      return 0
+      ;;
+    1) ;;
+    *) gg_collection_error "could not query the index for $file (git ls-files exit $status); refusing to treat it as untracked" ;;
+  esac
+  # ls-tree, never `cat-file -e`: with rev:path syntax git answers "no such
+  # path in HEAD" with the same 128 an operational failure returns, so only
+  # ls-tree (exit 0, empty output for an absent path) tells the two apart.
+  # An unborn HEAD carries nothing by definition — rev-parse reserves exit 1.
+  git rev-parse --verify --quiet HEAD >/dev/null 2>&1 || head_status=$?
+  case "$head_status" in
+    0)
+      entry="$(git ls-tree HEAD -- ":(literal)$file" 2>/dev/null)" || tree_status=$?
+      [ "$tree_status" -eq 0 ] \
+        || gg_collection_error "could not probe HEAD for $file (git ls-tree exit $tree_status); refusing to treat it as untracked"
+      # Tracked in HEAD, absent from the index: staged for deletion.
+      if [ -n "$entry" ]; then return 1; fi
+      ;;
+    1) ;;
+    *) gg_collection_error "could not resolve HEAD while reading $file (git rev-parse exit $head_status); refusing to treat it as untracked" ;;
+  esac
   if [ -f "$file" ]; then
     cat -- "$file" || gg_collection_error "could not read $file"
     return 0
   fi
   return 1
+}
+
+# Replace DEST with SRC's bytes through a rename inside DEST's own directory.
+# A direct redirect onto DEST, or a rename that crosses a filesystem (where mv
+# degrades to copy-then-unlink), leaves DEST TRUNCATED behind an interrupt —
+# and a truncated policy file is read as a complete one, which for a ratchet
+# baseline loosens the gate instead of failing it.
+gg_install_file() { # SRC DEST LABEL
+  local src="$1" dest="$2" label="$3" tmp
+  tmp="$(dirname -- "$dest")/.gg-install.$$.$(basename -- "$dest")"
+  if ! cp -- "$src" "$tmp"; then
+    rm -f -- "$tmp"
+    gg_collection_error "could not stage the replacement for $label beside $dest"
+  fi
+  if ! mv -- "$tmp" "$dest"; then
+    rm -f -- "$tmp"
+    gg_collection_error "could not replace $label at $dest — inspect the file before trusting it"
+  fi
 }
 
 # Shell glob matched against the full repo-relative path (`*` crosses `/`);
@@ -192,6 +235,24 @@ gg_is_excluded() { # PATH — 0 when some exclusion glob matches the full path
   return 1
 }
 
+# `git grep --cached` SKIPS an unmerged index entry entirely: it spends no
+# error status and writes no `error:` line doing it, so gg_grep_guard sees a
+# complete scan and the lane reports OK over a work tree whose files carry
+# conflict markers. The index cannot be scanned while a merge is unresolved,
+# so every --cached scan refuses first. The remedy is the only one there is:
+# finish or abort the merge.
+gg_require_merged_index() { # PATHSPEC... — returns only when nothing is unmerged
+  local rows status=0 paths count=0
+  rows="$(git ls-files --unmerged -- "$@")" || status=$?
+  [ "$status" -eq 0 ] \
+    || gg_collection_error "could not read the index for unmerged paths (git ls-files exit $status)"
+  [ -n "$rows" ] || return 0
+  paths="$(printf '%s\n' "$rows" | cut -f2- | LC_ALL=C sort -u)"
+  count="$(printf '%s\n' "$paths" | grep -c .)" || count=0
+  printf '%s\n' "$paths" >&2
+  gg_collection_error "the index carries $count unmerged path(s) (listed above) and a --cached scan skips them silently — finish or abort the merge, then re-run"
+}
+
 # Judge one `git grep` run from its exit status AND captured stderr. The
 # status carries only the MATCH result: a staged blob git cannot read is an
 # `error:` line on stderr while the status still says 1 (nothing matched) or
@@ -217,6 +278,7 @@ gg_grep_guard() { # STATUS ERRFILE CONTEXT — returns only when the scan is com
 gg_grep_lane() { # LABEL ERE REMEDY PATHSPEC... — numbered violations on stdout
   local label="$1" ere="$2" remedy="$3" status=0 f hit_status hit
   shift 3
+  gg_require_merged_index "$@"
   LC_ALL=C git grep --cached -lIzE "$ere" -- "$@" >"$GG_TMP/lane.z" 2>"$GG_TMP/lane.err" || status=$?
   gg_grep_guard "$status" "$GG_TMP/lane.err" "scanning tracked files for $label"
   while IFS= read -r -d '' f; do
