@@ -533,9 +533,13 @@ set -e
 assert_eq "$(jq -r '.reason' <<<"$out")" "incomplete" "--file arrays-lost still reason=incomplete"
 assert_substr "$(jq -r '.detail' <<<"$out")" "blockers[] is absent" "--file arrays-lost detail names the first missing array and what it was"
 assert_substr "$(jq -r '.detail' <<<"$out")" "suggestions[] is absent" "--file arrays-lost detail names the second"
+assert_substr "$(jq -r '.detail' <<<"$out")" "no qa_metadata" "--file arrays-lost detail says the tolerant shape is exempt"
+
 # A key that is missing and a key written as null are different things an agent
 # did; `has()` is what tells them apart, and the remedy reads better for both
-# when the report says which one it saw.
+# when the report says which one it saw. Kept BELOW the arrays-lost assertions:
+# each of these reassigns `out`, so sitting above them made the last one read
+# this fixture while claiming to describe $arrays_lost.
 qa_absent_vs_null="$worktree/tmp/review-external-20260812-950001.json"
 printf '{"verdict":"pass","blockers":null,"suggestions":[],"qa_metadata":{}}' > "$qa_absent_vs_null"
 set +e
@@ -547,7 +551,6 @@ set +e
 out="$("$CHECK" --file "$qa_absent_vs_null")"
 set -e
 assert_substr "$(jq -r '.detail' <<<"$out")" "blockers[] is absent" "--file a missing key is reported as absent, not as null"
-assert_substr "$(jq -r '.detail' <<<"$out")" "no qa_metadata" "--file arrays-lost detail says the tolerant shape is exempt"
 
 # A field PRESENT with the wrong type is this run's output shape, not a damaged
 # write, and the detail has to say which it was — an agent that wrote `null`
