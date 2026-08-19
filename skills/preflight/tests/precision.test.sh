@@ -15,6 +15,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 PASS=0
 FAIL=0
+SKIP=0
 ok() {
   PASS=$((PASS + 1))
   printf '  ok    %s\n' "$1"
@@ -23,7 +24,10 @@ bad() {
   FAIL=$((FAIL + 1))
   printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"
 }
-skipped() { printf '  skip  %s (%s)\n' "$1" "$2"; }
+skipped() {
+  SKIP=$((SKIP + 1))
+  printf '  skip  %s (%s)\n' "$1" "$2"
+}
 
 seed() { # NAME — fixture in $R: committed baseline, origin/main, feature branch
   R="$TMP/$1"
@@ -393,5 +397,5 @@ else
   skipped "a vendored shellcheck error still fails" "shellcheck not on PATH"
 fi
 
-printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
+printf '\n%s passed, %s failed, %s skipped\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" -eq 0 ]

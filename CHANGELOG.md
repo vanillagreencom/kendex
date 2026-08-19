@@ -153,6 +153,7 @@
   malformed config, a leaked temp directory or an unreferenced work marker
   becomes invisible. Both directions are pinned in `precision.test.sh`, per
   guard. (#1498)
+
 - preflight: new `hardcoded-temp-path` lane — an added directory-creating
   call taking a literal `/tmp/…` or `/var/tmp/…` as (part of) its first
   argument fails. A literal absolute temp path escapes TMPDIR redirection
