@@ -44,7 +44,7 @@ pub(in crate::refresh_sources) fn make_vstack_source(root: &Path, name: &str) ->
     source
 }
 
-pub(in crate::refresh_sources) fn lock_entry(name: &str, source: &str) -> LockEntry {
+pub(crate) fn lock_entry(name: &str, source: &str) -> LockEntry {
     LockEntry {
         name: name.into(),
         kind: ItemKind::Agent,

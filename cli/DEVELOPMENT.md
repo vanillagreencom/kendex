@@ -32,6 +32,7 @@ Remote sources are cloned under `~/.vstack/cache/`. Concurrency and process rule
 - `check` never fetches inline. A cache past its six-hour TTL is handed to a detached `vstack cache-refresh` that nobody waits on; its outcome is recorded and reported at the next session. `--offline` skips the handoff entirely.
 - When the background refresh cannot even be spawned (a sandbox denying process creation, for instance), `check` reports it on its own line — informational, never drift.
 - `vstack refresh` fetches synchronously and unbounded; only the background refresh and the wizard's startup fetch are bounded and credential-free.
+- A lock `source` recorded as a path INTO the cache (`vstack add ~/.vstack/cache/<entry>` is a supported invocation) is a remote source spelled as a path, and resolves as one. The remote comes from the entry's own `origin` — a cache key is derived from the repository identity and is not reversible, and one machine can hold `owner_repo` beside `owner_repo-<digest>` for a single repository — and stays pinned to the entry the lock named. An entry whose remote cannot be established is refused rather than read as a local directory. `refresh` rewrites such a source to the remote spec once vstack's own entry for that remote is present and current.
 
 ## Skill / Pi extension test surfaces
 

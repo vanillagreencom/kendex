@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+- CLI: a lock `source` recorded as a path inside `~/.vstack/cache/` now
+  resolves as the remote that cache entry clones, instead of as an ordinary
+  local checkout (#1495). vstack's cache is its own TTL-managed state, but
+  the resolver could not tell one of its entries from a user's stable
+  directory, so a single misclassification took the entry out of every
+  freshness mechanism at once: `refresh` skipped the fetch and copied stale
+  bytes, `cache-refresh` had nothing listed to fetch, and `check` and
+  `verify` compared the install against those same stale bytes and printed
+  `✓`. Every command reported success while propagation had stopped — one
+  machine sat nine hours behind `origin/main` with sixteen globally
+  installed Pi packages pinned to it and nothing reporting drift. The remote
+  is read from the entry's own `origin`, never reverse-engineered from the
+  directory name: a cache key is derived from the repository identity and is
+  not reversible, and one machine holds `vanillagreencom_vstack` beside
+  `vanillagreencom_vstack-ff0070a84862081c` for a single repository. It stays
+  PINNED to the entry the lock named, so the fetch, the lease and the drift
+  comparison all act on the tree the items were installed from. An entry
+  whose remote cannot be established fails closed — `check` reports the
+  entries as unverifiable, naming the file and the reason, and never counts
+  them clean — and one that is simply not on disk is reported absent, as it
+  always was. `refresh` migrates the recorded source onto the remote spec in
+  the same pass that repairs `source_repo`, so existing consumers cross over
+  without a manual re-add; the rewrite waits until vstack's own entry for
+  that remote is present AND has been brought to the revision the entry is
+  about to be hashed at, because a lock naming a remote with no clone
+  resolves to nothing and a hash taken against an older clone reads as drift
+  in the wrong direction on the next `check`.
+
 - preflight: new `hardcoded-temp-path` lane — an added directory-creating
   call taking a literal `/tmp/…` or `/var/tmp/…` as (part of) its first
   argument fails. A literal absolute temp path escapes TMPDIR redirection

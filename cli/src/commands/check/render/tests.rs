@@ -3,6 +3,7 @@ use crate::commands::check::test_support::*;
 use crate::commands::check::*;
 use crate::display::DISPLAY_LIMIT;
 
+mod cache_entry_source;
 mod quiet;
 
 #[test]

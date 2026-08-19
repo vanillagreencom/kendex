@@ -2,9 +2,11 @@ use crate::config::{self, CacheLease};
 use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 
+mod cache_entry;
 mod records;
 mod url;
 
+pub(crate) use cache_entry::*;
 pub(crate) use records::*;
 pub(crate) use url::*;
 
@@ -55,8 +57,29 @@ fn resolve_single_source_with(
     update_remote: bool,
     require_vstack_source: bool,
 ) -> LeasedResolution {
-    // Absolute local path that exists.
     let p = std::path::Path::new(source);
+
+    // A path inside vstack's own cache is a remote source spelled as a path,
+    // and is resolved as one BEFORE the local-directory branch below. The
+    // cache is state vstack fetches and `reset --hard`s on a TTL, not a
+    // checkout a user maintains, so reading one as an ordinary local directory
+    // took the entry out of the fetch, the TTL, the lease, the ownership
+    // proofs and every drift report at once — silently, because the stale tree
+    // it read still matched what had been installed from it.
+    if is_remote_cache_entry_path(p) {
+        return match remote_for_source(source) {
+            Ok(Some(remote)) => resolve_remote_source(remote, update_remote),
+            // An entry that is not there is absent, not refused, and
+            // `vstack add` is what puts one back.
+            Ok(None) => SourceResolution::Absent.into(),
+            // Fail closed. A cache entry whose remote cannot be established is
+            // a source whose freshness cannot be established either, and every
+            // caller reports that rather than counting its bytes clean.
+            Err(err) => SourceResolution::refused(&err).into(),
+        };
+    }
+
+    // Absolute local path that exists.
     if p.is_absolute()
         && p.is_dir()
         && (!require_vstack_source || crate::resolve::is_vstack_source(p))
@@ -93,41 +116,7 @@ fn resolve_single_source_with(
         Ok(None) => return SourceResolution::Absent.into(),
         Err(err) => return SourceResolution::refused(&err).into(),
     };
-    if !cache_entry_present(&remote) {
-        return SourceResolution::Absent.into();
-    }
-    if update_remote {
-        eprintln!("Updating cached repo {}...", remote.display);
-        // The update path runs the filesystem checks itself, on its way to the
-        // git-level ones that guard `reset --hard`.
-        return match update_cached_repo(&remote) {
-            // The lease travels with the directory it protects: whoever reads
-            // this root holds it until the read is done.
-            Ok(lease) => LeasedResolution {
-                resolution: SourceResolution::Resolved(remote.cache_dir),
-                lease,
-            },
-            Err(err) => SourceResolution::refused(&err).into(),
-        };
-    } else if config::remote_cache_fetch_in_flight(&remote.cache_dir) {
-        // Read-only, and another process is mid-fetch: this tree is being
-        // `reset --hard` right now, so every question asked of it — which
-        // assets it ships, what they hash to, even which repository its
-        // `.git/config` names — can be answered wrongly rather than not at
-        // all. Probed, never waited on: the session-start check runs this path
-        // and must stay local, so the answer is "not this run" rather than a
-        // lease taken out from under an install.
-        return SourceResolution::Busy.into();
-    } else if let Err(err) = ensure_cache_entry_is_owned(&remote) {
-        // The same question the update path asks, because reading an entry is
-        // how its content becomes the installed asset: a symlinked entry or a
-        // redirected `.git` is some other checkout, and an entry whose origin
-        // is a different repository would be installed as this source. Every
-        // check is a read; only the fetch and reset the update path adds are
-        // not.
-        return SourceResolution::refused(&err).into();
-    }
-    SourceResolution::Resolved(remote.cache_dir).into()
+    resolve_remote_source(remote, update_remote)
 }
 
 /// Best-effort update of every remote source's cache entry named by a lock.
@@ -143,7 +132,7 @@ pub(crate) fn refresh_remote_caches(lock: &config::LockFile) {
         if !seen.insert(entry.source.clone()) {
             continue;
         }
-        let remote = match RemoteSource::parse(&entry.source) {
+        let remote = match remote_for_source(&entry.source) {
             Ok(Some(remote)) => remote,
             Ok(None) => continue,
             Err(err) => {
@@ -1368,4 +1357,4 @@ fn redact_token(token: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

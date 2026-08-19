@@ -179,38 +179,6 @@ fn same_path(a: &Path, b: &Path) -> bool {
         == b.canonicalize().unwrap_or_else(|_| b.to_path_buf())
 }
 
-fn observed_source_repo_for_lock_entry(
-    source_records: &[ResolvedSource],
-    entry: &config::LockEntry,
-) -> Option<Option<String>> {
-    if let Some(record) = source_records.iter().find(|source| {
-        source.aliases.iter().any(|alias| alias == &entry.source)
-            || (Path::new(&entry.source).is_absolute()
-                && same_path(&source.root, Path::new(&entry.source)))
-    }) {
-        return Some(record.source_repo.clone());
-    }
-    if let Some(source_root) = config::resolve_source_path(&entry.source) {
-        return Some(config::source_repo_for_source(
-            Some(&source_root),
-            &entry.source,
-        ));
-    }
-    config::parse_github_slug(&entry.source).map(Some)
-}
-
-/// Record the durable repo identity of the source `entry` was just refreshed
-/// from — its own source, never whichever source a caller happened to have
-/// selected.
-pub(crate) fn sync_lock_entry_source_repo(
-    source_records: &[ResolvedSource],
-    entry: &mut config::LockEntry,
-) {
-    if let Some(source_repo) = observed_source_repo_for_lock_entry(source_records, entry) {
-        entry.source_repo = source_repo;
-    }
-}
-
 /// Generic upstream-merge: starts with `project_list` if present, else
 /// `source_list`; appends source items not already present, returning
 /// (merged, names_added).
@@ -1504,7 +1472,7 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
         }
         let old_hash = entry.source_hash.clone();
         if stats.successful_items.contains(&entry.name) {
-            sync_lock_entry_source_repo(&source_records, entry);
+            sync_lock_entry_source(&source_records, entry);
             entry.installed_at = now.clone();
             entry.source_hash = config::compute_source_hash(entry);
         }
@@ -1676,6 +1644,9 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
     }
     Ok(())
 }
+
+mod lock_repair;
+pub(crate) use lock_repair::*;
 
 #[cfg(test)]
 mod tests;

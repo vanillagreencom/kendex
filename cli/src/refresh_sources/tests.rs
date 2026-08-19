@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// A throwaway directory for one test, shared with the records tests next
 /// door — both halves build their fixtures under the same root name.
-pub(super) fn tmpdir(label: &str) -> PathBuf {
+pub(crate) fn tmpdir(label: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock before epoch")
@@ -21,7 +21,7 @@ pub(super) fn tmpdir(label: &str) -> PathBuf {
 
 /// Test-side git: unhardened with respect to the ownership checks under
 /// test, but never redirected by an inherited location override.
-fn git(repo: &Path, args: &[&str]) {
+pub(crate) fn git(repo: &Path, args: &[&str]) {
     let mut command = std::process::Command::new("git");
     for key in GIT_INHERITED_ENV_VARS.iter().chain(GIT_CACHE_ONLY_ENV_VARS) {
         command.env_remove(key);
@@ -45,7 +45,7 @@ fn git_stdout(repo: &Path, args: &[&str]) -> String {
 }
 
 /// A committed repository at `dir` with `README.md` tracked.
-fn init_git_repo(dir: &Path) {
+pub(crate) fn init_git_repo(dir: &Path) {
     std::fs::create_dir_all(dir).unwrap();
     git(dir, &["init", "-q", "-b", "main"]);
     git(dir, &["config", "user.email", "test@example.com"]);
@@ -56,7 +56,7 @@ fn init_git_repo(dir: &Path) {
     git(dir, &["commit", "-q", "-m", "init"]);
 }
 
-fn file_url(path: &Path) -> String {
+pub(crate) fn file_url(path: &Path) -> String {
     format!("file://{}", path.display())
 }
 
@@ -71,7 +71,7 @@ fn remote_at(cache: &Path, origin: &Path) -> RemoteSource {
 }
 
 /// Clone `origin` into `cache` the way vstack would have.
-fn clone_into(origin: &Path, cache: &Path) {
+pub(crate) fn clone_into(origin: &Path, cache: &Path) {
     std::fs::create_dir_all(cache.parent().unwrap()).unwrap();
     git(
         cache.parent().unwrap(),

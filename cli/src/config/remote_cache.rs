@@ -11,7 +11,7 @@
 //! [`fetch`]; what a recorded state MEANS for a report lives in [`problems`].
 
 use super::LockFile;
-use crate::refresh_sources::{RemoteSource, cache_entry_present};
+use crate::refresh_sources::{RemoteSource, cache_entry_present, remote_for_source};
 use std::path::{Path, PathBuf};
 
 mod fetch;
@@ -257,12 +257,16 @@ fn cache_refresh_unwritable_reason(cache_dir: &Path) -> Option<String> {
 }
 
 /// Every distinct lock source whose clone is on this machine, as the remote
-/// it names. Pure disk reads — no git process, so the session-start report
-/// never starts one.
+/// it names. Local reads only — nothing here fetches, so the session-start
+/// report never waits on the network. A source recorded as a path into the
+/// cache costs one local `git remote get-url` to establish which remote its
+/// entry clones; every other shape is answered from the string alone.
 ///
-/// Which entry belongs to a source is [`RemoteSource::parse`]'s answer, not
-/// this module's, so an entry a fetch mutates and an entry a report reads can
-/// never be two different directories. A source that parse REFUSES is not
+/// Which entry belongs to a source is [`remote_for_source`]'s answer, not this
+/// module's, so an entry a fetch mutates and an entry a report reads can never
+/// be two different directories — including for a source recorded as a path
+/// into the cache, which resolves to the remote its entry clones rather than
+/// to a local directory nothing ever fetches. A source that is REFUSED is not
 /// listed: it has no entry vstack would use, and the refusal is reported by
 /// the resolution path that names it.
 pub(crate) fn cached_remote_sources(lock: &LockFile) -> Vec<(String, RemoteSource)> {
@@ -272,7 +276,7 @@ pub(crate) fn cached_remote_sources(lock: &LockFile) -> Vec<(String, RemoteSourc
         if !seen.insert(entry.source.clone()) {
             continue;
         }
-        if let Ok(Some(remote)) = RemoteSource::parse(&entry.source)
+        if let Ok(Some(remote)) = remote_for_source(&entry.source)
             && cache_entry_present(&remote)
         {
             out.push((entry.source.clone(), remote));
