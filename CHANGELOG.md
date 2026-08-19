@@ -21,7 +21,7 @@
   is installed beside it (VST-310).
 - preflight: new `hardcoded-temp-path` lane — an added directory-creating call
   taking a literal `/tmp/…` or `/var/tmp/…` fails, since it escapes TMPDIR
-  redirection and leaks.
+  redirection and leaks (#1481).
 - preflight: three added-line lanes — `unwired-suite`, `mktemp-trap` and
   `docs-cited-paths`.
 - reviewer: five probes for classes that were being caught downstream instead
@@ -31,13 +31,13 @@
 - size-ratchet: per-class thresholds via `SIZE_RATCHET_CLASSES` (glob to
   threshold, first match wins).
 - cli: `vstack check` is a process contract — exit `0` clean, `1` drift, `2`
-  the check itself failed, with `--quiet`, `--json` and `--offline`.
+  the check itself failed, with `--quiet`, `--json` and `--offline` (VST-258).
 - hooks: one execution contract (an event × harness matrix) decides what
   installing a hook means; every install path, label and published table
   derives from it.
 - orch: `reconcile-work-items` reports tracker state written once and never
   re-read — parked containers, stale started items, Done items with unchecked
-  acceptance boxes.
+  acceptance boxes (VST-318).
 - pi-agents-tmux: the Agents popup Transcript tab is an event timeline rather
   than raw JSONL; `e` opens the raw file in `$VISUAL`/`$EDITOR` (VST-327).
 
@@ -55,7 +55,7 @@
   `rg_setting` ahead of every source rather than by an exemption in the
   source-shape check. Behavior unchanged.
 - pi-agents-tmux: Monitor task rows show elapsed/total run-time instead of a
-  local clock, and timestamps render local human time.
+  local clock, and timestamps render local human time (VST-316).
 
 ### Fixed
 
@@ -70,7 +70,7 @@
   package spelled with shell syntax is passed literally rather than executed.
 - growth-guards: a `git grep --cached` scan refuses an unmerged index instead
   of reporting it clean — `conflict-markers` had printed OK mid-conflict, and
-  `byte-ceiling` reported zero staged additions (#1510).
+  `byte-ceiling` reported zero staged additions (#1510, #1492).
 - growth-guards: policy reads fail closed when a git probe cannot answer, and a
   configured policy path is matched literally (#1508).
 - growth-guards: policy writes land by same-directory rename, so an interrupt
@@ -80,7 +80,7 @@
   built-in default.
 - growth-guards: the pre-commit shim reads `size-ratchet --staged`'s outcome, so
   a consuming repo's own replacement skips with a note instead of blocking
-  every commit.
+  every commit (VST-362).
 - growth-guards: every test suite runs against neutralized git configuration
   from one shared `tests/lib/harness.bash`, including config carried in the
   environment (#1500).
@@ -90,7 +90,7 @@
 - growth-guards: a green suite run prints nothing (#1503).
 - preflight: installed-artifact subtrees are out of scope for every lane that
   judges how a file is authored, not just `docs-cited-paths` — the finding
-  named an upstream choice the consuming repo cannot fix (#1498).
+  named an upstream choice the consuming repo cannot fix (#1498, VST-312).
 - review-gate: `settings-example-sync.test.sh` can no longer report success for
   comparisons it never made (#1507).
 - review-gate: the teardown suite no longer fails when a runner launches it in
@@ -113,7 +113,7 @@
 - hooks: `block-unsafe-rm` declares `harnesses:` without `pi`, which has no
   port of it (VST-283).
 - worktree: `create` installs npm dependencies only where npm is the package
-  manager, so a pnpm workspace no longer starts dirty.
+  manager, so a pnpm workspace no longer starts dirty (VST-340).
 - linear: a truncated `cache issues list` announces itself on stderr with both
   counts instead of returning a bare array that reads as complete (VST-320).
 - merge-queue ejection alert: the intake issue is reason-aware — deliberate
