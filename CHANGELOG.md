@@ -163,6 +163,25 @@
   suite neither sources the harness nor isolates itself: the tenth suite
   cannot forget. The harness is `.bash`, not `.sh`, because runners and the
   exec-bit lint glob `tests/*.sh` and git's pathspec matches nested paths.
+- growth-guards: `install-git-hooks --check` recognizes a hand-wired
+  `core.hooksPath` directory by a CLOSED grammar, and answers `2` for anything
+  outside it. An earlier pass read the hook line by line and armed on the
+  entry point wherever it stood in command position; that still reported
+  `armed`, exit 0, for `if false; then exec …/pre-commit; fi`, for the same
+  line inside a function nothing calls, and for a `<<-` heredoc whose
+  terminator is indented — three clones whose commits git does not gate at
+  all, each confirmed by a `git commit` that went straight through. Deciding
+  which lines a shell reaches needs a shell parser, and the failure direction
+  of guessing is OPEN, which is the one direction this answer must never
+  fail in. `--check` now accepts a hook that is a shebang, comments, and
+  exactly one command that is this skill's entry point (through `exec` or
+  not, quoted or not), plus the delegating line the installer itself writes
+  beside its helper. Anything else is `2`, `could not determine`, naming the
+  recognized shape — not `1`, because a hook that runs `set -e` before the
+  entry point does gate and calling it ungated is the same lie reversed. The
+  suite now asserts the property directly rather than the wording: exit 0 is
+  claimed only where a real commit is really blocked.
+
 - growth-guards: `install-git-hooks --check` now probes the directory
   `core.hooksPath` redirects git to, instead of judging a redirected clone
   solely by `.git/hooks` (#1509). The installer stands down under

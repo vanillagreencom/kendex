@@ -1275,12 +1275,26 @@ arm_pair() { # PRE_FORMAT MSG_FORMAT — printf formats taking the scripts dir
   printf "$2" "$SC38" >"$R38/shapehooks/commit-msg"
   chmod +x "$R38/shapehooks/pre-commit" "$R38/shapehooks/commit-msg"
 }
-must_fail_shape() { # LABEL
+# The invariant every shape below is judged against: exit 0 is claimed ONLY
+# where a commit is really gated. A shape the grammar does not recognize is
+# exit 2 — "could not determine" — never exit 0, and never exit 1 either,
+# because calling a hook that does gate "NOT gated" is the same tool telling
+# the same lie in the other direction.
+must_fail_shape() { # LABEL — recognizably not ours: exit 1, stated as ungated
   check_in "$R38"
   [ "$RC" -eq 1 ] && ok "must-fail: $1 is not armed" || bad "must-fail: $1 is not armed" "rc=$RC out=$OUT"
   case "$OUT" in
     *"NOT gated"* | *"NOT armed"*) ok "and $1 is stated as ungated" ;;
     *) bad "$1 stated as ungated" "out=$OUT" ;;
+  esac
+}
+unverifiable_shape() { # LABEL — outside the grammar: exit 2, never a verdict
+  check_in "$R38"
+  [ "$RC" -eq 2 ] && ok "must-fail: $1 is not armed (unverifiable)" \
+    || bad "must-fail: $1 is not armed (unverifiable)" "rc=$RC out=$OUT"
+  case "$OUT" in
+    *"could not determine"*) ok "and $1 is stated as unverifiable, not as a verdict" ;;
+    *) bad "$1 stated as unverifiable" "out=$OUT" ;;
   esac
 }
 
@@ -1290,15 +1304,15 @@ must_fail_shape "the entry point named only in a line-2 comment"
 
 arm_pair '#!/bin/sh\nexit 0\nexec %s/pre-commit "$@"\n' \
   '#!/bin/sh\nexit 0\nexec %s/commit-msg "$1"\n'
-must_fail_shape "wiring left unreachable after an unconditional exit"
+unverifiable_shape "wiring left unreachable after an unconditional exit"
 
 arm_pair '#!/bin/sh\ncat <<EOF\nexec %s/pre-commit "$@"\nEOF\nexit 0\n' \
   '#!/bin/sh\ncat <<EOF\nexec %s/commit-msg "$1"\nEOF\nexit 0\n'
-must_fail_shape "the entry point inside a heredoc body"
+unverifiable_shape "the entry point inside a heredoc body"
 
 arm_pair '#!/bin/sh\necho "%s/pre-commit"\nexit 0\n' \
   '#!/bin/sh\necho "%s/commit-msg"\nexit 0\n'
-must_fail_shape "the entry point as a quoted argument to another command"
+unverifiable_shape "the entry point as a quoted argument to another command"
 
 arm_pair '#!/bin/sh\n#%s/pre-commit\n' '#!/bin/sh\n#%s/commit-msg\n'
 must_fail_shape "a hook whose only content is the commented entry point"
@@ -1315,11 +1329,34 @@ check_in "$R38"
 [ "$RC" -eq 0 ] && ok "control: a quoted exec of the entry point is armed" \
   || bad "quoted exec armed" "rc=$RC out=$OUT"
 
-arm_pair '#!/bin/sh\nset -e\ncat <<EOF >/dev/null\nnoise\nEOF\n  exec %s/pre-commit "$@"\n' \
-  '#!/bin/sh\nset -e\ncat <<EOF >/dev/null\nnoise\nEOF\n  exec %s/commit-msg "$1"\n'
+# Reachability is the line this tool does not cross. These three all run the
+# entry point in a shell, and a lexical reader cannot separate the two that
+# never execute from the one that does — so none of them is answered.
+arm_pair '#!/bin/sh\nif false; then\nexec %s/pre-commit "$@"\nfi\nexit 0\n' \
+  '#!/bin/sh\nif false; then\nexec %s/commit-msg "$1"\nfi\nexit 0\n'
+unverifiable_shape "wiring guarded by a condition that is never true"
+
+arm_pair '#!/bin/sh\nunused() {\nexec %s/pre-commit "$@"\n}\nexit 0\n' \
+  '#!/bin/sh\nunused() {\nexec %s/commit-msg "$1"\n}\nexit 0\n'
+unverifiable_shape "wiring inside a function nothing calls"
+
+arm_pair '#!/bin/sh\ncat <<-EOF\n\t%s/pre-commit\n\tEOF\nexit 0\n' \
+  '#!/bin/sh\ncat <<-EOF\n\t%s/commit-msg\n\tEOF\nexit 0\n'
+unverifiable_shape "the entry point in a <<- heredoc with an indented terminator"
+
+# And the same answer for a hook that DOES gate but says more than the one
+# command: unverifiable is not a synonym for ungated.
+arm_pair '#!/bin/sh\nset -e\nexec %s/pre-commit "$@"\n' \
+  '#!/bin/sh\nset -e\nexec %s/commit-msg "$1"\n'
+unverifiable_shape "a hook that gates but runs another command first"
 check_in "$R38"
-[ "$RC" -eq 0 ] && ok "control: wiring indented after a heredoc that closed is armed" \
-  || bad "wiring after a closed heredoc armed" "rc=$RC out=$OUT"
+printf '# %s: finish this\n' "$TD" >"$R38/s.py"
+git -C "$R38" add s.py
+commit_in "$R38" "feat: add s"
+[ "$RC" -ne 0 ] && ok "and that unverifiable hook really does gate, which is why it is not called ungated" \
+  || bad "unverifiable-but-gating hook blocks" "rc=$RC out=$OUT"
+git -C "$R38" rm -q --cached s.py
+rm -f "$R38/s.py"
 
 # A second install elsewhere on disk: the generic entry-point shape, wired to
 # scripts that really run, so "armed" is proved against an actual commit.

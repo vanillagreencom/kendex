@@ -71,7 +71,8 @@ the installer, `vstack remove growth-guards` runs `--uninstall` first, and
 `.git/hooks`, or in a `core.hooksPath` directory hand-wired to this skill's
 `pre-commit` and `commit-msg`; 1 drifted, absent, or dormant behind a
 `core.hooksPath` that redirects git away from the shims; 2 could not
-determine — an unreadable hooks directory is 2, never a pass). Repeat runs are no-ops and repairs; `core.hooksPath` is never set,
+determine — an unreadable hooks directory, or a hand-wired hook whose shape
+this check does not recognize, is 2, never a pass and never a verdict). Repeat runs are no-ops and repairs; `core.hooksPath` is never set,
 existing hooks keep their content and their own exit status. Full behaviour,
 including what the installer refuses to touch:
 [DEVELOPMENT.md](DEVELOPMENT.md).

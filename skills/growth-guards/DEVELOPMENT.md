@@ -97,19 +97,29 @@ because it is the only one git reads. The target is resolved with `git
 rev-parse --git-path hooks` — git's own hook resolver, so an absolute, a
 `~`-prefixed and a work-tree-relative value all land where git lands, from a
 subdirectory as well as from the root. Its `pre-commit` and `commit-msg` are
-armed in exactly two shapes: a line whose COMMAND is this skill's entry
-point for that hook (optionally through `exec`, optionally quoted), or the
-delegating line this installer writes beside a helper in that same directory
-— that line resolves its helper through git, which under `core.hooksPath`
-answers with this directory and not `.git/hooks`. Only executable lines are
-read: a comment, a heredoc body, an argument to another command, and
-anything past an unconditional `exit` name the entry point without running
-it, and a check that took a mention for wiring would report gating that no
-commit gets. Anything short of both hooks armed is `1`, keeping the
-hand-wiring remedy, and a target that cannot be read is `2` rather than a
-verdict — including the case where every shim in `.git/hooks` is intact but
-dormant behind the redirect, which stays `1` with its own wording because no
-commit runs a guard right now.
+armed in exactly two shapes, matched over the WHOLE FILE rather than
+searched for: the delegating line this installer writes, beside a helper in
+that same directory — that line resolves its helper through git, which under
+`core.hooksPath` answers with this directory and not `.git/hooks` — or a
+hook that is a shebang, comments, and exactly ONE command, and that command
+is this skill's entry point for the hook (optionally through `exec`,
+optionally quoted, arguments allowed).
+
+The grammar is closed on purpose. Accepting the entry point anywhere it
+looks executable means ruling on reachability, which needs a shell parser:
+`if false; then … fi`, a function body nothing calls, and a `<<-` heredoc
+with an indented terminator all put the entry point on a line that reads as
+a command and never runs. Guessing there fails OPEN — it reports gating that
+no commit gets — so a hook outside the grammar is answered `2`, `could not
+determine`, naming the shape that is recognized. Never `0`, and never `1`
+either: a hook that runs `set -e` before the entry point does gate, and
+calling it ungated is the same false answer pointing the other way.
+
+A recognizable hook that is simply not ours — one command, and it is some
+other tool — is `1` with the hand-wiring remedy, as is a missing or
+non-executable one. A target that cannot be read is `2`. Every shim in
+`.git/hooks` intact but dormant behind the redirect stays `1` with its own
+wording, because no commit runs a guard right now.
 
 ## The pre-commit chain
 
