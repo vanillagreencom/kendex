@@ -7,24 +7,17 @@
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The harness owns the scratch root, TMPDIR inside it, and the git isolation.
+# The root matters here beyond hygiene: an assertion over a namespace shared
+# with other processes cannot tell "the code under test leaked" from "someone
+# else's run moved".
+# shellcheck source=lib/harness.bash
+. "$TEST_DIR/lib/harness.bash"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 SCRIPTS="$SKILL_DIR/scripts"
 COMMON="$SCRIPTS/lib/common.sh"
 SETTINGS="$SCRIPTS/lib/settings.sh"
-
-# A scratch root this suite OWNS: an assertion over a namespace shared with
-# other processes cannot tell "the code under test leaked" from "someone
-# else's run moved".
-ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gg-index-reads.XXXXXX")"
-trap 'rm -rf "$ROOT"' EXIT
-
-# The fixtures below are judged against THEIR OWN configuration: the caller's
-# core.hooksPath, init.templateDir or commit.gpgsign would otherwise run the
-# caller's hooks against generated repos, or block their commits outright.
-export HOME="$ROOT/home"
-export XDG_CONFIG_HOME="$ROOT/xdg"
-export GIT_CONFIG_NOSYSTEM=1
-mkdir -p "$HOME" "$XDG_CONFIG_HOME"
+ROOT="$TMP"
 
 unset GROWTH_GUARDS_SETTINGS_FILE GROWTH_GUARDS_CONFLICT_EXCLUDES 2>/dev/null || true
 
