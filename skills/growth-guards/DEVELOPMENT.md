@@ -103,7 +103,10 @@ that same directory — that line resolves its helper through git, which under
 `core.hooksPath` answers with this directory and not `.git/hooks` — or a
 hook that is a shebang, comments, and exactly ONE command, and that command
 is this skill's entry point for the hook (optionally through `exec`,
-optionally quoted, arguments allowed).
+optionally quoted). The argument list is checked as well: it must be empty,
+`"$@"` or `"$1"`, each optionally followed by `|| exit $?`. A tail outside
+that set is what makes `exec …/pre-commit --help` and `…/pre-commit "$@" ||
+true` gate nothing while naming the entry point in command position.
 
 The grammar is closed on purpose. Accepting the entry point anywhere it
 looks executable means ruling on reachability, which needs a shell parser:

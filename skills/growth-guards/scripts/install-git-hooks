@@ -590,7 +590,7 @@ check_helper() { # DIR -> 0 armed, 1 not armed, 2 could not determine
 # hook this function cannot recognize is reported as UNVERIFIABLE by its
 # caller, never as armed and never as ungated.
 hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecognized
-  local hook="$1" path="$2" line="" body="" cmd="" rest="" seen=0 matched=0 re=""
+  local hook="$1" path="$2" line="" body="" cmd="" tail="" rest="" seen=0 matched=0 re=""
   re='^(.*/)?growth-guards/scripts/'"$hook"'$'
   [ -r "$path" ] || return 2
   while IFS= read -r line || [ -n "$line" ]; do
@@ -600,35 +600,47 @@ hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecogni
       "" | "#"*) continue ;;
     esac
     seen=$((seen + 1))
-    cmd="$body"
-    case "$cmd" in
+    rest="$body"
+    case "$rest" in
       exec[[:space:]]*)
-        cmd="${cmd#exec}"
-        rest="${cmd%%[![:space:]]*}"
-        cmd="${cmd#"$rest"}"
+        rest="${rest#exec}"
+        rest="${rest#"${rest%%[![:space:]]*}"}"
         ;;
     esac
-    # One layer of quoting comes off first, so a path containing a space is
-    # still one word.
-    case "$cmd" in
+    # Split off the command word, honouring one layer of quoting so a path
+    # containing a space stays one word.
+    case "$rest" in
       \"*)
-        cmd="${cmd#\"}"
+        cmd="${rest#\"}"
         cmd="${cmd%%\"*}"
+        tail="${rest#\"$cmd\"}"
         ;;
       \'*)
-        cmd="${cmd#\'}"
+        cmd="${rest#\'}"
         cmd="${cmd%%\'*}"
+        tail="${rest#\'$cmd\'}"
         ;;
-      *) cmd="${cmd%%[[:space:]]*}" ;;
+      *)
+        cmd="${rest%%[[:space:]]*}"
+        tail="${rest#"$cmd"}"
+        ;;
     esac
-    if [ "$cmd" = "$SCRIPT_DIR/$hook" ]; then
-      matched=1
+    if [ "$cmd" != "$SCRIPT_DIR/$hook" ] && ! printf '%s\n' "$cmd" | grep -qE -- "$re"; then
       continue
     fi
-    if printf '%s\n' "$cmd" | grep -qE -- "$re"; then
-      matched=1
-      continue
-    fi
+    # The command word is the entry point; the TAIL decides whether running
+    # it can still fail the commit. `--help` returns 0 without checking
+    # anything, and `|| true` throws the status away — both leave the entry
+    # point named on a line that gates nothing.
+    tail="${tail#"${tail%%[![:space:]]*}"}"
+    tail="${tail%"${tail##*[![:space:]]}"}"
+    case "$tail" in
+      "" | '"$@"' | '"$1"' | \
+        '|| exit $?' | '"$@" || exit $?' | '"$1" || exit $?')
+        matched=1
+        ;;
+      *) ;;
+    esac
   done <"$path"
   # The verdict waits for the whole file. Deciding on the first command
   # instead would call a hook that runs `set -e` before the entry point
@@ -636,8 +648,8 @@ hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecogni
   if [ "$seen" -eq 1 ] && [ "$matched" -eq 1 ]; then
     return 0
   fi
-  # Exactly one command and it is not ours: recognizable, and recognizably
-  # someone else's. Everything else — several commands, or none — is a shape
+  # Exactly one command and it does not gate: recognizable, and recognizably
+  # not a guard. Everything else — several commands, or none — is a shape
   # whose reachability this tool does not get to guess at.
   if [ "$seen" -le 1 ]; then
     return 1

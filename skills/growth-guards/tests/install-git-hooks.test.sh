@@ -1317,6 +1317,18 @@ unverifiable_shape "the entry point as a quoted argument to another command"
 arm_pair '#!/bin/sh\n#%s/pre-commit\n' '#!/bin/sh\n#%s/commit-msg\n'
 must_fail_shape "a hook whose only content is the commented entry point"
 
+# The command word being the entry point is not enough: the TAIL decides
+# whether running it can still fail the commit. Each of these names the entry
+# point in command position and gates nothing.
+arm_pair '#!/bin/sh\nexec "%s/pre-commit" --help\n' '#!/bin/sh\nexec "%s/commit-msg" --help\n'
+must_fail_shape "the entry point invoked with --help"
+
+arm_pair '#!/bin/sh\n%s/pre-commit "$@" || true\n' '#!/bin/sh\n%s/commit-msg "$1" || true\n'
+must_fail_shape "the entry point with its status thrown away by || true"
+
+arm_pair '#!/bin/sh\n%s/pre-commit "$@" &\n' '#!/bin/sh\n%s/commit-msg "$1" &\n'
+must_fail_shape "the entry point backgrounded, so its status never lands"
+
 # One passing control per shape the check does accept.
 arm_pair '#!/bin/sh\n%s/pre-commit "$@" || exit $?\n' \
   '#!/bin/sh\n%s/commit-msg "$1" || exit $?\n'

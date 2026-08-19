@@ -179,8 +179,13 @@
   beside its helper. Anything else is `2`, `could not determine`, naming the
   recognized shape — not `1`, because a hook that runs `set -e` before the
   entry point does gate and calling it ungated is the same lie reversed. The
-  suite now asserts the property directly rather than the wording: exit 0 is
-  claimed only where a real commit is really blocked.
+  accepted TAIL is checked too, not just the command word: `exec
+  …/pre-commit --help` and `…/pre-commit "$@" || true` both name the entry
+  point in command position and both let every violation through, so the
+  argument list must be one of the forms that actually forwards git's
+  arguments and keeps the exit status. The suite asserts the property
+  directly rather than the wording: exit 0 is claimed only where a real
+  commit is really blocked.
 
 - growth-guards: `install-git-hooks --check` now probes the directory
   `core.hooksPath` redirects git to, instead of judging a redirected clone
