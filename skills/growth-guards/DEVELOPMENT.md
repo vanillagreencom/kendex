@@ -147,6 +147,13 @@ and the verifier use. The comparison runs in `.git/hooks` as well: `--check`
 writes nothing, so it cannot assume the installer has just refreshed the
 copy it is looking at.
 
+The command's SPELLING is checked too: only a word that survives shell
+evaluation unchanged can be compared against a file on disk. Single-quoted
+paths qualify; `$`, a backtick or a backslash under double quotes does not,
+and an unquoted word additionally globs and expands `~`. A checkout path
+literally containing `$slot` passed every file test while `/bin/sh` ran
+whatever `slot` pointed at.
+
 A tail counts only when a space or tab separates it from the command — the
 shell concatenates `"…/commit-msg""$1"` into a single word git cannot run —
 and only those blanks are trimmed, so a line ending in a carriage return is
