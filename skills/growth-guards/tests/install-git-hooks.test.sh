@@ -1616,6 +1616,40 @@ check_in "$R38"
 [ "$RC" -eq 1 ] && ok "must-fail: the delegating line without its helper is not armed" \
   || bad "delegating line without helper" "rc=$RC out=$OUT"
 
+echo "=== a shim carrying the guard line elsewhere is unverifiable, not ungated ==="
+# --check writes nothing, so it does not get to assume the shim in front of
+# it is the one the installer last wrote. A shim that still gates must never
+# be reported as NOT gated — the same false answer, pointing the other way.
+R42="$(new_repo checkshimguardline)"
+install_in "$R42"
+python3 - "$R42/.git/hooks/pre-commit" <<'PYMOVE'
+import sys
+p = sys.argv[1]
+lines = open(p).read().split("\n")
+lines.insert(1, "# a comment someone added")
+open(p, "w").write("\n".join(lines))
+PYMOVE
+check_in "$R42"
+[ "$RC" -eq 2 ] && ok "a shim whose guard line moved is unverifiable" \
+  || bad "moved guard line unverifiable" "rc=$RC out=$OUT"
+printf '# %s: finish this\n' "$TD" >"$R42/gl.py"
+git -C "$R42" add gl.py
+commit_in "$R42" "feat: add gl"
+[ "$RC" -ne 0 ] && ok "and that shim really does still gate, so 2 is not 'ungated'" \
+  || bad "moved guard line still gates" "rc=$RC out=$OUT"
+git -C "$R42" rm -q --cached gl.py
+rm -f "$R42/gl.py"
+# Control: with the guard line gone entirely, it is a verdict again.
+python3 - "$R42/.git/hooks/pre-commit" <<'PYDEL'
+import sys
+p = sys.argv[1]
+lines = [l for l in open(p).read().split("\n") if "vstack_gg_h" not in l]
+open(p, "w").write("\n".join(lines))
+PYDEL
+check_in "$R42"
+[ "$RC" -eq 1 ] && ok "control: with the guard line gone it is not armed" \
+  || bad "absent guard line not armed" "rc=$RC out=$OUT"
+
 echo "=== a tampered shebang in the DEFAULT hooks directory is not armed ==="
 # The interpreter decides whether the guard line runs at all, and --check
 # writes nothing, so the shim it is reading is not assumed to be the one the

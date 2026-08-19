@@ -847,6 +847,15 @@ check_hook() { # DIR HOOK -> 0 armed, 1 not armed, 2 could not determine
       CHECK_NEEDS_HELPER=1
     fi
   elif [ "$dir" = "$HOOKS_DIR" ]; then
+    # The installer writes the guard line at line 2, but --check writes
+    # nothing and does not get to assume the shim in front of it is the one
+    # the installer last wrote. A shim carrying that line SOMEWHERE still
+    # gates; where exactly is beyond what this reads, so it is unverifiable
+    # rather than a "not gated" verdict about a repository that is gated.
+    if grep -qF -- "$line" "$path" 2>/dev/null; then
+      add_reason "$hook carries the guard line, but not at line 2 where this check can confirm it runs"
+      return 2
+    fi
     add_reason "$hook does not carry the guard line at line 2"
     return 1
   else
