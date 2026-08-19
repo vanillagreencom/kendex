@@ -261,6 +261,58 @@ else
   assert_eq "$(jq -r '.reason' <<<"$out" 2>/dev/null || printf 'unparseable')" "invalid" "a jq that fails every call still prints a parseable rejection"
 fi
 
+# --- an accept path that could not emit an acceptance is not an acceptance ---
+# emit catching a failed `jq -n` and printing a rejection is only half the job:
+# the caller has to learn the answer changed. Printing `ok:false` while exiting
+# 0 is this issue's own defect class inside the emitter added to close it, and
+# every caller that branches on exit status — orch's waiters, review-pr.md
+# § 3.1, submit-pr.md § 1, the reviewer self-check — reads that 0 as accepted.
+# Asserted in ALL THREE modes: the rule lived in --wait alone.
+ACCEPT_SHIM="$TMP_ROOT/jqshim-accept"
+mkdir -p "$ACCEPT_SHIM"
+# Fails only emit's own invocation, so every gate still answers and the artifact
+# genuinely passes — the ONLY thing that fails is saying so.
+printf '#!/usr/bin/env bash\nif [ "$1" = "-n" ]; then exit 4; fi\nexec %s "$@"\n' "$REAL_JQ" > "$ACCEPT_SHIM/jq"
+chmod +x "$ACCEPT_SHIM/jq"
+awt="$TMP_ROOT/acceptwt"
+mkdir -p "$awt/tmp"
+accept_art="$awt/tmp/review-acc-20260101-000001.json"
+printf '{"agent":"acc","verdict":"pass","summary":"mutation: killed 3/3; stability: 10/10 at 16 threads","blockers":[],"suggestions":[],"qa_metadata":{}}' > "$accept_art"
+
+accept_mode_case() {
+  local label="$1"
+  shift
+  local out rc=0
+  set +e
+  out="$(PATH="$ACCEPT_SHIM:$PATH" "$CHECK" "$@" 2>/dev/null)"
+  rc=$?
+  set -e
+  assert_eq "$rc" "1" "$label: a valid artifact whose acceptance could not be emitted exits 1, not 0"
+  assert_eq "$(jq -r '.ok' <<<"$out" 2>/dev/null || printf 'unparseable')" "false" "$label: it prints ok=false"
+  assert_eq "$(jq -r '.reason' <<<"$out" 2>/dev/null || printf 'unparseable')" "invalid" "$label: it reports reason=invalid"
+}
+accept_mode_case "--file mode" --file "$accept_art"
+accept_mode_case "glob mode" "$awt" acc 0
+accept_mode_case "--wait mode" "$awt" acc 0 --wait 3 --interval 1
+
+# MUST-FAIL CONTROLS: with real jq the same artifact is accepted in each mode,
+# so the three assertions above are the shim's doing and not a check that
+# refuses everything.
+accept_control() {
+  local label="$1"
+  shift
+  local out rc=0
+  set +e
+  out="$("$CHECK" "$@" 2>/dev/null)"
+  rc=$?
+  set -e
+  assert_eq "$rc" "0" "$label: with a working emit the same artifact is accepted"
+  assert_eq "$(jq -r '.ok' <<<"$out")" "true" "$label: with a working emit it reports ok=true"
+}
+accept_control "--file mode" --file "$accept_art"
+accept_control "glob mode" "$awt" acc 0
+accept_control "--wait mode" "$awt" acc 0 --wait 3 --interval 1
+
 # --- --wait never exits 0 without an acceptance behind it ---
 # Capturing glob_check's stdout suspends errexit for its body, so a path that
 # failed part-way still returns 0. Construct exactly that: a jq that works for

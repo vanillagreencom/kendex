@@ -152,9 +152,16 @@ emit() {
      + (if $measurement_suppressed == "" then {}
         else {measurement_suppressed: $measurement_suppressed} end)' 2>/dev/null)"; then
     printf '%s\n' "$out"
-  else
-    emit_unavailable "review-artifact-check could not run jq, so no artifact could be validated"
+    return 0
   fi
+  # The result could not be formatted, so what lands on stdout is a rejection,
+  # not the answer the caller asked for. Say so in the status: an accept path
+  # that printed a refusal must not also report success — that is this issue's
+  # own defect class, and every caller that branches on exit status (orch's
+  # waiters, review-pr.md § 3.1, submit-pr.md § 1, the reviewer self-check)
+  # would read the 0 as "artifact accepted".
+  emit_unavailable "review-artifact-check could not run jq, so no artifact could be validated"
+  return 1
 }
 
 file_mtime() {
@@ -230,7 +237,12 @@ if [[ "${1:-}" == "--file" ]]; then
     exit 1
   fi
   if artifact_content_gates "$file"; then
-    emit true "$file" "$review_artifact_reason"
+    # An acceptance that could not be emitted is not an acceptance. Written
+    # explicitly rather than left to errexit: the status is the contract every
+    # caller branches on, and it must not depend on a shell option that a later
+    # refactor into a masking context (a command substitution, an `if`) would
+    # quietly suspend — which is exactly why --wait needs its own output guard.
+    emit true "$file" "$review_artifact_reason" || exit 1
     exit 0
   fi
   emit false "$file" "$review_artifact_reason" "$review_artifact_detail"
@@ -308,7 +320,10 @@ while IFS= read -r file; do
     continue
   fi
   if artifact_content_gates "$file"; then
-    emit true "$file" "$review_artifact_reason"
+    # Same rule as --file mode, and the reason this one is explicit is visible
+    # two callers up: --wait reads this function through a command substitution,
+    # where errexit is suspended for the outer command.
+    emit true "$file" "$review_artifact_reason" || return 1
     return 0
   fi
   if ! disposition_allows_fallback; then
