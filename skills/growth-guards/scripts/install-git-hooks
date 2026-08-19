@@ -602,7 +602,10 @@ canonical_dir() { # PATH -> physical directory on stdout, nonzero if unreachable
   (cd -- "$d" 2>/dev/null && pwd -P) || return 1
 }
 
-NOARG_SHEBANG_RE='^#![[:space:]]*([^[:space:]]*/)?(env[[:space:]]+)?(sh|bash|dash|ksh|zsh)[[:space:]]*$'
+# Horizontal blanks only, exactly as the tail parser does: `[[:space:]]`
+# treats a trailing carriage return as harmless, but the kernel looks for an
+# interpreter literally named `/bin/sh\r` and git cannot run the hook at all.
+NOARG_SHEBANG_RE='^#![[:blank:]]*([^[:blank:]]*/)?(env[[:blank:]]+)?(sh|bash|dash|ksh|zsh)[[:blank:]]*$'
 
 hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecognized
   local hook="$1" path="$2" line="" body="" cmd="" tail="" rest="" cmd_dir="" own_dir=""

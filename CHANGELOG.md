@@ -211,7 +211,10 @@
   be separated from the command by a real blank, since the shell concatenates
   `"…/commit-msg""$1"` into one unrunnable word; and only blanks are trimmed,
   because `[[:space:]]` would eat a trailing CR that the shell keeps as part
-  of the word. The
+  of the word. The shebang grammar uses blanks for the same reason: a
+  `#!/bin/sh` line ending in CR makes the kernel look for an interpreter
+  named `/bin/sh\r`, so git cannot run the hook at all and a clean commit
+  dies with `cannot exec`. The
   suite asserts the property directly rather than the wording: exit 0 is
   claimed only where a real violating commit is really blocked AND a clean
   one still passes, which is the half that separates a working gate from a

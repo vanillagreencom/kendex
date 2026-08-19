@@ -1442,6 +1442,12 @@ commit_in "$R38" "feat: add ea"
 git -C "$R38" rm -q --cached ea.txt
 rm -f "$R38/ea.txt"
 
+# A carriage return in the SHEBANG is not trailing whitespace: the kernel
+# looks for an interpreter named `/bin/sh\r`, and git cannot run the hook at
+# all — a clean commit dies with "cannot exec".
+arm_pair '#!/bin/sh\r\nexec %s/pre-commit "$@"\n' '#!/bin/sh\r\nexec %s/commit-msg "$1"\n'
+must_fail_shape "a shebang line ending in a carriage return"
+
 # One passing control per shape the check does accept.
 arm_pair '#!/bin/sh\n%s/pre-commit "$@" || exit $?\n' \
   '#!/bin/sh\n%s/commit-msg "$1" || exit $?\n'
