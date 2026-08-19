@@ -186,7 +186,12 @@
   needs git's message-file path — because swapping them breaks the gate
   rather than loosening it: `pre-commit "$1"` exits 2 on the argument it
   refuses and a bare `commit-msg` reads inherited stdin and calls every
-  message empty, so both reject valid commits while validating nothing. The
+  message empty, so both reject valid commits while validating nothing.
+  `armed` additionally requires that the entry point resolve to a real
+  executable — a path shaped like one but pointing at a moved install leaves
+  git answering every commit with command-not-found — and that the hook's
+  shebang carry no interpreter option, since `#!/bin/sh -n` syntax-checks the
+  body, exits 0, and runs no guard while every violating commit passes. The
   suite asserts the property directly rather than the wording: exit 0 is
   claimed only where a real violating commit is really blocked AND a clean
   one still passes, which is the half that separates a working gate from a

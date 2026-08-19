@@ -1339,6 +1339,25 @@ must_fail_shape "pre-commit handed an argument it refuses"
 arm_pair '#!/bin/sh\nexec %s/pre-commit "$@"\n' '#!/bin/sh\nexec %s/commit-msg\n'
 must_fail_shape "commit-msg without git's message-file argument"
 
+# A path SHAPE is not an entry point. A moved or removed install leaves a
+# hook whose command resolves to nothing: git answers every commit, clean
+# ones included, with command-not-found instead of a verdict.
+mkdir -p "$R38/gone/growth-guards/scripts"
+arm_pair "#!/bin/sh\nexec $R38/gone/growth-guards/scripts/pre-commit \"\$@\"\n" \
+  "#!/bin/sh\nexec $R38/gone/growth-guards/scripts/commit-msg \"\$1\"\n"
+must_fail_shape "an entry-point path with nothing at it"
+
+: >"$R38/gone/growth-guards/scripts/pre-commit"
+: >"$R38/gone/growth-guards/scripts/commit-msg"
+arm_pair "#!/bin/sh\nexec $R38/gone/growth-guards/scripts/pre-commit \"\$@\"\n" \
+  "#!/bin/sh\nexec $R38/gone/growth-guards/scripts/commit-msg \"\$1\"\n"
+must_fail_shape "an entry-point path that is not executable"
+
+# A shebang option can stop the body running at all: `sh -n` syntax-checks
+# and exits 0, so the hook executes no guard and passes every commit.
+arm_pair '#!/bin/sh -n\nexec %s/pre-commit "$@"\n' '#!/bin/sh -n\nexec %s/commit-msg "$1"\n'
+must_fail_shape "a shebang whose option stops the body running"
+
 # One passing control per shape the check does accept.
 arm_pair '#!/bin/sh\n%s/pre-commit "$@" || exit $?\n' \
   '#!/bin/sh\n%s/commit-msg "$1" || exit $?\n'

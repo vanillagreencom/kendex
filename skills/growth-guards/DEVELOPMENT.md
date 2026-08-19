@@ -113,6 +113,13 @@ loose: `pre-commit "$1"` exits 2 on the argument it refuses, and a bare
 `commit-msg` reads inherited stdin and calls every message empty, so both
 reject valid commits while validating nothing.
 
+Two more conditions before `armed`: the entry point must resolve to a real
+executable file, because a path merely SHAPED like one leaves git answering
+every commit with command-not-found; and the hook's shebang must carry no
+interpreter option, because `#!/bin/sh -n` syntax-checks the body and exits
+0, running no guard at all. The shared shebang check stays permissive for a
+repo's own hooks; this one does not.
+
 The grammar is closed on purpose. Accepting the entry point anywhere it
 looks executable means ruling on reachability, which needs a shell parser:
 `if false; then … fi`, a function body nothing calls, and a `<<-` heredoc

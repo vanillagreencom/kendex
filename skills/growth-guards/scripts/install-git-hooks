@@ -589,10 +589,18 @@ check_helper() { # DIR -> 0 armed, 1 not armed, 2 could not determine
 # one direction this answer must never fail in. So the grammar is closed: a
 # hook this function cannot recognize is reported as UNVERIFIABLE by its
 # caller, never as armed and never as ungated.
+# A shebang that hands the interpreter an option can stop the body running at
+# all: `#!/bin/sh -n` syntax-checks and exits 0, so an otherwise perfect hook
+# executes no guard and every commit passes. The shared shebang check accepts
+# options because a repo's own hooks may legitimately carry them; a hook this
+# tool is about to call ARMED may not.
+NOARG_SHEBANG_RE='^#![[:space:]]*([^[:space:]]*/)?(env[[:space:]]+)?(sh|bash|dash|ksh|zsh)[[:space:]]*$'
+
 hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecognized
   local hook="$1" path="$2" line="" body="" cmd="" tail="" rest="" seen=0 matched=0 re=""
   re='^(.*/)?growth-guards/scripts/'"$hook"'$'
   [ -r "$path" ] || return 2
+  head -n 1 "$path" 2>/dev/null | grep -qE "$NOARG_SHEBANG_RE" || return 1
   while IFS= read -r line || [ -n "$line" ]; do
     body="${line%%[![:space:]]*}"
     body="${line#"$body"}"
@@ -626,6 +634,13 @@ hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecogni
         ;;
     esac
     if [ "$cmd" != "$SCRIPT_DIR/$hook" ] && ! printf '%s\n' "$cmd" | grep -qE -- "$re"; then
+      continue
+    fi
+    # The path SHAPE is not the entry point. A moved or removed install leaves
+    # a hook whose command resolves to nothing, and git answers every commit —
+    # clean ones included — with command-not-found rather than a verdict.
+    # -x follows symlinks, which is what git runs.
+    if [ ! -f "$cmd" ] || [ ! -x "$cmd" ]; then
       continue
     fi
     # The command word is the entry point; the TAIL decides whether running
