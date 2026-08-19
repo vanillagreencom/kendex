@@ -203,7 +203,11 @@
   pre-commit failure while `--check` reported armed. An entry-point path
   whose final component is a SYMLINK is unverifiable for the same reason the
   suffix alone never was enough — two links to `/bin/true` passed every file
-  test and reported `armed` while every commit bypassed the guard. The
+  test and reported `armed` while every commit bypassed the guard. A tail must
+  be separated from the command by a real blank, since the shell concatenates
+  `"…/commit-msg""$1"` into one unrunnable word; and only blanks are trimmed,
+  because `[[:space:]]` would eat a trailing CR that the shell keeps as part
+  of the word. The
   suite asserts the property directly rather than the wording: exit 0 is
   claimed only where a real violating commit is really blocked AND a clean
   one still passes, which is the half that separates a working gate from a

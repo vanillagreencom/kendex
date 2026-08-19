@@ -132,6 +132,11 @@ a link to `/bin/true` passes every file test while gating nothing. Only the
 final component is tested, so a symlinked parent directory still resolves to
 a real installation.
 
+A tail counts only when a space or tab separates it from the command — the
+shell concatenates `"…/commit-msg""$1"` into a single word git cannot run —
+and only those blanks are trimmed, so a line ending in a carriage return is
+unverifiable rather than accepted for a tail the shell never sees.
+
 The grammar is closed on purpose. Accepting the entry point anywhere it
 looks executable means ruling on reachability, which needs a shell parser:
 `if false; then … fi`, a function body nothing calls, and a `<<-` heredoc

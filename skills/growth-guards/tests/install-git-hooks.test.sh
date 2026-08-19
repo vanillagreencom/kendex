@@ -1399,6 +1399,18 @@ commit_in "$R38" "feat: add sl"
 git -C "$R38" rm -q --cached sl.py
 rm -f "$R38/sl.py"
 
+# A tail must be SEPARATED from the command by a real blank. The shell
+# concatenates `"…/commit-msg""$1"` into one word, so reading it as
+# command-plus-tail describes a hook git cannot run at all.
+arm_pair '#!/bin/sh\nexec "%s/pre-commit""$@"\n' '#!/bin/sh\nexec "%s/commit-msg""$1"\n'
+must_fail_shape "a quoted command with no separator before its tail"
+
+# Only blanks are trimmed. `[[:space:]]` would eat a trailing CR that the
+# shell keeps as part of the word, so a CRLF hook would be accepted for a
+# tail the shell never sees.
+arm_pair '#!/bin/sh\nexec %s/pre-commit "$@"\r\n' '#!/bin/sh\nexec %s/commit-msg "$1"\r\n'
+unverifiable_shape "a hook whose command line ends in a carriage return"
+
 # One passing control per shape the check does accept.
 arm_pair '#!/bin/sh\n%s/pre-commit "$@" || exit $?\n' \
   '#!/bin/sh\n%s/commit-msg "$1" || exit $?\n'

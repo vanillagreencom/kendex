@@ -610,9 +610,9 @@ hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecogni
     seen=$((seen + 1))
     rest="$body"
     case "$rest" in
-      exec[[:space:]]*)
+      exec[[:blank:]]*)
         rest="${rest#exec}"
-        rest="${rest#"${rest%%[![:space:]]*}"}"
+        rest="${rest#"${rest%%[![:blank:]]*}"}"
         ;;
     esac
     # Split off the command word, honouring one layer of quoting so a path
@@ -629,9 +629,17 @@ hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecogni
         tail="${rest#\'$cmd\'}"
         ;;
       *)
-        cmd="${rest%%[[:space:]]*}"
+        cmd="${rest%%[[:blank:]]*}"
         tail="${rest#"$cmd"}"
         ;;
+    esac
+    # A tail has to be SEPARATED from the command by a real blank. The shell
+    # concatenates `"…/commit-msg""$1"` into one word, so accepting it as
+    # command-plus-tail describes a hook that names something git cannot run
+    # and fails every commit rather than judging it.
+    case "$tail" in
+      "" | [[:blank:]]*) ;;
+      *) continue ;;
     esac
     if [ "$cmd" != "$SCRIPT_DIR/$hook" ] && ! printf '%s\n' "$cmd" | grep -qE -- "$re"; then
       continue
@@ -664,8 +672,11 @@ hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecogni
     # `commit-msg` reads inherited stdin and rejects every commit — valid
     # ones included — as an empty message. Either way nothing is validated
     # and `armed` would be a false description of both.
-    tail="${tail#"${tail%%[![:space:]]*}"}"
-    tail="${tail%"${tail##*[![:space:]]}"}"
+    # Blanks only. `[[:space:]]` would also trim a trailing CR or vertical
+    # whitespace, which the shell keeps as part of the word — so a CRLF hook
+    # would be accepted for a tail the shell never sees.
+    tail="${tail#"${tail%%[![:blank:]]*}"}"
+    tail="${tail%"${tail##*[![:blank:]]}"}"
     # `?` is a one-character wildcard in this pattern, so an unescaped one
     # also strips `|| exit $#` — which for pre-commit, where git supplies no
     # arguments, is `exit 0` and swallows every failure.
