@@ -91,7 +91,7 @@ Load the project taxonomy and validate every issue's `labels[]` per [labels.md](
 
 ### 4.2 Convert to Audit Input
 
-Deterministic mapping only — do NOT re-analyze, and do NOT re-type: generate the file with a script (`jq` over `TPM_OUTPUT`) for every conversion, so field values transfer byte-exact. Convert `TPM_OUTPUT` to the issue-mode format of [audit-output.md](../schemas/audit-output.md), one `issues[]` entry per `organized_issues[i]`:
+Deterministic mapping only — do NOT re-analyze, and do NOT re-type: generate the file with a script (`jq` over `TPM_OUTPUT`) for every conversion, so field values transfer byte-exact. Convert `TPM_OUTPUT` to the issue-mode format of [audit-output.md](../schemas/audit-output.md), one `issues[]` entry per `organized_issues[i]` — skipping entries whose `project` is `Deferred` (deferred architecture gaps), which the § 5 report lists as deferred and which are never created in the roadmap project:
 
 | Field | Source |
 |-------|--------|

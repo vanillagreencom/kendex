@@ -10,7 +10,7 @@ Analyze proposed issues for cross-project conflicts, architecture coverage, and 
 
 `--input [file_path]` per [roadmap-plan-input.md](../schemas/roadmap-plan-input.md). Extract `FEATURE`, `RESEARCH_PATH`, `SPEC_PATH`, `ORIGIN_ISSUE`, `PLANNER_HANDOFF`, `PROPOSED_ISSUES[]`.
 
-**Spec mode** (`SPEC_PATH` set): the plan's decisions are binding. Organize, dedupe, order, and bundle its work and check it against the tracker, but never change its approach, drop a workstream it names, or add scope beyond its phases — an architecture gap is `include` only when the spec's own deliverables need it, otherwise `defer` or `out_of_scope` with the spec named in `reason`. Disagreement with the spec is a `declined`/`reason` note for the caller, never a silent reorganization.
+**Spec mode** (`SPEC_PATH` set): the plan's decisions are binding. Organize, dedupe, order, and bundle its work and check it against the tracker, but never change its approach, drop a workstream it names, or add scope beyond its phases — an architecture gap is `include` only when the spec's own deliverables need it; anything outside the spec's phases is `out_of_scope` — never `defer`, which would place it in `organized_issues[]` and reach creation — with the spec named in `reason`. Disagreement with the spec is a `declined`/`reason` note for the caller, never a silent reorganization.
 
 A `PLANNER_HANDOFF` is high-signal technical context from the scout → planner chain, not a project-management decision. Preserve its plan path, proposed phases, and explicit TPM questions through the analysis; let it inform placement, grouping, dependency order, and the roadmap-vs-child-issue call — but verify every claim against current issue and project state.
 
