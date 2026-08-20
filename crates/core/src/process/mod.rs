@@ -288,15 +288,19 @@ fn ssh_command(inherited: Option<&str>) -> String {
 /// own group, so the group is what goes: a chance to end cleanly, then not.
 #[cfg(unix)]
 fn end_tree(child: &mut std::process::Child) {
+    // The `--` is load-bearing: procps kill (Ubuntu) without it folds a
+    // negative pid to its leading digits — `kill -TERM -1234` becomes
+    // kill(-1, SIGTERM), every process the user owns, the CI runner
+    // included. util-linux and BSD kill accept the same spelling.
     let group = format!("-{}", child.id());
-    for signal in ["-TERM", "-KILL"] {
+    for signal in ["TERM", "KILL"] {
         let _ = Command::new("kill")
-            .args([signal, &group])
+            .args(["-s", signal, "--", &group])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
-        if signal == "-TERM" {
+        if signal == "TERM" {
             std::thread::sleep(GROUP_GRACE);
         }
     }

@@ -32,6 +32,12 @@ changes carry a **Breaking** call-out with their migration note inline.
 
 ### Fixed
 
+- On Linux, a helper command that ran past its time limit could take
+  unrelated processes down with it: Ubuntu's `kill` misreads the negative
+  process-group argument kendex passed, and for some process ids that
+  meant signalling everything the user runs. The cleanup now spells the
+  argument unambiguously, and the timed-out command's own processes are
+  the only ones ended.
 - Accepting a held-back update now actually installs it. `kendex findings`
   printed the accept flag for the copy already on disk rather than for the
   update being held back, so typing the instruction back did nothing; the
