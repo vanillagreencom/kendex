@@ -28,7 +28,8 @@ done
 
 os="$(uname -s)"
 arch="$(uname -m)"
-# appimage_arch is the architecture word Tauri puts in the AppImage name.
+# Tauri names AppImages with Debian arch words (amd64, aarch64), not the
+# Rust triple, so x86_64 needs its own spelling.
 case "$os-$arch" in
   Linux-x86_64|Linux-amd64)    target="x86_64-unknown-linux-gnu";  kind="linux"; appimage_arch="amd64" ;;
   Linux-aarch64|Linux-arm64)   target="aarch64-unknown-linux-gnu"; kind="linux"; appimage_arch="aarch64" ;;

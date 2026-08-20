@@ -12,7 +12,6 @@ options=('!strip')
 source_x86_64=("kendex-$pkgver::https://github.com/vanillagreencom/kendex/releases/download/v$pkgver/kendex-x86_64-unknown-linux-gnu")
 source_aarch64=("kendex-$pkgver::https://github.com/vanillagreencom/kendex/releases/download/v$pkgver/kendex-aarch64-unknown-linux-gnu")
 sha256sums_x86_64=('a3dee4c286614016198db72603fcf95de277ddf1a245da052dc815821f0e84c0')
-# Filled by the first release after 5.0.1, the first to ship an aarch64 build.
 sha256sums_aarch64=('0000000000000000000000000000000000000000000000000000000000000000')
 
 package() {

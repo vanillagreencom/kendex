@@ -13,8 +13,6 @@ class KendexCli < Formula
   version "5.0.1"
   license "MIT"
 
-  # Intel macOS and arm64 Linux ship from the first release after 5.0.1;
-  # their sha256 lines are filled in that release's bump.
   on_macos do
     on_arm do
       url "https://github.com/vanillagreencom/kendex/releases/download/v#{version}/kendex-aarch64-apple-darwin"

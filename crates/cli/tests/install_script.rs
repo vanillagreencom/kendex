@@ -26,7 +26,6 @@ fn requested_urls(os: &str, arch: &str) -> String {
     urls
 }
 
-/// Runs install.sh as `os`/`arch`; the fake curl answers any URL containing
 /// Runs install.sh as `os`/`arch`; `fail` makes the fake curl exit with the
 /// given code for any URL containing the given text.
 #[allow(clippy::unwrap_used)]
@@ -130,7 +129,16 @@ fn release_matrix_and_feed_name_the_same_targets() {
         .collect();
     lanes.sort();
     feed.sort();
-    assert!(!lanes.is_empty());
+    assert_eq!(
+        lanes,
+        [
+            "aarch64-apple-darwin",
+            "aarch64-unknown-linux-gnu",
+            "x86_64-apple-darwin",
+            "x86_64-pc-windows-msvc",
+            "x86_64-unknown-linux-gnu",
+        ]
+    );
     assert_eq!(lanes, feed);
 }
 

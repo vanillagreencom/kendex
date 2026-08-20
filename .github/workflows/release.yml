@@ -34,8 +34,7 @@ jobs:
             target: aarch64-unknown-linux-gnu
           - os: macos-14
             target: aarch64-apple-darwin
-          # The last Intel macOS image GitHub offers; supported until
-          # August 2027. Revisit Intel support when it retires.
+          # The last Intel macOS image GitHub offers.
           - os: macos-15-intel
             target: x86_64-apple-darwin
           - os: windows-latest

@@ -8,7 +8,6 @@
 # Installs the app and, through the formula dependency, the kendex command.
 cask "kendex" do
   version "5.0.1"
-  # The Intel sha256 is filled by the first release after 5.0.1.
   sha256 arm:   "f8215e1c059d2afcebfc1b56d64094b2f9fe7dacb1a773ce127acc85c262fb3b",
          intel: "0000000000000000000000000000000000000000000000000000000000000000"
 
