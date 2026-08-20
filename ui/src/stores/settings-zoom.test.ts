@@ -32,6 +32,9 @@ const settings: AppSettings = {
 type Reply =
   | { status: "ok"; data: AppSettings }
   | { status: "error"; error: string };
+type WindowReply =
+  | { status: "ok"; data: null }
+  | { status: "error"; error: string };
 
 const ok = <T>(data: T) => ({ status: "ok" as const, data });
 const failed = (error: string) => ({ status: "error" as const, error });
@@ -111,6 +114,8 @@ describe("zoom", () => {
 
     await useSettingsStore.getState().setZoom(150);
     const saved = useSettingsStore.getState().saveZoom();
+    // Once 150 is on its way, the person moves on.
+    await vi.waitFor(() => expect(commands.updateSettings).toHaveBeenCalled());
     await useSettingsStore.getState().setZoom(160);
     first.settle(ok({ ...settings, zoom: 150 }));
     await saved;
@@ -140,6 +145,7 @@ describe("zoom", () => {
       useSettingsStore.getState().saveZoom(),
     ];
     // The size moves on while the first save is still out.
+    await vi.waitFor(() => expect(commands.updateSettings).toHaveBeenCalled());
     await useSettingsStore.getState().setZoom(160);
     first.settle(ok({ ...settings, zoom: 150 }));
     await Promise.all(saves);
@@ -149,6 +155,82 @@ describe("zoom", () => {
     // which writes the size on screen by the time it runs.
     expect(commands.updateSettings).toHaveBeenCalledTimes(2);
     expect(vi.mocked(commands.updateSettings).mock.calls[1][0].zoom).toBe(160);
+  });
+
+  it("reports a bridge that throws instead of leaving the rejection to nobody", async () => {
+    vi.mocked(commands.updateSettings).mockRejectedValue(
+      new Error("no bridge"),
+    );
+
+    await useSettingsStore.getState().setZoom(150);
+    await expect(
+      useSettingsStore.getState().saveZoom(),
+    ).resolves.toBeUndefined();
+
+    expect(zoom()).toBe(150);
+    expect(dialog().title).toBe("Couldn't save the zoom");
+    expect(dialog().message).toContain("no bridge");
+  });
+
+  it("does not leave the save queue armed when a write fails", async () => {
+    vi.mocked(commands.updateSettings).mockRejectedValueOnce(
+      new Error("no bridge"),
+    );
+
+    await useSettingsStore.getState().setZoom(150);
+    await useSettingsStore.getState().saveZoom();
+    vi.mocked(commands.updateSettings).mockClear();
+    await useSettingsStore.getState().setZoom(160);
+    await useSettingsStore.getState().saveZoom();
+
+    expect(commands.updateSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("never writes a size the window went on to refuse", async () => {
+    const refusal = deferred<WindowReply>();
+    vi.mocked(commands.windowSetZoom).mockReturnValueOnce(refusal.promise);
+
+    // The commit goes out while the resize is still in flight, the way a
+    // pointer release just after the last drag step does.
+    const resized = useSettingsStore.getState().setZoom(150);
+    const saved = useSettingsStore.getState().saveZoom();
+    refusal.settle(failed("no webview"));
+    await Promise.all([resized, saved]);
+
+    // The commit still runs, but on the size the window is actually
+    // showing: the refused one never reaches the file.
+    expect(vi.mocked(commands.updateSettings).mock.calls[0][0].zoom).toBe(100);
+    expect(zoom()).toBe(100);
+  });
+
+  it("stores the size an accepted retry manages to show", async () => {
+    vi.mocked(commands.windowSetZoom).mockResolvedValueOnce(
+      failed("no webview"),
+    );
+
+    await useSettingsStore.getState().setZoom(150);
+    const retry = dialog().actions[0];
+    vi.mocked(commands.windowSetZoom).mockResolvedValue(ok(null));
+    retry.onClick();
+    await vi.waitFor(() => expect(commands.updateSettings).toHaveBeenCalled());
+
+    expect(vi.mocked(commands.updateSettings).mock.calls[0][0].zoom).toBe(150);
+  });
+
+  it("keeps a change made to another setting while the save was in flight", async () => {
+    const reply = deferred<Reply>();
+    vi.mocked(commands.updateSettings).mockReturnValueOnce(reply.promise);
+
+    await useSettingsStore.getState().setZoom(150);
+    const saved = useSettingsStore.getState().saveZoom();
+    useSettingsStore.setState({
+      settings: { ...settings, zoom: 150, appearance: "dark" },
+    });
+    reply.settle(ok({ ...settings, zoom: 150 }));
+    await saved;
+
+    expect(useSettingsStore.getState().settings?.appearance).toBe("dark");
+    expect(zoom()).toBe(150);
   });
 
   it("leaves the size on screen when it cannot be saved, and says so", async () => {

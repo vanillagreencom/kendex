@@ -35,13 +35,21 @@ fn write_then_rename(path: &Path, contents: &str, durable: bool) -> Result<()> {
         std::process::id(),
         NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
     ));
-    fs::write(&tmp, contents).map_err(|e| CoreError::io(&tmp, e))?;
+    // A failed write leaves nothing behind. With a name per attempt there is
+    // no next writer to overwrite an abandoned temp file, so it would just
+    // sit there beside the real one — a full copy of whatever was being
+    // saved, growing by one file per failure.
+    let discard = |error: std::io::Error, at: &Path| {
+        let _ = fs::remove_file(&tmp);
+        CoreError::io(at, error)
+    };
+    fs::write(&tmp, contents).map_err(|e| discard(e, &tmp))?;
     if durable {
         fs::File::open(&tmp)
             .and_then(|f| f.sync_all())
-            .map_err(|e| CoreError::io(&tmp, e))?;
+            .map_err(|e| discard(e, &tmp))?;
     }
-    fs::rename(&tmp, &path).map_err(|e| CoreError::io(&path, e))?;
+    fs::rename(&tmp, &path).map_err(|e| discard(e, &path))?;
     #[cfg(unix)]
     if durable && let Ok(dir) = fs::File::open(parent) {
         let _ = dir.sync_all();
@@ -103,6 +111,27 @@ mod tests {
             );
         }
         // Nothing is left behind for the next reader to trip over.
+        let leftovers: Vec<_> = fs::read_dir(tmp.path())
+            .unwrap()
+            .filter_map(|entry| entry.ok().map(|e| e.file_name()))
+            .filter(|name| name != "settings.toml")
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
+
+    /// Renaming onto a directory is the failure this can force; every other
+    /// one leaves the same debris. Both entry points share the helper, so
+    /// both are checked.
+    #[test]
+    fn a_write_that_cannot_finish_leaves_no_temp_file_behind() {
+        let tmp = tempfile::tempdir().unwrap();
+        let occupied = tmp.path().join("settings.toml");
+        fs::create_dir(&occupied).unwrap();
+
+        for write in [atomic_write, atomic_write_durable] {
+            assert!(write(&occupied, "schema = 1\n").is_err());
+        }
+
         let leftovers: Vec<_> = fs::read_dir(tmp.path())
             .unwrap()
             .filter_map(|entry| entry.ok().map(|e| e.file_name()))

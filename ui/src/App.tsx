@@ -7,7 +7,7 @@ import { Sidebar } from "@/components/sidebar";
 import { StatusFooter } from "@/components/status-footer";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { WindowControls } from "@/components/window-controls";
-import { zoomGesture } from "@/lib/zoom-shortcut";
+import { zoomControls } from "@/lib/zoom-controls";
 import { AvailablePackagePage } from "@/pages/available-package";
 import { BundleDetailPage } from "@/pages/bundle-detail";
 import { CustomizePage } from "@/pages/customize";
@@ -55,17 +55,19 @@ function useZoomShortcuts() {
   const setZoom = useSettingsStore((s) => s.setZoom);
   const saveZoom = useSettingsStore((s) => s.saveZoom);
   useEffect(() => {
-    const gesture = zoomGesture(
-      (percent) => void setZoom(percent),
-      () => void saveZoom(),
-    );
+    const zoom = zoomControls(setZoom, saveZoom);
     const onKeyDown = (event: KeyboardEvent) => {
       const current =
         useSettingsStore.getState().settings?.zoom ?? ZOOM.default;
-      if (gesture(event, current)) event.preventDefault();
+      if (zoom.onKeyDown(event, current)) event.preventDefault();
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    // This effect ends with the app, so a write still waiting on the settle
+    // would be talking to a window that is going away.
+    return () => {
+      zoom.cancel();
+      window.removeEventListener("keydown", onKeyDown);
+    };
   }, [setZoom, saveZoom]);
 }
 

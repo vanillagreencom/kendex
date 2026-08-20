@@ -348,16 +348,22 @@ lives in one capability table read by core and UI.
   and WebKitGTK round to a whole number: the person nudges the difference
   back by hand.
 - **A live control resizes on every step and writes once, when the input
-  settles.** A drag and a held key both produce a stream of values; the
-  window follows all of them so the control feels live, and the settings
-  file is written at the gesture's own commit boundary — the slider's
-  release, the keyboard's pause. At most one save is ever in flight, and
-  asks made while it runs collapse into a single follow-up that writes
-  whatever is on screen by then, so replies can never land out of order
-  and put back a size the person has already moved past. A size the
+  settles.** A drag, a held key, and an arrow key on the focused slider all
+  produce a stream of values; the window follows every one of them so the
+  control feels live, and the settings file is written once the stream
+  stops. Every path starts the same timer, so none of them can rewrite the
+  file per keypress, and the wiring for one control is a single object the
+  page spreads on rather than props it could half-forget. At most one save
+  is ever in flight, and asks made while it runs collapse into a single
+  follow-up that writes whatever is on screen by then, so replies can never
+  land out of order and put back a size the person has already moved past.
+  A write waits for the resize before it reads what to write, so a size the
   window refuses is never offered to the file; a size the file refuses
   stays on screen, because taking it away would cost the person the size
-  they are using to read the message.
+  they are using to read the message. Neither action ever rejects: the IPC
+  bridge throws when the bridge itself fails, and every call site is a
+  fire-and-forget handler where a rejection would reach nobody, so a throw
+  is reported the way an error reply is.
 - **Every atomic write gets its own temp file.** `write_then_rename` names
   its temp file per write, not per process: the app saves from a thread
   pool, so two writes of one path really do overlap, and a shared name

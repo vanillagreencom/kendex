@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Appearance } from "@/bindings";
 import { commands, ZOOM } from "@/bindings";
 import { AccountSection } from "@/components/account-section";
@@ -17,6 +17,7 @@ import { SAFETY_HELP } from "@/lib/copy-safety";
 import { SETTINGS_SUBTITLE } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { cn } from "@/lib/utils";
+import { zoomControls } from "@/lib/zoom-controls";
 import { useSettingsStore } from "@/stores/settings";
 
 // How cautious the safety check is, said without numbers on the dial.
@@ -51,13 +52,19 @@ function safetyLevelOf(warn: number, block: number): SafetyLevel | "custom" {
 export function SettingsPage() {
   const { settings, setAppearance, setSafety, setZoom, saveZoom } =
     useSettingsStore();
+  // Not cancelled when the page closes: leaving Settings right after moving
+  // the slider must still store the size.
+  const zoom = useMemo(
+    () => zoomControls(setZoom, saveZoom),
+    [setZoom, saveZoom],
+  );
   const [version, setVersion] = useState<string | null>(null);
 
   useEffect(() => {
     void commands.appVersion().then(setVersion);
   }, []);
 
-  const zoom = settings?.zoom ?? ZOOM.default;
+  const percent = settings?.zoom ?? ZOOM.default;
   const safety = settings?.safety ?? SAFETY_LEVELS.balanced;
   const level = safetyLevelOf(safety["warn-below"], safety["block-below"]);
 
@@ -95,16 +102,15 @@ export function SettingsPage() {
             >
               <div className="flex w-40 items-center gap-3">
                 <Slider
-                  value={zoom}
+                  value={percent}
                   min={ZOOM.min}
                   max={ZOOM.max}
                   step={ZOOM.step}
-                  onValueChange={(value) => void setZoom(value)}
-                  onValueCommitted={() => void saveZoom()}
+                  {...zoom.slider}
                   aria-label="Zoom"
                 />
                 <span className="w-11 shrink-0 text-right font-mono text-xs tabular-nums text-muted-foreground">
-                  {zoom}%
+                  {percent}%
                 </span>
               </div>
             </SettingRow>
