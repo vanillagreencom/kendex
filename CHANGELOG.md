@@ -22,6 +22,12 @@ changes carry a **Breaking** call-out with their migration note inline.
 - The app uses the Geist typeface, with titles and navigation in Geist Mono
   to match the website.
 
+### Fixed
+
+- `kendex adopt` now binds an adopted skill or agent to the tools that were
+  actually reading it. It used to inherit the scope's full install defaults,
+  which could install the item for tools you never gave it to.
+
 ## [5.0.1] — 2026-08-20
 
 ### Fixed

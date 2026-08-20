@@ -88,15 +88,24 @@ pub fn adopt(
         Some(shared) => shared.harnesses.clone(),
         None => vec![harness],
     };
-    let defaults_cover = wanted
-        .iter()
-        .all(|h| manifest.install.harnesses.contains(h));
+    // Adoption binds to the harnesses that were actually reading the item.
+    // Only when the [install] defaults name exactly that set may the list be
+    // left off: a wider default would install the item for tools the user
+    // never gave it to.
+    let defaults_match = {
+        let defaults: std::collections::BTreeSet<&HarnessId> =
+            manifest.install.harnesses.iter().collect();
+        wanted
+            .iter()
+            .collect::<std::collections::BTreeSet<&HarnessId>>()
+            == defaults
+    };
     let decl = manifest
         .declared_mut(kind)
         .entry(name.to_owned())
         .or_insert_with(|| ItemDecl::from_source(LOCAL_SOURCE_NAME));
     decl.source = LOCAL_SOURCE_NAME.to_owned();
-    if decl.harnesses.is_none() && !defaults_cover {
+    if decl.harnesses.is_none() && !defaults_match {
         decl.harnesses = Some(wanted);
     }
 
@@ -320,6 +329,46 @@ mod tests {
         assert!(!earlier.join("notes.md").exists());
         let trashed: Vec<_> = fs::read_dir(env.trash_dir()).unwrap().flatten().collect();
         assert!(trashed.iter().any(|e| e.path().join("notes.md").is_file()));
+    }
+
+    /// The [install] defaults name more tools than the one the item was
+    /// adopted from: the declaration pins to what was actually observed, so
+    /// the follow-up apply never installs it somewhere the user never put it.
+    #[test]
+    fn adoption_binds_only_the_harnesses_that_had_the_item() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = Env::fake(tmp.path(), FakeOs::Linux);
+        let project = tmp.path().join("app");
+        let scope = Scope::Project {
+            root: project.clone(),
+        };
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("kendex.toml"),
+            "schema = 5\n\n[install]\nharnesses = [\"claude\", \"opencode\"]\nmethod = \"symlink\"\n",
+        )
+        .unwrap();
+        fs::create_dir_all(project.join(".claude/skills/handmade")).unwrap();
+        fs::write(
+            project.join(".claude/skills/handmade/SKILL.md"),
+            "---\nname: handmade\ndescription: mine\n---\nMy content.\n",
+        )
+        .unwrap();
+
+        let plan = adopt(&env, &scope, ItemKind::Skill, "handmade", HarnessId::Claude).unwrap();
+        crate::apply::execute(&env, &plan, None).unwrap();
+
+        let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
+        assert!(manifest.contains("[skills.handmade]"));
+        assert!(
+            manifest.contains("harnesses = [\"claude\"]"),
+            "the declaration must pin to the adopted harness alone:\n{manifest}"
+        );
+
+        let report = audit(&env, &scope).unwrap();
+        crate::apply::execute(&env, &report.plan, None).unwrap();
+        assert!(project.join(".claude/skills/handmade").is_symlink());
+        assert!(!project.join(".opencode/skills/handmade").exists());
     }
 
     #[test]
