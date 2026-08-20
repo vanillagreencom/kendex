@@ -15,9 +15,19 @@ fail=0
 note() { echo "FAIL: $1"; fail=1; }
 ok() { echo "  ok    $1"; }
 
-for f in "$SUITE" "$SKILL_TEMPLATE" "$ROOT_TEMPLATE"; do
+for f in "$SUITE" "$SKILL_TEMPLATE"; do
   [ -f "$f" ] || { echo "FAIL: fixture source missing: $f"; exit 1; }
 done
+
+# The root template exists only in the kendex source tree; a vendored
+# checkout ships the skill alone. The fixtures are synthetic either way —
+# every control plants its own drift — so the skill template stands in as
+# the fixture's root copy and every control still runs.
+ROOT_SRC="$ROOT_TEMPLATE"
+if [ ! -f "$ROOT_SRC" ]; then
+  ROOT_SRC="$SKILL_TEMPLATE"
+  echo "  note  root template absent (vendored checkout) — fixtures use the skill template as the root copy"
+fi
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -31,7 +41,7 @@ fixture() {
   mkdir -p "$fx/skills/review-gate/tests"
   cp "$SUITE" "$fx/skills/review-gate/tests/"
   cp "$SKILL_TEMPLATE" "$fx/skills/review-gate/"
-  cp "$ROOT_TEMPLATE" "$fx/"
+  cp "$ROOT_SRC" "$fx/kendex.settings.toml.example"
   echo "$fx"
 }
 
