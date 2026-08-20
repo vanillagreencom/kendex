@@ -4,7 +4,7 @@ import type { AvailablePackage, Catalog, ItemKind } from "@/bindings";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { kindLabel } from "@/lib/labels";
-import { catalogKey, useMarketplacesStore } from "@/stores/marketplaces";
+import { bundleKey, useMarketplacesStore } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 
 /** The curated sets one marketplace offers, as cards: what each carries and
@@ -45,7 +45,7 @@ export function BundleCards({
   return (
     <div className="grid grid-cols-[repeat(auto-fill,minmax(18rem,1fr))] gap-4">
       {names.map((name) => {
-        const detail = bundles[`${catalogKey(catalog)}::${name}`];
+        const detail = bundles[bundleKey(catalog, name)];
         const state = !detail
           ? null
           : detail.installedMembers === detail.totalMembers &&

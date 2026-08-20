@@ -111,7 +111,7 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
         action={
           catalog.by === "repo" ? (
             <SubscribeFromRepo
-              repo={catalog.repo}
+              repo={summary?.provenance ?? catalog.repo}
               label="Subscribe to install"
             />
           ) : scope && target ? (

@@ -18,7 +18,8 @@ pub enum Catalog {
         scope: Scope,
         source: String,
     },
-    /// `owner/repo` on GitHub, as the directory spells it.
+    /// A GitHub repository, in any spelling `repo_move::owner_repo` folds
+    /// to the canonical `owner/repo` everything is keyed by.
     Repo {
         repo: String,
     },

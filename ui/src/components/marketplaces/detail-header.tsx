@@ -105,7 +105,12 @@ export function DetailHeader({
       </>
     );
   } else {
-    action = <SubscribeFromRepo repo={catalog.repo} label="Subscribe" />;
+    action = (
+      <SubscribeFromRepo
+        repo={summary?.provenance ?? catalog.repo}
+        label="Subscribe"
+      />
+    );
   }
 
   return (

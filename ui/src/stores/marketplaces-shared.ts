@@ -1,9 +1,8 @@
 // The cache vocabulary the marketplaces store and its readers share: the
 // collision-free subscription key, and the invalidation every catalog-moving
 // mutation runs.
-import { type Catalog, commands, type Scope } from "@/bindings";
+import type { Catalog, Scope } from "@/bindings";
 import { useAuditStore } from "./audit";
-import type { MarketplacesState } from "./marketplaces";
 import { resetPreinstallSafety } from "./preinstall-safety";
 import { useScanStore } from "./scan";
 
@@ -19,6 +18,15 @@ export const catalogKey = (catalog: Catalog): string =>
   catalog.by === "subscription"
     ? marketKey(catalog.scope, catalog.source)
     : JSON.stringify(["repo", catalog.repo]);
+
+/** Whether a [catalogKey] names a repository rather than a subscription. */
+export const isRepoKey = (key: string): boolean =>
+  key.startsWith(JSON.stringify(["repo", ""]).slice(0, -3));
+
+/** One curated set's cache and error key, in its own namespace so a set
+ * named like a read ("packages") can never land on that read's key. */
+export const bundleKey = (catalog: Catalog, name: string): string =>
+  `${readErrorKey(catalogKey(catalog), "bundle")}::${name}`;
 
 export const subscription = (scope: Scope, source: string): Catalog => ({
   by: "subscription",
@@ -72,82 +80,4 @@ export async function openLead(scope: Scope, source: string, lead: string) {
     kind: "skill",
     name: lead,
   });
-}
-
-/** One cached read landing: the answer under its key, or why there is
- * none — `suffix` keeps a summary's failure apart from the packages' under
- * the same catalog, since the page shows each where it belongs. */
-export async function settle<
-  S extends { readErrors: Record<string, string> },
-  F extends keyof S,
->(
-  set: (fn: (state: S) => Partial<S>) => void,
-  field: F,
-  key: string,
-  pending: Promise<
-    | { status: "ok"; data: S[F][keyof S[F]] }
-    | { status: "error"; error: string }
-  >,
-  suffix?: string,
-) {
-  const errorKey = suffix ? readErrorKey(key, suffix) : key;
-  const response = await pending;
-  if (response.status === "ok") {
-    set(
-      (state) =>
-        ({
-          [field]: { ...state[field], [key]: response.data },
-          readErrors: without(state.readErrors, errorKey),
-        }) as Partial<S>,
-    );
-  } else {
-    set(
-      (state) =>
-        ({
-          readErrors: { ...state.readErrors, [errorKey]: response.error },
-        }) as Partial<S>,
-    );
-  }
-}
-
-type Set = (
-  fn: (state: MarketplacesState) => Partial<MarketplacesState>,
-) => void;
-
-/** The store's four cached reads, each landing under its own key and
- * failing under its own error key. */
-export function catalogReads(set: Set) {
-  return {
-    loadPackages: (catalog: Catalog) =>
-      settle(
-        set,
-        "packages",
-        catalogKey(catalog),
-        commands.marketplacePackages(catalog),
-        "packages",
-      ),
-    loadSummary: (catalog: Catalog) =>
-      settle(
-        set,
-        "summaries",
-        catalogKey(catalog),
-        commands.marketplaceSummary(catalog),
-        "summary",
-      ),
-    loadAbout: (catalog: Catalog) =>
-      settle(
-        set,
-        "about",
-        catalogKey(catalog),
-        commands.marketplaceAbout(catalog),
-        "about",
-      ),
-    loadBundle: (catalog: Catalog, name: string) =>
-      settle(
-        set,
-        "bundles",
-        `${catalogKey(catalog)}::${name}`,
-        commands.marketplaceBundle(catalog, name),
-      ),
-  };
 }

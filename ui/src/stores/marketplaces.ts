@@ -11,17 +11,18 @@ import {
   type InstallItem,
   type Scope,
 } from "@/bindings";
+import { catalogReads } from "./marketplaces-reads";
 import {
   catalogKey,
-  catalogReads,
   dropCatalogCaches,
+  isRepoKey,
   openLead,
   refreshDownstream,
   subscription,
-  without,
 } from "./marketplaces-shared";
 
 export {
+  bundleKey,
   catalogKey,
   catalogLabel,
   marketKey,
@@ -29,7 +30,7 @@ export {
   subscription,
 } from "./marketplaces-shared";
 
-export interface MarketplacesState {
+interface MarketplacesState {
   rows: MarketplaceRow[];
   /** Each opened catalog's offered packages, by [catalogKey]. */
   packages: Record<string, AvailablePackage[]>;
@@ -112,11 +113,12 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
     toast.success(`Subscribed to '${response.data.name}'`);
     for (const note of response.data.notes) toast.message(note);
     dropCatalogCaches(set);
-    // Only this repository's page has a new subscription to carry on as.
+    // A repository page may now have a subscription to carry on as, under
+    // whatever spelling the dialog was submitted with — every repository
+    // summary re-reads, and only one such page can be open.
     set((state) => ({
-      summaries: without(
-        state.summaries,
-        catalogKey({ by: "repo", repo: reference }),
+      summaries: Object.fromEntries(
+        Object.entries(state.summaries).filter(([key]) => !isRepoKey(key)),
       ),
     }));
     await get().load();

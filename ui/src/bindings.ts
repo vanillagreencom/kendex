@@ -576,7 +576,10 @@ export type CapabilityRow = {
  *  twice and the pages keep working across the switch.
  */
 export type Catalog = { by: "subscription"; scope: Scope; source: string } | 
-/**  `owner/repo` on GitHub, as the directory spells it. */
+/**
+ *  A GitHub repository, in any spelling `repo_move::owner_repo` folds
+ *  to the canonical `owner/repo` everything is keyed by.
+ */
 { by: "repo"; repo: string };
 
 /**  Something wrong with a catalog, said in the catalog author's terms. */

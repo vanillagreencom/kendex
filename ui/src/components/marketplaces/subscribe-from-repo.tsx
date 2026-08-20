@@ -11,6 +11,8 @@ export function SubscribeFromRepo({
   repo,
   label,
 }: {
+  /** The canonical `owner/repo` the page reads, so the subscription keys
+   * the same store entry and the page can carry on as it. */
   repo: string;
   label: string;
 }) {

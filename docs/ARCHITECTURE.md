@@ -842,15 +842,18 @@ lives in one capability table read by core and UI.
   `Repo { repo }` — so the app has one detail, package and bundle surface
   rather than a parallel set. A bare repository is fetched by
   `remote::sync` into the same store a subscription reads from, keyed by
-  the directory's spelling, so subscribing never downloads twice and the
-  pre-install safety record is shared per commit; only GitHub `owner/repo`
-  is openable blind (`NotBrowsable` for anything else), because that is
-  what the directory and skills.sh hand over. With no subscription the
+  the canonical `owner/repo` every GitHub spelling folds to — the same key
+  Subscribe is prefilled with — so subscribing never downloads twice, the
+  pre-install safety record is shared per commit, and a listing never
+  picks the transport; only GitHub is openable blind (`NotBrowsable` for
+  anything else), because that is what the directory and skills.sh hand
+  over. With no subscription the
   installed-state join answers Available for everything and judges name
   clashes against the personal scope, where Subscribe lands by default.
   `browse::summary` is a repository's first read — it refreshes, reports a
-  failed refresh as a warning over the store's copy, and names the
-  subscription this machine already holds for that repository — and the
+  failed refresh as a warning over the store's copy, and names an enabled
+  subscription this machine already holds for that repository whose
+  content is readable — and the
   UI's `useCatalog` switches the page onto that subscription the moment one
   exists, which is how "subscribe from here" keeps your place. Installing
   still needs a subscription: a repository page's one action is Subscribe.

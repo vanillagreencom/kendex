@@ -98,13 +98,13 @@ pub fn about(env: &Env, catalog: &Catalog) -> Result<AboutReport> {
 
 /// The first subscription, personal scope first, that points at this
 /// repository however it spells it and can be read right now. One that is
-/// turned off or never fetched is passed over: the page just read the
-/// repository, and switching onto a subscription whose content is
-/// unreachable would trade that for an empty page.
+/// turned off or never fetched resolves as not Ready and is passed over:
+/// the page just read the repository, and switching onto a subscription
+/// whose content is unreachable would trade that for an empty page.
 fn subscribed_as(env: &Env, key: &str) -> Option<SubscriptionRef> {
     crate::source_ops::repo_subscriptions(env)
         .into_iter()
-        .filter(|row| row.enabled && row.repo_key.as_deref() == Some(key))
+        .filter(|row| row.repo_key.as_deref() == Some(key))
         .find(|row| {
             let Ok(Some(manifest)) = crate::source_ops::load_current(env, &row.scope) else {
                 return false;

@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  bundleKey,
   catalogKey,
   catalogLabel,
+  isRepoKey,
   marketKey,
+  readErrorKey,
   subscription,
 } from "./marketplaces-shared";
 
@@ -30,5 +33,19 @@ describe("catalog addressing", () => {
       "wshobson/agents",
     );
     expect(catalogLabel(undefined)).toBeNull();
+  });
+
+  it("tells repository keys from subscription keys", () => {
+    expect(isRepoKey(catalogKey({ by: "repo", repo: "acme/kit" }))).toBe(true);
+    expect(
+      isRepoKey(catalogKey(subscription({ scope: "global" }, "repo"))),
+    ).toBe(false);
+  });
+
+  it("keeps a set named like a read off that read's key", () => {
+    const catalog = subscription({ scope: "global" }, "kendex");
+    expect(bundleKey(catalog, "packages")).not.toBe(
+      readErrorKey(catalogKey(catalog), "packages"),
+    );
   });
 });

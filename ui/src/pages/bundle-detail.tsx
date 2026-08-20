@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import {
-  catalogKey,
+  bundleKey,
   catalogLabel,
   useMarketplacesStore,
 } from "@/stores/marketplaces";
@@ -30,7 +30,12 @@ export function BundleDetailPage() {
 
 function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
   const { bundle } = bundleRef;
-  const { catalog, error: reachError, ready } = useCatalog(bundleRef.catalog);
+  const {
+    catalog,
+    summary,
+    error: reachError,
+    ready,
+  } = useCatalog(bundleRef.catalog);
   const bundles = useMarketplacesStore((s) => s.bundles);
   const readErrors = useMarketplacesStore((s) => s.readErrors);
   const loadBundle = useMarketplacesStore((s) => s.loadBundle);
@@ -43,7 +48,7 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
     if (ready) void loadBundle(catalog, bundle);
   }, [catalog, ready, bundle, loadBundle]);
 
-  const key = `${catalogKey(catalog)}::${bundle}`;
+  const key = bundleKey(catalog, bundle);
   const detail = bundles[key];
   const readError = reachError ?? readErrors[key];
   const subscribed = catalog.by === "subscription" ? catalog : null;
@@ -113,7 +118,7 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
             </Button>
           ) : catalog.by === "repo" ? (
             <SubscribeFromRepo
-              repo={catalog.repo}
+              repo={summary?.provenance ?? catalog.repo}
               label="Subscribe to install"
             />
           ) : null
