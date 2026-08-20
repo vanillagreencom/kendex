@@ -89,6 +89,11 @@ require "$audit_issues" '\*\*GitHub route \(TRACKER=github\)\*\*' 'GitHub execut
 linear_create_row="$(extract "$audit_issues" '^\*\*Linear route \(TRACKER=linear\)\*\*' '^\| expand, update' linear-create-row)" || fail "could not extract the Linear create row"
 grep -Fq -- '--state "Backlog"' "$linear_create_row" || fail 'Linear create route does not require --state "Backlog"'
 research_issue="$SKILL_DIR/workflows/research-issue.md"
+merge_pr="$SKILL_DIR/../orch/workflows/merge-pr.md"
+if [[ -f "$merge_pr" ]]; then
+  merge_create_cmd="$(extract "$merge_pr" 'issues create' '^```$' merge-create-cmd)" || fail "could not extract the merge-pr rebundle create command"
+  grep -Fq -- '--state "Backlog"' "$merge_create_cmd" || fail 'merge-pr rebundle create does not pass --state "Backlog"'
+fi
 research_create_cmd="$(extract "$research_issue" 'issues create \\$' '^```$' research-create-cmd)" || fail "could not extract the research-issue create command"
 grep -Fq -- '--state "Backlog"' "$research_create_cmd" || fail 'research-issue create command does not pass --state "Backlog"'
 require "$audit_issues" 'Never mix routes within one audit' 'single-route rule'
