@@ -34,7 +34,7 @@ Cancelling and rescoping existing issues is a work decision the plan gate alread
 
 `Review each` asks per action (`Execute` | `Skip` | `Modify` with free text). Execute cancellations per the Linear CLI's workflow-actions § State Transitions (cancel/absorb) with the plan's reason named in the comment, and modifications per § Descriptions.
 
-For each conflict, ask `Proceed as planned` | `Modify approach` (free text, carried into issue creation) | `Skip this issue` (removed from creation).
+For each conflict whose resolution changed since the plan gate or was not presented there, ask `Proceed as planned` | `Modify approach` (free text, carried into issue creation) | `Skip this issue` (removed from creation); a resolution carried under the provenance rule above executes as presented.
 
 ---
 
