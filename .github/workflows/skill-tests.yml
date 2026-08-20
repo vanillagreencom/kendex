@@ -356,10 +356,29 @@ jobs:
       # Full debuginfo across the Tauri workspace out-links the runner's
       # memory — three group runs died with the cargo step "cancelled" and
       # no step output, the OOM-kill signature. Tests don't read debuginfo.
+      # The guard CLI binaries (guard_hooks, guard_repair, guard_env)
+      # exercise the real binary's git-hook installs through real
+      # commits; with the default parallel test runner the hosted
+      # runner SIGTERMs the whole job within seconds of them starting
+      # (KEN-411 holds the forensics: exit 143 with every completed
+      # suite green, CI-only — the same binaries pass locally and on
+      # the macOS lane). Running just those binaries single-threaded
+      # keeps them enforced here without the kill.
       - name: cargo test
         env:
           RUSTFLAGS: -C debuginfo=0
-        run: cargo test --workspace --locked
+        run: |
+          cargo test --workspace --locked --exclude kendex-cli
+          cargo test -p kendex-cli --locked --lib --bins
+          for t in crates/cli/tests/*.rs; do
+            name=$(basename "$t" .rs)
+            case "$name" in
+              guard_hooks|guard_repair|guard_env)
+                cargo test -p kendex-cli --locked --test "$name" -- --test-threads=1 ;;
+              *)
+                cargo test -p kendex-cli --locked --test "$name" ;;
+            esac
+          done
 
   # The app ships on macOS; nothing before the release tag compiled the
   # workspace there, so a mac-only break (keyring backend, path handling)
