@@ -36,6 +36,12 @@ changes carry a **Breaking** call-out with their migration note inline.
   the CLI together on macOS, and the CLI-only formula was renamed. Anyone
   on the old `kendex` formula migrates with `brew uninstall kendex &&
   brew install vanillagreencom/kendex/kendex-cli`.
+- The project-management skill's roadmap pipeline is spec-driven and asks
+  once: `roadmap plan feature @plan.md` accepts a finished, reviewed plan as
+  the spec (issues derive from it and cite it), the plan-gate approval
+  carries through to issue creation instead of being asked twice, and
+  research runs inline by default — a tracker research issue exists only for
+  research deferred as standalone work.
 
 ### Fixed
 

@@ -2,6 +2,8 @@
 
 User-initiated research: scope the question, gather prior work, then hand off to `research-issue`.
 
+Reach for this only when the research is **deferred** — standalone work someone (or the researcher agent) picks up later as a tracked issue with durable findings. Research a planning session can do now is done there (roadmap-plan § 1's inline option), its findings written to disk and cited; it never becomes an issue.
+
 ## 1. Scope the Question
 
 Ask in plain text: **"What research are you conducting?"** Expect a 1-2 sentence description.

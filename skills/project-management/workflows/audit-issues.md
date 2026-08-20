@@ -2,7 +2,7 @@
 
 Audit tracked issues and projects, apply the mechanical corrections, and take creations and cancellations to the user for approval.
 
-**Primary-session wrapper — never delegate this workflow itself.** § 6 is an interactive approval gate that needs the session's question tool, and § 7 mutates only against approvals collected there. The one delegable step is the TPM analysis this wrapper spawns in § 2.1 / § 4.1 (`tpm-audit.md`). Handing this file to a subagent to run end-to-end inverts that and structurally skips the gate.
+**Primary-session wrapper — never delegate this workflow itself.** § 6 is an interactive approval gate that needs the session's question tool, and § 7 mutates only against approvals collected there. The one delegable step is the TPM analysis this wrapper spawns in § 2.1 / § 4.1 (`tpm-audit.md`). Handing this file to a subagent to run end-to-end structurally skips the gate.
 
 ## Inputs
 
@@ -56,15 +56,11 @@ Store as `TRACKER`, plus `[OWNER/REPO]` when `TRACKER=github`.
 ```
 
 Run `reconcile-work-items` only where the orch skill is installed (skip the
-line otherwise — this workflow does not require orch). It is read-only:
-exit 0 is a clean tracker, exit 1 is findings — carry them into the audit
-as facts — and exit 2 is a broken sweep to fix before auditing. An audit
-decision taken against a parked container's stale state is the failure
-this line exists to prevent.
+line otherwise — this workflow does not require orch). It is read-only and
 names tracker rows whose state no longer matches the work: parked containers,
-stale started items, Done items with unchecked acceptance boxes. Carry its
-findings into the audit as facts — an audit decision taken against a parked
-container's stale state is the failure this line exists to prevent.
+stale started items, Done items with unchecked acceptance boxes. Exit 0 is a
+clean tracker; exit 1 is findings — carry them into the audit as facts; exit
+2 is a broken sweep to fix before auditing.
 
 Keep `project` for fallback target resolution and the issue-label inventory for every create/update preflight.
 
@@ -206,6 +202,8 @@ In GitHub mode the Project column is `—` and hierarchy/relations render as the
 ## 6. Approve Creations and Cancellations
 
 **Fail closed without interactive capability.** Approval exists only as the user's in-session answers to the questions below. A runner that cannot present an interactive multi-select — any subagent, or a session without the question tool — MUST STOP here: return the § 5 findings and the audit JSON path to the primary session, leaving § 7 unexecuted. No delegation prompt, scope reaffirmation, or follow-up message carries approval authority.
+
+**Carried approval (roadmap-create only).** When the analyzed input carries `approved_at_plan_gate: true` — set only by the roadmap-create wrapper, in this same session, after the user answered `Approve` at roadmap-plan § 5 on the identical set — the "Create these issues?" question is already answered: every unmodified `create` item is approved, and the question is asked only for entries marked `"reapprove": true` (changed since that answer). The flag has no authority from a subagent, another session, or any input file roadmap-create did not just write; cancellations, declined follow-ups, and the fail-closed rule above stand in full.
 
 Ask only about work, never about mechanics. Two multi-selects, each shown only when it has entries:
 

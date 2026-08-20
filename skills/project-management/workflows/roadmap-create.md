@@ -91,7 +91,7 @@ Load the project taxonomy and validate every issue's `labels[]` per [labels.md](
 
 ### 4.2 Convert to Audit Input
 
-Deterministic mapping only — do NOT re-analyze. Convert `TPM_OUTPUT` to the issue-mode format of [audit-output.md](../schemas/audit-output.md), one `issues[]` entry per `organized_issues[i]`:
+Deterministic mapping only — do NOT re-analyze, and do NOT re-type: for anything beyond a handful of issues, generate the file with a script (`jq` over `TPM_OUTPUT`) so field values transfer byte-exact. Convert `TPM_OUTPUT` to the issue-mode format of [audit-output.md](../schemas/audit-output.md), one `issues[]` entry per `organized_issues[i]`:
 
 | Field | Source |
 |-------|--------|
@@ -107,7 +107,9 @@ Deterministic mapping only — do NOT re-analyze. Convert `TPM_OUTPUT` to the is
 
 Each entry's `create_fields` carries `description` (synthesized from title, feature context, and breaking changes), `recommendation` (requirement bullets, plus doc updates and migration steps), `location`, `estimate`, `priority`, `labels[]` (authoritative, validated in § 4.1), `agent_label`, `is_bundle_parent`, and `source_path` = the plan markdown path. A bundle parent sets `is_bundle_parent: true` with no description or recommendation — [parent-issue-template.md](../templates/parent-issue-template.md) content is generated after the children exist, via workflow-actions § Descriptions (parent rebuild).
 
-Top-level: `{"mode": "issue", "source": "roadmap-create", "parent_issue": [from hierarchy_recommendation.origin_issue or null], "research_ref": [context.research_path], "plan_path": [context.plan_path]}`.
+Top-level: `{"mode": "issue", "source": "roadmap-create", "parent_issue": [from hierarchy_recommendation.origin_issue or null], "research_ref": [context.research_path], "plan_path": [context.plan_path], "approved_at_plan_gate": [true|false]}`.
+
+`approved_at_plan_gate` is true only when this wrapper, in this session, collected `Approve` at roadmap-plan § 5 and the converted set is identical to what that gate presented. An item modified since — a § 2 conflict resolution, any post-approval edit — is marked `"reapprove": true` on its entry, and a set that no longer matches the approved one at all sets the flag false. audit-issues § 6 reads this to skip re-asking what the user already answered.
 
 Write it to `tmp/audit-roadmap-YYYYMMDD-HHMMSS.json`, then run:
 
