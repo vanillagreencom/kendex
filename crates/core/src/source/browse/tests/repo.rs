@@ -269,8 +269,21 @@ fn a_ready_subscription_under_another_spelling_answers_offline() {
     // Spelled with a capital: the same repository on GitHub, but a
     // different store entry from the shorthand a listing hands over.
     let spelled = "Owner/repo";
-    let owners = upstream.parent().unwrap();
-    std::os::unix::fs::symlink(owners, owners.with_file_name("Owner")).unwrap();
+    // A second copy under the capitalised owner, unless the filesystem
+    // folds case and the path already resolves to the upstream itself.
+    let alias = upstream.parent().unwrap().with_file_name("Owner");
+    if !alias.exists() {
+        fs::create_dir_all(&alias).unwrap();
+        git(
+            &alias,
+            &[
+                "clone",
+                "--quiet",
+                upstream.to_str().unwrap(),
+                alias.join("repo").to_str().unwrap(),
+            ],
+        );
+    }
     assert_ne!(
         crate::remote::cache_key(&env, spelled),
         crate::remote::cache_key(&env, REPO)
