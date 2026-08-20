@@ -2242,9 +2242,9 @@ export type UpdateRow = {
 	source: string,
 	repo: string,
 	/**
-	 *  `repo` with the moved default's legacy spellings collapsed — the
+	 *  `repo` as [`crate::source_ref::repo_identity`] spells it — the one
 	 *  identity two scopes' rows share when they name one repository two
-	 *  ways.
+	 *  ways, on any host.
 	 */
 	repoIdentity: string,
 	/**  The content revision installed now, when the lock records it. */

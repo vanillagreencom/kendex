@@ -52,7 +52,7 @@ fn an_edited_agent_names_the_rendering_that_was_edited() {
     );
     assert_eq!(
         row.repo_identity,
-        kendex_core::repo_move::canonical(&row.repo)
+        kendex_core::source_ref::repo_identity(&row.repo)
     );
 
     // Edit Claude's copy too: a fork would keep one rendering and drop

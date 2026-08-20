@@ -33,9 +33,9 @@ pub struct UpdateRow {
     pub name: String,
     pub source: String,
     pub repo: String,
-    /// `repo` with the moved default's legacy spellings collapsed — the
+    /// `repo` as [`crate::source_ref::repo_identity`] spells it — the one
     /// identity two scopes' rows share when they name one repository two
-    /// ways.
+    /// ways, on any host.
     pub repo_identity: String,
     /// The content revision installed now, when the lock records it.
     pub current: Option<VersionRef>,
@@ -225,15 +225,6 @@ fn same_artifact(
     matches!((resolved(a), resolved(b)), (Some(x), Some(y)) if x == y)
 }
 
-/// One repository's identity across every spelling a manifest can carry:
-/// the moved default's legacy names collapse first, then any GitHub shape
-/// (`owner/repo`, an https URL with or without `.git`, scp-style) folds to
-/// lowercase `owner/repo`. Another host keeps its canonical string.
-pub fn repo_identity(repo: &str) -> String {
-    let canonical = crate::repo_move::canonical(repo);
-    crate::repo_move::owner_repo(canonical).unwrap_or_else(|| canonical.to_owned())
-}
-
 /// A fork's row: no versions, no update — the Library still needs to
 /// know it is a fork.
 fn fork_row(
@@ -305,30 +296,5 @@ fn load_current(env: &Env, scope: &Scope) -> Result<Option<crate::manifest::Mani
     match crate::manifest::load(&crate::manifest::manifest_path(env, scope))? {
         crate::manifest::ManifestFile::Current(manifest) => Ok(Some(*manifest)),
         _ => Ok(None),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::repo_identity;
-
-    #[test]
-    fn every_spelling_of_one_repository_shares_an_identity() {
-        let identities: std::collections::BTreeSet<String> = [
-            "owner/repo",
-            "https://github.com/owner/repo.git",
-            "https://www.github.com/Owner/Repo/",
-            "git@github.com:owner/repo.git",
-        ]
-        .into_iter()
-        .map(repo_identity)
-        .collect();
-        assert_eq!(identities.len(), 1, "{identities:?}");
-        assert_ne!(repo_identity("owner/repo"), repo_identity("owner/other"));
-        assert_eq!(
-            repo_identity("https://gitlab.com/owner/repo.git"),
-            "https://gitlab.com/owner/repo.git",
-            "another host keeps its canonical string"
-        );
     }
 }

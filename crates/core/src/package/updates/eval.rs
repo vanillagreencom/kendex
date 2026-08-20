@@ -116,7 +116,7 @@ impl Eval<'_> {
                     forked,
                     mixed: false,
                     removed_upstream: true,
-                    repo_identity: super::repo_identity(&repo),
+                    repo_identity: crate::source_ref::repo_identity(&repo),
                     repo,
                 });
             }
@@ -219,7 +219,7 @@ impl Eval<'_> {
             derived: planned.derived,
             edited_harnesses,
             forked,
-            repo_identity: super::repo_identity(&package.repo),
+            repo_identity: crate::source_ref::repo_identity(&package.repo),
             repo: package.repo.clone(),
             current,
             latest,
