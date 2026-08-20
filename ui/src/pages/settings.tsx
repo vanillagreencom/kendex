@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { Appearance } from "@/bindings";
 import { commands, ZOOM } from "@/bindings";
 import { AccountSection } from "@/components/account-section";
@@ -17,8 +17,8 @@ import { SAFETY_HELP } from "@/lib/copy-safety";
 import { SETTINGS_SUBTITLE } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { cn } from "@/lib/utils";
-import { zoomControls } from "@/lib/zoom-controls";
 import { useSettingsStore } from "@/stores/settings";
+import { zoom } from "@/stores/zoom";
 
 // How cautious the safety check is, said without numbers on the dial.
 const SAFETY_LEVELS = {
@@ -50,14 +50,7 @@ function safetyLevelOf(warn: number, block: number): SafetyLevel | "custom" {
 }
 
 export function SettingsPage() {
-  const { settings, setAppearance, setSafety, setZoom, saveZoom } =
-    useSettingsStore();
-  // Not cancelled when the page closes: leaving Settings right after moving
-  // the slider must still store the size.
-  const zoom = useMemo(
-    () => zoomControls(setZoom, saveZoom),
-    [setZoom, saveZoom],
-  );
+  const { settings, setAppearance, setSafety } = useSettingsStore();
   const [version, setVersion] = useState<string | null>(null);
 
   useEffect(() => {

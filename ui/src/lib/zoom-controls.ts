@@ -66,9 +66,9 @@ export interface ZoomControls {
     onValueChange: (percent: number) => void;
     onValueCommitted: () => void;
   };
-  /** Drop a pending write. Only for a teardown that ends the window it
-   *  would talk to — leaving a page must let the write land. */
-  cancel: () => void;
+  /** Write a pending size now rather than waiting out the settle — for the
+   *  app going away, which is the one moment the timer would never fire. */
+  flush: () => void;
 }
 
 export function zoomControls(
@@ -78,7 +78,10 @@ export function zoomControls(
   let settle: ReturnType<typeof setTimeout> | undefined;
   const commitWhenSettled = () => {
     clearTimeout(settle);
-    settle = setTimeout(save, ZOOM_SETTLE_MS);
+    settle = setTimeout(() => {
+      settle = undefined;
+      save();
+    }, ZOOM_SETTLE_MS);
   };
   return {
     onKeyDown(event, current) {
@@ -89,9 +92,11 @@ export function zoomControls(
       return true;
     },
     slider: { onValueChange: preview, onValueCommitted: commitWhenSettled },
-    cancel() {
+    flush() {
+      if (settle === undefined) return;
       clearTimeout(settle);
       settle = undefined;
+      save();
     },
   };
 }

@@ -52,20 +52,37 @@ export function zoomActions(
     if (current) set({ settings: { ...current, zoom: percent } });
   }
 
+  /** Why the window did not take the size, or null when it did. A bridge
+   *  that throws and a reply that says no are the same answer here: the
+   *  window is not showing what the store says it is. */
+  async function refused(percent: number): Promise<string | null> {
+    try {
+      const shown = await commands.windowSetZoom(percent);
+      return shown.status === "ok" ? null : shown.error;
+    } catch (error: unknown) {
+      return String(error);
+    }
+  }
+
   async function resize(percent: number) {
     const before = get().settings;
     if (!before || before.zoom === percent) return;
+    const previous = before.zoom ?? ZOOM.default;
     showZoom(percent);
-    const shown = await commands.windowSetZoom(percent);
-    if (shown.status === "ok") return;
-    // A size the window refused is not offered to the settings file. Put the
-    // old one back only if nothing newer has landed meanwhile: during a drag
-    // this reply can already be about a step the person has passed.
-    if (get().settings?.zoom === percent) showZoom(before.zoom ?? ZOOM.default);
-    report("Couldn't change the zoom", shown.error, () => void retry(percent));
+    const problem = await refused(percent);
+    if (problem === null) return;
+    // A size the window did not take is not offered to the settings file,
+    // and putting the old one back is what keeps the commit from writing it.
+    // Only if nothing newer has landed meanwhile: during a drag this reply
+    // can already be about a step the person has passed.
+    if (get().settings?.zoom === percent) showZoom(previous);
+    report("Couldn't change the zoom", problem, () => void retry(percent));
   }
 
   function setZoom(percent: number): Promise<void> {
+    // Joined, not replaced: a repeat of the size already on screen returns
+    // at once, and replacing would drop the earlier resize still in flight
+    // from what the commit waits for.
     const run = resize(percent).catch((error: unknown) => {
       report(
         "Couldn't change the zoom",
@@ -73,7 +90,7 @@ export function zoomActions(
         () => void retry(percent),
       );
     });
-    resizing = run;
+    resizing = Promise.all([resizing, run]).then(() => {});
     return run;
   }
 
@@ -85,17 +102,24 @@ export function zoomActions(
   }
 
   async function write() {
-    // The size on screen is settled only once every resize has replied.
-    let awaited: Promise<void>;
-    do {
-      awaited = resizing;
-      await awaited;
-    } while (resizing !== awaited);
-
-    const current = get().settings;
-    if (!current) return;
-    const percent = current.zoom ?? ZOOM.default;
     try {
+      // The size on screen is settled only once every resize has replied.
+      // `resizing` is a closure variable `setZoom` reassigns, and awaiting
+      // it hands control back, which is exactly when a new resize can start
+      // — so the identity check asks again until nothing new began while we
+      // waited. It terminates because every caller arrives through a settle
+      // timer that has already outlasted the input stream; wire `saveZoom`
+      // to something that fires mid-drag and this becomes an unbounded wait
+      // holding the one-save-at-a-time slot.
+      let awaited: Promise<void>;
+      do {
+        awaited = resizing;
+        await awaited;
+      } while (resizing !== awaited);
+
+      const current = get().settings;
+      if (!current) return;
+      const percent = current.zoom ?? ZOOM.default;
       const response = await commands.updateSettings(current);
       if (response.status === "ok") {
         // The reply describes the size that was on screen when the save
@@ -121,16 +145,10 @@ export function zoomActions(
       return saving;
     }
     saving = (async () => {
-      try {
-        await write();
-        while (again) {
-          again = false;
-          await write();
-        }
-      } finally {
-        // Never leave the queue armed: a run that ended early would other-
-        // wise make the next save do a second, pointless write forever.
+      await write();
+      while (again) {
         again = false;
+        await write();
       }
     })();
     try {

@@ -111,13 +111,26 @@ describe("zoomControls", () => {
     expect(save).toHaveBeenCalledTimes(1);
   });
 
-  it("drops a pending write when the window it would talk to is going away", () => {
+  it("writes a pending size at once when the app is going away", () => {
     const { save, zoom } = controls();
 
     zoom.onKeyDown(press("+"), 100);
-    zoom.cancel();
-    vi.advanceTimersByTime(ZOOM_SETTLE_MS * 2);
+    zoom.flush();
 
-    expect(save).not.toHaveBeenCalled();
+    expect(save).toHaveBeenCalledTimes(1);
+    // The settle it replaced does not fire a second write behind it.
+    vi.advanceTimersByTime(ZOOM_SETTLE_MS * 2);
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes nothing on the way out when nothing is pending", () => {
+    const { save, zoom } = controls();
+
+    zoom.flush();
+    zoom.onKeyDown(press("+"), 100);
+    vi.advanceTimersByTime(ZOOM_SETTLE_MS);
+    zoom.flush();
+
+    expect(save).toHaveBeenCalledTimes(1);
   });
 });

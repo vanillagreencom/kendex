@@ -7,7 +7,6 @@ import { Sidebar } from "@/components/sidebar";
 import { StatusFooter } from "@/components/status-footer";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { WindowControls } from "@/components/window-controls";
-import { zoomControls } from "@/lib/zoom-controls";
 import { AvailablePackagePage } from "@/pages/available-package";
 import { BundleDetailPage } from "@/pages/bundle-detail";
 import { CustomizePage } from "@/pages/customize";
@@ -28,6 +27,7 @@ import { useNavStore } from "@/stores/nav";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
 import { useUpdatesStore } from "@/stores/updates";
+import { zoom } from "@/stores/zoom";
 
 const FOCUS_RESCAN_DEBOUNCE_MS = 5000;
 
@@ -52,23 +52,23 @@ function useAppearance() {
 // browser. The keys work anywhere, fields included, because that is where a
 // browser's zoom works too.
 function useZoomShortcuts() {
-  const setZoom = useSettingsStore((s) => s.setZoom);
-  const saveZoom = useSettingsStore((s) => s.saveZoom);
   useEffect(() => {
-    const zoom = zoomControls(setZoom, saveZoom);
     const onKeyDown = (event: KeyboardEvent) => {
       const current =
         useSettingsStore.getState().settings?.zoom ?? ZOOM.default;
       if (zoom.onKeyDown(event, current)) event.preventDefault();
     };
+    // A size chosen and then abandoned inside the settle window would die
+    // with the window; leaving is the last chance to write it.
+    const onLeaving = () => zoom.flush();
     window.addEventListener("keydown", onKeyDown);
-    // This effect ends with the app, so a write still waiting on the settle
-    // would be talking to a window that is going away.
+    window.addEventListener("beforeunload", onLeaving);
     return () => {
-      zoom.cancel();
       window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("beforeunload", onLeaving);
+      onLeaving();
     };
-  }, [setZoom, saveZoom]);
+  }, []);
 }
 
 // The side buttons on a mouse mean back and forward everywhere else on the
