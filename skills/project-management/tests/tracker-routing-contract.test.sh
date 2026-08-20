@@ -89,7 +89,8 @@ require "$audit_issues" '\*\*GitHub route \(TRACKER=github\)\*\*' 'GitHub execut
 linear_create_row="$(extract "$audit_issues" '^\*\*Linear route \(TRACKER=linear\)\*\*' '^\| expand, update' linear-create-row)" || fail "could not extract the Linear create row"
 grep -Fq -- '--state "Backlog"' "$linear_create_row" || fail 'Linear create route does not require --state "Backlog"'
 research_issue="$SKILL_DIR/workflows/research-issue.md"
-require_fixed "$research_issue" '--state "Backlog"' 'research-issue create requires Backlog state'
+research_create_cmd="$(extract "$research_issue" 'issues create \\$' '^```$' research-create-cmd)" || fail "could not extract the research-issue create command"
+grep -Fq -- '--state "Backlog"' "$research_create_cmd" || fail 'research-issue create command does not pass --state "Backlog"'
 require "$audit_issues" 'Never mix routes within one audit' 'single-route rule'
 require_fixed "$audit_issues" 'gh issue create --repo [OWNER/REPO] --title "[TITLE]" --body-file [BODY_FILE] --label "[VALIDATED_FINAL_LABELS]"' 'GitHub create with validated labels'
 require_fixed "$audit_issues" 'gh issue edit [N] --repo [OWNER/REPO] --body-file [BODY_FILE]' 'GitHub body-edit route'
