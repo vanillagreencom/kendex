@@ -64,6 +64,9 @@ require_fixed "$plan" 'and `spec_path` (each null when absent' 'plan writes spec
 require_fixed "$tpm" '**Spec mode** (`SPEC_PATH` set): the plan'"'"'s decisions are binding' 'TPM spec mode binds the plan'
 require_fixed "$tpm" 'never change its approach, drop a workstream it names, or add scope beyond its phases' 'TPM spec-mode constraints'
 require_fixed "$skill" 'optional: [decider, second-opinion]' 'second-opinion declared as an optional dependency'
-require_fixed "$plan" 'Cross-model review: unavailable' 'cross-model review degrades when the skill is absent'
+require_fixed "$plan" '`Cross-model review` field reads `unavailable`' 'cross-model review degrades when the skill is absent'
+require_fixed "$plan" '· Cross-model review: [verdict summary | unavailable | skipped — reviewed spec]' 'report template carries the cross-model review field'
+require_fixed "$plan" 'Spec: [SPEC_PATH or "None"] — when set, the spec'"'"'s phases bound the roadmap' 'architecture review receives the spec boundary'
+require_fixed "$plan" 'In spec mode the fold stops at the spec'"'"'s boundary' 'out-of-spec findings are never folded in'
 
 echo "all pass"

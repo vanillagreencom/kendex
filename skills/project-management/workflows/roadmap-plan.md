@@ -93,6 +93,7 @@ Delegate to the architecture review agent:
 Review proposed roadmap for: [FEATURE]
 
 Proposed project: [project_placement.project_name]
+Spec: [SPEC_PATH or "None"] — when set, the spec's phases bound the roadmap: report anything beyond them as out-of-spec, with why it is needed
 
 Organized issues:
 [organized_issues]
@@ -108,9 +109,9 @@ Report as JSON:
 5. Risk assessment (high/medium/low) with rationale
 </delegation_format>
 
-Keep the result as `ARCH_FINDINGS` (`validated_findings[]`, `deprecated_code[]`, `breaking_changes[]`, `required_refactors[]`, `risk_assessment`). Fold verified findings into the TPM JSON — scope additions into the issues they belong to, ordering fixes into relations — before presenting.
+Keep the result as `ARCH_FINDINGS` (`validated_findings[]`, `deprecated_code[]`, `breaking_changes[]`, `required_refactors[]`, `risk_assessment`). Fold verified findings into the TPM JSON — scope additions into the issues they belong to, ordering fixes into relations — before presenting. In spec mode the fold stops at the spec's boundary: an addition beyond its phases (a prerequisite the spec did not name) is recorded as `defer`/`declined` with the spec named in `reason` and surfaced in the § 5 report, never folded in.
 
-For a major feature planned without an already-reviewed spec, also run the `second-opinion` skill (challenge mode; an optional dependency) on the plan here and fold verified findings in the same way — when the skill is not installed, record `Cross-model review: unavailable` in the § 5 report and continue. A SPEC that already passed external review skips this.
+For a major feature planned without an already-reviewed spec, also run the `second-opinion` skill (challenge mode; an optional dependency) on the plan here and fold verified findings in the same way — when the skill is not installed, the § 5 report's `Cross-model review` field reads `unavailable` and the workflow continues. A SPEC that already passed external review skips this.
 
 ---
 
@@ -120,7 +121,7 @@ For a major feature planned without an already-reviewed spec, also run the `seco
 
 ### ROADMAP PLAN — [FEATURE]
 
-Research: [RESEARCH_PATH or "None — less informed planning"] · Origin: [ORIGIN_ISSUE.id or "None"] · Hierarchy: [hierarchy_recommendation.type] · Risk: [risk_assessment.level]
+Research: [RESEARCH_PATH or "None — less informed planning"] · Origin: [ORIGIN_ISSUE.id or "None"] · Hierarchy: [hierarchy_recommendation.type] · Risk: [risk_assessment.level] · Cross-model review: [verdict summary | unavailable | skipped — reviewed spec]
 
 ### PROJECT: [project_placement.project_name]
 
