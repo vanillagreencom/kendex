@@ -1,0 +1,367 @@
+name: Skill Tests
+
+# Runs every skill's, hook's and pi-extension's own test suite — the same
+# suites fix cycles run locally — plus the workspace's cargo tests. Upstream
+# gating here is what lets consuming repos drop tracked vendoring: quality is
+# proven at the source, not re-proven per consumer.
+#
+# THE FAST/FULL SPLIT: the heavy suite shards and the cargo jobs run ONLY in
+# the merge queue — on PR pushes and main pushes they report `skipped`, which
+# satisfies the ruleset's required contexts while the pending "Review gate"
+# status is what actually blocks merge. A PR bills zero heavy runner-minutes
+# through every round of bot review, and the queue runs the full suite
+# exactly once, on the merged result, after review is done — main-push runs
+# would re-test the exact sha the queue just tested, so they are skipped
+# too. The accepted residual: a bypass-actor merge (gate-repair PRs) skips
+# the queue and lands without a heavy run — the operator runs the suites
+# locally and says so in the merge commit. The review gate never conditions
+# CI (it answers review-only; see the review-gate skill) — there is no gate
+# job here and nothing reads the predicate.
+#
+# Heavy jobs run on Blacksmith when the org's CI_RUNNER_* variables are set,
+# falling back to GitHub-hosted so the workflow runs anywhere.
+
+"on":
+  pull_request:
+  # Required checks must exist on merge-group shas too, or queue entries
+  # block forever on contexts nothing creates (VST-10).
+  merge_group:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # SHARDED: three shards bound wall time at the slowest shard and give
+  # suite growth per-shard headroom instead of a shared cliff. The
+  # ruleset's required context is the AGGREGATOR below — shard names are
+  # not required contexts, so shards can be rebalanced or added without
+  # touching repo settings.
+  skill-suites-shard:
+    name: Skill suites shard (${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [review-gate, shell, node]
+    # Merge-queue only (the fast/full split — see the header). A job-level
+    # if:, not workflow-level `paths`/conditions: a SKIPPED job still
+    # reports its context, so the ruleset's required contexts stay satisfied
+    # on PR heads while the pending "Review gate" status blocks merge until
+    # review is done.
+    if: github.event_name == 'merge_group'
+    runs-on: ${{ vars.CI_RUNNER_4V || 'ubuntu-latest' }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      # A shard name outside the known set would match NO step conditions
+      # and pass vacuously — refuse it up front so a matrix/step rename
+      # desync fails loud instead of green-and-empty.
+      - name: shard name is known
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          case "$SHARD" in
+            review-gate|shell|node) ;;
+            *) echo "unknown shard '$SHARD' — no steps would run"; exit 1 ;;
+          esac
+
+      # ---- shard: review-gate — the heavyweight wrapper battery alone ----
+      - name: review-gate suites
+        if: matrix.shard == 'review-gate'
+        run: |
+          set -u
+          fail=0
+          failed=""
+          for t in skills/review-gate/tests/*.sh; do
+            echo "=== $t"
+            if ! bash "$t"; then
+              echo "FAILED: $t"
+              fail=1
+              failed="$failed $t"
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "FAILED SUITES:$failed"
+          fi
+          exit "$fail"
+
+      # ---- shard: shell — lints, orch, every other shell suite ----------
+      - name: executable bits on skill tests and scripts
+        if: matrix.shard == 'shell'
+        run: |
+          set -u
+          fail=0
+          while IFS= read -r f; do
+            mode="$(git ls-files -s -- "$f" | cut -d' ' -f1)"
+            if [ "$mode" = "100644" ]; then
+              echo "not executable in git: $f"
+              fail=1
+            fi
+          done < <(git ls-files -- 'skills/*/tests/*.sh' 'skills/*/scripts/*' 'hooks/tests/*.sh' | grep -v '/scripts/lib/')
+          exit "$fail"
+
+      # The queue-side half of the size gate: the preflight job runs only on
+      # pull_request, so without this a merge group never re-checks the
+      # baseline against what it is about to merge.
+      - name: size-ratchet (tighten-only file-size gate)
+        if: matrix.shard == 'shell'
+        run: skills/size-ratchet/scripts/size-ratchet
+
+      # Every skill must route problem reports through `kendex report`. The
+      # ownership guard is a backstop for issues that bypassed it, so a skill
+      # carrying only a `bugs:` URL sends agents to hand-file in this repo
+      # regardless of who owns the asset.
+      - name: skills point reports at `kendex report`
+        if: matrix.shard == 'shell'
+        run: |
+          set -u
+          fail=0
+          while IFS= read -r f; do
+            if ! grep -qF 'kendex report' "$f"; then
+              echo "missing \`kendex report\` guidance: $f"
+              fail=1
+            fi
+          done < <(git ls-files -- 'skills/*/SKILL.md')
+          exit "$fail"
+
+      - name: orch suite (run-all)
+        if: matrix.shard == 'shell'
+        run: bash skills/orch/tests/run-all.sh
+
+      # A failure is announced twice: inline where it happened, and in a
+      # FAILED SUITES block at the end — the tail of a red job must name the
+      # culprits instead of showing only the later suites passing.
+      - name: all other skill suites
+        if: matrix.shard == 'shell'
+        run: |
+          set -u
+          fail=0
+          failed=""
+          for t in skills/*/tests/*.sh; do
+            case "$t" in
+              skills/orch/tests/*) continue ;;
+              skills/review-gate/tests/*) continue ;; # its own shard
+            esac
+            echo "=== $t"
+            if ! bash "$t"; then
+              echo "FAILED: $t"
+              fail=1
+              failed="$failed $t"
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "FAILED SUITES:$failed"
+          fi
+          exit "$fail"
+
+      - name: hook suites
+        if: matrix.shard == 'shell'
+        run: |
+          set -u
+          fail=0
+          failed=""
+          for t in hooks/tests/*.sh; do
+            echo "=== $t"
+            if ! bash "$t"; then
+              echo "FAILED: $t"
+              fail=1
+              failed="$failed $t"
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "FAILED SUITES:$failed"
+          fi
+          exit "$fail"
+
+      - uses: actions/setup-node@v4
+        if: matrix.shard == 'node'
+        with:
+          node-version: 22.19.0
+
+      - name: deep-research node suite
+        if: matrix.shard == 'node'
+        run: node --test skills/deep-research/tests/deep-research.test.mjs
+
+      - name: pi-extension package policy suite
+        if: matrix.shard == 'node'
+        run: node --test pi-extensions/package-policy.test.mjs
+
+      - uses: oven-sh/setup-bun@v2
+        if: matrix.shard == 'node'
+        with:
+          bun-version: 1.3.14
+
+      # Pi 0.80.4 introduced agent_settled but was not published to npm;
+      # 0.80.5 is the earliest installable compatible dependency set.
+      - name: pi-qol regression suite
+        if: matrix.shard == 'node'
+        working-directory: pi-extensions/pi-qol
+        run: |
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.80.5 @earendil-works/pi-ai@0.80.5 @earendil-works/pi-coding-agent@0.80.5 @earendil-works/pi-tui@0.80.5
+          bun test ./tests
+
+      - name: pi-output-policy suite
+        if: matrix.shard == 'node'
+        working-directory: pi-extensions/pi-output-policy
+        run: bun test ./tests
+
+      # Pi 0.84.x is the release the extensions are audited against, so the
+      # suites that assert 0.84 wire-format parity install that line rather
+      # than the 0.80.5 floor above.
+      # The two pane-preflight cases in pane-cwd-stale.test.ts call
+      # ensureTmux(), which throws when $TMUX is unset; they skip themselves
+      # on a bare runner the same way they already skip off Linux. The whole
+      # directory is still globbed, so new test files run here without
+      # editing this step.
+      - name: pi-agents-tmux suite
+        if: matrix.shard == 'node'
+        working-directory: pi-extensions/pi-agents-tmux
+        run: |
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1 typebox
+          bun test ./tests ./extensions/subagent/__tests__
+
+      # undici is pinned to the package's own declared range: installing it
+      # unversioned resolves the registry's latest major, so the proxy
+      # transport test would validate a different major than consumers
+      # actually install.
+      - name: pi-codex-minimal-tools suite
+        if: matrix.shard == 'node'
+        working-directory: pi-extensions/pi-codex-minimal-tools
+        run: |
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1 typebox 'undici@^7.25.0'
+          npm test
+
+      # pi-questions unit tests are dependency-free by design (question-model
+      # and rpc-fallback import nothing outside the package), so unlike the
+      # suites above no npm install is needed.
+      - name: pi-questions suite
+        if: matrix.shard == 'node'
+        working-directory: pi-extensions/pi-questions
+        run: bun test ./extensions/__tests__
+
+      # The renderer imports pi-tui and pi-coding-agent, so unlike
+      # pi-questions its suite needs the 0.84.1 install to resolve at all.
+      # pi-ai and pi-agent-core are pinned alongside them because
+      # pi-coding-agent pulls them transitively and an unpinned resolution
+      # mismatches its exports.
+      - name: pi-tool-renderer suite
+        if: matrix.shard == 'node'
+        working-directory: pi-extensions/pi-tool-renderer
+        run: |
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1
+          bun test ./extensions/__tests__
+
+      # Build first: one suite loads bundle/connector-inventory.js rather
+      # than src, so a src change without a rebuild has to fail here.
+      # `npm ci` is deliberately NOT allowed to fall back to `npm install`:
+      # the bundle assertion below only proves the artifact came from the
+      # committed lockfile if the install itself was lockfile-strict.
+      - name: pi-claude-bridge unit suite
+        if: matrix.shard == 'node'
+        working-directory: pi-extensions/pi-claude-bridge
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          npm run test:unit
+
+      # bundle/index.js is the artifact Pi loads and npm publishes. A clean
+      # lockfile build must reproduce the committed bytes exactly.
+      - name: pi-claude-bridge bundle matches a clean lockfile build
+        if: matrix.shard == 'node'
+        working-directory: pi-extensions/pi-claude-bridge
+        run: git diff --exit-code -- bundle/
+
+  # AGGREGATOR — this job's name is the ruleset's required context. On PR
+  # heads the expression is false and the job reports `skipped`. In a merge
+  # group it runs after every shard and fails unless ALL shards succeeded —
+  # `always()` is required in the expression because skipped/failed needs
+  # would otherwise skip this job too, and a skipped required context on a
+  # merge group would satisfy the ruleset without any suite having run (the
+  # fail-open this line exists to close).
+  skill-suites:
+    name: Skill suites (shell + node)
+    needs: [skill-suites-shard]
+    if: always() && github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: every shard succeeded
+        env:
+          SHARDS_RESULT: ${{ needs.skill-suites-shard.result }}
+        run: |
+          echo "shards: $SHARDS_RESULT"
+          [ "$SHARDS_RESULT" = "success" ]
+
+  gate-selftest:
+    # DELIBERATELY UNGATED: no `needs`, no approval condition, no path
+    # filter. If the predicate is broken, nothing is ever approved, so a
+    # gated selftest could never run when it matters. Runs from the repo
+    # root so the configured layer regenerates its approve/near-miss
+    # battery from THIS repo's committed kendex.settings.toml trust values.
+    name: Pin the review-gate decision table
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: review-gate selftest against this repo's settings
+        run: skills/review-gate/scripts/review-predicate-selftest.sh
+
+  preflight:
+    # Dogfoods the preflight skill on this repo's own PR diffs. PR-time on
+    # purpose despite the fast/full split: the whole run is seconds of
+    # diff-scoped checks, and its findings (fail-open bash, dead doc
+    # citations, stray work markers, broken JSON/TOML) are exactly the classes
+    # that otherwise surface as bot-review round-trips. Not a required
+    # context; merge-group correctness is owned by the sharded suites.
+    name: Preflight (diff-scoped deterministic checks)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: preflight against the PR base
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: skills/preflight/scripts/preflight --base "origin/$BASE_REF"
+      # Tighten-only file-size gate against tools/size-ratchet-baseline.tsv
+      # + tools/size-ratchet-excludes; reads tracked files at HEAD only.
+      - name: size-ratchet (tighten-only file-size gate)
+        run: skills/size-ratchet/scripts/size-ratchet
+
+  cargo-tests:
+    name: Cargo (workspace tests)
+    # Merge-queue only — same split as skill-suites above.
+    if: github.event_name == 'merge_group'
+    runs-on: ${{ vars.CI_RUNNER_8V || 'ubuntu-latest' }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: System dependencies for the keychain store and the app shell
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libwebkit2gtk-4.1-dev libgtk-3-dev
+      - name: cargo test
+        run: cargo test --workspace --locked
+
+  # The app ships on macOS; nothing before the release tag compiled the
+  # workspace there, so a mac-only break (keyring backend, path handling)
+  # surfaced at release time. One queue-time lane closes that. Not a
+  # required context yet — a red run is visible without wedging the queue.
+  cargo-tests-macos:
+    name: Cargo (workspace tests, macOS)
+    if: github.event_name == 'merge_group'
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test
+        run: cargo test --workspace --locked

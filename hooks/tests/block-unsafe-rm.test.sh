@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+# Tests for the block-unsafe-rm hook.
+#
+# The hook refuses a recursive rm whose path operand starts with a variable
+# that may expand empty — the shape the harness stops the whole session on
+# with a "Dangerous rm operation on possibly-empty variable path" prompt —
+# and names the accepted rewrite (${NAME:?} or a literal absolute path).
+# Non-recursive rm, literal paths, ${NAME:?}, and commands that merely mention
+# rm pass. HOOK_UNDER_TEST overrides the script under test so the must-fail
+# controls (a no-op hook, an always-block hook) run against these assertions.
+set -euo pipefail
+
+TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/block-unsafe-rm.sh}"
+
+PASS=0
+FAIL=0
+TMP_ROOT="$(mktemp -d)"
+trap 'rm -rf "$TMP_ROOT"' EXIT
+ERR_FILE="$TMP_ROOT/stderr"
+BASH_BIN="$(command -v bash)"
+
+pass() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
+fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
+assert_eq() {
+  if [ "$1" = "$2" ]; then pass "$3"; else FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$3" "$2" "$1"; fi
+}
+assert_contains() {
+  if grep -qF -- "$2" "$1"; then pass "$3"; else FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        wanted: %s\n        in:\n%s\n' "$3" "$2" "$(cat "$1")"; fi
+}
+
+# The command reaches the hook JSON-encoded, exactly as the harness sends it.
+json_for() {
+  local c
+  c=$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "$c"
+}
+
+run_hook() { # command -> rc, stderr in ERR_FILE
+  set +e
+  json_for "$1" | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
+  rc=$?
+  set -e
+}
+
+# A PATH without jq exercises the escape-aware fallback decoder.
+NOJQ_BIN="$TMP_ROOT/nojq"
+mkdir -p "$NOJQ_BIN"
+for tool in cat sed grep head awk tr; do
+  real="$(command -v "$tool" 2>/dev/null || true)"
+  [ -n "$real" ] || continue
+  ln -sf "$real" "$NOJQ_BIN/$tool"
+done
+run_hook_path() { # PATH command -> rc
+  set +e
+  json_for "$2" | env -i HOME="$HOME" PWD="$PWD" TMPDIR=/tmp PATH="$1" "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
+  rc=$?
+  set -e
+}
+
+echo "=== block-unsafe-rm: refused shapes ==="
+run_hook 'rm -rf $CACHE/$KEY';           assert_eq "$rc" 2 'rm -rf $CACHE/$KEY is refused'
+run_hook 'rm -rf "$P/save"';             assert_eq "$rc" 2 'a quoted "$P/save" is refused (quotes do not stop an empty expansion)'
+run_hook 'rm -r ${DIR}';                 assert_eq "$rc" 2 'rm -r ${DIR} is refused'
+run_hook 'rm -fr $X';                    assert_eq "$rc" 2 'the -fr cluster counts as recursive'
+run_hook 'rm -R $X';                     assert_eq "$rc" 2 'uppercase -R counts as recursive'
+run_hook 'rm --recursive --force $X';    assert_eq "$rc" 2 '--recursive counts as recursive'
+run_hook 'mkdir -p x && rm -rf $X/y';    assert_eq "$rc" 2 'a refused rm inside an && chain is still refused'
+run_hook 'rm -rf "${P:-}/save"';         assert_eq "$rc" 2 '${P:-} can still expand empty and is refused'
+run_hook 'rm -rf -- $X';                 assert_eq "$rc" 2 'the -- separator does not make a variable root safe'
+run_hook '(rm -rf $X)';                  assert_eq "$rc" 2 'a subshell-wrapped rm is still refused'
+run_hook 'cd y && { rm -rf $X/z; }';     assert_eq "$rc" 2 'a group-wrapped rm inside a chain is refused'
+run_hook "$(printf 'rm\t-rf\t%s' '$X')"; assert_eq "$rc" 2 'tab-separated rm -rf is refused'
+run_hook 'rm -rf -- -$DIR/sub';          assert_eq "$rc" 2 'a dash-leading operand after -- is still a variable root'
+run_hook 'rm -rf $LOGS/*.log';           assert_eq "$rc" 2 'a glob in the operand does not disturb classification'
+run_hook 'rm -rf "${X+x:?}/save"';       assert_eq "$rc" 2 'an unset-guarded alternative whose text contains :? can expand empty and is refused'
+run_hook 'true & rm -rf "$X/sub"';       assert_eq "$rc" 2 'a lone ampersand separates commands too'
+run_hook 'if true; then rm -rf "$X/sub"; fi'; assert_eq "$rc" 2 'a control-keyword prefix does not hide the rm'
+run_hook 'while x; do rm -rf $Y; done';  assert_eq "$rc" 2 'a do-prefixed rm inside a loop is refused'
+run_hook 'rm "-rf" "$X/sub"';            assert_eq "$rc" 2 'a quoted -rf flag still counts as recursive'
+run_hook 'rm -\rf "$X/sub"';             assert_eq "$rc" 2 'a backslash-escaped -rf flag still counts as recursive'
+run_hook 'case x in x) rm -rf "$X/sub";; esac'; assert_eq "$rc" 2 'a case-arm body does not hide the rm'
+run_hook 'rm -r""f "$X/sub"';            assert_eq "$rc" 2 'a concatenation-split -rf flag still counts as recursive'
+run_hook "rm -rf \$''\$X/sub";           assert_eq "$rc" 2 'an empty ANSI-C literal does not hide the variable root'
+run_hook 'rm -rf ""$X/sub';              assert_eq "$rc" 2 'an empty double-quote pair does not hide the variable root'
+run_hook "rm -rf ''\$X/sub";             assert_eq "$rc" 2 'an empty single-quote pair does not hide the variable root'
+set +e
+printf '%s' '{"tool_input":{"command":"rm \\\n-rf $X/sub"}}' | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"; rc=$?
+set -e
+assert_eq "$rc" 2 'a backslash-newline continuation still reads as one rm invocation'
+
+echo "=== block-unsafe-rm: the refusal names the cause and the rewrite ==="
+run_hook 'rm -rf $CACHE/$KEY'
+assert_contains "$ERR_FILE" 'possibly-empty variable path' 'the refusal names the harness prompt it prevents'
+assert_contains "$ERR_FILE" '${NAME:?}' 'the refusal names the ${NAME:?} rewrite'
+assert_contains "$ERR_FILE" '/absolute/literal/path' 'the refusal names the literal-path alternative'
+assert_contains "$ERR_FILE" '$CACHE/$KEY' 'the refusal quotes the offending operand'
+
+echo "=== block-unsafe-rm: accepted shapes ==="
+run_hook 'rm -rf -- "${P:?}/save"';      assert_eq "$rc" 0 '${P:?} cannot expand empty and passes'
+run_hook 'rm -rf "${VAR1:?}/x"';         assert_eq "$rc" 0 'digits after the first identifier char pass (${VAR1:?})'
+run_hook 'rm -rf -- "-${P:?}/x"';        assert_eq "$rc" 0 'a dash-leading ${P:?} operand after -- passes'
+run_hook "rm -rf '\$X'";                 assert_eq "$rc" 0 'a single-quoted operand is a literal filename, not an expansion'
+run_hook "rm -rf \$'/var/tmp/safe'";     assert_eq "$rc" 0 'an ANSI-C quoted operand is a literal, not a variable root'
+run_hook 'rm -rf /var/tmp/safe > $LOG';  assert_eq "$rc" 0 'a variable redirection target is not an rm operand'
+run_hook 'rm -rf /var/tmp/safe <<< "$LOG"'; assert_eq "$rc" 0 'a here-string target is not an rm operand'
+run_hook 'rm -rf $X > /var/tmp/log';     assert_eq "$rc" 2 'stripping redirects does not lose a real variable operand'
+run_hook 'rm -rf "${TMP_ROOT:?}"';       assert_eq "$rc" 0 'a bare ${TMP_ROOT:?} passes'
+run_hook 'rm -rf /var/tmp/x';            assert_eq "$rc" 0 'a literal absolute path passes'
+run_hook 'rm -rf ./build';               assert_eq "$rc" 0 'a literal relative path passes'
+run_hook 'rm -f $X';                     assert_eq "$rc" 0 'a non-recursive rm on a variable passes (not the prompted shape)'
+run_hook 'rm file.txt';                  assert_eq "$rc" 0 'plain rm passes'
+run_hook 'echo "rm -rf $X" > note';      assert_eq "$rc" 0 'a command that only mentions rm passes'
+run_hook 'git rm -r --cached $X';        assert_eq "$rc" 0 'git rm is not rm'
+run_hook 'ls -la';                       assert_eq "$rc" 0 'an unrelated command passes'
+
+echo "=== block-unsafe-rm: unreadable payload refuses ==="
+set +e
+printf '%s' '{"tool_input":{"command":"rm -rf $X"' | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"; rc=$?
+set -e
+assert_eq "$rc" 2 'a truncated JSON payload refuses rather than skipping the guard'
+assert_contains "$ERR_FILE" 'not valid JSON' 'the parse refusal names the cause'
+
+echo "=== block-unsafe-rm: enforcement without jq ==="
+run_hook_path "$NOJQ_BIN" 'rm -rf "$P/save"';        assert_eq "$rc" 2 'without jq, an escaped-quote payload is still decoded and refused'
+run_hook_path "$NOJQ_BIN" 'rm -rf -- "${P:?}/save"'; assert_eq "$rc" 0 'without jq, the ${P:?} form still passes'
+run_hook_path "/nonexistent" 'git status --short';   assert_eq "$rc" 0 'a command without rm completes with no external tool reachable'
+run_hook_path "/nonexistent" 'rm -rf $X';            assert_eq "$rc" 2 'an rm payload with no decode tools refuses rather than skipping the guard'
+set +e
+printf '%s' '{"tool_input":{"command":"rm -rf $X' \
+  | env -i HOME="$HOME" PWD="$PWD" TMPDIR=/tmp PATH="$NOJQ_BIN" "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"; rc=$?
+set -e
+assert_eq "$rc" 2 'without jq, an unterminated command string refuses'
+assert_contains "$ERR_FILE" 'could not decode' 'the no-jq refusal names the cause'
+set +e
+printf '%s' '{"tool_input":{"command":"rm\t-rf\t$X/sub"}}' \
+  | env -i HOME="$HOME" PWD="$PWD" TMPDIR=/tmp PATH="$NOJQ_BIN" "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"; rc=$?
+set -e
+assert_eq "$rc" 2 'without jq, JSON tab escapes still separate rm from its flags'
+
+printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

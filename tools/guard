@@ -31,6 +31,7 @@ while IFS= read -r f; do
     agents/* | skills/* | hooks/* | pi-extensions/* | skill-templates/*) continue ;; # catalog content
     docs/img/*) continue ;; # binary images
     ui/src/components/ui/* | ui/src/bindings.ts) continue ;; # generated: shadcn, tauri-specta
+    .github/workflows/*) continue ;; # declarative pipelines, one file per workflow by GitHub's contract — a workflow cannot be split without severing its jobs
     *.rs) cap=400 ;;
     *.ts | *.tsx) cap=250 ;;
     *) cap=400 ;;

@@ -1,0 +1,180 @@
+name: Issue Ownership Guard
+
+# Best-effort triage aid for MISFILED issues. Consuming repos sometimes open
+# issues here about assets that are actually project-local — e.g. a `tools/*`
+# script or a skill that lives only in their own repo (hyprtrade's `visual-qa`).
+# This workflow nudges those filers toward `kendex report`, the command that
+# decides ownership deterministically (from the project lock + installed
+# frontmatter) and files project-local problems in the RIGHT repo.
+#
+# Design notes:
+#   * It favors PRECISION: it does nothing when uncertain, so a maintainer's
+#     legitimate hand-filed kendex issue is never touched.
+#   * It NEVER closes an issue — it only adds a label and posts one comment.
+#   * Correct routing is the `kendex report` command's job; this only catches
+#     misfiles that bypassed it. Treat it as a backstop, not the gate.
+
+"on":
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read # checkout, so asset-presence checks can run
+  issues: write # add a label + post one comment
+
+jobs:
+  ownership-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Checkout so we can test whether asset names referenced in the body
+      # actually exist under skills/ agents/ hooks/ pi-extensions/ cli/ here.
+      - uses: actions/checkout@v4
+
+      - name: Triage issue ownership
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          set -euo pipefail
+
+          body="${RUNNER_TEMP}/body.txt"
+          tokens="${RUNNER_TEMP}/tokens.txt"
+          printf '%s' "${ISSUE_BODY:-}" > "$body"
+
+          # 1) Trust command-filed issues. `kendex report` appends this marker to
+          #    issues it has already verified as kendex-owned; never re-triage them.
+          if grep -qE '(kendex|vstack)-report:v1[^>]*ownership=(kendex|vstack)' "$body"; then
+            echo "Command-filed (ownership marker present) — trusting. No action."
+            exit 0
+          fi
+
+          # 2) Gather candidate asset references from the body:
+          #      - backtick-quoted spans (skill/agent/hook names, path fragments)
+          #      - bare path fragments under asset-ish dirs, even without backticks
+          : > "$tokens"
+          grep -oE '`[^`]+`' "$body" | sed 's/`//g' >> "$tokens" || true
+          # The optional `.agents/` prefix is load-bearing, not decoration. Without
+          # it the alternation matches `agents` MID-WORD inside `.agents/skills/`,
+          # emitting a phantom `agents/skills/` token that exists nowhere and so
+          # scores a foreign hit — on the standard install path, i.e. the exact
+          # vocabulary legitimate kendex issues use (#865). Matching the longer
+          # form from index 0 leaves no tail for the phantom to match.
+          grep -oE '(\.agents/)?(tools|\.config|skills|agents|hooks|pi-extensions)/[A-Za-z0-9._/-]+' "$body" >> "$tokens" || true
+          sort -u "$tokens" -o "$tokens"
+
+          # CLI verbs, flags, and common tool words that appear in legitimate
+          # kendex issues but are NOT assets. Excluding them keeps precision high.
+          stopwords=" add apply remove list check update refresh verify update-pi init report help version global scope harness agent skill hook asset pi cli git gh npm npx node cargo rust bash sh zsh fish curl jq sed grep awk toml json yaml yml md txt ci pr url api env path repo owner main "
+
+          is_kendex_asset() {
+            n="$1"
+            [ -d "skills/$n" ] && return 0
+            [ -f "agents/$n.md" ] && return 0
+            [ -f "agents/$n.toml" ] && return 0
+            [ -f "hooks/$n.sh" ] && return 0
+            [ -d "pi-extensions/$n" ] && return 0
+            [ -d "crates/$n" ] && return 0
+            return 1
+          }
+
+          kendex_hits=0
+          foreign_hits=0
+          while IFS= read -r tok; do
+            tok="$(printf '%s' "$tok" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+            if [ -z "$tok" ]; then continue; fi
+
+            # `.agents/` is the INSTALL MIRROR of this repo's own assets, and it is
+            # gitignored — so it is absent from the CI checkout and every reference
+            # to it would otherwise resolve to "missing". Strip the prefix and judge
+            # the asset it names: `.agents/skills/worktree` is `skills/worktree`.
+            tok="${tok#.agents/}"
+
+            # kendex's own global state dir (and the old vstack one) is not foreign.
+            # tools/* and .config/* otherwise do not exist here — clearly foreign.
+            case "$tok" in
+              .config/kendex*|.config/vstack*) continue ;;
+              tools/*|.config/*) foreign_hits=$((foreign_hits + 1)); continue ;;
+            esac
+
+            # Other path fragments: a real path => kendex; a missing path under a
+            # known asset dir => foreign; anything else is uncertain and ignored.
+            case "$tok" in
+              */*)
+                if [ -e "$tok" ]; then
+                  kendex_hits=$((kendex_hits + 1))
+                else
+                  case "$tok" in
+                    skills/*|agents/*|hooks/*|pi-extensions/*) foreign_hits=$((foreign_hits + 1)) ;;
+                  esac
+                fi
+                continue
+                ;;
+            esac
+
+            # Bare token: only asset-shaped names participate (starts with a
+            # lowercase letter, only [a-z0-9-], length >= 3, and not a stopword).
+            case "$tok" in
+              [a-z]*) : ;;
+              *) continue ;;
+            esac
+            case "$tok" in
+              *[!a-z0-9-]*) continue ;;
+            esac
+            if [ "${#tok}" -lt 3 ]; then continue; fi
+            case "$stopwords" in
+              *" $tok "*) continue ;;
+            esac
+
+            if is_kendex_asset "$tok"; then
+              kendex_hits=$((kendex_hits + 1))
+            else
+              foreign_hits=$((foreign_hits + 1))
+            fi
+          done < "$tokens"
+
+          echo "ownership-guard: kendex_hits=$kendex_hits foreign_hits=$foreign_hits"
+
+          # 3) Only nudge when the body references a clearly-foreign asset and NO
+          #    real kendex asset. Otherwise do nothing (precision-first).
+          if [ "$kendex_hits" -ne 0 ] || [ "$foreign_hits" -eq 0 ]; then
+            echo "No clear misfile signal — leaving the issue untouched."
+            exit 0
+          fi
+
+          # Idempotency: if a prior run already labeled this issue, don't comment
+          # again (guards reopened issues from getting a duplicate nudge).
+          existing="$(gh issue view "$ISSUE_NUMBER" --json labels --jq '.labels[].name' 2>/dev/null | tr '\n' ' ' || true)"
+          case " $existing " in
+            *" needs-ownership-check "*) echo "Already labeled — skipping."; exit 0 ;;
+          esac
+
+          # Create the label idempotently, then apply it.
+          gh label create needs-ownership-check \
+            --color FBCA04 \
+            --description "Possibly a project-local asset misfiled here; see kendex report" \
+            2>/dev/null || true
+          gh issue edit "$ISSUE_NUMBER" --add-label needs-ownership-check
+
+          # Post exactly one routing nudge. Never close the issue.
+          nudge="${RUNNER_TEMP}/nudge.md"
+          cat > "$nudge" <<'EOF'
+          Thanks for the report!
+
+          This issue looks like it might be about a **project-local** asset rather than a kendex-owned one: it references a `tools/…` / `.config/…` path or an asset name that does not exist anywhere in this repository, and it does not mention a known kendex asset.
+
+          - If the asset lives in **your own project**, please file this in your project's issue tracker (GitHub issues / Linear / etc.).
+          - If it really is a **kendex** asset, let the CLI route it for you:
+
+          ```
+          kendex report --skill <name> --title "…" --body "…"
+          ```
+
+          `kendex report` decides ownership deterministically from your project lock and installed frontmatter, and only files upstream when the asset is provably kendex-owned.
+
+          _The `needs-ownership-check` label is a best-effort triage aid — a maintainer will confirm. Nothing has been closed._
+          EOF
+          gh issue comment "$ISSUE_NUMBER" --body-file "$nudge"
+          echo "Labeled needs-ownership-check and posted a routing nudge."

@@ -1,0 +1,221 @@
+# Merge-queue ejections are SILENT: GitHub drops the auto-merge arm,
+# notifies nobody, and the review-gate wiring only writes commit statuses —
+# vstack#1166 sat CLEAN-but-unqueued for ~9 hours before a human asked why
+# nothing had merged (VST-196 / vstack#1177). This workflow turns the
+# ejection into two durable signals:
+#   1. a PR comment naming the dequeue reason and the failing merge-group
+#      run, with a flake-vs-genuine hint (same-named check state on the PR's
+#      own head) — informational only, it NEVER re-arms auto-merge;
+#   2. an intake issue, so the ejection enters the triage queue (the
+#      GH→Linear creation sync mirrors it) instead of vanishing.
+# One issue per PR per ejection run id; re-runs and duplicate deliveries
+# de-duplicate against the existing open issue.
+#
+# The intake issue is REASON-AWARE: MANUAL is a deliberate dequeue (the
+# dequeue-push-rearm flow) and MERGE_CONFLICT is routine queue re-evaluation
+# after a sibling merged — both get the PR comment (the dropped arm is still
+# real) but no tracker issue. Only failure-shaped reasons (CI_FAILURE and
+# anything unrecognized, fail-closed) enter the triage queue.
+name: Merge queue ejection alert
+
+# pull_request_target, not pull_request: a fork PR's dequeue would hand a
+# plain pull_request workflow a read-only GITHUB_TOKEN, silencing both the
+# comment and the intake issue. This workflow never checks out or executes
+# PR-controlled code (same posture as review-gate-writer.yml), so the
+# base-repository context is safe.
+"on":
+  pull_request_target:
+    types: [dequeued]
+
+permissions:
+  contents: read
+  actions: read
+  checks: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  alert:
+    # DEQUEUE reason "MERGE" means the queue finished with the PR (normal
+    # merge path) — only failure-shaped removals alert.
+    if: ${{ github.event.reason != 'MERGE' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Comment on the PR and file the intake issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          DEQUEUE_REASON: ${{ github.event.reason }}
+        run: |
+          set -euo pipefail
+
+          # The ejecting failure ran on the merge-group ref, not the PR head:
+          # gh-readonly-queue/<base>/pr-<N>-<sha>. The NEWEST matching
+          # merge_group run is the current attempt — no status filter, so a
+          # still-running or cancelled current attempt is never passed over
+          # for an older historical failure (which would also reuse its
+          # dedupe marker and suppress the new intake issue). Two-step
+          # paginated capture with a zero-byte guard, per the pagination-read
+          # pattern; head_branch is null-guarded (jq test() on a null errors
+          # the step under set -e).
+          runs_file="$(mktemp)"
+          lookup_failed=""
+          if ! gh api --paginate "/repos/${GH_REPO}/actions/runs?event=merge_group&per_page=100" \
+            --jq "[.workflow_runs[] | select(.head_branch | strings | test(\"/pr-${PR_NUMBER}-\"))]" \
+            > "$runs_file"; then
+            lookup_failed=1
+          fi
+          if [ ! -s "$runs_file" ] && [ -z "$lookup_failed" ]; then
+            # Zero bytes from a successful paginated read is a broken read,
+            # not an empty result set — treat it like a failed lookup.
+            lookup_failed=1
+          fi
+          run_json=""
+          if [ -z "$lookup_failed" ]; then
+            # One queue ATTEMPT triggers several workflows sharing one
+            # merge-group ref (identical head_branch): take the newest
+            # attempt's group, and within it the failure-shaped run —
+            # never a sibling workflow that merely started latest.
+            # Attempt scoping: a re-armed unchanged PR reuses the same
+            # merge-group branch name, so the head_branch group can span
+            # attempts. The dequeue fired moments ago — bound to runs
+            # created in the last 4 hours, then take the NEWEST
+            # failure-shaped run (sorted; API order is not a contract),
+            # falling back to the newest run of the group.
+            cutoff="$(date -u -d '4 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
+          run_json="$(jq -s --arg cutoff "$cutoff" 'add
+              | group_by(.head_branch)
+              | (max_by(map(.created_at) | max) // [])
+              # SOFT recency bound: prefer runs from the current window (a
+              # re-armed unchanged PR reuses the branch name), but never
+              # empty the group — an all-old group still identifies the run.
+              | (map(select(.created_at >= $cutoff)) // []) as $recent
+              | (if ($recent | length) > 0 then $recent else . end)
+              | sort_by(.created_at)
+              # ATTEMPT cluster: a re-armed unchanged PR reuses the branch
+              # name, so the window can span attempts. The runs of one
+              # attempt start together — keep only runs within 30 minutes
+              # of the newest, so the completed failure of an earlier
+              # attempt never shadows the current one. (No apostrophes in
+              # these comments: they sit inside a single-quoted jq program.)
+              | (map(.created_at) | max) as $newest
+              | map(select(.created_at >= ($newest | sub("Z$"; "") | strptime("%Y-%m-%dT%H:%M:%S") | mktime | . - 1800 | strftime("%Y-%m-%dT%H:%M:%SZ"))))
+              # Selection within the attempt: newest failure-shaped run;
+              # else the newest in_progress run (a dequeue often fires while
+              # the ejecting run is finishing sibling jobs — its failed jobs
+              # are already queryable); else the newest run.
+              | (map(select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required")) | last)
+                // (map(select(.status == "in_progress")) | last)
+                // last
+                // empty' "$runs_file")"
+          fi
+
+          run_id=""; run_url=""; run_name=""
+          if [ -n "$run_json" ]; then
+            run_id="$(printf '%s' "$run_json" | jq -r '.id')"
+            run_url="$(printf '%s' "$run_json" | jq -r '.html_url')"
+            run_name="$(printf '%s' "$run_json" | jq -r '.name')"
+          fi
+
+          if [ -n "$lookup_failed" ]; then
+            failing_jobs="(merge-group run lookup FAILED — API error or broken read; inspect the queue insights page and this alert run's logs)"
+          else
+            failing_jobs="(failing run not identified — the dequeue may predate run completion; check the queue insights page)"
+          fi
+          if [ -n "$run_id" ]; then
+            failing_jobs="$(gh api "/repos/${GH_REPO}/actions/runs/${run_id}/jobs?per_page=100" \
+              --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required") | "- `\(.name)` (\(.conclusion)): \(.html_url)"] | join("\n")')"
+            [ -n "$failing_jobs" ] || failing_jobs="(run $run_id has no failure-shaped jobs recorded — it may be the attempt's still-running or non-ejecting sibling; inspect the run link above)"
+          fi
+
+          # Flake hint: the same-named jobs' state on the PR's OWN head.
+          # Green there suggests queue-only flake (re-arm plausibly safe);
+          # red there means fix before re-arming. Informational only.
+          hint="No same-named check comparison available for the PR head."
+          if [ -n "$run_id" ]; then
+            head_checks="$(gh api "/repos/${GH_REPO}/commits/${PR_HEAD_SHA}/check-runs?per_page=100" \
+              --jq '[.check_runs[] | {name, conclusion}]')"
+            failed_names="$(gh api "/repos/${GH_REPO}/actions/runs/${run_id}/jobs?per_page=100" \
+              --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required") | .name]')"
+            # Flake requires POSITIVE evidence: every ejecting job name must
+            # have a same-named SUCCESSFUL check on the PR head. Queue-only
+            # jobs (this repo's normal heavy-suite shape) have no head
+            # counterpart — that is "no comparison", never a flake claim.
+            # "Red on head" means a failure-shaped conclusion ONLY —
+            # skipped same-named PR-head jobs (this repo's heavy suites
+            # run real work only in the queue) and still-running checks
+            # (null conclusion) are "no comparison available", never a
+            # fix-before-re-arm claim.
+            all_green_on_head="$(jq -cn --argjson head "$head_checks" --argjson failed "$failed_names" \
+              '($failed | length > 0) and ([$failed[] as $n | ($head | map(select(.name == $n and .conclusion == "success")) | length > 0)] | all)')"
+            any_red_on_head="$(jq -cn --argjson head "$head_checks" --argjson failed "$failed_names" \
+              '[$failed[] as $n | $head[] | select(.name == $n and (.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled" or .conclusion == "action_required"))] | length > 0')"
+            if [ "$all_green_on_head" = "true" ]; then
+              hint="Every ejecting check has a same-named GREEN check on the PR's own head — this looks like a queue-only flake; re-arming \`--auto\` once is plausibly safe. Never re-arm past a check that is also red on the PR head."
+            elif [ "$any_red_on_head" = "true" ]; then
+              hint="At least one ejecting check is not green on the PR's own head — fix before re-arming."
+            else
+              hint="No usable same-named comparison on the PR head (checks absent, skipped, or still running) — no flake-vs-genuine call is available; inspect the failing run before re-arming."
+            fi
+          fi
+
+          body_file="$(mktemp)"
+          cat > "$body_file" <<BODY
+          **Merge queue ejected this PR** (\`removed_from_merge_queue\`, reason: \`${DEQUEUE_REASON}\`). The auto-merge arm is now DROPPED — nothing will merge this PR until someone re-arms it.
+
+          Ejecting merge-group run: ${run_url:-not identified}${run_name:+ (\`${run_name}\`)}
+
+          Failing job(s):
+          ${failing_jobs}
+
+          ${hint}
+
+          _Automated by merge-queue-ejection-alert (VST-196). This alert never re-arms auto-merge._
+          BODY
+          gh pr comment "$PR_NUMBER" --body-file "$body_file"
+
+          # Intake issue (deduped per PR + ejection run), failure-shaped
+          # reasons only: a deliberate dequeue or a routine queue
+          # re-evaluation is not triage work. Guarded by a flag, not an
+          # early exit, so steps appended later still run for every reason.
+          create_intake_issue=1
+          case "${DEQUEUE_REASON}" in
+            MANUAL|MERGE_CONFLICT)
+              echo "reason ${DEQUEUE_REASON}: deliberate dequeue / queue re-evaluation — comment posted, no intake issue"
+              create_intake_issue=0
+              ;;
+          esac
+          # An unidentified ejecting run must not collapse successive
+          # ejections into one marker: fall back to this alert run's own id.
+          marker="ejection-alert:pr-${PR_NUMBER}:run-${run_id:-alert-${GITHUB_RUN_ID}}"
+          # The dedupe lookup runs only when an issue could be created: a
+          # transient Issues API failure must not kill a deliberately
+          # non-intake run under set -e.
+          if [ "$create_intake_issue" = "1" ]; then
+            existing="$(gh issue list --search "\"$marker\" in:body" --state open --json number --jq 'length')"
+            if [ "$existing" != "0" ]; then
+              echo "intake issue for $marker already open; skipping create"
+              create_intake_issue=0
+            fi
+          fi
+          if [ "$create_intake_issue" = "1" ]; then
+            issue_file="$(mktemp)"
+            cat > "$issue_file" <<BODY
+          PR #${PR_NUMBER} was ejected from the merge queue (reason: \`${DEQUEUE_REASON}\`); its auto-merge arm is dropped and it will sit unmerged until re-armed.
+
+          Ejecting run: ${run_url:-not identified}
+
+          Failing job(s):
+          ${failing_jobs}
+
+          ${hint}
+
+          <!-- ${marker} -->
+          BODY
+            gh issue create \
+              --title "merge-queue ejection: PR #${PR_NUMBER} — ${run_name:-failing required check}" \
+              --body-file "$issue_file"
+          fi
