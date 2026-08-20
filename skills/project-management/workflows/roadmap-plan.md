@@ -43,13 +43,14 @@ With no match, ask the user — spending a research cycle is their call:
 
 ## 2. Consult Specialists
 
-**Slicing mode (SPEC in hand):** when the spec already enumerates the workstreams, the parallel fan-out re-derives what is written down. Delegate one slicing pass per repo or domain the spec touches — at most one specialist each, told not to re-litigate the spec's decisions, only to cut its phases into PR-sized issues with real estimates and conflicts read from the code. Slicing delegates receive the same `<delegation_format>` below and answer in its table — `PROPOSED_ISSUES[]` is built from it either way.
+**Slicing mode (SPEC in hand):** when the spec already enumerates the workstreams, the parallel fan-out re-derives what is written down. Delegate one slicing pass per repo or domain the spec touches — at most one specialist each; the template's `Spec:` line carries the binding constraint, and they cut the spec's phases into PR-sized issues with real estimates and conflicts read from the code. Slicing delegates receive the same `<delegation_format>` below and answer in its table — `PROPOSED_ISSUES[]` is built from it either way.
 
 Otherwise, match `FEATURE` keywords and component paths to domain agents (project-configurable) to get `RELEVANT_AGENTS[]`, then delegate to each in parallel:
 
 <delegation_format>
 Feature: [FEATURE]
 Research: [RESEARCH_PATH or "None"]
+Spec: [SPEC_PATH or "None"] — when set, its approach and workstreams are binding: do not re-litigate them; cut its phases into PR-sized issues
 
 List implementation issues for your domain only. Reply as a table with these columns:
 
@@ -107,15 +108,18 @@ Report as JSON:
 3. Breaking changes at module boundaries
 4. Prerequisite refactors
 5. Risk assessment (high/medium/low) with rationale
+6. Out-of-spec work (spec mode only): anything needed beyond the spec's phases — each entry names the work and whether the spec's own deliverables need it
 </delegation_format>
 
-Keep the result as `ARCH_FINDINGS` (`validated_findings[]`, `deprecated_code[]`, `breaking_changes[]`, `required_refactors[]`, `risk_assessment`). Fold verified findings into the TPM JSON — scope additions into the issues they belong to, ordering fixes into relations — before presenting. In spec mode the fold stops at the spec's boundary, with the same exception the TPM applies: a prerequisite the spec's own deliverables need is folded in as `include`; anything else beyond its phases is recorded as `out_of_scope` — never `defer` — with the spec named in `reason` and surfaced in the § 5 report.
+Keep the result as `ARCH_FINDINGS` (`validated_findings[]`, `deprecated_code[]`, `breaking_changes[]`, `required_refactors[]`, `risk_assessment`, `out_of_spec[]`). Fold verified findings into the TPM JSON — scope additions into the issues they belong to, ordering fixes into relations — before presenting. In spec mode the fold stops at the spec's boundary, with the same exception the TPM applies: an `out_of_spec[]` entry the spec's own deliverables need is folded in as `include`; every other entry becomes an `architecture_gaps[]` row with `recommendation: out_of_scope` — never `defer` — naming the spec in `reason`, rendered under ARCHITECTURE GAPS in § 5.
 
 For a major feature planned without an already-reviewed spec, also run the `second-opinion` skill (challenge mode; an optional dependency) on the plan here and fold verified findings in the same way — when the skill is not installed, or is installed but cannot complete (no eligible target, missing external CLI, timeout, nonzero exit), the § 5 report's `Cross-model review` field reads `unavailable — <reason>` and the workflow continues. A SPEC that already passed external review skips this.
 
 ---
 
 ## 5. Present and Approve
+
+Render ISSUES from `organized_issues[]` excluding `project: "Deferred"` entries; those render under ARCHITECTURE GAPS with Recommendation `defer`. Render every `cross_project_findings.conflicts[]` entry in the Conflicts table — a resolution the user has not seen cannot be carried.
 
 <output_format>
 
@@ -140,6 +144,11 @@ Research: [RESEARCH_PATH or "None — less informed planning"] · Origin: [ORIGI
 | Issue | Action | Why |
 |-------|--------|-----|
 | [ISSUE_ID] | cancel \| expand \| descope | [REASON] |
+
+**Conflicts** ([N])
+
+| # | New issue | Conflicts with | Resolution |
+|---|-----------|----------------|------------|
 
 ### ARCHITECTURE GAPS
 

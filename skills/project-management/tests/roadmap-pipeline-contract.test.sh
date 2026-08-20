@@ -77,6 +77,12 @@ require_fixed "$plan" '`Cross-model review` field reads `unavailable — <reason
 require_fixed "$plan" '· Cross-model review: [verdict summary | unavailable | skipped — reviewed spec]' 'report template carries the cross-model review field'
 require_fixed "$plan" 'Spec: [SPEC_PATH or "None"] — when set, the spec'"'"'s phases bound the roadmap' 'architecture review receives the spec boundary'
 require_fixed "$plan" 'In spec mode the fold stops at the spec'"'"'s boundary' 'out-of-spec findings are never folded in'
-require_fixed "$plan" 'anything else beyond its phases is recorded as `out_of_scope` — never `defer`' 'architecture-review stage uses the same out_of_scope status as the TPM'
+require_fixed "$plan" 'becomes an `architecture_gaps[]` row with `recommendation: out_of_scope` — never `defer`' 'architecture-review stage uses the same out_of_scope status as the TPM'
+require_fixed "$plan" '`risk_assessment`, `out_of_spec[]`)' 'architecture review returns a structured out-of-spec array'
+require_fixed "$plan" '6. Out-of-spec work (spec mode only)' 'delegated review asks for out-of-spec work'
+require_fixed "$plan" 'Render ISSUES from `organized_issues[]` excluding `project: "Deferred"` entries' 'report filters deferred entries before approval'
+require_fixed "$plan" '**Conflicts** ([N])' 'report renders conflicts before approval'
+require_fixed "$plan" 'Spec: [SPEC_PATH or "None"] — when set, its approach and workstreams are binding' 'specialist delegation carries the spec constraint'
+require_fixed "$create" 'only under the same provenance as `approved_at_plan_gate`' 'existing-work carry requires same-session provenance'
 
 echo "all pass"
