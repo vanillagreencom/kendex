@@ -40,7 +40,7 @@ Confirm before creating issues.
 **Linear** — per accepted item, then the relations:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues create --title "[TITLE]" --description "[BODY]" --project "[PROJECT]" --labels "[LABELS]" --format=ids
+.agents/skills/linear/scripts/linear.sh issues create --state "Backlog" --title "[TITLE]" --description "[BODY]" --project "[PROJECT]" --labels "[LABELS]" --format=ids
 ```
 ```bash
 .agents/skills/linear/scripts/linear.sh issues block [BLOCKED_ID] --by [BLOCKER_ID] --reason "Plan dependency"

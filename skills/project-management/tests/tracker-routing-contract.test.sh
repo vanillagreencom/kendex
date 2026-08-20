@@ -90,6 +90,11 @@ linear_create_row="$(extract "$audit_issues" '^\*\*Linear route \(TRACKER=linear
 grep -Fq -- '--state "Backlog"' "$linear_create_row" || fail 'Linear create route does not require --state "Backlog"'
 research_issue="$SKILL_DIR/workflows/research-issue.md"
 merge_pr="$SKILL_DIR/../orch/workflows/merge-pr.md"
+plan_issues="$SKILL_DIR/../orch/workflows/plan-issues.md"
+if [[ -f "$plan_issues" ]]; then
+  plan_create_cmd="$(extract "$plan_issues" 'issues create' '^```$' plan-create-cmd)" || fail "could not extract the plan-issues create command"
+  grep -Fq -- '--state "Backlog"' "$plan_create_cmd" || fail 'plan-issues create does not pass --state "Backlog"'
+fi
 if [[ -f "$merge_pr" ]]; then
   merge_create_cmd="$(extract "$merge_pr" 'issues create' '^```$' merge-create-cmd)" || fail "could not extract the merge-pr rebundle create command"
   grep -Fq -- '--state "Backlog"' "$merge_create_cmd" || fail 'merge-pr rebundle create does not pass --state "Backlog"'
