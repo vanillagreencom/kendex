@@ -43,6 +43,7 @@ fn bindings_export_window_commands() {
         .expect("bindings export");
     let fresh = std::fs::read_to_string(&fresh_path).expect("fresh bindings readable");
     for command in [
+        "window_set_zoom",
         "window_minimize",
         "window_toggle_maximize",
         "window_close",
@@ -53,6 +54,22 @@ fn bindings_export_window_commands() {
             "expected generated bindings to export `{command}`"
         );
     }
+}
+
+/// The slider reads its floor, ceiling, and step from the generated
+/// constant, so dropping the constant would leave the UI inventing its own.
+#[test]
+fn bindings_export_the_zoom_range() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let fresh_path = tmp.path().join("bindings.ts");
+    kendex_app::specta_builder()
+        .export(exporter(), &fresh_path)
+        .expect("bindings export");
+    let fresh = std::fs::read_to_string(&fresh_path).expect("fresh bindings readable");
+    assert!(
+        fresh.contains("export const ZOOM"),
+        "expected generated bindings to export the zoom range"
+    );
 }
 
 #[test]

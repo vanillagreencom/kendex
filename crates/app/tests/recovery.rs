@@ -40,11 +40,3 @@ fn launch_recovery_rolls_back_pending_journals_in_registered_projects() {
     // Nothing pending: the next launch is silent.
     assert!(kendex_app::recovery::recover_on_launch(&env).is_empty());
 }
-
-#[test]
-fn wayland_gets_the_dmabuf_workaround_unless_the_user_chose() {
-    assert_eq!(kendex_app::webview_env(Some("wayland"), None), Some("1"));
-    assert_eq!(kendex_app::webview_env(Some("wayland"), Some("0")), None);
-    assert_eq!(kendex_app::webview_env(Some("x11"), None), None);
-    assert_eq!(kendex_app::webview_env(None, None), None);
-}

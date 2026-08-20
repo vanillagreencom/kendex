@@ -1,12 +1,13 @@
 import { useEffect } from "react";
 import { Toaster } from "sonner";
-import { commands } from "@/bindings";
+import { commands, ZOOM } from "@/bindings";
 import { ErrorDialog } from "@/components/error-dialog";
 import { NavBar } from "@/components/nav-bar";
 import { Sidebar } from "@/components/sidebar";
 import { StatusFooter } from "@/components/status-footer";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { WindowControls } from "@/components/window-controls";
+import { zoomForKey } from "@/lib/zoom-shortcut";
 import { AvailablePackagePage } from "@/pages/available-package";
 import { BundleDetailPage } from "@/pages/bundle-detail";
 import { CustomizePage } from "@/pages/customize";
@@ -45,6 +46,25 @@ function useAppearance() {
     media.addEventListener("change", apply);
     return () => media.removeEventListener("change", apply);
   }, [appearance]);
+}
+
+// Ctrl and + or - resize the whole app, the way they resize a page in a
+// browser. The keys work anywhere, fields included, because that is where a
+// browser's zoom works too.
+function useZoomShortcuts() {
+  const setZoom = useSettingsStore((s) => s.setZoom);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const current =
+        useSettingsStore.getState().settings?.zoom ?? ZOOM.default;
+      const next = zoomForKey(event, current);
+      if (next === null) return;
+      event.preventDefault();
+      void setZoom(next);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [setZoom]);
 }
 
 // The side buttons on a mouse mean back and forward everywhere else on the
@@ -105,6 +125,7 @@ export default function App() {
   useAppearance();
   useScanTriggers();
   useMouseNavigation();
+  useZoomShortcuts();
   const page = useNavStore((s) => s.page);
   const packageRef = useNavStore((s) => s.packageRef);
   const packageKey = packageRef

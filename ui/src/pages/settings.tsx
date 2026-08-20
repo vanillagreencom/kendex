@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Appearance } from "@/bindings";
-import { commands } from "@/bindings";
+import { commands, ZOOM } from "@/bindings";
 import { AccountSection } from "@/components/account-section";
 import { PageHeader } from "@/components/page-header";
 import { RecordedDecisions } from "@/components/recorded-decisions";
@@ -12,6 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
 import { SAFETY_HELP } from "@/lib/copy-safety";
 import { SETTINGS_SUBTITLE } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
@@ -48,13 +49,14 @@ function safetyLevelOf(warn: number, block: number): SafetyLevel | "custom" {
 }
 
 export function SettingsPage() {
-  const { settings, setAppearance, setSafety } = useSettingsStore();
+  const { settings, setAppearance, setSafety, setZoom } = useSettingsStore();
   const [version, setVersion] = useState<string | null>(null);
 
   useEffect(() => {
     void commands.appVersion().then(setVersion);
   }, []);
 
+  const zoom = settings?.zoom ?? ZOOM.default;
   const safety = settings?.safety ?? SAFETY_LEVELS.balanced;
   const level = safetyLevelOf(safety["warn-below"], safety["block-below"]);
 
@@ -85,6 +87,24 @@ export function SettingsPage() {
                   <SelectItem value="dark">Dark</SelectItem>
                 </SelectContent>
               </Select>
+            </SettingRow>
+            <SettingRow
+              label="Zoom"
+              description="How large everything draws. Ctrl and + or - change it from anywhere, Ctrl 0 returns to 100%."
+            >
+              <div className="flex w-40 items-center gap-3">
+                <Slider
+                  value={zoom}
+                  min={ZOOM.min}
+                  max={ZOOM.max}
+                  step={ZOOM.step}
+                  onValueChange={(value) => void setZoom(value)}
+                  aria-label="Zoom"
+                />
+                <span className="w-11 shrink-0 text-right font-mono text-xs tabular-nums text-muted-foreground">
+                  {zoom}%
+                </span>
+              </div>
             </SettingRow>
           </Section>
 

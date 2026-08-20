@@ -305,10 +305,19 @@ export const commands = {
 	truncated: boolean,
 } | null, string>(__TAURI_INVOKE("package_readme", { scope, kind, name })),
 	packageMeta: (scope: Scope, kind: ItemKind, name: string) => typedError<PackageMeta_Serialize, string>(__TAURI_INVOKE("package_meta", { scope, kind, name })),
+	/**
+	 *  Zoom is set on the webview rather than by restyling the page: it holds
+	 *  across reloads, and it scales the app's own titlebar along with
+	 *  everything else, the way a browser scales a page.
+	 */
+	windowSetZoom: (percent: number) => typedError<null, string>(__TAURI_INVOKE("window_set_zoom", { percent })),
 	windowMinimize: () => typedError<null, string>(__TAURI_INVOKE("window_minimize")),
 	windowToggleMaximize: () => typedError<null, string>(__TAURI_INVOKE("window_toggle_maximize")),
 	windowClose: () => typedError<null, string>(__TAURI_INVOKE("window_close")),
 };
+
+/* Constants */
+export const ZOOM = {"min":50,"max":200,"step":10,"default":100} as const;
 
 /* Types */
 /**  One About row: what was found under one root. */
@@ -359,6 +368,12 @@ export type AppSettings = {
 	 *  committed to a shared repository would silence a whole team.
 	 */
 	"ignored-updates"?: IgnoredUpdate[],
+	/**
+	 *  How large the interface draws, as a percent. Machine-local like
+	 *  everything else in this file: how big text needs to be belongs to
+	 *  the person and the display in front of them, not to a project.
+	 */
+	zoom?: number,
 };
 
 export type Appearance = "system" | "light" | "dark";

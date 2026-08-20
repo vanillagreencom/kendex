@@ -31,6 +31,46 @@ pub struct AppSettings {
     /// committed to a shared repository would silence a whole team.
     #[serde(default)]
     pub ignored_updates: Vec<crate::package::updates::IgnoredUpdate>,
+    /// How large the interface draws, as a percent. Machine-local like
+    /// everything else in this file: how big text needs to be belongs to
+    /// the person and the display in front of them, not to a project.
+    #[serde(default = "default_zoom")]
+    pub zoom: u16,
+}
+
+fn default_zoom() -> u16 {
+    ZOOM.default
+}
+
+/// The zoom the app offers, in percent — the number stored is the number on
+/// the slider, so the settings file reads the way the control does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct ZoomRange {
+    pub min: u16,
+    pub max: u16,
+    /// What one press of the zoom shortcut moves.
+    pub step: u16,
+    pub default: u16,
+}
+
+pub const ZOOM: ZoomRange = ZoomRange {
+    min: 50,
+    max: 200,
+    step: 10,
+    default: 100,
+};
+
+/// Below the floor the app is unreadable and above the ceiling its controls
+/// stop fitting the window, so neither is offered and neither is honoured: a
+/// hand-edited settings file is the only way a value outside the range gets
+/// this far.
+pub fn clamp_zoom(percent: u16) -> u16 {
+    percent.clamp(ZOOM.min, ZOOM.max)
+}
+
+/// The webview scale factor a stored zoom percent means.
+pub fn zoom_scale(percent: u16) -> f64 {
+    f64::from(clamp_zoom(percent)) / 100.0
 }
 
 impl Default for AppSettings {
@@ -42,6 +82,7 @@ impl Default for AppSettings {
             appearance: Appearance::System,
             safety: crate::quality::Thresholds::default(),
             ignored_updates: Vec::new(),
+            zoom: ZOOM.default,
         }
     }
 }
@@ -59,10 +100,15 @@ pub fn load(env: &Env) -> Result<AppSettings> {
     let path = env.settings_file();
     match read_if_exists(&path)? {
         None => Ok(AppSettings::default()),
-        Some(text) => toml::from_str(&text).map_err(|e| CoreError::TomlParse {
-            path,
-            message: e.to_string(),
-        }),
+        Some(text) => toml::from_str::<AppSettings>(&text)
+            .map(|mut settings| {
+                settings.zoom = clamp_zoom(settings.zoom);
+                settings
+            })
+            .map_err(|e| CoreError::TomlParse {
+                path,
+                message: e.to_string(),
+            }),
     }
 }
 
@@ -113,6 +159,12 @@ mod tests {
         Env::fake(dir, FakeOs::Linux)
     }
 
+    fn write_settings(env: &Env, text: &str) {
+        let path = env.settings_file();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+
     #[test]
     fn missing_settings_file_loads_defaults() {
         let tmp = tempfile::tempdir().unwrap();
@@ -155,6 +207,33 @@ mod tests {
             unregister_project(&env, &project),
             Err(CoreError::ProjectNotRegistered { .. })
         ));
+    }
+
+    #[test]
+    fn a_settings_file_without_zoom_reads_as_full_size() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = env_in(tmp.path());
+        write_settings(&env, "schema = 1\n");
+        assert_eq!(load(&env).unwrap().zoom, 100);
+    }
+
+    #[test]
+    fn a_hand_edited_zoom_outside_the_range_loads_clamped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = env_in(tmp.path());
+        write_settings(&env, "schema = 1\nzoom = 5000\n");
+        assert_eq!(load(&env).unwrap().zoom, ZOOM.max);
+        write_settings(&env, "schema = 1\nzoom = 1\n");
+        assert_eq!(load(&env).unwrap().zoom, ZOOM.min);
+    }
+
+    #[test]
+    fn zoom_scales_the_webview_by_the_percent_shown() {
+        assert_eq!(zoom_scale(100), 1.0);
+        assert_eq!(zoom_scale(150), 1.5);
+        assert_eq!(zoom_scale(50), 0.5);
+        // Out of range never reaches the window.
+        assert_eq!(zoom_scale(5000), 2.0);
     }
 
     #[test]

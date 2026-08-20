@@ -84,8 +84,18 @@ install_cli() {
   echo "Installed the kendex command to $bindir/kendex"
 }
 
+# One icon size into the theme directory it belongs to. A missing icon is
+# not worth failing an install over, so a download that fails is skipped.
+install_icon() {
+  local dir=$1 source=$2
+  mkdir -p "$dir"
+  curl -fsSL --proto '=https' -o "$dir/kendex.png" "$source" || true
+}
+
 # The desktop app on Linux is the AppImage, kept off PATH so the `kendex`
 # command stays the CLI. A .desktop entry launches it from the app menu.
+# StartupWMClass ties the window to this entry: without it a launcher shows
+# the running app as a second, unnamed, iconless item.
 install_app_linux() {
   local data libdir tmp
   data="${XDG_DATA_HOME:-$HOME/.local/share}"
@@ -98,11 +108,15 @@ install_app_linux() {
     echo "install.sh: could not download the desktop app; the kendex command is installed." >&2
     return 0
   fi
-  mkdir -p "$libdir" "$data/applications" \
-    "$data/icons/hicolor/128x128/apps"
+  mkdir -p "$libdir" "$data/applications"
   install -m 0755 "$tmp/kendex.AppImage" "$libdir/kendex.AppImage"
-  curl -fsSL --proto '=https' -o "$data/icons/hicolor/128x128/apps/kendex.png" \
-    "https://raw.githubusercontent.com/$repo/$version/crates/app/icons/128x128.png" || true
+  # Every size the app ships: a launcher or dock picking the 128px icon for
+  # a HiDPI slot has to upscale it, and the result looks soft.
+  local icons="https://raw.githubusercontent.com/$repo/$version/crates/app/icons"
+  local theme="$data/icons/hicolor"
+  install_icon "$theme/128x128/apps" "$icons/128x128.png"
+  install_icon "$theme/256x256/apps" "$icons/128x128@2x.png"
+  install_icon "$theme/512x512/apps" "$icons/icon.png"
   cat > "$data/applications/kendex.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
@@ -110,6 +124,7 @@ Name=kendex
 Comment=Manage AI coding agents, skills, and hooks
 Exec=$libdir/kendex.AppImage
 Icon=kendex
+StartupWMClass=kendex-app
 Categories=Development;Utility;
 Terminal=false
 DESKTOP

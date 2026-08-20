@@ -17,6 +17,11 @@ changes carry a **Breaking** call-out with their migration note inline.
   alongside Apple silicon, x86_64 Linux, and Windows. The installer script,
   `kendex update`, Homebrew, and the AUR packages all pick the build for
   your machine.
+- A zoom control for the app. Settings has a slider from 50% to 200%, and
+  `Ctrl` `+`, `Ctrl` `-`, and `Ctrl` `0` change it from anywhere in the app
+  the way they change a page in a browser. The size you pick is remembered
+  and applied before the window opens. It is also the fix for a display set
+  to a fractional scale, which GTK rounds to a whole number.
 - New ways to install. A one-line installer,
   `curl -fsSL https://kendex.ai/install.sh | sh`, that installs the app and
   the CLI on Linux and the CLI on macOS;
@@ -58,6 +63,17 @@ changes carry a **Breaking** call-out with their migration note inline.
   directly in Backlog instead of the team's Triage default. Pipeline output
   is already fully triaged — project, labels, priority, relations — and a
   Triage landing let triage automation re-route it into other projects.
+- The Linux app draws at the right size on a HiDPI Wayland display. The
+  AppImage always ran through XWayland, which reports a scale of 1 while the
+  compositor drives the display at 2, so every element came out at half its
+  size. The app now opens as a native Wayland client and falls back to X11
+  if the Wayland backend cannot start. `GDK_SCALE` and `GDK_DPI_SCALE` are
+  never touched, and a `GDK_BACKEND` you set is still yours — except inside
+  the AppImage, where the bundle overwrites it before kendex starts and
+  `KENDEX_GDK_BACKEND` is the way to ask for a particular backend.
+- The installer's app-menu entry now carries the app's window class and
+  installs the 256px and 512px icons as well as the 128px one, so launchers
+  and docks match the running window to kendex and draw a sharp icon.
 - On Linux, a helper command that ran past its time limit could take
   unrelated processes down with it: Ubuntu's `kill` misreads the negative
   process-group argument kendex passed, and for some process ids that

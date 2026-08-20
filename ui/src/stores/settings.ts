@@ -5,6 +5,7 @@ import {
   type AppSettings,
   type CapabilityRow,
   commands,
+  ZOOM,
 } from "@/bindings";
 import { useProblemsStore } from "./problems";
 import { useScanStore } from "./scan";
@@ -14,6 +15,7 @@ interface SettingsState {
   capabilities: CapabilityRow[];
   load: () => Promise<void>;
   setAppearance: (appearance: Appearance) => Promise<void>;
+  setZoom: (percent: number) => Promise<void>;
   setSafety: (warnBelow: number, blockBelow: number) => Promise<void>;
   setHarnessRoot: (harness: string, root: string) => Promise<void>;
   registerProject: (path: string) => Promise<boolean>;
@@ -66,6 +68,34 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
           },
         ],
       });
+  },
+
+  // The window follows the slider before the save round-trips, so dragging
+  // it feels like a zoom control rather than a form field. A save that fails
+  // puts the old size back, so what is on screen is always what is stored.
+  setZoom: async (percent) => {
+    const current = get().settings;
+    if (!current || current.zoom === percent) return;
+    set({ settings: { ...current, zoom: percent } });
+    await commands.windowSetZoom(percent);
+    const response = await commands.updateSettings({
+      ...current,
+      zoom: percent,
+    });
+    if (response.status === "ok") {
+      // A drag fires a save per step, and the replies can land out of
+      // order; only the reply for the size still on screen may replace it.
+      if (get().settings?.zoom === percent) set({ settings: response.data });
+      return;
+    }
+    set({ settings: current });
+    await commands.windowSetZoom(current.zoom ?? ZOOM.default);
+    useProblemsStore.getState().showError({
+      title: "Couldn't change the zoom",
+      message: response.error,
+      steps: ["Try again"],
+      actions: [{ label: "Retry", onClick: () => void get().setZoom(percent) }],
+    });
   },
 
   setSafety: async (warnBelow, blockBelow) => {

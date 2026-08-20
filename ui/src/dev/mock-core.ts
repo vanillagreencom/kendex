@@ -9,6 +9,12 @@ export const coreHandlers: Record<string, Handler> = {
   window_minimize: () => null,
   window_toggle_maximize: () => null,
   window_close: () => null,
+  // The one window command with a browser equivalent: CSS zoom scales the
+  // page the same way the webview's own zoom does.
+  window_set_zoom: ({ percent }: { percent: number }) => {
+    document.documentElement.style.zoom = String(percent / 100);
+    return null;
+  },
   pick_folder: () => null,
   reveal_path: () => null,
   open_in_editor: () => null,

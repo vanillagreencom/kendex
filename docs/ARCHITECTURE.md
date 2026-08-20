@@ -312,6 +312,32 @@ lives in one capability table read by core and UI.
   thread, stay synchronous.
 - No database: manifests, locks, and native dirs are the state; scans are
   in-memory views (startup, focus, watch); app prefs in one settings file.
+- **The Linux app decides its own display environment, once, before GTK
+  starts.** Packaging gets a vote it should not have: the AppImage's
+  bundled GTK hook pins `GDK_BACKEND=x11`, which puts the window on
+  XWayland, where a Wayland compositor reports a scale of 1 while driving
+  the display at 2 — the whole app then draws at half size. So the app
+  reads the session and relaunches itself once with `GDK_BACKEND` and the
+  WebKit DMABUF workaround set (`crates/app/src/launch_env.rs`); the
+  environment is never rewritten in place, because the workspace forbids
+  `unsafe`. `wayland,x11` is GDK's own ordered list, so a compositor the
+  Wayland backend cannot open still gets an X11 window rather than none.
+  A backend or scale the person set is never overridden — but inside the
+  AppImage their `GDK_BACKEND` is already gone when the app starts, and the
+  `x11` sitting there is the hook's, so that one value is ignored there and
+  `KENDEX_GDK_BACKEND`, which nothing in the bundle writes, is how an
+  AppImage is told to use a different backend. `GDK_SCALE` and
+  `GDK_DPI_SCALE` are never written at all: the Wayland backend takes the
+  scale from the compositor.
+- **Zoom is the webview's, applied before the window is shown.** The
+  window is configured hidden and revealed in `setup` once the saved zoom
+  is on the webview, so the first frame is already the right size — a page
+  restyle would re-lay out the app in front of the person. The range lives
+  in core and reaches the UI as a generated constant, so the slider and
+  the settings file are held to the same floor, ceiling, and step. This is
+  also the answer to a compositor set to a fractional scale, which GTK3
+  and WebKitGTK round to a whole number: the person nudges the difference
+  back by hand.
 - GUI + CLI are equal thin shells over `crates/core`; every core operation
   has a CLI verb. No CI until first release; `tools/guard` is the gate.
 - Multi-harness kept (v1 fleet workflows depend on Pi). Every capability

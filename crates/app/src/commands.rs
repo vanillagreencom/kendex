@@ -35,6 +35,7 @@ fn update_settings_at(env: &Env, mut settings: AppSettings) -> Result<AppSetting
     for root in settings.harness_roots.values_mut() {
         *root = crate::paths::expand_tilde(&env.home, &root.to_string_lossy());
     }
+    settings.zoom = settings::clamp_zoom(settings.zoom);
     settings::save(env, &settings).map_err(|e| e.to_string())?;
     Ok(settings)
 }
