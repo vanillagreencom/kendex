@@ -15,12 +15,12 @@ use crate::process::Hardened;
 
 const REPO: &str = "owner/repo";
 
-fn git(dir: &Path, args: &[&str]) {
+pub(super) fn git(dir: &Path, args: &[&str]) {
     let output = Hardened::git(args, Some(dir)).run().unwrap();
     assert!(output.status.success(), "git {args:?}");
 }
 
-fn commit(dir: &Path, message: &str) {
+pub(super) fn commit(dir: &Path, message: &str) {
     git(dir, &["add", "-A"]);
     git(
         dir,

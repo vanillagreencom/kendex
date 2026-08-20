@@ -48,7 +48,9 @@ pub fn package_preview(
     };
     let mut files = Vec::new();
     let readme = if browsed.sealed.is_dir(&path) {
-        for (rel, bytes) in browsed.sealed.collect_tree(&path, &[])? {
+        // The same tree scoring and install read: a repo-root skill's
+        // `.git`, `node_modules` and build output are not its files.
+        for (rel, bytes) in browsed.sealed.collect_skill_tree(&path)? {
             files.push(file_row(&rel, bytes.len()));
         }
         browsed
@@ -152,5 +154,22 @@ pub fn package_file(
             source_name: catalog.label().to_owned(),
         });
     };
+    // Only a file the preview lists is readable: the skill tree scoring
+    // and install use, never the repository around a repo-root skill.
+    let offered = if browsed.sealed.is_dir(&path) {
+        browsed
+            .sealed
+            .collect_skill_tree(&path)?
+            .into_iter()
+            .any(|(tree_rel, _)| file_row(&tree_rel, 0).path == rel)
+    } else {
+        Path::new(rel).file_name() == path.file_name() && !rel.contains('/')
+    };
+    if !offered {
+        return Err(CoreError::SourceEscape {
+            path: Path::new(rel).to_path_buf(),
+            reason: "not one of this package's offered files".to_owned(),
+        });
+    }
     crate::package::item_file::item_file(&browsed.sealed, &path, rel)
 }
