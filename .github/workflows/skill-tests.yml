@@ -9,10 +9,11 @@ name: Skill Tests
 # pushes — a PR bills zero heavy runner-minutes through every round of bot
 # review, while the pending "Review gate" status is what actually blocks
 # merge. The full battery runs once per merged result: in the merge queue
-# when it is enabled, and on the push to main while it is not (the queue is
-# currently disabled — it ejects every entry; see the KEN queue-wedge
-# issue — so today the main-push run is the one that tests merged results,
-# after the merge rather than before it). The review gate never conditions
+# before the merge, and again on the push to main as the post-merge record.
+# (The queue was disabled for a stretch when a kill bug in the timed-out
+# process cleanup was taking runners down and ejecting every entry — the
+# KEN runner-kill issue has the story; it is fixed and the queue is back.)
+# The review gate never conditions
 # CI (it answers review-only; see the review-gate skill) — there is no gate
 # job here and nothing reads the predicate.
 #
@@ -356,27 +357,13 @@ jobs:
       # Full debuginfo across the Tauri workspace out-links the runner's
       # memory — three group runs died with the cargo step "cancelled" and
       # no step output, the OOM-kill signature. Tests don't read debuginfo.
-      # The workspace debug target is far larger than the free disk on a
-      # hosted ubuntu runner. Filling the disk mid-compile does not fail
-      # cargo with ENOSPC — the VM's agent stops the runner service, the
-      # job dies with exit 143 and 'runner has received a shutdown
-      # signal', and every completed suite is green (the KEN runner-kill
-      # issue holds the forensics; the ~3-minute mark is just when the
-      # disk fills). Dropping the image's unused toolchains frees tens of
-      # GB, and non-incremental compilation halves what cargo writes.
-      - name: free disk space
-        run: |
-          df -h /
-          sudo rm -rf /usr/local/lib/android /opt/hostedtoolcache /usr/local/.ghcup /usr/share/dotnet /usr/local/share/powershell
-          df -h /
+      # Incremental artifacts are dead weight on a fresh runner and
+      # double what cargo writes.
       - name: cargo test
         env:
           RUSTFLAGS: -C debuginfo=0
           CARGO_INCREMENTAL: '0'
         run: cargo test --workspace --locked
-      - name: disk after
-        if: always()
-        run: df -h /
 
   # The app ships on macOS; nothing before the release tag compiled the
   # workspace there, so a mac-only break (keyring backend, path handling)
