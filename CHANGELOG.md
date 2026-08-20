@@ -8,6 +8,10 @@ changes carry a **Breaking** call-out with their migration note inline.
 
 ### Added
 
+- The app has its own icon. Every install channel shipped the old vstack
+  chevron; the icon is now the `x` from the kendex wordmark, in the
+  wordmark's green, at every size the desktop, dock, and installer use on
+  Linux, macOS, and Windows.
 - New ways to install. A one-line installer,
   `curl -fsSL https://kendex.ai/install.sh | sh`, that installs the app and
   the CLI on Linux and the CLI on macOS;
