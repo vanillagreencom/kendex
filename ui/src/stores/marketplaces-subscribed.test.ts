@@ -3,7 +3,6 @@ import { commands, type DirectoryRow, type MarketplaceRow } from "@/bindings";
 import { useMarketplacesStore } from "./marketplaces";
 import {
   catalogKey,
-  declaredHolder,
   rowSubscribed,
   subscribedKeys,
 } from "./marketplaces-shared";
@@ -153,6 +152,7 @@ describe("a repository page carried on as a subscription", () => {
       warning: null,
     };
     useMarketplacesStore.setState({
+      rows: [row("acme/kit", "acme/kit")],
       summaries: {
         [repoKey]: {
           ...summary,
@@ -160,6 +160,7 @@ describe("a repository page carried on as a subscription", () => {
         },
         [otherKey]: {
           ...summary,
+          provenance: "other/repo",
           subscription: { scope: { scope: "global" }, source: "other" },
         },
       },
@@ -181,38 +182,37 @@ describe("a repository page carried on as a subscription", () => {
     expect(summaries[repoKey]).toBeUndefined();
     expect(summaries[otherKey]).toBeDefined();
   });
-});
 
-describe("a bare repository page's action", () => {
-  it("offers Turn on, not Subscribe, once its subscription is turned off", async () => {
-    // Turning the held subscription off: the summary re-reads as bare, and
-    // the live list is what says a (disabled) subscription still holds it.
+  it("re-asks again when the holder is turned back on", async () => {
+    const repoKey = catalogKey({ by: "repo", repo: "Acme/Kit" });
+    // Turned off earlier: the summary reloaded bare, carried by nothing.
+    useMarketplacesStore.setState({
+      rows: [{ ...row("acme/kit", "acme/kit"), enabled: false }],
+      summaries: {
+        [repoKey]: {
+          provenance: "acme/kit",
+          commit: null,
+          meta: null,
+          mode: "discovered",
+          counts: {},
+          warning: null,
+          subscription: null,
+        },
+      },
+    });
     vi.mocked(commands.sourceToggle).mockResolvedValue({
       status: "ok",
       data: [],
     });
     vi.mocked(commands.marketplacesOverview).mockResolvedValue({
       status: "ok",
-      data: [{ ...row("acme/kit", "acme/kit"), enabled: false }],
+      data: [row("acme/kit", "acme/kit")],
     });
+
     await useMarketplacesStore
       .getState()
-      .toggle({ scope: "global" }, "kit", false);
+      .toggle({ scope: "global" }, "kit", true);
 
-    const held = declaredHolder(
-      useMarketplacesStore.getState().rows,
-      "acme/kit",
-    );
-    expect(held?.enabled).toBe(false);
-    expect(held?.name).toBe("kit");
-  });
-
-  it("offers Subscribe only when nothing declares the repository", () => {
-    expect(
-      declaredHolder([row("acme/kit", "acme/kit")], "other/repo"),
-    ).toBeNull();
-    const enabled = row("acme/kit", "acme/kit");
-    const disabled = { ...enabled, name: "old", enabled: false };
-    expect(declaredHolder([disabled, enabled], "acme/kit")?.name).toBe("kit");
+    expect(useMarketplacesStore.getState().summaries[repoKey]).toBeUndefined();
   });
 });

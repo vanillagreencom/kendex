@@ -95,6 +95,7 @@ export function without<T>(
  * kept: it only says which subscription the page carries on as, and
  * dropping it would blank an open page behind a second fetch. */
 export function dropCatalogCaches(set: (partial: object) => void) {
+  generation += 1;
   set({ packages: {}, bundles: {}, about: {}, readErrors: {} });
   resetPreinstallSafety();
 }
@@ -115,27 +116,44 @@ export async function openLead(scope: Scope, source: string, lead: string) {
   });
 }
 
-/** A repository page carried on as this subscription re-asks which
- * subscription to carry on as: turned off, the backend passes it over and
- * the page falls back to the bare repository; turned on, it carries on
- * again. */
-export function dropSummariesCarriedBy(
+/** Every summary about one repository — however it was requested, and
+ * whether or not it is carried by a subscription — so a toggled holder is
+ * re-asked in both directions: turned off, the page falls back to the bare
+ * repository; turned on, it carries on again. */
+export function dropSummariesForRepo(
   set: (
     fn: (state: { summaries: Record<string, CatalogSummary> }) => object,
   ) => void,
-  scope: Scope,
-  source: string,
+  repoKey: string,
 ) {
-  const toggled = marketKey(scope, source);
   set((state) => ({
     summaries: Object.fromEntries(
       Object.entries(state.summaries).filter(
-        ([key, summary]) =>
-          !isRepoKey(key) ||
-          !summary.subscription ||
-          marketKey(summary.subscription.scope, summary.subscription.source) !==
-            toggled,
+        ([key, summary]) => !isRepoKey(key) || summary.provenance !== repoKey,
       ),
     ),
   }));
 }
+
+/** What a page browsing a bare repository offers, decided from the live
+ * subscription list. Until an overview has succeeded the list is not to
+ * be trusted, and Subscribe — which a declared repository would refuse —
+ * is not offered on a guess. */
+export type RepoActionKind = "checking" | "subscribe" | "turn-on" | "refresh";
+
+export function repoAction(
+  rows: MarketplaceRow[],
+  rowsCurrent: boolean,
+  repoKey: string,
+): { kind: RepoActionKind; holder: MarketplaceRow | null } {
+  if (!rowsCurrent) return { kind: "checking", holder: null };
+  const holder = declaredHolder(rows, repoKey);
+  if (!holder) return { kind: "subscribe", holder: null };
+  return { kind: holder.enabled ? "refresh" : "turn-on", holder };
+}
+
+/** Bumped by every cache drop. A read that began under an older generation
+ * describes a checkout that may no longer be the one installed from, and
+ * its answer is discarded rather than stored. */
+let generation = 0;
+export const readGeneration = (): number => generation;
