@@ -16,7 +16,7 @@ export const COLLAPSED_ITEM_COUNT = 10;
 // version, so a stale constant leaves running panes on the previous launcher
 // (kendex#192 shipped the depth-guard/entry exports this way). A pinning test
 // in tests/pi-invocation.test.ts ties this constant to the template text.
-export const PANE_LAUNCHER_VERSION = 10;
+export const PANE_LAUNCHER_VERSION = 11;
 export const SUBAGENT_WIDGET_KEY = "kendex-agents-dashboard";
 export const FIRST_AGENT_COLUMN_ROWS = 3;
 export const NEXT_AGENT_COLUMN_ROWS = 4;

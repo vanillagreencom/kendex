@@ -356,12 +356,14 @@ jobs:
   # required context yet — a red run is visible without wedging the queue.
   cargo-tests-macos:
     name: Cargo (workspace tests, macOS)
-    if: github.event_name == 'merge_group'
+    if: github.event_name == 'merge_group' || github.event_name == 'pull_request'
     runs-on: macos-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # --no-fail-fast: one run reports every platform-specific failure
+      # instead of one per queue attempt.
       - name: cargo test
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked --no-fail-fast
