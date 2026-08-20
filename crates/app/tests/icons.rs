@@ -103,6 +103,104 @@ fn every_raster_icon_is_drawn_in_the_kendex_lime() {
     }
 }
 
+/// The mark check on the standalone PNGs says nothing about what Windows
+/// and macOS actually draw: those read the containers. A stale ICO or ICNS
+/// alone would ship the old artwork with every other assertion green.
+#[test]
+fn the_images_inside_the_containers_carry_the_mark_too() {
+    for icon in configured_icons() {
+        let bytes = icon_bytes(&icon);
+        let images = match Path::new(&icon).extension().and_then(|e| e.to_str()) {
+            Some("ico") => ico_images(&bytes),
+            Some("icns") => icns_images(&bytes),
+            _ => continue,
+        };
+        assert!(
+            !images.is_empty(),
+            "{icon} carries no image this can read, so nothing checks what it draws"
+        );
+        for (label, image) in images {
+            let share = lime_share(image);
+            assert!(
+                share > 0.10,
+                "{icon} {label} is {:.1}% lime; the mark covers about a fifth, \
+                 and the chevron it replaced was none of it",
+                share * 100.0
+            );
+        }
+    }
+}
+
+/// The chunk types an ICNS carries that hold no colour to check: `is32`
+/// and `il32` are Apple's own run-length encoding, which would need a
+/// decoder this project has no other use for, and `s8mk` and `l8mk` are
+/// alpha masks. Every other chunk our generator writes is a PNG.
+const ICNS_WITHOUT_COLOUR: [&[u8]; 4] = [b"is32", b"il32", b"s8mk", b"l8mk"];
+
+/// The images inside a Windows ICO, labelled by the size its directory
+/// claims. An entry that is not a PNG stops the test rather than being
+/// skipped: a size nothing can read is a size nothing checks.
+fn ico_images(bytes: &[u8]) -> Vec<(String, &[u8])> {
+    let count = u16::from_le_bytes(bytes[4..6].try_into().expect("image count")) as usize;
+    (0..count)
+        .map(|index| {
+            let entry = 6 + index * 16;
+            let side = |byte: u8| if byte == 0 { 256 } else { u32::from(byte) };
+            let (width, height) = (side(bytes[entry]), side(bytes[entry + 1]));
+            let size =
+                u32::from_le_bytes(bytes[entry + 8..entry + 12].try_into().expect("entry size"))
+                    as usize;
+            let offset = u32::from_le_bytes(
+                bytes[entry + 12..entry + 16]
+                    .try_into()
+                    .expect("entry offset"),
+            ) as usize;
+            let image = &bytes[offset..offset + size];
+            assert_eq!(
+                &image[..8],
+                b"\x89PNG\r\n\x1a\n",
+                "the {width}x{height} entry is not a PNG, so nothing here reads it"
+            );
+            let (drawn_width, drawn_height) = png_size(image);
+            assert_eq!(
+                (drawn_width, drawn_height),
+                (width, height),
+                "the entry filed under {width}x{height} holds a \
+                 {drawn_width}x{drawn_height} image"
+            );
+            (format!("{width}x{height}"), image)
+        })
+        .collect()
+}
+
+/// The colour images inside an ICNS, labelled by chunk type.
+fn icns_images(bytes: &[u8]) -> Vec<(String, &[u8])> {
+    let mut images = Vec::new();
+    let mut at = 8;
+    while at + 8 <= bytes.len() {
+        let kind = &bytes[at..at + 4];
+        let length =
+            u32::from_be_bytes(bytes[at + 4..at + 8].try_into().expect("chunk length")) as usize;
+        assert!(
+            length >= 8 && at + length <= bytes.len(),
+            "chunk {:?} runs past the end of the file",
+            String::from_utf8_lossy(kind)
+        );
+        let body = &bytes[at + 8..at + length];
+        if body.starts_with(b"\x89PNG\r\n\x1a\n") {
+            images.push((String::from_utf8_lossy(kind).into_owned(), body));
+        } else {
+            assert!(
+                ICNS_WITHOUT_COLOUR.contains(&kind),
+                "chunk {:?} is neither a PNG nor one of the legacy types this                  knows to leave alone",
+                String::from_utf8_lossy(kind)
+            );
+        }
+        at += length;
+    }
+    images
+}
+
 /// The size a bundled name promises, or `None` for a container.
 fn size_from_name(icon: &str) -> Option<u32> {
     let name = Path::new(icon).file_stem()?.to_str()?;
