@@ -36,6 +36,10 @@ changes carry a **Breaking** call-out with their migration note inline.
   the CLI together on macOS, and the CLI-only formula was renamed. Anyone
   on the old `kendex` formula migrates with `brew uninstall kendex &&
   brew install vanillagreencom/kendex/kendex-cli`.
+- The project-management skill's issue pipeline creates Linear issues
+  directly in Backlog instead of the team's Triage default. Pipeline output
+  is already fully triaged — project, labels, priority, relations — and
+  landing it in Triage invited triage automations to re-route it.
 
 ### Fixed
 

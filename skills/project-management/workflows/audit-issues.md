@@ -261,7 +261,7 @@ Process `create` first — created IDs resolve the `#N` references the other act
 
 | Action | Execution |
 |--------|-----------|
-| create | `issues create` with the Create template below and `--parent` per `hierarchy`. A `hierarchy.parent` of null with `make_child` resolves to the input's `parent_issue`. A child must share the parent's project; if it cannot, create it standalone with `related` — except for `hierarchy_contract` items, where the standalone fallback is not permitted: create the child in the contract parent's project and never downgrade to standalone. |
+| create | `issues create` with the Create template below, `--state "Backlog"`, and `--parent` per `hierarchy`. Backlog is mandatory, never the team-default Triage: pipeline output is already fully triaged (project, labels, priority, relations), and the workspace's Linear-native triage loop fires on Triage-state creations — it re-routed 8 of 30 pre-projected issues on 2026-08-20 before the loop's trigger was narrowed. § 7.2.1 then promotes to Todo where it applies. A `hierarchy.parent` of null with `make_child` resolves to the input's `parent_issue`. A child must share the parent's project; if it cannot, create it standalone with `related` — except for `hierarchy_contract` items, where the standalone fallback is not permitted: create the child in the contract parent's project and never downgrade to standalone. |
 | expand, update | workflow-actions § Descriptions + reason comment |
 | supersede, combine | workflow-actions § State Transitions (cancel/absorb), then Superseded issues below |
 | cancel | workflow-actions § State Transitions |
