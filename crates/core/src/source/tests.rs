@@ -323,3 +323,33 @@ fn a_local_source_left_under_the_old_name_still_reads() {
         project.join(".kendex-local")
     );
 }
+
+/// A declared Pi package is on offer wherever its package.json registers
+/// the name — the literal directory, or a short directory shelving a
+/// scoped name the way kendex's own catalog does.
+#[test]
+fn a_pi_extension_is_found_literal_or_by_registered_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let catalog = tmp.path().join("catalog");
+    std::fs::create_dir_all(catalog.join("pi-extensions/pi-hooks")).unwrap();
+    std::fs::write(
+        catalog.join("pi-extensions/pi-hooks/package.json"),
+        "{\"name\": \"@vg/pi-hooks\", \"version\": \"1.0.0\"}",
+    )
+    .unwrap();
+
+    let sealed = SealedSource::open(&catalog).unwrap();
+    let config = source_config(&sealed, "catalog").unwrap();
+    assert_eq!(
+        find_item(&sealed, &config, ItemKind::PiExtension, "pi-hooks"),
+        Some(sealed.root().join("pi-extensions/pi-hooks"))
+    );
+    assert_eq!(
+        find_item(&sealed, &config, ItemKind::PiExtension, "@vg/pi-hooks"),
+        Some(sealed.root().join("pi-extensions/pi-hooks"))
+    );
+    assert_eq!(
+        find_item(&sealed, &config, ItemKind::PiExtension, "@vg/pi-ghost"),
+        None
+    );
+}

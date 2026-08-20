@@ -307,7 +307,22 @@ pub fn find_item(
             catalog_file(sealed, dir, &format!("{name}.{ext}"))
         }
         ItemKind::Hook | ItemKind::Command | ItemKind::McpServer => None,
-        ItemKind::Plugin | ItemKind::PiExtension => None,
+        // A declared Pi package resolves like update-pi resolves it: the
+        // literal directory, else whichever directory's package.json
+        // registers the name — kendex's own catalog shelves scoped names
+        // in short directories. Without this, every declared Pi package
+        // reads as "no longer offered" the moment it is declared.
+        ItemKind::PiExtension => {
+            let base = root.join("pi-extensions");
+            let literal = base.join(name);
+            if sealed.is_file(&literal.join("package.json")) {
+                return Some(literal);
+            }
+            crate::pi_ext::find_by_package_name(&base, name)
+                .ok()
+                .flatten()
+        }
+        ItemKind::Plugin => None,
     }
 }
 
