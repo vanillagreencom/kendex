@@ -72,6 +72,7 @@ scripts/linear.sh initiatives update [INITIATIVE_ID] --status Active
 
 ```bash
 scripts/linear.sh issues create \
+  --state "Backlog" \
   --title "[TITLE]" --project "[TARGET_PROJECT]" --labels "[VALIDATED_LABELS]" \
   --priority [PRIORITY] --estimate [ESTIMATE] --description-file [PATH]
 ```

@@ -92,6 +92,11 @@ research_issue="$SKILL_DIR/workflows/research-issue.md"
 merge_pr="$SKILL_DIR/../orch/workflows/merge-pr.md"
 plan_issues="$SKILL_DIR/../orch/workflows/plan-issues.md"
 start_new="$SKILL_DIR/../orch/workflows/start-new.md"
+workflow_actions="$SKILL_DIR/../linear/patterns/workflow-actions.md"
+if [[ -f "$workflow_actions" ]]; then
+  wa_create_cmd="$(extract "$workflow_actions" 'issues create' '^```$' wa-create-cmd)" || fail "could not extract the workflow-actions follow-up create"
+  grep -Fq -- '--state "Backlog"' "$wa_create_cmd" || fail 'workflow-actions follow-up create does not pass --state "Backlog"'
+fi
 if [[ -f "$start_new" ]]; then
   start_create_cmd="$(extract "$start_new" 'issues create' '^```$' start-create-cmd)" || fail "could not extract the start-new create command"
   grep -Fq -- '--state "Backlog"' "$start_create_cmd" || fail 'start-new create does not pass --state "Backlog"'
