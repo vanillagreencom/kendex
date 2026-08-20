@@ -46,6 +46,7 @@ function updateRows(): UpdateRow[] {
     editedHarnesses: [],
     forkableHarness: null,
     canDiscard: true,
+    derived: false,
     forked: false,
     mixed: false,
     removedUpstream: false,

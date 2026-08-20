@@ -57,15 +57,20 @@ export const updatablePlaces = (rows: UpdateRow[]): UpdateRow[] =>
 export function placeName(scope: Scope, among: Scope[] = []): string {
   if (scope.scope === "global") return USER_LEVEL_PLACE;
   const parts = pathParts(scope.root);
-  const base = parts.at(-1) ?? scope.root;
-  const twin = among.some(
-    (other) =>
-      other.scope === "project" &&
-      other.root !== scope.root &&
-      (pathParts(other.root).at(-1) ?? other.root) === base,
+  const others = among.flatMap((other) =>
+    other.scope === "project" && other.root !== scope.root
+      ? [pathParts(other.root)]
+      : [],
   );
-  const parent = parts.at(-2);
-  return twin && parent ? `${parent}/${base}` : base;
+  // The shortest trailing run of folders no other place in the group
+  // ends with — one folder when nothing clashes, the whole root if even
+  // that is shared.
+  for (let take = 1; take <= parts.length; take += 1) {
+    const suffix = parts.slice(-take).join("/");
+    if (!others.some((other) => other.slice(-take).join("/") === suffix))
+      return suffix;
+  }
+  return scope.root;
 }
 
 // Roots are serialized by the OS that wrote them, so a Windows project

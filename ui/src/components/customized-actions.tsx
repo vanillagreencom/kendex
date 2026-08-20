@@ -10,6 +10,7 @@ import {
 } from "@/lib/copy";
 import {
   CUSTOMIZED_HERE_LABEL,
+  DERIVED_EDIT_NOTE,
   MULTI_TOOL_EDIT_NOTE,
   UNFORKABLE_EDIT_NOTE,
   USE_NEW_VERSION_LABEL,
@@ -29,8 +30,9 @@ export function CustomizedActions({
   busy: boolean;
 }) {
   const [confirmDiscard, setConfirmDiscard] = useState(false);
-  const whyNoFork =
-    row.editedHarnesses.length > 1
+  const whyNoFork = row.derived
+    ? DERIVED_EDIT_NOTE
+    : row.editedHarnesses.length > 1
       ? MULTI_TOOL_EDIT_NOTE
       : UNFORKABLE_EDIT_NOTE;
 

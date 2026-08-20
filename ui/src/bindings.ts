@@ -2287,6 +2287,12 @@ export type UpdateRow = {
 	 *  would leave the edited copy exactly as it is.
 	 */
 	canDiscard: boolean,
+	/**
+	 *  Installed as a bundle member or a dependency, with no declaration
+	 *  of its own: whatever pulled it in owns its revision, and a fork
+	 *  needs a declaration to turn local.
+	 */
+	derived: boolean,
 	/**  This package is a local fork of a catalog item. */
 	forked: boolean,
 	/**  Installations of this package disagree on their source commit. */

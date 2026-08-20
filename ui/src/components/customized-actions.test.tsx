@@ -50,6 +50,20 @@ describe("customized places", () => {
     expect(html).toContain(">Preview changes<");
   });
 
+  it("points an edited bundle member at the package page", () => {
+    const html = render([
+      row("gh", null, {
+        blockedByLocalEdit: true,
+        editedHarnesses: ["claude"],
+        forkableHarness: null,
+        derived: true,
+      }),
+    ]);
+    expect(html).not.toContain(">Keep as my own<");
+    expect(html).toContain("Comes with a bundle or another package");
+    expect(html).toContain(">Use new version…<");
+  });
+
   it("points edits in several tools at the package page", () => {
     const html = render([
       row("rev", null, {

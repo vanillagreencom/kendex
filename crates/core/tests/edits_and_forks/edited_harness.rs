@@ -134,3 +134,34 @@ fn discarding_edits_can_move_a_hold_in_the_same_apply() {
     assert!(fs::read_to_string(skill_file(&w)).unwrap().contains("Two."));
     assert!(audit(&w.env, &w.scope).unwrap().drift.is_empty());
 }
+
+/// A bundle member has no declaration of its own, so a fork has nothing to
+/// turn local and the engine would refuse it; the row says so up front.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_edited_bundle_member_is_not_offered_a_fork() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "Upstream.");
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[bundles.starter]\ndescription = \"the set\"\nskills = [\"gh\"]\n",
+    )
+    .unwrap();
+    commit(&w.upstream, "one");
+    declare(&w, "[bundles.starter]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    assert!(skill_file(&w).is_file());
+
+    fs::write(skill_file(&w), "my edited version").unwrap();
+    let report = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();
+    let row = report
+        .rows
+        .iter()
+        .find(|row| row.kind == ItemKind::Skill && row.name == "gh")
+        .unwrap();
+    assert!(row.derived);
+    assert!(row.blocked_by_local_edit);
+    assert_eq!(row.edited_harnesses, vec![HarnessId::Claude]);
+    assert_eq!(row.forkable_harness, None);
+    assert!(row.can_discard);
+}

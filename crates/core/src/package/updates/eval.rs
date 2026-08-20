@@ -109,8 +109,9 @@ impl Eval<'_> {
                     pinned,
                     ignored: self.is_ignored(kind, name, &repo),
                     blocked_by_local_edit: !edited_harnesses.is_empty(),
-                    forkable_harness: forkable_among(kind, &edited_harnesses),
+                    forkable_harness: forkable_among(kind, &edited_harnesses, planned.derived),
                     can_discard: false,
+                    derived: planned.derived,
                     edited_harnesses,
                     forked,
                     mixed: false,
@@ -209,8 +210,9 @@ impl Eval<'_> {
             pinned,
             ignored: self.is_ignored(kind, name, &package.repo),
             blocked_by_local_edit: !edited_harnesses.is_empty(),
-            forkable_harness: forkable_among(kind, &edited_harnesses),
+            forkable_harness: forkable_among(kind, &edited_harnesses, planned.derived),
             can_discard: latest.is_some(),
+            derived: planned.derived,
             edited_harnesses,
             forked,
             repo_identity: super::repo_identity(&package.repo),
@@ -239,9 +241,11 @@ impl Eval<'_> {
 /// rendering's bytes and turns the declaration local, so with edits in
 /// several tools it would silently drop the others — that case is left to
 /// the package page, where each rendering can be compared.
-fn forkable_among(kind: ItemKind, edited: &[HarnessId]) -> Option<HarnessId> {
+/// A derived package has no declaration to flip to a local source, so the
+/// fork engine refuses it; its owner is where the edit gets settled.
+fn forkable_among(kind: ItemKind, edited: &[HarnessId], derived: bool) -> Option<HarnessId> {
     match edited {
-        [only] if crate::engine::fork::forkable_harness(kind, *only) => Some(*only),
+        [only] if !derived && crate::engine::fork::forkable_harness(kind, *only) => Some(*only),
         _ => None,
     }
 }

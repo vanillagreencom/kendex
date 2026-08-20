@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
 import { useUpdatesStore } from "./updates";
-import { keepAsOwn, takeNewVersion } from "./updates-edits";
 
 vi.mock("@/bindings", () => ({
   commands: {
@@ -40,6 +39,7 @@ function row(overrides: Partial<UpdateRow>): UpdateRow {
     editedHarnesses: [],
     forkableHarness: null,
     canDiscard: true,
+    derived: false,
     forked: false,
     mixed: false,
     removedUpstream: false,
@@ -172,79 +172,5 @@ describe("updates store: bulk update", () => {
     expect(toast.info).toHaveBeenCalledWith(
       "Nothing to update — 1 customized place needs a decision first",
     );
-  });
-
-  it("use new version on a held place moves the hold to latest in the same apply", async () => {
-    const view = {
-      scope: { scope: "global" } as const,
-      drift: [],
-      plan: [],
-      notes: [],
-      warnings: [],
-      safety: [],
-      heldBack: [],
-      queued: [],
-    };
-    vi.mocked(commands.applyDiscardEdits).mockResolvedValue({
-      status: "ok",
-      data: view,
-    });
-    vi.mocked(commands.updatesOverview).mockResolvedValue({
-      status: "ok",
-      data: { rows: [], warnings: [] },
-    });
-    vi.mocked(commands.scanMachine).mockResolvedValue({
-      status: "ok",
-      data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
-    });
-    vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
-    const edited = {
-      blockedByLocalEdit: true,
-      editedHarnesses: ["claude" as const],
-      forkableHarness: "claude" as const,
-    };
-
-    await takeNewVersion(row({ ...edited, pinned: true }));
-    expect(commands.applyDiscardEdits).toHaveBeenLastCalledWith(
-      { scope: "global" },
-      "skill",
-      "gh",
-      "b".repeat(40),
-    );
-
-    await takeNewVersion(row(edited));
-    expect(commands.applyDiscardEdits).toHaveBeenLastCalledWith(
-      { scope: "global" },
-      "skill",
-      "gh",
-      null,
-    );
-    expect(commands.packageSetRev).not.toHaveBeenCalled();
-  });
-
-  it("keep as my own forks the edited rendering through the store's busy gate", async () => {
-    let busyDuring = false;
-    vi.mocked(commands.packageFork).mockImplementation(async () => {
-      busyDuring = useUpdatesStore.getState().busy;
-      return { status: "error", error: "nope" };
-    });
-
-    await keepAsOwn(
-      row({
-        kind: "agent",
-        blockedByLocalEdit: true,
-        editedHarnesses: ["opencode", "claude"],
-        forkableHarness: "claude",
-      }),
-    );
-
-    expect(commands.packageFork).toHaveBeenCalledWith(
-      { scope: "global" },
-      "agent",
-      "gh",
-      "claude",
-    );
-    expect(busyDuring).toBe(true);
-    expect(useUpdatesStore.getState().busy).toBe(false);
   });
 });

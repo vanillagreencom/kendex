@@ -26,6 +26,7 @@ const row = (
   editedHarnesses: [],
   forkableHarness: null,
   canDiscard: true,
+  derived: false,
   removedUpstream: false,
   mixed: false,
   forked: false,
@@ -87,6 +88,18 @@ describe("update groups", () => {
     ]);
     expect(groups).toHaveLength(1);
     expect(groups[0].places).toHaveLength(2);
+  });
+
+  it("grows the suffix until every clashing place reads apart", () => {
+    const alice = { scope: "project", root: "/home/alice/work/app" } as const;
+    const team = { scope: "project", root: "/mnt/team/work/app" } as const;
+    const shop = { scope: "project", root: "/srv/shop" } as const;
+    const all = [alice, team, shop];
+    expect(placeName(alice, all)).toBe("alice/work/app");
+    expect(placeName(team, all)).toBe("team/work/app");
+    expect(placeName(shop, all)).toBe("shop");
+    const twin = { scope: "project", root: "/home/alice/work/app/" } as const;
+    expect(placeName(alice, [alice, twin])).toBe("/home/alice/work/app");
   });
 
   it("reads Windows roots by either separator", () => {

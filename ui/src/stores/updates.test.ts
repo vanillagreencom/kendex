@@ -41,6 +41,7 @@ function row(overrides: Partial<UpdateRow>): UpdateRow {
     editedHarnesses: [],
     forkableHarness: null,
     canDiscard: true,
+    derived: false,
     forked: false,
     mixed: false,
     removedUpstream: false,

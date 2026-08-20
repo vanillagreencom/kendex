@@ -65,6 +65,10 @@ pub struct UpdateRow {
     /// false once the source no longer carries the package, when a discard
     /// would leave the edited copy exactly as it is.
     pub can_discard: bool,
+    /// Installed as a bundle member or a dependency, with no declaration
+    /// of its own: whatever pulled it in owns its revision, and a fork
+    /// needs a declaration to turn local.
+    pub derived: bool,
     /// This package is a local fork of a catalog item.
     pub forked: bool,
     /// Installations of this package disagree on their source commit.
@@ -227,6 +231,7 @@ fn fork_row(
         edited_harnesses: Vec::new(),
         forkable_harness: None,
         can_discard: false,
+        derived: false,
         forked: true,
         mixed: false,
         removed_upstream: false,

@@ -21,6 +21,7 @@ export const updateRow = (
   editedHarnesses: [],
   forkableHarness: null,
   canDiscard: true,
+  derived: false,
   removedUpstream: false,
   mixed: false,
   forked: false,

@@ -22,6 +22,8 @@ export const CUSTOMIZED_HERE_LABEL = "Customized here";
 export const USE_NEW_VERSION_LABEL = "Use new version…";
 export const UNFORKABLE_EDIT_NOTE =
   "Edited in a tool whose copy can't be kept as your own";
+export const DERIVED_EDIT_NOTE =
+  "Comes with a bundle or another package — settle it on the package page";
 export const MULTI_TOOL_EDIT_NOTE =
   "Edited in several tools — settle it on the package page";
 export const updatedWithPlaceToastLabel = (
