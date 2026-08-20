@@ -18,6 +18,7 @@ fn app_crate() -> &'static Path {
 
 /// The bundled set, read from the config rather than listed here: an icon
 /// added to the bundle and never generated is exactly the gap this closes.
+#[allow(clippy::expect_used)]
 fn configured_icons() -> Vec<String> {
     let config: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(app_crate().join("tauri.conf.json")).expect("tauri.conf.json"),
@@ -93,7 +94,7 @@ fn every_raster_icon_is_drawn_in_the_kendex_lime() {
         if size_from_name(&icon).is_none() {
             continue;
         }
-        let share = lime_share(&icon_bytes(&icon));
+        let share = lime_share(&png_drawn(&icon_bytes(&icon)));
         assert!(
             share > 0.10,
             "{icon} is {:.1}% lime; the mark covers about a fifth of the field, \
@@ -120,7 +121,7 @@ fn the_images_inside_the_containers_carry_the_mark_too() {
             "{icon} carries no image this can read, so nothing checks what it draws"
         );
         for (label, image) in images {
-            let share = lime_share(image);
+            let share = lime_share(&image);
             assert!(
                 share > 0.10,
                 "{icon} {label} is {:.1}% lime; the mark covers about a fifth, \
@@ -131,16 +132,18 @@ fn the_images_inside_the_containers_carry_the_mark_too() {
     }
 }
 
-/// The chunk types an ICNS carries that hold no colour to check: `is32`
-/// and `il32` are Apple's own run-length encoding, which would need a
-/// decoder this project has no other use for, and `s8mk` and `l8mk` are
-/// alpha masks. Every other chunk our generator writes is a PNG.
-const ICNS_WITHOUT_COLOUR: [&[u8]; 4] = [b"is32", b"il32", b"s8mk", b"l8mk"];
+/// The ICNS chunk types that are not PNGs. macOS still draws 16x16 and
+/// 32x32 at 1x from Apple's own RGB encoding paired with a separate alpha
+/// mask, and this file carries no PNG at either size, so on any display
+/// that is not retina these two chunks are the whole small icon.
+const ICNS_RGB_WITH_MASK: [(&[u8], usize, &[u8]); 2] =
+    [(b"is32", 16, b"s8mk"), (b"il32", 32, b"l8mk")];
 
 /// The images inside a Windows ICO, labelled by the size its directory
 /// claims. An entry that is not a PNG stops the test rather than being
 /// skipped: a size nothing can read is a size nothing checks.
-fn ico_images(bytes: &[u8]) -> Vec<(String, &[u8])> {
+#[allow(clippy::expect_used)]
+fn ico_images(bytes: &[u8]) -> Vec<(String, Vec<[u8; 3]>)> {
     let count = u16::from_le_bytes(bytes[4..6].try_into().expect("image count")) as usize;
     (0..count)
         .map(|index| {
@@ -168,14 +171,49 @@ fn ico_images(bytes: &[u8]) -> Vec<(String, &[u8])> {
                 "the entry filed under {width}x{height} holds a \
                  {drawn_width}x{drawn_height} image"
             );
-            (format!("{width}x{height}"), image)
+            (format!("{width}x{height}"), png_drawn(image))
         })
         .collect()
 }
 
-/// The colour images inside an ICNS, labelled by chunk type.
-fn icns_images(bytes: &[u8]) -> Vec<(String, &[u8])> {
+/// The images inside an ICNS, labelled by chunk type. A chunk that is
+/// neither a PNG nor one of the RGB-and-mask pairs stops the test: the
+/// generator has started writing something nothing here reads.
+fn icns_images(bytes: &[u8]) -> Vec<(String, Vec<[u8; 3]>)> {
+    let chunks = icns_chunks(bytes);
     let mut images = Vec::new();
+    for &(kind, body) in &chunks {
+        let name = String::from_utf8_lossy(kind).into_owned();
+        if body.starts_with(b"\x89PNG\r\n\x1a\n") {
+            images.push((name, png_drawn(body)));
+        } else if let Some(&(_, side, wanted)) =
+            ICNS_RGB_WITH_MASK.iter().find(|(rgb, _, _)| *rgb == kind)
+        {
+            let mask = chunks
+                .iter()
+                .find(|(other, _)| *other == wanted)
+                .unwrap_or_else(|| panic!("{name} ships without its {} mask", as_name(wanted)))
+                .1;
+            images.push((name, rgb_drawn(body, mask, side)));
+        } else {
+            assert!(
+                ICNS_RGB_WITH_MASK.iter().any(|(_, _, mask)| *mask == kind),
+                "chunk {name} is neither a PNG nor an encoding this reads, \
+                 so nothing checks what it draws"
+            );
+        }
+    }
+    images
+}
+
+fn as_name(kind: &[u8]) -> String {
+    String::from_utf8_lossy(kind).into_owned()
+}
+
+/// Every chunk in an ICNS, in the order the file lists them.
+#[allow(clippy::expect_used)]
+fn icns_chunks(bytes: &[u8]) -> Vec<(&[u8], &[u8])> {
+    let mut chunks = Vec::new();
     let mut at = 8;
     while at + 8 <= bytes.len() {
         let kind = &bytes[at..at + 4];
@@ -183,22 +221,66 @@ fn icns_images(bytes: &[u8]) -> Vec<(String, &[u8])> {
             u32::from_be_bytes(bytes[at + 4..at + 8].try_into().expect("chunk length")) as usize;
         assert!(
             length >= 8 && at + length <= bytes.len(),
-            "chunk {:?} runs past the end of the file",
-            String::from_utf8_lossy(kind)
+            "chunk {} runs past the end of the file",
+            as_name(kind)
         );
-        let body = &bytes[at + 8..at + length];
-        if body.starts_with(b"\x89PNG\r\n\x1a\n") {
-            images.push((String::from_utf8_lossy(kind).into_owned(), body));
-        } else {
-            assert!(
-                ICNS_WITHOUT_COLOUR.contains(&kind),
-                "chunk {:?} is neither a PNG nor one of the legacy types this                  knows to leave alone",
-                String::from_utf8_lossy(kind)
-            );
-        }
+        chunks.push((kind, &bytes[at + 8..at + length]));
         at += length;
     }
-    images
+    chunks
+}
+
+/// The drawn pixels of an RGB chunk, with its mask saying which count.
+fn rgb_drawn(rgb: &[u8], mask: &[u8], side: usize) -> Vec<[u8; 3]> {
+    let pixels = side * side;
+    assert_eq!(
+        mask.len(),
+        pixels,
+        "the mask holds {} bytes, not the {pixels} this size draws",
+        mask.len()
+    );
+    let [red, green, blue] = rgb_planes(rgb, pixels);
+    (0..pixels)
+        .filter(|at| mask[*at] > 0)
+        .map(|at| [red[at], green[at], blue[at]])
+        .collect()
+}
+
+/// Apple's run-length encoding: the red, green and blue planes one after
+/// another, each a stream of runs. A control byte below 0x80 introduces
+/// that many literal bytes plus one; from 0x80 up it repeats the byte
+/// that follows, three times plus the remainder. A chunk small enough to
+/// hold the pixels outright skips the encoding.
+#[allow(clippy::expect_used)]
+fn rgb_planes(body: &[u8], pixels: usize) -> [Vec<u8>; 3] {
+    if body.len() == pixels * 3 {
+        let plane = |which: usize| body[which * pixels..(which + 1) * pixels].to_vec();
+        return [plane(0), plane(1), plane(2)];
+    }
+    let mut planes = [Vec::new(), Vec::new(), Vec::new()];
+    let mut at = 0;
+    for plane in &mut planes {
+        while plane.len() < pixels {
+            let control = *body.get(at).expect("a run that starts inside the chunk");
+            at += 1;
+            if control < 0x80 {
+                let run = usize::from(control) + 1;
+                let literal = body
+                    .get(at..at + run)
+                    .expect("a run that ends inside the chunk");
+                plane.extend_from_slice(literal);
+                at += run;
+            } else {
+                let run = usize::from(control) - 0x80 + 3;
+                let byte = *body.get(at).expect("a repeat that ends inside the chunk");
+                at += 1;
+                plane.extend(std::iter::repeat_n(byte, run));
+            }
+        }
+        assert_eq!(plane.len(), pixels, "a colour plane overran its icon");
+    }
+    assert_eq!(at, body.len(), "the chunk carries runs past its last plane");
+    planes
 }
 
 /// The size a bundled name promises, or `None` for a container.
@@ -212,6 +294,7 @@ fn size_from_name(icon: &str) -> Option<u32> {
     Some(width.parse::<u32>().ok()? * doubled)
 }
 
+#[allow(clippy::expect_used)]
 fn png_size(bytes: &[u8]) -> (u32, u32) {
     let reader = png::Decoder::new(std::io::Cursor::new(bytes))
         .read_info()
@@ -220,8 +303,9 @@ fn png_size(bytes: &[u8]) -> (u32, u32) {
     (info.width, info.height)
 }
 
-/// The share of drawn pixels within a shade of the mark's lime.
-fn lime_share(bytes: &[u8]) -> f64 {
+/// The drawn pixels of a PNG: those its alpha channel does not hide.
+#[allow(clippy::expect_used)]
+fn png_drawn(bytes: &[u8]) -> Vec<[u8; 3]> {
     let mut reader = png::Decoder::new(std::io::Cursor::new(bytes))
         .read_info()
         .expect("a readable PNG");
@@ -234,15 +318,20 @@ fn lime_share(bytes: &[u8]) -> f64 {
         frame.color_type,
         frame.bit_depth
     );
-
-    let drawn: Vec<&[u8]> = pixels[..frame.buffer_size()]
+    pixels[..frame.buffer_size()]
         .chunks_exact(channels)
         .filter(|pixel| channels < 4 || pixel[3] > 0)
-        .collect();
+        .map(|pixel| [pixel[0], pixel[1], pixel[2]])
+        .collect()
+}
+
+/// The share of drawn pixels within a shade of the mark's lime.
+fn lime_share(drawn: &[[u8; 3]]) -> f64 {
+    assert!(!drawn.is_empty(), "this image draws no pixel at all");
     let lime = drawn
         .iter()
         .filter(|pixel| {
-            pixel[..3]
+            pixel
                 .iter()
                 .zip(LIME)
                 .all(|(had, want)| had.abs_diff(want) <= 24)
