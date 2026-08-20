@@ -1,0 +1,300 @@
+# Copy to `kendex.settings.toml` and commit it when the values are safe to
+# share. Keep secrets in `.env.local`. Skill scripts read only the `[env]`
+# table. Comments here are one-line intent + landmines; full semantics live in
+# each skill's SKILL.md / references.
+
+[env]
+
+# WORKTREE / SHARED WORKFLOW PATHS
+
+# Base branch new worktrees fork from.
+WORKTREE_DEFAULT_BRANCH = "main"
+
+# Where worktrees live; default is <parent-of-checkout>/.worktrees/<name>.
+# Never point it inside the repo root — watched build outputs exhaust inotify.
+# WORKTREE_BASE_DIR = "~/dev/.worktrees/myproject"
+
+# Paths symlinked into every worktree. Include `.env.local` only when
+# worktrees should share local secrets.
+WORKTREE_SYMLINKS = ".env.local opencode.json .agents .cursor .codex .opencode .pi .claude/settings.json .claude/agents .claude/hooks .claude/skills"
+
+# link=target pairs; each target resolves from the LINK's own directory
+# (`.claude/CLAUDE.md=../AGENTS.md` reaches the worktree root's AGENTS.md).
+WORKTREE_RELATIVE_SYMLINKS = ".claude/CLAUDE.md=../AGENTS.md .claude/AGENTS.md=../AGENTS.md"
+
+# Files copied (not linked) into new worktrees.
+WORKTREE_COPIES = ".kendex-lock.json"
+
+# Gitignored scratch dirs created in new worktrees.
+WORKTREE_MKDIRS = "tmp"
+
+# Where orch keeps its per-issue workflow state.
+ORCH_STATE_DIR = "tmp"
+
+# Seconds ci-wait keeps polling before failing when no CI checks registered
+# yet; raise for approval-gated CI with slow dispatch.
+CI_WAIT_NO_CHECKS_GRACE = "180"
+
+# Max automated ci-fix rounds per PR before a human takes over.
+CI_FIX_MAX_CYCLES = "6"
+
+# "ask" presents the merge decision; "auto" merges once every gate is green.
+ORCH_MERGE_AUTONOMY = "ask"
+
+# Max concurrent lanes the overseer keeps in flight.
+ORCH_OVERSEER_LANES = "3"
+
+# Path globs that add the needs-perf-test QA signal to review routing.
+# QA_PERF_PATHS = "src/hot/* engine/src/*"
+
+# "ask" presents workflow decision points; "auto-recommended" executes the
+# recommended option and logs it. Merge is governed by ORCH_MERGE_AUTONOMY,
+# and some decisions always ask. Full rules: orch skill.
+ORCH_DECISION_MODE = "ask"
+
+# Rename auto-discovered launch lanes: comma-separated
+# `<config-dir>=<alias>` pairs, usable as `open-terminal --lane <alias>`.
+# ORCH_LANE_ALIASES = "eclaude=work,mclaude=overflow"
+
+# Seconds per brief-delivery verification pass on tmux handoff lanes.
+ORCH_TMUX_VERIFY_SECS = "15"
+
+# Total concurrent agent-session budget, counting the primary; "0" =
+# unlimited. Reviews run in waves when the reviewer set exceeds free slots.
+REVIEWER_SLOT_BUDGET = "0"
+
+# Reviewer merge gate: "approval" needs a GitHub approval; "review" needs a
+# non-author review of the current head plus zero unresolved threads (for
+# bots that comment but never approve); "off" only where no reviewer exists.
+PR_REVIEW_GATE = "approval"
+
+# Total review-wait budget in seconds before the on-timeout policy applies.
+PR_REVIEW_WAIT_SECS = "900"
+
+# Seconds of reviewer silence on a head before the one nudge; "0" disables.
+PR_REVIEW_NUDGE_SECS = "600"
+
+# Comment posted as the nudge — whatever summons this repo's reviewer.
+# Empty = GitHub's native re-review request.
+PR_REVIEW_NUDGE = ""
+
+# Check-run or commit-status name a trusted review bot publishes on
+# analyzed heads; a success counts as review evidence. SECURITY: checks match by NAME and anyone can
+# publish under any name — name only the trusted bot's check. Empty = review
+# objects only.
+PR_REVIEW_CHECK = ""
+
+# Reviewer logins (comma/space separated, ONE line) that must EACH review the
+# current head with zero open threads before the gate opens. Empty = off.
+# On timeout, "proceed" needs EVERY listed reviewer silent.
+PR_REVIEW_QUORUM = ""
+
+# When the review signal never arrives: "block" reports a timeout; "proceed"
+# records a reviewer-down override and moves on, but only with zero
+# unresolved threads — a real comment is never bypassed.
+PR_REVIEW_ON_TIMEOUT = "block"
+
+# BOT / COMMIT IDENTITY — used by worktree. BOT_NAME gates the identity:
+# empty = the logged-in user (BOT_EMAIL then ignored); set = name and email
+# written verbatim, empty values included. BOT_REMOTE_NAME independently
+# selects the push remote (empty = origin).
+
+BOT_NAME = "automation-bot"
+
+BOT_EMAIL = "you+bot@example.com"
+
+BOT_REMOTE_NAME = "bot-remote"
+
+# DEV
+
+# The project's validation command, run from the worktree root — point it at
+# a diff-scoped validator where one exists. Empty = the documented
+# build/test/lint command.
+DEV_VALIDATE_CMD = ""
+
+# DECIDER
+
+# Where decision records live; auto-discovered when omitted.
+DECISIONS_DIR = "docs/decisions"
+
+# LINEAR
+
+# The team every Linear write targets. No default: an empty value refuses
+# writes instead of guessing inside whatever workspace the API key reaches
+# (the create actions still take `--team <name>` per call). Confirm with
+# `linear.sh auth-check --strict`.
+LINEAR_TEAM = ""
+
+# Default output format: safe, table, ids, raw.
+LINEAR_FORMAT = "safe"
+
+# Issue identifier prefix.
+LINEAR_TEAM_PREFIX = "PROJ"
+
+# Declared agent-routing label set (e.g. "agent:generalist, agent:rust").
+# Non-empty makes `issues create` refuse a create carrying none of them —
+# such an issue is invisible to agent routing. Empty = guard off.
+LINEAR_AGENT_LABELS = ""
+
+# GITHUB
+
+# Bot login the sticky-verdict commands target.
+GH_BOT_USERNAME = "automation[bot]"
+
+# Issue id extracted from branch names.
+GH_ISSUE_PATTERN = "[A-Z]+-[0-9]+"
+
+# Build/test command for `pr-cross-check --verify`.
+GH_VERIFY_CMD = "make verify"
+
+# Timeouts (seconds) for 1Password token resolution, auth preflight, pr-view.
+VSTACK_GITHUB_OP_TIMEOUT = "10"
+
+VSTACK_GITHUB_AUTH_TIMEOUT = "10"
+
+VSTACK_GITHUB_PR_VIEW_TIMEOUT = "30"
+
+# REVIEW GATE (shared CI merge-gate engine)
+# Keys resolve environment-first, then this file, then the built-in default.
+# Full reference: review-gate SKILL.md / references/adoption.md.
+
+# Commit-status context the writer posts — the required check name in branch
+# protection. Keep it stable.
+REVIEW_GATE_CONTEXT = "Review gate"
+
+# Check/status names whose success counts as review evidence. SECURITY:
+# matched by NAME — list only trusted bots' checks. github-actions-published
+# check-runs are rejected automatically.
+REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = ""
+
+# A trusted "pass" whose output contains one of these substrings is
+# NOT-EVIDENCE (analysis never ran). Empty disables.
+REVIEW_GATE_CHECKRUN_SKIP_PATTERNS = "rate limited;skipped;queued"
+
+# 'login:binding-pattern' pairs for bots whose clean pass is only an issue
+# comment binding a commit sha. SECURITY: trust keys on the LOGIN. Empty
+# disables.
+REVIEW_GATE_COMMENT_REVIEWERS = ""
+
+# Shortest sha prefix (4–40) a comment-form reviewer may bind evidence to.
+REVIEW_GATE_SHA_PREFIX_FLOOR = "7"
+
+# MANUAL operator override status — posted by a human, never automation;
+# substitutes for MISSING evidence only and must carry a reason in its
+# description. Same trusted-publisher model as the contexts above.
+REVIEW_GATE_OVERRIDE_CONTEXT = "kendex-reviewer-outage"
+
+# Creator logins whose commit statuses are never evidence. Recommended
+# "github-actions[bot]" wherever PR workflows hold statuses:write — PR
+# content can mint statuses through it. Empty disables.
+REVIEW_GATE_STATUS_PUBLISHER_REJECT = ""
+
+# Logins whose review objects at the exact head count as evidence. Empty =
+# any non-author.
+REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = ""
+
+# "any" or "approved" (an APPROVED at head not withdrawn by a later
+# CHANGES_REQUESTED from the same login).
+REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "any"
+
+# Substrings marking a review row's body as the reviewer's own errored-run
+# attestation — such a row is NOT-EVIDENCE, never a blocker.
+REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS = "encountered an error and was unable to review"
+
+# "enforce" fails closed on unresolved threads CI-side; "off" only where a
+# server-side zero-bypass ruleset already enforces thread hygiene.
+REVIEW_GATE_THREADS = "enforce"
+
+# Bounded attempts per predicate evidence read, and the pause between them.
+REVIEW_GATE_API_ATTEMPTS = "1"
+
+REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
+
+# Carry-safe delta classes ("docs", "comments"; empty = off): ancestor
+# evidence extends to head when the delta is entirely carry-safe. Never a
+# waiver — code changes always need fresh evidence. CAVEAT: "comments" is
+# line-lexical and cannot see heredocs; "docs" has no such caveat.
+REVIEW_GATE_CARRY_FORWARD = ""
+
+# Path globs that DISQUALIFY a carry — for policy-bearing markdown obeyed
+# mechanically (e.g. "*AGENTS.md;.github/*"), which deserves fresh review.
+REVIEW_GATE_CARRY_FORWARD_EXCLUDE = ""
+
+# Exclusion globs DECLARED to match no tracked path yet, so the selftest
+# accepts them; an entry not in the exclude list is an orphan and fails.
+REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
+
+# The one-switch gate disable: "enforce" is the full gate; "off" attests
+# approved before any evidence read. A typo is a loud config error.
+REVIEW_GATE_MODE = "enforce"
+
+# SECOND OPINION
+# One reviewer by default: the highest-priority roster entry that is
+# AVAILABLE and is NOT the model this session runs. Full semantics: second-opinion SKILL.md.
+
+# Priority-ordered roster. Per entry: SECOND_OPINION_<NAME>_CMD and
+# SECOND_OPINION_<NAME>_MODEL (identity, when the CLI fronts another model).
+SECOND_OPINION_MODELS = "claude codex"
+
+# Opinions a review collects; 2+ unions distinct models on one diff.
+SECOND_OPINION_COUNT = "1"
+
+# The model THIS session runs — needed only where the harness cannot be
+# detected (Pi, OpenCode, Cursor, plain shells). SESSION-SCOPED: leave it
+# commented here and export it in the session; a project-file value describes
+# no single session and is refused.
+# SECOND_OPINION_CURRENT_MODEL = "claude"
+
+# Roster commands (identities claude / codex).
+SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
+
+SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.6-sol -s read-only -c model_reasoning_effort=xhigh --ephemeral"
+
+# Example extra roster entry: add "pi-deepseek" to SECOND_OPINION_MODELS,
+# give it a command, declare the model it fronts.
+# SECOND_OPINION_PI_DEEPSEEK_CMD = "pi -p --model deepseek/deepseek-v4-pro"
+# SECOND_OPINION_PI_DEEPSEEK_MODEL = "deepseek"
+
+# Seconds to wait for the external CLI.
+SECOND_OPINION_TIMEOUT = "300"
+
+# Home for review/audit records written without --output; a directory the
+# script CREATES is seeded with a "*" .gitignore (a pre-existing one is
+# left alone — ignore it yourself).
+SECOND_OPINION_ARTIFACT_DIR = "tmp/second-opinion"
+
+# Repo instruction files appended to the review prompt (repo-rule lens).
+# Empty disables.
+SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md review-bots.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
+
+# Force one target instead of walking the roster; a target running this
+# session's model is refused.
+# SECOND_OPINION_TARGET = "claude"
+
+# SIZE RATCHET
+
+# Line threshold for paths matching no class below. Files already over it
+# are frozen in the baseline TSV and may only shrink.
+# SIZE_RATCHET_THRESHOLD = "400"
+
+# Per-path-class thresholds, `pattern=threshold` entries `;`-separated, FIRST
+# match wins. Globs cross `/`; a directory name needs both `tests/*` and
+# `*/tests/*`. A malformed entry is a config error, never a silent fallback.
+# SIZE_RATCHET_CLASSES = "tests/*=800;*/tests/*=800;*.test.*=800"
+
+# Relocate the baseline TSV / exclusion list (repo-root-relative).
+# SIZE_RATCHET_BASELINE = "tools/size-ratchet-baseline.tsv"
+# SIZE_RATCHET_EXCLUDES = "tools/size-ratchet-excludes"
+
+# PRE-COMMIT HOOK
+
+# Clippy lane for staged Rust files: unset = per-crate `cargo clippy
+# --all-targets -- -D warnings`; "off" skips the lane; any other value runs
+# verbatim as the check. The environment variable outranks this file.
+# VSTACK_PRE_COMMIT_RUST_CLIPPY = "off"
+
+# DEBUG / OVERRIDE HOOKS
+
+WORKTREE_CLI = ".agents/skills/worktree/scripts/worktree"
+
+GIT_HOST_CLI = ".agents/skills/github/scripts/github.sh"
