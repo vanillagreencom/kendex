@@ -14,7 +14,7 @@ Ask only for the details that are missing: title, expected outcome, tracker, pro
 ## 2. Create
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues create --title "[TITLE]" --description "[BODY]" --project "[PROJECT]" --labels "[LABELS]" --format=ids
+.agents/skills/linear/scripts/linear.sh issues create --state "Backlog" --title "[TITLE]" --description "[BODY]" --project "[PROJECT]" --labels "[LABELS]" --format=ids
 ```
 
 ```bash

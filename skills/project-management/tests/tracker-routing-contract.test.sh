@@ -91,6 +91,11 @@ grep -Fq -- '--state "Backlog"' "$linear_create_row" || fail 'Linear create rout
 research_issue="$SKILL_DIR/workflows/research-issue.md"
 merge_pr="$SKILL_DIR/../orch/workflows/merge-pr.md"
 plan_issues="$SKILL_DIR/../orch/workflows/plan-issues.md"
+start_new="$SKILL_DIR/../orch/workflows/start-new.md"
+if [[ -f "$start_new" ]]; then
+  start_create_cmd="$(extract "$start_new" 'issues create' '^```$' start-create-cmd)" || fail "could not extract the start-new create command"
+  grep -Fq -- '--state "Backlog"' "$start_create_cmd" || fail 'start-new create does not pass --state "Backlog"'
+fi
 if [[ -f "$plan_issues" ]]; then
   plan_create_cmd="$(extract "$plan_issues" 'issues create' '^```$' plan-create-cmd)" || fail "could not extract the plan-issues create command"
   grep -Fq -- '--state "Backlog"' "$plan_create_cmd" || fail 'plan-issues create does not pass --state "Backlog"'
