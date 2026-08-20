@@ -3,22 +3,31 @@ pkgname=kendex-bin
 pkgver=5.0.1
 pkgrel=1
 pkgdesc='Package manager for AI coding agents, skills, and hooks (desktop app and CLI)'
-arch=('x86_64')
+arch=('x86_64' 'aarch64')
 url='https://kendex.ai'
 license=('MIT')
 depends=('fuse2' 'hicolor-icon-theme')
 provides=('kendex')
 conflicts=('kendex' 'kendex-git')
 options=('!strip')
-source=(
+source=("kendex.png::https://raw.githubusercontent.com/vanillagreencom/kendex/v$pkgver/crates/app/icons/128x128.png")
+source_x86_64=(
   "kendex-app-$pkgver.AppImage::https://github.com/vanillagreencom/kendex/releases/download/v$pkgver/kendex_${pkgver}_amd64.AppImage"
   "kendex-$pkgver::https://github.com/vanillagreencom/kendex/releases/download/v$pkgver/kendex-x86_64-unknown-linux-gnu"
-  "kendex.png::https://raw.githubusercontent.com/vanillagreencom/kendex/v$pkgver/crates/app/icons/128x128.png"
 )
-sha256sums=(
+source_aarch64=(
+  "kendex-app-$pkgver.AppImage::https://github.com/vanillagreencom/kendex/releases/download/v$pkgver/kendex_${pkgver}_aarch64.AppImage"
+  "kendex-$pkgver::https://github.com/vanillagreencom/kendex/releases/download/v$pkgver/kendex-aarch64-unknown-linux-gnu"
+)
+sha256sums=('4ea797c32fc7754254505058574cdf080c90075a6e7995e30b27c6f939953e9d')
+sha256sums_x86_64=(
   '655180e2ba03b91746bb28c6f1ac49ce6684958fa5d6bd20bf4bc9d932973206'
   'a3dee4c286614016198db72603fcf95de277ddf1a245da052dc815821f0e84c0'
-  '4ea797c32fc7754254505058574cdf080c90075a6e7995e30b27c6f939953e9d'
+)
+# Filled by the first release after 5.0.1, the first to ship aarch64 builds.
+sha256sums_aarch64=(
+  '0000000000000000000000000000000000000000000000000000000000000000'
+  '0000000000000000000000000000000000000000000000000000000000000000'
 )
 
 package() {

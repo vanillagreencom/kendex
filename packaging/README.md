@@ -22,12 +22,20 @@ the `.app` bundle on macOS) and leaves the `kendex` command to the CLI.
 
 Each new `vX.Y.Z` changes the artifact checksums. Update, in this repo:
 
-- `arch/kendex/PKGBUILD` + `.SRCINFO`: `pkgver` and the `sha256sums` (the
-  released `kendex-x86_64-unknown-linux-gnu`).
-- `arch/kendex-bin/PKGBUILD` + `.SRCINFO`: `pkgver` and all three
-  `sha256sums` (AppImage, CLI binary, icon).
-- `homebrew/kendex-cli.rb`: `version` and both `sha256` lines.
-- `homebrew/kendex-cask.rb`: `version` and the `.dmg` `sha256`.
+- `arch/kendex/PKGBUILD` + `.SRCINFO`: `pkgver` and `sha256sums_x86_64` /
+  `sha256sums_aarch64` (the released `kendex-x86_64-unknown-linux-gnu` and
+  `kendex-aarch64-unknown-linux-gnu`).
+- `arch/kendex-bin/PKGBUILD` + `.SRCINFO`: `pkgver`, the icon `sha256sums`,
+  and the per-arch pairs (AppImage, CLI binary) in `sha256sums_x86_64` and
+  `sha256sums_aarch64`. Regenerate `.SRCINFO` with `makepkg --printsrcinfo`.
+- `homebrew/kendex-cli.rb`: `version` and all four `sha256` lines (macOS arm
+  and Intel, Linux Intel and arm).
+- `homebrew/kendex-cask.rb`: `version` and both `.dmg` checksums (`arm:` is
+  the `_aarch64.dmg`, `intel:` the `_x64.dmg`).
+
+Checksums for the released files come from the release page or
+`sha256sum <file>` on a download. A target shipping for the first time has
+all-zero placeholders until its first release fills them.
 
 Then push the recipes to their channels:
 
@@ -40,9 +48,9 @@ Then push the recipes to their channels:
   `git push` to `ssh://aur@aur.archlinux.org/<name>.git`. Pushing needs the
   AUR account's SSH key.
 
-The Linux CLI `sha256` is the same value in all three of `kendex.rb`,
-`arch/kendex/PKGBUILD`, and `arch/kendex-bin/PKGBUILD` — bump all three
-together. `kendex-git` needs no checksum change; its `pkgver()` is computed at
+Each Linux CLI `sha256` (one per architecture) is the same value in all
+three of `kendex-cli.rb`, `arch/kendex/PKGBUILD`, and `arch/kendex-bin/PKGBUILD`
+— bump all three together. `kendex-git` needs no checksum change; its `pkgver()` is computed at
 build time from the cloned commit.
 
 ## Caveats

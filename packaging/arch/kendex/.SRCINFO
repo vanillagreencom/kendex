@@ -4,11 +4,14 @@ pkgbase = kendex
 	pkgrel = 1
 	url = https://kendex.ai
 	arch = x86_64
+	arch = aarch64
 	license = MIT
 	provides = kendex
 	conflicts = kendex-git
 	options = !strip
-	source = kendex-5.0.1::https://github.com/vanillagreencom/kendex/releases/download/v5.0.1/kendex-x86_64-unknown-linux-gnu
-	sha256sums = a3dee4c286614016198db72603fcf95de277ddf1a245da052dc815821f0e84c0
+	source_x86_64 = kendex-5.0.1::https://github.com/vanillagreencom/kendex/releases/download/v5.0.1/kendex-x86_64-unknown-linux-gnu
+	sha256sums_x86_64 = a3dee4c286614016198db72603fcf95de277ddf1a245da052dc815821f0e84c0
+	source_aarch64 = kendex-5.0.1::https://github.com/vanillagreencom/kendex/releases/download/v5.0.1/kendex-aarch64-unknown-linux-gnu
+	sha256sums_aarch64 = 0000000000000000000000000000000000000000000000000000000000000000
 
 pkgname = kendex

@@ -187,11 +187,15 @@ fn update_replaces_the_binary_from_a_local_feed() {
     fs::set_permissions(&me, fs::Permissions::from_mode(0o755)).unwrap();
 
     fs::write(home.join("new-binary"), "#!/bin/sh\necho v9\n").unwrap();
-    let target = if cfg!(target_os = "macos") {
-        "aarch64-apple-darwin"
-    } else {
-        "x86_64-unknown-linux-gnu"
-    };
+    let target = format!(
+        "{}-{}",
+        std::env::consts::ARCH,
+        if cfg!(target_os = "macos") {
+            "apple-darwin"
+        } else {
+            "unknown-linux-gnu"
+        }
+    );
     fs::write(
         home.join("feed.json"),
         format!(

@@ -28,13 +28,12 @@ done
 
 os="$(uname -s)"
 arch="$(uname -m)"
+# appimage_arch is the architecture word Tauri puts in the AppImage name.
 case "$os-$arch" in
-  Linux-x86_64|Linux-amd64)   target="x86_64-unknown-linux-gnu"; kind="linux" ;;
-  Darwin-arm64|Darwin-aarch64) target="aarch64-apple-darwin"; kind="macos" ;;
-  Darwin-x86_64)
-    echo "install.sh: no prebuilt binary for Intel macOS yet." >&2
-    echo "  Build from source, or use an Apple-silicon Mac." >&2
-    exit 1 ;;
+  Linux-x86_64|Linux-amd64)    target="x86_64-unknown-linux-gnu";  kind="linux"; appimage_arch="amd64" ;;
+  Linux-aarch64|Linux-arm64)   target="aarch64-unknown-linux-gnu"; kind="linux"; appimage_arch="aarch64" ;;
+  Darwin-arm64|Darwin-aarch64) target="aarch64-apple-darwin";      kind="macos" ;;
+  Darwin-x86_64)               target="x86_64-apple-darwin";       kind="macos" ;;
   *)
     echo "install.sh: unsupported platform: $os $arch" >&2
     echo "  See https://kendex.ai/download for the desktop app, or build from source." >&2
@@ -85,7 +84,7 @@ install_app_linux() {
   trap 'rm -rf "$tmp"' RETURN
   echo "Downloading the desktop app…"
   if ! curl -fSL --proto '=https' -o "$tmp/kendex.AppImage" \
-      "$base/kendex_${plain}_amd64.AppImage"; then
+      "$base/kendex_${plain}_${appimage_arch}.AppImage"; then
     echo "install.sh: could not download the desktop app; the kendex command is installed." >&2
     return 0
   fi

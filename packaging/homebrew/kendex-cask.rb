@@ -8,14 +8,17 @@
 # Installs the app and, through the formula dependency, the kendex command.
 cask "kendex" do
   version "5.0.1"
-  sha256 "f8215e1c059d2afcebfc1b56d64094b2f9fe7dacb1a773ce127acc85c262fb3b"
+  # The Intel sha256 is filled by the first release after 5.0.1.
+  sha256 arm:   "f8215e1c059d2afcebfc1b56d64094b2f9fe7dacb1a773ce127acc85c262fb3b",
+         intel: "0000000000000000000000000000000000000000000000000000000000000000"
 
-  url "https://github.com/vanillagreencom/kendex/releases/download/v#{version}/kendex_#{version}_aarch64.dmg"
+  # Tauri names the Intel disk image `x64` and the Apple-silicon one `aarch64`.
+  arch arm: "aarch64", intel: "x64"
+  url "https://github.com/vanillagreencom/kendex/releases/download/v#{version}/kendex_#{version}_#{arch}.dmg"
   name "kendex"
   desc "Package manager for AI coding agents, skills, and hooks"
   homepage "https://kendex.ai"
 
-  depends_on arch: :arm64
   depends_on formula: "vanillagreencom/kendex/kendex-cli"
 
   app "kendex.app"

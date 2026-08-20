@@ -6,9 +6,10 @@ One workflow, tag-driven:
 git tag v0.1.0 && git push origin v0.1.0
 ```
 
-`.github/workflows/release.yml` builds on a native runner per target
-(linux x86_64, macOS aarch64, windows x86_64) and publishes a **draft**
-GitHub Release with:
+`.github/workflows/release.yml` builds on a native GitHub-standard runner
+per target (Linux x86_64 and aarch64, macOS aarch64 and x86_64, Windows
+x86_64; all free for a public repository) and publishes a **draft** GitHub
+Release with:
 
 - `kendex-<target>[.exe]` — the CLI binary, one per target. These are what
   `kendex update` downloads.
@@ -19,6 +20,11 @@ GitHub Release with:
   a version "latest"; until then existing installs see nothing.
 
 Review the draft, then publish it. That is the release.
+
+The workflow runs on tag push only, never on pull requests, and caches
+the Rust build per target triple. Nothing CLI-only runs on a macOS runner.
+The Intel macOS lane uses `macos-15-intel`, the last Intel image GitHub
+offers, supported until August 2027 — revisit Intel support then.
 
 ## User-supplied gates
 

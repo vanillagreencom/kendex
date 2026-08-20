@@ -1,6 +1,14 @@
 # Release: build the CLI and the desktop app on a native runner per
 # target, then publish a GitHub Release carrying every artifact plus the
 # feed.json that `kendex update` consumes.
+#
+# Tag push only: a release bundle is the most expensive job in the repo,
+# and pull requests are covered by the per-crate checks. Every lane runs
+# on a GitHub-standard runner, which is free for a public repository.
+# Each Apple architecture gets its own native lane rather than one
+# universal binary: the updater keys its artifacts per architecture and a
+# universal build doubles every download for nothing. Linux arm64 is a
+# native lane too — the app's webkit2gtk dependency does not cross-compile.
 name: release
 
 on:
@@ -18,14 +26,25 @@ jobs:
         include:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
           - os: macos-14
             target: aarch64-apple-darwin
+          # The last Intel macOS image GitHub offers; supported until
+          # August 2027. Revisit Intel support when it retires.
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -38,10 +57,13 @@ jobs:
         shell: bash
       - run: npm ci --prefix ui
         shell: bash
-      - run: cargo build --release -p kendex-cli
+      # An explicit --target on every lane puts the output under
+      # target/<triple>/release everywhere, so the staging step below
+      # reads one layout instead of one per runner.
+      - run: cargo build --release -p kendex-cli --target ${{ matrix.target }}
         shell: bash
       - name: Bundle the desktop app
-        run: cd crates/app && ../../ui/node_modules/.bin/tauri build
+        run: cd crates/app && ../../ui/node_modules/.bin/tauri build --target ${{ matrix.target }}
         shell: bash
         env:
           # User-supplied gates: unset keys skip updater-artifact signing.
@@ -52,14 +74,20 @@ jobs:
           mkdir -p dist
           ext=""
           [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
-          cp "target/release/kendex${ext}" "dist/kendex-${{ matrix.target }}${ext}"
+          out="target/${{ matrix.target }}/release"
+          cp "${out}/kendex${ext}" "dist/kendex-${{ matrix.target }}${ext}"
           # Alias binary: consuming repos' git hooks still call `vstack`.
-          cp "target/release/vstack${ext}" "dist/vstack-${{ matrix.target }}${ext}"
-          find target/release/bundle -type f \
+          cp "${out}/vstack${ext}" "dist/vstack-${{ matrix.target }}${ext}"
+          find "${out}/bundle" -type f \
             \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \
-               -o -name '*.dmg' -o -name '*.app.tar.gz' \
-               -o -name '*-setup.exe' -o -name '*.msi' \) \
+               -o -name '*.dmg' -o -name '*-setup.exe' -o -name '*.msi' \) \
             -exec cp {} dist/ \;
+          # Tauri names the macOS updater archive after the app alone, so
+          # the two Apple lanes would overwrite each other in the merged
+          # release; the target goes into the file name here.
+          find "${out}/bundle" -type f -name '*.app.tar.gz*' | while read -r f; do
+            cp "$f" "dist/kendex-${{ matrix.target }}.app.tar.gz${f##*.app.tar.gz}"
+          done
           ls -l dist
         shell: bash
       - uses: actions/upload-artifact@v4
@@ -85,7 +113,9 @@ jobs:
             "version": "${version}",
             "assets": {
               "x86_64-unknown-linux-gnu": "${base}/kendex-x86_64-unknown-linux-gnu",
+              "aarch64-unknown-linux-gnu": "${base}/kendex-aarch64-unknown-linux-gnu",
               "aarch64-apple-darwin": "${base}/kendex-aarch64-apple-darwin",
+              "x86_64-apple-darwin": "${base}/kendex-x86_64-apple-darwin",
               "x86_64-pc-windows-msvc": "${base}/kendex-x86_64-pc-windows-msvc.exe"
             }
           }

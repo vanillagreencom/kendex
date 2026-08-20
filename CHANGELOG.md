@@ -13,6 +13,10 @@ changes carry a **Breaking** call-out with their migration note inline.
   the wordmark's green, at every size the desktop, dock, and installer use
   on Linux, macOS, and Windows. The CLI-only channels are unaffected — they
   install no app and so carried no icon either way.
+- Releases now ship for Intel Macs and arm64 Linux (Raspberry Pi, Graviton)
+  alongside Apple silicon, x86_64 Linux, and Windows. The installer script,
+  `kendex update`, Homebrew, and the AUR packages all pick the build for
+  your machine.
 - New ways to install. A one-line installer,
   `curl -fsSL https://kendex.ai/install.sh | sh`, that installs the app and
   the CLI on Linux and the CLI on macOS;
