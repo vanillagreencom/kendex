@@ -174,12 +174,12 @@ neither a parent nor sub-issues — otherwise skip this task entirely (an
 In Progress or In Review trigger from a re-triage pass is never bundled).
 Search open, unstarted issues (Triage, Backlog, Todo) of the SAME team and
 SAME project that likewise have no parent, no sub-issues, and carry an
-agent:* label — excluding companions under 10 minutes old, whatever their
-body looks like: every create-then-link route attaches parents and blocking
-relations after the create. Exempt are the trigger and any issue named in a
-`bundle-handoff from <ID>` comment on the trigger (see the guard below);
-two human issues filed within ten minutes of each other are caught by
-Loop 3's companion check instead. Evaluation order for the boundary rule: FIRST pick the tentative bundle —
+agent:* label — excluding Backlog-state issues under 10 minutes old:
+pipeline creates are born in Backlog and attach parents and blocking
+relations after the create, while human-filed issues are born in Triage
+and stay eligible at any age, so a creation-time pair still bundles. The
+trigger, and any issue named in a `bundle-handoff from <ID>` comment on
+it (see the guard below), are exempt regardless. Evaluation order for the boundary rule: FIRST pick the tentative bundle —
 the trigger plus the one to four same-PR companions you would actually
 parent — then repeatedly drop any member (including the trigger) that
 blocks or is blocked by any issue outside that tentative bundle, until a
