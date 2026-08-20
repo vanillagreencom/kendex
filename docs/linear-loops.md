@@ -243,7 +243,8 @@ e.g. `agent:multi`] when children span two or more `agent:*` domains,
 otherwise the children's shared agent label, plus every other required
 category (domain, type) taken from the children's shared labels, all
 existing team labels — a Backlog-born parent gets no Task 2 pass, so
-validate the set before creating; the parent carries NO
+validate the set before creating; the parent takes the highest priority
+among its children (backlog ordering reads the parent, not the children); the parent carries NO
 estimate; omit the Acceptance Criteria section when children have none; no
 implementation detail — requirements live in the children; add no blocking
 relations unless a child's own text states one.
@@ -394,6 +395,5 @@ Comments are short, factual, and neutral. No greetings, no sign-offs.
 - **No per-team loop copies** — one ownership map covers the teams; copies drift.
 - **No "updated" catch-all loop** — sync and orchestration churn would fire it constantly.
 - **No cancel/consolidation loop** — the sweep FLAGS obsolete candidates;
-  cancellation and merging stay with the gated audit workflow. Task 6
-  bundling creates only a template parent and destroys nothing.
+  cancellation and merging stay with the gated audit workflow.
 - **No priority/estimate loop** — orchestration and cycle planning own those.
