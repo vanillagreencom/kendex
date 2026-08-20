@@ -15,10 +15,13 @@ import { useSettingsStore } from "./settings";
  * The size on screen, or null while the settings that hold it are still
  * loading. Settings that arrived without an explicit size are a different
  * answer: that means the default, not "unknown".
+ *
+ * A press that the window has not answered for yet is only in `shownZoom`,
+ * so the two have to be read together to get what is actually on screen.
  */
 export function currentZoom(): number | null {
-  const settings = useSettingsStore.getState().settings;
-  return settings ? (settings.zoom ?? ZOOM.default) : null;
+  const { settings, shownZoom } = useSettingsStore.getState();
+  return settings ? (shownZoom ?? settings.zoom ?? ZOOM.default) : null;
 }
 
 export const zoom = zoomControls({

@@ -9,6 +9,8 @@ import {
   ok,
   type Reply,
   settings,
+  stored,
+  type WindowReply,
   zoom,
 } from "./zoom-fixture";
 
@@ -129,6 +131,42 @@ describe("zoom, on disk", () => {
 
     expect(useSettingsStore.getState().settings?.appearance).toBe("dark");
     expect(zoom()).toBe(150);
+  });
+
+  /// Every settings action writes the whole object, so a size that is only
+  /// on screen would be persisted by an unrelated one — faithfully, and
+  /// then rolled back on screen but not in the file, leaving the next
+  /// launch to apply a size the window had refused.
+  it("keeps a size the window has not answered for out of another setting's save", async () => {
+    const asked = deferred<WindowReply>();
+    vi.mocked(commands.windowSetZoom).mockReturnValueOnce(asked.promise);
+
+    const previewed = useSettingsStore.getState().setZoom(150);
+    await useSettingsStore.getState().setAppearance("dark");
+    // Read while the resize is still out; asserted after it is answered, so
+    // a failure here cannot leave the queue holding an unsettled request
+    // for the rest of the suite.
+    const carried = vi.mocked(commands.updateSettings).mock.calls[0][0].zoom;
+    const onDisk = stored();
+
+    asked.settle(failed("no webview"));
+    await previewed;
+
+    expect(carried).toBe(100);
+    expect(onDisk).toBe(100);
+    // The window never left 100, and neither did the file.
+    expect(zoom()).toBe(100);
+    expect(stored()).toBe(100);
+  });
+
+  /// The other half of the same rule: a size the window has taken is the
+  /// truth about the app, so an unrelated write has to carry it rather than
+  /// put back the one the file still holds.
+  it("carries a size the window has taken into another setting's save", async () => {
+    await useSettingsStore.getState().setZoom(150);
+    await useSettingsStore.getState().setAppearance("dark");
+
+    expect(vi.mocked(commands.updateSettings).mock.calls[0][0].zoom).toBe(150);
   });
 
   it("leaves the size on screen when it cannot be saved, and says so", async () => {

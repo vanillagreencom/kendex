@@ -363,7 +363,13 @@ lives in one capability table read by core and UI.
   those orderings rather than answering them, since there is never a second
   reply to interleave with. The size still shows the moment it is pressed,
   so the control stays immediate and two presses in one frame cannot
-  collapse into one. At most one save is ever in flight, and asks made
+  collapse into one, and that previewed size is held in a field of its own
+  rather than in the shared settings object: every settings action writes
+  that object whole, so a preview sitting in it would be persisted,
+  faithfully, by an unrelated save, and then rolled back on screen but not
+  in the file. A size the window has taken moves into the shared object at
+  once — by then it is what the app is showing, so a write that carries it
+  carries the truth. At most one save is ever in flight, and asks made
   while it runs collapse into a single follow-up that writes whatever is on
   screen by then, so replies can never land out of order and put back a
   size the person has already moved past. A write waits for the resize

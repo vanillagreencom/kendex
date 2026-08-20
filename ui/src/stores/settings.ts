@@ -8,9 +8,9 @@ import {
 } from "@/bindings";
 import { useProblemsStore } from "./problems";
 import { useScanStore } from "./scan";
-import { type ZoomActions, zoomActions } from "./settings-zoom";
+import { type ZoomSlice, zoomActions } from "./settings-zoom";
 
-interface SettingsState extends ZoomActions {
+interface SettingsState extends ZoomSlice {
   settings: AppSettings | null;
   capabilities: CapabilityRow[];
   load: () => Promise<void>;

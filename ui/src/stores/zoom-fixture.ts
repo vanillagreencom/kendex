@@ -3,6 +3,7 @@ import type { AppSettings } from "@/bindings";
 import { commands } from "@/bindings";
 import { useProblemsStore } from "./problems";
 import { useSettingsStore } from "./settings";
+import { currentZoom } from "./zoom";
 
 /** Shared by the two zoom suites: the same store, mocked the same way. Each
  *  suite still declares its own `vi.mock`, which vitest hoists per file. */
@@ -37,12 +38,15 @@ export function deferred<T>() {
   return { promise, settle };
 }
 
-export const zoom = () => useSettingsStore.getState().settings?.zoom;
+/** What the app is showing, which a press moves ahead of the window. */
+export const zoom = () => currentZoom();
+/** What a save would carry: the size the shared settings object holds. */
+export const stored = () => useSettingsStore.getState().settings?.zoom;
 export const dialog = () => useProblemsStore.getState().dialog;
 
 /** A store at 100%, a closed dialog, and a window that takes every size. */
 export function freshZoomStore() {
-  useSettingsStore.setState({ settings, capabilities: [] });
+  useSettingsStore.setState({ settings, shownZoom: null, capabilities: [] });
   useProblemsStore.setState({
     dialog: { open: false, title: "", steps: [], actions: [] },
   });
