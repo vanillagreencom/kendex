@@ -640,7 +640,7 @@ md_tokens_of() { # LINE -> candidate tokens on stdout
     # the bare path as this repo. The markdown branch already skips the
     # qualified form by charset — the code branch has to match it. The
     # qualifier needs a boundary before it and a `/` after the colon, so a
-    # line-suffixed local citation (`docs/gone.md:42`) is untouched.
+    # line-suffixed local citation (`docs/<x>.md:42`) is untouched.
     gsub(/(^|[^A-Za-z0-9_.\/-])[A-Za-z][A-Za-z0-9_-]*:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.\/-]*/, " ")
     while (match($0, /[A-Za-z0-9_.\/-]+/)) {
       tok = substr($0, RSTART, RLENGTH)
