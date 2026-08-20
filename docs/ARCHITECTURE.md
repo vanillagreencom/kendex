@@ -552,7 +552,12 @@ lives in one capability table read by core and UI.
   page separately asks the mirror what newer content exists (fetching
   pinned sources too — a pin says what installs, not what exists). A
   version timeline lists only commits that touched the package's files,
-  decorated with tag names, never replaced by them. Muting a package's
+  decorated with tag names, never replaced by them. The overview is one
+  flat row per package per scope; the Updates page folds rows into one
+  line per package and expands them by place, because a hold, an edit,
+  and an Update are each decided per scope. Nothing applies an update on
+  its own: a following package comes current when its scope is applied
+  or refreshed, a held one when its hold is moved. Muting a package's
   update notifications is a machine-local settings entry, not manifest
   intent: a preference committed to a shared repository would silence a
   whole team.

@@ -7,6 +7,7 @@ import {
   updatedToastLabel,
 } from "@/lib/copy";
 import { scopeKey } from "@/lib/scope";
+import { packageCount, updatablePlaces } from "@/lib/update-groups";
 import { useAuditStore } from "./audit";
 import { useProblemsStore } from "./problems";
 import { useScanStore } from "./scan";
@@ -18,10 +19,11 @@ const noteworthy = (row: UpdateRow): boolean =>
   row.updateAvailable || row.removedUpstream || row.mixed;
 
 /** The sidebar badge's number: packages with news someone would want to
- *  hear. Ignored ones asked not to be counted; held ones still count — a
- *  hold is "not yet", not "never tell me". */
+ *  hear, counted once however many places they are installed in. Ignored
+ *  ones asked not to be counted; held ones still count — a hold is "not
+ *  yet", not "never tell me". */
 export const visibleUpdateCount = (rows: UpdateRow[]): number =>
-  rows.filter((row) => noteworthy(row) && !row.ignored).length;
+  packageCount(visibleUpdates(rows));
 
 /** The Updates page's main list: everything noteworthy that has not been
  *  muted. */
@@ -45,12 +47,14 @@ interface UpdatesState {
   load: () => Promise<void>;
   check: () => Promise<void>;
   updateOne: (row: UpdateRow) => Promise<void>;
-  updateAll: () => Promise<void>;
+  /** Bring every updatable place among `rows` current — the page-level
+   *  button passes every visible row, a package's button its own places. */
+  updateRows: (rows: UpdateRow[]) => Promise<void>;
   setAutoUpdate: (row: UpdateRow, auto: boolean) => Promise<void>;
   setIgnored: (row: UpdateRow, ignored: boolean) => Promise<void>;
 }
 
-export const useUpdatesStore = create<UpdatesState>((set, get) => {
+export const useUpdatesStore = create<UpdatesState>((set) => {
   const showError = (title: string, message: string) =>
     useProblemsStore.getState().showError({ title, message });
 
@@ -133,17 +137,15 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
       }
     },
 
-    updateAll: async () => {
+    updateRows: async (wanted) => {
       set({ busy: true });
       try {
         // Edited packages are held by the engine and cannot be updated
         // this way — they need the fork decision first, so they are left
-        // out of "update all" rather than silently surviving it. Rows that
-        // are news without an update (gone upstream, mixed installs) have
-        // nothing for this button to do.
-        const rows = visibleUpdates(get().rows).filter(
-          (row) => row.updateAvailable && !row.blockedByLocalEdit,
-        );
+        // out rather than silently surviving the click. Rows that are news
+        // without an update (gone upstream, mixed installs) have nothing
+        // for this button to do.
+        const rows = updatablePlaces(wanted);
         // Move every hold first, then one apply per scope brings the
         // followers current — never two applies for one scope.
         let ok = true;
@@ -172,7 +174,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     },
 
     setAutoUpdate: async (row, auto) => {
-      // Turning automatic OFF holds the package at what is installed now.
+      // Switching following OFF holds the package at what is installed now.
       // With nothing installed to hold at, there is nothing to switch —
       // never fall through to null, which means "follow" (the opposite).
       const hold = row.current?.commit ?? null;

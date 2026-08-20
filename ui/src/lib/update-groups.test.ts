@@ -1,0 +1,73 @@
+import { describe, expect, it } from "vitest";
+import type { UpdateRow } from "@/bindings";
+import {
+  groupUpdates,
+  packageCount,
+  placeName,
+  updatablePlaces,
+} from "./update-groups";
+
+const row = (
+  name: string,
+  root: string | null,
+  extra: Partial<UpdateRow> = {},
+): UpdateRow => ({
+  scope: root ? { scope: "project", root } : { scope: "global" },
+  kind: "skill",
+  name,
+  source: "kendex",
+  repo: "vanillagreencom/kendex",
+  current: { commit: "1111111111", label: null, date: null },
+  latest: { commit: "2222222222", label: null, date: null },
+  updateAvailable: true,
+  pinned: false,
+  blockedByLocalEdit: false,
+  removedUpstream: false,
+  mixed: false,
+  forked: false,
+  ignored: false,
+  ...extra,
+});
+
+describe("update groups", () => {
+  it("folds one package's places into one group, in first-seen order", () => {
+    const groups = groupUpdates([
+      row("gh", null),
+      row("review", "/home/x/acme"),
+      row("gh", "/home/x/acme"),
+      row("gh", "/home/x/shop"),
+    ]);
+    expect(groups.map((g) => [g.name, g.places.length])).toEqual([
+      ["gh", 3],
+      ["review", 1],
+    ]);
+    expect(groups[0].places.map((p) => placeName(p.scope))).toEqual([
+      "User level",
+      "acme",
+      "shop",
+    ]);
+  });
+
+  it("keeps a hook and a skill of the same name apart", () => {
+    const groups = groupUpdates([
+      row("gh", null),
+      row("gh", null, { kind: "hook" }),
+    ]);
+    expect(groups).toHaveLength(2);
+  });
+
+  it("counts packages, not places", () => {
+    expect(
+      packageCount([row("gh", null), row("gh", "/a"), row("x", "/a")]),
+    ).toBe(2);
+  });
+
+  it("leaves edited places out of a bulk update", () => {
+    const places = updatablePlaces([
+      row("gh", null),
+      row("gh", "/a", { blockedByLocalEdit: true }),
+      row("gh", "/b", { updateAvailable: false, removedUpstream: true }),
+    ]);
+    expect(places.map((p) => placeName(p.scope))).toEqual(["User level"]);
+  });
+});

@@ -29,11 +29,21 @@ changes carry a **Breaking** call-out with their migration note inline.
 
 ### Changed
 
-- The Updates page is a table. Column headers say what each column is —
-  package, type, version, auto-update — so a row no longer repeats "Update
-  automatically" beside its toggle, the type is written out instead of
-  being only an icon, and the actions line up on the right with Update as
-  the clear one to press.
+- The Updates page is a table with one row per package. A package out of
+  date in several projects shows how many places, expands into a row per
+  place — User level and each project by name — and each place has its
+  own versions, Follow source switch, Preview, and Update, plus an
+  "Update all" for that package. A place whose files you edited says
+  "Customized here" and offers Keep as my own or Use new version, since
+  an edit in one project says nothing about the copy in another. The
+  subtitle counts packages and places, and the sidebar badge counts
+  packages.
+- The "Update automatically" switch is now "Follow source": nothing in the
+  app applies updates on its own. A following package comes current when
+  its project refreshes or you press Update; a held one waits until you
+  choose. The package page's version menu and toasts say the same.
+- `kendex updates` names the place — global or the project path — at the
+  start of every line.
 - The app uses the Geist typeface, with titles and navigation in Geist Mono
   to match the website.
 - **Breaking**: the default Homebrew install is now the app —

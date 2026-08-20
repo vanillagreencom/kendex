@@ -102,8 +102,12 @@ pub fn run(env: &Env, args: UpdatesArgs) -> CliResult {
         } else {
             format!("  [{}]", notes.join(", "))
         };
+        // The place leads the line: the same package can be out of date
+        // in several projects, and a line that does not say which one
+        // reads as a duplicate.
         say(&format!(
-            "{} {}  {} -> {}{notes}",
+            "{}  {} {}  {} -> {}{notes}",
+            row.scope.label(),
             row.kind.name(),
             row.name,
             row.current

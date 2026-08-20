@@ -159,7 +159,7 @@ export const UPDATE_LABEL = "Update";
 export const PREVIEW_CHANGES_LABEL = "Preview changes";
 export const SWITCH_VERSION_LABEL = "Switch to this version";
 export const COMPARE_WITH_INSTALLED_LABEL = "Compare with installed";
-export const FOLLOW_SOURCE_LABEL = "Resume automatic updates";
+export const FOLLOW_SOURCE_LABEL = "Follow the source again";
 export const INSTALLED_VERSION_TAG = "installed";
 export const HELD_VERSION_TAG = "held here";
 export const NO_VERSIONS_NOTE =
@@ -170,7 +170,6 @@ export const DIFF_TRUNCATED_NOTE =
 export const VERSION_ERROR_TITLE = "Couldn't switch versions";
 
 // Updates page.
-export const UPDATES_SUBTITLE = "Newer versions of what you already have.";
 export const UPDATES_EMPTY = "Everything is up to date";
 export const UPDATES_EMPTY_BODY =
   "Every package you installed is on its latest version.";
@@ -178,12 +177,23 @@ export const UPDATES_UNCHECKED_TITLE = "Couldn't be checked";
 export const REMOVED_UPSTREAM_TAG = "No longer in its source";
 export const UPDATE_ALL_LABEL = "Update all";
 export const CHECK_FOR_UPDATES_LABEL = "Check for updates";
-export const AUTO_UPDATE_COLUMN = "Auto-update";
-export const autoUpdateLabel = (name: string): string =>
-  `Update ${name} automatically`;
+export const FOLLOW_SOURCE_COLUMN = "Follow source";
+export const FOLLOW_SOURCE_HELP =
+  "Following packages come current when that project refreshes or you press Update. Held ones wait until you choose.";
+export const followSourceLabel = (name: string, place: string): string =>
+  `Follow the source for ${name} in ${place}`;
 export const UPDATES_NAME_COLUMN = "Package";
 export const UPDATES_TYPE_COLUMN = "Type";
+export const UPDATES_PLACE_COLUMN = "Where";
 export const UPDATES_VERSION_COLUMN = "Version";
+export const USER_LEVEL_PLACE = "User level";
+export const placesLabel = (count: number): string =>
+  count === 1 ? "1 place" : `${count} places`;
+export const updatesSubtitle = (packages: number, places: number): string =>
+  `${packages === 1 ? "1 update" : `${packages} updates`} across ${placesLabel(places)}`;
+export const UPDATE_PACKAGE_EVERYWHERE_LABEL = "Update all";
+export const CUSTOMIZED_HERE_LABEL = "Customized here";
+export const USE_NEW_VERSION_LABEL = "Use new version…";
 export const IGNORE_UPDATES_LABEL = "Stop notifying…";
 export const ignoreConfirmTitle = (name: string): string =>
   `Stop notifying about ${name}?`;
@@ -221,9 +231,4 @@ export const forkedAttentionTitle = (count: number): string =>
 export const FORKED_ATTENTION_DETAIL =
   "Your changes are safe — nothing will overwrite them. Decide whether to keep each as your own copy.";
 
-// The install-time ask, answered by default: installs keep themselves
-// current unless the toast's one tap says otherwise.
-export const installedAutoToastLabel = (name: string): string =>
-  `Installed ${name} — it will keep itself up to date`;
-export const UPDATE_MANUALLY_ACTION = "Update manually instead";
-export const FOLLOW_SOURCE_TOAST = "Now updating automatically";
+export const FOLLOW_SOURCE_TOAST = "Now following its source";

@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { UpdatesTable } from "@/components/updates-table";
 import {
   CHECK_FOR_UPDATES_LABEL,
+  FOLLOW_SOURCE_HELP,
   hiddenUpdatesLabel,
   IGNORE_CONFIRM_BODY,
   IGNORE_CONFIRM_LABEL,
@@ -20,10 +21,11 @@ import {
   UPDATE_ALL_LABEL,
   UPDATES_EMPTY,
   UPDATES_EMPTY_BODY,
-  UPDATES_SUBTITLE,
   UPDATES_UNCHECKED_TITLE,
+  updatesSubtitle,
 } from "@/lib/copy";
 import { CONTENT_WIDTH, PAGE_GUTTER } from "@/lib/layout";
+import { packageCount } from "@/lib/update-groups";
 import { cn } from "@/lib/utils";
 import {
   hiddenUpdates,
@@ -34,7 +36,7 @@ import {
 /** Which packages have newer versions, what changed, and per-package
  *  control over how loudly to hear about it. */
 export function UpdatesPage() {
-  const { rows, warnings, busy, checking, check, updateAll } =
+  const { rows, warnings, busy, checking, check, updateRows } =
     useUpdatesStore();
   const load = useUpdatesStore((s) => s.load);
   const [showHidden, setShowHidden] = useState(false);
@@ -77,7 +79,18 @@ export function UpdatesPage() {
     <div className="flex min-h-0 flex-1 flex-col">
       <PageHeader
         title="Updates"
-        subtitle={UPDATES_SUBTITLE}
+        subtitle={
+          visible.length > 0 ? (
+            <>
+              {updatesSubtitle(packageCount(visible), visible.length)}
+              <span className="block text-muted-foreground">
+                {FOLLOW_SOURCE_HELP}
+              </span>
+            </>
+          ) : (
+            FOLLOW_SOURCE_HELP
+          )
+        }
         action={
           <div className="flex gap-2">
             {visible.length > 0 ? (
@@ -93,11 +106,11 @@ export function UpdatesPage() {
                 {CHECK_FOR_UPDATES_LABEL}
               </Button>
             ) : null}
-            {visible.length > 1 ? (
+            {packageCount(visible) > 1 ? (
               <Button
                 size="sm"
                 disabled={busy}
-                onClick={() => void updateAll()}
+                onClick={() => void updateRows(visible)}
               >
                 {UPDATE_ALL_LABEL}
               </Button>
