@@ -8,6 +8,7 @@ pub mod decisions_cmd;
 pub mod diff_cmd;
 pub mod drift_hook;
 pub mod engine_common;
+pub mod findings;
 pub mod fork_cmd;
 pub mod guard_cmd;
 pub mod import;

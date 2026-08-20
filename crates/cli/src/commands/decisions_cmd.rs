@@ -1,143 +1,21 @@
-//! The safety findings in installed content, the decisions recorded about
-//! them, and the verbs that make and take back those decisions.
+//! The decisions recorded about safety findings, and the verbs that make
+//! and take one back.
 //!
-//! Every finding is printed with the token that names exactly it on exactly
-//! this content; `dismiss` takes that token and nothing looser, the way
-//! `--allow-unsafe` takes `name@hash` — a bare name in a shell history must
-//! never dismiss whatever replaced what was read.
+//! `dismiss` takes the token `kendex findings` printed and nothing looser,
+//! the way `--allow-unsafe` takes `name@hash` — a bare name in a shell
+//! history must never dismiss whatever replaced what was read.
 
 use clap::Args;
 use kendex_core::apply;
-use kendex_core::engine::decisions::{DecisionState, DecisionToken, short_token};
+use kendex_core::engine::decisions::DecisionToken;
 use kendex_core::engine::ops::{
     DecisionRecord, RecordState, dismiss, list_decisions, revoke_dismissal, revoke_override,
 };
-use kendex_core::engine::{
-    ItemSafety, PlanOptions, allow_unsafe_flag, observed_safety, plan_apply,
-};
 use kendex_core::env::Env;
-use kendex_core::error::CoreError;
 use kendex_core::quality::reviews::DismissReason;
 
 use super::{CliResult, resolve_scopes, say};
 use crate::scope::ScopeFilter;
-
-#[derive(Args)]
-pub struct FindingsArgs {
-    #[arg(short = 'g', long)]
-    global: bool,
-    /// project | global | all (default all)
-    #[arg(long)]
-    scope: Option<String>,
-}
-
-/// What the safety rules found in what is installed right now, each finding
-/// with the token a dismissal takes and what has already been decided about
-/// it.
-pub fn findings(env: &Env, args: FindingsArgs) -> CliResult {
-    let filter = ScopeFilter::resolve(args.scope.as_deref(), args.global, ScopeFilter::All)?;
-    for scope in resolve_scopes(env, filter)? {
-        // Each row carries whether the gate is what is holding it: only a
-        // row the plan produced can be accepted with `--allow-unsafe`.
-        let mut rows: Vec<(ItemSafety, bool)> = held_back(env, &scope)?
-            .into_iter()
-            .map(|row| (row, true))
-            .collect();
-        let held: Vec<String> = rows.iter().map(|(row, _)| row.key()).collect();
-        rows.extend(
-            observed_safety(env, &scope)?
-                .into_iter()
-                .filter(|row| !row.findings.is_empty() && !held.contains(&row.key()))
-                .map(|row| (row, false)),
-        );
-        if rows.is_empty() {
-            say(&format!("{}: nothing found", scope.label()));
-            continue;
-        }
-        rows.sort_by_key(|(row, _)| (!row.blocked(), row.safety.score));
-        say(&format!("{}:", scope.label()));
-        for (row, gated) in &rows {
-            print_row(row, *gated);
-        }
-    }
-    Ok(())
-}
-
-/// What the gate would refuse to install in this scope, judged on the bytes
-/// it would write.
-///
-/// A declared item is held back over its *desired* render, and that is the
-/// content `--allow-unsafe` accepts. Scoring the copy already on disk would
-/// show findings from bytes the gate never reads and hand out a token the
-/// gate rejects — a printed instruction that does nothing when followed. So
-/// a held-back item is reported from the plan, and everything else from
-/// disk, which is where its dismissal tokens bind.
-fn held_back(env: &Env, scope: &kendex_core::model::Scope) -> Result<Vec<ItemSafety>, CoreError> {
-    let report = plan_apply(env, scope, &PlanOptions::default())?;
-    Ok(report
-        .safety
-        .into_iter()
-        .filter(ItemSafety::blocked)
-        .collect())
-}
-
-fn print_row(row: &ItemSafety, gated: bool) {
-    let held = match row.blocked() {
-        true => " — held back",
-        false => "",
-    };
-    say(&format!(
-        "  {} {} for {} scores {}/100{held}",
-        row.kind.name(),
-        row.name,
-        row.harness.display_name(),
-        row.safety.score
-    ));
-    for (finding, decision) in row.findings.iter().zip(&row.decisions) {
-        say(&format!(
-            "    [{}] {}: {}",
-            finding.severity.name(),
-            finding.location,
-            finding.message
-        ));
-        say(&format!("      fix: {}", finding.remediation));
-        match &decision.state {
-            DecisionState::Open { earlier } => {
-                if let Some(token) = &decision.token {
-                    let printed = match DecisionToken::parse(token) {
-                        Ok(parsed) => short_token(&parsed),
-                        Err(_) => token.clone(),
-                    };
-                    say(&format!("      token: {printed}"));
-                }
-                if let Some(earlier) = earlier {
-                    say(&format!("      dismissed before, but {earlier}"));
-                }
-            }
-            DecisionState::Dismissed {
-                reason,
-                dismissed_at,
-            } => say(&format!(
-                "      dismissed {dismissed_at} — {}",
-                reason.name()
-            )),
-            DecisionState::Accepted { granted_at } => {
-                say(&format!("      accepted {granted_at}"));
-            }
-        }
-    }
-    // Only what the gate is holding back can be accepted this way. Content
-    // already on disk that nothing declares is not waiting on a grant, and
-    // offering one would name bytes no plan is about.
-    if let Some(review_hash) = &row.review_hash
-        && gated
-    {
-        say(&format!(
-            "    to install it anyway, review the findings above and apply with --allow-unsafe {}",
-            allow_unsafe_flag(&row.name, review_hash)
-        ));
-    }
-}
 
 #[derive(Args)]
 pub struct DismissArgs {

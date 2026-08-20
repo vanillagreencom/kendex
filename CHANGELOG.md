@@ -39,6 +39,10 @@ changes carry a **Breaking** call-out with their migration note inline.
   check refuses also keeps its install record when its files stay, so the
   next run still knows kendex wrote them instead of reporting the item as
   unmanaged forever.
+- `kendex findings` reports the copy that is installed beside the update
+  being held back, when the two differ, each saying which it is. An update
+  stuck behind the safety check does not make what a tool is loading right
+  now any safer, and only the installed copy's findings can be dismissed.
 - `--allow-unsafe` naming something no longer there stops the run and says
   so, with the flag that accepts what the item says now. It used to be
   ignored in silence, leaving "nothing to do" as the only answer to a typed

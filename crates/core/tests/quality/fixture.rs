@@ -92,9 +92,8 @@ pub fn plan(f: &Fixture, allow_unsafe: &[&str]) -> kendex_core::engine::EngineRe
     plan_with(f, allow_unsafe, false).unwrap()
 }
 
-/// The same, with the answer kept whole: an unmatched grant fails the plan,
-/// and discarding edits is what writes over bytes kendex cannot prove it
-/// rendered itself.
+/// The same, with discarding edits available: that is what writes over
+/// bytes kendex cannot prove it rendered itself.
 pub fn plan_with(
     f: &Fixture,
     allow_unsafe: &[&str],
@@ -109,11 +108,32 @@ pub fn plan_with(
         &manifest,
         &lock,
         &PlanOptions {
-            allow_unsafe: allow_unsafe.iter().map(|name| (*name).to_owned()).collect(),
+            allow_unsafe: options(allow_unsafe).allow_unsafe,
             overwrite_edited: discard_edits,
             ..PlanOptions::default()
         },
     )
+}
+
+/// A whole run: plan this one scope, then judge every grant against what
+/// the run turned out to be about. The judging belongs to the caller, so a
+/// grant meant for one scope is not an error against another the same
+/// command happens to cover.
+pub fn accept(
+    f: &Fixture,
+    allow_unsafe: &[&str],
+) -> kendex_core::error::Result<kendex_core::engine::EngineReport> {
+    let report = plan_with(f, allow_unsafe, false)?;
+    let rows: Vec<&kendex_core::engine::ItemSafety> = report.safety.iter().collect();
+    kendex_core::engine::refuse_unmatched_grants(&options(allow_unsafe), &rows)?;
+    Ok(report)
+}
+
+fn options(allow_unsafe: &[&str]) -> PlanOptions {
+    PlanOptions {
+        allow_unsafe: allow_unsafe.iter().map(|name| (*name).to_owned()).collect(),
+        ..PlanOptions::default()
+    }
 }
 
 /// The exact flag that grants a review of what `hostile` says right now.

@@ -2,7 +2,9 @@ use kendex_core::engine::{PlanOptions, plan_apply};
 use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
 
-use super::engine_common::{confirm_and_execute, print_conflicts, refresh_failures};
+use super::engine_common::{
+    confirm_and_execute, print_conflicts, print_held_back, refresh_failures,
+};
 use super::{CliResult, resolve_scopes, say};
 use crate::scope::ScopeFilter;
 
@@ -107,18 +109,21 @@ pub fn run(
                 continue;
             }
         };
+        // What this refresh will not write comes first, and comes before
+        // the shortcut below: a scope with nothing installed and nothing to
+        // do is not worth a line, but a scope whose only reason for having
+        // nothing to do is that the gate refused its content is.
+        print_held_back(&report);
+        match verbose {
+            true => print_drift(&report),
+            false => print_conflicts(&report),
+        }
         let lock = load_lock(&lock_path(env, &scope))?;
         if lock.entries.is_empty() && report.plan.is_empty() {
             continue;
         }
         refreshed_anything = true;
         failures.extend(refresh_failures(&report));
-        // What this refresh changes and what it will not: verbose lists
-        // every row, otherwise just the conflicts that need an answer.
-        match verbose {
-            true => print_drift(&report),
-            false => print_conflicts(&report),
-        }
         if report.plan.is_empty() {
             say(&format!("{}: up to date", scope.label()));
             continue;

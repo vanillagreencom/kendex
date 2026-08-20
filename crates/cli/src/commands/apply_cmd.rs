@@ -1,4 +1,4 @@
-use kendex_core::engine::{PlanOptions, plan_apply};
+use kendex_core::engine::{PlanOptions, plan_apply, refuse_unmatched_grants};
 use kendex_core::env::Env;
 use kendex_core::error::CoreError;
 use kendex_core::manifest::{self, ManifestFile};
@@ -22,9 +22,12 @@ pub fn run(
     allow_unsafe: Vec<String>,
     discard_edits: bool,
 ) -> CliResult {
-    // Every scope is planned before any of them is written: a grant that
-    // names nothing fails its scope's plan, and a half-applied run followed
-    // by that failure is the worst of both answers.
+    // Every scope is planned before any of them is written. A grant is
+    // judged against the whole run and not against one scope at a time:
+    // with `--scope all` a flag for the project would otherwise be a hard
+    // error the moment the personal scope, which never heard of the item,
+    // is planned. Failing before the first write is the other half — a
+    // half-applied run followed by that failure is the worst answer.
     let mut planned = Vec::new();
     for scope in resolve_scopes(env, filter)? {
         // Plan from the manifest as it sits on disk — the same loader the
@@ -48,6 +51,16 @@ pub fn run(
         };
         planned.push((scope.clone(), plan_apply(env, &scope, &options)?));
     }
+    let options = PlanOptions {
+        allow_unsafe,
+        ..PlanOptions::default()
+    };
+    let rows: Vec<&kendex_core::engine::ItemSafety> = planned
+        .iter()
+        .flat_map(|(_, report)| report.safety.iter())
+        .collect();
+    refuse_unmatched_grants(&options, &rows)?;
+
     for (scope, report) in planned {
         say(&format!("{}:", scope.label()));
         print_report(&report);

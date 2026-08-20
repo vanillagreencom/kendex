@@ -98,7 +98,7 @@ enum Command {
     },
     /// What the safety check found in installed content, with the token
     /// each finding is dismissed by
-    Findings(commands::decisions_cmd::FindingsArgs),
+    Findings(commands::findings::FindingsArgs),
     /// Record that a finding is not a problem, by its token
     Dismiss(commands::decisions_cmd::DismissArgs),
     /// Every recorded safety decision — acceptances and dismissals — and
@@ -314,7 +314,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             let filter = ScopeFilter::resolve(scope.as_deref(), global, ScopeFilter::Project)?;
             commands::apply_cmd::run(&env, filter, plan, yes, allow_unsafe, discard_edits)?;
         }
-        Command::Findings(args) => commands::decisions_cmd::findings(&env, args)?,
+        Command::Findings(args) => commands::findings::findings(&env, args)?,
         Command::Dismiss(args) => commands::decisions_cmd::dismiss_cmd(&env, args)?,
         Command::Decisions(args) => commands::decisions_cmd::decisions(&env, args)?,
         Command::Adopt {

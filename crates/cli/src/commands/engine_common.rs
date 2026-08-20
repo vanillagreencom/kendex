@@ -45,19 +45,15 @@ pub fn print_report(report: &EngineReport) {
 
 /// What this apply cannot write and why. A conflict plans no op, so
 /// without this the run ends on "nothing to do" while the thing the user
-/// asked for sits blocked with the reason never printed. An item the gate
-/// held back is skipped: the safety section above already said so, with
-/// the findings and the way to accept them.
+/// asked for sits blocked with the reason never printed.
+///
+/// Every conflict is printed, held-back items included. Their rows are not
+/// the safety section said twice: they carry what happens to the copy
+/// already installed — moved to the trash, or kept because the user's
+/// edits are in it and still standing in the way of the accepted content.
 pub fn print_conflicts(report: &EngineReport) {
-    let held: Vec<&kendex_core::engine::ItemSafety> =
-        report.safety.iter().filter(|row| row.blocked()).collect();
     for row in &report.drift {
         if row.state != kendex_core::engine::DriftState::Conflict {
-            continue;
-        }
-        if held.iter().any(|held| {
-            held.kind == row.kind && held.name == row.name && held.harness == row.harness
-        }) {
             continue;
         }
         say(&format!(
@@ -77,11 +73,24 @@ pub fn print_conflicts(report: &EngineReport) {
 /// because "nothing was found" and "nothing could be looked at" are
 /// different answers and only one of them is a pass.
 pub fn print_safety(report: &EngineReport) {
-    let mut rows: Vec<&kendex_core::engine::ItemSafety> = report
-        .safety
-        .iter()
-        .filter(|row| !row.findings.is_empty() || !row.skipped.is_empty())
-        .collect();
+    print_safety_rows(report, |row| {
+        !row.findings.is_empty() || !row.skipped.is_empty()
+    });
+}
+
+/// Only what nothing will install. A refresh regenerates what is declared
+/// and says nothing about advisory findings, but an item it silently
+/// declines to write is a different thing and has to be said.
+pub fn print_held_back(report: &EngineReport) {
+    print_safety_rows(report, |row| row.blocked());
+}
+
+fn print_safety_rows(
+    report: &EngineReport,
+    wanted: impl Fn(&kendex_core::engine::ItemSafety) -> bool,
+) {
+    let mut rows: Vec<&kendex_core::engine::ItemSafety> =
+        report.safety.iter().filter(|row| wanted(row)).collect();
     rows.sort_by_key(|row| (!row.blocked(), row.safety.score));
     for row in rows {
         let held = match row.blocked() {

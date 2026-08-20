@@ -172,12 +172,14 @@ pub fn apply_scope(
         allow_unsafe,
         ..PlanOptions::default()
     };
-    // A grant naming nothing this plan would write already fails the plan.
-    // What is left to catch here is the partial grant: one harness renders
-    // an item differently from another, so a flag can name the content one
-    // of them would get and none of the rest. A button that says "accept
-    // and install" must not install some of them and hold back the others.
+    // This apply is one scope, so that scope's rows are the whole run.
     let report = engine::plan_apply(env, scope, &options).map_err(|e| e.to_string())?;
+    let rows: Vec<&engine::ItemSafety> = report.safety.iter().collect();
+    engine::refuse_unmatched_grants(&options, &rows).map_err(|e| e.to_string())?;
+    // The partial grant is the other half: one harness renders an item
+    // differently from another, so a flag can name the content one of them
+    // would get and none of the rest. A button that says "accept and
+    // install" must not install some of them and hold back the others.
     for token in &options.allow_unsafe {
         let name = token.rsplit_once('@').map_or(token.as_str(), |(n, _)| n);
         if report

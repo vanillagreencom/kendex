@@ -90,22 +90,25 @@ pub(super) fn pass(
     state: &mut super::desired::DesiredState,
 ) -> crate::error::Result<Vec<ItemSafety>> {
     let thresholds = crate::settings::load(env)?.safety;
-    let safety = run(scope, manifest, options, thresholds, state);
-    unmatched(scope, options, &safety)?;
-    Ok(safety)
+    Ok(run(scope, manifest, options, thresholds, state))
 }
 
-/// A grant that names nothing this plan would write stops the plan.
+/// Refuse any grant that names nothing across everything this run would
+/// write.
 ///
 /// The flag carries the content it was shown with, so one that matches
 /// nothing means the content moved on — and continuing would install
 /// everything *except* the item the user asked for, under a command line
 /// that says the opposite. Where the name is still here, the message
 /// carries the flag that grants what it says now.
-fn unmatched(
-    scope: &Scope,
+///
+/// The check belongs to the caller, not to one scope's plan: a run may
+/// cover several scopes, and a grant meant for the project would be a hard
+/// error against the personal scope that has never heard of the item. Pass
+/// the rows from every scope this run plans.
+pub fn refuse_unmatched_grants(
     options: &PlanOptions,
-    safety: &[ItemSafety],
+    safety: &[&ItemSafety],
 ) -> crate::error::Result<()> {
     for flag in &options.allow_unsafe {
         if safety.iter().any(|row| {
@@ -125,7 +128,6 @@ fn unmatched(
             .map(|hash| allow_unsafe_flag(name, hash));
         return Err(crate::error::CoreError::GrantMatchesNothing {
             flag: flag.clone(),
-            scope: scope.label(),
             fix: match current {
                 Some(current) => format!(
                     " — {name} says something different now; read the findings again and accept with --allow-unsafe {current}"

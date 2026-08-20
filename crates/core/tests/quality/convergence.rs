@@ -10,7 +10,9 @@ use kendex_core::engine::{DriftState, audit};
 use kendex_core::lock::{Lock, load as load_lock, lock_path, save as save_lock};
 use kendex_core::quality::overrides::OverrideState;
 
-use super::fixture::{Fixture, current_hash, fixture, grant, installed, plan, plan_with, skill};
+use super::fixture::{
+    Fixture, accept, current_hash, fixture, grant, installed, plan, plan_with, skill,
+};
 
 const KEY: &str = "skill:hostile:claude";
 
@@ -148,8 +150,7 @@ fn an_accepted_update_lands_over_the_kept_render() {
 fn a_grant_that_names_nothing_stops_the_plan() {
     let f = fixture();
     let stale = "hostile@000000000000";
-    let error = plan_with(&f, &[stale], false)
-        .expect_err("a grant matching nothing is refused, not skipped");
+    let error = accept(&f, &[stale]).expect_err("a grant matching nothing is refused, not skipped");
     let said = error.to_string();
     assert!(said.contains(stale), "{said}");
     assert!(
@@ -160,7 +161,7 @@ fn a_grant_that_names_nothing_stops_the_plan() {
         "the message carries the flag that grants what the item says now: {said}"
     );
 
-    let unknown = plan_with(&f, &["nosuchskill@000000000000"], false)
+    let unknown = accept(&f, &["nosuchskill@000000000000"])
         .expect_err("a name nothing declares is refused too");
     assert!(unknown.to_string().contains("nosuchskill"), "{unknown}");
 }
@@ -182,5 +183,5 @@ fn a_grant_for_content_that_passes_is_not_an_error() {
         .clone()
         .unwrap();
     let flag = kendex_core::engine::allow_unsafe_flag("clean", &clean_hash);
-    plan_with(&f, &[flag.as_str()], false).expect("naming content that passes is harmless");
+    accept(&f, &[flag.as_str()]).expect("naming content that passes is harmless");
 }
