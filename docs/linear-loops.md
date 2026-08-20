@@ -44,17 +44,13 @@ Runs once per newly created issue.
 | Teams | [Every team the janitor should cover — usually all public teams] |
 | Filter: Status | **Triage only** |
 
-Triage-only is a hard boundary the instructions text cannot provide
-(incident 2026-08-20: a 30-issue roadmap burst, every issue created with
-project, labels, priority, and relations already set, had 8 issues moved
-into label-matching area projects by the janitor within seconds — despite
-"never changed or cleared once set" sitting in its Hard limits; an LLM
-loop under burst load drifts, so the guarantee has to live in the trigger
-filter). Pipeline-created issues (TPM audit / roadmap-create) are born
-fully triaged directly into **Backlog** and now never fire the janitor;
-human-filed and tracker-synced issues land in Triage and still get the
-full pass. An issue filed straight to Backlog/Todo by hand can be triaged
-with the `re-triage` label (Loop 2).
+Triage-only is a boundary the instructions text cannot provide: on
+2026-08-20 the janitor moved 8 of 30 burst-created, already-projected
+issues into label-matching projects despite its own Hard limits — an LLM
+loop drifts under load, so the guarantee lives in the trigger filter.
+Pipeline-created issues are born fully triaged in **Backlog** and never
+fire it; human-filed and tracker-synced issues land in Triage and get the
+full pass; a hand-filed Backlog/Todo issue can be triaged via `re-triage`.
 
 No Agent Session filter: its options (Active/Error/Dismissed/Merged) only
 match issues that HAVE a session, and a just-created issue almost never does —
