@@ -84,16 +84,27 @@ install_cli() {
   echo "Installed the kendex command to $bindir/kendex"
 }
 
-# One icon size into the theme directory it belongs to. A missing icon is
-# not worth failing an install over, so a download that fails is skipped —
-# but curl creates the file before the transfer, so the empty one it leaves
-# behind is removed. A launcher prefers the size it finds over the size that
-# would have looked right, and an empty file is a file.
+# One icon size into the theme directory it belongs to.
+#
+# The download lands somewhere else first and is installed only once it has
+# arrived whole, the way the AppImage above is. This script is the upgrade
+# path as well as the install, so a fetch that fails on a re-run must leave
+# the icon the last run installed exactly where it is — writing into the
+# slot and cleaning up afterwards would take a working icon away over a rate
+# limit. Nothing here can fail the install either: every failure is caught
+# and named, and the function always returns 0.
 install_icon() {
-  local dir=$1 source=$2
-  mkdir -p "$dir"
-  curl -fsSL --proto '=https' -o "$dir/kendex.png" "$source" ||
-    rm -f "$dir/kendex.png"
+  local dir=$1 source=$2 size file
+  size=${dir%/apps}
+  size=${size##*/}
+  file="$(mktemp)" || return 0
+  if ! curl -fsSL --proto '=https' -o "$file" "$source"; then
+    echo "install.sh: no $size icon this time; kendex keeps the one it has." >&2
+  elif ! { mkdir -p "$dir" && install -m 0644 "$file" "$dir/kendex.png"; }; then
+    echo "install.sh: cannot write $dir; skipped the $size icon." >&2
+  fi
+  rm -f "$file"
+  return 0
 }
 
 # The desktop app on Linux is the AppImage, kept off PATH so the `kendex`

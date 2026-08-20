@@ -75,9 +75,10 @@ changes carry a **Breaking** call-out with their migration note inline.
   half-written. Settings, manifests, locks, and snapshots each get their own
   temporary file, so two saves of one file cannot overwrite each other's
   bytes partway through.
-- The installer's app-menu entry now carries the app's window class and
-  installs the 256px and 512px icons as well as the 128px one, so launchers
-  and docks match the running window to kendex and draw a sharp icon.
+- The app-menu entry now carries the app's window class, and every icon size
+  kendex ships is installed, so launchers and docks match the running window
+  to kendex and draw a sharp icon at any size. Both channels that write the
+  entry are fixed: `curl … | sh` and `yay -S kendex-bin`.
 - On Linux, a helper command that ran past its time limit could take
   unrelated processes down with it: Ubuntu's `kill` misreads the negative
   process-group argument kendex passed, and for some process ids that

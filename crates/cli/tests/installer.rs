@@ -21,14 +21,16 @@ const ICONS: [(&str, &str); 4] = [
     ("512x512", "icon.png"),
 ];
 
+fn set_mode(path: &Path, mode: u32) {
+    let mut permissions = std::fs::metadata(path).expect("metadata").permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, mode);
+    std::fs::set_permissions(path, permissions).expect("set mode");
+}
+
 fn write_stub(dir: &Path, name: &str, script: &str) {
     let path = dir.join(name);
     std::fs::write(&path, script).expect("write stub");
-    let mut permissions = std::fs::metadata(&path)
-        .expect("stub metadata")
-        .permissions();
-    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
-    std::fs::set_permissions(&path, permissions).expect("make the stub runnable");
+    set_mode(&path, 0o755);
 }
 
 /// Stand in for the network, down to the details that matter. The release
@@ -81,6 +83,12 @@ fn run_installer() -> tempfile::TempDir {
 /// `source_root` is what the stubbed network serves raw file URLs out of;
 /// an empty directory stands in for assets that cannot be fetched.
 fn run_installer_serving(source_root: &Path) -> tempfile::TempDir {
+    run_installer_over(source_root, |_| {})
+}
+
+/// `prepare` runs against the temp home before the installer does, for the
+/// cases that are about what the installer finds already there.
+fn run_installer_over(source_root: &Path, prepare: impl FnOnce(&Path)) -> tempfile::TempDir {
     let tmp = tempfile::tempdir().expect("tempdir");
     let stubs = tmp.path().join("stub-bin");
     std::fs::create_dir_all(&stubs).expect("stub bin dir");
@@ -91,6 +99,8 @@ fn run_installer_serving(source_root: &Path) -> tempfile::TempDir {
     );
     write_stub(&stubs, "uname", UNAME);
     write_stub(&stubs, "sudo", SUDO);
+
+    prepare(tmp.path());
 
     // The installer puts the command in the first of its candidate
     // directories that is already on PATH; naming the temp one keeps every
@@ -181,6 +191,68 @@ fn an_icon_that_cannot_be_fetched_leaves_nothing_behind() {
     }
 }
 
+fn icon_slot(home: &Path, size: &str) -> PathBuf {
+    home.join(format!("share/icons/hicolor/{size}/apps/kendex.png"))
+}
+
+/// This script is the upgrade path too, and the icon fetches go to a host
+/// that rate-limits. Taking away the icon a previous run installed, because
+/// this run could not fetch it, leaves the person worse off than not having
+/// run the installer at all.
+#[test]
+fn a_fetch_that_fails_keeps_the_icon_an_earlier_run_installed() {
+    let nothing = tempfile::tempdir().expect("tempdir");
+    let earlier = b"an icon a previous run installed".as_slice();
+    let tmp = run_installer_over(nothing.path(), |home| {
+        for (size, _) in ICONS {
+            let slot = icon_slot(home, size);
+            std::fs::create_dir_all(slot.parent().expect("slot dir")).expect("slot");
+            std::fs::write(&slot, earlier).expect("earlier icon");
+        }
+    });
+
+    for (size, _) in ICONS {
+        let slot = icon_slot(tmp.path(), size);
+        assert_eq!(
+            std::fs::read(&slot).expect("earlier icon"),
+            earlier,
+            "{size}"
+        );
+    }
+}
+
+/// Icons someone once installed under sudo: the file cannot be overwritten
+/// and the directory cannot be written either, so neither replacing the icon
+/// nor removing it can succeed. An icon is not worth failing an install over
+/// — the app is already copied by then, and the launcher entry is not
+/// written yet.
+#[test]
+fn icons_it_can_neither_replace_nor_remove_do_not_stop_the_install() {
+    let earlier = b"an icon a previous run installed".as_slice();
+    let tmp = run_installer_over(&repo_root(), |home| {
+        for (size, _) in ICONS {
+            let slot = icon_slot(home, size);
+            let dir = slot.parent().expect("slot dir");
+            std::fs::create_dir_all(dir).expect("slot");
+            std::fs::write(&slot, earlier).expect("earlier icon");
+            set_mode(&slot, 0o444);
+            set_mode(dir, 0o555);
+        }
+    });
+
+    assert!(desktop_entry(&tmp).contains("StartupWMClass="));
+    for (size, _) in ICONS {
+        let slot = icon_slot(tmp.path(), size);
+        assert_eq!(
+            std::fs::read(&slot).expect("earlier icon"),
+            earlier,
+            "{size}"
+        );
+        // Handed back so the temp directory can be cleaned up.
+        set_mode(slot.parent().expect("slot dir"), 0o755);
+    }
+}
+
 /// Two files write a kendex desktop entry — this installer and the Arch
 /// package — and a launcher reads whichever one is installed, so a fix to
 /// one that misses the other fixes the app for half its Linux users.
@@ -208,8 +280,21 @@ fn the_arch_package_installs_what_the_installer_installs() {
     };
     assert_eq!(fields(&packaged), fields(desktop_entry(&tmp).trim()));
 
-    for (size, _) in ICONS {
-        let slot = format!("icons/hicolor/{size}/apps/kendex.png");
-        assert!(pkgbuild.contains(&slot), "the Arch package skips {size}");
-    }
+    // Where the package really installs icons, read off the install lines a
+    // build would run rather than the text of the file: a path inside a
+    // comment ships nothing.
+    let installed: Vec<String> = pkgbuild
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.starts_with('#'))
+        .filter_map(|line| line.split_once("\"$pkgdir/"))
+        .filter_map(|(_, dest)| dest.split_once('"'))
+        .map(|(dest, _)| dest.to_owned())
+        .filter(|dest| dest.contains("icons/hicolor/"))
+        .collect();
+    let expected: Vec<String> = ICONS
+        .iter()
+        .map(|(size, _)| format!("usr/share/icons/hicolor/{size}/apps/kendex.png"))
+        .collect();
+    assert_eq!(installed, expected);
 }

@@ -4,6 +4,9 @@
 //! behaves on Wayland. The whole decision is a pure function of strings, so
 //! it can be tested without a display or a bundle.
 
+use std::ffi::OsStr;
+use std::path::Path;
+
 /// Choose a backend for the AppImage, where `GDK_BACKEND` cannot be heard.
 /// Nothing in the bundle writes this one.
 const OUR_BACKEND: &str = "KENDEX_GDK_BACKEND";
@@ -116,13 +119,34 @@ fn plan(session: Session<'_>) -> Vec<(&'static str, String)> {
     vars
 }
 
-/// Whether the bundle's pinned backend is about to be overridden — true
-/// only where nobody said anything, so the person who did say something is
-/// never told their choice was ignored.
-fn overriding_the_bundle(session: Session<'_>) -> bool {
+/// Whether this plan is overriding the bundle's pinned backend, read off
+/// the plan rather than worked out again: `plan` only reaches for the
+/// ordered list when nobody named a backend, so the person who did name one
+/// is never told their choice was ignored.
+fn overriding_the_bundle(session: Session<'_>, vars: &[(&'static str, String)]) -> bool {
     session.in_appimage
-        && chosen_backend(session).is_none()
-        && said(session.gdk) == Some(BUNDLED_BACKEND)
+        && vars
+            .iter()
+            .any(|(name, value)| *name == "GDK_BACKEND" && value == WAYLAND_THEN_X11)
+}
+
+/// Whether the bundled GTK hook has already been through this environment,
+/// so `GDK_BACKEND` is the bundle's word rather than the person's.
+///
+/// `APPIMAGE` says so on its own: nothing but the AppImage runtime sets it.
+/// `APPDIR` does not — every AppImage's AppRun exports it and every process
+/// it starts inherits it, so a `.deb` launched from a terminal that itself
+/// came out of an AppImage carries one. It only says anything about *this*
+/// process when this process is the one living inside that directory, which
+/// is the hand-extracted AppDir the hook writes `APPDIR` for.
+fn in_appimage(appimage: Option<&OsStr>, appdir: Option<&OsStr>, exe: Option<&Path>) -> bool {
+    if appimage.is_some() {
+        return true;
+    }
+    let (Some(appdir), Some(exe)) = (appdir, exe) else {
+        return false;
+    };
+    exe.starts_with(Path::new(appdir))
 }
 
 /// Relaunch with the fixes in the environment. Setting them in this process
@@ -170,9 +194,11 @@ pub(crate) fn apply() {
         webkit: webkit.as_deref(),
         ours: ours.as_deref(),
         gdk: gdk.as_deref(),
-        // The AppImage runtime sets both; a hand-extracted AppDir sets only
-        // APPDIR, from the bundled hook's own first line.
-        in_appimage: std::env::var_os("APPIMAGE").is_some() || std::env::var_os("APPDIR").is_some(),
+        in_appimage: in_appimage(
+            std::env::var_os("APPIMAGE").as_deref(),
+            std::env::var_os("APPDIR").as_deref(),
+            std::env::current_exe().ok().as_deref(),
+        ),
         relaunched: std::env::var_os(RELAUNCHED).is_some(),
     };
 
@@ -189,7 +215,7 @@ pub(crate) fn apply() {
         .collect::<Vec<_>>()
         .join(" ");
     let _ = writeln!(stderr, "display: starting with {setting}");
-    if overriding_the_bundle(session) {
+    if overriding_the_bundle(session, &vars) {
         let _ = writeln!(
             stderr,
             "display: the AppImage pins GDK_BACKEND={BUNDLED_BACKEND}, which puts the window \
@@ -200,166 +226,4 @@ pub(crate) fn apply() {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A Wayland session with nothing set — the shape every case varies.
-    fn wayland() -> Session<'static> {
-        Session {
-            session_type: Some("wayland"),
-            ..Session::default()
-        }
-    }
-
-    fn appimage() -> Session<'static> {
-        Session {
-            in_appimage: true,
-            gdk: Some(BUNDLED_BACKEND),
-            ..wayland()
-        }
-    }
-
-    fn backend(session: Session<'_>) -> Option<String> {
-        plan(session)
-            .into_iter()
-            .find(|(name, _)| *name == "GDK_BACKEND")
-            .map(|(_, value)| value)
-    }
-
-    #[test]
-    fn a_wayland_socket_counts_even_when_the_session_type_does_not_say_so() {
-        assert!(wayland_session(Some("wayland"), None));
-        assert!(wayland_session(Some("tty"), Some("wayland-1")));
-        assert!(!wayland_session(Some("x11"), None));
-        assert!(!wayland_session(None, Some("")));
-        assert!(!wayland_session(None, None));
-    }
-
-    #[test]
-    fn wayland_gets_the_dmabuf_workaround_whatever_installed_the_app() {
-        assert_eq!(
-            plan(wayland()),
-            [("WEBKIT_DISABLE_DMABUF_RENDERER", "1".to_owned())]
-        );
-        // A person who set it themselves keeps their choice.
-        assert!(
-            plan(Session {
-                webkit: Some("0"),
-                ..wayland()
-            })
-            .is_empty()
-        );
-    }
-
-    #[test]
-    fn the_appimage_stops_pinning_the_window_to_xwayland() {
-        assert_eq!(
-            plan(appimage()),
-            [
-                ("WEBKIT_DISABLE_DMABUF_RENDERER", "1".to_owned()),
-                ("GDK_BACKEND", WAYLAND_THEN_X11.to_owned()),
-            ]
-        );
-    }
-
-    /// GDK already tries Wayland before X11 when the variable is unset, so
-    /// pushing the same order onto a deb, an rpm, or a source build buys
-    /// nothing and costs a relaunch.
-    #[test]
-    fn no_other_packaging_is_pushed_onto_a_backend() {
-        assert_eq!(backend(wayland()), None);
-        assert!(
-            plan(Session {
-                webkit: Some("0"),
-                ..wayland()
-            })
-            .is_empty()
-        );
-    }
-
-    #[test]
-    fn our_variable_chooses_a_backend_the_appimage_would_not_let_through() {
-        for chosen in ["wayland", "broadway"] {
-            assert_eq!(
-                backend(Session {
-                    ours: Some(chosen),
-                    ..appimage()
-                }),
-                Some(chosen.to_owned()),
-                "{chosen}"
-            );
-        }
-    }
-
-    /// The one value that needs no push: it is already what the bundle set.
-    #[test]
-    fn choosing_the_backend_the_environment_already_has_changes_nothing() {
-        assert_eq!(
-            backend(Session {
-                ours: Some(BUNDLED_BACKEND),
-                ..appimage()
-            }),
-            None
-        );
-        assert_eq!(
-            backend(Session {
-                gdk: Some("broadway"),
-                ..wayland()
-            }),
-            None
-        );
-    }
-
-    #[test]
-    fn our_variable_is_heard_on_a_session_that_is_not_wayland() {
-        assert_eq!(
-            backend(Session {
-                session_type: Some("x11"),
-                ours: Some("wayland"),
-                ..Session::default()
-            }),
-            Some("wayland".to_owned())
-        );
-    }
-
-    #[test]
-    fn a_backend_the_person_chose_is_left_alone() {
-        assert_eq!(
-            backend(Session {
-                gdk: Some("x11"),
-                ..wayland()
-            }),
-            None
-        );
-        assert_eq!(
-            backend(Session {
-                ours: Some(" "),
-                gdk: Some("x11"),
-                ..wayland()
-            }),
-            None
-        );
-    }
-
-    #[test]
-    fn the_relaunched_process_decides_nothing_a_second_time() {
-        assert!(
-            plan(Session {
-                relaunched: true,
-                ..appimage()
-            })
-            .is_empty()
-        );
-    }
-
-    #[test]
-    fn only_an_ignored_bundle_pin_is_explained() {
-        assert!(overriding_the_bundle(appimage()));
-        // Their own choice was heard, so there is nothing to apologise for.
-        assert!(!overriding_the_bundle(Session {
-            ours: Some("wayland"),
-            ..appimage()
-        }));
-        assert!(!overriding_the_bundle(wayland()));
-    }
-}
+mod tests;
