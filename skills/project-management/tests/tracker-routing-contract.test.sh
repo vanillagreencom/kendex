@@ -104,6 +104,7 @@ fi
 if [[ -f "$plan_issues" ]]; then
   plan_create_cmd="$(extract "$plan_issues" 'issues create' '^```$' plan-create-cmd)" || fail "could not extract the plan-issues create command"
   grep -Fq -- '--state "Backlog"' "$plan_create_cmd" || fail 'plan-issues create does not pass --state "Backlog"'
+  require_fixed "$plan_issues" 'validate the complete label set' 'plan-issues preflights labels before a Backlog create'
 fi
 if [[ -f "$merge_pr" ]]; then
   merge_create_cmd="$(extract "$merge_pr" 'issues create' '^```$' merge-create-cmd)" || fail "could not extract the merge-pr rebundle create command"

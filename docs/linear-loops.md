@@ -51,9 +51,8 @@ Pipeline-created issues are born fully triaged in **Backlog** and never
 fire it; human-filed and tracker-synced issues land in Triage and get the
 full pass; a hand-filed Backlog/Todo issue can be triaged via `re-triage`.
 
-No Agent Session filter: its options (Active/Error/Dismissed/Merged) only
-match issues that HAVE a session, and a just-created issue almost never does —
-the filter would exclude nearly everything or nothing useful.
+No Agent Session filter: its options only match issues that HAVE a
+session, which a just-created issue almost never does.
 
 Created-only is deliberate: an "updated" trigger fires on every issue-tracker
 sync refresh, every CLI mutation from orchestration agents, and the loop's own
@@ -175,7 +174,8 @@ neither a parent nor sub-issues — otherwise skip this task entirely (an
 In Progress or In Review trigger from a re-triage pass is never bundled).
 Search open, unstarted issues (Triage, Backlog, Todo) of the SAME team and
 SAME project that likewise have no parent, no sub-issues, and carry an
-agent:* label. Evaluation order for the boundary rule: FIRST pick the tentative bundle —
+agent:* label, and — trigger included — are at least 10 minutes old:
+pipeline creates attach parents and blocking relations after the create. Evaluation order for the boundary rule: FIRST pick the tentative bundle —
 the trigger plus the one to four same-PR companions you would actually
 parent — then repeatedly drop any member (including the trigger) that
 blocks or is blocked by any issue outside that tentative bundle, until a

@@ -39,6 +39,8 @@ Confirm before creating issues.
 
 **Linear** — per accepted item, then the relations:
 
+Build and validate the complete label set against the live inventory and the project taxonomy first (the project-management skill's `references/labels.md` preflight) — a Backlog-born issue gets no janitor pass, so it must leave this workflow fully triaged.
+
 ```bash
 .agents/skills/linear/scripts/linear.sh issues create --state "Backlog" --title "[TITLE]" --description "[BODY]" --project "[PROJECT]" --labels "[LABELS]" --format=ids
 ```
