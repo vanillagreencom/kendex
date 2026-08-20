@@ -32,6 +32,8 @@ require_fixed 'the UNION of the children'"'"'s labels for a non-exclusive one' '
 require_fixed 'no common
 value means no bundle' 'no common exclusive value means no bundle'
 require_fixed 'combined estimate of its children'"'"'s PR scope' 'single-PR parent carries a combined estimate'
+require_fixed 'on the 1–5 scale — estimate
+the whole PR, never a sum past 5' 'combined estimate stays on the 1-5 scale'
 require_fixed '| Filter: Status | **Triage only** |' 'Loop 1 trigger is Triage-only'
 
 echo "all pass"

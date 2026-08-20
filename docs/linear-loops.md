@@ -245,9 +245,9 @@ category — the UNION of the children's labels for a non-exclusive one
 value means no bundle — all existing team labels; a Backlog-born parent
 gets no Task 2 pass, so validate the set before creating; the parent takes the highest priority
 among its children (backlog ordering reads the parent, not the children); a `(one PR)` parent carries the
-combined estimate of its children's PR scope (cycle planning budgets by the
-parent; a no-estimate parent is a coordination container, never a Task 6
-product); omit the Acceptance Criteria section when children have none; no
+combined estimate of its children's PR scope on the 1–5 scale — estimate
+the whole PR, never a sum past 5 (cycle planning budgets by the parent; a
+no-estimate parent is a coordination container, never a Task 6 product); omit the Acceptance Criteria section when children have none; no
 implementation detail — requirements live in the children; add no blocking
 relations unless a child's own text states one.
 
