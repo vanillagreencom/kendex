@@ -10,9 +10,6 @@ name: Skill Tests
 # review, while the pending "Review gate" status is what actually blocks
 # merge. The full battery runs once per merged result: in the merge queue
 # before the merge, and again on the push to main as the post-merge record.
-# (The queue was disabled for a stretch when a kill bug in the timed-out
-# process cleanup was taking runners down and ejecting every entry — the
-# KEN runner-kill issue has the story; it is fixed and the queue is back.)
 # The review gate never conditions
 # CI (it answers review-only; see the review-gate skill) — there is no gate
 # job here and nothing reads the predicate.
@@ -47,9 +44,8 @@ jobs:
       fail-fast: false
       matrix:
         shard: [review-gate, shell, node]
-    # Skipped on PRs (the fast/full split); runs in the queue when enabled
-    # and on the push to main while it is not, so a merged result is always
-    # tested exactly once.
+    # Skipped on PRs (the fast/full split); the merge group proves the
+    # merge and the main push records the merged result.
     if: github.event_name == 'merge_group' || github.event_name == 'push'
     runs-on: ${{ vars.CI_RUNNER_4V || 'ubuntu-latest' }}
     timeout-minutes: 25
@@ -339,13 +335,12 @@ jobs:
 
   cargo-tests:
     name: Cargo (workspace tests)
-    # Same split as skill-suites above: queue when it works, main push
-    # while it is disabled.
+    # Same split as skill-suites above: the merge group proves the merge,
+    # the main push records the merged result.
     if: github.event_name == 'merge_group' || github.event_name == 'push'
     # GitHub-hosted deliberately: the full workspace build (Tauri app
-    # included) killed the org's current Blacksmith size twice in a row —
-    # the runner died mid-build with no step conclusion. Route it back when
-    # the org variables point at a machine that fits it.
+    # included) does not fit the org's current Blacksmith size. Route it
+    # back when the org variables point at a machine that fits it.
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
