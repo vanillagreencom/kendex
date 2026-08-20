@@ -1,7 +1,12 @@
 // The cache vocabulary the marketplaces store and its readers share: the
 // collision-free subscription key, and the invalidation every catalog-moving
 // mutation runs.
-import type { Catalog, MarketplaceRow, Scope } from "@/bindings";
+import type {
+  Catalog,
+  CatalogSummary,
+  MarketplaceRow,
+  Scope,
+} from "@/bindings";
 import { useAuditStore } from "./audit";
 import { resetPreinstallSafety } from "./preinstall-safety";
 import { useScanStore } from "./scan";
@@ -96,4 +101,29 @@ export async function openLead(scope: Scope, source: string, lead: string) {
     kind: "skill",
     name: lead,
   });
+}
+
+/** A repository page carried on as this subscription re-asks which
+ * subscription to carry on as: turned off, the backend passes it over and
+ * the page falls back to the bare repository; turned on, it carries on
+ * again. */
+export function dropSummariesCarriedBy(
+  set: (
+    fn: (state: { summaries: Record<string, CatalogSummary> }) => object,
+  ) => void,
+  scope: Scope,
+  source: string,
+) {
+  const toggled = marketKey(scope, source);
+  set((state) => ({
+    summaries: Object.fromEntries(
+      Object.entries(state.summaries).filter(
+        ([key, summary]) =>
+          !isRepoKey(key) ||
+          !summary.subscription ||
+          marketKey(summary.subscription.scope, summary.subscription.source) !==
+            toggled,
+      ),
+    ),
+  }));
 }

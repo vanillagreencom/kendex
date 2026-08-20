@@ -15,6 +15,7 @@ import { catalogReads } from "./marketplaces-reads";
 import {
   catalogKey,
   dropCatalogCaches,
+  dropSummariesCarriedBy,
   isRepoKey,
   openLead,
   refreshDownstream,
@@ -47,6 +48,10 @@ interface MarketplacesState {
    * looking at says it instead of loading forever. */
   readErrors: Record<string, string>;
   loaded: boolean;
+  /** Whether `rows` is the answer of the last overview read. A failed read
+   * leaves the rows it had, and nothing may treat them as the truth about
+   * what is subscribed until a read succeeds again. */
+  rowsCurrent: boolean;
   busy: boolean;
   error: string | null;
   load: () => Promise<void>;
@@ -84,15 +89,21 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
   bundles: {},
   readErrors: {},
   loaded: false,
+  rowsCurrent: false,
   busy: false,
   error: null,
 
   load: async () => {
     const response = await commands.marketplacesOverview();
     if (response.status === "ok") {
-      set({ rows: response.data, loaded: true, error: null });
+      set({
+        rows: response.data,
+        loaded: true,
+        rowsCurrent: true,
+        error: null,
+      });
     } else {
-      set({ loaded: true, error: response.error });
+      set({ loaded: true, rowsCurrent: false, error: response.error });
     }
   },
 
@@ -168,6 +179,7 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
       return;
     }
     dropCatalogCaches(set);
+    dropSummariesCarriedBy(set, scope, source);
     await get().load();
     await refreshDownstream();
   },

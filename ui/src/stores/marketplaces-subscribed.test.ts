@@ -1,13 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands, type DirectoryRow, type MarketplaceRow } from "@/bindings";
 import { useMarketplacesStore } from "./marketplaces";
-import { rowSubscribed, subscribedKeys } from "./marketplaces-shared";
+import {
+  catalogKey,
+  rowSubscribed,
+  subscribedKeys,
+} from "./marketplaces-shared";
 
 vi.mock("@/bindings", () => ({
   commands: {
     marketplaceSubscribe: vi.fn(),
     marketplaceUnsubscribe: vi.fn(),
     marketplacesOverview: vi.fn(),
+    sourceToggle: vi.fn(),
   },
 }));
 vi.mock("sonner", () => ({
@@ -51,7 +56,11 @@ const row = (repo: string, repoKey: string | null): MarketplaceRow => ({
 
 describe("a Community row's Subscribed marker", () => {
   beforeEach(() => {
-    useMarketplacesStore.setState({ rows: [] });
+    useMarketplacesStore.setState({
+      rows: [],
+      rowsCurrent: false,
+      summaries: {},
+    });
   });
 
   it("flips as soon as a subscribe lands, however the repo was spelled", async () => {
@@ -112,5 +121,63 @@ describe("a Community row's Subscribed marker", () => {
 
   it("falls back to the snapshot only before the live list has loaded", () => {
     expect(rowSubscribed({ ...listed, subscribed: true }, null)).toBe(true);
+  });
+
+  it("keeps the directory snapshot when the live overview cannot be read", async () => {
+    useMarketplacesStore.setState({ rows: [], rowsCurrent: true });
+    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
+      status: "error",
+      error: "settings file is malformed",
+    });
+
+    await useMarketplacesStore.getState().load();
+
+    const state = useMarketplacesStore.getState();
+    expect(state.rowsCurrent).toBe(false);
+    const live = state.rowsCurrent ? subscribedKeys(state.rows) : null;
+    expect(rowSubscribed({ ...listed, subscribed: true }, live)).toBe(true);
+  });
+});
+
+describe("a repository page carried on as a subscription", () => {
+  it("re-asks which subscription to carry on as when that one is toggled", async () => {
+    const repoKey = catalogKey({ by: "repo", repo: "Acme/Kit" });
+    const otherKey = catalogKey({ by: "repo", repo: "other/repo" });
+    const summary = {
+      provenance: "acme/kit",
+      commit: null,
+      meta: null,
+      mode: "discovered" as const,
+      counts: {},
+      warning: null,
+    };
+    useMarketplacesStore.setState({
+      summaries: {
+        [repoKey]: {
+          ...summary,
+          subscription: { scope: { scope: "global" }, source: "kit" },
+        },
+        [otherKey]: {
+          ...summary,
+          subscription: { scope: { scope: "global" }, source: "other" },
+        },
+      },
+    });
+    vi.mocked(commands.sourceToggle).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
+    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
+
+    await useMarketplacesStore
+      .getState()
+      .toggle({ scope: "global" }, "kit", false);
+
+    const summaries = useMarketplacesStore.getState().summaries;
+    expect(summaries[repoKey]).toBeUndefined();
+    expect(summaries[otherKey]).toBeDefined();
   });
 });

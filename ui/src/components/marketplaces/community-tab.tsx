@@ -37,7 +37,7 @@ export function CommunityTab() {
   const goToMarketplaces = useNavStore((s) => s.goToMarketplaces);
   const goToMarketplace = useNavStore((s) => s.goToMarketplace);
   const subscriptions = useMarketplacesStore((s) => s.rows);
-  const subscriptionsLoaded = useMarketplacesStore((s) => s.loaded);
+  const subscriptionsCurrent = useMarketplacesStore((s) => s.rowsCurrent);
 
   const [section, setSection] = useState<"directory" | "skillssh">("directory");
   const [query, setQuery] = useState("");
@@ -50,8 +50,8 @@ export function CommunityTab() {
   }, [load]);
 
   const held = useMemo(
-    () => (subscriptionsLoaded ? subscribedKeys(subscriptions) : null),
-    [subscriptions, subscriptionsLoaded],
+    () => (subscriptionsCurrent ? subscribedKeys(subscriptions) : null),
+    [subscriptions, subscriptionsCurrent],
   );
   const tags = useMemo(
     () =>
