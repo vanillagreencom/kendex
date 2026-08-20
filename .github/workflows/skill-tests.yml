@@ -24,7 +24,11 @@ name: Skill Tests
 "on":
   pull_request:
   # Required checks must exist on merge-group shas too, or queue entries
-  # block forever on contexts nothing creates (VST-10).
+  # block forever on contexts nothing creates (VST-10). And a re-queued
+  # entry can inherit a stale FAILED run when the group resolves to the
+  # same synthetic sha — the queue ejects it citing the previous attempt
+  # while the fresh run is still green. The recovery is dequeue-push-rearm:
+  # a new head mints a new group.
   merge_group:
   push:
     branches: [main]
