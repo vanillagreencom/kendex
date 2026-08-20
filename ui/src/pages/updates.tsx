@@ -25,7 +25,7 @@ import {
   updatesSubtitle,
 } from "@/lib/copy";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
-import { packageCount } from "@/lib/update-groups";
+import { packageCount, updatablePlaces } from "@/lib/update-groups";
 import { cn } from "@/lib/utils";
 import {
   hiddenUpdates,
@@ -110,7 +110,7 @@ export function UpdatesPage() {
             {packageCount(visible) > 1 ? (
               <Button
                 size="sm"
-                disabled={busy}
+                disabled={busy || updatablePlaces(visible).length === 0}
                 onClick={() => void updateRows(visible)}
               >
                 {UPDATE_ALL_LABEL}

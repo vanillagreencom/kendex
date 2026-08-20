@@ -133,6 +133,20 @@ describe("UpdatesTable", () => {
     expect(html).toContain(">clients/app<");
   });
 
+  it("disables a package's Update all when every place needs a decision", () => {
+    const html = render([
+      row("gh", null, {
+        blockedByLocalEdit: true,
+        editedHarnesses: ["claude"],
+      }),
+      row("gh", "/home/x/acme", {
+        blockedByLocalEdit: true,
+        editedHarnesses: ["claude"],
+      }),
+    ]);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Update all</);
+  });
+
   it("offers no package-wide Update all in the muted table", () => {
     const html = renderToStaticMarkup(
       <UpdatesTable

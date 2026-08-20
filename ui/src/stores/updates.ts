@@ -2,8 +2,10 @@ import { toast } from "sonner";
 import { create } from "zustand";
 import { commands, type ItemWarning, type UpdateRow } from "@/bindings";
 import {
+  nothingToUpdateToastLabel,
   UPDATE_ERROR_TITLE,
   UPDATED_ALL_TOAST,
+  updatedSomeToastLabel,
   updatedToastLabel,
   updatedWithPlaceToastLabel,
 } from "@/lib/copy";
@@ -154,15 +156,23 @@ export const useUpdatesStore = create<UpdatesState>((set) => {
         // without an update (gone upstream, mixed installs) have nothing
         // for this button to do.
         const rows = updatablePlaces(wanted);
-        // Move every hold first, then one apply per scope brings the
-        // followers current — never two applies for one scope.
+        const skipped = wanted.filter((row) => row.blockedByLocalEdit).length;
+        if (rows.length === 0) {
+          toast.info(nothingToUpdateToastLabel(skipped));
+          return;
+        }
+        // Move every hold first — each move applies its whole scope, so
+        // that scope's followers are already current — then one apply per
+        // scope no hold touched. Never two applies for one scope.
         let ok = true;
+        const applied = new Set<string>();
         for (const row of rows.filter((row) => row.pinned)) {
-          ok = (await apply(row)) && ok;
+          if (await apply(row)) applied.add(scopeKey(row.scope));
+          else ok = false;
         }
         const scopes = new Map(
           rows
-            .filter((row) => !row.pinned)
+            .filter((row) => !row.pinned && !applied.has(scopeKey(row.scope)))
             .map((row) => [scopeKey(row.scope), row] as const),
         );
         for (const row of scopes.values()) {
@@ -172,7 +182,12 @@ export const useUpdatesStore = create<UpdatesState>((set) => {
             ok = false;
           }
         }
-        if (ok) toast.success(UPDATED_ALL_TOAST);
+        if (ok)
+          toast.success(
+            skipped > 0
+              ? updatedSomeToastLabel(packageCount(rows), skipped)
+              : UPDATED_ALL_TOAST,
+          );
         await reload();
         await useScanStore.getState().refresh();
         await useAuditStore.getState().refresh({ force: true });

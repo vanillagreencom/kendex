@@ -214,6 +214,13 @@ export const updatedWithPlaceToastLabel = (
   place: string,
 ): string => `Updated ${name} and everything else following in ${place}`;
 export const UPDATED_ALL_TOAST = "Everything is up to date";
+export const updatedSomeToastLabel = (
+  updated: number,
+  skipped: number,
+): string =>
+  `Updated ${updated === 1 ? "1 package" : `${updated} packages`} — ${skipped === 1 ? "1 customized place needs" : `${skipped} customized places need`} a decision`;
+export const nothingToUpdateToastLabel = (skipped: number): string =>
+  `Nothing to update — ${skipped === 1 ? "1 customized place needs" : `${skipped} customized places need`} a decision first`;
 
 // Fork: what happens when the app finds files you edited by hand.
 export const FORKED_BADGE_LABEL = "Forked";

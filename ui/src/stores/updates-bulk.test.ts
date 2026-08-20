@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
@@ -16,7 +17,7 @@ vi.mock("@/bindings", () => ({
 }));
 
 vi.mock("sonner", () => ({
-  toast: { error: vi.fn(), success: vi.fn() },
+  toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() },
 }));
 
 function row(overrides: Partial<UpdateRow>): UpdateRow {
@@ -96,8 +97,13 @@ describe("updates store: bulk update", () => {
       "gh",
       "b".repeat(40),
     );
+    // Moving gh's hold already applied acme, so review came current with
+    // it; only the global follower still needs its own apply.
     const applied = vi.mocked(commands.applyPlan).mock.calls.map((c) => c[0]);
-    expect(applied).toEqual([acme, { scope: "global" }]);
+    expect(applied).toEqual([{ scope: "global" }]);
+    expect(toast.success).toHaveBeenCalledWith(
+      "Updated 2 packages — 1 customized place needs a decision",
+    );
   });
 
   it("one package's bulk update leaves scopes only other packages live in alone", async () => {
@@ -141,5 +147,22 @@ describe("updates store: bulk update", () => {
       acme,
     ]);
     expect(commands.packageSetRev).not.toHaveBeenCalled();
+  });
+
+  it("says so instead of celebrating when every place needs a decision", async () => {
+    await useUpdatesStore.getState().updateRows([
+      row({
+        name: "gh",
+        blockedByLocalEdit: true,
+        editedHarnesses: ["claude"],
+      }),
+    ]);
+
+    expect(commands.applyPlan).not.toHaveBeenCalled();
+    expect(commands.packageSetRev).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.info).toHaveBeenCalledWith(
+      "Nothing to update — 1 customized place needs a decision first",
+    );
   });
 });
