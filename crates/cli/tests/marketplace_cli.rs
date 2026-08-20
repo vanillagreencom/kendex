@@ -25,7 +25,8 @@ fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
 #[allow(clippy::unwrap_used)]
 fn fixture_home() -> tempfile::TempDir {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
+    let home = tmp.path().canonicalize().unwrap();
+    let home = home.as_path();
     fs::create_dir_all(home.join("dev/app/.claude")).unwrap();
     fs::create_dir_all(home.join("catalog/skills/gh")).unwrap();
     fs::write(
@@ -48,7 +49,8 @@ fn fixture_home() -> tempfile::TempDir {
 #[allow(clippy::unwrap_used)]
 fn marketplace_list_json_is_versioned_and_stable() {
     let tmp = fixture_home();
-    let home = tmp.path();
+    let home = tmp.path().canonicalize().unwrap();
+    let home = home.as_path();
     let project = home.join("dev/app");
     let catalog = home.join("catalog");
     let catalog_arg = catalog.display().to_string();

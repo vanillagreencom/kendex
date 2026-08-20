@@ -44,7 +44,16 @@ fn plan(repo: &Repo) -> Result<(Vec<PlannedOp>, Vec<String>)> {
     // The receipt proves ownership of the directory it names and no
     // other. When the live directory is a different one — the repository
     // moved, or the receipt was edited — install owns re-recording.
-    if receipt.hooks_path != hooks_dir.display().to_string() {
+    // Compared as filesystem identities, not strings: macOS reaches /tmp
+    // and /var through symlinks, so the recorded spelling and the resolved
+    // one routinely name the same directory.
+    let same_dir = receipt.hooks_path == hooks_dir.display().to_string()
+        || std::path::Path::new(&receipt.hooks_path)
+            .canonicalize()
+            .ok()
+            .zip(hooks_dir.canonicalize().ok())
+            .is_some_and(|(recorded, live)| recorded == live);
+    if !same_dir {
         return Err(err(format!(
             "the receipt records {} but the live hooks directory is {} — refusing to rewrite; `kendex guard install` re-records ownership",
             receipt.hooks_path,

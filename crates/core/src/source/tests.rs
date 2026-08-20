@@ -206,7 +206,8 @@ fn an_explicit_catalog_does_not_list_names_it_cannot_install() {
 #[test]
 fn nested_and_plain_names_coexist_in_a_declared_layout() {
     let tmp = tempfile::tempdir().unwrap();
-    let root = tmp.path();
+    let root = tmp.path().canonicalize().unwrap();
+    let root = root.as_path();
     std::fs::write(root.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
     for rel in ["skills/plugin", "skills/plugin/item"] {
         std::fs::create_dir_all(root.join(rel)).unwrap();
