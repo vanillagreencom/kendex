@@ -219,3 +219,23 @@ fn authoring_tokens_parse_in_their_printed_shape() {
     assert_eq!(parse_token("skill:#abc"), None);
     assert_eq!(parse_token("nonsense:guardy#abc"), None);
 }
+
+/// A kind dir's support directories (tests, fixtures) hold suites about the
+/// items, not items — the check must not list them as installable names.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn hook_test_suites_are_not_catalog_items() {
+    let (_tmp, root) = repo();
+    fs::create_dir_all(root.join("hooks/tests")).unwrap();
+    fs::write(root.join("hooks/guard.sh"), "#!/bin/sh\n").unwrap();
+    fs::write(root.join("hooks/tests/guard.test.sh"), "#!/bin/sh\n").unwrap();
+    fs::write(root.join("kendex.toml"), "[marketplace]\nname = \"demo\"\n").unwrap();
+    let sealed = SealedSource::open(&root).unwrap();
+    let report = check(&sealed, "repo").unwrap();
+    let names: Vec<&str> = report.items.iter().map(|item| item.name.as_str()).collect();
+    assert!(names.contains(&"guard"));
+    assert!(
+        !names.iter().any(|name| name.contains("test")),
+        "suite files must not be listed as items: {names:?}"
+    );
+}

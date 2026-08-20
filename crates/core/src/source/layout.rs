@@ -75,6 +75,10 @@ fn nested_names(
         }
         if sealed.is_dir(&entry)
             && let Some(parent) = entry.file_name().and_then(|n| n.to_str())
+            // A kind dir's support directories hold the items' own test
+            // suites and fixtures, the same vocabulary a skill tree marks
+            // as supporting — files there are about the items, not items.
+            && !matches!(parent, "tests" | "test" | "fixtures" | "testdata")
             && let Ok(children) = sealed.list_dir(&entry)
         {
             for child in children {
