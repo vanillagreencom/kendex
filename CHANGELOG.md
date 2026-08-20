@@ -32,6 +32,20 @@ changes carry a **Breaking** call-out with their migration note inline.
 
 ### Fixed
 
+- Accepting a held-back update now actually installs it. `kendex findings`
+  printed the accept flag for the copy already on disk rather than for the
+  update being held back, so typing the instruction back did nothing; the
+  flag it prints is now the one `--allow-unsafe` takes. An item the safety
+  check refuses also keeps its install record when its files stay, so the
+  next run still knows kendex wrote them instead of reporting the item as
+  unmanaged forever.
+- `--allow-unsafe` naming something no longer there stops the run and says
+  so, with the flag that accepts what the item says now. It used to be
+  ignored in silence, leaving "nothing to do" as the only answer to a typed
+  acceptance.
+- `kendex apply` and `kendex refresh` now print what they cannot change and
+  why. A blocked install left them reporting "nothing to do" with the reason
+  never shown.
 - `kendex adopt` now binds an adopted skill or agent to the tools that were
   actually reading it. It used to inherit the scope's full install defaults,
   which could install the item for tools you never gave it to.

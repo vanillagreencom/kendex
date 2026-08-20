@@ -97,20 +97,27 @@ fn a_fresh_blocked_install_shows_in_held_back_and_accepts() {
 
 /// A token whose hash no longer matches stops the apply before it writes
 /// anything — installing everything except the item the button named
-/// would be a lie with a success toast.
+/// would be a lie with a success toast. The refusal names the token that
+/// was sent and the one that accepts what the item says now.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_stale_acceptance_stops_the_apply_out_loud() {
     let f = fixture();
-    let Err(error) = apply_scope(
-        &f.env,
-        &f.scope,
-        false,
-        vec!["hostile@000000000000".to_owned()],
-    ) else {
+    let stale = "hostile@000000000000".to_owned();
+    let Err(error) = apply_scope(&f.env, &f.scope, false, vec![stale.clone()]) else {
         panic!("a stale acceptance must not apply");
     };
-    assert!(error.contains("changed since"), "got: {error}");
+    assert!(error.contains(&stale), "got: {error}");
+    let current = view(&f.env, &f.scope)
+        .held_back
+        .iter()
+        .find(|row| row.name == "hostile")
+        .and_then(|row| row.review_hash.clone())
+        .expect("a blocked item's bytes are always readable");
+    assert!(
+        error.contains(&allow_unsafe_flag("hostile", &current)),
+        "got: {error}"
+    );
     assert!(!installed(&f), "nothing installs on a stale acceptance");
 }
 

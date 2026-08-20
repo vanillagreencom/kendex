@@ -76,6 +76,7 @@ pub(super) fn plan_refusals(
     drift: &mut Vec<DriftRow>,
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut config_edits::ConfigEditPlan,
+    new_lock: &mut Lock,
 ) -> Result<BTreeSet<String>> {
     let refused_keys: BTreeSet<String> = state
         .refused
@@ -104,6 +105,12 @@ pub(super) fn plan_refusals(
                     ),
                     cause: Some(DriftCause::LocalEdit),
                 });
+                // The files stay, so the record of them stays. Dropping it
+                // would leave kendex's own rendering on disk with nothing
+                // saying kendex wrote it, and the next pass would read it as
+                // a stranger's directory — refusing, forever, to write the
+                // accepted content over it.
+                new_lock.entries.insert(key, entry.clone());
                 continue;
             }
             guard.extend(

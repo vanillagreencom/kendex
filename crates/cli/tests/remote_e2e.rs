@@ -22,13 +22,25 @@ fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
 
 #[allow(clippy::unwrap_used)]
 fn git(dir: &Path, args: &[&str]) {
+    // The caller's git environment is dropped: run from a commit hook,
+    // GIT_DIR and friends point at the repository being committed to and
+    // every command here would act on that one instead of this fixture.
     let output = Command::new("git")
         .args(["-c", "user.email=t@t", "-c", "user.name=t"])
         .args(args)
         .current_dir(dir)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_PREFIX")
         .output()
         .unwrap();
-    assert!(output.status.success(), "git {args:?} failed");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[allow(clippy::unwrap_used)]

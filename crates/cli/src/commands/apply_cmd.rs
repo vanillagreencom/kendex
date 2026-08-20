@@ -22,6 +22,10 @@ pub fn run(
     allow_unsafe: Vec<String>,
     discard_edits: bool,
 ) -> CliResult {
+    // Every scope is planned before any of them is written: a grant that
+    // names nothing fails its scope's plan, and a half-applied run followed
+    // by that failure is the worst of both answers.
+    let mut planned = Vec::new();
     for scope in resolve_scopes(env, filter)? {
         // Plan from the manifest as it sits on disk — the same loader the
         // audit uses — so a v0.1 scope gets the schema upgrade its plan
@@ -42,7 +46,9 @@ pub fn run(
             overwrite_edited: discard_edits,
             ..PlanOptions::default()
         };
-        let report = plan_apply(env, &scope, &options)?;
+        planned.push((scope.clone(), plan_apply(env, &scope, &options)?));
+    }
+    for (scope, report) in planned {
         say(&format!("{}:", scope.label()));
         print_report(&report);
         if !plan_only {

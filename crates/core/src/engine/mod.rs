@@ -160,6 +160,7 @@ pub fn plan_scope(
         &mut drift,
         &mut ops,
         &mut config_edits,
+        &mut new_lock,
     )?;
 
     let sweepable = removal::orphans(

@@ -32,6 +32,7 @@ pub fn print_report(report: &EngineReport) {
         }
     }
     print_safety(report);
+    print_conflicts(report);
     if report.plan.is_empty() {
         say("nothing to do");
         return;
@@ -39,6 +40,33 @@ pub fn print_report(report: &EngineReport) {
     say("plan:");
     for op in &report.plan.ops {
         say(&format!("  - {}", op.description));
+    }
+}
+
+/// What this apply cannot write and why. A conflict plans no op, so
+/// without this the run ends on "nothing to do" while the thing the user
+/// asked for sits blocked with the reason never printed. An item the gate
+/// held back is skipped: the safety section above already said so, with
+/// the findings and the way to accept them.
+pub fn print_conflicts(report: &EngineReport) {
+    let held: Vec<&kendex_core::engine::ItemSafety> =
+        report.safety.iter().filter(|row| row.blocked()).collect();
+    for row in &report.drift {
+        if row.state != kendex_core::engine::DriftState::Conflict {
+            continue;
+        }
+        if held.iter().any(|held| {
+            held.kind == row.kind && held.name == row.name && held.harness == row.harness
+        }) {
+            continue;
+        }
+        say(&format!(
+            "conflict: {} {} for {}: {}",
+            row.kind.name(),
+            row.name,
+            row.harness.display_name(),
+            row.detail
+        ));
     }
 }
 

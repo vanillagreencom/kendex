@@ -3,6 +3,7 @@
 //! buy.
 #![cfg(unix)]
 
+mod convergence;
 mod decisions;
 mod decisions_lifecycle;
 mod decisions_refuse;

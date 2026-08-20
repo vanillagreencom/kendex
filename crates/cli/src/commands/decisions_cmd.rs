@@ -12,8 +12,11 @@ use kendex_core::engine::decisions::{DecisionState, DecisionToken, short_token};
 use kendex_core::engine::ops::{
     DecisionRecord, RecordState, dismiss, list_decisions, revoke_dismissal, revoke_override,
 };
-use kendex_core::engine::{ItemSafety, allow_unsafe_flag, observed_safety};
+use kendex_core::engine::{
+    ItemSafety, PlanOptions, allow_unsafe_flag, observed_safety, plan_apply,
+};
 use kendex_core::env::Env;
+use kendex_core::error::CoreError;
 use kendex_core::quality::reviews::DismissReason;
 
 use super::{CliResult, resolve_scopes, say};
@@ -34,22 +37,51 @@ pub struct FindingsArgs {
 pub fn findings(env: &Env, args: FindingsArgs) -> CliResult {
     let filter = ScopeFilter::resolve(args.scope.as_deref(), args.global, ScopeFilter::All)?;
     for scope in resolve_scopes(env, filter)? {
-        let rows = observed_safety(env, &scope)?;
-        let mut rows: Vec<&ItemSafety> = rows.iter().filter(|r| !r.findings.is_empty()).collect();
+        // Each row carries whether the gate is what is holding it: only a
+        // row the plan produced can be accepted with `--allow-unsafe`.
+        let mut rows: Vec<(ItemSafety, bool)> = held_back(env, &scope)?
+            .into_iter()
+            .map(|row| (row, true))
+            .collect();
+        let held: Vec<String> = rows.iter().map(|(row, _)| row.key()).collect();
+        rows.extend(
+            observed_safety(env, &scope)?
+                .into_iter()
+                .filter(|row| !row.findings.is_empty() && !held.contains(&row.key()))
+                .map(|row| (row, false)),
+        );
         if rows.is_empty() {
             say(&format!("{}: nothing found", scope.label()));
             continue;
         }
-        rows.sort_by_key(|row| (!row.blocked(), row.safety.score));
+        rows.sort_by_key(|(row, _)| (!row.blocked(), row.safety.score));
         say(&format!("{}:", scope.label()));
-        for row in rows {
-            print_row(row);
+        for (row, gated) in &rows {
+            print_row(row, *gated);
         }
     }
     Ok(())
 }
 
-fn print_row(row: &ItemSafety) {
+/// What the gate would refuse to install in this scope, judged on the bytes
+/// it would write.
+///
+/// A declared item is held back over its *desired* render, and that is the
+/// content `--allow-unsafe` accepts. Scoring the copy already on disk would
+/// show findings from bytes the gate never reads and hand out a token the
+/// gate rejects — a printed instruction that does nothing when followed. So
+/// a held-back item is reported from the plan, and everything else from
+/// disk, which is where its dismissal tokens bind.
+fn held_back(env: &Env, scope: &kendex_core::model::Scope) -> Result<Vec<ItemSafety>, CoreError> {
+    let report = plan_apply(env, scope, &PlanOptions::default())?;
+    Ok(report
+        .safety
+        .into_iter()
+        .filter(ItemSafety::blocked)
+        .collect())
+}
+
+fn print_row(row: &ItemSafety, gated: bool) {
     let held = match row.blocked() {
         true => " — held back",
         false => "",
@@ -94,8 +126,11 @@ fn print_row(row: &ItemSafety) {
             }
         }
     }
+    // Only what the gate is holding back can be accepted this way. Content
+    // already on disk that nothing declares is not waiting on a grant, and
+    // offering one would name bytes no plan is about.
     if let Some(review_hash) = &row.review_hash
-        && row.blocked()
+        && gated
     {
         say(&format!(
             "    to install it anyway, review the findings above and apply with --allow-unsafe {}",

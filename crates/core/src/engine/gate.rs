@@ -90,7 +90,51 @@ pub(super) fn pass(
     state: &mut super::desired::DesiredState,
 ) -> crate::error::Result<Vec<ItemSafety>> {
     let thresholds = crate::settings::load(env)?.safety;
-    Ok(run(scope, manifest, options, thresholds, state))
+    let safety = run(scope, manifest, options, thresholds, state);
+    unmatched(scope, options, &safety)?;
+    Ok(safety)
+}
+
+/// A grant that names nothing this plan would write stops the plan.
+///
+/// The flag carries the content it was shown with, so one that matches
+/// nothing means the content moved on — and continuing would install
+/// everything *except* the item the user asked for, under a command line
+/// that says the opposite. Where the name is still here, the message
+/// carries the flag that grants what it says now.
+fn unmatched(
+    scope: &Scope,
+    options: &PlanOptions,
+    safety: &[ItemSafety],
+) -> crate::error::Result<()> {
+    for flag in &options.allow_unsafe {
+        if safety.iter().any(|row| {
+            row.review_hash
+                .as_deref()
+                .is_some_and(|hash| names(flag, &row.name, &row.key(), hash))
+        }) {
+            continue;
+        }
+        let name = flag
+            .rsplit_once('@')
+            .map_or(flag.as_str(), |(name, _)| name);
+        let current = safety
+            .iter()
+            .filter(|row| row.name == name || row.key() == name)
+            .find_map(|row| row.review_hash.as_deref())
+            .map(|hash| allow_unsafe_flag(name, hash));
+        return Err(crate::error::CoreError::GrantMatchesNothing {
+            flag: flag.clone(),
+            scope: scope.label(),
+            fix: match current {
+                Some(current) => format!(
+                    " — {name} says something different now; read the findings again and accept with --allow-unsafe {current}"
+                ),
+                None => String::new(),
+            },
+        });
+    }
+    Ok(())
 }
 
 /// Audit every desired installation, hold back the ones that fail, and
@@ -200,14 +244,20 @@ pub(super) fn run(
 /// become. When the content changes the printed hash changes with it, so
 /// re-running the same command line blocks again and prints the new one.
 fn granted(options: &PlanOptions, item: &Desired, review_hash: &str) -> bool {
-    options.allow_unsafe.iter().any(|named| {
-        let Some((name, shown)) = named.rsplit_once('@') else {
-            return false;
-        };
-        (name == item.name || name == item.key)
-            && shown.len() >= SHOWN_HASH
-            && review_hash.starts_with(shown)
-    })
+    options
+        .allow_unsafe
+        .iter()
+        .any(|flag| names(flag, &item.name, &item.key, review_hash))
+}
+
+/// Whether one flag names this installation and this content.
+fn names(flag: &str, name: &str, key: &str, review_hash: &str) -> bool {
+    let Some((flagged, shown)) = flag.rsplit_once('@') else {
+        return false;
+    };
+    (flagged == name || flagged == key)
+        && shown.len() >= SHOWN_HASH
+        && review_hash.starts_with(shown)
 }
 
 /// How much of the review hash is printed, and the least a flag may carry.

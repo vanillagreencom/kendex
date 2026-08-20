@@ -160,6 +160,63 @@ fn verify_names_an_installation_that_cannot_act() {
     );
 }
 
+/// A plan that cannot write says so. An install kendex refuses to touch
+/// leaves no op behind, and reporting only "nothing to do" or "up to date"
+/// hid the reason from every command that could show it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_blocked_install_is_named_instead_of_passing_as_up_to_date() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let project = home.join("dev/app");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    let catalog = home.join("catalog");
+    let skill = catalog.join("skills/deploy");
+    fs::create_dir_all(&skill).unwrap();
+    fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: deploy\ndescription: ship it\n---\nRead the plan first.\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        format!(
+            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+            catalog.display()
+        ),
+    )
+    .unwrap();
+    assert!(kendex(home, &project, &["apply", "-y"]).status.success());
+
+    // The user's hands on the install, and the source moving under it: the
+    // one situation kendex refuses to resolve on its own.
+    let installed = project.join(".claude/skills/deploy/SKILL.md");
+    fs::write(
+        &installed,
+        "---\nname: deploy\ndescription: ship it\n---\nMine.\n",
+    )
+    .unwrap();
+    fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: deploy\ndescription: ship it\n---\nRead the plan, then the diff.\n",
+    )
+    .unwrap();
+
+    let planned = kendex(home, &project, &["apply", "--plan"]);
+    let printed = String::from_utf8_lossy(&planned.stderr).into_owned();
+    assert!(
+        printed.contains("conflict: skill deploy for Claude Code"),
+        "{printed}"
+    );
+
+    let refreshed = kendex(home, &project, &["refresh", "-y", "--scope", "project"]);
+    let printed = String::from_utf8_lossy(&refreshed.stderr).into_owned();
+    assert!(
+        printed.contains("conflict: skill deploy for Claude Code"),
+        "{printed}"
+    );
+}
+
 /// The real binary — not just the library — runs the global-dir move
 /// before its verb: state under the old `vstack2` config dir lands under
 /// `kendex` on any command at all.

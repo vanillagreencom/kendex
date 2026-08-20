@@ -2,7 +2,7 @@ use kendex_core::engine::{PlanOptions, plan_apply};
 use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
 
-use super::engine_common::{confirm_and_execute, refresh_failures};
+use super::engine_common::{confirm_and_execute, print_conflicts, refresh_failures};
 use super::{CliResult, resolve_scopes, say};
 use crate::scope::ScopeFilter;
 
@@ -27,6 +27,44 @@ pub struct RefreshArgs {
     /// Overwrite installations you edited by hand
     #[arg(long)]
     discard_edits: bool,
+}
+
+fn print_drift(report: &kendex_core::engine::EngineReport) {
+    for row in &report.drift {
+        say(&format!(
+            "{} {} [{}]: {:?} — {}",
+            row.kind.name(),
+            row.name,
+            row.harness.name(),
+            row.state,
+            row.detail
+        ));
+    }
+}
+
+/// What this refresh would add to or drop from the installed set — the part
+/// that needs an answer before it runs.
+fn print_set_changes(
+    scope: &kendex_core::model::Scope,
+    report: &kendex_core::engine::EngineReport,
+) {
+    say(&format!(
+        "{}: this changes what is installed",
+        scope.label()
+    ));
+    for change in &report.set_changes {
+        let verb = match change.direction {
+            kendex_core::engine::SetDirection::Add => "install",
+            kendex_core::engine::SetDirection::Remove => "remove",
+        };
+        say(&format!(
+            "  - {verb} {} {} for {} — {}",
+            change.kind.name(),
+            change.name,
+            change.harness.display_name(),
+            change.reason
+        ));
+    }
 }
 
 pub fn run_args(env: &Env, args: RefreshArgs) -> CliResult {
@@ -75,40 +113,18 @@ pub fn run(
         }
         refreshed_anything = true;
         failures.extend(refresh_failures(&report));
-        if verbose {
-            for row in &report.drift {
-                say(&format!(
-                    "{} {} [{}]: {:?} — {}",
-                    row.kind.name(),
-                    row.name,
-                    row.harness.name(),
-                    row.state,
-                    row.detail
-                ));
-            }
+        // What this refresh changes and what it will not: verbose lists
+        // every row, otherwise just the conflicts that need an answer.
+        match verbose {
+            true => print_drift(&report),
+            false => print_conflicts(&report),
         }
         if report.plan.is_empty() {
             say(&format!("{}: up to date", scope.label()));
             continue;
         }
         if !report.set_changes.is_empty() {
-            say(&format!(
-                "{}: this changes what is installed",
-                scope.label()
-            ));
-            for change in &report.set_changes {
-                let verb = match change.direction {
-                    kendex_core::engine::SetDirection::Add => "install",
-                    kendex_core::engine::SetDirection::Remove => "remove",
-                };
-                say(&format!(
-                    "  - {verb} {} {} for {} — {}",
-                    change.kind.name(),
-                    change.name,
-                    change.harness.display_name(),
-                    change.reason
-                ));
-            }
+            print_set_changes(&scope, &report);
             if let Err(error) = confirm_and_execute(env, &report, yes) {
                 failures.push(error.to_string());
             }

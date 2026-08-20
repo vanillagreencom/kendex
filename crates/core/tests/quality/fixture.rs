@@ -89,7 +89,19 @@ pub fn manifest_of(f: &Fixture) -> kendex_core::manifest::Manifest {
 
 #[allow(clippy::unwrap_used)]
 pub fn plan(f: &Fixture, allow_unsafe: &[&str]) -> kendex_core::engine::EngineReport {
+    plan_with(f, allow_unsafe, false).unwrap()
+}
+
+/// The same, with the answer kept whole: an unmatched grant fails the plan,
+/// and discarding edits is what writes over bytes kendex cannot prove it
+/// rendered itself.
+pub fn plan_with(
+    f: &Fixture,
+    allow_unsafe: &[&str],
+    discard_edits: bool,
+) -> kendex_core::error::Result<kendex_core::engine::EngineReport> {
     let manifest = manifest_of(f);
+    #[allow(clippy::unwrap_used)]
     let lock = load_lock(&lock_path(&f.env, &f.scope)).unwrap();
     plan_scope(
         &f.env,
@@ -98,10 +110,10 @@ pub fn plan(f: &Fixture, allow_unsafe: &[&str]) -> kendex_core::engine::EngineRe
         &lock,
         &PlanOptions {
             allow_unsafe: allow_unsafe.iter().map(|name| (*name).to_owned()).collect(),
+            overwrite_edited: discard_edits,
             ..PlanOptions::default()
         },
     )
-    .unwrap()
 }
 
 /// The exact flag that grants a review of what `hostile` says right now.
