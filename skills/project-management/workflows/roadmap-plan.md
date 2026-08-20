@@ -109,9 +109,9 @@ Report as JSON:
 5. Risk assessment (high/medium/low) with rationale
 </delegation_format>
 
-Keep the result as `ARCH_FINDINGS` (`validated_findings[]`, `deprecated_code[]`, `breaking_changes[]`, `required_refactors[]`, `risk_assessment`). Fold verified findings into the TPM JSON — scope additions into the issues they belong to, ordering fixes into relations — before presenting. In spec mode the fold stops at the spec's boundary: an addition beyond its phases (a prerequisite the spec did not name) is recorded as `defer`/`declined` with the spec named in `reason` and surfaced in the § 5 report, never folded in.
+Keep the result as `ARCH_FINDINGS` (`validated_findings[]`, `deprecated_code[]`, `breaking_changes[]`, `required_refactors[]`, `risk_assessment`). Fold verified findings into the TPM JSON — scope additions into the issues they belong to, ordering fixes into relations — before presenting. In spec mode the fold stops at the spec's boundary, with the same exception the TPM applies: a prerequisite the spec's own deliverables need is folded in as `include`; anything else beyond its phases is recorded as `out_of_scope` — never `defer` — with the spec named in `reason` and surfaced in the § 5 report.
 
-For a major feature planned without an already-reviewed spec, also run the `second-opinion` skill (challenge mode; an optional dependency) on the plan here and fold verified findings in the same way — when the skill is not installed, the § 5 report's `Cross-model review` field reads `unavailable` and the workflow continues. A SPEC that already passed external review skips this.
+For a major feature planned without an already-reviewed spec, also run the `second-opinion` skill (challenge mode; an optional dependency) on the plan here and fold verified findings in the same way — when the skill is not installed, or is installed but cannot complete (no eligible target, missing external CLI, timeout, nonzero exit), the § 5 report's `Cross-model review` field reads `unavailable — <reason>` and the workflow continues. A SPEC that already passed external review skips this.
 
 ---
 

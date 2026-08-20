@@ -66,9 +66,11 @@ require_fixed "$tpm" 'never change its approach, drop a workstream it names, or 
 require_fixed "$tpm" 'anything outside the spec'"'"'s phases is `out_of_scope` — never `defer`' 'out-of-spec gaps never enter organized_issues'
 require_fixed "$create" 'skipping entries whose `project` is `Deferred`' 'deferred gaps are never created in the roadmap project'
 require_fixed "$skill" 'optional: [decider, second-opinion]' 'second-opinion declared as an optional dependency'
-require_fixed "$plan" '`Cross-model review` field reads `unavailable`' 'cross-model review degrades when the skill is absent'
+require_fixed "$plan" 'or is installed but cannot complete (no eligible target, missing external CLI, timeout, nonzero exit)' 'cross-model review degrades when the skill is absent or unusable'
+require_fixed "$plan" '`Cross-model review` field reads `unavailable — <reason>`' 'unavailable review carries its reason'
 require_fixed "$plan" '· Cross-model review: [verdict summary | unavailable | skipped — reviewed spec]' 'report template carries the cross-model review field'
 require_fixed "$plan" 'Spec: [SPEC_PATH or "None"] — when set, the spec'"'"'s phases bound the roadmap' 'architecture review receives the spec boundary'
 require_fixed "$plan" 'In spec mode the fold stops at the spec'"'"'s boundary' 'out-of-spec findings are never folded in'
+require_fixed "$plan" 'anything else beyond its phases is recorded as `out_of_scope` — never `defer`' 'architecture-review stage uses the same out_of_scope status as the TPM'
 
 echo "all pass"
