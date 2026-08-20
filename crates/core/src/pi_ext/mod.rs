@@ -116,6 +116,40 @@ pub fn read(package_dir: &Path) -> Result<PiPackage> {
     })
 }
 
+/// Where a package whose registered name differs from its directory
+/// lives under a catalog's package folder — kendex's own catalog shelves
+/// scoped names in short directories. The walk stays inside the sealed
+/// reader: catalog content is adversarial input, so symlinked or
+/// oversized metadata is skipped, never followed. One nested level
+/// covers npm-style `@scope/name` layouts.
+pub fn find_by_package_name(base: &Path, name: &str) -> Option<PathBuf> {
+    let sealed = crate::source_read::SealedSource::open(base).ok()?;
+    let mut candidates = sealed.list_dir(sealed.root()).ok()?;
+    for dir in std::mem::take(&mut candidates) {
+        if dir
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().starts_with('@'))
+        {
+            candidates.extend(sealed.list_dir(&dir).ok().unwrap_or_default());
+        } else {
+            candidates.push(dir);
+        }
+    }
+    for dir in candidates {
+        let manifest = dir.join("package.json");
+        if !sealed.is_file(&manifest) {
+            continue;
+        }
+        let Ok(text) = sealed.read_to_string(&manifest) else {
+            continue;
+        };
+        if serde_json::from_str::<RawPackage>(&text).is_ok_and(|raw| raw.name == name) {
+            return Some(dir);
+        }
+    }
+    None
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstallOutcome {
     pub name: String,

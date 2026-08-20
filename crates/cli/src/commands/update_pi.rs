@@ -221,7 +221,7 @@ fn declared_sources(
                 let dir = base.join(name);
                 if dir.join("package.json").is_file() {
                     found.insert(name.clone(), dir);
-                } else if let Some(dir) = dir_by_package_name(&base, name) {
+                } else if let Some(dir) = pi_ext::find_by_package_name(&base, name) {
                     found.insert(name.clone(), dir);
                 } else {
                     notes.push(format!(
@@ -234,24 +234,6 @@ fn declared_sources(
         }
     }
     found
-}
-
-/// A catalog is free to shelve a package under a directory spelled
-/// differently from the name its package.json registers — kendex's own
-/// catalog keeps short directories for scoped names. The name in the
-/// manifest is the package's, so when no directory matches it literally,
-/// the package.json names decide.
-fn dir_by_package_name(base: &Path, name: &str) -> Option<PathBuf> {
-    for entry in std::fs::read_dir(base).ok()?.flatten() {
-        let dir = entry.path();
-        if !dir.join("package.json").is_file() {
-            continue;
-        }
-        if pi_ext::read(&dir).is_ok_and(|package| package.name == name) {
-            return Some(dir);
-        }
-    }
-    None
 }
 
 fn installed_version(root: &Path, name: &str) -> Option<String> {

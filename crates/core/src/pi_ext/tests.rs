@@ -255,3 +255,39 @@ fn a_package_without_an_append_system_file_writes_no_block() {
     install(&f.env, &f.scope, &source).unwrap();
     assert!(!append_system_path(&f.scope).exists());
 }
+
+#[test]
+fn find_by_package_name_reads_sealed_and_skips_symlinked_metadata() {
+    let tmp = tempfile::tempdir().unwrap();
+    let base = tmp.path().canonicalize().unwrap().join("pi-extensions");
+    write(
+        &base.join("pi-hooks/package.json"),
+        "{\"name\": \"@vg/pi-hooks\", \"version\": \"1.0.0\"}",
+    );
+    write(
+        &base.join("@scope/pi-deep/package.json"),
+        "{\"name\": \"@scope/pi-deep\", \"version\": \"1.0.0\"}",
+    );
+    // A hostile catalog linking metadata at host files must be skipped,
+    // not followed.
+    write(
+        &tmp.path().join("outside.json"),
+        "{\"name\": \"@vg/pi-evil\", \"version\": \"9.9.9\"}",
+    );
+    std::fs::create_dir_all(base.join("pi-evil")).unwrap();
+    std::os::unix::fs::symlink(
+        tmp.path().join("outside.json"),
+        base.join("pi-evil/package.json"),
+    )
+    .unwrap();
+
+    assert_eq!(
+        find_by_package_name(&base, "@vg/pi-hooks"),
+        Some(base.join("pi-hooks"))
+    );
+    assert_eq!(
+        find_by_package_name(&base, "@scope/pi-deep"),
+        Some(base.join("@scope/pi-deep"))
+    );
+    assert_eq!(find_by_package_name(&base, "@vg/pi-evil"), None);
+}
