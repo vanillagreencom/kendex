@@ -109,3 +109,23 @@ fn a_pi_extension_flag_is_refused_toward_its_carrier_bundle() {
     let said = String::from_utf8_lossy(&output.stderr).into_owned();
     assert!(said.contains("not installable on its own"), "{said}");
 }
+
+/// The same carrier explanation reaches a global add: `--pi-extension` is
+/// an explicit selection, so the gate lets the engine explain instead of
+/// demanding selections that were already given.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_global_pi_extension_flag_gets_the_carrier_explanation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let project = project_with_catalog(home);
+
+    let output = kendex(
+        home,
+        &project,
+        &["add", "--global", "--pi-extension", "pi-hooks", "-y"],
+    );
+    assert!(!output.status.success());
+    let said = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(said.contains("not installable on its own"), "{said}");
+}

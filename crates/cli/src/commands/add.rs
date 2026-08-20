@@ -60,11 +60,20 @@ pub fn run(env: &Env, args: AddArgs) -> CliResult {
     let commands = split(&args.command);
     let mcp_servers = split(&args.mcp_server);
     let bundles = split(&args.bundle);
+    let pi_extensions = split(&args.pi_extension);
     if args.global
         && !args.all
-        && [&agents, &skills, &hooks, &commands, &mcp_servers, &bundles]
-            .iter()
-            .all(|names| names.is_empty())
+        && [
+            &agents,
+            &skills,
+            &hooks,
+            &commands,
+            &mcp_servers,
+            &bundles,
+            &pi_extensions,
+        ]
+        .iter()
+        .all(|names| names.is_empty())
     {
         return Err(
             "global installs need --all or explicit --agent/--skill/--bundle selections".into(),
@@ -87,7 +96,7 @@ pub fn run(env: &Env, args: AddArgs) -> CliResult {
         hooks,
         commands,
         mcp_servers,
-        pi_extensions: split(&args.pi_extension),
+        pi_extensions,
         all: args.all,
         harnesses: if args.harness.is_empty() {
             None
