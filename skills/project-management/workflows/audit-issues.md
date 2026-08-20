@@ -285,7 +285,7 @@ Process `create` first — created IDs resolve the `#N` references the other act
 
 **Linear only.** With `TRACKER=github`, record `positioning: n/a (github)` in § 8 and skip.
 
-After each create, position the issue in Todo unless any of these hold: the project state is not `started`, the issue is blocked by a non-Done issue in another project, or it is P4 with no blocking relations.
+Once every create has landed and its relations and parent are attached — never per create: a Todo issue whose blockers are still pending is exactly what a concurrent janitor would bundle — position each created issue in Todo unless any of these hold: the project state is not `started`, the issue is blocked by a non-Done issue in another project, or it is P4 with no blocking relations.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh cache projects get [PROJECT_ID] | jq -r '.state'

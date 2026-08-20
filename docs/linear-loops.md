@@ -1,9 +1,8 @@
 # Linear Loops — Triage Janitor (template)
 
 Loops have no public GraphQL API (verified 2026-08-08 by schema
-introspection: no `loop*`/`agentAutomation*` CRUD; only leaked enums
-`AgentAutomationUsageLimitScope`, `WorkflowTrigger`, `WorkflowTriggerType`),
-so they are configured manually in the Linear UI at **Loops → New loop**.
+introspection — no `loop*`/`agentAutomation*` CRUD), so they are configured
+by hand in the Linear UI at **Loops → New loop**.
 
 **How to use this template:** copy this file to a sibling named
 linear-loops-local.md in the same directory (the `docs/*-local.md` gitignore
@@ -174,10 +173,11 @@ neither a parent nor sub-issues — otherwise skip this task entirely (an
 In Progress or In Review trigger from a re-triage pass is never bundled).
 Search open, unstarted issues (Triage, Backlog, Todo) of the SAME team and
 SAME project that likewise have no parent, no sub-issues, and carry an
-agent:* label — excluding Backlog-state issues under 10 minutes old:
-pipeline creates are born in Backlog and attach parents and blocking
-relations after the create, while human-filed issues are born in Triage
-and stay eligible at any age, so a creation-time pair still bundles. The
+agent:* label — excluding issues under 10 minutes old that are not in
+Triage: pipeline creates are born in Backlog (and may already sit in Todo)
+and attach parents and blocking relations after the create, while
+human-filed issues are born in Triage and stay eligible at any age, so a
+creation-time pair still bundles. The
 trigger, and any issue named in a `bundle-handoff from <ID>` comment on
 it (see the guard below), are exempt regardless. Evaluation order for the boundary rule: FIRST pick the tentative bundle —
 the trigger plus the one to four same-PR companions you would actually
