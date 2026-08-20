@@ -5,13 +5,17 @@ introspection: no `loop*`/`agentAutomation*` CRUD; only leaked enums
 `AgentAutomationUsageLimitScope`, `WorkflowTrigger`, `WorkflowTriggerType`),
 so they are configured manually in the Linear UI at **Loops → New loop**.
 
-**How to use this template:** copy this file beside itself with a `-local`
-suffix (the `docs/*-local.md` gitignore rule keeps that copy untracked), fill
-in every `[BRACKETED]` placeholder — each one says what to put there — and
-paste the finished sections into the Linear UI. Angle-bracket `<...>` slots
-inside the instructions text are runtime values the loop substitutes per
-issue — leave those untouched. Your filled copy is the working document;
-this template only changes when the loop design changes.
+**How to use this template:** copy this file to a sibling named
+linear-loops-local.md in the same directory (the `docs/*-local.md` gitignore
+rule keeps that copy untracked), fill in every SETUP placeholder — the
+`[BRACKETED]` entries whose text tells you what to put there (team map, agent
+label definitions, schedule, multi-agent label) — and paste the finished
+sections into the Linear UI. Leave every RUNTIME slot untouched: the
+angle-bracket `<...>` values the loop substitutes per issue, and the
+square-bracket slots inside the parent issue format (`[SUMMARY]`,
+`[ISSUE_ID]`, `[title]`, `[Criterion …]`), which the loop fills when it
+creates a parent. Your filled copy is the working document; this template
+only changes when the loop design changes.
 
 Scope boundary: Loops own per-issue hygiene AND routing — labels, team
 routing, project assignment, `agent:*` routing labels, duplicate flagging,
@@ -187,8 +191,10 @@ sequencing must stay where it is visible, so such issues are left
 unbundled. If the triggering issue plus one to
 four of them would plausibly ship as a single pull request — same component
 or surface, complementary small changes, no conflicting approaches — create
-ONE new parent issue IN THAT SAME TEAM AND PROJECT from the template below and set each child's parent to
-it. Skip entirely when in doubt; never re-parent an issue that already has
+ONE new parent issue IN THAT SAME TEAM AND PROJECT from the template below,
+in the Backlog state (never Triage: a Triage-state creation would fire this
+loop on the parent before its children are attached), with `(one PR)` at the
+end of its title, and set each child's parent to it. Skip entirely when in doubt; never re-parent an issue that already has
 a parent; never bundle across teams or projects. Issues that have sub-issues
 (coordination parents — including ones this loop created, which will
 themselves trigger a janitor run) are never bundle candidates.
@@ -232,9 +238,12 @@ header line with no value):
 
   - [Key constraints shared by the children, 1-3 bullets]
 
-Parent rules: title names the bundle's goal, not a child's; label the
-parent `agent:multi` when children span two or more `agent:*` domains,
-otherwise give it the children's shared agent label; the parent carries NO
+Parent rules: title names the bundle's goal, not a child's, and ends in
+`(one PR)` — the marker that tells orchestration the children ship as one
+pull request (a parent without it is dispatched as a container, one PR per
+child); label the parent [MULTI_AGENT_LABEL — the project's configured
+multi-agent routing label, e.g. `agent:multi`] when children span two or
+more `agent:*` domains, otherwise give it the children's shared agent label; the parent carries NO
 estimate; omit the Acceptance Criteria section when children have none; no
 implementation detail — requirements live in the children; add no blocking
 relations unless a child's own text states one.

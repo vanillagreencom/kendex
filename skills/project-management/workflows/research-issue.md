@@ -41,10 +41,13 @@ Write the description to a file, then:
   --title "Research: [TOPIC]" \
   --project "[PROJECT]" \
   --labels "[VALIDATED_LABELS]" \
+  --state "Backlog" \
   --priority 2 \
   --estimate 1 \
   --description-file [BODY_FILE]
 ```
+
+`--state "Backlog"` is mandatory: a research issue leaves this workflow fully triaged, and the team-default Triage state is where the workspace's triage loop fires.
 
 ```markdown
 ## Summary
