@@ -30,6 +30,7 @@ export function CommunityTab() {
   const skillsshAvailable = useCommunityStore((s) => s.skillsshAvailable);
   const load = useCommunityStore((s) => s.load);
   const goToMarketplaces = useNavStore((s) => s.goToMarketplaces);
+  const goToMarketplace = useNavStore((s) => s.goToMarketplace);
 
   const [section, setSection] = useState<"directory" | "skillssh">("directory");
   const [query, setQuery] = useState("");
@@ -81,7 +82,10 @@ export function CommunityTab() {
         </div>
 
         {section === "skillssh" ? (
-          <SkillsShSearch onInstall={(url) => setSubscribeTo(url)} />
+          <SkillsShSearch
+            onOpen={(repo) => goToMarketplace({ by: "repo", repo })}
+            onInstall={(url) => setSubscribeTo(url)}
+          />
         ) : error && !directory ? (
           <EmptyState icon={Globe} title="kendex.ai is not reachable">
             {error}
@@ -155,6 +159,9 @@ export function CommunityTab() {
                   <DirectoryRowLine
                     key={row.repo}
                     row={row}
+                    onOpen={() =>
+                      goToMarketplace({ by: "repo", repo: row.repo })
+                    }
                     onSubscribe={() => setSubscribeTo(row.repo)}
                   />
                 ))}

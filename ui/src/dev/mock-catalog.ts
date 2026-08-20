@@ -3,6 +3,7 @@
 import type {
   AvailablePackage,
   BundleDetail,
+  Catalog,
   InstallState,
   ItemKind,
   MarketplaceRow,
@@ -22,11 +23,21 @@ export function marketplaceRow(
 }
 
 /// The readable catalog's packages, or the rejection that says why the
-/// content is unreachable — mirrors core's require_ready errors.
+/// content is unreachable — mirrors core's require_ready errors. A
+/// repository nobody subscribes to reads as the community fixture's listing.
 export function offeredHere(
-  scope: Scope,
-  source: string,
+  catalog: Catalog,
 ): AvailablePackage[] | Promise<never> {
+  if (catalog.by === "repo") {
+    const offered = store.state.repoPackages[catalog.repo];
+    if (!offered) {
+      return Promise.reject(
+        `${catalog.repo}: could not reach github.com (offline in the mock)`,
+      );
+    }
+    return offered;
+  }
+  const { scope, source } = catalog;
   if (!marketplaceRow(scope, source)) {
     return Promise.reject(`unknown source '${source}'`);
   }
@@ -36,6 +47,10 @@ export function offeredHere(
   }
   return offered;
 }
+
+/** The source name a catalog's bundle specs are filed under. */
+export const specSource = (catalog: Catalog): string =>
+  catalog.by === "subscription" ? catalog.source : catalog.repo;
 
 const stateOf = (
   offered: AvailablePackage[],

@@ -192,13 +192,19 @@ export const commands = {
 	 */
 	marketplacesOverview: () => typedError<MarketplaceRow[], string>(__TAURI_INVOKE("marketplaces_overview")),
 	/**
-	 *  Every package one subscription offers, across kinds, with installed
-	 *  state joined in.
+	 *  Every package one catalog offers, across kinds, with installed state
+	 *  joined in.
 	 */
-	marketplacePackages: (scope: Scope, source: string) => typedError<AvailablePackage[], string>(__TAURI_INVOKE("marketplace_packages", { scope, source })),
+	marketplacePackages: (catalog: Catalog) => typedError<AvailablePackage[], string>(__TAURI_INVOKE("marketplace_packages", { catalog })),
+	/**
+	 *  What a catalog says about itself, fetched fresh for a repository nobody
+	 *  subscribes to — the marketplace page's header, and the subscription to
+	 *  carry on as when this machine already holds one.
+	 */
+	marketplaceSummary: (catalog: Catalog) => typedError<CatalogSummary, string>(__TAURI_INVOKE("marketplace_summary", { catalog })),
 	/**  One curated set with per-member installed state. */
-	marketplaceBundle: (scope: Scope, source: string, name: string) => typedError<BundleDetail, string>(__TAURI_INVOKE("marketplace_bundle", { scope, source, name })),
-	marketplacePackagePreview: (scope: Scope, source: string, kind: ItemKind, name: string) => typedError<PackageView, string>(__TAURI_INVOKE("marketplace_package_preview", { scope, source, kind, name })),
+	marketplaceBundle: (catalog: Catalog, name: string) => typedError<BundleDetail, string>(__TAURI_INVOKE("marketplace_bundle", { catalog, name })),
+	marketplacePackagePreview: (catalog: Catalog, kind: ItemKind, name: string) => typedError<PackageView, string>(__TAURI_INVOKE("marketplace_package_preview", { catalog, kind, name })),
 	/**
 	 *  Install packages or a curated set from one subscription. `destination`
 	 *  redirects the install from the scope being browsed into a project: the
@@ -242,7 +248,7 @@ export const commands = {
 	 *  sub-tab when it is not, rather than showing a dead search box.
 	 */
 	communitySkillsshAvailable: () => typedError<boolean, string>(__TAURI_INVOKE("community_skillssh_available")),
-	marketplaceAbout: (scope: Scope, source: string) => typedError<AboutView, string>(__TAURI_INVOKE("marketplace_about", { scope, source })),
+	marketplaceAbout: (catalog: Catalog) => typedError<AboutView, string>(__TAURI_INVOKE("marketplace_about", { catalog })),
 	/**
 	 *  Where every installation came from, across every scope — the Library
 	 *  table's From column in one query.
@@ -563,6 +569,16 @@ export type CapabilityRow = {
 	caps: KindCaps,
 };
 
+/**
+ *  What a browse read addresses: a subscription, or a GitHub repository
+ *  browsed before anyone subscribes to it. The second fetches into the same
+ *  store a later subscription reads from, so subscribing never downloads
+ *  twice and the pages keep working across the switch.
+ */
+export type Catalog = { by: "subscription"; scope: Scope; source: string } | 
+/**  `owner/repo` on GitHub, as the directory spells it. */
+{ by: "repo"; repo: string };
+
 /**  Something wrong with a catalog, said in the catalog author's terms. */
 export type CatalogFinding = {
 	location: string,
@@ -590,6 +606,25 @@ export type CatalogGroupMeta = {
  *  control file makes the source unusable, never a different mode.
  */
 export type CatalogMode = "plugin-registry" | "explicit" | "discovered" | "unusable";
+
+export type CatalogSummary = {
+	/**  `owner/repo`, a path, or `local` — what the catalog is. */
+	provenance: string,
+	/**  The commit being read, for a remote. */
+	commit: string | null,
+	/**  `[marketplace]` from the catalog's own kendex.toml. */
+	meta: MarketplaceMeta | null,
+	mode: CatalogMode,
+	/**  Packages offered, by kind name. */
+	counts: { [key in string]: number },
+	/**  Set when the catalog is read from the store because a refresh failed. */
+	warning: string | null,
+	/**
+	 *  For a repository: the subscription this machine already holds for
+	 *  it, if any. A subscription answers with itself.
+	 */
+	subscription: SubscriptionRef | null,
+};
 
 export type CreateRequest = {
 	/**  Folder and repository name; must be a plain installable spelling. */
@@ -2214,6 +2249,15 @@ export type SubscribeOutcome = {
 	 */
 	lead: string | null,
 	notes: string[],
+};
+
+/**
+ *  The subscription a browsed repository already has on this machine, so
+ *  the page can carry on as that subscription instead of a stranger.
+ */
+export type SubscriptionRef = {
+	scope: Scope,
+	source: string,
 };
 
 /**  The job an item helps with. */

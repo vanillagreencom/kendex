@@ -12,7 +12,11 @@ import type {
   SourceRow,
 } from "@/bindings";
 import { bundles, manifests, sources, views } from "./fixture-declared";
-import { marketplacePackages, marketplaces } from "./fixture-marketplaces";
+import {
+  marketplacePackages,
+  marketplaces,
+  repoPackages,
+} from "./fixture-marketplaces";
 import { harnesses, items } from "./fixture-observed";
 import { provenance } from "./fixture-provenance";
 import { ACME, API } from "./fixture-scopes";
@@ -32,6 +36,8 @@ export interface MockState {
   marketplaces: MarketplaceRow[];
   /// What each readable subscription offers, keyed scope-label::source.
   marketplacePackages: Record<string, AvailablePackage[]>;
+  /// What a listed repository offers when browsed before subscribing.
+  repoPackages: Record<string, AvailablePackage[]>;
   provenance: ProvenanceRow[];
   /// Packages whose update notifications the mock user muted.
   ignored: { kind: ItemKind; name: string }[];
@@ -56,6 +62,7 @@ export function initialState(): MockState {
     bundles: bundles(),
     marketplaces: marketplaces(),
     marketplacePackages: marketplacePackages(),
+    repoPackages: repoPackages(),
     provenance: provenance(),
     ignored: [],
   };

@@ -4,7 +4,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::super::{PackageSafety, package_safety};
+use super::super::{Catalog, PackageSafety, package_safety};
 use crate::env::{Env, FakeOs};
 use crate::model::{ItemKind, Scope};
 use crate::process::Hardened;
@@ -73,7 +73,16 @@ fn cache_file(env: &Env) -> PathBuf {
 }
 
 fn score(env: &Env, scope: &Scope) -> PackageSafety {
-    package_safety(env, scope, "cat", ItemKind::Skill, "gh").unwrap()
+    package_safety(
+        env,
+        &Catalog::Subscription {
+            scope: scope.clone(),
+            source: "cat".to_owned(),
+        },
+        ItemKind::Skill,
+        "gh",
+    )
+    .unwrap()
 }
 
 #[test]

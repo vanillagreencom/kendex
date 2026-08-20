@@ -18,14 +18,14 @@ use specta::Type;
 
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-use crate::model::{ItemKind, Scope};
+use crate::model::ItemKind;
 use crate::quality::{
     AuditInput, Content, Finding, QualityScore, RULESET_VERSION, SafetyScore, SkippedRule,
     TreeFile, Verdict,
 };
 use crate::source::DISCOVERY_VERSION;
 
-use super::Browsed;
+use super::{Browsed, Catalog};
 
 /// The shape of one cached record — the scanner/parser half of the cache
 /// key, beside the rule-set and discovery-table versions. Bump it when what
@@ -70,12 +70,11 @@ pub struct PackageSafety {
 
 pub fn package_safety(
     env: &Env,
-    scope: &Scope,
-    source_name: &str,
+    catalog: &Catalog,
     kind: ItemKind,
     name: &str,
 ) -> Result<PackageSafety> {
-    let browsed = super::open(env, scope, source_name)?;
+    let browsed = super::open(env, catalog)?;
     let (score, from_cache) = scored(env, &browsed, kind, name)?;
     let thresholds = crate::settings::load(env)?.safety;
     let (verdict, reasons) = crate::quality::verdict(&score.findings, &score.safety, thresholds);
@@ -155,13 +154,11 @@ fn verified(path: &std::path::Path, content_hash: &str) -> Option<CachedScore> {
 /// Where this item's record lives — beside the commit's receipt in the
 /// store. `None` where there is nothing immutable to key by: a path source
 /// can change under the same identity, so it is scored fresh each time.
+/// Only a remote resolves to a commit, and its provenance is the repository
+/// the store keys by, so a repository browsed before subscribing and the
+/// subscription that follows share one record per commit.
 fn cache_path(env: &Env, browsed: &Browsed, kind: ItemKind, name: &str) -> Option<PathBuf> {
     let commit = browsed.source.commit.as_ref()?;
-    browsed
-        .manifest
-        .sources
-        .get(&browsed.source.name)
-        .filter(|decl| decl.repo.is_some())?;
     let key = crate::remote::cache_key(env, &browsed.source.provenance);
     // The name is flattened for the filesystem; the hash keeps two names
     // one filesystem would fold together from sharing a record.

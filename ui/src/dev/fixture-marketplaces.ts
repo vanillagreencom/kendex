@@ -6,6 +6,7 @@
 import type {
   AboutView,
   AvailablePackage,
+  CatalogSummary,
   MarketplaceRow,
   Scope,
 } from "@/bindings";
@@ -75,6 +76,53 @@ const counts = (offered: Offered[]) => {
     out[pkg.kind] = (out[pkg.kind] ?? 0) + 1;
   }
   return out;
+};
+
+/** What the Community tab's listed repositories offer when opened before
+ * subscribing — the kendex catalog's packages, unsubscribed. A listed repo
+ * absent here reads as unreachable, so the page's error path is exercised. */
+export function repoPackages(): Record<string, AvailablePackage[]> {
+  return {
+    "acme/agent-kit": packageList(KENDEX_OFFERED, []),
+    "wshobson/agents": packageList(PLUGINS_OFFERED, []),
+    "vercel-labs/agent-skills": packageList(KENDEX_OFFERED, []),
+  };
+}
+
+export const repoSummaries: Record<
+  string,
+  Omit<CatalogSummary, "subscription">
+> = {
+  "acme/agent-kit": {
+    provenance: "acme/agent-kit",
+    commit: "9f3a1c2d4e5f60718293a4b5c6d7e8f901234567",
+    meta: {
+      description: "Agent kit for TypeScript teams",
+      author: "Acme",
+      license: "MIT",
+      tags: ["typescript", "agents"],
+    },
+    mode: "explicit",
+    counts: counts(KENDEX_OFFERED),
+    warning: null,
+  },
+  "wshobson/agents": {
+    provenance: "wshobson/agents",
+    commit: PLUGINS_HEAD,
+    meta: null,
+    mode: "plugin-registry",
+    counts: counts(PLUGINS_OFFERED),
+    warning:
+      "wshobson/agents: using cached version (could not reach github.com)",
+  },
+  "vercel-labs/agent-skills": {
+    provenance: "vercel-labs/agent-skills",
+    commit: KENDEX_HEAD,
+    meta: null,
+    mode: "discovered",
+    counts: counts(KENDEX_OFFERED),
+    warning: null,
+  },
 };
 
 export function marketplaces(): MarketplaceRow[] {

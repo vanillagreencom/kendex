@@ -1,6 +1,6 @@
 // The vocabulary of places: every page id, the refs that address what a
 // nested page is showing, and the snapshot the back stack keeps.
-import type { HarnessId, ItemKind, Scope } from "@/bindings";
+import type { Catalog, HarnessId, ItemKind, Scope } from "@/bindings";
 
 export type Page =
   | "home"
@@ -45,19 +45,20 @@ export interface PackageRef {
   scope: Scope;
 }
 
-/** One subscription, addressed the way every marketplace query is. */
-export interface MarketplaceRef {
-  scope: Scope;
-  source: string;
-}
+/** One catalog, addressed the way every marketplace query is: a
+ * subscription, or a repository opened from the Community tab before
+ * subscribing. */
+export type MarketplaceRef = Catalog;
 
-/** One curated set inside a subscription. */
-export interface BundleRef extends MarketplaceRef {
+/** One curated set inside a catalog. */
+export interface BundleRef {
+  catalog: Catalog;
   bundle: string;
 }
 
-/** One offered-but-not-installed package inside a subscription. */
-export interface AvailableRef extends MarketplaceRef {
+/** One offered-but-not-installed package inside a catalog. */
+export interface AvailableRef {
+  catalog: Catalog;
   kind: ItemKind;
   name: string;
 }

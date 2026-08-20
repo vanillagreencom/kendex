@@ -40,7 +40,11 @@ pub fn run_browse(
         for name in names {
             // A subscription that will not open costs its own rows, not the
             // whole listing — the same tolerance the app's overview shows.
-            let Ok(packages) = kendex_core::source::browse::packages(env, &scope, &name) else {
+            let catalog = kendex_core::source::browse::Catalog::Subscription {
+                scope: scope.clone(),
+                source: name.clone(),
+            };
+            let Ok(packages) = kendex_core::source::browse::packages(env, &catalog) else {
                 continue;
             };
             for package in packages {

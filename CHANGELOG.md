@@ -24,6 +24,13 @@ changes carry a **Breaking** call-out with their migration note inline.
   opens. It is also the fix for a display set to a fractional scale, which
   GTK rounds to a whole number. If the window cannot take your size, it
   opens at 100% and says so, and the size you chose is kept for next time.
+- Marketplaces › Community: a listed marketplace opens in the app before
+  you subscribe — its packages and bundles, each package's README, files
+  and safety findings, and the About report — on the same pages a
+  subscription gets. Subscribe from any of them and the page carries on as
+  the subscription, Install and all. A Skills.sh hit opens its repository
+  the same way. An unreachable repository says so on the page, with a way
+  to try again.
 - New ways to install. A one-line installer,
   `curl -fsSL https://kendex.ai/install.sh | sh`, that installs the app and
   the CLI on Linux and the CLI on macOS;

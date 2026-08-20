@@ -1,10 +1,15 @@
 // Reading marketplaces: the overview, a subscription's packages, a bundle,
 // a package preview with its safety report, and the Library's provenance.
 // Installing and subscribing live in mock-install.ts and mock-subscribe.ts.
-import type { ItemKind, PackageView, Scope } from "@/bindings";
-import { aboutViews } from "./fixture-marketplaces";
+import type {
+  Catalog,
+  CatalogSummary,
+  ItemKind,
+  PackageView,
+} from "@/bindings";
+import { aboutViews, repoSummaries } from "./fixture-marketplaces";
 import { packageSafety } from "./fixture-package-safety";
-import { bundleDetail, offeredHere } from "./mock-catalog";
+import { bundleDetail, offeredHere, specSource } from "./mock-catalog";
 import { installHandlers } from "./mock-install";
 import { type Handler, store } from "./mock-state";
 import { subscribeHandlers } from "./mock-subscribe";
@@ -17,39 +22,64 @@ export const marketplaceHandlers: Record<string, Handler> = {
 
   marketplaces_overview: () => store.state.marketplaces,
 
-  marketplace_packages: ({ scope, source }: { scope: Scope; source: string }) =>
-    offeredHere(scope, source),
+  marketplace_packages: ({ catalog }: { catalog: Catalog }) =>
+    offeredHere(catalog),
+
+  marketplace_summary: ({
+    catalog,
+  }: {
+    catalog: Catalog;
+  }): CatalogSummary | Promise<never> => {
+    const offered = offeredHere(catalog);
+    if (offered instanceof Promise) return offered;
+    if (catalog.by === "subscription") {
+      return {
+        provenance: catalog.source,
+        commit: null,
+        meta: null,
+        mode: "discovered",
+        counts: {},
+        warning: null,
+        subscription: { scope: catalog.scope, source: catalog.source },
+      };
+    }
+    const held = store.state.marketplaces.find(
+      (row) => row.repo === catalog.repo,
+    );
+    return {
+      ...repoSummaries[catalog.repo],
+      subscription: held ? { scope: held.scope, source: held.name } : null,
+    };
+  },
 
   marketplace_bundle: ({
-    scope,
-    source,
+    catalog,
     name,
   }: {
-    scope: Scope;
-    source: string;
+    catalog: Catalog;
     name: string;
   }) => {
-    const offered = offeredHere(scope, source);
+    const offered = offeredHere(catalog);
     if (offered instanceof Promise) return offered;
-    return bundleDetail(offered, source, name);
+    return bundleDetail(offered, specSource(catalog), name);
   },
 
   marketplace_package_preview: ({
-    scope,
-    source,
+    catalog,
     kind,
     name,
   }: {
-    scope: Scope;
-    source: string;
+    catalog: Catalog;
     kind: ItemKind;
     name: string;
   }): PackageView | Promise<never> => {
-    const offered = offeredHere(scope, source);
+    const offered = offeredHere(catalog);
     if (offered instanceof Promise) return offered;
     const pkg = offered.find((p) => p.kind === kind && p.name === name);
     if (!pkg) {
-      return Promise.reject(`'${name}' is not offered by '${source}'`);
+      return Promise.reject(
+        `'${name}' is not offered by '${specSource(catalog)}'`,
+      );
     }
     return {
       preview: {
@@ -82,12 +112,14 @@ export const marketplaceHandlers: Record<string, Handler> = {
     };
   },
 
-  marketplace_about: ({ scope, source }: { scope: Scope; source: string }) => {
-    const offered = offeredHere(scope, source);
+  marketplace_about: ({ catalog }: { catalog: Catalog }) => {
+    const offered = offeredHere(catalog);
     if (offered instanceof Promise) return offered;
-    const about = aboutViews[source];
+    const about = aboutViews[specSource(catalog)];
     if (!about) {
-      return Promise.reject(`source '${source}' is not fetched yet`);
+      return Promise.reject(
+        `source '${specSource(catalog)}' is not fetched yet`,
+      );
     }
     return about;
   },

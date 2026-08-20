@@ -1,8 +1,8 @@
 import { useEffect } from "react";
-import type { MarketplaceMeta, Scope } from "@/bindings";
+import type { Catalog, MarketplaceMeta } from "@/bindings";
 import { Badge } from "@/components/ui/badge";
 import { kindLabel } from "@/lib/labels";
-import { marketKey, useMarketplacesStore } from "@/stores/marketplaces";
+import { catalogKey, useMarketplacesStore } from "@/stores/marketplaces";
 
 const MODE_COPY: Record<string, string> = {
   "plugin-registry":
@@ -18,23 +18,21 @@ const MODE_COPY: Record<string, string> = {
  * found where, and every finding it carries — the same report `kendex
  * index` prints. */
 export function AboutSection({
-  scope,
-  source,
+  catalog,
   meta,
 }: {
-  scope: Scope;
-  source: string;
+  catalog: Catalog;
   meta: MarketplaceMeta | null;
 }) {
-  const about = useMarketplacesStore((s) => s.about[marketKey(scope, source)]);
+  const about = useMarketplacesStore((s) => s.about[catalogKey(catalog)]);
   const readError = useMarketplacesStore(
-    (s) => s.readErrors[marketKey(scope, source)],
+    (s) => s.readErrors[catalogKey(catalog)],
   );
   const loadAbout = useMarketplacesStore((s) => s.loadAbout);
 
   useEffect(() => {
-    void loadAbout(scope, source);
-  }, [scope, source, loadAbout]);
+    void loadAbout(catalog);
+  }, [catalog, loadAbout]);
 
   if (!about && readError) {
     return (

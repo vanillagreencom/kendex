@@ -1,9 +1,12 @@
-//! Browsing one subscription: every package it offers, its curated sets
-//! with per-member installed state, and a package's preview before install.
+//! Browsing one catalog: every package it offers, its curated sets with
+//! per-member installed state, and a package's preview before install.
 //!
-//! Everything here is read-side. Installed state is a join over the scope's
-//! manifest and lock, never stored — a bundle's partly-installed count is
-//! derived from its members on every call. Every catalog byte comes through
+//! A [`Catalog`] is either a subscription or a bare GitHub repository nobody
+//! has subscribed to yet — the Community tab opens the latter, and both read
+//! through the same functions so the app has one detail surface. Everything
+//! here is read-side. Installed state is a join over the scope's manifest
+//! and lock, never stored — a bundle's partly-installed count is derived
+//! from its members on every call. Every catalog byte comes through
 //! [`SealedSource`], and a catalog's own words are shown, never acted on.
 
 use std::collections::BTreeMap;
@@ -23,8 +26,37 @@ use crate::tags::Tag;
 
 mod preview;
 mod safety;
+mod summary;
 pub use preview::{PackagePreview, package_preview};
 pub use safety::{PackageSafety, package_safety};
+pub use summary::{CatalogSummary, SubscriptionRef, about, summary};
+
+/// What a browse read addresses: a subscription, or a GitHub repository
+/// browsed before anyone subscribes to it. The second fetches into the same
+/// store a later subscription reads from, so subscribing never downloads
+/// twice and the pages keep working across the switch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "by", rename_all = "camelCase")]
+pub enum Catalog {
+    Subscription {
+        scope: Scope,
+        source: String,
+    },
+    /// `owner/repo` on GitHub, as the directory spells it.
+    Repo {
+        repo: String,
+    },
+}
+
+impl Catalog {
+    /// How the catalog is named in an error or a title.
+    pub fn label(&self) -> &str {
+        match self {
+            Catalog::Subscription { source, .. } => source,
+            Catalog::Repo { repo } => repo,
+        }
+    }
+}
 
 /// Whether one offered package exists in this scope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -89,7 +121,7 @@ pub struct BundleDetail {
     pub collision: Option<String>,
 }
 
-/// One subscription opened for reading, with the scope records the
+/// One catalog opened for reading, with the scope records the
 /// installed-state join needs.
 pub(crate) struct Browsed {
     pub(crate) manifest: Manifest,
@@ -97,12 +129,16 @@ pub(crate) struct Browsed {
     pub(crate) source: super::ResolvedSource,
     pub(crate) sealed: SealedSource,
     pub(crate) config: super::SourceConfig,
+    /// The subscription's name when there is one. A bare repository is
+    /// subscribed as nothing, so nothing is installed "from here" and every
+    /// declared name is a collision.
+    subscription: Option<String>,
 }
 
-pub(crate) fn open(env: &Env, scope: &Scope, source_name: &str) -> Result<Browsed> {
-    // Browsing observes: a scope whose manifest or lock is still the old
-    // generation reads as empty here rather than blocking the page — the
-    // records only feed the installed-state join.
+/// The scope records the join reads. Browsing observes: a scope whose
+/// manifest or lock is still the old generation reads as empty rather than
+/// blocking the page — the records only feed the installed-state join.
+fn records(env: &Env, scope: &Scope) -> Result<(Manifest, Lock)> {
     let manifest = match crate::manifest::load(&crate::manifest::manifest_path(env, scope))? {
         ManifestFile::Current(manifest) => *manifest,
         _ => Manifest::default(),
@@ -111,7 +147,24 @@ pub(crate) fn open(env: &Env, scope: &Scope, source_name: &str) -> Result<Browse
         LockFile::Current(lock) => lock,
         _ => Lock::default(),
     };
-    let source = super::require_ready(env, scope, source_name, &manifest)?;
+    Ok((manifest, lock))
+}
+
+pub(crate) fn open(env: &Env, catalog: &Catalog) -> Result<Browsed> {
+    let (manifest, lock, source, subscription) = match catalog {
+        Catalog::Subscription { scope, source } => {
+            let (manifest, lock) = records(env, scope)?;
+            let resolved = super::require_ready(env, scope, source, &manifest)?;
+            (manifest, lock, resolved, Some(source.clone()))
+        }
+        Catalog::Repo { repo } => {
+            // Collisions are judged against the personal scope: that is
+            // where Subscribe lands by default, so the warning shown here
+            // is the refusal an install there would meet.
+            let (manifest, lock) = records(env, &Scope::Global)?;
+            (manifest, lock, resolve_repo(env, repo)?, None)
+        }
+    };
     let sealed = SealedSource::open(&source.root)?;
     let config = super::source_config_for(&sealed, &source.provenance)?;
     Ok(Browsed {
@@ -120,13 +173,43 @@ pub(crate) fn open(env: &Env, scope: &Scope, source_name: &str) -> Result<Browse
         source,
         sealed,
         config,
+        subscription,
+    })
+}
+
+/// The checked-out head of a repository nobody subscribes to. The store
+/// answers without the network when it already holds the repository;
+/// otherwise this is the one fetch, into the store a subscription would
+/// use. Only GitHub's `owner/repo` is browsable this way — that is what the
+/// directory and skills.sh hand over, and anything else is a reference to
+/// subscribe to, not to open blind.
+fn resolve_repo(env: &Env, repo: &str) -> Result<super::ResolvedSource> {
+    if crate::repo_move::owner_repo(repo).is_none() {
+        return Err(CoreError::NotBrowsable {
+            reference: repo.to_owned(),
+        });
+    }
+    // Kept in the directory's spelling: the store keys by it, and Subscribe
+    // is prefilled with the same string, so the two share one download.
+    let repo = repo.trim();
+    let resolution = match crate::remote::cached(env, repo, None)? {
+        Some(resolution) => resolution,
+        None => crate::remote::sync(env, repo, None)?,
+    };
+    Ok(super::ResolvedSource {
+        name: repo.to_owned(),
+        root: resolution.root,
+        provenance: repo.to_owned(),
+        commit: Some(resolution.commit),
     })
 }
 
 impl Browsed {
     fn locked_here(&self, kind: ItemKind, name: &str) -> bool {
         self.lock.entries.values().any(|entry| {
-            entry.kind == kind && entry.name == name && entry.source == self.source.name
+            entry.kind == kind
+                && entry.name == name
+                && Some(&entry.source) == self.subscription.as_ref()
         })
     }
 
@@ -134,14 +217,14 @@ impl Browsed {
         self.manifest
             .declared(kind)
             .get(name)
-            .is_some_and(|decl| decl.source == self.source.name)
+            .is_some_and(|decl| Some(&decl.source) == self.subscription.as_ref())
     }
 
     fn bundle_declared(&self, name: &str) -> bool {
         self.manifest
             .bundles
             .get(name)
-            .is_some_and(|decl| decl.source == self.source.name)
+            .is_some_and(|decl| Some(&decl.source) == self.subscription.as_ref())
     }
 
     /// The lock+manifest join behind every state column. `asked_for` says a
@@ -172,7 +255,7 @@ impl Browsed {
     /// fork counts too — `local` is a source like any other here.
     fn collision(&self, kind: ItemKind, name: &str) -> Option<String> {
         if let Some(decl) = self.manifest.declared(kind).get(name)
-            && decl.source != self.source.name
+            && Some(&decl.source) != self.subscription.as_ref()
         {
             return Some(decl.source.clone());
         }
@@ -180,7 +263,9 @@ impl Browsed {
             .entries
             .values()
             .find(|entry| {
-                entry.kind == kind && entry.name == name && entry.source != self.source.name
+                entry.kind == kind
+                    && entry.name == name
+                    && Some(&entry.source) != self.subscription.as_ref()
             })
             .map(|entry| entry.source.clone())
     }
@@ -189,14 +274,14 @@ impl Browsed {
         self.manifest
             .bundles
             .get(name)
-            .filter(|decl| decl.source != self.source.name)
+            .filter(|decl| Some(&decl.source) != self.subscription.as_ref())
             .map(|decl| decl.source.clone())
     }
 }
 
-/// Every package one subscription offers, across kinds.
-pub fn packages(env: &Env, scope: &Scope, source_name: &str) -> Result<Vec<AvailablePackage>> {
-    let browsed = open(env, scope, source_name)?;
+/// Every package one catalog offers, across kinds.
+pub fn packages(env: &Env, catalog: &Catalog) -> Result<Vec<AvailablePackage>> {
+    let browsed = open(env, catalog)?;
     let mut carried: BTreeMap<(ItemKind, String), Vec<String>> = BTreeMap::new();
     for bundle in super::bundles::offered(&browsed.sealed, &browsed.config)? {
         for member in &bundle.members {
@@ -232,17 +317,12 @@ pub fn packages(env: &Env, scope: &Scope, source_name: &str) -> Result<Vec<Avail
 }
 
 /// One curated set with per-member installed state.
-pub fn bundle(
-    env: &Env,
-    scope: &Scope,
-    source_name: &str,
-    bundle_name: &str,
-) -> Result<BundleDetail> {
-    let browsed = open(env, scope, source_name)?;
+pub fn bundle(env: &Env, catalog: &Catalog, bundle_name: &str) -> Result<BundleDetail> {
+    let browsed = open(env, catalog)?;
     let Some(found) = super::bundles::find(&browsed.sealed, &browsed.config, bundle_name)? else {
         return Err(CoreError::NoSuchBundle {
             name: bundle_name.to_owned(),
-            source_name: source_name.to_owned(),
+            source_name: catalog.label().to_owned(),
         });
     };
     let declared = browsed.bundle_declared(bundle_name);

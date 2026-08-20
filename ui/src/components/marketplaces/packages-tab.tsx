@@ -17,7 +17,11 @@ import { scopeLabel } from "@/lib/derive";
 import { kindLabel, scopeName, TAG_LABELS } from "@/lib/labels";
 import { PAGE_BODY, PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { cn } from "@/lib/utils";
-import { marketKey, useMarketplacesStore } from "@/stores/marketplaces";
+import {
+  marketKey,
+  subscription,
+  useMarketplacesStore,
+} from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 
 const KINDS: ItemKind[] = [
@@ -53,7 +57,7 @@ export function PackagesTab() {
     for (const row of rows) {
       if (!row.enabled) continue;
       if (!packages[marketKey(row.scope, row.name)]) {
-        void loadPackages(row.scope, row.name);
+        void loadPackages(subscription(row.scope, row.name));
       }
     }
   }, [rows, packages, loadPackages]);
@@ -79,7 +83,7 @@ export function PackagesTab() {
           !(pkg.description ?? "").toLowerCase().includes(needle)
         )
           continue;
-        out.push({ scope: row.scope, source: row.name, row: pkg });
+        out.push({ catalog: subscription(row.scope, row.name), row: pkg });
       }
     }
     return out;

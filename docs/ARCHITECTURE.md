@@ -836,6 +836,24 @@ lives in one capability table read by core and UI.
   (`KENDEX_SKILLSSH=off`), and a hit is a lead, never an identity —
   installing routes through the same subscribe path as any marketplace.
   Sign-in, collections and deep links arrive with W3/W4.
+- **A listed marketplace is browsable before anyone subscribes to it, on
+  the same pages a subscription gets.** Every browse read in
+  `source/browse` takes a `Catalog` — `Subscription { scope, source }` or
+  `Repo { repo }` — so the app has one detail, package and bundle surface
+  rather than a parallel set. A bare repository is fetched by
+  `remote::sync` into the same store a subscription reads from, keyed by
+  the directory's spelling, so subscribing never downloads twice and the
+  pre-install safety record is shared per commit; only GitHub `owner/repo`
+  is openable blind (`NotBrowsable` for anything else), because that is
+  what the directory and skills.sh hand over. With no subscription the
+  installed-state join answers Available for everything and judges name
+  clashes against the personal scope, where Subscribe lands by default.
+  `browse::summary` is a repository's first read — it refreshes, reports a
+  failed refresh as a warning over the store's copy, and names the
+  subscription this machine already holds for that repository — and the
+  UI's `useCatalog` switches the page onto that subscription the moment one
+  exists, which is how "subscribe from here" keeps your place. Installing
+  still needs a subscription: a repository page's one action is Subscribe.
 - **Intent in the manifest, closure in the plan, edges in the lock.** The
   manifest records choices and never their consequences: the items asked
   for, the bundles installed, which optional dependencies were taken, what

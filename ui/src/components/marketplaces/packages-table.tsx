@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import type { AvailablePackage, Scope, Verdict } from "@/bindings";
+import type { AvailablePackage, Catalog, Verdict } from "@/bindings";
 import { StatusDot } from "@/components/status-dot";
 import { TagBadges } from "@/components/tag-badge";
 import { Button } from "@/components/ui/button";
@@ -13,14 +13,17 @@ import {
 } from "@/components/ui/table";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName, VERDICT_LABELS } from "@/lib/labels";
-import { marketKey, useMarketplacesStore } from "@/stores/marketplaces";
+import {
+  catalogKey,
+  catalogLabel,
+  useMarketplacesStore,
+} from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 import { safetyKey, usePreinstallSafety } from "@/stores/preinstall-safety";
 
-/** One offered package with the subscription it comes from. */
+/** One offered package with the catalog it comes from. */
 export interface PackageEntry {
-  scope: Scope;
-  source: string;
+  catalog: Catalog;
   row: AvailablePackage;
 }
 
@@ -58,7 +61,7 @@ export function PackagesTable({
       <TableBody>
         {entries.map((entry) => (
           <PackageRow
-            key={`${marketKey(entry.scope, entry.source)}:${entry.row.kind}:${entry.row.name}`}
+            key={`${catalogKey(entry.catalog)}:${entry.row.kind}:${entry.row.name}`}
             entry={entry}
             showMarketplace={showMarketplace}
           />
@@ -75,22 +78,22 @@ function PackageRow({
   entry: PackageEntry;
   showMarketplace: boolean;
 }) {
-  const { scope, source, row } = entry;
+  const { catalog, row } = entry;
   const goToAvailablePackage = useNavStore((s) => s.goToAvailablePackage);
   const install = useMarketplacesStore((s) => s.install);
   const busy = useMarketplacesStore((s) => s.busy);
   const want = usePreinstallSafety((s) => s.want);
   const safety = usePreinstallSafety(
-    (s) => s.scores[safetyKey(scope, source, row.kind, row.name)],
+    (s) => s.scores[safetyKey(catalog, row.kind, row.name)],
   );
   const Icon = kindIcon(row.kind);
 
   useEffect(() => {
-    want(scope, source, row.kind, row.name);
-  }, [want, scope, source, row.kind, row.name]);
+    want(catalog, row.kind, row.name);
+  }, [want, catalog, row.kind, row.name]);
 
   const open = () =>
-    goToAvailablePackage({ scope, source, kind: row.kind, name: row.name });
+    goToAvailablePackage({ catalog, kind: row.kind, name: row.name });
 
   return (
     <TableRow className="cursor-pointer" onClick={open}>
@@ -116,7 +119,9 @@ function PackageRow({
         <TagBadges tags={row.tags} />
       </TableCell>
       {showMarketplace ? (
-        <TableCell className="text-muted-foreground">{source}</TableCell>
+        <TableCell className="text-muted-foreground">
+          {catalogLabel(catalog)}
+        </TableCell>
       ) : null}
       <TableCell>
         {safety ? (
@@ -138,6 +143,10 @@ function PackageRow({
           <span className="text-xs text-muted-foreground">
             No longer offered
           </span>
+        ) : catalog.by === "repo" ? (
+          // Installing needs a subscription; the page's Subscribe button
+          // is the one action, so the row only says the package is here.
+          <span className="text-xs text-muted-foreground">Available</span>
         ) : (
           <Button
             size="sm"
@@ -146,8 +155,8 @@ function PackageRow({
             onClick={(e) => {
               e.stopPropagation();
               void install({
-                scope,
-                source,
+                scope: catalog.scope,
+                source: catalog.source,
                 items: [{ kind: row.kind, name: row.name }],
               });
             }}
