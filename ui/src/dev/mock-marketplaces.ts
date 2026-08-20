@@ -5,6 +5,7 @@ import type {
   Catalog,
   CatalogSummary,
   ItemKind,
+  ItemSource,
   PackageView,
 } from "@/bindings";
 import { aboutViews, repoSummaries } from "./fixture-marketplaces";
@@ -110,6 +111,33 @@ export const marketplaceHandlers: Record<string, Handler> = {
       },
       safety: packageSafety(kind, name),
     };
+  },
+
+  marketplace_package_file: ({
+    catalog,
+    kind,
+    name,
+    path,
+  }: {
+    catalog: Catalog;
+    kind: ItemKind;
+    name: string;
+    path: string;
+  }): ItemSource | Promise<never> => {
+    const offered = offeredHere(catalog);
+    if (offered instanceof Promise) return offered;
+    if (!offered.some((p) => p.kind === kind && p.name === name)) {
+      return Promise.reject(`'${name}' is not offered`);
+    }
+    if (path.startsWith("/") || path.split("/").includes("..") || !path) {
+      return Promise.reject(
+        `${path}: a package file is named by a plain relative path`,
+      );
+    }
+    const content = path.endsWith(".md")
+      ? `# ${path}\n\nWhat **${name}** keeps in ${path}.\n`
+      : `${path} of ${name}\n`;
+    return { path, content, truncated: false };
   },
 
   marketplace_about: ({ catalog }: { catalog: Catalog }) => {

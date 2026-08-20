@@ -68,6 +68,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             marketplaces::marketplace_summary,
             marketplaces::marketplace_bundle,
             marketplaces::marketplace_package_preview,
+            marketplaces::marketplace_package_file,
             marketplaces::marketplace_install,
             marketplaces::marketplace_subscribe,
             unsubscribe::marketplace_unsubscribe_preview,

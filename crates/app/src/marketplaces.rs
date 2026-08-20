@@ -176,6 +176,20 @@ pub fn marketplace_package_preview(
     Ok(PackageView { preview, safety })
 }
 
+/// One offered file's content before install — the same read an installed
+/// package's file gets, confined to the package inside the catalog.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn marketplace_package_file(
+    catalog: Catalog,
+    kind: ItemKind,
+    name: String,
+    path: String,
+) -> Result<kendex_core::engine::ItemSource, String> {
+    let env = env()?;
+    browse::package_file(&env, &catalog, kind, &name, &path).map_err(|e| e.to_string())
+}
+
 /// One selected package, by the kind and name the catalog offers it under.
 #[derive(Debug, Clone, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]

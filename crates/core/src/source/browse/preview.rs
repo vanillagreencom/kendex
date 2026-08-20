@@ -134,3 +134,23 @@ fn file_row(rel: &Path, len: usize) -> PackageFile {
         path,
     }
 }
+
+/// One offered file's content, capped for preview, before anything
+/// installs — the same validated read an installed package's file gets,
+/// confined to the package's own directory inside the sealed catalog.
+pub fn package_file(
+    env: &Env,
+    catalog: &Catalog,
+    kind: ItemKind,
+    name: &str,
+    rel: &str,
+) -> Result<crate::engine::ItemSource> {
+    let browsed = super::open(env, catalog)?;
+    let Some(path) = crate::source::find_item(&browsed.sealed, &browsed.config, kind, name) else {
+        return Err(CoreError::ItemNotInSource {
+            name: name.to_owned(),
+            source_name: catalog.label().to_owned(),
+        });
+    };
+    crate::package::item_file::item_file(&browsed.sealed, &path, rel)
+}

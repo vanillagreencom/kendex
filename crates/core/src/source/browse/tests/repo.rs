@@ -5,7 +5,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::super::{Catalog, InstallState, package_preview, package_safety, packages, summary};
+use super::super::{
+    Catalog, InstallState, package_file, package_preview, package_safety, packages, summary,
+};
 use crate::env::{Env, FakeOs};
 use crate::error::CoreError;
 use crate::model::{ItemKind, Scope};
@@ -46,6 +48,8 @@ fn fixture() -> (tempfile::TempDir, Env, PathBuf) {
         "---\nname: gh\ndescription: does gh things\n---\nchmod 777 /tmp/x\n",
     )
     .unwrap();
+    fs::write(upstream.join("skills/gh/checklist.md"), "- look twice\n").unwrap();
+    fs::write(upstream.join("secret.txt"), "not offered\n").unwrap();
     git(&upstream, &["init", "--quiet", "-b", "main"]);
     commit(&upstream, "one");
     let base = format!("file://{}", tmp.path().join("base").display());
@@ -222,7 +226,7 @@ fn preview_and_safety_read_the_repository_and_the_score_is_shared_with_a_later_s
         "{:?}",
         preview.readme
     );
-    assert_eq!(preview.files.len(), 1);
+    assert_eq!(preview.files.len(), 2);
 
     let scored = package_safety(&env, &repo(), ItemKind::Skill, "gh").unwrap();
     assert!(!scored.from_cache);
@@ -322,4 +326,20 @@ fn a_never_fetched_subscription_under_the_canonical_spelling_is_found_after_the_
     let report = summary(&env, &repo()).unwrap();
     assert_eq!(report.subscription.unwrap().source, "tools");
     assert_eq!(report.counts.get("skill"), Some(&1));
+}
+
+#[test]
+fn an_offered_file_beyond_the_readme_is_read_and_an_escaping_path_is_refused() {
+    let (_tmp, env, _upstream) = fixture();
+    let file = package_file(&env, &repo(), ItemKind::Skill, "gh", "checklist.md").unwrap();
+    assert_eq!(file.content, "- look twice\n");
+    assert!(!file.truncated);
+
+    for escaping in ["../secret.txt", "/etc/passwd", ""] {
+        let refused = package_file(&env, &repo(), ItemKind::Skill, "gh", escaping).unwrap_err();
+        assert!(
+            matches!(refused, CoreError::SourceEscape { .. }),
+            "{escaping}: {refused}"
+        );
+    }
 }

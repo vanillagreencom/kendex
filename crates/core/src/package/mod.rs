@@ -18,6 +18,7 @@ use crate::source_read::SealedSource;
 
 pub mod detail;
 pub mod diff;
+pub(crate) mod item_file;
 pub mod updates;
 
 /// One declared package bound to its repository coordinates: where its

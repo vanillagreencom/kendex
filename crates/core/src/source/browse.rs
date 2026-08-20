@@ -30,7 +30,7 @@ mod safety;
 mod summary;
 pub use catalog::Catalog;
 use catalog::browsable;
-pub use preview::{PackagePreview, package_preview};
+pub use preview::{PackagePreview, package_file, package_preview};
 pub use safety::{PackageSafety, package_safety};
 pub use summary::{CatalogSummary, SubscriptionRef, about, summary};
 

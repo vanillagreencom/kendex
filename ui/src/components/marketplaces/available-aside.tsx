@@ -1,5 +1,5 @@
 import type { Catalog, PackageView } from "@/bindings";
-import { fileSizeLabel } from "@/components/package/file-list";
+import { FileList } from "@/components/package/file-list";
 import { VERDICT_LABELS } from "@/lib/labels";
 import { catalogLabel } from "@/stores/marketplaces";
 
@@ -9,11 +9,16 @@ export function AvailableAside({
   catalog,
   repo,
   view,
+  selectedFile,
+  onSelectFile,
 }: {
   catalog: Catalog;
   /** The repository or path behind the catalog, when known. */
   repo: string | null;
   view: PackageView | null;
+  /** The file open in the main column; null shows the README. */
+  selectedFile: string | null;
+  onSelectFile: (path: string) => void;
 }) {
   return (
     <aside className="space-y-6 text-sm">
@@ -54,19 +59,11 @@ export function AvailableAside({
           <h3 className="mb-1 text-xs font-semibold text-muted-foreground uppercase">
             Files
           </h3>
-          <ul className="space-y-1">
-            {view.preview.files.map((file) => (
-              <li
-                key={file.path}
-                className="flex items-baseline justify-between gap-2"
-              >
-                <span className="truncate font-mono text-xs">{file.path}</span>
-                <span className="shrink-0 text-xs text-muted-foreground">
-                  {fileSizeLabel(file.size)}
-                </span>
-              </li>
-            ))}
-          </ul>
+          <FileList
+            files={view.preview.files}
+            selected={selectedFile}
+            onSelect={onSelectFile}
+          />
         </section>
       ) : null}
       {view?.preview.collision ? (

@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { commands, type PackageView, type Scope } from "@/bindings";
 import { MarkdownView } from "@/components/markdown-view";
 import { AvailableAside } from "@/components/marketplaces/available-aside";
+import { CatalogFilePreview } from "@/components/marketplaces/catalog-file-preview";
 import { DestinationSelect } from "@/components/marketplaces/destination-select";
 import { RepoAction } from "@/components/marketplaces/repo-action";
 import { useCatalog } from "@/components/marketplaces/use-catalog";
@@ -11,6 +12,7 @@ import { TagBadges } from "@/components/tag-badge";
 import { Button } from "@/components/ui/button";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName } from "@/lib/labels";
+import { latestOnly } from "@/lib/latest";
 import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import { catalogKey, useMarketplacesStore } from "@/stores/marketplaces";
@@ -42,14 +44,24 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
   const [error, setError] = useState<string | null>(null);
   const [destination, setDestination] = useState<Scope | null>(null);
 
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  // The address can change under an in-flight read — a repository page
+  // carrying on as the subscription it just gained — and the older answer
+  // must not land on top of the newer one.
+  const latest = useRef(latestOnly());
+
   useEffect(() => {
     if (!ready) return;
     setView(null);
     setError(null);
-    void commands.marketplacePackagePreview(catalog, kind, name).then((r) => {
-      if (r.status === "ok") setView(r.data);
-      else setError(r.error);
-    });
+    setSelectedFile(null);
+    void latest
+      .current(commands.marketplacePackagePreview(catalog, kind, name))
+      .then((r) => {
+        if (!r) return;
+        if (r.status === "ok") setView(r.data);
+        else setError(r.error);
+      });
   }, [catalog, ready, kind, name]);
 
   const Icon = kindIcon(kind);
@@ -143,7 +155,16 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
                   {shownError}
                 </p>
               ) : null}
-              {view?.preview.readme ? (
+              {view && selectedFile ? (
+                <section>
+                  <CatalogFilePreview
+                    catalog={catalog}
+                    kind={kind}
+                    name={name}
+                    path={selectedFile}
+                  />
+                </section>
+              ) : view?.preview.readme ? (
                 <section>
                   <MarkdownView source={view.preview.readme} />
                 </section>
@@ -168,7 +189,13 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
                 </section>
               ) : null}
             </div>
-            <AvailableAside catalog={catalog} repo={repo} view={view} />
+            <AvailableAside
+              catalog={catalog}
+              repo={repo}
+              view={view}
+              selectedFile={selectedFile}
+              onSelectFile={setSelectedFile}
+            />
           </div>
         </div>
       </div>
