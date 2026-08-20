@@ -42,6 +42,7 @@ function updateRows(): UpdateRow[] {
       (entry) => entry.kind === item.kind && entry.name === item.name,
     ),
     blockedByLocalEdit: false,
+    editedHarnesses: [],
     forked: false,
     mixed: false,
     removedUpstream: false,

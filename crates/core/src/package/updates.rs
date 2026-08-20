@@ -10,7 +10,7 @@ use specta::Type;
 use crate::engine::ItemWarning;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-use crate::model::{ItemKind, Scope};
+use crate::model::{HarnessId, ItemKind, Scope};
 use crate::remote::history;
 use crate::settings;
 
@@ -49,6 +49,10 @@ pub struct UpdateRow {
     /// The installed files were edited by hand; updating is blocked until
     /// the edit is kept as a fork or discarded.
     pub blocked_by_local_edit: bool,
+    /// Which renderings carry the edit. An agent renders once per tool,
+    /// and keeping the edit as a fork captures one rendering's bytes — it
+    /// has to be the one that was changed.
+    pub edited_harnesses: Vec<HarnessId>,
     /// This package is a local fork of a catalog item.
     pub forked: bool,
     /// Installations of this package disagree on their source commit.
@@ -137,8 +141,9 @@ fn edited_items(
     scope: &Scope,
     manifest: &crate::manifest::Manifest,
     lock: &crate::lock::Lock,
-) -> std::collections::BTreeSet<(ItemKind, String)> {
-    match crate::engine::plan_scope(
+) -> std::collections::BTreeMap<(ItemKind, String), Vec<HarnessId>> {
+    let mut edited = std::collections::BTreeMap::<(ItemKind, String), Vec<HarnessId>>::new();
+    let rows: Vec<(ItemKind, String, HarnessId)> = match crate::engine::plan_scope(
         env,
         scope,
         manifest,
@@ -154,7 +159,7 @@ fn edited_items(
                     Some(crate::engine::DriftCause::LocalEdit | crate::engine::DriftCause::Both)
                 )
             })
-            .map(|row| (row.kind, row.name))
+            .map(|row| (row.kind, row.name, row.harness))
             .collect(),
         // A plan the scope cannot produce (a broken manifest, an
         // unreadable source) must not fail open — reporting nothing edited
@@ -165,9 +170,16 @@ fn edited_items(
             .entries
             .values()
             .filter(|entry| crate::engine::edit_holds(env, scope, entry))
-            .map(|entry| (entry.kind, entry.name.clone()))
+            .map(|entry| (entry.kind, entry.name.clone(), entry.harness))
             .collect(),
+    };
+    for (kind, name, harness) in rows {
+        let harnesses = edited.entry((kind, name)).or_default();
+        if !harnesses.contains(&harness) {
+            harnesses.push(harness);
+        }
     }
+    edited
 }
 
 /// A fork's row: no versions, no update — the Library still needs to
@@ -190,6 +202,7 @@ fn fork_row(
         pinned: false,
         ignored: false,
         blocked_by_local_edit: false,
+        edited_harnesses: Vec::new(),
         forked: true,
         mixed: false,
         removed_upstream: false,

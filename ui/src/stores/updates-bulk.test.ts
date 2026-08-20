@@ -32,6 +32,7 @@ function row(overrides: Partial<UpdateRow>): UpdateRow {
     pinned: false,
     ignored: false,
     blockedByLocalEdit: false,
+    editedHarnesses: [],
     forked: false,
     mixed: false,
     removedUpstream: false,
@@ -76,14 +77,17 @@ describe("updates store: bulk update", () => {
     });
     vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
 
-    await useUpdatesStore
-      .getState()
-      .updateRows([
-        row({ name: "gh", scope: acme, pinned: true }),
-        row({ name: "review", scope: acme }),
-        row({ name: "gh" }),
-        row({ name: "gh", scope: shop, blockedByLocalEdit: true }),
-      ]);
+    await useUpdatesStore.getState().updateRows([
+      row({ name: "gh", scope: acme, pinned: true }),
+      row({ name: "review", scope: acme }),
+      row({ name: "gh" }),
+      row({
+        name: "gh",
+        scope: shop,
+        blockedByLocalEdit: true,
+        editedHarnesses: ["claude"],
+      }),
+    ]);
 
     expect(commands.packageSetRev).toHaveBeenCalledTimes(1);
     expect(commands.packageSetRev).toHaveBeenCalledWith(

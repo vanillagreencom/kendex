@@ -8,11 +8,18 @@ import { scopeKey } from "@/lib/scope";
 export interface UpdateGroup {
   kind: UpdateRow["kind"];
   name: string;
+  repo: string;
   places: UpdateRow[];
 }
 
-export const groupKey = (row: { kind: string; name: string }): string =>
-  `${row.kind}:${row.name}`;
+/** A package's identity: kind, name, and the repository it comes from —
+ *  two projects installing a `gh` skill from unrelated catalogs are two
+ *  packages, not one in two places. */
+export const groupKey = (row: {
+  kind: string;
+  name: string;
+  repo: string;
+}): string => `${row.kind}:${row.name}:${row.repo}`;
 
 /** Group rows by package, keeping first-seen order for the groups and the
  *  rows' own order inside each. */
@@ -22,7 +29,13 @@ export function groupUpdates(rows: UpdateRow[]): UpdateGroup[] {
     const key = groupKey(row);
     const group = groups.get(key);
     if (group) group.places.push(row);
-    else groups.set(key, { kind: row.kind, name: row.name, places: [row] });
+    else
+      groups.set(key, {
+        kind: row.kind,
+        name: row.name,
+        repo: row.repo,
+        places: [row],
+      });
   }
   return [...groups.values()];
 }
@@ -42,20 +55,22 @@ export const updatablePlaces = (rows: UpdateRow[]): UpdateRow[] =>
  *  so ~/work/app and ~/clients/app never read as one place twice. */
 export function placeName(scope: Scope, among: Scope[] = []): string {
   if (scope.scope === "global") return USER_LEVEL_PLACE;
-  const parts = scope.root.split("/").filter((part) => part !== "");
+  const parts = pathParts(scope.root);
   const base = parts.at(-1) ?? scope.root;
   const twin = among.some(
     (other) =>
       other.scope === "project" &&
       other.root !== scope.root &&
-      (other.root
-        .split("/")
-        .filter((part) => part !== "")
-        .at(-1) ?? other.root) === base,
+      (pathParts(other.root).at(-1) ?? other.root) === base,
   );
   const parent = parts.at(-2);
   return twin && parent ? `${parent}/${base}` : base;
 }
+
+// Roots are serialized by the OS that wrote them, so a Windows project
+// arrives with backslashes; either separator ends a folder name.
+const pathParts = (root: string): string[] =>
+  root.split(/[\\/]+/).filter((part) => part !== "");
 
 export const placeKey = (row: UpdateRow): string =>
   `${groupKey(row)}:${scopeKey(row.scope)}`;

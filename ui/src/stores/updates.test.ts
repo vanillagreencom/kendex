@@ -37,6 +37,7 @@ function row(overrides: Partial<UpdateRow>): UpdateRow {
     pinned: false,
     ignored: false,
     blockedByLocalEdit: false,
+    editedHarnesses: [],
     forked: false,
     mixed: false,
     removedUpstream: false,

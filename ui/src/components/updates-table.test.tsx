@@ -1,9 +1,21 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import { Table, TableBody } from "@/components/ui/table";
 import { groupUpdates } from "@/lib/update-groups";
 import { PackageRows, UpdatesTable } from "./updates-table";
+
+// Static rendering reads a zustand store's initial snapshot, never one set
+// later, so the store hook is wrapped to let a test flip `busy`.
+const stub = vi.hoisted(() => ({ busy: false }));
+vi.mock("@/stores/updates", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("@/stores/updates")>();
+  const hook = (selector?: (state: unknown) => unknown) => {
+    const state = { ...mod.useUpdatesStore.getState(), busy: stub.busy };
+    return selector ? selector(state) : state;
+  };
+  return { ...mod, useUpdatesStore: Object.assign(hook, mod.useUpdatesStore) };
+});
 
 const row = (
   name: string,
@@ -20,6 +32,7 @@ const row = (
   updateAvailable: true,
   pinned: false,
   blockedByLocalEdit: false,
+  editedHarnesses: [],
   removedUpstream: false,
   mixed: false,
   forked: false,
@@ -142,11 +155,32 @@ describe("UpdatesTable", () => {
   });
 
   it("offers the fork decision instead of Update where files were edited", () => {
-    const html = render([row("one", null, { blockedByLocalEdit: true })]);
+    const html = render([
+      row("one", null, {
+        blockedByLocalEdit: true,
+        editedHarnesses: ["claude"],
+      }),
+    ]);
     expect(html).toContain(">Customized here<");
     expect(html).toContain(">Keep as my own<");
     expect(html).toContain(">Use new version…<");
     expect(html).not.toContain(">Update<");
+  });
+
+  it("holds the fork decision while another update is running", () => {
+    stub.busy = true;
+    try {
+      const html = render([
+        row("one", null, {
+          blockedByLocalEdit: true,
+          editedHarnesses: ["opencode"],
+        }),
+      ]);
+      expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Keep as my own</);
+      expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Use new version…</);
+    } finally {
+      stub.busy = false;
+    }
   });
 
   it("swaps the toggle and actions for a muted row", () => {

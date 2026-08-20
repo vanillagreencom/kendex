@@ -2263,6 +2263,12 @@ export type UpdateRow = {
 	 *  the edit is kept as a fork or discarded.
 	 */
 	blockedByLocalEdit: boolean,
+	/**
+	 *  Which renderings carry the edit. An agent renders once per tool,
+	 *  and keeping the edit as a fork captures one rendering's bytes — it
+	 *  has to be the one that was changed.
+	 */
+	editedHarnesses: HarnessId[],
 	/**  This package is a local fork of a catalog item. */
 	forked: boolean,
 	/**  Installations of this package disagree on their source commit. */

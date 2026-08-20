@@ -28,7 +28,7 @@ import {
   USE_NEW_VERSION_LABEL,
 } from "@/lib/copy";
 import { packageDisplayName } from "@/lib/labels";
-import { sameScope, scopeKey } from "@/lib/scope";
+import { scopeKey } from "@/lib/scope";
 import { placeName } from "@/lib/update-groups";
 import { versionLabel } from "@/lib/versions";
 import { useAuditStore } from "@/stores/audit";
@@ -98,7 +98,9 @@ export function PlaceCells({
           </TableCell>
           <TableCell>
             <div className="flex items-center justify-end gap-1.5">
-              {row.blockedByLocalEdit ? <CustomizedActions row={row} /> : null}
+              {row.blockedByLocalEdit ? (
+                <CustomizedActions row={row} storeBusy={busy} />
+              ) : null}
               <Button
                 size="sm"
                 variant="ghost"
@@ -148,21 +150,22 @@ export function PlaceCells({
 /** A place whose files were edited by hand: the update waits on a
  *  decision, made here per place because an edit in one project says
  *  nothing about the copy in another. */
-function CustomizedActions({ row }: { row: UpdateRow }) {
+function CustomizedActions({
+  row,
+  storeBusy,
+}: {
+  row: UpdateRow;
+  /** Another update in flight must finish before a fork rewrites the
+   *  manifest; the store's busy covers every apply, the local one only
+   *  this row's. */
+  storeBusy: boolean;
+}) {
   const showError = useProblemsStore((s) => s.showError);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [busy, setBusy] = useState(false);
-  // Forking captures one rendering's bytes, so it needs the harness the
-  // edited install belongs to — the scan knows which one that is.
-  const harness = useScanStore(
-    (s) =>
-      s.result?.items.find(
-        (item) =>
-          item.kind === row.kind &&
-          item.name === row.name &&
-          sameScope(item.scope, row.scope),
-      )?.harness ?? null,
-  );
+  // Forking captures one rendering's bytes, so it must be the rendering
+  // that was edited; the row says which.
+  const harness = row.editedHarnesses[0] ?? null;
 
   const refreshAll = async () => {
     await useScanStore.getState().refresh();
@@ -210,7 +213,7 @@ function CustomizedActions({ row }: { row: UpdateRow }) {
       <Button
         size="sm"
         variant="outline"
-        disabled={busy || harness === null}
+        disabled={busy || storeBusy || harness === null}
         onClick={() => void keepAsOwn()}
       >
         {KEEP_AS_FORK_LABEL}
@@ -218,7 +221,7 @@ function CustomizedActions({ row }: { row: UpdateRow }) {
       <Button
         size="sm"
         variant="outline"
-        disabled={busy}
+        disabled={busy || storeBusy}
         onClick={() => setConfirmDiscard(true)}
       >
         {USE_NEW_VERSION_LABEL}

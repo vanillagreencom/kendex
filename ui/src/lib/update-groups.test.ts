@@ -22,6 +22,7 @@ const row = (
   updateAvailable: true,
   pinned: false,
   blockedByLocalEdit: false,
+  editedHarnesses: [],
   removedUpstream: false,
   mixed: false,
   forked: false,
@@ -59,6 +60,28 @@ describe("update groups", () => {
     expect(placeName({ scope: "global" }, [work])).toBe("User level");
   });
 
+  it("keeps same-named packages from different repositories apart", () => {
+    const groups = groupUpdates([
+      row("gh", "/a"),
+      row("gh", "/b", { repo: "someone/else" }),
+    ]);
+    expect(groups.map((g) => g.repo)).toEqual([
+      "vanillagreencom/kendex",
+      "someone/else",
+    ]);
+    expect(
+      packageCount([row("gh", "/a"), row("gh", "/b", { repo: "x/y" })]),
+    ).toBe(2);
+  });
+
+  it("reads Windows roots by either separator", () => {
+    const work = { scope: "project", root: "C:\\work\\app\\" } as const;
+    const clients = { scope: "project", root: "C:\\clients\\app" } as const;
+    expect(placeName(work)).toBe("app");
+    expect(placeName(work, [work, clients])).toBe("work/app");
+    expect(placeName(clients, [work, clients])).toBe("clients/app");
+  });
+
   it("keeps a hook and a skill of the same name apart", () => {
     const groups = groupUpdates([
       row("gh", null),
@@ -76,7 +99,10 @@ describe("update groups", () => {
   it("leaves edited places out of a bulk update", () => {
     const places = updatablePlaces([
       row("gh", null),
-      row("gh", "/a", { blockedByLocalEdit: true }),
+      row("gh", "/a", {
+        blockedByLocalEdit: true,
+        editedHarnesses: ["claude"],
+      }),
       row("gh", "/b", { updateAvailable: false, removedUpstream: true }),
     ]);
     expect(places.map((p) => placeName(p.scope))).toEqual(["User level"]);

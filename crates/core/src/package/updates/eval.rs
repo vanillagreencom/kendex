@@ -10,12 +10,19 @@ pub(super) struct Eval<'a> {
     pub(super) scope: &'a Scope,
     pub(super) ignored: Vec<IgnoredUpdate>,
     pub(super) scope_key: String,
-    pub(super) edited: std::collections::BTreeSet<(ItemKind, String)>,
+    pub(super) edited: std::collections::BTreeMap<(ItemKind, String), Vec<HarnessId>>,
     pub(super) manifest: &'a crate::manifest::Manifest,
     pub(super) lock: &'a crate::lock::Lock,
 }
 
 impl Eval<'_> {
+    fn edited_harnesses(&self, kind: ItemKind, name: &str) -> Vec<HarnessId> {
+        self.edited
+            .get(&(kind, name.to_owned()))
+            .cloned()
+            .unwrap_or_default()
+    }
+
     pub(super) fn standing(
         &self,
         planned: &crate::engine::PlannedDeclaration,
@@ -90,6 +97,7 @@ impl Eval<'_> {
                     .get(&decl.source)
                     .and_then(|s| s.repo.clone())
                     .unwrap_or_default();
+                let edited_harnesses = self.edited_harnesses(kind, name);
                 report.rows.push(UpdateRow {
                     scope: self.scope.clone(),
                     kind,
@@ -100,7 +108,8 @@ impl Eval<'_> {
                     update_available: false,
                     pinned,
                     ignored: self.is_ignored(kind, name, &repo),
-                    blocked_by_local_edit: self.edited.contains(&(kind, name.clone())),
+                    blocked_by_local_edit: !edited_harnesses.is_empty(),
+                    edited_harnesses,
                     forked,
                     mixed: false,
                     removed_upstream: true,
@@ -188,6 +197,7 @@ impl Eval<'_> {
             // on every legacy install would drown the real ones.
             _ => false,
         };
+        let edited_harnesses = self.edited_harnesses(kind, name);
         report.rows.push(UpdateRow {
             scope: self.scope.clone(),
             kind,
@@ -195,7 +205,8 @@ impl Eval<'_> {
             source: package.source_name.clone(),
             pinned,
             ignored: self.is_ignored(kind, name, &package.repo),
-            blocked_by_local_edit: self.edited.contains(&(kind, name.clone())),
+            blocked_by_local_edit: !edited_harnesses.is_empty(),
+            edited_harnesses,
             forked,
             repo: package.repo.clone(),
             current,
