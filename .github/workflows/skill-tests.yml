@@ -351,7 +351,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: System dependencies for the keychain store and the app shell
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libwebkit2gtk-4.1-dev libgtk-3-dev
+      # Full debuginfo across the Tauri workspace out-links the runner's
+      # memory — three group runs died with the cargo step "cancelled" and
+      # no step output, the OOM-kill signature. Tests don't read debuginfo.
       - name: cargo test
+        env:
+          RUSTFLAGS: -C debuginfo=0
         run: cargo test --workspace --locked
 
   # The app ships on macOS; nothing before the release tag compiled the
