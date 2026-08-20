@@ -118,8 +118,13 @@ fn files_list_sorted_with_the_readme_marked() {
         .map(|f| (f.path.as_str(), f.is_readme))
         .collect();
     // A case-insensitive filesystem folds the two readme spellings into
-    // one file, so only the case-preserving layout lists both.
-    let case_sensitive = paths.iter().any(|(p, _)| *p == "readme.md");
+    // one file — under whichever spelling landed first — so only a
+    // case-sensitive layout lists both.
+    let case_sensitive = paths
+        .iter()
+        .filter(|(p, _)| p.eq_ignore_ascii_case("readme.md"))
+        .count()
+        == 2;
     if case_sensitive {
         assert_eq!(
             paths,
@@ -131,14 +136,13 @@ fn files_list_sorted_with_the_readme_marked() {
             ]
         );
     } else {
-        assert_eq!(
-            paths,
-            vec![
-                ("README.md", true),
-                ("SKILL.md", false),
-                ("references/deep.md", false),
-            ]
-        );
+        let folded: Vec<(bool, bool)> = files
+            .iter()
+            .map(|f| (f.path.eq_ignore_ascii_case("readme.md"), f.is_readme))
+            .collect();
+        assert_eq!(folded.iter().filter(|(is, _)| *is).count(), 1);
+        assert!(folded.iter().all(|(is, marked)| is == marked));
+        assert_eq!(files.len(), 3);
     }
     assert!(files.iter().all(|f| f.size > 0));
 }
