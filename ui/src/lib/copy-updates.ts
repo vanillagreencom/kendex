@@ -37,5 +37,7 @@ export const updatedSomeToastLabel = (
   skipped: number,
 ): string =>
   `Updated ${updated === 1 ? "1 package" : `${updated} packages`} — ${skipped === 1 ? "1 place needs" : `${skipped} places need`} attention on its own row`;
+export const updatedCountToastLabel = (updated: number): string =>
+  `Updated ${updated === 1 ? "1 package" : `${updated} packages`}`;
 export const nothingToUpdateToastLabel = (skipped: number): string =>
   `Nothing to update — ${skipped === 1 ? "1 place needs" : `${skipped} places need`} attention on its own row`;

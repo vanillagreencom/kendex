@@ -1,14 +1,9 @@
 import { toast } from "sonner";
 import { create } from "zustand";
 import { commands, type ItemWarning, type UpdateRow } from "@/bindings";
-import {
-  UPDATE_ERROR_TITLE,
-  UPDATED_ALL_TOAST,
-  updatedToastLabel,
-} from "@/lib/copy";
+import { UPDATE_ERROR_TITLE, updatedToastLabel } from "@/lib/copy";
 import {
   nothingToUpdateToastLabel,
-  updatedSomeToastLabel,
   updatedWithPlaceToastLabel,
 } from "@/lib/copy-updates";
 import { scopeKey } from "@/lib/scope";
@@ -18,6 +13,7 @@ import {
   skippedPlaces,
   updatablePlaces,
 } from "@/lib/update-groups";
+import { bulkUpdateToast } from "@/lib/update-toasts";
 import { useAuditStore } from "./audit";
 import { useProblemsStore } from "./problems";
 import { useScanStore } from "./scan";
@@ -64,7 +60,7 @@ interface UpdatesState {
   setIgnored: (row: UpdateRow, ignored: boolean) => Promise<void>;
 }
 
-export const useUpdatesStore = create<UpdatesState>((set) => {
+export const useUpdatesStore = create<UpdatesState>((set, get) => {
   const showError = (title: string, message: string) =>
     useProblemsStore.getState().showError({ title, message });
 
@@ -189,13 +185,11 @@ export const useUpdatesStore = create<UpdatesState>((set) => {
             ok = false;
           }
         }
+        await reload();
         if (ok)
           toast.success(
-            skipped > 0
-              ? updatedSomeToastLabel(packageCount(rows), skipped)
-              : UPDATED_ALL_TOAST,
+            bulkUpdateToast(rows, skipped, visibleUpdates(get().rows)),
           );
-        await reload();
         await useScanStore.getState().refresh();
         await useAuditStore.getState().refresh({ force: true });
       } finally {
