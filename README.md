@@ -62,12 +62,13 @@ curl -fsSL https://kendex.ai/install.sh | sh
 On Linux this installs the app and the `kendex` command. On macOS it installs
 the command; get the app with the cask below.
 
-- macOS: `brew install --cask kendex`
+- macOS: `brew install vanillagreencom/kendex/kendex`
 - Arch: `yay -S kendex-bin`
 - Windows: download the installer from
   [kendex.ai/download](https://kendex.ai/download).
 
-For the CLI on its own: `brew install kendex`, `yay -S kendex`, or the curl
+For the CLI on its own: `brew install vanillagreencom/kendex/kendex-cli`,
+`yay -S kendex`, or the curl
 command on macOS. Every install option is on
 [kendex.ai/download](https://kendex.ai/download).
 

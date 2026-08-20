@@ -24,3 +24,6 @@ docs/reviews/
 
 # The linear skill's local cache
 .cache/
+
+# Filled-in local working copies of docs (backed up privately, never committed).
+docs/*-local.md

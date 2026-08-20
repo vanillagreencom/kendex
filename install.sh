@@ -4,7 +4,7 @@
 #   curl -fsSL https://kendex.ai/install.sh | sh
 #
 # On Linux this installs the desktop app and the kendex command. On macOS it
-# installs the kendex command; get the app with `brew install --cask kendex`
+# installs the kendex command; get the app with `brew install vanillagreencom/kendex/kendex`
 # or from https://kendex.ai/download.
 set -euo pipefail
 
@@ -111,7 +111,7 @@ install_cli
 if [ "$kind" = linux ]; then
   install_app_linux
 else
-  echo "Desktop app: brew install --cask kendex, or https://kendex.ai/download"
+  echo "Desktop app: brew install vanillagreencom/kendex/kendex, or https://kendex.ai/download"
 fi
 
 case ":$PATH:" in

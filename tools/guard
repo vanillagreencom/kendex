@@ -83,6 +83,15 @@ hits=$(scan 'allow\((dead_code|unused)' | grep -vE "$guard_impl")
 # catalog path is caught wherever it is added. source/browse/safety.rs is not
 # here on purpose: its one fs read is of kendex's own cache record under the
 # store, never a catalog path, and adding it would flag that legitimate read.
+# The plain Homebrew name must resolve to the cask (the app): brew checks
+# formulas first, so a formula claiming `kendex` silently flips the default
+# install back to CLI-only.
+hits=$(scan 'class Kendex < Formula' '^packaging/homebrew/')
+[ -n "$hits" ] && {
+  echo "$hits"
+  say "a Homebrew formula claims the plain kendex name — the cask owns it; name the formula KendexCli"
+}
+
 hits=$(scan 'std::fs::read|crate::fs::read' '^crates/core/src/(source\.rs|check_catalog\.rs|library\.rs|source/(about|browse|bundles|catalog|config|discover|index|meta|plugin_registry)\.rs|source/browse/preview\.rs|render/skill\.rs|engine/(desired|ops))|^crates/app/src/editor\.rs')
 [ -n "$hits" ] && {
   echo "$hits" | head -5

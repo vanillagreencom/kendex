@@ -7,8 +7,8 @@ and the CLI install together; the CLI is also available on its own.
 | Channel | Command | Installs | Recipe |
 |---|---|---|---|
 | curl | `curl -fsSL https://kendex.ai/install.sh \| sh` | app + CLI (Linux), CLI (macOS) | [`/install.sh`](../install.sh) |
-| Homebrew cask | `brew install --cask kendex` | app + CLI | [`homebrew/kendex-cask.rb`](homebrew/kendex-cask.rb) |
-| Homebrew formula | `brew install kendex` | CLI | [`homebrew/kendex.rb`](homebrew/kendex.rb) |
+| Homebrew | `brew install vanillagreencom/kendex/kendex` | app + CLI | [`homebrew/kendex-cask.rb`](homebrew/kendex-cask.rb) |
+| Homebrew (CLI) | `brew install vanillagreencom/kendex/kendex-cli` | CLI | [`homebrew/kendex-cli.rb`](homebrew/kendex-cli.rb) |
 | Arch | `yay -S kendex-bin` | app + CLI | [`arch/kendex-bin/`](arch/kendex-bin/) |
 | Arch (CLI) | `yay -S kendex` | CLI | [`arch/kendex/`](arch/kendex/) |
 | Arch (latest commit) | `yay -S kendex-git` | CLI | [`arch/kendex-git/`](arch/kendex-git/) |
@@ -26,14 +26,16 @@ Each new `vX.Y.Z` changes the artifact checksums. Update, in this repo:
   released `kendex-x86_64-unknown-linux-gnu`).
 - `arch/kendex-bin/PKGBUILD` + `.SRCINFO`: `pkgver` and all three
   `sha256sums` (AppImage, CLI binary, icon).
-- `homebrew/kendex.rb`: `version` and both `sha256` lines.
+- `homebrew/kendex-cli.rb`: `version` and both `sha256` lines.
 - `homebrew/kendex-cask.rb`: `version` and the `.dmg` `sha256`.
 
 Then push the recipes to their channels:
 
-- **Homebrew**: copy `homebrew/kendex.rb` to `Formula/kendex.rb` and
+- **Homebrew**: copy `homebrew/kendex-cli.rb` to `Formula/kendex-cli.rb` and
   `homebrew/kendex-cask.rb` to `Casks/kendex.rb` in the tap repo
-  `vanillagreencom/homebrew-kendex`, and commit.
+  `vanillagreencom/homebrew-kendex`, and commit. The formula deliberately
+  is NOT named `kendex`: brew resolves a formula before a cask, and the
+  plain name must reach the cask so the default install is the app.
 - **Arch**: in each AUR package clone, copy the `PKGBUILD` + `.SRCINFO` and
   `git push` to `ssh://aur@aur.archlinux.org/<name>.git`. Pushing needs the
   AUR account's SSH key.

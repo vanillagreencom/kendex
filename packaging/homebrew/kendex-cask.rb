@@ -1,7 +1,9 @@
 # Homebrew cask for the kendex desktop app. Lives in the tap
-# `vanillagreencom/homebrew-kendex` as `Casks/kendex.rb`, installed with:
+# `vanillagreencom/homebrew-kendex` as `Casks/kendex.rb`. The formula is
+# named kendex-cli, so the plain name resolves here and the DEFAULT brew
+# install is the app:
 #
-#   brew install --cask kendex
+#   brew install vanillagreencom/kendex/kendex
 #
 # Installs the app and, through the formula dependency, the kendex command.
 cask "kendex" do
@@ -14,7 +16,7 @@ cask "kendex" do
   homepage "https://kendex.ai"
 
   depends_on arch: :arm64
-  depends_on formula: "vanillagreencom/kendex/kendex"
+  depends_on formula: "vanillagreencom/kendex/kendex-cli"
 
   app "kendex.app"
 

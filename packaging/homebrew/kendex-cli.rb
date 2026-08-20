@@ -1,10 +1,13 @@
-# Homebrew formula for the kendex CLI. Lives in the tap
-# `vanillagreencom/homebrew-kendex`, installed with:
+# Homebrew formula for the kendex CLI on its own. Lives in the tap
+# `vanillagreencom/homebrew-kendex` as `Formula/kendex-cli.rb`, installed
+# with:
 #
-#   brew install vanillagreencom/kendex/kendex
+#   brew install vanillagreencom/kendex/kendex-cli
 #
-# Installs the prebuilt release binary — no toolchain needed.
-class Kendex < Formula
+# The plain `kendex` name belongs to the cask, so the default install is
+# the app; this formula is the CLI-only channel and what the cask depends
+# on. Installs the prebuilt release binary — no toolchain needed.
+class KendexCli < Formula
   desc "Package manager for agents, skills, and hooks across AI coding tools"
   homepage "https://kendex.ai"
   version "5.0.1"

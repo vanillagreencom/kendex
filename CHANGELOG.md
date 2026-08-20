@@ -10,9 +10,11 @@ changes carry a **Breaking** call-out with their migration note inline.
 
 - New ways to install. A one-line installer,
   `curl -fsSL https://kendex.ai/install.sh | sh`, that installs the app and
-  the CLI on Linux and the CLI on macOS; `brew install --cask kendex` and
-  `yay -S kendex-bin`, which install the app and the CLI together; and
-  CLI-only channels `brew install kendex`, `yay -S kendex`, and `kendex-git`.
+  the CLI on Linux and the CLI on macOS;
+  `brew install vanillagreencom/kendex/kendex` and `yay -S kendex-bin`,
+  which install the app and the CLI together; and CLI-only channels
+  `brew install vanillagreencom/kendex/kendex-cli`, `yay -S kendex`, and
+  `kendex-git`.
 - The default catalog now offers curated bundles and tagged packages, so you
   can install a working set in one step: orchestration, code-review,
   research, and commit-guards.
@@ -29,6 +31,11 @@ changes carry a **Breaking** call-out with their migration note inline.
 
 - The app uses the Geist typeface, with titles and navigation in Geist Mono
   to match the website.
+- **Breaking**: the default Homebrew install is now the app —
+  `brew install vanillagreencom/kendex/kendex` installs the desktop app and
+  the CLI together on macOS, and the CLI-only formula was renamed. Anyone
+  on the old `kendex` formula migrates with `brew uninstall kendex &&
+  brew install vanillagreencom/kendex/kendex-cli`.
 
 ### Fixed
 
