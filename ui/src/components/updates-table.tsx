@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { useState } from "react";
+import { useId, useState } from "react";
 import type { UpdateRow } from "@/bindings";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import { PlaceCells } from "@/components/update-place-cells";
 import {
   EDITED_UPDATE_TAG,
   FOLLOW_SOURCE_COLUMN,
+  heldInLabel,
   PINNED_UPDATE_TAG,
   placesLabel,
   REMOVED_UPSTREAM_TAG,
@@ -55,11 +56,11 @@ export function UpdatesTable({
           <TableHead>{UPDATES_NAME_COLUMN}</TableHead>
           <TableHead className="w-24">{UPDATES_TYPE_COLUMN}</TableHead>
           <TableHead className="w-36">{UPDATES_PLACE_COLUMN}</TableHead>
-          <TableHead className="w-40">{UPDATES_VERSION_COLUMN}</TableHead>
+          <TableHead className="w-36">{UPDATES_VERSION_COLUMN}</TableHead>
           <TableHead className="w-28 text-center">
             {FOLLOW_SOURCE_COLUMN}
           </TableHead>
-          <TableHead className="w-72">
+          <TableHead>
             <span className="sr-only">Actions</span>
           </TableHead>
         </TableRow>
@@ -77,23 +78,33 @@ export function UpdatesTable({
   );
 }
 
-function PackageRows({
+/** One package's row, and its place rows once opened. */
+export function PackageRows({
   group,
   onIgnore,
+  defaultOpen = false,
 }: {
   group: UpdateGroup;
   onIgnore?: (row: UpdateRow) => void;
+  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
+  const placesId = useId();
   const busy = useUpdatesStore((s) => s.busy);
   const updateRows = useUpdatesStore((s) => s.updateRows);
   const Icon = kindIcon(group.kind);
   const name = packageDisplayName(group);
   const places = group.places;
+  const scopes = places.map((place) => place.scope);
   const only = places.length === 1 ? places[0] : null;
   const Chevron = open ? ChevronDown : ChevronRight;
+  const held = places.filter((p) => p.pinned).length;
   const tags = [
-    places.every((p) => p.pinned) ? PINNED_UPDATE_TAG : null,
+    held === places.length
+      ? PINNED_UPDATE_TAG
+      : held > 0
+        ? heldInLabel(held, places.length)
+        : null,
     places.some((p) => p.blockedByLocalEdit) ? EDITED_UPDATE_TAG : null,
     places.some((p) => p.removedUpstream) ? REMOVED_UPSTREAM_TAG : null,
   ].filter((tag) => tag !== null);
@@ -116,40 +127,50 @@ function PackageRows({
           {kindLabel(group.kind)}
         </TableCell>
         {only ? (
-          <PlaceCells row={only} onIgnore={onIgnore} />
+          <PlaceCells row={only} among={scopes} onIgnore={onIgnore} />
         ) : (
           <>
             <TableCell>
-              <button
-                type="button"
+              <Button
+                size="sm"
+                variant="ghost"
+                className="-ml-2.5 text-muted-foreground"
                 aria-expanded={open}
-                className="flex items-center gap-1 text-muted-foreground hover:text-foreground"
+                aria-controls={placesId}
                 onClick={() => setOpen((value) => !value)}
               >
                 <Chevron className="size-3.5" />
                 {placesLabel(places.length)}
-              </button>
+              </Button>
             </TableCell>
             <TableCell />
             <TableCell />
             <TableCell className="text-right">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy || updatablePlaces(places).length === 0}
-                onClick={() => void updateRows(places)}
-              >
-                {UPDATE_PACKAGE_EVERYWHERE_LABEL}
-              </Button>
+              {/* Muted places only offer "notify again", so there is
+                  nothing for a package-wide Update to do. */}
+              {onIgnore ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy || updatablePlaces(places).length === 0}
+                  onClick={() => void updateRows(places)}
+                >
+                  {UPDATE_PACKAGE_EVERYWHERE_LABEL}
+                </Button>
+              ) : null}
             </TableCell>
           </>
         )}
       </TableRow>
       {open && !only
-        ? places.map((row) => (
-            <TableRow key={placeKey(row)} className="bg-muted/20">
+        ? places.map((row, index) => (
+            <TableRow
+              key={placeKey(row)}
+              id={index === 0 ? placesId : undefined}
+              className="bg-muted/20"
+            >
               <TableCell colSpan={2} />
-              <PlaceCells row={row} onIgnore={onIgnore} />
+              <PlaceCells row={row} among={scopes} onIgnore={onIgnore} />
             </TableRow>
           ))
         : null}

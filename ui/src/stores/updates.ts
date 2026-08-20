@@ -5,9 +5,10 @@ import {
   UPDATE_ERROR_TITLE,
   UPDATED_ALL_TOAST,
   updatedToastLabel,
+  updatedWithPlaceToastLabel,
 } from "@/lib/copy";
 import { scopeKey } from "@/lib/scope";
-import { packageCount, updatablePlaces } from "@/lib/update-groups";
+import { packageCount, placeName, updatablePlaces } from "@/lib/update-groups";
 import { useAuditStore } from "./audit";
 import { useProblemsStore } from "./problems";
 import { useScanStore } from "./scan";
@@ -127,7 +128,14 @@ export const useUpdatesStore = create<UpdatesState>((set) => {
       set({ busy: true });
       try {
         if (await apply(row)) {
-          toast.success(updatedToastLabel(row.name));
+          // A follower comes current by applying its scope, which brings
+          // that scope's other followers along — the toast says so rather
+          // than letting the extra changes look like a surprise.
+          toast.success(
+            row.pinned
+              ? updatedToastLabel(row.name)
+              : updatedWithPlaceToastLabel(row.name, placeName(row.scope)),
+          );
           await reload();
           await useScanStore.getState().refresh();
           await useAuditStore.getState().refresh({ force: true });

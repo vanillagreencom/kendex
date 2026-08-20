@@ -179,7 +179,9 @@ export const UPDATE_ALL_LABEL = "Update all";
 export const CHECK_FOR_UPDATES_LABEL = "Check for updates";
 export const FOLLOW_SOURCE_COLUMN = "Follow source";
 export const FOLLOW_SOURCE_HELP =
-  "Following packages come current when that project refreshes or you press Update. Held ones wait until you choose.";
+  "Following packages come current when that project refreshes or you press Update — and Update brings that project's other following packages current too. Held ones wait until you choose.";
+export const heldInLabel = (held: number, total: number): string =>
+  `Held in ${held} of ${total}`;
 export const followSourceLabel = (name: string, place: string): string =>
   `Follow the source for ${name} in ${place}`;
 export const UPDATES_NAME_COLUMN = "Package";
@@ -207,6 +209,10 @@ export const PINNED_UPDATE_TAG = "Held";
 export const EDITED_UPDATE_TAG = "Edited by you";
 export const UPDATE_ERROR_TITLE = "Couldn't update";
 export const updatedToastLabel = (name: string): string => `Updated ${name}`;
+export const updatedWithPlaceToastLabel = (
+  name: string,
+  place: string,
+): string => `Updated ${name} and everything else following in ${place}`;
 export const UPDATED_ALL_TOAST = "Everything is up to date";
 
 // Fork: what happens when the app finds files you edited by hand.

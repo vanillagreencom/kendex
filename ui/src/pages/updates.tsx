@@ -24,7 +24,7 @@ import {
   UPDATES_UNCHECKED_TITLE,
   updatesSubtitle,
 } from "@/lib/copy";
-import { CONTENT_WIDTH, PAGE_GUTTER } from "@/lib/layout";
+import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { packageCount } from "@/lib/update-groups";
 import { cn } from "@/lib/utils";
 import {
@@ -79,6 +79,7 @@ export function UpdatesPage() {
     <div className="flex min-h-0 flex-1 flex-col">
       <PageHeader
         title="Updates"
+        wide
         subtitle={
           visible.length > 0 ? (
             <>
@@ -119,7 +120,7 @@ export function UpdatesPage() {
         }
       />
       <div className={cn("min-h-0 flex-1 overflow-y-auto", PAGE_GUTTER)}>
-        <div className={cn("pb-8", CONTENT_WIDTH)}>
+        <div className={cn("pb-8", WIDE_CONTENT_WIDTH)}>
           {visible.length === 0 ? (
             <EmptyState icon={CheckCircle2} title={UPDATES_EMPTY}>
               {UPDATES_EMPTY_BODY}
@@ -151,7 +152,7 @@ export function UpdatesPage() {
                 onClick={() => setShowHidden((value) => !value)}
               >
                 <HiddenChevron className="size-3.5" />
-                {hiddenUpdatesLabel(hidden.length)}
+                {hiddenUpdatesLabel(packageCount(hidden))}
               </button>
               {showHidden ? (
                 <div className="mt-2 opacity-80">

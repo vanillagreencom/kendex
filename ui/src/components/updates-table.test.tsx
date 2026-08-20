@@ -1,7 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { UpdateRow } from "@/bindings";
-import { UpdatesTable } from "./updates-table";
+import { Table, TableBody } from "@/components/ui/table";
+import { groupUpdates } from "@/lib/update-groups";
+import { PackageRows, UpdatesTable } from "./updates-table";
 
 const row = (
   name: string,
@@ -63,6 +65,72 @@ describe("UpdatesTable", () => {
     expect(html).toContain(">Update all<");
     expect(html).not.toContain('role="switch"');
     expect(html).not.toContain(">Preview changes<");
+  });
+
+  it("expands a package into one row per place, each with its own controls", () => {
+    const rows = [
+      row("gh", null, { pinned: true }),
+      row("gh", "/home/x/acme"),
+      row("gh", "/home/x/shop"),
+    ];
+    const html = renderToStaticMarkup(
+      <Table>
+        <TableBody>
+          <PackageRows
+            group={groupUpdates(rows)[0]}
+            onIgnore={() => {}}
+            defaultOpen
+          />
+        </TableBody>
+      </Table>,
+    );
+    expect(html.match(/<tr/g)).toHaveLength(4);
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toMatch(/aria-controls="([^"]+)"[\s\S]*<tr[^>]*id="\1"/);
+    expect(html).toContain(">Update all<");
+    expect(html).toContain(">Held in 1 of 3<");
+    for (const place of ["User level", "acme", "shop"]) {
+      expect(html).toContain(`>${place}<`);
+      expect(html).toContain(
+        `aria-label="Follow the source for gh in ${place}"`,
+      );
+    }
+    expect(html.match(/role="switch"/g)).toHaveLength(3);
+    expect(html.match(/>Preview changes</g)).toHaveLength(3);
+    expect(html.match(/>Update</g)).toHaveLength(3);
+  });
+
+  it("tells same-named project folders apart by their parent", () => {
+    const html = renderToStaticMarkup(
+      <Table>
+        <TableBody>
+          <PackageRows
+            group={
+              groupUpdates([
+                row("gh", "/home/x/work/app"),
+                row("gh", "/home/x/clients/app/"),
+              ])[0]
+            }
+            defaultOpen
+          />
+        </TableBody>
+      </Table>,
+    );
+    expect(html).toContain(">work/app<");
+    expect(html).toContain(">clients/app<");
+  });
+
+  it("offers no package-wide Update all in the muted table", () => {
+    const html = renderToStaticMarkup(
+      <UpdatesTable
+        rows={[
+          row("gh", null, { ignored: true }),
+          row("gh", "/home/x/acme", { ignored: true }),
+        ]}
+      />,
+    );
+    expect(html).toContain(">2 places<");
+    expect(html).not.toContain(">Update all<");
   });
 
   it("shows the kind as a column and the actions in every row", () => {

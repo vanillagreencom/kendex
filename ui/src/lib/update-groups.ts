@@ -37,10 +37,24 @@ export const updatablePlaces = (rows: UpdateRow[]): UpdateRow[] =>
   rows.filter((row) => row.updateAvailable && !row.blockedByLocalEdit);
 
 /** Where a package lives, as a person names it: the project folder, or
- *  "User level" for the install that applies everywhere. */
-export function placeName(scope: Scope): string {
+ *  "User level" for the install that applies everywhere. Two projects
+ *  with the same folder name among `among` get their parent folder too,
+ *  so ~/work/app and ~/clients/app never read as one place twice. */
+export function placeName(scope: Scope, among: Scope[] = []): string {
   if (scope.scope === "global") return USER_LEVEL_PLACE;
-  return scope.root.split("/").pop() ?? scope.root;
+  const parts = scope.root.split("/").filter((part) => part !== "");
+  const base = parts.at(-1) ?? scope.root;
+  const twin = among.some(
+    (other) =>
+      other.scope === "project" &&
+      other.root !== scope.root &&
+      (other.root
+        .split("/")
+        .filter((part) => part !== "")
+        .at(-1) ?? other.root) === base,
+  );
+  const parent = parts.at(-2);
+  return twin && parent ? `${parent}/${base}` : base;
 }
 
 export const placeKey = (row: UpdateRow): string =>

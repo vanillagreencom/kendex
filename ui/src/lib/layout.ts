@@ -17,6 +17,7 @@ export const WIDE_CONTENT_WIDTH = "mx-auto w-full max-w-[110rem]";
 // so the choice is named here rather than passed down twice.
 const WIDE_PAGES = new Set([
   "library",
+  "updates",
   "package",
   "marketplaces",
   "marketplaceDetail",

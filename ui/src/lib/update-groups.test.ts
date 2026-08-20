@@ -48,6 +48,17 @@ describe("update groups", () => {
     ]);
   });
 
+  it("names a place by folder, disambiguated by parent only on a clash", () => {
+    const work = { scope: "project", root: "/home/x/work/app" } as const;
+    const clients = { scope: "project", root: "/home/x/clients/app/" } as const;
+    const other = { scope: "project", root: "/home/x/shop" } as const;
+    expect(placeName(clients)).toBe("app");
+    expect(placeName(work, [work, other])).toBe("app");
+    expect(placeName(work, [work, clients])).toBe("work/app");
+    expect(placeName(clients, [work, clients])).toBe("clients/app");
+    expect(placeName({ scope: "global" }, [work])).toBe("User level");
+  });
+
   it("keeps a hook and a skill of the same name apart", () => {
     const groups = groupUpdates([
       row("gh", null),

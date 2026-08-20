@@ -1,7 +1,7 @@
 import { MoreHorizontal } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { commands, type UpdateRow } from "@/bindings";
+import { commands, type Scope, type UpdateRow } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -43,15 +43,18 @@ import { useUpdatesStore } from "@/stores/updates";
  *  several shows them once per place under the package. */
 export function PlaceCells({
   row,
+  among,
   onIgnore,
 }: {
   row: UpdateRow;
+  /** The package's other places, so two same-named folders read apart. */
+  among: Scope[];
   onIgnore?: (row: UpdateRow) => void;
 }) {
   const { busy, updateOne, setAutoUpdate, setIgnored } = useUpdatesStore();
   const goToPackage = useNavStore((s) => s.goToPackage);
   const name = packageDisplayName(row);
-  const place = placeName(row.scope);
+  const place = placeName(row.scope, among);
 
   const preview = () => {
     if (!row.current || !row.latest) return;
