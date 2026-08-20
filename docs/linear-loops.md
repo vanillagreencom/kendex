@@ -14,8 +14,7 @@ sections into the Linear UI. Leave every RUNTIME slot untouched: the
 angle-bracket `<...>` values the loop substitutes per issue, and the
 square-bracket slots inside the parent issue format (`[SUMMARY]`,
 `[ISSUE_ID]`, `[title]`, `[Criterion …]`), which the loop fills when it
-creates a parent. Your filled copy is the working document; this template
-only changes when the loop design changes.
+creates a parent.
 
 Scope boundary: Loops own per-issue hygiene AND routing — labels, team
 routing, project assignment, `agent:*` routing labels, duplicate flagging,
@@ -241,11 +240,14 @@ child); the parent carries the complete label set its project requires —
 [MULTI_AGENT_LABEL — the project's configured multi-agent routing label,
 e.g. `agent:multi`] when children span two or more `agent:*` domains,
 otherwise the children's shared agent label, plus every other required
-category (domain, type) taken from the children's shared labels, all
-existing team labels — a Backlog-born parent gets no Task 2 pass, so
-validate the set before creating; the parent takes the highest priority
-among its children (backlog ordering reads the parent, not the children); the parent carries NO
-estimate; omit the Acceptance Criteria section when children have none; no
+category — the UNION of the children's labels for a non-exclusive one
+(domain, type), their common value for an exclusive one, and no common
+value means no bundle — all existing team labels; a Backlog-born parent
+gets no Task 2 pass, so validate the set before creating; the parent takes the highest priority
+among its children (backlog ordering reads the parent, not the children); a `(one PR)` parent carries the
+combined estimate of its children's PR scope (cycle planning budgets by the
+parent; a no-estimate parent is a coordination container, never a Task 6
+product); omit the Acceptance Criteria section when children have none; no
 implementation detail — requirements live in the children; add no blocking
 relations unless a child's own text states one.
 
@@ -253,9 +255,7 @@ relations unless a child's own text states one.
 
 Comments are short, factual, and neutral. No greetings, no sign-offs.
 ```
-
 ---
-
 ## Loop 2 — Re-triage on demand
 
 Re-run handle: apply the `re-triage` label to any issue to get one janitor
@@ -392,8 +392,8 @@ Comments are short, factual, and neutral. No greetings, no sign-offs.
 
 ## Deliberate non-loops
 
-- **No per-team loop copies** — one ownership map covers the teams; copies drift.
-- **No "updated" catch-all loop** — sync and orchestration churn would fire it constantly.
+- **No per-team loop copies** (one map covers the teams) and **no "updated"
+  catch-all loop** (sync and orchestration churn would fire it constantly).
 - **No cancel/consolidation loop** — the sweep FLAGS obsolete candidates;
   cancellation and merging stay with the gated audit workflow.
 - **No priority/estimate loop** — orchestration and cycle planning own those.
