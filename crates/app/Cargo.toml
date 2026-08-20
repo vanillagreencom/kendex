@@ -19,6 +19,10 @@ tauri-plugin-dialog = "2.7.2"
 tauri-plugin-opener = "2.5.4"
 
 [dev-dependencies]
+# Reads the bundled icons back: asserting what they depict is the only way
+# to catch a stale or wrongly regenerated one, and tauri already builds it.
+png = "0.18"
+serde_json.workspace = true
 tempfile.workspace = true
 
 [build-dependencies]
