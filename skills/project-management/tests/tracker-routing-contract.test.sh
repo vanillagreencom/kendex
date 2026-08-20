@@ -100,6 +100,7 @@ fi
 if [[ -f "$start_new" ]]; then
   start_create_cmd="$(extract "$start_new" 'issues create' '^```$' start-create-cmd)" || fail "could not extract the start-new create command"
   grep -Fq -- '--state "Backlog"' "$start_create_cmd" || fail 'start-new create does not pass --state "Backlog"'
+  require_fixed "$start_new" 'validate the complete label set' 'start-new preflights labels before a Backlog create'
 fi
 if [[ -f "$plan_issues" ]]; then
   plan_create_cmd="$(extract "$plan_issues" 'issues create' '^```$' plan-create-cmd)" || fail "could not extract the plan-issues create command"

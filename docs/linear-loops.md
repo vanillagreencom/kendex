@@ -174,8 +174,9 @@ neither a parent nor sub-issues — otherwise skip this task entirely (an
 In Progress or In Review trigger from a re-triage pass is never bundled).
 Search open, unstarted issues (Triage, Backlog, Todo) of the SAME team and
 SAME project that likewise have no parent, no sub-issues, and carry an
-agent:* label, and — trigger included — are at least 10 minutes old:
-pipeline creates attach parents and blocking relations after the create. Evaluation order for the boundary rule: FIRST pick the tentative bundle —
+agent:* label, and are at least 10 minutes old (the trigger itself is
+exempt, so a creation-time pass can still bundle): pipeline creates attach
+parents and blocking relations after the create. Evaluation order for the boundary rule: FIRST pick the tentative bundle —
 the trigger plus the one to four same-PR companions you would actually
 parent — then repeatedly drop any member (including the trigger) that
 blocks or is blocked by any issue outside that tentative bundle, until a

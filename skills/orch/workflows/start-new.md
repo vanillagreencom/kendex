@@ -13,6 +13,8 @@ Ask only for the details that are missing: title, expected outcome, tracker, pro
 
 ## 2. Create
 
+Build and validate the complete label set against the live inventory and the project taxonomy first (the project-management skill's `references/labels.md` preflight) — a Backlog-born issue gets no janitor pass, so it must leave this step fully triaged.
+
 ```bash
 .agents/skills/linear/scripts/linear.sh issues create --state "Backlog" --title "[TITLE]" --description "[BODY]" --project "[PROJECT]" --labels "[LABELS]" --format=ids
 ```

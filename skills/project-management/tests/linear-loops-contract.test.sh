@@ -50,5 +50,6 @@ require_fixed 'repeatedly drop any member (including the trigger)' 'cross-bounda
 require_fixed 'pass drops nobody' 'pruning runs to a fixed point'
 require_fixed 'If the trigger itself drops, skip this task' 'a dropped trigger skips bundling'
 require_fixed 'are at least 10 minutes old' 'in-flight pipeline issues are never bundle candidates'
+require_fixed '(the trigger itself is' 'a creation-time pass can still bundle'
 
 echo "all pass"
