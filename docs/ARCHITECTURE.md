@@ -313,30 +313,21 @@ lives in one capability table read by core and UI.
 - No database: manifests, locks, and native dirs are the state; scans are
   in-memory views (startup, focus, watch); app prefs in one settings file.
 - **The Linux app decides its own display environment, once, before GTK
-  starts.** Packaging gets a vote it should not have: the AppImage's
-  bundled GTK hook pins `GDK_BACKEND=x11`, which puts the window on
-  XWayland, where a Wayland compositor reports a scale of 1 while driving
-  the display at 2 — the whole app then draws at half size. So the app
-  reads the session and relaunches itself once with whichever of
-  `GDK_BACKEND` and the WebKit DMABUF workaround that session needs
-  (`crates/app/src/launch_env.rs`), and not at all when it needs neither; the
-  environment is never rewritten in place, because the workspace forbids
-  `unsafe`. The whole decision is one pure function of the strings the
-  environment holds, so every case is testable without a display or a
-  bundle, and the relaunch says on stderr what it set — the person who set
-  any of these variables is at a terminal.
-  Only the AppImage is pushed onto a backend, and only onto `wayland,x11`,
-  GDK's own ordered list: a compositor the Wayland backend cannot open
-  still gets an X11 window rather than none. Every other packaging is left
-  alone, because with the variable unset GDK already tries Wayland first —
-  writing the same order there would buy nothing and cost a relaunch.
-  A backend the person named is honoured on any session, and never
-  overridden. Inside the AppImage their `GDK_BACKEND` is already gone when
-  the app starts and the `x11` sitting there is the hook's, so that one
-  value is ignored there — `KENDEX_GDK_BACKEND`, which nothing in the
-  bundle writes, names a backend instead, and the launch says so when it
-  overrides the pin. `GDK_SCALE` and `GDK_DPI_SCALE` are never written at
-  all: the Wayland backend takes the scale from the compositor.
+  starts.** The AppImage's bundled GTK hook pins `GDK_BACKEND=x11`, which
+  puts the window on XWayland, where a compositor driving the display at
+  scale 2 tells the client the scale is 1 — so the whole app draws at half
+  size. The app reads the session and relaunches itself once
+  (`crates/app/src/launch_env.rs`) with whichever of `GDK_BACKEND` and the
+  WebKit DMABUF workaround that session needs, and not at all when it needs
+  neither; the environment is never rewritten in place, because the
+  workspace forbids `unsafe`. Only the AppImage is pushed onto a backend,
+  and only onto `wayland,x11` — GDK's own ordered list, so a compositor the
+  Wayland backend cannot open still gets an X11 window rather than none.
+  Every other packaging is left alone: with the variable unset GDK already
+  tries Wayland first. A backend the person named is honoured on any
+  session and never overridden; inside the AppImage the `x11` sitting there
+  is the hook's rather than theirs, so `KENDEX_GDK_BACKEND` names one
+  instead. `GDK_SCALE` and `GDK_DPI_SCALE` are never written at all.
 - **Zoom is the webview's, applied before the window is shown.** The
   window is configured hidden and revealed in `setup` once the saved zoom
   is on the webview, so the first frame is already the right size — a page
@@ -353,18 +344,14 @@ lives in one capability table read by core and UI.
   produce a stream of values; the window follows every one of them so the
   control feels live, and the settings file is written once the stream
   stops. Every path starts the same timer, so none of them can rewrite the
-  file per keypress, and the wiring for one control is a single object the
-  page spreads on rather than props it could half-forget. At most one save
-  is ever in flight, and asks made while it runs collapse into a single
-  follow-up that writes whatever is on screen by then, so replies can never
-  land out of order and put back a size the person has already moved past.
-  A write waits for the resize before it reads what to write, so a size the
-  window refuses is never offered to the file; a size the file refuses
-  stays on screen, because taking it away would cost the person the size
-  they are using to read the message. Neither action ever rejects: the IPC
-  bridge throws when the bridge itself fails, and every call site is a
-  fire-and-forget handler where a rejection would reach nobody, so a throw
-  is reported the way an error reply is.
+  file per keypress. At most one save is ever in flight, and asks made
+  while it runs collapse into a single follow-up that writes whatever is on
+  screen by then, so replies can never land out of order and put back a
+  size the person has already moved past. A write waits for the resize
+  before it reads what to write, so a size the window refuses is never
+  offered to the file; a size the file refuses stays on screen, because
+  taking it away would cost the person the size they are using to read the
+  message.
 - **Every atomic write gets its own temp file.** `write_then_rename` names
   its temp file per write, not per process: the app saves from a thread
   pool, so two writes of one path really do overlap, and a shared name
