@@ -17,7 +17,7 @@ fn write_exe(path: &Path, body: &str) {
 
 /// Runs install.sh as `os`/`arch` and returns every URL curl was handed.
 fn requested_urls(os: &str, arch: &str) -> String {
-    let (output, urls) = run_install(os, arch, "");
+    let (output, urls) = run_install(os, arch, None);
     assert!(
         output.status.success(),
         "install.sh failed for {os} {arch}:\n{}",
@@ -27,9 +27,10 @@ fn requested_urls(os: &str, arch: &str) -> String {
 }
 
 /// Runs install.sh as `os`/`arch`; the fake curl answers any URL containing
-/// `missing` with exit 22, curl's code for an HTTP error.
+/// Runs install.sh as `os`/`arch`; `fail` makes the fake curl exit with the
+/// given code for any URL containing the given text.
 #[allow(clippy::unwrap_used)]
-fn run_install(os: &str, arch: &str, missing: &str) -> (std::process::Output, String) {
+fn run_install(os: &str, arch: &str, fail: Option<(&str, i32)>) -> (std::process::Output, String) {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let fake = home.join("fake-bin");
@@ -42,11 +43,9 @@ fn run_install(os: &str, arch: &str, missing: &str) -> (std::process::Output, St
     );
     // Logs the URL; `-o FILE` gets a runnable stand-in for the download,
     // and the release lookup gets a tag.
-    let miss = if missing.is_empty() {
-        String::new()
-    } else {
-        format!("case \"$url\" in *{missing}*) exit 22 ;; esac\n")
-    };
+    let miss = fail.map_or(String::new(), |(url, code)| {
+        format!("case \"$url\" in *{url}*) exit {code} ;; esac\n")
+    });
     write_exe(
         &fake.join("curl"),
         &format!(
@@ -135,10 +134,11 @@ fn release_matrix_and_feed_name_the_same_targets() {
     assert_eq!(lanes, feed);
 }
 
+/// curl exits 22 on an HTTP error: the release exists but has no such asset.
 #[test]
 fn a_release_without_this_target_says_so_instead_of_a_bare_curl_error() {
-    let (output, _) = run_install("Darwin", "x86_64", "kendex-x86_64-apple-darwin");
-    assert!(!output.status.success());
+    let (output, _) = run_install("Darwin", "x86_64", Some(("kendex-x86_64-apple-darwin", 22)));
+    assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("could not download kendex-x86_64-apple-darwin from"),
@@ -148,4 +148,22 @@ fn a_release_without_this_target_says_so_instead_of_a_bare_curl_error() {
         stderr.contains("release v9.9.9 may have no build for x86_64-apple-darwin"),
         "{stderr}"
     );
+    // The script stops at its own message; a crash on the next step would
+    // exit 1 too, but through chmod complaining about the missing file.
+    assert!(!stderr.contains("chmod"), "{stderr}");
+}
+
+/// curl exits 7 when it cannot connect: the release is not to blame, so
+/// the no-build hint stays out.
+#[test]
+fn a_network_failure_does_not_blame_the_release() {
+    let (output, _) = run_install("Darwin", "x86_64", Some(("kendex-x86_64-apple-darwin", 7)));
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("could not download kendex-x86_64-apple-darwin from"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("may have no build"), "{stderr}");
+    assert!(!stderr.contains("chmod"), "{stderr}");
 }
