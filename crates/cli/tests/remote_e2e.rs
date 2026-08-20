@@ -115,6 +115,11 @@ fn consuming_repo_installs_customizes_and_refreshes_from_the_default_catalog() {
             .contains("Upstream v1"),
     );
     assert!(proj.join(".claude/skills/gh").is_symlink());
+    // The platform cache root the binary itself resolves: macOS caches
+    // under Library/Caches and ignores XDG variables.
+    #[cfg(target_os = "macos")]
+    let sources = home.join("Library/Caches/kendex/sources");
+    #[cfg(not(target_os = "macos"))]
     let sources = home.join(".cache/kendex/sources");
     let installed = only_child(&only_child(&sources.join("commits")));
     assert!(installed.join("skills/gh/SKILL.md").is_file());

@@ -67,14 +67,18 @@ fn a_stale_v1_lock_never_reimports_over_a_live_v2_record() {
     let proj = project(home);
     // The global scope keeps v1 and v2 locks at different paths, which is
     // exactly where a stale v1 leftover could shadow a live v2 record.
-    let v1_dir = home.join(".config/vstack");
+    #[cfg(target_os = "macos")]
+    let config = home.join("Library/Application Support");
+    #[cfg(not(target_os = "macos"))]
+    let config = home.join(".config");
+    let v1_dir = config.join("vstack");
     fs::create_dir_all(&v1_dir).unwrap();
     fs::write(
         v1_dir.join(".vstack-lock.json"),
         r#"{"version":1,"entries":{"old":{"name":"old","kind":"skill","source":"x/y","source_repo":"x/y","harnesses":["claude-code"],"method":"symlink","installed_at":"t","source_hash":"aa"}}}"#,
     )
     .unwrap();
-    let v2_dir = home.join(".config/kendex");
+    let v2_dir = config.join("kendex");
     fs::create_dir_all(&v2_dir).unwrap();
     fs::write(
         v2_dir.join("kendex.toml"),

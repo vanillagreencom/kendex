@@ -89,6 +89,12 @@ impl Env {
         }
     }
 
+    /// The platform config root itself — v1 kept its `vstack` state
+    /// directly under it, resolved the same way (`dirs::config_dir()`).
+    pub fn platform_config_dir(&self) -> &Path {
+        &self.config_dir
+    }
+
     fn app_config_dir(&self) -> PathBuf {
         self.config_dir.join(APP_DIR)
     }

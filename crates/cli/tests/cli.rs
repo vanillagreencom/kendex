@@ -295,9 +295,15 @@ fn refresh_says_what_it_refused_even_when_the_scope_is_empty() {
 fn any_verb_moves_the_global_dirs_off_vstack2() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
-    fs::create_dir_all(home.join(".config/vstack2")).unwrap();
+    // The platform config root the binary itself resolves: macOS reads
+    // Library/Application Support and ignores XDG variables entirely.
+    #[cfg(target_os = "macos")]
+    let config = home.join("Library/Application Support");
+    #[cfg(not(target_os = "macos"))]
+    let config = home.join(".config");
+    fs::create_dir_all(config.join("vstack2")).unwrap();
     let settings = format!("schema = 1\nprojects = [\"{}/dev/app\"]\n", home.display());
-    fs::write(home.join(".config/vstack2/settings.toml"), &settings).unwrap();
+    fs::write(config.join("vstack2/settings.toml"), &settings).unwrap();
 
     let output = kendex(home, home, &["project", "list"]);
     assert!(output.status.success(), "{output:?}");
@@ -307,10 +313,10 @@ fn any_verb_moves_the_global_dirs_off_vstack2() {
         "{output:?}"
     );
     assert_eq!(
-        fs::read_to_string(home.join(".config/kendex/settings.toml")).unwrap(),
+        fs::read_to_string(config.join("kendex/settings.toml")).unwrap(),
         settings
     );
-    assert!(!home.join(".config/vstack2").exists());
+    assert!(!config.join("vstack2").exists());
 }
 
 /// The rename ships a `vstack` alias binary for one release cycle:

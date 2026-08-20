@@ -14,7 +14,9 @@ use kendex_core::model::Scope;
 #[allow(clippy::unwrap_used)]
 fn codex_and_pi_share_one_project_variant_and_claude_links_while_equal() {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path().to_path_buf();
+    // Canonical up front: macOS reaches its temp dirs through a symlink,
+    // and the engine hands back canonical paths.
+    let home = tmp.path().canonicalize().unwrap();
     let env = Env::fake(&home, FakeOs::Linux);
     let project = home.join("dev/app");
     fs::create_dir_all(project.join(".claude")).unwrap();
@@ -66,7 +68,9 @@ fn codex_and_pi_share_one_project_variant_and_claude_links_while_equal() {
 #[allow(clippy::unwrap_used)]
 fn an_oversized_skill_splits_per_surface_instead_of_truncating() {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path().to_path_buf();
+    // Canonical up front: macOS reaches its temp dirs through a symlink,
+    // and the engine hands back canonical paths.
+    let home = tmp.path().canonicalize().unwrap();
     let env = Env::fake(&home, FakeOs::Linux);
     let project = home.join("dev/app");
     fs::create_dir_all(project.join(".claude")).unwrap();

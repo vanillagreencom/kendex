@@ -202,6 +202,14 @@ fn a_catalog_whose_two_files_disagree_is_reported() {
 fn item_names_a_filesystem_would_fold_together_are_reported_not_installed() {
     let (tmp, _) = fixture();
     let root = tmp.path().join("catalog");
+    // A case-insensitive filesystem cannot even hold the colliding pair —
+    // the second write lands on the first — so the finding this check
+    // exists to raise for such consumers can only be staged where case is
+    // preserved as distinct.
+    let case_sensitive = {
+        std::fs::write(tmp.path().join("CaseProbe"), "a").unwrap();
+        !tmp.path().join("caseprobe").exists()
+    };
     write(
         &root,
         "plugins/data-science/agents/EDA.md",
@@ -217,10 +225,12 @@ fn item_names_a_filesystem_would_fold_together_are_reported_not_installed() {
         .expect("plugin-registry-shaped");
     let problems: Vec<&str> = meta.findings.iter().map(|f| f.problem.as_str()).collect();
 
-    assert!(
-        problems.iter().any(|p| p.contains("folded case")),
-        "{problems:?}"
-    );
+    if case_sensitive {
+        assert!(
+            problems.iter().any(|p| p.contains("folded case")),
+            "{problems:?}"
+        );
+    }
     assert!(
         problems.iter().any(|p| p.contains("reserved device name")),
         "{problems:?}"

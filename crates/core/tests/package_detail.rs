@@ -57,7 +57,9 @@ fn commit(dir: &Path, message: &str) -> String {
 #[allow(clippy::unwrap_used)]
 fn world() -> World {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path().to_path_buf();
+    // Canonical up front: macOS reaches its temp dirs through a symlink,
+    // and the engine hands back canonical paths.
+    let home = tmp.path().canonicalize().unwrap();
     let upstream = home.join("git").join(REPO);
     fs::create_dir_all(&upstream).unwrap();
     git(&upstream, &["init", "--quiet", "-b", "main"]);
@@ -115,15 +117,33 @@ fn files_list_sorted_with_the_readme_marked() {
         .iter()
         .map(|f| (f.path.as_str(), f.is_readme))
         .collect();
-    assert_eq!(
-        paths,
-        vec![
-            ("README.md", true),
-            ("SKILL.md", false),
-            ("readme.md", true),
-            ("references/deep.md", false),
-        ]
-    );
+    // A case-insensitive filesystem folds the two readme spellings into
+    // one file — under whichever spelling landed first — so only a
+    // case-sensitive layout lists both.
+    let case_sensitive = paths
+        .iter()
+        .filter(|(p, _)| p.eq_ignore_ascii_case("readme.md"))
+        .count()
+        == 2;
+    if case_sensitive {
+        assert_eq!(
+            paths,
+            vec![
+                ("README.md", true),
+                ("SKILL.md", false),
+                ("readme.md", true),
+                ("references/deep.md", false),
+            ]
+        );
+    } else {
+        let folded: Vec<(bool, bool)> = files
+            .iter()
+            .map(|f| (f.path.eq_ignore_ascii_case("readme.md"), f.is_readme))
+            .collect();
+        assert_eq!(folded.iter().filter(|(is, _)| *is).count(), 1);
+        assert!(folded.iter().all(|(is, marked)| is == marked));
+        assert_eq!(files.len(), 3);
+    }
     assert!(files.iter().all(|f| f.size > 0));
 }
 
