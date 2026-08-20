@@ -46,10 +46,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: catalog
+      # Callers pin the checker with inputs.ref; this repo's own PR and push
+      # runs build it from the event's own sha, so an engine change and the
+      # catalog change it validates travel through review together.
       - uses: actions/checkout@v4
         with:
           repository: vanillagreencom/kendex
-          ref: ${{ inputs.ref || 'main' }}
+          ref: ${{ inputs.ref || github.sha }}
           path: kendex
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
