@@ -39,6 +39,14 @@ changes carry a **Breaking** call-out with their migration note inline.
   used to abort with "fixture source missing" outside the kendex source
   tree. The preflight package no longer flags a cross-repo citation like
   `kendex:docs/x.md` on code lines as a missing local file.
+- `kendex import` finds a v1 install's global state on macOS. It probed a
+  Linux-shaped path there, so Macs with a real v1 setup were reported as
+  already migrated with nothing imported.
+- Two more macOS path fixes: a repository reached through a symlinked
+  location (anything under `/tmp`, or a linked project folder) can be read
+  as a catalog again, and `kendex guard repair` no longer refuses a
+  repository whose hooks receipt spells the same directory through a
+  symlinked path.
 
 ## [5.0.1] — 2026-08-20
 

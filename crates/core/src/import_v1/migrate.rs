@@ -22,7 +22,7 @@ fn err(scope: &Scope, message: impl std::fmt::Display) -> CoreError {
 /// global scopes differ.
 pub fn v1_lock_path(env: &Env, scope: &Scope) -> PathBuf {
     match scope {
-        Scope::Global => env.home.join(".config/vstack/.vstack-lock.json"),
+        Scope::Global => env.platform_config_dir().join("vstack/.vstack-lock.json"),
         Scope::Project { root } => root.join(".vstack-lock.json"),
     }
 }

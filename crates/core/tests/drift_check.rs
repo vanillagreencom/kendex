@@ -73,7 +73,9 @@ fn write_skill_with(dir: &Path, name: &str, body: &str, extra_frontmatter: &str)
 #[allow(clippy::unwrap_used)]
 fn world() -> World {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path().to_path_buf();
+    // Canonical up front: macOS reaches its temp dirs through a symlink,
+    // and the engine hands back canonical paths.
+    let home = tmp.path().canonicalize().unwrap();
     let upstream = home.join("git").join(REPO);
     fs::create_dir_all(&upstream).unwrap();
     git(&upstream, &["init", "--quiet", "-b", "main"]);

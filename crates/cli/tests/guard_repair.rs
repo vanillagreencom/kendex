@@ -96,14 +96,18 @@ fn repair_upgrades_an_old_generation_install_without_moving_it() {
     std::fs::write(root.join("b.txt"), "b\n").unwrap();
     git_ok(home, &root, &["add", "-A"]);
     let bad = git(home, &root, &["commit", "-m", "not conventional"]);
-    assert!(!bad.status.success(), "the old-generation hook still gates");
+    assert!(
+        !bad.status.success(),
+        "the old-generation hook still gates: {bad:?}"
+    );
     git_ok(home, &root, &["commit", "--quiet", "-m", "feat: add b"]);
 
     let repaired = run(home, &root, "kendex", &["guard", "repair"]);
     assert!(
         repaired.status.success(),
-        "{}",
-        String::from_utf8_lossy(&repaired.stdout)
+        "stdout: {} stderr: {}",
+        String::from_utf8_lossy(&repaired.stdout),
+        String::from_utf8_lossy(&repaired.stderr)
     );
     for hook in githooks::HOOKS {
         assert_eq!(

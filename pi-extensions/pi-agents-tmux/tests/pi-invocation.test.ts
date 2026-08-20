@@ -447,7 +447,7 @@ describe("persistent pane launcher depth export (kendex#192 / PR #1178 f4)", () 
 		const templateEnd = paneSource.indexOf("`;", templateStart);
 		expect(templateEnd).toBeGreaterThan(templateStart);
 		const templateDigest = createHash("sha256").update(paneSource.slice(templateStart, templateEnd)).digest("hex").slice(0, 16);
-		expect({ version: PANE_LAUNCHER_VERSION, templateDigest }).toEqual({ version: 10, templateDigest: "ed747d117275e537" });
+		expect({ version: PANE_LAUNCHER_VERSION, templateDigest }).toEqual({ version: 11, templateDigest: "38837c68b7dc5b2a" });
 	});
 
 	test("launcher exports the RESOLVED absolute entry when the parent had a relative override (PR #1178 r3)", async () => {

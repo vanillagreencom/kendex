@@ -20,10 +20,18 @@ const MAX_DIR_ENTRIES: usize = 4096;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SealedSource {
     root: PathBuf,
+    /// The spelling the caller opened the root under, kept beside the
+    /// canonical one: on macOS the standard temp locations reach their
+    /// directories through a `/var` → `/private/var` symlink, so paths a
+    /// caller builds from its own spelling would otherwise read as outside
+    /// the canonicalized root. Only the ROOT may differ this way — every
+    /// component below it still walks the symlink refusal.
+    given: PathBuf,
 }
 
 impl SealedSource {
     pub fn open(root: &Path) -> Result<SealedSource> {
+        let given = root.to_path_buf();
         let root = root.canonicalize().map_err(|e| CoreError::io(root, e))?;
         if !root.is_dir() {
             return Err(CoreError::SourceEscape {
@@ -31,7 +39,7 @@ impl SealedSource {
                 reason: "the source root is not a directory".to_owned(),
             });
         }
-        Ok(SealedSource { root })
+        Ok(SealedSource { root, given })
     }
 
     pub fn root(&self) -> &Path {
@@ -39,10 +47,12 @@ impl SealedSource {
     }
 
     /// The containment check every read goes through: the path must sit
-    /// beneath the root and no component below the root may be a symlink.
+    /// beneath the root — under either spelling of it — and no component
+    /// below the root may be a symlink.
     fn contained(&self, path: &Path) -> Result<()> {
         let rel = path
             .strip_prefix(&self.root)
+            .or_else(|_| path.strip_prefix(&self.given))
             .map_err(|_| CoreError::SourceEscape {
                 path: path.to_path_buf(),
                 reason: "outside the source root".to_owned(),
@@ -158,7 +168,9 @@ impl SealedSource {
     /// skill's bytes — render, browse safety, catalog check — goes through here
     /// so the three never disagree on what the skill contains.
     pub fn collect_skill_tree(&self, dir: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>> {
-        let skip: &[&str] = match dir == self.root() {
+        // Either spelling of the root is the root: the repo-root exclusions
+        // must hold however the caller reached it.
+        let skip: &[&str] = match dir == self.root || dir == self.given {
             true => &[".git", "node_modules", "target", "dist", "build", ".venv"],
             false => &[],
         };
