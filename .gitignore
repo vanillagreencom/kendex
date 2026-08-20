@@ -21,3 +21,6 @@ docs/reviews/
 # Per-checkout install lock (absolute paths and timestamps).
 .kendex-lock.json
 .env.local
+
+# The linear skill's local cache
+.cache/
