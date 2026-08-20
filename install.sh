@@ -63,7 +63,10 @@ install_cli() {
   echo "Downloading the kendex command ($target)…"
   curl -fSL --proto '=https' -o "$tmp/kendex" "$base/kendex-$target"
   chmod +x "$tmp/kendex"
-  if [ -w "$bindir" ] || mkdir -p "$bindir" 2>/dev/null; then
+  # mkdir -p exits 0 on a directory that already exists, writable or not,
+  # so create-if-missing first and let writability alone pick the branch.
+  [ -d "$bindir" ] || mkdir -p "$bindir" 2>/dev/null || true
+  if [ -w "$bindir" ]; then
     install -m 0755 "$tmp/kendex" "$bindir/kendex"
   else
     echo "Installing to $bindir needs elevated permissions."
