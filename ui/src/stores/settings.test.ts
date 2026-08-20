@@ -16,6 +16,7 @@ vi.mock("@/bindings", () => ({
     discoverProjects: vi.fn(),
     scanMachine: vi.fn(),
     windowSetZoom: vi.fn(),
+    saveZoom: vi.fn(),
   },
   ZOOM: { min: 50, max: 200, step: 10, default: 100 },
 }));

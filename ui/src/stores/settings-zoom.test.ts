@@ -22,6 +22,7 @@ vi.mock("@/bindings", () => ({
     discoverProjects: vi.fn(),
     scanMachine: vi.fn(),
     windowSetZoom: vi.fn(),
+    saveZoom: vi.fn(),
   },
   ZOOM: { min: 50, max: 200, step: 10, default: 100 },
 }));
@@ -48,18 +49,16 @@ describe("zoom, on screen", () => {
 
     expect(commands.windowSetZoom).toHaveBeenCalledWith(150);
     expect(zoom()).toBe(150);
-    expect(commands.updateSettings).not.toHaveBeenCalled();
+    expect(commands.saveZoom).not.toHaveBeenCalled();
 
     await useSettingsStore.getState().saveZoom();
 
-    expect(commands.updateSettings).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(commands.updateSettings).mock.calls[0][0].zoom).toBe(150);
+    expect(commands.saveZoom).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(commands.saveZoom).mock.calls[0][0]).toBe(150);
     // The window leads the file, so what is stored is a size already shown.
     expect(
       vi.mocked(commands.windowSetZoom).mock.invocationCallOrder[0],
-    ).toBeLessThan(
-      vi.mocked(commands.updateSettings).mock.invocationCallOrder[0],
-    );
+    ).toBeLessThan(vi.mocked(commands.saveZoom).mock.invocationCallOrder[0]);
   });
 
   it("keeps a size the window refused out of the settings file", async () => {
@@ -71,7 +70,7 @@ describe("zoom, on screen", () => {
     await useSettingsStore.getState().setZoom(160);
 
     expect(zoom()).toBe(150);
-    expect(commands.updateSettings).not.toHaveBeenCalled();
+    expect(commands.saveZoom).not.toHaveBeenCalled();
     expect(dialog().title).toBe("Couldn't change the zoom");
     expect(dialog().message).toBe("no webview");
   });
@@ -92,10 +91,10 @@ describe("zoom, on screen", () => {
 
     vi.mocked(commands.windowSetZoom).mockResolvedValue(ok(null));
     dialog().actions[0].onClick();
-    await vi.waitFor(() => expect(commands.updateSettings).toHaveBeenCalled());
+    await vi.waitFor(() => expect(commands.saveZoom).toHaveBeenCalled());
 
     expect(commands.windowSetZoom).toHaveBeenLastCalledWith(160);
-    expect(vi.mocked(commands.updateSettings).mock.calls[0][0].zoom).toBe(160);
+    expect(vi.mocked(commands.saveZoom).mock.calls[0][0]).toBe(160);
   });
 
   it("does not undo a newer size when an older resize comes back refused", async () => {
@@ -123,8 +122,8 @@ describe("zoom, on screen", () => {
     const retry = dialog().actions[0];
     vi.mocked(commands.windowSetZoom).mockResolvedValue(ok(null));
     retry.onClick();
-    await vi.waitFor(() => expect(commands.updateSettings).toHaveBeenCalled());
+    await vi.waitFor(() => expect(commands.saveZoom).toHaveBeenCalled());
 
-    expect(vi.mocked(commands.updateSettings).mock.calls[0][0].zoom).toBe(150);
+    expect(vi.mocked(commands.saveZoom).mock.calls[0][0]).toBe(150);
   });
 });

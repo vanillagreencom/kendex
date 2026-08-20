@@ -48,8 +48,14 @@ export const coreHandlers: Record<string, Handler> = {
   }),
   get_settings: () => store.state.settings,
   update_settings: ({ settings }: { settings: AppSettings }) => {
-    store.state.settings = settings;
+    // The size is the window's; a settings save carries a copy that may
+    // predate the last resize, so the stored one stands.
+    store.state.settings = { ...settings, zoom: store.state.settings.zoom };
     return store.state.settings;
+  },
+  save_zoom: ({ percent }: { percent: number }) => {
+    store.state.settings.zoom = percent;
+    return percent;
   },
   register_project: ({ path }: { path: string }) => {
     const projects = store.state.settings.projects ?? [];

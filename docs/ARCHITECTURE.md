@@ -363,13 +363,18 @@ lives in one capability table read by core and UI.
   those orderings rather than answering them, since there is never a second
   reply to interleave with. The size still shows the moment it is pressed,
   so the control stays immediate and two presses in one frame cannot
-  collapse into one, and that previewed size is held in a field of its own
-  rather than in the shared settings object: every settings action writes
-  that object whole, so a preview sitting in it would be persisted,
-  faithfully, by an unrelated save, and then rolled back on screen but not
-  in the file. A size the window has taken moves into the shared object at
-  once — by then it is what the app is showing, so a write that carries it
-  carries the truth. At most one save is ever in flight, and asks made
+  collapse into one. Three values track the size, each with a single
+  writer: what the app shows moves on a press, what the window has taken
+  moves only on the window's reply, and what the settings object holds
+  moves only when the file does. The first two are kept out of that object
+  because every settings action writes it whole — a preview sitting in it
+  would be persisted, faithfully, by an unrelated save, and a reply that
+  predates the last resize would put an older size back over one the window
+  has taken. The size reaches the file through a command of its own for the
+  same reason: it carries a percent and nothing else, so no other setting
+  can ride back with it, and it cannot ride back with any other setting.
+  `update_settings` leaves the stored size exactly as it found it.
+  At most one save is ever in flight, and asks made
   while it runs collapse into a single follow-up that writes whatever is on
   screen by then, so replies can never land out of order and put back a
   size the person has already moved past. A write waits for the resize

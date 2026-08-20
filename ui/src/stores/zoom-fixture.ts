@@ -22,6 +22,9 @@ export type Reply =
 export type WindowReply =
   | { status: "ok"; data: null }
   | { status: "error"; error: string };
+export type ZoomReply =
+  | { status: "ok"; data: number }
+  | { status: "error"; error: string };
 
 export const ok = <T>(data: T) => ({ status: "ok" as const, data });
 export const failed = (error: string) => ({ status: "error" as const, error });
@@ -46,7 +49,12 @@ export const dialog = () => useProblemsStore.getState().dialog;
 
 /** A store at 100%, a closed dialog, and a window that takes every size. */
 export function freshZoomStore() {
-  useSettingsStore.setState({ settings, shownZoom: null, capabilities: [] });
+  useSettingsStore.setState({
+    settings,
+    shownZoom: null,
+    tookZoom: null,
+    capabilities: [],
+  });
   useProblemsStore.setState({
     dialog: { open: false, title: "", steps: [], actions: [] },
   });
@@ -54,6 +62,9 @@ export function freshZoomStore() {
   vi.mocked(commands.windowSetZoom).mockResolvedValue(ok(null));
   vi.mocked(commands.updateSettings).mockImplementation(async (next) =>
     ok(next),
+  );
+  vi.mocked(commands.saveZoom).mockImplementation(async (percent) =>
+    ok(percent),
   );
   expect(zoom()).toBe(100);
 }

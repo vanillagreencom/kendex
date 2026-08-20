@@ -4,6 +4,7 @@ import { useProblemsStore } from "./problems";
 interface ZoomFields {
   settings: AppSettings | null;
   shownZoom: number | null;
+  tookZoom: number | null;
 }
 
 export interface ZoomSlice {
@@ -19,6 +20,17 @@ export interface ZoomSlice {
    * says. Readers want `shownZoom ?? settings.zoom`.
    */
   shownZoom: number | null;
+  /**
+   * The size the window has taken, and the only size ever written. What the
+   * settings object says is not evidence of this: every settings action
+   * replies with the whole file, and a reply read before the person last
+   * resized puts an older size back. Only a reply from the window moves
+   * this, so nothing else can undo a resize.
+   *
+   * Null until the window's first reply, when the stored size is what the
+   * launch applied and so what the window is showing.
+   */
+  tookZoom: number | null;
   /** Resize the window to follow the input. Nothing is written. */
   setZoom: (percent: number) => Promise<void>;
   /** The commit boundary: remember the size now on screen. */
@@ -62,11 +74,12 @@ export function zoomActions(
     });
   }
 
-  /** The size the window has taken, which is the one `settings` carries.
-   *  Before the first reply that is the stored size, which the launch
-   *  applied, so this is true from the first frame. */
+  /** The size the window has taken. Before its first reply that is the
+   *  stored size, which the launch applied, so this is true from the first
+   *  frame. */
   function confirmedZoom(): number {
-    return get().settings?.zoom ?? ZOOM.default;
+    const { tookZoom, settings } = get();
+    return tookZoom ?? settings?.zoom ?? ZOOM.default;
   }
 
   /** The size the app is showing, which a press moves ahead of the window. */
@@ -81,9 +94,10 @@ export function zoomActions(
     set({ shownZoom: percent });
   }
 
-  /** Take a confirmed size into the shared object — the size and nothing
-   *  else, so a change made to another setting meanwhile survives. */
-  function confirmZoom(percent: number) {
+  /** Take the size the file now holds into the settings object — the size
+   *  and nothing else, so a change made to another setting while the write
+   *  was in flight survives it. */
+  function storedZoom(percent: number) {
     const current = get().settings;
     if (current) set({ settings: { ...current, zoom: percent } });
   }
@@ -105,9 +119,7 @@ export function zoomActions(
   async function ask(percent: number) {
     const problem = await refused(percent);
     if (problem === null) {
-      // The window is showing it, so it is now safe for anything that
-      // writes the settings file to carry it.
-      confirmZoom(percent);
+      set({ tookZoom: percent });
       return;
     }
     // A size the window did not take is not the size the app is showing, so
@@ -159,18 +171,14 @@ export function zoomActions(
         await awaited;
       } while (asking !== awaited);
 
-      // Every request has been answered by now, so what `settings` carries
-      // is a size the window took — never one it refused or has not seen.
-      const current = get().settings;
-      if (!current) return;
-      const percent = current.zoom ?? ZOOM.default;
-      const response = await commands.updateSettings(current);
+      // Every request has been answered by now, so this is a size the
+      // window took — never one it refused or has not seen. It goes to the
+      // file on its own: a whole-settings write would carry fields read
+      // before this size was chosen, and would be carrying them back.
+      if (!get().settings) return;
+      const response = await commands.saveZoom(confirmedZoom());
       if (response.status === "ok") {
-        // The reply describes the size that was on screen when the save
-        // started; a newer one may have replaced it since.
-        if (get().settings?.zoom === percent) {
-          confirmZoom(response.data.zoom ?? percent);
-        }
+        storedZoom(response.data);
         return;
       }
       // The size stays on screen: taking it away would cost the person the
@@ -202,5 +210,5 @@ export function zoomActions(
     }
   }
 
-  return { shownZoom: null, setZoom, saveZoom };
+  return { shownZoom: null, tookZoom: null, setZoom, saveZoom };
 }

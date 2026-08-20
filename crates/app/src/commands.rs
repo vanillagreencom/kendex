@@ -35,7 +35,11 @@ fn update_settings_at(env: &Env, mut settings: AppSettings) -> Result<AppSetting
     for root in settings.harness_roots.values_mut() {
         *root = crate::paths::expand_tilde(&env.home, &root.to_string_lossy());
     }
-    settings.zoom = settings::clamp_zoom(settings.zoom);
+    // The size on screen is the window's, not this call's. Every settings
+    // action sends the whole object, and a copy of it read before the person
+    // last resized would put back a size they have moved past, so what the
+    // file already holds wins and `save_zoom` is the only way to change it.
+    settings.zoom = settings::load(env).map_err(|e| e.to_string())?.zoom;
     settings::save(env, &settings).map_err(|e| e.to_string())?;
     Ok(settings)
 }
@@ -44,6 +48,22 @@ fn update_settings_at(env: &Env, mut settings: AppSettings) -> Result<AppSetting
 #[specta::specta]
 pub fn update_settings(settings: AppSettings) -> Result<AppSettings, String> {
     update_settings_at(&env()?, settings)
+}
+
+fn save_zoom_at(env: &Env, percent: u16) -> Result<u16, String> {
+    let mut settings = settings::load(env).map_err(|e| e.to_string())?;
+    settings.zoom = settings::clamp_zoom(percent);
+    settings::save(env, &settings).map_err(|e| e.to_string())?;
+    Ok(settings.zoom)
+}
+
+/// The size on screen, written on its own. Nothing else in the file moves
+/// with it, and nothing else can move it: a size the person is looking at
+/// survives whatever else is being saved at the same moment.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn save_zoom(percent: u16) -> Result<u16, String> {
+    save_zoom_at(&env()?, percent)
 }
 
 fn register_project_at(env: &Env, path: &str) -> Result<AppSettings, String> {
@@ -245,18 +265,58 @@ mod tests {
     fn an_out_of_range_zoom_is_clamped_before_it_reaches_the_file() {
         let tmp = tempfile::tempdir().unwrap();
         let env = env_in(tmp.path());
-        let settings = AppSettings {
-            zoom: 5000,
-            ..AppSettings::default()
-        };
 
-        let saved = update_settings_at(&env, settings).unwrap();
+        let saved = save_zoom_at(&env, 5000).unwrap();
 
-        assert_eq!(saved.zoom, kendex_core::settings::ZOOM.max);
+        assert_eq!(saved, kendex_core::settings::ZOOM.max);
         assert_eq!(
             settings::load(&env).unwrap().zoom,
             kendex_core::settings::ZOOM.max
         );
+    }
+
+    /// A settings action sends the whole object, and it may have read that
+    /// object before the person last resized. Writing the size it carries
+    /// would undo the resize, and the next launch would open at the size
+    /// the person had already moved past.
+    #[test]
+    fn a_settings_save_leaves_the_size_the_window_set() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = env_in(tmp.path());
+        save_zoom_at(&env, 150).unwrap();
+
+        let stale = AppSettings {
+            zoom: 100,
+            appearance: kendex_core::settings::Appearance::Dark,
+            ..AppSettings::default()
+        };
+        let saved = update_settings_at(&env, stale).unwrap();
+
+        assert_eq!(saved.zoom, 150);
+        assert_eq!(settings::load(&env).unwrap().zoom, 150);
+        assert_eq!(
+            settings::load(&env).unwrap().appearance,
+            kendex_core::settings::Appearance::Dark
+        );
+    }
+
+    /// The reverse: writing the size must not roll back whatever else was
+    /// saved since this size was read.
+    #[test]
+    fn saving_the_size_leaves_every_other_setting_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = env_in(tmp.path());
+        let settings = AppSettings {
+            appearance: kendex_core::settings::Appearance::Dark,
+            ..AppSettings::default()
+        };
+        update_settings_at(&env, settings).unwrap();
+
+        save_zoom_at(&env, 150).unwrap();
+
+        let stored = settings::load(&env).unwrap();
+        assert_eq!(stored.zoom, 150);
+        assert_eq!(stored.appearance, kendex_core::settings::Appearance::Dark);
     }
 
     #[test]

@@ -22,6 +22,7 @@ vi.mock("@/bindings", () => ({
     discoverProjects: vi.fn(),
     scanMachine: vi.fn(),
     windowSetZoom: vi.fn(),
+    saveZoom: vi.fn(),
   },
   ZOOM: { min: 50, max: 200, step: 10, default: 100 },
 }));
@@ -50,7 +51,7 @@ describe("zoom, with a resize still out", () => {
     second.settle(failed("no webview"));
     await Promise.all([step, last, saved]);
 
-    expect(vi.mocked(commands.updateSettings).mock.calls[0][0].zoom).toBe(150);
+    expect(vi.mocked(commands.saveZoom).mock.calls[0][0]).toBe(150);
     expect(zoom()).toBe(150);
   });
 
@@ -67,7 +68,7 @@ describe("zoom, with a resize still out", () => {
     await Promise.all([moved, repeat, saved]);
 
     // The refused size never reaches the file; the rolled-back one does.
-    expect(vi.mocked(commands.updateSettings).mock.calls[0][0].zoom).toBe(100);
+    expect(vi.mocked(commands.saveZoom).mock.calls[0][0]).toBe(100);
     expect(zoom()).toBe(100);
   });
 
@@ -91,7 +92,7 @@ describe("zoom, with a resize still out", () => {
 
     // The window never left 100, so 100 is what the file gets.
     expect(zoom()).toBe(100);
-    expect(vi.mocked(commands.updateSettings).mock.calls[0][0].zoom).toBe(100);
+    expect(vi.mocked(commands.saveZoom).mock.calls[0][0]).toBe(100);
   });
 
   /// The replies can come back in either order. A newer press refused
@@ -142,7 +143,7 @@ describe("zoom, with a resize still out", () => {
     await useSettingsStore.getState().saveZoom();
 
     expect(zoom()).toBe(150);
-    expect(vi.mocked(commands.updateSettings).mock.calls[0][0].zoom).toBe(150);
+    expect(vi.mocked(commands.saveZoom).mock.calls[0][0]).toBe(150);
   });
 
   it("never writes a size the window went on to refuse", async () => {
@@ -160,7 +161,7 @@ describe("zoom, with a resize still out", () => {
 
     // The commit still runs, but on the size the window is actually
     // showing: the refused one never reaches the file.
-    expect(vi.mocked(commands.updateSettings).mock.calls[0][0].zoom).toBe(150);
+    expect(vi.mocked(commands.saveZoom).mock.calls[0][0]).toBe(150);
     expect(zoom()).toBe(150);
   });
 });

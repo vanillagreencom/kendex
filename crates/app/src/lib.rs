@@ -31,6 +31,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::scan_machine,
             commands::get_settings,
             commands::update_settings,
+            commands::save_zoom,
             commands::register_project,
             commands::unregister_project,
             commands::install_drift_hook,

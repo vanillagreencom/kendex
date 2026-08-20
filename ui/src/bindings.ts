@@ -9,6 +9,12 @@ export const commands = {
 	scanMachine: () => typedError<ScanResult, string>(__TAURI_INVOKE("scan_machine")),
 	getSettings: () => typedError<AppSettings, string>(__TAURI_INVOKE("get_settings")),
 	updateSettings: (settings: AppSettings) => typedError<AppSettings, string>(__TAURI_INVOKE("update_settings", { settings })),
+	/**
+	 *  The size on screen, written on its own. Nothing else in the file moves
+	 *  with it, and nothing else can move it: a size the person is looking at
+	 *  survives whatever else is being saved at the same moment.
+	 */
+	saveZoom: (percent: number) => typedError<number, string>(__TAURI_INVOKE("save_zoom", { percent })),
 	registerProject: (path: string) => typedError<AppSettings, string>(__TAURI_INVOKE("register_project", { path })),
 	unregisterProject: (path: string) => typedError<AppSettings, string>(__TAURI_INVOKE("unregister_project", { path })),
 	/**
