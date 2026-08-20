@@ -66,6 +66,9 @@ require_fixed "$plan" '`false` leaves the issue ready for later pickup — never
 schema="$SKILL_DIR/schemas/roadmap-plan-input.md"
 tpm="$SKILL_DIR/workflows/tpm-roadmap-plan.md"
 require_fixed "$schema" '| `spec_path` | No |' 'spec_path in the input schema'
+require_fixed "$schema" 'the `@[path]` input or the roadmap-plan § 1 disk match' 'schema admits disk-discovered specs'
+require_fixed "$create" 'enters as `action: "skip"` with `reason: "executed at § 2"`' 'executed existing-work actions are not re-asked at § 6'
+require_fixed "$audit" 'cancellations not already executed by roadmap-create § 2' '§ 6 excludes already-executed cancellations'
 require_fixed "$plan" 'and `spec_path` (each null when absent' 'plan writes spec_path into the TPM input'
 require_fixed "$tpm" '**Spec mode** (`SPEC_PATH` set): the plan'"'"'s decisions are binding' 'TPM spec mode binds the plan'
 require_fixed "$tpm" 'never change its approach, drop a workstream it names, or add scope beyond its phases' 'TPM spec-mode constraints'

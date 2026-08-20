@@ -40,7 +40,7 @@ Written by `roadmap-plan.md` after specialist consultation, at `tmp/roadmap-inpu
 |-------|----------|-------------|
 | `feature` | Yes | Feature name from the command |
 | `research_path` | No | Findings path, null when research was skipped. When the input is a SPEC this is the spec path, so downstream `research_ref` cites it |
-| `spec_path` | No | Set exactly when the `@[path]` input classified as a finished, reviewed plan (roadmap-plan § Inputs): its approach and workstreams are binding on the TPM. Null otherwise |
+| `spec_path` | No | Set exactly when the artifact in hand — the `@[path]` input or the roadmap-plan § 1 disk match — classified as a finished, reviewed plan (roadmap-plan § Inputs): its approach and workstreams are binding on the TPM. Null otherwise |
 | `origin_issue` | No | The issue that triggered this roadmap — context for the hierarchy decision, not a directive |
 | `planner_handoff` | No | Technical context from a scout → planner chain, preserved through the analysis. It informs placement, grouping, and ordering; it bypasses no gate, approval, or creation step |
 | `proposed_issues[]` | Yes | Issues collected from the specialist agents |
