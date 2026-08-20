@@ -7,7 +7,7 @@ import { Sidebar } from "@/components/sidebar";
 import { StatusFooter } from "@/components/status-footer";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { WindowControls } from "@/components/window-controls";
-import { zoomForKey } from "@/lib/zoom-shortcut";
+import { zoomGesture } from "@/lib/zoom-shortcut";
 import { AvailablePackagePage } from "@/pages/available-package";
 import { BundleDetailPage } from "@/pages/bundle-detail";
 import { CustomizePage } from "@/pages/customize";
@@ -53,18 +53,20 @@ function useAppearance() {
 // browser's zoom works too.
 function useZoomShortcuts() {
   const setZoom = useSettingsStore((s) => s.setZoom);
+  const saveZoom = useSettingsStore((s) => s.saveZoom);
   useEffect(() => {
+    const gesture = zoomGesture(
+      (percent) => void setZoom(percent),
+      () => void saveZoom(),
+    );
     const onKeyDown = (event: KeyboardEvent) => {
       const current =
         useSettingsStore.getState().settings?.zoom ?? ZOOM.default;
-      const next = zoomForKey(event, current);
-      if (next === null) return;
-      event.preventDefault();
-      void setZoom(next);
+      if (gesture(event, current)) event.preventDefault();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [setZoom]);
+  }, [setZoom, saveZoom]);
 }
 
 // The side buttons on a mouse mean back and forward everywhere else on the

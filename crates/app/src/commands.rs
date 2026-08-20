@@ -238,6 +238,27 @@ mod tests {
         );
     }
 
+    /// The UI cannot ask for a size outside the range, but the command is
+    /// reachable with any number, and an out-of-range one reaching the file
+    /// would open a window nobody can read or use.
+    #[test]
+    fn an_out_of_range_zoom_is_clamped_before_it_reaches_the_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = env_in(tmp.path());
+        let settings = AppSettings {
+            zoom: 5000,
+            ..AppSettings::default()
+        };
+
+        let saved = update_settings_at(&env, settings).unwrap();
+
+        assert_eq!(saved.zoom, kendex_core::settings::ZOOM.max);
+        assert_eq!(
+            settings::load(&env).unwrap().zoom,
+            kendex_core::settings::ZOOM.max
+        );
+    }
+
     #[test]
     fn harness_root_overrides_expand_a_typed_tilde() {
         let tmp = tempfile::tempdir().unwrap();

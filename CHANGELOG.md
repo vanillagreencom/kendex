@@ -71,6 +71,10 @@ changes carry a **Breaking** call-out with their migration note inline.
   never touched, and a `GDK_BACKEND` you set is still yours — except inside
   the AppImage, where the bundle overwrites it before kendex starts and
   `KENDEX_GDK_BACKEND` is the way to ask for a particular backend.
+- Saving two things at the same moment can no longer leave a file
+  half-written. Settings, manifests, locks, and snapshots each get their own
+  temporary file, so two saves of one file cannot overwrite each other's
+  bytes partway through.
 - The installer's app-menu entry now carries the app's window class and
   installs the 256px and 512px icons as well as the 128px one, so launchers
   and docks match the running window to kendex and draw a sharp icon.

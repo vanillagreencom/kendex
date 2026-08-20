@@ -49,7 +49,8 @@ function safetyLevelOf(warn: number, block: number): SafetyLevel | "custom" {
 }
 
 export function SettingsPage() {
-  const { settings, setAppearance, setSafety, setZoom } = useSettingsStore();
+  const { settings, setAppearance, setSafety, setZoom, saveZoom } =
+    useSettingsStore();
   const [version, setVersion] = useState<string | null>(null);
 
   useEffect(() => {
@@ -99,6 +100,7 @@ export function SettingsPage() {
                   max={ZOOM.max}
                   step={ZOOM.step}
                   onValueChange={(value) => void setZoom(value)}
+                  onValueCommitted={() => void saveZoom()}
                   aria-label="Zoom"
                 />
                 <span className="w-11 shrink-0 text-right font-mono text-xs tabular-nums text-muted-foreground">

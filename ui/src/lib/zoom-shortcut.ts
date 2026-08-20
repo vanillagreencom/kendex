@@ -38,3 +38,34 @@ export function zoomForKey(
       return null;
   }
 }
+
+/**
+ * How long after the last press the size is written. A held key repeats
+ * every few tens of milliseconds, so this sits comfortably past a repeat
+ * without making a single press feel unsaved.
+ */
+export const ZOOM_SETTLE_MS = 300;
+
+/**
+ * A zoom gesture on the keyboard, the counterpart to a slider drag: the
+ * window follows every press, and the size is written once the presses
+ * stop. Holding the key would otherwise rewrite the settings file at the
+ * keyboard's repeat rate for one gesture.
+ *
+ * Returns whether the press was a zoom press, so the caller knows whether
+ * to keep it from the page.
+ */
+export function zoomGesture(
+  preview: (percent: number) => void,
+  save: () => void,
+): (event: ZoomShortcutEvent, current: number) => boolean {
+  let settle: ReturnType<typeof setTimeout> | undefined;
+  return (event, current) => {
+    const next = zoomForKey(event, current);
+    if (next === null) return false;
+    preview(next);
+    clearTimeout(settle);
+    settle = setTimeout(save, ZOOM_SETTLE_MS);
+    return true;
+  };
+}

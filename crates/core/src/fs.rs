@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::error::{CoreError, Result};
 
@@ -24,7 +25,16 @@ fn write_then_rename(path: &Path, contents: &str, durable: bool) -> Result<()> {
         .parent()
         .ok_or_else(|| CoreError::io(&path, std::io::Error::other("path has no parent")))?;
     fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e))?;
-    let tmp = path.with_extension(format!("tmp.{}", std::process::id()));
+    // One temp name per write, not per process: two writers sharing a name
+    // truncate each other's bytes, and the one that loses the rename either
+    // fails with ENOENT or writes its payload straight over the live file
+    // the winner just moved into place. The app writes settings from a
+    // thread pool, so same-path writes really do overlap.
+    let tmp = path.with_extension(format!(
+        "tmp.{}.{}",
+        std::process::id(),
+        NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+    ));
     fs::write(&tmp, contents).map_err(|e| CoreError::io(&tmp, e))?;
     if durable {
         fs::File::open(&tmp)
@@ -38,6 +48,8 @@ fn write_then_rename(path: &Path, contents: &str, durable: bool) -> Result<()> {
     }
     Ok(())
 }
+
+static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
 /// The file a symlink chain ends at; the path itself when it is not a link
 /// or the link is broken (nothing to preserve, the rename replaces it).
@@ -59,6 +71,45 @@ pub fn read_if_exists(path: &Path) -> Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The app saves settings from a Tokio thread pool, so a slider drag can
+    /// put several writes of one file in flight at once. Sharing a temp name
+    /// made them collide: the loser either failed to rename or wrote its
+    /// payload over the live file, leaving it half one write and half the
+    /// other.
+    #[test]
+    fn concurrent_writers_of_one_file_all_succeed_and_leave_it_whole() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("settings.toml");
+        let bodies: Vec<String> = (0..8)
+            .map(|writer| {
+                format!(
+                    "writer = {writer}\npadding = \"{}\"\n",
+                    "x".repeat(writer * 40)
+                )
+            })
+            .collect();
+
+        for _ in 0..50 {
+            std::thread::scope(|scope| {
+                for body in &bodies {
+                    scope.spawn(|| atomic_write(&path, body).expect("every writer succeeds"));
+                }
+            });
+            let written = fs::read_to_string(&path).unwrap();
+            assert!(
+                bodies.iter().any(|body| *body == written),
+                "the file is one writer's bytes, not a mixture: {written:?}"
+            );
+        }
+        // Nothing is left behind for the next reader to trip over.
+        let leftovers: Vec<_> = fs::read_dir(tmp.path())
+            .unwrap()
+            .filter_map(|entry| entry.ok().map(|e| e.file_name()))
+            .filter(|name| name != "settings.toml")
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
 
     #[cfg(unix)]
     #[test]

@@ -84,37 +84,6 @@ describe("settings store", () => {
     expect(useSettingsStore.getState().settings).toEqual(updated);
   });
 
-  it("resizes the window before the save round-trips, so the slider does not lag", async () => {
-    useSettingsStore.setState({ settings });
-    let zoomWhenSaved: number | null = null;
-    vi.mocked(commands.updateSettings).mockImplementation(async () => {
-      zoomWhenSaved = useSettingsStore.getState().settings?.zoom ?? null;
-      return { status: "ok", data: { ...settings, zoom: 150 } };
-    });
-
-    await useSettingsStore.getState().setZoom(150);
-
-    expect(commands.windowSetZoom).toHaveBeenCalledWith(150);
-    expect(zoomWhenSaved).toBe(150);
-    expect(useSettingsStore.getState().settings?.zoom).toBe(150);
-  });
-
-  it("puts the old size back when the zoom cannot be saved", async () => {
-    useSettingsStore.setState({ settings });
-    vi.mocked(commands.updateSettings).mockResolvedValue({
-      status: "error",
-      error: "disk is full",
-    });
-
-    await useSettingsStore.getState().setZoom(150);
-
-    expect(commands.windowSetZoom).toHaveBeenLastCalledWith(100);
-    expect(useSettingsStore.getState().settings).toBe(settings);
-    expect(useProblemsStore.getState().dialog.title).toBe(
-      "Couldn't change the zoom",
-    );
-  });
-
   it("toasts success naming the folder when a project is added, and resolves true", async () => {
     vi.mocked(commands.registerProject).mockResolvedValue({
       status: "ok",

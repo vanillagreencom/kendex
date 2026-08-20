@@ -338,6 +338,22 @@ lives in one capability table read by core and UI.
   also the answer to a compositor set to a fractional scale, which GTK3
   and WebKitGTK round to a whole number: the person nudges the difference
   back by hand.
+- **A live control resizes on every step and writes once, when the input
+  settles.** A drag and a held key both produce a stream of values; the
+  window follows all of them so the control feels live, and the settings
+  file is written at the gesture's own commit boundary — the slider's
+  release, the keyboard's pause. At most one save is ever in flight, and
+  asks made while it runs collapse into a single follow-up that writes
+  whatever is on screen by then, so replies can never land out of order
+  and put back a size the person has already moved past. A size the
+  window refuses is never offered to the file; a size the file refuses
+  stays on screen, because taking it away would cost the person the size
+  they are using to read the message.
+- **Every atomic write gets its own temp file.** `write_then_rename` names
+  its temp file per write, not per process: the app saves from a thread
+  pool, so two writes of one path really do overlap, and a shared name
+  makes them truncate each other and lets the loser write its payload over
+  the live file the winner just renamed into place.
 - GUI + CLI are equal thin shells over `crates/core`; every core operation
   has a CLI verb. No CI until first release; `tools/guard` is the gate.
 - Multi-harness kept (v1 fleet workflows depend on Pi). Every capability
