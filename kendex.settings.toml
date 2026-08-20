@@ -18,9 +18,11 @@ LINEAR_TEAM_PREFIX = "KEN"
 LINEAR_AGENT_LABELS = ""
 
 # Reviewer merge gate: "approval" needs a GitHub approval; "review" needs a
-# non-author review of the current head plus zero unresolved threads (for
-# bots that comment but never approve); "off" only where no reviewer exists.
-PR_REVIEW_GATE = "approval"
+# non-author review of the current head plus zero unresolved threads; "off"
+# only where no reviewer exists. This repo's reviewers (Codex, Copilot)
+# comment but never approve, and the CI "Review gate" status is the engine's
+# verdict, so "review" is the mode that can actually pass.
+PR_REVIEW_GATE = "review"
 
 # The review-gate ENGINE's one-switch disable, consumed by orch even where
 # the review-gate skill is not installed. Only the exact value "off"
@@ -54,8 +56,10 @@ PR_REVIEW_QUORUM = ""
 
 # When the review signal never arrives: "block" reports a timeout;
 # "proceed" records a reviewer-down override and moves on, but only with
-# zero unresolved threads — a real comment is never bypassed.
-PR_REVIEW_ON_TIMEOUT = "block"
+# zero unresolved threads — a real comment is never bypassed. Comment-only
+# bots can go silent on a trivial head, so a silent round proceeds rather
+# than stalling the session.
+PR_REVIEW_ON_TIMEOUT = "proceed"
 
 # Seconds ci-wait keeps polling before failing when no CI checks registered
 # yet; raise for approval-gated CI with slow dispatch.
