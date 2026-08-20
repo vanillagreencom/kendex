@@ -60,8 +60,14 @@ install_cli() {
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
   echo "Downloading the kendex command ($target)…"
-  if ! curl -fSL --proto '=https' -o "$tmp/kendex" "$base/kendex-$target"; then
-    echo "install.sh: release $version has no build for $target (see https://github.com/$repo/releases)" >&2
+  # curl exits 22 on an HTTP error — here a 404 for an asset the release
+  # lacks; any other failure is the network, not the release.
+  if curl -fSL --proto '=https' -o "$tmp/kendex" "$base/kendex-$target"; then
+    :
+  else
+    rc=$?
+    echo "install.sh: could not download kendex-$target from $base" >&2
+    [ "$rc" -eq 22 ] && echo "  release $version may have no build for $target (see https://github.com/$repo/releases)" >&2
     exit 1
   fi
   chmod +x "$tmp/kendex"

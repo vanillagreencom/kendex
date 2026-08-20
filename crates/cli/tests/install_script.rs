@@ -16,8 +16,20 @@ fn write_exe(path: &Path, body: &str) {
 }
 
 /// Runs install.sh as `os`/`arch` and returns every URL curl was handed.
-#[allow(clippy::unwrap_used)]
 fn requested_urls(os: &str, arch: &str) -> String {
+    let (output, urls) = run_install(os, arch, "");
+    assert!(
+        output.status.success(),
+        "install.sh failed for {os} {arch}:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    urls
+}
+
+/// Runs install.sh as `os`/`arch`; the fake curl answers any URL containing
+/// `missing` with exit 22, curl's code for an HTTP error.
+#[allow(clippy::unwrap_used)]
+fn run_install(os: &str, arch: &str, missing: &str) -> (std::process::Output, String) {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let fake = home.join("fake-bin");
@@ -30,11 +42,16 @@ fn requested_urls(os: &str, arch: &str) -> String {
     );
     // Logs the URL; `-o FILE` gets a runnable stand-in for the download,
     // and the release lookup gets a tag.
+    let miss = if missing.is_empty() {
+        String::new()
+    } else {
+        format!("case \"$url\" in *{missing}*) exit 22 ;; esac\n")
+    };
     write_exe(
         &fake.join("curl"),
         &format!(
             "#!/bin/sh\nout=\"\"\nwhile [ $# -gt 0 ]; do case \"$1\" in -o) out=\"$2\"; shift 2 ;; *) url=\"$1\"; shift ;; esac; done\n\
-             echo \"$url\" >> \"{log}\"\n\
+             echo \"$url\" >> \"{log}\"\n{miss}\
              if [ -n \"$out\" ]; then printf '#!/bin/sh\\necho v9\\n' > \"$out\"; else echo '\"tag_name\": \"v9.9.9\"'; fi\n",
             log = home.join("urls.txt").display()
         ),
@@ -55,12 +72,8 @@ fn requested_urls(os: &str, arch: &str) -> String {
         )
         .output()
         .unwrap();
-    assert!(
-        output.status.success(),
-        "install.sh failed for {os} {arch}:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    fs::read_to_string(home.join("urls.txt")).unwrap()
+    let urls = fs::read_to_string(home.join("urls.txt")).unwrap_or_default();
+    (output, urls)
 }
 
 #[test]
@@ -120,4 +133,19 @@ fn release_matrix_and_feed_name_the_same_targets() {
     feed.sort();
     assert!(!lanes.is_empty());
     assert_eq!(lanes, feed);
+}
+
+#[test]
+fn a_release_without_this_target_says_so_instead_of_a_bare_curl_error() {
+    let (output, _) = run_install("Darwin", "x86_64", "kendex-x86_64-apple-darwin");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("could not download kendex-x86_64-apple-darwin from"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("release v9.9.9 may have no build for x86_64-apple-darwin"),
+        "{stderr}"
+    );
 }

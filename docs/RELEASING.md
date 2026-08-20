@@ -23,8 +23,9 @@ Review the draft, then publish it. That is the release.
 
 The workflow runs on tag push only, never on pull requests. Every lane
 builds the CLI and the desktop app together, so no lane is spent on the
-CLI alone; there is no build cache, because a tag-only workflow never
-restores one.
+CLI alone; there is no build cache, because the only release-profile cache main
+saves (catalog-check's x86_64 CLI build) is keyed to that job and built
+without `--target`, so no release lane could restore it.
 The Intel macOS lane uses `macos-15-intel`, the last Intel image GitHub
 offers, supported until August 2027 — revisit Intel support then.
 

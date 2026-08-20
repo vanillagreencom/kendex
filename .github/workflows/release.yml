@@ -4,9 +4,10 @@
 #
 # Tag push only: a release bundle is the most expensive job in the repo,
 # and pull requests are covered by the per-crate checks. No build cache:
-# Actions restores caches only from the same ref or the default branch,
-# and nothing on main saves release-profile artifacts, so a cache step here
-# would pay for a save that no lane ever restores. Every lane runs
+# the only release-profile cache main saves (catalog-check's x86_64
+# kendex-cli build) is keyed to that job and built without --target, so no
+# lane here could restore it; a cache step would only pay for saves that
+# tag runs never reuse. Every lane runs
 # on a GitHub-standard runner, which is free for a public repository.
 # Each Apple architecture gets its own native lane rather than one
 # universal binary: the updater keys its artifacts per architecture and a
