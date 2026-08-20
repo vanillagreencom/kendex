@@ -2,6 +2,7 @@ import { useEffect, useMemo } from "react";
 import type { Catalog, CatalogSummary } from "@/bindings";
 import {
   catalogKey,
+  readErrorKey,
   subscription,
   useMarketplacesStore,
 } from "@/stores/marketplaces";
@@ -22,7 +23,7 @@ export function useCatalog(requested: Catalog): {
   const key = catalogKey(requested);
   const summary = useMarketplacesStore((s) => s.summaries[key] ?? null);
   const error = useMarketplacesStore(
-    (s) => s.readErrors[`${key}::summary`] ?? null,
+    (s) => s.readErrors[readErrorKey(key, "summary")] ?? null,
   );
   const loadSummary = useMarketplacesStore((s) => s.loadSummary);
 

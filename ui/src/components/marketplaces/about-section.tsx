@@ -2,7 +2,11 @@ import { useEffect } from "react";
 import type { Catalog, MarketplaceMeta } from "@/bindings";
 import { Badge } from "@/components/ui/badge";
 import { kindLabel } from "@/lib/labels";
-import { catalogKey, useMarketplacesStore } from "@/stores/marketplaces";
+import {
+  catalogKey,
+  readErrorKey,
+  useMarketplacesStore,
+} from "@/stores/marketplaces";
 
 const MODE_COPY: Record<string, string> = {
   "plugin-registry":
@@ -26,7 +30,7 @@ export function AboutSection({
 }) {
   const about = useMarketplacesStore((s) => s.about[catalogKey(catalog)]);
   const readError = useMarketplacesStore(
-    (s) => s.readErrors[catalogKey(catalog)],
+    (s) => s.readErrors[readErrorKey(catalogKey(catalog), "about")],
   );
   const loadAbout = useMarketplacesStore((s) => s.loadAbout);
 

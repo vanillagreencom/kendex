@@ -1,7 +1,7 @@
 import { MoreHorizontal, RefreshCw, Star } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import type { Catalog, CatalogSummary, MarketplaceRow } from "@/bindings";
-import { SubscribeDialog } from "@/components/marketplaces/subscribe-dialog";
+import { SubscribeFromRepo } from "@/components/marketplaces/subscribe-from-repo";
 import { UnsubscribeDialog } from "@/components/marketplaces/unsubscribe-dialog";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -42,7 +42,6 @@ export function DetailHeader({
       : undefined,
   );
   const [unsubscribeOpen, setUnsubscribeOpen] = useState(false);
-  const [subscribeOpen, setSubscribeOpen] = useState(false);
 
   const meta = row?.meta ?? summary?.meta ?? null;
   const title =
@@ -106,22 +105,7 @@ export function DetailHeader({
       </>
     );
   } else {
-    action = (
-      <>
-        <Button size="sm" onClick={() => setSubscribeOpen(true)}>
-          Subscribe
-        </Button>
-        {/* Keyed so the repository lands in the dialog's initial state. */}
-        {subscribeOpen ? (
-          <SubscribeDialog
-            key={catalog.repo}
-            open
-            onOpenChange={setSubscribeOpen}
-            initialReference={catalog.repo}
-          />
-        ) : null}
-      </>
-    );
+    action = <SubscribeFromRepo repo={catalog.repo} label="Subscribe" />;
   }
 
   return (

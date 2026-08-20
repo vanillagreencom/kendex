@@ -3,7 +3,7 @@ import { commands, type PackageView, type Scope } from "@/bindings";
 import { MarkdownView } from "@/components/markdown-view";
 import { AvailableAside } from "@/components/marketplaces/available-aside";
 import { DestinationSelect } from "@/components/marketplaces/destination-select";
-import { SubscribeDialog } from "@/components/marketplaces/subscribe-dialog";
+import { SubscribeFromRepo } from "@/components/marketplaces/subscribe-from-repo";
 import { useCatalog } from "@/components/marketplaces/use-catalog";
 import { PageHeader } from "@/components/page-header";
 import { FindingLine } from "@/components/safety-findings";
@@ -41,7 +41,6 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
   const [view, setView] = useState<PackageView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [destination, setDestination] = useState<Scope | null>(null);
-  const [subscribeOpen, setSubscribeOpen] = useState(false);
 
   useEffect(() => {
     if (!ready) return;
@@ -110,7 +109,12 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
           </>
         }
         action={
-          catalog.by === "subscription" && scope && target ? (
+          catalog.by === "repo" ? (
+            <SubscribeFromRepo
+              repo={catalog.repo}
+              label="Subscribe to install"
+            />
+          ) : scope && target ? (
             <>
               <DestinationSelect
                 browsing={scope}
@@ -121,21 +125,7 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
                 {busy ? "Installing…" : "Install"}
               </Button>
             </>
-          ) : (
-            <>
-              <Button onClick={() => setSubscribeOpen(true)}>
-                Subscribe to install
-              </Button>
-              {subscribeOpen && catalog.by === "repo" ? (
-                <SubscribeDialog
-                  key={catalog.repo}
-                  open
-                  onOpenChange={setSubscribeOpen}
-                  initialReference={catalog.repo}
-                />
-              ) : null}
-            </>
-          )
+          ) : null
         }
       />
       <div className="min-h-0 flex-1 overflow-y-auto">

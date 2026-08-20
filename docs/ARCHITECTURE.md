@@ -750,7 +750,7 @@ lives in one capability table read by core and UI.
   found where, plus every finding — that the About tab and `kendex
   index` consume.
 - **Browsing is a read-side join, and installed state is derived, never
-  stored.** `source/browse.rs` answers what one subscription offers — every
+  stored.** `source/browse.rs` answers what one catalog offers — every
   package across kinds, a bundle's members, a package's preview — with each
   row's state joined from the scope's manifest and lock on every call:
   installed is a lock entry from this subscription, held-back-by-safety is

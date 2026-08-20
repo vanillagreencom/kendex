@@ -5,7 +5,7 @@ import {
   memberKey,
 } from "@/components/marketplaces/bundle-member-row";
 import { DestinationSelect } from "@/components/marketplaces/destination-select";
-import { SubscribeDialog } from "@/components/marketplaces/subscribe-dialog";
+import { SubscribeFromRepo } from "@/components/marketplaces/subscribe-from-repo";
 import { useCatalog } from "@/components/marketplaces/use-catalog";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -38,7 +38,6 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
   const busy = useMarketplacesStore((s) => s.busy);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [destination, setDestination] = useState<Scope | null>(null);
-  const [subscribeOpen, setSubscribeOpen] = useState(false);
 
   useEffect(() => {
     if (ready) void loadBundle(catalog, bundle);
@@ -112,21 +111,12 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
             <Button disabled={busy || !detail} onClick={() => installItems([])}>
               Install all
             </Button>
-          ) : (
-            <>
-              <Button onClick={() => setSubscribeOpen(true)}>
-                Subscribe to install
-              </Button>
-              {subscribeOpen && catalog.by === "repo" ? (
-                <SubscribeDialog
-                  key={catalog.repo}
-                  open
-                  onOpenChange={setSubscribeOpen}
-                  initialReference={catalog.repo}
-                />
-              ) : null}
-            </>
-          )
+          ) : catalog.by === "repo" ? (
+            <SubscribeFromRepo
+              repo={catalog.repo}
+              label="Subscribe to install"
+            />
+          ) : null
         }
       />
       <div className="min-h-0 flex-1 overflow-y-auto">

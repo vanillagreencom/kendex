@@ -1,8 +1,9 @@
 // The cache vocabulary the marketplaces store and its readers share: the
 // collision-free subscription key, and the invalidation every catalog-moving
 // mutation runs.
-import type { Catalog, Scope } from "@/bindings";
+import { type Catalog, commands, type Scope } from "@/bindings";
 import { useAuditStore } from "./audit";
+import type { MarketplacesState } from "./marketplaces";
 import { resetPreinstallSafety } from "./preinstall-safety";
 import { useScanStore } from "./scan";
 
@@ -49,11 +50,18 @@ export function without<T>(
 
 /** A mutation that can change what any catalog offers empties every derived
  * cache — the pages re-read, and pre-install scores are re-asked, so nothing
- * keeps describing the commit before the change. */
+ * keeps describing the commit before the change. A repository's summary is
+ * kept: it only says which subscription the page carries on as, and
+ * dropping it would blank an open page behind a second fetch. */
 export function dropCatalogCaches(set: (partial: object) => void) {
-  set({ packages: {}, bundles: {}, about: {}, summaries: {}, readErrors: {} });
+  set({ packages: {}, bundles: {}, about: {}, readErrors: {} });
   resetPreinstallSafety();
 }
+
+/** The error key one cached read fails under, kept apart from the other
+ * reads of the same catalog so a later success elsewhere never erases it. */
+export const readErrorKey = (key: string, read: string): string =>
+  `${key}::${read}`;
 
 /** A tree or skills.sh URL was pointing at one package; land on it so
  * Install is the next click, with its safety verdict in view. */
@@ -82,7 +90,7 @@ export async function settle<
   >,
   suffix?: string,
 ) {
-  const errorKey = suffix ? `${key}::${suffix}` : key;
+  const errorKey = suffix ? readErrorKey(key, suffix) : key;
   const response = await pending;
   if (response.status === "ok") {
     set(
@@ -100,4 +108,46 @@ export async function settle<
         }) as Partial<S>,
     );
   }
+}
+
+type Set = (
+  fn: (state: MarketplacesState) => Partial<MarketplacesState>,
+) => void;
+
+/** The store's four cached reads, each landing under its own key and
+ * failing under its own error key. */
+export function catalogReads(set: Set) {
+  return {
+    loadPackages: (catalog: Catalog) =>
+      settle(
+        set,
+        "packages",
+        catalogKey(catalog),
+        commands.marketplacePackages(catalog),
+        "packages",
+      ),
+    loadSummary: (catalog: Catalog) =>
+      settle(
+        set,
+        "summaries",
+        catalogKey(catalog),
+        commands.marketplaceSummary(catalog),
+        "summary",
+      ),
+    loadAbout: (catalog: Catalog) =>
+      settle(
+        set,
+        "about",
+        catalogKey(catalog),
+        commands.marketplaceAbout(catalog),
+        "about",
+      ),
+    loadBundle: (catalog: Catalog, name: string) =>
+      settle(
+        set,
+        "bundles",
+        `${catalogKey(catalog)}::${name}`,
+        commands.marketplaceBundle(catalog, name),
+      ),
+  };
 }

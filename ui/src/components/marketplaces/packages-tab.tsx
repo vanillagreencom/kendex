@@ -19,6 +19,7 @@ import { PAGE_BODY, PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import {
   marketKey,
+  readErrorKey,
   subscription,
   useMarketplacesStore,
 } from "@/stores/marketplaces";
@@ -92,7 +93,11 @@ export function PackagesTab() {
   // Subscriptions whose catalog refused to load: named above the table so
   // an empty offer is never mistaken for an empty marketplace.
   const unreadable = rows
-    .filter((row) => row.enabled && readErrors[marketKey(row.scope, row.name)])
+    .filter(
+      (row) =>
+        row.enabled &&
+        readErrors[readErrorKey(marketKey(row.scope, row.name), "packages")],
+    )
     .map((row) => row.name);
   const marketplaceNames = [...new Set(rows.map((row) => row.name))];
   const whereOptions = [

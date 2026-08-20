@@ -13,21 +13,23 @@ import {
 } from "@/bindings";
 import {
   catalogKey,
+  catalogReads,
   dropCatalogCaches,
   openLead,
   refreshDownstream,
-  settle,
   subscription,
+  without,
 } from "./marketplaces-shared";
 
 export {
   catalogKey,
   catalogLabel,
   marketKey,
+  readErrorKey,
   subscription,
 } from "./marketplaces-shared";
 
-interface MarketplacesState {
+export interface MarketplacesState {
   rows: MarketplaceRow[];
   /** Each opened catalog's offered packages, by [catalogKey]. */
   packages: Record<string, AvailablePackage[]>;
@@ -91,38 +93,7 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
     }
   },
 
-  loadPackages: (catalog) =>
-    settle(
-      set,
-      "packages",
-      catalogKey(catalog),
-      commands.marketplacePackages(catalog),
-    ),
-
-  loadSummary: (catalog) =>
-    settle(
-      set,
-      "summaries",
-      catalogKey(catalog),
-      commands.marketplaceSummary(catalog),
-      "summary",
-    ),
-
-  loadAbout: (catalog) =>
-    settle(
-      set,
-      "about",
-      catalogKey(catalog),
-      commands.marketplaceAbout(catalog),
-    ),
-
-  loadBundle: (catalog, name) =>
-    settle(
-      set,
-      "bundles",
-      `${catalogKey(catalog)}::${name}`,
-      commands.marketplaceBundle(catalog, name),
-    ),
+  ...catalogReads(set),
 
   subscribe: async (scope, reference, name) => {
     set({ busy: true });
@@ -141,6 +112,13 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
     toast.success(`Subscribed to '${response.data.name}'`);
     for (const note of response.data.notes) toast.message(note);
     dropCatalogCaches(set);
+    // Only this repository's page has a new subscription to carry on as.
+    set((state) => ({
+      summaries: without(
+        state.summaries,
+        catalogKey({ by: "repo", repo: reference }),
+      ),
+    }));
     await get().load();
     if (response.data.lead) {
       await openLead(scope, response.data.name, response.data.lead);
@@ -172,6 +150,8 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
         : `Unsubscribed from '${source}'`,
     );
     dropCatalogCaches(set);
+    // A page carried on as this subscription must stop pointing at it.
+    set({ summaries: {} });
     await get().load();
     await refreshDownstream();
     return true;

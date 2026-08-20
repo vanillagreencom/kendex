@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import {
   catalogKey,
   marketKey,
+  readErrorKey,
   useMarketplacesStore,
 } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
@@ -42,6 +43,9 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
         )
       : undefined;
   const offered = packages[catalogKey(catalog)] ?? [];
+  const packagesError = useMarketplacesStore(
+    (s) => s.readErrors[readErrorKey(catalogKey(catalog), "packages")],
+  );
 
   useEffect(() => {
     void load();
@@ -104,7 +108,14 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
                   <BundleCards catalog={catalog} offered={offered} />
                 </TabsContent>
                 <TabsContent value="packages">
-                  {offered.length === 0 ? (
+                  {packagesError ? (
+                    <p
+                      className="py-16 text-center text-sm text-critical"
+                      role="alert"
+                    >
+                      Its packages can't be read right now — {packagesError}
+                    </p>
+                  ) : offered.length === 0 ? (
                     <p className="py-16 text-center text-sm text-muted-foreground">
                       Nothing to list yet — this marketplace hasn't been
                       fetched, or offers no packages.
