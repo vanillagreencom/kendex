@@ -332,3 +332,20 @@ fn find_by_package_name_refuses_a_symlinked_extensions_folder() {
     let sealed = crate::source_read::SealedSource::open(&catalog).unwrap();
     assert_eq!(find_by_package_name(&sealed, "@vg/pi-hooks").unwrap(), None);
 }
+
+/// The scan carries one aggregate budget across both levels — thousands
+/// of scope directories must not multiply into millions of candidates.
+#[test]
+fn find_by_package_name_bounds_the_aggregate_scan() {
+    let tmp = tempfile::tempdir().unwrap();
+    let catalog = tmp.path().canonicalize().unwrap().join("catalog");
+    let base = catalog.join("pi-extensions");
+    for scope in 0..3 {
+        for pkg in 0..2000 {
+            std::fs::create_dir_all(base.join(format!("@s{scope}/p{pkg}"))).unwrap();
+        }
+    }
+    let sealed = crate::source_read::SealedSource::open(&catalog).unwrap();
+    let error = find_by_package_name(&sealed, "@vg/pi-hooks").unwrap_err();
+    assert!(error.to_string().contains("refusing to scan"), "{error}");
+}

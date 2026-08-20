@@ -133,6 +133,10 @@ pub fn find_by_package_name(
     if !sealed.is_dir(&base) {
         return Ok(None);
     }
+    // One aggregate budget across both levels: per-directory caps alone
+    // would let thousands of @scope directories multiply into millions of
+    // candidates.
+    const MAX_CANDIDATES: usize = 4096;
     let mut candidates = sealed.list_dir(&base)?;
     for dir in std::mem::take(&mut candidates) {
         if dir
@@ -142,6 +146,15 @@ pub fn find_by_package_name(
             candidates.extend(sealed.list_dir(&dir).unwrap_or_default());
         } else {
             candidates.push(dir);
+        }
+        if candidates.len() > MAX_CANDIDATES {
+            return Err(CoreError::PiPackage {
+                name: name.to_owned(),
+                message: format!(
+                    "more than {MAX_CANDIDATES} package directories under {} — refusing to scan them all",
+                    base.display()
+                ),
+            });
         }
     }
     let mut matches = Vec::new();
