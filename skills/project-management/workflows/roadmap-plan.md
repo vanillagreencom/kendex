@@ -25,7 +25,7 @@ With `--planner-handoff`, read the file and keep its plan path, recommended appr
 
 **Skip if** `RESEARCH_PATH` was provided.
 
-Search existing artifacts on disk first — the project's research and plan directories (`docs/research/`, `docs/plans/`, or the project's equivalents) by `FEATURE` keywords; classify a match with the Inputs rule (research vs SPEC) exactly as an `@[path]` argument, and when several match, ask the user which applies rather than choosing one. Then the tracker: resolve `RESEARCH_WORKFLOW_LABEL` from the project taxonomy and the live inventory (`cache labels list --format=safe`), then query it. If no unambiguous assignable label exists, skip the lookup and continue to § 2 — do not query a hard-coded fallback label.
+Search existing artifacts on disk first — the project's research and plan directories (`docs/research/`, `docs/plans/`, or the project's equivalents) by `FEATURE` keywords; classify a match with the Inputs rule (research vs SPEC) exactly as an `@[path]` argument, and when several match, ask the user which applies rather than choosing one; a selected artifact ends this gate → § 2. Only when the disk search finds nothing, query the tracker: resolve `RESEARCH_WORKFLOW_LABEL` from the project taxonomy and the live inventory (`cache labels list --format=safe`), then query it. If no unambiguous assignable label exists, skip the lookup and continue to § 2 — do not query a hard-coded fallback label.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh cache issues list --label "[RESEARCH_WORKFLOW_LABEL]" --state "Done" --max
@@ -73,7 +73,7 @@ Build `PROPOSED_ISSUES[]` per [roadmap-plan-input.md](../schemas/roadmap-plan-in
 
 ## 3. TPM Analysis
 
-Write the input file per [roadmap-plan-input.md](../schemas/roadmap-plan-input.md) to `tmp/roadmap-input-YYYYMMDD-HHMMSS.json`, including `origin_issue`, `planner_handoff`, and `spec_path` (each null when absent — `spec_path` is set exactly when the `@[path]` input classified as a SPEC, so the TPM knows the plan's decisions are binding). Delegate to a one-shot `[TPM]` sub-agent:
+Write the input file per [roadmap-plan-input.md](../schemas/roadmap-plan-input.md) to `tmp/roadmap-input-YYYYMMDD-HHMMSS.json`, including `origin_issue`, `planner_handoff`, and `spec_path` (each null when absent — `spec_path` is set exactly when the artifact in hand — the `@[path]` input or the § 1 disk match — classified as a SPEC, so the TPM knows the plan's decisions are binding). Delegate to a one-shot `[TPM]` sub-agent:
 
 <delegation_format>
 Follow workflow: .agents/skills/project-management/workflows/tpm-roadmap-plan.md
@@ -156,7 +156,7 @@ Research: [RESEARCH_PATH or "None — less informed planning"] · Origin: [ORIGI
 - [TITLE] — [which creation-bar test it fails]
 </output_format>
 
-Ask: `Approve` | `Adjust` | `Cancel`. `Cancel` discards the plan and ends the workflow. **`Approve` authorizes creation of the presented creation set** — the ISSUES table, which never contains `Deferred`-project entries (deferred gaps appear under ARCHITECTURE GAPS and are never created): `roadmap create` carries this answer through audit-issues § 6, which re-asks only items that changed after it. `Adjust` takes free text, updates the in-memory TPM JSON, and re-presents:
+Ask: `Approve` | `Adjust` | `Cancel`. `Cancel` discards the plan and ends the workflow. **`Approve` authorizes the presented creation set** — the ISSUES table, which never contains `Deferred`-project entries (deferred gaps appear under ARCHITECTURE GAPS and are never created) — **and the EXISTING WORK AFFECTED actions as presented**: `roadmap create` carries this answer — its § 2 executes unchanged cancel/expand/descope actions and as-presented conflict resolutions without re-asking, and audit-issues § 6 re-asks only items that changed after it. `Adjust` takes free text, updates the in-memory TPM JSON, and re-presents:
 
 | Adjustment | JSON update |
 |------------|-------------|

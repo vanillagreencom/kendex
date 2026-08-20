@@ -39,7 +39,11 @@ require_fixed "$create" 'renders as the template'"'"'s `**Research**` line on ev
 
 # --- One approval: carried from the plan gate, admitted at § 6, honored at § 7
 
-require_fixed "$plan" '**`Approve` authorizes creation of the presented creation set**' 'plan-gate approval authorizes creation'
+require_fixed "$plan" '**`Approve` authorizes the presented creation set**' 'plan-gate approval authorizes creation'
+require_fixed "$plan" '**and the EXISTING WORK AFFECTED actions as presented**' 'plan-gate approval covers existing-work actions'
+require_fixed "$create" 'unchanged since roadmap-plan § 5 `Approve` execute as presented without re-asking' 'roadmap-create § 2 does not re-ask approved actions'
+require_fixed "$plan" 'a selected artifact ends this gate → § 2. Only when the disk search finds nothing, query the tracker' 'a disk artifact is not overwritten by a tracker match'
+require_fixed "$plan" 'the `@[path]` input or the § 1 disk match — classified as a SPEC' 'spec_path is set for disk-discovered specs too'
 require_fixed "$create" '"approved_at_plan_gate": [true|false]' 'carried-approval flag in the audit input'
 require_fixed "$create" 'identical to the creation set that gate presented' 'flag bound to the identical creation set'
 require_fixed "$create" '`Deferred`-project entries were never part of it' 'deferred filtering keeps the approved set identical'

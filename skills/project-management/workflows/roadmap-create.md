@@ -16,7 +16,7 @@ From `TPM_OUTPUT` take `project_placement`, `organized_issues[]`, `cross_project
 
 **Skip if** `cross_project_findings` has no `cancel`, `expand`, `descope`, or conflict entries.
 
-Cancelling and rescoping existing issues is a work decision. Present them, then ask once: `Execute all` | `Review each` | `Skip`.
+Cancelling and rescoping existing issues is a work decision the plan gate already took for the rows it presented: actions and conflict resolutions unchanged since roadmap-plan § 5 `Approve` execute as presented without re-asking. Present only what changed since that gate or was not shown there, then ask once: `Execute all` | `Review each` | `Skip`.
 
 <output_format>
 
