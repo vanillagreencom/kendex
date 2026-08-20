@@ -345,6 +345,18 @@ fn managed_skill_tree(env: &Env, scope: &Scope, name: &str, path: &std::path::Pa
 /// source. Only the plain `.md`-with-frontmatter shape round-trips; codex
 /// (TOML), cursor (`.mdc`), copilot (`.agent.md`), and opencode (`.md`
 /// without a name field) do not.
+/// Whether keeping an edit as a fork can capture this rendering: a skill's
+/// canonical tree always round-trips, an agent's only from the tools whose
+/// format the source parser reads back. The Updates page asks before it
+/// offers the action, so the answer is the same one `fork` enforces.
+pub fn forkable_harness(kind: ItemKind, harness: HarnessId) -> bool {
+    match kind {
+        ItemKind::Skill => true,
+        ItemKind::Agent => forkable_agent_harness(harness),
+        _ => false,
+    }
+}
+
 fn forkable_agent_harness(harness: HarnessId) -> bool {
     matches!(
         harness,

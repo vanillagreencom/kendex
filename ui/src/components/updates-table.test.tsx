@@ -27,12 +27,14 @@ const row = (
   name,
   source: "kendex",
   repo: "vanillagreencom/kendex",
+  repoIdentity: "vanillagreencom/kendex",
   current: { commit: "1111111111", label: null, date: null },
   latest: { commit: "2222222222", label: "v2", date: null },
   updateAvailable: true,
   pinned: false,
   blockedByLocalEdit: false,
   editedHarnesses: [],
+  forkableHarness: null,
   removedUpstream: false,
   mixed: false,
   forked: false,
@@ -138,10 +140,12 @@ describe("UpdatesTable", () => {
       row("gh", null, {
         blockedByLocalEdit: true,
         editedHarnesses: ["claude"],
+        forkableHarness: "claude",
       }),
       row("gh", "/home/x/acme", {
         blockedByLocalEdit: true,
         editedHarnesses: ["claude"],
+        forkableHarness: "claude",
       }),
     ]);
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Update all</);
@@ -173,6 +177,7 @@ describe("UpdatesTable", () => {
       row("one", null, {
         blockedByLocalEdit: true,
         editedHarnesses: ["claude"],
+        forkableHarness: "claude",
       }),
     ]);
     expect(html).toContain(">Customized here<");
@@ -181,13 +186,29 @@ describe("UpdatesTable", () => {
     expect(html).not.toContain(">Update<");
   });
 
+  it("offers no fork for an edit only a non-forkable tool holds", () => {
+    const html = render([
+      row("rev", null, {
+        kind: "agent",
+        blockedByLocalEdit: true,
+        editedHarnesses: ["opencode"],
+        forkableHarness: null,
+      }),
+    ]);
+    expect(html).not.toContain(">Keep as my own<");
+    expect(html).toContain("Edited in a tool whose copy can");
+    expect(html).toContain(">Use new version…<");
+    expect(html).toContain(">Preview changes<");
+  });
+
   it("holds the fork decision while another update is running", () => {
     stub.busy = true;
     try {
       const html = render([
         row("one", null, {
           blockedByLocalEdit: true,
-          editedHarnesses: ["opencode"],
+          editedHarnesses: ["claude"],
+          forkableHarness: "claude",
         }),
       ]);
       expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Keep as my own</);

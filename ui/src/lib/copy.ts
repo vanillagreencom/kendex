@@ -196,6 +196,8 @@ export const updatesSubtitle = (packages: number, places: number): string =>
 export const UPDATE_PACKAGE_EVERYWHERE_LABEL = "Update all";
 export const CUSTOMIZED_HERE_LABEL = "Customized here";
 export const USE_NEW_VERSION_LABEL = "Use new version…";
+export const UNFORKABLE_EDIT_NOTE =
+  "Edited in a tool whose copy can't be kept as your own";
 export const IGNORE_UPDATES_LABEL = "Stop notifying…";
 export const ignoreConfirmTitle = (name: string): string =>
   `Stop notifying about ${name}?`;

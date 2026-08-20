@@ -33,6 +33,10 @@ pub struct UpdateRow {
     pub name: String,
     pub source: String,
     pub repo: String,
+    /// `repo` with the moved default's legacy spellings collapsed — the
+    /// identity two scopes' rows share when they name one repository two
+    /// ways.
+    pub repo_identity: String,
     /// The content revision installed now, when the lock records it.
     pub current: Option<VersionRef>,
     /// The newest content revision the mirror knows.
@@ -53,6 +57,10 @@ pub struct UpdateRow {
     /// and keeping the edit as a fork captures one rendering's bytes — it
     /// has to be the one that was changed.
     pub edited_harnesses: Vec<HarnessId>,
+    /// The edited rendering a fork can capture, when one exists — an
+    /// agent edited only in a tool whose format cannot be read back has
+    /// none, and the UI must not offer what the engine will refuse.
+    pub forkable_harness: Option<HarnessId>,
     /// This package is a local fork of a catalog item.
     pub forked: bool,
     /// Installations of this package disagree on their source commit.
@@ -196,6 +204,7 @@ fn fork_row(
         name: name.to_owned(),
         source: decl.source.clone(),
         repo: String::new(),
+        repo_identity: String::new(),
         current: None,
         latest: None,
         update_available: false,
@@ -203,6 +212,7 @@ fn fork_row(
         ignored: false,
         blocked_by_local_edit: false,
         edited_harnesses: Vec::new(),
+        forkable_harness: None,
         forked: true,
         mixed: false,
         removed_upstream: false,

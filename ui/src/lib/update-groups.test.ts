@@ -17,12 +17,14 @@ const row = (
   name,
   source: "kendex",
   repo: "vanillagreencom/kendex",
+  repoIdentity: "vanillagreencom/kendex",
   current: { commit: "1111111111", label: null, date: null },
   latest: { commit: "2222222222", label: null, date: null },
   updateAvailable: true,
   pinned: false,
   blockedByLocalEdit: false,
   editedHarnesses: [],
+  forkableHarness: null,
   removedUpstream: false,
   mixed: false,
   forked: false,
@@ -63,15 +65,27 @@ describe("update groups", () => {
   it("keeps same-named packages from different repositories apart", () => {
     const groups = groupUpdates([
       row("gh", "/a"),
-      row("gh", "/b", { repo: "someone/else" }),
+      row("gh", "/b", { repo: "someone/else", repoIdentity: "someone/else" }),
     ]);
-    expect(groups.map((g) => g.repo)).toEqual([
+    expect(groups.map((g) => g.repoIdentity)).toEqual([
       "vanillagreencom/kendex",
       "someone/else",
     ]);
     expect(
-      packageCount([row("gh", "/a"), row("gh", "/b", { repo: "x/y" })]),
+      packageCount([
+        row("gh", "/a"),
+        row("gh", "/b", { repo: "x/y", repoIdentity: "x/y" }),
+      ]),
     ).toBe(2);
+  });
+
+  it("keeps two spellings of one repository as one package", () => {
+    const groups = groupUpdates([
+      row("gh", "/a", { repo: "vanillagreencom/vstack" }),
+      row("gh", "/b", { repo: "https://github.com/vanillagreencom/kendex" }),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].places).toHaveLength(2);
   });
 
   it("reads Windows roots by either separator", () => {
@@ -102,6 +116,7 @@ describe("update groups", () => {
       row("gh", "/a", {
         blockedByLocalEdit: true,
         editedHarnesses: ["claude"],
+        forkableHarness: "claude",
       }),
       row("gh", "/b", { updateAvailable: false, removedUpstream: true }),
     ]);

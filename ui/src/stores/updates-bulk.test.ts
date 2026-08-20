@@ -27,6 +27,7 @@ function row(overrides: Partial<UpdateRow>): UpdateRow {
     name: "gh",
     source: "vstack",
     repo: "owner/catalog",
+    repoIdentity: "owner/catalog",
     current: { commit: "a".repeat(40), label: "v1", date: null },
     latest: { commit: "b".repeat(40), label: "v2", date: null },
     updateAvailable: true,
@@ -34,6 +35,7 @@ function row(overrides: Partial<UpdateRow>): UpdateRow {
     ignored: false,
     blockedByLocalEdit: false,
     editedHarnesses: [],
+    forkableHarness: null,
     forked: false,
     mixed: false,
     removedUpstream: false,
@@ -87,6 +89,7 @@ describe("updates store: bulk update", () => {
         scope: shop,
         blockedByLocalEdit: true,
         editedHarnesses: ["claude"],
+        forkableHarness: "claude",
       }),
     ]);
 
@@ -155,6 +158,7 @@ describe("updates store: bulk update", () => {
         name: "gh",
         blockedByLocalEdit: true,
         editedHarnesses: ["claude"],
+        forkableHarness: "claude",
       }),
     ]);
 

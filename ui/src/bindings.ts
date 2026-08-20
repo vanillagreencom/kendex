@@ -2241,6 +2241,12 @@ export type UpdateRow = {
 	name: string,
 	source: string,
 	repo: string,
+	/**
+	 *  `repo` with the moved default's legacy spellings collapsed — the
+	 *  identity two scopes' rows share when they name one repository two
+	 *  ways.
+	 */
+	repoIdentity: string,
 	/**  The content revision installed now, when the lock records it. */
 	current: VersionRef | null,
 	/**  The newest content revision the mirror knows. */
@@ -2269,6 +2275,12 @@ export type UpdateRow = {
 	 *  has to be the one that was changed.
 	 */
 	editedHarnesses: HarnessId[],
+	/**
+	 *  The edited rendering a fork can capture, when one exists — an
+	 *  agent edited only in a tool whose format cannot be read back has
+	 *  none, and the UI must not offer what the engine will refuse.
+	 */
+	forkableHarness: HarnessId | null,
 	/**  This package is a local fork of a catalog item. */
 	forked: boolean,
 	/**  Installations of this package disagree on their source commit. */

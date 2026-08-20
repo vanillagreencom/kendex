@@ -31,6 +31,7 @@ function updateRows(): UpdateRow[] {
     name: item.name,
     source: "kendex",
     repo: item.origin ?? "vanillagreencom/kendex",
+    repoIdentity: item.origin ?? "vanillagreencom/kendex",
     current: { commit: OLD, label: "v1.0", date: "2026-08-01T10:00:00Z" },
     latest:
       index === 0
@@ -43,6 +44,7 @@ function updateRows(): UpdateRow[] {
     ),
     blockedByLocalEdit: false,
     editedHarnesses: [],
+    forkableHarness: null,
     forked: false,
     mixed: false,
     removedUpstream: false,
@@ -198,6 +200,7 @@ export const packageHandlers: Record<string, Handler> = {
   package_meta: ({ name }: { name: string }) => ({
     source: "kendex",
     repo: "vanillagreencom/kendex",
+    repoIdentity: "vanillagreencom/kendex",
     repoUrl: "https://github.com/vanillagreencom/kendex",
     rev: null,
     current: { commit: OLD, label: "v1.0", date: "2026-08-01T10:00:00Z" },

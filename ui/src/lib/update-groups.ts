@@ -8,18 +8,19 @@ import { scopeKey } from "@/lib/scope";
 export interface UpdateGroup {
   kind: UpdateRow["kind"];
   name: string;
-  repo: string;
+  repoIdentity: string;
   places: UpdateRow[];
 }
 
 /** A package's identity: kind, name, and the repository it comes from —
  *  two projects installing a `gh` skill from unrelated catalogs are two
- *  packages, not one in two places. */
+ *  packages, not one in two places. The backend's canonical identity
+ *  keeps two spellings of one repository together. */
 export const groupKey = (row: {
   kind: string;
   name: string;
-  repo: string;
-}): string => `${row.kind}:${row.name}:${row.repo}`;
+  repoIdentity: string;
+}): string => `${row.kind}:${row.name}:${row.repoIdentity}`;
 
 /** Group rows by package, keeping first-seen order for the groups and the
  *  rows' own order inside each. */
@@ -33,7 +34,7 @@ export function groupUpdates(rows: UpdateRow[]): UpdateGroup[] {
       groups.set(key, {
         kind: row.kind,
         name: row.name,
-        repo: row.repo,
+        repoIdentity: row.repoIdentity,
         places: [row],
       });
   }

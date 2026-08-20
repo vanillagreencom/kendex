@@ -109,10 +109,12 @@ impl Eval<'_> {
                     pinned,
                     ignored: self.is_ignored(kind, name, &repo),
                     blocked_by_local_edit: !edited_harnesses.is_empty(),
+                    forkable_harness: forkable_among(kind, &edited_harnesses),
                     edited_harnesses,
                     forked,
                     mixed: false,
                     removed_upstream: true,
+                    repo_identity: crate::repo_move::canonical(&repo).to_owned(),
                     repo,
                 });
             }
@@ -206,8 +208,10 @@ impl Eval<'_> {
             pinned,
             ignored: self.is_ignored(kind, name, &package.repo),
             blocked_by_local_edit: !edited_harnesses.is_empty(),
+            forkable_harness: forkable_among(kind, &edited_harnesses),
             edited_harnesses,
             forked,
+            repo_identity: crate::repo_move::canonical(&package.repo).to_owned(),
             repo: package.repo.clone(),
             current,
             latest,
@@ -227,4 +231,12 @@ impl Eval<'_> {
                 && crate::repo_move::same_repo(&entry.repo, repo)
         })
     }
+}
+
+/// The first edited rendering a fork can capture, if any.
+fn forkable_among(kind: ItemKind, edited: &[HarnessId]) -> Option<HarnessId> {
+    edited
+        .iter()
+        .copied()
+        .find(|harness| crate::engine::fork::forkable_harness(kind, *harness))
 }

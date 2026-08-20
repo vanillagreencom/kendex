@@ -45,4 +45,22 @@ fn an_edited_agent_names_the_rendering_that_was_edited() {
         vec![HarnessId::Opencode],
         "the fork must capture the rendering that was edited, not the first one"
     );
+    assert_eq!(
+        row.forkable_harness, None,
+        "an opencode agent cannot be read back as source, so nothing is offered"
+    );
+    assert_eq!(
+        row.repo_identity,
+        kendex_core::repo_move::canonical(&row.repo)
+    );
+
+    // Edit Claude's copy too: that one round-trips, so it is the fork.
+    fs::write(&claude, "my claude edit").unwrap();
+    let report = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();
+    let row = report
+        .rows
+        .iter()
+        .find(|row| row.kind == ItemKind::Agent && row.name == "rev")
+        .unwrap();
+    assert_eq!(row.forkable_harness, Some(HarnessId::Claude));
 }
