@@ -49,6 +49,7 @@ export const subscribeHandlers: Record<string, Handler> = {
         scope,
         name: alias,
         repo: isPath ? null : base,
+        repoKey: isPath ? null : base.toLowerCase(),
         path: isPath ? base : null,
         rev,
         commit: null,

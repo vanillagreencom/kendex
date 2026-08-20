@@ -73,6 +73,9 @@ pub struct MarketplaceRow {
     pub scope: Scope,
     pub name: String,
     pub repo: Option<String>,
+    /// The canonical `owner/repo` a GitHub declaration folds to — what a
+    /// directory row is matched against, however the subscription spells it.
+    pub repo_key: Option<String>,
     pub path: Option<String>,
     pub rev: Option<String>,
     /// The commit the subscription reads right now, when the cache holds one.
@@ -100,6 +103,10 @@ pub fn marketplaces_overview() -> Result<Vec<MarketplaceRow>, String> {
             rows.push(MarketplaceRow {
                 scope: row.scope,
                 name: row.name,
+                repo_key: row
+                    .repo
+                    .as_deref()
+                    .and_then(kendex_core::repo_move::owner_repo),
                 repo: row.repo,
                 path: row.path,
                 rev: row.rev,

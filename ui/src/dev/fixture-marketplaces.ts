@@ -129,6 +129,7 @@ export function marketplaces(): MarketplaceRow[] {
   const kendex = {
     name: "kendex",
     repo: KENDEX_REPO,
+    repoKey: KENDEX_REPO,
     path: null,
     rev: null,
     commit: KENDEX_HEAD,
@@ -151,6 +152,7 @@ export function marketplaces(): MarketplaceRow[] {
       scope: GLOBAL,
       name: "claude-plugins",
       repo: PLUGINS_REPO,
+      repoKey: PLUGINS_REPO,
       path: null,
       rev: null,
       commit: PLUGINS_HEAD,
@@ -164,6 +166,7 @@ export function marketplaces(): MarketplaceRow[] {
       scope: proj(ACME),
       name: "team",
       repo: null,
+      repoKey: null,
       path: "../team-catalog",
       rev: null,
       commit: null,

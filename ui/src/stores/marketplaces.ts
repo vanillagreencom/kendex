@@ -27,6 +27,7 @@ export {
   catalogLabel,
   marketKey,
   readErrorKey,
+  subscribedKeys,
   subscription,
 } from "./marketplaces-shared";
 

@@ -26,6 +26,9 @@ pub struct DirectoryView {
 #[serde(rename_all = "camelCase")]
 pub struct DirectoryRow {
     pub repo: String,
+    /// The canonical key a subscription's `repo_key` is compared with, so
+    /// the row can flip to Subscribed from the live subscription list.
+    pub repo_key: Option<String>,
     pub name: String,
     pub description: Option<String>,
     pub tags: Vec<String>,
@@ -46,10 +49,13 @@ pub fn directory(env: &Env, fetch: &dyn Fetch, force_refresh: bool) -> Result<Di
         .into_iter()
         .map(|market| {
             let name = market.name.clone().unwrap_or_else(|| leaf_of(&market.repo));
-            let is_subscribed =
-                repo_move::owner_repo(&market.repo).is_some_and(|key| subscribed.contains(&key));
+            let repo_key = repo_move::owner_repo(&market.repo);
+            let is_subscribed = repo_key
+                .as_ref()
+                .is_some_and(|key| subscribed.contains(key));
             DirectoryRow {
                 repo: market.repo,
+                repo_key,
                 name,
                 description: market.description,
                 tags: market.tags,

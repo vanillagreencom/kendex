@@ -1,7 +1,7 @@
 // The cache vocabulary the marketplaces store and its readers share: the
 // collision-free subscription key, and the invalidation every catalog-moving
 // mutation runs.
-import type { Catalog, Scope } from "@/bindings";
+import type { Catalog, MarketplaceRow, Scope } from "@/bindings";
 import { useAuditStore } from "./audit";
 import { resetPreinstallSafety } from "./preinstall-safety";
 import { useScanStore } from "./scan";
@@ -18,6 +18,12 @@ export const catalogKey = (catalog: Catalog): string =>
   catalog.by === "subscription"
     ? marketKey(catalog.scope, catalog.source)
     : JSON.stringify(["repo", catalog.repo]);
+
+/** The repositories the live subscription list holds, by canonical key —
+ * what a Community row's Subscribed marker reads, so it flips the moment
+ * a subscription lands or goes, wherever that happened. */
+export const subscribedKeys = (rows: MarketplaceRow[]): Set<string> =>
+  new Set(rows.flatMap((row) => (row.repoKey ? [row.repoKey] : [])));
 
 /** Whether a [catalogKey] names a repository rather than a subscription. */
 export const isRepoKey = (key: string): boolean =>

@@ -807,6 +807,11 @@ export type DirectoryPackage = {
 
 export type DirectoryRow = {
 	repo: string,
+	/**
+	 *  The canonical key a subscription's `repo_key` is compared with, so
+	 *  the row can flip to Subscribed from the live subscription list.
+	 */
+	repoKey: string | null,
 	name: string,
 	description: string | null,
 	tags: string[],
@@ -1700,6 +1705,11 @@ export type MarketplaceRow = {
 	scope: Scope,
 	name: string,
 	repo: string | null,
+	/**
+	 *  The canonical `owner/repo` a GitHub declaration folds to — what a
+	 *  directory row is matched against, however the subscription spells it.
+	 */
+	repoKey: string | null,
 	path: string | null,
 	rev: string | null,
 	/**  The commit the subscription reads right now, when the cache holds one. */

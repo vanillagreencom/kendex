@@ -7,10 +7,13 @@ import { Button } from "@/components/ui/button";
  * before subscribing — and Subscribe stays a separate click. */
 export function DirectoryRowLine({
   row,
+  subscribed,
   onOpen,
   onSubscribe,
 }: {
   row: DirectoryRow;
+  /** From the live subscription list, not the directory's snapshot. */
+  subscribed: boolean;
   onOpen: () => void;
   onSubscribe: () => void;
 }) {
@@ -44,7 +47,7 @@ export function DirectoryRowLine({
         {row.packageCount} {row.packageCount === 1 ? "pkg" : "pkgs"}
         {row.bundleCount > 0 ? ` · ${row.bundleCount} bundles` : ""}
       </span>
-      {row.subscribed ? (
+      {subscribed ? (
         <span className="shrink-0 text-xs text-muted-foreground">
           Subscribed ✓
         </span>
