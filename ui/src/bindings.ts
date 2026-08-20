@@ -2270,9 +2270,10 @@ export type UpdateRow = {
 	 */
 	blockedByLocalEdit: boolean,
 	/**
-	 *  Which renderings carry the edit. An agent renders once per tool,
-	 *  and keeping the edit as a fork captures one rendering's bytes — it
-	 *  has to be the one that was changed.
+	 *  Which renderings carry the edit, one entry per physical rendering:
+	 *  an agent renders once per tool, while tools sharing a skill's
+	 *  canonical tree count once. Keeping the edit as a fork captures one
+	 *  rendering's bytes — it has to be the one that was changed.
 	 */
 	editedHarnesses: HarnessId[],
 	/**

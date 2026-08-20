@@ -220,3 +220,37 @@ fn a_held_bundle_member_with_newer_upstream_cannot_discard() {
     assert!(row.blocked_by_local_edit);
     assert!(!row.can_discard);
 }
+
+/// Two tools symlinking one skill tree report one edit twice; that is one
+/// rendering, and a fork through either tool captures the same bytes.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_skill_shared_by_symlink_counts_as_one_edited_rendering() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "Upstream.");
+    commit(&w.upstream, "one");
+    fs::create_dir_all(w.home.join("app/.opencode")).unwrap();
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        format!(
+            "schema = 5\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\", \"opencode\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n"
+        ),
+    )
+    .unwrap();
+    sync_and_apply(&w);
+    assert!(w.home.join("app/.claude/skills/gh").is_symlink());
+    assert!(w.home.join("app/.opencode/skills/gh").is_symlink());
+
+    fs::write(skill_file(&w), "my edited version").unwrap();
+    let report = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();
+    let row = report
+        .rows
+        .iter()
+        .find(|row| row.kind == ItemKind::Skill && row.name == "gh")
+        .unwrap();
+    assert!(row.blocked_by_local_edit);
+    assert_eq!(row.edited_harnesses.len(), 1, "{:?}", row.edited_harnesses);
+    assert!(row.forkable_harness.is_some(), "{row:?}");
+}

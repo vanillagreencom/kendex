@@ -53,9 +53,10 @@ pub struct UpdateRow {
     /// The installed files were edited by hand; updating is blocked until
     /// the edit is kept as a fork or discarded.
     pub blocked_by_local_edit: bool,
-    /// Which renderings carry the edit. An agent renders once per tool,
-    /// and keeping the edit as a fork captures one rendering's bytes — it
-    /// has to be the one that was changed.
+    /// Which renderings carry the edit, one entry per physical rendering:
+    /// an agent renders once per tool, while tools sharing a skill's
+    /// canonical tree count once. Keeping the edit as a fork captures one
+    /// rendering's bytes — it has to be the one that was changed.
     pub edited_harnesses: Vec<HarnessId>,
     /// The edited rendering a fork can capture, when one exists — an
     /// agent edited only in a tool whose format cannot be read back has
@@ -191,12 +192,37 @@ fn edited_items(
             .collect(),
     };
     for (kind, name, harness) in rows {
-        let harnesses = edited.entry((kind, name)).or_default();
-        if !harnesses.contains(&harness) {
+        let harnesses = edited.entry((kind, name.clone())).or_default();
+        // One entry per physical rendering: tools that symlink a skill's
+        // shared tree report one edit several times, and a fork through
+        // any of them captures the same bytes.
+        let seen = harnesses.iter().any(|known| {
+            *known == harness || same_artifact(env, scope, kind, &name, *known, harness)
+        });
+        if !seen {
             harnesses.push(harness);
         }
     }
     edited
+}
+
+/// Whether two tools read one item from the same files on disk.
+fn same_artifact(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    a: HarnessId,
+    b: HarnessId,
+) -> bool {
+    if kind != ItemKind::Skill {
+        return false;
+    }
+    let resolved = |harness| {
+        crate::engine::fork::skill_content_path(env, scope, name, harness)
+            .map(|path| path.canonicalize().unwrap_or(path))
+    };
+    matches!((resolved(a), resolved(b)), (Some(x), Some(y)) if x == y)
 }
 
 /// One repository's identity across every spelling a manifest can carry:
