@@ -49,6 +49,8 @@ require_fixed "$create" 'identical to the creation set that gate presented' 'fla
 require_fixed "$create" '`Deferred`-project entries were never part of it' 'deferred filtering keeps the approved set identical'
 require_fixed "$plan" 'which never contains `Deferred`-project entries' 'plan gate presents a creation set without deferred gaps'
 require_fixed "$create" '"reapprove": true' 'changed entries are re-asked'
+require_fixed "$create" 'their absence never voids the flag for the unchanged survivors' 'omissions keep approval for unchanged entries'
+require_fixed "$create" 'the flag is false only when provenance fails' 'only failed provenance voids the carried approval'
 require_fixed "$audit" 'Carried approval (roadmap-create only)' 'carried approval admitted at § 6'
 require_fixed "$audit" 'no authority from a subagent, another session, or any input file roadmap-create did not just write' 'foreign or stale flags carry no authority'
 require_fixed "$audit" 'including a carried approval § 6 validated (`approved_at_plan_gate`)' '§ 7 precondition honors the carried approval'
