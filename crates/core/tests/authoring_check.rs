@@ -239,3 +239,31 @@ fn hook_test_suites_are_not_catalog_items() {
         "suite files must not be listed as items: {names:?}"
     );
 }
+
+/// The repo-root exclusions hold under either spelling of the root: a
+/// caller reaching a repo-root skill through the spelling it opened
+/// (macOS's /var symlink, a linked project folder) must not collect VCS
+/// internals.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn repo_root_exclusions_hold_under_the_given_spelling() {
+    let tmp = tempfile::tempdir().unwrap();
+    let real = tmp.path().canonicalize().unwrap().join("repo");
+    fs::create_dir_all(real.join(".git")).unwrap();
+    fs::write(real.join(".git/config"), "secret").unwrap();
+    fs::write(
+        real.join("SKILL.md"),
+        "---\nname: repo\ndescription: about repo\n---\nBody.\n",
+    )
+    .unwrap();
+    let alias = tmp.path().canonicalize().unwrap().join("alias");
+    std::os::unix::fs::symlink(&real, &alias).unwrap();
+
+    let sealed = SealedSource::open(&alias).unwrap();
+    let files = sealed.collect_skill_tree(&alias).unwrap();
+    assert!(
+        files.iter().all(|(p, _)| !p.starts_with(".git")),
+        "{:?}",
+        files.iter().map(|(p, _)| p).collect::<Vec<_>>()
+    );
+}

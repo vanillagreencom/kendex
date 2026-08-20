@@ -168,7 +168,9 @@ impl SealedSource {
     /// skill's bytes — render, browse safety, catalog check — goes through here
     /// so the three never disagree on what the skill contains.
     pub fn collect_skill_tree(&self, dir: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>> {
-        let skip: &[&str] = match dir == self.root() {
+        // Either spelling of the root is the root: the repo-root exclusions
+        // must hold however the caller reached it.
+        let skip: &[&str] = match dir == self.root || dir == self.given {
             true => &[".git", "node_modules", "target", "dist", "build", ".venv"],
             false => &[],
         };
