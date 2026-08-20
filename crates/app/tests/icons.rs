@@ -1,15 +1,13 @@
 //! The icons `tauri.conf.json` bundles.
 //!
 //! Nothing else in this repo ever opens these files, so a stale one — or a
-//! wrongly regenerated one — ships with every check green. That is not
-//! hypothetical: an `icon.icns` generated with ImageMagick came out a PNG
-//! wearing an `.icns` extension, and only `file(1)` said so.
+//! wrongly regenerated one — ships with every check green.
 
 use std::path::{Path, PathBuf};
 
-/// The mark's colour, the lime the kendex wordmark uses. The chevron this
-/// icon replaced was white on a near-black field, so how much of this
-/// colour an icon carries tells the two apart without pinning a pixel.
+/// The mark's colour, the lime the kendex wordmark uses. The mark covers
+/// about a fifth of a near-black field, so the share of this colour an
+/// image carries says whether it is the mark, without pinning a pixel.
 const LIME: [u8; 3] = [0xCC, 0xFF, 0x00];
 
 fn app_crate() -> &'static Path {
@@ -97,8 +95,7 @@ fn every_raster_icon_is_drawn_in_the_kendex_lime() {
         let share = lime_share(&png_drawn(&icon_bytes(&icon)));
         assert!(
             share > 0.10,
-            "{icon} is {:.1}% lime; the mark covers about a fifth of the field, \
-             and the chevron it replaced was none of it",
+            "{icon} is {:.1}% lime; the mark covers about a fifth of the field",
             share * 100.0
         );
     }
@@ -124,20 +121,37 @@ fn the_images_inside_the_containers_carry_the_mark_too() {
             let share = lime_share(&image);
             assert!(
                 share > 0.10,
-                "{icon} {label} is {:.1}% lime; the mark covers about a fifth, \
-                 and the chevron it replaced was none of it",
+                "{icon} {label} is {:.1}% lime; the mark covers about a fifth \
+                 of the field",
                 share * 100.0
             );
         }
     }
 }
 
-/// The ICNS chunk types that are not PNGs. macOS still draws 16x16 and
-/// 32x32 at 1x from Apple's own RGB encoding paired with a separate alpha
-/// mask, and this file carries no PNG at either size, so on any display
-/// that is not retina these two chunks are the whole small icon.
-const ICNS_RGB_WITH_MASK: [(&[u8], usize, &[u8]); 2] =
-    [(b"is32", 16, b"s8mk"), (b"il32", 32, b"l8mk")];
+/// The four bytes that name an ICNS chunk type, the size in pixels that
+/// name declares, and the mask it pairs with when it is not a PNG.
+type ChunkType = (&'static [u8], u32, Option<&'static [u8]>);
+
+/// Every chunk type the bundled ICNS carries. A chunk type is a size as
+/// much as it is a picture — macOS reads `ic09` as 512 whatever is inside
+/// it — so the artwork alone says nothing about whether it will draw right.
+///
+/// macOS takes 16x16 and 32x32 at 1x from Apple's own RGB encoding rather
+/// than from a PNG, and this file holds none at either size, so on a display
+/// that is not retina those two chunks are the whole small icon.
+const ICNS_CHUNKS: [ChunkType; 10] = [
+    (b"ic07", 128, None),
+    (b"ic08", 256, None),
+    (b"ic09", 512, None),
+    (b"ic10", 1024, None), // 512@2x
+    (b"ic11", 32, None),   // 16@2x
+    (b"ic12", 64, None),   // 32@2x
+    (b"ic13", 256, None),  // 128@2x
+    (b"ic14", 512, None),  // 256@2x
+    (b"is32", 16, Some(b"s8mk")),
+    (b"il32", 32, Some(b"l8mk")),
+];
 
 /// The images inside a Windows ICO, labelled by the size its directory
 /// claims. An entry that is not a PNG stops the test rather than being
@@ -176,32 +190,62 @@ fn ico_images(bytes: &[u8]) -> Vec<(String, Vec<[u8; 3]>)> {
         .collect()
 }
 
-/// The images inside an ICNS, labelled by chunk type. A chunk that is
-/// neither a PNG nor one of the RGB-and-mask pairs stops the test: the
-/// generator has started writing something nothing here reads.
+/// The images inside an ICNS, labelled by chunk type, each held to the
+/// size its type declares. A chunk this knows nothing about stops the
+/// test: the generator has started writing something nothing here reads.
 fn icns_images(bytes: &[u8]) -> Vec<(String, Vec<[u8; 3]>)> {
     let chunks = icns_chunks(bytes);
     let mut images = Vec::new();
     for &(kind, body) in &chunks {
-        let name = String::from_utf8_lossy(kind).into_owned();
-        if body.starts_with(b"\x89PNG\r\n\x1a\n") {
-            images.push((name, png_drawn(body)));
-        } else if let Some(&(_, side, wanted)) =
-            ICNS_RGB_WITH_MASK.iter().find(|(rgb, _, _)| *rgb == kind)
-        {
-            let mask = chunks
-                .iter()
-                .find(|(other, _)| *other == wanted)
-                .unwrap_or_else(|| panic!("{name} ships without its {} mask", as_name(wanted)))
-                .1;
-            images.push((name, rgb_drawn(body, mask, side)));
-        } else {
+        let name = as_name(kind);
+        let Some(&(_, side, pairs_with)) = ICNS_CHUNKS.iter().find(|(known, _, _)| *known == kind)
+        else {
             assert!(
-                ICNS_RGB_WITH_MASK.iter().any(|(_, _, mask)| *mask == kind),
-                "chunk {name} is neither a PNG nor an encoding this reads, \
+                ICNS_CHUNKS.iter().any(|(_, _, mask)| *mask == Some(kind)),
+                "chunk {name} is not one this knows a size or an encoding for, \
                  so nothing checks what it draws"
             );
-        }
+            continue;
+        };
+        let pixels = match pairs_with {
+            // A PNG carries its own dimensions, and they have to be the ones
+            // the chunk type promises: artwork filed under the wrong type is
+            // a size macOS then scales or skips.
+            None => {
+                assert!(
+                    body.starts_with(b"\x89PNG\r\n\x1a\n"),
+                    "chunk {name} is not a PNG, so nothing here reads it"
+                );
+                let (width, height) = png_size(body);
+                assert_eq!(
+                    (width, height),
+                    (side, side),
+                    "chunk {name} draws {width}x{height}; macOS reads it as \
+                     {side}x{side}"
+                );
+                png_drawn(body)
+            }
+            // The RGB pair carries no dimensions of its own, so the size the
+            // type declares is what decodes it — a payload of another size
+            // runs out of runs or leaves some over.
+            Some(wanted) => {
+                let mask = chunks
+                    .iter()
+                    .find(|(other, _)| *other == wanted)
+                    .unwrap_or_else(|| panic!("{name} ships without its {} mask", as_name(wanted)))
+                    .1;
+                rgb_drawn(body, mask, side as usize)
+            }
+        };
+        images.push((name, pixels));
+    }
+    for (kind, side, _) in ICNS_CHUNKS {
+        assert!(
+            chunks.iter().any(|(present, _)| *present == kind),
+            "the icns carries no {} chunk, so macOS has nothing to draw at \
+             {side}x{side}",
+            as_name(kind)
+        );
     }
     images
 }
