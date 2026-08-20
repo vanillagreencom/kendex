@@ -174,9 +174,11 @@ neither a parent nor sub-issues — otherwise skip this task entirely (an
 In Progress or In Review trigger from a re-triage pass is never bundled).
 Search open, unstarted issues (Triage, Backlog, Todo) of the SAME team and
 SAME project that likewise have no parent, no sub-issues, and carry an
-agent:* label, and are at least 10 minutes old (the trigger itself is
-exempt, so a creation-time pass can still bundle): pipeline creates attach
-parents and blocking relations after the create. Evaluation order for the boundary rule: FIRST pick the tentative bundle —
+agent:* label — excluding pipeline-created issues under 10 minutes old
+(ones whose description opens with a `**Source**:` or `**Research**:`
+line), because pipeline creates attach parents and blocking relations after
+the create; human-filed issues of any age, and the trigger, stay eligible,
+so a creation-time pass and its leader handoff can still bundle. Evaluation order for the boundary rule: FIRST pick the tentative bundle —
 the trigger plus the one to four same-PR companions you would actually
 parent — then repeatedly drop any member (including the trigger) that
 blocks or is blocked by any issue outside that tentative bundle, until a
@@ -272,12 +274,10 @@ Loop 3's weekly sweep. Create the workspace label `re-triage` first.
 | Filter: Labels | contains `re-triage` |
 | Filter: Agent Session | "is not Active" if the filter supports negation — avoids re-triaging an issue an agent is mid-flight on; omit if only inclusion is supported |
 
-No Status filter: the label is an explicit operator request, valid on active
-issues (In Progress, In Review) too.
+No Status filter: the label is an explicit operator request, valid on active issues too.
 
-Self-disarming: the loop removes the label FIRST, before any other mutation —
-label absent means the filter fails, so neither its intermediate edits nor
-its final update can schedule another run.
+Self-disarming: the loop removes the label FIRST — label absent means the
+filter fails, so none of its own edits can schedule another run.
 
 ### Permissions
 
@@ -303,9 +303,8 @@ happens.
 
 ## Loop 3 — Backlog sweep (scheduled, flag-only)
 
-Weekly repo-grounded staleness sweep. Flags; never fixes or cancels. Chains
-Loop 2 by applying `re-triage` instead of duplicating the janitor logic.
-Requires workspace Code Intelligence enabled with Loops access.
+Weekly repo-grounded staleness sweep: flags, never fixes or cancels; chains
+Loop 2 via `re-triage`. Needs workspace Code Intelligence with Loops access.
 
 ### Trigger
 
