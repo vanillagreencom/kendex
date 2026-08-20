@@ -32,6 +32,7 @@ fn an_edited_agent_names_the_rendering_that_was_edited() {
     let opencode = w.home.join("app/.opencode/agents/rev.md");
     assert!(claude.is_file() && opencode.is_file());
 
+    let opencode_rendered = fs::read(&opencode).unwrap();
     fs::write(&opencode, "my opencode edit").unwrap();
     let report = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();
     let row = report
@@ -54,7 +55,8 @@ fn an_edited_agent_names_the_rendering_that_was_edited() {
         kendex_core::repo_move::canonical(&row.repo)
     );
 
-    // Edit Claude's copy too: that one round-trips, so it is the fork.
+    // Edit Claude's copy too: a fork would keep one rendering and drop
+    // the other edit, so with two edited tools nothing is offered.
     fs::write(&claude, "my claude edit").unwrap();
     let report = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();
     let row = report
@@ -62,6 +64,19 @@ fn an_edited_agent_names_the_rendering_that_was_edited() {
         .iter()
         .find(|row| row.kind == ItemKind::Agent && row.name == "rev")
         .unwrap();
+    assert_eq!(row.edited_harnesses.len(), 2);
+    assert_eq!(row.forkable_harness, None);
+    assert!(row.can_discard);
+
+    // Only Claude's copy edited: that one round-trips, so it is the fork.
+    fs::write(&opencode, &opencode_rendered).unwrap();
+    let report = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();
+    let row = report
+        .rows
+        .iter()
+        .find(|row| row.kind == ItemKind::Agent && row.name == "rev")
+        .unwrap();
+    assert_eq!(row.edited_harnesses, vec![HarnessId::Claude]);
     assert_eq!(row.forkable_harness, Some(HarnessId::Claude));
 }
 

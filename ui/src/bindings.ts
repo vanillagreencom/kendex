@@ -2281,6 +2281,12 @@ export type UpdateRow = {
 	 *  none, and the UI must not offer what the engine will refuse.
 	 */
 	forkableHarness: HarnessId | null,
+	/**
+	 *  Whether dropping the edits can put replacement content in place:
+	 *  false once the source no longer carries the package, when a discard
+	 *  would leave the edited copy exactly as it is.
+	 */
+	canDiscard: boolean,
 	/**  This package is a local fork of a catalog item. */
 	forked: boolean,
 	/**  Installations of this package disagree on their source commit. */

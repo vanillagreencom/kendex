@@ -2,13 +2,15 @@ import { toast } from "sonner";
 import { create } from "zustand";
 import { commands, type ItemWarning, type UpdateRow } from "@/bindings";
 import {
-  nothingToUpdateToastLabel,
   UPDATE_ERROR_TITLE,
   UPDATED_ALL_TOAST,
-  updatedSomeToastLabel,
   updatedToastLabel,
-  updatedWithPlaceToastLabel,
 } from "@/lib/copy";
+import {
+  nothingToUpdateToastLabel,
+  updatedSomeToastLabel,
+  updatedWithPlaceToastLabel,
+} from "@/lib/copy-updates";
 import { scopeKey } from "@/lib/scope";
 import { packageCount, placeName, updatablePlaces } from "@/lib/update-groups";
 import { useAuditStore } from "./audit";

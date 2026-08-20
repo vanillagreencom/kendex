@@ -13,7 +13,6 @@ import { Button } from "@/components/ui/button";
 import { UpdatesTable } from "@/components/updates-table";
 import {
   CHECK_FOR_UPDATES_LABEL,
-  FOLLOW_SOURCE_HELP,
   hiddenUpdatesLabel,
   IGNORE_CONFIRM_BODY,
   IGNORE_CONFIRM_LABEL,
@@ -22,8 +21,8 @@ import {
   UPDATES_EMPTY,
   UPDATES_EMPTY_BODY,
   UPDATES_UNCHECKED_TITLE,
-  updatesSubtitle,
 } from "@/lib/copy";
+import { FOLLOW_SOURCE_HELP, updatesSubtitle } from "@/lib/copy-updates";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { packageCount, updatablePlaces } from "@/lib/update-groups";
 import { cn } from "@/lib/utils";

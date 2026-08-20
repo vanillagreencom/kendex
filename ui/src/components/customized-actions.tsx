@@ -3,14 +3,17 @@ import type { UpdateRow } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import {
-  CUSTOMIZED_HERE_LABEL,
   DISCARD_EDITS_CONFIRM_BODY,
   DISCARD_EDITS_CONFIRM_LABEL,
   DISCARD_EDITS_CONFIRM_TITLE,
   KEEP_AS_FORK_LABEL,
+} from "@/lib/copy";
+import {
+  CUSTOMIZED_HERE_LABEL,
+  MULTI_TOOL_EDIT_NOTE,
   UNFORKABLE_EDIT_NOTE,
   USE_NEW_VERSION_LABEL,
-} from "@/lib/copy";
+} from "@/lib/copy-updates";
 import { scopeKey } from "@/lib/scope";
 import { keepAsOwn, takeNewVersion } from "@/stores/updates-edits";
 
@@ -26,6 +29,10 @@ export function CustomizedActions({
   busy: boolean;
 }) {
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const whyNoFork =
+    row.editedHarnesses.length > 1
+      ? MULTI_TOOL_EDIT_NOTE
+      : UNFORKABLE_EDIT_NOTE;
 
   return (
     <>
@@ -40,21 +47,22 @@ export function CustomizedActions({
           {KEEP_AS_FORK_LABEL}
         </Button>
       ) : (
-        <span
-          className="mr-1 text-xs text-muted-foreground"
-          title={UNFORKABLE_EDIT_NOTE}
-        >
-          {UNFORKABLE_EDIT_NOTE}
+        <span className="mr-1 text-xs text-muted-foreground" title={whyNoFork}>
+          {whyNoFork}
         </span>
       )}
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={busy}
-        onClick={() => setConfirmDiscard(true)}
-      >
-        {USE_NEW_VERSION_LABEL}
-      </Button>
+      {/* A source that no longer carries the package has nothing to put
+          in the edits' place; the row's badge already says so. */}
+      {row.canDiscard ? (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={() => setConfirmDiscard(true)}
+        >
+          {USE_NEW_VERSION_LABEL}
+        </Button>
+      ) : null}
       <ConfirmDialog
         key={scopeKey(row.scope)}
         open={confirmDiscard}

@@ -45,6 +45,7 @@ function updateRows(): UpdateRow[] {
     blockedByLocalEdit: false,
     editedHarnesses: [],
     forkableHarness: null,
+    canDiscard: true,
     forked: false,
     mixed: false,
     removedUpstream: false,

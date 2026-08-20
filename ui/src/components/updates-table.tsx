@@ -14,17 +14,19 @@ import {
 import { PlaceCells } from "@/components/update-place-cells";
 import {
   EDITED_UPDATE_TAG,
+  PINNED_UPDATE_TAG,
+  REMOVED_UPSTREAM_TAG,
+} from "@/lib/copy";
+import {
   FOLLOW_SOURCE_COLUMN,
   heldInLabel,
-  PINNED_UPDATE_TAG,
   placesLabel,
-  REMOVED_UPSTREAM_TAG,
   UPDATE_PACKAGE_EVERYWHERE_LABEL,
   UPDATES_NAME_COLUMN,
   UPDATES_PLACE_COLUMN,
   UPDATES_TYPE_COLUMN,
   UPDATES_VERSION_COLUMN,
-} from "@/lib/copy";
+} from "@/lib/copy-updates";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName } from "@/lib/labels";
 import {

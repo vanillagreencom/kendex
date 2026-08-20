@@ -110,11 +110,12 @@ impl Eval<'_> {
                     ignored: self.is_ignored(kind, name, &repo),
                     blocked_by_local_edit: !edited_harnesses.is_empty(),
                     forkable_harness: forkable_among(kind, &edited_harnesses),
+                    can_discard: false,
                     edited_harnesses,
                     forked,
                     mixed: false,
                     removed_upstream: true,
-                    repo_identity: crate::repo_move::canonical(&repo).to_owned(),
+                    repo_identity: super::repo_identity(&repo),
                     repo,
                 });
             }
@@ -209,9 +210,10 @@ impl Eval<'_> {
             ignored: self.is_ignored(kind, name, &package.repo),
             blocked_by_local_edit: !edited_harnesses.is_empty(),
             forkable_harness: forkable_among(kind, &edited_harnesses),
+            can_discard: latest.is_some(),
             edited_harnesses,
             forked,
-            repo_identity: crate::repo_move::canonical(&package.repo).to_owned(),
+            repo_identity: super::repo_identity(&package.repo),
             repo: package.repo.clone(),
             current,
             latest,
@@ -233,10 +235,13 @@ impl Eval<'_> {
     }
 }
 
-/// The first edited rendering a fork can capture, if any.
+/// The edited rendering a fork can capture, if any. A fork takes one
+/// rendering's bytes and turns the declaration local, so with edits in
+/// several tools it would silently drop the others — that case is left to
+/// the package page, where each rendering can be compared.
 fn forkable_among(kind: ItemKind, edited: &[HarnessId]) -> Option<HarnessId> {
-    edited
-        .iter()
-        .copied()
-        .find(|harness| crate::engine::fork::forkable_harness(kind, *harness))
+    match edited {
+        [only] if crate::engine::fork::forkable_harness(kind, *only) => Some(*only),
+        _ => None,
+    }
 }

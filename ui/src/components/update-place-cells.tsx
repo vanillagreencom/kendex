@@ -11,12 +11,12 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { TableCell } from "@/components/ui/table";
 import {
-  followSourceLabel,
   IGNORE_UPDATES_LABEL,
   NOTIFY_AGAIN_LABEL,
   PREVIEW_CHANGES_LABEL,
   UPDATE_LABEL,
 } from "@/lib/copy";
+import { followSourceLabel } from "@/lib/copy-updates";
 import { packageDisplayName } from "@/lib/labels";
 import { placeName } from "@/lib/update-groups";
 import { versionLabel } from "@/lib/versions";

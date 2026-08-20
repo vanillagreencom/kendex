@@ -25,6 +25,7 @@ const row = (
   blockedByLocalEdit: false,
   editedHarnesses: [],
   forkableHarness: null,
+  canDiscard: true,
   removedUpstream: false,
   mixed: false,
   forked: false,

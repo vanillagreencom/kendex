@@ -61,6 +61,10 @@ pub struct UpdateRow {
     /// agent edited only in a tool whose format cannot be read back has
     /// none, and the UI must not offer what the engine will refuse.
     pub forkable_harness: Option<HarnessId>,
+    /// Whether dropping the edits can put replacement content in place:
+    /// false once the source no longer carries the package, when a discard
+    /// would leave the edited copy exactly as it is.
+    pub can_discard: bool,
     /// This package is a local fork of a catalog item.
     pub forked: bool,
     /// Installations of this package disagree on their source commit.
@@ -190,6 +194,15 @@ fn edited_items(
     edited
 }
 
+/// One repository's identity across every spelling a manifest can carry:
+/// the moved default's legacy names collapse first, then any GitHub shape
+/// (`owner/repo`, an https URL with or without `.git`, scp-style) folds to
+/// lowercase `owner/repo`. Another host keeps its canonical string.
+pub fn repo_identity(repo: &str) -> String {
+    let canonical = crate::repo_move::canonical(repo);
+    crate::repo_move::owner_repo(canonical).unwrap_or_else(|| canonical.to_owned())
+}
+
 /// A fork's row: no versions, no update — the Library still needs to
 /// know it is a fork.
 fn fork_row(
@@ -213,6 +226,7 @@ fn fork_row(
         blocked_by_local_edit: false,
         edited_harnesses: Vec::new(),
         forkable_harness: None,
+        can_discard: false,
         forked: true,
         mixed: false,
         removed_upstream: false,
@@ -259,5 +273,30 @@ fn load_current(env: &Env, scope: &Scope) -> Result<Option<crate::manifest::Mani
     match crate::manifest::load(&crate::manifest::manifest_path(env, scope))? {
         crate::manifest::ManifestFile::Current(manifest) => Ok(Some(*manifest)),
         _ => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::repo_identity;
+
+    #[test]
+    fn every_spelling_of_one_repository_shares_an_identity() {
+        let identities: std::collections::BTreeSet<String> = [
+            "owner/repo",
+            "https://github.com/owner/repo.git",
+            "https://www.github.com/Owner/Repo/",
+            "git@github.com:owner/repo.git",
+        ]
+        .into_iter()
+        .map(repo_identity)
+        .collect();
+        assert_eq!(identities.len(), 1, "{identities:?}");
+        assert_ne!(repo_identity("owner/repo"), repo_identity("owner/other"));
+        assert_eq!(
+            repo_identity("https://gitlab.com/owner/repo.git"),
+            "https://gitlab.com/owner/repo.git",
+            "another host keeps its canonical string"
+        );
     }
 }

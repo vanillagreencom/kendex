@@ -1,46 +1,10 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import { Table, TableBody } from "@/components/ui/table";
 import { groupUpdates } from "@/lib/update-groups";
 import { PackageRows, UpdatesTable } from "./updates-table";
-
-// Static rendering reads a zustand store's initial snapshot, never one set
-// later, so the store hook is wrapped to let a test flip `busy`.
-const stub = vi.hoisted(() => ({ busy: false }));
-vi.mock("@/stores/updates", async (importOriginal) => {
-  const mod = await importOriginal<typeof import("@/stores/updates")>();
-  const hook = (selector?: (state: unknown) => unknown) => {
-    const state = { ...mod.useUpdatesStore.getState(), busy: stub.busy };
-    return selector ? selector(state) : state;
-  };
-  return { ...mod, useUpdatesStore: Object.assign(hook, mod.useUpdatesStore) };
-});
-
-const row = (
-  name: string,
-  root: string | null,
-  extra: Partial<UpdateRow> = {},
-): UpdateRow => ({
-  scope: root ? { scope: "project", root } : { scope: "global" },
-  kind: "skill",
-  name,
-  source: "kendex",
-  repo: "vanillagreencom/kendex",
-  repoIdentity: "vanillagreencom/kendex",
-  current: { commit: "1111111111", label: null, date: null },
-  latest: { commit: "2222222222", label: "v2", date: null },
-  updateAvailable: true,
-  pinned: false,
-  blockedByLocalEdit: false,
-  editedHarnesses: [],
-  forkableHarness: null,
-  removedUpstream: false,
-  mixed: false,
-  forked: false,
-  ignored: false,
-  ...extra,
-});
+import { updateRow as row } from "./updates-test-rows";
 
 const render = (rows: UpdateRow[]) =>
   renderToStaticMarkup(<UpdatesTable rows={rows} onIgnore={() => {}} />);
@@ -170,53 +134,6 @@ describe("UpdatesTable", () => {
     expect(html).toContain(">Preview changes<");
     expect(html).toContain(">Update<");
     expect(html).toContain('aria-label="More actions"');
-  });
-
-  it("offers the fork decision instead of Update where files were edited", () => {
-    const html = render([
-      row("one", null, {
-        blockedByLocalEdit: true,
-        editedHarnesses: ["claude"],
-        forkableHarness: "claude",
-      }),
-    ]);
-    expect(html).toContain(">Customized here<");
-    expect(html).toContain(">Keep as my own<");
-    expect(html).toContain(">Use new version…<");
-    expect(html).not.toContain(">Update<");
-  });
-
-  it("offers no fork for an edit only a non-forkable tool holds", () => {
-    const html = render([
-      row("rev", null, {
-        kind: "agent",
-        blockedByLocalEdit: true,
-        editedHarnesses: ["opencode"],
-        forkableHarness: null,
-      }),
-    ]);
-    expect(html).not.toContain(">Keep as my own<");
-    expect(html).toContain("Edited in a tool whose copy can");
-    expect(html).toContain(">Use new version…<");
-    expect(html).toContain(">Preview changes<");
-  });
-
-  it("holds the fork decision while another update is running", () => {
-    stub.busy = true;
-    try {
-      const html = render([
-        row("one", null, {
-          blockedByLocalEdit: true,
-          editedHarnesses: ["claude"],
-          forkableHarness: "claude",
-        }),
-      ]);
-      expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Keep as my own</);
-      expect(html).toMatch(/<span[^>]*data-disabled=""[^>]*role="switch"/);
-      expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Use new version…</);
-    } finally {
-      stub.busy = false;
-    }
   });
 
   it("swaps the toggle and actions for a muted row", () => {

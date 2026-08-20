@@ -1,5 +1,5 @@
 import type { Scope, UpdateRow } from "@/bindings";
-import { USER_LEVEL_PLACE } from "@/lib/copy";
+import { USER_LEVEL_PLACE } from "@/lib/copy-updates";
 import { scopeKey } from "@/lib/scope";
 
 /** One package with every place it is out of date in. The same skill
