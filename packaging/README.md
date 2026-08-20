@@ -35,7 +35,10 @@ Each new `vX.Y.Z` changes the artifact checksums. Update, in this repo:
 
 Checksums for the released files come from the release page or
 `sha256sum <file>` on a download. A target shipping for the first time has
-all-zero placeholders until its first release fills them.
+all-zero placeholders until its first release fills them. Recipes carrying a
+placeholder are pushed to the tap and AUR only as part of that release's
+version bump, never before — pushed early, a user on the new target gets a
+checksum mismatch instead of a clear "not supported".
 
 Then push the recipes to their channels:
 

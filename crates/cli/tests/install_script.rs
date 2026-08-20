@@ -9,12 +9,14 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
 
+#[allow(clippy::unwrap_used)]
 fn write_exe(path: &Path, body: &str) {
     fs::write(path, body).unwrap();
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
 /// Runs install.sh as `os`/`arch` and returns every URL curl was handed.
+#[allow(clippy::unwrap_used)]
 fn requested_urls(os: &str, arch: &str) -> String {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
@@ -62,11 +64,15 @@ fn requested_urls(os: &str, arch: &str) -> String {
 }
 
 #[test]
+#[allow(clippy::unwrap_used)]
 fn each_release_host_downloads_its_own_binary() {
     for (os, arch, target) in [
         ("Linux", "x86_64", "x86_64-unknown-linux-gnu"),
+        ("Linux", "amd64", "x86_64-unknown-linux-gnu"),
         ("Linux", "aarch64", "aarch64-unknown-linux-gnu"),
+        ("Linux", "arm64", "aarch64-unknown-linux-gnu"),
         ("Darwin", "arm64", "aarch64-apple-darwin"),
+        ("Darwin", "aarch64", "aarch64-apple-darwin"),
         ("Darwin", "x86_64", "x86_64-apple-darwin"),
     ] {
         let urls = requested_urls(os, arch);
@@ -78,6 +84,7 @@ fn each_release_host_downloads_its_own_binary() {
 }
 
 #[test]
+#[allow(clippy::unwrap_used)]
 fn linux_picks_the_appimage_built_for_its_architecture() {
     let urls = requested_urls("Linux", "x86_64");
     assert!(urls.contains("/kendex_9.9.9_amd64.AppImage"), "{urls}");
@@ -85,4 +92,32 @@ fn linux_picks_the_appimage_built_for_its_architecture() {
     assert!(urls.contains("/kendex_9.9.9_aarch64.AppImage"), "{urls}");
     let urls = requested_urls("Darwin", "x86_64");
     assert!(!urls.contains(".AppImage"), "{urls}");
+}
+
+/// The matrix lanes and the feed.json keys are two lists in release.yml;
+/// a lane missing from either leaves that host's `kendex update` with no
+/// asset to find.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn release_matrix_and_feed_name_the_same_targets() {
+    let workflow = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows/release.yml"),
+    )
+    .unwrap();
+    let mut lanes: Vec<&str> = workflow
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("target: "))
+        .collect();
+    let mut feed: Vec<&str> = workflow
+        .lines()
+        .filter_map(|l| {
+            let l = l.trim().strip_prefix('"')?;
+            let (key, rest) = l.split_once("\": \"${base}/kendex-")?;
+            rest.starts_with(key).then_some(key)
+        })
+        .collect();
+    lanes.sort();
+    feed.sort();
+    assert!(!lanes.is_empty());
+    assert_eq!(lanes, feed);
 }

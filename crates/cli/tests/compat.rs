@@ -187,15 +187,7 @@ fn update_replaces_the_binary_from_a_local_feed() {
     fs::set_permissions(&me, fs::Permissions::from_mode(0o755)).unwrap();
 
     fs::write(home.join("new-binary"), "#!/bin/sh\necho v9\n").unwrap();
-    let target = format!(
-        "{}-{}",
-        std::env::consts::ARCH,
-        if cfg!(target_os = "macos") {
-            "apple-darwin"
-        } else {
-            "unknown-linux-gnu"
-        }
-    );
+    let target = env!("KENDEX_TARGET");
     fs::write(
         home.join("feed.json"),
         format!(

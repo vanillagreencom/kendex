@@ -3,7 +3,10 @@
 # feed.json that `kendex update` consumes.
 #
 # Tag push only: a release bundle is the most expensive job in the repo,
-# and pull requests are covered by the per-crate checks. Every lane runs
+# and pull requests are covered by the per-crate checks. No build cache:
+# Actions restores caches only from the same ref or the default branch,
+# and nothing on main saves release-profile artifacts, so a cache step here
+# would pay for a save that no lane ever restores. Every lane runs
 # on a GitHub-standard runner, which is free for a public repository.
 # Each Apple architecture gets its own native lane rather than one
 # universal binary: the updater keys its artifacts per architecture and a
@@ -42,9 +45,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22

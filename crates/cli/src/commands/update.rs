@@ -14,22 +14,10 @@ fn feed_url() -> String {
     })
 }
 
-/// One entry per lane in `.github/workflows/release.yml`; the feed keys its
-/// assets by these names.
+/// The feed keys its assets by the build target, one per lane in
+/// `.github/workflows/release.yml`; `build.rs` bakes it in from Cargo.
 fn target_triple() -> &'static str {
-    if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-        "x86_64-unknown-linux-gnu"
-    } else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
-        "aarch64-unknown-linux-gnu"
-    } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-        "aarch64-apple-darwin"
-    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
-        "x86_64-apple-darwin"
-    } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
-        "x86_64-pc-windows-msvc"
-    } else {
-        "unsupported"
-    }
+    env!("KENDEX_TARGET")
 }
 
 fn fetch(url: &str) -> Result<Vec<u8>, String> {
@@ -91,22 +79,4 @@ fn staged_path(current: &std::path::Path) -> PathBuf {
         .unwrap_or_else(|| "kendex".to_owned());
     name.push_str(".update");
     current.with_file_name(name)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::target_triple;
-
-    #[test]
-    fn every_release_host_maps_to_its_feed_key() {
-        let expected = match (std::env::consts::OS, std::env::consts::ARCH) {
-            ("linux", "x86_64") => "x86_64-unknown-linux-gnu",
-            ("linux", "aarch64") => "aarch64-unknown-linux-gnu",
-            ("macos", "aarch64") => "aarch64-apple-darwin",
-            ("macos", "x86_64") => "x86_64-apple-darwin",
-            ("windows", "x86_64") => "x86_64-pc-windows-msvc",
-            _ => "unsupported",
-        };
-        assert_eq!(target_triple(), expected);
-    }
 }

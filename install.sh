@@ -60,7 +60,10 @@ install_cli() {
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
   echo "Downloading the kendex command ($target)…"
-  curl -fSL --proto '=https' -o "$tmp/kendex" "$base/kendex-$target"
+  if ! curl -fSL --proto '=https' -o "$tmp/kendex" "$base/kendex-$target"; then
+    echo "install.sh: release $version has no build for $target (see https://github.com/$repo/releases)" >&2
+    exit 1
+  fi
   chmod +x "$tmp/kendex"
   # mkdir -p exits 0 on a directory that already exists, writable or not,
   # so create-if-missing first and let writability alone pick the branch.
