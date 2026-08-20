@@ -186,21 +186,40 @@ pub(crate) fn hook_target(
         // Pi executes nothing per hook itself: the pi-hooks carrier's
         // listeners read the registry rendered here and run the scripts.
         // The registry keys are Pi's own listener names — the event was
-        // restated before this target is asked for.
-        HarnessId::Pi => Some(dotted_script_hook(
-            env,
-            scope,
-            harness,
-            name,
-            ".pi",
-            "hooks.json",
-        )),
+        // restated before this target is asked for. Both sit under the
+        // segment kendex owns: Pi reserved the `hooks/` name beside its
+        // own roots (`crate::harness::pi::HOOK_HOME`).
+        HarnessId::Pi => Some(pi_hook(env, scope, name)),
         HarnessId::Copilot => Some(copilot_hook(env, scope, name)),
     }
 }
 
-/// The shape Gemini and Pi share: a script under the harness's dot-dir,
-/// registered in a claude-nested JSON file beside it.
+/// Pi's shape: a script and the carrier's registry, both under the segment
+/// kendex owns inside the scope root.
+fn pi_hook(env: &Env, scope: &Scope, name: &str) -> HookTarget {
+    let root = match scope {
+        Scope::Global => adapter(HarnessId::Pi).default_global_root(env),
+        Scope::Project { root } => root.join(".pi"),
+    };
+    let path = crate::harness::pi::hook_dir(&root).join(format!("{name}.sh"));
+    let command = match scope {
+        Scope::Global => format!("bash \"{}\"", path.display()),
+        Scope::Project { .. } => format!(
+            "bash \"$(git rev-parse --show-toplevel)/.pi/{}/hooks/{name}.sh\"",
+            crate::harness::pi::HOOK_HOME
+        ),
+    };
+    HookTarget::Script {
+        path,
+        command,
+        registry: crate::harness::pi::hook_registry(&root),
+        format: HookFormat::Nested,
+        feature: None,
+    }
+}
+
+/// Gemini's shape: a script under the harness's dot-dir, registered in a
+/// claude-nested JSON file beside it.
 fn dotted_script_hook(
     env: &Env,
     scope: &Scope,

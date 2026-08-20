@@ -8,6 +8,25 @@ pub struct Pi;
 
 const EXTENSION_EXTS: &[&str] = &["ts", "js"];
 
+/// The segment kendex parks its Pi hook storage under, at both scopes.
+/// Pi warns about a `hooks/` or `tools/` directory sitting directly beside
+/// a root it loads — on the name alone, never on the contents — and the
+/// migration it names, into `extensions/`, is not one these files can
+/// take: they are shell scripts the `pi-hooks` carrier runs, not Pi
+/// extensions. Under a segment of kendex's own, Pi never looks — the same
+/// segment its Pi extensions already keep per-session state in.
+pub const HOOK_HOME: &str = "kendex";
+
+/// The registry the carrier reads, for one scope root.
+pub fn hook_registry(root: &Path) -> PathBuf {
+    root.join(HOOK_HOME).join("hooks.json")
+}
+
+/// The directory the hook scripts live in, for one scope root.
+pub fn hook_dir(root: &Path) -> PathBuf {
+    root.join(HOOK_HOME).join("hooks")
+}
+
 impl HarnessAdapter for Pi {
     fn id(&self) -> HarnessId {
         HarnessId::Pi
@@ -34,7 +53,7 @@ impl HarnessAdapter for Pi {
             // Hooks ride the pi-hooks carrier: the registry kendex renders
             // is what the carrier's listeners execute. pi has no MCP.
             ItemKind::Hook => vec![Surface::Structured {
-                path: root.join("hooks.json"),
+                path: hook_registry(root),
                 reader: Reader::HooksObject,
             }],
             ItemKind::McpServer | ItemKind::Plugin => vec![],
@@ -63,7 +82,7 @@ impl HarnessAdapter for Pi {
                 marker: "SKILL.md",
             }],
             ItemKind::Hook => vec![Surface::Structured {
-                path: dot.join("hooks.json"),
+                path: hook_registry(&dot),
                 reader: Reader::HooksObject,
             }],
             ItemKind::McpServer | ItemKind::Plugin => vec![],

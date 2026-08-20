@@ -36,6 +36,7 @@ mod item_source;
 mod observed;
 pub mod ops;
 mod owned;
+mod pi_hooks_move;
 mod plan_pass;
 mod planned;
 mod removal;
@@ -148,6 +149,13 @@ pub fn plan_scope(
 
     plan_settings_seed(scope, &state, &mut new_lock, &mut ops, &mut drift)?;
 
+    // The reserved-name move reads the lock, not the desired state: the
+    // old copies go whether or not the hook is still declared, and the
+    // writes this plan already made put every declared one at its new
+    // path.
+    let mut moved_notes = Vec::new();
+    pi_hooks_move::plan_move(env, scope, lock, &mut ops, &mut moved_notes)?;
+
     // Trash ops all pass one guard: writes for this pass are already
     // planned, so anything still wanted is known, and no path goes to the
     // trash twice.
@@ -201,6 +209,7 @@ pub fn plan_scope(
         kept,
         safety,
     };
+    report.notes.extend(moved_notes);
     unmanaged_rows(env, scope, manifest, lock, &state.items, &mut report.drift);
     Ok(report)
 }

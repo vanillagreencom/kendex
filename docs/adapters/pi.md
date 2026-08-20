@@ -22,16 +22,30 @@ Project markers: a `.pi/` or `.agents/` directory. Owner:
 | agent | `~/.pi/agent/agents/*.md` | `.pi/agents/*.md` | managed, both |
 | skill | `~/.pi/agent/skills/<name>/SKILL.md` | `.agents/skills/<name>/SKILL.md` — **shared with Codex** | managed, both |
 | command | `~/.pi/agent/prompts/*.md` | `.pi/prompts/*.md` | observe only, both |
-| hook | `~/.pi/agent/hooks/<name>.sh` + `hooks.json` | `.pi/hooks/<name>.sh` + `.pi/hooks.json` | managed, both — enforced while the `pi-hooks` carrier is registered |
+| hook | `~/.pi/agent/kendex/hooks/<name>.sh` + `kendex/hooks.json` | `.pi/kendex/hooks/<name>.sh` + `.pi/kendex/hooks.json` | managed, both — enforced while the `pi-hooks` carrier is registered |
 | mcp-server | — | — | unsupported |
 | plugin | — | — | unsupported |
 | pi-extension | `~/.pi/agent/settings.json` `packages[]`, and `~/.pi/agent/extensions/*.{ts,js}` | `.pi/settings.json` `packages[]`, and `.pi/extensions/*.{ts,js}` | managed, both |
 
 Pi executes nothing per hook itself: the `pi-hooks` carrier extension hosts
 native listeners, and hook content rides in the registry kendex renders
-beside them — `hooks/<name>.sh` plus `hooks.json`, keyed by Pi's own
+beside them — `kendex/hooks/<name>.sh` plus `kendex/hooks.json`, keyed by Pi's own
 listener names (`pi_listener`: tool call, tool result, turn end, session
 start). An event outside that map installs nothing on Pi, said as a note.
+
+**The reserved names.** Pi warns at every start about a `hooks/` or a
+`tools/` directory sitting directly beside a root it loads, on the name
+alone — it never looks inside — and the migration it names, into
+`extensions/`, is one these files cannot take: Pi extensions are
+TypeScript registered in `settings.json`, these are shell scripts a
+carrier runs. So both the scripts and the registry sit one level down,
+under `kendex/`, where Pi does not look (`harness::pi::HOOK_HOME`) — the
+same segment kendex's Pi extensions already keep per-session state in.
+kendex writes nothing to `tools/` at either scope — an extension's `bin`
+entries link into the scope's `bin/`. What an earlier kendex left in the
+reserved name comes off disk on the next plan, the directory with it
+(`engine::pi_hooks_move`): a file kendex did not write, or one edited
+since it was installed, stays where it is and the plan says so.
 Enforcement is read live (`pi_ext::carrier::enforcement`): with the carrier
 registered in either scope's settings the hook is enforced; with no carrier
 anywhere Pi loads, the install downgrades to advisory, said per item. Pi

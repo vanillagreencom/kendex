@@ -232,6 +232,16 @@ changes carry a **Breaking** call-out with their migration note inline.
   session, in a fresh install of kendex's own default catalog. The
   publisher's recorded review now travels with the package, and the default
   catalog ships nothing its own check has not settled.
+- Pi no longer prints a migration warning at every start in a
+  kendex-managed project. Pi has reserved the `hooks/` directory name
+  beside its own roots and warns whenever one exists, whatever is in it —
+  and the migration it suggests is one kendex's Pi hooks cannot take, since
+  they are shell scripts a carrier extension runs, not Pi extensions. They
+  now live under `.pi/kendex/hooks/` and `~/.pi/agent/kendex/hooks/`, and
+  the next `kendex refresh` moves an existing install out of the reserved
+  directory and takes the directory away with it. A file kendex did not
+  write, or one you edited after it was installed, stays where it is and
+  the plan tells you which.
 - On Linux, a helper command that ran past its time limit could take
   unrelated processes down with it: Ubuntu's `kill` misreads the negative
   process-group argument kendex passed, and for some process ids that
