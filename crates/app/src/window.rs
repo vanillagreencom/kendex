@@ -1,7 +1,10 @@
 //! Titlebar controls for the frameless window — the UI draws its own
 //! chrome, so these replace what the OS window frame used to provide.
 
-/// The window this app opens, as named by `tauri.conf.json`.
+/// The window this app opens. `tauri.conf.json` names it explicitly: with
+/// the window built hidden, this lookup is the only thing that shows it, and
+/// leaning on tauri's default label would put the app's one window behind a
+/// default that no test or compiler here would notice changing.
 const MAIN: &str = "main";
 
 /// Zoom is set on the webview rather than by restyling the page: it holds

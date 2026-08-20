@@ -4,7 +4,7 @@ mod commands;
 mod community;
 pub mod decisions;
 mod editor;
-pub mod launch_env;
+mod launch_env;
 mod marketplaces;
 mod mine;
 mod native;

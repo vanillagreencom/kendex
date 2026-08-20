@@ -320,15 +320,22 @@ lives in one capability table read by core and UI.
   reads the session and relaunches itself once with `GDK_BACKEND` and the
   WebKit DMABUF workaround set (`crates/app/src/launch_env.rs`); the
   environment is never rewritten in place, because the workspace forbids
-  `unsafe`. `wayland,x11` is GDK's own ordered list, so a compositor the
-  Wayland backend cannot open still gets an X11 window rather than none.
-  A backend or scale the person set is never overridden — but inside the
-  AppImage their `GDK_BACKEND` is already gone when the app starts, and the
-  `x11` sitting there is the hook's, so that one value is ignored there and
-  `KENDEX_GDK_BACKEND`, which nothing in the bundle writes, is how an
-  AppImage is told to use a different backend. `GDK_SCALE` and
-  `GDK_DPI_SCALE` are never written at all: the Wayland backend takes the
-  scale from the compositor.
+  `unsafe`. The whole decision is one pure function of the strings the
+  environment holds, so every case is testable without a display or a
+  bundle, and the relaunch says on stderr what it set — the person who set
+  any of these variables is at a terminal.
+  Only the AppImage is pushed onto a backend, and only onto `wayland,x11`,
+  GDK's own ordered list: a compositor the Wayland backend cannot open
+  still gets an X11 window rather than none. Every other packaging is left
+  alone, because with the variable unset GDK already tries Wayland first —
+  writing the same order there would buy nothing and cost a relaunch.
+  A backend the person named is honoured on any session, and never
+  overridden. Inside the AppImage their `GDK_BACKEND` is already gone when
+  the app starts and the `x11` sitting there is the hook's, so that one
+  value is ignored there — `KENDEX_GDK_BACKEND`, which nothing in the
+  bundle writes, names a backend instead, and the launch says so when it
+  overrides the pin. `GDK_SCALE` and `GDK_DPI_SCALE` are never written at
+  all: the Wayland backend takes the scale from the compositor.
 - **Zoom is the webview's, applied before the window is shown.** The
   window is configured hidden and revealed in `setup` once the saved zoom
   is on the webview, so the first frame is already the right size — a page

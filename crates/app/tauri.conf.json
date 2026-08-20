@@ -18,6 +18,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "kendex",
         "width": 1280,
         "height": 840,

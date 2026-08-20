@@ -17,4 +17,7 @@ fn config() -> serde_json::Value {
 fn the_window_opens_hidden_so_the_saved_zoom_lands_first() {
     let window = &config()["app"]["windows"][0];
     assert_eq!(window["visible"].as_bool(), Some(false));
+    // The label the reveal looks up. Left to tauri's default, a hidden
+    // window would simply never be shown if that default ever changed.
+    assert_eq!(window["label"].as_str(), Some("main"));
 }
