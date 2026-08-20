@@ -82,8 +82,6 @@ After each spawn, persist the session — `"status": "active"` is what reviewer 
 ### Single issue
 
 <delegation_format>
-Ultrathink.
-
 Follow workflow: .agents/skills/dev/workflows/dev-implement.md
 
 Issue: [ISSUE_ID]
@@ -103,8 +101,6 @@ Group pending sub-issues by `agent:[TYPE]` label and order them per [SKILL.md §
 Between groups, read each completed sub-issue's comments for a `Handoff Notes` section and combine them into the next delegation. Re-run all four § 2 stamps immediately before each group's delegation, so every group's round id scopes its own artifact path and a prior group's receipt can never satisfy this group's check, and no group is delegated into a worktree another session has taken.
 
 <delegation_format>
-Ultrathink.
-
 Follow workflow: .agents/skills/dev/workflows/dev-implement.md
 
 Parent: [ISSUE_ID]

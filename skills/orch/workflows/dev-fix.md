@@ -101,8 +101,6 @@ Cancel ends the workflow; a selection goes to § 2.
    ⚠ Fill placeholders only ([Format Tags Are Literal](../SKILL.md#format-tags-are-literal)). `Recommendation:` is the technical fix, never procedure steps — the agent owns validate, commit, and return.
 
    <delegation_format>
-   Ultrathink.
-
    Follow workflow: .agents/skills/dev/workflows/dev-fix.md
 
    Source: [SOURCE]
