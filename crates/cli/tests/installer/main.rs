@@ -3,7 +3,8 @@
 //! someone opens their launcher, so it is asserted here instead.
 #![cfg(target_os = "linux")]
 
-use std::io::Write;
+mod icons;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -103,6 +104,38 @@ esac
 /// it fails here instead.
 const SUDO: &str = "#!/bin/sh\necho 'installer test tried to escalate' >&2\nexit 1\n";
 
+/// A network that cannot answer the release lookup. That lookup is the one
+/// pipeline in the installer, and the reason the script does not lean on
+/// `pipefail` to notice a failure inside it.
+const CURL_WITHOUT_RELEASES: &str = r#"#!/bin/sh
+out=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift 2 ;;
+    -*) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+case "$url" in
+  *api.github.com*) exit 22 ;;
+  *) : > "$out" ;;
+esac
+"#;
+
+/// The shell the published command uses: `curl … | sh`, which is dash on
+/// Debian and Ubuntu. Where dash is installed it is preferred, because
+/// `/bin/sh` is bash on some distributions and a bashism would then sail
+/// straight through the check meant to catch it.
+fn posix_shell() -> &'static str {
+    let runs = |shell: &str| {
+        Command::new(shell)
+            .args(["-c", "exit 0"])
+            .output()
+            .is_ok_and(|probe| probe.status.success())
+    };
+    if runs("dash") { "dash" } else { "sh" }
+}
+
 fn run_installer() -> tempfile::TempDir {
     run_installer_serving(&repo_root())
 }
@@ -116,13 +149,32 @@ fn run_installer_serving(source_root: &Path) -> tempfile::TempDir {
 /// `prepare` runs against the temp home before the installer does, for the
 /// cases that are about what the installer finds already there.
 fn run_installer_over(source_root: &Path, prepare: impl FnOnce(&Path)) -> tempfile::TempDir {
+    let (tmp, output) = installer_output(source_root, CURL, prepare);
+    assert!(
+        output.status.success(),
+        "install.sh failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        tmp.path().join(".local/bin/kendex").is_file(),
+        "the installer wrote the command outside its temp home"
+    );
+    tmp
+}
+
+/// The installer run against a stubbed network, and whatever it said.
+fn installer_output(
+    source_root: &Path,
+    curl: &str,
+    prepare: impl FnOnce(&Path),
+) -> (tempfile::TempDir, std::process::Output) {
     let tmp = tempfile::tempdir().expect("tempdir");
     let stubs = tmp.path().join("stub-bin");
     std::fs::create_dir_all(&stubs).expect("stub bin dir");
     write_stub(
         &stubs,
         "curl",
-        &CURL.replace("__ROOT__", &source_root.display().to_string()),
+        &curl.replace("__ROOT__", &source_root.display().to_string()),
     );
     write_stub(&stubs, "uname", UNAME);
     write_stub(&stubs, "sudo", SUDO);
@@ -138,28 +190,42 @@ fn run_installer_over(source_root: &Path, prepare: impl FnOnce(&Path)) -> tempfi
         tmp.path().display(),
         std::env::var("PATH").unwrap_or_default()
     );
-    let output = Command::new("bash")
+    let output = Command::new(posix_shell())
         .arg(repo_root().join("install.sh"))
         .env("PATH", path)
         .env("HOME", tmp.path())
         .env("XDG_DATA_HOME", tmp.path().join("share"))
         .output()
         .expect("install.sh runs");
+    (tmp, output)
+}
+
+/// `set -o pipefail` is not in the shell the published command runs, so the
+/// release lookup cannot lean on it. A lookup that answers with nothing has
+/// to stop the install and say so, rather than carrying an empty version
+/// into every download URL.
+#[test]
+fn a_release_lookup_that_answers_with_nothing_stops_the_install() {
+    let (tmp, output) = installer_output(&repo_root(), CURL_WITHOUT_RELEASES, |_| {});
+    assert!(!output.status.success(), "the install carried on");
     assert!(
-        output.status.success(),
-        "install.sh failed: {}",
+        String::from_utf8_lossy(&output.stderr).contains("could not resolve the latest release"),
+        "{}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        tmp.path().join(".local/bin/kendex").is_file(),
-        "the installer wrote the command outside its temp home"
+        !tmp.path().join(".local/bin/kendex").exists(),
+        "a version it could not resolve still installed something"
     );
-    tmp
 }
 
 fn desktop_entry(tmp: &tempfile::TempDir) -> String {
     std::fs::read_to_string(tmp.path().join("share/applications/kendex.desktop"))
         .expect("desktop entry")
+}
+
+fn icon_slot(home: &Path, size: &str) -> PathBuf {
+    home.join(format!("share/icons/hicolor/{size}/apps/kendex.png"))
 }
 
 /// The name tauri gives the app binary, which is what a Linux launcher
@@ -184,114 +250,6 @@ fn the_desktop_entry_names_the_window_class() {
     let tmp = run_installer();
     let expected = format!("\nStartupWMClass={}\n", app_binary_name());
     assert!(desktop_entry(&tmp).contains(&expected), "{expected:?}");
-}
-
-/// A launcher filling a HiDPI slot from the 128px icon upscales it, and the
-/// result looks soft beside every other app on the machine.
-#[test]
-fn every_icon_the_app_ships_lands_in_its_own_slot() {
-    let tmp = run_installer();
-    for (size, source) in ICONS {
-        let installed = tmp
-            .path()
-            .join(format!("share/icons/hicolor/{size}/apps/kendex.png"));
-        let installed = std::fs::read(&installed)
-            .unwrap_or_else(|error| panic!("{size}: {} ({error})", installed.display()));
-        let expected = std::fs::read(repo_root().join("crates/app/icons").join(source))
-            .expect("the app ships this icon");
-        assert_eq!(installed, expected, "the {size} slot must carry {source}");
-    }
-}
-
-/// curl creates the output file before the transfer, so a fetch that fails
-/// leaves an empty one behind — in the very slot a HiDPI launcher prefers,
-/// where it would shadow the size that did install.
-#[test]
-fn an_icon_that_cannot_be_fetched_leaves_nothing_behind() {
-    let nothing = tempfile::tempdir().expect("tempdir");
-    let tmp = run_installer_serving(nothing.path());
-    for (size, _) in ICONS {
-        let slot = tmp
-            .path()
-            .join(format!("share/icons/hicolor/{size}/apps/kendex.png"));
-        assert!(!slot.exists(), "{size}: {}", slot.display());
-    }
-}
-
-fn icon_slot(home: &Path, size: &str) -> PathBuf {
-    home.join(format!("share/icons/hicolor/{size}/apps/kendex.png"))
-}
-
-/// This script is the upgrade path too, and the icon fetches go to a host
-/// that rate-limits. Taking away the icon a previous run installed, because
-/// this run could not fetch it, leaves the person worse off than not having
-/// run the installer at all.
-#[test]
-fn a_fetch_that_fails_keeps_the_icon_an_earlier_run_installed() {
-    let nothing = tempfile::tempdir().expect("tempdir");
-    let earlier = b"an icon a previous run installed".as_slice();
-    let tmp = run_installer_over(nothing.path(), |home| {
-        for (size, _) in ICONS {
-            let slot = icon_slot(home, size);
-            std::fs::create_dir_all(slot.parent().expect("slot dir")).expect("slot");
-            std::fs::write(&slot, earlier).expect("earlier icon");
-        }
-    });
-
-    for (size, _) in ICONS {
-        let slot = icon_slot(tmp.path(), size);
-        assert_eq!(
-            std::fs::read(&slot).expect("earlier icon"),
-            earlier,
-            "{size}"
-        );
-    }
-}
-
-/// Icons someone once installed under sudo: the file cannot be overwritten
-/// and the directory cannot be written either, so neither replacing the icon
-/// nor removing it can succeed. An icon is not worth failing an install over
-/// — the app is already copied by then, and the launcher entry is not
-/// written yet.
-#[test]
-fn icons_it_can_neither_replace_nor_remove_do_not_stop_the_install() {
-    if running_as_root() {
-        // The whole scenario is built out of permissions, and none of them
-        // stop root: the icons would simply be replaced, and the failure
-        // would say nothing about the behaviour under test.
-        let _ = writeln!(
-            std::io::stderr(),
-            "installer: skipped as root — this case is made of permissions"
-        );
-        return;
-    }
-
-    let earlier = b"an icon a previous run installed".as_slice();
-    let mut locked: Vec<PathBuf> = Vec::new();
-    let tmp = run_installer_over(&repo_root(), |home| {
-        for (size, _) in ICONS {
-            let slot = icon_slot(home, size);
-            let dir = slot.parent().expect("slot dir").to_path_buf();
-            std::fs::create_dir_all(&dir).expect("slot");
-            std::fs::write(&slot, earlier).expect("earlier icon");
-            set_mode(&slot, 0o444);
-            set_mode(&dir, 0o555);
-            locked.push(dir);
-        }
-    });
-    // Declared after `tmp`, so it hands the modes back before `TempDir`
-    // tries to remove a tree it would otherwise not be allowed to.
-    let _unlocked = Unlocked(locked);
-
-    assert!(desktop_entry(&tmp).contains("StartupWMClass="));
-    for (size, _) in ICONS {
-        let slot = icon_slot(tmp.path(), size);
-        assert_eq!(
-            std::fs::read(&slot).expect("earlier icon"),
-            earlier,
-            "{size}"
-        );
-    }
 }
 
 /// Two files write a kendex desktop entry — this installer and the Arch
