@@ -62,8 +62,9 @@ pub struct UpdateRow {
     /// none, and the UI must not offer what the engine will refuse.
     pub forkable_harness: Option<HarnessId>,
     /// Whether dropping the edits can put replacement content in place:
-    /// false once the source no longer carries the package, when a discard
-    /// would leave the edited copy exactly as it is.
+    /// false once the source no longer carries the package, and false for
+    /// a derived place whose owner holds it at an older revision — either
+    /// way the discard would only bring back what is already there.
     pub can_discard: bool,
     /// Installed as a bundle member or a dependency, with no declaration
     /// of its own: whatever pulled it in owns its revision, and a fork

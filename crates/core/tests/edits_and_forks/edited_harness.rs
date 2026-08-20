@@ -165,3 +165,58 @@ fn an_edited_bundle_member_is_not_offered_a_fork() {
     assert_eq!(row.forkable_harness, None);
     assert!(row.can_discard);
 }
+
+/// A bundle member held by its bundle at an older revision: discarding
+/// the edit would restore that old copy and leave the update pending, so
+/// the row withholds the discard and leaves the move to the owner.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_held_bundle_member_with_newer_upstream_cannot_discard() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "One.");
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[bundles.starter]\ndescription = \"the set\"\nskills = [\"gh\"]\n",
+    )
+    .unwrap();
+    commit(&w.upstream, "one");
+    let one = String::from_utf8(
+        std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&w.upstream)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_OBJECT_DIRECTORY")
+            .env_remove("GIT_PREFIX")
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    declare(
+        &w,
+        &format!(
+            "[bundles.starter]\nsource = \"cat\"\nrev = \"{}\"\n",
+            one.trim()
+        ),
+    );
+    sync_and_apply(&w);
+    write_skill(&w.upstream, "gh", "Two.");
+    commit(&w.upstream, "two");
+    fs::write(skill_file(&w), "my edited version").unwrap();
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
+
+    let report = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();
+    let row = report
+        .rows
+        .iter()
+        .find(|row| row.kind == ItemKind::Skill && row.name == "gh")
+        .unwrap();
+    assert!(row.derived && row.pinned && row.update_available, "{row:?}");
+    assert!(row.blocked_by_local_edit);
+    assert!(!row.can_discard);
+}

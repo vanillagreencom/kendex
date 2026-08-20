@@ -2283,8 +2283,9 @@ export type UpdateRow = {
 	forkableHarness: HarnessId | null,
 	/**
 	 *  Whether dropping the edits can put replacement content in place:
-	 *  false once the source no longer carries the package, when a discard
-	 *  would leave the edited copy exactly as it is.
+	 *  false once the source no longer carries the package, and false for
+	 *  a derived place whose owner holds it at an older revision — either
+	 *  way the discard would only bring back what is already there.
 	 */
 	canDiscard: boolean,
 	/**

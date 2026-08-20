@@ -64,6 +64,22 @@ describe("customized places", () => {
     expect(html).toContain(">Use new version…<");
   });
 
+  it("withholds the new version from a bundle member its bundle holds back", () => {
+    const html = render([
+      row("gh", null, {
+        blockedByLocalEdit: true,
+        editedHarnesses: ["claude"],
+        forkableHarness: null,
+        derived: true,
+        pinned: true,
+        canDiscard: false,
+      }),
+    ]);
+    expect(html).not.toContain(">Keep as my own<");
+    expect(html).not.toContain(">Use new version…<");
+    expect(html).toContain("Comes with a bundle or another package");
+  });
+
   it("points edits in several tools at the package page", () => {
     const html = render([
       row("rev", null, {

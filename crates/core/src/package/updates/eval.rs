@@ -211,7 +211,11 @@ impl Eval<'_> {
             ignored: self.is_ignored(kind, name, &package.repo),
             blocked_by_local_edit: !edited_harnesses.is_empty(),
             forkable_harness: forkable_among(kind, &edited_harnesses, planned.derived),
-            can_discard: latest.is_some(),
+            // A derived place held by its owner cannot take the newer
+            // content on its own: the discard would replan the unchanged
+            // manifest, restore the old held copy, and leave the update
+            // pending — the edit gone for nothing.
+            can_discard: latest.is_some() && !(planned.derived && pinned && update_available),
             derived: planned.derived,
             edited_harnesses,
             forked,
