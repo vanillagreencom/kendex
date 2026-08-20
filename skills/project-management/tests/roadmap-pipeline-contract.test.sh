@@ -88,6 +88,8 @@ require_fixed "$plan" 'or is installed but cannot complete (no eligible target, 
 require_fixed "$plan" '`Cross-model review` field reads `unavailable — <reason>`' 'unavailable review carries its reason'
 require_fixed "$plan" '· Cross-model review: [verdict summary | unavailable — <reason> | skipped — reviewed spec | skipped — not required]' 'report template carries every cross-model review state'
 require_fixed "$plan" 'a non-major plan records `skipped — not required`' 'non-major plans report the review as not required'
+require_fixed "$plan" 'ten or more creation entries, entries spanning two or more `agent:*` domains, a listed breaking change, or `risk_assessment.level: high`' 'major is a deterministic predicate'
+require_fixed "$create" 'Each resolution is applied before conversion' 'conflict resolutions are applied, not carried as prose'
 require_fixed "$plan" 'Spec: [SPEC_PATH or "None"] — when set, the spec'"'"'s phases bound the roadmap' 'architecture review receives the spec boundary'
 require_fixed "$plan" 'In spec mode the fold stops at the spec'"'"'s boundary' 'out-of-spec findings are never folded in'
 require_fixed "$plan" 'becomes an `architecture_gaps[]` row with `recommendation: out_of_scope` — never `defer`' 'architecture-review stage uses the same out_of_scope status as the TPM'
