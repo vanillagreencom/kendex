@@ -87,6 +87,7 @@ Any output that can create an issue or change labels carries full label intent. 
 ```json
 {
   "mode": "issue",
+  "approved_at_plan_gate": false,
   "summary": {"total_input": 0, "create": 0, "valid": 0, "skip": 0, "expand": 0, "update": 0,
               "supersede": 0, "superseded": 0, "combine": 0, "cancel": 0},
   "issues": [
@@ -95,6 +96,7 @@ Any output that can create an issue or change labels carries full label intent. 
       "identifier": "[ISSUE_ID] or null",
       "title": "Issue title",
       "action": "valid|create|skip|expand|update|supersede|combine|cancel",
+      "reapprove": false,
       "target": "[OTHER_ISSUE_ID] or null",
       "project": {"current": "Name or null", "recommended": "Name", "recommended_id": "uuid"},
       "contract": {"target": "...", "creates": [], "consumes": [], "problem": "..."},
@@ -134,7 +136,7 @@ Any output that can create an issue or change labels carries full label intent. 
 | `combine` | Absorb into an existing issue |
 | `cancel` | Cancel — obsolete |
 
-Every `skip` carries a one-line `reason` naming the duplicate, the covering issue, or the creation-bar test it failed. `create_fields.labels[]` is required for `create`; `label_updates[].final_labels[]` is required when `mode` is `replace_all`. A `label_cooccurrence.missing` with no `label_updates[]` entry is treated as `mode: add` for that label's category.
+`approved_at_plan_gate` and `reapprove` travel together (roadmap-create § 4.2, audit-issues § 6): the top-level flag binds the file to a same-session plan-gate approval of this plan, and `reapprove: true` marks an entry changed since — a normalizer that drops one must drop both, or an edited entry reads as approved. Both default false/absent outside roadmap-create. Every `skip` carries a one-line `reason` naming the duplicate, the covering issue, or the creation-bar test it failed. `create_fields.labels[]` is required for `create`; `label_updates[].final_labels[]` is required when `mode` is `replace_all`. A `label_cooccurrence.missing` with no `label_updates[]` entry is treated as `mode: add` for that label's category.
 
 ### Hierarchy Field
 

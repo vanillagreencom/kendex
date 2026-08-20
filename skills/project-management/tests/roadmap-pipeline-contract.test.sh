@@ -45,7 +45,12 @@ require_fixed "$create" 'unchanged since roadmap-plan § 5 `Approve` execute as 
 require_fixed "$plan" 'a selected artifact ends this gate → § 2. Only when the disk search finds nothing, query the tracker' 'a disk artifact is not overwritten by a tracker match'
 require_fixed "$plan" 'the `@[path]` input or the § 1 disk match — classified as a SPEC' 'spec_path is set for disk-discovered specs too'
 require_fixed "$create" '"approved_at_plan_gate": [true|false]' 'carried-approval flag in the audit input'
-require_fixed "$create" 'identical to the creation set that gate presented' 'flag bound to the identical creation set'
+require_fixed "$create" 'provenance, not set equality' 'flag bound to same-session provenance'
+audit_schema="$SKILL_DIR/schemas/audit-output.md"
+require_fixed "$audit_schema" '"approved_at_plan_gate": false,' 'schema carries the carried-approval flag'
+require_fixed "$audit_schema" '"reapprove": false,' 'schema carries the per-entry reapprove field'
+require_fixed "$audit_schema" 'travel together' 'schema binds the two fields together'
+require_fixed "$audit" 'already answered for every `create` entry without `reapprove`' '§ 6 partitions by reapprove, not set equality'
 require_fixed "$create" '`Deferred`-project entries were never part of it' 'deferred filtering keeps the approved set identical'
 require_fixed "$plan" 'which never contains `Deferred`-project entries' 'plan gate presents a creation set without deferred gaps'
 require_fixed "$create" '"reapprove": true' 'changed entries are re-asked'
