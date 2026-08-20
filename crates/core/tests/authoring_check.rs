@@ -245,6 +245,7 @@ fn hook_test_suites_are_not_catalog_items() {
 /// (macOS's /var symlink, a linked project folder) must not collect VCS
 /// internals.
 #[test]
+#[cfg(unix)]
 #[allow(clippy::unwrap_used)]
 fn repo_root_exclusions_hold_under_the_given_spelling() {
     let tmp = tempfile::tempdir().unwrap();
