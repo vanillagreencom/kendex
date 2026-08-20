@@ -25,6 +25,16 @@ export const catalogKey = (catalog: Catalog): string =>
 export const subscribedKeys = (rows: MarketplaceRow[]): Set<string> =>
   new Set(rows.flatMap((row) => (row.repoKey ? [row.repoKey] : [])));
 
+/** A Community row's Subscribed marker. The directory's own flag is only
+ * a stand-in until the live subscription list has loaded; after that the
+ * list alone decides, so an unsubscribe clears the marker as surely as a
+ * subscribe sets it. */
+export const rowSubscribed = (
+  row: { repoKey: string | null; subscribed: boolean },
+  live: Set<string> | null,
+): boolean =>
+  live ? row.repoKey !== null && live.has(row.repoKey) : row.subscribed;
+
 /** Whether a [catalogKey] names a repository rather than a subscription. */
 export const isRepoKey = (key: string): boolean =>
   key.startsWith(JSON.stringify(["repo", ""]).slice(0, -3));

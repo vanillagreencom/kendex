@@ -1,10 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands, type DirectoryRow, type MarketplaceRow } from "@/bindings";
 import { useMarketplacesStore } from "./marketplaces";
-import { subscribedKeys } from "./marketplaces-shared";
+import { rowSubscribed, subscribedKeys } from "./marketplaces-shared";
 
 vi.mock("@/bindings", () => ({
-  commands: { marketplaceSubscribe: vi.fn(), marketplacesOverview: vi.fn() },
+  commands: {
+    marketplaceSubscribe: vi.fn(),
+    marketplaceUnsubscribe: vi.fn(),
+    marketplacesOverview: vi.fn(),
+  },
 }));
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), message: vi.fn(), error: vi.fn() },
@@ -80,5 +84,33 @@ describe("a Community row's Subscribed marker", () => {
 
   it("ignores path subscriptions, which are no repository", () => {
     expect(subscribedKeys([row("", null)]).size).toBe(0);
+  });
+
+  it("clears once an unsubscribe lands, whatever the directory snapshot said", async () => {
+    useMarketplacesStore.setState({
+      rows: [row("Acme/Kit", "acme/kit")],
+      loaded: true,
+    });
+    vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
+      status: "ok",
+      data: null,
+    });
+    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
+
+    const ok = await useMarketplacesStore
+      .getState()
+      .unsubscribe({ scope: "global" }, "kit", false, false);
+
+    expect(ok).toBe(true);
+    const live = subscribedKeys(useMarketplacesStore.getState().rows);
+    // The snapshot still says subscribed; the live list outranks it.
+    expect(rowSubscribed({ ...listed, subscribed: true }, live)).toBe(false);
+  });
+
+  it("falls back to the snapshot only before the live list has loaded", () => {
+    expect(rowSubscribed({ ...listed, subscribed: true }, null)).toBe(true);
   });
 });

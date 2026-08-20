@@ -42,10 +42,11 @@ pub struct CatalogSummary {
     pub subscription: Option<SubscriptionRef>,
 }
 
-/// One read of what the catalog says about itself. A bare repository is
-/// refreshed here — this is the page's first read, so what follows reads
-/// the head it just fetched — and a failed refresh serves the store with
-/// its warning rather than an empty page.
+/// One read of what the catalog says about itself. A bare repository that
+/// no readable subscription holds is refreshed here — this is the page's
+/// first read, so what follows reads the head it just fetched — and a
+/// failed refresh serves the store with its warning rather than an empty
+/// page.
 pub fn summary(env: &Env, catalog: &Catalog) -> Result<CatalogSummary> {
     let (browsed, warning, subscription) = match catalog {
         Catalog::Subscription { scope, source } => (
@@ -58,14 +59,21 @@ pub fn summary(env: &Env, catalog: &Catalog) -> Result<CatalogSummary> {
         ),
         Catalog::Repo { repo } => {
             let key = super::browsable(repo)?;
-            let resolution = crate::remote::sync(env, &key, None)?;
-            let warning = resolution.warning.clone();
-            let subscription = subscribed_as(env, &key);
-            (
-                super::open_repo(env, key, resolution)?,
-                warning,
-                subscription,
-            )
+            // A readable subscription already holds this repository: the
+            // page carries on as it, from its own store and without the
+            // network — a spelling that keys a different store entry must
+            // not turn an offline open into a failed fetch.
+            if let Some(held) = subscribed_as(env, &key) {
+                let catalog = Catalog::Subscription {
+                    scope: held.scope.clone(),
+                    source: held.source.clone(),
+                };
+                (super::open(env, &catalog)?, None, Some(held))
+            } else {
+                let resolution = crate::remote::sync(env, &key, None)?;
+                let warning = resolution.warning.clone();
+                (super::open_repo(env, key, resolution)?, warning, None)
+            }
         }
     };
     let mut counts = BTreeMap::new();

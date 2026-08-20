@@ -14,7 +14,11 @@ import {
 import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import { useCommunityStore } from "@/stores/community";
-import { subscribedKeys, useMarketplacesStore } from "@/stores/marketplaces";
+import {
+  rowSubscribed,
+  subscribedKeys,
+  useMarketplacesStore,
+} from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 import { agoLabel, DirectoryRowLine, dayOf } from "./directory-row";
 import { SkillsShSearch } from "./skillssh-search";
@@ -33,6 +37,7 @@ export function CommunityTab() {
   const goToMarketplaces = useNavStore((s) => s.goToMarketplaces);
   const goToMarketplace = useNavStore((s) => s.goToMarketplace);
   const subscriptions = useMarketplacesStore((s) => s.rows);
+  const subscriptionsLoaded = useMarketplacesStore((s) => s.loaded);
 
   const [section, setSection] = useState<"directory" | "skillssh">("directory");
   const [query, setQuery] = useState("");
@@ -44,7 +49,10 @@ export function CommunityTab() {
     void load(false);
   }, [load]);
 
-  const held = useMemo(() => subscribedKeys(subscriptions), [subscriptions]);
+  const held = useMemo(
+    () => (subscriptionsLoaded ? subscribedKeys(subscriptions) : null),
+    [subscriptions, subscriptionsLoaded],
+  );
   const tags = useMemo(
     () =>
       [...new Set((directory?.rows ?? []).flatMap((row) => row.tags))].sort(),
@@ -162,10 +170,7 @@ export function CommunityTab() {
                   <DirectoryRowLine
                     key={row.repo}
                     row={row}
-                    subscribed={
-                      row.subscribed ||
-                      (row.repoKey !== null && held.has(row.repoKey))
-                    }
+                    subscribed={rowSubscribed(row, held)}
                     onOpen={() =>
                       goToMarketplace({ by: "repo", repo: row.repo })
                     }

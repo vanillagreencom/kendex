@@ -262,3 +262,33 @@ fn an_unreachable_upstream_serves_the_store_with_a_warning() {
         "a failed refresh is said, not hidden"
     );
 }
+
+#[test]
+fn a_ready_subscription_under_another_spelling_answers_offline() {
+    let (_tmp, env, upstream) = fixture();
+    // Spelled with a capital: the same repository on GitHub, but a
+    // different store entry from the shorthand a listing hands over.
+    let spelled = "Owner/repo";
+    let owners = upstream.parent().unwrap();
+    std::os::unix::fs::symlink(owners, owners.with_file_name("Owner")).unwrap();
+    assert_ne!(
+        crate::remote::cache_key(&env, spelled),
+        crate::remote::cache_key(&env, REPO)
+    );
+    let manifest = env.global_manifest_file();
+    fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    fs::write(
+        &manifest,
+        format!("schema = 5\n[sources.tools]\nrepo = \"{spelled}\"\n"),
+    )
+    .unwrap();
+    crate::remote::sync(&env, spelled, None).unwrap();
+    fs::remove_dir_all(&upstream).unwrap();
+
+    let report = summary(&env, &repo()).unwrap();
+    assert_eq!(report.subscription.unwrap().source, "tools");
+    assert_eq!(report.counts.get("skill"), Some(&1));
+    assert_eq!(report.warning, None);
+    // The shorthand was never fetched: nothing went to the network.
+    assert!(crate::remote::cached(&env, REPO, None).unwrap().is_none());
+}
