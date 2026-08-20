@@ -1,3 +1,4 @@
+import { MinusIcon, PlusIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Appearance } from "@/bindings";
 import { commands, ZOOM } from "@/bindings";
@@ -5,6 +6,7 @@ import { AccountSection } from "@/components/account-section";
 import { PageHeader } from "@/components/page-header";
 import { RecordedDecisions } from "@/components/recorded-decisions";
 import { Section, SettingRow } from "@/components/section";
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -12,7 +14,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Slider } from "@/components/ui/slider";
 import { SAFETY_HELP } from "@/lib/copy-safety";
 import { SETTINGS_SUBTITLE } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
@@ -93,18 +94,28 @@ export function SettingsPage() {
               label="Zoom"
               description="How large everything draws. Ctrl with + or - changes it from anywhere, and Ctrl 0 returns to 100%. On a Mac, Cmd does the same."
             >
-              <div className="flex w-40 items-center gap-3">
-                <Slider
-                  value={percent}
-                  min={ZOOM.min}
-                  max={ZOOM.max}
-                  step={ZOOM.step}
-                  {...zoom.slider}
-                  aria-label="Zoom"
-                />
-                <span className="w-11 shrink-0 text-right font-mono text-xs tabular-nums text-muted-foreground">
+              <div className="flex w-40 items-center justify-end gap-2">
+                <Button
+                  variant="outline"
+                  size="icon-sm"
+                  aria-label="Zoom out"
+                  disabled={percent <= ZOOM.min}
+                  onClick={() => zoom.step(-ZOOM.step)}
+                >
+                  <MinusIcon />
+                </Button>
+                <span className="w-11 text-center font-mono text-xs tabular-nums text-muted-foreground">
                   {percent}%
                 </span>
+                <Button
+                  variant="outline"
+                  size="icon-sm"
+                  aria-label="Zoom in"
+                  disabled={percent >= ZOOM.max}
+                  onClick={() => zoom.step(ZOOM.step)}
+                >
+                  <PlusIcon />
+                </Button>
               </div>
             </SettingRow>
           </Section>

@@ -333,18 +333,20 @@ lives in one capability table read by core and UI.
   is on the webview, so the first frame is already the right size — a page
   restyle would re-lay out the app in front of the person. The range lives
   in core and reaches the UI as a generated constant. The floor and the
-  ceiling bind both the slider and the settings file — a value outside them
-  is clamped on the way in and on the way out — while the step is the
-  slider's and the shortcut's alone, so a hand-edited 137 is honoured. This is
-  also the answer to a compositor set to a fractional scale, which GTK3
-  and WebKitGTK round to a whole number: the person nudges the difference
-  back by hand.
-- **A live control resizes on every step and writes once, when the input
-  settles.** A drag, a held key, and an arrow key on the focused slider all
-  produce a stream of values; the window follows every one of them so the
-  control feels live, and the settings file is written once the stream
-  stops. Every path starts the same timer, so none of them can rewrite the
-  file per keypress. At most one save is ever in flight, and asks made
+  ceiling bind the controls and the settings file alike — a value outside
+  them is clamped on the way in and on the way out — while the step is the
+  controls' alone, so a hand-edited 137 is honoured. This is also the answer
+  to a compositor set to a fractional scale, which GTK3 and WebKitGTK round
+  to a whole number: the person nudges the difference back by hand.
+- **Zoom moves in steps, and writes once the stepping stops.** Nothing
+  offers a continuous zoom: a held `Ctrl` `+` and a repeatedly clicked
+  button are the two inputs, and both take one step per press. That is the
+  whole reason the control has buttons rather than a slider — every step
+  re-lays out the webview on the GTK thread, so a drag turned the app into
+  a flicker while a keypress never did. The window follows every step so
+  the control feels live, and the settings file is written once the steps
+  stop. Both inputs start the same timer, so neither can rewrite the file
+  per press. At most one save is ever in flight, and asks made
   while it runs collapse into a single follow-up that writes whatever is on
   screen by then, so replies can never land out of order and put back a
   size the person has already moved past. A write waits for the resize

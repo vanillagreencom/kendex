@@ -51,20 +51,27 @@ describe("zoomControls", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  const controls = () => {
-    const preview = vi.fn();
+  const controls = (start = 100) => {
+    let shown = start;
+    const preview = vi.fn((percent: number) => {
+      shown = percent;
+    });
     const save = vi.fn();
-    return { preview, save, zoom: zoomControls(preview, save) };
+    return {
+      preview,
+      save,
+      zoom: zoomControls({ current: () => shown, preview, save }),
+    };
   };
 
   it("resizes on every press and writes once the presses stop", () => {
     const { preview, save, zoom } = controls();
 
-    expect(zoom.onKeyDown(press("+"), 100)).toBe(true);
+    expect(zoom.onKeyDown(press("+"))).toBe(true);
     vi.advanceTimersByTime(ZOOM_SETTLE_MS - 1);
-    expect(zoom.onKeyDown(press("+"), 110)).toBe(true);
+    expect(zoom.onKeyDown(press("+"))).toBe(true);
     vi.advanceTimersByTime(ZOOM_SETTLE_MS - 1);
-    expect(zoom.onKeyDown(press("+"), 120)).toBe(true);
+    expect(zoom.onKeyDown(press("+"))).toBe(true);
 
     // A held key repeats faster than the size is written.
     expect(preview).toHaveBeenCalledTimes(3);
@@ -77,44 +84,59 @@ describe("zoomControls", () => {
   it("leaves a press that means something else alone", () => {
     const { preview, save, zoom } = controls();
 
-    expect(zoom.onKeyDown(press("a"), 100)).toBe(false);
+    expect(zoom.onKeyDown(press("a"))).toBe(false);
     vi.advanceTimersByTime(ZOOM_SETTLE_MS * 2);
     expect(preview).not.toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
   });
 
-  it("resizes as the slider moves and writes nothing until it stops", () => {
+  it("resizes by one step a press, and writes once the clicking stops", () => {
     const { preview, save, zoom } = controls();
 
-    zoom.slider.onValueChange(110);
-    zoom.slider.onValueChange(120);
-
-    expect(preview).toHaveBeenCalledTimes(2);
-    expect(preview).toHaveBeenLastCalledWith(120);
-    vi.advanceTimersByTime(ZOOM_SETTLE_MS * 2);
-    expect(save).not.toHaveBeenCalled();
-  });
-
-  /// An arrow key on the focused slider commits once per press, so the
-  /// slider needs the same settle the shortcut has.
-  it("writes once for a run of slider commits", () => {
-    const { save, zoom } = controls();
-
-    zoom.slider.onValueCommitted();
+    zoom.step(ZOOM.step);
     vi.advanceTimersByTime(ZOOM_SETTLE_MS - 1);
-    zoom.slider.onValueCommitted();
+    zoom.step(ZOOM.step);
     vi.advanceTimersByTime(ZOOM_SETTLE_MS - 1);
-    zoom.slider.onValueCommitted();
+    zoom.step(-ZOOM.step);
+
+    expect(preview.mock.calls.map(([percent]) => percent)).toEqual([
+      110, 120, 110,
+    ]);
+    // Clicked faster than the file is written, exactly as a held key is.
     expect(save).not.toHaveBeenCalled();
 
     vi.advanceTimersByTime(ZOOM_SETTLE_MS);
     expect(save).toHaveBeenCalledTimes(1);
   });
 
+  it("stops at the ends of the range rather than running past them", () => {
+    const top = controls(ZOOM.max);
+    top.zoom.step(ZOOM.step);
+    expect(top.preview).toHaveBeenLastCalledWith(ZOOM.max);
+
+    const bottom = controls(ZOOM.min);
+    bottom.zoom.step(-ZOOM.step);
+    expect(bottom.preview).toHaveBeenLastCalledWith(ZOOM.min);
+  });
+
+  /// Two presses inside one render frame both have to count: reading the
+  /// size back from what the page last drew loses the second.
+  it("counts every press, even two before anything redraws", () => {
+    const { preview, zoom } = controls();
+
+    zoom.step(ZOOM.step);
+    zoom.step(ZOOM.step);
+    zoom.step(ZOOM.step);
+
+    expect(preview.mock.calls.map(([percent]) => percent)).toEqual([
+      110, 120, 130,
+    ]);
+  });
+
   it("writes a pending size at once when the app is going away", () => {
     const { save, zoom } = controls();
 
-    zoom.onKeyDown(press("+"), 100);
+    zoom.onKeyDown(press("+"));
     zoom.flush();
 
     expect(save).toHaveBeenCalledTimes(1);
@@ -127,7 +149,7 @@ describe("zoomControls", () => {
     const { save, zoom } = controls();
 
     zoom.flush();
-    zoom.onKeyDown(press("+"), 100);
+    zoom.onKeyDown(press("+"));
     vi.advanceTimersByTime(ZOOM_SETTLE_MS);
     zoom.flush();
 

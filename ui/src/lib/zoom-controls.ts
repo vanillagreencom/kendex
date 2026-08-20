@@ -41,42 +41,44 @@ export function zoomForKey(
 
 /**
  * How long after the last input the size is written. A held key repeats
- * every few tens of milliseconds and a slider under an arrow key commits
- * once per repeat, so this has to sit well past a repeat interval — see the
- * bound the test holds it to.
+ * every few tens of milliseconds, and a button can be clicked nearly as
+ * fast, so this has to sit well past a repeat interval — see the bound the
+ * test holds it to.
  */
 export const ZOOM_SETTLE_MS = 300;
 
 /**
  * The zoom controls, wired to whatever changes and stores the size.
  *
- * Every input here is a stream: a drag, a held `Ctrl` `+`, an arrow key on
- * the focused slider. The window follows all of them so the control feels
- * live, and the size is written once the stream stops — one settle for
- * every input, so no path rewrites the settings file per keypress.
+ * Every input here comes in steps, and can come fast: a held `Ctrl` `+`, a
+ * repeatedly clicked button. The window follows every step so the control
+ * feels live, and the size is written once the steps stop — one settle for
+ * every input, so no path rewrites the settings file per press.
  */
 export interface ZoomControls {
   /** Whether the press was a zoom press, so the caller can keep it from
    *  the page. */
-  onKeyDown: (event: ZoomShortcutEvent, current: number) => boolean;
-  /** Spread onto the slider. One object rather than two props, so half of
-   *  the wiring cannot go missing: without it the slider moves nothing at
-   *  all, which is seen the moment anyone drags it. */
-  slider: {
-    onValueChange: (percent: number) => void;
-    onValueCommitted: () => void;
-  };
+  onKeyDown: (event: ZoomShortcutEvent) => boolean;
+  /** One press of the zoom-out or zoom-in button, `by` being the step and
+   *  its sign the direction. */
+  step: (by: number) => void;
   /** Write a pending size now rather than waiting out the settle — for the
    *  app going away, which is the one moment the timer would never fire. */
   flush: () => void;
 }
 
-export function zoomControls(
-  preview: (percent: number) => void,
-  save: () => void,
-): ZoomControls {
+export function zoomControls(actions: {
+  /** The size on screen right now. Read at the moment of the press, never
+   *  handed in by the caller: a button reading a rendered prop loses a
+   *  click whenever two land inside one render. */
+  current: () => number;
+  preview: (percent: number) => void;
+  save: () => void;
+}): ZoomControls {
+  const { current, preview, save } = actions;
   let settle: ReturnType<typeof setTimeout> | undefined;
-  const commitWhenSettled = () => {
+  const change = (next: number) => {
+    preview(next);
     clearTimeout(settle);
     settle = setTimeout(() => {
       settle = undefined;
@@ -84,14 +86,15 @@ export function zoomControls(
     }, ZOOM_SETTLE_MS);
   };
   return {
-    onKeyDown(event, current) {
-      const next = zoomForKey(event, current);
+    onKeyDown(event) {
+      const next = zoomForKey(event, current());
       if (next === null) return false;
-      preview(next);
-      commitWhenSettled();
+      change(next);
       return true;
     },
-    slider: { onValueChange: preview, onValueCommitted: commitWhenSettled },
+    step(by) {
+      change(clamp(current() + by));
+    },
     flush() {
       if (settle === undefined) return;
       clearTimeout(settle);

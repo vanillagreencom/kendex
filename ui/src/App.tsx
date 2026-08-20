@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { Toaster } from "sonner";
-import { commands, ZOOM } from "@/bindings";
+import { commands } from "@/bindings";
 import { ErrorDialog } from "@/components/error-dialog";
 import { NavBar } from "@/components/nav-bar";
 import { Sidebar } from "@/components/sidebar";
@@ -54,9 +54,7 @@ function useAppearance() {
 function useZoomShortcuts() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      const current =
-        useSettingsStore.getState().settings?.zoom ?? ZOOM.default;
-      if (zoom.onKeyDown(event, current)) event.preventDefault();
+      if (zoom.onKeyDown(event)) event.preventDefault();
     };
     // A size chosen and then abandoned inside the settle window would die
     // with the window; leaving is the last chance to write it.

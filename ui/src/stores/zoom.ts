@@ -1,3 +1,4 @@
+import { ZOOM } from "@/bindings";
 import { zoomControls } from "@/lib/zoom-controls";
 import { useSettingsStore } from "./settings";
 
@@ -10,7 +11,8 @@ import { useSettingsStore } from "./settings";
  * holding them, so it needs no React lifetime and both consumers can simply
  * import it.
  */
-export const zoom = zoomControls(
-  (percent) => void useSettingsStore.getState().setZoom(percent),
-  () => void useSettingsStore.getState().saveZoom(),
-);
+export const zoom = zoomControls({
+  current: () => useSettingsStore.getState().settings?.zoom ?? ZOOM.default,
+  preview: (percent) => void useSettingsStore.getState().setZoom(percent),
+  save: () => void useSettingsStore.getState().saveZoom(),
+});
