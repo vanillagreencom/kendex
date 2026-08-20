@@ -174,11 +174,12 @@ neither a parent nor sub-issues — otherwise skip this task entirely (an
 In Progress or In Review trigger from a re-triage pass is never bundled).
 Search open, unstarted issues (Triage, Backlog, Todo) of the SAME team and
 SAME project that likewise have no parent, no sub-issues, and carry an
-agent:* label — excluding pipeline-created issues under 10 minutes old
-(ones whose description opens with a `**Source**:` or `**Research**:`
-line), because pipeline creates attach parents and blocking relations after
-the create; human-filed issues of any age, and the trigger, stay eligible,
-so a creation-time pass and its leader handoff can still bundle. Evaluation order for the boundary rule: FIRST pick the tentative bundle —
+agent:* label — excluding companions under 10 minutes old, whatever their
+body looks like: every create-then-link route attaches parents and blocking
+relations after the create. Exempt are the trigger and any issue named in a
+`bundle-handoff from <ID>` comment on the trigger (see the guard below);
+two human issues filed within ten minutes of each other are caught by
+Loop 3's companion check instead. Evaluation order for the boundary rule: FIRST pick the tentative bundle —
 the trigger plus the one to four same-PR companions you would actually
 parent — then repeatedly drop any member (including the trigger) that
 blocks or is blocked by any issue outside that tentative bundle, until a
@@ -201,7 +202,8 @@ Duplicate-bundle guard (concurrent runs have no lock): every member of the
 final bundle already passes the preconditions above, and the LEADER is
 simply its oldest member. If the triggering
 issue is NOT the leader, do not create anything: apply the "re-triage"
-label to the leader and stop this task — the leader's re-triage pass owns
+label to the leader, comment `bundle-handoff from <ID>` (your own id) on
+it, and stop this task — the leader's re-triage pass owns
 the bundle (its own creation-time pass ran before the younger companions
 existed, so this re-trigger is what makes bundling actually happen).
 If the triggering issue IS the leader: immediately before creating the
@@ -212,9 +214,8 @@ Perfect mutual exclusion is impossible without locks; these rechecks bound
 the window, and an accidental duplicate parent is flagged by the next
 sweep rather than compounded.
 
-Parent issue format (from the project-management skill's
-parent-issue-template — keep this embedded copy faithful to it; omit any
-header line with no value):
+Parent issue format (keep faithful to the project-management skill's
+parent-issue-template; omit any header line with no value):
 
   **Research**: [RESEARCH_REF — only when a child carries one]
   **Decision [DXXX]**: [DECISION_PATH — only when a child carries one]

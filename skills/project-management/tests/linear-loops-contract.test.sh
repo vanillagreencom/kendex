@@ -49,7 +49,9 @@ require_fixed '(b) search for an existing coordination parent already covering a
 require_fixed 'repeatedly drop any member (including the trigger)' 'cross-boundary pruning is iterative'
 require_fixed 'pass drops nobody' 'pruning runs to a fixed point'
 require_fixed 'If the trigger itself drops, skip this task' 'a dropped trigger skips bundling'
-require_fixed 'excluding pipeline-created issues under 10 minutes old' 'in-flight pipeline issues are never bundle candidates'
-require_fixed 'so a creation-time pass and its leader handoff can still bundle' 'creation-time bundling and the leader handoff survive the age rule'
+require_fixed 'excluding companions under 10 minutes old, whatever their' 'fresh companions are never bundle candidates, whatever the create route'
+require_fixed 'comment `bundle-handoff from <ID>` (your own id) on' 'the leader handoff names the younger issue'
+require_fixed '`bundle-handoff from <ID>` comment on the trigger' 'handoff-named issues are exempt from the age rule'
+# from <ID>` comment on the trigger' 'handoff-named issues are exempt from the age rule'
 
 echo "all pass"
