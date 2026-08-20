@@ -3,6 +3,7 @@
 //! someone opens their launcher, so it is asserted here instead.
 #![cfg(target_os = "linux")]
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -27,6 +28,29 @@ fn set_mode(path: &Path, mode: u32) {
     std::fs::set_permissions(path, permissions).expect("set mode");
 }
 
+/// Read off a file this process just made, rather than through a new
+/// dependency: its owner is whoever this process is.
+fn running_as_root() -> bool {
+    let probe = tempfile::NamedTempFile::new().expect("probe file");
+    let made = probe.as_file().metadata().expect("probe metadata");
+    std::os::unix::fs::MetadataExt::uid(&made) == 0
+}
+
+/// Hands the modes back however the test ends. A directory left unwritable
+/// by a failing assertion is one `TempDir` cannot clean up, so the run that
+/// most needs a tidy machine would be the one to litter it.
+struct Unlocked(Vec<PathBuf>);
+
+impl Drop for Unlocked {
+    fn drop(&mut self) {
+        for dir in &self.0 {
+            if std::fs::metadata(dir).is_ok() {
+                set_mode(dir, 0o755);
+            }
+        }
+    }
+}
+
 fn write_stub(dir: &Path, name: &str, script: &str) {
     let path = dir.join(name);
     std::fs::write(&path, script).expect("write stub");
@@ -35,10 +59,10 @@ fn write_stub(dir: &Path, name: &str, script: &str) {
 
 /// Stand in for the network, down to the details that matter. The release
 /// lookup answers with a tag; a raw file URL is served out of this working
-/// tree, and a missing path fails the way `curl -f` fails — empty file
-/// created, exit 22 — so neither a mistyped asset nor the leftover it
-/// leaves can pass unnoticed. Anything else is a release download and gets
-/// a runnable placeholder.
+/// tree, and a missing path fails the way the worst `curl -f` ever did —
+/// empty file created, exit 22 — so neither a mistyped asset nor a leftover
+/// husk can pass unnoticed. Anything else is a release download and gets a
+/// runnable placeholder.
 const CURL: &str = r#"#!/usr/bin/env bash
 out=""
 url=""
@@ -54,8 +78,11 @@ case "$url" in
   *raw.githubusercontent.com/*)
     path="${url#*raw.githubusercontent.com/}"
     path="${path#*/}"; path="${path#*/}"; path="${path#*/}"
-    # curl opens the output file before it knows the request failed, and
-    # leaves the empty one behind on -f; the installer has to cope with that.
+    # Deliberate pessimism, not a description of curl 8.x, which leaves an
+    # existing file untouched on -f and creates none where there was none.
+    # Older curl did leave an empty file behind, and an installer that
+    # cannot cope with that is one bad enough curl away from planting a
+    # broken icon in a slot a launcher prefers.
     : > "$out"
     [ -f "__ROOT__/$path" ] || exit 22
     cp "__ROOT__/$path" "$out" ;;
@@ -228,17 +255,33 @@ fn a_fetch_that_fails_keeps_the_icon_an_earlier_run_installed() {
 /// written yet.
 #[test]
 fn icons_it_can_neither_replace_nor_remove_do_not_stop_the_install() {
+    if running_as_root() {
+        // The whole scenario is built out of permissions, and none of them
+        // stop root: the icons would simply be replaced, and the failure
+        // would say nothing about the behaviour under test.
+        let _ = writeln!(
+            std::io::stderr(),
+            "installer: skipped as root — this case is made of permissions"
+        );
+        return;
+    }
+
     let earlier = b"an icon a previous run installed".as_slice();
+    let mut locked: Vec<PathBuf> = Vec::new();
     let tmp = run_installer_over(&repo_root(), |home| {
         for (size, _) in ICONS {
             let slot = icon_slot(home, size);
-            let dir = slot.parent().expect("slot dir");
-            std::fs::create_dir_all(dir).expect("slot");
+            let dir = slot.parent().expect("slot dir").to_path_buf();
+            std::fs::create_dir_all(&dir).expect("slot");
             std::fs::write(&slot, earlier).expect("earlier icon");
             set_mode(&slot, 0o444);
-            set_mode(dir, 0o555);
+            set_mode(&dir, 0o555);
+            locked.push(dir);
         }
     });
+    // Declared after `tmp`, so it hands the modes back before `TempDir`
+    // tries to remove a tree it would otherwise not be allowed to.
+    let _unlocked = Unlocked(locked);
 
     assert!(desktop_entry(&tmp).contains("StartupWMClass="));
     for (size, _) in ICONS {
@@ -248,8 +291,6 @@ fn icons_it_can_neither_replace_nor_remove_do_not_stop_the_install() {
             earlier,
             "{size}"
         );
-        // Handed back so the temp directory can be cleaned up.
-        set_mode(slot.parent().expect("slot dir"), 0o755);
     }
 }
 

@@ -42,6 +42,17 @@ fn said(value: Option<&str>) -> Option<&str> {
     value.filter(|said| !said.trim().is_empty())
 }
 
+/// The same for a directory-valued variable, whose bytes need not be UTF-8.
+/// An exported-but-empty one matters here: `Path::new("")` has no components,
+/// so every path starts with it.
+fn said_dir(value: Option<&OsStr>) -> Option<&Path> {
+    let dir = value?;
+    if dir.is_empty() || dir.to_str().is_some_and(|dir| dir.trim().is_empty()) {
+        return None;
+    }
+    Some(Path::new(dir))
+}
+
 /// Whether a Wayland compositor is there to talk to. `XDG_SESSION_TYPE` is
 /// the usual answer but is not always set — a compositor started from a tty
 /// leaves it saying `tty` — and a Wayland socket to connect to settles it
@@ -119,12 +130,18 @@ fn plan(session: Session<'_>) -> Vec<(&'static str, String)> {
     vars
 }
 
-/// Whether this plan is overriding the bundle's pinned backend, read off
-/// the plan rather than worked out again: `plan` only reaches for the
-/// ordered list when nobody named a backend, so the person who did name one
-/// is never told their choice was ignored.
+/// Whether this plan is overriding the bundle's pinned backend.
+///
+/// What is being set comes off the plan rather than being worked out a
+/// second time, but the plan alone cannot say why: a person who names
+/// `wayland,x11` themselves produces the same entry the default does, and
+/// telling them the bundle's pin was overridden would be telling them their
+/// own choice was ignored. So the question of whether anybody named one is
+/// asked here, and the message names the AppImage, so the AppImage is asked
+/// about rather than inferred.
 fn overriding_the_bundle(session: Session<'_>, vars: &[(&'static str, String)]) -> bool {
     session.in_appimage
+        && chosen_backend(session).is_none()
         && vars
             .iter()
             .any(|(name, value)| *name == "GDK_BACKEND" && value == WAYLAND_THEN_X11)
@@ -133,20 +150,23 @@ fn overriding_the_bundle(session: Session<'_>, vars: &[(&'static str, String)]) 
 /// Whether the bundled GTK hook has already been through this environment,
 /// so `GDK_BACKEND` is the bundle's word rather than the person's.
 ///
-/// `APPIMAGE` says so on its own: nothing but the AppImage runtime sets it.
-/// `APPDIR` does not — every AppImage's AppRun exports it and every process
-/// it starts inherits it, so a `.deb` launched from a terminal that itself
-/// came out of an AppImage carries one. It only says anything about *this*
-/// process when this process is the one living inside that directory, which
-/// is the hand-extracted AppDir the hook writes `APPDIR` for.
+/// Neither variable answers this on its own. An AppImage's AppRun exports
+/// both `APPIMAGE` and `APPDIR`, and every process it starts inherits both,
+/// so a terminal opened from one hands a stranger's pair to every `.deb`
+/// and source build launched from it. What separates those cases is where
+/// this executable lives: `APPDIR` is the directory a bundle unpacks to —
+/// the mount point of a running AppImage, or the tree a hand-extracted one
+/// sits in — and a process inside it really is inside that bundle.
+///
+/// Only when there is no executable to place does a bare variable get the
+/// last word, so a genuine bundle that cannot read its own path is not
+/// quietly demoted to a half-size window.
 fn in_appimage(appimage: Option<&OsStr>, appdir: Option<&OsStr>, exe: Option<&Path>) -> bool {
-    if appimage.is_some() {
-        return true;
-    }
-    let (Some(appdir), Some(exe)) = (appdir, exe) else {
-        return false;
+    let appdir = said_dir(appdir);
+    let Some(exe) = exe else {
+        return appimage.is_some() || appdir.is_some();
     };
-    exe.starts_with(Path::new(appdir))
+    appdir.is_some_and(|dir| exe.starts_with(dir))
 }
 
 /// Relaunch with the fixes in the environment. Setting them in this process

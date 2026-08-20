@@ -161,23 +161,86 @@ fn the_relaunched_process_decides_nothing_a_second_time() {
 fn only_an_ignored_bundle_pin_is_explained() {
     let explained = |session| overriding_the_bundle(session, &plan(session));
     assert!(explained(appimage()));
-    // Their own choice was heard, so there is nothing to apologise for.
-    assert!(!explained(Session {
-        ours: Some("wayland"),
-        ..appimage()
-    }));
+    // Their own choice was heard, so there is nothing to apologise for —
+    // including when they named the very value the default would have used,
+    // which is the one the plan cannot tell apart on its own.
+    for chosen in ["wayland", "wayland,x11"] {
+        assert!(
+            !explained(Session {
+                ours: Some(chosen),
+                ..appimage()
+            }),
+            "{chosen}"
+        );
+    }
     assert!(!explained(wayland()));
 }
 
+/// A running AppImage: the runtime mounts it and both variables point at
+/// that mount, which is where the executable is.
 #[test]
-fn the_appimage_runtime_says_so_by_itself() {
-    let exe = Path::new("/usr/bin/kendex-app");
+fn a_mounted_appimage_is_recognised_by_where_it_runs_from() {
+    assert!(in_appimage(
+        Some(OsStr::new("/home/me/kendex.AppImage")),
+        Some(OsStr::new("/tmp/.mount_kendexAbc")),
+        Some(Path::new("/tmp/.mount_kendexAbc/usr/bin/kendex-app"))
+    ));
+    assert!(!in_appimage(
+        None,
+        None,
+        Some(Path::new("/usr/bin/kendex-app"))
+    ));
+}
+
+/// The other half of the inherited-variable problem: the runtime exports
+/// APPIMAGE into the same environment every child gets, so it says no more
+/// about this process than APPDIR does.
+#[test]
+fn a_stray_appimage_does_not_make_this_an_appimage() {
+    let installed = Path::new("/usr/bin/kendex-app");
+    assert!(!in_appimage(
+        Some(OsStr::new("/home/me/other.AppImage")),
+        None,
+        Some(installed)
+    ));
+    assert!(!in_appimage(
+        Some(OsStr::new("/home/me/other.AppImage")),
+        Some(OsStr::new("/tmp/.mount_otherXyz")),
+        Some(installed)
+    ));
+}
+
+/// Neither variable can be measured against a path we do not have, and a
+/// genuine bundle is not worth demoting to half size over it.
+#[test]
+fn a_bundle_that_cannot_read_its_own_path_is_still_a_bundle() {
     assert!(in_appimage(
         Some(OsStr::new("/home/me/kendex.AppImage")),
         None,
-        Some(exe)
+        None
     ));
-    assert!(!in_appimage(None, None, Some(exe)));
+    assert!(in_appimage(
+        None,
+        Some(OsStr::new("/home/me/kendex.AppDir")),
+        None
+    ));
+    assert!(!in_appimage(None, None, None));
+}
+
+/// An exported-but-empty APPDIR is every path's prefix, so it has to be
+/// read as unset rather than as a directory containing everything.
+#[test]
+fn an_empty_appdir_is_not_a_directory_this_lives_in() {
+    for empty in ["", "   "] {
+        assert!(
+            !in_appimage(
+                None,
+                Some(OsStr::new(empty)),
+                Some(Path::new("/usr/bin/kendex-app"))
+            ),
+            "{empty:?}"
+        );
+    }
 }
 
 /// Every AppImage's AppRun exports APPDIR and everything it starts
@@ -203,21 +266,26 @@ fn a_stray_appdir_does_not_make_this_an_appimage() {
         Some(extracted),
         Some(Path::new("/home/me/kendex.AppDirectory/usr/bin/kendex-app"))
     ));
-    assert!(!in_appimage(None, Some(extracted), None));
 }
 
-/// The whole point of the narrower signal: a deb that inherited APPDIR
-/// must still treat GDK_BACKEND as the person's word.
+/// The whole point of the narrower signal: a deb launched from a terminal
+/// that came out of an AppImage inherits both variables, and must still
+/// treat GDK_BACKEND as the person's word.
 #[test]
-fn a_deb_that_inherited_appdir_keeps_the_backend_the_person_set() {
-    let session = Session {
-        in_appimage: in_appimage(
-            None,
-            Some(OsStr::new("/home/me/kendex.AppDir")),
-            Some(Path::new("/usr/bin/kendex-app")),
+fn a_deb_that_inherited_the_variables_keeps_the_backend_the_person_set() {
+    for (appimage, appdir) in [
+        (Some(OsStr::new("/home/me/other.AppImage")), None),
+        (None, Some(OsStr::new("/tmp/.mount_otherXyz"))),
+        (
+            Some(OsStr::new("/home/me/other.AppImage")),
+            Some(OsStr::new("/tmp/.mount_otherXyz")),
         ),
-        gdk: Some("x11"),
-        ..wayland()
-    };
-    assert_eq!(backend(session), None);
+    ] {
+        let session = Session {
+            in_appimage: in_appimage(appimage, appdir, Some(Path::new("/usr/bin/kendex-app"))),
+            gdk: Some("x11"),
+            ..wayland()
+        };
+        assert_eq!(backend(session), None, "{appimage:?} {appdir:?}");
+    }
 }

@@ -317,8 +317,9 @@ lives in one capability table read by core and UI.
   bundled GTK hook pins `GDK_BACKEND=x11`, which puts the window on
   XWayland, where a Wayland compositor reports a scale of 1 while driving
   the display at 2 — the whole app then draws at half size. So the app
-  reads the session and relaunches itself once with `GDK_BACKEND` and the
-  WebKit DMABUF workaround set (`crates/app/src/launch_env.rs`); the
+  reads the session and relaunches itself once with whichever of
+  `GDK_BACKEND` and the WebKit DMABUF workaround that session needs
+  (`crates/app/src/launch_env.rs`), and not at all when it needs neither; the
   environment is never rewritten in place, because the workspace forbids
   `unsafe`. The whole decision is one pure function of the strings the
   environment holds, so every case is testable without a display or a

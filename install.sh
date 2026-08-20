@@ -97,7 +97,10 @@ install_icon() {
   local dir=$1 source=$2 size file
   size=${dir%/apps}
   size=${size##*/}
-  file="$(mktemp)" || return 0
+  if ! file="$(mktemp)"; then
+    echo "install.sh: nowhere to download to; skipped the $size icon." >&2
+    return 0
+  fi
   if ! curl -fsSL --proto '=https' -o "$file" "$source"; then
     echo "install.sh: no $size icon this time; kendex keeps the one it has." >&2
   elif ! { mkdir -p "$dir" && install -m 0644 "$file" "$dir/kendex.png"; }; then
