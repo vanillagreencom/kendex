@@ -10,7 +10,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
-import { UpdateRowView } from "@/components/update-row";
+import { UpdatesTable } from "@/components/updates-table";
 import {
   CHECK_FOR_UPDATES_LABEL,
   hiddenUpdatesLabel,
@@ -112,15 +112,7 @@ export function UpdatesPage() {
               {UPDATES_EMPTY_BODY}
             </EmptyState>
           ) : (
-            <div className="divide-y">
-              {visible.map((row) => (
-                <UpdateRowView
-                  key={`${row.kind}:${row.name}:${JSON.stringify(row.scope)}`}
-                  row={row}
-                  onIgnore={setConfirmIgnore}
-                />
-              ))}
-            </div>
+            <UpdatesTable rows={visible} onIgnore={setConfirmIgnore} />
           )}
           {warnings.length > 0 ? (
             <div className="mt-8">
@@ -149,13 +141,8 @@ export function UpdatesPage() {
                 {hiddenUpdatesLabel(hidden.length)}
               </button>
               {showHidden ? (
-                <div className="mt-2 divide-y opacity-80">
-                  {hidden.map((row) => (
-                    <UpdateRowView
-                      key={`${row.kind}:${row.name}:${JSON.stringify(row.scope)}`}
-                      row={row}
-                    />
-                  ))}
+                <div className="mt-2 opacity-80">
+                  <UpdatesTable rows={hidden} />
                 </div>
               ) : null}
             </div>

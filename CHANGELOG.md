@@ -29,6 +29,11 @@ changes carry a **Breaking** call-out with their migration note inline.
 
 ### Changed
 
+- The Updates page is a table. Column headers say what each column is —
+  package, type, version, auto-update — so a row no longer repeats "Update
+  automatically" beside its toggle, the type is written out instead of
+  being only an icon, and the actions line up on the right with Update as
+  the clear one to press.
 - The app uses the Geist typeface, with titles and navigation in Geist Mono
   to match the website.
 - **Breaking**: the default Homebrew install is now the app —

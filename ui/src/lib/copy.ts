@@ -178,7 +178,12 @@ export const UPDATES_UNCHECKED_TITLE = "Couldn't be checked";
 export const REMOVED_UPSTREAM_TAG = "No longer in its source";
 export const UPDATE_ALL_LABEL = "Update all";
 export const CHECK_FOR_UPDATES_LABEL = "Check for updates";
-export const AUTO_UPDATE_LABEL = "Update automatically";
+export const AUTO_UPDATE_COLUMN = "Auto-update";
+export const autoUpdateLabel = (name: string): string =>
+  `Update ${name} automatically`;
+export const UPDATES_NAME_COLUMN = "Package";
+export const UPDATES_TYPE_COLUMN = "Type";
+export const UPDATES_VERSION_COLUMN = "Version";
 export const IGNORE_UPDATES_LABEL = "Stop notifying…";
 export const ignoreConfirmTitle = (name: string): string =>
   `Stop notifying about ${name}?`;
