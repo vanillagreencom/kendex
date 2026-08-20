@@ -119,7 +119,7 @@ For a major feature planned without an already-reviewed spec, also run the `seco
 
 ## 5. Present and Approve
 
-Render ISSUES from `organized_issues[]` entries with `action: "create"` only — `skip` entries (TPM duplicates, creation-bar failures, user removals) render under DECLINED, and `project: "Deferred"` entries under ARCHITECTURE GAPS with Recommendation `defer` — so the table is exactly the creation set the approval binds. Render every `cross_project_findings.conflicts[]` entry in the Conflicts table — a resolution the user has not seen cannot be carried.
+Render ISSUES from `organized_issues[]` creation-bearing entries only — `action: "create"` and `"supersede"` (the replacement; its cancellation also appears under EXISTING WORK AFFECTED) — `skip` entries (TPM duplicates, creation-bar failures, user removals) render under DECLINED, and `project: "Deferred"` entries under ARCHITECTURE GAPS with Recommendation `defer` — so the table is exactly the creation set the approval binds. Render every `cross_project_findings.conflicts[]` entry in the Conflicts table — a resolution the user has not seen cannot be carried.
 
 <output_format>
 
