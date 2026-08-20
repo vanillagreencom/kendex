@@ -13,7 +13,7 @@ Ask only for the details that are missing: title, expected outcome, tracker, pro
 
 ## 2. Create
 
-Build and validate the complete label set against the live inventory and the project taxonomy first (the project-management skill's `references/labels.md` preflight) — a Backlog-born issue gets no janitor pass, so it must leave this step fully triaged. For the same reason, search existing issues (all states) for the same problem or component change first — the janitor's duplicate check never runs on it — and flag a likely duplicate to the user (related relation + comment) instead of creating blind.
+Build and validate the complete label set against the live inventory and the project taxonomy first (the project-management skill's label preflight) — a Backlog-born issue gets no janitor pass, so it must leave this step fully triaged. For the same reason, search existing issues (all states) for the same problem or component change first — the janitor's duplicate check never runs on it — and flag a likely duplicate to the user (related relation + comment) instead of creating blind.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues create --state "Backlog" --title "[TITLE]" --description "[BODY]" --project "[PROJECT]" --labels "[LABELS]" --format=ids
