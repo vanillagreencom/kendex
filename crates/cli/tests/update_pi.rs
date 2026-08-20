@@ -200,3 +200,44 @@ fn a_package_no_source_declares_is_reported_not_updated() {
     let notes = String::from_utf8_lossy(&output.stderr);
     assert!(notes.contains("no longer ships pi-extensions"), "{notes}");
 }
+
+/// The kendex catalog shelves scoped packages under short directories —
+/// `pi-extensions/pi-hooks/` registering `@vanillagreen/pi-hooks`. The
+/// declaration names the package, so the resolver falls back to the
+/// package.json names when no directory matches the declared name.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_scoped_name_resolves_a_short_directory_by_package_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project = tmp.path().join("dev/app");
+    write(
+        &project.join("kendex.toml"),
+        "schema = 5\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.\"@vanillagreen/pi-hooks\"]\nsource = \"cat\"\n",
+    );
+    write(
+        &project.join("catalog/pi-extensions/pi-hooks/package.json"),
+        "{\"name\": \"@vanillagreen/pi-hooks\", \"version\": \"1.1.0\"}\n",
+    );
+    write(
+        &project.join(".pi/packages/@vanillagreen/pi-hooks/package.json"),
+        "{\"name\": \"@vanillagreen/pi-hooks\", \"version\": \"1.0.0\"}\n",
+    );
+
+    let output = kendex(tmp.path(), &project, &["update-pi", "--check"]);
+    assert!(output.status.success());
+    let plan = String::from_utf8_lossy(&output.stdout);
+    assert!(!plan.contains("no declared source"), "{plan}");
+    assert!(!plan.contains("no longer ships"), "{plan}");
+    assert!(plan.contains("stale"), "{plan}");
+
+    let output = kendex(tmp.path(), &project, &["update-pi"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let updated =
+        fs::read_to_string(project.join(".pi/packages/@vanillagreen/pi-hooks/package.json"))
+            .unwrap();
+    assert!(updated.contains("1.1.0"), "{updated}");
+}
