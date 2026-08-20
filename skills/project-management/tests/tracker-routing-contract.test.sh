@@ -102,11 +102,13 @@ if [[ -f "$start_new" ]]; then
   start_create_cmd="$(extract "$start_new" 'issues create' '^```$' start-create-cmd)" || fail "could not extract the start-new create command"
   grep -Fq -- '--state "Backlog"' "$start_create_cmd" || fail 'start-new create does not pass --state "Backlog"'
   require_fixed "$start_new" 'validate the complete label set' 'start-new preflights labels before a Backlog create'
+  require_fixed "$start_new" 'search existing issues (all states) for the same problem' 'start-new dedupes before a Backlog create'
 fi
 if [[ -f "$plan_issues" ]]; then
   plan_create_cmd="$(extract "$plan_issues" 'issues create' '^```$' plan-create-cmd)" || fail "could not extract the plan-issues create command"
   grep -Fq -- '--state "Backlog"' "$plan_create_cmd" || fail 'plan-issues create does not pass --state "Backlog"'
   require_fixed "$plan_issues" 'validate the complete label set' 'plan-issues preflights labels before a Backlog create'
+  require_fixed "$plan_issues" 'search existing issues (all states) for the same problem' 'plan-issues dedupes before a Backlog create'
 fi
 if [[ -f "$merge_pr" ]]; then
   merge_create_cmd="$(extract "$merge_pr" 'issues create' '^```$' merge-create-cmd)" || fail "could not extract the merge-pr rebundle create command"
