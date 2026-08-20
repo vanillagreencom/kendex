@@ -67,11 +67,12 @@ changes carry a **Breaking** call-out with their migration note inline.
 - The Linux app draws at the right size on a HiDPI Wayland display. The
   AppImage always ran through XWayland, which reports a scale of 1 while the
   compositor drives the display at 2, so every element came out at half its
-  size. The app now opens as a native Wayland client and falls back to X11
-  if the Wayland backend cannot start. `GDK_SCALE` and `GDK_DPI_SCALE` are
+  size. The app now opens as a native Wayland client, falling back to X11 if
+  the Wayland display cannot be opened. `GDK_SCALE` and `GDK_DPI_SCALE` are
   never touched, and a `GDK_BACKEND` you set is still yours — except inside
-  the AppImage, where the bundle overwrites it before kendex starts and
-  `KENDEX_GDK_BACKEND` is the way to ask for a particular backend.
+  the AppImage, where the bundle overwrites it before kendex starts, so
+  `KENDEX_GDK_BACKEND` is how you choose a backend there. Set it to `x11` if
+  your machine turns out to need what the bundle was pinning.
 - Saving two things at the same moment can no longer leave a file
   half-written. Settings, manifests, locks, and snapshots each get their own
   temporary file, so two saves of one file cannot overwrite each other's

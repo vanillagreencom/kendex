@@ -97,12 +97,25 @@ fn chosen_backend<'a>(session: Session<'a>) -> Option<&'a str> {
 /// it.
 ///
 /// The AppImage's bundled GTK hook exports `GDK_BACKEND=x11` before the app
-/// starts, to dodge a crash (tauri-apps/tauri#8541) that `webview_env`
-/// already handles here. The cost is that the shipped app always lands on
-/// XWayland, and a Wayland compositor reports a scale of 1 to an XWayland
-/// client while driving the display at 2 — so the whole window comes out at
-/// half size. No other packaging needs the push: with the variable unset,
-/// GDK already tries Wayland before X11.
+/// starts. What it dodges is not the DMABUF crash `webview_env` handles —
+/// it is tauri-apps/tauri#8541, a GLib-GIO settings-schema lookup that
+/// aborts the process, hit by AppImages built on an old distro and run on a
+/// newer one. The cost of the pin is paid by everyone: the shipped app
+/// always lands on XWayland, where a Wayland compositor reports a scale of
+/// 1 while driving the display at 2, so the whole window comes out at half
+/// size.
+///
+/// `wayland,x11` is a display-open fallback, not a net under that abort: a
+/// `g_error` kills the process after GDK has already chosen Wayland, and
+/// the second entry is never reached. Overriding the pin is judged worth it
+/// because upstream reports the abort does not occur for bundles built on
+/// current Ubuntu, which is what `release.yml` builds on, and because the
+/// released AppImage patched to this value was run on a Wayland session and
+/// came up native with an empty log. `KENDEX_GDK_BACKEND=x11` is the way
+/// back for anyone whose host proves that judgement wrong.
+///
+/// No other packaging needs the push: with the variable unset, GDK already
+/// tries Wayland before X11.
 fn gdk_backend(wayland: bool, session: Session<'_>) -> Option<String> {
     let wanted = match chosen_backend(session) {
         Some(chosen) => chosen.to_owned(),

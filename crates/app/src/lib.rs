@@ -170,6 +170,11 @@ pub fn run() -> tauri::Result<()> {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(builder.invoke_handler())
+        // The window is configured hidden, so this line is the only thing
+        // that ever shows it. Nothing can test that from here — tauri's
+        // mock runtime answers `is_visible` with a constant — but `zoom`
+        // has no other reader, so deleting this fails `clippy -D warnings`
+        // on an unused variable. Give `zoom` another use and that goes away.
         .setup(move |app| window::show_at_zoom(app, zoom))
         .run(tauri::generate_context!())
 }

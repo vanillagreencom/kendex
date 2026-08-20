@@ -80,6 +80,10 @@ export function zoomActions(
     outstanding -= 1;
     if (problem === null) {
       showing = percent;
+      // The last reply standing says what the window ended up on, and the
+      // store has to agree: a newer press refused before this older one was
+      // accepted has already rolled the store back past this size.
+      if (outstanding === 0) showZoom(percent);
       return;
     }
     // A size the window did not take is not offered to the settings file,

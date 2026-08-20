@@ -316,13 +316,24 @@ lives in one capability table read by core and UI.
   starts.** The AppImage's bundled GTK hook pins `GDK_BACKEND=x11`, which
   puts the window on XWayland, where a compositor driving the display at
   scale 2 tells the client the scale is 1 — so the whole app draws at half
-  size. The app reads the session and relaunches itself once
-  (`crates/app/src/launch_env.rs`) with whichever of `GDK_BACKEND` and the
-  WebKit DMABUF workaround that session needs, and not at all when it needs
-  neither; the environment is never rewritten in place, because the
-  workspace forbids `unsafe`. Only the AppImage is pushed onto a backend,
-  and only onto `wayland,x11` — GDK's own ordered list, so a compositor the
-  Wayland backend cannot open still gets an X11 window rather than none.
+  size. That pin is upstream's workaround for tauri-apps/tauri#8541, a
+  GLib-GIO schema lookup that aborts the process on bundles built old and
+  run new; it is a different failure from the WebKitGTK DMABUF crash, and
+  the two fixes do not substitute for each other. The app reads the session
+  and relaunches itself once (`crates/app/src/launch_env.rs`) with whichever
+  of `GDK_BACKEND` and the WebKit DMABUF workaround that session needs, and
+  not at all when it needs neither; the environment is never rewritten in
+  place, because the workspace forbids `unsafe`. Only the AppImage is pushed
+  onto a backend, and only onto `wayland,x11` — GDK's own ordered list, so a
+  compositor whose Wayland display cannot be opened still gets an X11 window
+  rather than none. That list is not a net under #8541: an abort kills the
+  process after Wayland has been chosen, so the second entry never runs.
+  Overriding the pin is a judgement, taken because upstream reports the
+  abort does not occur for bundles built on current Ubuntu — which is what
+  `release.yml` builds on — and because the released AppImage patched to
+  this value came up native on a Wayland session with an empty log. The
+  recourse if a host proves it wrong is `KENDEX_GDK_BACKEND=x11`, and the
+  launch prints that name whenever it overrides the pin.
   Every other packaging is left alone: with the variable unset GDK already
   tries Wayland first. A backend the person named is honoured on any
   session and never overridden; inside the AppImage the `x11` sitting there
