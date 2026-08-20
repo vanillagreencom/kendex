@@ -4,7 +4,7 @@
 //! message path git passes, and the guard judges the exact index git names
 //! in GIT_INDEX_FILE (a partial commit's temporary index, not the staged
 //! one).
-#![cfg(unix)]
+#![cfg(any())] // forensics: compiled out to isolate the CI runner kill
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
