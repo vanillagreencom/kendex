@@ -2,6 +2,15 @@
 
 ## Consumer-impacting changes
 
+### 2.8.8
+
+- `PANE_LAUNCHER_VERSION` bumped 10 → 11: the launcher template changed
+  without the bump that recycles running panes, so live persistent panes
+  recorded at version 10 were still on the older launcher. On upgrade each
+  such pane is killed and relaunched once so it picks up the current
+  template. The pinning test caught this on its first CI run after the
+  suites returned.
+
 ### 2.8.7
 
 - The completion poller no longer re-reads terminal transcripts on every tick (kendex#1453). Transcript fingerprints (size + mtime) were cached only when a usage parse both succeeded and persisted, so any terminal task whose usage failed to persist — or whose summary backfill kept coming up empty — had its whole transcript re-read every 2s for the life of the session; a 17h session with 22 tasks and 70MB of transcripts sat at ~30% CPU and ~20MB/s of reads while idle, with visible TUI input lag. Both poll paths now key the cache on the ATTEMPT: a terminal transcript is parsed once, and again only when its bytes change. The one-shot completion-event and session-restore paths still fingerprint on success, so a transcript whose registry write lost a lock race keeps one poll-loop retry.
