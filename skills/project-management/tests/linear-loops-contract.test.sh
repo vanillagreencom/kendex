@@ -40,4 +40,14 @@ require_fixed 'Before anything else, remove the "re-triage" label from the trigg
 require_fixed 'stop
 only this task — Tasks 2–6 still run' 'a wrong-team flag stops only Task 1'
 
+# --- Task 6 concurrency and boundary guards ---------------------------------
+require_fixed 'Duplicate-bundle guard (concurrent runs have no lock)' 'duplicate-bundle guard exists'
+require_fixed 'simply its oldest member' 'the oldest member leads the bundle'
+require_fixed 'issue is NOT the leader, do not create anything' 'only the leader creates the parent'
+require_fixed '(a) re-check that every selected child still has no parent' 'pre-create recheck: children still unparented'
+require_fixed '(b) search for an existing coordination parent already covering any of' 'pre-create recheck: no covering parent exists'
+require_fixed 'repeatedly drop any member (including the trigger)' 'cross-boundary pruning is iterative'
+require_fixed 'pass drops nobody' 'pruning runs to a fixed point'
+require_fixed 'If the trigger itself drops, skip this task' 'a dropped trigger skips bundling'
+
 echo "all pass"
