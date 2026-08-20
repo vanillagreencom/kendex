@@ -39,9 +39,11 @@ require_fixed "$create" 'renders as the template'"'"'s `**Research**` line on ev
 
 # --- One approval: carried from the plan gate, admitted at § 6, honored at § 7
 
-require_fixed "$plan" '**`Approve` authorizes creation of the presented set**' 'plan-gate approval authorizes creation'
+require_fixed "$plan" '**`Approve` authorizes creation of the presented creation set**' 'plan-gate approval authorizes creation'
 require_fixed "$create" '"approved_at_plan_gate": [true|false]' 'carried-approval flag in the audit input'
-require_fixed "$create" 'identical to what that gate presented' 'flag bound to the identical set'
+require_fixed "$create" 'identical to the creation set that gate presented' 'flag bound to the identical creation set'
+require_fixed "$create" '`Deferred`-project entries were never part of it' 'deferred filtering keeps the approved set identical'
+require_fixed "$plan" 'which never contains `Deferred`-project entries' 'plan gate presents a creation set without deferred gaps'
 require_fixed "$create" '"reapprove": true' 'changed entries are re-asked'
 require_fixed "$audit" 'Carried approval (roadmap-create only)' 'carried approval admitted at § 6'
 require_fixed "$audit" 'no authority from a subagent, another session, or any input file roadmap-create did not just write' 'foreign or stale flags carry no authority'

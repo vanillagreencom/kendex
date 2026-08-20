@@ -156,7 +156,7 @@ Research: [RESEARCH_PATH or "None — less informed planning"] · Origin: [ORIGI
 - [TITLE] — [which creation-bar test it fails]
 </output_format>
 
-Ask: `Approve` | `Adjust` | `Cancel`. `Cancel` discards the plan and ends the workflow. **`Approve` authorizes creation of the presented set**: `roadmap create` carries this answer through audit-issues § 6, which re-asks only items that changed after it. `Adjust` takes free text, updates the in-memory TPM JSON, and re-presents:
+Ask: `Approve` | `Adjust` | `Cancel`. `Cancel` discards the plan and ends the workflow. **`Approve` authorizes creation of the presented creation set** — the ISSUES table, which never contains `Deferred`-project entries (deferred gaps appear under ARCHITECTURE GAPS and are never created): `roadmap create` carries this answer through audit-issues § 6, which re-asks only items that changed after it. `Adjust` takes free text, updates the in-memory TPM JSON, and re-presents:
 
 | Adjustment | JSON update |
 |------------|-------------|
