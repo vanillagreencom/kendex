@@ -80,7 +80,6 @@ describe("updates store: bulk update", () => {
       .getState()
       .updateRows([
         row({ name: "gh", scope: acme, pinned: true }),
-        row({ name: "gh", scope: acme }),
         row({ name: "review", scope: acme }),
         row({ name: "gh" }),
         row({ name: "gh", scope: shop, blockedByLocalEdit: true }),

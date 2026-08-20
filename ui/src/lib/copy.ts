@@ -179,7 +179,7 @@ export const UPDATE_ALL_LABEL = "Update all";
 export const CHECK_FOR_UPDATES_LABEL = "Check for updates";
 export const FOLLOW_SOURCE_COLUMN = "Follow source";
 export const FOLLOW_SOURCE_HELP =
-  "Following packages come current when that project refreshes or you press Update — and Update brings that project's other following packages current too. Held ones wait until you choose.";
+  "Following packages come current when their place refreshes or you press Update, which also brings that place's other followers current. Held ones wait until you choose.";
 export const heldInLabel = (held: number, total: number): string =>
   `Held in ${held} of ${total}`;
 export const followSourceLabel = (name: string, place: string): string =>
