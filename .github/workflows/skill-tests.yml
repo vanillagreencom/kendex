@@ -340,7 +340,7 @@ jobs:
     name: Cargo (workspace tests)
     # Same split as skill-suites above: queue when it works, main push
     # while it is disabled.
-    if: github.event_name == 'merge_group' || github.event_name == 'push'
+    if: github.event_name != 'pull_request' || github.event_name == 'pull_request'
     # GitHub-hosted deliberately: the full workspace build (Tauri app
     # included) killed the org's current Blacksmith size twice in a row —
     # the runner died mid-build with no step conclusion. Route it back when
@@ -356,10 +356,19 @@ jobs:
       # Full debuginfo across the Tauri workspace out-links the runner's
       # memory — three group runs died with the cargo step "cancelled" and
       # no step output, the OOM-kill signature. Tests don't read debuginfo.
+      - name: process-tree monitor
+        run: |
+          ( while true; do date -u +%T; ps -ef --forest | tail -60; echo ---; sleep 15; done > /tmp/pstree.log 2>&1 & )
       - name: cargo test
         env:
           RUSTFLAGS: -C debuginfo=0
         run: cargo test --workspace --locked
+      - name: upload process log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pstree
+          path: /tmp/pstree.log
 
   # The app ships on macOS; nothing before the release tag compiled the
   # workspace there, so a mac-only break (keyring backend, path handling)
