@@ -5,7 +5,7 @@ import {
   memberKey,
 } from "@/components/marketplaces/bundle-member-row";
 import { DestinationSelect } from "@/components/marketplaces/destination-select";
-import { SubscribeFromRepo } from "@/components/marketplaces/subscribe-from-repo";
+import { RepoAction } from "@/components/marketplaces/repo-action";
 import { useCatalog } from "@/components/marketplaces/use-catalog";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -117,9 +117,10 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
               Install all
             </Button>
           ) : catalog.by === "repo" ? (
-            <SubscribeFromRepo
-              repo={summary?.provenance ?? catalog.repo}
-              label="Subscribe to install"
+            <RepoAction
+              repo={catalog.repo}
+              summary={summary}
+              subscribeLabel="Subscribe to install"
             />
           ) : null
         }

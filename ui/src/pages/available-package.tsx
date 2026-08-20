@@ -3,7 +3,7 @@ import { commands, type PackageView, type Scope } from "@/bindings";
 import { MarkdownView } from "@/components/markdown-view";
 import { AvailableAside } from "@/components/marketplaces/available-aside";
 import { DestinationSelect } from "@/components/marketplaces/destination-select";
-import { SubscribeFromRepo } from "@/components/marketplaces/subscribe-from-repo";
+import { RepoAction } from "@/components/marketplaces/repo-action";
 import { useCatalog } from "@/components/marketplaces/use-catalog";
 import { PageHeader } from "@/components/page-header";
 import { FindingLine } from "@/components/safety-findings";
@@ -110,9 +110,10 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
         }
         action={
           catalog.by === "repo" ? (
-            <SubscribeFromRepo
-              repo={summary?.provenance ?? catalog.repo}
-              label="Subscribe to install"
+            <RepoAction
+              repo={catalog.repo}
+              summary={summary}
+              subscribeLabel="Subscribe to install"
             />
           ) : scope && target ? (
             <>

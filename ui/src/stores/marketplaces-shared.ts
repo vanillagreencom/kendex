@@ -30,6 +30,18 @@ export const catalogKey = (catalog: Catalog): string =>
 export const subscribedKeys = (rows: MarketplaceRow[]): Set<string> =>
   new Set(rows.flatMap((row) => (row.repoKey ? [row.repoKey] : [])));
 
+/** The subscription the live list already declares for a repository the
+ * page is browsing bare — `summary` left it bare because that subscription
+ * is turned off or unreadable, so Subscribe would be refused as a
+ * duplicate. An enabled one outranks a disabled one. */
+export const declaredHolder = (
+  rows: MarketplaceRow[],
+  repoKey: string,
+): MarketplaceRow | null =>
+  rows.find((row) => row.repoKey === repoKey && row.enabled) ??
+  rows.find((row) => row.repoKey === repoKey) ??
+  null;
+
 /** A Community row's Subscribed marker. The directory's own flag is only
  * a stand-in until the live subscription list has loaded; after that the
  * list alone decides, so an unsubscribe clears the marker as surely as a

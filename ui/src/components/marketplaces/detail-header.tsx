@@ -1,7 +1,7 @@
 import { MoreHorizontal, RefreshCw, Star } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import type { Catalog, CatalogSummary, MarketplaceRow } from "@/bindings";
-import { SubscribeFromRepo } from "@/components/marketplaces/subscribe-from-repo";
+import { RepoAction } from "@/components/marketplaces/repo-action";
 import { UnsubscribeDialog } from "@/components/marketplaces/unsubscribe-dialog";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -106,9 +106,10 @@ export function DetailHeader({
     );
   } else {
     action = (
-      <SubscribeFromRepo
-        repo={summary?.provenance ?? catalog.repo}
-        label="Subscribe"
+      <RepoAction
+        repo={catalog.repo}
+        summary={summary}
+        subscribeLabel="Subscribe"
       />
     );
   }

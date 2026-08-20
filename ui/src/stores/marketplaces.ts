@@ -26,6 +26,7 @@ export {
   bundleKey,
   catalogKey,
   catalogLabel,
+  declaredHolder,
   marketKey,
   readErrorKey,
   rowSubscribed,
