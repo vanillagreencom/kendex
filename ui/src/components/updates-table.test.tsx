@@ -115,6 +115,14 @@ describe("UpdatesTable", () => {
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Update all</);
   });
 
+  it("disables Update and the switch on a place its owner holds", () => {
+    const html = render([row("gh", null, { derived: true, pinned: true })]);
+    expect(html).toMatch(
+      /<button[^>]*disabled=""[^>]*title="Held by the bundle or package it came with[^"]*"[^>]*>Update</,
+    );
+    expect(html).toMatch(/<span[^>]*data-disabled=""[^>]*role="switch"/);
+  });
+
   it("offers no package-wide Update all in the muted table", () => {
     const html = renderToStaticMarkup(
       <UpdatesTable

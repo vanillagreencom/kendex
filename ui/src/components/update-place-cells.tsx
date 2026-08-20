@@ -16,9 +16,9 @@ import {
   PREVIEW_CHANGES_LABEL,
   UPDATE_LABEL,
 } from "@/lib/copy";
-import { followSourceLabel } from "@/lib/copy-updates";
+import { followSourceLabel, HELD_BY_OWNER_NOTE } from "@/lib/copy-updates";
 import { packageDisplayName } from "@/lib/labels";
-import { placeName } from "@/lib/update-groups";
+import { heldByOwner, placeName } from "@/lib/update-groups";
 import { versionLabel } from "@/lib/versions";
 import { useNavStore } from "@/stores/nav";
 import { useUpdatesStore } from "@/stores/updates";
@@ -78,7 +78,8 @@ export function PlaceCells({
             <Switch
               aria-label={followSourceLabel(name, place)}
               checked={!row.pinned}
-              disabled={busy}
+              disabled={busy || row.derived}
+              title={row.derived ? HELD_BY_OWNER_NOTE : undefined}
               onCheckedChange={(follow) => void setAutoUpdate(row, follow)}
             />
           </TableCell>
@@ -99,7 +100,8 @@ export function PlaceCells({
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={busy || !row.updateAvailable}
+                  disabled={busy || !row.updateAvailable || heldByOwner(row)}
+                  title={heldByOwner(row) ? HELD_BY_OWNER_NOTE : undefined}
                   onClick={() => void updateOne(row)}
                 >
                   {UPDATE_LABEL}

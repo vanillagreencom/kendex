@@ -12,7 +12,12 @@ import {
   updatedWithPlaceToastLabel,
 } from "@/lib/copy-updates";
 import { scopeKey } from "@/lib/scope";
-import { packageCount, placeName, updatablePlaces } from "@/lib/update-groups";
+import {
+  packageCount,
+  placeName,
+  skippedPlaces,
+  updatablePlaces,
+} from "@/lib/update-groups";
 import { useAuditStore } from "./audit";
 import { useProblemsStore } from "./problems";
 import { useScanStore } from "./scan";
@@ -158,7 +163,7 @@ export const useUpdatesStore = create<UpdatesState>((set) => {
         // without an update (gone upstream, mixed installs) have nothing
         // for this button to do.
         const rows = updatablePlaces(wanted);
-        const skipped = wanted.filter((row) => row.blockedByLocalEdit).length;
+        const skipped = skippedPlaces(wanted).length;
         if (rows.length === 0) {
           toast.info(nothingToUpdateToastLabel(skipped));
           return;

@@ -109,7 +109,7 @@ describe("updates store: bulk update", () => {
     const applied = vi.mocked(commands.applyPlan).mock.calls.map((c) => c[0]);
     expect(applied).toEqual([{ scope: "global" }]);
     expect(toast.success).toHaveBeenCalledWith(
-      "Updated 2 packages — 1 customized place needs a decision",
+      "Updated 2 packages — 1 place needs attention on its own row",
     );
   });
 
@@ -170,7 +170,48 @@ describe("updates store: bulk update", () => {
     expect(commands.packageSetRev).not.toHaveBeenCalled();
     expect(toast.success).not.toHaveBeenCalled();
     expect(toast.info).toHaveBeenCalledWith(
-      "Nothing to update — 1 customized place needs a decision first",
+      "Nothing to update — 1 place needs attention on its own row",
+    );
+  });
+
+  it("never moves a hold that belongs to a bundle or parent", async () => {
+    const acme = { scope: "project", root: "/home/x/acme" } as const;
+    vi.mocked(commands.applyPlan).mockResolvedValue({
+      status: "ok",
+      data: {
+        scope: acme,
+        drift: [],
+        plan: [],
+        notes: [],
+        warnings: [],
+        safety: [],
+        heldBack: [],
+        queued: [],
+      },
+    });
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [] },
+    });
+    vi.mocked(commands.scanMachine).mockResolvedValue({
+      status: "ok",
+      data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
+    });
+    vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
+
+    await useUpdatesStore
+      .getState()
+      .updateRows([
+        row({ name: "gh", scope: acme, derived: true, pinned: true }),
+        row({ name: "review", scope: acme, derived: true }),
+      ]);
+
+    expect(commands.packageSetRev).not.toHaveBeenCalled();
+    expect(vi.mocked(commands.applyPlan).mock.calls.map((c) => c[0])).toEqual([
+      acme,
+    ]);
+    expect(toast.success).toHaveBeenCalledWith(
+      "Updated 1 package — 1 place needs attention on its own row",
     );
   });
 });

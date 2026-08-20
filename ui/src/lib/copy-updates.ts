@@ -22,6 +22,8 @@ export const CUSTOMIZED_HERE_LABEL = "Customized here";
 export const USE_NEW_VERSION_LABEL = "Use new version…";
 export const UNFORKABLE_EDIT_NOTE =
   "Edited in a tool whose copy can't be kept as your own";
+export const HELD_BY_OWNER_NOTE =
+  "Held by the bundle or package it came with — update or release it from there";
 export const DERIVED_EDIT_NOTE =
   "Comes with a bundle or another package — settle it on the package page";
 export const MULTI_TOOL_EDIT_NOTE =
@@ -34,6 +36,6 @@ export const updatedSomeToastLabel = (
   updated: number,
   skipped: number,
 ): string =>
-  `Updated ${updated === 1 ? "1 package" : `${updated} packages`} — ${skipped === 1 ? "1 customized place needs" : `${skipped} customized places need`} a decision`;
+  `Updated ${updated === 1 ? "1 package" : `${updated} packages`} — ${skipped === 1 ? "1 place needs" : `${skipped} places need`} attention on its own row`;
 export const nothingToUpdateToastLabel = (skipped: number): string =>
-  `Nothing to update — ${skipped === 1 ? "1 customized place needs" : `${skipped} customized places need`} a decision first`;
+  `Nothing to update — ${skipped === 1 ? "1 place needs" : `${skipped} places need`} attention on its own row`;

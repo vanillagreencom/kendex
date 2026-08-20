@@ -4,6 +4,7 @@ import {
   groupUpdates,
   packageCount,
   placeName,
+  skippedPlaces,
   updatablePlaces,
 } from "./update-groups";
 
@@ -122,6 +123,26 @@ describe("update groups", () => {
     expect(
       packageCount([row("gh", null), row("gh", "/a"), row("x", "/a")]),
     ).toBe(2);
+  });
+
+  it("leaves a place held by its owner out of a bulk update", () => {
+    const rows = [
+      row("gh", null, { derived: true, pinned: true }),
+      row("gh", "/a", { derived: true }),
+      row("gh", "/b", { pinned: true }),
+      row("gh", "/c", {
+        blockedByLocalEdit: true,
+        editedHarnesses: ["claude"],
+      }),
+    ];
+    expect(updatablePlaces(rows).map((p) => placeName(p.scope))).toEqual([
+      "a",
+      "b",
+    ]);
+    expect(skippedPlaces(rows).map((p) => placeName(p.scope))).toEqual([
+      "User level",
+      "c",
+    ]);
   });
 
   it("leaves edited places out of a bulk update", () => {

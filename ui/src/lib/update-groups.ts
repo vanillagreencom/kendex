@@ -48,7 +48,23 @@ export const packageCount = (rows: UpdateRow[]): number =>
 /** The places "Update all" can act on: a newer version exists and no local
  *  edit is holding it. Edited places need the fork decision first. */
 export const updatablePlaces = (rows: UpdateRow[]): UpdateRow[] =>
-  rows.filter((row) => row.updateAvailable && !row.blockedByLocalEdit);
+  rows.filter(
+    (row) =>
+      row.updateAvailable && !row.blockedByLocalEdit && !heldByOwner(row),
+  );
+
+/** A bundle member or dependency held at its owner's revision: the hold
+ *  is the owner's to move, so nothing here can update or release it. */
+export const heldByOwner = (row: UpdateRow): boolean =>
+  row.pinned && row.derived;
+
+/** Places with news that a bulk update has to leave alone — edited ones
+ *  waiting on a decision, held derived ones waiting on their owner. */
+export const skippedPlaces = (rows: UpdateRow[]): UpdateRow[] =>
+  rows.filter(
+    (row) =>
+      row.updateAvailable && (row.blockedByLocalEdit || heldByOwner(row)),
+  );
 
 /** Where a package lives, as a person names it: the project folder, or
  *  "User level" for the install that applies everywhere. Two projects
