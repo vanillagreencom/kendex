@@ -28,6 +28,10 @@ require_fixed 'in the Backlog state (never Triage' 'bundle parent is created out
 require_fixed 'with `(one PR)` at the' 'bundle parent carries the single-PR title marker'
 require_fixed 'the parent carries the complete label set its project requires' 'bundle parent carries the full required label set'
 require_fixed 'the parent takes the highest priority' 'bundle parent takes the highest child priority'
+require_fixed 'the UNION of the children'"'"'s labels for a non-exclusive one' 'required non-exclusive categories take the union'
+require_fixed 'no common
+value means no bundle' 'no common exclusive value means no bundle'
+require_fixed 'combined estimate of its children'"'"'s PR scope' 'single-PR parent carries a combined estimate'
 require_fixed '| Filter: Status | **Triage only** |' 'Loop 1 trigger is Triage-only'
 
 echo "all pass"
