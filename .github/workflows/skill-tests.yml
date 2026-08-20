@@ -339,7 +339,11 @@ jobs:
     name: Cargo (workspace tests)
     # Merge-queue only — same split as skill-suites above.
     if: github.event_name == 'merge_group'
-    runs-on: ${{ vars.CI_RUNNER_8V || 'ubuntu-latest' }}
+    # GitHub-hosted deliberately: the full workspace build (Tauri app
+    # included) killed the org's current Blacksmith size twice in a row —
+    # the runner died mid-build with no step conclusion. Route it back when
+    # the org variables point at a machine that fits it.
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
