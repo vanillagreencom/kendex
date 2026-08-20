@@ -117,15 +117,23 @@ pub fn read(package_dir: &Path) -> Result<PiPackage> {
 }
 
 /// Where a package whose registered name differs from its directory
-/// lives under a catalog's package folder — kendex's own catalog shelves
-/// scoped names in short directories. The walk stays inside the sealed
-/// reader: catalog content is adversarial input, so symlinked or
-/// oversized metadata is skipped, never followed. One nested level
-/// covers npm-style `@scope/name` layouts. Two directories registering
-/// the same name is an error, not a coin toss over which bytes install.
-pub fn find_by_package_name(base: &Path, name: &str) -> Result<Option<PathBuf>> {
-    let sealed = crate::source_read::SealedSource::open(base)?;
-    let mut candidates = sealed.list_dir(sealed.root())?;
+/// lives under a catalog's `pi-extensions/` folder — kendex's own catalog
+/// shelves scoped names in short directories. `sealed` is the CATALOG
+/// root, and the folder is traversed beneath it: sealing the folder
+/// itself would canonicalize a symlinked `pi-extensions` into a trusted
+/// root and launder an escape. Symlinked or oversized metadata is
+/// skipped, never followed. One nested level covers npm-style
+/// `@scope/name` layouts. Two directories registering the same name is
+/// an error, not a coin toss over which bytes install.
+pub fn find_by_package_name(
+    sealed: &crate::source_read::SealedSource,
+    name: &str,
+) -> Result<Option<PathBuf>> {
+    let base = sealed.root().join("pi-extensions");
+    if !sealed.is_dir(&base) {
+        return Ok(None);
+    }
+    let mut candidates = sealed.list_dir(&base)?;
     for dir in std::mem::take(&mut candidates) {
         if dir
             .file_name()

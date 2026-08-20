@@ -282,15 +282,16 @@ fn find_by_package_name_reads_sealed_and_skips_symlinked_metadata() {
     )
     .unwrap();
 
+    let sealed = crate::source_read::SealedSource::open(base.parent().unwrap()).unwrap();
     assert_eq!(
-        find_by_package_name(&base, "@vg/pi-hooks").unwrap(),
+        find_by_package_name(&sealed, "@vg/pi-hooks").unwrap(),
         Some(base.join("pi-hooks"))
     );
     assert_eq!(
-        find_by_package_name(&base, "@scope/pi-deep").unwrap(),
+        find_by_package_name(&sealed, "@scope/pi-deep").unwrap(),
         Some(base.join("@scope/pi-deep"))
     );
-    assert_eq!(find_by_package_name(&base, "@vg/pi-evil").unwrap(), None);
+    assert_eq!(find_by_package_name(&sealed, "@vg/pi-evil").unwrap(), None);
 }
 
 #[test]
@@ -303,9 +304,31 @@ fn find_by_package_name_refuses_an_ambiguous_registration() {
             "{\"name\": \"@vg/pi-hooks\", \"version\": \"1.0.0\"}",
         );
     }
-    let error = find_by_package_name(&base, "@vg/pi-hooks").unwrap_err();
+    let sealed = crate::source_read::SealedSource::open(base.parent().unwrap()).unwrap();
+    let error = find_by_package_name(&sealed, "@vg/pi-hooks").unwrap_err();
     assert!(
         error.to_string().contains("refusing to pick one"),
         "{error}"
     );
+}
+
+/// A catalog whose `pi-extensions` is itself a symlink out of the catalog
+/// must not have the escape laundered by sealing the folder as a root —
+/// the traversal stays beneath the catalog's own seal and refuses the
+/// link.
+#[test]
+#[cfg(unix)]
+fn find_by_package_name_refuses_a_symlinked_extensions_folder() {
+    let tmp = tempfile::tempdir().unwrap();
+    let outside = tmp.path().canonicalize().unwrap().join("outside");
+    write(
+        &outside.join("pi-hooks/package.json"),
+        "{\"name\": \"@vg/pi-hooks\", \"version\": \"9.9.9\"}",
+    );
+    let catalog = tmp.path().canonicalize().unwrap().join("catalog");
+    std::fs::create_dir_all(&catalog).unwrap();
+    std::os::unix::fs::symlink(&outside, catalog.join("pi-extensions")).unwrap();
+
+    let sealed = crate::source_read::SealedSource::open(&catalog).unwrap();
+    assert_eq!(find_by_package_name(&sealed, "@vg/pi-hooks").unwrap(), None);
 }

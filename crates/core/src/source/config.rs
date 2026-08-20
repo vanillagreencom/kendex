@@ -318,7 +318,7 @@ pub fn find_item(
             if sealed.is_file(&literal.join("package.json")) {
                 return Some(literal);
             }
-            crate::pi_ext::find_by_package_name(&base, name)
+            crate::pi_ext::find_by_package_name(sealed, name)
                 .ok()
                 .flatten()
         }
