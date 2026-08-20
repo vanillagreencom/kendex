@@ -11,7 +11,7 @@ Plan a roadmap: research gate, specialist consultation, TPM analysis, architectu
 | `... --origin-issue [ISSUE_ID]` | Supply origin-issue context for the hierarchy decision |
 | `... --planner-handoff @[plan-file]` | Consume a plan from a scout → planner chain |
 
-Extract `FEATURE`, `RESEARCH_PATH`, `ORIGIN_ISSUE`, and `PLANNER_HANDOFF` (each null when absent). Read the `@[path]` file and classify it: research findings inform planning; a **finished plan** — a design document the user has reviewed (external review included) that already settles approach and workstreams — is the SPEC. With a SPEC: § 1 is satisfied (the spec is the research), § 2 runs in slicing mode, the § 5 report presents the derived issues against it, and every created issue cites the spec's path, which stays the live reference through delivery. The spec skips no approval and no creation gate. With `--origin-issue`, fetch it and keep `id`, `title`, `project`, `description`, `children`:
+Extract `FEATURE`, `RESEARCH_PATH`, `ORIGIN_ISSUE`, and `PLANNER_HANDOFF` (each null when absent). Read the `@[path]` file and classify it: research findings inform planning; a **finished plan** — a design document the user has reviewed (external review included) that already settles approach and workstreams — is the SPEC. With a SPEC: § 1 is satisfied (the spec is the research), § 2 runs in slicing mode, the § 5 report presents the derived issues against it, and the spec's path travels as `RESEARCH_PATH` → `research_ref`, which the issue template writes as the `**Research**` line on every created issue (unconditionally — the § 6 research question offers the reference to pre-existing issues only), so it stays the live reference through delivery. The spec skips no approval and no creation gate. With `--origin-issue`, fetch it and keep `id`, `title`, `project`, `description`, `children`:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh cache issues get [ORIGIN_ISSUE_ID]
@@ -25,7 +25,7 @@ With `--planner-handoff`, read the file and keep its plan path, recommended appr
 
 **Skip if** `RESEARCH_PATH` was provided.
 
-Search existing artifacts on disk first — the project's research and plan directories (`docs/research/`, `docs/plans/`, or the project's equivalents) by `FEATURE` keywords; a findings or plan file there supplies `RESEARCH_PATH` directly. Then the tracker: resolve `RESEARCH_WORKFLOW_LABEL` from the project taxonomy and the live inventory (`cache labels list --format=safe`), then query it. If no unambiguous assignable label exists, skip the lookup and continue to § 2 — do not query a hard-coded fallback label.
+Search existing artifacts on disk first — the project's research and plan directories (`docs/research/`, `docs/plans/`, or the project's equivalents) by `FEATURE` keywords; classify a match with the Inputs rule (research vs SPEC) exactly as an `@[path]` argument, and when several match, ask the user which applies rather than choosing one. Then the tracker: resolve `RESEARCH_WORKFLOW_LABEL` from the project taxonomy and the live inventory (`cache labels list --format=safe`), then query it. If no unambiguous assignable label exists, skip the lookup and continue to § 2 — do not query a hard-coded fallback label.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh cache issues list --label "[RESEARCH_WORKFLOW_LABEL]" --state "Done" --max
@@ -36,14 +36,14 @@ Filter for `FEATURE` keywords. A match supplies `RESEARCH_PATH` from the issue �
 With no match, ask the user — spending a research cycle is their call:
 
 - **Research inline (recommended)** — gather what the plan needs now (code, vendor docs, web), write findings to `docs/research/[FEATURE].md`, and continue with it as `RESEARCH_PATH`. No tracker issue: research done in-session is planning work, not backlog.
-- **Delegate a research spike** — for research worth deferring as standalone work. Run `⤵ workflows/research-spike.md [FEATURE] § 1-4`, then re-run `roadmap plan [FEATURE] @[RESEARCH_OUTPUT_PATH]`.
+- **Delegate a research spike** — standalone tracked research the researcher agent runs, or with `auto_execute: false` prepares for later pickup, when the question is too large for this session. Run `⤵ workflows/research-spike.md [FEATURE] § 1-4`, then re-run `roadmap plan [FEATURE] @[RESEARCH_OUTPUT_PATH]` once findings exist.
 - **Skip research** — set `RESEARCH_PATH` = null → § 2.
 
 ---
 
 ## 2. Consult Specialists
 
-**Slicing mode (SPEC in hand):** when the spec already enumerates the workstreams, the parallel fan-out re-derives what is written down. Delegate one slicing pass per repo or domain the spec touches — at most one specialist each, told not to re-litigate the spec's decisions, only to cut its phases into PR-sized issues with real estimates and conflicts read from the code.
+**Slicing mode (SPEC in hand):** when the spec already enumerates the workstreams, the parallel fan-out re-derives what is written down. Delegate one slicing pass per repo or domain the spec touches — at most one specialist each, told not to re-litigate the spec's decisions, only to cut its phases into PR-sized issues with real estimates and conflicts read from the code. Slicing delegates receive the same `<delegation_format>` below and answer in its table — `PROPOSED_ISSUES[]` is built from it either way.
 
 Otherwise, match `FEATURE` keywords and component paths to domain agents (project-configurable) to get `RELEVANT_AGENTS[]`, then delegate to each in parallel:
 
@@ -110,7 +110,7 @@ Report as JSON:
 
 Keep the result as `ARCH_FINDINGS` (`validated_findings[]`, `deprecated_code[]`, `breaking_changes[]`, `required_refactors[]`, `risk_assessment`). Fold verified findings into the TPM JSON — scope additions into the issues they belong to, ordering fixes into relations — before presenting.
 
-For a major feature planned without an already-reviewed spec, also run the `second-opinion` skill (challenge mode) on the plan here and fold verified findings in the same way. A SPEC that already passed external review skips this.
+For a major feature planned without an already-reviewed spec, also run the `second-opinion` skill (challenge mode; an optional dependency) on the plan here and fold verified findings in the same way — when the skill is not installed, record `Cross-model review: unavailable` in the § 5 report and continue. A SPEC that already passed external review skips this.
 
 ---
 

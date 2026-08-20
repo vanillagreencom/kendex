@@ -5,7 +5,7 @@ license: MIT
 user-invocable: true
 dependencies:
   required: [linear, github]
-  optional: [decider]
+  optional: [decider, second-opinion]
 metadata:
   author: vanillagreen
   source: kendex
@@ -28,7 +28,7 @@ The backlog is a queue of work someone will do, not a record of everything anyon
 - **Creation bar.** File an issue only when all three hold: it changes what a user or operator experiences, or blocks work that does; no open issue, active branch, or one-line fix already covers it; and someone could pick it up and finish it without a new investigation. A reproducible anomaly with evidence in hand passes all three as an investigation issue — the diagnosis is its deliverable. Everything else is declined with one line in the report — no issue, no placeholder, no tracking artifact. A severe-sounding edge case that no real input reaches fails the first test.
 - **Burn down more than you create.** Any audit that proposes creations also sweeps its comparison set for issues the codebase has already satisfied, duplicated, or superseded, and proposes those for cancellation in the same pass. Report `created N / closed M`; an audit reporting only creations has not finished its sweep.
 - **Ask about work, never about mechanics.** The user decides what gets created, cancelled, and activated. Labels, priorities, relations, hierarchy, sort order, and project moves are corrections the workflow applies on its own authority.
-- **Research is part of planning, not a work item.** Prior art, vendor docs, and approach comparisons are gathered inline during planning and land as an artifact on disk that issues cite. A tracker research issue exists only when the research is deferred as standalone work someone picks up later (`research-spike`); research done now, in-session, never becomes an issue.
+- **Research is part of planning, not a work item.** Prior art, vendor docs, and approach comparisons are gathered inline during planning and land as an artifact on disk that issues cite. A tracker research issue exists only when the research is delegated as standalone work — run by the researcher agent, or prepared for later pickup (`research-spike`); research done now, in-session, never becomes an issue.
 - **One approval per decision.** The pipeline asks the user to approve a body of work once — at the roadmap plan gate. Creation re-asks only what changed after that answer; presenting the identical set twice is overhead, not safety.
 
 ## Commands
@@ -43,7 +43,7 @@ The backlog is a queue of work someone will do, not a record of everything anyon
 | `research-complete` | `[ISSUE_ID]` | [research-complete](workflows/research-complete.md) |
 | `research-issue` | — | [research-issue](workflows/research-issue.md) — internal, invoked by `research-spike` |
 
-`audit-issues` is **primary-session only**: its § 6 approval gate needs the session's interactive question tool, and § 7 mutates only against approvals collected there. Delegate the `tpm-audit.md` analysis it spawns, never the wrapper.
+`audit-issues` is **primary-session only**: its § 6 approval gate needs the session's interactive question tool, and § 7 mutates only against approvals collected there — the roadmap-plan § 5 answer that roadmap-create carries in is validated and admitted at § 6, never around it. Delegate the `tpm-audit.md` analysis it spawns, never the wrapper.
 
 The `@[path]` given to `roadmap plan` may be research findings or a **finished plan** — a design the user has reviewed, external review included. A finished plan is the spec: the pipeline derives issues from it instead of re-planning, every issue cites it, and it stays the live reference through delivery.
 

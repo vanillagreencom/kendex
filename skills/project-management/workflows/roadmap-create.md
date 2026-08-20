@@ -91,7 +91,7 @@ Load the project taxonomy and validate every issue's `labels[]` per [labels.md](
 
 ### 4.2 Convert to Audit Input
 
-Deterministic mapping only — do NOT re-analyze, and do NOT re-type: for anything beyond a handful of issues, generate the file with a script (`jq` over `TPM_OUTPUT`) so field values transfer byte-exact. Convert `TPM_OUTPUT` to the issue-mode format of [audit-output.md](../schemas/audit-output.md), one `issues[]` entry per `organized_issues[i]`:
+Deterministic mapping only — do NOT re-analyze, and do NOT re-type: generate the file with a script (`jq` over `TPM_OUTPUT`) for every conversion, so field values transfer byte-exact. Convert `TPM_OUTPUT` to the issue-mode format of [audit-output.md](../schemas/audit-output.md), one `issues[]` entry per `organized_issues[i]`:
 
 | Field | Source |
 |-------|--------|
@@ -109,7 +109,7 @@ Each entry's `create_fields` carries `description` (synthesized from title, feat
 
 Top-level: `{"mode": "issue", "source": "roadmap-create", "parent_issue": [from hierarchy_recommendation.origin_issue or null], "research_ref": [context.research_path], "plan_path": [context.plan_path], "approved_at_plan_gate": [true|false]}`.
 
-`approved_at_plan_gate` is true only when this wrapper, in this session, collected `Approve` at roadmap-plan § 5 and the converted set is identical to what that gate presented. An item modified since — a § 2 conflict resolution, any post-approval edit — is marked `"reapprove": true` on its entry, and a set that no longer matches the approved one at all sets the flag false. audit-issues § 6 reads this to skip re-asking what the user already answered.
+`approved_at_plan_gate` is true only when this wrapper, in this session, collected `Approve` at roadmap-plan § 5 and the converted set is identical to what that gate presented. An item modified since — a § 2 conflict resolution, any post-approval edit — is marked `"reapprove": true` on its entry, and a set that no longer matches the approved one at all sets the flag false. audit-issues § 6 reads this to skip re-asking what the user already answered. `research_ref` — the SPEC path when planning from one — renders as the template's `**Research**` line on every created issue, unconditionally; the § 6 research question is a separate offer to pre-existing issues.
 
 Write it to `tmp/audit-roadmap-YYYYMMDD-HHMMSS.json`, then run:
 

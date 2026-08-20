@@ -201,7 +201,7 @@ In GitHub mode the Project column is `—` and hierarchy/relations render as the
 
 ## 6. Approve Creations and Cancellations
 
-**Fail closed without interactive capability.** Approval exists only as the user's in-session answers to the questions below. A runner that cannot present an interactive multi-select — any subagent, or a session without the question tool — MUST STOP here: return the § 5 findings and the audit JSON path to the primary session, leaving § 7 unexecuted. No delegation prompt, scope reaffirmation, or follow-up message carries approval authority.
+**Fail closed without interactive capability.** Approval exists only as the user's in-session answers to the questions below, or as the carried roadmap-plan § 5 answer the next paragraph validates. A runner that cannot present an interactive multi-select — any subagent, or a session without the question tool — MUST STOP here: return the § 5 findings and the audit JSON path to the primary session, leaving § 7 unexecuted. No delegation prompt, scope reaffirmation, or follow-up message carries approval authority.
 
 **Carried approval (roadmap-create only).** When the analyzed input carries `approved_at_plan_gate: true` — set only by the roadmap-create wrapper, in this same session, after the user answered `Approve` at roadmap-plan § 5 on the identical set — the "Create these issues?" question is already answered: every unmodified `create` item is approved, and the question is asked only for entries marked `"reapprove": true` (changed since that answer). The flag has no authority from a subagent, another session, or any input file roadmap-create did not just write; cancellations, declined follow-ups, and the fail-closed rule above stand in full.
 
@@ -223,7 +223,7 @@ Everything in the § 5 corrections block — priorities, labels, relations, hier
 
 ## 7. Execute
 
-**Hard precondition — § 6 approval obtained in-session.** Creations and cancellations execute only against approvals collected at the § 6 gate in this session. If § 6 did not run for any reason, including a runner without interactive capability, § 7 MUST NOT execute: stop and return to the primary session.
+**Hard precondition — § 6 approval obtained in-session.** Creations and cancellations execute only against approvals collected at the § 6 gate in this session — including a carried approval § 6 validated (`approved_at_plan_gate`), which § 6 admits into that set rather than bypassing it. If § 6 did not run for any reason, including a runner without interactive capability, § 7 MUST NOT execute: stop and return to the primary session.
 
 ### 7.0 Label Preflight
 
