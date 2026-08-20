@@ -15,11 +15,10 @@ square-bracket slots inside the parent issue format (`[SUMMARY]`,
 `[ISSUE_ID]`, `[title]`, `[Criterion …]`), which the loop fills when it
 creates a parent.
 
-Scope boundary: Loops own per-issue hygiene AND routing — labels, team
-routing, project assignment, `agent:*` routing labels, duplicate flagging,
-actionability nudges, and same-PR bundling under a new template parent
-(janitor Task 6) — plus, in the scheduled Loop 3 sweep only, comment-only
-FLAGGING of likely-obsolete issues via Code Intelligence. The line is
+Scope boundary: Loops own per-issue hygiene AND routing — labels, project
+assignment, `agent:*` labels, duplicate flagging, actionability nudges,
+same-PR bundling under a template parent (Task 6) — plus, in the Loop 3
+sweep only, comment-only FLAGGING of likely-obsolete issues. The line is
 constructive versus destructive: cancellation, merging issues away, and
 acting on an obsolete flag stay with the audit workflow
 (`skills/project-management/workflows/audit-issues.md` — the user-facing
@@ -201,9 +200,10 @@ themselves trigger a janitor run) are never bundle candidates.
 Duplicate-bundle guard (concurrent runs have no lock): every member of the
 final bundle already passes the preconditions above, and the LEADER is
 simply its oldest member. If the triggering
-issue is NOT the leader, do not create anything: apply the "re-triage"
-label to the leader, comment `bundle-handoff from <ID>` (your own id) on
-it, and stop this task — the leader's re-triage pass owns
+issue is NOT the leader, do not create anything: comment `bundle-handoff
+from <ID>` (your own id) on the leader FIRST, then apply the "re-triage"
+label — the comment must exist before the label can fire Loop 2 — and
+stop this task — the leader's re-triage pass owns
 the bundle (its own creation-time pass ran before the younger companions
 existed, so this re-trigger is what makes bundling actually happen).
 If the triggering issue IS the leader: immediately before creating the
