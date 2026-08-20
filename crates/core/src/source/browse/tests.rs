@@ -8,6 +8,7 @@ use crate::model::HarnessId;
 
 mod repo;
 mod safety_cache;
+mod summary;
 
 fn skill(catalog: &Path, dir: &str, name: &str, body: &str) {
     let home = catalog.join(dir).join(name);

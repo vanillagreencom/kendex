@@ -81,21 +81,34 @@ fn the_summary_counts_and_names_the_head_and_knows_no_subscription() {
     assert_eq!(first.provenance, REPO);
     assert!(first.commit.is_some());
     assert_eq!(first.counts.get("skill"), Some(&1));
+    assert_eq!(
+        first.counts.len(),
+        1,
+        "kinds with nothing offered are not rows"
+    );
     assert_eq!(first.subscription, None);
     assert_eq!(first.warning, None);
 }
 
 #[test]
-fn a_subscription_to_the_same_repository_is_found_however_it_is_spelled() {
+fn a_readable_subscription_to_the_same_repository_is_found_and_an_unfetched_one_passed_over() {
     let (_tmp, env, _upstream) = fixture();
     let manifest = env.global_manifest_file();
     fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    // Spelled as a URL, the declaration keys a different store entry that
+    // nothing has fetched: switching onto it would empty the page.
     fs::write(
         &manifest,
         "schema = 5\n[sources.tools]\nrepo = \"https://github.com/owner/repo.git\"\n",
     )
     .unwrap();
+    assert_eq!(summary(&env, &repo()).unwrap().subscription, None);
 
+    fs::write(
+        &manifest,
+        format!("schema = 5\n[sources.tools]\nrepo = \"{REPO}\"\n"),
+    )
+    .unwrap();
     let found = summary(&env, &repo()).unwrap().subscription.unwrap();
     assert_eq!(found.scope, Scope::Global);
     assert_eq!(found.source, "tools");
@@ -111,10 +124,73 @@ fn a_name_installed_from_anywhere_else_is_a_collision_and_never_installed_here()
         "schema = 5\n[sources.other]\npath = \"/elsewhere\"\n[skills.gh]\nsource = \"other\"\n",
     )
     .unwrap();
+    // Installed too, from that other source: a blind browse owns no
+    // installation, so this is still a clash and never "Installed".
+    let mut lock = crate::lock::Lock {
+        version: crate::lock::LOCK_VERSION,
+        ..Default::default()
+    };
+    lock.entries.insert(
+        crate::lock::entry_key(ItemKind::Skill, "gh", crate::model::HarnessId::Claude),
+        super::lock_entry(ItemKind::Skill, "gh", "other"),
+    );
+    crate::lock::save(&crate::lock::lock_path(&env, &Scope::Global), &lock).unwrap();
 
     let rows = packages(&env, &repo()).unwrap();
     assert_eq!(rows[0].state, InstallState::Available);
     assert_eq!(rows[0].collision.as_deref(), Some("other"));
+}
+
+#[test]
+fn a_subscription_that_is_turned_off_is_passed_over_and_the_repository_still_reads() {
+    let (_tmp, env, _upstream) = fixture();
+    let manifest = env.global_manifest_file();
+    fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    fs::write(
+        &manifest,
+        format!("schema = 5\n[sources.cat]\nrepo = \"{REPO}\"\nenabled = false\n"),
+    )
+    .unwrap();
+
+    let first = summary(&env, &repo()).unwrap();
+    assert_eq!(first.subscription, None);
+    assert_eq!(packages(&env, &repo()).unwrap().len(), 1);
+}
+
+#[test]
+fn a_listing_never_picks_the_transport() {
+    let (_tmp, env, _upstream) = fixture();
+    let spelled = Catalog::Repo {
+        repo: format!("ssh://git@github.com/{REPO}"),
+    };
+    let first = summary(&env, &spelled).unwrap();
+    // Fetched as the shorthand — over https in production — under the one
+    // key the shorthand, the safety cache and Subscribe all share.
+    assert_eq!(first.provenance, REPO);
+    assert!(crate::remote::cached(&env, REPO, None).unwrap().is_some());
+    assert_ne!(
+        crate::remote::cache_key(&env, &format!("ssh://git@github.com/{REPO}")),
+        crate::remote::cache_key(&env, REPO),
+        "the two spellings would otherwise be two downloads"
+    );
+}
+
+#[test]
+fn a_repository_that_does_not_exist_says_the_fetch_failed_not_a_pin() {
+    let (_tmp, env, _upstream) = fixture();
+    let error = summary(
+        &env,
+        &Catalog::Repo {
+            repo: "owner/missing".to_owned(),
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(error, CoreError::FetchFailed { .. }), "{error}");
+    let text = error.to_string();
+    assert!(
+        !text.contains("pinned") && !text.contains("cached"),
+        "{text}"
+    );
 }
 
 #[test]

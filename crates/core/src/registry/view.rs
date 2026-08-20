@@ -6,7 +6,6 @@
 use crate::clock;
 use crate::env::Env;
 use crate::error::Result;
-use crate::model::Scope;
 use crate::registry::index::{DirectoryBundle, DirectoryPackage};
 use crate::registry::{Fetch, cache};
 use crate::repo_move;
@@ -71,30 +70,12 @@ pub fn directory(env: &Env, fetch: &dyn Fetch, force_refresh: bool) -> Result<Di
 }
 
 /// Every repository any scope subscribes to, spelled the one canonical
-/// way. A scope that cannot be read contributes nothing rather than
-/// blocking the tab.
+/// way.
 fn subscribed_repos(env: &Env) -> BTreeSet<String> {
-    let mut repos = BTreeSet::new();
-    let mut scopes = vec![Scope::Global];
-    if let Ok(settings) = crate::settings::load(env) {
-        scopes.extend(
-            settings
-                .projects
-                .into_iter()
-                .map(|root| Scope::Project { root }),
-        );
-    }
-    for scope in scopes {
-        let Ok(rows) = crate::source_ops::list_subscriptions(env, &scope) else {
-            continue;
-        };
-        for row in rows {
-            if let Some(key) = row.repo.as_deref().and_then(repo_move::owner_repo) {
-                repos.insert(key);
-            }
-        }
-    }
-    repos
+    crate::source_ops::repo_subscriptions(env)
+        .into_iter()
+        .filter_map(|row| row.repo_key)
+        .collect()
 }
 
 fn leaf_of(repo: &str) -> String {

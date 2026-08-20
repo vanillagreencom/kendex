@@ -47,8 +47,9 @@ pub struct CatalogSummary {
 /// the head it just fetched — and a failed refresh serves the store with
 /// its warning rather than an empty page.
 pub fn summary(env: &Env, catalog: &Catalog) -> Result<CatalogSummary> {
-    let (warning, subscription) = match catalog {
+    let (browsed, warning, subscription) = match catalog {
         Catalog::Subscription { scope, source } => (
+            super::open(env, catalog)?,
             None,
             Some(SubscriptionRef {
                 scope: scope.clone(),
@@ -56,15 +57,17 @@ pub fn summary(env: &Env, catalog: &Catalog) -> Result<CatalogSummary> {
             }),
         ),
         Catalog::Repo { repo } => {
-            let warning = match crate::repo_move::owner_repo(repo) {
-                Some(_) => crate::remote::sync(env, repo.trim(), None)?.warning,
-                // open() below names the refusal.
-                None => None,
-            };
-            (warning, subscribed_as(env, repo))
+            let key = super::browsable(repo)?;
+            let resolution = crate::remote::sync(env, &key, None)?;
+            let warning = resolution.warning.clone();
+            let subscription = subscribed_as(env, &key);
+            (
+                super::open_repo(env, key, resolution)?,
+                warning,
+                subscription,
+            )
         }
     };
-    let browsed = super::open(env, catalog)?;
     let mut counts = BTreeMap::new();
     for kind in ItemKind::ALL {
         let offered = crate::source::list_items(&browsed.sealed, &browsed.config, kind).len();
@@ -94,31 +97,25 @@ pub fn about(env: &Env, catalog: &Catalog) -> Result<AboutReport> {
 }
 
 /// The first subscription, personal scope first, that points at this
-/// repository however it spells it. A scope that cannot be read holds no
-/// subscription rather than blocking the page.
-fn subscribed_as(env: &Env, repo: &str) -> Option<SubscriptionRef> {
-    let key = crate::repo_move::owner_repo(repo)?;
-    let mut scopes = vec![Scope::Global];
-    if let Ok(settings) = crate::settings::load(env) {
-        scopes.extend(
-            settings
-                .projects
-                .into_iter()
-                .map(|root| Scope::Project { root }),
-        );
-    }
-    scopes.into_iter().find_map(|scope| {
-        let rows = crate::source_ops::list_subscriptions(env, &scope).ok()?;
-        rows.into_iter()
-            .find(|row| {
-                row.repo
-                    .as_deref()
-                    .and_then(crate::repo_move::owner_repo)
-                    .is_some_and(|candidate| candidate == key)
-            })
-            .map(|row| SubscriptionRef {
-                scope,
-                source: row.name,
-            })
-    })
+/// repository however it spells it and can be read right now. One that is
+/// turned off or never fetched is passed over: the page just read the
+/// repository, and switching onto a subscription whose content is
+/// unreachable would trade that for an empty page.
+fn subscribed_as(env: &Env, key: &str) -> Option<SubscriptionRef> {
+    crate::source_ops::repo_subscriptions(env)
+        .into_iter()
+        .filter(|row| row.enabled && row.repo_key.as_deref() == Some(key))
+        .find(|row| {
+            let Ok(Some(manifest)) = crate::source_ops::load_current(env, &row.scope) else {
+                return false;
+            };
+            matches!(
+                crate::source::resolve(env, &row.scope, &row.name, &manifest),
+                Ok(crate::source::SourceState::Ready(_))
+            )
+        })
+        .map(|row| SubscriptionRef {
+            scope: row.scope,
+            source: row.name,
+        })
 }

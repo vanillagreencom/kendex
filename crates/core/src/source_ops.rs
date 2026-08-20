@@ -1,6 +1,9 @@
 use serde::Serialize;
 use specta::Type;
 
+mod repos;
+pub use repos::{RepoSubscription, repo_subscriptions};
+
 use crate::engine::{EngineReport, PlanOptions, plan_scope};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
@@ -22,7 +25,7 @@ pub struct SourceRow {
     pub declared_items: Vec<String>,
 }
 
-fn load_current(env: &Env, scope: &Scope) -> Result<Option<Manifest>> {
+pub(crate) fn load_current(env: &Env, scope: &Scope) -> Result<Option<Manifest>> {
     match manifest::load(&manifest::manifest_path(env, scope))? {
         manifest::ManifestFile::Current(m) => Ok(Some(*m)),
         _ => Ok(None),

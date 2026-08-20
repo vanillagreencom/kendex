@@ -117,6 +117,9 @@ pub enum CoreError {
     )]
     NotBrowsable { reference: String },
 
+    #[error("{repo} could not be fetched: {reason}")]
+    FetchFailed { repo: String, reason: String },
+
     #[error("'{reference}': {reason}")]
     SourceRefInvalid { reference: String, reason: String },
 

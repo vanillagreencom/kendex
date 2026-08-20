@@ -90,7 +90,7 @@ pub fn sync(env: &Env, repo: &str, rev: Option<&str>) -> Result<Resolution> {
     let _guard = store::lock_repo(env, &key)?;
     let fetched = store::ensure_mirror(&mirror, &url).and_then(|()| store::fetch(&mirror));
     stamp_fetch(env, &key, &mirror, &fetched);
-    let warning = match fetched {
+    let warning = match &fetched {
         Ok(()) => None,
         Err(error) => Some(format!("{repo}: using cached version ({error})")),
     };
@@ -98,12 +98,18 @@ pub fn sync(env: &Env, repo: &str, rev: Option<&str>) -> Result<Resolution> {
         // The mirror cannot name this selector: nothing was fetched, or the
         // branch or tag is gone upstream. The pre-2.0 clone is the last
         // thing left that might hold content.
-        return match legacy_resolution(env, repo) {
-            Some(resolution) => Ok(resolution),
-            None => Err(CoreError::PinUnavailable {
+        return match (legacy_resolution(env, repo), fetched) {
+            (Some(resolution), _) => Ok(resolution),
+            // Nothing was ever fetched: the fetch failure is the whole
+            // story, and "pinned" or "cached" would both be untrue.
+            (None, Err(error)) => Err(CoreError::FetchFailed {
+                repo: repo.to_owned(),
+                reason: error.to_string(),
+            }),
+            (None, Ok(())) => Err(CoreError::PinUnavailable {
                 repo: repo.to_owned(),
                 pin: selector.to_owned(),
-                reason: warning.unwrap_or_else(|| "no such branch or tag".to_owned()),
+                reason: "no such branch or tag".to_owned(),
             }),
         };
     };
