@@ -18,6 +18,16 @@ fn read(rel: &str) -> String {
     fs::read_to_string(repo(rel)).unwrap()
 }
 
+/// A checksum entry as the recipes write it: 64 hex chars, quotes and a
+/// trailing comma allowed, placeholder zeros included.
+fn is_sha256(entry: &str) -> bool {
+    let hex = entry
+        .trim()
+        .trim_end_matches(',')
+        .trim_matches(|c| c == '"' || c == '\'');
+    hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 /// A release lane split the way the recipes select it.
 struct Lane {
     triple: String,
@@ -51,13 +61,14 @@ fn unix_lanes() -> Vec<Lane> {
 }
 
 /// Formula blocks nest as `on_<os> do` / `on_<arch> do`; the triple's url
-/// must sit inside the pair that matches it.
+/// must sit inside the pair that matches it, with its own sha256 beside it.
 #[test]
 fn homebrew_formula_places_each_lane_under_its_os_and_arch_block() {
     let formula = read("packaging/homebrew/kendex-cli.rb");
     let mut os = "";
     let mut arch = "";
     let mut placed: Vec<(String, &str, &str)> = Vec::new();
+    let mut shas: Vec<Option<String>> = Vec::new();
     for line in formula.lines().map(str::trim) {
         match line {
             "on_macos do" => os = "macos",
@@ -71,9 +82,26 @@ fn homebrew_formula_places_each_lane_under_its_os_and_arch_block() {
                     .unwrap()
                     .trim_end_matches('"');
                 placed.push((triple.to_owned(), os, arch));
+                shas.push(None);
+            }
+            _ if line.starts_with("sha256 ") => {
+                let slot = shas.last_mut().expect("sha256 before any url");
+                assert!(
+                    slot.is_none(),
+                    "two sha256 lines for {}",
+                    placed[placed.len() - 1].0
+                );
+                *slot = Some(line.trim_start_matches("sha256 ").to_owned());
             }
             _ => {}
         }
+    }
+    for (lane, sha) in placed.iter().zip(&shas) {
+        assert!(
+            sha.as_deref().is_some_and(is_sha256),
+            "kendex-cli.rb lane {} has no 64-hex sha256 beside its url (got {sha:?})",
+            lane.0
+        );
     }
     for lane in unix_lanes() {
         assert!(
@@ -123,19 +151,15 @@ fn homebrew_cask_selects_a_dmg_and_checksum_per_mac_arch() {
         2,
         "cask has no two-line sha256 map:\n{cask}"
     );
-    let is_sha = |entry: &str| {
-        let hex = entry.trim().trim_end_matches(',').trim_matches('"');
-        hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit())
-    };
     let arm = sha_lines[0].split("arm:").nth(1).unwrap_or_default();
     assert!(
-        is_sha(arm),
+        is_sha256(arm),
         "cask arm sha256 is not 64 hex chars: {}",
         sha_lines[0]
     );
     let intel = sha_lines[1].split("intel:").nth(1).unwrap_or_default();
     assert!(
-        sha_lines[1].trim().starts_with("intel:") && is_sha(intel),
+        sha_lines[1].trim().starts_with("intel:") && is_sha256(intel),
         "cask sha256 map has no intel entry: {}",
         sha_lines[1]
     );
@@ -194,6 +218,29 @@ fn aur_packages_carry_a_source_array_per_linux_arch() {
                         && l.contains(&format!("kendex-{}", lane.triple))
                 }),
                 "{pkg}: .SRCINFO is stale for source_{pacman_arch}"
+            );
+            let sources = source_line.matches("::").count();
+            let sums = pkgbuild
+                .split(&format!("sha256sums_{pacman_arch}=("))
+                .nth(1)
+                .and_then(|rest| rest.split(')').next())
+                .unwrap_or_else(|| panic!("{pkg}: no sha256sums_{pacman_arch} array"));
+            let valid = sums.split_whitespace().filter(|e| is_sha256(e)).count();
+            assert_eq!(
+                valid, sources,
+                "{pkg}: sha256sums_{pacman_arch} has {valid} 64-hex entries for {sources} sources"
+            );
+            let srcinfo_sums = srcinfo
+                .lines()
+                .filter(|l| {
+                    l.trim()
+                        .starts_with(&format!("sha256sums_{pacman_arch} = "))
+                })
+                .filter(|l| is_sha256(l.rsplit(" = ").next().unwrap_or_default()))
+                .count();
+            assert_eq!(
+                srcinfo_sums, sources,
+                "{pkg}: .SRCINFO is stale for sha256sums_{pacman_arch}"
             );
         }
     }

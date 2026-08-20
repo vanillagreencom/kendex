@@ -4,7 +4,7 @@
 # but never approve, so any other recognized value — and any misspelling,
 # which the gate tolerates by warning and falling back to approval/block —
 # re-arms a gate no reviewer can open and stalls every session.
-set -uo pipefail
+set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS="$TEST_DIR/../scripts"
@@ -17,7 +17,7 @@ FAIL=0
 ok()  { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() {
   FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"
-  [[ -s "$2" ]] && sed 's/^/        stderr: /' "$2"
+  if [[ -s "$2" ]]; then sed 's/^/        stderr: /' "$2"; fi
 }
 
 # Read the committed file the way the gate does: from the repository root,
