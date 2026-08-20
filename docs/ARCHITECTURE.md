@@ -340,8 +340,10 @@ lives in one capability table read by core and UI.
   window is configured hidden and revealed in `setup` once the saved zoom
   is on the webview, so the first frame is already the right size — a page
   restyle would re-lay out the app in front of the person. The range lives
-  in core and reaches the UI as a generated constant, so the slider and
-  the settings file are held to the same floor, ceiling, and step. This is
+  in core and reaches the UI as a generated constant. The floor and the
+  ceiling bind both the slider and the settings file — a value outside them
+  is clamped on the way in and on the way out — while the step is the
+  slider's and the shortcut's alone, so a hand-edited 137 is honoured. This is
   also the answer to a compositor set to a fractional scale, which GTK3
   and WebKitGTK round to a whole number: the person nudges the difference
   back by hand.

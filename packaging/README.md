@@ -14,9 +14,12 @@ and the CLI install together; the CLI is also available on its own.
 | Arch (latest commit) | `yay -S kendex-git` | CLI | [`arch/kendex-git/`](arch/kendex-git/) |
 | App bundles | download from the release | app | built by `release.yml` |
 
-The desktop app binary is named `kendex`, the same as the CLI, so every
-channel that installs both keeps the app off `PATH` (the AppImage on Linux,
-the `.app` bundle on macOS) and leaves the `kendex` command to the CLI.
+The desktop app binary is named `kendex-app`, after its cargo package, and
+every channel that installs both keeps it off `PATH` (the AppImage on Linux,
+the `.app` bundle on macOS) so the `kendex` command is the CLI. That name is
+also what a Linux launcher matches a running window against, which is why
+both the curl script and the Arch package put `StartupWMClass=kendex-app` in
+the desktop entry they write.
 
 ## Per release
 
@@ -25,9 +28,10 @@ Each new `vX.Y.Z` changes the artifact checksums. Update, in this repo:
 - `arch/kendex/PKGBUILD` + `.SRCINFO`: `pkgver` and `sha256sums_x86_64` /
   `sha256sums_aarch64` (the released `kendex-x86_64-unknown-linux-gnu` and
   `kendex-aarch64-unknown-linux-gnu`).
-- `arch/kendex-bin/PKGBUILD` + `.SRCINFO`: `pkgver`, the icon `sha256sums`,
-  and the per-arch pairs (AppImage, CLI binary) in `sha256sums_x86_64` and
-  `sha256sums_aarch64`. Regenerate `.SRCINFO` with `makepkg --printsrcinfo`.
+- `arch/kendex-bin/PKGBUILD` + `.SRCINFO`: `pkgver`, the four icon
+  `sha256sums`, and the per-arch pairs (AppImage, CLI binary) in
+  `sha256sums_x86_64` and `sha256sums_aarch64`. Regenerate `.SRCINFO` with
+  `makepkg --printsrcinfo`.
 - `homebrew/kendex-cli.rb`: `version` and all four `sha256` lines (macOS arm
   and Intel, Linux Intel and arm).
 - `homebrew/kendex-cask.rb`: `version` and both `.dmg` checksums (`arm:` is

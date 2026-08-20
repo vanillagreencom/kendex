@@ -91,7 +91,7 @@ export function SettingsPage() {
             </SettingRow>
             <SettingRow
               label="Zoom"
-              description="How large everything draws. Ctrl and + or - change it from anywhere, Ctrl 0 returns to 100%."
+              description="How large everything draws. Ctrl with + or - changes it from anywhere, and Ctrl 0 returns to 100%. On a Mac, Cmd does the same."
             >
               <div className="flex w-40 items-center gap-3">
                 <Slider

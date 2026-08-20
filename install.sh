@@ -85,11 +85,15 @@ install_cli() {
 }
 
 # One icon size into the theme directory it belongs to. A missing icon is
-# not worth failing an install over, so a download that fails is skipped.
+# not worth failing an install over, so a download that fails is skipped —
+# but curl creates the file before the transfer, so the empty one it leaves
+# behind is removed. A launcher prefers the size it finds over the size that
+# would have looked right, and an empty file is a file.
 install_icon() {
   local dir=$1 source=$2
   mkdir -p "$dir"
-  curl -fsSL --proto '=https' -o "$dir/kendex.png" "$source" || true
+  curl -fsSL --proto '=https' -o "$dir/kendex.png" "$source" ||
+    rm -f "$dir/kendex.png"
 }
 
 # The desktop app on Linux is the AppImage, kept off PATH so the `kendex`
@@ -110,10 +114,12 @@ install_app_linux() {
   fi
   mkdir -p "$libdir" "$data/applications"
   install -m 0755 "$tmp/kendex.AppImage" "$libdir/kendex.AppImage"
-  # Every size the app ships: a launcher or dock picking the 128px icon for
-  # a HiDPI slot has to upscale it, and the result looks soft.
+  # Every size the app ships, each in its own slot: a launcher or dock that
+  # picks the 128px icon for a HiDPI slot has to upscale it, and the result
+  # looks soft.
   local icons="https://raw.githubusercontent.com/$repo/$version/crates/app/icons"
   local theme="$data/icons/hicolor"
+  install_icon "$theme/32x32/apps" "$icons/32x32.png"
   install_icon "$theme/128x128/apps" "$icons/128x128.png"
   install_icon "$theme/256x256/apps" "$icons/128x128@2x.png"
   install_icon "$theme/512x512/apps" "$icons/icon.png"
