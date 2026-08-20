@@ -368,7 +368,7 @@ jobs:
   # surfaced at release time. One queue-time lane closes that. Not a
   # required context yet — a red run is visible without wedging the queue.
   cargo-tests-macos:
-    name: Cargo (workspace tests, macOS)
+    name: macOS cargo (workspace tests)
     if: github.event_name == 'merge_group'
     runs-on: macos-latest
     timeout-minutes: 30
