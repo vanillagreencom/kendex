@@ -78,6 +78,14 @@ const counts = (offered: Offered[]) => {
   return out;
 };
 
+/** Which subscription fixture backs each listed repository: its packages,
+ * bundle specs and About report are that source's. */
+export const REPO_FIXTURE_SOURCE: Record<string, string> = {
+  "acme/agent-kit": "kendex",
+  "wshobson/agents": "claude-plugins",
+  "vercel-labs/agent-skills": "kendex",
+};
+
 /** What the Community tab's listed repositories offer when opened before
  * subscribing — the kendex catalog's packages, unsubscribed. A listed repo
  * absent here reads as unreachable, so the page's error path is exercised. */

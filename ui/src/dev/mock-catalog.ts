@@ -10,7 +10,7 @@ import type {
   Scope,
 } from "@/bindings";
 import { BUNDLE_SPECS } from "./fixture-catalog";
-import { packagesKey } from "./fixture-marketplaces";
+import { packagesKey, REPO_FIXTURE_SOURCE } from "./fixture-marketplaces";
 import { same, store } from "./mock-state";
 
 export function marketplaceRow(
@@ -48,9 +48,12 @@ export function offeredHere(
   return offered;
 }
 
-/** The source name a catalog's bundle specs are filed under. */
+/** The source name a catalog's bundle specs and About report are filed
+ * under — a listed repository's is the fixture source backing it. */
 export const specSource = (catalog: Catalog): string =>
-  catalog.by === "subscription" ? catalog.source : catalog.repo;
+  catalog.by === "subscription"
+    ? catalog.source
+    : (REPO_FIXTURE_SOURCE[catalog.repo] ?? catalog.repo);
 
 const stateOf = (
   offered: AvailablePackage[],

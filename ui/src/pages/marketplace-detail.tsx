@@ -1,10 +1,13 @@
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import type { Catalog } from "@/bindings";
 import { AboutSection } from "@/components/marketplaces/about-section";
 import { BundleCards } from "@/components/marketplaces/bundle-cards";
 import { DetailHeader } from "@/components/marketplaces/detail-header";
 import { PackagesTable } from "@/components/marketplaces/packages-table";
-import { useCatalog } from "@/components/marketplaces/use-catalog";
+import {
+  useCachedRead,
+  useCatalog,
+} from "@/components/marketplaces/use-catalog";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PAGE_BODY, PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
@@ -42,7 +45,8 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
             marketKey(r.scope, r.name) === catalogKey(catalog),
         )
       : undefined;
-  const offered = packages[catalogKey(catalog)] ?? [];
+  const cached = packages[catalogKey(catalog)];
+  const offered = cached ?? [];
   const packagesError = useMarketplacesStore(
     (s) => s.readErrors[readErrorKey(catalogKey(catalog), "packages")],
   );
@@ -50,9 +54,11 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
   useEffect(() => {
     void load();
   }, [load]);
-  useEffect(() => {
-    if (ready) void loadPackages(catalog);
-  }, [catalog, ready, loadPackages]);
+  const readPackages = useCallback(
+    () => loadPackages(catalog),
+    [loadPackages, catalog],
+  );
+  useCachedRead(cached !== undefined, !!packagesError, ready, readPackages);
 
   return (
     <div className="flex h-full flex-col">

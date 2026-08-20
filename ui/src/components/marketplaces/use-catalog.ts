@@ -49,3 +49,25 @@ export function useCatalog(requested: Catalog): {
     retry: () => void loadSummary(requested),
   };
 }
+
+/** Whether a cached read is due: the slot is empty, nothing has refused
+ * it, and the catalog is ready. A mutation empties the slot without
+ * touching the catalog, so presence is what an effect must watch — the
+ * failure guard keeps a refused read from being asked again and again. */
+export const readDue = (
+  present: boolean,
+  failed: boolean,
+  ready: boolean,
+): boolean => ready && !present && !failed;
+
+/** Issue `read` whenever [readDue] says so. */
+export function useCachedRead(
+  present: boolean,
+  failed: boolean,
+  ready: boolean,
+  read: () => Promise<void>,
+) {
+  useEffect(() => {
+    if (readDue(present, failed, ready)) void read();
+  }, [present, failed, ready, read]);
+}

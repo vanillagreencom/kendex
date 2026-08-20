@@ -2,6 +2,7 @@
 // reference that leads with one package. Nothing is fetched — the mock
 // harness has no network — so the new row carries no content yet.
 import type { Scope, SubscribeOutcome } from "@/bindings";
+import { packagesKey } from "./fixture-marketplaces";
 import { marketplaceRow } from "./mock-catalog";
 import { type Handler, label, same, store } from "./mock-state";
 
@@ -58,6 +59,14 @@ export const subscribeHandlers: Record<string, Handler> = {
         meta: null,
         mode: null,
       });
+      // A listed repository's offer is already in the store: the new
+      // subscription reads it at once, so a page that was browsing the
+      // repository carries on as the subscription with Install available.
+      const browsed = store.state.repoPackages[base];
+      if (browsed) {
+        store.state.marketplacePackages[packagesKey(scope, alias)] =
+          structuredClone(browsed);
+      }
       store.state.sources.push({
         scope,
         name: alias,
