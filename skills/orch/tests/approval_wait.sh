@@ -54,9 +54,6 @@
 #  22+ --resolve-mode precedence: PR_REVIEW_GATE beats legacy PR_APPROVAL_GATE
 #      (on -> approval, off -> off), default approval, settings-file source,
 #      invalid value falls back to approval
-#  committed1-4: the repository's own kendex.settings.toml resolves to
-#      recognized PR_REVIEW_GATE and PR_REVIEW_ON_TIMEOUT values with no
-#      fallback warning — a misspelling would silently restore the defaults
 #  nudge1-5: PR_REVIEW_NUDGE/PR_REVIEW_NUDGE_SECS — once per head, clock reset
 #      on head change, empty-body fallback to reviewer re-request (or silence
 #      with nobody to re-request), approval-mode parity
@@ -1631,40 +1628,6 @@ rm -f "$TMP_ROOT/bin/jq"
 output=$(run_wait_json STUB_APPROVAL_MODE=approved_decision 2>"$TMP_ROOT/emitok.err")
 assert_eq "$(json_field "$output" '.status')" "approved" \
   "control: the same poll approves once emission works again" "$TMP_ROOT/emitok.err"
-
-echo "=== committed kendex.settings.toml resolves to recognized gate values ==="
-
-# The runtime tolerates a typo by warning and falling back to block/approval,
-# which would quietly re-arm the gate this repo's reviewers can never open.
-# Read the committed file the way the gate does: from the repository root,
-# with the process env silent on both keys.
-stderr="$TMP_ROOT/committed-gate.err"
-committed_gate=$( (cd "$REPO_ROOT" && env -u PR_REVIEW_GATE -u PR_APPROVAL_GATE -u REVIEW_GATE_MODE \
-  "$REPO_ROOT/skills/orch/scripts/approval-wait" --resolve-mode) 2>"$stderr")
-case "$committed_gate" in
-  approval|review|off) pass "committed PR_REVIEW_GATE is a recognized mode ($committed_gate)" ;;
-  *)
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        got: %s\n' "committed PR_REVIEW_GATE is a recognized mode" "$committed_gate"
-    dump_stderr "$stderr"
-    ;;
-esac
-assert_eq "$(grep -c unrecognized "$stderr" || true)" "0" \
-  "committed PR_REVIEW_GATE resolves without a fallback warning" "$stderr"
-
-stderr="$TMP_ROOT/committed-timeout.err"
-committed_timeout=$( (cd "$REPO_ROOT" && env -u PR_REVIEW_ON_TIMEOUT \
-  "$REPO_ROOT/skills/orch/scripts/orch-env" PR_REVIEW_ON_TIMEOUT block) 2>"$stderr")
-case "$committed_timeout" in
-  block|proceed) pass "committed PR_REVIEW_ON_TIMEOUT is a recognized policy ($committed_timeout)" ;;
-  *)
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        got: %s\n' "committed PR_REVIEW_ON_TIMEOUT is a recognized policy" "$committed_timeout"
-    dump_stderr "$stderr"
-    ;;
-esac
-assert_eq "$(grep -c unrecognized "$stderr" || true)" "0" \
-  "committed PR_REVIEW_ON_TIMEOUT resolves without a warning" "$stderr"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -111,8 +111,34 @@ fn homebrew_cask_selects_a_dmg_and_checksum_per_mac_arch() {
         "{cask}"
     );
     assert!(cask.contains("_#{arch}.dmg"), "{cask}");
-    assert!(cask.contains("sha256 arm:"), "{cask}");
-    assert!(cask.contains("intel:"), "{cask}");
+    // The `arch arm:/intel:` stanza also says `intel:`, so the checksum
+    // check reads only the sha256 declaration and its continuation line.
+    let sha_lines: Vec<&str> = cask
+        .lines()
+        .skip_while(|l| !l.trim().starts_with("sha256 arm:"))
+        .take(2)
+        .collect();
+    assert_eq!(
+        sha_lines.len(),
+        2,
+        "cask has no two-line sha256 map:\n{cask}"
+    );
+    let is_sha = |entry: &str| {
+        let hex = entry.trim().trim_end_matches(',').trim_matches('"');
+        hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit())
+    };
+    let arm = sha_lines[0].split("arm:").nth(1).unwrap_or_default();
+    assert!(
+        is_sha(arm),
+        "cask arm sha256 is not 64 hex chars: {}",
+        sha_lines[0]
+    );
+    let intel = sha_lines[1].split("intel:").nth(1).unwrap_or_default();
+    assert!(
+        sha_lines[1].trim().starts_with("intel:") && is_sha(intel),
+        "cask sha256 map has no intel entry: {}",
+        sha_lines[1]
+    );
     assert!(
         !cask.contains("depends_on arch"),
         "cask still pins one architecture"
