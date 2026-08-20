@@ -257,6 +257,7 @@ fn a_package_without_an_append_system_file_writes_no_block() {
 }
 
 #[test]
+#[cfg(unix)]
 fn find_by_package_name_reads_sealed_and_skips_symlinked_metadata() {
     let tmp = tempfile::tempdir().unwrap();
     let base = tmp.path().canonicalize().unwrap().join("pi-extensions");
@@ -282,12 +283,29 @@ fn find_by_package_name_reads_sealed_and_skips_symlinked_metadata() {
     .unwrap();
 
     assert_eq!(
-        find_by_package_name(&base, "@vg/pi-hooks"),
+        find_by_package_name(&base, "@vg/pi-hooks").unwrap(),
         Some(base.join("pi-hooks"))
     );
     assert_eq!(
-        find_by_package_name(&base, "@scope/pi-deep"),
+        find_by_package_name(&base, "@scope/pi-deep").unwrap(),
         Some(base.join("@scope/pi-deep"))
     );
-    assert_eq!(find_by_package_name(&base, "@vg/pi-evil"), None);
+    assert_eq!(find_by_package_name(&base, "@vg/pi-evil").unwrap(), None);
+}
+
+#[test]
+fn find_by_package_name_refuses_an_ambiguous_registration() {
+    let tmp = tempfile::tempdir().unwrap();
+    let base = tmp.path().canonicalize().unwrap().join("pi-extensions");
+    for dir in ["first", "second"] {
+        write(
+            &base.join(dir).join("package.json"),
+            "{\"name\": \"@vg/pi-hooks\", \"version\": \"1.0.0\"}",
+        );
+    }
+    let error = find_by_package_name(&base, "@vg/pi-hooks").unwrap_err();
+    assert!(
+        error.to_string().contains("refusing to pick one"),
+        "{error}"
+    );
 }

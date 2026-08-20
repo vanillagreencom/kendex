@@ -221,13 +221,17 @@ fn declared_sources(
                 let dir = base.join(name);
                 if dir.join("package.json").is_file() {
                     found.insert(name.clone(), dir);
-                } else if let Some(dir) = pi_ext::find_by_package_name(&base, name) {
-                    found.insert(name.clone(), dir);
                 } else {
-                    notes.push(format!(
-                        "{name}: source '{}' no longer ships pi-extensions/{name}",
-                        decl.source
-                    ));
+                    match pi_ext::find_by_package_name(&base, name) {
+                        Ok(Some(dir)) => {
+                            found.insert(name.clone(), dir);
+                        }
+                        Ok(None) => notes.push(format!(
+                            "{name}: source '{}' no longer ships pi-extensions/{name}",
+                            decl.source
+                        )),
+                        Err(error) => notes.push(format!("{name}: {error}")),
+                    }
                 }
             }
             Err(error) => notes.push(format!("{name}: {error}")),

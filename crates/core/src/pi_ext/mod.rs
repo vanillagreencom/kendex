@@ -121,20 +121,22 @@ pub fn read(package_dir: &Path) -> Result<PiPackage> {
 /// scoped names in short directories. The walk stays inside the sealed
 /// reader: catalog content is adversarial input, so symlinked or
 /// oversized metadata is skipped, never followed. One nested level
-/// covers npm-style `@scope/name` layouts.
-pub fn find_by_package_name(base: &Path, name: &str) -> Option<PathBuf> {
-    let sealed = crate::source_read::SealedSource::open(base).ok()?;
-    let mut candidates = sealed.list_dir(sealed.root()).ok()?;
+/// covers npm-style `@scope/name` layouts. Two directories registering
+/// the same name is an error, not a coin toss over which bytes install.
+pub fn find_by_package_name(base: &Path, name: &str) -> Result<Option<PathBuf>> {
+    let sealed = crate::source_read::SealedSource::open(base)?;
+    let mut candidates = sealed.list_dir(sealed.root())?;
     for dir in std::mem::take(&mut candidates) {
         if dir
             .file_name()
             .is_some_and(|n| n.to_string_lossy().starts_with('@'))
         {
-            candidates.extend(sealed.list_dir(&dir).ok().unwrap_or_default());
+            candidates.extend(sealed.list_dir(&dir).unwrap_or_default());
         } else {
             candidates.push(dir);
         }
     }
+    let mut matches = Vec::new();
     for dir in candidates {
         let manifest = dir.join("package.json");
         if !sealed.is_file(&manifest) {
@@ -144,10 +146,21 @@ pub fn find_by_package_name(base: &Path, name: &str) -> Option<PathBuf> {
             continue;
         };
         if serde_json::from_str::<RawPackage>(&text).is_ok_and(|raw| raw.name == name) {
-            return Some(dir);
+            matches.push(dir);
         }
     }
-    None
+    match matches.len() {
+        0 => Ok(None),
+        1 => Ok(matches.pop()),
+        _ => Err(CoreError::PiPackage {
+            name: name.to_owned(),
+            message: format!(
+                "{} directories under {} register this package name — refusing to pick one",
+                matches.len(),
+                base.display()
+            ),
+        }),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
