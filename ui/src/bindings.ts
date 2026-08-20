@@ -296,7 +296,7 @@ export const commands = {
 	 *  "the catalog's version wins", scoped to the package the user named so
 	 *  a neighbour's edits are never taken along.
 	 */
-	applyDiscardEdits: (scope: Scope, kind: ItemKind, name: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("apply_discard_edits", { scope, kind, name })),
+	applyDiscardEdits: (scope: Scope, kind: ItemKind, name: string, rev: string | null) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("apply_discard_edits", { scope, kind, name, rev })),
 	packageFiles: (scope: Scope, kind: ItemKind, name: string) => typedError<PackageFile[], string>(__TAURI_INVOKE("package_files", { scope, kind, name })),
 	packageFile: (scope: Scope, kind: ItemKind, name: string, path: string) => typedError<ItemSource, string>(__TAURI_INVOKE("package_file", { scope, kind, name, path })),
 	packageReadme: (scope: Scope, kind: ItemKind, name: string) => typedError<{

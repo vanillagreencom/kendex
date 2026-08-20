@@ -212,6 +212,7 @@ describe("UpdatesTable", () => {
         }),
       ]);
       expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Keep as my own</);
+      expect(html).toMatch(/<span[^>]*data-disabled=""[^>]*role="switch"/);
       expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Use new version…</);
     } finally {
       stub.busy = false;

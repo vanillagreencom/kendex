@@ -251,6 +251,27 @@ pub fn set_rev(
     name: &str,
     rev: Option<&str>,
 ) -> Result<EngineReport> {
+    set_rev_with(
+        env,
+        scope,
+        kind,
+        name,
+        rev,
+        &crate::engine::PlanOptions::default(),
+    )
+}
+
+/// `set_rev` whose plan takes the caller's options, so moving a hold and
+/// discarding the held copy's edits can be one apply: planning the new
+/// revision from the old manifest first would restore the old version.
+pub fn set_rev_with(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    rev: Option<&str>,
+    options: &crate::engine::PlanOptions,
+) -> Result<EngineReport> {
     let mut manifest = crate::engine::ops::manifest_for_mutation(env, scope)?;
     let Some(decl) = manifest.declared(kind).get(name).cloned() else {
         return Err(CoreError::NotDeclared {
@@ -289,7 +310,7 @@ pub fn set_rev(
         });
     };
     entry.rev = normalized;
-    crate::source_ops::persist_and_plan(env, scope, manifest)
+    crate::source_ops::persist_and_plan_with(env, scope, manifest, options)
 }
 
 /// The cache answers first — a version the mirror already holds needs no

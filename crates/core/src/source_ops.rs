@@ -219,8 +219,19 @@ pub(crate) fn persist_and_plan(
     scope: &Scope,
     manifest: Manifest,
 ) -> Result<EngineReport> {
+    persist_and_plan_with(env, scope, manifest, &PlanOptions::default())
+}
+
+/// `persist_and_plan` with the caller's plan options — for a manifest
+/// change that must land in the same apply as, say, discarding an edit.
+pub(crate) fn persist_and_plan_with(
+    env: &Env,
+    scope: &Scope,
+    manifest: Manifest,
+    options: &PlanOptions,
+) -> Result<EngineReport> {
     let lock = load_lock(&lock_path(env, scope))?;
-    let mut report = plan_scope(env, scope, &manifest, &lock, &PlanOptions::default())?;
+    let mut report = plan_scope(env, scope, &manifest, &lock, options)?;
     let has_write = crate::engine::persists_manifest(&report.plan.ops);
     if !has_write {
         crate::rename::insert_manifest_save(env, scope, &mut report.plan, manifest)?;

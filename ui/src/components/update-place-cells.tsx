@@ -85,7 +85,7 @@ export function PlaceCells({
           <TableCell>
             <div className="flex items-center justify-end gap-1.5">
               {row.blockedByLocalEdit ? (
-                <CustomizedActions row={row} storeBusy={busy} />
+                <CustomizedActions row={row} busy={busy} />
               ) : null}
               <Button
                 size="sm"

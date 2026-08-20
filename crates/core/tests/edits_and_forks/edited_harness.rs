@@ -64,3 +64,58 @@ fn an_edited_agent_names_the_rendering_that_was_edited() {
         .unwrap();
     assert_eq!(row.forkable_harness, Some(HarnessId::Claude));
 }
+
+/// "Use new version" on a held, edited place: the hold moves to the new
+/// commit and the edits go in the same apply — two steps would restore
+/// the old held copy first and leave the update pending.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn discarding_edits_can_move_a_hold_in_the_same_apply() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "One.");
+    commit(&w.upstream, "one");
+    // Run from a commit hook, GIT_DIR and friends point at the repository
+    // being committed to; dropped, so HEAD is the fixture's.
+    let one = String::from_utf8(
+        std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&w.upstream)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_OBJECT_DIRECTORY")
+            .env_remove("GIT_PREFIX")
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    declare(
+        &w,
+        &format!("[skills.gh]\nsource = \"cat\"\nrev = \"{}\"\n", one.trim()),
+    );
+    sync_and_apply(&w);
+    write_skill(&w.upstream, "gh", "Two.");
+    commit(&w.upstream, "two");
+    fs::write(skill_file(&w), "my edited version").unwrap();
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
+
+    let report = kendex_core::package::set_rev_with(
+        &w.env,
+        &w.scope,
+        ItemKind::Skill,
+        "gh",
+        Some("main"),
+        &PlanOptions {
+            overwrite_edited_names: Some(vec![(ItemKind::Skill, "gh".to_owned())]),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    apply::execute(&w.env, &report.plan, None).unwrap();
+    assert!(fs::read_to_string(skill_file(&w)).unwrap().contains("Two."));
+    assert!(audit(&w.env, &w.scope).unwrap().drift.is_empty());
+}

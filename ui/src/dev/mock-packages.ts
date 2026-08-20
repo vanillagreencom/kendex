@@ -181,6 +181,7 @@ export const packageHandlers: Record<string, Handler> = {
     scope: Scope;
     kind: ItemKind;
     name: string;
+    rev: string | null;
   }) => view(scope),
   package_files: () => [
     { path: "README.md", size: README.length, isReadme: true },
