@@ -5,8 +5,8 @@ introspection: no `loop*`/`agentAutomation*` CRUD; only leaked enums
 `AgentAutomationUsageLimitScope`, `WorkflowTrigger`, `WorkflowTriggerType`),
 so they are configured manually in the Linear UI at **Loops → New loop**.
 
-**How to use this template:** copy this file to `docs/linear-loops-local.md`
-(the `docs/*-local.md` gitignore rule keeps it out of version control), fill
+**How to use this template:** copy this file beside itself with a `-local`
+suffix (the `docs/*-local.md` gitignore rule keeps that copy untracked), fill
 in every `[BRACKETED]` placeholder — each one says what to put there — and
 paste the finished sections into the Linear UI. Angle-bracket `<...>` slots
 inside the instructions text are runtime values the loop substitutes per
