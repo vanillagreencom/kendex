@@ -5,16 +5,14 @@ name: Skill Tests
 # gating here is what lets consuming repos drop tracked vendoring: quality is
 # proven at the source, not re-proven per consumer.
 #
-# THE FAST/FULL SPLIT: the heavy suite shards and the cargo jobs run ONLY in
-# the merge queue — on PR pushes and main pushes they report `skipped`, which
-# satisfies the ruleset's required contexts while the pending "Review gate"
-# status is what actually blocks merge. A PR bills zero heavy runner-minutes
-# through every round of bot review, and the queue runs the full suite
-# exactly once, on the merged result, after review is done — main-push runs
-# would re-test the exact sha the queue just tested, so they are skipped
-# too. The accepted residual: a bypass-actor merge (gate-repair PRs) skips
-# the queue and lands without a heavy run — the operator runs the suites
-# locally and says so in the merge commit. The review gate never conditions
+# THE FAST/FULL SPLIT: the heavy suite shards and the cargo jobs skip on PR
+# pushes — a PR bills zero heavy runner-minutes through every round of bot
+# review, while the pending "Review gate" status is what actually blocks
+# merge. The full battery runs once per merged result: in the merge queue
+# when it is enabled, and on the push to main while it is not (the queue is
+# currently disabled — it ejects every entry; see the KEN queue-wedge
+# issue — so today the main-push run is the one that tests merged results,
+# after the merge rather than before it). The review gate never conditions
 # CI (it answers review-only; see the review-gate skill) — there is no gate
 # job here and nothing reads the predicate.
 #
@@ -48,9 +46,9 @@ jobs:
       fail-fast: false
       matrix:
         shard: [review-gate, shell, node]
-    # Merge-queue only by design; while the queue is disabled (it ejects
-    # every entry — see the KEN queue-wedge issue) the full battery runs on
-    # the push to main instead, so a merged result is still tested once.
+    # Skipped on PRs (the fast/full split); runs in the queue when enabled
+    # and on the push to main while it is not, so a merged result is always
+    # tested exactly once.
     if: github.event_name == 'merge_group' || github.event_name == 'push'
     runs-on: ${{ vars.CI_RUNNER_4V || 'ubuntu-latest' }}
     timeout-minutes: 25
@@ -277,7 +275,8 @@ jobs:
 
   # AGGREGATOR — this job's name is the ruleset's required context. On PR
   # heads the expression is false and the job reports `skipped`. In a merge
-  # group it runs after every shard and fails unless ALL shards succeeded —
+  # group or a main-push run it runs after every shard and fails unless ALL
+  # shards succeeded —
   # `always()` is required in the expression because skipped/failed needs
   # would otherwise skip this job too, and a skipped required context on a
   # merge group would satisfy the ruleset without any suite having run (the
