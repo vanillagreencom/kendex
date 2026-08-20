@@ -116,7 +116,7 @@ issue (owner decision 2026-08-09 after a misrouting incident: a team move
 also strips the project and re-scopes labels, and a wrong guess relocates
 whole filed waves). When the ownership map clearly assigns the issue to a
 different team, add ONE comment naming that team and the map rule, and stop
-there — every remaining task then works against the issue's CURRENT team.
+only this task — Tasks 2–6 still run, against the issue's CURRENT team.
 If ownership is ambiguous, comment and ask. Humans move issues; you flag.
 
 ## Task 2 — Labels
