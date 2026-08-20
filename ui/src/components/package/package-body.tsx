@@ -58,7 +58,6 @@ export function PackageBody({
         scope={reference.scope}
         kind={reference.kind}
         name={reference.name}
-        harness={primary.harness}
         alreadyForked={meta?.fork != null}
         onViewChanges={() => {
           if (!installed) return;
