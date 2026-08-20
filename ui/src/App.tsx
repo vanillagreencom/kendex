@@ -56,8 +56,10 @@ function useZoomShortcuts() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (zoom.onKeyDown(event)) event.preventDefault();
     };
-    // A size chosen and then abandoned inside the settle window would die
-    // with the window; leaving is the last chance to write it.
+    // Gives a size still inside its settle window its best chance rather
+    // than a certain one: this starts the write instead of waiting out the
+    // timer, and whether it lands depends on the runtime outliving the
+    // unload.
     const onLeaving = () => zoom.flush();
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("beforeunload", onLeaving);

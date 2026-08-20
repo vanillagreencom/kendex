@@ -353,7 +353,12 @@ lives in one capability table read by core and UI.
   before it reads what to write, so a size the window refuses is never
   offered to the file; a size the file refuses stays on screen, because
   taking it away would cost the person the size they are using to read the
-  message.
+  message. What the settle costs is the last size chosen before quitting:
+  the write is IPC behind a promise chain, so unloading starts it but
+  cannot wait for it, and a close can end the runtime first. The close is
+  not held open to fix that — a window that will not shut while the webview
+  is busy is worse than losing one zoom step, and a timeout on the wait
+  brings the loss back anyway.
 - **Every atomic write gets its own temp file.** `write_then_rename` names
   its temp file per write, not per process: the app saves from a thread
   pool, so two writes of one path really do overlap, and a shared name

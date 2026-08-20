@@ -44,6 +44,7 @@ export function initialState(): MockState {
       projects: [ACME, API],
       appearance: "system",
       safety: { "warn-below": 80, "block-below": 60 },
+      zoom: 100,
     },
     harnesses: harnesses(),
     items: items(),

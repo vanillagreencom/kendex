@@ -11,8 +11,18 @@ import { useSettingsStore } from "./settings";
  * holding them, so it needs no React lifetime and both consumers can simply
  * import it.
  */
+/**
+ * The size on screen, or null while the settings that hold it are still
+ * loading. Settings that arrived without an explicit size are a different
+ * answer: that means the default, not "unknown".
+ */
+export function currentZoom(): number | null {
+  const settings = useSettingsStore.getState().settings;
+  return settings ? (settings.zoom ?? ZOOM.default) : null;
+}
+
 export const zoom = zoomControls({
-  current: () => useSettingsStore.getState().settings?.zoom ?? ZOOM.default,
+  current: currentZoom,
   preview: (percent) => void useSettingsStore.getState().setZoom(percent),
   save: () => void useSettingsStore.getState().saveZoom(),
 });

@@ -145,6 +145,22 @@ describe("zoomControls", () => {
     expect(save).toHaveBeenCalledTimes(1);
   });
 
+  /// The window opens before the settings that hold its size have loaded.
+  /// A press then has nothing to act on, and a size guessed from a default
+  /// would move the window somewhere nobody asked for.
+  it("does nothing, and takes nothing, before the size is known", () => {
+    const preview = vi.fn();
+    const save = vi.fn();
+    const zoom = zoomControls({ current: () => null, preview, save });
+
+    expect(zoom.onKeyDown(press("+"))).toBe(false);
+    zoom.step(ZOOM.step);
+    vi.advanceTimersByTime(ZOOM_SETTLE_MS * 2);
+
+    expect(preview).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+  });
+
   it("writes nothing on the way out when nothing is pending", () => {
     const { save, zoom } = controls();
 

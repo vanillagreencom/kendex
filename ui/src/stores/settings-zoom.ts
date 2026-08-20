@@ -35,6 +35,12 @@ export function zoomActions(
   // The resize a commit has to wait for: a size the window refused must
   // never reach the file, and the refusal can outlive the input that asked.
   let resizing: Promise<void> = Promise.resolve();
+  // What the window is showing, which is what a refusal falls back to. With
+  // no resize outstanding the store agrees with the window, so this is read
+  // back from it then; while resizes are in flight the store is running
+  // ahead and only a reply can move this.
+  let showing: number = ZOOM.default;
+  let outstanding = 0;
 
   function report(title: string, message: string, retry: () => void) {
     useProblemsStore.getState().showError({
@@ -67,15 +73,23 @@ export function zoomActions(
   async function resize(percent: number) {
     const before = get().settings;
     if (!before || before.zoom === percent) return;
-    const previous = before.zoom ?? ZOOM.default;
+    if (outstanding === 0) showing = before.zoom ?? ZOOM.default;
+    outstanding += 1;
     showZoom(percent);
     const problem = await refused(percent);
-    if (problem === null) return;
+    outstanding -= 1;
+    if (problem === null) {
+      showing = percent;
+      return;
+    }
     // A size the window did not take is not offered to the settings file,
-    // and putting the old one back is what keeps the commit from writing it.
-    // Only if nothing newer has landed meanwhile: during a drag this reply
-    // can already be about a step the person has passed.
-    if (get().settings?.zoom === percent) showZoom(previous);
+    // and putting back what it is showing is what keeps the commit from
+    // writing it. Read now, not when this call started: with two presses in
+    // flight the size the store had then is the other press's, which the
+    // window may be about to refuse as well, and an earlier press may have
+    // been accepted since. Only if nothing newer has landed meanwhile —
+    // this reply can already be about a step the person has pressed past.
+    if (get().settings?.zoom === percent) showZoom(showing);
     report("Couldn't change the zoom", problem, () => void retry(percent));
   }
 

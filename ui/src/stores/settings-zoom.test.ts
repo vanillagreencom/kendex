@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands } from "@/bindings";
 import { useSettingsStore } from "./settings";
+import { currentZoom } from "./zoom";
 import {
   deferred,
   dialog,
@@ -29,6 +30,18 @@ vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 describe("zoom, on screen", () => {
   beforeEach(freshZoomStore);
+
+  /// Settings that arrived without an explicit size are not the same as
+  /// settings that have not arrived: the first means the default, and
+  /// treating it as unknown would leave the zoom controls dead.
+  it("reads the default size from settings that carry none", () => {
+    const { zoom: _z, ...withoutZoom } = settings;
+    useSettingsStore.setState({ settings: withoutZoom });
+    expect(currentZoom()).toBe(100);
+
+    useSettingsStore.setState({ settings: null });
+    expect(currentZoom()).toBeNull();
+  });
 
   it("resizes the window without writing anything, and writes only on commit", async () => {
     await useSettingsStore.getState().setZoom(150);

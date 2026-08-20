@@ -88,6 +88,47 @@ describe("zoom, on disk", () => {
     expect(zoom()).toBe(100);
   });
 
+  /// Two presses in flight and both refused: the second must not fall back
+  /// to the first, which the window never took either.
+  it("puts back the size the window is showing, not the one it also refused", async () => {
+    const first = deferred<WindowReply>();
+    const second = deferred<WindowReply>();
+    vi.mocked(commands.windowSetZoom)
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+
+    const step = useSettingsStore.getState().setZoom(150);
+    const next = useSettingsStore.getState().setZoom(160);
+    first.settle(failed("no webview"));
+    await tick();
+    second.settle(failed("no webview"));
+    await Promise.all([step, next]);
+    await useSettingsStore.getState().saveZoom();
+
+    // The window never left 100, so 100 is what the file gets.
+    expect(zoom()).toBe(100);
+    expect(vi.mocked(commands.updateSettings).mock.calls[0][0].zoom).toBe(100);
+  });
+
+  /// The same two presses with the first accepted: the fall-back is then the
+  /// size that press left on screen, not the one before it.
+  it("puts back a size an earlier press had accepted", async () => {
+    const first = deferred<WindowReply>();
+    const second = deferred<WindowReply>();
+    vi.mocked(commands.windowSetZoom)
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+
+    const step = useSettingsStore.getState().setZoom(150);
+    const next = useSettingsStore.getState().setZoom(160);
+    first.settle(ok(null));
+    await tick();
+    second.settle(failed("no webview"));
+    await Promise.all([step, next]);
+
+    expect(zoom()).toBe(150);
+  });
+
   it("never has two saves in flight, and the last one writes what is on screen", async () => {
     const first = deferred<Reply>();
     let live = 0;
