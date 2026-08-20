@@ -22,10 +22,13 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::model::{HarnessId, ItemKind};
+use crate::quality::reviews::SafetyReview;
 use crate::quality::{self, AuditInput, Content, TreeFile, Verdict};
 use crate::render::validate;
 use crate::source::{CatalogMode, SourceConfig};
 use crate::source_read::SealedSource;
+
+pub mod dismissals;
 
 /// The versioned envelope `check --catalog --json` wraps this report in.
 pub const CHECK_SCHEMA: u32 = 1;
@@ -65,6 +68,13 @@ pub struct CheckFinding {
     pub rule: Option<String>,
     pub message: String,
     pub fix: String,
+    /// For safety findings, the token `dismiss --catalog` takes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    /// A committed review record says this finding is not a problem; it is
+    /// reported but no longer counts toward the verdict or the score.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub dismissed: bool,
 }
 
 impl CheckFinding {
@@ -184,16 +194,26 @@ pub fn check_with(
             rule: None,
             message: finding.problem.clone(),
             fix: finding.fix.clone(),
+            token: None,
+            dismissed: false,
         })
         .collect();
     let mut report = CatalogCheck {
         catalog,
         items: Vec::new(),
     };
+    // The maintainer's committed decisions about their own findings —
+    // authoring CI honors them; a consumer's install never reads them.
+    let reviews = dismissals::load(sealed)?;
     for kind in CHECKED_KINDS {
         for name in crate::source::list_items(sealed, config, kind) {
             match crate::source::find_item(sealed, config, kind, &name) {
-                Some(path) => report.items.push(check_item(sealed, kind, &name, &path)?),
+                Some(path) => {
+                    let review = reviews.get(&dismissals::review_key(kind, &name));
+                    report
+                        .items
+                        .push(check_item(sealed, kind, &name, &path, review)?)
+                }
                 // A listed name every lookup refuses (an illegal spelling,
                 // say) is a catalog problem, not content to score.
                 None => report.catalog.push(CheckFinding {
@@ -206,6 +226,8 @@ pub fn check_with(
                     message: format!("this {} is listed but cannot be read", kind.name()),
                     fix: "give it a plain installable name at the path the catalog declares"
                         .to_owned(),
+                    token: None,
+                    dismissed: false,
                 }),
             }
         }
@@ -214,12 +236,14 @@ pub fn check_with(
 }
 
 /// Both passes over one item at its catalog path — the unit the indexer
-/// scores packages with.
+/// scores packages with. `review` is the catalog's committed record for
+/// this item, if it carries one.
 pub fn check_item(
     sealed: &SealedSource,
     kind: ItemKind,
     name: &str,
     path: &Path,
+    review: Option<&SafetyReview>,
 ) -> Result<CheckedItem> {
     let content = content(sealed, kind, path)?;
     let file = path
@@ -227,8 +251,10 @@ pub fn check_item(
         .unwrap_or(path)
         .display()
         .to_string();
+    let hash = dismissals::content_hash(sealed, path);
+    let dismissed = dismissals::active(review, hash.as_deref());
     let mut findings = structural(kind, name, &file, &content);
-    let (verdict, score) = safety(kind, name, &file, content, &mut findings);
+    let (verdict, score) = safety(kind, name, &file, content, &dismissed, &mut findings);
     Ok(CheckedItem {
         kind,
         name: name.to_owned(),
@@ -306,6 +332,8 @@ fn structural(kind: ItemKind, name: &str, file: &str, content: &Content) -> Vec<
             rule: None,
             message: finding.message,
             fix: finding.remediation,
+            token: None,
+            dismissed: false,
         }));
     }
     out
@@ -316,6 +344,7 @@ fn safety(
     name: &str,
     file: &str,
     content: Content,
+    dismissed: &std::collections::BTreeSet<String>,
     findings: &mut Vec<CheckFinding>,
 ) -> (Verdict, u32) {
     let result = quality::audit(AuditInput {
@@ -325,17 +354,36 @@ fn safety(
         location: file.to_owned(),
         content,
     });
-    let thresholds = quality::Thresholds::default();
-    let (verdict, _) = quality::verdict(&result.findings, &result.safety, thresholds);
-    findings.extend(result.findings.into_iter().map(|finding| CheckFinding {
-        file: finding.location,
-        kind: kind.name(),
-        name: name.to_owned(),
-        pass: SAFETY_PASS.to_owned(),
-        severity: finding.severity.name(),
-        rule: Some(finding.rule),
-        message: finding.message,
-        fix: finding.remediation,
-    }));
-    (verdict, result.safety.score)
+    // A dismissed finding is reported but no longer counted: the verdict
+    // and the score answer for what is still an open question.
+    let (counted, settled): (Vec<_>, Vec<_>) = result
+        .findings
+        .into_iter()
+        .partition(|finding| !dismissed.contains(&dismissals::fingerprint(finding, file)));
+    let safety = quality::safety(&counted);
+    let (verdict, _) = quality::verdict(&counted, &safety, quality::Thresholds::default());
+    let score = safety.score;
+    for (finding, was_dismissed) in counted
+        .into_iter()
+        .map(|f| (f, false))
+        .chain(settled.into_iter().map(|f| (f, true)))
+    {
+        findings.push(CheckFinding {
+            token: Some(dismissals::token(
+                kind,
+                name,
+                &dismissals::fingerprint(&finding, file),
+            )),
+            file: finding.location,
+            kind: kind.name(),
+            name: name.to_owned(),
+            pass: SAFETY_PASS.to_owned(),
+            severity: finding.severity.name(),
+            rule: Some(finding.rule),
+            message: finding.message,
+            fix: finding.remediation,
+            dismissed: was_dismissed,
+        });
+    }
+    (verdict, score)
 }

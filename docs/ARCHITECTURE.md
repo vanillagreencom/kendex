@@ -730,7 +730,16 @@ lives in one capability table read by core and UI.
   finds (pinned by test), safety scores from the check passes, bundles
   with members, About rows, findings. Field order in both JSON shapes is
   the schema — serde structs, no maps. `kendex marketplace check` is the
-  alias of `check --catalog --strict`, same exit codes.
+  alias of `check --catalog --strict`, same exit codes. A maintainer's
+  reviewed findings live in a committed `kendex-reviews.toml` at the
+  catalog root (`check_catalog/dismissals.rs`): the same
+  content-hash-bound dismissal records the install side keeps in a
+  manifest, keyed `kind:name`, written by `dismiss --catalog` from the
+  tokens `check --catalog` prints. The authoring passes stop counting a
+  dismissed finding (still reported, marked) — and only the authoring
+  passes: a consumer's install never reads a catalog's own reviews, so a
+  catalog cannot pre-approve its content on anyone else's machine. Editing
+  the item stales the record and the hold returns.
 - **The community directory is read like any remote: strictly, capped,
   and honest about staleness.** `registry/` (core) consumes what
   `source/index.rs` producers feed kendex.ai: `index.rs` re-parses the

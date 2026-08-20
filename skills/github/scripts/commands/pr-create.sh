@@ -29,7 +29,8 @@ Options:
   --head HEAD      Head branch (default: current branch)
   --label LABEL    Add label (repeatable: --label foo --label bar)
   --draft          Create as draft PR
-  --force          Skip safety checks
+  --force          Create even when the pre-create checks below fail — you
+                   can end up with a PR from main or an empty/unpushed branch
   --dry-run        Show what would be created without creating
 
 Safety Checks (run by default):

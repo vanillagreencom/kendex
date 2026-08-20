@@ -106,7 +106,8 @@ fn print_row(row: &ItemSafety) {
 
 #[derive(Args)]
 pub struct DismissArgs {
-    /// The finding tokens printed by `kendex findings`
+    /// The finding tokens printed by `kendex findings`, or with --catalog
+    /// the kind:name#fingerprint tokens printed by `check --catalog`
     #[arg(required = true)]
     tokens: Vec<String>,
     /// wrong-call | intended | trusted-source
@@ -117,6 +118,10 @@ pub struct DismissArgs {
     /// project | global (default project)
     #[arg(long)]
     scope: Option<String>,
+    /// Record an authoring decision in this catalog directory's
+    /// kendex-reviews.toml instead of dismissing an installed finding
+    #[arg(long)]
+    catalog: Option<std::path::PathBuf>,
 }
 
 /// Record that these findings are not problems. One journaled manifest
@@ -134,6 +139,9 @@ pub fn dismiss_cmd(env: &Env, args: DismissArgs) -> CliResult {
                 .join(", ")
         )
     })?;
+    if let Some(catalog) = &args.catalog {
+        return dismiss_catalog(catalog, &args.tokens, reason);
+    }
     let tokens = args
         .tokens
         .iter()
@@ -151,6 +159,76 @@ pub fn dismiss_cmd(env: &Env, args: DismissArgs) -> CliResult {
         tokens.len(),
         if tokens.len() == 1 { "" } else { "s" },
         reason.name()
+    ));
+    Ok(())
+}
+
+/// The authoring flavor: one committed record in the catalog's
+/// kendex-reviews.toml, validated against the catalog's bytes right now the
+/// same way an install-side dismissal is — a token whose content or finding
+/// has moved on is refused, and a batch with one bad token writes nothing.
+fn dismiss_catalog(
+    catalog: &std::path::Path,
+    tokens: &[String],
+    reason: DismissReason,
+) -> CliResult {
+    use kendex_core::check_catalog::dismissals;
+    if reason == DismissReason::TrustedSource {
+        return Err(
+            "trusted-source is about where an install came from; an authoring decision is \
+             wrong-call or intended"
+                .into(),
+        );
+    }
+    let sealed = kendex_core::source_read::SealedSource::open(catalog)?;
+    let config = kendex_core::source::source_config(&sealed, "catalog")?;
+    // (kind, name, content hash, fingerprints) per token, all validated
+    // before anything is written.
+    let mut batches: Vec<(kendex_core::model::ItemKind, String, String, Vec<String>)> = Vec::new();
+    for token in tokens {
+        let Some((kind, name, fingerprint)) = dismissals::parse_token(token) else {
+            return Err(format!("'{token}' is not a kind:name#fingerprint token").into());
+        };
+        let Some(path) = kendex_core::source::find_item(&sealed, &config, kind, name) else {
+            return Err(format!("{}: no {} '{name}' in this catalog", token, kind.name()).into());
+        };
+        let item = kendex_core::check_catalog::check_item(&sealed, kind, name, &path, None)?;
+        let known = item.findings.iter().any(|finding| {
+            finding
+                .token
+                .as_deref()
+                .is_some_and(|printed| printed == *token)
+        });
+        if !known {
+            return Err(format!(
+                "{token}: the finding is no longer there — re-run check --catalog and use the tokens it prints"
+            )
+            .into());
+        }
+        let Some(hash) = dismissals::content_hash(&sealed, &path) else {
+            return Err(format!("{token}: the item's content cannot be read").into());
+        };
+        match batches
+            .iter_mut()
+            .find(|(k, n, _, _)| *k == kind && n == name)
+        {
+            Some((_, _, _, prints)) => prints.push(fingerprint.to_owned()),
+            None => batches.push((kind, name.to_owned(), hash, vec![fingerprint.to_owned()])),
+        }
+    }
+    let mut count = 0;
+    for (kind, name, hash, prints) in batches {
+        let records: Vec<(String, DismissReason)> =
+            prints.into_iter().map(|print| (print, reason)).collect();
+        count += records.len();
+        dismissals::record(&sealed, kind, &name, &hash, &records)?;
+    }
+    say(&format!(
+        "{}: recorded {count} authoring dismissal{} as {} in {}",
+        catalog.display(),
+        if count == 1 { "" } else { "s" },
+        reason.name(),
+        dismissals::REVIEWS_FILE
     ));
     Ok(())
 }

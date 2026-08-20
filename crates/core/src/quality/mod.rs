@@ -30,7 +30,7 @@ mod secret;
 mod text;
 
 pub use dimensions::{AntiPattern, DimensionScore, QualityScore};
-pub use score::{Deduction, SafetyScore, Thresholds, Verdict, verdict};
+pub use score::{Deduction, SafetyScore, Thresholds, Verdict, safety, verdict};
 pub use secret::{fingerprint_secret, redact};
 pub use text::{Line, Normalization};
 

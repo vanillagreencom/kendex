@@ -139,3 +139,83 @@ fn check_and_index_agree_on_the_offered_set() {
         assert_eq!(package.safety.score, item.score);
     }
 }
+
+/// A committed review record settles a finding: the item stops being held
+/// back, the finding is still reported (marked dismissed), and editing the
+/// item's content makes the record stale so the hold comes back.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_committed_dismissal_unblocks_until_the_content_moves() {
+    use kendex_core::check_catalog::dismissals;
+    use kendex_core::quality::Verdict;
+
+    let (_tmp, root) = repo();
+    let dir = root.join("skills/guardy");
+    fs::create_dir_all(&dir).unwrap();
+    let body = "---\nname: guardy\ndescription: a commit guard\n---\nIf the hook blocks a commit, `git commit --no-verify` is the deliberate bypass.\n";
+    fs::write(dir.join("SKILL.md"), body).unwrap();
+    fs::write(root.join("kendex.toml"), "[marketplace]\nname = \"demo\"\n").unwrap();
+
+    let sealed = SealedSource::open(&root).unwrap();
+    let report = check(&sealed, "repo").unwrap();
+    let item = &report.items[0];
+    assert_eq!(item.verdict, Verdict::Block);
+    let token = item
+        .findings
+        .iter()
+        .find_map(|finding| finding.token.clone())
+        .unwrap();
+    let (kind, name, fingerprint) = dismissals::parse_token(&token).unwrap();
+    assert_eq!(kind, ItemKind::Skill);
+    assert_eq!(name, "guardy");
+
+    let hash = dismissals::content_hash(&sealed, &dir).unwrap();
+    dismissals::record(
+        &sealed,
+        kind,
+        name,
+        &hash,
+        &[(
+            fingerprint.to_owned(),
+            kendex_core::quality::reviews::DismissReason::Intended,
+        )],
+    )
+    .unwrap();
+
+    // Re-open so the reviews file is inside the sealed root's view.
+    let sealed = SealedSource::open(&root).unwrap();
+    let report = check(&sealed, "repo").unwrap();
+    let item = &report.items[0];
+    assert_ne!(
+        item.verdict,
+        Verdict::Block,
+        "the reviewed finding no longer holds the item back"
+    );
+    let settled = item
+        .findings
+        .iter()
+        .find(|finding| finding.token.as_deref() == Some(token.as_str()))
+        .unwrap();
+    assert!(
+        settled.dismissed,
+        "the finding is still reported, marked dismissed"
+    );
+
+    // The content moves: the snapshot is stale and the hold returns.
+    fs::write(dir.join("SKILL.md"), format!("{body}\nOne more line.\n")).unwrap();
+    let report = check(&sealed, "repo").unwrap();
+    assert_eq!(report.items[0].verdict, Verdict::Block);
+}
+
+/// Tokens parse only in their printed shape.
+#[test]
+fn authoring_tokens_parse_in_their_printed_shape() {
+    use kendex_core::check_catalog::dismissals::parse_token;
+    assert_eq!(
+        parse_token("skill:guardy#abc123"),
+        Some((ItemKind::Skill, "guardy", "abc123"))
+    );
+    assert_eq!(parse_token("skill:guardy"), None);
+    assert_eq!(parse_token("skill:#abc"), None);
+    assert_eq!(parse_token("nonsense:guardy#abc"), None);
+}

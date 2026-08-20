@@ -16,6 +16,14 @@ changes carry a **Breaking** call-out with their migration note inline.
 - The default catalog now offers curated bundles and tagged packages, so you
   can install a working set in one step: orchestration, code-review,
   research, and commit-guards.
+- Catalog authors can settle a reviewed safety finding:
+  `kendex dismiss --catalog <dir> --reason intended '<token>'` records the
+  decision in a committed `kendex-reviews.toml`, and `kendex check --catalog`
+  stops holding the catalog back for that exact finding on that exact
+  content. Any edit to the item brings the hold back, dismissed findings are
+  still reported, and installs on other machines are unaffected — a catalog
+  can never pre-approve its own content for consumers. `check --catalog`
+  prints the token beside each blocking finding.
 
 ### Changed
 

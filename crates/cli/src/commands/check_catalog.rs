@@ -68,12 +68,28 @@ fn lines(report: &CatalogCheck) {
                 // whether this run fails, and a line that says "error"
                 // without failing anything is a line people learn to scroll
                 // past.
+                Some(rule) if finding.dismissed => {
+                    say(&format!(
+                        "[dismissed {}] safety: {}: {} ({rule})",
+                        finding.severity, finding.file, finding.message
+                    ));
+                    continue;
+                }
                 Some(rule) => say(&format!(
                     "[{}] safety: {}: {} ({rule})",
                     finding.severity, finding.file, finding.message
                 )),
             }
             say(&format!("    fix: {}", finding.fix));
+            // A held-back item is waiting on the maintainer's review; the
+            // token is how a reviewed finding is recorded as intended.
+            if item.verdict == Verdict::Block
+                && let Some(token) = &finding.token
+            {
+                say(&format!(
+                    "    reviewed and intended? kendex dismiss --catalog <dir> --reason intended '{token}'"
+                ));
+            }
         }
         if item.verdict != Verdict::Clean {
             say(&format!(
