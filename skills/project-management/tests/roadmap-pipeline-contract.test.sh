@@ -55,6 +55,14 @@ require_fixed "$create" 'for every conversion' 'scripted conversion for every pl
 require_fixed "$plan" '**Research inline (recommended)**' 'inline research is the default'
 require_fixed "$spike" 'research is **delegated**' 'research-spike is for delegated research'
 require_fixed "$spike" '`auto_execute` as the caller passed it' 'spike passes auto_execute through'
+require_fixed "$plan" 'passing `auto_execute` explicitly' 'plan gate passes auto_execute explicitly to the spike'
+require_fixed "$plan" '`false` leaves the issue ready for later pickup — never omit the value' 'deferred spike path is explicit'
+schema="$SKILL_DIR/schemas/roadmap-plan-input.md"
+tpm="$SKILL_DIR/workflows/tpm-roadmap-plan.md"
+require_fixed "$schema" '| `spec_path` | No |' 'spec_path in the input schema'
+require_fixed "$plan" 'and `spec_path` (each null when absent' 'plan writes spec_path into the TPM input'
+require_fixed "$tpm" '**Spec mode** (`SPEC_PATH` set): the plan'"'"'s decisions are binding' 'TPM spec mode binds the plan'
+require_fixed "$tpm" 'never change its approach, drop a workstream it names, or add scope beyond its phases' 'TPM spec-mode constraints'
 require_fixed "$skill" 'optional: [decider, second-opinion]' 'second-opinion declared as an optional dependency'
 require_fixed "$plan" 'Cross-model review: unavailable' 'cross-model review degrades when the skill is absent'
 

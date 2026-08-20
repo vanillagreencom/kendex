@@ -32,7 +32,7 @@ On a match, read `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md` and extract its f
 
 Type follows domain count: one domain is Targeted, two or more Pervasive. Strategic (initiative-level, 10+ issues) requires the user to say so.
 
-Run `⤵ workflows/research-issue.md § 1-5 → § 4` with `topic` (§ 1), `questions` (§ 1), `domains` (§ 2), `project` (above), `type`, `prior_research` (§ 2, or empty), `auto_execute` as the caller passed it, and no `blocked_issue` — a spike has no blocker.
+Run `⤵ workflows/research-issue.md § 1-5 → § 4` with `topic` (§ 1), `questions` (§ 1), `domains` (§ 2), `project` (above), `type`, `prior_research` (§ 2, or empty), `auto_execute` as the caller passed it (roadmap-plan § 1 always passes it; a standalone spike defaults to true), and no `blocked_issue` — a spike has no blocker.
 
 ## 4. Report
 

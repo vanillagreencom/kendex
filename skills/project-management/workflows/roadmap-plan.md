@@ -36,7 +36,7 @@ Filter for `FEATURE` keywords. A match supplies `RESEARCH_PATH` from the issue �
 With no match, ask the user — spending a research cycle is their call:
 
 - **Research inline (recommended)** — gather what the plan needs now (code, vendor docs, web), write findings to `docs/research/[FEATURE].md`, and continue with it as `RESEARCH_PATH`. No tracker issue: research done in-session is planning work, not backlog.
-- **Delegate a research spike** — standalone tracked research the researcher agent runs, or with `auto_execute: false` prepares for later pickup, when the question is too large for this session. Run `⤵ workflows/research-spike.md [FEATURE] § 1-4`, then re-run `roadmap plan [FEATURE] @[RESEARCH_OUTPUT_PATH]` once findings exist.
+- **Delegate a research spike** — standalone tracked research when the question is too large for this session. Run `⤵ workflows/research-spike.md [FEATURE] § 1-4` passing `auto_execute` explicitly: `true` has the researcher run it now, `false` leaves the issue ready for later pickup — never omit the value. Re-run `roadmap plan [FEATURE] @[RESEARCH_OUTPUT_PATH]` once findings exist.
 - **Skip research** — set `RESEARCH_PATH` = null → § 2.
 
 ---
@@ -73,7 +73,7 @@ Build `PROPOSED_ISSUES[]` per [roadmap-plan-input.md](../schemas/roadmap-plan-in
 
 ## 3. TPM Analysis
 
-Write the input file per [roadmap-plan-input.md](../schemas/roadmap-plan-input.md) to `tmp/roadmap-input-YYYYMMDD-HHMMSS.json`, including `origin_issue` and `planner_handoff` (null when absent). Delegate to a one-shot `[TPM]` sub-agent:
+Write the input file per [roadmap-plan-input.md](../schemas/roadmap-plan-input.md) to `tmp/roadmap-input-YYYYMMDD-HHMMSS.json`, including `origin_issue`, `planner_handoff`, and `spec_path` (each null when absent — `spec_path` is set exactly when the `@[path]` input classified as a SPEC, so the TPM knows the plan's decisions are binding). Delegate to a one-shot `[TPM]` sub-agent:
 
 <delegation_format>
 Follow workflow: .agents/skills/project-management/workflows/tpm-roadmap-plan.md
