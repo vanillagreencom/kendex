@@ -48,12 +48,10 @@ jobs:
       fail-fast: false
       matrix:
         shard: [review-gate, shell, node]
-    # Merge-queue only (the fast/full split — see the header). A job-level
-    # if:, not workflow-level `paths`/conditions: a SKIPPED job still
-    # reports its context, so the ruleset's required contexts stay satisfied
-    # on PR heads while the pending "Review gate" status blocks merge until
-    # review is done.
-    if: github.event_name == 'merge_group'
+    # Merge-queue only by design; while the queue is disabled (it ejects
+    # every entry — see the KEN queue-wedge issue) the full battery runs on
+    # the push to main instead, so a merged result is still tested once.
+    if: github.event_name == 'merge_group' || github.event_name == 'push'
     runs-on: ${{ vars.CI_RUNNER_4V || 'ubuntu-latest' }}
     timeout-minutes: 25
     steps:
@@ -287,7 +285,7 @@ jobs:
   skill-suites:
     name: Skill suites (shell + node)
     needs: [skill-suites-shard]
-    if: always() && github.event_name == 'merge_group'
+    if: always() && (github.event_name == 'merge_group' || github.event_name == 'push')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -341,8 +339,9 @@ jobs:
 
   cargo-tests:
     name: Cargo (workspace tests)
-    # Merge-queue only — same split as skill-suites above.
-    if: github.event_name == 'merge_group'
+    # Same split as skill-suites above: queue when it works, main push
+    # while it is disabled.
+    if: github.event_name == 'merge_group' || github.event_name == 'push'
     # GitHub-hosted deliberately: the full workspace build (Tauri app
     # included) killed the org's current Blacksmith size twice in a row —
     # the runner died mid-build with no step conclusion. Route it back when
@@ -369,7 +368,7 @@ jobs:
   # required context yet — a red run is visible without wedging the queue.
   cargo-tests-macos:
     name: macOS cargo (workspace tests)
-    if: github.event_name == 'merge_group'
+    if: github.event_name == 'merge_group' || github.event_name == 'push'
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
