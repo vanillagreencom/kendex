@@ -104,10 +104,12 @@ describe("zoom, on screen", () => {
       .mockReturnValueOnce(first.promise)
       .mockResolvedValue(ok(null));
 
+    // The second press is made while the first is still out: it moves the
+    // store at once and waits its turn at the window.
     const refused = useSettingsStore.getState().setZoom(150);
-    await useSettingsStore.getState().setZoom(160);
+    const next = useSettingsStore.getState().setZoom(160);
     first.settle(failed("no webview"));
-    await refused;
+    await Promise.all([refused, next]);
 
     expect(zoom()).toBe(160);
   });

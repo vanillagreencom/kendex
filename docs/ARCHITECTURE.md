@@ -357,7 +357,13 @@ lives in one capability table read by core and UI.
   a flicker while a keypress never did. The window follows every step so
   the control feels live, and the settings file is written once the steps
   stop. Both inputs start the same timer, so neither can rewrite the file
-  per press. At most one save is ever in flight, and asks made
+  per press. The window is asked for one size at a time, each press queued
+  behind the last: three ordering bugs came out of letting the requests
+  overlap and reconciling their replies afterwards, and a queue removes
+  those orderings rather than answering them, since there is never a second
+  reply to interleave with. The size still shows the moment it is pressed,
+  so the control stays immediate and two presses in one frame cannot
+  collapse into one. At most one save is ever in flight, and asks made
   while it runs collapse into a single follow-up that writes whatever is on
   screen by then, so replies can never land out of order and put back a
   size the person has already moved past. A write waits for the resize

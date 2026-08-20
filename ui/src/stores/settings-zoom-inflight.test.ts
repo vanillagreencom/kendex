@@ -98,28 +98,34 @@ describe("zoom, with a resize still out", () => {
   /// before an older one is accepted rolls the store past a size the window
   /// then lands on, and the store has to be brought back to it.
 
-  it("follows a late success the window ended up on", async () => {
-    const older = deferred<WindowReply>();
-    const newer = deferred<WindowReply>();
+  /// One request to the window at a time is what removes the orderings
+  /// rather than answering them: with no second reply to interleave with,
+  /// there is no sequence of replies left to get wrong. Three ordering bugs
+  /// came out of the version that let them overlap.
+  it("asks the window for one size at a time", async () => {
+    const first = deferred<WindowReply>();
     vi.mocked(commands.windowSetZoom)
-      .mockReturnValueOnce(older.promise)
-      .mockReturnValueOnce(newer.promise);
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValue(ok(null));
 
-    const step = useSettingsStore.getState().setZoom(150);
-    const next = useSettingsStore.getState().setZoom(160);
-    newer.settle(failed("no webview"));
+    const one = useSettingsStore.getState().setZoom(150);
+    const two = useSettingsStore.getState().setZoom(160);
     await tick();
-    older.settle(ok(null));
-    await Promise.all([step, next]);
-    await useSettingsStore.getState().saveZoom();
 
-    expect(zoom()).toBe(150);
-    expect(vi.mocked(commands.updateSettings).mock.calls[0][0].zoom).toBe(150);
+    // The second press is on screen already; the window has not been told.
+    expect(commands.windowSetZoom).toHaveBeenCalledTimes(1);
+    expect(zoom()).toBe(160);
+
+    first.settle(ok(null));
+    await Promise.all([one, two]);
+
+    expect(
+      vi.mocked(commands.windowSetZoom).mock.calls.map(([percent]) => percent),
+    ).toEqual([150, 160]);
   });
 
-  /// The same two presses with the first accepted: the fall-back is then the
-  /// size that press left on screen, not the one before it.
-
+  /// An earlier press accepted and a later one refused: the fall-back is the
+  /// size the accepted press left on screen, not the one before it.
   it("puts back a size an earlier press had accepted", async () => {
     const first = deferred<WindowReply>();
     const second = deferred<WindowReply>();
@@ -133,8 +139,10 @@ describe("zoom, with a resize still out", () => {
     await tick();
     second.settle(failed("no webview"));
     await Promise.all([step, next]);
+    await useSettingsStore.getState().saveZoom();
 
     expect(zoom()).toBe(150);
+    expect(vi.mocked(commands.updateSettings).mock.calls[0][0].zoom).toBe(150);
   });
 
   it("never writes a size the window went on to refuse", async () => {

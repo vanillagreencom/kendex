@@ -32,15 +32,19 @@ export function zoomActions(
   // the person has already moved past.
   let saving: Promise<void> | null = null;
   let again = false;
-  // The resize a commit has to wait for: a size the window refused must
-  // never reach the file, and the refusal can outlive the input that asked.
-  let resizing: Promise<void> = Promise.resolve();
-  // What the window is showing, which is what a refusal falls back to. With
-  // no resize outstanding the store agrees with the window, so this is read
-  // back from it then; while resizes are in flight the store is running
-  // ahead and only a reply can move this.
+  // One request to the window at a time, each queued behind the last. Three
+  // ordering bugs came out of letting them overlap and reconciling the
+  // replies afterwards; a queue removes the orderings rather than answering
+  // them, because there is never a second reply to interleave with. The
+  // commit waits on the tail of this, so a size the window refused cannot
+  // reach the file.
+  let asking: Promise<void> = Promise.resolve();
+  // What the window last confirmed, which is what a refusal falls back to.
+  // With nothing queued the store agrees with the window, so this is read
+  // back from it then; once presses are queued the store is running ahead
+  // and only a reply moves this.
   let showing: number = ZOOM.default;
-  let outstanding = 0;
+  let queued = 0;
 
   function report(title: string, message: string, retry: () => void) {
     useProblemsStore.getState().showError({
@@ -70,45 +74,44 @@ export function zoomActions(
     }
   }
 
-  async function resize(percent: number) {
-    const before = get().settings;
-    if (!before || before.zoom === percent) return;
-    if (outstanding === 0) showing = before.zoom ?? ZOOM.default;
-    outstanding += 1;
-    showZoom(percent);
+  /// Its turn in the queue: ask the window, and put the size back if it
+  /// says no.
+  async function ask(percent: number) {
     const problem = await refused(percent);
-    outstanding -= 1;
+    queued -= 1;
     if (problem === null) {
       showing = percent;
-      // The last reply standing says what the window ended up on, and the
-      // store has to agree: a newer press refused before this older one was
-      // accepted has already rolled the store back past this size.
-      if (outstanding === 0) showZoom(percent);
       return;
     }
     // A size the window did not take is not offered to the settings file,
     // and putting back what it is showing is what keeps the commit from
-    // writing it. Read now, not when this call started: with two presses in
-    // flight the size the store had then is the other press's, which the
-    // window may be about to refuse as well, and an earlier press may have
-    // been accepted since. Only if nothing newer has landed meanwhile —
-    // this reply can already be about a step the person has pressed past.
+    // writing it. Only if nothing newer has landed meanwhile: a press made
+    // while this one waited its turn has already moved the store past it.
     if (get().settings?.zoom === percent) showZoom(showing);
     report("Couldn't change the zoom", problem, () => void retry(percent));
   }
 
   function setZoom(percent: number): Promise<void> {
-    // Joined, not replaced: a repeat of the size already on screen returns
-    // at once, and replacing would drop the earlier resize still in flight
-    // from what the commit waits for.
-    const run = resize(percent).catch((error: unknown) => {
-      report(
-        "Couldn't change the zoom",
-        String(error),
-        () => void retry(percent),
-      );
-    });
-    resizing = Promise.all([resizing, run]).then(() => {});
+    const before = get().settings;
+    if (!before || before.zoom === percent) return Promise.resolve();
+    // Nothing queued means the store and the window agree, which is the
+    // only moment this can be read back from the store.
+    if (queued === 0) showing = before.zoom ?? ZOOM.default;
+    queued += 1;
+    // The size shows at once and the window is asked in turn, so a second
+    // press reads a store that has already moved and cannot collapse into
+    // the first.
+    showZoom(percent);
+    const run = asking
+      .then(() => ask(percent))
+      .catch((error: unknown) => {
+        report(
+          "Couldn't change the zoom",
+          String(error),
+          () => void retry(percent),
+        );
+      });
+    asking = run;
     return run;
   }
 
@@ -121,19 +124,19 @@ export function zoomActions(
 
   async function write() {
     try {
-      // The size on screen is settled only once every resize has replied.
-      // `resizing` is a closure variable `setZoom` reassigns, and awaiting
-      // it hands control back, which is exactly when a new resize can start
-      // — so the identity check asks again until nothing new began while we
-      // waited. It terminates because every caller arrives through a settle
+      // The size on screen is settled only once the queue has drained.
+      // `asking` is a closure variable `setZoom` reassigns, and awaiting it
+      // hands control back, which is exactly when a new press can join — so
+      // the identity check asks again until nothing new arrived while we
+      // waited. It terminates because every caller comes through a settle
       // timer that has already outlasted the input stream; wire `saveZoom`
-      // to something that fires mid-drag and this becomes an unbounded wait
-      // holding the one-save-at-a-time slot.
+      // to something that fires mid-gesture and this becomes an unbounded
+      // wait holding the one-save-at-a-time slot.
       let awaited: Promise<void>;
       do {
-        awaited = resizing;
+        awaited = asking;
         await awaited;
-      } while (resizing !== awaited);
+      } while (asking !== awaited);
 
       const current = get().settings;
       if (!current) return;

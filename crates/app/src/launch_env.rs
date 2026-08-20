@@ -19,9 +19,6 @@ const BUNDLED_BACKEND: &str = "x11";
 /// backend cannot talk to still gets a window.
 const WAYLAND_THEN_X11: &str = "wayland,x11";
 
-/// Set on the relaunch below, so a session relaunches at most once.
-const RELAUNCHED: &str = "KENDEX_DISPLAY_ENV";
-
 /// What the environment said when this process started.
 #[derive(Debug, Default, Clone, Copy)]
 struct Session<'a> {
@@ -34,7 +31,6 @@ struct Session<'a> {
     gdk: Option<&'a str>,
     /// The bundled GTK hook has run, so `GDK_BACKEND` is the bundle's.
     in_appimage: bool,
-    relaunched: bool,
 }
 
 /// A value only counts as said if there is something in it.
@@ -128,10 +124,15 @@ fn gdk_backend(wayland: bool, session: Session<'_>) -> Option<String> {
 
 /// Everything that has to change before GTK and WebKit start; empty when
 /// nothing does, which is the common case and means no relaunch.
+///
+/// A relaunch cannot loop because this is a fixed point: applying what it
+/// asks for makes the next call return nothing, since every entry is only
+/// emitted when the variable does not already hold the wanted value. That
+/// is checked rather than asserted — see the test. A sentinel variable
+/// would be the obvious alternative and was the wrong one: children inherit
+/// it, so a kendex launched from a process kendex started would read a
+/// stale marker and skip a plan its own environment needs.
 fn plan(session: Session<'_>) -> Vec<(&'static str, String)> {
-    if session.relaunched {
-        return Vec::new();
-    }
     let wayland = wayland_session(session.session_type, session.wayland_display);
     let mut vars = Vec::new();
     if let Some(value) = webview_env(wayland, session.webkit) {
@@ -199,9 +200,7 @@ fn relaunch_with(vars: &[(&'static str, String)]) {
         }
     };
     let mut command = std::process::Command::new(exe);
-    command
-        .args(std::env::args_os().skip(1))
-        .env(RELAUNCHED, "1");
+    command.args(std::env::args_os().skip(1));
     for (name, value) in vars {
         command.env(name, value);
     }
@@ -232,7 +231,6 @@ pub(crate) fn apply() {
             std::env::var_os("APPDIR").as_deref(),
             std::env::current_exe().ok().as_deref(),
         ),
-        relaunched: std::env::var_os(RELAUNCHED).is_some(),
     };
 
     let vars = plan(session);

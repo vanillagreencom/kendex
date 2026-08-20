@@ -146,15 +146,46 @@ fn a_backend_the_person_chose_is_left_alone() {
     );
 }
 
+/// What stops a relaunch looping: applying the plan leaves nothing to do.
+/// There is no marker in the environment for a child to inherit and a
+/// later launch to trust.
 #[test]
-fn the_relaunched_process_decides_nothing_a_second_time() {
-    assert!(
-        plan(Session {
-            relaunched: true,
-            ..appimage()
-        })
-        .is_empty()
-    );
+fn applying_the_plan_leaves_nothing_to_do() {
+    let sessions = [
+        ("the AppImage on Wayland", appimage()),
+        ("a deb on Wayland", wayland()),
+        (
+            "a backend the person named",
+            Session {
+                ours: Some("broadway"),
+                ..appimage()
+            },
+        ),
+        (
+            "a named backend on an X11 session",
+            Session {
+                session_type: Some("x11"),
+                ours: Some("broadway"),
+                ..Session::default()
+            },
+        ),
+    ];
+    for (what, session) in sessions {
+        let first = plan(session);
+        assert!(!first.is_empty(), "{what}: nothing to apply");
+        let applied = |name| {
+            first
+                .iter()
+                .find(|(entry, _)| *entry == name)
+                .map(|(_, value)| value.as_str())
+        };
+        let relaunched = Session {
+            webkit: applied("WEBKIT_DISABLE_DMABUF_RENDERER").or(session.webkit),
+            gdk: applied("GDK_BACKEND").or(session.gdk),
+            ..session
+        };
+        assert!(plan(relaunched).is_empty(), "{what}: would relaunch again");
+    }
 }
 
 #[test]
