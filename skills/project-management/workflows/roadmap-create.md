@@ -102,7 +102,7 @@ Deterministic mapping only — do NOT re-analyze, and do NOT re-type: generate t
 | `add_relations` | `depends_on_proposed` titles → `blocked_by: ["#N"]` by index; `depends_on_existing` → `blocked_by: ["[ISSUE_ID]"]`. Relations are already lifted to parent level — preserve them |
 | `hierarchy` | Bundle children are always `make_child` of `#[parent_index]`. Parents and standalone issues follow `hierarchy_recommendation`: `children_of_origin` → `make_child` of the origin ID, anything else → `none`, `mixed` → per the TPM grouping |
 | `supersedes` | Supersession entries in `cross_project_findings` — unless § 2 already executed them |
-| existing-work actions § 2 executed | Every cancel/expand/descope/supersede action § 2 already carried out enters as `action: "skip"` with `reason: "executed at § 2"` — never as a live `cancel`/`supersede` — so § 6 asks about no action twice and § 7 repeats none |
+| existing-work actions § 2 executed | Every cancel/expand/descope action § 2 already carried out enters as `action: "skip"` with `reason: "executed at § 2"`; a `supersede` whose cancellation § 2 completed enters as a plain `create` with `supersedes` cleared, so the approved replacement is still filed — never a live `cancel`/`supersede`, so § 6 asks about no action twice and § 7 repeats none |
 | `obsolete` | `organized_issues[i].obsolete` |
 | `priority_misalignment`, `agent_mismatch` | null — already correct |
 
