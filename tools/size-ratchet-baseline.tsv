@@ -129,8 +129,8 @@ skills/orch/tests/review_artifact_check.sh	747
 skills/orch/tests/review_artifact_check_channels.sh	426
 skills/orch/tests/review_artifact_check_measurement.sh	602
 skills/orch/workflows/review-pr.md	450
-skills/preflight/scripts/preflight	1014
-skills/preflight/tests/precision.test.sh	402
+skills/preflight/scripts/preflight	1016
+skills/preflight/tests/precision.test.sh	404
 skills/review-gate/scripts/pr-watch.sh	820
 skills/review-gate/scripts/review-predicate-selftest.sh	2607
 skills/review-gate/scripts/review-predicate.sh	1149

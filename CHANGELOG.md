@@ -35,6 +35,10 @@ changes carry a **Breaking** call-out with their migration note inline.
 - `kendex adopt` now binds an adopted skill or agent to the tools that were
   actually reading it. It used to inherit the scope's full install defaults,
   which could install the item for tools you never gave it to.
+- The review-gate package's test suite runs in projects that install it: it
+  used to abort with "fixture source missing" outside the kendex source
+  tree. The preflight package no longer flags a cross-repo citation like
+  `kendex:docs/x.md` on code lines as a missing local file.
 
 ## [5.0.1] — 2026-08-20
 
