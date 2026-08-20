@@ -64,15 +64,17 @@ pub fn summary(env: &Env, catalog: &Catalog) -> Result<CatalogSummary> {
             // network — a spelling that keys a different store entry must
             // not turn an offline open into a failed fetch.
             if let Some(held) = subscribed_as(env, &key) {
-                let catalog = Catalog::Subscription {
-                    scope: held.scope.clone(),
-                    source: held.source.clone(),
-                };
-                (super::open(env, &catalog)?, None, Some(held))
+                (open_held(env, &held)?, None, Some(held))
             } else {
                 let resolution = crate::remote::sync(env, &key, None)?;
                 let warning = resolution.warning.clone();
-                (super::open_repo(env, key, resolution)?, warning, None)
+                // The fetch may be the one a never-fetched subscription
+                // under this spelling was waiting for: it is Ready now, and
+                // the page carries on as it rather than offering Subscribe.
+                match subscribed_as(env, &key) {
+                    Some(held) => (open_held(env, &held)?, warning, Some(held)),
+                    None => (super::open_repo(env, key, resolution)?, warning, None),
+                }
             }
         }
     };
@@ -95,6 +97,17 @@ pub fn summary(env: &Env, catalog: &Catalog) -> Result<CatalogSummary> {
         warning,
         subscription,
     })
+}
+
+/// A held subscription, opened from its own store.
+fn open_held(env: &Env, held: &SubscriptionRef) -> Result<super::Browsed> {
+    super::open(
+        env,
+        &Catalog::Subscription {
+            scope: held.scope.clone(),
+            source: held.source.clone(),
+        },
+    )
 }
 
 /// The About report for any catalog: how its items were decided, what was

@@ -292,3 +292,21 @@ fn a_ready_subscription_under_another_spelling_answers_offline() {
     // The shorthand was never fetched: nothing went to the network.
     assert!(crate::remote::cached(&env, REPO, None).unwrap().is_none());
 }
+
+#[test]
+fn a_never_fetched_subscription_under_the_canonical_spelling_is_found_after_the_fetch() {
+    let (_tmp, env, _upstream) = fixture();
+    let manifest = env.global_manifest_file();
+    fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    fs::write(
+        &manifest,
+        format!("schema = 5\n[sources.tools]\nrepo = \"{REPO}\"\n"),
+    )
+    .unwrap();
+    assert!(crate::remote::cached(&env, REPO, None).unwrap().is_none());
+
+    // Pending before the read, Ready by the fetch the read itself made.
+    let report = summary(&env, &repo()).unwrap();
+    assert_eq!(report.subscription.unwrap().source, "tools");
+    assert_eq!(report.counts.get("skill"), Some(&1));
+}
