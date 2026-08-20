@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# The repository's own kendex.settings.toml must resolve the review gate to
+# This repository's kendex.settings.toml must resolve the review gate to
 # "review" and its timeout policy to "proceed". The reviewers here comment
 # but never approve, so any other recognized value — and any misspelling,
 # which the gate tolerates by warning and falling back to approval/block —
 # re-arms a gate no reviewer can open and stalls every session.
+#
+# Lives under tools/, not skills/orch/tests/: that suite ships with the orch
+# skill to other projects, and this policy is kendex's alone.
 set -euo pipefail
 
-TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPTS="$TEST_DIR/../scripts"
-REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPTS="$REPO_ROOT/skills/orch/scripts"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
