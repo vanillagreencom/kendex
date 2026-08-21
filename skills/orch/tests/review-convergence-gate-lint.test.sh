@@ -86,30 +86,16 @@ else
   fail "the cap no longer exits to the verdict pass at four"
 fi
 
-# A split moves findings; it does not answer them. Absent from both records
-# they read as declined, which is how a live blocker goes quiet.
+# A finding that leaves items is disposed of one way or the other; absent from
+# both records it reads as declined, which is how a live blocker goes quiet.
 if sed -n '/### Fix Delegation/,/Run Workflow.*dev-fix.md/p' "$REVIEW_PR_WF" \
-  | grep -q 'escalated_items'; then
-  pass "a split records its findings instead of dropping them"
+  | grep -q 'never dropped'; then
+  pass "the gate says findings leaving items are disposed of"
 else
-  fail "split findings are narrowed out of items with nothing recording them"
+  fail "findings can leave items with nothing saying what becomes of them"
 fi
 
 # The decision has to land somewhere the panel-scoping write does not clobber.
-if grep -q "workflow-state set \[ISSUE_ID\] convergence" "$REVIEW_PR_WF"; then
-  pass "review-pr.md records the decision in its own key"
-else
-  fail "review-pr.md does not record the convergence decision durably"
-fi
-
-if grep -q "rereview_panel" "$REVIEW_PR_WF" \
-  && sed -n "/$GATE_RE/,/Run Workflow.*dev-fix.md/p" "$REVIEW_PR_WF" \
-     | grep -q "set \[ISSUE_ID\] rereview_panel"; then
-  fail "the convergence decision is stored in rereview_panel, which is later overwritten"
-else
-  pass "the convergence decision is not stored in the key that gets overwritten"
-fi
-
 # Recorded and never read is the same as not recorded.
 # Accepting it in caller context and never rendering it is the same as not
 # accepting it: the agent reads the delegation, not the workflow.

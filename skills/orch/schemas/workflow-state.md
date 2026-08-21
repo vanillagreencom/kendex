@@ -33,7 +33,6 @@ Persistent state file for orch workflows. Survives context compaction.
   },
   "review_wave_done": ["security-review"],
   "pre_delegate_sha": "abc123f",
-  "convergence": { "cycle": 3, "choice": "structural", "reason": "one predicate, not five call sites" },
   "skip_qa": false,
   "cycles": 0,
   "submit_cycles": 0,
@@ -110,7 +109,6 @@ Persistent state file for orch workflows. Survives context compaction.
 | `dev_round_id` | string | Unique per-delegation round token, minted by `workflow-state new-round-id [ISSUE] dev_round_id` immediately before each dev/QA delegation (implement, fix, or analysis) and embedded in it. It is the completion artifact's identity ([`dev-return.md`](dev-return.md)) and, on a fix round, the delegated-item record's ([`dev-round.md`](dev-round.md)) |
 | `review_skipped` | string | Set to `tiny-docs` when a trivial diff skipped review by rule |
 | `rereview_skipped` | string | Why a fix round routed to submit WITHOUT re-review. Present only when the skip happened, so a by-policy skip is visible after the fact instead of silent |
-| `convergence` | object | `{cycle, choice, reason}` — the decision taken when a review reached its third cycle still yielding blockers: `cut` a surface the issue never required, fix the recurring class `structural`ly, or `split`. Written before the fix round it governs and carried into that delegation, so a resumed session sees what shape the round was asked for rather than re-deriving it from the findings |
 | `rereview_panel` | object | `{agents: string[], reason}` for a fix round re-reviewed by a scoped panel instead of the full set, so the scoping is visible after the fact |
 | `auto_decisions` | string[] | Audit trail of decisions taken without a user prompt under `ORCH_DECISION_MODE=auto-recommended`: one `auto-selected: [option] — [reason]` line per auto-executed ask-user step. Absent under the default `ask` mode |
 | `json_paths` | string[] | Accumulated review JSON file paths |

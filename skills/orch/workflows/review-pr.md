@@ -271,13 +271,7 @@ Omit empty categories. Decline any item that cannot affect real usage with one l
 **Disposition is by rule, not by prompt** — never present a selection menu over the findings. Every blocker and `category == "fix"` suggestion that survives declining goes to the fix round below, in EVERY decision mode: which findings to fix is a mechanics question the rule settles, so `ORCH_DECISION_MODE` does not gate it. The always-ask set in [SKILL.md § The Cycle](../SKILL.md#the-cycle) is unaffected and still applies. Nothing left after declines → § 5.
 
 ### Fix Delegation
-**At `cycles` 3, converge before delegating this round** ([SKILL.md § The Cycle](../SKILL.md#the-cycle)): a diff still yielding new blockers is answered by cutting a surface the issue did not require, by fixing the recurring class structurally, or by splitting — decided BEFORE the delegation below, because per-comment patching past that point is the failure the rule names. Three is the last cycle that delegates; at 4 the cap below reports and exits, so this is the final chance to change the shape of the work.
-
-```bash
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] convergence '{"cycle": [CYCLES], "choice": "[cut|structural|split]", "reason": "[ONE_LINE]"}'
-```
-
-Its own key, which nothing later overwrites, and carried into the delegation as `convergence` so the round is told what shape its answer takes. `cut` and `split` both narrow `items`, and dispose of what leaves differently: a cut surface is gone, so its findings are declined per [finding-disposition](../references/finding-disposition.md); a split one still exists, so record each finding in `escalated_items` naming the split BEFORE narrowing — § 8 reads a finding absent from both records as declined, and a blocker does not stop being one because it moved.
+**At `cycles` 3, converge before delegating this round** ([SKILL.md § The Cycle](../SKILL.md#the-cycle)): a diff still yielding new blockers is answered by cutting a surface the issue did not require, by fixing the recurring class structurally, or by splitting — decided BEFORE the delegation below, and carried into it so the round is told what shape its answer takes. Three is the last cycle that delegates; at 4 the cap below reports and exits. Findings that leave `items` are disposed of, never dropped: declined per [finding-disposition](../references/finding-disposition.md) when their surface is gone, recorded in `escalated_items` when it moved.
 
 Never fix as the main agent.
 
