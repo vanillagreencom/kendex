@@ -243,3 +243,73 @@ fn a_changed_matcher_retires_kendexs_entry_and_leaves_theirs() {
         "leaving nothing behind where it was: {value}"
     );
 }
+
+/// A hook that is only a registration comes out by the identity the
+/// record kept, matcher included: the same command under a matcher the
+/// person chose is their registration, and removing kendex's is not
+/// removing theirs. A hook whose script goes too keeps the older
+/// reach — an entry left naming a deleted script is the worse thing to
+/// leave behind — and this is the line between the two.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn removing_a_command_bodied_hook_leaves_their_own_matcher_alone() {
+    let f = fixture();
+    let manifest = f.project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        text.replace(
+            "[hooks.guard]\nsource = \"cat\"\n",
+            "[[custom-hooks]]\nname = \"mine\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./scripts/mine.sh\"\nagents = \"all\"\n",
+        ),
+    )
+    .unwrap();
+    apply_now(&f);
+
+    let settings = f.project.join(".claude/settings.json");
+    let mut value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+    assert_eq!(value["hooks"]["PreToolUse"][0]["matcher"], "Bash");
+    let command = value["hooks"]["PreToolUse"][0]["hooks"][0]["command"].clone();
+    // Their own, running the same command under a matcher they chose.
+    value["hooks"]["PreToolUse"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "matcher": "Edit",
+            "hooks": [{ "type": "command", "command": command }]
+        }));
+    fs::write(&settings, serde_json::to_string_pretty(&value).unwrap()).unwrap();
+
+    // Nothing declares it any more, and the sweep takes what it left.
+    let text = fs::read_to_string(&manifest).unwrap();
+    let kept: String = text
+        .split_inclusive("\n\n")
+        .filter(|block| !block.starts_with("[[custom-hooks]]"))
+        .collect();
+    fs::write(&manifest, kept).unwrap();
+    let report = plan_apply(
+        &f.env,
+        &f.scope,
+        &PlanOptions {
+            remove_orphans: true,
+            sweep_unneeded: true,
+            ..PlanOptions::default()
+        },
+    )
+    .unwrap();
+    apply::execute(&f.env, &report.plan, None).unwrap();
+
+    let value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+    let groups = value["hooks"]["PreToolUse"].as_array().unwrap();
+    let matchers: Vec<&str> = groups
+        .iter()
+        .map(|group| group["matcher"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        matchers,
+        vec!["Edit"],
+        "kendex's own entry goes and theirs stays: {value}"
+    );
+}

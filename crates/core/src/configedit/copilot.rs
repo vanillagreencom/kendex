@@ -6,7 +6,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::ensure_object;
+use super::{ensure_object, names, one};
 
 /// The schema version Copilot's hook loader expects a file to declare.
 const COPILOT_HOOK_VERSION: u64 = 1;
@@ -33,8 +33,13 @@ pub(super) fn upsert_copilot_hook(
     if let Some(timeout) = timeout {
         entry["timeoutSec"] = json!(timeout);
     }
-    // Refreshed where it already stands, so a re-apply moves nothing.
-    let ours = |candidate: &Value| candidate.get("bash").and_then(Value::as_str) == Some(command);
+    // Refreshed where it already stands, so a re-apply moves nothing —
+    // and only where this registration stands: an entry running the same
+    // command under a matcher somebody else chose is theirs.
+    let ours = |candidate: &Value| {
+        candidate.get("bash").and_then(Value::as_str) == Some(command)
+            && names(candidate, one(matcher))
+    };
     let first = entries.iter().position(ours);
     let mut kept = false;
     entries.retain(|candidate| !ours(candidate) || !std::mem::replace(&mut kept, true));
@@ -56,16 +61,7 @@ pub(super) fn remove_copilot_hook(
 ) {
     // A matcher names one entry; without one the command goes wherever it
     // is registered, which is what removing the whole installation means.
-    let named = |entry: &Value| {
-        matcher.is_none_or(|matcher| {
-            entry
-                .get("matcher")
-                .and_then(Value::as_str)
-                .filter(|entry| !entry.is_empty())
-                .unwrap_or(crate::scan::hooks::ANY_MATCHER)
-                == matcher
-        })
-    };
+    let named = |entry: &Value| names(entry, matcher);
     let Some(events) = root.get_mut("hooks").and_then(Value::as_object_mut) else {
         return;
     };

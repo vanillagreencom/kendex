@@ -553,9 +553,9 @@ lives in one capability table read by core and UI.
   apply what is rendered, record that — whichever way round, since
   switching a hook off renders the removal of an entry that may not be the
   one there. Otherwise it fires twice, or keeps firing with nothing naming
-  it. Removal reads the same record, and an entry no edit of kendex's can
-  reach is neither reconciled nor retired: proven by applying it and
-  reading back.
+  it. Removal reads the same record, an editor rewrites only what its own
+  registration names, and an entry no edit of kendex's can reach is
+  neither reconciled nor retired — proven by applying it and reading back.
 - **Pi hooks are enforced through the carrier.** Pi has no per-hook
   artifact: the `pi-hooks` extension package hosts native listeners, and
   hook content rides in the registry kendex renders beside them

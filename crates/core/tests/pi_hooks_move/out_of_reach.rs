@@ -184,3 +184,42 @@ fn a_linked_new_registry_holds_the_first_install_too() {
     );
     assert!(registry.is_symlink(), "and the link is still theirs");
 }
+
+/// The plan proves the registry is a plain file; the op has to carry that
+/// proof, or the window between them is one a link fits through. Same
+/// bytes at the other end satisfies a hash, and the write follows the
+/// link straight out of the directory kendex manages.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_registry_that_became_a_link_after_planning_is_not_written_through() {
+    let w = world();
+    apply(&w);
+    let registry = w.dot().join("kendex/hooks.json");
+    // A catalog change, so this pass has an edit to make in that file.
+    let source = w.catalog.join("hooks/guard.sh");
+    let text = fs::read_to_string(&source).unwrap();
+    fs::write(
+        &source,
+        text.replace("# event: PreToolUse", "# event: Stop"),
+    )
+    .unwrap();
+    let report = audit(&w.env, &w.scope()).unwrap();
+
+    // Between the plan and the apply, the same bytes behind a link.
+    let theirs = w.home.join("their-hooks.json");
+    let bytes = fs::read_to_string(&registry).unwrap();
+    fs::write(&theirs, &bytes).unwrap();
+    fs::remove_file(&registry).unwrap();
+    std::os::unix::fs::symlink(&theirs, &registry).unwrap();
+
+    let ran = kendex_core::apply::execute(&w.env, &report.plan, None);
+    assert!(
+        ran.is_err(),
+        "the apply aborts on a path that is no longer what was proven"
+    );
+    assert_eq!(
+        fs::read_to_string(&theirs).unwrap(),
+        bytes,
+        "and the file at the other end is untouched"
+    );
+}

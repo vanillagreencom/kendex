@@ -45,6 +45,23 @@ pub enum Pre {
 impl Pre {
     /// What a plan that rewrites `path` wholesale binds to: the bytes seen
     /// at plan time, or the absence seen at plan time.
+    /// What a plan that rewrites a document kendex will not write through
+    /// a link binds to: the bytes it saw, and that they were in a plain
+    /// file. A link arriving where one stood fails this as surely as
+    /// changed bytes would — a write follows a link, and the file at the
+    /// other end is outside whatever directory kendex was asked to
+    /// manage.
+    pub fn plain_observed(path: &Path) -> Result<Pre> {
+        match fs::symlink_metadata(path) {
+            Ok(meta) if meta.file_type().is_file() => Ok(Pre::PlainHashIs {
+                hash: hash_tree(path)?,
+            }),
+            // Nothing of the kind is here, and the write binds to that: a
+            // link arriving where nothing was fails it too.
+            _ => Ok(Pre::Absent),
+        }
+    }
+
     pub fn observed(path: &Path) -> Result<Pre> {
         match path.is_file() {
             true => Ok(Pre::HashIs {

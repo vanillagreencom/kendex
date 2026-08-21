@@ -111,18 +111,18 @@ fn hook_owned(
     files: &mut Vec<PathBuf>,
     edits: &mut Vec<(PathBuf, ConfigEdit)>,
 ) {
-    let removal = |event: Option<String>, command: String, format: &HookFormat| match format {
-        // The whole installation is going, so its command goes wherever
-        // it is registered: an entry left behind would name a script that
-        // is no longer there.
+    let removal = |event: Option<String>,
+                   matcher: Option<String>,
+                   command: String,
+                   format: &HookFormat| match format {
         HookFormat::Nested => ConfigEdit::RemoveHook {
             event,
-            matcher: None,
+            matcher,
             command,
         },
         HookFormat::Copilot => ConfigEdit::RemoveCopilotHook {
             event,
-            matcher: None,
+            matcher,
             command,
         },
     };
@@ -140,23 +140,25 @@ fn hook_owned(
             if entry.rendered_hash.is_some() || entry.registration.is_none() {
                 files.push(path);
             }
-            let (event, command) = match &entry.registration {
+            let (event, matcher, command) = match &entry.registration {
                 // A hook with no script of its own is that entry and
                 // nothing else, so it comes out by the identity the
                 // record kept, exactly.
-                Some(recorded) if entry.rendered_hash.is_none() => {
-                    (Some(recorded.event.clone()), recorded.command.clone())
-                }
+                Some(recorded) if entry.rendered_hash.is_none() => (
+                    Some(recorded.event.clone()),
+                    recorded.matcher.clone(),
+                    recorded.command.clone(),
+                ),
                 // A hook whose script goes with it takes its registration
                 // wherever that has got to. An entry taken from an event
                 // somebody moved it to is a smaller wrong than a command
                 // left pointing at a script that is no longer there — and
                 // the command is the record's, which is what kendex
                 // registered, not what it would render today.
-                Some(recorded) => (None, recorded.command.clone()),
-                None => (None, command),
+                Some(recorded) => (None, None, recorded.command.clone()),
+                None => (None, None, command),
             };
-            edits.push((registry, removal(event, command, &format)));
+            edits.push((registry, removal(event, matcher, command, &format)));
         }
         Some(HookTarget::Instruction {
             path,

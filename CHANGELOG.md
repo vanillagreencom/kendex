@@ -257,8 +257,9 @@ changes carry a **Breaking** call-out with their migration note inline.
   script was — a directory of your own, say — a hook registration you
   added or duplicated by hand — the same command registered twice holds
   that hook, and no other hook waits on it, while one you register under
-  a matcher of your own is left where you put it even when the catalog
-  moves kendex's; a hook whose catalog moves it
+  a matcher of your own is left where you put it — when the catalog moves
+  kendex's, when kendex's is taken away, and on every tool that keeps
+  hooks this way; a hook whose catalog moves it
   to another event is not one of these: the entry it had comes out as the
   new one goes in, so it fires once, where the catalog now says, and
   switching it off in that same refresh still leaves nothing running — and a hook whose source is

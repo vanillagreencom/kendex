@@ -201,7 +201,7 @@ pub fn plan_scope(
     // Written here and nowhere else: every entry this pass keeps is in
     // the record by now, the sweep's carry-forwards included.
     pi_hooks_move::record_finished(&mut new_lock, &moved_out);
-    plan_config_edits(config_edits, &mut ops)?;
+    plan_config_edits(env, scope, config_edits, &mut ops)?;
     let set_changes = set_changes(scope, lock, &new_lock);
     let kept = kept_members(scope, lock, &new_lock, &options.uninstalled_bundles);
     plan_lock_write(env, scope, disk_lock, new_lock, &mut ops)?;

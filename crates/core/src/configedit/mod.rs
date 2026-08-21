@@ -292,7 +292,7 @@ fn upsert_hook(
     // in the file is claimed by carrying a command.
     let mut placed = false;
     for group in groups.iter_mut() {
-        if group.get("matcher").and_then(Value::as_str) != matcher {
+        if !names(group, one(matcher)) {
             continue;
         }
         let Some(handlers) = group.get_mut("hooks").and_then(Value::as_array_mut) else {
@@ -310,8 +310,8 @@ fn upsert_hook(
     if !placed {
         let group = groups
             .iter_mut()
-            .find(|g| g.get("matcher").and_then(Value::as_str) == matcher)
-            .and_then(|g| g.get_mut("hooks"))
+            .find(|group| names(group, one(matcher)))
+            .and_then(|group| group.get_mut("hooks"))
             .and_then(Value::as_array_mut);
         match group {
             Some(handlers) => handlers.push(handler),
@@ -333,18 +333,32 @@ fn upsert_hook(
     Ok(())
 }
 
-/// Whether this group is the one a matcher names, spelled the way a
-/// registry spells it — a group with none is every operation.
-fn named(group: &Value, matcher: Option<&str>) -> bool {
+/// Whether a matcher names this group or entry, spelled the way a registry
+/// spells it: one carrying none is every operation.
+///
+/// The one place any of these editors decides that something in the file
+/// is the registration it is holding. Identifying by the command alone
+/// claims whatever else happens to run it, which is how a person's own
+/// registration came to be swept up beside kendex's — twice, in two
+/// editors. `None` names every matcher, which is what taking a whole
+/// installation away means and never what putting one in does; an upsert
+/// asks for the one it writes under.
+pub(super) fn names(entry: &Value, matcher: Option<&str>) -> bool {
     let Some(matcher) = matcher else {
         return true;
     };
-    let group = group
+    let found = entry
         .get("matcher")
         .and_then(Value::as_str)
-        .filter(|group| !group.is_empty())
+        .filter(|found| !found.is_empty())
         .unwrap_or(crate::scan::hooks::ANY_MATCHER);
-    group == matcher
+    found == matcher
+}
+
+/// The matcher an upsert writes under, as a registry spells it — never
+/// "every matcher", which is not something a registration can be.
+pub(super) fn one(matcher: Option<&str>) -> Option<&str> {
+    Some(matcher.unwrap_or(crate::scan::hooks::ANY_MATCHER))
 }
 
 fn remove_hook(root: &mut Map<String, Value>, event: &str, matcher: Option<&str>, command: &str) {
@@ -356,7 +370,7 @@ fn remove_hook(root: &mut Map<String, Value>, event: &str, matcher: Option<&str>
             // A matcher names one group. Without one every group in the
             // event gives the command up, which is what a removal of the
             // whole installation means.
-            if !named(group, matcher) {
+            if !names(group, matcher) {
                 continue;
             }
             if let Some(handlers) = group.get_mut("hooks").and_then(Value::as_array_mut) {

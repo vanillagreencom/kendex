@@ -58,6 +58,16 @@ fn hook_surfaces(env: &Env, scope: &Scope, root: &Path) -> Vec<Surface> {
     surfaces
 }
 
+/// Whether this path is one of the registries kendex writes for the
+/// carrier — the one it renders now, or the one an older kendex wrote.
+/// Neither is ever written through a link: what a link points at is
+/// outside the directory kendex manages, and the move refuses to read
+/// through one for the same reason.
+pub fn is_hook_registry(env: &Env, scope: &Scope, path: &Path) -> bool {
+    let root = scope_root(env, scope);
+    path == hook_registry(&root) || path == legacy_hook_registry(&root)
+}
+
 /// Where hook scripts live inside a scope root, slash-separated: the one
 /// spelling both a `Path` and a POSIX command line are built from.
 fn hook_rel_dir() -> String {
