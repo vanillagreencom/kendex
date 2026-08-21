@@ -130,3 +130,77 @@ fn a_finished_hook_does_not_keep_the_registry_in_anybodys_way() {
         "and their document is left exactly as it was"
     );
 }
+
+/// One script on two events is an ordinary thing to want, and two hooks
+/// that run it are two registrations. Read as a command carried twice,
+/// both are held as though somebody had duplicated them — on every
+/// refresh, for ever, over a setup with nothing wrong with it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn two_hooks_running_one_script_on_two_events_both_move() {
+    let w = super::world_declaring(
+        "[[custom-hooks]]\nname = \"before\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./scripts/audit.sh\"\nagents = \"all\"\n\n[[custom-hooks]]\nname = \"after\"\nevent = \"PostToolUse\"\nmatcher = \"Bash\"\ncommand = \"./scripts/audit.sh\"\nagents = \"all\"\n",
+    );
+    apply(&w);
+    let registry = w.dot().join("kendex/hooks.json");
+    let installed = fs::read_to_string(&registry).unwrap();
+    assert!(
+        installed.contains("tool_call") && installed.contains("tool_result"),
+        "both went in, on the events each asked for: {installed}"
+    );
+    // The layout an older kendex left, both entries and all.
+    super::forget_the_move(&w.project.join(".kendex-lock.json"));
+    fs::write(w.dot().join("hooks.json"), &installed).unwrap();
+    fs::remove_dir_all(w.dot().join("kendex")).unwrap();
+
+    let said = notes(&w);
+    assert!(
+        said.is_empty(),
+        "neither is a puzzle for the other: {said:?}"
+    );
+    apply(&w);
+
+    assert!(
+        !w.dot().join("hooks.json").exists(),
+        "the old registry gives both of them up"
+    );
+    let moved = fs::read_to_string(&registry).unwrap();
+    assert!(
+        moved.contains("tool_call") && moved.contains("tool_result"),
+        "and both run from the new one: {moved}"
+    );
+}
+
+/// The other half, still true: a record that names no event and no
+/// matcher — a script-backed hook, whose record keeps none — cannot tell
+/// its own entry from a copy of it. Taking one by guess would leave the
+/// other running the script this pass takes away, so both stay.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_record_that_cannot_tell_its_entry_apart_still_holds() {
+    let w = super::regressed();
+    let registry = w.dot().join("hooks.json");
+    let mut value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&registry).unwrap()).unwrap();
+    let group = value["hooks"]["tool_call"][0].clone();
+    value["hooks"]["turn_end"] = serde_json::json!([group]);
+    let theirs = serde_json::to_string_pretty(&value).unwrap();
+    fs::write(&registry, &theirs).unwrap();
+
+    let said = about(&notes(&w), "hooks.json");
+    assert!(
+        said.iter().any(|note| note.contains("more than once")),
+        "the person is told which document is in the way: {said:?}"
+    );
+    apply(&w);
+
+    assert_eq!(
+        fs::read_to_string(&registry).unwrap(),
+        theirs,
+        "so neither entry moves"
+    );
+    assert!(
+        w.dot().join("hooks/guard.sh").is_file(),
+        "and the script they both name stays with them"
+    );
+}

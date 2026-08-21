@@ -93,9 +93,10 @@ pub(super) fn registration_conflict(
     };
     match registered(&entries, &legacy) {
         Registered::Absent => None,
-        // Found, and only once — but found is not gone. What the removal
-        // will really leave behind is read back before a single byte of
-        // this hook's is planned for the trash.
+        // Found, and exactly what the record describes — which is not
+        // the same as gone. What the removal will really leave behind is
+        // read back before a byte of this hook's is planned for the
+        // trash.
         Registered::Ours => survives_its_own_removal(&path, &legacy).then(|| {
             format!(
                 "{} writes {command} in a shape kendex cannot take it out of — a handler standing directly under its event, rather than inside a matcher group — so this hook stays where it is; take that entry out yourself, and the script goes with it on the next refresh",
@@ -137,6 +138,14 @@ fn survives_its_own_removal(path: &std::path::Path, identity: &Identity) -> bool
     let Ok(after) = edit.apply(&text) else {
         return true;
     };
-    crate::scan::hooks::registrations_text(&after)
-        .is_ok_and(|entries| !matches!(registered(&entries, identity), Registered::Absent))
+    // What has to be gone is the entry the record names. Something else
+    // still running that command is not this registration — the question
+    // of whether taking the script out from under it is fair is asked
+    // above, and answered differently.
+    crate::scan::hooks::registrations_text(&after).is_ok_and(|entries| {
+        matches!(
+            registered(&entries, identity),
+            Registered::Ours | Registered::Ambiguous
+        )
+    })
 }

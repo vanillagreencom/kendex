@@ -69,33 +69,38 @@ fn a_catalog_that_changed_the_event_still_migrates() {
     assert!(settled.notes.is_empty(), "{:?}", settled.notes);
 }
 
-/// A command carried twice is one kendex cannot tell its own copy of,
-/// however the two are spread across events. Taking the one under the
-/// expected event would leave the other running a script that is no
-/// longer there.
+/// A record naming an event and a matcher can tell its own entry from
+/// one somebody copied to another event: they are two registrations, not
+/// one puzzle. kendex moves its own and leaves theirs, and — this being a
+/// hook that is only a registration — theirs runs the same command it
+/// always did, out of a file kendex never wrote.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_command_carried_under_two_events_is_nobodys_to_take() {
+fn a_record_that_can_tell_its_entry_apart_takes_only_that_one() {
     let w = command_bodied_in_the_legacy_layout();
     let registry = w.dot().join("hooks.json");
     let mut value: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&registry).unwrap()).unwrap();
     let group = value["hooks"]["tool_call"][0].clone();
     value["hooks"]["turn_end"] = serde_json::json!([group]);
-    let theirs = serde_json::to_string_pretty(&value).unwrap();
-    fs::write(&registry, &theirs).unwrap();
+    fs::write(&registry, serde_json::to_string_pretty(&value).unwrap()).unwrap();
 
     let said = about(&notes(&w), "hooks.json");
-    assert!(
-        said.iter().any(|note| note.contains("more than once")),
-        "the person is told kendex cannot tell the two apart: {said:?}"
-    );
+    assert!(said.is_empty(), "nothing here is a puzzle: {said:?}");
     apply(&w);
 
-    assert_eq!(
-        fs::read_to_string(&registry).unwrap(),
-        theirs,
-        "neither entry is taken while both carry the same command"
+    let after: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&registry).unwrap()).unwrap();
+    assert!(
+        after["hooks"].get("tool_call").is_none(),
+        "kendex's own entry moves: {after}"
+    );
+    assert!(
+        after["hooks"]["turn_end"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap()
+            .contains("mine.sh"),
+        "and the copy they made stays where they put it: {after}"
     );
 }
 

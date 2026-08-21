@@ -108,34 +108,43 @@ pub(super) fn registered(
     entries: &[crate::scan::hooks::Registration],
     identity: &Identity,
 ) -> Registered {
-    let carrying: Vec<&crate::scan::hooks::Registration> = entries
+    // Everything the record can tell this registration by: its command,
+    // and the event and matcher wherever it kept them. The parts as the
+    // document keys them, never a name taken apart again — the character
+    // that joins those parts for display is legal inside two of them.
+    let answering: Vec<&crate::scan::hooks::Registration> = entries
         .iter()
-        .filter(|entry| entry.command == identity.command)
+        .filter(|entry| {
+            entry.command == identity.command
+                && identity
+                    .event
+                    .as_deref()
+                    .is_none_or(|event| entry.event == event)
+                && identity
+                    .matcher
+                    .as_deref()
+                    .is_none_or(|matcher| entry.matcher == matcher)
+        })
         .collect();
-    let Some(only) = carrying.first() else {
-        return Registered::Absent;
-    };
-    // Asked before the rest, and of the whole document: a command carried
-    // twice is one kendex cannot tell its own copy of, however the two
-    // are spread across events. Resolving it by taking the one where the
-    // record points would retire that entry and the script with it,
-    // leaving the other pointing at nothing.
-    if carrying.len() > 1 {
-        return Registered::Ambiguous;
-    }
-    // The parts as the document keys them, never a name taken apart
-    // again: the character that joins those parts for display is legal
-    // inside two of them, so no reading of the joined form can be made
-    // to answer this.
-    let differs =
-        |kept: &Option<String>, found: &str| kept.as_deref().is_some_and(|kept| kept != found);
-    match differs(&identity.event, &only.event) || differs(&identity.matcher, &only.matcher) {
-        // The one entry carrying the command is not where the record
-        // says kendex left it: what is there is somebody's own doing,
-        // whether they moved the event or narrowed the matcher.
-        true => Registered::Elsewhere,
-        // Either it is where the record says, or the record kept nothing
-        // to contradict.
-        false => Registered::Ours,
+    match answering.len() {
+        // Exactly one thing in the document is what the record describes.
+        1 => Registered::Ours,
+        // More than one, and every field the record kept is the same
+        // across them: kendex cannot tell its own from the others, and
+        // taking one by guess would leave the rest running a script it
+        // had taken away. A record naming an event and a matcher can tell
+        // two such entries apart, and two entries it can tell apart are
+        // two registrations rather than one puzzle.
+        2.. => Registered::Ambiguous,
+        // Nothing answers to the record. Whether that is because there is
+        // nothing of this hook's here at all, or because somebody moved
+        // what is here, is what the command alone can still say.
+        0 => match entries
+            .iter()
+            .any(|entry| entry.command == identity.command)
+        {
+            true => Registered::Elsewhere,
+            false => Registered::Absent,
+        },
     }
 }

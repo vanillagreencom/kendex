@@ -79,9 +79,10 @@ not. A registration is named by the command it
 runs and, where the record kept them, the event and matcher it fires
 under — read from the parts a document keys, never from the one line a
 scan displays them on, since the character joining that line is legal
-inside a matcher and inside a command alike — and by uniqueness either
-way: a command carried twice in a document is one
-kendex cannot tell its own copy of, so it holds. At the new path the record keeps
+inside a matcher and inside a command alike — and by being the only entry
+answering to all of that. Two entries a record can tell apart are two
+registrations; two it cannot — the same command where the record names no
+event and no matcher — are one puzzle, and a puzzle holds. At the new path the record keeps
 the event and matcher a hook went in under, whatever the catalog renders
 today: a catalog is free to move a hook to another event, and reading
 where the entry should be off the current rendering called that the
