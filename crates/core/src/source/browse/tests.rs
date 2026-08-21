@@ -4,7 +4,7 @@ use std::path::Path;
 use super::*;
 use crate::env::FakeOs;
 use crate::lock::{Lock, LockEntry};
-use crate::model::HarnessId;
+use crate::model::{HarnessId, Scope};
 
 mod repo;
 mod root_skill;

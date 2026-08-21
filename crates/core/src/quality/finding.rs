@@ -44,7 +44,7 @@ impl Finding {
         let material = format!("{}|{}", self.rule, self.message);
         crate::hash::hash_bytes(material.as_bytes())
             .chars()
-            .take(16)
+            .take(super::DIGEST_CHARS)
             .collect()
     }
 }
@@ -52,6 +52,25 @@ impl Finding {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every digest that reaches a finding's message is as wide as the
+    /// fingerprint itself.
+    ///
+    /// Identity is the rule and the sentence, so a digest inside a sentence
+    /// is part of what a decision binds to — and each of these stands in
+    /// for a value a project can choose and vary offline. Narrowing one is
+    /// handing somebody a way to make their own injected finding wear a
+    /// settled one's sentence, so the width is pinned here rather than left
+    /// to whoever next thinks a shorter one reads better.
+    #[test]
+    fn every_digest_in_a_sentence_is_as_wide_as_the_fingerprint() {
+        assert_eq!(super::super::DIGEST_CHARS, 16);
+        assert_eq!(finding("a.md:1").fingerprint().len(), 16);
+        assert_eq!(super::super::digest("anything").len(), 16);
+        let printed = super::super::redact("ghp_0123456789abcdefghijklmnopqrstuvwxyzAB");
+        let (_, shown) = printed.rsplit_once('#').expect("a redacted token is named");
+        assert_eq!(shown.len(), 16, "{printed}");
+    }
 
     fn finding(location: &str) -> Finding {
         Finding {

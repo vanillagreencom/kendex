@@ -37,6 +37,20 @@ pub use score::{Deduction, SafetyScore, Thresholds, Verdict, safety, verdict};
 pub use secret::{fingerprint_secret, redact};
 pub use text::{Line, Normalization};
 
+/// How much of a hash stands in for the thing it names, wherever that name
+/// reaches a finding's message.
+///
+/// A finding's identity is its rule and its sentence
+/// ([`Finding::fingerprint`]), so a digest inside a sentence decides
+/// identity as surely as the sentence around it — and every one of them
+/// names something a project can choose. Grind a hidden suffix until the
+/// digest matches, and an injected finding reads as one a publisher already
+/// settled, which is the guarantee this whole feature rests on, defeated by
+/// arithmetic rather than by any of the structural routes. Sixteen
+/// hexadecimal characters is sixty-four bits, the same as a fingerprint
+/// collision costs. Eight was thirty-two, which is an afternoon.
+pub(crate) const DIGEST_CHARS: usize = 16;
+
 /// A short, stable name for content a message cannot print — too long, or
 /// no longer in hand at all. Never an identity on its own: it goes beside
 /// what *is* printed, so the sentence still says what the rule fired on and
@@ -44,7 +58,7 @@ pub use text::{Line, Normalization};
 fn digest(material: &str) -> String {
     crate::hash::hash_bytes(material.as_bytes())
         .chars()
-        .take(8)
+        .take(DIGEST_CHARS)
         .collect()
 }
 

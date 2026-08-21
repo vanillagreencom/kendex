@@ -57,8 +57,15 @@ fn installs_as(
 }
 
 /// Which tools this item would install to: its own declaration where the
-/// project has one for it, and the scope's default otherwise. Reading only
-/// the default models the wrong set for every item that names its own.
+/// project has one for it, the scope's default otherwise, and then only
+/// those that can take this kind here.
+///
+/// Both halves matter. Reading only the default models the wrong set for
+/// every item that names its own; keeping a tool that cannot take the kind
+/// in this scope models a rendering nobody installs — a requested Cursor
+/// has no body cap, so it would keep a long skill unsplit and hold the page
+/// back while the plan drops Cursor and splits for Codex. The filter is
+/// `harness::installs_here`, which is the one the plan uses.
 fn installs_to(browsed: &Browsed, kind: ItemKind, name: &str) -> Vec<crate::model::HarnessId> {
     browsed
         .manifest
@@ -66,6 +73,9 @@ fn installs_to(browsed: &Browsed, kind: ItemKind, name: &str) -> Vec<crate::mode
         .get(name)
         .and_then(|decl| decl.harnesses.clone())
         .unwrap_or_else(|| browsed.manifest.install.harnesses.clone())
+        .into_iter()
+        .filter(|harness| crate::harness::installs_here(*harness, kind, &browsed.scope))
+        .collect()
 }
 
 /// The same typed input `check --catalog` audits: a skill's whole tree,

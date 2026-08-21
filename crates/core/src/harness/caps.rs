@@ -258,6 +258,21 @@ pub fn pi_listener(event: &str) -> Option<&'static str> {
     }
 }
 
+/// Whether this tool can have this kind installed to it in this scope.
+///
+/// The one reading of "will this install", so a preview and a plan cannot
+/// model different sets of tools: a requested tool that cannot take the
+/// kind here is not one the item will ever be rendered for, and scoring a
+/// rendering nobody installs is how a page promises an answer the install
+/// does not give.
+pub fn installs_here(harness: HarnessId, kind: ItemKind, scope: &crate::model::Scope) -> bool {
+    let support = capabilities(harness, kind).install;
+    match scope {
+        crate::model::Scope::Global => support.global,
+        crate::model::Scope::Project { .. } => support.project,
+    }
+}
+
 pub fn capabilities(harness: HarnessId, kind: ItemKind) -> KindCaps {
     use HarnessId::*;
     use ItemKind::*;

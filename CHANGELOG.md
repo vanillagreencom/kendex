@@ -105,7 +105,9 @@ changes carry a **Breaking** call-out with their migration note inline.
   capitalized, and named by its own arguments when the address is not
   written out — which credential file a command sends away and by which
   command, which characters a file hides, and which unreadable content a
-  file carries. Two different problems reading the same used to be
+  file carries. Where a message stands in for something it cannot print, it
+  does so at the same width the finding's own identity uses, so nothing can
+  be ground into looking like a finding somebody already settled. Two different problems reading the same used to be
   one decision, and only one of them was ever shown.
 - Safety findings are identified by the rule and the sentence it fired with,
   so a decision survives everything kendex does to an item on the way in —

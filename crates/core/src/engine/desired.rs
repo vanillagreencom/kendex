@@ -191,13 +191,7 @@ pub(super) fn target_harnesses(
         .unwrap_or_else(|| manifest.install.harnesses.clone());
     requested
         .into_iter()
-        .filter(|harness| {
-            let support = crate::harness::capabilities(*harness, kind).install;
-            match scope {
-                Scope::Global => support.global,
-                Scope::Project { .. } => support.project,
-            }
-        })
+        .filter(|harness| crate::harness::installs_here(*harness, kind, scope))
         .collect()
 }
 

@@ -75,6 +75,12 @@ fn is_token_char(c: char) -> bool {
 /// How a matched token is written down: the issuer's prefix, then a short
 /// digest of the whole token. Two findings about the same key fingerprint
 /// alike; nothing here can be used to authenticate as anyone.
+///
+/// The digest is [`super::DIGEST_CHARS`] wide because it lands in a
+/// finding's message, and a message is half of what a finding *is*: the
+/// token it stands for is a value a project chooses, so a narrow digest is
+/// something to grind against until an injected finding wears a settled
+/// one's sentence.
 pub fn fingerprint_secret(token: &str) -> String {
     let prefix = PREFIXES
         .iter()
@@ -83,7 +89,7 @@ pub fn fingerprint_secret(token: &str) -> String {
         .unwrap_or("");
     let digest: String = crate::hash::hash_bytes(token.as_bytes())
         .chars()
-        .take(8)
+        .take(super::DIGEST_CHARS)
         .collect();
     format!("{prefix}…#{digest}")
 }

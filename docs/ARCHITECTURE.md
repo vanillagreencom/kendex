@@ -874,10 +874,13 @@ lives in one capability table read by core and UI.
   is the rule and the sentence it fired with, and nothing else
   (`Finding::fingerprint`). Which puts a standing obligation on every
   rule's message: it says what the rule fired *on* — the address the line
-  actually runs, the characters a file hides — and never where it was
-  found. Two different problems that read the same are one decision, and
-  only one of them is ever displayed; naming the file instead would fix
-  that by coupling identity to the thing rendering moves content between.
+  actually runs, the characters a file hides — and never where it was found.
+  Two different problems that read the same are one decision, and only one is
+  ever displayed. A digest standing in for what a message cannot print
+  decides identity like the rest of the sentence, so every one is
+  `DIGEST_CHARS` wide: each stands for a value a project chooses, and a
+  narrow one is a thing to grind against until an injected finding wears a
+  settled one's words.
   Where a finding was found is carried by its location, and every location
   one decision covers is listed under it. Everything kendex's own rendering moves is
   deliberately out of it: the line, because rendering shifts lines; the
