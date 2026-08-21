@@ -24,8 +24,11 @@ pub const MOVE_DESCRIPTION: &str = "Point kendex at its new repository";
 /// The public spelling of the normalization for callers outside this
 /// module — the Community tab matches directory rows against existing
 /// subscriptions by what the string names, never by literal spellings.
+/// The moved default folds to its new key: a scope still declaring the
+/// old repository subscribes to the same catalog the directory lists
+/// under the new one, and every side that matches keys must say so.
 pub fn owner_repo(reference: &str) -> Option<String> {
-    github_owner_repo(reference)
+    github_owner_repo(canonical(reference))
 }
 
 pub(crate) fn github_owner_repo(reference: &str) -> Option<String> {
@@ -156,6 +159,18 @@ mod tests {
         // A substring is a different repository, never a match.
         assert!(!names_old_default("vanillagreencom/vstack-extras"));
         assert!(!names_old_default("vanillagreencom/vstack2"));
+    }
+
+    #[test]
+    fn the_public_key_of_the_moved_default_is_its_new_repository() {
+        assert_eq!(
+            owner_repo("git@github.com:VanillaGreenCom/vstack.git").as_deref(),
+            Some(DEFAULT_SOURCE_REPO)
+        );
+        assert_eq!(
+            owner_repo("someone/vstack").as_deref(),
+            Some("someone/vstack")
+        );
     }
 
     #[test]

@@ -89,4 +89,28 @@ mod tests {
         );
         assert!(rows.iter().all(|row| row.scope == Scope::Global));
     }
+
+    #[test]
+    fn a_scope_still_naming_the_moved_default_subscribes_under_the_new_key() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = Env::fake(tmp.path(), FakeOs::Linux);
+        let manifest = env.global_manifest_file();
+        fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+        fs::write(
+            &manifest,
+            format!(
+                "schema = 5\n[sources.vstack]\nrepo = \"{}\"\n",
+                crate::manifest::LEGACY_SOURCE_REPO
+            ),
+        )
+        .unwrap();
+
+        let rows = repo_subscriptions(&env);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "vstack");
+        assert_eq!(
+            rows[0].repo_key.as_deref(),
+            Some(crate::manifest::DEFAULT_SOURCE_REPO)
+        );
+    }
 }

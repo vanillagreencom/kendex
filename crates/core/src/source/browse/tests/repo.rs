@@ -315,6 +315,45 @@ fn a_ready_subscription_under_another_spelling_answers_offline() {
 }
 
 #[test]
+fn a_subscription_still_naming_the_moved_default_carries_the_browse_of_its_new_repository() {
+    let tmp = tempfile::tempdir().unwrap();
+    let moved = crate::manifest::DEFAULT_SOURCE_REPO;
+    let upstream = tmp.path().join("base").join(moved);
+    fs::create_dir_all(upstream.join("skills/gh")).unwrap();
+    fs::write(
+        upstream.join("skills/gh/SKILL.md"),
+        "---\nname: gh\ndescription: does gh things\n---\nhello\n",
+    )
+    .unwrap();
+    git(&upstream, &["init", "--quiet", "-b", "main"]);
+    commit(&upstream, "one");
+    let base = format!("file://{}", tmp.path().join("base").display());
+    let env = Env::fake(tmp.path(), FakeOs::Linux).with_var("KENDEX_GIT_BASE", &base);
+    // A manifest written before the move, never upgraded.
+    let manifest = env.global_manifest_file();
+    fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    fs::write(
+        &manifest,
+        format!(
+            "schema = 5\n[sources.vstack]\nrepo = \"{}\"\n",
+            crate::manifest::LEGACY_SOURCE_REPO
+        ),
+    )
+    .unwrap();
+
+    let report = summary(
+        &env,
+        &Catalog::Repo {
+            repo: moved.to_owned(),
+        },
+    )
+    .unwrap();
+    assert_eq!(report.subscription.unwrap().source, "vstack");
+    assert_eq!(report.repo_key.as_deref(), Some(moved));
+    assert_eq!(report.counts.get("skill"), Some(&1));
+}
+
+#[test]
 fn a_never_fetched_subscription_under_the_canonical_spelling_is_found_after_the_fetch() {
     let (_tmp, env, _upstream) = fixture();
     let manifest = env.global_manifest_file();
