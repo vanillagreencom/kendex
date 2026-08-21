@@ -47,6 +47,20 @@ impl Reach {
 /// Interpreters a download can be handed straight to.
 const SHELLS: &[&str] = &["sh", "bash", "zsh", "python"];
 
+/// Whether this program reads what is piped into it and runs it.
+///
+/// A version on the end of the name is the same interpreter: `python3` is
+/// what anybody actually writes, and it is the spelling a substring search
+/// used to catch and a whole-word one stopped catching. Nothing else is
+/// stretched — a name that is not one of these runs whatever it runs, and
+/// saying otherwise would hold back lines nothing interprets.
+fn interprets(program: &str) -> bool {
+    SHELLS.contains(&program)
+        || program.strip_prefix("python").is_some_and(|version| {
+            !version.is_empty() && version.chars().all(|c| c.is_ascii_digit() || c == '.')
+        })
+}
+
 /// The commands a line runs, read once with the shell's own quoting.
 mod tokens;
 use tokens::{Command, Reached};
@@ -107,11 +121,7 @@ fn runners(commands: &[Command], reached: Reached) -> Vec<usize> {
         .iter()
         .enumerate()
         .filter(|(_, command)| command.reached_by == reached)
-        .filter(|(_, command)| {
-            command
-                .verb()
-                .is_some_and(|verb| SHELLS.contains(&verb.as_str()))
-        })
+        .filter(|(_, command)| command.verb().is_some_and(|verb| interprets(&verb)))
         .map(|(at, _)| at)
         .collect()
 }

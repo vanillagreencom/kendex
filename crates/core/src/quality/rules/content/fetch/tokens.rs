@@ -54,15 +54,23 @@ impl Command {
         self.words.iter().position(|word| !assigns(word))
     }
 
-    /// The program being run, lowercased. `None` for a command that is
+    /// The program being run, lowercased and by its own name rather than
+    /// the path it was reached through. `None` for a command that is
     /// nothing but assignments, or an empty stretch between separators.
+    ///
+    /// `/bin/sh` and `./bash` run the same programs `sh` and `bash` do, and
+    /// a line piping a download into one of them is the thing this rule
+    /// exists to catch — matching the whole word means the rule says
+    /// nothing about it. The cut is at the last separator, so `notbash` and
+    /// `mybash.txt` are still their own whole names and still match
+    /// nothing. An address is not a path to a program, whatever it ends in.
     pub(super) fn verb(&self) -> Option<String> {
-        Some(
-            self.words
-                .get(self.names_program()?)?
-                .text
-                .to_ascii_lowercase(),
-        )
+        let written = &self.words.get(self.names_program()?)?.text;
+        let named = match written.contains("://") {
+            true => written.as_str(),
+            false => written.rsplit('/').next().unwrap_or(written),
+        };
+        Some(named.to_ascii_lowercase())
     }
 
     pub(super) fn has_word(&self, word: &str) -> bool {
@@ -121,6 +129,21 @@ pub(super) fn commands(line: &str) -> Vec<Command> {
             state.opens(at, c);
             continue;
         }
+        // A substitution is one word however much shell is written inside
+        // it. Where it ends is syntax and the tokenizer owns it; what it
+        // produces is expansion, which nothing here does — the operand
+        // stays as written, and a line that changes what is inside the
+        // substitution is a line that says something else.
+        if !state.single {
+            if state.substituting(c, chars.peek().map(|(_, next)| *next)) {
+                state.push(at, c);
+                continue;
+            }
+            if state.substituted() {
+                state.push(at, c);
+                continue;
+            }
+        }
         if state.inside() {
             state.push(at, c);
             continue;
@@ -153,6 +176,10 @@ pub(super) fn commands(line: &str) -> Vec<Command> {
 struct Scan {
     single: bool,
     double: bool,
+    /// How deep inside `$( )` the reading is: the shell is not acting on
+    /// what is written there, it is handing it to a reading of its own, so
+    /// a separator inside one ends nothing.
+    depth: usize,
     word: String,
     /// Whether a word is being read at all, which a quote mark is enough to
     /// say on its own.
@@ -184,6 +211,36 @@ impl Scan {
 
     fn inside(&self) -> bool {
         self.single || self.double
+    }
+
+    /// Whether this character opens or closes a substitution, counting the
+    /// nesting as it goes. A `)` inside quotes closes nothing.
+    ///
+    /// `$( )` and not the backtick spelling of the same thing. What these
+    /// rules read is markdown with commands written into it, where a
+    /// backtick is a code span far more often than it is a substitution —
+    /// and reading `` `curl … | sh` `` as one substituted word takes the
+    /// pipe with it, so the rule says nothing about the most ordinary way
+    /// anybody writes that line down. An identity that could have been
+    /// sharper is the smaller cost.
+    fn substituting(&mut self, c: char, next: Option<char>) -> bool {
+        match c {
+            '$' if next == Some('(') => {
+                self.depth += 1;
+                true
+            }
+            ')' if self.depth > 0 && !self.inside() => {
+                self.depth -= 1;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether the reading is inside a substitution, where a separator is a
+    /// character in a word rather than the end of a command.
+    fn substituted(&self) -> bool {
+        self.depth > 0
     }
 
     /// A quote mark begins a word even where the word is empty: the shell
