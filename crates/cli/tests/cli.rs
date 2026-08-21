@@ -13,6 +13,7 @@ fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
         .current_dir(cwd)
         .env_clear()
         .env("HOME", home)
+        .env("KENDEX_REAL_HOME", "1")
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .output()
         .expect("kendex binary runs")
@@ -329,6 +330,7 @@ fn vstack_alias_binary_answers() {
         .arg("--version")
         .env_clear()
         .env("HOME", tmp.path())
+        .env("KENDEX_REAL_HOME", "1")
         .output()
         .unwrap();
     assert!(out.status.success());

@@ -15,6 +15,7 @@ fn kendex(home: &Path, args: &[&str]) -> Output {
         .current_dir(home)
         .env_clear()
         .env("HOME", home)
+        .env("KENDEX_REAL_HOME", "1")
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .output()
         .expect("kendex binary runs")

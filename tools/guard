@@ -124,6 +124,17 @@ hits=$(scan 'Command::new' '^crates/(core|cli)/src/' | grep -v '^crates/core/src
   say "raw Command::new — external processes go through process::Hardened"
 }
 
+# A test that hands the binary a fixture home must also say the home it gave
+# is the one it means: without that, a debug build sandboxes itself and the
+# test silently drives the dev home instead of the fixture.
+hits=$(grep -rlE '\.env\("HOME"' crates/*/tests 2>/dev/null | while IFS= read -r f; do
+  grep -q 'KENDEX_REAL_HOME' "$f" || echo "$f"
+done)
+[ -n "$hits" ] && {
+  echo "$hits" | head -5
+  say 'fixture HOME without KENDEX_REAL_HOME — the test would run in the dev sandbox'
+}
+
 # Structural invariants.
 [ "$(readlink .claude/CLAUDE.md 2>/dev/null)" = "../AGENTS.md" ] ||
   say ".claude/CLAUDE.md must be a symlink to ../AGENTS.md"

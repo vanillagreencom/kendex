@@ -36,6 +36,7 @@ fn run_with(
         .current_dir(cwd)
         .env_clear()
         .env("HOME", home)
+        .env("KENDEX_REAL_HOME", "1")
         .env(
             "PATH",
             format!(

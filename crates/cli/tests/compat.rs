@@ -18,6 +18,7 @@ fn kendex_in(home: &Path, cwd: &Path, args: &[&str], envs: &[(&str, String)]) ->
         .current_dir(cwd)
         .env_clear()
         .env("HOME", home)
+        .env("KENDEX_REAL_HOME", "1")
         .env("PATH", std::env::var("PATH").unwrap_or_default());
     for (key, value) in envs {
         command.env(key, value);
@@ -201,6 +202,7 @@ fn update_replaces_the_binary_from_a_local_feed() {
         .args(["update"])
         .env_clear()
         .env("HOME", home)
+        .env("KENDEX_REAL_HOME", "1")
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env(
             "KENDEX_UPDATE_FEED",

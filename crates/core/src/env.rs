@@ -9,6 +9,15 @@ const APP_DIR: &str = "kendex";
 /// the first-launch move ([`crate::rename::migrate_global_dirs`]).
 const LEGACY_APP_DIR: &str = "vstack2";
 
+/// The home a debug build gets instead of the real one, under the platform
+/// data dir. A build from a branch writes lock records, harness files and
+/// caches the installed app cannot read; keeping them here is what stops a
+/// bug reproduction from landing in the machine its author actually uses.
+const DEV_HOME_DIR: &str = "kendex-dev";
+
+/// Opts a debug build back onto the real home, for deliberate dogfooding.
+const REAL_HOME_VAR: &str = "KENDEX_REAL_HOME";
+
 /// Process env vars that relocate harness roots.
 const HARNESS_VARS: [&str; 7] = [
     "CODEX_HOME",
@@ -38,6 +47,14 @@ pub struct Env {
 
 impl Env {
     pub fn detect() -> Result<Self> {
+        let data_dir = dirs::data_dir().ok_or(CoreError::NoHomeDir)?;
+        let opt_in = std::env::var(REAL_HOME_VAR).ok();
+        if let Some(home) = dev_home(cfg!(debug_assertions), opt_in.as_deref(), &data_dir) {
+            // Harness vars are dropped with the home they point beside: an
+            // inherited CODEX_HOME would aim a sandboxed build straight back
+            // at the real machine.
+            return Ok(Self::rooted(home, HOST_OS));
+        }
         let vars = HARNESS_VARS
             .iter()
             .filter_map(|k| std::env::var(k).ok().map(|v| ((*k).to_owned(), v)))
@@ -46,7 +63,7 @@ impl Env {
             home: dirs::home_dir().ok_or(CoreError::NoHomeDir)?,
             config_dir: dirs::config_dir().ok_or(CoreError::NoHomeDir)?,
             cache_dir: dirs::cache_dir().ok_or(CoreError::NoHomeDir)?,
-            data_dir: dirs::data_dir().ok_or(CoreError::NoHomeDir)?,
+            data_dir,
             vars,
         })
     }
@@ -62,7 +79,11 @@ impl Env {
 
     /// Fixture environment shaped like the given OS, rooted under `home`.
     pub fn fake(home: impl Into<PathBuf>, os: FakeOs) -> Self {
-        let home: PathBuf = home.into();
+        Self::rooted(home.into(), os)
+    }
+
+    /// Every root under one home, laid out the way `os` lays them out.
+    fn rooted(home: PathBuf, os: FakeOs) -> Self {
         let (config, cache, data) = match os {
             FakeOs::Linux => (
                 home.join(".config"),
@@ -218,4 +239,83 @@ pub enum FakeOs {
     Linux,
     Mac,
     Windows,
+}
+
+/// How this machine lays out its base directories — the same shapes
+/// `dirs` resolves to, so a sandboxed home is a faithful stand-in.
+const HOST_OS: FakeOs = if cfg!(target_os = "macos") {
+    FakeOs::Mac
+} else if cfg!(target_os = "windows") {
+    FakeOs::Windows
+} else {
+    FakeOs::Linux
+};
+
+/// The home a build gets when it must not touch the real machine. A debug
+/// build is one an agent or a contributor built from a branch, so it is the
+/// one that writes records a release build cannot read; `KENDEX_REAL_HOME`
+/// is how someone dogfooding says they meant the real machine.
+fn dev_home(debug_build: bool, real_home_opt_in: Option<&str>, data_dir: &Path) -> Option<PathBuf> {
+    let opted_in = real_home_opt_in.is_some_and(|v| !v.is_empty());
+    match debug_build && !opted_in {
+        true => Some(data_dir.join(DEV_HOME_DIR)),
+        false => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DATA: &str = "/data";
+
+    #[test]
+    fn a_debug_build_gets_its_own_home() {
+        assert_eq!(
+            dev_home(true, None, Path::new(DATA)),
+            Some(PathBuf::from("/data/kendex-dev"))
+        );
+    }
+
+    #[test]
+    fn a_release_build_gets_the_real_home() {
+        assert_eq!(dev_home(false, None, Path::new(DATA)), None);
+    }
+
+    #[test]
+    fn a_debug_build_asked_for_the_real_home_gets_it() {
+        assert_eq!(dev_home(true, Some("1"), Path::new(DATA)), None);
+    }
+
+    #[test]
+    fn an_empty_opt_in_is_not_an_opt_in() {
+        assert_eq!(
+            dev_home(true, Some(""), Path::new(DATA)),
+            Some(PathBuf::from("/data/kendex-dev"))
+        );
+        assert_eq!(dev_home(false, Some(""), Path::new(DATA)), None);
+    }
+
+    /// The lock, the harness dirs it applies into and the caches all hang
+    /// off the roots, so redirecting the home is what moves every write.
+    #[test]
+    fn a_sandboxed_home_holds_every_root_it_writes() {
+        let env = Env::rooted(PathBuf::from("/data/kendex-dev"), FakeOs::Linux);
+        for path in [
+            env.global_lock_file(),
+            env.settings_file(),
+            env.source_cache_dir(),
+            env.journal_dir(),
+            crate::harness::HarnessAdapter::default_global_root(
+                &crate::harness::claude::Claude,
+                &env,
+            ),
+        ] {
+            assert!(
+                path.starts_with("/data/kendex-dev"),
+                "{} escaped the sandbox",
+                path.display()
+            );
+        }
+    }
 }

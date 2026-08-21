@@ -21,6 +21,7 @@ fn run(home: &Path, cwd: &Path, program: &str, args: &[&str]) -> Output {
         .current_dir(cwd)
         .env_clear()
         .env("HOME", home)
+        .env("KENDEX_REAL_HOME", "1")
         .env(
             "PATH",
             format!(

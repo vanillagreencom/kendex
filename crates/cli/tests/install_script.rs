@@ -59,6 +59,7 @@ fn run_install(os: &str, arch: &str, fail: Option<(&str, i32)>) -> (std::process
         .arg(script)
         .env_clear()
         .env("HOME", home)
+        .env("KENDEX_REAL_HOME", "1")
         .env(
             "PATH",
             format!(

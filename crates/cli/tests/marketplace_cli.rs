@@ -11,6 +11,7 @@ fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
         .current_dir(cwd)
         .env_clear()
         .env("HOME", home)
+        .env("KENDEX_REAL_HOME", "1")
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         // Keeps the post-subscribe fetch off the network: shorthands
         // resolve under an empty local base and fail fast.

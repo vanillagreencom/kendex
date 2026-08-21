@@ -89,6 +89,7 @@ fn run(bin: &str, home: &Path, cwd: &Path, args: &[&str]) -> Output {
         .current_dir(cwd)
         .env_clear()
         .env("HOME", home)
+        .env("KENDEX_REAL_HOME", "1")
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env("NO_COLOR", "1")
         .output()
