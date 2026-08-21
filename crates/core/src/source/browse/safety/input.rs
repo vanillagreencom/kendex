@@ -53,7 +53,7 @@ fn installs_as(
     };
     // A refusal is the real rendering's to report; the files it hands back
     // are what there is to score either way.
-    Ok(crate::render::split::enforce_body_cap(files, cap).files)
+    Ok(crate::render::split::enforce_body_cap(files, cap, None).files)
 }
 
 /// Which tools this item would install to: its own declaration where the

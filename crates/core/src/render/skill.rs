@@ -5,6 +5,9 @@ use crate::error::Result;
 use crate::manifest::Manifest;
 use crate::source_read::SealedSource;
 
+/// A rendered tree as apply materializes it: relative path, bytes.
+pub type Files = Vec<(PathBuf, Vec<u8>)>;
+
 pub const INSTRUCTIONS_START: &str = "<!-- kendex:project-instructions:start -->";
 pub const INSTRUCTIONS_END: &str = "<!-- kendex:project-instructions:end -->";
 
@@ -14,11 +17,49 @@ pub const INSTRUCTIONS_END: &str = "<!-- kendex:project-instructions:end -->";
 const LEGACY_INSTRUCTIONS_START: &str = "<!-- vstack:project-instructions:start -->";
 const LEGACY_INSTRUCTIONS_END: &str = "<!-- vstack:project-instructions:end -->";
 
-/// Byte range of the injected block, either marker generation: from the
-/// start marker through the end marker and its trailing newline. `None`
-/// when there is no block — or when a start marker has no matching end,
-/// which is user damage we leave in place rather than guess at.
-pub(crate) fn instructions_block_range(text: &str) -> Option<(usize, usize)> {
+/// Where a rendering put text the item's publisher did not write: a byte
+/// range in one rendered file.
+///
+/// Produced where the text is written and carried from there. The finished
+/// file is the project's own text as much as the publisher's, and it can
+/// spell a marker as readily as anything else — so finding this range again
+/// by searching that text is finding whatever the project wanted found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Block {
+    /// The rendered file it sits in, relative to the tree's root.
+    pub file: PathBuf,
+    pub start: usize,
+    pub end: usize,
+}
+
+impl Block {
+    /// The same block after bytes were added or removed ahead of it.
+    pub fn shifted(self, by: isize) -> Block {
+        let moved = |at: usize| at.saturating_add_signed(by);
+        Block {
+            start: moved(self.start),
+            end: moved(self.end),
+            ..self
+        }
+    }
+
+    /// The same block after the file it sits in was renamed.
+    pub fn renamed(self, file: PathBuf) -> Block {
+        Block { file, ..self }
+    }
+}
+
+/// Byte range of a block already written into a file kendex rendered
+/// earlier, either marker generation: from the start marker through the end
+/// marker and its trailing newline. `None` when there is no block — or when
+/// a start marker has no matching end, which is user damage we leave in
+/// place rather than guess at.
+///
+/// Only [`strip_block`] asks this, and only of a file kendex wrote before,
+/// so that re-rendering replaces that block instead of stacking another on
+/// top of it. Nothing decides who wrote what by asking: the answer is
+/// whatever the text says, and half of the text is the project's.
+fn instructions_block_range(text: &str) -> Option<(usize, usize)> {
     for (start_marker, end_marker) in [
         (INSTRUCTIONS_START, INSTRUCTIONS_END),
         (LEGACY_INSTRUCTIONS_START, LEGACY_INSTRUCTIONS_END),
@@ -45,7 +86,7 @@ pub fn render_skill(
     source_dir: &Path,
     manifest: &Manifest,
     name: &str,
-) -> Result<Vec<(PathBuf, Vec<u8>)>> {
+) -> Result<(Files, Option<Block>)> {
     let instructions = merged_instructions(&manifest.skill_instructions, name);
     with_instructions(sealed, source_dir, instructions.as_deref())
 }
@@ -54,34 +95,39 @@ pub fn render_skill(
 /// from the rendered text — the renderer is asked what it produces from the
 /// publisher's inputs, so nothing in the project's own instructions, marker
 /// or otherwise, can be mistaken for the publisher's.
-pub fn render_authored(
-    sealed: &SealedSource,
-    source_dir: &Path,
-) -> Result<Vec<(PathBuf, Vec<u8>)>> {
-    with_instructions(sealed, source_dir, None)
+pub fn render_authored(sealed: &SealedSource, source_dir: &Path) -> Result<Files> {
+    Ok(with_instructions(sealed, source_dir, None)?.0)
 }
 
 fn with_instructions(
     sealed: &SealedSource,
     source_dir: &Path,
     instructions: Option<&str>,
-) -> Result<Vec<(PathBuf, Vec<u8>)>> {
+) -> Result<(Files, Option<Block>)> {
     let mut files = sealed.collect_skill_tree(source_dir)?;
+    let mut block = None;
     for (rel, bytes) in &mut files {
         if rel == Path::new("SKILL.md") {
             let text = String::from_utf8_lossy(bytes).into_owned();
-            *bytes = inject_instructions(&text, instructions).into_bytes();
+            let (rendered, put) = injected(&text, instructions);
+            block = put.map(|put| put.renamed(rel.clone()));
+            *bytes = rendered.into_bytes();
         }
     }
-    Ok(files)
+    Ok((files, block))
 }
 
-/// Rename the tree's SKILL.md to the name the skill installs under. Every
+/// Rename the tree's SKILL.md to the name the skill installs under,
+/// returning how many bytes its frontmatter grew or shrank so anything
+/// holding an offset into that file can move with it — the rewrite is
+/// entirely inside the frontmatter, and every byte after it keeps its
+/// place relative to the rest. Every
 /// tool keys a skill on its directory and answers to the name the file
 /// gives, so the two have to agree — and a plugin-registry catalog's file knows
 /// only its leaf name, never the plugin the item is installed under. The
 /// catalog keeps the name it wrote; the copy carries the installed one.
-pub fn set_skill_name(files: &mut [(PathBuf, Vec<u8>)], installed: &str) {
+pub fn set_skill_name(files: &mut [(PathBuf, Vec<u8>)], installed: &str) -> isize {
+    let mut moved = 0;
     for (rel, bytes) in files.iter_mut() {
         let is_skill_md = matches!(rel.to_str(), Some("SKILL.md" | "SKILL.md.disabled"));
         if !is_skill_md {
@@ -89,9 +135,11 @@ pub fn set_skill_name(files: &mut [(PathBuf, Vec<u8>)], installed: &str) {
         }
         let text = String::from_utf8_lossy(bytes).into_owned();
         if let Some(renamed) = with_name(&text, installed) {
+            moved = renamed.len() as isize - text.len() as isize;
             *bytes = renamed.into_bytes();
         }
     }
+    moved
 }
 
 /// `None` when the file carries no frontmatter to name the skill in — the
@@ -123,20 +171,36 @@ fn with_name(text: &str, installed: &str) -> Option<String> {
 /// between markers, and strip + inject are exact inverses so re-rendering
 /// is byte-stable.
 pub fn inject_instructions(skill_md: &str, instructions: Option<&str>) -> String {
+    injected(skill_md, instructions).0
+}
+
+/// The same, and where the block went — the fact every later reading of
+/// "whose bytes are these" depends on, stated once by the code that puts
+/// them there.
+fn injected(skill_md: &str, instructions: Option<&str>) -> (String, Option<Block>) {
     let stripped = strip_block(skill_md);
     let Some(instructions) = instructions else {
-        return stripped;
+        return (stripped, None);
     };
     let block = format!(
         "{INSTRUCTIONS_START}\n## Project Instructions\n\n{instructions}\n{INSTRUCTIONS_END}\n"
     );
     let insert_at = frontmatter_end(&stripped);
     let (head, tail) = stripped.split_at(insert_at);
-    if head.is_empty() {
-        format!("{block}{tail}")
-    } else {
-        format!("{head}\n{block}{tail}")
-    }
+    let separator = usize::from(!head.is_empty());
+    let start = head.len() + separator;
+    let text = match head.is_empty() {
+        true => format!("{block}{tail}"),
+        false => format!("{head}\n{block}{tail}"),
+    };
+    (
+        text,
+        Some(Block {
+            file: PathBuf::from("SKILL.md"),
+            start,
+            end: start + block.len(),
+        }),
+    )
 }
 
 fn strip_block(text: &str) -> String {
@@ -256,7 +320,7 @@ mod tests {
 
         let sealed = crate::source_read::SealedSource::open(tmp.path()).unwrap();
         let src = sealed.root().join("github");
-        let files = render_skill(&sealed, &src, &manifest, "github").unwrap();
+        let (files, block) = render_skill(&sealed, &src, &manifest, "github").unwrap();
         assert_eq!(files.len(), 2);
         let skill_md = files
             .iter()
@@ -265,5 +329,15 @@ mod tests {
         assert!(String::from_utf8_lossy(&skill_md.1).contains("use gh"));
         let script = files.iter().find(|(p, _)| p.ends_with("run.sh")).unwrap();
         assert_eq!(script.1, b"#!/bin/sh\n");
+
+        // The offsets come back with the tree, and they are the block the
+        // renderer wrote — not whatever a later search of the file finds.
+        let block = block.expect("the render says where it put the block");
+        assert_eq!(block.file, PathBuf::from("SKILL.md"));
+        let text = String::from_utf8_lossy(&skill_md.1).into_owned();
+        assert!(text[block.start..block.end].starts_with(INSTRUCTIONS_START));
+        assert!(text[block.start..block.end].ends_with(&format!("{INSTRUCTIONS_END}\n")));
+        assert!(text[block.start..block.end].contains("use gh"));
+        assert!(!text[..block.start].contains("use gh") && !text[block.end..].contains("use gh"));
     }
 }

@@ -8,6 +8,7 @@ mod author_reviews_binding;
 mod author_reviews_emitted;
 mod author_reviews_injection;
 mod author_reviews_installations;
+mod author_reviews_occurrence;
 mod author_reviews_provenance;
 mod author_reviews_records;
 mod author_reviews_split;

@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use super::RenderWarning;
 use super::fences::fenced_ranges;
+use super::skill::Block;
 
 const SKILL_FILE: &str = "SKILL.md";
 const PROVENANCE: &str = "<!-- continued from SKILL.md -->\n";
@@ -17,6 +18,10 @@ pub struct SplitOutcome {
     /// The adjusted tree (SKILL.md possibly shortened, an overflow file
     /// possibly added). Unchanged when the body already fits.
     pub files: Vec<(PathBuf, Vec<u8>)>,
+    /// Where the project's block sits now. The split keeps it in the head
+    /// and can move everything around it, so the range it came in as is not
+    /// the range it leaves as.
+    pub block: Option<Block>,
     pub warnings: Vec<RenderWarning>,
     /// Set when the cap cannot be honored at all (a single fenced block
     /// larger than the cap): the caller refuses the install for that
@@ -25,9 +30,10 @@ pub struct SplitOutcome {
 }
 
 impl SplitOutcome {
-    fn unchanged(files: Vec<(PathBuf, Vec<u8>)>) -> SplitOutcome {
+    fn unchanged(files: Vec<(PathBuf, Vec<u8>)>, block: Option<Block>) -> SplitOutcome {
         SplitOutcome {
             files,
+            block,
             warnings: Vec::new(),
             refusal: None,
         }
@@ -36,6 +42,7 @@ impl SplitOutcome {
     fn refused(files: Vec<(PathBuf, Vec<u8>)>, reason: String) -> SplitOutcome {
         SplitOutcome {
             files,
+            block: None,
             warnings: Vec::new(),
             refusal: Some(reason),
         }
@@ -46,15 +53,23 @@ impl SplitOutcome {
 /// into `references/`. Frontmatter and the injected project-instructions
 /// block always stay in the head: instructions the project added are
 /// authoritative and must be read before anything they qualify.
-pub fn enforce_body_cap(mut files: Vec<(PathBuf, Vec<u8>)>, max_bytes: usize) -> SplitOutcome {
+///
+/// `block` is where the renderer put that block, passed in rather than
+/// looked for: the text spanning this file is half the project's own, so a
+/// marker found in it says only that the project wrote one.
+pub fn enforce_body_cap(
+    mut files: Vec<(PathBuf, Vec<u8>)>,
+    max_bytes: usize,
+    block: Option<Block>,
+) -> SplitOutcome {
     let Some(index) = files
         .iter()
         .position(|(path, _)| path == Path::new(SKILL_FILE))
     else {
-        return SplitOutcome::unchanged(files);
+        return SplitOutcome::unchanged(files, block);
     };
     if files[index].1.len() <= max_bytes {
-        return SplitOutcome::unchanged(files);
+        return SplitOutcome::unchanged(files, block);
     }
     let Ok(text) = std::str::from_utf8(&files[index].1).map(str::to_owned) else {
         let reason = format!("{SKILL_FILE} is not valid UTF-8, so it cannot be cut safely");
@@ -63,8 +78,10 @@ pub fn enforce_body_cap(mut files: Vec<(PathBuf, Vec<u8>)>, max_bytes: usize) ->
 
     let front = crate::frontmatter::split(&text).map_or(0, |(_, body)| text.len() - body.len());
     let body = &text[front..];
-    let protected = protected_range(body);
-    let block = protected.1 - protected.0;
+    let protected = block.as_ref().map_or((body.len(), body.len()), |block| {
+        (block.start - front, block.end - front)
+    });
+    let protected_len = protected.1 - protected.0;
     let overflow = overflow_path(&files);
     let note = format!(
         "\n> Continued in {} — read it for the remaining sections.\n",
@@ -73,19 +90,19 @@ pub fn enforce_body_cap(mut files: Vec<(PathBuf, Vec<u8>)>, max_bytes: usize) ->
     // What the head may spend on body bytes: everything up to the cut, plus
     // the protected block. A cap too small to hold the block on its own
     // cannot be met at all.
-    let Some(spare) = max_bytes.checked_sub(front + note.len() + block) else {
+    let Some(spare) = max_bytes.checked_sub(front + note.len() + protected_len) else {
         let reason = format!(
             "{SKILL_FILE} cannot meet the {max_bytes}-byte cap: its frontmatter and project instructions alone are {} bytes",
-            front + block
+            front + protected_len
         );
         return SplitOutcome::refused(files, reason);
     };
-    let budget = spare + block;
+    let budget = spare + protected_len;
 
     // Ranges no cut may land inside: code blocks, and the protected block,
     // whose own `## ` heading would otherwise look like a split point.
     let mut forbidden = fenced_ranges(body);
-    if block > 0 {
+    if protected_len > 0 {
         forbidden.push(protected);
     }
     // Past the block the budget covers it already; before the block the cut
@@ -131,18 +148,23 @@ pub fn enforce_body_cap(mut files: Vec<(PathBuf, Vec<u8>)>, max_bytes: usize) ->
     files[index].1 = head.into_bytes();
     files.push((overflow, format!("{PROVENANCE}{moved}").into_bytes()));
     files.sort_by(|a, b| a.0.cmp(&b.0));
+    // Where the block ends up: ahead of the cut it stays where it was, and
+    // behind it everything before it moved out from under it, so it now
+    // begins where the cut fell.
+    let block = block.map(|block| match cut <= protected.0 {
+        true => Block {
+            start: front + cut,
+            end: front + cut + protected_len,
+            ..block
+        },
+        false => block,
+    });
     SplitOutcome {
         files,
+        block,
         warnings: vec![warning],
         refusal: None,
     }
-}
-
-/// The injected project-instructions block, as a body byte range. An
-/// unterminated marker is user damage — as in `inject_instructions`, we take
-/// the file as it stands rather than guessing where the block ends.
-fn protected_range(body: &str) -> (usize, usize) {
-    crate::render::skill::instructions_block_range(body).unwrap_or((body.len(), body.len()))
 }
 
 /// The first free overflow name. Never overwrite a file the skill author

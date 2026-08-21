@@ -5,10 +5,12 @@ use crate::hash::{hash_files, installation_hash};
 use crate::lock::entry_key;
 use crate::manifest::Method;
 use crate::model::{HarnessId, ItemKind, Scope};
-use crate::render::agent::merged_instructions;
 use crate::render::skill::render_skill;
 
 use super::desired::{Artifact, Desired, DesiredState, ItemCtx, native_dir, skill_canonical};
+
+mod authored;
+use authored::authored_tree;
 
 /// One physical skill surface and the harnesses that read it. Codex and Pi
 /// both consume `.agents/skills` in a project, so they form one group and
@@ -26,8 +28,7 @@ struct SurfaceGroup {
 /// One rendered variant: the tree's files and their content hash. A group
 /// whose cap cannot be honored produces a refused placeholder and installs
 /// nothing.
-/// A rendered tree as apply materializes it: relative path, bytes.
-type Files = Vec<(PathBuf, Vec<u8>)>;
+use crate::render::skill::Files;
 
 struct Variant {
     files: Files,
@@ -239,20 +240,20 @@ fn render_variant(
     group: &SurfaceGroup,
     enabled: bool,
 ) -> Result<Variant> {
-    let instructions = merged_instructions(&ctx.manifest.skill_instructions, ctx.name);
-    let mut files = render_skill(ctx.sealed, ctx.item_path, ctx.manifest, ctx.name)?;
+    let (mut files, mut block) = render_skill(ctx.sealed, ctx.item_path, ctx.manifest, ctx.name)?;
     // A skill from a plugin-registry catalog installs under its plugin, and the
     // catalog's own SKILL.md knows nothing of that: the copy carries the
     // name the tool will list it under, the catalog keeps the name it wrote.
     if group.installed != ctx.name {
-        crate::render::skill::set_skill_name(&mut files, &group.installed);
+        let moved = crate::render::skill::set_skill_name(&mut files, &group.installed);
+        block = block.map(|block| block.shifted(moved));
     }
     // The tightest cap in the group and the member that enforces it, taken
     // together: they are one fact, and reading them from separate passes
     // invites a fallback for a state that cannot happen.
     let capped = tightest_cap(group);
     if let Some((cap, capped_by)) = capped {
-        let outcome = crate::render::split::enforce_body_cap(files, cap);
+        let outcome = crate::render::split::enforce_body_cap(files, cap, block);
         if let Some(reason) = outcome.refusal {
             for harness in &group.members {
                 state.refused.push(super::desired::Refused {
@@ -279,6 +280,7 @@ fn render_variant(
             });
         }
         files = outcome.files;
+        block = outcome.block;
     }
     // The group's members share one physical tree, so a rendering one of
     // their loaders rejects is refused for all of them — installing it for
@@ -338,7 +340,7 @@ fn render_variant(
     }
     let hash = hash_files(&files);
     let authored = match ctx.author_review.is_some() {
-        true => authored_tree(&files, instructions.is_some()),
+        true => authored_tree(&files, block),
         false => None,
     };
     Ok(Variant {
@@ -347,40 +349,6 @@ fn render_variant(
         refused: false,
         authored,
     })
-}
-
-/// How much of this rendered tree its publisher wrote: everything outside
-/// the project's instructions block, a boundary the renderer put there
-/// rather than anything read back out of the text.
-///
-/// Saying it as a boundary is what carries an occurrence through the split.
-/// The block stays in the head while the publisher's own sections move to
-/// `references/`, so their line lands in another file and one severity
-/// lighter than a rendering of their bytes alone puts it — nothing to match
-/// it to there, while a boundary has nothing to match. It is then settled
-/// at the weight it is scored at, which is the only weight that matters.
-///
-/// `None` when the project supplied instructions and the rendering carries
-/// no block for them: nothing here can then say which lines are whose, and
-/// a record that cannot be bounded settles nothing.
-fn authored_tree(files: &Files, injected: bool) -> Option<crate::quality::Authored> {
-    let block = files.iter().find_map(|(rel, bytes)| {
-        let text = std::str::from_utf8(bytes).ok()?;
-        let (start, end) = crate::render::skill::instructions_block_range(text)?;
-        Some(crate::quality::Injection {
-            file: rel.clone(),
-            lines: (line_at(text, start), line_at(text, end.saturating_sub(1))),
-        })
-    });
-    match (injected, &block) {
-        (true, None) => None,
-        _ => Some(crate::quality::Authored::Around(block)),
-    }
-}
-
-/// The line an offset falls on, counted from one, as a location names it.
-fn line_at(text: &str, offset: usize) -> usize {
-    text[..offset].lines().count().max(1)
 }
 
 /// The tightest body cap any member of this group enforces, and the member

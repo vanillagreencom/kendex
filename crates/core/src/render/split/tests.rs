@@ -1,5 +1,5 @@
 use super::*;
-use crate::render::skill::{INSTRUCTIONS_END, INSTRUCTIONS_START};
+use crate::render::skill::{Block, INSTRUCTIONS_END, INSTRUCTIONS_START};
 
 const NOTE: &str = "\n> Continued in references/details.md — read it for the remaining sections.\n";
 
@@ -22,6 +22,26 @@ fn instructions() -> String {
     format!("{INSTRUCTIONS_START}\n## Project Instructions\n\nuse gh\n{INSTRUCTIONS_END}\n")
 }
 
+/// The split under the block the renderer would have carried to it. These
+/// trees are built here, so where the block sits is known rather than
+/// looked for — which is the whole point of passing it in.
+fn capped(files: Vec<(PathBuf, Vec<u8>)>, max_bytes: usize) -> SplitOutcome {
+    let block = files
+        .iter()
+        .find(|(path, _)| path == Path::new("SKILL.md"))
+        .and_then(|(_, bytes)| {
+            let text = std::str::from_utf8(bytes).ok()?;
+            let start = text.find(INSTRUCTIONS_START)?;
+            let end = text.find(INSTRUCTIONS_END)? + INSTRUCTIONS_END.len() + 1;
+            Some(Block {
+                file: PathBuf::from("SKILL.md"),
+                start,
+                end,
+            })
+        });
+    enforce_body_cap(files, max_bytes, block)
+}
+
 fn read(outcome: &SplitOutcome, name: &str) -> String {
     let (_, bytes) = outcome
         .files
@@ -34,7 +54,7 @@ fn read(outcome: &SplitOutcome, name: &str) -> String {
 #[test]
 fn a_body_under_the_cap_is_left_alone() {
     let files = tree(&skill("\n## One\n\nshort\n"));
-    let outcome = enforce_body_cap(files.clone(), 4096);
+    let outcome = capped(files.clone(), 4096);
     assert_eq!(outcome.files, files);
     assert!(outcome.warnings.is_empty());
     assert!(outcome.refusal.is_none());
@@ -43,7 +63,7 @@ fn a_body_under_the_cap_is_left_alone() {
 #[test]
 fn a_tree_without_a_skill_file_is_left_alone() {
     let files = vec![(PathBuf::from("references/details.md"), vec![b'x'; 900])];
-    let outcome = enforce_body_cap(files.clone(), 10);
+    let outcome = capped(files.clone(), 10);
     assert_eq!(outcome.files, files);
     assert!(outcome.refusal.is_none());
 }
@@ -51,7 +71,7 @@ fn a_tree_without_a_skill_file_is_left_alone() {
 #[test]
 fn a_split_lands_on_a_heading_and_loses_no_bytes() {
     let text = skill(&sections(6));
-    let outcome = enforce_body_cap(tree(&text), 400);
+    let outcome = capped(tree(&text), 400);
     let head = read(&outcome, "SKILL.md");
     let overflow = read(&outcome, "references/details.md");
 
@@ -78,7 +98,7 @@ fn a_heading_inside_a_fence_is_not_a_split_point() {
     let text = skill(&format!("{}\n{fence}\n## Last\n\ntail\n", sections(2)));
     // The cap falls inside the fence: a fake heading would win if fences
     // were not tracked.
-    let outcome = enforce_body_cap(tree(&text), 640);
+    let outcome = capped(tree(&text), 640);
     let head = read(&outcome, "SKILL.md");
     let overflow = read(&outcome, "references/details.md");
 
@@ -115,7 +135,7 @@ fn an_indented_fence_is_not_a_split_point() {
         "    step\n".repeat(60)
     );
     let text = skill(&format!("{}\n{block}", "Intro line.\n".repeat(20)));
-    let outcome = enforce_body_cap(tree(&text), 400);
+    let outcome = capped(tree(&text), 400);
     let head = read(&outcome, "SKILL.md");
     let overflow = read(&outcome, "references/details.md");
 
@@ -133,7 +153,7 @@ fn deeper_headings_are_split_points_too() {
         .map(|n| format!("\n### S{n}\n\n{}\n", "x".repeat(200)))
         .collect();
     let text = skill(&format!("\n## Only\n\nintro\n{body}"));
-    let outcome = enforce_body_cap(tree(&text), 700);
+    let outcome = capped(tree(&text), 700);
     let head = read(&outcome, "SKILL.md");
 
     assert!(head.len() <= 700);
@@ -147,7 +167,7 @@ fn deeper_headings_are_split_points_too() {
 #[test]
 fn a_multibyte_character_is_never_cut_in_half() {
     let text = skill(&"é".repeat(400));
-    let outcome = enforce_body_cap(tree(&text), 201);
+    let outcome = capped(tree(&text), 201);
     let head = read(&outcome, "SKILL.md");
     let overflow = read(&outcome, "references/details.md");
 
@@ -167,7 +187,7 @@ fn a_multibyte_character_is_never_cut_in_half() {
 #[test]
 fn a_fenced_block_larger_than_the_cap_is_refused() {
     let files = tree(&skill(&format!("```\n{}```\n", "line\n".repeat(200))));
-    let outcome = enforce_body_cap(files.clone(), 300);
+    let outcome = capped(files.clone(), 300);
 
     assert_eq!(outcome.files, files);
     assert!(outcome.warnings.is_empty());
@@ -181,7 +201,7 @@ fn the_instructions_block_stays_in_the_head_when_it_comes_late() {
         sections(3),
         instructions()
     ));
-    let outcome = enforce_body_cap(tree(&text), 700);
+    let outcome = capped(tree(&text), 700);
     let head = read(&outcome, "SKILL.md");
     let overflow = read(&outcome, "references/details.md");
 
@@ -206,7 +226,7 @@ fn a_heading_inside_the_instructions_block_is_not_a_split_point() {
         instructions(),
         "y".repeat(300)
     ));
-    let outcome = enforce_body_cap(tree(&text), 694);
+    let outcome = capped(tree(&text), 694);
     let head = read(&outcome, "SKILL.md");
     let overflow = read(&outcome, "references/details.md");
 
@@ -218,7 +238,7 @@ fn a_heading_inside_the_instructions_block_is_not_a_split_point() {
 #[test]
 fn a_cap_below_the_instructions_block_is_refused() {
     let text = skill(&format!("{}{}", instructions(), sections(2)));
-    let outcome = enforce_body_cap(tree(&text), 100);
+    let outcome = capped(tree(&text), 100);
     assert!(
         outcome
             .refusal
@@ -231,7 +251,7 @@ fn a_cap_below_the_instructions_block_is_refused() {
 fn an_existing_details_file_pushes_the_overflow_to_a_free_name() {
     let mut files = tree(&skill(&sections(6)));
     files.push((PathBuf::from("references/details.md"), b"prior\n".to_vec()));
-    let outcome = enforce_body_cap(files.clone(), 400);
+    let outcome = capped(files.clone(), 400);
 
     assert_eq!(read(&outcome, "references/details.md"), "prior\n");
     assert!(read(&outcome, "references/details_overflow.md").starts_with(PROVENANCE));
@@ -241,7 +261,7 @@ fn an_existing_details_file_pushes_the_overflow_to_a_free_name() {
         PathBuf::from("references/details_overflow.md"),
         b"prior\n".to_vec(),
     ));
-    let outcome = enforce_body_cap(files, 400);
+    let outcome = capped(files, 400);
     assert!(read(&outcome, "references/details_overflow-2.md").starts_with(PROVENANCE));
 }
 
@@ -249,7 +269,7 @@ fn an_existing_details_file_pushes_the_overflow_to_a_free_name() {
 fn the_returned_tree_stays_sorted() {
     let mut files = tree(&skill(&sections(6)));
     files.push((PathBuf::from("assets/logo.svg"), b"<svg/>".to_vec()));
-    let outcome = enforce_body_cap(files, 400);
+    let outcome = capped(files, 400);
 
     let paths: Vec<&PathBuf> = outcome.files.iter().map(|(path, _)| path).collect();
     let mut sorted = paths.clone();

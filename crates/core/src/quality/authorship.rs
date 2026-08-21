@@ -28,12 +28,15 @@ pub enum Authored {
     /// half is a second rendering, from their inputs alone.
     Rendered {
         publishers: Content,
-        /// The text the project handed the renderer, line by line. Prose
-        /// reaches the document as lines of its own, so it is the one
-        /// contribution that can read the same as a line of the
-        /// publisher's; every other input is a value inside a line the
-        /// renderer writes, and can only read the same when it *is* what
-        /// the publisher wrote.
+        /// The text the project handed the renderer, line by line, as it
+        /// stands in the manifest. Prose reaches the document as lines of
+        /// its own, so it is the one contribution that can read the same as
+        /// a line of the publisher's; every other input is a value inside a
+        /// line the renderer writes, and can only read the same when it
+        /// *is* what the publisher wrote.
+        ///
+        /// Read here through the same deobfuscation the lines it is
+        /// compared against went through — see [`spoken_for`].
         supplied: BTreeSet<String>,
     },
 }
@@ -73,22 +76,43 @@ pub fn publishers(real: AuditInput, authored: &Authored, findings: &[Finding]) -
         // into a supporting file, where it weighs one step less. Reading
         // the weight off the artifact in front of us is the point: it is
         // the weight being scored.
-        Authored::Around(block) => findings
-            .iter()
-            .map(|finding| !holds(block.as_ref(), &real.location, &finding.location))
-            .collect(),
+        Authored::Around(block) => {
+            let theirs = covered(block.as_ref(), &real.location);
+            findings
+                .iter()
+                .map(|finding| !theirs.contains(&finding.location))
+                .collect()
+        }
         Authored::Rendered {
             publishers,
             supplied,
         } => {
-            let mine = AuditInput {
+            let input = AuditInput {
                 content: publishers.clone(),
                 ..real.clone()
             };
-            let theirs = spoken_for(real, mine, supplied);
+            // Their own rendering, read twice: what it produces, and what
+            // of it survived into this one.
+            let produced = crate::quality::audit(input.clone()).findings;
+            let mine = text::prepare(input);
+            let docs: BTreeSet<&str> = mine.docs.iter().map(|doc| doc.location.as_str()).collect();
+            let lines = spoken_for(real, &mine.docs, supplied);
             findings
                 .iter()
-                .map(|finding| theirs.contains(&finding.location))
+                .map(|finding| match docs.contains(finding.location.as_str()) {
+                    // A whole document — what deobfuscation had to change,
+                    // bytes that would not decode. Theirs when their own
+                    // rendering produced this very finding, never merely
+                    // because the document is in both: a project that swaps
+                    // one of their occurrences for one of its own leaves a
+                    // document that still exists and a sentence about it
+                    // that still reads the same.
+                    true => produced.iter().any(|mine| {
+                        mine.location == finding.location
+                            && mine.fingerprint() == finding.fingerprint()
+                    }),
+                    false => lines.contains(&finding.location),
+                })
                 .collect()
         }
     };
@@ -104,46 +128,49 @@ pub fn publishers(real: AuditInput, authored: &Authored, findings: &[Finding]) -
     }
 }
 
-/// Whether a finding sits inside the project's block.
+/// Every location the project's block covers, spelled the way a finding
+/// spells its own.
 ///
-/// A location naming the whole document that holds the block counts as
-/// inside it: a judgement about a document is not about the publisher's
-/// bytes alone once the project's are in it. A document whose path merely
-/// begins the same way is a different document.
-fn holds(block: Option<&Injection>, root: &str, location: &str) -> bool {
+/// Built rather than matched. A location is composed from a path a catalog
+/// chose and a line number, so taking one apart again to read the number
+/// off it is reading a catalog's filename as a line — the same shape as
+/// reading a project's text for the block's edges. Composing the block's
+/// own locations and comparing whole strings has nothing to take apart.
+///
+/// The document holding the block is one of them: a judgement about a whole
+/// document is not about the publisher's bytes alone once the project's are
+/// in it.
+fn covered(block: Option<&Injection>, root: &str) -> BTreeSet<String> {
     let Some(block) = block else {
-        return false;
+        return BTreeSet::new();
     };
-    let Some(rest) = location.strip_prefix(&format!("{root}/{}", block.file.display())) else {
-        return false;
-    };
-    match rest.strip_prefix(':') {
-        Some(number) => number
-            .parse::<usize>()
-            .is_ok_and(|line| (block.lines.0..=block.lines.1).contains(&line)),
-        None => rest.is_empty(),
-    }
+    let doc = format!("{root}/{}", block.file.display());
+    let mut covered: BTreeSet<String> = (block.lines.0..=block.lines.1)
+        .map(|line| format!("{doc}:{line}"))
+        .collect();
+    covered.insert(doc);
+    covered
 }
 
-/// The locations in a generated rendering the publisher's own rendering
-/// also speaks for, found by walking the two documents beside each other.
+/// The lines of a generated rendering the publisher's own rendering also
+/// speaks for, found by walking the two documents beside each other.
 ///
-/// A finding about a document rather than a line — what deobfuscation had
-/// to change, bytes that would not decode — is matched by its document.
-/// What the publisher's own bytes carry of those is already all the budget
-/// there is for them, so the count is what bounds those and this does not
-/// have to.
-fn spoken_for(real: AuditInput, mine: AuditInput, supplied: &BTreeSet<String>) -> BTreeSet<String> {
-    let mine = text::prepare(mine);
-    mine.docs
+/// Lines only. A finding naming a whole document is not a line and is not
+/// answered here.
+fn spoken_for(real: AuditInput, mine: &[Doc], supplied: &BTreeSet<String>) -> BTreeSet<String> {
+    // Both sides of the comparison in one text space. What is compared is
+    // the deobfuscated line, so a project repeating a reviewed sentence
+    // with a zero-width character in it matches the publisher's line while
+    // a set of raw manifest text never sees it — the pass that exists to
+    // catch hidden characters carrying the attack across.
+    let supplied: BTreeSet<String> = supplied
         .iter()
-        .map(|doc| doc.location.clone())
-        .chain(
-            text::prepare(real)
-                .docs
-                .iter()
-                .flat_map(|doc| aligned(doc, &mine.docs, supplied)),
-        )
+        .map(|line| text::deobfuscate("", line).0)
+        .collect();
+    text::prepare(real)
+        .docs
+        .iter()
+        .flat_map(|doc| aligned(doc, mine, &supplied))
         .collect()
 }
 
@@ -200,4 +227,67 @@ fn aligned(real: &Doc, authored: &[Doc], supplied: &BTreeSet<String>) -> Vec<Str
         }
     }
     found
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::model::ItemKind;
+
+    fn document(text: &str) -> AuditInput {
+        AuditInput {
+            kind: ItemKind::Agent,
+            name: "helper".to_owned(),
+            harness: None,
+            location: "agents/helper.md".to_owned(),
+            content: Content::Document {
+                text: text.to_owned(),
+            },
+        }
+    }
+
+    fn rendered(text: &str) -> Authored {
+        Authored::Rendered {
+            publishers: Content::Document {
+                text: text.to_owned(),
+            },
+            supplied: BTreeSet::new(),
+        }
+    }
+
+    /// A finding that names a whole document belongs to the publisher when
+    /// their own rendering produces it — not when their rendering merely
+    /// has a document by that name.
+    ///
+    /// Reading it off the document's existence says a project's hidden
+    /// characters are the publisher's the moment the publisher has a
+    /// document to hide them in, and the budget then counts an occurrence
+    /// nothing of theirs carried.
+    #[test]
+    fn a_document_level_finding_is_theirs_only_where_their_own_produces_it() {
+        let hidden = "Read the diff.\nSay what cou\u{200b}ld break.\n";
+        let real = document(hidden);
+        let found = crate::quality::audit(real.clone()).findings;
+        let whole: Vec<&Finding> = found
+            .iter()
+            .filter(|finding| finding.location == real.location)
+            .collect();
+        assert!(!whole.is_empty(), "a finding about the document: {found:?}");
+
+        let theirs = publishers(real.clone(), &rendered("Read the diff.\n"), &found).theirs;
+        for (finding, ours) in found.iter().zip(&theirs) {
+            if finding.location == real.location {
+                assert!(!ours, "their rendering does not produce {finding:?}");
+            }
+        }
+
+        // And where it does produce it, it is theirs.
+        let theirs = publishers(real.clone(), &rendered(hidden), &found).theirs;
+        for (finding, ours) in found.iter().zip(&theirs) {
+            if finding.location == real.location {
+                assert!(ours, "their rendering produces {finding:?}");
+            }
+        }
+    }
 }

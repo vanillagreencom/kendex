@@ -202,7 +202,7 @@ fn split_to_cap(
     files: Vec<(PathBuf, Vec<u8>)>,
     cap: usize,
 ) -> Option<Vec<(PathBuf, Vec<u8>)>> {
-    let outcome = crate::render::split::enforce_body_cap(files, cap);
+    let outcome = crate::render::split::enforce_body_cap(files, cap, None);
     if let Some(reason) = outcome.refusal {
         state.refused.push(super::desired::Refused {
             kind: ItemKind::Command,
