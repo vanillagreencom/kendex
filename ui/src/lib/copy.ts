@@ -199,6 +199,8 @@ export const FORK_NOTICE_DETAIL =
   "Updates are paused so your edits stay. Keep it as your own copy, see what changed, or discard the edits and go back to the catalog's version.";
 export const KEEP_AS_FORK_LABEL = "Keep as my own";
 export const VIEW_CHANGES_LABEL = "View changes";
+export const viewChangesInLabel = (tool: string): string =>
+  `View changes in ${tool}`;
 export const DISCARD_EDITS_LABEL = "Discard edits…";
 export const DISCARD_ALL_EDITS_LABEL = "Discard all edits…";
 export const editedInToolsLabel = (tools: string[]): string =>

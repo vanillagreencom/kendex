@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ItemKind, Scope, UpdateRow } from "@/bindings";
+import type { HarnessId, ItemKind, Scope, UpdateRow } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { StatusDot } from "@/components/status-dot";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,7 @@ import {
   MULTI_TOOL_FORK_NOTE,
   unforkableCopyNote,
   VIEW_CHANGES_LABEL,
+  viewChangesInLabel,
 } from "@/lib/copy";
 import { harnessName } from "@/lib/labels";
 import { sameScope } from "@/lib/scope";
@@ -33,7 +34,9 @@ export function ForkNotice({
   onResolved,
 }: {
   row: UpdateRow;
-  onViewChanges: () => void;
+  /** Opens the comparison for one tool's edited copy — the primary
+   *  rendering when no tool is named. */
+  onViewChanges: (harness?: HarnessId) => void;
   onResolved: () => void;
 }) {
   const busy = useUpdatesStore((s) => s.busy);
@@ -69,9 +72,26 @@ export function ForkNotice({
             {KEEP_AS_FORK_LABEL}
           </Button>
         ) : null}
-        <Button size="sm" variant="outline" onClick={onViewChanges}>
-          {VIEW_CHANGES_LABEL}
-        </Button>
+        {several ? (
+          row.editedHarnesses.map((harness) => (
+            <Button
+              key={harness}
+              size="sm"
+              variant="outline"
+              onClick={() => onViewChanges(harness)}
+            >
+              {viewChangesInLabel(harnessName(harness))}
+            </Button>
+          ))
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => onViewChanges(row.editedHarnesses[0])}
+          >
+            {VIEW_CHANGES_LABEL}
+          </Button>
+        )}
         {row.canDiscard ? (
           <Button
             size="sm"
@@ -116,7 +136,7 @@ export function EditedNotice({
   kind: ItemKind;
   name: string;
   alreadyForked: boolean;
-  onViewChanges: () => void;
+  onViewChanges: (harness?: HarnessId) => void;
   onResolved: () => void;
 }) {
   const row = useUpdatesStore((s) =>

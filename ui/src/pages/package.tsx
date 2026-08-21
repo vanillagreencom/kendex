@@ -7,6 +7,7 @@ import { PackageBody } from "@/components/package/package-body";
 import { PackageHeader } from "@/components/package/package-header";
 import { RemoveDialog } from "@/components/package/remove-dialog";
 import {
+  diffHarness,
   type PackageView,
   packageVersionActions,
   usePackageData,
@@ -77,7 +78,7 @@ export function PackagePage() {
   const diff = usePackageDiff(
     ref,
     view,
-    group?.installations[0]?.harness ?? null,
+    diffHarness(view, group?.installations[0]?.harness ?? null),
   );
   const updatesLoaded = useUpdatesStore((s) => s.loaded);
   const edited = useUpdatesStore((s) =>

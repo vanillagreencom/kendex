@@ -12,6 +12,7 @@ import { EditedNotice } from "@/components/package/fork-notice";
 import { PackageSidebar } from "@/components/package/package-sidebar";
 import type { PackageView } from "@/components/package/use-package-data";
 import type { ItemGroup } from "@/lib/derive";
+import { harnessName } from "@/lib/labels";
 import { versionRowLabel } from "@/lib/versions";
 import type { PackageRef } from "@/stores/nav";
 
@@ -59,14 +60,17 @@ export function PackageBody({
         kind={reference.kind}
         name={reference.name}
         alreadyForked={meta?.fork != null}
-        onViewChanges={() => {
+        onViewChanges={(harness) => {
           if (!installed) return;
           setView({
             mode: "diff",
             from: installed.id,
             to: "installed",
             fromLabel: versionRowLabel(installed),
-            toLabel: "your edits",
+            toLabel: harness
+              ? `your edits in ${harnessName(harness)}`
+              : "your edits",
+            harness,
           });
         }}
         onResolved={onReload}

@@ -57,6 +57,9 @@ describe("package page edited notice", () => {
     expect(html).toContain("Edited in Claude Code and OpenCode.");
     expect(html).toContain("would drop the other edits");
     expect(html).toContain(">Discard all edits…<");
+    expect(html).toContain(">View changes in Claude Code<");
+    expect(html).toContain(">View changes in OpenCode<");
+    expect(html).not.toContain(">View changes<");
   });
 
   it("says why a lone non-forkable rendering cannot become a fork", () => {

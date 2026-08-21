@@ -27,7 +27,19 @@ export type PackageView =
       to: string;
       fromLabel: string;
       toLabel: string;
+      /** The rendering to read the installed side from, when the
+       *  comparison is about one tool's edited copy rather than the
+       *  package's primary installation. */
+      harness?: HarnessId;
     };
+
+/** Which rendering a diff reads: the one the view names, else the
+ *  package's primary installation. */
+export const diffHarness = (
+  view: PackageView,
+  primary: HarnessId | null,
+): HarnessId | null =>
+  view.mode === "diff" && view.harness ? view.harness : primary;
 
 /** The package page's reads, refetchable as one unit after a mutation. */
 export function usePackageData(ref: PackageRef | null) {
