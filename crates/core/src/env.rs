@@ -34,6 +34,19 @@ const HARNESS_VARS: [&str; 7] = [
     "KENDEX_GIT_BASE",
 ];
 
+/// The subset of [`HARNESS_VARS`] that names a directory beside the home. A
+/// sandboxed build drops these and keeps the rest: an inherited CODEX_HOME
+/// would aim it straight back at the real machine, while KENDEX_GIT_BASE
+/// names a git host and belongs to the build wherever it runs.
+const HOME_RELOCATING_VARS: [&str; 6] = [
+    "CODEX_HOME",
+    "OPENCODE_CONFIG",
+    "OPENCODE_CONFIG_DIR",
+    "PI_CODING_AGENT_DIR",
+    "COPILOT_HOME",
+    "GEMINI_CLI_SYSTEM_SETTINGS_PATH",
+];
+
 /// Every filesystem root the app reads or writes flows through here so tests
 /// can point the whole engine at a fixture tree instead of the real machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,16 +62,17 @@ impl Env {
     pub fn detect() -> Result<Self> {
         let data_dir = dirs::data_dir().ok_or(CoreError::NoHomeDir)?;
         let opt_in = std::env::var(REAL_HOME_VAR).ok();
-        if let Some(home) = dev_home(cfg!(debug_assertions), opt_in.as_deref(), &data_dir) {
-            // Harness vars are dropped with the home they point beside: an
-            // inherited CODEX_HOME would aim a sandboxed build straight back
-            // at the real machine.
-            return Ok(Self::rooted(home, HOST_OS));
-        }
-        let vars = HARNESS_VARS
+        let vars: BTreeMap<String, String> = HARNESS_VARS
             .iter()
             .filter_map(|k| std::env::var(k).ok().map(|v| ((*k).to_owned(), v)))
             .collect();
+        if let Some(home) = dev_home(cfg!(debug_assertions), opt_in.as_deref(), &data_dir) {
+            let mut env = Self::rooted(home, HOST_OS);
+            for (key, value) in sandbox_vars(vars) {
+                env = env.with_var(&key, &value);
+            }
+            return Ok(env);
+        }
         Ok(Env {
             home: dirs::home_dir().ok_or(CoreError::NoHomeDir)?,
             config_dir: dirs::config_dir().ok_or(CoreError::NoHomeDir)?,
@@ -263,6 +277,13 @@ fn dev_home(debug_build: bool, real_home_opt_in: Option<&str>, data_dir: &Path) 
     }
 }
 
+/// What a sandboxed build carries over from the process it was launched in.
+fn sandbox_vars(vars: BTreeMap<String, String>) -> BTreeMap<String, String> {
+    vars.into_iter()
+        .filter(|(key, _)| !HOME_RELOCATING_VARS.contains(&key.as_str()))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,6 +315,34 @@ mod tests {
             Some(PathBuf::from("/data/kendex-dev"))
         );
         assert_eq!(dev_home(false, Some(""), Path::new(DATA)), None);
+    }
+
+    /// A git base names a host, not a directory beside the home, so a
+    /// sandboxed build resolving `owner/repo` still reaches the fixture tree
+    /// its launcher pointed it at.
+    #[test]
+    fn a_sandbox_keeps_what_does_not_point_at_a_home() {
+        let vars = BTreeMap::from([
+            ("KENDEX_GIT_BASE".to_owned(), "file:///fixtures".to_owned()),
+            ("CODEX_HOME".to_owned(), "/home/real/.codex".to_owned()),
+            ("COPILOT_HOME".to_owned(), "/home/real/.copilot".to_owned()),
+        ]);
+        let kept = sandbox_vars(vars);
+        assert_eq!(
+            kept.get("KENDEX_GIT_BASE").map(String::as_str),
+            Some("file:///fixtures")
+        );
+        assert!(!kept.contains_key("CODEX_HOME"));
+        assert!(!kept.contains_key("COPILOT_HOME"));
+    }
+
+    /// Every relocating var is a harness var: a name in one list and not the
+    /// other would be read from the process and never dropped.
+    #[test]
+    fn every_relocating_var_is_a_harness_var() {
+        for key in HOME_RELOCATING_VARS {
+            assert!(HARNESS_VARS.contains(&key), "{key} is not a harness var");
+        }
     }
 
     /// The lock, the harness dirs it applies into and the caches all hang

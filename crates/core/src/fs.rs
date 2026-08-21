@@ -106,7 +106,7 @@ mod tests {
             });
             let written = fs::read_to_string(&path).unwrap();
             assert!(
-                bodies.iter().any(|body| *body == written),
+                bodies.contains(&written),
                 "the file is one writer's bytes, not a mixture: {written:?}"
             );
         }

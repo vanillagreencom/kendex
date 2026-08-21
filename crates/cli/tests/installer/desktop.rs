@@ -7,6 +7,7 @@ use crate::{CURL, ICONS, installer_output, posix_shell, repo_root};
 /// The encoder itself, run out of `install.sh` rather than copied here: the
 /// function is sliced out of the shipped script and handed one argument, so
 /// renaming or moving it fails this instead of quietly testing nothing.
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 fn desktop_arg(path: &str) -> String {
     let script = std::fs::read_to_string(repo_root().join("install.sh")).expect("install.sh");
     let body = script

@@ -124,15 +124,22 @@ hits=$(scan 'Command::new' '^crates/(core|cli)/src/' | grep -v '^crates/core/src
   say "raw Command::new — external processes go through process::Hardened"
 }
 
-# A test that hands the binary a fixture home must also say the home it gave
-# is the one it means: without that, a debug build sandboxes itself and the
-# test silently drives the dev home instead of the fixture.
+# A command that hands the binary a fixture home must say on the spot that
+# the home it gave is the one it means: without that, a debug build sandboxes
+# itself and the command drives the dev home instead of the fixture. Checked
+# per call site — one compliant builder must not vouch for the rest of a file
+# that holds several.
 hits=$(grep -rlE '\.env\("HOME"' crates/*/tests 2>/dev/null | while IFS= read -r f; do
-  grep -q 'KENDEX_REAL_HOME' "$f" || echo "$f"
+  awk -v file="$f" '
+    pending && /^[[:space:]]*(\/\/|$)/ { next }
+    pending { if ($0 !~ /KENDEX_REAL_HOME/) print file ":" pending; pending = 0 }
+    /\.env\("HOME"/ { pending = NR }
+    END { if (pending) print file ":" pending }
+  ' "$f"
 done)
 [ -n "$hits" ] && {
   echo "$hits" | head -5
-  say 'fixture HOME without KENDEX_REAL_HOME — the test would run in the dev sandbox'
+  say 'fixture HOME without KENDEX_REAL_HOME on the next line — that command would run in the dev sandbox'
 }
 
 # Structural invariants.
