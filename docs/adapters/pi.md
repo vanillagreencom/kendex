@@ -96,7 +96,8 @@ reading the file back, in whichever direction it is going: a refresh
 never doubles such an entry, and a removal never takes the script out
 from under one. A link where that registry goes is read through no more
 than any other link here, and that is the scope's question rather than
-any hook's: it holds the first install as surely as the hundredth —
+any hook's: it holds the first install as surely as the hundredth, and
+answers nothing about a move the record already says is over —
 asked wherever the old layout has got to, since "nothing of kendex's is
 under the reserved name" answers a different question from "this
 installation is in good order", and only the first is about that

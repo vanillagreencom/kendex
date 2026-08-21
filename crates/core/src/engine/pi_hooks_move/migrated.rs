@@ -29,16 +29,25 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// last wrote is at the new path, nothing of this hook's is registered
 /// under the reserved name any more, and what runs it at the new path is
 /// what the record says should. Anything it cannot establish reads as
-/// unfinished.
+/// unfinished, and a registry it may not read is one of those things.
 pub(super) fn moved(
     env: &Env,
     scope: &Scope,
     root: &std::path::Path,
     entry: &LockEntry,
     state: &DesiredState,
+    linked: bool,
 ) -> bool {
+    // The record settles the reserved name and goes on settling it
+    // whatever the registry at the new path has since become. A link
+    // there is a question about what may be written, answered where the
+    // holds are; it is no evidence about a move that is already over.
     entry.left_pi_reserved_name
-        || (lives_at_the_new_path(root, entry)
+        // Without the record there is only the reading, and the reading
+        // is of that very document — which is one nothing is read
+        // through, so nothing can be proven from it.
+        || (!linked
+            && lives_at_the_new_path(root, entry)
             && legacy_registration_gone(scope, root, entry)
             && new_registration_stands(env, scope, root, entry, state))
 }

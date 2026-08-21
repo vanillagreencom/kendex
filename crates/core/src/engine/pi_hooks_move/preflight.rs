@@ -172,7 +172,7 @@ pub(crate) fn preflight(
         .collect();
     let migrated: BTreeSet<String> = ours
         .iter()
-        .filter(|entry| !linked && moved(env, scope, &root, entry, state))
+        .filter(|entry| moved(env, scope, &root, entry, state, linked))
         .map(|entry| entry.name.clone())
         .collect();
     let recorded: BTreeSet<String> = ours
