@@ -69,15 +69,17 @@ CURRENT_MODEL_IN_CALLER_ENV=false
 source "$SCRIPT_DIR/lib/kendex-env.sh"
 kendex_load_project_env "$PROJECT_ROOT"
 
-# Portability: macOS lacks timeout, try gtimeout fallback
-if ! command -v timeout >/dev/null 2>&1; then
-  if command -v gtimeout >/dev/null 2>&1; then
-    timeout() { gtimeout "$@"; }
-  else
-    # No timeout available — run without time limit
-    timeout() { shift; "$@"; }
-  fi
-fi
+# Portability: macOS lacks timeout, try gtimeout fallback. Only an EXTERNAL
+# executable will do, resolved with type -P so an exported function or alias
+# of the same name is never what runs. Finding neither fails CLOSED at the
+# mode gate below — silently stripping the deadline would run the external
+# CLI unbounded, the exact orphan the deadline exists to prevent.
+TIMEOUT_BIN=""
+for timeout_name in timeout gtimeout; do
+  TIMEOUT_BIN=$(type -P "$timeout_name" 2>/dev/null) && break
+  TIMEOUT_BIN=""
+done
+unset timeout_name
 
 # --- Defaults -----------------------------------------------------------------
 
@@ -519,6 +521,12 @@ fi
 command -v jq >/dev/null 2>&1 || { echo "Error: jq is required but not found" >&2; exit 1; }
 
 [[ -n "$MODE" ]] || { echo "Error: mode required (review|challenge|audit|quick|detect)" >&2; exit 1; }
+# Every mode but detect invokes the external CLI, and the deadline is
+# load-bearing: refuse rather than run unbounded. detect invokes nothing.
+if [[ -z "$TIMEOUT_BIN" && "$MODE" != "detect" ]]; then
+  echo "Error: no timeout implementation found (timeout or gtimeout) — refusing to run the external CLI with no deadline; on macOS install GNU coreutils for gtimeout (brew install coreutils)" >&2
+  exit 1
+fi
 [[ "$TIMEOUT" =~ ^[0-9]+$ ]] || { echo "Error: --timeout must be a positive integer" >&2; exit 1; }
 # Normalized once, here, so no later consumer meets the raw form: a zero-padded
 # value (0900) is valid digits but an octal literal to $(( )), which aborts on
@@ -2045,8 +2053,18 @@ EXIT_CODE=0
 # TIMEOUT plus a fixed overhead). The clock starts at the first invocation;
 # the retry gets the remainder, never less than the floor — a zero would tell
 # timeout to wait forever — so a lane's total stays within TIMEOUT plus the
-# floor, inside the margin.
+# floor plus the kill grace, inside the margin.
 RETRY_TIMEOUT_FLOOR=60
+
+# Grace between the deadline's TERM and the KILL that follows it. TERM alone
+# is catchable, so a CLI that ignores it outlives its own deadline and keeps
+# running — and billing — after the lane is gone.
+KILL_AFTER=30
+
+# A deadline ended the CLI: 124 when the TERM did it, 137 when the CLI
+# outlived the TERM and the KILL did.
+deadline_hit() { [[ "$1" -eq 124 || "$1" -eq 137 ]]; }
+
 remaining_budget() {
   local remaining=$(( TIMEOUT - (SECONDS - RUN_DEADLINE_STARTED_AT) ))
   [[ $remaining -ge $RETRY_TIMEOUT_FLOOR ]] || remaining=$RETRY_TIMEOUT_FLOOR
@@ -2056,8 +2074,9 @@ remaining_budget() {
 # Invoke the resolved target CLI with a prompt file on stdin, bounded by $2
 # seconds. The command line comes from target_cmd (env override or built-in
 # default). Echoes the CLI's stdout on our stdout and returns its exit code
-# (124 on timeout). Reused for the retry on JSON-extraction failure, so it
-# stays side-effect-free beyond writing the CLI's stderr to STDERR_TMP.
+# (a deadline reads as 124, or 137 when KILL ended a CLI that ignored the
+# TERM). Reused for the retry on JSON-extraction failure, so it stays
+# side-effect-free beyond writing the CLI's stderr to STDERR_TMP.
 run_target_cli() {
   local prompt_file="$1" limit="$2"
   local rc=0 cmd
@@ -2068,7 +2087,7 @@ run_target_cli() {
   fi
   echo "→ cmd: timeout ${limit}s $cmd" >&2
   # shellcheck disable=SC2086
-  (cd -- "$CWD" && timeout "$limit" $cmd < "$prompt_file" 2>"$STDERR_TMP") || rc=$?
+  (cd -- "$CWD" && "$TIMEOUT_BIN" --kill-after="$KILL_AFTER" "$limit" $cmd < "$prompt_file" 2>"$STDERR_TMP") || rc=$?
   return "$rc"
 }
 
@@ -2133,7 +2152,7 @@ REVIEW_LIKE=false
 RUN_DEADLINE_STARTED_AT="$SECONDS"
 RESULT=$(run_target_cli "$PROMPT_TMP" "$TIMEOUT") || EXIT_CODE=$?
 
-if [[ $EXIT_CODE -eq 124 ]]; then
+if deadline_hit "$EXIT_CODE"; then
   $REVIEW_LIKE && preserve_cli_failure_and_fail "timed out after ${TIMEOUT}s" "$RESULT"
   echo "{\"error\": \"Timeout after ${TIMEOUT}s\", \"target\": \"$TARGET_CLI\"}" >&2
   exit 1
@@ -2434,7 +2453,7 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
     RETRY_RESULT=$(run_target_cli "$RETRY_PROMPT_TMP" "$RETRY_TIMEOUT") || RETRY_EXIT=$?
     RETRY_RESPONSE_BYTES=${#RETRY_RESULT}
 
-    if [[ $RETRY_EXIT -eq 124 ]]; then
+    if deadline_hit "$RETRY_EXIT"; then
       echo "→ retry timed out after ${RETRY_TIMEOUT}s (remaining lane budget of the ${TIMEOUT}s total)" >&2
       preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
     elif [[ $RETRY_EXIT -ne 0 ]]; then

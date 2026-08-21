@@ -111,6 +111,9 @@ changes carry a **Breaking** call-out with their migration note inline.
   never rewrites settings you already have — so a project whose
   `kendex.settings.toml` carries `SECOND_OPINION_TIMEOUT = "300"` from an
   earlier install must update it to `"1080"` by hand to get the new wait.
+  An external review now requires a `timeout` binary and refuses to run
+  without one rather than running with no limit at all; on macOS, install
+  it with `brew install coreutils`.
 - The `dangerous-commands` check no longer reads a shell `case` arm's
   pattern list as a command: naming `sudo` among the words a parser should
   skip is not running it. Skills and hooks that parse command lines stop

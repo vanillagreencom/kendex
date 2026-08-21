@@ -9,6 +9,9 @@ The review prompt reviews through explicit holistic lenses (correctness, securit
 ## Prerequisites
 
 - **jq** installed
+- **`timeout`** (or `gtimeout`) on PATH — the deadline is what stops a review
+  from running unbounded, so every mode but `detect` refuses without it.
+  macOS ships neither: `brew install coreutils`
 - At least one external CLI: `claude` (Claude Code) or `codex` (Codex CLI)
 - CLI must be authenticated (`claude /login` or `codex login`)
 

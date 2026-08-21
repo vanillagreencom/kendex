@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Regression test: shipped project settings must keep the documented
 # second-opinion default timeout at 1080s, while caller env overrides still win,
-# the retry runs inside that one total budget, and every doc and settings
-# surface spells the shipped default.
+# the retry runs inside that one total budget, the run refuses when no timeout
+# binary can bound it, a CLI that ignores the deadline's TERM is still killed,
+# and every doc and settings surface spells the shipped default.
 
 set -euo pipefail
 
@@ -38,6 +39,20 @@ export PATH
 unset CLAUDECODE CLAUDE_CODE CLAUDE_PROJECT_DIR CODEX_SANDBOX \
       CODEX_SANDBOX_NETWORK_DISABLED PI_CODING_AGENT_DIR OPENCODE \
       CURSOR_AGENT CURSOR_TRACE_ID
+
+# The script refuses to run the external CLI with no deadline, so a host
+# without timeout or gtimeout cannot run this suite at all — a skip, not a
+# failure. The refusal itself is asserted below, on a fixture PATH.
+REAL_TIMEOUT=""
+for _t in timeout gtimeout; do
+  REAL_TIMEOUT=$(type -P "$_t") && break
+  REAL_TIMEOUT=""
+done
+unset _t
+if [[ -z "$REAL_TIMEOUT" ]]; then
+  printf 'SKIP: no timeout (or gtimeout) on PATH; the script cannot run here\n'
+  exit 0
+fi
 
 # Hermetic copy: the script resolves PROJECT_ROOT from its own location and
 # loads that project's settings files, so running the in-repo copy leaks the
@@ -186,6 +201,162 @@ for zero in 0 000; do
     exit 1
   fi
 done
+
+# --- No timeout binary: fail closed ------------------------------------------
+# Stock macOS ships neither timeout nor gtimeout, and at an 18-minute default
+# silently dropping the deadline would run the external CLI unbounded — the
+# run must refuse, naming the fix, before any CLI invocation. The fixture PATH
+# carries everything the script reaches before the gate, and nothing else.
+NOTIMEOUT_BIN="$TMP_ROOT/notimeout-bin"
+mkdir -p "$NOTIMEOUT_BIN"
+for tool in bash sh git jq grep sed tr cat rm mkdir rmdir head tail ps mktemp \
+            cut sort uniq wc date dirname basename env printf ls cp mv chmod \
+            touch awk find readlink od stat; do
+  tool_path=$(command -v "$tool" 2>/dev/null) || continue
+  ln -s "$tool_path" "$NOTIMEOUT_BIN/$tool"
+done
+cat > "$NOTIMEOUT_BIN/codex" <<SH
+#!/usr/bin/env bash
+touch "$TMP_ROOT/codex-invoked"
+cat >/dev/null
+printf 'should never run\n'
+SH
+chmod +x "$NOTIMEOUT_BIN/codex"
+
+notimeout_stderr="$TMP_ROOT/notimeout.stderr"
+notimeout_rc=0
+PATH="$NOTIMEOUT_BIN" \
+  SECOND_OPINION_TARGET=codex \
+  SECOND_OPINION_CODEX_CMD=codex \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" \
+  >/dev/null 2>"$notimeout_stderr" || notimeout_rc=$?
+if [[ "$notimeout_rc" -eq 1 ]] && grep -q "no timeout implementation" "$notimeout_stderr" \
+   && grep -q "brew install coreutils" "$notimeout_stderr" \
+   && [[ ! -f "$TMP_ROOT/codex-invoked" ]]; then
+  printf 'PASS: a PATH without timeout/gtimeout refuses before any CLI invocation\n'
+else
+  printf 'FAIL: a PATH without timeout/gtimeout refuses before any CLI invocation (exit %s, invoked=%s)\n' \
+    "$notimeout_rc" "$([[ -f "$TMP_ROOT/codex-invoked" ]] && echo yes || echo no)" >&2
+  sed -n '1,40p' "$notimeout_stderr" >&2
+  exit 1
+fi
+
+# Only an external executable counts: an exported shell function named timeout
+# would let a caller's environment decide what bounds the CLI, so the same
+# fixture PATH plus such a function must still refuse.
+fn_stderr="$TMP_ROOT/fntimeout.stderr"
+fn_rc=0
+# shellcheck disable=SC2317
+timeout() { "$REAL_TIMEOUT" "$@"; }
+export -f timeout
+PATH="$NOTIMEOUT_BIN" \
+  SECOND_OPINION_TARGET=codex \
+  SECOND_OPINION_CODEX_CMD=codex \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" \
+  >/dev/null 2>"$fn_stderr" || fn_rc=$?
+unset -f timeout
+if [[ "$fn_rc" -eq 1 ]] && grep -q "no timeout implementation" "$fn_stderr" \
+   && [[ ! -e "$TMP_ROOT/codex-invoked" ]]; then
+  printf 'PASS: an exported timeout function does not satisfy the probe\n'
+else
+  printf 'FAIL: an exported timeout function does not satisfy the probe (exit %s, invoked: %s)\n' \
+    "$fn_rc" "$([[ -e "$TMP_ROOT/codex-invoked" ]] && echo yes || echo no)" >&2
+  sed -n '1,20p' "$fn_stderr" >&2
+  exit 1
+fi
+
+# --- A CLI that ignores TERM is still reaped ---------------------------------
+# The deadline sends TERM, and TERM can be caught. A CLI that ignores it would
+# outlive its own deadline and keep running — and billing — long after the
+# lane it belonged to was resolved, so the deadline carries --kill-after and
+# the KILL is what finally ends such a CLI. Its exit is 137 rather than 124,
+# and the run must classify that as the deadline it is.
+#
+# The stub caps its own life so a regression costs the suite a bounded wait
+# instead of hanging it.
+make_stubborn_cli() {
+  local bin_dir="$1" pid_file="$2"
+  mkdir -p "$bin_dir"
+  cat > "$bin_dir/codex" <<SH
+#!/usr/bin/env bash
+trap '' TERM
+cat >/dev/null
+printf '%s' "\$\$" > "$pid_file"
+end=\$(( SECONDS + 120 ))
+while (( SECONDS < end )); do sleep 1; done
+SH
+  chmod +x "$bin_dir/codex"
+}
+
+# The control runs the same stub against a copy of the script with the flag
+# stripped, and it runs alongside the real one: proving the CLI is NOT reaped
+# means outwaiting the grace, and doing that twice in sequence would double
+# the suite's wall time for no extra evidence.
+NOKILL_ROOT="$TMP_ROOT/nokill"
+cp -R "$TMP_ROOT/proj" "$NOKILL_ROOT"
+NOKILL_SCRIPT="$NOKILL_ROOT/skills/second-opinion/scripts/second-opinion"
+sed 's/ --kill-after="\$KILL_AFTER"//' "$SECOND_OPINION" > "$NOKILL_SCRIPT"
+chmod +x "$NOKILL_SCRIPT"
+if grep -q -- '--kill-after' "$NOKILL_SCRIPT" || ! grep -q -- '--kill-after' "$SECOND_OPINION"; then
+  printf 'FAIL: control setup did not strip --kill-after from the script copy\n' >&2
+  exit 1
+fi
+
+# Its own worktree: both runs preserve a failure artifact under --cwd.
+WORK_NOKILL="$TMP_ROOT/work-nokill"
+cp -R "$WORK" "$WORK_NOKILL"
+
+NOKILL_PID_FILE="$TMP_ROOT/stubborn-nokill.pid"
+make_stubborn_cli "$TMP_ROOT/bin-nokill" "$NOKILL_PID_FILE"
+nokill_started="$SECONDS"
+PATH="$TMP_ROOT/bin-nokill:$PATH" \
+  SECOND_OPINION_TARGET=codex \
+  SECOND_OPINION_CODEX_CMD=codex \
+  SECOND_OPINION_TIMEOUT=1 \
+  "$NOKILL_SCRIPT" review --range HEAD --cwd "$WORK_NOKILL" \
+  >/dev/null 2>"$TMP_ROOT/nokill.stderr" &
+NOKILL_JOB=$!
+
+KILL_PID_FILE="$TMP_ROOT/stubborn.pid"
+make_stubborn_cli "$TMP_ROOT/bin-stubborn" "$KILL_PID_FILE"
+stubborn_started="$SECONDS"
+stubborn_rc=0
+PATH="$TMP_ROOT/bin-stubborn:$PATH" \
+  SECOND_OPINION_TARGET=codex \
+  SECOND_OPINION_CODEX_CMD=codex \
+  SECOND_OPINION_TIMEOUT=1 \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" \
+  >/dev/null 2>"$TMP_ROOT/stubborn.stderr" || stubborn_rc=$?
+stubborn_elapsed=$(( SECONDS - stubborn_started ))
+
+stubborn_pid=$(cat "$KILL_PID_FILE" 2>/dev/null || true)
+if [[ -n "$stubborn_pid" ]] && ! kill -0 "$stubborn_pid" 2>/dev/null \
+   && [[ "$stubborn_rc" -eq 5 ]] && [[ "$stubborn_elapsed" -lt 90 ]] \
+   && grep -q "timed out" "$TMP_ROOT/stubborn.stderr"; then
+  printf 'PASS: a TERM-ignoring CLI is killed at the deadline and read as a timeout (%ss)\n' \
+    "$stubborn_elapsed"
+else
+  printf 'FAIL: a TERM-ignoring CLI is killed at the deadline and read as a timeout (exit %s, %ss, pid %s)\n' \
+    "$stubborn_rc" "$stubborn_elapsed" "${stubborn_pid:-none}" >&2
+  sed -n '1,20p' "$TMP_ROOT/stubborn.stderr" >&2
+  exit 1
+fi
+
+# Read the control only once its own grace window has passed, so "still alive"
+# cannot mean "not killed yet".
+while (( SECONDS - nokill_started < 40 )); do sleep 1; done
+nokill_pid=$(cat "$NOKILL_PID_FILE" 2>/dev/null || true)
+if [[ -n "$nokill_pid" ]] && kill -0 "$nokill_pid" 2>/dev/null; then
+  printf 'PASS: control — without --kill-after the same CLI is still running\n'
+  nokill_ok=true
+else
+  printf 'FAIL: control — without --kill-after the same CLI is still running (pid %s)\n' \
+    "${nokill_pid:-none}" >&2
+  nokill_ok=false
+fi
+[[ -z "$nokill_pid" ]] || kill -9 "$nokill_pid" 2>/dev/null || true
+wait "$NOKILL_JOB" 2>/dev/null || true
+$nokill_ok || exit 1
 
 # --- Every surface spells the script's default ------------------------------
 # The script's DEFAULT_TIMEOUT is the single source; the settings files and doc

@@ -120,7 +120,7 @@ On script failure (non-zero exit), stderr contains a JSON error object:
 
 Options take their value in either form, `--opt VALUE` or `--opt=VALUE`; the split form refuses a value that begins with `-` (it would otherwise swallow the following flag), so a dash-leading path is passed as `--output=-report.json`.
 
-Runtime failures emit the JSON error object above; pre-flight configuration errors — unknown flag, an option missing its value, missing mode, non-integer `--timeout` or `SECOND_OPINION_COUNT`, missing `jq`, a directory or an uncreatable parent at `--output`, a missing `--cwd` — are plain `Error:` lines on stderr with exit 1. They are plain by necessity: they can precede the `jq` dependency check, which is what would format the JSON.
+Runtime failures emit the JSON error object above; pre-flight configuration errors — unknown flag, an option missing its value, missing mode, non-integer `--timeout` or `SECOND_OPINION_COUNT`, missing `jq`, no `timeout` or `gtimeout` executable on PATH (every mode but `detect` refuses rather than run the external CLI with no deadline; a shell function or alias of that name does not count), a directory or an uncreatable parent at `--output`, a missing `--cwd` — are plain `Error:` lines on stderr with exit 1. They are plain by necessity: they can precede the `jq` dependency check, which is what would format the JSON.
 
 Multi-lane review maps lane failures into the same contract: a failing lane is recorded inside the union artifact (`qa_metadata.lanes`, `coverage: "degraded"`) with the run still exiting 0; only when **every** lane fails does the run exit 4 (at least one lane answered unusably) or 5 (no lane answered), writing no artifact.
 
