@@ -271,7 +271,15 @@ Omit empty categories. Decline any item that cannot affect real usage with one l
 **Disposition is by rule, not by prompt** — never present a selection menu over the findings. Every blocker and `category == "fix"` suggestion that survives declining goes to the fix round below, in EVERY decision mode: which findings to fix is a mechanics question the rule settles, so `ORCH_DECISION_MODE` does not gate it. The always-ask set in [SKILL.md § The Cycle](../SKILL.md#the-cycle) is unaffected and still applies. Nothing left after declines → § 5.
 
 ### Fix Delegation
-**At `cycles` 3, converge before delegating this round** ([SKILL.md § The Cycle](../SKILL.md#the-cycle)): a diff still yielding new blockers is answered by cutting a surface the issue did not require, or by fixing the recurring class structurally, or by splitting — recorded in `rereview_panel.reason` — BEFORE the delegation below runs. Per-comment patching past that point is the failure the rule names, so the decision is made here rather than after another round has already been spent.
+**At `cycles` 3, converge before delegating this round** ([SKILL.md § The Cycle](../SKILL.md#the-cycle)): a diff still yielding new blockers is answered by cutting a surface the issue did not require, or by fixing the recurring class structurally, or by splitting — decided BEFORE the delegation below runs, because per-comment patching past that point is the failure the rule names.
+
+Record it in its own key, which nothing later overwrites:
+
+```bash
+.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] convergence '{"cycle": 3, "choice": "[cut|structural|split]", "reason": "[ONE_LINE]"}'
+```
+
+Then carry it into the delegation as `convergence`, so the round is told what shape its answer takes rather than receiving the same per-comment list again. A `cut` or `split` choice changes `items` accordingly — the findings that fall outside the surface being cut are declined per [finding-disposition](../references/finding-disposition.md), not delegated.
 
 Never fix as the main agent.
 
@@ -279,7 +287,7 @@ Never fix as the main agent.
 .agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]
 ```
 
-**Run Workflow**: `⤵ workflows/dev-fix.md § 1-3 → § 4 re-review` with context `worktree`, `lifecycle: "managed"`, `dev_agent`, `issue_id`, `items` (every blocker plus every `category == "fix"` suggestion that survived declining, each formatted `#[N] | [Agent] | [Location]` with Description and Recommendation), `source: pr-review`.
+**Run Workflow**: `⤵ workflows/dev-fix.md § 1-3 → § 4 re-review` with context `worktree`, `lifecycle: "managed"`, `dev_agent`, `issue_id`, `items` (every blocker plus every `category == "fix"` suggestion that survived declining, each formatted `#[N] | [Agent] | [Location]` with Description and Recommendation), `source: pr-review`, and `convergence` (the recorded `choice` and `reason`) whenever `cycles` reached 3.
 
 ### Bounded Re-Review
 
