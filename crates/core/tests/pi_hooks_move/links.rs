@@ -6,6 +6,8 @@
 use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
 
+use kendex_core::engine::audit;
+
 use super::{about, apply, notes, regress, regressed, world};
 
 /// A file at the new path is proof only when it is this hook's own
@@ -162,4 +164,37 @@ fn an_opaque_reserved_directory_holds_the_installation() {
         );
         let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o755));
     }
+}
+
+/// A link inside the reserved directory is a stranger, and proving the
+/// directory must never read through it: the tree it points at is not
+/// kendex's to walk, however large or however closed.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_link_inside_the_reserved_directory_is_never_read_through() {
+    let w = regressed();
+    let outside = w.home.join("outside");
+    fs::create_dir_all(outside.join("deep")).unwrap();
+    fs::write(outside.join("deep/secret"), "not kendex's\n").unwrap();
+    symlink(&outside, w.dot().join("hooks/theirs")).unwrap();
+    fs::set_permissions(&outside, fs::Permissions::from_mode(0o000)).unwrap();
+
+    let report = audit(&w.env, &w.scope()).unwrap();
+    let said = report.notes.clone();
+    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    fs::set_permissions(&outside, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(
+        !said.iter().any(|note| note.contains("could not list")),
+        "nothing tried to read through the link: {said:?}"
+    );
+    assert!(
+        w.dot().join("hooks/theirs").is_symlink(),
+        "the link stays where it is"
+    );
+    assert!(outside.join("deep/secret").is_file());
+    assert!(
+        !w.dot().join("hooks/guard.sh").exists(),
+        "and kendex's own file still moves out from beside it"
+    );
 }

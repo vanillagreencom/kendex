@@ -363,3 +363,25 @@ fn retiring_an_orphans_copy_says_the_hook_stopped_running() {
         report.notes
     );
 }
+
+/// The orphan sweep derives its paths from the lock, and this hook's
+/// path moved: a file already sitting at the new one was never written
+/// by that record, so an automatic removal must not take it — the rule
+/// every other kind already follows.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_orphan_sweep_does_not_take_a_stranger_at_the_new_path() {
+    let w = regressed();
+    undeclare(&w);
+    let new = w.dot().join("kendex/hooks/guard.sh");
+    fs::create_dir_all(new.parent().unwrap()).unwrap();
+    fs::write(&new, "#!/bin/sh\n# somebody else's\n").unwrap();
+
+    apply_with(&w, &reconcile());
+
+    assert_eq!(
+        fs::read_to_string(&new).unwrap(),
+        "#!/bin/sh\n# somebody else's\n",
+        "a sweep nobody named takes only what it can prove it wrote"
+    );
+}

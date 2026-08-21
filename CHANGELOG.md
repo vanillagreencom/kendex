@@ -252,7 +252,9 @@ changes carry a **Breaking** call-out with their migration note inline.
   the move in that run, leaving one registration and nothing more to say.
   A registration kendex cannot take out holds the script it names, so a
   hook is never left half-retired. Hooks that came in with a bundle move
-  like any other. `refresh` now prints those reasons, which it
+  like any other. And a cleanup nobody asked for by name now leaves a
+  hook's files alone when they are not the ones kendex wrote — the rule
+  skills, agents and commands already followed. `refresh` now prints those reasons, which it
   previously worked out and dropped.
 - On Linux, a helper command that ran past its time limit could take
   unrelated processes down with it: Ubuntu's `kill` misreads the negative

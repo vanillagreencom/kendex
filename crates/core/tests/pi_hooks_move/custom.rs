@@ -153,3 +153,46 @@ fn a_declared_custom_hook_is_not_read_as_one_nobody_declares() {
         "a declaration that could not be rendered keeps the hook it is running"
     );
 }
+
+/// A command-bodied hook has no file under the reserved name — it is
+/// only that registration — so a registry kendex cannot take it out of
+/// has to hold it like any other, or the command ends up registered
+/// twice.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_command_bodied_hook_is_held_by_a_registry_that_cannot_give_it_up() {
+    for spoil in ["link", "jsonc"] {
+        let w = world();
+        let scope = Scope::Project {
+            root: w.project.clone(),
+        };
+        fs::write(
+            w.project.join("kendex.toml"),
+            format!("schema = 5\n\n[install]\nharnesses = [\"pi\"]\n\n{DECLARATION}"),
+        )
+        .unwrap();
+        apply(&w.env, &scope);
+        let dot = w.project.join(".pi");
+        regress(&dot);
+        let registry = dot.join("hooks.json");
+        if spoil == "link" {
+            let elsewhere = w.home.join("hooks.json");
+            fs::rename(&registry, &elsewhere).unwrap();
+            std::os::unix::fs::symlink(&elsewhere, &registry).unwrap();
+        } else {
+            let text = fs::read_to_string(&registry).unwrap();
+            fs::write(&registry, format!("// mine\n{text}")).unwrap();
+        }
+
+        apply(&w.env, &scope);
+
+        let new = dot.join("kendex/hooks.json");
+        assert!(
+            !new.exists()
+                || !fs::read_to_string(&new)
+                    .unwrap()
+                    .contains("./scripts/mine.sh"),
+            "{spoil}: the command must not end up registered twice"
+        );
+    }
+}

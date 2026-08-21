@@ -325,12 +325,9 @@ fn claims(
 fn claim(entry: &LockEntry, path: &Path, discard: bool) -> std::result::Result<String, Held> {
     match provenance(entry, path) {
         Ok(proven) => Ok(proven),
-        Err(held @ (Held::Edited | Held::Unprovable)) if discard => crate::hash::hash_tree(path)
-            .map_err(|error| Held::Unreadable(error.to_string()))
-            .map_err(|unreadable| match held {
-                Held::Edited | Held::Unprovable => unreadable,
-                other => other,
-            }),
+        Err(Held::Edited | Held::Unprovable) if discard => {
+            crate::hash::hash_tree(path).map_err(|error| Held::Unreadable(error.to_string()))
+        }
         Err(held) => Err(held),
     }
 }

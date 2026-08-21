@@ -26,14 +26,6 @@ pub(super) fn plan_directory(
     if !matches!(look(dir), Found::Plain(_)) {
         return;
     }
-    // The binding hash is taken BEFORE the listing that proves ownership,
-    // so every arrival is covered: a file that lands before it is in the
-    // listing too and becomes a stranger, and one that lands after makes
-    // the apply-time hash differ and the op abort. Taken after, a file
-    // arriving between the two reads would be in neither.
-    // A directory that cannot be hashed cannot be taken whole; what is
-    // wrong with it is said by the listing below, in its own words.
-    let whole = crate::hash::hash_tree(dir).ok();
     let strangers = match strangers(dir, ours) {
         Ok(strangers) => strangers,
         Err(error) => {
@@ -64,14 +56,11 @@ pub(super) fn plan_directory(
     }
     // Nothing here is anybody else's, so the whole directory goes when
     // this pass takes everything the lock names in it.
-    if let Some(whole) = &whole
-        && !take.is_empty()
-        && take.len() == ours.len()
-    {
-        trash(
+    if !take.is_empty() && take.len() == ours.len() {
+        whole(
             format!("Move pi hooks out of {}", dir.display()),
             dir,
-            whole,
+            ours,
             sink,
         );
         return;
@@ -80,14 +69,11 @@ pub(super) fn plan_directory(
     // finished move leaves behind, which pi still warns about and which
     // holds nothing anyone could lose. Said out loud: a directory this
     // scope's hooks no longer sit in is not one kendex can prove it made.
-    if let Some(whole) = &whole
-        && claimed
-        && ours.is_empty()
-    {
-        trash(
+    if claimed && ours.is_empty() {
+        whole(
             format!("Remove the empty {} pi warns about", dir.display()),
             dir,
-            whole,
+            ours,
             sink,
         );
         sink.notes.push(format!(
@@ -97,6 +83,52 @@ pub(super) fn plan_directory(
         return;
     }
     each(sink);
+}
+
+/// The whole directory, bound to a hash of everything in it.
+///
+/// Two properties at once. The hash is taken only after the listing has
+/// shown every child is a plain file this pass claims — a link among them
+/// is a stranger, and a stranger means the directory is taken file by
+/// file instead — so hashing never follows a link out of the directory
+/// kendex owns. And the listing is taken again afterwards and has to be
+/// unchanged: that, not the order of two reads, is what makes the proof
+/// and the binding describe one state. A file arriving at any point
+/// either shows up in a listing or changes the hash the apply checks.
+fn whole(description: String, dir: &Path, ours: &BTreeSet<OsString>, sink: &mut Sink) {
+    // Checked here rather than inferred from the caller: `hash_tree`
+    // resolves links, so one child link would walk a tree kendex does not
+    // own. The caller only asks about a directory whose every child it
+    // claims, and a claimed child is always a plain file — this makes
+    // that a check instead of an argument.
+    if !every_child_is_a_plain_file(dir) {
+        return;
+    }
+    let proven = match crate::hash::hash_tree(dir) {
+        Ok(proven) => proven,
+        Err(error) => {
+            sink.notes.push(list_note(dir, &error.to_string()));
+            return;
+        }
+    };
+    match strangers(dir, ours) {
+        // Something arrived while kendex was looking. Nothing is taken
+        // this pass; the next one sees it as the stranger it is.
+        Ok(again) if !again.is_empty() => {}
+        Ok(_) => trash(description, dir, &proven, sink),
+        Err(error) => sink.notes.push(list_note(dir, &error.to_string())),
+    }
+}
+
+/// Whether nothing in this directory is a link, a subdirectory, or
+/// anything else that reading it would follow out of the directory.
+fn every_child_is_a_plain_file(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().all(|entry| {
+        std::fs::symlink_metadata(entry.path()).is_ok_and(|meta| meta.file_type().is_file())
+    })
 }
 
 fn list_note(dir: &Path, error: &str) -> String {
@@ -239,4 +271,41 @@ fn strangers(dir: &Path, ours: &BTreeSet<OsString>) -> std::io::Result<Vec<Strin
     }
     strangers.sort();
     Ok(strangers)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The guarantee that does not depend on the caller: a directory
+    /// holding a link is never hashed, so the tree it points at is never
+    /// read — even when everything in it is claimed.
+    #[test]
+    #[cfg(unix)]
+    #[allow(clippy::unwrap_used)]
+    fn a_directory_holding_a_link_is_never_hashed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("deep"), "not kendex's\n").unwrap();
+        let dir = tmp.path().join("hooks");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("guard.sh"), "#!/bin/sh\n").unwrap();
+        std::os::unix::fs::symlink(&outside, dir.join("theirs")).unwrap();
+        std::fs::set_permissions(
+            &outside,
+            std::os::unix::fs::PermissionsExt::from_mode(0o000),
+        )
+        .unwrap();
+
+        assert!(!every_child_is_a_plain_file(&dir));
+        // And the caller's own answer, for a directory of plain files.
+        std::fs::remove_file(dir.join("theirs")).unwrap();
+        assert!(every_child_is_a_plain_file(&dir));
+        std::fs::set_permissions(
+            &outside,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+    }
 }

@@ -88,17 +88,23 @@ pub(crate) fn preflight(
             if opaque {
                 return true;
             }
+            // A registry that cannot give up an entry holds every hook
+            // it might be holding one for — including a command-bodied
+            // one, which has no file under the reserved name at all and
+            // exists there only as that registration.
+            if this.registry_block.is_some() {
+                return true;
+            }
             let files = legacy_files(&dir, &entry.name);
             if files.is_empty() {
                 return false;
             }
-            this.registry_block.is_some()
-                || files.iter().any(|found| match found {
-                    Found::Plain(path) => provenance(entry, path)
-                        .is_err_and(|_| !this.discards(&entry.name) || !discardable(entry, path)),
-                    Found::Linked(_) | Found::Unreadable(..) => true,
-                    Found::Absent => false,
-                })
+            files.iter().any(|found| match found {
+                Found::Plain(path) => provenance(entry, path)
+                    .is_err_and(|_| !this.discards(&entry.name) || !discardable(path)),
+                Found::Linked(_) | Found::Unreadable(..) => true,
+                Found::Absent => false,
+            })
         })
         .map(|entry| entry.name.clone())
         .collect();
@@ -122,8 +128,7 @@ fn discarding(options: &crate::engine::PlanOptions, name: &str) -> bool {
 /// Bytes a discard covers: a plain file that is readable. Discarding is
 /// permission to replace someone's edits, never permission to guess at a
 /// file kendex cannot read at all.
-fn discardable(entry: &LockEntry, path: &std::path::Path) -> bool {
-    let _ = entry;
+fn discardable(path: &std::path::Path) -> bool {
     crate::hash::hash_tree(path).is_ok()
 }
 

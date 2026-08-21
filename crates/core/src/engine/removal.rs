@@ -21,7 +21,7 @@ use crate::model::{ItemKind, Scope};
 pub fn edit_holds(env: &Env, scope: &Scope, entry: &LockEntry) -> bool {
     if !matches!(
         entry.kind,
-        ItemKind::Skill | ItemKind::Agent | ItemKind::Command
+        ItemKind::Skill | ItemKind::Agent | ItemKind::Command | ItemKind::Hook
     ) {
         return false;
     }
