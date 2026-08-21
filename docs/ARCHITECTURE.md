@@ -186,9 +186,14 @@ lives in one capability table read by core and UI.
     that is keyed by name, or that answers a question about the person
     rather than about this build's state, belongs on that list.
 
-    The boundary is the home, not the whole filesystem. A project path
-    handed to a debug build is still that project: `--scope project`
-    reads and writes the repository it was pointed at.
+    The boundary is the home this process resolves, not the whole machine,
+    and three things sit outside it. A project path handed to a debug build
+    is still that project: `--scope project` reads and writes the repository
+    it was pointed at. A harness root set to an explicit absolute path is
+    used as written, because that setting exists to say where a root is. And
+    a child process inherits this process's environment (`process/mod.rs`),
+    so `npm` run for a Pi package sees the real home — the sandbox rebases
+    `Env`, which nothing outside this process reads.
 
 ## Decisions
 

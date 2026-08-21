@@ -146,6 +146,16 @@ changes carry a **Breaking** call-out with their migration note inline.
 
 ### Fixed
 
+- A build you make yourself no longer touches your real setup. Building from
+  source now keeps its own home under the platform data directory, so a
+  branch cannot leave lock records, harness files, or caches that the kendex
+  you installed will not read — the case that showed up as `lock.json was
+  written by a newer kendex`. Your global skills and agents are not visible
+  to such a build and nothing it writes reaches them. To point one at your
+  real setup deliberately, run it with `KENDEX_REAL_HOME=1`; only that exact
+  value opts out. Released builds are unaffected — they were never
+  sandboxed, and nothing about an installed kendex changes.
+
 - The project-management skill's issue pipeline creates Linear issues
   directly in Backlog instead of the team's Triage default. Pipeline output
   is already fully triaged — project, labels, priority, relations — and a
