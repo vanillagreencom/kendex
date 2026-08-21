@@ -164,10 +164,11 @@ changes carry a **Breaking** call-out with their migration note inline.
   on — the same guard names already had.
 - A marketplace package's preview scores what installing it would write,
   not what the catalog holds: the same read budget as an install, and the
-  same body cap for the tools this project installs to. A long package could
-  read held back on the page while its install went through with a warning,
-  because the line past the cap moves into `references/` where it weighs
-  less. `kendex check --catalog` reads under that budget too, so neither
+  body cap of whichever tool this package installs to reads it hardest. A
+  long package could read held back on the page while its install went
+  through with a warning, or warn while the install was held back, because
+  a line past a tool's cap moves into `references/` where it weighs less and
+  not every tool has a cap. `kendex check --catalog` reads under that budget too, so neither
   reports findings, or mints tokens for them, in content past the point any
   install stops reading; an item bigger than that says so instead, and the
   standing "reviewed findings do not appear in what this installs" warnings

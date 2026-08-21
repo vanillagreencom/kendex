@@ -15,29 +15,57 @@ use super::Item;
 
 /// The tree this project would install, from the publisher's own bytes: a
 /// marked block is the project's to write and never installs, and a body
-/// past the tightest cap any harness here enforces is split into
-/// `references/`, where the rules read it one weight lower. Scoring the
-/// catalog's unsplit source instead reads that line at full weight, which
-/// is how a package reads held back whose install is not.
+/// past a tool's cap is split into `references/`, where the rules read it
+/// one weight lower.
+///
+/// A package installs to several tools and each renders it its own way, so
+/// there is no one tree to score — and the one a preview must not show is a
+/// tree nobody installs. Splitting only ever lowers what a line weighs, so
+/// the harshest of the renderings is the one that splits least: no split at
+/// all where any tool this item goes to has no cap, and otherwise the
+/// largest cap among them. A preview that took the smallest instead showed
+/// the mildest rendering and promised better than the install delivers —
+/// Claude has no cap, so Claude beside Codex read as a warning while the
+/// install Claude got was held back.
 ///
 /// The project's own instructions are deliberately *not* folded in — the
 /// page says so — because a preview is about the package, and the gate
 /// stays the authority on what the combination scores.
-fn installs_as(browsed: &Browsed, path: &std::path::Path) -> Result<Vec<(PathBuf, Vec<u8>)>> {
+fn installs_as(
+    browsed: &Browsed,
+    kind: ItemKind,
+    name: &str,
+    path: &std::path::Path,
+) -> Result<Vec<(PathBuf, Vec<u8>)>> {
     let files = crate::render::skill::render_authored(&browsed.sealed, path)?;
-    let Some(cap) = browsed
-        .manifest
-        .install
-        .harnesses
+    let caps: Vec<Option<usize>> = installs_to(browsed, kind, name)
+        .into_iter()
+        .map(|harness| crate::harness::format_caps(harness).skill_body_max_bytes)
+        .collect();
+    let Some(cap) = caps
         .iter()
-        .filter_map(|harness| crate::harness::format_caps(*harness).skill_body_max_bytes)
-        .min()
+        .copied()
+        .max()
+        .flatten()
+        .filter(|_| caps.iter().all(Option::is_some))
     else {
         return Ok(files);
     };
     // A refusal is the real rendering's to report; the files it hands back
     // are what there is to score either way.
     Ok(crate::render::split::enforce_body_cap(files, cap).files)
+}
+
+/// Which tools this item would install to: its own declaration where the
+/// project has one for it, and the scope's default otherwise. Reading only
+/// the default models the wrong set for every item that names its own.
+fn installs_to(browsed: &Browsed, kind: ItemKind, name: &str) -> Vec<crate::model::HarnessId> {
+    browsed
+        .manifest
+        .declared(kind)
+        .get(name)
+        .and_then(|decl| decl.harnesses.clone())
+        .unwrap_or_else(|| browsed.manifest.install.harnesses.clone())
 }
 
 /// The same typed input `check --catalog` audits: a skill's whole tree,
@@ -62,7 +90,9 @@ pub(super) fn input_for(
         // at weights it never gives them — the two disagreeing about one
         // package, which is the whole thing a preview is for.
         ItemKind::Skill => Content::SkillTree {
-            files: crate::quality::observe::tree_files_from_bytes(&installs_as(browsed, path)?),
+            files: crate::quality::observe::tree_files_from_bytes(&installs_as(
+                browsed, kind, name, path,
+            )?),
         },
         // A hook's script is what the harness runs; browse scores it as a hook
         // so the rules that read event/command/script fire here too, not only

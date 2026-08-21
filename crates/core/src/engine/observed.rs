@@ -1,4 +1,23 @@
 //! Scoring what is on disk, as opposed to what a plan would write.
+//!
+//! **An installation is the unit of every answer here: one row, one lock
+//! entry, one revision, one record, one decision.** The same item installed
+//! for two tools is two installations, and the lock can hold them at two
+//! revisions — a refresh applies per installation, so one tool's new
+//! rendering can go through while another's is held back. Anything keyed by
+//! the item alone therefore collapses two answers into one and hands
+//! whichever survived to both: an unreviewed installation inheriting a
+//! dismissal, or a person's acceptance of one tool's copy reading as an
+//! acceptance of another's, or a token that records a click against an
+//! installation nobody was looking at. If something here is keyed by item
+//! and not by installation, that is the bug.
+//!
+//! The one thing bytes may answer for is a row that is no installation at
+//! all: one tree under `.agents/` is read by every tool that looks there
+//! and scanned as a row each time, while only the tools it was installed
+//! for have an entry. A record binds to bytes, so those rows are answered
+//! by the bytes — and only where every installation carrying them agrees,
+//! since two revisions can render alike and review differently.
 
 use crate::env::Env;
 use crate::error::Result;
@@ -64,36 +83,42 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
     // reconstruction, and then no record settles anything.
     let planned =
         super::desired::desired_as_installed(env, &scope, &manifest, &lock).unwrap_or_default();
-    // Keyed by what a rebuild produced, so finding one *is* the check that
-    // the bytes on disk are that rebuild. Not by harness: one shared tree is
-    // what several tools load, each scanned as its own row, while the plan
-    // built it once. Kind and name stay in the key — a review hash is sealed
-    // by kind but not by name, and `publisher` is a name a person is asked
-    // to weigh, so one catalog must never be named as the reviewer of
-    // another's identical bytes.
-    let rebuilt: std::collections::HashMap<Rebuild<'_>, &super::desired::Desired> = planned
+    // An installation is the unit of every answer here: one row, one lock
+    // entry, one revision, one record. So the rebuilds are keyed by the
+    // installation they are — the artifact's kind and name on disk, and the
+    // tool it was written for. Keying by the item alone collapses two
+    // installations of one item into one answer, and once the lock can pin
+    // them to different revisions that is two tools sharing whichever
+    // answer the hash ordering happened to keep.
+    let mine: std::collections::HashMap<Installed<'_>, &super::desired::Desired> = planned
         .iter()
-        .filter_map(|item| {
+        .map(|item| {
             let (kind, name) = written_as(item);
-            Some(((kind, name, super::review_hash::desired(item)?), item))
+            ((kind, name, item.harness), item)
         })
         .collect();
-    // And the same items by name alone: where the item comes from, and what
-    // says so when a rebuild exists and is not what is installed.
-    let carried: std::collections::HashMap<
-        (crate::model::ItemKind, &str),
-        &super::desired::Desired,
-    > = planned
-        .iter()
-        .map(|item| (written_as(item), item))
-        .collect();
+    // And by the bytes they produced, for a row that is no installation of
+    // its own: one tree under `.agents/` is read by every tool that looks
+    // there, and each is scanned as its own row while only the tools it was
+    // installed for have an entry. A record binds to bytes, so bytes are
+    // what answers those — but only where every installation carrying them
+    // says the same thing, since two revisions can render alike and review
+    // differently, and picking one of those would be the collapse again.
+    let mut shared: std::collections::HashMap<Rebuild<'_>, Vec<&super::desired::Desired>> =
+        std::collections::HashMap::new();
+    for item in &planned {
+        let (kind, name) = written_as(item);
+        if let Some(hash) = super::review_hash::desired(item) {
+            shared.entry((kind, name, hash)).or_default().push(item);
+        }
+    }
     let reading = Reading {
         scope: &scope,
         manifest: &manifest,
         lock: &lock,
         thresholds: settings.safety,
-        rebuilt,
-        carried,
+        mine,
+        shared,
     };
     Ok(items
         .into_iter()
@@ -108,9 +133,11 @@ struct Reading<'a> {
     manifest: &'a Manifest,
     lock: &'a crate::lock::Lock,
     thresholds: crate::quality::Thresholds,
-    rebuilt: std::collections::HashMap<Rebuild<'a>, &'a super::desired::Desired>,
-    carried:
-        std::collections::HashMap<(crate::model::ItemKind, &'a str), &'a super::desired::Desired>,
+    /// Every rebuilt installation, by the installation it is.
+    mine: std::collections::HashMap<Installed<'a>, &'a super::desired::Desired>,
+    /// The same rebuilds by the bytes they produced, for rows that are no
+    /// installation of their own.
+    shared: std::collections::HashMap<Rebuild<'a>, Vec<&'a super::desired::Desired>>,
 }
 
 impl Reading<'_> {
@@ -124,24 +151,26 @@ impl Reading<'_> {
         // the one its own kind and name spell: a Codex command is written
         // and scanned back as a skill tree, and its records were made under
         // the command it is declared as.
-        let key = self.installation_key(item);
+        // This row's own installation, and nothing else's: the rebuild for
+        // this tool, this item, this revision.
+        let mine = self.mine.get(&here(item)).copied();
+        let key = match mine {
+            Some(planned) => planned.key.clone(),
+            None => emitted_under(self.lock, item),
+        };
         let root = item.path.display().to_string();
         // Where the bytes came from, as the rebuild resolved it — never the
         // scanner's guess, which is a remote url read out of a `.git/config`
         // sitting inside the very content being judged. The lock answers
         // only for an installation no rebuild covers, which is one nothing
         // declares any more.
-        let provenance = self
-            .carried
-            .get(&(item.kind, item.name.as_str()))
-            .map(|planned| planned.provenance.clone())
-            .or_else(|| {
-                self.lock
-                    .entries
-                    .get(&key)
-                    .map(|entry| entry.source_repo.clone())
-            });
-        let by_author = published_by(&self.rebuilt, &self.carried, item, scored.review.as_deref());
+        let provenance = mine.map(|planned| planned.provenance.clone()).or_else(|| {
+            self.lock
+                .entries
+                .get(&key)
+                .map(|entry| entry.source_repo.clone())
+        });
+        let by_author = self.published_by(item, mine, scored.review.as_deref());
         let budget = by_author
             .as_ref()
             .and_then(|found| found.earned.as_ref())
@@ -207,55 +236,66 @@ fn written_as(item: &super::desired::Desired) -> (crate::model::ItemKind, &str) 
     }
 }
 
-/// The publisher's record for this installation, and what it earned.
-///
-/// Both come from the rebuilt plan, which read the record out of the
-/// catalog it resolved and measured it against the item rendered from the
-/// publisher's own inputs — the same derivation the gate does, on the same
-/// bytes. Nothing here reads the lock: a record kept there would be a claim
-/// about a catalog, and this has the catalog.
-///
-/// The record is honoured only where a rebuild *is* what is installed, and
-/// that is the lookup rather than a comparison after it. Content no rebuild
-/// produced is content the publisher never saw — replaced, edited, or
-/// simply something else — and a rebuild that exists and does not match
-/// says so, because a record carried onto other content is exactly the
-/// thing a person reading this needs told.
-fn published_by<'a>(
-    rebuilt: &std::collections::HashMap<Rebuild<'_>, &'a super::desired::Desired>,
-    carried: &std::collections::HashMap<
-        (crate::model::ItemKind, &str),
-        &'a super::desired::Desired,
-    >,
-    item: &crate::model::ObservedItem,
-    observed: Option<&str>,
-) -> Option<Published<'a>> {
-    let here = (item.kind, item.name.as_str());
-    if let Some(planned) = observed.and_then(|hash| rebuilt.get(&(here.0, here.1, hash.to_owned())))
-    {
-        let review = planned.author_review.as_ref()?;
+impl<'a> Reading<'a> {
+    fn published_by(
+        &self,
+        item: &crate::model::ObservedItem,
+        mine: Option<&'a super::desired::Desired>,
+        observed: Option<&str>,
+    ) -> Option<Published<'a>> {
+        // This row's own installation answers for it. A rebuild that is not
+        // what is installed says so — a record carried onto other content is
+        // exactly the thing a person reading this needs told.
+        if let Some(planned) = mine {
+            let review = planned.author_review.as_ref()?;
+            if super::review_hash::desired(planned).as_deref() != observed {
+                return Some(Published {
+                    review,
+                    earned: None,
+                    unbuilt: Some(format!(
+                        "what is installed here is not what {} publishes as {} {} — the review recorded in their name is about content this is not, so it settles nothing",
+                        review.publisher,
+                        planned.kind.name(),
+                        planned.name
+                    )),
+                });
+            }
+            return Some(self.earned_by(planned, review));
+        }
+        // No installation of its own: one tree under `.agents/` is read by
+        // every tool that looks there, and a record binds to bytes, so the
+        // bytes answer. Only where every installation carrying them says the
+        // same thing — two revisions can render alike and review
+        // differently, and choosing between them would be the collapse this
+        // module exists to avoid.
+        let (kind, name) = (item.kind, item.name.as_str());
+        let carrying = self.shared.get(&(kind, name, observed?.to_owned()))?;
+        let planned = carrying.first()?;
+        let agreed = carrying
+            .iter()
+            .all(|other| other.author_review == planned.author_review);
+        let review = agreed.then_some(planned.author_review.as_ref()).flatten()?;
+        Some(self.earned_by(planned, review))
+    }
+
+    /// What one rebuild's record earned, measured against the item rendered
+    /// from the publisher's own inputs — the same derivation the gate does,
+    /// on the same bytes.
+    fn earned_by(
+        &self,
+        planned: &'a super::desired::Desired,
+        review: &'a crate::quality::author::AuthorReview,
+    ) -> Published<'a> {
         let authored = crate::quality::audit(super::gate::input::authored_for(planned));
-        return Some(Published {
+        Published {
             review,
             earned: Some(crate::quality::author::Budget::earned(
                 review,
                 &authored.findings,
             )),
             unbuilt: None,
-        });
+        }
     }
-    let planned = carried.get(&here)?;
-    let review = planned.author_review.as_ref()?;
-    Some(Published {
-        review,
-        earned: None,
-        unbuilt: Some(format!(
-            "what is installed here is not what {} publishes as {} {} — the review recorded in their name is about content this is not, so it settles nothing",
-            review.publisher,
-            planned.kind.name(),
-            planned.name
-        )),
-    })
 }
 
 /// One rebuilt artifact, as the observation that matches it spells itself:
@@ -272,21 +312,19 @@ struct Published<'a> {
     unbuilt: Option<String>,
 }
 
-/// The key this observation's records live under. An artifact written under
-/// another kind's name belongs to the installation that wrote it — every
-/// decision about it, the person's own included, was made there.
-///
-/// The rebuild says which that is; the lock answers only for an
-/// installation no rebuild covers, which is one nothing declares any more.
-impl Reading<'_> {
-    fn installation_key(&self, item: &crate::model::ObservedItem) -> String {
-        self.carried
-            .get(&(item.kind, item.name.as_str()))
-            .map(|planned| planned.key.clone())
-            .unwrap_or_else(|| emitted_under(self.lock, item))
-    }
+/// Which installation this observation is: the artifact's kind and name on
+/// disk, and the tool that reads it.
+fn here(item: &crate::model::ObservedItem) -> Installed<'_> {
+    (item.kind, item.name.as_str(), item.harness)
 }
 
+/// One installation, as the observation and the rebuild both spell it.
+type Installed<'a> = (crate::model::ItemKind, &'a str, crate::model::HarnessId);
+
+/// The key an observation's records live under where no rebuild covers it —
+/// an artifact written under another kind's name belongs to the
+/// installation that wrote it, and that entry is the only thing left that
+/// says which.
 fn emitted_under(lock: &crate::lock::Lock, item: &crate::model::ObservedItem) -> String {
     lock.entries
         .iter()

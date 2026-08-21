@@ -848,8 +848,9 @@ lives in one capability table read by core and UI.
   installation, and is planned at both — and the record read out of *that*
   catalog, measured against the item rendered from the publisher's own
   inputs, which is the gate's own derivation on the gate's own bytes. A
-  rebuild is looked up by the bytes it produced, so finding one is the proof,
-  and content no rebuild produced is content the publisher never saw. The commit
+  installation answers for itself and for nothing else — one row, one entry,
+  one revision, one record — and content its own rebuild did not produce is
+  content the publisher never saw. The commit
   an entry names chooses which revision to rebuild from and asserts nothing;
   naming another produces another artifact, which is not what is installed.
   An item that cannot be rebuilt at all — a catalog not on this machine, a
