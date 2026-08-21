@@ -56,6 +56,20 @@ export const rowSubscribed = (
 export const isRepoKey = (key: string): boolean =>
   key.startsWith(JSON.stringify(["repo", ""]).slice(0, -3));
 
+/** Every repository catalog with a cached summary — the pages to re-ask
+ * after a refresh may have made a holder readable. The key is the way
+ * back to the catalog, read in place so the old summary stands until the
+ * new one lands. */
+export const cachedRepoCatalogs = (
+  summaries: Record<string, unknown>,
+): Catalog[] =>
+  Object.keys(summaries)
+    .filter(isRepoKey)
+    .map((key) => ({
+      by: "repo",
+      repo: (JSON.parse(key) as [string, string])[1],
+    }));
+
 /** One curated set's cache and error key, in its own namespace so a set
  * named like a read ("packages") can never land on that read's key. */
 export const bundleKey = (catalog: Catalog, name: string): string =>

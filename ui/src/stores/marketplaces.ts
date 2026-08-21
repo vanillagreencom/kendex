@@ -13,6 +13,7 @@ import {
 } from "@/bindings";
 import { catalogReads } from "./marketplaces-reads";
 import {
+  cachedRepoCatalogs,
   catalogKey,
   dropCatalogCaches,
   dropSummariesHeldBy,
@@ -196,6 +197,9 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
         // derived from catalog bytes re-reads.
         dropCatalogCaches(set);
         await get().load();
+        for (const repo of cachedRepoCatalogs(get().summaries)) {
+          void get().loadSummary(repo);
+        }
       } else {
         toast.error(response.error);
       }
