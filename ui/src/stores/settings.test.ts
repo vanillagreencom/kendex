@@ -16,6 +16,7 @@ vi.mock("@/bindings", () => ({
     discoverProjects: vi.fn(),
     scanMachine: vi.fn(),
     windowSetZoom: vi.fn(),
+    windowLaunchZoom: vi.fn(),
     saveZoom: vi.fn(),
   },
   ZOOM: { min: 50, max: 200, step: 10, default: 100 },
@@ -52,6 +53,9 @@ describe("settings store", () => {
       status: "ok",
       data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
     });
+    vi.mocked(commands.windowLaunchZoom).mockResolvedValue(
+      settings.zoom ?? 100,
+    );
   });
 
   it("shows the error modal with the backend message and leaves settings untouched when a save fails", async () => {

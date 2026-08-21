@@ -44,6 +44,7 @@ fn bindings_export_window_commands() {
     let fresh = std::fs::read_to_string(&fresh_path).expect("fresh bindings readable");
     for command in [
         "window_set_zoom",
+        "window_launch_zoom",
         "window_minimize",
         "window_toggle_maximize",
         "window_close",

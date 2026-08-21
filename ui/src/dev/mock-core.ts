@@ -15,6 +15,8 @@ export const coreHandlers: Record<string, Handler> = {
     document.documentElement.style.zoom = String(percent / 100);
     return null;
   },
+  // The mock page always takes the size, so it opened at the stored one.
+  window_launch_zoom: () => store.state.settings.zoom,
   pick_folder: () => null,
   reveal_path: () => null,
   open_in_editor: () => null,

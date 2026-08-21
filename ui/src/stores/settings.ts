@@ -5,6 +5,7 @@ import {
   type AppSettings,
   type CapabilityRow,
   commands,
+  ZOOM,
 } from "@/bindings";
 import { useProblemsStore } from "./problems";
 import { useScanStore } from "./scan";
@@ -32,12 +33,29 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   ...zoomActions(set, get),
 
   load: async () => {
-    const [settings, capabilities] = await Promise.all([
+    // The size the window opened at comes from the launch, not from the
+    // file: the file holds what the person asked for, and a window that
+    // would not take it is showing something else.
+    const [settings, capabilities, openedAt] = await Promise.all([
       commands.getSettings(),
       commands.capabilityTable(),
+      commands.windowLaunchZoom(),
     ]);
     if (settings.status === "ok") {
-      set({ settings: settings.data, capabilities });
+      set({ settings: settings.data, capabilities, tookZoom: openedAt });
+      // The launch had no UI to say this in, so it is said here rather than
+      // leaving the person with an app that quietly ignored their size.
+      const asked = settings.data.zoom ?? ZOOM.default;
+      if (openedAt !== asked) {
+        useProblemsStore.getState().showError({
+          title: "Couldn't open at your saved zoom",
+          message: `kendex opened at ${openedAt}% instead of ${asked}%. Your saved zoom is unchanged.`,
+          steps: ["Try again", "If it keeps happening, restart kendex"],
+          actions: [
+            { label: "Retry", onClick: () => void get().setZoom(asked) },
+          ],
+        });
+      }
     } else {
       useProblemsStore.getState().showError({
         title: "Couldn't load your settings",

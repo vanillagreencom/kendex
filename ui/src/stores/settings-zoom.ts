@@ -16,21 +16,23 @@ export interface ZoomSlice {
    * object, so one that ran now would faithfully persist a size the window
    * may be about to refuse.
    *
-   * Null until the first press, when the window is showing what `settings`
-   * says. Readers want `shownZoom ?? settings.zoom`.
+   * Null until the first press, when the window is showing the size it
+   * last confirmed. Readers want `onScreen()`.
    */
   shownZoom: number | null;
   /**
    * The size the window has taken, and the only size ever written. What the
-   * settings object says is not evidence of this: every settings action
-   * replies with the whole file, and a reply read before the person last
-   * resized puts an older size back. Only a reply from the window moves
-   * this, so nothing else can undo a resize.
+   * settings object says is not evidence of this: it holds the size the
+   * person asked for, which survives a session the window would not honour
+   * it in, and every settings action replies with the whole file, so a
+   * reply read before the person last resized puts an older size back. Only
+   * the window moves this, so nothing else can undo a resize.
    *
-   * Null until the window's first reply, when the stored size is what the
-   * launch applied and so what the window is showing.
+   * Seeded at load from the size the launch actually opened at.
    */
   tookZoom: number | null;
+  /** The size the app is showing, which a press moves ahead of the window. */
+  onScreen: () => number;
   /** Resize the window to follow the input. Nothing is written. */
   setZoom: (percent: number) => Promise<void>;
   /** The commit boundary: remember the size now on screen. */
@@ -57,12 +59,10 @@ export function zoomActions(
   // the person has already moved past.
   let saving: Promise<void> | null = null;
   let again = false;
-  // One request to the window at a time, each queued behind the last. Three
-  // ordering bugs came out of letting them overlap and reconciling the
-  // replies afterwards; a queue removes the orderings rather than answering
-  // them, because there is never a second reply to interleave with. The
-  // commit waits on the tail of this, so a size the window refused cannot
-  // reach the file.
+  // One request to the window at a time, each queued behind the last, so
+  // there is never a second reply to interleave with: a queue removes the
+  // orderings rather than reconciling them. The commit waits on the tail of
+  // this, so a size the window refused cannot reach the file.
   let asking: Promise<void> = Promise.resolve();
 
   function report(title: string, message: string, retry: () => void) {
@@ -74,12 +74,11 @@ export function zoomActions(
     });
   }
 
-  /** The size the window has taken. Before its first reply that is the
-   *  stored size, which the launch applied, so this is true from the first
-   *  frame. */
+  /** The size the window has taken. The launch reports what it opened at,
+   *  so this is true from the first frame — including when the window
+   *  refused the stored size and full size is what is really on screen. */
   function confirmedZoom(): number {
-    const { tookZoom, settings } = get();
-    return tookZoom ?? settings?.zoom ?? ZOOM.default;
+    return get().tookZoom ?? ZOOM.default;
   }
 
   /** The size the app is showing, which a press moves ahead of the window. */
@@ -210,5 +209,5 @@ export function zoomActions(
     }
   }
 
-  return { shownZoom: null, tookZoom: null, setZoom, saveZoom };
+  return { shownZoom: null, tookZoom: null, onScreen, setZoom, saveZoom };
 }

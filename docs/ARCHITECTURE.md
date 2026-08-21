@@ -348,7 +348,13 @@ lives in one capability table read by core and UI.
   them is clamped on the way in and on the way out — while the step is the
   controls' alone, so a hand-edited 137 is honoured. This is also the answer
   to a compositor set to a fractional scale, which GTK3 and WebKitGTK round
-  to a whole number: the person nudges the difference back by hand.
+  to a whole number: the person nudges the difference back by hand. A
+  webview that refuses the size still opens, at full size, and the launch
+  records the percent it really applied for the UI to read — the readout and
+  the next step come from the window rather than from the preference, so the
+  app never shows a size it is not at. The stored percent is left alone in
+  that case: it is what the person asked for, and it outlives a session that
+  could not honour it.
 - **Zoom moves in steps, and writes once the stepping stops.** Nothing
   offers a continuous zoom: a held `Ctrl` `+` and a repeatedly clicked
   button are the two inputs, and both take one step per press. That is the
@@ -358,15 +364,14 @@ lives in one capability table read by core and UI.
   the control feels live, and the settings file is written once the steps
   stop. Both inputs start the same timer, so neither can rewrite the file
   per press. The window is asked for one size at a time, each press queued
-  behind the last: three ordering bugs came out of letting the requests
-  overlap and reconciling their replies afterwards, and a queue removes
-  those orderings rather than answering them, since there is never a second
-  reply to interleave with. The size still shows the moment it is pressed,
+  behind the last, so there is never a second reply to interleave with: a
+  queue removes those orderings rather than reconciling them afterwards. The size still shows the moment it is pressed,
   so the control stays immediate and two presses in one frame cannot
   collapse into one. Three values track the size, each with a single
   writer: what the app shows moves on a press, what the window has taken
-  moves only on the window's reply, and what the settings object holds
-  moves only when the file does. The first two are kept out of that object
+  starts at the size the launch put on screen and moves only on the
+  window's reply, and what the settings object holds moves only when the
+  file does. The first two are kept out of that object
   because every settings action writes it whole — a preview sitting in it
   would be persisted, faithfully, by an unrelated save, and a reply that
   predates the last resize would put an older size back over one the window

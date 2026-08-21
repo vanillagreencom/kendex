@@ -22,6 +22,7 @@ vi.mock("@/bindings", () => ({
     discoverProjects: vi.fn(),
     scanMachine: vi.fn(),
     windowSetZoom: vi.fn(),
+    windowLaunchZoom: vi.fn(),
     saveZoom: vi.fn(),
   },
   ZOOM: { min: 50, max: 200, step: 10, default: 100 },
@@ -100,9 +101,8 @@ describe("zoom, with a resize still out", () => {
   /// then lands on, and the store has to be brought back to it.
 
   /// One request to the window at a time is what removes the orderings
-  /// rather than answering them: with no second reply to interleave with,
-  /// there is no sequence of replies left to get wrong. Three ordering bugs
-  /// came out of the version that let them overlap.
+  /// rather than reconciling them: with no second reply to interleave with,
+  /// there is no sequence of replies left to get wrong.
   it("asks the window for one size at a time", async () => {
     const first = deferred<WindowReply>();
     vi.mocked(commands.windowSetZoom)
@@ -150,7 +150,10 @@ describe("zoom, with a resize still out", () => {
     const refusal = deferred<WindowReply>();
     vi.mocked(commands.windowSetZoom).mockReturnValueOnce(refusal.promise);
 
-    useSettingsStore.setState({ settings: { ...settings, zoom: 150 } });
+    useSettingsStore.setState({
+      settings: { ...settings, zoom: 150 },
+      tookZoom: 150,
+    });
 
     // The commit goes out while the resize is still in flight, the way a
     // pointer release just after the last drag step does.

@@ -51,14 +51,14 @@ function safetyLevelOf(warn: number, block: number): SafetyLevel | "custom" {
 }
 
 export function SettingsPage() {
-  const { settings, shownZoom, setAppearance, setSafety } = useSettingsStore();
+  const { settings, onScreen, setAppearance, setSafety } = useSettingsStore();
   const [version, setVersion] = useState<string | null>(null);
 
   useEffect(() => {
     void commands.appVersion().then(setVersion);
   }, []);
 
-  const percent = shownZoom ?? settings?.zoom ?? ZOOM.default;
+  const percent = onScreen();
   const safety = settings?.safety ?? SAFETY_LEVELS.balanced;
   const level = safetyLevelOf(safety["warn-below"], safety["block-below"]);
 

@@ -109,6 +109,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             packages::package_readme,
             packages::package_meta,
             window::window_set_zoom,
+            window::window_launch_zoom,
             window::window_minimize,
             window::window_toggle_maximize,
             window::window_close,

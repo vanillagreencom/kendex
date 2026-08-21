@@ -22,7 +22,8 @@ changes carry a **Breaking** call-out with their migration note inline.
   Mac — change it from anywhere in the app the way they change a page in a
   browser. The size you pick is remembered and applied before the window
   opens. It is also the fix for a display set to a fractional scale, which
-  GTK rounds to a whole number.
+  GTK rounds to a whole number. If the window cannot take your size, it
+  opens at 100% and says so, and the size you chose is kept for next time.
 - New ways to install. A one-line installer,
   `curl -fsSL https://kendex.ai/install.sh | sh`, that installs the app and
   the CLI on Linux and the CLI on macOS;

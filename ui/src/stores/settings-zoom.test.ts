@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { commands } from "@/bindings";
+import { commands, ZOOM } from "@/bindings";
 import { useSettingsStore } from "./settings";
-import { currentZoom } from "./zoom";
+import { zoom as controls, currentZoom } from "./zoom";
 import {
   deferred,
   dialog,
@@ -9,6 +9,8 @@ import {
   freshZoomStore,
   ok,
   settings,
+  stored,
+  tick,
   zoom,
 } from "./zoom-fixture";
 
@@ -22,6 +24,7 @@ vi.mock("@/bindings", () => ({
     discoverProjects: vi.fn(),
     scanMachine: vi.fn(),
     windowSetZoom: vi.fn(),
+    windowLaunchZoom: vi.fn(),
     saveZoom: vi.fn(),
   },
   ZOOM: { min: 50, max: 200, step: 10, default: 100 },
@@ -44,6 +47,36 @@ describe("zoom, on screen", () => {
     expect(currentZoom()).toBeNull();
   });
 
+  /// The launch could not apply the stored size, so the window is at full
+  /// size. Settings has to read the size in front of the person and step
+  /// from it: a readout of the stored size would name a size nobody is
+  /// looking at, and the next press would move from there.
+  it("reads the size a launch that could not zoom actually opened at", async () => {
+    useSettingsStore.setState({ settings: null, tookZoom: null });
+    vi.mocked(commands.getSettings).mockResolvedValue(
+      ok({ ...settings, zoom: 150 }),
+    );
+    vi.mocked(commands.capabilityTable).mockResolvedValue([]);
+    vi.mocked(commands.windowLaunchZoom).mockResolvedValue(100);
+
+    await useSettingsStore.getState().load();
+
+    expect(zoom()).toBe(100);
+    expect(dialog().title).toBe("Couldn't open at your saved zoom");
+
+    controls.step(ZOOM.step);
+    await tick();
+
+    // Stepped from the size on screen, and the size the person asked for is
+    // still theirs: a session the window would not honour it in does not
+    // take it away.
+    expect(commands.windowSetZoom).toHaveBeenLastCalledWith(110);
+    expect(stored()).toBe(150);
+
+    controls.flush();
+    await tick();
+  });
+
   it("resizes the window without writing anything, and writes only on commit", async () => {
     await useSettingsStore.getState().setZoom(150);
 
@@ -64,7 +97,10 @@ describe("zoom, on screen", () => {
   it("keeps a size the window refused out of the settings file", async () => {
     // Starting away from ZOOM.default, so the rollback has to name the size
     // the person was working at rather than falling back to full size.
-    useSettingsStore.setState({ settings: { ...settings, zoom: 150 } });
+    useSettingsStore.setState({
+      settings: { ...settings, zoom: 150 },
+      tookZoom: 150,
+    });
     vi.mocked(commands.windowSetZoom).mockResolvedValue(failed("no webview"));
 
     await useSettingsStore.getState().setZoom(160);
@@ -76,7 +112,10 @@ describe("zoom, on screen", () => {
   });
 
   it("puts the size back when the bridge throws, and lets Retry ask again", async () => {
-    useSettingsStore.setState({ settings: { ...settings, zoom: 150 } });
+    useSettingsStore.setState({
+      settings: { ...settings, zoom: 150 },
+      tookZoom: 150,
+    });
     vi.mocked(commands.windowSetZoom).mockRejectedValue(new Error("no bridge"));
 
     await expect(

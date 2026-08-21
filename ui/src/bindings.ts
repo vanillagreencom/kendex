@@ -317,6 +317,11 @@ export const commands = {
 	 *  everything else, the way a browser scales a page.
 	 */
 	windowSetZoom: (percent: number) => typedError<null, string>(__TAURI_INVOKE("window_set_zoom", { percent })),
+	/**
+	 *  What the window opened at, so the app steps from the size in front of
+	 *  the person rather than from the size the settings file asked for.
+	 */
+	windowLaunchZoom: () => __TAURI_INVOKE<number>("window_launch_zoom"),
 	windowMinimize: () => typedError<null, string>(__TAURI_INVOKE("window_minimize")),
 	windowToggleMaximize: () => typedError<null, string>(__TAURI_INVOKE("window_toggle_maximize")),
 	windowClose: () => typedError<null, string>(__TAURI_INVOKE("window_close")),

@@ -7,6 +7,20 @@
 /// default that no test or compiler here would notice changing.
 const MAIN: &str = "main";
 
+/// The size the launch actually put on screen: the saved percent when the
+/// window took it, full size when it refused. The saved percent is what the
+/// person asked for and outlives a session that could not honour it, so it
+/// is no evidence of what is being displayed — this is.
+pub struct LaunchZoom(u16);
+
+/// What the window opened at, so the app steps from the size in front of
+/// the person rather than from the size the settings file asked for.
+#[tauri::command]
+#[specta::specta]
+pub fn window_launch_zoom(opened: tauri::State<'_, LaunchZoom>) -> u16 {
+    opened.0
+}
+
 /// Zoom is set on the webview rather than by restyling the page: it holds
 /// across reloads, and it scales the app's own titlebar along with
 /// everything else, the way a browser scales a page.
@@ -40,15 +54,23 @@ impl Reveal for tauri::WebviewWindow {
 /// Size first, then reveal. The window is configured hidden so the saved
 /// zoom lands before the first frame: showing at full size and rescaling a
 /// moment later re-lays out the whole app in front of the person.
-fn reveal_at(window: &impl Reveal, percent: u16) -> Result<(), String> {
+///
+/// Answers with the size the window ends up at, which is full size when it
+/// would not take the saved one.
+fn reveal_at(window: &impl Reveal, percent: u16) -> Result<u16, String> {
     use std::io::Write;
 
     // A webview that will not zoom is a far smaller problem than a window
     // that never opens, so this is said out loud and the window still shows.
-    if let Err(error) = window.scale_to(kendex_core::settings::zoom_scale(percent)) {
-        let _ = writeln!(std::io::stderr(), "zoom not applied: {error}");
-    }
-    window.unhide()
+    let opened_at = match window.scale_to(kendex_core::settings::zoom_scale(percent)) {
+        Ok(()) => percent,
+        Err(error) => {
+            let _ = writeln!(std::io::stderr(), "zoom not applied: {error}");
+            kendex_core::settings::ZOOM.default
+        }
+    };
+    window.unhide()?;
+    Ok(opened_at)
 }
 
 pub fn show_at_zoom(app: &tauri::App, percent: u16) -> Result<(), Box<dyn std::error::Error>> {
@@ -57,7 +79,7 @@ pub fn show_at_zoom(app: &tauri::App, percent: u16) -> Result<(), Box<dyn std::e
     let window = app
         .get_webview_window(MAIN)
         .ok_or("tauri.conf.json declares no window named `main`")?;
-    reveal_at(&window, percent)?;
+    app.manage(LaunchZoom(reveal_at(&window, percent)?));
     Ok(())
 }
 
@@ -124,7 +146,7 @@ mod tests {
     fn the_saved_size_reaches_the_window_before_it_is_shown() {
         let window = Recorder::default();
 
-        reveal_at(&window, 150).unwrap();
+        assert_eq!(reveal_at(&window, 150), Ok(150));
 
         assert_eq!(
             window.told.into_inner(),
@@ -145,8 +167,12 @@ mod tests {
         }
     }
 
+    /// A window that refused the size is at full size, and the app has to
+    /// be told that rather than the size it asked for: everything the person
+    /// sees afterwards — the readout, the next step of the zoom — is
+    /// measured from here.
     #[test]
-    fn a_window_that_will_not_zoom_is_shown_anyway() {
+    fn a_window_that_will_not_zoom_is_shown_at_full_size() {
         let window = Recorder {
             refuses_zoom: true,
             ..Recorder::default()
@@ -154,7 +180,11 @@ mod tests {
 
         let opened = reveal_at(&window, 150);
 
-        assert!(opened.is_ok(), "the window never opened: {opened:?}");
+        assert_eq!(
+            opened,
+            Ok(kendex_core::settings::ZOOM.default),
+            "the window never opened, or reported the size it refused"
+        );
         assert_eq!(window.told.into_inner().last(), Some(&Told::Unhide));
     }
 }

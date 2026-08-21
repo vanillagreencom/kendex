@@ -1,4 +1,3 @@
-import { ZOOM } from "@/bindings";
 import { zoomControls } from "@/lib/zoom-controls";
 import { useSettingsStore } from "./settings";
 
@@ -12,16 +11,18 @@ import { useSettingsStore } from "./settings";
  * import it.
  */
 /**
- * The size on screen, or null while the settings that hold it are still
- * loading. Settings that arrived without an explicit size are a different
- * answer: that means the default, not "unknown".
+ * The size on screen, or null while the app is still loading — settings
+ * that have not arrived, which is not the same answer as settings that
+ * arrived carrying no size.
  *
- * A press that the window has not answered for yet is only in `shownZoom`,
- * so the two have to be read together to get what is actually on screen.
+ * The store owns what "on screen" means: a press the window has not
+ * answered for, and a launch the window would not take the stored size at,
+ * both move it away from what the settings file says. So this asks rather
+ * than working it out a second way.
  */
 export function currentZoom(): number | null {
-  const { settings, shownZoom } = useSettingsStore.getState();
-  return settings ? (shownZoom ?? settings.zoom ?? ZOOM.default) : null;
+  const { settings, onScreen } = useSettingsStore.getState();
+  return settings ? onScreen() : null;
 }
 
 export const zoom = zoomControls({

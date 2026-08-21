@@ -26,6 +26,10 @@ export type ZoomReply =
   | { status: "ok"; data: number }
   | { status: "error"; error: string };
 
+/** What the launch put on screen. The mock window takes every size, so it
+ *  is the stored one. */
+const openedAt = settings.zoom ?? 100;
+
 export const ok = <T>(data: T) => ({ status: "ok" as const, data });
 export const failed = (error: string) => ({ status: "error" as const, error });
 
@@ -47,12 +51,13 @@ export const zoom = () => currentZoom();
 export const stored = () => useSettingsStore.getState().settings?.zoom;
 export const dialog = () => useProblemsStore.getState().dialog;
 
-/** A store at 100%, a closed dialog, and a window that takes every size. */
+/** A store at 100%, a closed dialog, and a window that takes every size —
+ *  including at launch, so `tookZoom` starts where the stored size is. */
 export function freshZoomStore() {
   useSettingsStore.setState({
     settings,
     shownZoom: null,
-    tookZoom: null,
+    tookZoom: openedAt,
     capabilities: [],
   });
   useProblemsStore.setState({
@@ -66,5 +71,6 @@ export function freshZoomStore() {
   vi.mocked(commands.saveZoom).mockImplementation(async (percent) =>
     ok(percent),
   );
+  vi.mocked(commands.windowLaunchZoom).mockResolvedValue(openedAt);
   expect(zoom()).toBe(100);
 }
