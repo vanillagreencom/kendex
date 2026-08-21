@@ -39,10 +39,10 @@ Confirm before creating issues.
 
 **Linear** — per accepted item, then the relations:
 
-Build and validate the complete label set against the live inventory and the project taxonomy first (the project-management skill's label preflight) — a Backlog-born issue gets no janitor pass, so it must leave this workflow fully triaged. For the same reason, search existing issues (all states) for the same problem or component change first — the janitor's duplicate check never runs on it — and flag a likely duplicate to the user (related relation + comment) instead of creating blind.
+Build and validate the complete label set against the live inventory and the project taxonomy first (the project-management skill's label preflight) — a Backlog-born issue gets no janitor pass, so it must leave this workflow fully triaged. For the same reason, search existing issues (all states) for the same problem or component change first — the janitor's duplicate check never runs on it — and flag a likely duplicate to the user (related relation + comment) instead of creating blind. The preview also derives a priority (1–4, from the plan's ordering; 3 when it states none) and an estimate (1–5 points per PR unit) for every item — a Backlog-born issue is a cycle-planning candidate at once, and an unset priority or estimate sorts ahead of assigned work and budgets as zero.
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues create --state "Backlog" --title "[TITLE]" --description "[BODY]" --project "[PROJECT]" --labels "[LABELS]" --format=ids
+.agents/skills/linear/scripts/linear.sh issues create --state "Backlog" --title "[TITLE]" --description "[BODY]" --project "[PROJECT]" --labels "[LABELS]" --priority [PRIORITY] --estimate [ESTIMATE] --format=ids
 ```
 ```bash
 .agents/skills/linear/scripts/linear.sh issues block [BLOCKED_ID] --by [BLOCKER_ID] --reason "Plan dependency"
