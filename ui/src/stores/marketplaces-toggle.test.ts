@@ -76,6 +76,14 @@ describe("a bare repository page's action", () => {
     expect(held?.name).toBe("kit");
   });
 
+  it("stays neutral until the canonical key is known, then matches by it", () => {
+    const disabled = { ...row("acme/kit", "acme/kit"), enabled: false };
+    // The page was opened as "Acme/Kit": before the summary or the directory
+    // row supplies the canonical key, no spelling is compared.
+    expect(repoAction([disabled], true, null).kind).toBe("checking");
+    expect(repoAction([disabled], true, "acme/kit").kind).toBe("turn-on");
+  });
+
   it("offers Subscribe only when nothing declares the repository", () => {
     expect(
       declaredHolder([row("acme/kit", "acme/kit")], "other/repo"),

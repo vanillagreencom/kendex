@@ -3,6 +3,7 @@ import type { CatalogSummary } from "@/bindings";
 import { SubscribeFromRepo } from "@/components/marketplaces/subscribe-from-repo";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useCommunityStore } from "@/stores/community";
 import { repoAction, useMarketplacesStore } from "@/stores/marketplaces";
 
 /** What a page browsing a bare repository offers. Subscribe only when no
@@ -14,7 +15,7 @@ export function RepoAction({
   summary,
   subscribeLabel,
 }: {
-  /** The requested spelling, used until the summary names the canonical key. */
+  /** The requested spelling — a directory row's or a skills.sh hit's. */
   repo: string;
   summary: CatalogSummary | null;
   subscribeLabel: string;
@@ -24,7 +25,12 @@ export function RepoAction({
   const toggle = useMarketplacesStore((s) => s.toggle);
   const checkForUpdates = useMarketplacesStore((s) => s.checkForUpdates);
   const busy = useMarketplacesStore((s) => s.busy);
-  const key = summary?.provenance ?? repo;
+  // The canonical key comes from core — the directory row's from the first
+  // render, or the summary's once it lands — never from the spelling.
+  const listedKey = useCommunityStore(
+    (s) => s.directory?.rows.find((r) => r.repo === repo)?.repoKey ?? null,
+  );
+  const key = summary?.repoKey ?? listedKey;
   const { kind, holder } = repoAction(rows, rowsCurrent, key);
 
   switch (kind) {
@@ -35,7 +41,7 @@ export function RepoAction({
         </Button>
       );
     case "subscribe":
-      return <SubscribeFromRepo repo={key} label={subscribeLabel} />;
+      return <SubscribeFromRepo repo={key ?? repo} label={subscribeLabel} />;
     case "turn-on":
       return (
         <Button

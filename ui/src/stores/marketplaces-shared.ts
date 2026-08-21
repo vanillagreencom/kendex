@@ -163,17 +163,21 @@ export function dropSummariesHeldBy(
 }
 
 /** What a page browsing a bare repository offers, decided from the live
- * subscription list. Until an overview has succeeded the list is not to
- * be trusted, and Subscribe — which a declared repository would refuse —
- * is not offered on a guess. */
+ * subscription list and the repository's canonical key. Until an overview
+ * has succeeded the list is not to be trusted, and until the key is known
+ * — from the directory's row or the summary, never the requested spelling,
+ * which may differ in case — nothing can be matched: either way Subscribe,
+ * which a declared repository would refuse, is not offered on a guess. */
 export type RepoActionKind = "checking" | "subscribe" | "turn-on" | "refresh";
 
 export function repoAction(
   rows: MarketplaceRow[],
   rowsCurrent: boolean,
-  repoKey: string,
+  repoKey: string | null,
 ): { kind: RepoActionKind; holder: MarketplaceRow | null } {
-  if (!rowsCurrent) return { kind: "checking", holder: null };
+  if (!rowsCurrent || repoKey === null) {
+    return { kind: "checking", holder: null };
+  }
   const holder = declaredHolder(rows, repoKey);
   if (!holder) return { kind: "subscribe", holder: null };
   return { kind: holder.enabled ? "refresh" : "turn-on", holder };
