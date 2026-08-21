@@ -112,12 +112,15 @@ mod tests {
         assert_ne!(service(true), service(false));
     }
 
-    /// This test binary is itself a debug build with no opt-out, which is
-    /// the case that must not reach the installed app's sign-in — so the
-    /// wiring is asserted on the build running the assertion.
+    /// The wiring, not the outcome: which service is right depends on the
+    /// profile and on the opt-out, so an absolute answer here would be
+    /// wrong under `cargo test --release` and wrong again in a shell that
+    /// exports `KENDEX_REAL_HOME=1`. What must hold in every one of those
+    /// is that the entry takes its service from the sandbox rather than
+    /// naming one itself; which service that yields is the case above.
     #[test]
-    fn a_debug_build_reaches_the_sandbox_entry() {
-        assert_eq!(active_service(), DEV_SERVICE);
+    fn the_entry_takes_its_service_from_the_sandbox() {
+        assert_eq!(active_service(), service(crate::env::sandboxed()));
     }
 
     #[test]
