@@ -48,7 +48,7 @@ mod retire;
 use claims::{claim, claims, provenance};
 use disposal::{legacy_registration, plan_directory, plan_registry};
 use identity::{Registered, registered};
-pub(crate) use preflight::{Hold, Preflight, preflight};
+pub(crate) use preflight::{Preflight, preflight};
 use retire::{Retire, retirable};
 
 /// The directory name Pi reserved. The registry an earlier kendex wrote
@@ -223,8 +223,18 @@ pub(super) fn plan_move(
             )),
             Retire::Replaced => {}
         }
+        // A finished migration stops touching the reserved name — both
+        // halves of it. The file half is the claim above: a copy this
+        // pass cannot prove it wrote is filtered out, so a person's own
+        // script at the old path survives. The registration half is this:
+        // with nothing of theirs left to claim, the entry beside it is
+        // theirs too, however exactly it spells the command kendex used
+        // to register. Only a hook still on its way out gives up a
+        // registration kendex did not just prove it owns bytes for.
+        if !pre.moved_on(&entry.name) || !mine.is_empty() {
+            deregister.push(legacy_registration(entry, scope, &root));
+        }
         take.extend(mine);
-        deregister.push(legacy_registration(entry, scope, &root, state));
     }
 
     plan_directory(&dir, &ours, &take, !entries.is_empty(), sink);
@@ -238,6 +248,11 @@ pub(super) fn plan_move(
 /// entry added to the registry, between the proof and the apply fails
 /// the precondition instead of riding along in the deletion.
 ///
+/// The type is bound with the bytes. Ownership here is proven of a plain
+/// file or a plain directory — never a link — so a link that arrives in
+/// its place before the apply must fail the op rather than satisfy it by
+/// resolving to the same bytes.
+///
 /// Nothing else in the plan derives a legacy path, so the guard has no
 /// overlap to catch today — it is the boundary every Trash op in a plan
 /// passes, kept so a future pass that does overlap cannot slip past it.
@@ -248,7 +263,7 @@ fn trash(description: String, path: &Path, proven: &str, sink: &mut Sink) {
             description,
             op: crate::apply::Op::Trash {
                 path: path.to_path_buf(),
-                pre: crate::apply::Pre::HashIs {
+                pre: crate::apply::Pre::PlainHashIs {
                     hash: proven.to_owned(),
                 },
             },

@@ -62,11 +62,18 @@ never keys, is not mistaken for an install nobody wants. A copy kendex
 cannot prove it wrote holds the whole installation, not just the file:
 its old registration stays live and no fresh rendering takes over. A
 registration kendex cannot take out holds the script it names, so neither
-half is ever left without the other. A registration is named by its event
-and its command together: the record keeps both for a script-less hook,
-and for a script-backed one the event is the one this pass renders the
-hook under, so a command somebody moved to another listener is held in
-both directions — never taken out, and never registered beside. Discarding edits finishes the move
+half is ever left without the other. A registration is named by the command it
+runs and, where the record kept one, the event it fires on — and by
+uniqueness either way: a command carried twice in a document is one
+kendex cannot tell its own copy of, so it holds. The record keeps an
+event only for a script-less hook; a script-backed one is named by its
+command alone, because the event an older version installed it under is
+not knowable and a catalog is free to have changed it since. What this
+pass renders names the entry at the new path only, so a registration
+somebody moved there by hand is never doubled by a second one beside it.
+Once a hook has finished moving, neither half under the reserved name is
+kendex's any more — not the script, and not an entry spelling the command
+kendex used to register. Discarding edits finishes the move
 in that same pass — the old copy goes to the trash and one registration
 is left. Discarding covers bytes, and only bytes: every gate that lets a
 deletion through asks for a plain file first, so a directory or a link

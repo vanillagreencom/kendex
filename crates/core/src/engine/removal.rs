@@ -283,20 +283,25 @@ pub(super) fn orphans(
         // live and still kendex's to account for: its record is the only
         // thing a later pass can claim those files with, so it outlives
         // the sweep whatever else this pass was told to remove.
-        if legacy_pi.hold(&entry.name).is_some()
-            && entry.kind == ItemKind::Hook
+        if entry.kind == ItemKind::Hook
             && entry.harness == crate::model::HarnessId::Pi
+            && let Some(hold) = legacy_pi.hold(&entry.name)
         {
+            // The same causes, said the same way as on the path where the
+            // item is still declared: only the line for an edit differs,
+            // because what finishing the move means here is taking the
+            // copy away rather than replacing it.
+            let (detail, cause) = hold.row(
+                "no longer wanted, but its copy under the directory pi reserved is not the one kendex wrote — that copy still runs; discard the edits to finish moving it, or take it away by hand",
+            );
             drift.push(DriftRow {
                 kind: entry.kind,
                 name: entry.name.clone(),
                 harness: entry.harness,
                 scope: scope.clone(),
                 state: DriftState::Conflict,
-                detail:
-                    "no longer wanted, but its copy under the directory pi reserved is not the one kendex wrote — that copy still runs; discard the edits to finish moving it, or take it away by hand"
-                        .into(),
-                cause: Some(super::DriftCause::LocalEdit),
+                detail,
+                cause,
             });
             new_lock.entries.insert(key.clone(), entry.clone());
             continue;

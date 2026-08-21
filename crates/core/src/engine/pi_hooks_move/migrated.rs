@@ -3,12 +3,13 @@
 //! new registry, and both are answered through one reading of the
 //! registry so they can never disagree about it.
 
-use super::super::desired::DesiredState;
+use super::super::desired::{Artifact, DesiredState};
 use super::{Found, Registered, legacy_registration, look, registered};
+use crate::configedit::ConfigEdit;
 use crate::env::Env;
 use crate::harness::pi;
 use crate::lock::LockEntry;
-use crate::model::{HarnessId, Scope};
+use crate::model::{HarnessId, ItemKind, Scope};
 
 /// Whether this hook's installation has already finished moving. Two
 /// things have to be true, and bytes are only the first: the copy apply
@@ -50,7 +51,7 @@ fn new_registration_runs_it(
     entry: &LockEntry,
     state: &DesiredState,
 ) -> bool {
-    let (event, command) = legacy_registration(entry, scope, root, state);
+    let (event, command) = legacy_registration(entry, scope, root);
     matches!(
         new_registration(env, scope, root, entry, state),
         Registered::Ours
@@ -86,6 +87,10 @@ pub(super) fn moved_by_hand(
 /// pass would render it with. Asked once for both questions that ask it —
 /// whether the move has finished, and whether a fresh registration would
 /// double one the person moved — so the two can never disagree.
+///
+/// This is the one place the rendered event belongs: what goes into the
+/// new registry this pass is exactly what this pass renders, whatever a
+/// previous version of the hook was installed under.
 fn new_registration(
     env: &Env,
     scope: &Scope,
@@ -93,7 +98,7 @@ fn new_registration(
     entry: &LockEntry,
     state: &DesiredState,
 ) -> Registered {
-    let (event, legacy) = legacy_registration(entry, scope, root, state);
+    let (recorded_event, legacy) = legacy_registration(entry, scope, root);
     let rendered = match crate::engine::targets::hook_target(env, scope, HarnessId::Pi, &entry.name)
     {
         Some(crate::engine::targets::HookTarget::Script { command, .. }) => command,
@@ -106,10 +111,29 @@ fn new_registration(
         .registration
         .as_ref()
         .map_or(rendered, |recorded| recorded.command.clone());
+    let event = recorded_event.or_else(|| rendered_event(state, &entry.name));
     match crate::scan::hooks::read(&pi::hook_registry(root)) {
         Ok(entries) => registered(&entries, event.as_deref(), &command),
         // A registry that is not there, or cannot be read, carries no
         // registration of this hook's that anything could act on.
         Err(_) => Registered::Absent,
     }
+}
+
+/// The event this pass registers one hook under, off the registration it
+/// renders — the same edit the item pass writes, so the two cannot name
+/// different events. A hook this pass does not render has none.
+fn rendered_event(state: &DesiredState, name: &str) -> Option<String> {
+    let key = crate::lock::entry_key(ItemKind::Hook, name, HarnessId::Pi);
+    let item = state.items.iter().find(|item| item.key == key)?;
+    let Artifact::Registration { edits, .. } = &item.artifact else {
+        return None;
+    };
+    edits.iter().find_map(|(_, edit)| match edit {
+        // A disabled hook renders the reversed registration, which names
+        // the same event the enabled one would have been written under.
+        ConfigEdit::UpsertHook { event, .. } => Some(event.clone()),
+        ConfigEdit::RemoveHook { event, .. } => event.clone(),
+        _ => None,
+    })
 }

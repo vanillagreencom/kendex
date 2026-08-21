@@ -35,6 +35,20 @@ pub(crate) enum Hold {
     ByHand(String),
 }
 
+impl Hold {
+    /// The conflict row this hold produces, wherever it is reported: one
+    /// rendering for every path that reports one, so a cause cannot come
+    /// out named on the declared path and flattened on the orphan path.
+    /// `edits` is the line for the one cause a discard settles, which is
+    /// the only half that reads differently between them.
+    pub(crate) fn row(&self, edits: &str) -> (String, Option<crate::engine::DriftCause>) {
+        match self {
+            Hold::Edits => (edits.to_owned(), Some(crate::engine::DriftCause::LocalEdit)),
+            Hold::ByHand(why) => (why.clone(), None),
+        }
+    }
+}
+
 pub(crate) struct Preflight {
     /// Installations that hold whole: nothing is written or registered
     /// for them this pass, and nothing of theirs is retired. Each with
@@ -124,7 +138,7 @@ pub(crate) fn preflight(
     // written or registered at the new path behind one. Without a lock
     // entry to claim by, kendex has nothing under the reserved name at all.
     let lingering = ours.iter().any(|entry| !migrated.contains(&entry.name));
-    let registry_block = registry_block(&root, scope, &ours, state);
+    let registry_block = registry_block(&root, scope, &ours);
     let mut this = Preflight {
         held: BTreeMap::new(),
         discard,
@@ -256,12 +270,7 @@ fn discardable(path: &std::path::Path) -> bool {
 /// cannot. Absent is no obstacle, and neither is a document holding
 /// nobody's entries but somebody else's — there is nothing there to take
 /// out, so nothing is blocked by it.
-fn registry_block(
-    root: &std::path::Path,
-    scope: &Scope,
-    ours: &[&LockEntry],
-    state: &DesiredState,
-) -> Option<String> {
+fn registry_block(root: &std::path::Path, scope: &Scope, ours: &[&LockEntry]) -> Option<String> {
     let path = pi::legacy_hook_registry(root);
     let say = |why: String| {
         Some(format!(
@@ -286,7 +295,7 @@ fn registry_block(
     // — is held, not guessed at.
     let mut holds_ours = false;
     for entry in ours {
-        let (event, command) = legacy_registration(entry, scope, root, state);
+        let (event, command) = legacy_registration(entry, scope, root);
         match registered(&entries, event.as_deref(), &command) {
             Registered::Ours => holds_ours = true,
             Registered::Absent => {}

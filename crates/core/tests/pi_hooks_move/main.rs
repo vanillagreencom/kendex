@@ -11,6 +11,7 @@ use kendex_core::model::Scope;
 
 mod asked_for;
 mod custom;
+mod finished;
 mod gates;
 mod global;
 mod held_back;

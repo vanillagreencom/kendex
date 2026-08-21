@@ -66,14 +66,12 @@ pub(super) fn hold_legacy_copy(
     if item.kind != crate::model::ItemKind::Hook || item.harness != crate::model::HarnessId::Pi {
         return false;
     }
-    let (detail, cause) = match held.hold(&item.name) {
-        None => return false,
-        Some(super::pi_hooks_move::Hold::Edits) => (
-            "its copy under the directory pi reserved is not the one kendex wrote — that copy is what runs; keep it as a fork, or apply with edits discarded".to_owned(),
-            Some(DriftCause::LocalEdit),
-        ),
-        Some(super::pi_hooks_move::Hold::ByHand(why)) => (why.clone(), None),
+    let Some(hold) = held.hold(&item.name) else {
+        return false;
     };
+    let (detail, cause) = hold.row(
+        "its copy under the directory pi reserved is not the one kendex wrote — that copy is what runs; keep it as a fork, or apply with edits discarded",
+    );
     sink.drift.push(DriftRow {
         kind: item.kind,
         name: item.name.clone(),

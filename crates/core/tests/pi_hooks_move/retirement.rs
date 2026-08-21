@@ -6,7 +6,7 @@
 
 use std::fs;
 
-use kendex_core::engine::{PlanOptions, audit, plan_apply};
+use kendex_core::engine::{DriftState, PlanOptions, audit, plan_apply};
 
 use std::os::unix::fs::PermissionsExt;
 
@@ -316,4 +316,37 @@ fn removing_a_held_hook_by_name_takes_it() {
         serde_json::from_str(&fs::read_to_string(w.project.join(".kendex-lock.json")).unwrap())
             .unwrap();
     assert!(lock["entries"].get("hook:guard:pi").is_none(), "{lock}");
+}
+
+/// The row an orphan's hold produces says the same thing the declared
+/// one does, cause for cause. A link is not an edit, and telling somebody
+/// to discard edits over one sends them round a loop that changes
+/// nothing and explains nothing.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_hold_no_discard_can_release_reads_the_same_when_nothing_asks_for_it() {
+    let w = regressed();
+    undeclare(&w);
+    let registry = w.dot().join("hooks.json");
+    let elsewhere = w.home.join("their-hooks.json");
+    fs::rename(&registry, &elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &registry).unwrap();
+
+    let report = plan_apply(&w.env, &w.scope(), &reconcile()).unwrap();
+    let row = report
+        .drift
+        .iter()
+        .find(|row| row.name == "guard" && row.state == DriftState::Conflict)
+        .unwrap_or_else(|| panic!("the hold has to be reported: {:?}", report.drift));
+    assert!(
+        row.detail.contains("registration") && row.detail.contains("hooks.json"),
+        "the row names what is in the way: {}",
+        row.detail
+    );
+    assert!(
+        !row.detail.contains("discard"),
+        "and not a remedy that cannot work: {}",
+        row.detail
+    );
+    assert!(row.cause.is_none(), "nor a cause for one: {:?}", row.cause);
 }

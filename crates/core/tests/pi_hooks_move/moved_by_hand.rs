@@ -9,42 +9,87 @@ use std::os::unix::fs::symlink;
 
 use kendex_core::engine::audit;
 
-use super::{about, apply, notes, regressed, world};
+use super::{World, about, apply, notes, regressed, world, world_declaring};
 
-/// Moving the event of a script-backed hook is the common shape: the lock
-/// records no registration for one, so the event has to be derived from
-/// what this pass renders, or the identity is the command alone and a
-/// moved entry reads as kendex's own.
+/// A command-bodied hook in the layout an earlier kendex wrote. Its
+/// record keeps the event it registered — the one shape whose identity
+/// has an event to check at all.
+#[allow(clippy::unwrap_used)]
+fn command_bodied_in_the_legacy_layout() -> World {
+    let w = world_declaring(
+        "[[custom-hooks]]\nname = \"mine\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./scripts/mine.sh\"\nagents = \"all\"\n",
+    );
+    apply(&w);
+    let registry = fs::read_to_string(w.dot().join("kendex/hooks.json")).unwrap();
+    fs::write(w.dot().join("hooks.json"), registry).unwrap();
+    fs::remove_dir_all(w.dot().join("kendex")).unwrap();
+    w
+}
+
+/// A catalog is free to change a hook's event, and a hook still waiting
+/// to be migrated is then registered under the event the older version
+/// installed. The record kept no event for a script-backed hook, so the
+/// legacy entry is identified by its command alone — anything else calls
+/// an ordinary catalog change tampering and holds an installation the
+/// person cannot do anything about.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_legacy_registration_moved_to_another_event_is_not_kendexs_to_take() {
+fn a_catalog_that_changed_the_event_still_migrates() {
     let w = regressed();
+    let source = w.catalog.join("hooks/guard.sh");
+    let text = fs::read_to_string(&source).unwrap();
+    let changed = text.replace("# event: PreToolUse", "# event: Stop");
+    assert_ne!(changed, text, "the fixture has to change the event");
+    fs::write(&source, changed).unwrap();
+    assert!(
+        fs::read_to_string(w.dot().join("hooks.json"))
+            .unwrap()
+            .contains("tool_call"),
+        "the installed registration is still under the event it was written with"
+    );
+
+    let said = notes(&w);
+    assert!(said.is_empty(), "nothing here is anybody's doing: {said:?}");
+    apply(&w);
+
+    assert!(
+        !w.dot().join("hooks").exists() && !w.dot().join("hooks.json").exists(),
+        "the move finished"
+    );
+    let new = fs::read_to_string(w.dot().join("kendex/hooks.json")).unwrap();
+    assert!(
+        new.contains("turn_end") && !new.contains("tool_call"),
+        "and what runs the hook is the event the catalog now asks for: {new}"
+    );
+}
+
+/// A command carried twice is one kendex cannot tell its own copy of,
+/// however the two are spread across events. Taking the one under the
+/// expected event would leave the other running a script that is no
+/// longer there.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_command_carried_under_two_events_is_nobodys_to_take() {
+    let w = command_bodied_in_the_legacy_layout();
     let registry = w.dot().join("hooks.json");
-    let text = fs::read_to_string(&registry).unwrap();
-    let moved = text.replace("tool_call", "turn_end");
-    assert_ne!(moved, text, "the fixture has to move the event");
-    fs::write(&registry, &moved).unwrap();
+    let mut value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&registry).unwrap()).unwrap();
+    let group = value["hooks"]["tool_call"][0].clone();
+    value["hooks"]["turn_end"] = serde_json::json!([group]);
+    let theirs = serde_json::to_string_pretty(&value).unwrap();
+    fs::write(&registry, &theirs).unwrap();
 
     let said = about(&notes(&w), "hooks.json");
     assert!(
-        said.iter().any(|note| note.contains("no longer registers")),
-        "the person is told the entry is not where kendex left it: {said:?}"
+        said.iter().any(|note| note.contains("more than once")),
+        "the person is told kendex cannot tell the two apart: {said:?}"
     );
     apply(&w);
 
     assert_eq!(
         fs::read_to_string(&registry).unwrap(),
-        moved,
-        "what is there now is not kendex's to take"
-    );
-    assert!(
-        w.dot().join("hooks/guard.sh").is_file(),
-        "and the script that entry names stays with it"
-    );
-    let new = w.dot().join("kendex/hooks.json");
-    assert!(
-        !new.exists() || !fs::read_to_string(&new).unwrap().contains("guard.sh"),
-        "nothing was registered alongside it, or the hook would fire twice"
+        theirs,
+        "neither entry is taken while both carry the same command"
     );
 }
 

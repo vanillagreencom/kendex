@@ -561,11 +561,17 @@ lives in one capability table read by core and UI.
   Discarding edits or naming the hook for removal releases a hold over
   bytes, never over a directory or a link somebody left where the script
   was: both gates (`claims::provenance` and `preflight::discardable`) ask
-  for a plain file in the same words. A registration is identified by
-  event and command together — recorded for a script-less hook, derived
-  from what this pass renders for a script-backed one
-  (`disposal::legacy_registration`) — and each hold carries its own cause
-  into the conflict row, so no remedy is offered that cannot work.
+  for a plain file in the same words. A registration is identified by its
+  command plus the event the record kept, and by being the only entry
+  carrying that command; the event a previous version installed a
+  script-backed hook under is not knowable, so only the entry this pass
+  renders at the new path is identified by the rendered event
+  (`migrated::new_registration`). A finished migration claims neither
+  half under the reserved name, script or registration. Each hold carries
+  its own cause into the conflict row through one rendering
+  (`Hold::row`), so no path offers a remedy that cannot work, and every
+  trash op binds the file type it proved alongside the hash
+  (`Pre::PlainHashIs`).
   A hook held that way runs from the old registry and nowhere else, so
   Pi's hook surface list carries that registry too for as long as an
   installation of kendex's is still under the reserved name

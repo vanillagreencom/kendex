@@ -37,19 +37,24 @@ pub(super) fn registered(
         .iter()
         .filter(|entry| entry.description.as_deref() == Some(command))
         .collect();
-    if carrying.is_empty() {
+    let Some(only) = carrying.first() else {
         return Registered::Absent;
-    }
-    let answering = match event {
-        Some(event) => carrying
-            .iter()
-            .filter(|entry| entry.name.split(':').next() == Some(event))
-            .count(),
-        None => carrying.len(),
     };
-    match answering {
-        1 => Registered::Ours,
-        0 => Registered::Elsewhere,
-        _ => Registered::Ambiguous,
+    // Asked before the event, and of the whole document: a command
+    // carried twice is one kendex cannot tell its own copy of, however
+    // the two are spread across events. Resolving it by taking the one
+    // under the expected event would retire that entry and the script
+    // with it, leaving the other pointing at nothing.
+    if carrying.len() > 1 {
+        return Registered::Ambiguous;
+    }
+    match event {
+        // The record kept an event, and the one entry carrying the
+        // command is not under it: what is there is not this
+        // registration.
+        Some(event) if only.name.split(':').next() != Some(event) => Registered::Elsewhere,
+        // Either the identity names no event — nothing to contradict —
+        // or the one entry is under the one it names.
+        _ => Registered::Ours,
     }
 }
