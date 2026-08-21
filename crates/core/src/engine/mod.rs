@@ -44,6 +44,7 @@ mod review_hash;
 pub mod reviewable;
 mod scope_writes;
 mod set_change;
+mod takeover;
 mod targets;
 mod tree_plan;
 mod unmanaged;
@@ -207,7 +208,7 @@ pub fn plan_scope(
         safety,
     };
     unmanaged_rows(env, scope, manifest, lock, &state.items, &mut report.drift);
-    gate::refuse_unsettled_takeover(options, &report.drift)?;
+    takeover::refuse_unsettled_takeover(options, &report.drift)?;
     Ok(report)
 }
 
