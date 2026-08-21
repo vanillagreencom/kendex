@@ -208,7 +208,7 @@ fn a_settled_finding_stops_counting_in_the_preview_too() {
     let hash = crate::quality::author::content_hash(
         &sealed,
         &item,
-        &config.rendering_inputs(ItemKind::Skill, "gh"),
+        &config.rendering_inputs(&sealed, ItemKind::Skill, "gh"),
     )
     .unwrap();
     let fingerprint = before.findings[0].finding.fingerprint();

@@ -7,7 +7,7 @@ use crate::quality::{AuditInput, Content, McpEntry, UNREADABLE_PLUGIN};
 use super::super::desired::{Artifact, Desired};
 
 /// What this item's rendering gives the rules to read.
-pub(super) fn input_for(item: &Desired) -> AuditInput {
+pub(in crate::engine) fn input_for(item: &Desired) -> AuditInput {
     let (location, content) = match &item.artifact {
         Artifact::File { path, bytes } => (
             path.display().to_string(),

@@ -1,4 +1,4 @@
-//! What a catalog's own control file contributes to an item's rendering.
+//! What a catalog contributes to an item's rendering, beyond the item.
 //!
 //! Split out of `config.rs` to stay under the file's line cap. One
 //! question, and it has one caller of consequence: a publisher's record
@@ -6,25 +6,36 @@
 //! record rather than leaving it live over content nobody read.
 
 use crate::model::ItemKind;
+use crate::source_read::SealedSource;
 
 use super::SourceConfig;
 
 impl SourceConfig {
-    /// What this catalog's own control file contributes to one item's
-    /// rendering, spelled the same way every time so a publisher's record
-    /// can bind to it.
+    /// Everything this catalog contributes to one item's rendering from
+    /// somewhere other than the item's own file, spelled the same way every
+    /// time so a publisher's record can bind to it.
     ///
     /// Only what a rendering actually reads. An agent takes its frontmatter
-    /// overrides and its skill assignment from these tables; every other
-    /// kind renders from its own bytes alone and gets an empty string, so
-    /// the hash for one is unchanged and no record for one goes stale.
+    /// overrides from the control file and its skill list from the catalog
+    /// as a whole; every other kind renders from its own bytes alone and
+    /// gets an empty string, so the hash for one is unchanged and no record
+    /// for one goes stale.
     ///
-    /// `role_skills` goes in whole rather than by the agent's own role: the
-    /// role is in the agent's bytes, which are hashed beside this, and
-    /// reading them again here to narrow the table would be a second
-    /// parse that has to agree with the first. Editing one role's list
-    /// therefore stales every agent's record, which is the safe direction.
-    pub fn rendering_inputs(&self, kind: ItemKind, name: &str) -> String {
+    /// The skill list goes in *resolved* rather than as the tables it comes
+    /// from. Those tables are only half of it: an agent with no explicit
+    /// mapping renders with whatever prefix-matching skills the catalog
+    /// carries and with its role's defaults, so adding a matching skill
+    /// changes the bytes without touching any table. Folding the answer
+    /// covers both halves and is narrower than folding either — a skill the
+    /// agent does not render with stales nothing.
+    ///
+    /// The inputs the agent rendering reads and this does *not* fold, each
+    /// because it cannot change what the publisher wrote: the harness and
+    /// the scope, which no catalog edit moves; everything in
+    /// `desired_agent::Project`, which is the project's own text and is
+    /// subtracted from the rendering a record is measured against; and the
+    /// agent's own bytes, which are hashed beside this.
+    pub fn rendering_inputs(&self, sealed: &SealedSource, kind: ItemKind, name: &str) -> String {
         if kind != ItemKind::Agent {
             return String::new();
         }
@@ -38,14 +49,31 @@ impl SourceConfig {
                 }
             }
         }
-        for agent in [name, stripped] {
-            if let Some(skills) = self.agent_skills.get(agent) {
-                spelled.push_str(&format!("agent-skills/{agent}={}\n", skills.join(",")));
-            }
-        }
-        for (role, skills) in &self.role_skills {
-            spelled.push_str(&format!("role-skills/{role}={}\n", skills.join(",")));
-        }
+        spelled.push_str(&format!(
+            "skills={}\n",
+            self.assigns(sealed, name).join(",")
+        ));
         spelled
+    }
+
+    /// The skills this catalog's own inputs give one agent — the list its
+    /// publisher-only rendering carries, through the same derivation the
+    /// plan uses rather than a second reading of the same tables.
+    ///
+    /// An agent this catalog does not carry, or one whose file will not
+    /// parse, assigns nothing: there is no rendering to bind to, and the
+    /// item's own bytes answer for that either way.
+    fn assigns(&self, sealed: &SealedSource, name: &str) -> Vec<String> {
+        let Some(path) = super::find_item(sealed, self, ItemKind::Agent, name) else {
+            return Vec::new();
+        };
+        let Ok(text) = sealed.read_to_string(&path) else {
+            return Vec::new();
+        };
+        let role = crate::render::agent::parse_source_agent(&text)
+            .ok()
+            .and_then(|agent| agent.role);
+        let available = crate::source::list_items(sealed, self, ItemKind::Skill);
+        crate::mapping::upstream_skills(name, role, self, &available)
     }
 }

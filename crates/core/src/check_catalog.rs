@@ -272,7 +272,8 @@ pub fn check_item(
         .unwrap_or(path)
         .display()
         .to_string();
-    let hash = quality::author::content_hash(sealed, path, &config.rendering_inputs(kind, name));
+    let hash =
+        quality::author::content_hash(sealed, path, &config.rendering_inputs(sealed, kind, name));
     let dismissed = dismissals::active(kind, review, hash.as_deref());
     let mut findings = structural(kind, name, &file, &content);
     // An item bigger than any install reads has a tail nobody has judged.

@@ -23,7 +23,7 @@ pub(super) fn safety(
     });
     // A dismissed finding is reported but no longer counted: the verdict
     // and the score answer for what is still an open question.
-    let scored = quality::author::score(&result.findings, dismissed);
+    let scored = quality::author::score(&result.findings, dismissed, None);
     let (verdict, _) = quality::verdict(
         &scored.counted,
         &scored.safety,

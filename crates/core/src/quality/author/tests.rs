@@ -48,7 +48,7 @@ fn a_decision_settles_only_as_many_occurrences_as_it_paid_for() {
             .into_iter()
             .collect(),
     );
-    let scored = score(&findings, &one);
+    let scored = score(&findings, &one, None);
     assert_eq!(scored.settled, vec![true, false]);
     assert_eq!(scored.counted.len(), 1);
     assert!(scored.unmatched.is_empty());
@@ -58,7 +58,7 @@ fn a_decision_settles_only_as_many_occurrences_as_it_paid_for() {
             .into_iter()
             .collect(),
     );
-    assert_eq!(score(&findings, &both).counted.len(), 0);
+    assert_eq!(score(&findings, &both, None).counted.len(), 0);
 }
 
 /// A decision made against these very bytes covers every occurrence in
@@ -76,7 +76,7 @@ fn a_whole_budget_settles_every_occurrence() {
         ),
     ];
     let budget = Budget::whole([findings[0].fingerprint()].into_iter().collect());
-    let scored = score(&findings, &budget);
+    let scored = score(&findings, &budget, None);
     assert_eq!(scored.settled, vec![true, true]);
     assert_eq!(scored.safety.score, 100);
 }
@@ -101,7 +101,7 @@ fn a_budget_earned_at_one_weight_is_not_spendable_at_another() {
 
     // The publisher earned one occurrence, in a supporting file.
     let budget = Budget([((fingerprint, Severity::High), 1)].into_iter().collect());
-    let scored = score(&[injected, publishers], &budget);
+    let scored = score(&[injected, publishers], &budget, None);
     assert_eq!(
         scored.settled,
         vec![false, true],
@@ -122,7 +122,7 @@ fn a_record_that_matches_nothing_says_so() {
             .into_iter()
             .collect(),
     );
-    let scored = score(&findings, &budget);
+    let scored = score(&findings, &budget, None);
     assert_eq!(scored.settled, vec![false]);
     assert_eq!(
         scored.unmatched,

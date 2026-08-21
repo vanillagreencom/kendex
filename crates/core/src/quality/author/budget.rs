@@ -115,13 +115,26 @@ pub struct Scored {
 /// while the publisher's own copy may have been split out into a supporting
 /// file and lowered. Bounding what the budget is *earned* from was never
 /// enough on its own: what it may be *spent* on has to be bounded too.
-pub fn score(findings: &[Finding], budget: &Budget) -> Scored {
+///
+/// `theirs` says which of these occurrences the publisher's own rendering
+/// produced ([`crate::quality::authored_by`]), and only those may be
+/// settled. Weight tells two occurrences apart when they have different
+/// ones; this tells them apart when they do not, which is the case a count
+/// cannot see — and settling somebody else's line is how a person comes to
+/// read their own text under a publisher's name. `None` where every
+/// occurrence is the publisher's: the catalog's own check and the
+/// pre-install preview, where nothing has been added to it yet.
+pub fn score(findings: &[Finding], budget: &Budget, theirs: Option<&[bool]>) -> Scored {
     let mut left = budget.0.clone();
     let mut settled = Vec::with_capacity(findings.len());
     let mut counted = Vec::new();
-    for finding in findings {
-        let spend = left
-            .get_mut(&(finding.fingerprint(), finding.severity))
+    for (at, finding) in findings.iter().enumerate() {
+        // A mask that does not reach this far settles nothing here, which
+        // is the direction a mistake in it has to fail in.
+        let ours = theirs.is_none_or(|mask| mask.get(at).copied().unwrap_or(false));
+        let spend = ours
+            .then(|| left.get_mut(&(finding.fingerprint(), finding.severity)))
+            .flatten()
             .filter(|remaining| **remaining > 0);
         match spend {
             Some(remaining) => {

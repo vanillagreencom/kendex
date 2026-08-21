@@ -193,7 +193,7 @@ fn judge(env: &Env, score: &CachedScore, review: Option<&AuthorReview>) -> Resul
             settled: vec![None; score.findings.len()],
         });
     }
-    let scored = crate::quality::author::score(&score.findings, &budget);
+    let scored = crate::quality::author::score(&score.findings, &budget, None);
     let (verdict, reasons) = crate::quality::verdict(&scored.counted, &scored.safety, thresholds);
     let settled = score
         .findings
@@ -251,7 +251,7 @@ fn published(
             &browsed.sealed,
             &item.path,
             item.tree.as_deref(),
-            &browsed.config.rendering_inputs(kind, name),
+            &browsed.config.rendering_inputs(&browsed.sealed, kind, name),
         ),
         &browsed.source.provenance,
     )

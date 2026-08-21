@@ -194,7 +194,7 @@ fn a_hook_carries_no_publishers_review() {
     let hash = kendex_core::quality::author::content_hash(
         &sealed,
         &script,
-        &config.rendering_inputs(ItemKind::Hook, "guard"),
+        &config.rendering_inputs(&sealed, ItemKind::Hook, "guard"),
     )
     .unwrap();
     let fingerprint = before.findings[0].fingerprint();

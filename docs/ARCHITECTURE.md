@@ -823,76 +823,76 @@ lives in one capability table read by core and UI.
   same budget an install does, so it never mints a token for content no
   install can see. A dismissed finding stops counting and
   stays reported, marked — in the catalog's own passes and on the machines
-  that install from it. What that record is worth on somebody else's
-  machine is `quality/author.rs`, the neutral home for the travelling
-  shape (`AuthorReview`) and for the one derivation of "a settled finding
-  is reported and does not count" (`author::score`) that the authoring
-  check, the gate, the audit and browsing all call. Three bounds, because
-  the record arrives from content kendex does not control: it binds to
-  bytes — the item's own plus the control-file tables an agent renders from
-  (`SourceConfig::rendering_inputs`), so editing either stales it;
-  it settles as many occurrences of a finding as the publisher's own bytes
-  carried and at the weight each was read at, so nothing a project repeats
-  rides in on a reviewed one, however heavy; and it carries only reasons
-  an author can give — `trusted-source` is refused on read, not only on
-  write, and a timestamp that is not a timestamp is refused with it.
+  that install from it. What that record is worth on somebody else's machine
+  is `quality/author.rs`, the neutral home for the travelling shape
+  (`AuthorReview`) and for the one derivation of "a settled finding is
+  reported and does not count" (`author::score`) that the authoring check, the
+  gate, the audit and browsing all call. Three bounds, because the record
+  arrives from content kendex does not control: it binds to bytes — the item's
+  own plus all else its rendering reads, the control-file tables and the skill
+  list an agent resolves to, whichever way it resolves
+  (`SourceConfig::rendering_inputs`), so editing any of it stales it; it
+  settles the occurrences the publisher's own bytes carried, each at the
+  weight and in the place it was read — `quality::authored_by` lines the
+  rendering up against the publisher-only one to mark which are theirs — so
+  nothing a project repeats rides in on a reviewed one, however heavy, and no
+  injected line wears a publisher's name while theirs stays open; and it
+  carries only reasons an author can give — `trusted-source` is refused on
+  read, not only on write, and a timestamp that is not a timestamp is refused
+  with it.
   **The record never travels in a file this project commits.** The lock
   carries none, and the fourth bound is why: a record kept there would be a
-  claim about a catalog, and every attempt to authenticate such a claim —
-  its shape, the name it carries, the numbers beside it — answers a
-  different question than the one that matters, which is what the content
-  should be. So the audit rebuilds instead
-  (`engine::desired::desired_as_installed`): the plan that produced what is
-  on disk, each installation at the revision its own lock entry names — one
-  item can sit at two revisions at once, since a refresh applies per
-  installation, and is planned at both — and the record read out of *that*
-  catalog, measured against the item rendered from the publisher's own
-  inputs, which is the gate's own derivation on the gate's own bytes. A
+  claim about a catalog, and every attempt to authenticate such a claim — its
+  shape, the name it carries, the numbers beside it — answers a different
+  question than the one that matters, which is what the content should be. So
+  the audit rebuilds instead (`engine::desired::desired_as_installed`): the
+  plan that produced what is on disk, each installation at the revision its
+  own lock entry names — one item can sit at two revisions at once, since a
+  refresh applies per installation, and is planned at both — and the record
+  read out of *that* catalog, measured against the item rendered from the
+  publisher's own inputs — the gate's derivation on the gate's bytes. An
   installation answers for itself and for nothing else — one row, one entry,
   one revision, one record — and content its own rebuild did not produce is
-  content the publisher never saw. The commit
-  an entry names chooses which revision to rebuild from and asserts nothing;
-  naming another produces another artifact, which is not what is installed.
-  An item that cannot be rebuilt at all — a catalog not on this machine, a
-  manifest that will not resolve — carries no review. No signing scheme
-  here. A hook records none: the
-  gate reads the script and the audit reads the shared settings file, two
-  readings of different bytes by design — so the record is refused where
-  it is read, `dismiss --catalog` refuses to write one, and `check
-  --catalog` prints no token for a hook's finding. The audit matches an
-  entry to an observation by the item and then by the bytes: its kind and
-  name, or the kind and name of the artifact it emitted, and then a review
-  hash sealed by what the artifact is on disk. Every settled finding is
-  shown with the publisher recorded alongside it and their reason — under
-  the line in the CLI, in its own row on a scope and beside the finding in
-  the held-back panel in the app, and beside the finding on a marketplace
-  package's page, which reads the same record through `browse/safety.rs` so
-  the preview cannot promise a verdict the install will not give (and says
-  when this project's own instructions are not in what it read). A record that settles nothing here is a note,
-  never silence; and editing the item — in the catalog or on disk —
-  stales it and the hold returns. Finding identity
-  is the rule and the sentence it fired with, and nothing else
-  (`Finding::fingerprint`). Which puts a standing obligation on every
-  rule's message: it says what the rule fired *on* — the address the line
-  actually runs, the characters a file hides — and never where it was found.
-  Two different problems that read the same are one decision, and only one is
-  ever displayed. A digest standing in for what a message cannot print
-  decides identity like the rest of the sentence, so every one is
-  `DIGEST_CHARS` wide: each stands for a value a project chooses, and a
-  narrow one is a thing to grind against until an injected finding wears a
-  settled one's words.
-  Where a finding was found is carried by its location, and every location
-  one decision covers is listed under it. Everything kendex's own rendering moves is
-  deliberately out of it: the line, because rendering shifts lines; the
-  file, because Codex renders a command as a skill tree and an over-cap
-  body is split into `references/`; the severity, because a hit weighs one
-  step less in a supporting file than in the body and the split moves
-  content between exactly those two. What bounds it instead is the item —
-  a fingerprint is only read within one item's records — the content hash
-  every decision binds to, and, for a publisher's record, the number of
-  occurrences the content they wrote actually carried
-  (`author::Budget::earned`, counted against the render with the project's
-  injected instructions taken back out).
+  content the publisher never saw. The commit an entry names chooses which
+  revision to rebuild from and asserts nothing; naming another produces
+  another artifact, which is not what is installed. An item that cannot be
+  rebuilt at all — a catalog not on this machine, a manifest that will not
+  resolve — carries no review. No signing scheme here. A hook records none:
+  the gate reads the script and the audit reads the shared settings file, two
+  readings of different bytes by design — so the record is refused where it is
+  read, `dismiss --catalog` refuses to write one, and `check --catalog` prints
+  no token for a hook's finding. The audit matches an entry to an observation
+  by the item and then by the bytes: its kind and name, or the kind and name
+  of the artifact it emitted, and then a review hash sealed by what the
+  artifact is on disk. Every settled finding is shown with the publisher
+  recorded alongside it and their reason — under the line in the CLI, in its
+  own row on a scope and beside the finding in the held-back panel in the app,
+  and beside the finding on a marketplace package's page, which reads the same
+  record through `browse/safety.rs` so the preview cannot promise a verdict
+  the install will not give (and says when this project's own instructions are
+  not in what it read). A record that settles nothing here is a note, never
+  silence; and editing the item — in the catalog or on disk — stales it and
+  the hold returns. Finding identity is the rule and the sentence it fired
+  with, and nothing else (`Finding::fingerprint`). Which puts a standing
+  obligation on every rule's message: it says what the rule fired *on* — the
+  address the line actually runs, the characters a file hides — and never
+  where it was found. Two different problems that read the same are one
+  decision, and only one is ever displayed. A digest standing in for what a
+  message cannot print decides identity like the rest of the sentence, so
+  every one is `DIGEST_CHARS` wide: each stands for a value a project chooses,
+  and a narrow one is ground against until an injected finding wears a settled
+  one's words. Where a finding was found is carried by its location, and every
+  location one decision covers is listed under it. Everything kendex's own
+  rendering moves is deliberately out of it: the line, because rendering
+  shifts lines; the file, because Codex renders a command as a skill tree and
+  an over-cap body is split into `references/`; the severity, because a hit
+  weighs one step less in a supporting file than in the body and the split
+  moves content between exactly those two. What bounds it instead is the item
+  — a fingerprint is only read within one item's records — the content hash
+  every decision binds to, and, for a publisher's record, the occurrences the
+  content they wrote actually carried — how many (`author::Budget::earned`,
+  counted against the render with the project's injected instructions taken
+  back out) and which ones (`quality::authored_by`).
 - **The community directory is read like any remote: strictly, capped,
   and honest about staleness.** `registry/` (core) consumes what
   `source/index.rs` producers feed kendex.ai: `index.rs` re-parses the

@@ -4,6 +4,7 @@
 #![cfg(unix)]
 
 mod author_reviews;
+mod author_reviews_binding;
 mod author_reviews_emitted;
 mod author_reviews_injection;
 mod author_reviews_installations;

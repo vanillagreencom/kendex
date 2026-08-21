@@ -166,7 +166,7 @@ pub(super) fn published_review(
                 Default::default()
             }
         });
-    let inputs = config.rendering_inputs(kind, name);
+    let inputs = config.rendering_inputs(sealed, kind, name);
     let read = crate::quality::author::for_item(
         parsed, sealed, kind, name, item_path, provenance, &inputs,
     );

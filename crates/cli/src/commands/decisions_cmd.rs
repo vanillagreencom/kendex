@@ -135,7 +135,7 @@ fn dismiss_catalog(
         let Some(hash) = kendex_core::quality::author::content_hash(
             &sealed,
             &path,
-            &config.rendering_inputs(kind, name),
+            &config.rendering_inputs(&sealed, kind, name),
         ) else {
             return Err(format!("{token}: the item's content cannot be read").into());
         };

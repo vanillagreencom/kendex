@@ -212,7 +212,7 @@ fn an_unreadable_item_with_a_record_is_contained() {
     let hash = kendex_core::quality::author::content_hash(
         &sealed,
         &agents.join("rogue.md"),
-        &config.rendering_inputs(ItemKind::Agent, "rogue"),
+        &config.rendering_inputs(&sealed, ItemKind::Agent, "rogue"),
     )
     .unwrap();
     kendex_core::check_catalog::dismissals::record(

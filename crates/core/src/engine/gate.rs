@@ -186,7 +186,18 @@ pub(super) fn run(
                 Budget::earned(review, &authored.findings)
             })
             .unwrap_or_default();
-        let scored = crate::quality::author::score(&result.findings, &earned.budget);
+        // Which of these the publisher's own rendering produced, so the
+        // budget is spent on their occurrences rather than on whichever
+        // sorted first.
+        let theirs = item.author_review.as_ref().map(|_| {
+            crate::quality::authored_by(
+                input_for(&item),
+                input::authored_for(&item),
+                &result.findings,
+            )
+        });
+        let scored =
+            crate::quality::author::score(&result.findings, &earned.budget, theirs.as_deref());
         let (verdict, reasons) =
             crate::quality::verdict(&scored.counted, &scored.safety, thresholds);
         // A record that named findings nothing here carries is not the same

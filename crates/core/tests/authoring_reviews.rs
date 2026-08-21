@@ -36,7 +36,7 @@ fn a_record_an_install_refuses_fails_the_check() {
     let hash = kendex_core::quality::author::content_hash(
         &sealed,
         &dir,
-        &config.rendering_inputs(kendex_core::model::ItemKind::Skill, "risky"),
+        &config.rendering_inputs(&sealed, kendex_core::model::ItemKind::Skill, "risky"),
     )
     .unwrap();
     let fingerprint = check(&sealed, "repo")
@@ -98,7 +98,7 @@ fn a_hand_written_hook_record_is_refused_by_the_check_too() {
     let hash = kendex_core::quality::author::content_hash(
         &sealed,
         &script,
-        &config.rendering_inputs(kendex_core::model::ItemKind::Hook, "guard"),
+        &config.rendering_inputs(&sealed, kendex_core::model::ItemKind::Hook, "guard"),
     )
     .unwrap();
     fs::write(
@@ -158,7 +158,7 @@ fn a_committed_dismissal_unblocks_until_the_content_moves() {
     let hash = kendex_core::quality::author::content_hash(
         &sealed,
         &dir,
-        &config.rendering_inputs(kendex_core::model::ItemKind::Skill, "risky"),
+        &config.rendering_inputs(&sealed, kendex_core::model::ItemKind::Skill, "risky"),
     )
     .unwrap();
     dismissals::record(

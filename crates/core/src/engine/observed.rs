@@ -170,13 +170,23 @@ impl Reading<'_> {
                 .get(&key)
                 .map(|entry| entry.source_repo.clone())
         });
-        let by_author = self.published_by(item, mine, scored.review.as_deref());
+        let by_author = self.published_by(
+            item,
+            mine,
+            scored.review.as_deref(),
+            &result.findings,
+            &root,
+        );
         let budget = by_author
             .as_ref()
             .and_then(|found| found.earned.as_ref())
             .map(|earned| earned.budget.clone())
             .unwrap_or_default();
-        let scored_findings = crate::quality::author::score(&result.findings, &budget);
+        let scored_findings = crate::quality::author::score(
+            &result.findings,
+            &budget,
+            by_author.as_ref().and_then(|found| found.theirs.as_deref()),
+        );
         let (verdict, reasons) = crate::quality::verdict(
             &scored_findings.counted,
             &scored_findings.safety,
@@ -242,6 +252,8 @@ impl<'a> Reading<'a> {
         item: &crate::model::ObservedItem,
         mine: Option<&'a super::desired::Desired>,
         observed: Option<&str>,
+        findings: &[crate::quality::Finding],
+        at: &str,
     ) -> Option<Published<'a>> {
         // This row's own installation answers for it. A rebuild that is not
         // what is installed says so — a record carried onto other content is
@@ -252,6 +264,7 @@ impl<'a> Reading<'a> {
                 return Some(Published {
                     review,
                     earned: None,
+                    theirs: None,
                     unbuilt: Some(format!(
                         "what is installed here is not what {} publishes as {} {} — the review recorded in their name is about content this is not, so it settles nothing",
                         review.publisher,
@@ -260,7 +273,7 @@ impl<'a> Reading<'a> {
                     )),
                 });
             }
-            return Some(self.earned_by(planned, review));
+            return Some(earned_by(planned, review, findings, at));
         }
         // No installation of its own: one tree under `.agents/` is read by
         // every tool that looks there, and a record binds to bytes, so the
@@ -275,26 +288,40 @@ impl<'a> Reading<'a> {
             .iter()
             .all(|other| other.author_review == planned.author_review);
         let review = agreed.then_some(planned.author_review.as_ref()).flatten()?;
-        Some(self.earned_by(planned, review))
+        Some(earned_by(planned, review, findings, at))
     }
+}
 
-    /// What one rebuild's record earned, measured against the item rendered
-    /// from the publisher's own inputs — the same derivation the gate does,
-    /// on the same bytes.
-    fn earned_by(
-        &self,
-        planned: &'a super::desired::Desired,
-        review: &'a crate::quality::author::AuthorReview,
-    ) -> Published<'a> {
-        let authored = crate::quality::audit(super::gate::input::authored_for(planned));
-        Published {
+/// What one rebuild's record earned, and which occurrences in front of us
+/// are the publisher's — the same two derivations the gate does, on the
+/// same bytes.
+fn earned_by<'a>(
+    planned: &'a super::desired::Desired,
+    review: &'a crate::quality::author::AuthorReview,
+    findings: &[crate::quality::Finding],
+    at: &str,
+) -> Published<'a> {
+    let authored = super::gate::input::authored_for(planned);
+    // Read at the path these bytes are *here*, not the one the plan would
+    // write them to. A finding names the file it was found in, and the same
+    // tree is loaded by several tools from several places — an alignment
+    // against the plan's own path would match none of them.
+    let here = |input: crate::quality::AuditInput| crate::quality::AuditInput {
+        location: at.to_owned(),
+        ..input
+    };
+    Published {
+        review,
+        earned: Some(crate::quality::author::Budget::earned(
             review,
-            earned: Some(crate::quality::author::Budget::earned(
-                review,
-                &authored.findings,
-            )),
-            unbuilt: None,
-        }
+            &crate::quality::audit(authored.clone()).findings,
+        )),
+        theirs: Some(crate::quality::authored_by(
+            here(super::gate::input::input_for(planned)),
+            here(authored),
+            findings,
+        )),
+        unbuilt: None,
     }
 }
 
@@ -308,6 +335,9 @@ struct Published<'a> {
     /// What it earned against the item rendered from the publisher's own
     /// inputs. `None` where the rebuild is not what is installed.
     earned: Option<crate::quality::author::Earned>,
+    /// Which of the findings in front of us the publisher's own rendering
+    /// produced. `None` where the rebuild is not what is installed.
+    theirs: Option<Vec<bool>>,
     /// Why it settles nothing, when it does. `None` when it stands.
     unbuilt: Option<String>,
 }

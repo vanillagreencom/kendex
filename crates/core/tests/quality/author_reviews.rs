@@ -102,7 +102,12 @@ pub fn author_dismisses(source: &Path, kind: ItemKind, name: &str, rules: &[&str
     let sealed = SealedSource::open(source).unwrap();
     let config = kendex_core::source::source_config(&sealed, "cat").unwrap();
     let path = kendex_core::source::find_item(&sealed, &config, kind, name).unwrap();
-    let hash = author::content_hash(&sealed, &path, &config.rendering_inputs(kind, name)).unwrap();
+    let hash = author::content_hash(
+        &sealed,
+        &path,
+        &config.rendering_inputs(&sealed, kind, name),
+    )
+    .unwrap();
     dismissals::record(&sealed, kind, name, &hash, &settled).unwrap();
 }
 

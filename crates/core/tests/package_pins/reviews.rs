@@ -30,7 +30,7 @@ fn a_review_belongs_to_the_commit_it_was_committed_in() {
         let config = kendex_core::source::source_config(&sealed, "cat").unwrap();
         for name in ["pinned", "following"] {
             let path = w.upstream.join("skills").join(name);
-            let inputs = config.rendering_inputs(ItemKind::Skill, name);
+            let inputs = config.rendering_inputs(&sealed, ItemKind::Skill, name);
             let hash = kendex_core::quality::author::content_hash(&sealed, &path, &inputs).unwrap();
             let item = kendex_core::check_catalog::check_item(
                 &sealed,
@@ -119,7 +119,7 @@ fn a_record_whose_catalog_is_not_on_this_machine_settles_nothing() {
     let hash = kendex_core::quality::author::content_hash(
         &sealed,
         &path,
-        &config.rendering_inputs(ItemKind::Skill, "risky"),
+        &config.rendering_inputs(&sealed, ItemKind::Skill, "risky"),
     )
     .unwrap();
     let item = kendex_core::check_catalog::check_item(
@@ -288,7 +288,7 @@ fn review_and_commit(w: &World, name: &str, message: &str) -> String {
     let hash = kendex_core::quality::author::content_hash(
         &sealed,
         &path,
-        &config.rendering_inputs(ItemKind::Skill, name),
+        &config.rendering_inputs(&sealed, ItemKind::Skill, name),
     )
     .unwrap();
     let item = kendex_core::check_catalog::check_item(
