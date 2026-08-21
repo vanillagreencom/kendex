@@ -4,7 +4,7 @@ use kendex_core::engine::decisions::DecisionState;
 use kendex_core::engine::{DriftCause, DriftRow, DriftState, EngineReport};
 use kendex_core::env::Env;
 use kendex_core::error::CoreError;
-use kendex_core::model::HarnessId;
+use kendex_core::model::{HarnessId, Scope};
 
 use super::{CliResult, say};
 
@@ -132,13 +132,16 @@ pub fn print_conflicts(env: &Env, report: &EngineReport) -> bool {
         say(&format!("  to keep those files: {}", keep_exit(env, &item)));
     }
     let any = !rows.is_empty();
-    if replaceable {
+    if let (true, Some(row)) = (replaceable, rows.first()) {
         // Once, not per row: the half that names the item differs line by
         // line and belongs on the row; the flag is the same for all of them,
         // and forty copies of it bury the paths that differ. Indented with
         // them all the same — at column 0 it reads as a heading over the
         // plan that follows, which is the plan that runs without it.
-        say("  to install what kendex.toml asks for instead: kendex apply --replace-unmanaged");
+        say(&format!(
+            "  to install what kendex.toml asks for instead: kendex apply --replace-unmanaged{}",
+            scope_flag(&row.scope)
+        ));
     }
     any
 }
@@ -175,31 +178,58 @@ pub fn conflict_detail(row: &DriftRow) -> String {
 /// nothing can be offered the files are still the reader's to keep, by
 /// moving them out of the way themselves.
 fn keep_exit(env: &Env, item: &[&DriftRow]) -> String {
+    let away = "move them somewhere else first".to_owned();
+    let Some(row) = item.first() else {
+        return away;
+    };
     let mut tools: Vec<HarnessId> = Vec::new();
     for row in item {
-        let keepable = row.cause.is_some_and(DriftCause::can_keep)
-            && kendex_core::engine::adopt::can_keep_for(
-                env,
-                &row.scope,
-                row.kind,
-                &row.name,
-                row.harness,
-            );
-        if keepable && !tools.contains(&row.harness) {
+        // A shape adoption cannot take — a folder where one file goes, or
+        // the reverse — settles nothing, and the offer would keep the rest
+        // of the item and rewrite the declaration around them, leaving this
+        // place blocked with the item no longer its tool's. The whole item
+        // moves out of the way by hand instead.
+        if !row.cause.is_some_and(DriftCause::can_keep) {
+            return away;
+        }
+        // A tool with nothing at its own place is a different thing: it
+        // reads the item through a folder shared by hand, and the tool that
+        // links at that folder keeps it for both.
+        if kendex_core::engine::adopt::can_keep_for(
+            env,
+            &row.scope,
+            row.kind,
+            &row.name,
+            row.harness,
+        ) && !tools.contains(&row.harness)
+        {
             tools.push(row.harness);
         }
     }
-    let Some(row) = item.first() else {
-        return "move them somewhere else first".to_owned();
-    };
     if tools.is_empty() || !kendex_core::names::plain_argument(&row.name) {
-        return "move them somewhere else first".to_owned();
+        return away;
     }
     let named: String = tools
         .iter()
         .map(|harness| format!(" --harness {}", harness.name()))
         .collect();
-    format!("kendex adopt {} {}{named}", row.kind.name(), row.name)
+    format!(
+        "kendex adopt {} {}{named}{}",
+        row.kind.name(),
+        row.name,
+        scope_flag(&row.scope)
+    )
+}
+
+/// The flag that points a command at the scope the row was read in. A
+/// project needs none — it is what every command defaults to — but a
+/// remedy printed while looking at the global scope runs against the
+/// current project without it.
+fn scope_flag(scope: &Scope) -> &'static str {
+    match scope {
+        Scope::Global => " --global",
+        Scope::Project { .. } => "",
+    }
 }
 
 /// What the safety rules found in the content this plan would write. Held

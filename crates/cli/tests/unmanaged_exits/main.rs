@@ -252,29 +252,6 @@ fn two_tools_holding_one_item_are_kept_by_one_offer() {
 
 /// A file where a folder goes is files kendex did not write, and the
 /// replacement handles it — but adoption reads a skill's position as a
-/// folder, so the keep line must not be printed here.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_file_where_a_folder_goes_is_not_offered_the_adopt() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
-    let project = project_with(home, "[\"claude\", \"codex\"]", "symlink");
-    fs::create_dir_all(project.join(".claude/skills")).unwrap();
-    fs::write(
-        project.join(".claude/skills/deploy"),
-        "laid out by the tool that came before",
-    )
-    .unwrap();
-
-    let planned = plan(home, &project);
-    assert!(planned.contains("conflict: skill deploy"), "{planned}");
-    assert_eq!(offer(&planned), "move them somewhere else first");
-    assert!(
-        planned.contains("--replace-unmanaged"),
-        "the exit that handles this shape was not offered: {planned}"
-    );
-}
-
 /// Adoption reads one tool's position, and left unsaid it reads Claude
 /// Code's. A conflict on any other tool was directing the reader at a
 /// place that is not the one blocked — so the offer names the tool, and
@@ -306,28 +283,6 @@ fn one_tool_blocked_is_kept_through_the_tool_that_is_blocked() {
 /// The same folder, with no declared tool sitting at the link that reads
 /// it. Adoption works at a tool's own place, and every tool here has an
 /// empty one — so the row says the way out that does work rather than a
-/// command that would error on the spot.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_link_no_declared_tool_sits_at_offers_no_command() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
-    let project = project_with(home, "[\"claude\"]", "symlink");
-    let elsewhere = home.join("shared/deploy");
-    folder_at(&elsewhere, "Kept somewhere else.");
-    link_at(&project.join(".agents/skills/deploy"), &elsewhere);
-
-    let planned = plan(home, &project);
-    assert!(planned.contains("conflict: skill deploy"), "{planned}");
-    assert_eq!(offer(&planned), "move them somewhere else first");
-    assert!(
-        fs::read_to_string(elsewhere.join("SKILL.md"))
-            .unwrap()
-            .contains("Kept somewhere else."),
-        "planning touched the folder"
-    );
-}
-
 /// An item can be blocked for one tool and edited under another, and the two
 /// conflicts come out in whichever order the tools are listed. The way out
 /// of the hand-made files has to be said either way: printed only when it
@@ -371,3 +326,11 @@ fn hand_made_files_beside_an_edited_install_keep_their_offer() {
         );
     }
 }
+
+/// A shape adoption cannot take, beside one it can. Keeping is one move for
+/// the whole item, so an offer that quietly drops the place it cannot take
+/// settles the rest and rewrites the declaration around them — leaving that
+/// place blocked with the item no longer its tool's. Neither exit fits, and
+/// The exits are what a reader types next, so they carry the scope they
+/// were read in. Printed while looking at the global scope without it,
+mod refusals;

@@ -207,6 +207,7 @@ pub fn plan_scope(
         safety,
     };
     unmanaged_rows(env, scope, manifest, lock, &state.items, &mut report.drift);
+    gate::refuse_unsettled_takeover(options, &report.drift)?;
     Ok(report)
 }
 

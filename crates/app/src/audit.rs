@@ -251,27 +251,12 @@ pub fn replace_unmanaged(
     kind: ItemKind,
     name: String,
 ) -> Result<AuditView, String> {
-    // The page this was clicked on may be a minute old. Nothing is written
-    // over a choice that is no longer on offer: the apply that follows is
-    // the scope's whole plan, like every apply, and it must not run because
-    // a button answered a question that had already gone away.
+    // The page this was clicked on may be a minute old, and the apply that
+    // follows is the scope's whole plan. Planning refuses a take-over that
+    // reaches nothing, or one that would settle some of an item's places
+    // and leave the rest blocked — read off this same plan, so nothing can
+    // change between the check and what it guards.
     //
-    // Every place the item sits has to still allow it, which is the rule the
-    // row is drawn by. Asking whether any one of them does would take over
-    // the places that still can and leave the rest blocked.
-    let waiting: Vec<engine::DriftCause> = engine::audit(env, scope)
-        .map_err(|e| e.to_string())?
-        .drift
-        .into_iter()
-        .filter(|row| row.kind == kind && row.name == name)
-        .filter_map(|row| row.cause)
-        .filter(|cause| cause.in_the_way())
-        .collect();
-    if waiting.is_empty() || !waiting.into_iter().all(engine::DriftCause::can_replace) {
-        return Err(format!(
-            "{name} has no files waiting on that choice any more — nothing was changed"
-        ));
-    }
     // Planned from the manifest as it sits on disk, like every apply: a
     // normalized copy already looks current, so a scope still on an older
     // schema would be written without the migration its own plan owes it.

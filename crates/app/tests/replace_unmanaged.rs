@@ -273,3 +273,29 @@ fn replacing_stops_when_one_of_an_item_s_places_stops_allowing_it() {
     );
     assert!(position.is_symlink(), "the link is left exactly as it was");
 }
+
+/// The check and the plan it guards come from one read. Between a separate
+/// look at the disk and the plan, the files can go: the second read sees an
+/// ordinary missing install, and the scope's whole apply runs for a button
+/// that answered a question already gone.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_choice_settled_between_the_look_and_the_plan_changes_nothing() {
+    let f = fixture();
+    let deploy = f.project.join(".claude/skills/deploy");
+
+    // Exactly what a second read would find: nothing in the way any more.
+    fs::remove_dir_all(&deploy).unwrap();
+
+    let refused = replace_unmanaged(&f.env, &f.scope, ItemKind::Skill, "deploy".into());
+    assert!(refused.is_err(), "a stale choice was carried out");
+    assert!(
+        !deploy.join("SKILL.md").exists(),
+        "the item was installed by a choice that was about replacing it"
+    );
+    assert_eq!(
+        body(&f, "lint"),
+        "the tool that came before",
+        "and the rest of the scope was applied on the way past"
+    );
+}
