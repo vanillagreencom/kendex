@@ -141,6 +141,14 @@ pub(super) fn plan_move(
         .values()
         .filter(|entry| entry.kind == ItemKind::Hook && entry.harness == HarnessId::Pi)
         .collect();
+    // A hook this pass installs for the first time never had anything
+    // under the reserved name, so its move is over before it starts.
+    // Whatever else is in that directory is somebody else's and says
+    // nothing about this one's history — waiting for a pass that finds
+    // the directory empty would leave a fresh install reading its own
+    // completion off the disk, and a script the person writes at the old
+    // name meanwhile would meet that reading instead of this record.
+    record_finished(newly_installed(&entries, state), sink);
     // The move retires itself: with neither reserved path there, there is
     // nothing to take and nothing to say — the same answer everything
     // below reaches, reached without stat-ing both names of every hook
@@ -283,22 +291,29 @@ pub(super) fn plan_move(
 
 /// Every pi hook this scope knows about, installed or being installed —
 /// what a plan that finds nothing at all under the reserved name may call
-/// finished. A hook whose first apply put it at the new path was never
-/// there, which is the same fact by another road, and it is written down
-/// on that pass rather than the one after: the person can reach for that
-/// directory before any second pass.
+/// finished.
 fn every_pi_hook(entries: &[&LockEntry], state: &DesiredState) -> BTreeSet<String> {
     entries
         .iter()
         .map(|entry| entry.name.clone())
-        .chain(
-            state
-                .items
-                .iter()
-                .filter(|item| item.kind == ItemKind::Hook && item.harness == HarnessId::Pi)
-                .map(|item| item.name.clone()),
-        )
+        .chain(desired_pi_hooks(state))
         .collect()
+}
+
+/// The pi hooks this pass installs that no lock entry names: the ones
+/// with no history under the reserved name to have anything left in.
+fn newly_installed(entries: &[&LockEntry], state: &DesiredState) -> BTreeSet<String> {
+    desired_pi_hooks(state)
+        .filter(|name| !entries.iter().any(|entry| &entry.name == name))
+        .collect()
+}
+
+fn desired_pi_hooks(state: &DesiredState) -> impl Iterator<Item = String> + '_ {
+    state
+        .items
+        .iter()
+        .filter(|item| item.kind == ItemKind::Hook && item.harness == HarnessId::Pi)
+        .map(|item| item.name.clone())
 }
 
 /// A trash op through the plan's one guard, bound to the bytes ownership

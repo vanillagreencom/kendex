@@ -260,7 +260,9 @@ changes carry a **Breaking** call-out with their migration note inline.
   again, so nothing under the old name is kendex's afterwards — a script
   and a registration you put back there yourself both stay, however
   exactly they match what kendex used to write, and whatever else you
-  change about the hook later. A hook held that
+  change about the hook later. A hook you install for the first time
+  counts as finished too, so files of your own already sitting in that
+  directory are never mistaken for an older kendex's. A hook held that
   way still shows up in `kendex list`, in the app, and in the safety scan,
   read from the old registry it fires from, so the copy that needs your
   attention is not the one you cannot see. A registration

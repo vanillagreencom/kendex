@@ -555,36 +555,27 @@ lives in one capability table read by core and UI.
   reserved `hooks/` beside every root it loads and warns on that name
   whatever the directory holds, so the storage sits one level down under
   `kendex/`; `engine::pi_hooks_move` retires the old layout, taking only
-  files this scope's lock names whose bytes hash to what apply wrote,
-  holding a still-declared hook this pass could not render — the whole
-  installation, registration included — and saying what it left and why.
-  Discarding edits or naming the hook for removal releases a hold over
-  bytes, never over a directory or a link somebody left where the script
-  was: both gates (`claims::provenance` and `preflight::discardable`) ask
-  for a plain file in the same words. A finished move is recorded in the lock
-  (`LockEntry::left_pi_reserved_name`) and read back from there, never
-  re-derived: an edit to the new copy or a catalog changing the hook's
-  event would otherwise re-open a move that was over, and a re-opened
-  move reads whatever the person has since put under the reserved name as
-  the copy it is owed. Past that record the ownership question is not
-  asked at all. A lock from before the record falls back to reading the
-  disk, and the first pass that sees nothing under the reserved name
-  writes the record. A registration is identified by its
-  command plus the event and matcher the record kept, and by being the
-  only entry carrying that command; the event a previous version installed a
-  script-backed hook under is not knowable, so only the entry this pass
-  renders at the new path is identified by the rendered event
-  (`migrated::new_registration`). A finished migration claims neither
-  half under the reserved name, script or registration. Each hold carries
-  its own cause into the conflict row through one rendering
-  (`Hold::row`), so no path offers a remedy that cannot work, and every
-  trash op binds the file type it proved alongside the hash
-  (`Pre::PlainHashIs`).
-  A hook held that way runs from the old registry and nowhere else, so
-  Pi's hook surface list carries that registry too for as long as an
+  what this scope's lock names and its bytes prove, holding whole what it
+  cannot — the whole installation, registration included — and saying
+  what it left and why. Three rules hold that together, and
+  [docs/adapters/pi.md](adapters/pi.md) carries them in full. A finished
+  move is a fact about the past: recorded in the lock
+  (`LockEntry::left_pi_reserved_name`), read back, never re-derived, and
+  written only where completion is proven — an unrecorded one costs a
+  derived pass, a wrong one cannot be taken back. Past it the ownership
+  question is not asked at all, of either half. A registration is
+  identified by what the record kept of it and by being the only entry
+  carrying its command, never by what this pass would render. And what
+  authorizes a deletion asks for a plain file and binds the type it
+  proved with the hash (`claims::provenance`, `preflight::discardable`,
+  `Pre::PlainHashIs`), while every hold reaches the conflict row through
+  one rendering (`Hold::row`), so no path offers a remedy that cannot
+  work. A hook held that way runs from the old registry and nowhere else,
+  so Pi's hook surface list carries that registry too while an
   installation of kendex's is still under the reserved name
-  (`pi_hooks_move::legacy_registry_lives`) and drops it once none is. An event outside that map cannot fire on Pi and
-  installs nothing there, said as a note. The capability row says what the
+  (`pi_hooks_move::legacy_registry_lives`) and drops it once none is. An
+  event outside that map cannot fire on Pi and installs nothing there,
+  said as a note. The capability row says what the
   mechanism supports; the surfaces that label an installation read carrier
   reality (`pi_ext::carrier`), and Pi loads project and global settings
   both, so a project-installed hook with only a global carrier is still

@@ -22,12 +22,14 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// has since put under the reserved name as the copy it is owed.
 ///
 /// The reading below is for the installations that finished before there
-/// was anywhere to write it down. It asks two things, and bytes are only
-/// the first: the copy apply last wrote is at the new path, AND the new
-/// registration is the one that runs it — either the new registry names
-/// it, or nothing of kendex's is registered under the reserved name any
-/// more. A clean copy at the new path while the old registration still
-/// runs is a migration half done, not one finished.
+/// was anywhere to write it down, and it has to be right in the same
+/// direction the record is: a wrong "not finished" costs one more derived
+/// pass, and a wrong "finished" is written down and cannot be taken back.
+/// So it asks for everything a finished move means — the copy apply
+/// last wrote is at the new path, nothing of this hook's is registered
+/// under the reserved name any more, and what runs it at the new path is
+/// what the record says should. Anything it cannot establish reads as
+/// unfinished.
 pub(super) fn moved(
     env: &Env,
     scope: &Scope,
@@ -37,7 +39,8 @@ pub(super) fn moved(
 ) -> bool {
     entry.left_pi_reserved_name
         || (lives_at_the_new_path(root, entry)
-            && new_registration_runs_it(env, scope, root, entry, state))
+            && legacy_registration_gone(scope, root, entry)
+            && new_registration_stands(env, scope, root, entry, state))
 }
 
 fn lives_at_the_new_path(root: &std::path::Path, entry: &LockEntry) -> bool {
@@ -51,24 +54,42 @@ fn lives_at_the_new_path(root: &std::path::Path, entry: &LockEntry) -> bool {
     })
 }
 
-/// Whether execution has moved with the bytes: the new registry carries
-/// this hook's registration, or the legacy one carries nothing of its.
-fn new_registration_runs_it(
+/// Whether nothing of this hook's is registered under the reserved name
+/// any more — proven, never assumed. A registry kendex cannot read, or
+/// one that is a link it will not read through, may be running the old
+/// copy this second; a move whose old registration might still be live is
+/// not one to call finished, and calling it finished is permanent.
+fn legacy_registration_gone(scope: &Scope, root: &std::path::Path, entry: &LockEntry) -> bool {
+    let path = pi::legacy_hook_registry(root);
+    match look(&path) {
+        Found::Absent => true,
+        Found::Plain(_) => crate::scan::hooks::read(&path).is_ok_and(|entries| {
+            matches!(
+                registered(&entries, &legacy_registration(entry, scope, root)),
+                Registered::Absent
+            )
+        }),
+        Found::Linked(_) | Found::Unreadable(..) => false,
+    }
+}
+
+/// Whether what runs this hook at the new path is what the record says
+/// should. A hook installed disabled registers nothing anywhere — that
+/// absence is the installation, not a move half done — so it is asked for
+/// explicitly here; read as an unfinished move it would leave every
+/// disabled hook migrating for ever.
+fn new_registration_stands(
     env: &Env,
     scope: &Scope,
     root: &std::path::Path,
     entry: &LockEntry,
     state: &DesiredState,
 ) -> bool {
-    let legacy = legacy_registration(entry, scope, root);
-    matches!(
-        new_registration(env, scope, root, entry, state),
-        Registered::Ours
-    ) || !matches!(
-        look(&pi::legacy_hook_registry(root)),
-        Found::Plain(_) | Found::Linked(_)
-    ) || crate::scan::hooks::read(&pi::legacy_hook_registry(root))
-        .is_ok_and(|entries| matches!(registered(&entries, &legacy), Registered::Absent))
+    let here = new_registration(env, scope, root, entry, state);
+    match entry.enabled {
+        true => matches!(here, Registered::Ours),
+        false => matches!(here, Registered::Absent),
+    }
 }
 
 /// Whether this hook's registration in the new registry sits under an

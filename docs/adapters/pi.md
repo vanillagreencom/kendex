@@ -76,7 +76,12 @@ kendex's any more — not the script, and not an entry spelling the command
 kendex used to register. That is a fact about the past, so the lock keeps
 it (`left_pi_reserved_name`) and the move reads it back instead of
 working it out again from bytes and registrations that have every right
-to change afterwards. A lock written before the record falls back to the
+to change afterwards. It is written only where the move is proven over —
+the new copy in place, nothing of the hook's still registered under the
+reserved name, and what runs it at the new path being what the record
+asks for, which for a hook installed disabled is nothing at all. A hook
+installed for the first time is over before it starts, whoever else's
+files happen to be in that directory. A lock written before the record falls back to the
 reading, and the first pass that finds nothing under the reserved name
 writes the record down. Discarding edits finishes the move
 in that same pass — the old copy goes to the trash and one registration

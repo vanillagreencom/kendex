@@ -25,8 +25,12 @@ pub(super) fn plan_directory(
     sink: &mut Sink,
 ) -> bool {
     if !matches!(look(dir), Found::Plain(_)) {
-        // Nothing there to take, so nothing was left behind.
-        return true;
+        // Proven absence is the only reading that says nothing was left
+        // behind. A link or a path that could not be stat-ed is one the
+        // caller has already refused to walk, so nothing reaches here
+        // holding either — and if one ever did, it would be a directory
+        // this pass knows nothing about.
+        return matches!(look(dir), Found::Absent);
     }
     let strangers = match strangers(dir, ours) {
         Ok(strangers) => strangers,
@@ -187,10 +191,12 @@ pub(super) fn plan_registry(
     sink: &mut Sink,
 ) -> Result<bool> {
     if !matches!(look(registry), Found::Plain(_)) {
-        // A registry that is not a plain file holds nothing this pass can
-        // be leaving behind: a link or an absent one was never read as
-        // kendex's to edit, and the hold that says so is elsewhere.
-        return Ok(!matches!(look(registry), Found::Linked(_)));
+        // Absence is the only one of these that proves nothing was left
+        // behind. A link kendex will not read through, or a path it could
+        // not even stat, may be running an old registration this second —
+        // and a move that might have left one is not one to write down as
+        // finished.
+        return Ok(matches!(look(registry), Found::Absent));
     }
     let current = match crate::fs::read_if_exists(registry) {
         Ok(text) => text.unwrap_or_default(),
