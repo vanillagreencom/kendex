@@ -9,7 +9,9 @@ use crate::configedit::ConfigEdit;
 use crate::error::Result;
 use crate::harness::pi;
 use crate::lock::LockEntry;
-use crate::model::Scope;
+use crate::model::{HarnessId, ItemKind, Scope};
+
+use super::super::desired::{Artifact, DesiredState};
 
 use super::{Found, LEGACY_DIR, Sink, look, trash, unreadable_note};
 
@@ -258,13 +260,26 @@ pub(super) fn plan_registry(
     Ok(())
 }
 
-/// The registry entry one hook left behind: a custom hook registered the
-/// person's own command and the lock recorded it verbatim, a script-bodied
-/// one registered the command the old layout spelled.
+/// The registry entry one hook left behind, as the identity that names
+/// it: the event it fires on and the command that runs.
+///
+/// The record carries both for a script-less custom hook, whose command
+/// is the person's own and cannot be re-derived. A script-backed hook
+/// keeps no record of either, so both are derived: the command the old
+/// layout spelled, and the event this pass renders the hook under, which
+/// is the event the old registration was written under too. Deriving it
+/// is what keeps the identity whole for the shape most people have — with
+/// the event left out, a command somebody moved to another listener by
+/// hand reads as the one kendex wrote, and is taken.
+///
+/// `None` for the event only where kendex has nothing to derive it from:
+/// a hook this pass does not render, which is also a hook it retires
+/// nothing of until it can.
 pub(super) fn legacy_registration(
     entry: &LockEntry,
     scope: &Scope,
     root: &Path,
+    state: &DesiredState,
 ) -> (Option<String>, String) {
     match &entry.registration {
         Some(recorded) => (Some(recorded.event.clone()), recorded.command.clone()),
@@ -278,9 +293,27 @@ pub(super) fn legacy_registration(
                     format!("bash \"$(git rev-parse --show-toplevel)/.pi/{LEGACY_DIR}/{file}\"")
                 }
             };
-            (None, command)
+            (rendered_event(state, &entry.name), command)
         }
     }
+}
+
+/// The event this pass registers one hook under, off the registration it
+/// renders — the same edit the item pass writes, so the two cannot name
+/// different events. A hook this pass does not render has none.
+fn rendered_event(state: &DesiredState, name: &str) -> Option<String> {
+    let key = crate::lock::entry_key(ItemKind::Hook, name, HarnessId::Pi);
+    let item = state.items.iter().find(|item| item.key == key)?;
+    let Artifact::Registration { edits, .. } = &item.artifact else {
+        return None;
+    };
+    edits.iter().find_map(|(_, edit)| match edit {
+        // A disabled hook renders the reversed registration, which names
+        // the same event the enabled one would have been written under.
+        ConfigEdit::UpsertHook { event, .. } => Some(event.clone()),
+        ConfigEdit::RemoveHook { event, .. } => event.clone(),
+        _ => None,
+    })
 }
 
 /// Everything in the reserved directory the lock does not account for.

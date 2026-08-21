@@ -123,7 +123,7 @@ pub fn plan_scope(
     // is planned: a pi hook whose copy under the name pi reserved is not
     // this pass's to take holds whole, so the fresh rendering never
     // quietly takes over from bytes the person kept.
-    let legacy_pi = pi_hooks_move::preflight(env, scope, lock, options);
+    let legacy_pi = pi_hooks_move::preflight(env, scope, lock, options, &state);
 
     plan_pass::plan_items(
         env,

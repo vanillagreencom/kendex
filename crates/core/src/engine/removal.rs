@@ -283,7 +283,7 @@ pub(super) fn orphans(
         // live and still kendex's to account for: its record is the only
         // thing a later pass can claim those files with, so it outlives
         // the sweep whatever else this pass was told to remove.
-        if legacy_pi.holds(&entry.name)
+        if legacy_pi.hold(&entry.name).is_some()
             && entry.kind == ItemKind::Hook
             && entry.harness == crate::model::HarnessId::Pi
         {

@@ -107,7 +107,7 @@ pub(super) fn plan_refusals(
             if removal::edit_holds(env, scope, entry)
                 || (refusal.kind == crate::model::ItemKind::Hook
                     && refusal.harness == crate::model::HarnessId::Pi
-                    && legacy_pi.holds(&refusal.name))
+                    && legacy_pi.hold(&refusal.name).is_some())
             {
                 drift.push(DriftRow {
                     kind: refusal.kind,

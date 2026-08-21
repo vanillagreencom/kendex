@@ -38,16 +38,17 @@ use super::desired::DesiredState;
 use super::removal::TrashGuard;
 use super::targets::disabled_name;
 
-mod claims;
+pub(super) mod claims;
 mod disposal;
 mod identity;
+mod migrated;
 mod preflight;
 mod retire;
 
 use claims::{claim, claims, provenance};
 use disposal::{legacy_registration, plan_directory, plan_registry};
 use identity::{Registered, registered};
-pub(super) use preflight::{Preflight, preflight};
+pub(crate) use preflight::{Hold, Preflight, preflight};
 use retire::{Retire, retirable};
 
 /// The directory name Pi reserved. The registry an earlier kendex wrote
@@ -90,7 +91,17 @@ pub(crate) fn legacy_registry_lives(env: &Env, scope: &Scope) -> bool {
     else {
         return false;
     };
-    preflight(env, scope, &lock, &crate::engine::PlanOptions::default()).legacy_registry_lives()
+    // Nothing is being rendered here, so a hook's identity is what the
+    // record kept and no more — the reading every pass took before one
+    // was rendered to compare with.
+    preflight(
+        env,
+        scope,
+        &lock,
+        &crate::engine::PlanOptions::default(),
+        &crate::engine::desired::DesiredState::default(),
+    )
+    .legacy_registry_lives()
 }
 
 pub(super) fn plan_move(
@@ -213,7 +224,7 @@ pub(super) fn plan_move(
             Retire::Replaced => {}
         }
         take.extend(mine);
-        deregister.push(legacy_registration(entry, scope, &root));
+        deregister.push(legacy_registration(entry, scope, &root, state));
     }
 
     plan_directory(&dir, &ours, &take, !entries.is_empty(), sink);

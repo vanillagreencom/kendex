@@ -44,11 +44,18 @@ pub(super) fn hold_rev_conflict(
     true
 }
 
-/// A pi hook whose copy under the directory pi reserved is not provably
-/// kendex's holds whole. Writing the fresh rendering and registering it
-/// would leave the person's bytes sitting on disk while what runs them
-/// moved to a copy they never saw — the opposite of what holding a file
-/// back is for. Returns true when the item was held back this way.
+/// A pi hook whose installation under the directory pi reserved is not
+/// provably kendex's holds whole. Writing the fresh rendering and
+/// registering it would leave the person's bytes sitting on disk while
+/// what runs them moved to a copy they never saw — the opposite of what
+/// holding a file back is for. Returns true when the item was held back
+/// this way.
+///
+/// The row says which hold this is, because the remedies are not
+/// interchangeable: discarding edits replaces bytes and does nothing at
+/// all for a link, a file that cannot be read, or a registration somebody
+/// moved. Offering it for those would send the person round a loop that
+/// changes nothing and explains nothing.
 pub(super) fn hold_legacy_copy(
     item: &Desired,
     scope: &Scope,
@@ -56,22 +63,25 @@ pub(super) fn hold_legacy_copy(
     held: &super::pi_hooks_move::Preflight,
     sink: &mut PlanSink,
 ) -> bool {
-    if item.kind != crate::model::ItemKind::Hook
-        || item.harness != crate::model::HarnessId::Pi
-        || !held.holds(&item.name)
-    {
+    if item.kind != crate::model::ItemKind::Hook || item.harness != crate::model::HarnessId::Pi {
         return false;
     }
+    let (detail, cause) = match held.hold(&item.name) {
+        None => return false,
+        Some(super::pi_hooks_move::Hold::Edits) => (
+            "its copy under the directory pi reserved is not the one kendex wrote — that copy is what runs; keep it as a fork, or apply with edits discarded".to_owned(),
+            Some(DriftCause::LocalEdit),
+        ),
+        Some(super::pi_hooks_move::Hold::ByHand(why)) => (why.clone(), None),
+    };
     sink.drift.push(DriftRow {
         kind: item.kind,
         name: item.name.clone(),
         harness: item.harness,
         scope: scope.clone(),
         state: DriftState::Conflict,
-        detail:
-            "its copy under the directory pi reserved is not the one kendex wrote — that copy is what runs; keep it as a fork, or apply with edits discarded"
-                .into(),
-        cause: Some(DriftCause::LocalEdit),
+        detail,
+        cause,
     });
     if let Some(entry) = lock.entries.get(&item.key) {
         sink.new_lock

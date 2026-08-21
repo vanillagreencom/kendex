@@ -245,13 +245,17 @@ changes carry a **Breaking** call-out with their migration note inline.
   that kendex cannot account for: a file it did not write, one you edited
   after it was installed, anything that is not a plain file where the
   script was — a directory of your own, say — a hook registration you
-  added, moved or duplicated by hand, and a hook whose source is
+  added, moved or duplicated by hand — moving one to another event holds
+  the hook at both ends, so the entry you moved is never taken out and no
+  second one is registered beside it — and a hook whose source is
   unreachable this run all stay exactly where they are, and that last one completes the move as soon
   as the source is back. A copy kendex cannot prove it wrote keeps its
   whole installation, not just the file — the old copy stays the one that
   runs, and nothing replaces it until you discard the edits — and
   discarding them, or removing the hook by name, finishes the move in that
-  run, leaving one registration and nothing more to say. A hook held that
+  run, leaving one registration and nothing more to say. Each hold says
+  which one it is, so a conflict offers to discard edits only where
+  discarding edits is what settles it. A hook held that
   way still shows up in `kendex list`, in the app, and in the safety scan,
   read from the old registry it fires from, so the copy that needs your
   attention is not the one you cannot see. A registration

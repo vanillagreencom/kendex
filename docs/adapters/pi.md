@@ -62,12 +62,18 @@ never keys, is not mistaken for an install nobody wants. A copy kendex
 cannot prove it wrote holds the whole installation, not just the file:
 its old registration stays live and no fresh rendering takes over. A
 registration kendex cannot take out holds the script it names, so neither
-half is ever left without the other. Discarding edits finishes the move
+half is ever left without the other. A registration is named by its event
+and its command together: the record keeps both for a script-less hook,
+and for a script-backed one the event is the one this pass renders the
+hook under, so a command somebody moved to another listener is held in
+both directions — never taken out, and never registered beside. Discarding edits finishes the move
 in that same pass — the old copy goes to the trash and one registration
 is left. Discarding covers bytes, and only bytes: every gate that lets a
 deletion through asks for a plain file first, so a directory or a link
 left where the script was is held and named, never trashed. Everything held back gets a line saying which
-file and why, and `refresh` prints them. A held hook is also still
+file and why, and `refresh` prints them; the conflict row carries the
+same cause, so a hold discarding edits cannot release never asks for a
+discard. A held hook is also still
 observed where it runs from: while any installation of kendex's remains
 under the reserved name, the registry beside it is a scan surface of its
 own, so `kendex list`, the app and the safety scan carry the copy that is
