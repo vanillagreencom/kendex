@@ -45,7 +45,13 @@ pub(super) fn plan_directory(
     };
     if !strangers.is_empty() {
         each(sink);
-        if !take.is_empty() {
+        // Said whenever kendex still has something under the reserved
+        // name — whether this pass moved it or is holding it — because
+        // either way the directory, and pi's warning with it, outlive
+        // whatever else the person fixes. Once nothing of kendex's is
+        // left there the directory is not its to talk about, so it stops
+        // saying anything at all.
+        if !ours.is_empty() {
             sink.notes.push(format!(
                 "{} also holds files kendex did not write ({}) — pi keeps warning about the directory until they are moved or removed by hand",
                 dir.display(),

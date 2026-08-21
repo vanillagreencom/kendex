@@ -210,6 +210,7 @@ pub(super) fn orphans(
     lock: &Lock,
     state: &desired::DesiredState,
     options: &PlanOptions,
+    legacy_pi: &super::pi_hooks_move::Preflight,
     refused_keys: &BTreeSet<String>,
     guard: &mut TrashGuard,
     drift: &mut Vec<DriftRow>,
@@ -275,6 +276,28 @@ pub(super) fn orphans(
             if unneeded {
                 sweepable.push(super::SetChange::dropped(scope, entry));
             }
+            new_lock.entries.insert(key.clone(), entry.clone());
+            continue;
+        }
+        // An installation the reserved-name move is holding is still
+        // live and still kendex's to account for: its record is the only
+        // thing a later pass can claim those files with, so it outlives
+        // the sweep whatever else this pass was told to remove.
+        if legacy_pi.holds(&entry.name)
+            && entry.kind == ItemKind::Hook
+            && entry.harness == crate::model::HarnessId::Pi
+        {
+            drift.push(DriftRow {
+                kind: entry.kind,
+                name: entry.name.clone(),
+                harness: entry.harness,
+                scope: scope.clone(),
+                state: DriftState::Conflict,
+                detail:
+                    "no longer wanted, but its copy under the directory pi reserved is not the one kendex wrote — that copy still runs; discard the edits to finish moving it, or take it away by hand"
+                        .into(),
+                cause: Some(super::DriftCause::LocalEdit),
+            });
             new_lock.entries.insert(key.clone(), entry.clone());
             continue;
         }

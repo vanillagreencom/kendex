@@ -330,3 +330,31 @@ fn a_directory_that_changed_since_the_preview_is_not_taken() {
     assert!(w.dot().join("hooks/appeared.sh").is_file());
     assert!(w.dot().join("hooks/guard.sh").is_file());
 }
+
+/// Everything left under the reserved name gets its line, including when
+/// nothing moved this pass: fixing the edit is not enough while a
+/// stranger's file is keeping pi's warning alive, and only this line
+/// says so.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_held_file_and_a_stranger_are_both_reported() {
+    let w = regressed();
+    fs::write(
+        w.dot().join("hooks/guard.sh"),
+        "#!/bin/sh\n# mine\nexit 0\n",
+    )
+    .unwrap();
+    fs::write(w.dot().join("hooks/theirs.sh"), "#!/bin/sh\n").unwrap();
+
+    let said = audit(&w.env, &w.scope()).unwrap().notes;
+
+    assert!(
+        said.iter().any(|note| note.contains("was edited on disk")),
+        "{said:?}"
+    );
+    assert!(
+        said.iter()
+            .any(|note| note.contains("did not write") && note.contains("theirs.sh")),
+        "the stranger keeping the warning alive has to be said too: {said:?}"
+    );
+}

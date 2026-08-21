@@ -80,6 +80,7 @@ pub(super) fn plan_refusals(
     scope: &Scope,
     lock: &Lock,
     state: &desired::DesiredState,
+    legacy_pi: &super::pi_hooks_move::Preflight,
     guard: &mut removal::TrashGuard,
     drift: &mut Vec<DriftRow>,
     ops: &mut Vec<PlannedOp>,
@@ -100,7 +101,14 @@ pub(super) fn plan_refusals(
             // an automatic casualty of an upstream change (that is the
             // exact promise of edit protection), so they hold and the
             // conflict says why.
-            if removal::edit_holds(env, scope, entry) {
+            // The reserved-name move's hold counts here too: what it is
+            // holding is still what runs, and its record is the only
+            // thing a later pass can claim it with.
+            if removal::edit_holds(env, scope, entry)
+                || (refusal.kind == crate::model::ItemKind::Hook
+                    && refusal.harness == crate::model::HarnessId::Pi
+                    && legacy_pi.holds(&refusal.name))
+            {
                 drift.push(DriftRow {
                     kind: refusal.kind,
                     name: refusal.name.clone(),
