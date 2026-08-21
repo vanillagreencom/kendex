@@ -60,6 +60,23 @@ check_order() {
 
 check_order "$REVIEW_PR_WF" "review-pr.md gates the fix round before delegating it"
 
+# The phrase alone is not the contract: a gate that fires at two or four, or
+# that names no cycle at all, reads the same and bounds nothing.
+GATE_LINE="$(grep -m1 "$GATE_RE" "$REVIEW_PR_WF" || true)"
+if printf '%s' "$GATE_LINE" | grep -q '`cycles` 3'; then
+  pass "the gate names the cycle it starts at"
+else
+  fail "the gate does not pin a threshold, so it bounds nothing"
+fi
+
+# It has to keep applying past the third, or the round answering the
+# verification pass — the one most likely to be patching — escapes it.
+if printf '%s' "$GATE_LINE" | grep -qi 'from `cycles` 3 on'; then
+  pass "the gate applies from that cycle onward, not at it alone"
+else
+  fail "the gate applies to one cycle only, so later rounds escape it"
+fi
+
 # The decision has to land somewhere the panel-scoping write does not clobber.
 if grep -q "workflow-state set \[ISSUE_ID\] convergence" "$REVIEW_PR_WF"; then
   pass "review-pr.md records the decision in its own key"
@@ -107,6 +124,14 @@ plant() {
   sed "$prog" "$REVIEW_PR_WF" > "$scratch"
   printf '%s' "$scratch"
 }
+
+CTRL_THRESHOLD="$(plant threshold 's/From .cycles. 3 on, converge/Converge/')"
+CTRL_LINE="$(grep -m1 "$GATE_RE" "$CTRL_THRESHOLD" || true)"
+if printf '%s' "$CTRL_LINE" | grep -q '`cycles` 3'; then
+  fail "control: a gate with its threshold removed still reads as pinned"
+else
+  pass "control: a gate with no threshold is detectable"
+fi
 
 CTRL_MISSING="$(plant missing "/$GATE_RE/d")"
 if [[ -z "$(line_of "$CTRL_MISSING" "$GATE_RE" || true)" ]]; then
