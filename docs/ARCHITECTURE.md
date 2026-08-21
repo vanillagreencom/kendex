@@ -558,10 +558,14 @@ lives in one capability table read by core and UI.
   files this scope's lock names whose bytes hash to what apply wrote,
   holding a still-declared hook this pass could not render — the whole
   installation, registration included — and saying what it left and why.
+  Discarding edits or naming the hook for removal releases a hold over
+  bytes, never over a directory or a link somebody left where the script
+  was: both gates (`claims::provenance` and `preflight::discardable`) ask
+  for a plain file in the same words.
   A hook held that way runs from the old registry and nowhere else, so
   Pi's hook surface list carries that registry too for as long as an
   installation of kendex's is still under the reserved name
-  (`preflight::legacy_registry_lives`) and drops it once none is. An event outside that map cannot fire on Pi and
+  (`pi_hooks_move::legacy_registry_lives`) and drops it once none is. An event outside that map cannot fire on Pi and
   installs nothing there, said as a note. The capability row says what the
   mechanism supports; the surfaces that label an installation read carrier
   reality (`pi_ext::carrier`), and Pi loads project and global settings

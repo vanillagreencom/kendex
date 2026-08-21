@@ -107,8 +107,13 @@ fn whole(description: String, dir: &Path, ours: &BTreeSet<OsString>, sink: &mut 
     // own. The caller only asks about a directory whose every child it
     // claims, and a claimed child is always a plain file — this makes
     // that a check instead of an argument.
-    if !every_child_is_a_plain_file(dir) {
-        return;
+    match every_child_is_a_plain_file(dir) {
+        Ok(true) => {}
+        Ok(false) => return,
+        Err(note) => {
+            sink.notes.push(note);
+            return;
+        }
     }
     let proven = match crate::hash::hash_tree(dir) {
         Ok(proven) => proven,
@@ -128,13 +133,25 @@ fn whole(description: String, dir: &Path, ours: &BTreeSet<OsString>, sink: &mut 
 
 /// Whether nothing in this directory is a link, a subdirectory, or
 /// anything else that reading it would follow out of the directory.
-fn every_child_is_a_plain_file(dir: &Path) -> bool {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
-    };
-    entries.flatten().all(|entry| {
-        std::fs::symlink_metadata(entry.path()).is_ok_and(|meta| meta.file_type().is_file())
-    })
+///
+/// A child the listing could not produce or could not stat is not proof
+/// of anything, so it fails the check and says so rather than dropping
+/// out of it: what this answers authorizes taking the whole directory,
+/// and a listing with a hole in it has proved nothing about what is in
+/// the hole. `Err` carries the line the caller has to print.
+fn every_child_is_a_plain_file(dir: &Path) -> std::result::Result<bool, String> {
+    let entries = std::fs::read_dir(dir).map_err(|error| list_note(dir, &error.to_string()))?;
+    for entry in entries {
+        let path = entry
+            .map_err(|error| list_note(dir, &error.to_string()))?
+            .path();
+        match std::fs::symlink_metadata(&path) {
+            Ok(meta) if meta.file_type().is_file() => {}
+            Ok(_) => return Ok(false),
+            Err(error) => return Err(super::unreadable_note(&path, &error.to_string())),
+        }
+    }
+    Ok(true)
 }
 
 fn list_note(dir: &Path, error: &str) -> String {
@@ -304,14 +321,42 @@ mod tests {
         )
         .unwrap();
 
-        assert!(!every_child_is_a_plain_file(&dir));
+        assert_eq!(every_child_is_a_plain_file(&dir), Ok(false));
         // And the caller's own answer, for a directory of plain files.
         std::fs::remove_file(dir.join("theirs")).unwrap();
-        assert!(every_child_is_a_plain_file(&dir));
+        assert_eq!(every_child_is_a_plain_file(&dir), Ok(true));
         std::fs::set_permissions(
             &outside,
             std::os::unix::fs::PermissionsExt::from_mode(0o755),
         )
         .unwrap();
+    }
+
+    /// The other half of that guarantee: a child the proof could not look
+    /// at is not one it may pass over. Dropped from the check it would
+    /// leave a directory reading as entirely kendex's while holding
+    /// something nobody could see — and that reading is what authorizes
+    /// taking the whole directory.
+    #[test]
+    #[cfg(unix)]
+    #[allow(clippy::unwrap_used)]
+    fn a_child_this_process_cannot_stat_fails_the_proof() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("hooks");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("guard.sh"), "#!/bin/sh\n").unwrap();
+        // Listable but not traversable: the names come back, and stat-ing
+        // any of them does not.
+        std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o444))
+            .unwrap();
+
+        let answer = every_child_is_a_plain_file(&dir);
+        std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        let note = answer.unwrap_err();
+        assert!(
+            note.contains("guard.sh") && note.contains("could not read"),
+            "the child that could not be looked at is named: {note}"
+        );
     }
 }

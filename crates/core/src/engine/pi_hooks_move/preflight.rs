@@ -10,7 +10,7 @@
 
 use std::collections::BTreeSet;
 
-use super::{Found, LEGACY_DIR, legacy_files, look, provenance};
+use super::{Found, LEGACY_DIR, legacy_files, look, plain_file, provenance};
 use crate::env::Env;
 use crate::harness::pi;
 use crate::lock::{Lock, LockEntry};
@@ -174,9 +174,11 @@ fn discarding(options: &crate::engine::PlanOptions, name: &str) -> bool {
 
 /// Bytes a discard covers: a plain file that is readable. Discarding is
 /// permission to replace someone's edits, never permission to guess at a
-/// file kendex cannot read at all.
+/// file kendex cannot read at all — and never permission to take a
+/// directory tree somebody put where the script was, which `hash_tree`
+/// would hash as happily as a file.
 fn discardable(path: &std::path::Path) -> bool {
-    crate::hash::hash_tree(path).is_ok()
+    plain_file(path) && crate::hash::hash_tree(path).is_ok()
 }
 
 /// Whether this hook's installation has already finished moving. Two

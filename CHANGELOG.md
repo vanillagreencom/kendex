@@ -243,9 +243,10 @@ changes carry a **Breaking** call-out with their migration note inline.
   takes the directory away with it — including for a hook you removed or
   switched off, which leaves nothing behind to keep firing. Nothing moves
   that kendex cannot account for: a file it did not write, one you edited
-  after it was installed, a hook registration you added, moved or
-  duplicated by hand, and a hook whose source is unreachable this run all
-  stay exactly where they are, and that last one completes the move as soon
+  after it was installed, anything that is not a plain file where the
+  script was — a directory of your own, say — a hook registration you
+  added, moved or duplicated by hand, and a hook whose source is
+  unreachable this run all stay exactly where they are, and that last one completes the move as soon
   as the source is back. A copy kendex cannot prove it wrote keeps its
   whole installation, not just the file — the old copy stays the one that
   runs, and nothing replaces it until you discard the edits — and

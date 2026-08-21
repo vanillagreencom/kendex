@@ -173,3 +173,71 @@ fn a_clean_copy_at_the_new_path_is_not_a_finished_move() {
         "and nothing took execution from it"
     );
 }
+
+/// Discarding edits is permission to replace bytes kendex wrote at a file
+/// path, and a removal is permission to be rid of them. A directory
+/// somebody put there is neither — `hash_tree` would hash the whole tree
+/// as happily as a file, so the gates have to ask what is at the path and
+/// not only whether it can be read. The installation holds whole, as it
+/// does for every other copy kendex cannot claim.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_directory_where_the_script_was_is_never_taken() {
+    for (asked, options) in [
+        (
+            "edits discarded",
+            PlanOptions {
+                overwrite_edited: true,
+                ..PlanOptions::default()
+            },
+        ),
+        (
+            "removed by name",
+            PlanOptions {
+                remove_orphans: true,
+                removal_filter_typed: Some(vec![(ItemKind::Hook, "guard".to_owned())]),
+                ..PlanOptions::default()
+            },
+        ),
+    ] {
+        let w = regressed();
+        let theirs = w.dot().join("hooks/guard.sh");
+        fs::remove_file(&theirs).unwrap();
+        fs::create_dir(&theirs).unwrap();
+        fs::write(theirs.join("notes.md"), "mine\n").unwrap();
+
+        let report = plan_apply(&w.env, &w.scope(), &options).unwrap();
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|note| note.contains("guard.sh") && note.contains("not a plain file")),
+            "{asked}: the person is told what is in the way: {:?}",
+            report.notes
+        );
+        kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(theirs.join("notes.md")).unwrap(),
+            "mine\n",
+            "{asked}: a directory of theirs is never what a discard takes"
+        );
+        assert!(
+            !w.dot().join("kendex/hooks/guard.sh").exists(),
+            "{asked}: and nothing takes over from a copy kendex cannot claim"
+        );
+        assert!(
+            fs::read_to_string(w.dot().join("hooks.json"))
+                .unwrap()
+                .contains(".pi/hooks/guard.sh"),
+            "{asked}: what runs the hook stays with it"
+        );
+        let lock: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(w.project.join(".kendex-lock.json")).unwrap())
+                .unwrap();
+        assert!(
+            lock["entries"].get("hook:guard:pi").is_some(),
+            "{asked}: the record is the only thing that can claim the path later: {lock}"
+        );
+    }
+}

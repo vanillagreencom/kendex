@@ -64,7 +64,9 @@ its old registration stays live and no fresh rendering takes over. A
 registration kendex cannot take out holds the script it names, so neither
 half is ever left without the other. Discarding edits finishes the move
 in that same pass — the old copy goes to the trash and one registration
-is left. Everything held back gets a line saying which
+is left. Discarding covers bytes, and only bytes: every gate that lets a
+deletion through asks for a plain file first, so a directory or a link
+left where the script was is held and named, never trashed. Everything held back gets a line saying which
 file and why, and `refresh` prints them. A held hook is also still
 observed where it runs from: while any installation of kendex's remains
 under the reserved name, the registry beside it is a scan surface of its
