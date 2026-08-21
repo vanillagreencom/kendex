@@ -70,6 +70,39 @@ describe("publisherGroups", () => {
     expect(authorSettledCount(rows)).toBe(3);
   });
 
+  // Two tools locked to different revisions whose item bytes are identical
+  // share a review hash, and the publisher can have changed their mind
+  // between the two — or simply re-recorded the same call at a later date.
+  // One entry can show one reason and one date, so merging prints a
+  // judgement made for one tool over the other.
+  it("keeps one publisher's two decisions apart, each with its own reason", () => {
+    const reconsidered = decision({
+      fingerprint: "p",
+      state: {
+        state: "author-dismissed",
+        reason: "wrong-call",
+        dismissedAt: "2026-08-19T00:00:00Z",
+        publisher: "vanillagreencom/kendex",
+      },
+    });
+    const groups = publisherGroups([
+      row({ harness: "claude", decisions: [settledByPublisher] }),
+      row({ harness: "codex", decisions: [reconsidered] }),
+    ]);
+    expect(groups).toHaveLength(2);
+    expect(groups.map((group) => group.reason)).toEqual([
+      "intended",
+      "wrong-call",
+    ]);
+    expect(groups.map((group) => group.dismissedAt)).toEqual([
+      "2026-08-16T00:00:00Z",
+      "2026-08-19T00:00:00Z",
+    ]);
+    expect(
+      groups.map((group) => group.items.map((item) => item.harness)),
+    ).toEqual([["claude"], ["codex"]]);
+  });
+
   it("keeps different bytes apart", () => {
     const other = row({
       name: "other",

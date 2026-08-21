@@ -43,8 +43,11 @@ fn a_kind_that_carries_project_text_and_reports_none_reads_as_unreadable() {
     for kind in [ItemKind::Skill, ItemKind::Agent] {
         assert!(
             matches!(
-                authored_for(&without_authored(kind)).content,
-                Content::Unread { .. }
+                authored_for(&without_authored(kind)),
+                Authored::Rendered {
+                    publishers: Content::Unread { .. },
+                    ..
+                }
             ),
             "{kind:?} settles nothing when its own content cannot be told apart"
         );
@@ -52,10 +55,10 @@ fn a_kind_that_carries_project_text_and_reports_none_reads_as_unreadable() {
 }
 
 /// And the other half: a kind whose rendering takes nothing from the
-/// project needs no separate rendering, because what installs is already
-/// the publisher's own.
+/// project has no block in it, because what installs is already the
+/// publisher's own from end to end.
 #[test]
-fn a_kind_that_carries_none_reads_what_installs() {
+fn a_kind_that_carries_none_is_the_publishers_throughout() {
     for kind in [
         ItemKind::Command,
         ItemKind::Hook,
@@ -63,11 +66,10 @@ fn a_kind_that_carries_none_reads_what_installs() {
         ItemKind::Plugin,
         ItemKind::PiExtension,
     ] {
-        let item = without_authored(kind);
         assert_eq!(
-            authored_for(&item).content,
-            input_for(&item).content,
-            "{kind:?} reads what installs"
+            authored_for(&without_authored(kind)),
+            Authored::Around(None),
+            "{kind:?} is the publisher's throughout"
         );
     }
 }

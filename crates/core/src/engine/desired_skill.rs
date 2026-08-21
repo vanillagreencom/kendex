@@ -5,6 +5,7 @@ use crate::hash::{hash_files, installation_hash};
 use crate::lock::entry_key;
 use crate::manifest::Method;
 use crate::model::{HarnessId, ItemKind, Scope};
+use crate::render::agent::merged_instructions;
 use crate::render::skill::render_skill;
 
 use super::desired::{Artifact, Desired, DesiredState, ItemCtx, native_dir, skill_canonical};
@@ -32,9 +33,9 @@ struct Variant {
     files: Files,
     hash: String,
     refused: bool,
-    /// The same tree from the publisher's own bytes, where a record needs
+    /// How much of this tree its publisher wrote, where a record needs
     /// measuring against it.
-    authored: Option<Files>,
+    authored: Option<crate::quality::Authored>,
 }
 
 /// The tools that read a skill directory another tool owns, and what each
@@ -176,11 +177,7 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
                 emitted: None,
                 reasons: ctx.reasons_for(*harness),
                 author_review: ctx.author_review.clone(),
-                authored: variant.authored.as_deref().map(|files| {
-                    crate::quality::Content::SkillTree {
-                        files: crate::quality::observe::tree_files_from_bytes(files),
-                    }
-                }),
+                authored: variant.authored.clone(),
                 artifact: Artifact::Tree {
                     canonical: canonical.clone(),
                     files: variant.files.clone(),
@@ -242,10 +239,7 @@ fn render_variant(
     group: &SurfaceGroup,
     enabled: bool,
 ) -> Result<Variant> {
-    let authored = match ctx.author_review.is_some() {
-        true => authored_variant(ctx, group)?,
-        false => None,
-    };
+    let instructions = merged_instructions(&ctx.manifest.skill_instructions, ctx.name);
     let mut files = render_skill(ctx.sealed, ctx.item_path, ctx.manifest, ctx.name)?;
     // A skill from a plugin-registry catalog installs under its plugin, and the
     // catalog's own SKILL.md knows nothing of that: the copy carries the
@@ -343,12 +337,50 @@ fn render_variant(
         }
     }
     let hash = hash_files(&files);
+    let authored = match ctx.author_review.is_some() {
+        true => authored_tree(&files, instructions.is_some()),
+        false => None,
+    };
     Ok(Variant {
         files,
         hash,
         refused: false,
         authored,
     })
+}
+
+/// How much of this rendered tree its publisher wrote: everything outside
+/// the project's instructions block, a boundary the renderer put there
+/// rather than anything read back out of the text.
+///
+/// Saying it as a boundary is what carries an occurrence through the split.
+/// The block stays in the head while the publisher's own sections move to
+/// `references/`, so their line lands in another file and one severity
+/// lighter than a rendering of their bytes alone puts it — nothing to match
+/// it to there, while a boundary has nothing to match. It is then settled
+/// at the weight it is scored at, which is the only weight that matters.
+///
+/// `None` when the project supplied instructions and the rendering carries
+/// no block for them: nothing here can then say which lines are whose, and
+/// a record that cannot be bounded settles nothing.
+fn authored_tree(files: &Files, injected: bool) -> Option<crate::quality::Authored> {
+    let block = files.iter().find_map(|(rel, bytes)| {
+        let text = std::str::from_utf8(bytes).ok()?;
+        let (start, end) = crate::render::skill::instructions_block_range(text)?;
+        Some(crate::quality::Injection {
+            file: rel.clone(),
+            lines: (line_at(text, start), line_at(text, end.saturating_sub(1))),
+        })
+    });
+    match (injected, &block) {
+        (true, None) => None,
+        _ => Some(crate::quality::Authored::Around(block)),
+    }
+}
+
+/// The line an offset falls on, counted from one, as a location names it.
+fn line_at(text: &str, offset: usize) -> usize {
+    text[..offset].lines().count().max(1)
 }
 
 /// The tightest body cap any member of this group enforces, and the member
@@ -364,25 +396,4 @@ fn tightest_cap(group: &SurfaceGroup) -> Option<(usize, HarnessId)> {
                 .map(|c| (c, *h))
         })
         .min_by_key(|(cap, _)| *cap)
-}
-
-/// The publisher's own tree, through exactly the transformations the real
-/// rendering applies to theirs: the installed name, and the tightest
-/// member's body cap. Every warning and refusal this raises is the real
-/// rendering's to report, so they are dropped here; a refusal means there
-/// is no publisher-only tree to compare against, and the record then
-/// settles nothing.
-fn authored_variant(ctx: &ItemCtx, group: &SurfaceGroup) -> Result<Option<Files>> {
-    let mut files = crate::render::skill::render_authored(ctx.sealed, ctx.item_path)?;
-    if group.installed != ctx.name {
-        crate::render::skill::set_skill_name(&mut files, &group.installed);
-    }
-    if let Some((cap, _)) = tightest_cap(group) {
-        let outcome = crate::render::split::enforce_body_cap(files, cap);
-        if outcome.refusal.is_some() {
-            return Ok(None);
-        }
-        files = outcome.files;
-    }
-    Ok(Some(files))
 }

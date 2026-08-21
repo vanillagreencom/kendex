@@ -304,23 +304,20 @@ fn earned_by<'a>(
     let authored = super::gate::input::authored_for(planned);
     // Read at the path these bytes are *here*, not the one the plan would
     // write them to. A finding names the file it was found in, and the same
-    // tree is loaded by several tools from several places — an alignment
-    // against the plan's own path would match none of them.
-    let here = |input: crate::quality::AuditInput| crate::quality::AuditInput {
+    // tree is loaded by several tools from several places — a boundary or
+    // an alignment against the plan's own path would match none of them.
+    let real = crate::quality::AuditInput {
         location: at.to_owned(),
-        ..input
+        ..super::gate::input::input_for(planned)
     };
+    let publishers = crate::quality::publishers(real, &authored, findings);
     Published {
         review,
         earned: Some(crate::quality::author::Budget::earned(
             review,
-            &crate::quality::audit(authored.clone()).findings,
+            &publishers.findings,
         )),
-        theirs: Some(crate::quality::authored_by(
-            here(super::gate::input::input_for(planned)),
-            here(authored),
-            findings,
-        )),
+        theirs: Some(publishers.theirs),
         unbuilt: None,
     }
 }

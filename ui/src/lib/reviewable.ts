@@ -95,23 +95,25 @@ export interface PublisherGroup {
  *  grouping. The other two are not: two differently named commands can
  *  carry identical bytes, and a review hash seals the kind and the bytes
  *  alone — merging them would print one catalog's name over content it
- *  never saw, which is the one thing this list exists to state. */
+ *  never saw, which is the one thing this list exists to state.
+ *
+ *  So are the reason and the date, for the same reason. Two tools can sit
+ *  at revisions whose bytes are identical while the record between them
+ *  changed — `wrong-call` re-recorded as `intended` — and an entry can
+ *  only show one reason and one date. Merging those prints a judgement the
+ *  publisher made for one tool over the other, on the one surface built to
+ *  disclose what they actually decided. */
 export function publisherGroups(rows: ItemSafety[]): PublisherGroup[] {
   const ordered: PublisherGroup[] = [];
   const byEvidence = new Map<string, PublisherGroup>();
   for (const { row, finding, decision } of authorOccurrences(rows)) {
     if (decision.state.state !== "author-dismissed") continue;
     const content = row.reviewHash ?? `${row.kind}:${row.name}`;
-    const key = `${content}::${row.kind}:${row.name}::${decision.state.publisher}::${decision.fingerprint}`;
+    const { publisher, reason, dismissedAt } = decision.state;
+    const key = `${content}::${row.kind}:${row.name}::${publisher}::${reason}::${dismissedAt}::${decision.fingerprint}`;
     let group = byEvidence.get(key);
     if (!group) {
-      group = {
-        finding,
-        reason: decision.state.reason,
-        dismissedAt: decision.state.dismissedAt,
-        publisher: decision.state.publisher,
-        items: [],
-      };
+      group = { finding, reason, dismissedAt, publisher, items: [] };
       byEvidence.set(key, group);
       ordered.push(group);
     }

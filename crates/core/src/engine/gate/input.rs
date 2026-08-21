@@ -2,7 +2,7 @@
 
 use crate::configedit::ConfigEdit;
 use crate::model::ItemKind;
-use crate::quality::{AuditInput, Content, McpEntry, UNREADABLE_PLUGIN};
+use crate::quality::{AuditInput, Authored, Content, McpEntry, UNREADABLE_PLUGIN};
 
 use super::super::desired::{Artifact, Desired};
 
@@ -36,8 +36,8 @@ pub(in crate::engine) fn input_for(item: &Desired) -> AuditInput {
     }
 }
 
-/// This item as its publisher wrote it — what their record is allowed to
-/// answer for, and nothing else.
+/// How much of this item its publisher wrote — what their record is
+/// allowed to answer for, and nothing else.
 ///
 /// The builder that rendered the artifact reports it; nothing here derives
 /// it back out of the rendered text, because text a project supplied can
@@ -47,12 +47,12 @@ pub(in crate::engine) fn input_for(item: &Desired) -> AuditInput {
 /// reads as unreadable — so the record settles nothing and the plan says a
 /// carried review did not apply, which is the direction a mistake here has
 /// to fail in.
-pub(in crate::engine) fn authored_for(item: &Desired) -> AuditInput {
-    let input = input_for(item);
-    let content = match (&item.authored, item.kind) {
+pub(in crate::engine) fn authored_for(item: &Desired) -> Authored {
+    match (&item.authored, item.kind) {
         (Some(authored), _) => authored.clone(),
         // Nothing in these renderings comes from the project: the
-        // publisher's bytes are the whole of what is read.
+        // publisher's bytes are the whole of what is read, so there is no
+        // block in them and no line of one.
         //
         // This arm is a standing obligation on the renderers, and the one
         // half of this match the compiler cannot hold. A new kind cannot be
@@ -61,7 +61,7 @@ pub(in crate::engine) fn authored_for(item: &Desired) -> AuditInput {
         // clean and silently widens every publisher review for that kind,
         // which is the failure this whole match exists to prevent. Adding
         // project text to any kind listed here means moving it to the arm
-        // below and giving its builder an `authored` rendering to report.
+        // below and making its builder report where that text went.
         (
             None,
             ItemKind::Command
@@ -69,19 +69,21 @@ pub(in crate::engine) fn authored_for(item: &Desired) -> AuditInput {
             | ItemKind::McpServer
             | ItemKind::Plugin
             | ItemKind::PiExtension,
-        ) => input.content.clone(),
+        ) => Authored::Around(None),
         // These two carry project text — `[skill-instructions]`, and
         // everything in `desired_agent::Project`. Their builders owe an
-        // `authored` rendering beside the real one; reaching here means one
-        // did not produce it, which a body-cap refusal or a harness that
-        // cannot express the agent both do. Unreadable is the answer:
-        // nothing is settled, and the plan says a carried review did not
-        // apply.
-        (None, ItemKind::Skill | ItemKind::Agent) => Content::Unread {
-            why: "kendex could not tell this item's own content from this project's",
+        // answer beside the artifact; reaching here means one did not give
+        // it, which a body-cap refusal, a harness that cannot express the
+        // agent, and instructions whose block the rendering does not carry
+        // all do. Unreadable is the answer: nothing is settled, and the
+        // plan says a carried review did not apply.
+        (None, ItemKind::Skill | ItemKind::Agent) => Authored::Rendered {
+            publishers: Content::Unread {
+                why: "kendex could not tell this item's own content from this project's",
+            },
+            supplied: std::collections::BTreeSet::new(),
         },
-    };
-    AuditInput { content, ..input }
+    }
 }
 
 type Script = (std::path::PathBuf, Vec<u8>);

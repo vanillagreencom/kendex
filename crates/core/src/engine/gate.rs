@@ -178,26 +178,26 @@ pub(super) fn run(
         // and splits over-cap bodies out of. The record was bound to the
         // source bytes when it was read; that binding is not re-checked at
         // this distance from it.
-        let earned = item
-            .author_review
-            .as_ref()
-            .map(|review| {
-                let authored = crate::quality::audit(input::authored_for(&item));
-                Budget::earned(review, &authored.findings)
-            })
-            .unwrap_or_default();
-        // Which of these the publisher's own rendering produced, so the
-        // budget is spent on their occurrences rather than on whichever
-        // sorted first.
-        let theirs = item.author_review.as_ref().map(|_| {
-            crate::quality::authored_by(
+        //
+        // Which occurrences are the publisher's and what their record has
+        // earned are one derivation: a record answers for their
+        // occurrences, at the weight this artifact gives each of them.
+        let publishers = item.author_review.as_ref().map(|_| {
+            crate::quality::publishers(
                 input_for(&item),
-                input::authored_for(&item),
+                &input::authored_for(&item),
                 &result.findings,
             )
         });
-        let scored =
-            crate::quality::author::score(&result.findings, &earned.budget, theirs.as_deref());
+        let earned = match (&item.author_review, &publishers) {
+            (Some(review), Some(publishers)) => Budget::earned(review, &publishers.findings),
+            _ => Default::default(),
+        };
+        let scored = crate::quality::author::score(
+            &result.findings,
+            &earned.budget,
+            publishers.as_ref().map(|found| found.theirs.as_slice()),
+        );
         let (verdict, reasons) =
             crate::quality::verdict(&scored.counted, &scored.safety, thresholds);
         // A record that named findings nothing here carries is not the same

@@ -42,6 +42,35 @@ pub(super) struct Project<'a> {
 }
 
 impl Project<'_> {
+    /// The text this project hands the renderer, line by line.
+    ///
+    /// Prose reaches the document as lines of its own, verbatim, so it is
+    /// the one contribution that can read the same as a line the publisher
+    /// wrote — and a project that repeats a reviewed sentence word for word
+    /// would otherwise take the credit for it, since its copy comes first.
+    /// Every other input here is a value inside a line the renderer writes,
+    /// which can only read the same as the publisher's when it *is* what
+    /// they wrote: overriding a key with the value already there changes no
+    /// line and adds no occurrence, and a hook or a skill entry has no
+    /// counterpart in a rendering that has none of them.
+    ///
+    /// Destructured like `is_empty`, so an input added without an answer
+    /// here does not compile.
+    pub(super) fn supplied_lines(&self) -> std::collections::BTreeSet<String> {
+        let Project {
+            launch_instructions,
+            additional_instructions,
+            frontmatter: _,
+            skills: _,
+            custom_hooks: _,
+        } = self;
+        [launch_instructions, additional_instructions]
+            .into_iter()
+            .flatten()
+            .flat_map(|text| text.lines().map(str::to_owned))
+            .collect()
+    }
+
     /// Whether this project contributes nothing to the rendering.
     fn is_empty(&self) -> bool {
         let Project {

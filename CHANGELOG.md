@@ -47,34 +47,42 @@ changes carry a **Breaking** call-out with their migration note inline.
   holding the catalog back for that exact finding on that exact content. The
   decision reaches whoever installs the item too: the finding stops counting
   for them, is still shown, and is labelled with the publisher's name and
-  reason so it is clear whose judgement it is. It settles only what the
-  publisher wrote — as many occurrences as their own bytes carried, each
-  carrying the weight theirs did, and their occurrence rather than yours, so
-  nothing a project adds to the item rides in on a reviewed finding however
-  serious it reads and no line your project injected is ever shown under a
-  publisher's name; and a review is only ever read out of the catalog that
-  published it. Your install record keeps no copy: kendex rebuilds what each
-  installation should be, from the catalog at the revision that installation
-  came from — one package can sit at two revisions when a refresh goes
-  through for one tool and not another — and reads the review there. A
-  package you have not fetched, and content that is not what its catalog
-  publishes, settle nothing. It can only carry reasons an author can give: a
-  hand-written `trusted-source` record is refused on the installing machine.
-  Any edit to the item, in the catalog or on the installed copy, brings the
-  hold back, as does an edit to anything else the catalog renders it from —
-  an agent's frontmatter overrides, or the set of skills it goes out with. A
-  record that settles nothing where it lands — stale, refused, or naming a
-  finding that is not there — says so rather than passing in silence. A hook
-  cannot carry one: it is scored from its script before it installs and from
-  the harness's settings file afterwards, two readings of different bytes,
-  so `dismiss --catalog` refuses a hook token and says why — a hook author
-  answers a false positive by narrowing the script or by getting the rule
-  fixed, and there is no record they can write instead. `check --catalog`
-  prints the token beside each finding it can be used on. A review in a
-  publisher's name is worth more than your own dismissal — yours settles a
-  question, theirs can lift a hold — so none of it is taken from a file your
-  project commits: an installation whose content is not what its catalog
-  publishes is told so plainly, and settles nothing.
+  reason so it is clear whose judgement it is — and where the publisher
+  decided differently for two tools, each decision is listed with its own
+  reason and date rather than the first one standing in for both. It settles
+  only what the publisher wrote — their occurrences rather than yours, each
+  at the weight the installed copy gives it — so nothing a project adds to
+  the item rides in on a reviewed finding however serious it reads, and no
+  line your project injected is ever shown under a publisher's name. Adding
+  instructions to a skill cannot cost the publisher their review either,
+  even when the added bytes are what pushes the file past a tool's size
+  limit and moves their line into `references/`. Where a project repeats a
+  publisher's sentence word for word in an agent's instructions, neither
+  copy is shown as reviewed and the report says the review settled nothing:
+  an open finding is a question you can answer, where your own text under
+  someone else's name is not. A review is only ever read out of the catalog
+  that published it. Your install record keeps no copy: kendex rebuilds what
+  each installation should be, from the catalog at the revision that
+  installation came from — one package can sit at two revisions when a
+  refresh goes through for one tool and not another — and reads the review
+  there. A package you have not fetched, and content that is not what its
+  catalog publishes, settle nothing. It can only carry reasons an author can
+  give: a hand-written `trusted-source` record is refused on the installing
+  machine. Any edit to the item, in the catalog or on the installed copy,
+  brings the hold back, as does an edit to anything else the catalog renders
+  it from — an agent's frontmatter overrides, or the set of skills it goes
+  out with. A record that settles nothing where it lands — stale, refused,
+  or naming a finding that is not there — says so rather than passing in
+  silence. A hook cannot carry one: it is scored from its script before it
+  installs and from the harness's settings file afterwards, two readings of
+  different bytes, so `dismiss --catalog` refuses a hook token and says why
+  — a hook author answers a false positive by narrowing the script or by
+  getting the rule fixed, and there is no record they can write instead.
+  `check --catalog` prints the token beside each finding it can be used on.
+  A review in a publisher's name is worth more than your own dismissal —
+  yours settles a question, theirs can lift a hold — so none of it is taken
+  from a file your project commits: an installation whose content is not
+  what its catalog publishes is told so plainly, and settles nothing.
 ### Changed
 
 - The Updates page is a table with one row per package. A package out of

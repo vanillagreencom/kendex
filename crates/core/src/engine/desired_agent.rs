@@ -189,23 +189,22 @@ pub(super) fn desired_agent(
         let namespaced = installed_under(&parsed, ctx.name, &installed);
         let source_agent = namespaced.as_ref().unwrap_or(&parsed);
         notice_overrides(ctx, state, harness, source_agent, &parsed, &skills);
-        let effective = effective_agent(
-            ctx,
-            source_agent,
-            harness,
-            &skills.upstream_now,
-            gathered(ctx, &parsed, harness, &skills.effective),
-        );
+        let project = gathered(ctx, &parsed, harness, &skills.effective);
+        let supplied = project.supplied_lines();
+        let effective = effective_agent(ctx, source_agent, harness, &skills.upstream_now, project);
         // The publisher's own: this project contributes nothing to it, by
         // construction rather than by a list of what to leave out.
         let authored = ctx.author_review.as_ref().and_then(|_| {
-            authored_agent(&effective_agent(
-                ctx,
-                source_agent,
-                harness,
-                &skills.upstream_now,
-                Project::default(),
-            ))
+            authored_agent(
+                &effective_agent(
+                    ctx,
+                    source_agent,
+                    harness,
+                    &skills.upstream_now,
+                    Project::default(),
+                ),
+                supplied,
+            )
         });
         let Some(rendered) = render_or_refuse(ctx, state, harness, &effective) else {
             continue;
@@ -311,11 +310,17 @@ fn render_or_refuse(
 /// backwards for text a project could have written to look like anything.
 /// `None` where the publisher's own inputs render to nothing this harness
 /// can hold, which settles nothing.
-fn authored_agent(publishers: &EffectiveAgent) -> Option<crate::quality::Content> {
+fn authored_agent(
+    publishers: &EffectiveAgent,
+    supplied: std::collections::BTreeSet<String>,
+) -> Option<crate::quality::Authored> {
     generate(publishers)
         .ok()
-        .map(|rendered| crate::quality::Content::Document {
-            text: rendered.text,
+        .map(|rendered| crate::quality::Authored::Rendered {
+            publishers: crate::quality::Content::Document {
+                text: rendered.text,
+            },
+            supplied,
         })
 }
 

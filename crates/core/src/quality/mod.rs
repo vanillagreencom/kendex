@@ -19,7 +19,7 @@ use specta::Type;
 use crate::model::{HarnessId, ItemKind};
 
 pub mod author;
-pub mod authorship;
+mod authorship;
 pub mod dimensions;
 mod finding;
 mod homoglyph;
@@ -32,7 +32,7 @@ mod score;
 mod secret;
 mod text;
 
-pub use authorship::authored_by;
+pub use authorship::{Authored, Injection, Publishers, publishers};
 pub use dimensions::{AntiPattern, DimensionScore, QualityScore};
 pub use finding::Finding;
 pub use score::{Deduction, SafetyScore, Thresholds, Verdict, safety, verdict};
