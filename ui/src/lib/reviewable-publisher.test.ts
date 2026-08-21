@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Finding, FindingDecision, ItemSafety } from "@/bindings";
-import {
-  authorSettledCount,
-  publisherGroups,
-  settledCount,
-} from "./reviewable";
+import { authorSettledCount, publisherGroups } from "./reviewable";
 
 const FINDING: Finding = {
   rule: "dangerous-commands",
@@ -103,6 +99,25 @@ describe("publisherGroups", () => {
     ).toEqual([["claude"], ["codex"]]);
   });
 
+  // A publisher settles a sentence wherever the item carries it. Keeping
+  // the first occurrence and dropping the rest tells a person their
+  // publisher ruled on one line when they ruled on three — on the list
+  // whose whole job is saying how far somebody else's judgement reaches.
+  it("names every place one decision covers", () => {
+    const at = (location: string): Finding => ({ ...FINDING, location });
+    const everywhere = row({
+      findings: [at("SKILL.md:5"), at("SKILL.md:41"), at("scripts/run.sh:9")],
+      decisions: [settledByPublisher, settledByPublisher, settledByPublisher],
+    });
+    const groups = publisherGroups([everywhere]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].locations).toEqual([
+      "SKILL.md:5",
+      "SKILL.md:41",
+      "scripts/run.sh:9",
+    ]);
+  });
+
   it("keeps different bytes apart", () => {
     const other = row({
       name: "other",
@@ -195,44 +210,5 @@ describe("publisherGroups", () => {
       ],
     });
     expect(publisherGroups([mine])).toEqual([]);
-  });
-});
-
-describe("the two publisher counts in the footer", () => {
-  const byPublisher = (fingerprint: string): FindingDecision =>
-    decision({
-      fingerprint,
-      state: {
-        state: "author-dismissed",
-        reason: "intended",
-        dismissedAt: "2026-08-16T00:00:00Z",
-        publisher: "vanillagreencom/kendex",
-      },
-    });
-
-  // The parenthetical qualifies the settled sentence, so it has to count
-  // the same rows in the same unit. Counting deduplicated decisions across
-  // settled, open and blocked rows let it claim more publisher decisions
-  // than there were decisions at all.
-  it("never claims more publisher decisions than the total it sits inside", () => {
-    const settled = row({ decisions: [byPublisher("s")] });
-    const open = row({
-      name: "open",
-      reviewHash: "hash-2",
-      findings: [FINDING, { ...FINDING, location: "SKILL.md:9" }],
-      decisions: [byPublisher("o"), decision({ fingerprint: "x" })],
-    });
-    const blocked = row({
-      name: "blocked",
-      reviewHash: "hash-3",
-      verdict: "block",
-      decisions: [byPublisher("b")],
-    });
-
-    const total = settledCount([settled]);
-    const parenthetical = authorSettledCount([settled]);
-    expect(parenthetical).toBeLessThanOrEqual(total);
-    // The disclosure below it is its own count, over every scored row.
-    expect(publisherGroups([settled, open, blocked])).toHaveLength(3);
   });
 });

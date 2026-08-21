@@ -1,9 +1,7 @@
-import { useState } from "react";
 import type { Finding } from "@/bindings";
-import { FileLink } from "@/components/file-link";
+import { FoundAt } from "@/components/found-at";
 import { InlineMarkdown } from "@/components/inline-markdown";
 import { StatusDot } from "@/components/status-dot";
-import { morePlacesLabel } from "@/lib/copy";
 import { SEVERITY_DOT_TONE, SEVERITY_LABELS, sentence } from "@/lib/labels";
 
 /**
@@ -31,9 +29,6 @@ export function FindingLine({
    *  and the sentence that matters is whose call it was. */
   settledBy?: string;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const shown = expanded ? locations : locations.slice(0, 1);
-  const hidden = locations.length - shown.length;
   return (
     <div className="flex items-start gap-2.5">
       <StatusDot
@@ -59,18 +54,7 @@ export function FindingLine({
           </p>
         )}
         <div className="flex flex-wrap items-center gap-1.5">
-          {shown.map((location) => (
-            <FileLink key={location} location={location} />
-          ))}
-          {hidden > 0 ? (
-            <button
-              type="button"
-              onClick={() => setExpanded(true)}
-              className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-            >
-              {morePlacesLabel(hidden)}
-            </button>
-          ) : null}
+          <FoundAt locations={locations} />
         </div>
       </div>
     </div>

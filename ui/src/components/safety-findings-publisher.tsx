@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useState } from "react";
-import { FileLink } from "@/components/file-link";
+import { FoundAt } from "@/components/found-at";
 import { InlineMarkdown } from "@/components/inline-markdown";
 import { StatusDot } from "@/components/status-dot";
 import {
@@ -80,7 +80,7 @@ export function PublisherSettled({ groups }: { groups: PublisherGroup[] }) {
                     <span className="font-mono text-xs text-muted-foreground">
                       {group.finding.rule}
                     </span>
-                    <FileLink location={group.finding.location} />
+                    <FoundAt locations={group.locations} />
                     <span className="text-xs text-muted-foreground">
                       {group.items[0]?.name} · {tools.join(", ")}
                     </span>

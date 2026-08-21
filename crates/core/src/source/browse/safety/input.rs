@@ -57,49 +57,61 @@ fn installs_as(
 }
 
 /// Which tools this item would install to, through the plan's own
-/// derivation over the declaration it would install under.
+/// derivation over every declaration that asks for it.
 ///
 /// Both halves matter and neither is spelled here. Reading only the scope
 /// default models the wrong set for every item that names its own tools;
 /// keeping a tool that cannot take the kind in this scope models a
 /// rendering nobody installs — a requested Cursor has no body cap, so it
 /// would keep a long skill unsplit and hold the page back while the plan
-/// drops Cursor and splits for Codex. `target_harnesses` is what the plan
+/// drops Cursor and splits for Codex. `harnesses_for` is what the plan
 /// asks, so it is what this asks.
+///
+/// Every declaration and not one of them: an item can be declared by name
+/// and carried by a set, or carried by two sets aiming at different tools,
+/// and the plan lands it on the union of what they ask for. Picking one
+/// previews a rendering some of its installations never get, and the
+/// harshest-rendering rule below is only as good as the set it runs over.
 fn installs_to(browsed: &Browsed, kind: ItemKind, name: &str) -> Vec<crate::model::HarnessId> {
-    let under = decl_for(browsed, kind, name);
-    crate::engine::harnesses_for(
-        under.as_ref().and_then(|decl| decl.harnesses.as_deref()),
-        &browsed.manifest,
-        kind,
-        &browsed.scope,
-    )
+    let asked = asked_by(browsed, kind, name);
+    let tools = |harnesses: Option<&[crate::model::HarnessId]>| {
+        crate::engine::harnesses_for(harnesses, &browsed.manifest, kind, &browsed.scope)
+    };
+    // Nothing here asks for it yet, so what is being asked is which tools
+    // this scope would put it on.
+    if asked.is_empty() {
+        return tools(None);
+    }
+    asked
+        .iter()
+        .flat_map(|decl| tools(decl.harnesses.as_deref()))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
-/// The declaration this item would install under: its own where the project
-/// declared it by name, otherwise the one belonging to whatever put it
-/// there. `None` where nothing here has asked for it at all.
+/// Every declaration that would install this item: its own where the
+/// project declared it by name, and each set that carries it.
 ///
 /// A bundle member has no declaration under its own name, and a lookup that
-/// assumes one falls through to the scope's defaults — a bundle targeting
-/// one tool then previews a rendering that tool never gets. What a member
+/// assumes one falls through to the scope's defaults — a set targeting one
+/// tool then previews a rendering that tool never gets. What a member
 /// installs under is [`crate::engine::bundles::member_decl`], the same
 /// answer the plan builds from.
 ///
-/// Only a bundle installed from this catalog can be what put it here: a
-/// set's members are its own catalog's items, so a bare name in another
-/// catalog's bundle names something else.
-fn decl_for(browsed: &Browsed, kind: ItemKind, name: &str) -> Option<crate::manifest::ItemDecl> {
-    if let Some(own) = browsed.manifest.declared(kind).get(name) {
-        return Some(own.clone());
-    }
-    browsed
+/// Only a set installed from this catalog can be one of them: a set's
+/// members are its own catalog's items, so a bare name in another catalog's
+/// set names something else.
+fn asked_by(browsed: &Browsed, kind: ItemKind, name: &str) -> Vec<crate::manifest::ItemDecl> {
+    let own = browsed.manifest.declared(kind).get(name).cloned();
+    let sets = browsed
         .manifest
         .bundles
         .iter()
         .filter(|(_, decl)| browsed.owned_here(&decl.source))
-        .find(|(bundle, _)| carries(browsed, bundle, kind, name))
-        .map(|(_, decl)| crate::engine::bundles::member_decl(decl))
+        .filter(|(bundle, _)| carries(browsed, bundle, kind, name))
+        .map(|(_, decl)| crate::engine::bundles::member_decl(decl));
+    own.into_iter().chain(sets).collect()
 }
 
 /// Whether one of this catalog's sets carries this item.
