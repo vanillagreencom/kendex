@@ -116,16 +116,39 @@ install_icon() {
   return 0
 }
 
-# A path, ready to sit inside the quotes of an Exec key. That key is Desktop
-# Entry syntax, not shell syntax: its value is a list of arguments, so a data
-# directory with a space in its name becomes several of them unless the path
-# is one quoted argument. And a launcher unescapes the file before it reads
-# that quoting, so a backslash has to survive both passes — one is not
-# enough, and GLib refuses the whole key when a `$`, a backtick or a quote
-# carries a single backslash, leaving a menu entry that launches nothing and
-# says nothing.
+# A path, ready to sit inside the quotes of an Exec key. Three layers of the
+# Desktop Entry spec meet in that one value, and none of them is shell
+# syntax:
+#
+#   * The value is a list of arguments. Every character the spec reserves —
+#     space, tab, newline, " ' \ > < ~ | & ; $ * ? # ( ) ` — has to sit
+#     inside quotes, which is why the whole path is written as one quoted
+#     argument. That alone settles all but five of them.
+#   * Inside those quotes " ` $ and \ each take a leading backslash.
+#   * A launcher reads the file's own escapes first, and only \\ \s \n \t
+#     \r exist there — so each backslash above is doubled again, a tab, a
+#     carriage return and a newline go in by name, and any other backslash
+#     makes a launcher refuse the whole key.
+#
+# Percent is the odd one out: it introduces a field code rather than being
+# reserved, and a literal one is written %%. Doubling it is what the spec
+# asks for, and it is still the better of two bad answers on GLib, which
+# checks that the Exec binary exists before it undoubles them: a path with a
+# percent in it gets a menu entry GLib will not read, where leaving the
+# percent alone gets one that quietly launches a truncated path.
 desktop_arg() {
-  printf '%s' "$1" | sed -e 's/\\/\\\\\\\\/g' -e 's/[$`"]/\\\\&/g'
+  local tab cr
+  tab=$(printf '\t')
+  cr=$(printf '\r')
+  # sed reads a line at a time, so a newline in the path arrives as two of
+  # them: mark every line but the last and join them back up afterwards.
+  printf '%s' "$1" | sed \
+    -e 's/\\/\\\\\\\\/g' \
+    -e 's/[$`"]/\\\\&/g' \
+    -e 's/%/%%/g' \
+    -e "s/$tab/\\\\t/g" \
+    -e "s/$cr/\\\\r/g" \
+    -e '$!s/$/\\n/' | tr -d '\n'
 }
 
 # The desktop app on Linux is the AppImage, kept off PATH so the `kendex`
