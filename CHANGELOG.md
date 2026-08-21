@@ -133,7 +133,9 @@ changes carry a **Breaking** call-out with their migration note inline.
 - A project card on Projects opens that project's library. Clicking the
   card — Personal included — shows everything installed there, unfiltered.
   Seeing a whole project used to mean picking a kind you did not want and
-  then clearing the filter.
+  then clearing the filter. A screen reader names the folder each card
+  opens, so two projects whose folders share a name — `/work/client` and
+  `/personal/client` — are told apart by ear as well as on screen.
 - Following a link into My Library starts from a clean filter strip. The
   whole strip — every picker, the search box and where the table is looking —
   is set to exactly what the link asked for, and nothing an earlier visit

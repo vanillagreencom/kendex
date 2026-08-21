@@ -64,6 +64,7 @@ export function ProjectList() {
                 key={root}
                 name={name}
                 subtitle={root}
+                path={root}
                 counts={[...countByKind(items).entries()]}
                 emptyLabel="Nothing from kendex yet."
                 badge={

@@ -3,6 +3,7 @@ import type { ItemKind } from "@/bindings";
 import { KindCountBadges } from "@/components/kind-count-badges";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { showEverythingLabel } from "@/lib/project-card-label";
 
 /**
  * One place a setup applies — Personal, or a project folder. Personal and a
@@ -14,6 +15,7 @@ import { Card } from "@/components/ui/card";
 export function ProjectCard({
   name,
   subtitle,
+  path,
   counts,
   onOpen,
   onKindClick,
@@ -23,6 +25,10 @@ export function ProjectCard({
 }: {
   name: string;
   subtitle: string;
+  /** The folder this card is for, where it has one. The name is only that
+   * folder's last segment, which two projects can share, so it is what a
+   * label says to name one card apart from another. */
+  path?: string;
   counts: [ItemKind, number][];
   /** Show everything installed here — what the project's name is a button
    * for. A count badge narrows to one kind, and there was no way to ask for
@@ -54,7 +60,7 @@ export function ProjectCard({
             <button
               type="button"
               onClick={onOpen}
-              aria-label={`Show everything in ${name}`}
+              aria-label={showEverythingLabel(name, path)}
               className="truncate text-sm font-medium hover:underline"
             >
               {name}
