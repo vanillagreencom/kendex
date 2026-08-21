@@ -2,8 +2,10 @@
 # Regression test: shipped project settings must keep the documented
 # second-opinion default timeout at 1080s, while caller env overrides still win,
 # the retry runs inside that one total budget, the run refuses when no timeout
-# binary can bound it, a CLI that ignores the deadline's TERM is still killed,
-# and every doc and settings surface spells the shipped default.
+# binary can bound it, a CLI that ignores the deadline's TERM is killed and
+# reported as killed rather than timed out, and every doc and settings surface
+# spells the shipped default, the real upper bound, and what the deadline
+# leaves unbounded.
 
 set -euo pipefail
 
@@ -32,6 +34,9 @@ mode=""; while [[ $# -gt 0 ]]; do case "$1" in -o) mode="$2"; shift 2 ;; *) shif
 case "$mode" in ppid=) printf '1\n' ;; comm=) printf 'bash\n' ;; esac
 PSSH
 chmod +x "$_PSBIN/ps"
+# The stand-in answers only the ancestor walk. This suite's own process checks
+# need a real ps, so resolve it before the shadow goes on PATH.
+REAL_PS=$(command -v ps)
 PATH="$_PSBIN:$PATH"
 export PATH
 # The process tree is only half the signal; the environment markers are the
@@ -265,15 +270,59 @@ else
   exit 1
 fi
 
+# --- The deadline itself reads as a timeout ----------------------------------
+# 124 is timeout's own report that the limit was reached, and it is the only
+# status that proves it. A CLI that takes the TERM exits that way, and the run
+# names the limit it hit.
+DEADLINE_PID_FILE="$TMP_ROOT/deadline.pid"
+mkdir -p "$TMP_ROOT/bin-deadline"
+cat > "$TMP_ROOT/bin-deadline/codex" <<SH
+#!/usr/bin/env bash
+cat >/dev/null
+printf '%s' "\$\$" > "$DEADLINE_PID_FILE"
+sleep 30
+SH
+chmod +x "$TMP_ROOT/bin-deadline/codex"
+
+WORK_DEADLINE="$TMP_ROOT/work-deadline"
+cp -R "$WORK" "$WORK_DEADLINE"
+deadline_rc=0
+PATH="$TMP_ROOT/bin-deadline:$PATH" \
+  SECOND_OPINION_TARGET=codex \
+  SECOND_OPINION_CODEX_CMD=codex \
+  SECOND_OPINION_TIMEOUT=1 \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK_DEADLINE" \
+  >/dev/null 2>"$TMP_ROOT/deadline.stderr" || deadline_rc=$?
+if [[ "$deadline_rc" -eq 5 ]] && grep -q "timed out after 1s" "$TMP_ROOT/deadline.stderr"; then
+  printf 'PASS: a CLI that takes the TERM is reported as the timeout it is\n'
+else
+  printf 'FAIL: a CLI that takes the TERM is reported as the timeout it is (exit %s)\n' \
+    "$deadline_rc" >&2
+  sed -n '1,20p' "$TMP_ROOT/deadline.stderr" >&2
+  exit 1
+fi
+
 # --- A CLI that ignores TERM is still reaped ---------------------------------
 # The deadline sends TERM, and TERM can be caught. A CLI that ignores it would
 # outlive its own deadline and keep running — and billing — long after the
 # lane it belonged to was resolved, so the deadline carries --kill-after and
-# the KILL is what finally ends such a CLI. Its exit is 137 rather than 124,
-# and the run must classify that as the deadline it is.
+# the KILL is what finally ends such a CLI. Its exit is 137, which is a KILL
+# of unstated origin rather than proof the limit was reached, so the run
+# reports a kill and never a timeout — while keeping the same no-verdict exit.
 #
 # The stub caps its own life so a regression costs the suite a bounded wait
 # instead of hanging it.
+# A killed process stays visible to kill -0 until its parent reaps it, and on
+# a runtime whose PID 1 does not reap promptly that outlasts this assertion —
+# the kill worked and the test still failed. A zombie is dead: read the state
+# and count Z as gone.
+cli_reaped() {
+  local pid="$1" state
+  kill -0 "$pid" 2>/dev/null || return 0
+  state=$("$REAL_PS" -o state= -p "$pid" 2>/dev/null || true)
+  [[ "$state" == Z* ]]
+}
+
 make_stubborn_cli() {
   local bin_dir="$1" pid_file="$2"
   mkdir -p "$bin_dir"
@@ -330,13 +379,15 @@ PATH="$TMP_ROOT/bin-stubborn:$PATH" \
 stubborn_elapsed=$(( SECONDS - stubborn_started ))
 
 stubborn_pid=$(cat "$KILL_PID_FILE" 2>/dev/null || true)
-if [[ -n "$stubborn_pid" ]] && ! kill -0 "$stubborn_pid" 2>/dev/null \
+if [[ -n "$stubborn_pid" ]] && cli_reaped "$stubborn_pid" \
    && [[ "$stubborn_rc" -eq 5 ]] && [[ "$stubborn_elapsed" -lt 90 ]] \
-   && grep -q "timed out" "$TMP_ROOT/stubborn.stderr"; then
-  printf 'PASS: a TERM-ignoring CLI is killed at the deadline and read as a timeout (%ss)\n' \
+   && grep -q "was killed (exit 137) before answering" "$TMP_ROOT/stubborn.stderr" \
+   && grep -q "the limit may not have been reached" "$TMP_ROOT/stubborn.stderr" \
+   && ! grep -q "timed out" "$TMP_ROOT/stubborn.stderr"; then
+  printf 'PASS: a TERM-ignoring CLI is killed and reported as killed, not timed out (%ss)\n' \
     "$stubborn_elapsed"
 else
-  printf 'FAIL: a TERM-ignoring CLI is killed at the deadline and read as a timeout (exit %s, %ss, pid %s)\n' \
+  printf 'FAIL: a TERM-ignoring CLI is killed and reported as killed, not timed out (exit %s, %ss, pid %s)\n' \
     "$stubborn_rc" "$stubborn_elapsed" "${stubborn_pid:-none}" >&2
   sed -n '1,20p' "$TMP_ROOT/stubborn.stderr" >&2
   exit 1
@@ -346,7 +397,7 @@ fi
 # cannot mean "not killed yet".
 while (( SECONDS - nokill_started < 40 )); do sleep 1; done
 nokill_pid=$(cat "$NOKILL_PID_FILE" 2>/dev/null || true)
-if [[ -n "$nokill_pid" ]] && kill -0 "$nokill_pid" 2>/dev/null; then
+if [[ -n "$nokill_pid" ]] && ! cli_reaped "$nokill_pid"; then
   printf 'PASS: control — without --kill-after the same CLI is still running\n'
   nokill_ok=true
 else
@@ -400,6 +451,23 @@ assert_contains "$SKILL_DIR/README.md" "| \`SECOND_OPINION_TIMEOUT\` | \`\"$DEFA
   "README working-example table documents the default"
 assert_contains "$SKILL_DIR/README.md" "| \`SECOND_OPINION_TIMEOUT\` | \`$DEFAULT\` |" \
   "README config table documents the default"
+
+# The budget is not the upper bound: a malformed first answer arriving near the
+# deadline buys the retry floor, and a CLI that ignores the TERM buys the kill
+# grace on top. Both surfaces that state a bound must state that one, built
+# from the script's own constants so a change to either is caught here.
+FLOOR=$(sed -n 's/^RETRY_TIMEOUT_FLOOR=\([0-9]\{1,\}\)$/\1/p' "$SECOND_OPINION")
+GRACE=$(sed -n 's/^KILL_AFTER=\([0-9]\{1,\}\)$/\1/p' "$SECOND_OPINION")
+if [[ ! "$FLOOR" =~ ^[0-9]+$ || ! "$GRACE" =~ ^[0-9]+$ ]]; then
+  printf 'FAIL: could not read RETRY_TIMEOUT_FLOOR/KILL_AFTER from the script\n' >&2
+  exit 1
+fi
+for doc in "$SKILL_DIR/SKILL.md" "$SKILL_DIR/README.md"; do
+  assert_contains "$doc" "plus that ${FLOOR}s floor plus the ${GRACE}s kill grace" \
+    "$(basename "$doc") states the real upper bound"
+  assert_contains "$doc" "keeps running after the lane is gone — KEN-480" \
+    "$(basename "$doc") states what the deadline does not bound"
+done
 
 # The workflow documents that quote the default as an operational number —
 # each backgrounding instruction, and review-pr.md's watchdog fallback, which
