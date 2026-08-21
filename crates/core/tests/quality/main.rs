@@ -4,6 +4,8 @@
 #![cfg(unix)]
 
 mod author_reviews;
+mod author_reviews_records;
+mod author_reviews_untrusted;
 mod convergence;
 mod decisions;
 mod decisions_lifecycle;

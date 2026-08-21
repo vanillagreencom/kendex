@@ -164,9 +164,9 @@ fn print_row(reading: &Reading) {
             DecisionState::AuthorDismissed {
                 reason,
                 dismissed_at,
-                source,
+                publisher,
             } => say(&format!(
-                "      {source} reviewed this {dismissed_at} and recorded it as {}",
+                "      {publisher} reviewed this {dismissed_at} and recorded it as {}",
                 reason.name()
             )),
             DecisionState::Accepted { granted_at } => {

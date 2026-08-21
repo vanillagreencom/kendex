@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use super::desired::{Artifact, Desired, DesiredState, ItemCtx};
@@ -44,7 +44,7 @@ pub(super) fn declared(
         upstream_skills: None,
         emitted: None,
         reasons: ctx.reasons_for(harness),
-        author_dismissed: ctx.author_dismissed.clone(),
+        author_review: ctx.author_review.clone(),
         artifact,
     })
 }
@@ -307,7 +307,7 @@ pub(super) fn desired_plugins(
             reasons: BTreeSet::from([Reason::Requested]),
             // A plugin is a switch in a settings file, not catalog content
             // an author could have reviewed.
-            author_dismissed: BTreeMap::new(),
+            author_review: None,
             artifact: Artifact::Registration {
                 script: None,
                 edits: vec![(

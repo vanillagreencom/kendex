@@ -47,13 +47,27 @@ impl Finding {
             "{}|{}|{}|{}",
             self.rule,
             self.severity.name(),
-            strip_line(location),
+            within_item(location),
             self.message
         );
         crate::hash::hash_bytes(material.as_bytes())
             .chars()
             .take(16)
             .collect()
+    }
+}
+
+/// Where in the item a finding is, in the one spelling every reading of
+/// that item agrees on: no line number, and the body under one name.
+///
+/// A harness decides for itself what shape an item takes. Codex renders a
+/// command as a skill tree, so the same authored document is the item's
+/// whole file in the catalog and `SKILL.md` once installed — one body, two
+/// spellings, and a decision about it has to survive the trip.
+fn within_item(location: &str) -> &str {
+    match strip_line(location) {
+        "SKILL.md" => "",
+        rest => rest,
     }
 }
 
@@ -115,5 +129,22 @@ mod tests {
         assert_eq!(strip_line("mcpServers.deploy"), "mcpServers.deploy");
         assert_eq!(strip_line("skills/g/SKILL.md:69"), "skills/g/SKILL.md");
         assert_eq!(strip_line("skills/g/SKILL.md:"), "skills/g/SKILL.md:");
+    }
+
+    /// Codex renders a command as a skill tree. The catalog reads the
+    /// authored document as the item itself, the install reads it as
+    /// `SKILL.md`, and one decision has to cover both.
+    #[test]
+    fn the_item_body_fingerprints_the_same_under_either_spelling() {
+        let document = finding("commands/ship.md:12").fingerprint("commands/ship.md");
+        let rendered = finding("/home/u/p/.agents/skills/ship/SKILL.md:14")
+            .fingerprint("/home/u/p/.agents/skills/ship");
+        assert_eq!(document, rendered);
+        // A supporting file is still its own question.
+        assert_ne!(
+            document,
+            finding("/home/u/p/.agents/skills/ship/references/a.md:14")
+                .fingerprint("/home/u/p/.agents/skills/ship")
+        );
     }
 }

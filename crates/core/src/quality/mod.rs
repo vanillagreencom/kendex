@@ -18,6 +18,7 @@ use specta::Type;
 
 use crate::model::{HarnessId, ItemKind};
 
+pub mod author;
 pub mod dimensions;
 mod finding;
 mod homoglyph;
@@ -37,10 +38,13 @@ pub use secret::{fingerprint_secret, redact};
 pub use text::{Line, Normalization};
 
 /// The rule set findings were produced by. An override binds to it, so any
-/// change to what the rules catch — a new rule, a widened pattern, a
-/// re-calibrated severity — must bump this and stale every override that
-/// was granted against the old behaviour.
-pub const RULESET_VERSION: u32 = 2;
+/// change to what a finding *is* must bump this and stale every override
+/// granted against the old behaviour — a new rule, a widened pattern, a
+/// re-calibrated severity, and equally a change to how a finding is
+/// identified. Version 3 made [`Finding::fingerprint`] non-positional: the
+/// same problems, under new identities, which without a bump would read as
+/// "different problems were found than the ones that were reviewed".
+pub const RULESET_VERSION: u32 = 3;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Type, Hash,
@@ -294,6 +298,11 @@ pub struct SkippedRule {
 pub struct AuditResult {
     pub findings: Vec<Finding>,
     pub skipped: Vec<SkippedRule>,
+    /// What every finding here costs, before anybody's decision is read.
+    /// The score a person is shown comes from [`author::score`], which
+    /// answers for what is still an open question; this is the number the
+    /// rules alone produced, and the two differ wherever a finding has
+    /// been settled.
     pub safety: SafetyScore,
     /// Advisory, never blocking, and `None` for kinds that carry no
     /// authored prose to judge — a settings toggle has no writing in it.

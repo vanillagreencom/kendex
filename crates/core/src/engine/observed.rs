@@ -71,15 +71,15 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
                 .entries
                 .get(&key)
                 .map(|entry| entry.source_repo.clone());
-            let by_author = author_dismissed(&lock, item, scored.review.as_deref());
-            let counted: Vec<crate::quality::Finding> = result
-                .findings
-                .iter()
-                .filter(|finding| !by_author.contains_key(&finding.fingerprint(&root)))
-                .cloned()
-                .collect();
-            let safety = crate::quality::safety(&counted);
-            let (verdict, reasons) = crate::quality::verdict(&counted, &safety, settings.safety);
+            let by_author = author_review(&lock, scored.review.as_deref());
+            let budget =
+                crate::quality::author::AuthorReview::budget(by_author, scored.review.as_deref());
+            let scored_findings = crate::quality::author::score(&result.findings, &root, &budget);
+            let (verdict, reasons) = crate::quality::verdict(
+                &scored_findings.counted,
+                &scored_findings.safety,
+                settings.safety,
+            );
             let override_state = crate::quality::overrides::state(
                 manifest.safety_overrides.get(&key),
                 scored.review.as_deref(),
@@ -95,7 +95,8 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
                     review_hash: scored.review.as_deref(),
                     provenance: provenance.as_deref(),
                     override_state: &override_state,
-                    author_dismissed: &by_author,
+                    author_review: by_author,
+                    settled: &scored_findings.settled,
                     held_back: verdict == crate::quality::Verdict::Block
                         && !override_state.unblocks(),
                 },
@@ -107,7 +108,7 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
                 harness: item.harness,
                 scope: item.scope.clone(),
                 location: root,
-                safety,
+                safety: scored_findings.safety,
                 quality: result.quality,
                 override_state,
                 findings: result.findings,
@@ -123,28 +124,28 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
         .collect())
 }
 
-/// What the item's catalog had settled when the apply ran, for the bytes in
-/// front of us now.
+/// What the item's publisher had settled when the apply ran, for the bytes
+/// in front of us now.
 ///
-/// Keyed by the content, not by the installation: one shared skill tree is
-/// what several tools load, and each of them is scored as its own row while
-/// only the tool that was installed for has a lock entry. A record binds to
-/// bytes, so the same bytes are what it answers for — an edited install
-/// moves the hash and every record for it stops applying, which is the rule
-/// every other review answers to.
-fn author_dismissed(
-    lock: &crate::lock::Lock,
-    item: &crate::model::ObservedItem,
+/// Found by the bytes, not by the installation. A record binds to a review
+/// hash and that hash is sealed by kind, so a record whose hash is this
+/// content's hash is a record about this content — whichever entry happens
+/// to hold it. That is what the lookup needs: one shared skill tree is what
+/// several tools load, each scored as its own row, while only the tool it
+/// was installed for has a lock entry; and a hook is scanned back under a
+/// synthesized `event:matcher:name`, which no lock key spells. Comparing
+/// names would miss both. An edited install moves the hash and every record
+/// for it stops applying, the rule every other review answers to.
+fn author_review<'a>(
+    lock: &'a crate::lock::Lock,
     review_hash: Option<&str>,
-) -> std::collections::BTreeMap<String, crate::quality::reviews::Dismissal> {
+) -> Option<&'a crate::quality::author::AuthorReview> {
+    let review_hash = review_hash?;
     lock.entries
         .values()
-        .filter(|entry| entry.kind == item.kind && entry.name == item.name)
-        .map(|entry| {
-            crate::check_catalog::dismissals::live(entry.author_review.as_ref(), review_hash)
-        })
-        .find(|live| !live.is_empty())
-        .unwrap_or_default()
+        .filter_map(|entry| entry.author_review.as_ref())
+        .find(|review| review.stale_why(Some(review_hash)).is_none())
+        .map(|review| review as &crate::quality::author::AuthorReview)
 }
 
 /// Every observation's score, one reading per distinct set of bytes, spread

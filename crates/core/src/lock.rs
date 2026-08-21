@@ -10,14 +10,16 @@ use crate::fs::{atomic_write, read_if_exists};
 use crate::manifest::Method;
 use crate::model::{HarnessId, ItemKind, Scope};
 
-/// Current lock version. Versions 1 (v0.1) through 3 still load — the
+/// Current lock version. Versions 1 (v0.1) through 4 still load — the
 /// shapes are compatible and the next lock write records the current
 /// version. A lock newer than this build refuses to load. Version 3 added
 /// `source_commit` and `rendered_hash`; version 4 added `settings-seeds`;
-/// each bump is what stops an older build from reading the lock, dropping
-/// the newer record on its next write, and erasing evidence — of which
-/// bytes are whose, or of which comment blocks seeding wrote.
-pub const LOCK_VERSION: u32 = 4;
+/// version 5 added `authorReview`, the publisher's settled findings for the
+/// bytes an apply wrote. Each bump is what stops an older build from
+/// reading the lock, dropping the newer record on its next write, and
+/// erasing evidence — of which bytes are whose, of which comment blocks
+/// seeding wrote, or of what a publisher already reviewed.
+pub const LOCK_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
 pub struct Lock {
@@ -168,7 +170,7 @@ pub struct LockEntry {
     /// unreviewed the moment anyone looked at it. Bound like any other
     /// review: edit the install and it stops applying.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub author_review: Option<crate::quality::reviews::SafetyReview>,
+    pub author_review: Option<crate::quality::author::AuthorReview>,
 }
 
 /// One hook entry as a harness's registry keys it: event plus command.

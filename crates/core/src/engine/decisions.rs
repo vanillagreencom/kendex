@@ -15,8 +15,9 @@ use specta::Type;
 use crate::manifest::Manifest;
 use crate::model::Scope;
 use crate::quality::Finding;
+use crate::quality::author::AuthorReview;
 use crate::quality::overrides::OverrideState;
-use crate::quality::reviews::{DismissReason, Dismissal, DismissalState, dismissal_state};
+use crate::quality::reviews::{DismissReason, DismissalState, dismissal_state};
 
 use super::gate::SHOWN_HASH;
 
@@ -42,12 +43,13 @@ pub enum DecisionState {
     },
     /// The catalog that publishes this content committed a review saying
     /// this finding is not a problem, and that review still describes the
-    /// exact bytes we fetched. It is reported, not hidden: `source` names
-    /// whose judgement this is, so a person can weigh it.
+    /// exact bytes we fetched. It is reported, not hidden: `publisher` is
+    /// the source the record was read from, recorded when it was read, so a
+    /// person can weigh whose judgement this is.
     AuthorDismissed {
         reason: DismissReason,
         dismissed_at: String,
-        source: String,
+        publisher: String,
     },
     /// Covered by an acceptance of the whole item: every finding on it was
     /// read and the item installed anyway.
@@ -162,10 +164,13 @@ pub struct Installation<'a> {
     pub review_hash: Option<&'a str>,
     pub provenance: Option<&'a str>,
     pub override_state: &'a OverrideState,
-    /// What the item's own catalog already settled about it, keyed by
-    /// fingerprint. Already re-checked against the source bytes; nothing
-    /// here is taken on the record's own word.
-    pub author_dismissed: &'a std::collections::BTreeMap<String, Dismissal>,
+    /// What the item's publisher already settled about it, and which of
+    /// the findings in front of us that record actually paid for — decided
+    /// by the scorer, since a record settles as many occurrences as the
+    /// publisher's own bytes carried and no more.
+    pub author_review: Option<&'a AuthorReview>,
+    /// One flag per finding, in the findings' order.
+    pub settled: &'a [bool],
     /// Held back by the gate with no live acceptance. Decided by accepting
     /// or removing the item, so its findings get no token: one would be
     /// refused on arrival.
@@ -190,7 +195,8 @@ pub fn decisions(installation: &Installation<'_>, findings: &[Finding]) -> Vec<F
     let scope = scope_tag(installation.scope);
     findings
         .iter()
-        .map(|finding| {
+        .enumerate()
+        .map(|(index, finding)| {
             let fingerprint = finding.fingerprint(installation.root);
             let token = installation
                 .review_hash
@@ -205,7 +211,17 @@ pub fn decisions(installation: &Installation<'_>, findings: &[Finding]) -> Vec<F
                     .to_string()
                 });
             let dismissed = review.and_then(|r| r.dismissed.get(&fingerprint).map(|d| (r, d)));
-            let by_author = installation.author_dismissed.get(&fingerprint);
+            let by_author = installation
+                .settled
+                .get(index)
+                .filter(|settled| **settled)
+                .and(installation.author_review)
+                .and_then(|review| {
+                    review
+                        .dismissed
+                        .get(&fingerprint)
+                        .map(|dismissal| (review, dismissal))
+                });
             let state = match (accepted, dismissed) {
                 (Some(recorded), _) => DecisionState::Accepted {
                     granted_at: recorded.granted_at.clone(),
@@ -224,14 +240,13 @@ pub fn decisions(installation: &Installation<'_>, findings: &[Finding]) -> Vec<F
                         // The person's own record spoke for bytes that have
                         // moved on. The author's, which was re-checked
                         // against the bytes actually here, still stands.
-                        DismissalState::Stale { why } => {
-                            author_state(by_author, installation.provenance)
-                                .unwrap_or(DecisionState::Open { earlier: Some(why) })
-                        }
+                        DismissalState::Stale { why } => author_state(by_author)
+                            .unwrap_or(DecisionState::Open { earlier: Some(why) }),
                     }
                 }
-                (None, None) => author_state(by_author, installation.provenance)
-                    .unwrap_or(DecisionState::Open { earlier: None }),
+                (None, None) => {
+                    author_state(by_author).unwrap_or(DecisionState::Open { earlier: None })
+                }
             };
             FindingDecision {
                 fingerprint,
@@ -242,15 +257,17 @@ pub fn decisions(installation: &Installation<'_>, findings: &[Finding]) -> Vec<F
         .collect()
 }
 
-/// The author's record as a decision state, when they carry one. Their
-/// reason and their name travel with it: this settles nothing on the
-/// person's own authority, and a page that said otherwise would be lying
-/// about whose judgement is on the line.
-fn author_state(dismissal: Option<&Dismissal>, provenance: Option<&str>) -> Option<DecisionState> {
-    dismissal.map(|dismissal| DecisionState::AuthorDismissed {
+/// The publisher's record as a decision state, when one paid for this
+/// finding. Their reason and the name recorded with the record travel with
+/// it: this settles nothing on the person's own authority, and a page that
+/// said otherwise would be lying about whose judgement is on the line.
+fn author_state(
+    settled: Option<(&AuthorReview, &crate::quality::author::AuthorDismissal)>,
+) -> Option<DecisionState> {
+    settled.map(|(review, dismissal)| DecisionState::AuthorDismissed {
         reason: dismissal.reason,
         dismissed_at: dismissal.dismissed_at.clone(),
-        source: provenance.unwrap_or("its source").to_owned(),
+        publisher: review.publisher.clone(),
     })
 }
 

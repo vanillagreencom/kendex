@@ -157,3 +157,53 @@ fn an_empty_lock_reads_as_current() {
     std::fs::write(&path, r#"{"version":1,"entries":{}}"#).unwrap();
     assert!(matches!(load_file(&path).unwrap(), LockFile::Current(_)));
 }
+
+/// What a version bump is for: an older build must refuse the lock rather
+/// than read it, drop the record it does not know about, and write the file
+/// back without it. A publisher's review lives in the entry now, so the
+/// file it appears in has to declare a version the build that predates it
+/// refuses — every such build refuses anything above its own ceiling, and
+/// 4 was the ceiling before this field existed.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_lock_carrying_a_publishers_review_declares_a_version_older_builds_refuse() {
+    const WITHOUT_AUTHOR_REVIEW: u32 = 4;
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join(".kendex-lock.json");
+    let mut lock = Lock {
+        version: LOCK_VERSION,
+        ..Lock::default()
+    };
+    lock.entries.insert(
+        entry_key(ItemKind::Skill, "gh", HarnessId::Claude),
+        LockEntry {
+            registration: None,
+            name: "gh".into(),
+            kind: ItemKind::Skill,
+            harness: HarnessId::Claude,
+            source: "vstack".into(),
+            source_repo: "vanillagreencom/vstack".into(),
+            method: Method::Symlink,
+            installed_at: crate::clock::timestamp(),
+            source_hash: "abc".into(),
+            source_commit: None,
+            rendered_hash: None,
+            enabled: true,
+            upstream_skills: None,
+            emitted: None,
+            reasons: BTreeSet::from([Reason::Requested]),
+            author_review: Some(crate::quality::author::AuthorReview {
+                review_hash: "abc".into(),
+                ruleset: crate::quality::RULESET_VERSION,
+                publisher: "owner/repo".into(),
+                dismissed: std::collections::BTreeMap::new(),
+            }),
+        },
+    );
+    save(&path, &lock).unwrap();
+
+    assert!(LOCK_VERSION > WITHOUT_AUTHOR_REVIEW);
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(written.contains("authorReview"));
+    assert_eq!(load(&path).unwrap(), lock);
+}

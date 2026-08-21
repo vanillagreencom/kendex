@@ -22,8 +22,9 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::model::{HarnessId, ItemKind};
+use crate::quality::author::review_key;
 use crate::quality::reviews::SafetyReview;
-use crate::quality::{self, AuditInput, Content, TreeFile, Verdict};
+use crate::quality::{self, AuditInput, Content, Verdict};
 use crate::render::validate;
 use crate::source::{CatalogMode, SourceConfig};
 use crate::source_read::SealedSource;
@@ -209,7 +210,7 @@ pub fn check_with(
         for name in crate::source::list_items(sealed, config, kind) {
             match crate::source::find_item(sealed, config, kind, &name) {
                 Some(path) => {
-                    let review = reviews.get(&dismissals::review_key(kind, &name));
+                    let review = reviews.get(&review_key(kind, &name));
                     report
                         .items
                         .push(check_item(sealed, kind, &name, &path, review)?)
@@ -245,13 +246,13 @@ pub fn check_item(
     path: &Path,
     review: Option<&SafetyReview>,
 ) -> Result<CheckedItem> {
-    let content = content(sealed, kind, path)?;
+    let content = quality::author::content(sealed, kind, path)?;
     let file = path
         .strip_prefix(sealed.root())
         .unwrap_or(path)
         .display()
         .to_string();
-    let hash = dismissals::content_hash(sealed, path);
+    let hash = quality::author::content_hash(sealed, path);
     let dismissed = dismissals::active(review, hash.as_deref());
     let mut findings = structural(kind, name, &file, &content);
     let (verdict, score) = safety(kind, name, &file, content, &dismissed, &mut findings);
@@ -262,29 +263,6 @@ pub fn check_item(
         findings,
         verdict,
         score,
-    })
-}
-
-/// A skill's whole tree; anything else is one file. A repo-root skill's
-/// tree is the repository itself, whose VCS internals and dependency dirs
-/// are not content.
-fn content(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Result<Content> {
-    if kind != ItemKind::Skill {
-        return Ok(Content::Document {
-            text: sealed.read_to_string(path)?,
-        });
-    }
-    if !sealed.is_dir(path) {
-        return Ok(Content::Unread {
-            why: "a skill is a directory holding SKILL.md",
-        });
-    }
-    Ok(Content::SkillTree {
-        files: sealed
-            .collect_skill_tree(path)?
-            .into_iter()
-            .map(|(path, bytes)| TreeFile::read(path, &bytes))
-            .collect(),
     })
 }
 
@@ -344,7 +322,7 @@ fn safety(
     name: &str,
     file: &str,
     content: Content,
-    dismissed: &std::collections::BTreeSet<String>,
+    dismissed: &quality::author::Budget,
     findings: &mut Vec<CheckFinding>,
 ) -> (Verdict, u32) {
     let result = quality::audit(AuditInput {
@@ -356,18 +334,14 @@ fn safety(
     });
     // A dismissed finding is reported but no longer counted: the verdict
     // and the score answer for what is still an open question.
-    let (counted, settled): (Vec<_>, Vec<_>) = result
-        .findings
-        .into_iter()
-        .partition(|finding| !dismissed.contains(&dismissals::fingerprint(finding, file)));
-    let safety = quality::safety(&counted);
-    let (verdict, _) = quality::verdict(&counted, &safety, quality::Thresholds::default());
-    let score = safety.score;
-    for (finding, was_dismissed) in counted
-        .into_iter()
-        .map(|f| (f, false))
-        .chain(settled.into_iter().map(|f| (f, true)))
-    {
+    let scored = quality::author::score(&result.findings, file, dismissed);
+    let (verdict, _) = quality::verdict(
+        &scored.counted,
+        &scored.safety,
+        quality::Thresholds::default(),
+    );
+    let score = scored.safety.score;
+    for (finding, was_dismissed) in result.findings.into_iter().zip(scored.settled) {
         findings.push(CheckFinding {
             token: Some(dismissals::token(
                 kind,

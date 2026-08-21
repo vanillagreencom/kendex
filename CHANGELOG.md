@@ -47,10 +47,15 @@ changes carry a **Breaking** call-out with their migration note inline.
   stops holding the catalog back for that exact finding on that exact
   content. The decision reaches whoever installs the item too: the finding
   stops counting for them, is still shown, and is labelled with the
-  publisher's name and reason so it is clear whose judgement it is. Any
-  edit to the item — in the catalog or on the installed copy — brings the
-  hold back. `check --catalog` prints the token beside each blocking
-  finding.
+  publisher's name and reason so it is clear whose judgement it is. It
+  settles only what the publisher wrote — as many occurrences as their own
+  bytes carried, so a project's own `[skill-instructions]` cannot ride in
+  on a reviewed finding — and it can only carry reasons an author can give:
+  a hand-written `trusted-source` record is refused on the installing
+  machine. Any edit to the item, in the catalog or on the installed copy,
+  brings the hold back, and a record that settles nothing where it lands
+  says so rather than passing in silence. `check --catalog` prints the
+  token beside each blocking finding.
 
 ### Changed
 
@@ -69,6 +74,17 @@ changes carry a **Breaking** call-out with their migration note inline.
   choose. The package page's version menu and toasts say the same.
 - `kendex updates` names the place — global or the project path — at the
   start of every line.
+- Safety findings are identified by rule, file and message rather than by
+  line number, so a decision survives the content moving under it. Recorded
+  acceptances and dismissals made before this release no longer match and
+  read as needing review again — the rule set version carries the change, so
+  they are reported as "the safety rules changed since it was reviewed"
+  rather than as a different set of problems. Re-accept or re-dismiss from
+  the tokens `kendex findings` prints now.
+- The install record (`.kendex-lock.json`) is version 5: it carries what a
+  package's publisher had already reviewed. Older kendex builds refuse to
+  read it rather than quietly dropping that record, so upgrade every kendex
+  on a machine together — the desktop app and the CLI are separate binaries.
 - The app uses the Geist typeface, with titles and navigation in Geist Mono
   to match the website.
 - **Breaking**: the default Homebrew install is now the app —

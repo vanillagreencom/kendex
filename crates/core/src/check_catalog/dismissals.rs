@@ -15,24 +15,23 @@
 //! standing exemption. Dismissed findings are still reported; they stop
 //! counting, not existing.
 //!
-//! A record travels with the content it is about. The plan re-reads it out
-//! of the source it actually fetched and re-checks it against those bytes,
-//! so an author can only settle findings on the exact item they published,
-//! and every dismissal they carry is shown to the person installing, named
-//! as the author's and with the author's reason. That is a real trust grant
-//! to whoever a person subscribes to, and it is the one that makes a
+//! A record travels with the content it is about, which is what makes a
 //! committed review worth committing: without it every consumer of a
 //! security-adjacent skill re-answers a question its author already
-//! answered, with nothing on their machine that could tell them so.
+//! answered, with nothing on their machine that could tell them so. What
+//! that record is worth on somebody else's machine — the checks it has to
+//! survive, and the one it can never make — is
+//! [`crate::quality::author`]. This file is the authoring side: the file
+//! format, the writer, and the token vocabulary.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, Result};
 use crate::model::ItemKind;
 use crate::quality::Finding;
+use crate::quality::author::{Budget, review_key};
 use crate::quality::reviews::{DismissReason, Dismissal, SafetyReview};
 use crate::source_read::SealedSource;
 
@@ -44,10 +43,6 @@ pub const REVIEWS_FILE: &str = "kendex-reviews.toml";
 struct ReviewsFile {
     #[serde(default)]
     reviews: BTreeMap<String, SafetyReview>,
-}
-
-pub fn review_key(kind: ItemKind, name: &str) -> String {
-    format!("{}:{name}", kind.name())
 }
 
 /// Every committed review record, or an empty map where the catalog has
@@ -66,63 +61,15 @@ pub fn load(sealed: &SealedSource) -> Result<BTreeMap<String, SafetyReview>> {
     Ok(parsed.reviews)
 }
 
-/// The hash a catalog decision binds to: every authored byte of the item.
-/// A skill is its collected tree (VCS internals and dependency dirs are not
-/// authored content); anything else is one file. `None` where the bytes
-/// cannot be read — a decision with nothing to compare against must never
-/// read as live.
-pub fn content_hash(sealed: &SealedSource, path: &Path) -> Option<String> {
-    if sealed.is_dir(path) {
-        return Some(crate::hash::hash_files(
-            &sealed.collect_skill_tree(path).ok()?,
-        ));
-    }
-    Some(crate::hash::hash_bytes(&sealed.read(path).ok()?))
-}
-
 /// The fingerprints this item's record still answers for: its dismissals
 /// when the snapshot matches the content in front of us, nothing when the
-/// content or the rules have moved on.
-pub fn active(review: Option<&SafetyReview>, content_hash: Option<&str>) -> BTreeSet<String> {
-    live(review, content_hash).into_keys().collect()
-}
-
-/// The same answer with each record's reason and date, for the side that
-/// has to say who settled a finding and why.
-pub fn live(
-    review: Option<&SafetyReview>,
-    content_hash: Option<&str>,
-) -> BTreeMap<String, Dismissal> {
-    let Some(review) = review else {
-        return BTreeMap::new();
+/// content or the rules have moved on. The catalog's own check made these
+/// decisions against these very bytes, so each covers every occurrence.
+pub fn active(review: Option<&SafetyReview>, content_hash: Option<&str>) -> Budget {
+    let Some(review) = review.filter(|r| r.stale_why(content_hash).is_none()) else {
+        return Budget::default();
     };
-    match review.stale_why(content_hash) {
-        Some(_) => BTreeMap::new(),
-        None => review.dismissed.clone(),
-    }
-}
-
-/// What one item's own catalog has already settled about it, re-checked
-/// against the bytes in front of us.
-///
-/// The record is the author's, and it can only ever speak for the exact
-/// content it was committed against: the hash comes from the source being
-/// read, never from the file claiming the dismissal. A catalog whose
-/// reviews file cannot be read settles nothing — an unreadable claim is not
-/// a review, and every finding stays open.
-pub fn for_item(
-    sealed: &SealedSource,
-    kind: ItemKind,
-    name: &str,
-    item_path: &Path,
-) -> BTreeMap<String, Dismissal> {
-    let Ok(reviews) = load(sealed) else {
-        return BTreeMap::new();
-    };
-    live(
-        reviews.get(&review_key(kind, name)),
-        content_hash(sealed, item_path).as_deref(),
-    )
+    Budget::whole(review.dismissed.keys().cloned().collect())
 }
 
 /// Record that these findings on this content are not problems. The same

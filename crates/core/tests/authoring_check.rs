@@ -169,7 +169,7 @@ fn a_committed_dismissal_unblocks_until_the_content_moves() {
     assert_eq!(kind, ItemKind::Skill);
     assert_eq!(name, "guardy");
 
-    let hash = dismissals::content_hash(&sealed, &dir).unwrap();
+    let hash = kendex_core::quality::author::content_hash(&sealed, &dir).unwrap();
     dismissals::record(
         &sealed,
         kind,
@@ -284,6 +284,14 @@ fn the_default_catalog_ships_nothing_undismissed() {
         .to_owned();
     let sealed = SealedSource::open(&root).unwrap();
     let report = check(&sealed, "kendex").unwrap();
+    // The clean assertions below are only worth something if the check read
+    // the catalog at all: a moved declaration or a widened exclusion would
+    // otherwise pass this test green over an empty item set.
+    assert!(
+        report.tally().items >= 30,
+        "the default catalog's own check read {} items — discovery has narrowed",
+        report.tally().items
+    );
     let open: Vec<String> = report
         .findings()
         .filter(|finding| finding.rule.is_some() && !finding.dismissed)

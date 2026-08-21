@@ -117,3 +117,53 @@ pub(super) fn read_catalog(
         Err(other) => Err(other),
     }
 }
+
+/// What this item's publisher already settled about it, read out of the
+/// source this pass fetched.
+///
+/// `reviews` caches each source's parsed reviews file for the pass. A file
+/// that exists and cannot be parsed settles nothing — failing closed is
+/// right — but it never does so quietly: without a word, an installer sees
+/// a package held back over findings its publisher reviewed and has no way
+/// to tell that from a publisher who reviewed nothing.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn published_review(
+    sealed: &SealedSource,
+    source_name: &str,
+    provenance: &str,
+    kind: crate::model::ItemKind,
+    name: &str,
+    item_path: &Path,
+    reviews: &mut std::collections::BTreeMap<
+        String,
+        std::collections::BTreeMap<String, crate::quality::reviews::SafetyReview>,
+    >,
+    state: &mut DesiredState,
+) -> Result<Option<crate::quality::author::AuthorReview>> {
+    let mut unreadable = None;
+    let parsed = reviews.entry(source_name.to_owned()).or_insert_with(|| {
+        match crate::check_catalog::dismissals::load(sealed) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                unreadable = Some(error.to_string());
+                Default::default()
+            }
+        }
+    });
+    let read = crate::quality::author::for_item(parsed, sealed, kind, name, item_path, provenance)?;
+    if let Some(problem) = unreadable {
+        state.notes.push(format!(
+            "source '{source_name}': {} could not be read, so nothing it reviewed counts as reviewed — {problem}",
+            crate::check_catalog::dismissals::REVIEWS_FILE
+        ));
+    }
+    if !read.refused.is_empty() {
+        state.notes.push(format!(
+            "{} {name}: {} of the {} record(s) {source_name} carries for it settle nothing here — the finding is gone or the claim is not one an author can make",
+            kind.name(),
+            read.refused.len(),
+            crate::check_catalog::dismissals::REVIEWS_FILE
+        ));
+    }
+    Ok(read.review)
+}

@@ -118,7 +118,7 @@ fn dismiss_catalog(
             )
             .into());
         }
-        let Some(hash) = dismissals::content_hash(&sealed, &path) else {
+        let Some(hash) = kendex_core::quality::author::content_hash(&sealed, &path) else {
             return Err(format!("{token}: the item's content cannot be read").into());
         };
         match batches

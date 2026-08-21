@@ -818,16 +818,32 @@ lives in one capability table read by core and UI.
   manifest, keyed `kind:name`, written by `dismiss --catalog` from the
   tokens `check --catalog` prints. A dismissed finding stops counting and
   stays reported, marked — in the catalog's own passes and on the machines
-  that install from it. The record travels with the content: the plan
-  re-reads it out of the source it fetched and re-checks it against those
-  bytes, the apply writes it into the lock entry bound to the bytes it
-  wrote, and the audit reads it back from there, so an item the gate let
-  through does not return as unreviewed. Every one of them shows the
-  publisher's name and reason where the finding is printed, and editing
-  the item — in the catalog or on disk — stales the record and the hold
-  returns. Finding identity is deliberately non-positional (rule, file,
-  message, severity; `Finding::fingerprint`), because rendering moves
-  lines and a positional identity could never cross that boundary.
+  that install from it. What that record is worth on somebody else's
+  machine is `quality/author.rs`, the neutral home for the travelling
+  shape (`AuthorReview`) and for the one derivation of "a settled finding
+  is reported and does not count" (`author::score`) that the authoring
+  check, the gate, the audit and browsing all call. Three bounds, because
+  the record arrives from content kendex does not control: it binds to
+  bytes (the reader recomputes the hash from the source in front of it);
+  it settles as many occurrences of a finding as the publisher's own bytes
+  carried and no more, so a project's injected `[skill-instructions]`
+  cannot ride in on a reviewed one; and it carries only reasons an author
+  can give — `trusted-source` is refused on read, not only on write, and
+  a timestamp that is not a timestamp is refused with it. The record
+  travels with the content: the plan re-reads it out of the source it
+  fetched, the apply writes it into the lock entry (`authorReview`, lock
+  version 5) bound to the bytes it wrote, and the audit finds it by that
+  hash rather than by name — one shared skill tree is loaded by several
+  tools and only one of them holds a lock entry. A hook records none: the
+  gate reads the script and the audit reads the shared settings file, two
+  readings of different bytes by design. Every settled finding prints the
+  publisher recorded with the record and its reason; a record that settles
+  nothing here is a note, never silence; and editing the item — in the
+  catalog or on disk — stales it and the hold returns. Finding identity
+  is deliberately non-positional and body-normalized (rule, file with
+  `SKILL.md` spelled as the item body, message, severity;
+  `Finding::fingerprint`), because rendering moves lines and Codex renders
+  a command as a skill tree.
 - **The community directory is read like any remote: strictly, capped,
   and honest about staleness.** `registry/` (core) consumes what
   `source/index.rs` producers feed kendex.ai: `index.rs` re-parses the

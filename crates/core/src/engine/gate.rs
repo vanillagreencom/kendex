@@ -163,20 +163,38 @@ pub(super) fn run(
         let content_hash = content_hash(&input);
         let review_hash = super::review_hash::desired(&item);
         let result = crate::quality::audit(input);
-        // A finding the item's own catalog already reviewed and settled is
+        // A finding this item's publisher already reviewed and settled is
         // reported, and does not count: the verdict and the score answer
         // for what is still an open question, exactly as the authoring
-        // check does. The records were re-checked against the bytes this
-        // pass fetched before they got here.
-        let by_author = &item.author_dismissed;
-        let counted: Vec<crate::quality::Finding> = result
-            .findings
-            .iter()
-            .filter(|finding| !by_author.contains_key(&finding.fingerprint(&root)))
-            .cloned()
-            .collect();
-        let safety_score = crate::quality::safety(&counted);
-        let (verdict, reasons) = crate::quality::verdict(&counted, &safety_score, thresholds);
+        // check does. The record was re-checked against the bytes this pass
+        // fetched, and against how many times those bytes carried each
+        // finding, before it got here.
+        let budget = crate::quality::author::AuthorReview::budget(
+            item.author_review.as_ref(),
+            item.author_review.as_ref().map(|r| r.review_hash.as_str()),
+        );
+        let scored = crate::quality::author::score(&result.findings, &root, &budget);
+        let (verdict, reasons) =
+            crate::quality::verdict(&scored.counted, &scored.safety, thresholds);
+        // A record that named findings nothing here carries is not the same
+        // as no record: the publisher believes they settled something, and
+        // neither side learns otherwise unless this is said out loud.
+        if !scored.unmatched.is_empty() {
+            state.warnings.push(super::ItemWarning {
+                kind: item.kind,
+                name: item.name.clone(),
+                harness: Some(item.harness),
+                message: format!(
+                    "{} of {}'s reviewed findings do not appear in what {} installs here, so they settle nothing",
+                    scored.unmatched.len(),
+                    item.provenance,
+                    item.name
+                ),
+                remediation: Some(
+                    "re-run `kendex check --catalog` in the source and re-record the tokens it prints now".to_owned(),
+                ),
+            });
+        }
         let mut recorded = manifest.safety_overrides.get(&item.key);
         if let Some(review_hash) = &review_hash
             && verdict == Verdict::Block
@@ -200,7 +218,8 @@ pub(super) fn run(
                 review_hash: review_hash.as_deref(),
                 provenance: Some(&item.provenance),
                 override_state: &override_state,
-                author_dismissed: by_author,
+                author_review: item.author_review.as_ref(),
+                settled: &scored.settled,
                 held_back: verdict == Verdict::Block && !override_state.unblocks(),
             },
             &result.findings,
@@ -211,7 +230,7 @@ pub(super) fn run(
             harness: item.harness,
             scope: scope.clone(),
             location: root,
-            safety: safety_score,
+            safety: scored.safety,
             quality: result.quality,
             findings: result.findings,
             skipped: result.skipped,
@@ -230,23 +249,30 @@ pub(super) fn run(
         safety.push(row);
     }
     state.items = kept;
-    let surviving_skills: std::collections::BTreeSet<&str> = state
+    drop_settings_from_blocked_skills(state);
+    safety
+}
+
+/// A skill held back on every harness also loses its say over the project's
+/// settings file: what it would seed or refresh there is content the gate
+/// refused.
+fn drop_settings_from_blocked_skills(state: &mut DesiredState) {
+    let surviving: std::collections::BTreeSet<&str> = state
         .items
         .iter()
         .filter(|item| item.kind == ItemKind::Skill)
         .map(|item| item.name.as_str())
         .collect();
-    let blocked_skills: std::collections::BTreeSet<String> = state
+    let blocked: std::collections::BTreeSet<String> = state
         .refused
         .iter()
         .filter(|refused| refused.kind == ItemKind::Skill)
-        .filter(|refused| !surviving_skills.contains(refused.name.as_str()))
+        .filter(|refused| !surviving.contains(refused.name.as_str()))
         .map(|refused| refused.name.clone())
         .collect();
     state
         .settings_env
-        .retain(|seeded| !blocked_skills.contains(&seeded.owner));
-    safety
+        .retain(|seeded| !blocked.contains(&seeded.owner));
 }
 
 /// Whether this run was asked to record a review of *this* content.

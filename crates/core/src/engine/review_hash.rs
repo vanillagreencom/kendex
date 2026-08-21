@@ -36,6 +36,7 @@ use sha2::{Digest, Sha256};
 
 use crate::hash::{hash_bytes, hash_files};
 use crate::model::{ItemKind, ObservedItem};
+use crate::quality::author::AuthorReview;
 
 use super::desired::{Artifact, Desired};
 
@@ -49,20 +50,23 @@ pub(super) fn desired(item: &Desired) -> Option<String> {
     Some(seal(item.kind, &inner))
 }
 
-/// The catalog author's settled findings, bound to the bytes this plan
-/// writes — what the lock records so the audit can read them back without a
-/// catalog to ask. `None` where they settled nothing, or where the content
-/// has no identity a review could bind to: an unbound record would go on
-/// speaking for whatever landed there next.
-pub(super) fn author_review(item: &Desired) -> Option<crate::quality::reviews::SafetyReview> {
-    if item.author_dismissed.is_empty() {
+/// The publisher's settled findings, rebound to the bytes this plan writes
+/// — what the lock records so the audit can read them back without a
+/// catalog to ask.
+///
+/// `None` where they settled nothing, where the content has no identity a
+/// review could bind to, or where this kind's two readings are deliberately
+/// different bytes. That last one is the hook: the gate reads the script
+/// this plan writes and the audit reads the whole shared settings file the
+/// registration lands in (see the module doc), so a record bound to either
+/// could never be live against the other. Recording it anyway would leave a
+/// row of state that can only ever read as stale.
+pub(super) fn author_review(item: &Desired) -> Option<AuthorReview> {
+    let review = item.author_review.as_ref()?;
+    if item.kind == ItemKind::Hook {
         return None;
     }
-    Some(crate::quality::reviews::SafetyReview {
-        review_hash: desired(item)?,
-        ruleset: crate::quality::RULESET_VERSION,
-        dismissed: item.author_dismissed.clone(),
-    })
+    Some(review.rebound(desired(item)?))
 }
 
 /// What is installed here right now, read back off disk.

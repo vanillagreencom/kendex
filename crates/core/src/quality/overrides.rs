@@ -122,3 +122,42 @@ pub fn state(
     }
     OverrideState::Active
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::quality::Severity;
+
+    fn finding() -> Finding {
+        Finding {
+            rule: "safety-bypass".to_owned(),
+            severity: Severity::Critical,
+            location: "s/SKILL.md:69".to_owned(),
+            message: "`--no-verify` skips the checks a commit runs".to_owned(),
+            remediation: "leave the check in place".to_owned(),
+        }
+    }
+
+    /// A record made under an older rule set says so, and says it first.
+    /// The alternative is the lie the rule-set version exists to prevent:
+    /// the same problems, re-identified, reported as "different problems
+    /// were found than the ones that were reviewed".
+    #[test]
+    fn a_record_from_an_older_rule_set_reads_as_rules_changed() {
+        let findings = [finding()];
+        let recorded = SafetyOverride {
+            review_hash: "same-bytes".to_owned(),
+            ruleset: RULESET_VERSION - 1,
+            findings: vec!["an identity that build produced".to_owned()],
+            granted_at: "2026-01-01T00:00:00Z".to_owned(),
+            note: None,
+        };
+        match state(Some(&recorded), Some("same-bytes"), &findings, "s") {
+            OverrideState::Stale { why } => {
+                assert!(why.contains("safety rules changed"), "{why}");
+                assert!(!why.contains("different problems"), "{why}");
+            }
+            other => panic!("expected stale, got {other:?}"),
+        }
+    }
+}

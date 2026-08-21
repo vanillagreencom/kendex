@@ -20,6 +20,7 @@ pub mod desired;
 mod desired_agent;
 mod desired_command;
 mod desired_custom_hooks;
+mod desired_item;
 mod desired_kinds;
 mod desired_mcp;
 mod desired_skill;

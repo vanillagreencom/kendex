@@ -119,9 +119,9 @@ fn print_safety_rows(
                 DecisionState::AuthorDismissed {
                     reason,
                     dismissed_at,
-                    source,
+                    publisher,
                 } => say(&format!(
-                    "    {source} reviewed this {dismissed_at} and recorded it as {} — it is reported, and does not count",
+                    "    {publisher} reviewed this {dismissed_at} and recorded it as {} — it is reported, and does not count",
                     reason.name()
                 )),
                 _ => say(&format!("    fix: {}", finding.remediation)),
