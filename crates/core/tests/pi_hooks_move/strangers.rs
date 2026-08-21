@@ -358,3 +358,43 @@ fn a_held_file_and_a_stranger_are_both_reported() {
         "the stranger keeping the warning alive has to be said too: {said:?}"
     );
 }
+
+/// The edit that retires a registration takes out every handler carrying
+/// the command, so a second entry wearing it — a matcher somebody added
+/// by hand — cannot be told from kendex's own. Ambiguous means held.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_command_registered_twice_holds_rather_than_guessing() {
+    let w = regressed();
+    let registry = w.dot().join("hooks.json");
+    let mut value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&registry).unwrap()).unwrap();
+    let command = value["hooks"]["tool_call"][0]["hooks"][0]["command"].clone();
+    value["hooks"]["tool_call"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "matcher": "edit",
+            "hooks": [{ "type": "command", "command": command }]
+        }));
+    let theirs = serde_json::to_string_pretty(&value).unwrap();
+    fs::write(&registry, &theirs).unwrap();
+
+    let said = audit(&w.env, &w.scope()).unwrap().notes;
+    assert!(
+        said.iter()
+            .any(|note| note.contains("more than once") && note.contains("hooks.json")),
+        "{said:?}"
+    );
+    apply(&w);
+
+    assert_eq!(
+        fs::read_to_string(&registry).unwrap(),
+        theirs,
+        "the hand-added handler keeps its place, and so does the file"
+    );
+    assert!(
+        w.dot().join("hooks/guard.sh").is_file(),
+        "and the script it might name stays with it"
+    );
+}

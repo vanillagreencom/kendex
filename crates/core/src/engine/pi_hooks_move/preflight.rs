@@ -111,10 +111,24 @@ pub(crate) fn preflight(
     this
 }
 
-/// Whether this pass was told to discard what the person changed here —
-/// globally, or for this item by name, exactly as the item pass reads it.
+/// Whether this pass was told to be rid of what is here — by discarding
+/// edits, globally or for this item, exactly as the item pass reads it,
+/// or by naming this hook for removal. Naming it is the person saying
+/// they mean to take these bytes: the hold exists so an automatic
+/// cleanup cannot take what nobody asked it to, and a removal they typed
+/// is the opposite of that. The trash keeps what it takes either way.
 fn discarding(options: &crate::engine::PlanOptions, name: &str) -> bool {
-    options.overwrite_edited
+    let named_for_removal = match &options.removal_filter_typed {
+        Some(names) => names
+            .iter()
+            .any(|(kind, n)| *kind == ItemKind::Hook && n == name),
+        None => options
+            .removal_filter
+            .as_ref()
+            .is_some_and(|names| names.iter().any(|n| n == name)),
+    };
+    named_for_removal
+        || options.overwrite_edited
         || options
             .overwrite_edited_names
             .as_ref()
@@ -169,12 +183,24 @@ fn registry_block(root: &std::path::Path, scope: &Scope, ours: &[&LockEntry]) ->
         Ok(entries) => entries,
         Err(message) => return say(format!("could not be read ({message})")),
     };
-    let holds_ours = ours.iter().any(|entry| {
+    // Identity has to be exact before anything is removed: the edit takes
+    // out every handler carrying the command, so a second entry wearing
+    // it — a matcher somebody added by hand — cannot be told from
+    // kendex's own. Ambiguous means held, not guessed at.
+    let mut holds_ours = false;
+    for entry in ours {
         let (_, command) = super::legacy_registration(entry, scope, root);
-        registered
+        let carrying = registered
             .iter()
-            .any(|entry| entry.description.as_deref() == Some(command.as_str()))
-    });
+            .filter(|entry| entry.description.as_deref() == Some(command.as_str()))
+            .count();
+        if carrying > 1 {
+            return say(format!(
+                "registers {command} more than once, so kendex cannot tell its own entry from the others"
+            ));
+        }
+        holds_ours |= carrying == 1;
+    }
     if !holds_ours {
         return None;
     }

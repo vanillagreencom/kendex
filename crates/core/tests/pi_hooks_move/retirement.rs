@@ -280,3 +280,40 @@ fn an_undeclared_held_hook_keeps_its_record_through_the_orphan_sweep() {
         assert!(!w.dot().join("hooks.json").exists());
     }
 }
+
+/// A removal the person typed is the one case where they have already
+/// said they mean to take these bytes. It finishes the move rather than
+/// leaving the hook running with its declaration gone.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn removing_a_held_hook_by_name_takes_it() {
+    let w = regressed();
+    fs::write(
+        w.dot().join("hooks/guard.sh"),
+        "#!/bin/sh\n# mine\nexit 0\n",
+    )
+    .unwrap();
+    undeclare(&w);
+
+    apply_with(
+        &w,
+        &PlanOptions {
+            remove_orphans: true,
+            removal_filter: Some(vec!["guard".to_owned()]),
+            ..PlanOptions::default()
+        },
+    );
+
+    assert!(
+        !w.dot().join("hooks").exists(),
+        "the copy the person asked to be rid of goes"
+    );
+    assert!(
+        !w.dot().join("hooks.json").exists(),
+        "and so does what runs it"
+    );
+    let lock: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(w.project.join(".kendex-lock.json")).unwrap())
+            .unwrap();
+    assert!(lock["entries"].get("hook:guard:pi").is_none(), "{lock}");
+}

@@ -75,3 +75,58 @@ fn refresh_says_which_file_it_left_under_the_name_pi_reserved() {
     );
     assert!(dot.join("hooks/guard.sh").is_file());
 }
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn remove_by_name_takes_a_held_hook_out_of_the_reserved_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().canonicalize().unwrap();
+    let catalog = home.join("cat");
+    fs::create_dir_all(catalog.join("hooks")).unwrap();
+    fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    fs::write(
+        catalog.join("hooks/guard.sh"),
+        "#!/bin/sh\n# ---\n# name: guard\n# event: PreToolUse\n# description: a guard\n# harnesses: [pi]\n# ---\nexit 0\n",
+    )
+    .unwrap();
+    let project = home.join("app");
+    fs::create_dir_all(project.join(".pi")).unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        format!(
+            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"pi\"]\n\n[hooks.guard]\nsource = \"cat\"\n",
+            catalog.display()
+        ),
+    )
+    .unwrap();
+    assert!(kendex(&home, &project, &["refresh", "-y"]).status.success());
+
+    // Back to the old layout, with the script edited so it is held.
+    let dot = project.join(".pi");
+    fs::create_dir_all(dot.join("hooks")).unwrap();
+    fs::rename(
+        dot.join("kendex/hooks/guard.sh"),
+        dot.join("hooks/guard.sh"),
+    )
+    .unwrap();
+    let registry = fs::read_to_string(dot.join("kendex/hooks.json")).unwrap();
+    fs::write(
+        dot.join("hooks.json"),
+        registry.replace(".pi/kendex/hooks/", ".pi/hooks/"),
+    )
+    .unwrap();
+    fs::remove_dir_all(dot.join("kendex")).unwrap();
+    fs::write(dot.join("hooks/guard.sh"), "#!/bin/sh\n# mine\nexit 0\n").unwrap();
+
+    let output = kendex(&home, &project, &["remove", "guard"]);
+    let said = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{said}");
+
+    assert!(
+        !dot.join("hooks").exists(),
+        "a removal the person typed leaves nothing running: {said}"
+    );
+    assert!(!dot.join("hooks.json").exists(), "{said}");
+    let lock = fs::read_to_string(project.join(".kendex-lock.json")).unwrap();
+    assert!(!lock.contains("hook:guard:pi"), "{lock}");
+}

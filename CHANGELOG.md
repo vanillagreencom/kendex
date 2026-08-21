@@ -248,8 +248,9 @@ changes carry a **Breaking** call-out with their migration note inline.
   they are, and that last one completes the move as soon as the source is
   back. A copy kendex cannot prove it wrote keeps its whole installation,
   not just the file — the old copy stays the one that runs, and nothing
-  replaces it until you discard the edits — and discarding them finishes
-  the move in that run, leaving one registration and nothing more to say.
+  replaces it until you discard the edits — and discarding them, or
+  removing the hook by name, finishes the move in that run, leaving one
+  registration and nothing more to say.
   A registration kendex cannot take out holds the script it names, so a
   hook is never left half-retired. Hooks that came in with a bundle move
   like any other. And a cleanup nobody asked for by name now leaves a
