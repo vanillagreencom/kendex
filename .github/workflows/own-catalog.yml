@@ -13,6 +13,8 @@ jobs:
   # The default marketplace holds itself to the strictest reading: everyone
   # who installs from it inherits whatever its safety pass still finds.
   catalog:
+    permissions:
+      contents: read
     uses: ./.github/workflows/catalog-check.yml
     with:
       path: .
@@ -37,6 +39,8 @@ jobs:
   # running it against theirs would fail them for our content.
   smoke:
     name: real-CLI round trip
+    permissions:
+      contents: read
     runs-on: ${{ vars.CI_RUNNER_8V || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4

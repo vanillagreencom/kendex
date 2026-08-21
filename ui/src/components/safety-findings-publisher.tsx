@@ -36,6 +36,7 @@ export function PublisherSettled({ groups }: { groups: PublisherGroup[] }) {
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
         className="flex cursor-pointer items-center gap-1.5 self-start text-[13px] text-muted-foreground hover:text-foreground"
       >
         {open ? (

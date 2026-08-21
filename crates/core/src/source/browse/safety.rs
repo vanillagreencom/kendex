@@ -25,8 +25,7 @@ use crate::error::{CoreError, Result};
 use crate::model::ItemKind;
 use crate::quality::author::{AuthorDismissal, AuthorReview};
 use crate::quality::{
-    AuditInput, Content, Finding, QualityScore, RULESET_VERSION, SafetyScore, SkippedRule,
-    TreeFile, Verdict,
+    AuditInput, Content, Finding, QualityScore, RULESET_VERSION, SafetyScore, SkippedRule, Verdict,
 };
 use crate::source::DISCOVERY_VERSION;
 
@@ -359,13 +358,14 @@ fn input_for(browsed: &Browsed, kind: ItemKind, name: &str, item: &Item) -> Resu
         .display()
         .to_string();
     let content = match kind {
+        // Through the same budgeted constructor the install gate reads a
+        // tree with. A preview that read further would score findings the
+        // gate never sees, and the two would disagree about the verdict on
+        // the same bytes — which is the whole thing a preview is for.
         ItemKind::Skill => Content::SkillTree {
-            files: item
-                .tree
-                .iter()
-                .flatten()
-                .map(|(rel, bytes)| TreeFile::read(rel.clone(), bytes))
-                .collect(),
+            files: crate::quality::observe::tree_files_from_bytes(
+                item.tree.as_deref().unwrap_or_default(),
+            ),
         },
         // A hook's script is what the harness runs; browse scores it as a hook
         // so the rules that read event/command/script fire here too, not only

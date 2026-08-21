@@ -88,14 +88,21 @@ export interface PublisherGroup {
  *  per installation: a shared skill tree is what three tools load, and the
  *  same sentence printed three times reads as three problems. Grouped the
  *  way the decision zone groups evidence — the same bytes carrying the same
- *  finding is one thing to say, with every tool that loads it named. */
+ *  finding is one thing to say, with every tool that loads it named.
+ *
+ *  The item and the publisher are part of the key, never the harness. The
+ *  harness is what makes one file three rows, so leaving it out is the
+ *  grouping. The other two are not: two differently named commands can
+ *  carry identical bytes, and a review hash seals the kind and the bytes
+ *  alone — merging them would print one catalog's name over content it
+ *  never saw, which is the one thing this list exists to state. */
 export function publisherGroups(rows: ItemSafety[]): PublisherGroup[] {
   const ordered: PublisherGroup[] = [];
   const byEvidence = new Map<string, PublisherGroup>();
   for (const { row, finding, decision } of authorOccurrences(rows)) {
     if (decision.state.state !== "author-dismissed") continue;
     const content = row.reviewHash ?? `${row.kind}:${row.name}`;
-    const key = `${content}::${decision.fingerprint}`;
+    const key = `${content}::${row.kind}:${row.name}::${decision.state.publisher}::${decision.fingerprint}`;
     let group = byEvidence.get(key);
     if (!group) {
       group = {

@@ -8,6 +8,7 @@ use crate::model::HarnessId;
 
 mod repo;
 mod root_skill;
+mod safety_budget;
 mod safety_cache;
 mod summary;
 

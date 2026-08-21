@@ -80,6 +80,44 @@ pub fn local_source_root(env: &Env, scope: &Scope) -> PathBuf {
     }
 }
 
+/// Where a declared source's checkout sits on this machine, before asking
+/// whether anything is there.
+fn path_root(env: &Env, scope: &Scope, path: &str) -> PathBuf {
+    if Path::new(path).is_absolute() {
+        return PathBuf::from(path);
+    }
+    match scope {
+        Scope::Global => env.home.join(path),
+        Scope::Project { root } => root.join(path),
+    }
+}
+
+/// Where one declared source's bytes come from, as the manifest alone says
+/// it: `local`, a canonical path, or `owner/repo`. `None` where the
+/// declaration names nothing, or names a path that is not there.
+///
+/// The same answer [`resolve`] arrives at, without opening anything.
+/// `resolve` is for a pass that is about to read the source; this is for
+/// one that must not take the lock's word for where a record came from —
+/// the lock travels in the project repository, and it is the file under
+/// suspicion.
+pub fn declared_provenance(
+    env: &Env,
+    scope: &Scope,
+    name: &str,
+    manifest: &Manifest,
+) -> Option<String> {
+    if name == LOCAL_SOURCE_NAME {
+        return Some(LOCAL_SOURCE_NAME.to_owned());
+    }
+    let decl = manifest.sources.get(name)?;
+    let Some(path) = &decl.path else {
+        return decl.repo.clone();
+    };
+    let root = path_root(env, scope, path).canonicalize().ok()?;
+    root.is_dir().then(|| root.display().to_string())
+}
+
 pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Result<SourceState> {
     if name == LOCAL_SOURCE_NAME {
         // Adopt creates this root; until then the reserved source has no
@@ -109,15 +147,7 @@ pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Res
         });
     }
     if let Some(path) = &decl.path {
-        let base = match scope {
-            Scope::Global => env.home.clone(),
-            Scope::Project { root } => root.clone(),
-        };
-        let joined = if Path::new(path).is_absolute() {
-            PathBuf::from(path)
-        } else {
-            base.join(path)
-        };
+        let joined = path_root(env, scope, path);
         return match joined.canonicalize() {
             Ok(root) if root.is_dir() => Ok(SourceState::Ready(ResolvedSource {
                 name: name.to_owned(),

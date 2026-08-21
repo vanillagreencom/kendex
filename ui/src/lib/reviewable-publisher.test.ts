@@ -81,6 +81,42 @@ describe("publisherGroups", () => {
     ).toHaveLength(2);
   });
 
+  // A review hash seals the installed kind and the bytes, so two commands
+  // with the same body from two catalogs share one. Merging them would
+  // print the first catalog's name over content it never reviewed.
+  it("keeps two catalogs' identical bytes apart, each under its own name", () => {
+    const mine = row({
+      kind: "command",
+      name: "ship",
+      decisions: [settledByPublisher],
+    });
+    const theirs = row({
+      kind: "command",
+      name: "deploy",
+      decisions: [
+        decision({
+          fingerprint: "p",
+          state: {
+            state: "author-dismissed",
+            reason: "intended",
+            dismissedAt: "2026-08-16T00:00:00Z",
+            publisher: "someone/else",
+          },
+        }),
+      ],
+    });
+    const groups = publisherGroups([mine, theirs]);
+    expect(groups).toHaveLength(2);
+    expect(groups.map((group) => group.publisher)).toEqual([
+      "vanillagreencom/kendex",
+      "someone/else",
+    ]);
+    expect(groups.map((group) => group.items[0].name)).toEqual([
+      "ship",
+      "deploy",
+    ]);
+  });
+
   it("carries nothing the person decided themselves", () => {
     const mine = row({
       decisions: [

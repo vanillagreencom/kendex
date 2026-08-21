@@ -169,6 +169,12 @@ pub struct Installation<'a> {
     /// by the scorer, since a record settles as many occurrences as the
     /// publisher's own bytes carried and no more.
     pub author_review: Option<&'a AuthorReview>,
+    /// Why that record settles nothing here, when it is one this project
+    /// cannot vouch for. Set together with `author_review`, whose budget the
+    /// scorer was then not given — so `settled` is all false for it, and the
+    /// findings it names carry this sentence instead of reading as findings
+    /// nobody ever looked at.
+    pub unvouched: Option<&'a str>,
     /// One flag per finding, in the findings' order.
     pub settled: &'a [bool],
     /// Held back by the gate with no live acceptance. Decided by accepting
@@ -222,6 +228,18 @@ pub fn decisions(installation: &Installation<'_>, findings: &[Finding]) -> Vec<F
                         .get(&fingerprint)
                         .map(|dismissal| (review, dismissal))
                 });
+            // A record that paid nothing still has something to say about
+            // the findings it named, and saying it is the difference
+            // between "nobody has looked at this" and "somebody claimed to
+            // and this project could not confirm it".
+            let unvouched = installation
+                .unvouched
+                .filter(|_| {
+                    installation
+                        .author_review
+                        .is_some_and(|review| review.dismissed.contains_key(&fingerprint))
+                })
+                .map(str::to_owned);
             let state = match (accepted, dismissed) {
                 (Some(recorded), _) => DecisionState::Accepted {
                     granted_at: recorded.granted_at.clone(),
@@ -245,7 +263,7 @@ pub fn decisions(installation: &Installation<'_>, findings: &[Finding]) -> Vec<F
                     }
                 }
                 (None, None) => {
-                    author_state(by_author).unwrap_or(DecisionState::Open { earlier: None })
+                    author_state(by_author).unwrap_or(DecisionState::Open { earlier: unvouched })
                 }
             };
             FindingDecision {

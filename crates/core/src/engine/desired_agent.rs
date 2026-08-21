@@ -188,20 +188,13 @@ pub(super) fn desired_agent(
         let installed = crate::harness::rendered_name(harness, ctx.name);
         let namespaced = installed_under(&parsed, ctx.name, &installed);
         let source_agent = namespaced.as_ref().unwrap_or(&parsed);
-        notice_overrides(
-            ctx,
-            state,
-            harness,
-            source_agent,
-            &parsed,
-            &skills.upstream_now,
-        );
+        notice_overrides(ctx, state, harness, source_agent, &parsed, &skills);
         let effective = effective_agent(
             ctx,
             source_agent,
             harness,
             &skills.upstream_now,
-            gathered(ctx, &parsed, harness),
+            gathered(ctx, &parsed, harness, &skills.effective),
         );
         // The publisher's own: this project contributes nothing to it, by
         // construction rather than by a list of what to leave out.
@@ -277,14 +270,14 @@ fn notice_overrides(
     harness: crate::model::HarnessId,
     source_agent: &crate::render::agent::SourceAgent,
     parsed: &crate::render::agent::SourceAgent,
-    upstream_skills: &[String],
+    skills: &EffectiveSkills,
 ) {
     let effective = effective_agent(
         ctx,
         source_agent,
         harness,
-        upstream_skills,
-        gathered(ctx, parsed, harness),
+        &skills.upstream_now,
+        gathered(ctx, parsed, harness, &skills.effective),
     );
     harness_notices(ctx, state, harness, source_agent, &effective.overrides);
 }

@@ -166,13 +166,20 @@ impl AuditRule for ObfuscatedContent {
 /// finding a decision was made about.
 fn spelled(found: &std::collections::BTreeSet<char>) -> String {
     const SHOWN: usize = 6;
-    let mut points: Vec<String> = found
-        .iter()
-        .take(SHOWN)
-        .map(|c| format!("U+{:04X}", *c as u32))
-        .collect();
+    let point = |c: &char| format!("U+{:04X}", *c as u32);
+    let mut points: Vec<String> = found.iter().take(SHOWN).map(point).collect();
     if found.len() > SHOWN {
-        points.push(format!("and {} more", found.len() - SHOWN));
+        // The tail is named by a digest of the whole set, not left out.
+        // Two files sharing their first six code points and differing
+        // after would otherwise read the same sentence, and one sentence
+        // is one decision — the reader would settle the second having
+        // seen only the first.
+        let whole: Vec<String> = found.iter().map(point).collect();
+        points.push(format!(
+            "and {} more, {}",
+            found.len() - SHOWN,
+            super::digest(&whole.join(","))
+        ));
     }
     points.join(", ")
 }
@@ -197,18 +204,26 @@ impl AuditRule for UndecodableContent {
             prepared
                 .normalized
                 .iter()
-                .filter(|report| report.undecodable > 0)
-                .map(|report| Finding {
+                // Named by what would not decode, so the reading that found
+                // nothing to name is the same reading that reports nothing.
+                .filter_map(|report| {
+                    let unreadable = report.unreadable.as_deref()?;
+                    Some(Finding {
                     rule: self.id().to_owned(),
                     severity: Severity::Medium,
                     location: report.location.clone(),
+                    // Which unreadable content, not which file. The count
+                    // alone is the same sentence in every file that has
+                    // that many, and one sentence is one decision — the
+                    // reader would settle a file they were never shown.
                     message: format!(
-                        "{} byte(s) of this file are not text and were read as best they could be, so part of it was scanned as a guess",
-                        report.undecodable
+                        "{} byte(s) of this file are not text and were read as best they could be, so part of it was scanned as a guess (unreadable content {unreadable})",
+                        report.undecodable,
                     ),
                     remediation:
                         "save the file as UTF-8 text, or remove it if it was never meant to be text"
                             .to_owned(),
+                    })
                 })
                 .collect(),
         )

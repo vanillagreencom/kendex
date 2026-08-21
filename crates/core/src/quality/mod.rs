@@ -37,6 +37,17 @@ pub use score::{Deduction, SafetyScore, Thresholds, Verdict, safety, verdict};
 pub use secret::{fingerprint_secret, redact};
 pub use text::{Line, Normalization};
 
+/// A short, stable name for content a message cannot print — too long, or
+/// no longer in hand at all. Never an identity on its own: it goes beside
+/// what *is* printed, so the sentence still says what the rule fired on and
+/// the digest only tells apart what the printing left out.
+fn digest(material: &str) -> String {
+    crate::hash::hash_bytes(material.as_bytes())
+        .chars()
+        .take(8)
+        .collect()
+}
+
 /// The rule set findings were produced by. An override binds to it, so any
 /// change to what a finding *is* must bump this and stale every override
 /// granted against the old behaviour — a new rule, a widened pattern, a

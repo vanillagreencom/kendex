@@ -80,10 +80,20 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
             // answer rather than deriving it a second time: a live record
             // proves the bytes are the ones that apply measured, and two
             // derivations of one number are two chances to disagree.
-            let by_author =
-                author_review(&lock, item, scored.review.as_deref(), result.findings.len());
+            let by_author = author_review(
+                env,
+                &scope,
+                &manifest,
+                &lock,
+                item,
+                scored.review.as_deref(),
+                result.findings.len(),
+            );
+            // Only a record this project can vouch for pays for anything.
             let budget = by_author
-                .map(crate::quality::author::AuthorReview::recorded_budget)
+                .as_ref()
+                .filter(|found| found.unvouched.is_none())
+                .map(|found| found.review.recorded_budget())
                 .unwrap_or_default();
             let scored_findings = crate::quality::author::score(&result.findings, &budget);
             let (verdict, reasons) = crate::quality::verdict(
@@ -105,7 +115,10 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
                     review_hash: scored.review.as_deref(),
                     provenance: provenance.as_deref(),
                     override_state: &override_state,
-                    author_review: by_author,
+                    author_review: by_author.as_ref().map(|found| found.review),
+                    unvouched: by_author
+                        .as_ref()
+                        .and_then(|found| found.unvouched.as_deref()),
                     settled: &scored_findings.settled,
                     held_back: verdict == crate::quality::Verdict::Block
                         && !override_state.unblocks(),
@@ -147,22 +160,100 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
 /// names would miss both. An edited install moves the hash and every record
 /// for it stops applying, the rule every other review answers to.
 fn author_review<'a>(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
     lock: &'a crate::lock::Lock,
     item: &crate::model::ObservedItem,
     review_hash: Option<&str>,
     counted: usize,
-) -> Option<&'a crate::quality::author::AuthorReview> {
+) -> Option<Published<'a>> {
     let review_hash = review_hash?;
     lock.entries
         .values()
         .filter(|entry| names(entry, item))
-        .filter_map(|entry| entry.author_review.as_ref())
-        .find(|review| review.stale_why(Some(review_hash)).is_none())
+        // Every check on one record before the next record is looked at.
         // The lock travels in the project repository and a pull request can
         // edit it, so what comes back out of it gets the checks the
-        // catalog's own file gets. A record that fails them settles
-        // nothing, which is the same answer as no record.
-        .filter(|review| review.is_honest(counted))
+        // catalog's own file gets — and a record that fails them settles
+        // nothing, which is the same answer as no record. Asking after the
+        // first match had been picked let one bad entry hide a good one:
+        // several entries carry a record for one shared tree, and only one
+        // of them has to hold up.
+        .filter_map(|entry| {
+            let review = entry.author_review.as_ref()?;
+            (review.stale_why(Some(review_hash)).is_none() && review.is_honest(counted)).then(
+                || Published {
+                    unvouched: unvouched(env, scope, manifest, entry, review),
+                    review,
+                },
+            )
+        })
+        // A record this project vouches for outranks one it does not, so a
+        // forged entry beside a real one cannot take the real one's place.
+        .min_by_key(|found| usize::from(found.unvouched.is_some()))
+}
+
+/// The publisher's record for one observation, and its standing here.
+struct Published<'a> {
+    review: &'a crate::quality::author::AuthorReview,
+    /// Why this record settles nothing, when the manifest does not vouch
+    /// for where it came from. `None` when it does.
+    unvouched: Option<String>,
+}
+
+/// Whether this project's own manifest vouches for where the record came
+/// from, and the sentence to show when it does not.
+///
+/// Every other check on a lock-carried record answers a question about
+/// shape: is the hash this content's, is the fingerprint one this build
+/// could have written, is the timestamp a timestamp. None of those can
+/// answer provenance, and provenance is what this record trades on — it is
+/// the one decision a person did not make that removes findings from the
+/// score, where their own dismissal never unblocks anything. So a forged
+/// entry with a correct hash, a real fingerprint, a plausible name and an
+/// in-range count passes everything a shape can be asked and still buys
+/// what it wanted.
+///
+/// What it cannot forge in the same file is the subscription. The manifest
+/// declares the item and names the source; the source names the repository
+/// or the path (`source::declared_provenance`). Both are read here from the
+/// manifest alone — never from the lock, which is the file under suspicion
+/// — so a forged record has to be accompanied by a visible subscription to
+/// the publisher it names, which is a change a person reviewing the pull
+/// request is looking straight at.
+///
+/// An installation nothing declares by name — a dependency, a bundle's
+/// member — is asked of the source its entry names instead, which the
+/// manifest still has to declare for the lookup to answer at all. That is
+/// weaker: it lets the entry choose among the catalogs this project already
+/// subscribes to. It is not nothing, and re-deriving the whole closure to
+/// name a derived item's source would be the same subscription list read a
+/// second way.
+///
+/// A record that cannot be corroborated is still reported, under the name
+/// it carries, with this sentence beside it. It just does not spend.
+fn unvouched(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    entry: &crate::lock::LockEntry,
+    review: &crate::quality::author::AuthorReview,
+) -> Option<String> {
+    let publisher = &review.publisher;
+    let source = manifest
+        .declared(entry.kind)
+        .get(&entry.name)
+        .map_or(entry.source.as_str(), |decl| decl.source.as_str());
+    let subscribed = crate::source::declared_provenance(env, scope, source, manifest);
+    if subscribed.as_deref() == Some(publisher.as_str()) {
+        return None;
+    }
+    Some(format!(
+        "this project's install record carries a review in {publisher}'s name, but the project does not install {} {} from {publisher} — nothing here can confirm whose review it is, so it settles nothing",
+        entry.kind.name(),
+        entry.name
+    ))
 }
 
 /// The key this observation's records live under. An entry that emitted

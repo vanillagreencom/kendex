@@ -78,13 +78,26 @@ fn from_manifest<'a>(manifest: &'a Manifest, harness: HarnessId, name: &str) -> 
             .agent_frontmatter
             .get(harness.name())
             .and_then(|by_agent| by_agent.get(name)),
-        skills: manifest.agent_skills.get(name).cloned(),
+        skills: declared_skills(manifest, name).cloned(),
         custom_hooks: manifest
             .custom_hooks
             .iter()
             .filter(|hook| hook.enabled && targets(&hook.agents, name))
             .collect(),
     }
+}
+
+/// The `[agent-skills]` entry this agent reads, found by the same lookup
+/// the mapping uses: a reviewer agent falls back to its base agent's entry.
+/// Asking for the exact name alone would call a real assignment absent and
+/// render the upstream list over the top of it, which is the removal the
+/// person made coming back.
+fn declared_skills<'a>(manifest: &'a Manifest, name: &str) -> Option<&'a Vec<String>> {
+    manifest.agent_skills.get(name).or_else(|| {
+        manifest
+            .agent_skills
+            .get(crate::mapping::skill_match_prefix(name))
+    })
 }
 
 /// Whether a custom hook's agent selector could reach this agent. `all` and
@@ -101,14 +114,28 @@ fn targets(agents: &HookAgents, name: &str) -> bool {
 }
 
 /// The same, with the hooks narrowed to what this harness will actually
-/// deliver to this agent.
+/// deliver to this agent and the skill assignment taken from the list the
+/// pass already resolved.
+///
+/// `effective` is [`crate::mapping::EffectiveSkills::effective`]: the
+/// declaration filtered to what is installed, with the upstream additions
+/// this pass merged into the manifest folded in. Reading the manifest again
+/// here would render the list the pass has already moved past — an upstream
+/// skill discovered this run would need a second apply to appear, and a
+/// declaration held under the base agent's name would read as no
+/// declaration at all and bring back the skills the person removed.
 pub(super) fn gathered<'a>(
     ctx: &'a ItemCtx,
     parsed: &SourceAgent,
     harness: HarnessId,
+    effective: &[String],
 ) -> Project<'a> {
     Project {
         custom_hooks: hooks_for_agent(ctx.env, ctx.scope, harness, ctx.manifest, parsed),
+        // Still the project's contribution or nothing: with no declaration
+        // to read, the source's own assignment is the publisher's and is
+        // not folded in here.
+        skills: declared_skills(ctx.manifest, ctx.name).map(|_| effective.to_vec()),
         ..from_manifest(ctx.manifest, harness, ctx.name)
     }
 }

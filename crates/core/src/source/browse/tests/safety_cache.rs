@@ -10,14 +10,14 @@ use crate::model::{ItemKind, Scope};
 use crate::process::Hardened;
 use crate::quality::Verdict;
 
-const REPO: &str = "owner/repo";
+pub(super) const REPO: &str = "owner/repo";
 
 fn git(dir: &Path, args: &[&str]) {
     let output = Hardened::git(args, Some(dir)).run().unwrap();
     assert!(output.status.success(), "git {args:?}");
 }
 
-fn commit(dir: &Path, message: &str) {
+pub(super) fn commit(dir: &Path, message: &str) {
     git(dir, &["add", "-A"]);
     git(
         dir,
@@ -36,7 +36,7 @@ fn commit(dir: &Path, message: &str) {
 
 /// An upstream repository whose one skill scores below 100 without any
 /// Critical finding, subscribed as `cat` and already synced into the store.
-fn fixture() -> (tempfile::TempDir, Env, Scope) {
+pub(super) fn fixture() -> (tempfile::TempDir, Env, Scope) {
     let tmp = tempfile::tempdir().unwrap();
     let upstream = tmp.path().join("base/owner/repo");
     fs::create_dir_all(upstream.join("skills/gh")).unwrap();

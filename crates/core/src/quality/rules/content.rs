@@ -74,13 +74,13 @@ impl AuditRule for Rce {
             let Some(what) = fetch_and_run(line) else {
                 return;
             };
+            let what = what.said();
             findings.push(Finding {
                 rule: self.id().to_owned(),
                 severity: line.weigh(Severity::Critical),
                 location: at(doc, line),
                 message: format!(
-                    "this line {what}{}, so whatever the far end serves is what runs",
-                    target(line)
+                    "this line {what}, so whatever the far end serves is what runs"
                 ),
                 remediation:
                     "download to a file, show the user what it contains, and run it as a separate step they can refuse"
@@ -94,49 +94,122 @@ impl AuditRule for Rce {
     }
 }
 
-/// What this line reaches for, quoted, so two lines fetching two different
-/// things are two questions. A finding's identity is its rule and its
-/// sentence, and a sentence that says only "this line" is the same sentence
-/// wherever it fires — the person is shown one and settles both.
+/// What this line does, and what it does it to — so two lines that reach
+/// for two different things are two questions. A finding's identity is its
+/// rule and its sentence, and a sentence that says only "this line" is the
+/// same sentence wherever it fires: the person is shown one and settles
+/// both.
 ///
 /// Named from the line, never from the file it sits in: a file is something
 /// kendex's own rendering moves between (an over-cap body is split into
 /// `references/`), and an identity that moved with it would stop being the
 /// finding a decision was made about.
-fn target(line: &Line) -> String {
-    const BOUNDARY: &[char] = &['"', '\'', '`', ' ', '\t', ')', '(', '<', '>', ';', ','];
-    for scheme in ["https://", "http://"] {
-        if let Some(at) = line.text.find(scheme) {
-            let rest = &line.text[at..];
-            let url = rest.split(BOUNDARY).next().unwrap_or(rest);
-            if url.len() > scheme.len() {
-                return format!(" from `{}`", crate::quality::redact(url));
-            }
+struct Reach {
+    what: &'static str,
+    /// How the operand attaches to `what` — "from", "of", "built from".
+    preposition: &'static str,
+    operand: String,
+}
+
+impl Reach {
+    fn said(&self) -> String {
+        if self.operand.is_empty() {
+            return self.what.to_owned();
         }
+        const CAP: usize = 60;
+        let shown = crate::quality::redact(&self.operand);
+        // An `eval` argument is a whole program on one line, and a message
+        // is a sentence. What is cut is named by a digest of the whole, so
+        // two long operands sharing a prefix stay two questions.
+        let shown = match shown.char_indices().nth(CAP) {
+            None => shown,
+            Some((at, _)) => format!("{}… {}", &shown[..at], crate::quality::digest(&shown)),
+        };
+        format!("{} {} `{shown}`", self.what, self.preposition)
     }
-    String::new()
 }
 
 /// A plain description of what this line fetches and runs, if it does.
-fn fetch_and_run(line: &Line) -> Option<&'static str> {
+fn fetch_and_run(line: &Line) -> Option<Reach> {
     const SHELLS: &[&str] = &["| sh", "|sh", "| bash", "|bash", "| zsh", "| python"];
-    if ["curl", "wget"].iter().any(|verb| line.has(verb)) {
+    let fetch = ["curl", "wget"]
+        .iter()
+        .find_map(|verb| line.find(verb).map(|at| at + verb.len()));
+    if let Some(after) = fetch {
+        let downloaded = |what| Reach {
+            what,
+            preposition: "from",
+            operand: fetched(line, after),
+        };
         if SHELLS.iter().any(|shell| line.has(shell)) {
-            return Some("pipes a download straight into a shell");
+            return Some(downloaded("pipes a download straight into a shell"));
         }
         if line.has("/tmp/")
             && ["&& sh", "&& bash", "chmod +x"]
                 .iter()
                 .any(|run| line.has(run))
         {
-            return Some("downloads a file and then executes it");
+            return Some(downloaded("downloads a file and then executes it"));
         }
     }
     if line.has("base64") && line.has("|") && (line.has("-d") || line.has("--decode")) {
-        return Some("decodes hidden text and pipes it onward");
+        return Some(Reach {
+            what: "decodes hidden text and pipes it onward",
+            preposition: "out of",
+            // Where an encoded payload is written, whether it is piped in
+            // or passed on the decoding command itself.
+            operand: line
+                .text
+                .split('|')
+                .next()
+                .unwrap_or(&line.text)
+                .trim()
+                .to_owned(),
+        });
     }
-    line.has("eval(")
-        .then_some("hands a built-up string to an interpreter")
+    line.find("eval(").map(|at| Reach {
+        what: "hands a built-up string to an interpreter",
+        preposition: "built from",
+        operand: line.text[at + "eval(".len()..]
+            .split(')')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_owned(),
+    })
+}
+
+/// What a fetch verb is pointed at: a literal URL wherever it sits on the
+/// line, or else the first thing after the verb that is not a switch.
+///
+/// The URL is located in the flattened line and cut from the original, so
+/// `CURL HTTPS://…` is the match the detector already made — which reads
+/// the flattened text — and still prints the way it was written. Deriving
+/// the name from a different reading than the one that matched is how two
+/// different downloads end up sharing one sentence.
+fn fetched(line: &Line, after: usize) -> String {
+    const BOUNDARY: &[char] = &['"', '\'', '`', ' ', '\t', ')', '(', '<', '>', ';', ','];
+    for scheme in ["https://", "http://"] {
+        let Some(at) = line.lower.find(scheme) else {
+            continue;
+        };
+        let rest = &line.text[at..];
+        let url = rest.split(BOUNDARY).next().unwrap_or(rest);
+        if url.len() > scheme.len() {
+            return url.to_owned();
+        }
+    }
+    operand(&line.text[after..]).to_owned()
+}
+
+/// The first thing after a fetch verb that is not a switch: what is being
+/// downloaded, when it was not written as a literal URL. Quotes come off,
+/// so `"$URL"` and `$URL` are one operand written two ways.
+fn operand(rest: &str) -> &str {
+    rest.split(|c: char| c.is_whitespace() || c == '|')
+        .map(|token| token.trim_matches(|c| matches!(c, '"' | '\'' | '`')))
+        .find(|token| !token.is_empty() && !token.starts_with('-'))
+        .unwrap_or_default()
 }
 
 /// Files that hold credentials, and the verbs that would send them

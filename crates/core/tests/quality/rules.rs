@@ -16,6 +16,16 @@ pub fn document(kind: ItemKind, text: &str) -> AuditResult {
 }
 
 pub fn skill(files: &[(&str, &str)]) -> AuditResult {
+    let bytes: Vec<(&str, &[u8])> = files
+        .iter()
+        .map(|(path, text)| (*path, text.as_bytes()))
+        .collect();
+    skill_bytes(&bytes)
+}
+
+/// The same, for a tree holding bytes that are not text — what
+/// `undecodable-content` is about.
+pub fn skill_bytes(files: &[(&str, &[u8])]) -> AuditResult {
     audit(AuditInput {
         kind: ItemKind::Skill,
         name: "sample".into(),
@@ -24,7 +34,7 @@ pub fn skill(files: &[(&str, &str)]) -> AuditResult {
         content: Content::SkillTree {
             files: files
                 .iter()
-                .map(|(path, text)| TreeFile::read(PathBuf::from(path), text.as_bytes()))
+                .map(|(path, bytes)| TreeFile::read(PathBuf::from(path), bytes))
                 .collect(),
         },
     })

@@ -51,7 +51,38 @@ pub fn deobfuscate(location: &str, text: &str) -> (String, Normalization) {
             None => c,
         })
         .collect();
+    report.unreadable = (report.undecodable > 0).then(|| unreadable_print(text));
     (out, report)
+}
+
+/// A short name for the unreadable places in one document.
+///
+/// The bytes themselves are gone: `TreeFile::read` decodes lossily so a
+/// payload cannot be hidden from every rule behind one stray byte, and each
+/// invalid run arrives here as a single U+FFFD. What is left to tell two
+/// unreadable files apart is the readable text around their holes, which is
+/// what this names. Never the file's path — rendering moves content between
+/// files, and an identity that moved with it would stop being the finding a
+/// decision was made about.
+fn unreadable_print(text: &str) -> String {
+    const AROUND: usize = 16;
+    let chars: Vec<char> = text.chars().collect();
+    let mut material = String::new();
+    for at in chars
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| **c == char::REPLACEMENT_CHARACTER)
+        .map(|(at, _)| at)
+    {
+        let from = at.saturating_sub(AROUND);
+        let to = (at + 1 + AROUND).min(chars.len());
+        material.extend(&chars[from..to]);
+        // One hole's surroundings never run into the next one's: without a
+        // separator, two files whose holes sit differently in the same text
+        // could still spell one string.
+        material.push('\u{1}');
+    }
+    crate::quality::digest(&material)
 }
 
 /// Characters that occupy no space on screen: zero-width joiners and

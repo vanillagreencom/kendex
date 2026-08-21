@@ -30,6 +30,13 @@ pub struct Normalization {
     /// Bytes that were not valid UTF-8 and had to be replaced to read this
     /// as text at all.
     pub undecodable: usize,
+    /// A short name for where those replacements sit in this document's own
+    /// text — the readable characters around each hole. The bytes are gone
+    /// by the time anything here runs, and a sentence that says only how
+    /// many there were is the same sentence in every file with that many:
+    /// one decision, settling files the reader never saw. `None` where
+    /// nothing had to be replaced.
+    pub unreadable: Option<String>,
     /// The distinct characters behind `invisible` and `homoglyphs`, in code
     /// point order. A finding's identity is its rule and its sentence, so a
     /// sentence that says only how many were found is the same sentence for

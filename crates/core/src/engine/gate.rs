@@ -228,6 +228,10 @@ pub(super) fn run(
                 provenance: Some(&item.provenance),
                 override_state: &override_state,
                 author_review: item.author_review.as_ref(),
+                // The plan read this record out of the catalog it just
+                // resolved from the manifest, so provenance is not
+                // something anything here has to take on trust.
+                unvouched: None,
                 settled: &scored.settled,
                 held_back: verdict == Verdict::Block && !override_state.unblocks(),
             },

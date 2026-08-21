@@ -839,7 +839,19 @@ lives in one capability table read by core and UI.
   fetched, the apply writes it into the lock entry (`authorReview`, lock
   version 5) bound to the bytes it wrote, and the audit finds it by that
   hash rather than by name — one shared skill tree is loaded by several
-  tools and only one of them holds a lock entry. A hook records none: the
+  tools and only one of them holds a lock entry, so one entry that does not
+  hold up never ends the search for one that does. A fourth bound is the
+  audit's alone, since only there does the record arrive out of the lock — a
+  committed file a pull request can edit — and the three above answer only
+  questions of shape, which cannot answer provenance. So it corroborates the
+  name against this project's subscription (`source::declared_provenance`):
+  the declaration names the source and the source names the repository or
+  path, both read from the manifest, never from the lock; an installation
+  nothing declares by name falls back to the source its entry names, which
+  the manifest must still declare. A record naming a publisher this project
+  does not install the item from is reported under the name it carries and
+  buys nothing, so forging one means committing a visible subscription to
+  whoever is being impersonated. A hook records none: the
   gate reads the script and the audit reads the shared settings file, two
   readings of different bytes by design — so the record is refused where
   it is read, `dismiss --catalog` refuses to write one, and `check
