@@ -50,7 +50,7 @@ describe("groupFindingsByRule", () => {
         location: "/home/dana/skills/visual-qa/process.py:111",
       },
     ];
-    const groups = groupFindingsByRule(findings);
+    const groups = groupFindingsByRule(findings, []);
     expect(groups).toHaveLength(1);
     expect(groups[0].locations).toEqual([
       RULE_FINDING.location,
@@ -65,7 +65,7 @@ describe("groupFindingsByRule", () => {
       { ...RULE_FINDING, message: "different message" },
       { ...RULE_FINDING, remediation: "different fix" },
     ];
-    expect(groupFindingsByRule(findings)).toHaveLength(3);
+    expect(groupFindingsByRule(findings, [])).toHaveLength(3);
   });
 
   it("keeps the highest severity across a rule's findings", () => {
@@ -74,7 +74,7 @@ describe("groupFindingsByRule", () => {
       { ...RULE_FINDING, severity: "critical" },
       { ...RULE_FINDING, severity: "low" },
     ];
-    expect(groupFindingsByRule(findings)[0].severity).toBe("critical");
+    expect(groupFindingsByRule(findings, [])[0].severity).toBe("critical");
   });
 });
 
@@ -236,6 +236,6 @@ describe("a held-back item's settled findings", () => {
     expect(mixed[0].settledBy).toBeNull();
 
     // And with no decisions at all — every other caller — nothing changes.
-    expect(groupFindingsByRule([first, second])[0].settledBy).toBeNull();
+    expect(groupFindingsByRule([first, second], [])[0].settledBy).toBeNull();
   });
 });

@@ -38,9 +38,13 @@ export interface SettledBy {
 // matched (a hook shelling through the same wrapper at four call sites) —
 // same message, same fix, four locations. This collapses those into one
 // entry so the fix sentence prints once instead of once per location.
+// `decisions` has no default on purpose: it is what carries the publisher's
+// name onto a held-back item's settled findings, and a default would let the
+// one caller drop it with nothing to notice. The type checker holds the
+// wiring instead.
 export function groupFindingsByRule(
   findings: Finding[],
-  decisions: FindingDecision[] = [],
+  decisions: FindingDecision[],
 ): RuleGroup[] {
   const ordered: RuleGroup[] = [];
   const byKey = new Map<string, RuleGroup>();

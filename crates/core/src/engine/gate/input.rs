@@ -53,6 +53,15 @@ pub(super) fn authored_for(item: &Desired) -> AuditInput {
         (Some(authored), _) => authored.clone(),
         // Nothing in these renderings comes from the project: the
         // publisher's bytes are the whole of what is read.
+        //
+        // This arm is a standing obligation on the renderers, and the one
+        // half of this match the compiler cannot hold. A new kind cannot be
+        // added without answering here — that part it does hold. But
+        // teaching one of these kinds to splice in project text compiles
+        // clean and silently widens every publisher review for that kind,
+        // which is the failure this whole match exists to prevent. Adding
+        // project text to any kind listed here means moving it to the arm
+        // below and giving its builder an `authored` rendering to report.
         (
             None,
             ItemKind::Command
@@ -61,8 +70,13 @@ pub(super) fn authored_for(item: &Desired) -> AuditInput {
             | ItemKind::Plugin
             | ItemKind::PiExtension,
         ) => input.content.clone(),
-        // These two carry project text — `[skill-instructions]`, an agent's
-        // launch and additional instructions, its project-configured hooks.
+        // These two carry project text — `[skill-instructions]`, and
+        // everything in `desired_agent::Project`. Their builders owe an
+        // `authored` rendering beside the real one; reaching here means one
+        // did not produce it, which a body-cap refusal or a harness that
+        // cannot express the agent both do. Unreadable is the answer:
+        // nothing is settled, and the plan says a carried review did not
+        // apply.
         (None, ItemKind::Skill | ItemKind::Agent) => Content::Unread {
             why: "kendex could not tell this item's own content from this project's",
         },
@@ -152,3 +166,6 @@ fn mcp_entry(edits: &[(std::path::PathBuf, ConfigEdit)]) -> Option<McpEntry> {
         })
         .map(McpEntry::from_json)
 }
+
+#[cfg(test)]
+mod tests;
