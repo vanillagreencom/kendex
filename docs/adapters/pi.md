@@ -80,7 +80,10 @@ runs and, where the record kept them, the event and matcher it fires
 under — read from the parts a document keys, never from the one line a
 scan displays them on, since the character joining that line is legal
 inside a matcher and inside a command alike — and by being the only entry
-answering to all of that. Two entries a record can tell apart are two
+answering to all of that. A matcher nobody set and one set to nothing are
+the same matcher, spelled one way for every question asked about it, so
+no two sides of a comparison can spell it differently and read one entry
+as two. Two entries a record can tell apart are two
 registrations; two it cannot — the same command where the record names no
 event and no matcher — are one puzzle, and a puzzle holds. At the new path the record keeps
 the event and matcher a hook went in under, whatever the catalog renders

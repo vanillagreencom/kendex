@@ -243,71 +243,24 @@ changes carry a **Breaking** call-out with their migration note inline.
   publisher's recorded review now travels with the package, and the default
   catalog ships nothing its own check has not settled.
 - Pi no longer halts every interactive start in a kendex-managed project.
-  Pi has reserved the `hooks/` directory name beside its own roots: it
-  warns whenever one exists, whatever is in it, and then waits for a
-  keypress before the session opens — and the migration it suggests is one
-  kendex's Pi hooks cannot take, since they are shell scripts a carrier
-  extension runs, not Pi extensions. They now live under
-  `.pi/kendex/hooks/` and `~/.pi/agent/kendex/hooks/`, and the next `kendex
-  refresh` moves an existing install out of the reserved directory and
-  takes the directory away with it — including for a hook you removed or
-  switched off, which leaves nothing behind to keep firing. Nothing moves
-  that kendex cannot account for. A file it did not write, one you edited
-  after it was installed, anything that is not a plain file where the
-  script was — a directory of your own, say — a hook registration you
-  added or duplicated by hand, and a hook whose source is unreachable this
-  run all stay exactly where they are; that last one completes the move as
-  soon as the source is back. The same holds when the catalog moves
-  kendex's hook, when kendex's is taken away, and on every tool that keeps
-  hooks this way. The same command registered twice holds that hook, and
-  no other hook waits on it, while one you register under a matcher of
-  your own is left where you put it. Two hooks that run one script on
-  different events are two hooks, and both refresh; only entries kendex
-  genuinely cannot tell apart hold. A hook you declare for the first time
-  takes nothing with it on the way in, so a command you already register
-  yourself keeps the entry you gave it. An install record from an older
-  kendex, which says less about what it registered, no longer leads to a
-  second registration beside the first: what the record cannot name is
-  looked up in the file itself, and a hook whose matcher you left empty
-  registers once and stays once. A hook whose catalog moves it to another
-  event is not held either: the entry it had comes out as the new one goes
-  in, so it fires once, where the catalog now says, and switching it off
-  in that same refresh still leaves nothing running. What `refresh` prints
-  before it applies anything now reads as what it is about to do, rather
-  than as done. A copy kendex cannot prove it wrote keeps its
-  whole installation, not just the file — the old copy stays the one that
-  runs, and nothing replaces it until you discard the edits — and
-  discarding them, or removing the hook by name, finishes the move in that
-  run, leaving one registration and nothing more to say. Each hold says
-  which one it is, wherever it is reported, so a conflict offers to
-  discard edits only where discarding edits is what settles it. And a finished
-  move stays finished: kendex writes it down rather than working it out
-  again, so nothing under the old name is kendex's afterwards — a script
-  and a registration you put back there yourself both stay, however
-  exactly they match what kendex used to write, and whatever else you
-  change about the hook later, and so does the directory itself if you
-  make it again, empty or not. A hook you install for the first time
-  counts as finished too, so files of your own already sitting in that
-  directory are never mistaken for an older kendex's. A hook held that
-  way still shows up in `kendex list`, in the app, and in the safety scan,
-  read from the old registry it fires from, so the copy that needs your
-  attention is not the one you cannot see. A registration
-  kendex cannot take out holds the script it names, so a hook is never left
-  half-retired — including one written in a shape kendex does not write
-  and cannot edit — at either path, whether it is being refreshed or
-  taken away, and found out by making the edit and reading the file back
-  rather than by the edit reporting success. A link where a registry goes
-  is left alone like every other link here. A registration kendex wrote down in full — the ones you
-  declare under `[[custom-hooks]]` — is known by the event and matcher it
-  went in under, so one you move by hand stays where you moved it and
-  nothing is registered beside it; and at the new path, a registration you
-  move is never doubled by a second one either — though removing the hook
-  by name still takes it, wherever you moved the entry to, since nothing
-  is being registered for a hook you asked to be rid of. Hooks that came in with a bundle move like any other. And a
-  cleanup nobody asked for by name now leaves a hook's files alone when
-  they are not the ones kendex wrote — the rule skills, agents and commands
-  already followed. `refresh` now prints those reasons, which it previously
-  worked out and dropped.
+  Pi reserves the `hooks/` directory name beside every root it loads: it
+  warns whenever one exists, whatever is in it, and waits for a keypress
+  before the session opens. kendex's Pi hooks now live under
+  `.pi/kendex/hooks/` and `~/.pi/agent/kendex/hooks/`, and the next
+  `kendex refresh` moves an existing install there and takes the old
+  directory away with it — including for a hook you removed or switched
+  off, so nothing is left behind still firing. Nothing moves that kendex
+  cannot prove it wrote: a file you edited, one it never wrote, something
+  that is not a plain file where the script was, a registration you added
+  or moved by hand, a link, and a hook whose source is unreachable this
+  run all stay exactly where they are, and `refresh` says which and why.
+  Discarding the edits, or removing the hook by name, finishes the move.
+  A hook left behind still shows up in `kendex list`, in the app and in
+  the safety scan, read from where it is really firing, so the copy that
+  needs your attention is not the one you cannot see. Once a hook has
+  moved, the reserved name is yours again: a script, a registration or a
+  directory you put back there is left alone, however exactly it matches
+  what kendex used to write.
 - On Linux, a helper command that ran past its time limit could take
   unrelated processes down with it: Ubuntu's `kill` misreads the negative
   process-group argument kendex passed, and for some process ids that
