@@ -42,9 +42,15 @@ pub trait CredentialStore {
 
 pub struct KeyringStore;
 
+/// The service this build reaches. `entry` holds no decision of its own, so
+/// what a build signs in as is settled here and nowhere else.
+fn active_service() -> &'static str {
+    service(crate::env::sandboxed())
+}
+
 fn entry() -> Result<keyring::Entry> {
     let endpoint = base_url();
-    keyring::Entry::new(service(crate::env::sandboxed()), &endpoint).map_err(|error| {
+    keyring::Entry::new(active_service(), &endpoint).map_err(|error| {
         CoreError::RegistryUnavailable {
             why: format!("no usable credential store: {error}"),
         }
@@ -104,6 +110,14 @@ mod tests {
     #[test]
     fn a_sandboxed_build_never_reaches_the_real_sign_in() {
         assert_ne!(service(true), service(false));
+    }
+
+    /// This test binary is itself a debug build with no opt-out, which is
+    /// the case that must not reach the installed app's sign-in — so the
+    /// wiring is asserted on the build running the assertion.
+    #[test]
+    fn a_debug_build_reaches_the_sandbox_entry() {
+        assert_eq!(active_service(), DEV_SERVICE);
     }
 
     #[test]

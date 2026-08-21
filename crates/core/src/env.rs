@@ -45,28 +45,41 @@ pub struct Env {
 impl Env {
     pub fn detect() -> Result<Self> {
         let data_dir = dirs::data_dir().ok_or(CoreError::NoHomeDir)?;
-        let opt_in = real_home_opt_in();
-        let vars: BTreeMap<String, String> = HARNESS_VARS
+        let home = dirs::home_dir().ok_or(CoreError::NoHomeDir)?;
+        let machine = Env {
+            real_home: home.clone(),
+            home,
+            config_dir: dirs::config_dir().ok_or(CoreError::NoHomeDir)?,
+            cache_dir: dirs::cache_dir().ok_or(CoreError::NoHomeDir)?,
+            data_dir: data_dir.clone(),
+            vars: BTreeMap::new(),
+        };
+        let vars = HARNESS_VARS
             .iter()
             .filter_map(|k| std::env::var(k).ok().map(|v| ((*k).to_owned(), v)))
             .collect();
-        let real_home = dirs::home_dir().ok_or(CoreError::NoHomeDir)?;
-        if let Some(home) = dev_home(cfg!(debug_assertions), opt_in.as_deref(), &data_dir) {
-            let mut env = Self::rooted(home, HOST_OS);
-            env.real_home = real_home;
-            for (key, value) in sandbox_vars(vars) {
-                env = env.with_var(&key, &value);
-            }
-            return Ok(env);
+        let dev = dev_home(
+            cfg!(debug_assertions),
+            real_home_opt_in().as_deref(),
+            &data_dir,
+        );
+        Ok(Self::resolve(dev, machine, vars))
+    }
+
+    /// The whole decision with the process read out of it: given the
+    /// machine's own roots, the vars this build was launched with, and the
+    /// home a sandbox would give it, the environment it runs in. `detect`
+    /// keeps only the reading, so there is nothing in it left to get wrong.
+    fn resolve(dev_home: Option<PathBuf>, machine: Env, vars: BTreeMap<String, String>) -> Self {
+        let Some(home) = dev_home else {
+            return Env { vars, ..machine };
+        };
+        let mut env = Self::rooted(home, HOST_OS);
+        env.real_home = machine.home;
+        for (key, value) in sandbox_vars(vars) {
+            env = env.with_var(&key, &value);
         }
-        Ok(Env {
-            home: real_home.clone(),
-            real_home,
-            config_dir: dirs::config_dir().ok_or(CoreError::NoHomeDir)?,
-            cache_dir: dirs::cache_dir().ok_or(CoreError::NoHomeDir)?,
-            data_dir,
-            vars,
-        })
+        env
     }
 
     pub fn var(&self, key: &str) -> Option<&str> {
@@ -281,6 +294,48 @@ mod tests {
     /// send it to the real ones.
     /// Every relocating var is a harness var: a name in one list and not the
     /// other would be read from the process and never dropped.
+    /// The vars a sandboxed build ends up holding, and the home it holds
+    /// them under. Reached through `resolve` rather than through the
+    /// filter alone: dropping the carry-over from the decision would leave
+    /// a filter that still passes its own test while every debug build
+    /// loses the fixture git host and the fixture policy file.
+    #[test]
+    fn a_sandbox_resolves_to_its_own_home_and_keeps_what_is_safe() {
+        let env = Env::resolve(
+            Some(PathBuf::from("/data/kendex-dev")),
+            Env::fake("/home/pat", FakeOs::Linux),
+            BTreeMap::from([
+                ("KENDEX_GIT_BASE".to_owned(), "file:///fixtures".to_owned()),
+                (
+                    "GEMINI_CLI_SYSTEM_SETTINGS_PATH".to_owned(),
+                    "/fixtures/gemini.json".to_owned(),
+                ),
+                ("CODEX_HOME".to_owned(), "/home/pat/.codex".to_owned()),
+            ]),
+        );
+        assert_eq!(env.home, PathBuf::from("/data/kendex-dev"));
+        assert_eq!(env.real_home(), Path::new("/home/pat"));
+        assert_eq!(env.var("KENDEX_GIT_BASE"), Some("file:///fixtures"));
+        assert_eq!(
+            env.var("GEMINI_CLI_SYSTEM_SETTINGS_PATH"),
+            Some("/fixtures/gemini.json")
+        );
+        assert_eq!(env.var("CODEX_HOME"), None);
+    }
+
+    /// Without a sandbox the machine's own roots and every var stand.
+    #[test]
+    fn a_real_build_resolves_to_the_machine_it_is_on() {
+        let env = Env::resolve(
+            None,
+            Env::fake("/home/pat", FakeOs::Linux),
+            BTreeMap::from([("CODEX_HOME".to_owned(), "/home/pat/.codex".to_owned())]),
+        );
+        assert_eq!(env.home, PathBuf::from("/home/pat"));
+        assert_eq!(env.real_home(), Path::new("/home/pat"));
+        assert_eq!(env.var("CODEX_HOME"), Some("/home/pat/.codex"));
+    }
+
     /// The lock, the harness dirs it applies into and the caches all hang
     /// off the roots, so redirecting the home is what moves every write.
     #[test]

@@ -3,7 +3,12 @@
 //! and the child would write into the real profile. The sandbox itself
 //! holds on Windows — this is the test that cannot be pointed somewhere
 //! safe, not the behaviour.
-#![cfg(not(windows))]
+//!
+//! A release build is not sandboxed, which is the point, so these assertions
+//! are false for one and the file is compiled only into a debug test run.
+//! `cargo test --release` is how the release is verified, and a debug-only
+//! guarantee asserted there fails a build that is behaving correctly.
+#![cfg(all(not(windows), debug_assertions))]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
