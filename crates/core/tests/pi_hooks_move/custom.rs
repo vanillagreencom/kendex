@@ -5,7 +5,7 @@
 //! registry would sit there being warned about forever.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use kendex_core::engine::audit;
 use kendex_core::env::{Env, FakeOs};
@@ -55,7 +55,7 @@ fn apply(env: &Env, scope: &Scope) {
 /// pi reserved. A custom hook's command is the person's own, so the move
 /// changes nothing inside it — only where it lives.
 #[allow(clippy::unwrap_used)]
-fn regress(root: &PathBuf) {
+fn regress(root: &Path) {
     let registry = fs::read_to_string(root.join("kendex/hooks.json")).unwrap();
     fs::write(root.join("hooks.json"), registry).unwrap();
     fs::remove_dir_all(root.join("kendex")).unwrap();

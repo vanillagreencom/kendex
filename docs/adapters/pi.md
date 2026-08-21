@@ -52,11 +52,17 @@ take this file*: only one this scope's lock names, whose bytes hash to
 what apply last wrote — and the legacy registry gives up only entries
 that lock accounts for and that are really in the file, trashed only when
 that leaves nothing at all. *Is a replacement coming*: a hook nothing
-declares any more is retired outright (leaving it would keep a removed
+asks for any more is retired outright (leaving it would keep a removed
 hook firing), a hook this pass rendered is retired against that
-rendering, and only a declaration this pass could not resolve waits.
-Everything held back gets a line saying which file and why, and `refresh`
-prints them.
+rendering, and a still-declared hook waits whenever this pass did not put
+its replacement in place — the source did not resolve, or the script or
+the registration could not be written. "Nothing asks for it" is the
+question the orphan sweep asks, so a bundle member, which the manifest
+never keys, is not mistaken for an install nobody wants. A copy kendex
+cannot prove it wrote holds the whole installation, not just the file:
+its old registration stays live and no fresh rendering takes over, until
+the edits are discarded. Everything held back gets a line saying which
+file and why, and `refresh` prints them.
 Enforcement is read live (`pi_ext::carrier::enforcement`): with the carrier
 registered in either scope's settings the hook is enforced; with no carrier
 anywhere Pi loads, the install downgrades to advisory, said per item. Pi

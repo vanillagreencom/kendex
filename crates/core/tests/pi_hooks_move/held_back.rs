@@ -58,6 +58,7 @@ fn a_held_file_is_never_also_called_a_file_kendex_did_not_write() {
         apply(&w);
         regress(&w, "guard.sh");
         regress(&w, "other.sh");
+        fs::remove_dir_all(w.dot().join("kendex")).unwrap();
         let held = w.dot().join("hooks/guard.sh");
         spoil(&w, &held);
 
@@ -69,6 +70,24 @@ fn a_held_file_is_never_also_called_a_file_kendex_did_not_write() {
         assert!(
             w.dot().join("hooks/guard.sh").exists(),
             "{cause}: the held file stays"
+        );
+        // Holding the bytes and rerouting what runs them is not holding
+        // anything: the old registration is still the live one, and no
+        // fresh rendering was put in its place.
+        assert!(
+            fs::read_to_string(w.dot().join("hooks.json"))
+                .unwrap()
+                .contains(".pi/hooks/guard.sh"),
+            "{cause}: the held copy keeps what runs it"
+        );
+        let new = fs::read_to_string(w.dot().join("kendex/hooks.json")).unwrap();
+        assert!(
+            !new.contains("guard.sh"),
+            "{cause}: and nothing took over from it: {new}"
+        );
+        assert!(
+            !w.dot().join("kendex/hooks/guard.sh").exists(),
+            "{cause}: no replacement was written behind the hold"
         );
         assert!(
             !w.dot().join("hooks/other.sh").exists(),
@@ -111,65 +130,6 @@ fn a_script_that_cannot_be_read_is_named_for_that_and_not_for_an_edit() {
     fs::set_permissions(&script, fs::Permissions::from_mode(0o644)).unwrap();
 }
 
-/// A hash follows a link; a rename does not. A link is never kendex's own
-/// write, so nothing is taken through one.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_linked_script_is_left_where_it_is() {
-    let w = regressed();
-    let script = w.dot().join("hooks/guard.sh");
-    let elsewhere = w.home.join("guard.sh");
-    fs::rename(&script, &elsewhere).unwrap();
-    symlink(&elsewhere, &script).unwrap();
-
-    let said = about(&notes(&w), "guard.sh");
-    assert_eq!(said.len(), 1, "{said:?}");
-    assert!(
-        said[0].contains("is a link kendex did not create"),
-        "{said:?}"
-    );
-    apply(&w);
-    assert!(script.is_symlink(), "the link stays");
-    assert!(elsewhere.is_file(), "and so does what it points at");
-}
-
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_linked_registry_is_left_where_it_is() {
-    let w = regressed();
-    let registry = w.dot().join("hooks.json");
-    let elsewhere = w.home.join("hooks.json");
-    fs::rename(&registry, &elsewhere).unwrap();
-    symlink(&elsewhere, &registry).unwrap();
-
-    apply(&w);
-    assert!(registry.is_symlink());
-    assert!(elsewhere.is_file());
-}
-
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_linked_directory_is_never_enumerated() {
-    let w = regressed();
-    let dir = w.dot().join("hooks");
-    let elsewhere = w.home.join("hooks");
-    fs::rename(&dir, &elsewhere).unwrap();
-    symlink(&elsewhere, &dir).unwrap();
-
-    apply(&w);
-    assert!(dir.is_symlink(), "the link stays");
-    assert!(
-        elsewhere.join("guard.sh").is_file(),
-        "and nothing under it was touched"
-    );
-    assert!(
-        fs::read_to_string(w.dot().join("hooks.json"))
-            .unwrap()
-            .contains(".pi/hooks/guard.sh"),
-        "nor was the registration of what it holds"
-    );
-}
-
 /// A declaration whose source cannot be resolved plans no write, so the
 /// old copy is all that is running — and it stays running.
 #[test]
@@ -201,37 +161,15 @@ fn a_hook_with_no_replacement_this_pass_keeps_its_old_copy() {
     );
 }
 
-/// A file at the new path is not proof unless it is this hook's own
-/// rendering: a link there is a conflict the plan reports, not a
-/// replacement that licenses taking the working copy away.
+/// A declaration this pass could not resolve keeps its old copy while
+/// the sibling that did resolve moves out from beside it. (The narrower
+/// question `registration_ready` asks — this hook's own edit rather than
+/// any edit to the same file — has no fixture of its own: no reachable
+/// state has one hook's edit queued for a registry while another's is
+/// neither queued nor satisfied.)
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_link_at_the_new_path_is_not_this_hooks_replacement() {
-    let w = regressed();
-    let elsewhere = w.home.join("someone-elses.sh");
-    fs::write(&elsewhere, "#!/bin/sh\nexit 0\n").unwrap();
-    fs::create_dir_all(w.dot().join("kendex/hooks")).unwrap();
-    symlink(&elsewhere, w.dot().join("kendex/hooks/guard.sh")).unwrap();
-
-    apply(&w);
-
-    assert!(
-        w.dot().join("hooks/guard.sh").is_file(),
-        "the working copy stays while the new path is somebody else's link"
-    );
-    assert!(
-        fs::read_to_string(w.dot().join("hooks.json"))
-            .unwrap()
-            .contains(".pi/hooks/guard.sh"),
-        "and it keeps its registration, so the hook keeps running"
-    );
-    assert!(w.dot().join("kendex/hooks/guard.sh").is_symlink());
-}
-
-/// One hook's registry edit says nothing about another hook's move.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_sibling_hooks_registry_edit_is_not_this_hooks_replacement() {
+fn a_hook_that_did_not_resolve_keeps_its_copy_while_its_sibling_moves() {
     let w = world();
     declare_second_hook(&w);
     apply(&w);
@@ -290,34 +228,6 @@ fn an_unreadable_reserved_directory_retires_nothing() {
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
-/// A broken link at the reserved name is what pi's own existence check
-/// sees, so kendex has to see it too — and never mistake it for absence.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_broken_link_at_the_reserved_name_is_not_absence() {
-    let w = regressed();
-    let dir = w.dot().join("hooks");
-    fs::remove_file(dir.join("guard.sh")).unwrap();
-    fs::remove_dir(&dir).unwrap();
-    symlink(w.home.join("nowhere"), &dir).unwrap();
-
-    let said = notes(&w);
-    assert!(
-        said.iter()
-            .any(|note| note.contains("is a link kendex did not create")),
-        "{said:?}"
-    );
-    apply(&w);
-
-    assert!(dir.is_symlink(), "the link stays");
-    assert!(
-        fs::read_to_string(w.dot().join("hooks.json"))
-            .unwrap()
-            .contains(".pi/hooks/guard.sh"),
-        "and nothing beside it was retired either"
-    );
-}
-
 /// An interrupted toggle can leave both names. Neither is a stranger's,
 /// and the one whose bytes prove out still moves.
 #[test]
@@ -332,9 +242,47 @@ fn a_leftover_twin_is_not_reported_as_a_strangers_file() {
         !said.iter().any(|note| note.contains("did not write")),
         "kendex wrote both names: {said:?}"
     );
+    assert_eq!(
+        said.iter()
+            .filter(|note| note.contains("guard.sh.disabled"))
+            .count(),
+        1,
+        "{said:?}"
+    );
     apply(&w);
     assert!(
-        !w.dot().join("hooks/guard.sh").exists(),
-        "the proven copy still moves"
+        twin.is_file(),
+        "the twin kendex cannot prove is not kendex's to take"
     );
+    assert!(
+        w.dot().join("hooks/guard.sh").is_file(),
+        "and its sibling name holds with it: one installation, one answer"
+    );
+    assert!(
+        fs::read_to_string(w.dot().join("hooks.json"))
+            .unwrap()
+            .contains(".pi/hooks/guard.sh"),
+        "so what runs it is left alone too"
+    );
+}
+
+/// Both of a hook's names, both provably kendex's, both taken — beside a
+/// stranger's file that keeps the directory. Claiming only the first
+/// would leave the other sitting in the reserved name forever.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn both_of_a_hooks_names_are_taken_when_both_prove_out() {
+    let w = regressed();
+    let dir = w.dot().join("hooks");
+    fs::copy(dir.join("guard.sh"), dir.join("guard.sh.disabled")).unwrap();
+    fs::write(dir.join("theirs.sh"), "#!/bin/sh\n").unwrap();
+
+    apply(&w);
+
+    assert!(!dir.join("guard.sh").exists(), "the enabled name goes");
+    assert!(
+        !dir.join("guard.sh.disabled").exists(),
+        "and so does the name it keeps its bytes under when it is off"
+    );
+    assert!(dir.join("theirs.sh").is_file());
 }

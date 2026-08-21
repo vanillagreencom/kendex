@@ -44,6 +44,43 @@ pub(super) fn hold_rev_conflict(
     true
 }
 
+/// A pi hook whose copy under the directory pi reserved is not provably
+/// kendex's holds whole. Writing the fresh rendering and registering it
+/// would leave the person's bytes sitting on disk while what runs them
+/// moved to a copy they never saw — the opposite of what holding a file
+/// back is for. Returns true when the item was held back this way.
+pub(super) fn hold_legacy_copy(
+    item: &Desired,
+    scope: &Scope,
+    lock: &Lock,
+    held: &BTreeSet<String>,
+    sink: &mut PlanSink,
+) -> bool {
+    if item.kind != crate::model::ItemKind::Hook
+        || item.harness != crate::model::HarnessId::Pi
+        || !held.contains(&item.name)
+    {
+        return false;
+    }
+    sink.drift.push(DriftRow {
+        kind: item.kind,
+        name: item.name.clone(),
+        harness: item.harness,
+        scope: scope.clone(),
+        state: DriftState::Conflict,
+        detail:
+            "its copy under the directory pi reserved is not the one kendex wrote — that copy is what runs; keep it as a fork, or apply with edits discarded"
+                .into(),
+        cause: Some(DriftCause::LocalEdit),
+    });
+    if let Some(entry) = lock.entries.get(&item.key) {
+        sink.new_lock
+            .entries
+            .insert(item.key.clone(), entry.clone());
+    }
+    true
+}
+
 /// What the artifact's bytes on disk hash to right now — `None` when there
 /// is nothing comparable (absent, a symlink where content should be, a
 /// registration, unreadable). `None` never blocks: the paths that need a

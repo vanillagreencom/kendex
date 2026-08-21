@@ -272,3 +272,52 @@ fn an_unreadable_registry_is_a_note_not_a_failed_audit() {
     );
     fs::set_permissions(&registry, fs::Permissions::from_mode(0o644)).unwrap();
 }
+
+/// The preview says what the op does: this arm fires precisely because
+/// there are no hooks left in the directory, so it cannot claim a move.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_empty_directory_op_says_what_it_does() {
+    let w = world();
+    apply(&w);
+    fs::create_dir_all(w.dot().join("hooks")).unwrap();
+
+    let report = audit(&w.env, &w.scope()).unwrap();
+    let said: Vec<&str> = report
+        .plan
+        .ops
+        .iter()
+        .map(|op| op.description.as_str())
+        .collect();
+    assert!(
+        said.iter().any(|line| line.starts_with("Remove the empty")),
+        "{said:?}"
+    );
+    assert!(
+        !said.iter().any(|line| line.starts_with("Move pi hooks")),
+        "nothing is being moved: {said:?}"
+    );
+    assert!(
+        report.notes.iter().any(|note| note.contains("was empty")),
+        "{:?}",
+        report.notes
+    );
+}
+
+/// Ownership is proven at plan time and the deletion binds to exactly
+/// that state: a file dropped into the reserved directory between the
+/// preview and the apply fails the precondition instead of going to the
+/// trash along with everything else.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_directory_that_changed_since_the_preview_is_not_taken() {
+    let w = regressed();
+    let report = audit(&w.env, &w.scope()).unwrap();
+    fs::write(w.dot().join("hooks/appeared.sh"), "#!/bin/sh\n").unwrap();
+
+    let outcome = kendex_core::apply::execute(&w.env, &report.plan, None);
+
+    assert!(outcome.is_err(), "a stale plan must not take the directory");
+    assert!(w.dot().join("hooks/appeared.sh").is_file());
+    assert!(w.dot().join("hooks/guard.sh").is_file());
+}

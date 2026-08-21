@@ -246,8 +246,11 @@ changes carry a **Breaking** call-out with their migration note inline.
   edited after it was installed, a hook registration you added by hand,
   and a hook whose source is unreachable this run all stay exactly where
   they are, and that last one completes the move as soon as the source is
-  back. `refresh` now prints those reasons, which it previously worked out
-  and dropped.
+  back. A copy kendex cannot prove it wrote keeps its whole installation,
+  not just the file — the old copy stays the one that runs, and nothing
+  replaces it until you discard the edits. Hooks that came in with a
+  bundle move like any other. `refresh` now prints those reasons, which it
+  previously worked out and dropped.
 - On Linux, a helper command that ran past its time limit could take
   unrelated processes down with it: Ubuntu's `kill` misreads the negative
   process-group argument kendex passed, and for some process ids that

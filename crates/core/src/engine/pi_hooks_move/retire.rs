@@ -2,34 +2,33 @@
 //! output, never off whatever happens to sit at the new path.
 
 use crate::apply::{Op, PlannedOp};
+use crate::env::Env;
 use crate::lock::LockEntry;
-use crate::model::{HarnessId, ItemKind};
+use crate::model::{HarnessId, ItemKind, Scope};
 
 use super::super::config_edits::ConfigEditPlan;
 use super::super::desired::{Artifact, Desired, DesiredState};
 use super::{Found, look};
 
 /// Whether this hook's legacy copy may be retired at all — the "is a
-/// replacement coming" question, read off the declaration rather than off
-/// this pass's output. Nothing declares it: no replacement is coming and
-/// the plan is already dropping it. Declared and rendered: retired against
-/// that rendering. Declared, resolved, and rendered nothing for pi: the
-/// declaration's own answer is that pi gets nothing, so the old copy goes
-/// too. Only a declaration this pass could not resolve waits — the one
-/// case where holding on is repair rather than abandonment.
+/// replacement coming" question. Nothing asks for it: no replacement is
+/// coming and the plan is already dropping it. Asked for and rendered:
+/// retired against that rendering. Asked for, resolved, and rendered
+/// nothing for pi: the declaration's own answer is that pi gets nothing,
+/// so the old copy goes too. A hook still asked for waits whenever this
+/// pass did not put its replacement in place — the source did not
+/// resolve, or the script or the registration could not be written —
+/// the one case where holding on is repair rather than abandonment.
 pub(super) fn retirable(
+    env: &Env,
+    scope: &Scope,
     entry: &LockEntry,
     manifest: &crate::manifest::Manifest,
     state: &DesiredState,
     ops: &[PlannedOp],
     config_edits: &ConfigEditPlan,
 ) -> bool {
-    // Both shapes of declaration count: a catalog hook keyed by name, and
-    // a `[[custom-hooks]]` entry, whose name the same derivation produces
-    // that keyed its lock entry.
-    let declared = manifest.hooks.contains_key(&entry.name)
-        || crate::hook::custom_hook_names(manifest).contains(&entry.name);
-    if !declared {
+    if !asked_for(env, scope, entry, manifest, state) {
         return true;
     }
     let key = crate::lock::entry_key(ItemKind::Hook, &entry.name, HarnessId::Pi);
@@ -39,6 +38,35 @@ pub(super) fn retirable(
             .contains(&(ItemKind::Hook, entry.name.clone()));
     };
     script_ready(item, ops) && registration_ready(item, config_edits)
+}
+
+/// Whether anything still asks for this hook — the same question the
+/// orphan sweep asks, because the same installations are at stake. A
+/// manifest key is one way in. A declaration this pass resolved is the
+/// other, and it is how everything the manifest does not key arrives: a
+/// bundle member, a dependency, a `[[custom-hooks]]` entry. And an
+/// install nobody requested, whose catalog cannot be read right now, is
+/// one this pass cannot account for either way — the reason it exists
+/// lives in that catalog.
+fn asked_for(
+    env: &Env,
+    scope: &Scope,
+    entry: &LockEntry,
+    manifest: &crate::manifest::Manifest,
+    state: &DesiredState,
+) -> bool {
+    // A declaration the expansion deliberately drops has been answered,
+    // not deferred: the legacy drift-hook spelling standing beside the new
+    // one is superseded, and no pass will ever render it.
+    if crate::drift::hook::superseded(manifest, &entry.name) {
+        return false;
+    }
+    manifest.hooks.contains_key(&entry.name)
+        || state
+            .processed
+            .contains(&(ItemKind::Hook, entry.name.clone()))
+        || (super::super::removal::derived_only(entry)
+            && !super::super::removal::origin_readable(env, scope, manifest, state, &entry.source))
 }
 
 /// Whether this hook's own script is at its new path — kendex's bytes at

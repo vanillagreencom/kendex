@@ -125,6 +125,10 @@ pub fn plan_scope(
     plan_manifest_write(env, scope, repo_moved, manifest, &state, &mut ops)?;
 
     let emitted_paths = emitted_paths(lock);
+    // Answered before anything is planned: a pi hook whose copy under the
+    // name pi reserved is not provably kendex's holds whole, so the fresh
+    // rendering never quietly takes over from bytes the person kept.
+    let legacy_pi_holds = pi_hooks_move::held_installations(env, scope, lock);
 
     plan_pass::plan_items(
         env,
@@ -133,6 +137,7 @@ pub fn plan_scope(
         lock,
         options,
         &emitted_paths,
+        &legacy_pi_holds,
         &mut drift,
         &mut ops,
         &mut config_edits,

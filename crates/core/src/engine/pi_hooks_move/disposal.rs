@@ -19,7 +19,7 @@ use super::{Found, LEGACY_DIR, Sink, look, trash, unreadable_note};
 pub(super) fn plan_directory(
     dir: &Path,
     ours: &BTreeSet<OsString>,
-    take: &[PathBuf],
+    take: &[(PathBuf, String)],
     claimed: bool,
     sink: &mut Sink,
 ) {
@@ -29,21 +29,22 @@ pub(super) fn plan_directory(
     let strangers = match strangers(dir, ours) {
         Ok(strangers) => strangers,
         Err(error) => {
-            sink.notes.push(format!(
-                "kendex could not list {} ({error}), so everything in the directory pi reserved stayed — fix its permissions, then refresh again",
-                dir.display()
-            ));
+            sink.notes.push(list_note(dir, &error.to_string()));
             return;
         }
     };
-    if !strangers.is_empty() {
-        for path in take {
+    let each = |sink: &mut Sink| {
+        for (path, proven) in take {
             trash(
                 format!("Move pi hooks out of {}", dir.display()),
                 path,
+                proven,
                 sink,
             );
         }
+    };
+    if !strangers.is_empty() {
+        each(sink);
         if !take.is_empty() {
             sink.notes.push(format!(
                 "{} also holds files kendex did not write ({}) — pi keeps warning about the directory until they are moved or removed by hand",
@@ -53,22 +54,46 @@ pub(super) fn plan_directory(
         }
         return;
     }
-    // Nothing here is anybody else's. The whole directory goes when this
-    // pass takes everything the lock names in it — and when it names
-    // nothing and the directory is empty, which is what a finished move
-    // leaves behind and pi still warns about. An empty directory holds
-    // nothing anyone could lose.
-    if (!take.is_empty() && take.len() == ours.len()) || (claimed && ours.is_empty()) {
-        trash(format!("Move pi hooks out of {}", dir.display()), dir, sink);
+    // Nothing here is anybody else's, so the whole directory goes when
+    // this pass takes everything the lock names in it.
+    if !take.is_empty() && take.len() == ours.len() {
+        whole(format!("Move pi hooks out of {}", dir.display()), dir, sink);
         return;
     }
-    for path in take {
-        trash(
-            format!("Move pi hooks out of {}", dir.display()),
-            path,
+    // And when it names nothing and the directory is empty — the shell a
+    // finished move leaves behind, which pi still warns about and which
+    // holds nothing anyone could lose. Said out loud: a directory this
+    // scope's hooks no longer sit in is not one kendex can prove it made.
+    if claimed && ours.is_empty() {
+        whole(
+            format!("Remove the empty {} pi warns about", dir.display()),
+            dir,
             sink,
         );
+        sink.notes.push(format!(
+            "{} was empty and pi warns about the name, so it was removed — nothing was in it",
+            dir.display()
+        ));
+        return;
     }
+    each(sink);
+}
+
+/// The whole directory, bound to a hash of everything in it — the same
+/// read that proved nothing else is in there, so a file added between the
+/// two fails the precondition instead of going to the trash unnoticed.
+fn whole(description: String, dir: &Path, sink: &mut Sink) {
+    match crate::hash::hash_tree(dir) {
+        Ok(proven) => trash(description, dir, &proven, sink),
+        Err(error) => sink.notes.push(list_note(dir, &error.to_string())),
+    }
+}
+
+fn list_note(dir: &Path, error: &str) -> String {
+    format!(
+        "kendex could not list {} ({error}), so everything in the directory pi reserved stayed — fix its permissions, then refresh again",
+        dir.display()
+    )
 }
 
 /// The legacy registry: only the entries this scope's lock accounts for
@@ -153,6 +178,7 @@ pub(super) fn plan_registry(
         trash(
             format!("Move the pi hook registry out of {}", registry.display()),
             registry,
+            &crate::hash::hash_bytes(current.as_bytes()),
             sink,
         );
         return Ok(());

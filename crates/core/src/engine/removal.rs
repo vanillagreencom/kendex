@@ -301,7 +301,7 @@ pub(super) fn orphans(
 
 /// Whether this installation only ever existed for another item's sake —
 /// nobody asked for it by name, so once nothing needs it, nothing does.
-fn derived_only(entry: &crate::lock::LockEntry) -> bool {
+pub(super) fn derived_only(entry: &crate::lock::LockEntry) -> bool {
     !entry.reasons.contains(&crate::lock::Reason::Requested)
 }
 
@@ -309,7 +309,7 @@ fn derived_only(entry: &crate::lock::LockEntry) -> bool {
 /// pass has usually resolved it already; a source no declaration named this
 /// time is resolved here, because the last item that needed it going away is
 /// exactly when this question gets asked.
-fn origin_readable(
+pub(super) fn origin_readable(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,

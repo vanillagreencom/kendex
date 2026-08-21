@@ -12,12 +12,15 @@
 //!
 //! Two questions, kept apart. *May kendex take this file* is answered by
 //! the lock and the bytes: only a file this scope's lock names, whose
-//! hash is what apply last wrote, is ever moved. *Is a replacement
-//! coming* is answered by the desired state: a hook nothing declares any
-//! more has no replacement coming and is retired outright, a hook this
-//! pass really did render is retired against that rendering, and only a
-//! hook still declared that this pass could not render waits — the one
-//! case where holding on is repair rather than abandonment.
+//! hash is what apply last wrote, is ever moved — and a file it cannot
+//! prove holds the whole installation, registration included, or holding
+//! the bytes would only mean moving what runs them somewhere the person
+//! never looked. *Is a replacement coming* is answered by the desired
+//! state: a hook nothing asks for any more is retired outright, a hook
+//! this pass really did render is retired against that rendering, and a
+//! hook still asked for whose replacement this pass did not put in place
+//! waits — the one case where holding on is repair rather than
+//! abandonment.
 
 use std::collections::BTreeSet;
 use std::ffi::OsString;
@@ -32,7 +35,7 @@ use crate::model::{HarnessId, ItemKind, Scope};
 
 use super::config_edits::ConfigEditPlan;
 use super::desired::DesiredState;
-use super::removal::{self, TrashGuard};
+use super::removal::TrashGuard;
 use super::targets::disabled_name;
 
 mod disposal;
@@ -69,6 +72,35 @@ enum Held {
     Edited,
     Unprovable,
     Unreadable(String),
+}
+
+/// The hooks whose copy under the name pi reserved this scope cannot
+/// prove is kendex's own — edited, older than the record, a link, or
+/// unreadable. Answered before anything is planned, because holding one
+/// of those files back is only honest if the whole installation holds:
+/// writing the fresh rendering and registering it would leave the
+/// person's bytes on disk while quietly taking away what runs them.
+pub(super) fn held_installations(env: &Env, scope: &Scope, lock: &Lock) -> BTreeSet<String> {
+    let dir = pi::scope_root(env, scope).join(LEGACY_DIR);
+    // A link or an unreadable directory is never traversed, and the move
+    // touches nothing under it either.
+    if !matches!(look(&dir), Found::Plain(_)) {
+        return BTreeSet::new();
+    }
+    lock.entries
+        .values()
+        .filter(|entry| entry.kind == ItemKind::Hook && entry.harness == HarnessId::Pi)
+        .filter(|entry| {
+            legacy_files(&dir, &entry.name)
+                .iter()
+                .any(|found| match found {
+                    Found::Plain(path) => provenance(entry, path).is_err(),
+                    Found::Linked(_) | Found::Unreadable(..) => true,
+                    Found::Absent => false,
+                })
+        })
+        .map(|entry| entry.name.clone())
+        .collect()
 }
 
 pub(super) fn plan_move(
@@ -111,7 +143,11 @@ pub(super) fn plan_move(
             ));
             return Ok(());
         }
+        // A scope root this process cannot stat through fails earlier, in
+        // the registration read, so this is a default rather than a state
+        // a plan reaches — asserted here rather than only argued.
         Found::Unreadable(path, error) => {
+            debug_assert!(false, "{} could not be stat-ed: {error}", path.display());
             sink.notes.push(unreadable_note(&path, &error));
             return Ok(());
         }
@@ -119,7 +155,7 @@ pub(super) fn plan_move(
     }
 
     let mut ours: BTreeSet<OsString> = BTreeSet::new();
-    let mut take: Vec<PathBuf> = Vec::new();
+    let mut take: Vec<(PathBuf, String)> = Vec::new();
     let mut deregister: Vec<(Option<String>, String)> = Vec::new();
     for entry in entries.iter().copied() {
         let found = legacy_files(&dir, &entry.name);
@@ -134,27 +170,52 @@ pub(super) fn plan_move(
             sink.notes.push(unreadable_note(path, error));
             continue;
         }
-        if !retirable(entry, manifest, state, sink.ops, sink.config_edits) {
+        // What of this hook's own bytes may be taken comes first, before
+        // the question of whether anything is coming to replace them: a
+        // file that is not kendex's to move keeps its registration too,
+        // or holding it back would leave it on disk with nothing running
+        // it — the same installation held whole, said per file.
+        let mut mine = Vec::new();
+        let mut holds = false;
+        for found in &found {
+            match found {
+                Found::Linked(path) => {
+                    holds = true;
+                    sink.notes.push(format!(
+                        "{} is a link kendex did not create, so it stayed in the directory pi reserved — move it yourself and pi stops warning",
+                        path.display()
+                    ));
+                }
+                Found::Plain(path) => match provenance(entry, path) {
+                    Ok(proven) => mine.push((path.clone(), proven)),
+                    Err(held) => {
+                        holds = true;
+                        sink.notes.push(held_note(&held, path, &root, &entry.name));
+                    }
+                },
+                Found::Absent | Found::Unreadable(..) => {}
+            }
+        }
+        if holds {
+            continue;
+        }
+        if !retirable(
+            env,
+            scope,
+            entry,
+            manifest,
+            state,
+            sink.ops,
+            sink.config_edits,
+        ) {
             sink.notes.push(format!(
-                "the pi hook {} is declared but was not written at {} this pass, so its copy under the name pi reserved stays until it is",
+                "the pi hook {} is declared but its replacement was not written at {} this pass, so its copy under the name pi reserved stays until it is",
                 entry.name,
                 pi::hook_dir(&root).display()
             ));
             continue;
         }
-        for found in &found {
-            match found {
-                Found::Linked(path) => sink.notes.push(format!(
-                    "{} is a link kendex did not create, so it stayed in the directory pi reserved — move it yourself and pi stops warning",
-                    path.display()
-                )),
-                Found::Plain(path) => match provenance(entry, path) {
-                    None => take.push(path.clone()),
-                    Some(held) => sink.notes.push(held_note(&held, path, &root, &entry.name)),
-                },
-                Found::Absent | Found::Unreadable(..) => {}
-            }
-        }
+        take.extend(mine);
         deregister.push(legacy_registration(entry, scope, &root));
     }
 
@@ -162,17 +223,29 @@ pub(super) fn plan_move(
     plan_registry(&registry, &deregister, sink)
 }
 
-/// A trash op through the plan's one guard. Nothing else in the plan
-/// derives a legacy path, so the guard has no overlap to catch today —
-/// it is the boundary every Trash op in a plan passes, kept so a future
-/// pass that does overlap cannot slip past it. A path that cannot be
-/// hashed is one this plan leaves alone: the whole audit must not fail
-/// over a legacy file somebody removed while it ran.
-fn trash(description: String, path: &Path, sink: &mut Sink) {
-    match removal::trash(description, path.to_path_buf()) {
-        Ok(op) => sink.guard.extend(sink.ops, [op]),
-        Err(error) => sink.notes.push(unreadable_note(path, &error.to_string())),
-    }
+/// A trash op through the plan's one guard, bound to the bytes ownership
+/// was proven against — not to whatever is there by the time the op is
+/// built. `hash_tree` of a directory covers every child, so the same
+/// hash binds membership: a file added to the reserved directory, or an
+/// entry added to the registry, between the proof and the apply fails
+/// the precondition instead of riding along in the deletion.
+///
+/// Nothing else in the plan derives a legacy path, so the guard has no
+/// overlap to catch today — it is the boundary every Trash op in a plan
+/// passes, kept so a future pass that does overlap cannot slip past it.
+fn trash(description: String, path: &Path, proven: &str, sink: &mut Sink) {
+    sink.guard.extend(
+        sink.ops,
+        [PlannedOp {
+            description,
+            op: crate::apply::Op::Trash {
+                path: path.to_path_buf(),
+                pre: crate::apply::Pre::HashIs {
+                    hash: proven.to_owned(),
+                },
+            },
+        }],
+    );
 }
 
 /// What is at a path, without following a link: `is_file` and `hash_tree`
@@ -215,15 +288,17 @@ fn legacy_files(dir: &Path, name: &str) -> Vec<Found> {
 
 /// Whether the bytes at `path` are the ones apply last wrote there — a
 /// record from before `rendered_hash` existed proves nothing, exactly as
-/// `removal::edit_holds` reads the same evidence.
-fn provenance(entry: &LockEntry, path: &Path) -> Option<Held> {
+/// `removal::edit_holds` reads the same evidence. The hash that proved it
+/// comes back out, so the deletion binds to the state ownership was read
+/// from rather than to a later one.
+fn provenance(entry: &LockEntry, path: &Path) -> std::result::Result<String, Held> {
     let Some(rendered) = entry.rendered_hash.as_ref() else {
-        return Some(Held::Unprovable);
+        return Err(Held::Unprovable);
     };
     match crate::hash::hash_tree(path) {
-        Err(error) => Some(Held::Unreadable(error.to_string())),
-        Ok(disk) if &disk == rendered => None,
-        Ok(_) => Some(Held::Edited),
+        Err(error) => Err(Held::Unreadable(error.to_string())),
+        Ok(disk) if &disk == rendered => Ok(disk),
+        Ok(_) => Err(Held::Edited),
     }
 }
 
