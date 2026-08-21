@@ -321,10 +321,9 @@ lives in one capability table read by core and UI.
   `settings.json`, where it also covers the main session. A custom hook's
   name is its identity (lock key `hook:<name>:<harness>`, same shape as a
   catalog hook's); the editor derives one from command + event on first
-  save and writes it back, and a script-less registration records its
-  event + command in the lock so removal can reverse an entry whose
-  manifest line is already gone. Custom hook commands pass the same safety
-  gate as catalog hook scripts.
+  save and writes it back, and what it registered is recorded like any
+  other hook's, so removal can reverse an entry whose manifest line is
+  gone. Custom hook commands pass the same safety gate as catalog scripts.
 - A section with nothing in it is not rendered. An empty state earns its
   place only when the page would otherwise be blank.
 - "Nothing here" and "not counted yet" are different sentences. A list
