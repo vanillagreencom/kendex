@@ -18,6 +18,7 @@ import { useAuditStore } from "@/stores/audit";
 import type { PackageRef } from "@/stores/nav";
 import { useProblemsStore } from "@/stores/problems";
 import { useScanStore } from "@/stores/scan";
+import { useUpdatesStore } from "@/stores/updates";
 
 export type PackageView =
   | { mode: "files"; file: string | null }
@@ -171,4 +172,13 @@ export function packageVersionActions(
     );
 
   return { switchTo, updateToLatest, follow };
+}
+
+/** One gate for every control that rewrites this package's manifest: the
+ *  audit store's apply, a version switch in flight, and the updates
+ *  store's fork or discard all touch the same file. */
+export function useManifestBusy(switching: boolean): boolean {
+  const auditBusy = useAuditStore((s) => s.busy);
+  const updatesBusy = useUpdatesStore((s) => s.busy);
+  return auditBusy || switching || updatesBusy;
 }

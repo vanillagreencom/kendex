@@ -64,7 +64,7 @@ describe("customized places", () => {
     expect(html).toContain(">Use new version…<");
   });
 
-  it("withholds the new version from a bundle member its bundle holds back", () => {
+  it("offers a bundle member its bundle holds back a discard, not a new version", () => {
     const html = render([
       row("gh", null, {
         blockedByLocalEdit: true,
@@ -72,11 +72,13 @@ describe("customized places", () => {
         forkableHarness: null,
         derived: true,
         pinned: true,
-        canDiscard: false,
+        canDiscard: true,
+        canTakeLatest: false,
       }),
     ]);
     expect(html).not.toContain(">Keep as my own<");
     expect(html).not.toContain(">Use new version…<");
+    expect(html).toContain(">Discard edits…<");
     expect(html).toContain("Comes with a bundle or another package");
   });
 
@@ -104,6 +106,7 @@ describe("customized places", () => {
         removedUpstream: true,
         latest: null,
         canDiscard: false,
+        canTakeLatest: false,
       }),
     ]);
     expect(html).toContain(">Keep as my own<");

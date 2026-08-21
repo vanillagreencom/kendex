@@ -10,6 +10,7 @@ import {
   diffHarness,
   type PackageView,
   packageVersionActions,
+  useManifestBusy,
   usePackageData,
   usePackageDiff,
 } from "@/components/package/use-package-data";
@@ -40,7 +41,7 @@ export function PackagePage() {
   const clearPackageView = useNavStore((s) => s.clearPackageView);
   const back = useNavStore((s) => s.back);
   const result = useScanStore((s) => s.result);
-  const { busy, toggle } = useAuditStore();
+  const toggle = useAuditStore((s) => s.toggle);
   const { draft, dirty, saving, openScope, load, save } = useEditorStore();
 
   const [view, setView] = useState<PackageView>(() =>
@@ -56,6 +57,7 @@ export function PackagePage() {
   );
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [switching, setSwitching] = useState(false);
+  const mutating = useManifestBusy(switching);
   useEffect(() => {
     if (initialView) clearPackageView();
   }, [initialView, clearPackageView]);
@@ -153,7 +155,7 @@ export function PackagePage() {
       view={view}
       setView={setView}
       diff={diff}
-      busy={busy || switching}
+      busy={mutating}
       onToggle={(enable) =>
         void inEveryScope((scope) =>
           toggle(scope, group.kind, group.name, enable),
@@ -181,7 +183,7 @@ export function PackagePage() {
             name={group.name}
             primaryPath={primary.path}
             updateAvailable={canUpdate}
-            busy={busy || switching}
+            busy={mutating}
             onUpdate={() => latest && updateToLatest(latest)}
             onPreview={() => latest && compare(latest)}
             onRemove={() => setConfirmRemove(true)}

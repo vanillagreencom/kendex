@@ -2283,13 +2283,18 @@ export type UpdateRow = {
 	 */
 	forkableHarness: HarnessId | null,
 	/**
-	 *  Whether dropping the edits can put replacement content in place —
-	 *  the source content resolved, whether or not its history could be
-	 *  read. False once the source no longer carries the package, and for
-	 *  a derived place whose owner holds it at an older revision: either
-	 *  way the discard would only bring back what is already there.
+	 *  Whether dropping the edits can put the currently resolved content
+	 *  back in place, without moving any revision — the source content
+	 *  resolved, whether or not its history could be read. False once the
+	 *  source no longer carries the package.
 	 */
 	canDiscard: boolean,
+	/**
+	 *  Whether this place can move to the newest content on its own: the
+	 *  newest is known, and the hold — if any — is this declaration's to
+	 *  move rather than a bundle's or parent's.
+	 */
+	canTakeLatest: boolean,
 	/**
 	 *  Installed as a bundle member or a dependency, with no declaration
 	 *  of its own: whatever pulled it in owns its revision, and a fork

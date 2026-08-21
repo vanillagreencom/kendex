@@ -6,6 +6,7 @@ import {
   DISCARD_EDITS_CONFIRM_BODY,
   DISCARD_EDITS_CONFIRM_LABEL,
   DISCARD_EDITS_CONFIRM_TITLE,
+  DISCARD_EDITS_LABEL,
   KEEP_AS_FORK_LABEL,
 } from "@/lib/copy";
 import {
@@ -54,7 +55,9 @@ export function CustomizedActions({
         </span>
       )}
       {/* A source that no longer carries the package has nothing to put
-          in the edits' place; the row's badge already says so. */}
+          in the edits' place; the row's badge already says so. A place
+          that can drop its edits but not move — held by its bundle or
+          parent — is offered exactly that, never a newer version. */}
       {row.canDiscard ? (
         <Button
           size="sm"
@@ -62,7 +65,7 @@ export function CustomizedActions({
           disabled={busy}
           onClick={() => setConfirmDiscard(true)}
         >
-          {USE_NEW_VERSION_LABEL}
+          {row.canTakeLatest ? USE_NEW_VERSION_LABEL : DISCARD_EDITS_LABEL}
         </Button>
       ) : null}
       <ConfirmDialog

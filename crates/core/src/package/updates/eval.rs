@@ -111,6 +111,7 @@ impl Eval<'_> {
                     blocked_by_local_edit: !edited_harnesses.is_empty(),
                     forkable_harness: forkable_among(kind, &edited_harnesses, planned.derived),
                     can_discard: false,
+                    can_take_latest: false,
                     derived: planned.derived,
                     edited_harnesses,
                     forked,
@@ -211,13 +212,13 @@ impl Eval<'_> {
             ignored: self.is_ignored(kind, name, &package.repo),
             blocked_by_local_edit: !edited_harnesses.is_empty(),
             forkable_harness: forkable_among(kind, &edited_harnesses, planned.derived),
-            // A derived place held by its owner cannot take the newer
-            // content on its own: the discard would replan the unchanged
-            // manifest, restore the old held copy, and leave the update
-            // pending — the edit gone for nothing. Reaching this row at all
-            // means the source content resolved, so an unreadable history
-            // (no `latest`) takes the version labels, never the discard.
-            can_discard: !(planned.derived && pinned && update_available),
+            // Reaching this row at all means the source content resolved, so
+            // a discard can always put it back; an unreadable history (no
+            // `latest`) costs the version labels, never the discard. Moving
+            // to the newest is another matter: it needs the newest known, and
+            // a derived place's hold belongs to its owner.
+            can_discard: true,
+            can_take_latest: latest.is_some() && !(planned.derived && pinned),
             derived: planned.derived,
             edited_harnesses,
             forked,

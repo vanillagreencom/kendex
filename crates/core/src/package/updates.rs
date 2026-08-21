@@ -62,12 +62,15 @@ pub struct UpdateRow {
     /// agent edited only in a tool whose format cannot be read back has
     /// none, and the UI must not offer what the engine will refuse.
     pub forkable_harness: Option<HarnessId>,
-    /// Whether dropping the edits can put replacement content in place —
-    /// the source content resolved, whether or not its history could be
-    /// read. False once the source no longer carries the package, and for
-    /// a derived place whose owner holds it at an older revision: either
-    /// way the discard would only bring back what is already there.
+    /// Whether dropping the edits can put the currently resolved content
+    /// back in place, without moving any revision — the source content
+    /// resolved, whether or not its history could be read. False once the
+    /// source no longer carries the package.
     pub can_discard: bool,
+    /// Whether this place can move to the newest content on its own: the
+    /// newest is known, and the hold — if any — is this declaration's to
+    /// move rather than a bundle's or parent's.
+    pub can_take_latest: bool,
     /// Installed as a bundle member or a dependency, with no declaration
     /// of its own: whatever pulled it in owns its revision, and a fork
     /// needs a declaration to turn local.
@@ -250,6 +253,7 @@ fn fork_row(
         edited_harnesses: Vec::new(),
         forkable_harness: None,
         can_discard: false,
+        can_take_latest: false,
         derived: false,
         forked: true,
         mixed: false,

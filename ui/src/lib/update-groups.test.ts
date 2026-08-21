@@ -27,6 +27,7 @@ const row = (
   editedHarnesses: [],
   forkableHarness: null,
   canDiscard: true,
+  canTakeLatest: true,
   derived: false,
   removedUpstream: false,
   mixed: false,

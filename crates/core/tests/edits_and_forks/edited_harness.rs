@@ -67,6 +67,7 @@ fn an_edited_agent_names_the_rendering_that_was_edited() {
     assert_eq!(row.edited_harnesses.len(), 2);
     assert_eq!(row.forkable_harness, None);
     assert!(row.can_discard);
+    assert!(row.can_take_latest);
 
     // Only Claude's copy edited: that one round-trips, so it is the fork.
     fs::write(&opencode, &opencode_rendered).unwrap();
@@ -167,11 +168,11 @@ fn an_edited_bundle_member_is_not_offered_a_fork() {
 }
 
 /// A bundle member held by its bundle at an older revision: discarding
-/// the edit would restore that old copy and leave the update pending, so
-/// the row withholds the discard and leaves the move to the owner.
+/// the edit restores that held copy — offered as exactly that — while
+/// moving to the newest is the owner's to do.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_held_bundle_member_with_newer_upstream_cannot_discard() {
+fn a_held_bundle_member_with_newer_upstream_can_discard_but_not_move() {
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     fs::write(
@@ -218,7 +219,8 @@ fn a_held_bundle_member_with_newer_upstream_cannot_discard() {
         .unwrap();
     assert!(row.derived && row.pinned && row.update_available, "{row:?}");
     assert!(row.blocked_by_local_edit);
-    assert!(!row.can_discard);
+    assert!(row.can_discard, "the owner's held content can come back");
+    assert!(!row.can_take_latest, "only the owner can move the hold");
 }
 
 /// Two tools symlinking one skill tree report one edit twice; that is one
@@ -292,6 +294,7 @@ fn discard_survives_an_unreadable_history_but_not_a_vanished_package() {
     assert!(row.blocked_by_local_edit);
     assert!(row.latest.is_none(), "{row:?}");
     assert!(row.can_discard, "{row:?}");
+    assert!(!row.can_take_latest, "no newest to move to");
     assert!(
         report
             .warnings
@@ -316,4 +319,5 @@ fn discard_survives_an_unreadable_history_but_not_a_vanished_package() {
         .unwrap();
     assert!(row.removed_upstream, "{row:?}");
     assert!(!row.can_discard);
+    assert!(!row.can_take_latest);
 }

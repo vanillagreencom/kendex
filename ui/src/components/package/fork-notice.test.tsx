@@ -73,12 +73,28 @@ describe("package page edited notice", () => {
     );
   });
 
+  it("keeps Discard edits for an owner-held derived package", () => {
+    const html = render([
+      edited({
+        editedHarnesses: ["claude"],
+        forkableHarness: null,
+        derived: true,
+        pinned: true,
+        canDiscard: true,
+        canTakeLatest: false,
+      }),
+    ]);
+    expect(html).not.toContain(">Keep as my own<");
+    expect(html).toContain(">Discard edits…<");
+  });
+
   it("hides the discard when the source has nothing to put in its place", () => {
     const html = render([
       edited({
         editedHarnesses: ["claude"],
         forkableHarness: "claude",
         canDiscard: false,
+        canTakeLatest: false,
       }),
     ]);
     expect(html).not.toContain(">Discard edits…<");

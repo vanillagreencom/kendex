@@ -56,9 +56,10 @@ export const takeNewVersion = async (row: UpdateRow): Promise<void> => {
       row.scope,
       row.kind,
       row.name,
-      // A derived place's revision belongs to the bundle or package that
-      // pulled it in; only a declared hold can move along with the discard.
-      row.pinned && !row.derived ? (row.latest?.commit ?? null) : null,
+      // A held place moves to the newest only when that is its own hold
+      // to move and the newest is known; otherwise the discard restores
+      // what is resolved now.
+      row.pinned && row.canTakeLatest ? (row.latest?.commit ?? null) : null,
     );
     return response.status === "error" ? response.error : null;
   });

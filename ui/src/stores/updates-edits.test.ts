@@ -39,6 +39,7 @@ function row(overrides: Partial<UpdateRow>): UpdateRow {
     editedHarnesses: [],
     forkableHarness: null,
     canDiscard: true,
+    canTakeLatest: true,
     derived: false,
     forked: false,
     mixed: false,
@@ -101,7 +102,9 @@ describe("updates store: edited places", () => {
 
     // A held bundle member: the bundle owns the revision, so the discard
     // runs without moving one.
-    await takeNewVersion(row({ ...edited, pinned: true, derived: true }));
+    await takeNewVersion(
+      row({ ...edited, pinned: true, derived: true, canTakeLatest: false }),
+    );
     expect(commands.applyDiscardEdits).toHaveBeenLastCalledWith(
       { scope: "global" },
       "skill",
