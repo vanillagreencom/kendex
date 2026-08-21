@@ -9,35 +9,68 @@ use crate::hook::command_stem;
 /// matcher with a read one has to use.
 pub(crate) const ANY_MATCHER: &str = "*";
 
-/// The event and matcher an entry's name carries, read back the way
-/// [`read`] spelled it. The event and the stem are the fixed ends, and
-/// everything between them is the matcher — which holds colons of its own
-/// as often as not, being a regex. Read from both ends, so it does.
-pub(crate) fn named(name: &str) -> Option<(&str, &str)> {
-    let (event, rest) = name.split_once(':')?;
-    let (matcher, _stem) = rest.rsplit_once(':')?;
-    Some((event, matcher))
+/// One registration as a hooks document keys it, with the parts kept
+/// apart. The one-line name a scan displays is built from these; it is
+/// never read back out of, because two of the three parts may hold the
+/// character that joins them — a matcher is a regex, and a command stem
+/// is a file name. Anything asking which registration is which asks for
+/// these.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Registration {
+    pub(crate) event: String,
+    pub(crate) matcher: String,
+    pub(crate) command: String,
+}
+
+impl Registration {
+    /// How a scan names this entry. One rendering, in one place, from the
+    /// parts — so nothing downstream has to take it apart again.
+    fn name(&self) -> String {
+        format!(
+            "{}:{}:{}",
+            self.event,
+            self.matcher,
+            command_stem(&self.command)
+        )
+    }
 }
 
 /// `{"hooks": {"<Event>": [{matcher?, hooks: [{command}]} | {command}]}}` —
 /// claude settings.json and codex/cursor hooks.json share this shape; cursor
 /// omits `matcher` and nests no handler array.
 pub fn read(path: &Path) -> Result<Vec<RawEntry>, String> {
-    entries(read_json(path)?)
+    Ok(rows(registrations(read_json(path)?)))
 }
 
-/// [`read`] for a document the caller already has in hand — one it is
-/// about to write, say, and wants to read back before it does.
-pub(crate) fn read_text(text: &str) -> Result<Vec<RawEntry>, String> {
+/// Every registration in one document, in its parts.
+pub(crate) fn read_registrations(path: &Path) -> Result<Vec<Registration>, String> {
+    Ok(registrations(read_json(path)?))
+}
+
+/// [`read_registrations`] for a document the caller already has in hand —
+/// one it is about to write, say, and wants to read back before it does.
+pub(crate) fn registrations_text(text: &str) -> Result<Vec<Registration>, String> {
     let value = serde_json::from_str(&super::jsonc::to_json(text)).map_err(|e| e.to_string())?;
-    entries(value)
+    Ok(registrations(value))
 }
 
-fn entries(value: serde_json::Value) -> Result<Vec<RawEntry>, String> {
+fn rows(registrations: Vec<Registration>) -> Vec<RawEntry> {
+    registrations
+        .into_iter()
+        .map(|registration| RawEntry {
+            name: registration.name(),
+            enabled: None,
+            description: Some(registration.command),
+            source_path: None,
+        })
+        .collect()
+}
+
+fn registrations(value: serde_json::Value) -> Vec<Registration> {
     let Some(events) = value.get("hooks").and_then(|h| h.as_object()) else {
-        return Ok(Vec::new());
+        return Vec::new();
     };
-    let mut entries = Vec::new();
+    let mut found = Vec::new();
     for (event, groups) in events {
         let Some(groups) = groups.as_array() else {
             continue;
@@ -56,16 +89,15 @@ fn entries(value: serde_json::Value) -> Result<Vec<RawEntry>, String> {
                 let Some(command) = handler.get("command").and_then(|c| c.as_str()) else {
                     continue;
                 };
-                entries.push(RawEntry {
-                    name: format!("{event}:{matcher}:{}", command_stem(command)),
-                    enabled: None,
-                    description: Some(command.to_owned()),
-                    source_path: None,
+                found.push(Registration {
+                    event: event.clone(),
+                    matcher: matcher.to_owned(),
+                    command: command.to_owned(),
                 });
             }
         }
     }
-    Ok(entries)
+    found
 }
 
 #[cfg(test)]

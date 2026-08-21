@@ -132,26 +132,16 @@ pub(crate) fn preflight(
         .values()
         .filter(|entry| entry.kind == ItemKind::Hook && entry.harness == HarnessId::Pi)
         .collect();
-    // Nothing under either reserved name means nothing to hold about what
-    // is there — the same answer everything below reaches, reached
+    // Nothing under either reserved name means nothing to work out about
+    // what is there — the same answer everything below reaches, reached
     // without hashing a hook's bytes or reading a legacy path per hook on
-    // every later plan.
-    //
-    // It does not mean the installation is in good order, and only one of
-    // those two questions is about the reserved name. A registration
-    // somebody moved by hand at the new path would be doubled by the
-    // fresh one this pass writes wherever the old layout has got to, so
-    // that question is asked here too — and nothing else is.
+    // every later plan. What still has to be asked, of every hook and
+    // wherever the old layout has got to, is asked once at the end.
     if matches!(look(&dir), Found::Absent)
         && matches!(look(&pi::legacy_hook_registry(&root)), Found::Absent)
     {
-        return Preflight {
-            held: ours
-                .iter()
-                .filter_map(|entry| {
-                    doubled(env, scope, &root, entry, state).map(|hold| (entry.name.clone(), hold))
-                })
-                .collect(),
+        let mut this = Preflight {
+            held: BTreeMap::new(),
             discard: BTreeSet::new(),
             migrated: BTreeSet::new(),
             recorded: BTreeSet::new(),
@@ -159,6 +149,8 @@ pub(crate) fn preflight(
             registry_block: None,
             conflicts: BTreeMap::new(),
         };
+        this.held = held(env, scope, &root, &dir, &ours, &this, state);
+        return this;
     }
     let discard: BTreeSet<String> = ours
         .iter()
@@ -208,15 +200,27 @@ pub(crate) fn preflight(
         registry_block,
         conflicts,
     };
-    this.held = ours
-        .iter()
-        .filter(|entry| !this.moved_on(&entry.name))
-        .filter_map(|entry| {
-            holding(env, scope, &root, &dir, entry, &this, state)
-                .map(|hold| (entry.name.clone(), hold))
-        })
-        .collect();
+    this.held = held(env, scope, &root, &dir, &ours, &this, state);
     this
+}
+
+/// Why each of this scope's hooks is holding whole, for the ones that
+/// are. One place, so the answer cannot depend on which way the pass
+/// arrived at it.
+fn held(
+    env: &Env,
+    scope: &Scope,
+    root: &std::path::Path,
+    dir: &std::path::Path,
+    ours: &[&LockEntry],
+    pre: &Preflight,
+    state: &DesiredState,
+) -> BTreeMap<String, Hold> {
+    ours.iter()
+        .filter_map(|entry| {
+            holding(env, scope, root, dir, entry, pre, state).map(|hold| (entry.name.clone(), hold))
+        })
+        .collect()
 }
 
 /// The hold a registration somebody moved by hand at the new path earns:
@@ -240,8 +244,8 @@ fn doubled(
 }
 
 /// Why one hook's installation holds whole, when it does — asked of every
-/// hook the move has not finished with, and answered in the order the
-/// person would have to fix things in.
+/// hook, and answered in the order the person would have to fix things
+/// in.
 fn holding(
     env: &Env,
     scope: &Scope,
@@ -251,6 +255,18 @@ fn holding(
     pre: &Preflight,
     state: &DesiredState,
 ) -> Option<Hold> {
+    // Asked of every hook, whatever the record says: the record settles
+    // the reserved name and says nothing about the new path, where a
+    // registration somebody moved would be doubled by the fresh one this
+    // pass writes.
+    if let Some(hold) = doubled(env, scope, root, entry, state) {
+        return Some(hold);
+    }
+    // Everything below is about the reserved name, which an installation
+    // on record as having left it has left for good.
+    if pre.moved_on(&entry.name) {
+        return None;
+    }
     // A directory kendex cannot look inside is one it cannot install
     // beside either: a replacement written there would run alongside
     // whatever is still under the reserved name, and nobody would have
@@ -275,9 +291,6 @@ fn holding(
     // else's: a sibling with a clean identity moves while this one waits.
     if let Some(why) = pre.conflict(&entry.name) {
         return Some(Hold::ByHand(why.clone()));
-    }
-    if let Some(hold) = doubled(env, scope, root, entry, state) {
-        return Some(hold);
     }
     let files = legacy_files(dir, &entry.name);
     if files.is_empty() {

@@ -39,7 +39,7 @@ pub(super) fn registry_block(
         Found::Unreadable(_, error) => return say(format!("could not be read ({error})")),
         Found::Plain(_) => {}
     }
-    let entries = match crate::scan::hooks::read(&path) {
+    let entries = match crate::scan::hooks::read_registrations(&path) {
         Ok(entries) => entries,
         Err(message) => return say(format!("could not be read ({message})")),
     };
@@ -82,7 +82,7 @@ pub(super) fn registration_conflict(
     entry: &LockEntry,
 ) -> Option<String> {
     let path = pi::legacy_hook_registry(root);
-    let entries = crate::scan::hooks::read(&path).ok()?;
+    let entries = crate::scan::hooks::read_registrations(&path).ok()?;
     let legacy = legacy_registration(entry, scope, root);
     let command = &legacy.command;
     let say = |why: String| {
@@ -132,6 +132,6 @@ fn survives_its_own_removal(path: &std::path::Path, identity: &Identity) -> bool
     let Ok(after) = edit.apply(&text) else {
         return true;
     };
-    crate::scan::hooks::read_text(&after)
+    crate::scan::hooks::registrations_text(&after)
         .is_ok_and(|entries| !matches!(registered(&entries, identity), Registered::Absent))
 }

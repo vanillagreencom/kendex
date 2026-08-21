@@ -206,7 +206,7 @@ pub(super) fn plan_registry(
             return Ok(false);
         }
     };
-    let registered = match crate::scan::hooks::read(registry) {
+    let registered = match crate::scan::hooks::read_registrations(registry) {
         Ok(entries) => entries,
         Err(message) => {
             sink.notes.push(format!(
@@ -221,7 +221,7 @@ pub(super) fn plan_registry(
         .filter(|identity| {
             registered
                 .iter()
-                .any(|entry| entry.description.as_deref() == Some(identity.command.as_str()))
+                .any(|entry| entry.command == identity.command)
         })
         .map(|identity| ConfigEdit::RemoveHook {
             event: identity.event.clone(),

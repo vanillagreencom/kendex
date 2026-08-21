@@ -15,6 +15,7 @@ mod finished;
 mod gates;
 mod global;
 mod held_back;
+mod in_the_way;
 mod links;
 mod moved_by_hand;
 mod observed;

@@ -63,7 +63,7 @@ fn legacy_registration_gone(scope: &Scope, root: &std::path::Path, entry: &LockE
     let path = pi::legacy_hook_registry(root);
     match look(&path) {
         Found::Absent => true,
-        Found::Plain(_) => crate::scan::hooks::read(&path).is_ok_and(|entries| {
+        Found::Plain(_) => crate::scan::hooks::read_registrations(&path).is_ok_and(|entries| {
             matches!(
                 registered(&entries, &legacy_registration(entry, scope, root)),
                 Registered::Absent
@@ -144,7 +144,7 @@ fn new_registration(
         matcher: legacy.matcher,
         command,
     };
-    match crate::scan::hooks::read(&pi::hook_registry(root)) {
+    match crate::scan::hooks::read_registrations(&pi::hook_registry(root)) {
         Ok(entries) => registered(&entries, &here),
         // A registry that is not there, or cannot be read, carries no
         // registration of this hook's that anything could act on.

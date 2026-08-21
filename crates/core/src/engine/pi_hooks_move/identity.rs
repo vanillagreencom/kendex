@@ -82,12 +82,13 @@ pub(super) fn legacy_registration(entry: &LockEntry, scope: &Scope, root: &Path)
     }
 }
 
-pub(super) fn registered(entries: &[crate::scan::RawEntry], identity: &Identity) -> Registered {
-    // The reader names an entry `event:matcher:stem` and carries the
-    // command itself as the description.
-    let carrying: Vec<&crate::scan::RawEntry> = entries
+pub(super) fn registered(
+    entries: &[crate::scan::hooks::Registration],
+    identity: &Identity,
+) -> Registered {
+    let carrying: Vec<&crate::scan::hooks::Registration> = entries
         .iter()
-        .filter(|entry| entry.description.as_deref() == Some(&identity.command))
+        .filter(|entry| entry.command == identity.command)
         .collect();
     let Some(only) = carrying.first() else {
         return Registered::Absent;
@@ -100,18 +101,13 @@ pub(super) fn registered(entries: &[crate::scan::RawEntry], identity: &Identity)
     if carrying.len() > 1 {
         return Registered::Ambiguous;
     }
-    // Read back through the reader that wrote it: the name is that
-    // module's spelling, and re-deriving it here is how a matcher with a
-    // colon in it — an ordinary regex — came to read as somebody moving
-    // the registration.
-    let (event, matcher) = match crate::scan::hooks::named(&only.name) {
-        Some((event, matcher)) => (Some(event), Some(matcher)),
-        None => (None, None),
-    };
-    let differs = |kept: &Option<String>, found: Option<&str>| {
-        kept.as_deref().is_some_and(|kept| found != Some(kept))
-    };
-    match differs(&identity.event, event) || differs(&identity.matcher, matcher) {
+    // The parts as the document keys them, never a name taken apart
+    // again: the character that joins those parts for display is legal
+    // inside two of them, so no reading of the joined form can be made
+    // to answer this.
+    let differs =
+        |kept: &Option<String>, found: &str| kept.as_deref().is_some_and(|kept| kept != found);
+    match differs(&identity.event, &only.event) || differs(&identity.matcher, &only.matcher) {
         // The one entry carrying the command is not where the record
         // says kendex left it: what is there is somebody's own doing,
         // whether they moved the event or narrowed the matcher.

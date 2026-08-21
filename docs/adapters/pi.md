@@ -72,9 +72,15 @@ entry kendex has to take out in a shape its editor cannot rewrite is in
 every hook's way; an entry kendex cannot pick out of an otherwise editable
 document is in that one hook's way alone, and a sibling whose own entry is
 exactly where its record says still moves. A hook on record as finished is
-in nobody's way at all: what wears its old command now is the person's. A registration is named by the command it
+in nobody's way at all: what wears its old command now is the person's.
+The record settles the reserved name and nothing else, so a registration
+moved by hand at the new path holds the hook whether the move is over or
+not. A registration is named by the command it
 runs and, where the record kept them, the event and matcher it fires
-under — and by uniqueness either way: a command carried twice in a document is one
+under — read from the parts a document keys, never from the one line a
+scan displays them on, since the character joining that line is legal
+inside a matcher and inside a command alike — and by uniqueness either
+way: a command carried twice in a document is one
 kendex cannot tell its own copy of, so it holds. The record keeps an
 event only for a script-less hook; a script-backed one is named by its
 command alone, because the event an older version installed it under is
