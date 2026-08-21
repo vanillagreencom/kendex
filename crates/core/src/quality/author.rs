@@ -50,26 +50,29 @@ use crate::source_read::SealedSource;
 pub struct AuthorDismissal {
     pub reason: DismissReason,
     pub dismissed_at: String,
-    /// How many occurrences of this finding the publisher's own text
-    /// carries in what was installed, by the weight each one was read at.
-    /// Written by the apply that measured it, so the audit reads the answer
-    /// rather than deriving it a second time and risking a different one.
-    /// Empty on a record that has not been measured yet — the catalog's own
-    /// read, before any rendering.
-    ///
-    /// By weight, not a single number, because a number is spendable on
-    /// anything. Findings are scored highest severity first, so a bare
-    /// count settles the heaviest matching occurrence whoever wrote it: a
-    /// project that injects the publisher's own sentence into the body,
-    /// where it weighs Critical, spends the budget a publisher earned for
-    /// their own copy in a supporting file, where it weighs High — and the
-    /// blocker disappears. The weight is what tells the two apart, because
-    /// it is exactly what the renderer's placement decided.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub occurrences: BTreeMap<Severity, u32>,
 }
 
 /// A publisher's decisions about one item, as they travel to an install.
+///
+/// Every field here is read back out of a lock a pull request can edit, so
+/// none of them may reach the score on this record's own word. What bounds
+/// each one, in full — a field added without an answer in this list is a
+/// field somebody will forge:
+///
+/// - `review_hash`: only ever compared against a hash the reader computes
+///   from the bytes in front of it, so it can disqualify the record and
+///   never grant anything ([`AuthorReview::stale_why`]).
+/// - `ruleset`: compared against this build's, and against the one the
+///   catalog published.
+/// - `publisher`: printable ([`crate::names::shown`]), has to be the
+///   provenance the manifest subscribes this item to, and the catalog there
+///   has to publish this record. It buys nothing arithmetically.
+/// - `dismissed` keys: shaped like fingerprints this build could have
+///   written ([`read::honest`]), and published by that catalog for this
+///   item. What each is *worth* is counted from the catalog's own content,
+///   never carried here — see `engine::observed::vouching`.
+/// - `dismissed[_].reason` and `.dismissed_at`: printed, and have to match
+///   what the catalog published.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthorReview {
@@ -117,74 +120,19 @@ impl AuthorReview {
     /// written. The lock is a project file a pull request can edit, so a
     /// record read back out of it is untrusted input exactly as the
     /// catalog's own file is — and `publisher` and `dismissed_at` are
-    /// printed. `counted` is how many findings are actually in front of us:
-    /// a record cannot claim to have measured more occurrences than exist.
-    pub fn is_honest(&self, counted: usize) -> bool {
-        // The total is added up, never wrapped into one. A record claiming
-        // more per weight than a total can hold has a total nothing here
-        // can check, and adding it up anyway reads as a small number — the
-        // record then passes the bound it was meant to fail, and its
-        // per-weight allowance is honoured in full out of a file a pull
-        // request can edit. A wrapping add would also answer differently
-        // with overflow checks on than off, which is two builds disagreeing
-        // about what is honest.
-        let bounded = |occurrences: &BTreeMap<Severity, u32>| {
-            occurrences
-                .values()
-                .try_fold(0u32, |total, count| total.checked_add(*count))
-                .is_some_and(|claimed| {
-                    usize::try_from(claimed).is_ok_and(|claimed| claimed <= counted)
-                })
-        };
+    /// printed.
+    pub fn is_honest(&self) -> bool {
         crate::names::shown(&self.publisher) == self.publisher
             && self.dismissed.iter().all(|(fingerprint, dismissal)| {
-                bounded(&dismissal.occurrences)
-                    && read::honest(
-                        fingerprint,
-                        &crate::quality::reviews::Dismissal {
-                            reason: dismissal.reason,
-                            dismissed_at: dismissal.dismissed_at.clone(),
-                            source: None,
-                        },
-                    )
+                read::honest(
+                    fingerprint,
+                    &crate::quality::reviews::Dismissal {
+                        reason: dismissal.reason,
+                        dismissed_at: dismissal.dismissed_at.clone(),
+                        source: None,
+                    },
+                )
             })
-    }
-
-    /// The budget an apply already measured and wrote down. Valid exactly
-    /// while the record is live, since a live record proves the bytes are
-    /// the ones that apply wrote.
-    pub fn recorded_budget(&self) -> Budget {
-        Budget(
-            self.dismissed
-                .iter()
-                .flat_map(|(fingerprint, dismissal)| {
-                    dismissal
-                        .occurrences
-                        .iter()
-                        .map(|(severity, count)| ((fingerprint.clone(), *severity), *count))
-                })
-                .collect(),
-        )
-    }
-
-    /// The same record carrying what it earned, for the lock to keep.
-    pub fn measured(&self, budget: &Budget) -> AuthorReview {
-        AuthorReview {
-            dismissed: self
-                .dismissed
-                .iter()
-                .map(|(fingerprint, dismissal)| {
-                    (
-                        fingerprint.clone(),
-                        AuthorDismissal {
-                            occurrences: budget.of(fingerprint),
-                            ..dismissal.clone()
-                        },
-                    )
-                })
-                .collect(),
-            ..self.clone()
-        }
     }
 }
 

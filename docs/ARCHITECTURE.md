@@ -851,9 +851,12 @@ lives in one capability table read by core and UI.
   subscribes to (`source::declared_provenance`, from the manifest, never
   the lock), and the catalog at the commit the entry names, or the
   directory a path source points at, has to publish that record — same
-  rule set, same fingerprints, same reasons, same dates. Anything else, and
-  a catalog not on this machine, buys nothing and is still reported under
-  the name it carries. No signing scheme here. A hook records none: the
+  rule set, same fingerprints, same reasons, same dates. What it is worth is
+  counted there too, from the publisher's own bytes, and since the weight an
+  occurrence was read at cannot be recovered from finished content, the
+  budget settles the lightest, leaving the heaviest counted. Anything else,
+  and a catalog not on this machine, buys nothing and is still reported
+  under the name it carries. No signing scheme here. A hook records none: the
   gate reads the script and the audit reads the shared settings file, two
   readings of different bytes by design — so the record is refused where
   it is read, `dismiss --catalog` refuses to write one, and `check
@@ -1096,12 +1099,9 @@ lives in one capability table read by core and UI.
   review is read *before* the verdict, so a finding it settles stops
   counting toward the score and can therefore move an item out of Block;
   that is the whole point of a catalog reviewing its own content, and it is
-  bounded by the checks above (bound to bytes, capped at the occurrences
-  the publisher's own text carries in what installs and at the weight each
-  was read at, refusing the reasons only the installer's machine could
-  answer for, and — read out of a lock — re-checked against the catalog
-  that published it). That cap is measured by the apply that wrote the
-  bytes, so the audit reads it rather than deriving a second one. The publisher's record does not live in the
+  bounded by the checks above — and, read out of a lock, by the catalog that
+  published it, which is also where the cap is counted from rather than
+  carried. The publisher's record does not live in the
   person's manifest and is not one of their revocable records: it lives in
   the catalog's committed `kendex-reviews.toml` and, once installed, in the
   lock entry — so it never appears in the Recorded decisions registry,

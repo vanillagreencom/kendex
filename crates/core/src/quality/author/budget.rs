@@ -35,14 +35,44 @@ impl Budget {
         )
     }
 
-    /// What this record earned for one finding, by weight — the shape the
-    /// lock keeps.
-    pub(super) fn of(&self, fingerprint: &str) -> BTreeMap<Severity, u32> {
-        self.0
-            .iter()
-            .filter(|((named, _), _)| named == fingerprint)
-            .map(|((_, severity), count)| (*severity, *count))
-            .collect()
+    /// A budget that settles the *lightest* occurrences of each finding:
+    /// `carries` says how many of it the publisher's own content holds, and
+    /// which of the occurrences in front of us those are is decided here.
+    ///
+    /// Which weight an occurrence is read at is decided by where the
+    /// renderer put it — the body, or a supporting file the split moved it
+    /// into — and that is not something a reader who has only the finished
+    /// content can recover. So it is not guessed at and not taken on
+    /// anybody's word: the occurrences settled are the lightest, which is
+    /// the reading that leaves the heaviest one counted. A project that
+    /// repeats a reviewed sentence in the body, where it weighs full,
+    /// cannot have that copy settled by a record whose own copy weighs
+    /// less.
+    pub fn lightest(carries: &BTreeMap<String, u32>, findings: &[Finding]) -> Budget {
+        let mut here: BTreeMap<(String, Severity), u32> = BTreeMap::new();
+        for finding in findings {
+            *here
+                .entry((finding.fingerprint(), finding.severity))
+                .or_default() += 1;
+        }
+        let mut spend: BTreeMap<(String, Severity), u32> = BTreeMap::new();
+        for (fingerprint, earned) in carries {
+            let mut left = *earned;
+            // `Severity::ALL` is lightest first, which is the order these
+            // may be spent in.
+            for severity in Severity::ALL {
+                if left == 0 {
+                    break;
+                }
+                let Some(found) = here.get(&(fingerprint.clone(), severity)) else {
+                    continue;
+                };
+                let take = left.min(*found);
+                spend.insert((fingerprint.clone(), severity), take);
+                left -= take;
+            }
+        }
+        Budget(spend)
     }
 
     /// Every occurrence this budget still has to spend on one finding.

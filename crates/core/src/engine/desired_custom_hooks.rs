@@ -95,7 +95,6 @@ pub(super) fn desired_custom_hooks(
                 // stands behind it.
                 author_review: None,
                 authored: None,
-                earned: Default::default(),
                 artifact,
             });
         }

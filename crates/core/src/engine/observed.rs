@@ -8,7 +8,7 @@ use crate::model::Scope;
 use super::gate::{self, ItemSafety};
 
 mod vouching;
-use vouching::Vouching;
+use vouching::{Vouched, Vouching};
 
 /// The other scoring path: the safety of what is on disk in this scope
 /// right now, declared or not. The plan-time path scores content nobody has
@@ -81,23 +81,20 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
                 .entries
                 .get(&key)
                 .map(|entry| entry.source_repo.clone());
-            // What the record earned was measured by the apply that wrote
-            // these bytes and written down beside it. The audit reads that
-            // answer rather than deriving it a second time: a live record
-            // proves the bytes are the ones that apply measured, and two
-            // derivations of one number are two chances to disagree.
-            let by_author = author_review(
-                &mut vouching,
-                &lock,
-                item,
-                scored.review.as_deref(),
-                result.findings.len(),
-            );
-            // Only a record this project can vouch for pays for anything.
+            // What the publisher's record is worth is counted from their
+            // own catalog, never read out of the lock: the lock is a file a
+            // pull request can edit, and this number is the only thing the
+            // record buys.
+            let by_author = author_review(&mut vouching, &lock, item, scored.review.as_deref());
             let budget = by_author
                 .as_ref()
-                .filter(|found| found.unvouched.is_none())
-                .map(|found| found.review.recorded_budget())
+                .and_then(|found| match &found.vouched {
+                    Vouched::Carries(carries) => Some(crate::quality::author::Budget::lightest(
+                        carries,
+                        &result.findings,
+                    )),
+                    Vouched::Not(_) => None,
+                })
                 .unwrap_or_default();
             let scored_findings = crate::quality::author::score(&result.findings, &budget);
             let (verdict, reasons) = crate::quality::verdict(
@@ -120,9 +117,7 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
                     provenance: provenance.as_deref(),
                     override_state: &override_state,
                     author_review: by_author.as_ref().map(|found| found.review),
-                    unvouched: by_author
-                        .as_ref()
-                        .and_then(|found| found.unvouched.as_deref()),
+                    unvouched: by_author.as_ref().and_then(|found| found.vouched.why()),
                     settled: &scored_findings.settled,
                     held_back: verdict == crate::quality::Verdict::Block
                         && !override_state.unblocks(),
@@ -168,7 +163,6 @@ fn author_review<'a>(
     lock: &'a crate::lock::Lock,
     item: &crate::model::ObservedItem,
     review_hash: Option<&str>,
-    counted: usize,
 ) -> Option<Published<'a>> {
     let review_hash = review_hash?;
     lock.entries
@@ -184,27 +178,28 @@ fn author_review<'a>(
         // of them has to hold up.
         .filter(|entry| {
             entry.author_review.as_ref().is_some_and(|review| {
-                review.stale_why(Some(review_hash)).is_none() && review.is_honest(counted)
+                review.stale_why(Some(review_hash)).is_none() && review.is_honest()
             })
         })
         .filter_map(|entry| {
             let review = entry.author_review.as_ref()?;
             Some(Published {
-                unvouched: vouching.unvouched(entry, review),
+                vouched: vouching.vouched(entry, review),
                 review,
             })
         })
         // A record the catalog answers for outranks one it does not, so a
         // forged entry beside a real one cannot take the real one's place.
-        .min_by_key(|found| usize::from(found.unvouched.is_some()))
+        .min_by_key(|found| usize::from(found.vouched.why().is_some()))
 }
 
 /// The publisher's record for one observation, and its standing here.
 struct Published<'a> {
     review: &'a crate::quality::author::AuthorReview,
-    /// Why this record settles nothing, when the manifest does not vouch
-    /// for where it came from. `None` when it does.
-    unvouched: Option<String>,
+    /// What the catalog that published it says: how many occurrences of
+    /// each finding it names the publisher's own content carries, or why it
+    /// settles nothing.
+    vouched: Vouched,
 }
 
 /// The key this observation's records live under. An entry that emitted

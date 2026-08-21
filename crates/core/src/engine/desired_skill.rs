@@ -176,7 +176,6 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
                 emitted: None,
                 reasons: ctx.reasons_for(*harness),
                 author_review: ctx.author_review.clone(),
-                earned: Default::default(),
                 authored: variant.authored.as_deref().map(|files| {
                     crate::quality::Content::SkillTree {
                         files: crate::quality::observe::tree_files_from_bytes(files),

@@ -115,9 +115,6 @@ pub fn one(
                     AuthorDismissal {
                         reason: dismissal.reason,
                         dismissed_at: dismissal.dismissed_at.clone(),
-                        // Nothing has been rendered yet, so nothing has
-                        // been earned yet.
-                        occurrences: BTreeMap::new(),
                     },
                 );
             }

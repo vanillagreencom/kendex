@@ -276,13 +276,19 @@ fn one_publishers_record_never_answers_for_anothers_copy() {
     }
 }
 
-/// The audit reads the number the apply measured rather than measuring
-/// again. An installed item carrying the project's own repeat of a reviewed
-/// sentence has one occurrence settled and one open, and the audit has to
-/// say the same — a second derivation is a second chance to disagree.
+/// The audit measures the record again, from the catalog, and reaches the
+/// gate's answer.
+///
+/// Two derivations are two chances to disagree, which is why the number
+/// used to be carried in the lock — but a number in the lock is a number a
+/// pull request can edit, and this one is the only thing a publisher's
+/// record buys. So it is counted here instead, and this is what holds the
+/// two readings to the same answer: an installed item carrying the
+/// project's own repeat of a reviewed sentence has one occurrence settled
+/// and one open, at the gate and again at the audit.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn the_audit_reads_the_budget_the_apply_measured() {
+fn the_audit_and_the_gate_agree_on_what_a_record_paid_for() {
     let f = fixture();
     // Warn-level, so the item installs with the project's repeat in it and
     // there is something on disk to audit.

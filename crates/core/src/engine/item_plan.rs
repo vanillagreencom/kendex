@@ -120,7 +120,7 @@ pub(super) fn plan_item(
             emitted: item.emitted.clone(),
             registration: super::desired_custom_hooks::hook_registration(item),
             reasons: item.reasons.clone(),
-            author_review: super::review_hash::author_review(item, &item.earned),
+            author_review: super::review_hash::author_review(item),
         },
     );
     Ok(())

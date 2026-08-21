@@ -237,7 +237,6 @@ pub(super) fn desired_agent(
             reasons: ctx.reasons_for(harness),
             author_review: ctx.author_review.clone(),
             authored,
-            earned: Default::default(),
             artifact: Artifact::File {
                 path: written_at(&native, harness, ctx.name, enabled),
                 bytes: rendered.text.into_bytes(),
