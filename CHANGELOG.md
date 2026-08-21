@@ -245,9 +245,8 @@ changes carry a **Breaking** call-out with their migration note inline.
   that kendex cannot account for: a file it did not write, one you edited
   after it was installed, anything that is not a plain file where the
   script was — a directory of your own, say — a hook registration you
-  added, moved or duplicated by hand — moving one to another event holds
-  the hook at both ends, so the entry you moved is never taken out and no
-  second one is registered beside it — and a hook whose source is
+  added or duplicated by hand — the same command registered twice holds
+  that hook, and no other hook waits on it — and a hook whose source is
   unreachable this run all stay exactly where they are, and that last one completes the move as soon
   as the source is back. A copy kendex cannot prove it wrote keeps its
   whole installation, not just the file — the old copy stays the one that
@@ -267,7 +266,11 @@ changes carry a **Breaking** call-out with their migration note inline.
   read from the old registry it fires from, so the copy that needs your
   attention is not the one you cannot see. A registration
   kendex cannot take out holds the script it names, so a hook is never left
-  half-retired. Hooks that came in with a bundle move like any other. And a
+  half-retired. A registration kendex wrote down in full — the ones you
+  declare under `[[custom-hooks]]` — is known by the event and matcher it
+  went in under, so one you move by hand stays where you moved it and
+  nothing is registered beside it; and at the new path, a registration you
+  move is never doubled by a second one either. Hooks that came in with a bundle move like any other. And a
   cleanup nobody asked for by name now leaves a hook's files alone when
   they are not the ones kendex wrote — the rule skills, agents and commands
   already followed. `refresh` now prints those reasons, which it previously

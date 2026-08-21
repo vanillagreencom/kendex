@@ -1,0 +1,103 @@
+//! What the registry an earlier kendex wrote will and will not give up,
+//! and how wide the answer reaches.
+//!
+//! Two obstacles live here and they are not the same size. The document
+//! itself may be one kendex cannot edit at all, which is in the way of
+//! every hook needing an edit in it. Or one hook's own entry may be one
+//! kendex cannot pick out, which is in that hook's way and nobody else's
+//! — a sibling whose entry is exactly where its record says has nothing
+//! to do with it.
+
+use super::Found;
+use super::{Registered, legacy_registration, look, registered};
+use crate::harness::pi;
+use crate::lock::LockEntry;
+use crate::model::Scope;
+
+/// Why nothing in the legacy registry can be given up at all, when
+/// nothing can: it is a link kendex did not make, it could not be read,
+/// or it holds an entry kendex has to take out in a shape its editor
+/// cannot rewrite. The obstacle is the document, so it blocks every hook
+/// that needs an edit in it — which is what makes this the scope-wide
+/// half. Absence is no obstacle, and neither is a document holding
+/// nobody's entries but somebody else's.
+pub(super) fn registry_block(
+    root: &std::path::Path,
+    scope: &Scope,
+    ours: &[&LockEntry],
+) -> Option<String> {
+    let path = pi::legacy_hook_registry(root);
+    let say = |why: String| {
+        Some(format!(
+            "{} {why}, so nothing under the name pi reserved was retired — a hook's registration and the script it names have to go together",
+            path.display()
+        ))
+    };
+    match look(&path) {
+        Found::Absent => return None,
+        Found::Linked(_) => return say("is a link kendex did not create".to_owned()),
+        Found::Unreadable(_, error) => return say(format!("could not be read ({error})")),
+        Found::Plain(_) => {}
+    }
+    let entries = match crate::scan::hooks::read(&path) {
+        Ok(entries) => entries,
+        Err(message) => return say(format!("could not be read ({message})")),
+    };
+    // Whether anything of kendex's is in there to take out at all. An
+    // entry kendex cannot pick out of the document is one hook's problem,
+    // not the document's, and it holds that hook on its own below.
+    let holds_ours = ours.iter().any(|entry| {
+        matches!(
+            registered(&entries, &legacy_registration(entry, scope, root)),
+            Registered::Ours
+        )
+    });
+    if !holds_ours {
+        return None;
+    }
+    match crate::fs::read_if_exists(&path) {
+        Err(error) => say(format!("could not be read ({error})")),
+        Ok(text) => match serde_json::from_str::<serde_json::Value>(&text.unwrap_or_default()) {
+            Ok(_) => None,
+            Err(error) => say(format!(
+                "holds an entry kendex has to take out but could not be parsed ({error})"
+            )),
+        },
+    }
+}
+
+/// Why this hook's own registration under the reserved name is not
+/// kendex's to take, when it is not: the record points at one entry and
+/// the document does not hold exactly that one — moved to another event
+/// or matcher, or carried twice. That is evidence about this hook and no
+/// other, so it holds this hook and no other; a sibling whose own entry
+/// is exactly where its record says still moves.
+///
+/// Identity has to resolve before anything is removed. The edit takes out
+/// every handler answering to it, so one kendex cannot tell from another
+/// is held, not guessed at.
+pub(super) fn registration_conflict(
+    root: &std::path::Path,
+    scope: &Scope,
+    entry: &LockEntry,
+) -> Option<String> {
+    let path = pi::legacy_hook_registry(root);
+    let entries = crate::scan::hooks::read(&path).ok()?;
+    let legacy = legacy_registration(entry, scope, root);
+    let command = &legacy.command;
+    let say = |why: String| {
+        Some(format!(
+            "{} {why} — that entry is not kendex's to take, so this hook stays where it is; move it back, or take it out yourself",
+            path.display()
+        ))
+    };
+    match registered(&entries, &legacy) {
+        Registered::Ours | Registered::Absent => None,
+        Registered::Elsewhere => say(format!(
+            "no longer registers {command} where kendex recorded it"
+        )),
+        Registered::Ambiguous => say(format!(
+            "registers {command} more than once, so kendex cannot tell its own entry from the others"
+        )),
+    }
+}

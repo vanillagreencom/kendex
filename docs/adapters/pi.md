@@ -62,7 +62,13 @@ never keys, is not mistaken for an install nobody wants. A copy kendex
 cannot prove it wrote holds the whole installation, not just the file:
 its old registration stays live and no fresh rendering takes over. A
 registration kendex cannot take out holds the script it names, so neither
-half is ever left without the other. A registration is named by the command it
+half is ever left without the other — and what it holds is as wide as the
+evidence. A registry that is a link, that cannot be read, or that holds an
+entry kendex has to take out in a shape its editor cannot rewrite is in
+every hook's way; an entry kendex cannot pick out of an otherwise editable
+document is in that one hook's way alone, and a sibling whose own entry is
+exactly where its record says still moves. A hook on record as finished is
+in nobody's way at all: what wears its old command now is the person's. A registration is named by the command it
 runs and, where the record kept them, the event and matcher it fires
 under — and by uniqueness either way: a command carried twice in a document is one
 kendex cannot tell its own copy of, so it holds. The record keeps an

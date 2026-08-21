@@ -13,10 +13,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::super::desired::DesiredState;
 use super::claims::Held;
 use super::migrated::{moved, moved_by_hand};
-use super::{
-    Found, LEGACY_DIR, Registered, legacy_files, legacy_registration, look, plain_file, provenance,
-    registered,
-};
+use super::registry::{registration_conflict, registry_block};
+use super::{Found, LEGACY_DIR, legacy_files, look, plain_file, provenance};
 use crate::env::Env;
 use crate::harness::pi;
 use crate::lock::{Lock, LockEntry};
@@ -72,8 +70,14 @@ pub(crate) struct Preflight {
     lingering: bool,
     /// Why the legacy registry cannot give up an entry, when it cannot.
     /// A script is never retired while its registration has to stay, or
-    /// the registration would point at a path with nothing at it.
+    /// the registration would point at a path with nothing at it. The
+    /// document is the obstacle here, so this holds every hook needing an
+    /// edit in it.
     pub(super) registry_block: Option<String>,
+    /// Why one hook's own entry in that registry is not kendex's to take,
+    /// for each hook that has such a reason. Evidence about one hook and
+    /// no other, so it holds one hook and no other.
+    conflicts: BTreeMap<String, String>,
 }
 
 impl Preflight {
@@ -89,6 +93,13 @@ impl Preflight {
 
     pub(super) fn moved_on(&self, name: &str) -> bool {
         self.migrated.contains(name)
+    }
+
+    /// Why this hook's own registration under the reserved name is not
+    /// kendex's to take, when it is not. Read by both halves of the pass:
+    /// the hold it causes, and the line the move prints about it.
+    pub(super) fn conflict(&self, name: &str) -> Option<&String> {
+        self.conflicts.get(name)
     }
 
     /// Whether this installation is on record as having left the reserved
@@ -129,6 +140,7 @@ pub(crate) fn preflight(
             recorded: BTreeSet::new(),
             lingering: false,
             registry_block: None,
+            conflicts: BTreeMap::new(),
         };
     }
     let ours: Vec<&LockEntry> = lock
@@ -156,7 +168,25 @@ pub(crate) fn preflight(
     // written or registered at the new path behind one. Without a lock
     // entry to claim by, kendex has nothing under the reserved name at all.
     let lingering = ours.iter().any(|entry| !migrated.contains(&entry.name));
-    let registry_block = registry_block(&root, scope, &ours);
+    // A hook on record as having left the reserved name has no
+    // registration of kendex's there to identify: what wears its command
+    // now is the person's, by the very fact the record states. It has no
+    // business blocking anything, and neither has a document that is only
+    // in anybody's way for its sake.
+    let unfinished: Vec<&LockEntry> = ours
+        .iter()
+        .copied()
+        .filter(|entry| !entry.left_pi_reserved_name)
+        .collect();
+    let registry_block = (!unfinished.is_empty())
+        .then(|| registry_block(&root, scope, &unfinished))
+        .flatten();
+    let conflicts: BTreeMap<String, String> = unfinished
+        .iter()
+        .filter_map(|entry| {
+            registration_conflict(&root, scope, entry).map(|why| (entry.name.clone(), why))
+        })
+        .collect();
     let mut this = Preflight {
         held: BTreeMap::new(),
         discard,
@@ -164,6 +194,7 @@ pub(crate) fn preflight(
         recorded,
         lingering,
         registry_block,
+        conflicts,
     };
     this.held = ours
         .iter()
@@ -207,6 +238,11 @@ fn holding(
             "its registration under the name pi reserved is not kendex's to change — {} says what is in the way",
             pi::legacy_hook_registry(root).display()
         )));
+    }
+    // And this hook's own entry, which says nothing about anybody
+    // else's: a sibling with a clean identity moves while this one waits.
+    if let Some(why) = pre.conflict(&entry.name) {
+        return Some(Hold::ByHand(why.clone()));
     }
     // Registering the fresh rendering beside a registration somebody
     // moved by hand would leave the hook firing twice, under two events.
@@ -283,64 +319,4 @@ fn discarding(options: &crate::engine::PlanOptions, name: &str) -> bool {
 /// would hash as happily as a file.
 fn discardable(path: &std::path::Path) -> bool {
     plain_file(path) && crate::hash::hash_tree(path).is_ok()
-}
-
-/// Why the legacy registry cannot give up kendex's own entry, when it
-/// cannot. Absent is no obstacle, and neither is a document holding
-/// nobody's entries but somebody else's — there is nothing there to take
-/// out, so nothing is blocked by it.
-fn registry_block(root: &std::path::Path, scope: &Scope, ours: &[&LockEntry]) -> Option<String> {
-    let path = pi::legacy_hook_registry(root);
-    let say = |why: String| {
-        Some(format!(
-            "{} {why}, so nothing under the name pi reserved was retired — a hook's registration and the script it names have to go together",
-            path.display()
-        ))
-    };
-    match look(&path) {
-        Found::Absent => return None,
-        Found::Linked(_) => return say("is a link kendex did not create".to_owned()),
-        Found::Unreadable(_, error) => return say(format!("could not be read ({error})")),
-        Found::Plain(_) => {}
-    }
-    let entries = match crate::scan::hooks::read(&path) {
-        Ok(entries) => entries,
-        Err(message) => return say(format!("could not be read ({message})")),
-    };
-    // Identity has to resolve to exactly one registration before anything
-    // is removed. The edit takes out every handler answering to it, so
-    // one kendex cannot tell from another — a second matcher wearing the
-    // command, or the command moved to an event the record does not name
-    // — is held, not guessed at.
-    let mut holds_ours = false;
-    for entry in ours {
-        let legacy = legacy_registration(entry, scope, root);
-        let command = &legacy.command;
-        match registered(&entries, &legacy) {
-            Registered::Ours => holds_ours = true,
-            Registered::Absent => {}
-            Registered::Elsewhere => {
-                return say(format!(
-                    "no longer registers {command} where kendex recorded it, so what is there now is not kendex's to take"
-                ));
-            }
-            Registered::Ambiguous => {
-                return say(format!(
-                    "registers {command} more than once, so kendex cannot tell its own entry from the others"
-                ));
-            }
-        }
-    }
-    if !holds_ours {
-        return None;
-    }
-    match crate::fs::read_if_exists(&path) {
-        Err(error) => say(format!("could not be read ({error})")),
-        Ok(text) => match serde_json::from_str::<serde_json::Value>(&text.unwrap_or_default()) {
-            Ok(_) => None,
-            Err(error) => say(format!(
-                "holds an entry kendex has to take out but could not be parsed ({error})"
-            )),
-        },
-    }
 }

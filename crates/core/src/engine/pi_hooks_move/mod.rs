@@ -43,12 +43,15 @@ mod disposal;
 mod identity;
 mod migrated;
 mod preflight;
+mod record;
+mod registry;
 mod retire;
 
 use claims::{claim, claims, provenance};
 use disposal::{plan_directory, plan_registry};
 use identity::{Identity, Registered, legacy_registration, registered};
 pub(crate) use preflight::{Preflight, preflight};
+use record::{every_pi_hook, newly_installed, record_finished};
 use retire::{Retire, retirable};
 
 /// The directory name Pi reserved. The registry an earlier kendex wrote
@@ -105,19 +108,6 @@ pub(crate) fn legacy_registry_lives(env: &Env, scope: &Scope) -> bool {
         &crate::engine::desired::DesiredState::default(),
     )
     .legacy_registry_lives()
-}
-
-/// A finished move goes into the record this plan writes, so no later
-/// pass has to work it out again from bytes and registrations that have
-/// every right to change afterwards. It rides the same plan as the
-/// removals it describes: an apply that fails rolls both back.
-fn record_finished(finished: BTreeSet<String>, sink: &mut Sink) {
-    for name in finished {
-        let key = crate::lock::entry_key(ItemKind::Hook, &name, HarnessId::Pi);
-        if let Some(entry) = sink.new_lock.entries.get_mut(&key) {
-            entry.left_pi_reserved_name = true;
-        }
-    }
 }
 
 pub(super) fn plan_move(
@@ -192,9 +182,7 @@ pub(super) fn plan_move(
     // entry stops every retirement here, because a script whose
     // registration has to stay would leave that registration naming a
     // path with nothing at it.
-    if let Some(block) = &pre.registry_block
-        && !entries.is_empty()
-    {
+    if let Some(block) = &pre.registry_block {
         sink.notes.push(block.clone());
     }
 
@@ -210,6 +198,12 @@ pub(super) fn plan_move(
         // not asked at all. Asking it is what re-opened finished moves.
         if pre.left_for_good(&entry.name) {
             continue;
+        }
+        // One line about this hook's own entry, where there is one to
+        // say: for a command-bodied hook, which has no file under the
+        // reserved name at all, it is the only line there is.
+        if let Some(why) = pre.conflict(&entry.name) {
+            sink.notes.push(why.clone());
         }
         let found = legacy_files(&dir, &entry.name);
         // Where there is no record — an installation that finished
@@ -236,7 +230,12 @@ pub(super) fn plan_move(
             continue;
         }
         let (mine, holds) = claims(entry, &found, &root, pre, sink);
-        if holds || pre.registry_block.is_some() {
+        // One gate for both halves of the pass: what the preflight is
+        // holding whole keeps everything it has, this pass writes nothing
+        // for it and retires nothing of its. The per-file reading is
+        // asked as well because it is where the lines about each file
+        // come from.
+        if holds || pre.hold(&entry.name).is_some() {
             continue;
         }
         match retirable(
@@ -287,33 +286,6 @@ pub(super) fn plan_move(
         record_finished(finished, sink);
     }
     Ok(())
-}
-
-/// Every pi hook this scope knows about, installed or being installed —
-/// what a plan that finds nothing at all under the reserved name may call
-/// finished.
-fn every_pi_hook(entries: &[&LockEntry], state: &DesiredState) -> BTreeSet<String> {
-    entries
-        .iter()
-        .map(|entry| entry.name.clone())
-        .chain(desired_pi_hooks(state))
-        .collect()
-}
-
-/// The pi hooks this pass installs that no lock entry names: the ones
-/// with no history under the reserved name to have anything left in.
-fn newly_installed(entries: &[&LockEntry], state: &DesiredState) -> BTreeSet<String> {
-    desired_pi_hooks(state)
-        .filter(|name| !entries.iter().any(|entry| &entry.name == name))
-        .collect()
-}
-
-fn desired_pi_hooks(state: &DesiredState) -> impl Iterator<Item = String> + '_ {
-    state
-        .items
-        .iter()
-        .filter(|item| item.kind == ItemKind::Hook && item.harness == HarnessId::Pi)
-        .map(|item| item.name.clone())
 }
 
 /// A trash op through the plan's one guard, bound to the bytes ownership
