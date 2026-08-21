@@ -18,7 +18,6 @@ import {
   replaceFilesConfirmBody,
   replaceFilesConfirmTitle,
 } from "@/lib/copy-in-the-way";
-import { ADOPT_SHARED_CONFIRM, ADOPT_SHARED_TITLE } from "@/lib/copy-safety";
 import { type MergedDriftRow, summarizePaths } from "@/lib/drift-merge";
 import { canKeep, canReplace } from "@/lib/drift-zones";
 import { harnessName } from "@/lib/labels";
@@ -93,22 +92,19 @@ export function BlockedDeclarations({
     setPending(null);
   };
 
-  const keepConfirm = (group: MergedDriftRow) =>
-    isShared(group)
-      ? {
-          title: ADOPT_SHARED_TITLE,
-          body: keepSharedConfirmBody(
-            where(group)?.text ?? "",
-            toolsOf(group).map(harnessName),
-            alsoApplies,
-          ),
-          label: ADOPT_SHARED_CONFIRM,
-        }
-      : {
-          title: keepFilesConfirmTitle(group.name),
-          body: keepFilesConfirmBody(alsoApplies),
-          label: KEEP_FILES_CONFIRM_LABEL,
-        };
+  // One action keeps its own words whichever shape it takes: only what
+  // happens to the files differs, and the shared folder says the more of it.
+  const keepConfirm = (group: MergedDriftRow) => ({
+    title: keepFilesConfirmTitle(group.name),
+    label: KEEP_FILES_CONFIRM_LABEL,
+    body: isShared(group)
+      ? keepSharedConfirmBody(
+          where(group)?.text ?? "",
+          toolsOf(group).map(harnessName),
+          alsoApplies,
+        )
+      : keepFilesConfirmBody(alsoApplies),
+  });
 
   return (
     <div className="overflow-hidden rounded-lg border">
@@ -151,8 +147,11 @@ export function BlockedDeclarations({
               </span>
               {/* Each exit says what it does, under the control that does
                   it — a row with no Keep button then carries only the line
-                  telling the reader how to keep the files themselves. */}
-              <div className="flex shrink-0 flex-wrap items-start gap-4">
+                  telling the reader how to keep the files themselves. Two
+                  slots of a fixed width, kept whether or not the row fills
+                  them: a column that moves from row to row is what makes a
+                  list of these hard to read. */}
+              <div className="grid shrink-0 grid-cols-[15rem_15rem] gap-4">
                 {keepable ? (
                   <Exit
                     consequence={KEEP_FILES_CONSEQUENCE}
@@ -167,7 +166,7 @@ export function BlockedDeclarations({
                     }
                   />
                 ) : (
-                  <span className="max-w-[16rem] text-[13px] text-muted-foreground">
+                  <span className="text-[13px] text-muted-foreground">
                     {MOVE_FILES_YOURSELF}
                   </span>
                 )}
@@ -185,7 +184,11 @@ export function BlockedDeclarations({
                       </Button>
                     }
                   />
-                ) : null}
+                ) : (
+                  // The slot stays, empty: collapsing it would pull the
+                  // keep column across on every row that has no replace.
+                  <span />
+                )}
               </div>
             </div>
           );
@@ -215,7 +218,13 @@ export function BlockedDeclarations({
             ? keepConfirm(pending.group).label
             : REPLACE_FILES_CONFIRM_LABEL
         }
-        destructive={pending?.exit === "replace"}
+        destructive={
+          // A shared folder goes to the trash whole and shortcuts kendex
+          // cannot see break with it, which the body says — so keeping it
+          // is weighted like the replacement, and like the Library weighs
+          // the same move.
+          pending?.exit === "replace" || (!!pending && isShared(pending.group))
+        }
         busy={busy}
         onConfirm={confirm}
       />
@@ -232,7 +241,7 @@ function Exit({
   consequence: string;
 }) {
   return (
-    <span className="flex max-w-[16rem] flex-col items-start gap-1">
+    <span className="flex flex-col items-start gap-1">
       {control}
       <span className="text-[13px] text-muted-foreground">{consequence}</span>
     </span>

@@ -109,6 +109,11 @@ changes carry a **Breaking** call-out with their migration note inline.
   publishes is told so plainly, and settles nothing.
 ### Changed
 
+- Keeping a folder several tools read through shortcuts now asks in the
+  same words as the button that opened it, rather than renaming the action
+  halfway through. It still names the folder, the tools reading it, and
+  what stops working, and its confirm button now looks like the other ones
+  that send files to the trash.
 - The Updates page is a table with one row per package. A package out of
   date in several projects shows how many places, expands into a row per
   place — User level and each project by name — and each place has its

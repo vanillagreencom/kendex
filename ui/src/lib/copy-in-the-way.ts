@@ -1,5 +1,3 @@
-import { adoptSharedBody } from "@/lib/copy-safety";
-
 // The words for one state: kendex.toml asks for something, and files are
 // already where it goes. Two ways forward and no way to guess which is
 // wanted, so the group says only what is true of every row and each
@@ -35,16 +33,23 @@ export const keepFilesConfirmBody = (alsoApplies: boolean): string =>
     alsoApplies ? ALSO_APPLIES : ""
   }`;
 export const KEEP_FILES_CONFIRM_LABEL = "Keep them";
-// Keeping a folder several tools read through links is a bigger move than
-// keeping a plain folder, and the words for it already exist where the
-// Library offers the same thing. Only the whole-project note is added, so
-// both exits on a row disclose the same apply.
+// Keeping a folder several tools read through shortcuts they set up is a
+// bigger move than keeping a plain folder, so the words for it say what
+// happens to the folder itself. One action, one set of words: the Library
+// offers the same move and reads them from here, because a dialog that
+// renames the button that opened it leaves the reader unsure what they
+// agreed to. The last sentence is the one honest warning — shortcuts
+// kendex cannot see will break, and there is no way to list them.
+export const keepSharedBody = (target: string, tools: string[]): string =>
+  `${tools.join(" and ")} read this skill from ${target}. kendex moves the folder's content into its own keeping — the folder goes to the trash, where you can get it back — and points them at kendex's copy, so they stay in sync. Anything else pointing at the old folder stops working.`;
+// The Review page adds the whole-project note, so both exits on a row
+// disclose the same apply.
 export const keepSharedConfirmBody = (
   target: string,
   tools: string[],
   alsoApplies: boolean,
 ): string =>
-  `${adoptSharedBody(target, tools)}${alsoApplies ? ALSO_APPLIES : ""}`;
+  `${keepSharedBody(target, tools)}${alsoApplies ? ALSO_APPLIES : ""}`;
 export const replaceFilesConfirmTitle = (name: string): string =>
   `Replace ${name}?`;
 // One or two places read as themselves. Past that the summary is "<first>

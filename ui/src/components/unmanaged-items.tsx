@@ -12,10 +12,10 @@ import {
   startManagingAllLabel,
 } from "@/lib/copy";
 import {
-  ADOPT_SHARED_CONFIRM,
-  ADOPT_SHARED_TITLE,
-  adoptSharedBody,
-} from "@/lib/copy-safety";
+  KEEP_FILES_CONFIRM_LABEL,
+  keepFilesConfirmTitle,
+  keepSharedBody,
+} from "@/lib/copy-in-the-way";
 import type { MergedDriftRow } from "@/lib/drift-merge";
 import { summarizePaths } from "@/lib/drift-merge";
 import { kindLabel } from "@/lib/labels";
@@ -191,13 +191,13 @@ export function UnmanagedItems({
         onOpenChange={(open) => {
           if (!open) setConfirmingShared(null);
         }}
-        title={ADOPT_SHARED_TITLE}
+        title={keepFilesConfirmTitle(confirmingShared?.group.name ?? "")}
         description={
           confirmingShared
-            ? adoptSharedBody(confirmingShared.target, confirmingShared.tools)
+            ? keepSharedBody(confirmingShared.target, confirmingShared.tools)
             : undefined
         }
-        confirmLabel={ADOPT_SHARED_CONFIRM}
+        confirmLabel={KEEP_FILES_CONFIRM_LABEL}
         destructive
         busy={busy}
         onConfirm={() => {
