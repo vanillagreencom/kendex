@@ -131,6 +131,7 @@ fn survives_its_own_removal(path: &std::path::Path, identity: &Identity) -> bool
     };
     let edit = crate::configedit::ConfigEdit::RemoveHook {
         event: identity.event.clone(),
+        matcher: identity.matcher.clone(),
         command: identity.command.clone(),
     };
     let Ok(after) = edit.apply(&text) else {

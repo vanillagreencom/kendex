@@ -225,6 +225,7 @@ pub(super) fn plan_registry(
         })
         .map(|identity| ConfigEdit::RemoveHook {
             event: identity.event.clone(),
+            matcher: identity.matcher.clone(),
             command: identity.command.clone(),
         })
         .collect();

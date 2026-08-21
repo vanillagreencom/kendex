@@ -51,8 +51,21 @@ pub(super) fn upsert_copilot_hook(
 pub(super) fn remove_copilot_hook(
     root: &mut Map<String, Value>,
     event: Option<&str>,
+    matcher: Option<&str>,
     command: &str,
 ) {
+    // A matcher names one entry; without one the command goes wherever it
+    // is registered, which is what removing the whole installation means.
+    let named = |entry: &Value| {
+        matcher.is_none_or(|matcher| {
+            entry
+                .get("matcher")
+                .and_then(Value::as_str)
+                .filter(|entry| !entry.is_empty())
+                .unwrap_or(crate::scan::hooks::ANY_MATCHER)
+                == matcher
+        })
+    };
     let Some(events) = root.get_mut("hooks").and_then(Value::as_object_mut) else {
         return;
     };
@@ -62,7 +75,9 @@ pub(super) fn remove_copilot_hook(
     };
     for name in names {
         if let Some(entries) = events.get_mut(&name).and_then(Value::as_array_mut) {
-            entries.retain(|entry| entry.get("bash").and_then(Value::as_str) != Some(command));
+            entries.retain(|entry| {
+                !named(entry) || entry.get("bash").and_then(Value::as_str) != Some(command)
+            });
             if entries.is_empty() {
                 events.shift_remove(&name);
             }
@@ -112,6 +127,7 @@ mod tests {
         let registered = upsert().apply(existing).unwrap();
         let removed = ConfigEdit::RemoveCopilotHook {
             event: None,
+            matcher: None,
             command: "bash /h/.copilot/hooks/audit.sh".to_owned(),
         }
         .apply(&registered)
@@ -129,6 +145,7 @@ mod tests {
         let registered = upsert().apply("").unwrap();
         let removed = ConfigEdit::RemoveCopilotHook {
             event: Some("preToolUse".to_owned()),
+            matcher: None,
             command: "bash /h/.copilot/hooks/audit.sh".to_owned(),
         }
         .apply(&registered)

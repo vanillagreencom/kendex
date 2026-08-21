@@ -48,10 +48,24 @@ pub(super) fn retire_previous(
         return None;
     }
     let event = Some(recorded.event.clone());
+    // The key the identity was decided by, and no coarser: a command the
+    // person also registered under a matcher of their own is theirs, and
+    // retiring by the command alone would take it with kendex's. Where
+    // the record kept no matcher there is nothing finer to retire by, and
+    // the reach is what it always was.
+    let matcher = recorded.matcher.clone();
     let command = recorded.command.clone();
     let removal = match named.copilot {
-        true => ConfigEdit::RemoveCopilotHook { event, command },
-        false => ConfigEdit::RemoveHook { event, command },
+        true => ConfigEdit::RemoveCopilotHook {
+            event,
+            matcher,
+            command,
+        },
+        false => ConfigEdit::RemoveHook {
+            event,
+            matcher,
+            command,
+        },
     };
     Some((named.path.clone(), removal))
 }
@@ -116,22 +130,24 @@ fn named(item: &Desired) -> Option<Named<'_>> {
         }),
         ConfigEdit::RemoveHook {
             event: Some(event),
+            matcher: named,
             command,
         } => Some(Named {
             path,
             copilot: false,
             event,
-            matcher: None,
+            matcher: spelled(named),
             command,
         }),
         ConfigEdit::RemoveCopilotHook {
             event: Some(event),
+            matcher: named,
             command,
         } => Some(Named {
             path,
             copilot: true,
             event,
-            matcher: None,
+            matcher: spelled(named),
             command,
         }),
         _ => None,
@@ -189,20 +205,17 @@ pub(super) fn registration(item: &Desired) -> Option<crate::lock::HookRegistrati
             ..
         } => record(event, matcher.as_ref(), command),
         // A disabled hook renders the reversed registration, which names
-        // the event its entry was written under; its matcher is not part
-        // of that edit, so it stays unknown rather than assumed.
+        // the event and matcher its entry was written under.
         ConfigEdit::RemoveHook {
             event: Some(event),
+            matcher,
             command,
         }
         | ConfigEdit::RemoveCopilotHook {
             event: Some(event),
+            matcher,
             command,
-        } => Some(crate::lock::HookRegistration {
-            event: event.clone(),
-            command: command.clone(),
-            matcher: None,
-        }),
+        } => record(event, matcher.as_ref(), command),
         _ => None,
     })
 }

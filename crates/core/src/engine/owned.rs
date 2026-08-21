@@ -112,8 +112,19 @@ fn hook_owned(
     edits: &mut Vec<(PathBuf, ConfigEdit)>,
 ) {
     let removal = |event: Option<String>, command: String, format: &HookFormat| match format {
-        HookFormat::Nested => ConfigEdit::RemoveHook { event, command },
-        HookFormat::Copilot => ConfigEdit::RemoveCopilotHook { event, command },
+        // The whole installation is going, so its command goes wherever
+        // it is registered: an entry left behind would name a script that
+        // is no longer there.
+        HookFormat::Nested => ConfigEdit::RemoveHook {
+            event,
+            matcher: None,
+            command,
+        },
+        HookFormat::Copilot => ConfigEdit::RemoveCopilotHook {
+            event,
+            matcher: None,
+            command,
+        },
     };
     match hook_target(env, scope, entry.harness, &entry.name) {
         Some(HookTarget::Script {

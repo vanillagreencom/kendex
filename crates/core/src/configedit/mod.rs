@@ -22,10 +22,15 @@ pub enum ConfigEdit {
         command: String,
         timeout: Option<u32>,
     },
-    /// Remove our handler (from every event when `event` is None); empty
-    /// groups and events are pruned.
+    /// Remove our handler (from every event when `event` is None, and
+    /// from every matcher within it when `matcher` is None); empty groups
+    /// and events are pruned. A matcher names one group: a command the
+    /// person also registered under a matcher of their own is theirs, and
+    /// removing by the command alone would take it with ours.
     RemoveHook {
         event: Option<String>,
+        #[serde(default)]
+        matcher: Option<String>,
         command: String,
     },
     /// copilot hook file: upsert our entry under `hooks.<event>`, replacing
@@ -41,6 +46,8 @@ pub enum ConfigEdit {
     },
     RemoveCopilotHook {
         event: Option<String>,
+        #[serde(default)]
+        matcher: Option<String>,
         command: String,
     },
     /// `mcpServers.<name>` upsert with a full value.
@@ -118,7 +125,11 @@ impl ConfigEdit {
                 command,
                 timeout,
             } => upsert_hook(object, event, matcher.as_deref(), command, *timeout),
-            ConfigEdit::RemoveHook { event, command } => {
+            ConfigEdit::RemoveHook {
+                event,
+                matcher,
+                command,
+            } => {
                 let events: Vec<String> = match event {
                     Some(event) => vec![event.clone()],
                     None => object
@@ -128,7 +139,7 @@ impl ConfigEdit {
                         .unwrap_or_default(),
                 };
                 for event in events {
-                    remove_hook(object, &event, command);
+                    remove_hook(object, &event, matcher.as_deref(), command);
                 }
                 Ok(())
             }
@@ -138,8 +149,12 @@ impl ConfigEdit {
                 command,
                 timeout,
             } => upsert_copilot_hook(object, event, matcher.as_deref(), command, *timeout),
-            ConfigEdit::RemoveCopilotHook { event, command } => {
-                remove_copilot_hook(object, event.as_deref(), command);
+            ConfigEdit::RemoveCopilotHook {
+                event,
+                matcher,
+                command,
+            } => {
+                remove_copilot_hook(object, event.as_deref(), matcher.as_deref(), command);
                 Ok(())
             }
             ConfigEdit::UpsertMcpServer { name, value } => {
@@ -268,20 +283,27 @@ fn upsert_hook(
         .as_array_mut()
         .ok_or("hook event is not an array")?;
     // Refreshed where it already stands — the file is another tool's too,
-    // and a handler that moves on every apply reads as drift there. Copies
-    // in other groups go.
+    // and a handler that moves on every apply reads as drift there.
+    //
+    // Only the group this registration belongs to is rewritten. The same
+    // command under a matcher somebody else chose is their registration,
+    // not a copy of this one: what an earlier pass of kendex's left
+    // elsewhere is retired by the record that named it, and nothing else
+    // in the file is claimed by carrying a command.
     let mut placed = false;
     for group in groups.iter_mut() {
-        let wanted = group.get("matcher").and_then(Value::as_str) == matcher;
+        if group.get("matcher").and_then(Value::as_str) != matcher {
+            continue;
+        }
         let Some(handlers) = group.get_mut("hooks").and_then(Value::as_array_mut) else {
             continue;
         };
         for h in handlers.iter_mut().filter(|h| ours(h)) {
-            *h = match wanted && !placed {
-                true => handler.clone(),
-                false => Value::Null,
+            *h = match placed {
+                false => handler.clone(),
+                true => Value::Null,
             };
-            placed |= wanted;
+            placed = true;
         }
         handlers.retain(|h| !h.is_null());
     }
@@ -311,12 +333,32 @@ fn upsert_hook(
     Ok(())
 }
 
-fn remove_hook(root: &mut Map<String, Value>, event: &str, command: &str) {
+/// Whether this group is the one a matcher names, spelled the way a
+/// registry spells it — a group with none is every operation.
+fn named(group: &Value, matcher: Option<&str>) -> bool {
+    let Some(matcher) = matcher else {
+        return true;
+    };
+    let group = group
+        .get("matcher")
+        .and_then(Value::as_str)
+        .filter(|group| !group.is_empty())
+        .unwrap_or(crate::scan::hooks::ANY_MATCHER);
+    group == matcher
+}
+
+fn remove_hook(root: &mut Map<String, Value>, event: &str, matcher: Option<&str>, command: &str) {
     let Some(events) = root.get_mut("hooks").and_then(Value::as_object_mut) else {
         return;
     };
     if let Some(groups) = events.get_mut(event).and_then(Value::as_array_mut) {
         for group in groups.iter_mut() {
+            // A matcher names one group. Without one every group in the
+            // event gives the command up, which is what a removal of the
+            // whole installation means.
+            if !named(group, matcher) {
+                continue;
+            }
             if let Some(handlers) = group.get_mut("hooks").and_then(Value::as_array_mut) {
                 handlers.retain(|h| h.get("command").and_then(Value::as_str) != Some(command));
             }

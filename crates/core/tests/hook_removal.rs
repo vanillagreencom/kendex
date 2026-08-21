@@ -181,3 +181,65 @@ fn switching_off_a_hook_whose_event_changed_leaves_nothing_registered() {
     assert!(settled.plan.ops.is_empty(), "{:?}", settled.plan.ops);
     assert!(settled.drift.is_empty(), "{:?}", settled.drift);
 }
+
+/// Retiring the entry a catalog moved takes kendex's own and nothing
+/// else. A matcher names one group, and the person is free to register
+/// the same command under a matcher of their own: retired by command and
+/// event alone, theirs would go with kendex's, and they would never be
+/// told.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_changed_matcher_retires_kendexs_entry_and_leaves_theirs() {
+    let f = fixture();
+    apply_now(&f);
+    let settings = f.project.join(".claude/settings.json");
+    let mut value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+    let command = value["hooks"]["PreToolUse"][0]["hooks"][0]["command"].clone();
+    assert_eq!(value["hooks"]["PreToolUse"][0]["matcher"], "Bash");
+    // Their own, under a matcher they chose, running the same script.
+    value["hooks"]["PreToolUse"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "matcher": "Edit",
+            "hooks": [{ "type": "command", "command": command.clone() }]
+        }));
+    fs::write(&settings, serde_json::to_string_pretty(&value).unwrap()).unwrap();
+
+    // And the catalog moves kendex's to another matcher.
+    let source = f
+        .project
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("catalog");
+    fs::write(
+        source.join("hooks/guard.sh"),
+        GUARD.replace("# matcher: Bash", "# matcher: Write"),
+    )
+    .unwrap();
+
+    apply_now(&f);
+
+    let value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+    let groups = value["hooks"]["PreToolUse"].as_array().unwrap();
+    let matchers: Vec<&str> = groups
+        .iter()
+        .map(|group| group["matcher"].as_str().unwrap_or_default())
+        .collect();
+    assert!(
+        matchers.contains(&"Edit"),
+        "what they registered is theirs: {value}"
+    );
+    assert!(
+        matchers.contains(&"Write"),
+        "and kendex's went where the catalog now asks: {value}"
+    );
+    assert!(
+        !matchers.contains(&"Bash"),
+        "leaving nothing behind where it was: {value}"
+    );
+}
