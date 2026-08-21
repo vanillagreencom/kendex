@@ -40,7 +40,7 @@ impl<'a> Places<'a> {
     fn scope_wide(&self) -> Option<Hold> {
         self.linked.then(|| {
             Hold::ByHand(format!(
-                "{} is a link kendex did not create, so nothing was written through it — move it aside yourself, then refresh again",
+                "{} is a link kendex did not create, so nothing is written through it — move it aside yourself, then refresh again",
                 pi::hook_registry(self.root).display()
             ))
         })
@@ -139,7 +139,7 @@ fn holding(
     // been told there are now two.
     if !matches!(look(dir), Found::Absent | Found::Plain(_)) {
         return Some(Hold::ByHand(format!(
-            "kendex cannot see inside {}, so nothing was written beside it — fix its permissions, or move it aside, then refresh again",
+            "kendex cannot see inside {}, so nothing is written beside it — fix its permissions, or move it aside, then refresh again",
             dir.display()
         )));
     }

@@ -183,7 +183,7 @@ fn move_out(
     match look(&dir) {
         Found::Linked(path) => {
             sink.notes.push(format!(
-                "{} is a link kendex did not create, so nothing under it was touched — move it yourself and pi stops warning",
+                "{} is a link kendex did not create, so nothing under it is touched — move it yourself and pi stops warning",
                 path.display()
             ));
             return Ok(finished);
@@ -280,7 +280,7 @@ fn move_out(
             // A refresh keeps an orphan's record and its drift row, so
             // without this nobody is told the hook itself went quiet.
             Retire::Unwanted => sink.notes.push(format!(
-                "nothing asks for the pi hook {} any more, so its copy under the name pi reserved was taken — it stops running now",
+                "nothing asks for the pi hook {} any more, so its copy under the name pi reserved goes with this plan — it stops running once this is applied",
                 entry.name
             )),
             Retire::Replaced => {}
@@ -387,7 +387,7 @@ fn legacy_files(dir: &Path, name: &str) -> Vec<Found> {
 
 fn unreadable_note(path: &Path, error: &str) -> String {
     format!(
-        "kendex could not read {} ({error}), so it stayed in the directory pi reserved — fix its permissions or move it aside, then refresh again",
+        "kendex could not read {} ({error}), so it stays in the directory pi reserved — fix its permissions or move it aside, then refresh again",
         path.display()
     )
 }

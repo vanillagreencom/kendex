@@ -29,7 +29,7 @@ pub(super) fn registry_block(
     let path = pi::legacy_hook_registry(root);
     let say = |why: String| {
         Some(format!(
-            "{} {why}, so nothing under the name pi reserved was retired — a hook's registration and the script it names have to go together",
+            "{} {why}, so nothing under the name pi reserved is retired — a hook's registration and the script it names have to go together",
             path.display()
         ))
     };

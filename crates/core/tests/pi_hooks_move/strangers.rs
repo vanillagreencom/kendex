@@ -291,7 +291,7 @@ fn the_empty_directory_op_says_what_it_does() {
         "nothing is being moved: {said:?}"
     );
     assert!(
-        report.notes.iter().any(|note| note.contains("was empty")),
+        report.notes.iter().any(|note| note.contains("is empty")),
         "{:?}",
         report.notes
     );

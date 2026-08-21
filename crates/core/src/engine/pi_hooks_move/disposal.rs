@@ -89,7 +89,7 @@ pub(super) fn plan_directory(
         );
         if taken {
             sink.notes.push(format!(
-                "{} was empty and pi warns about the name, so it was removed — nothing was in it",
+                "{} is empty and pi warns about the name, so this plan removes it — nothing is in it",
                 dir.display()
             ));
         }
@@ -172,7 +172,7 @@ fn every_child_is_a_plain_file(dir: &Path) -> std::result::Result<bool, String> 
 
 fn list_note(dir: &Path, error: &str) -> String {
     format!(
-        "kendex could not list {} ({error}), so everything in the directory pi reserved stayed — fix its permissions, then refresh again",
+        "kendex could not list {} ({error}), so everything in the directory pi reserved stays — fix its permissions, then refresh again",
         dir.display()
     )
 }
@@ -210,7 +210,7 @@ pub(super) fn plan_registry(
         Ok(entries) => entries,
         Err(message) => {
             sink.notes.push(format!(
-                "{} could not be read ({message}), so it was left alone",
+                "{} could not be read ({message}), so it is left alone",
                 registry.display()
             ));
             return Ok(false);
@@ -240,7 +240,7 @@ pub(super) fn plan_registry(
             Ok(text) => text,
             Err(message) => {
                 sink.notes.push(format!(
-                    "{} could not be edited ({message}), so it was left alone",
+                    "{} could not be edited ({message}), so it is left alone",
                     registry.display()
                 ));
                 return Ok(false);
@@ -261,7 +261,7 @@ pub(super) fn plan_registry(
                 registry.display()
             );
             sink.notes.push(format!(
-                "{} could not be rewritten ({error}), so it was left alone",
+                "{} could not be rewritten ({error}), so it is left alone",
                 registry.display()
             ));
             return Ok(false);

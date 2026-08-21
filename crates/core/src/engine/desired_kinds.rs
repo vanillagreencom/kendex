@@ -194,15 +194,16 @@ fn hook_artifact(target: &HookTarget, hook: &HookSpec, name: &str, enabled: bool
                 },
                 // Switched off, its own entry comes out and nobody
                 // else's: the matcher it would have gone in under is the
-                // matcher it is taken from.
+                // matcher it is taken from, spelled the way a registry
+                // spells it, since that is what it will be looked for by.
                 (false, HookFormat::Nested) => ConfigEdit::RemoveHook {
                     event: Some(hook.event.clone()),
-                    matcher: hook.matcher.clone(),
+                    matcher: Some(crate::configedit::spelled(hook.matcher.as_deref()).to_owned()),
                     command: registered_command,
                 },
                 (false, HookFormat::Copilot) => ConfigEdit::RemoveCopilotHook {
                     event: Some(hook.event.clone()),
-                    matcher: hook.matcher.clone(),
+                    matcher: Some(crate::configedit::spelled(hook.matcher.as_deref()).to_owned()),
                     command: registered_command,
                 },
             };

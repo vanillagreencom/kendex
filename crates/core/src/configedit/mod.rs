@@ -2,9 +2,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 mod copilot;
+mod nested;
 mod text;
 
 use copilot::{remove_copilot_hook, upsert_copilot_hook};
+use nested::{remove_hook, upsert_hook};
 use text::codex_enable_hooks;
 pub use text::{remove_marker_block, upsert_marker_block};
 
@@ -265,76 +267,19 @@ fn set_gemini_mcp_enabled(
     Ok(())
 }
 
-fn upsert_hook(
-    root: &mut Map<String, Value>,
-    event: &str,
-    matcher: Option<&str>,
-    command: &str,
-    timeout: Option<u32>,
-) -> Result<(), String> {
-    let mut handler = json!({"type": "command", "command": command});
-    if let Some(timeout) = timeout {
-        handler["timeout"] = json!(timeout);
-    }
-    let ours = |h: &Value| h.get("command").and_then(Value::as_str) == Some(command);
-    let groups = ensure_object(root, "hooks")?
-        .entry(event)
-        .or_insert_with(|| json!([]))
-        .as_array_mut()
-        .ok_or("hook event is not an array")?;
-    // Refreshed where it already stands — the file is another tool's too,
-    // and a handler that moves on every apply reads as drift there.
-    //
-    // Only the group this registration belongs to is rewritten. The same
-    // command under a matcher somebody else chose is their registration,
-    // not a copy of this one: what an earlier pass of kendex's left
-    // elsewhere is retired by the record that named it, and nothing else
-    // in the file is claimed by carrying a command.
-    let mut placed = false;
-    for group in groups.iter_mut() {
-        if !names(group, one(matcher)) {
-            continue;
-        }
-        let Some(handlers) = group.get_mut("hooks").and_then(Value::as_array_mut) else {
-            continue;
-        };
-        for h in handlers.iter_mut().filter(|h| ours(h)) {
-            *h = match placed {
-                false => handler.clone(),
-                true => Value::Null,
-            };
-            placed = true;
-        }
-        handlers.retain(|h| !h.is_null());
-    }
-    if !placed {
-        let group = groups
-            .iter_mut()
-            .find(|group| names(group, one(matcher)))
-            .and_then(|group| group.get_mut("hooks"))
-            .and_then(Value::as_array_mut);
-        match group {
-            Some(handlers) => handlers.push(handler),
-            None => {
-                let mut group = Map::new();
-                if let Some(matcher) = matcher {
-                    group.insert("matcher".into(), Value::String(matcher.to_owned()));
-                }
-                group.insert("hooks".into(), Value::Array(vec![handler]));
-                groups.push(Value::Object(group));
-            }
-        }
-    }
-    groups.retain(|g| {
-        g.get("hooks")
-            .and_then(Value::as_array)
-            .is_none_or(|handlers| !handlers.is_empty())
-    });
-    Ok(())
+/// How a registry spells a matcher: an entry naming none, or naming an
+/// empty one, is the entry for every operation.
+///
+/// Everything that compares or records a matcher goes through this. Two
+/// spellings of the same thing passing each other by is how a hook came
+/// to be registered again beside itself on every refresh, for ever.
+pub(crate) fn spelled(matcher: Option<&str>) -> &str {
+    matcher
+        .filter(|matcher| !matcher.is_empty())
+        .unwrap_or(crate::scan::hooks::ANY_MATCHER)
 }
 
-/// Whether a matcher names this group or entry, spelled the way a registry
-/// spells it: one carrying none is every operation.
+/// Whether a matcher names this group or entry.
 ///
 /// The one place any of these editors decides that something in the file
 /// is the registration it is holding. Identifying by the command alone
@@ -343,53 +288,21 @@ fn upsert_hook(
 /// editors. `None` names every matcher, which is what taking a whole
 /// installation away means and never what putting one in does; an upsert
 /// asks for the one it writes under.
-pub(super) fn names(entry: &Value, matcher: Option<&str>) -> bool {
+///
+/// What is stored is whatever the person wrote, so it is spelled here.
+/// What is asked for arrives spelled already — every matcher becomes one
+/// through [`spelled`], where it becomes a thing to look for.
+pub(crate) fn names(entry: &Value, matcher: Option<&str>) -> bool {
     let Some(matcher) = matcher else {
         return true;
     };
-    let found = entry
-        .get("matcher")
-        .and_then(Value::as_str)
-        .filter(|found| !found.is_empty())
-        .unwrap_or(crate::scan::hooks::ANY_MATCHER);
-    found == matcher
+    spelled(entry.get("matcher").and_then(Value::as_str)) == matcher
 }
 
 /// The matcher an upsert writes under, as a registry spells it — never
 /// "every matcher", which is not something a registration can be.
-pub(super) fn one(matcher: Option<&str>) -> Option<&str> {
-    Some(matcher.unwrap_or(crate::scan::hooks::ANY_MATCHER))
-}
-
-fn remove_hook(root: &mut Map<String, Value>, event: &str, matcher: Option<&str>, command: &str) {
-    let Some(events) = root.get_mut("hooks").and_then(Value::as_object_mut) else {
-        return;
-    };
-    if let Some(groups) = events.get_mut(event).and_then(Value::as_array_mut) {
-        for group in groups.iter_mut() {
-            // A matcher names one group. Without one every group in the
-            // event gives the command up, which is what a removal of the
-            // whole installation means.
-            if !names(group, matcher) {
-                continue;
-            }
-            if let Some(handlers) = group.get_mut("hooks").and_then(Value::as_array_mut) {
-                handlers.retain(|h| h.get("command").and_then(Value::as_str) != Some(command));
-            }
-        }
-        groups.retain(|group| {
-            group
-                .get("hooks")
-                .and_then(Value::as_array)
-                .is_none_or(|handlers| !handlers.is_empty())
-        });
-        if groups.is_empty() {
-            events.shift_remove(event);
-        }
-    }
-    if events.is_empty() {
-        root.shift_remove("hooks");
-    }
+pub(crate) fn one(matcher: Option<&str>) -> Option<&str> {
+    Some(spelled(matcher))
 }
 
 #[cfg(test)]

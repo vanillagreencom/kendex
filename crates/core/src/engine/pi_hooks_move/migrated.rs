@@ -208,13 +208,23 @@ fn reaches(
     // the same record every removal is built from.
     let (edits, wanted) = match item {
         Some(item) => match &item.artifact {
-            Artifact::Registration { edits, .. } => (
-                super::super::item_record::retire_previous(item, Some(entry))
-                    .into_iter()
-                    .chain(edits.iter().cloned())
-                    .collect::<Vec<_>>(),
-                usize::from(registers(edits, &here.command)),
-            ),
+            Artifact::Registration { edits, .. } => {
+                let retire = match super::super::item_record::retire_previous(item, Some(entry)) {
+                    super::super::item_record::Previous::Retire(path, edit) => Some((path, edit)),
+                    // Nothing to retire, or nothing this pass can tell
+                    // apart — either way it plans no removal of its own,
+                    // and what it would write is all there is to read
+                    // back.
+                    _ => None,
+                };
+                (
+                    retire
+                        .into_iter()
+                        .chain(edits.iter().cloned())
+                        .collect::<Vec<_>>(),
+                    usize::from(registers(edits, &here.command)),
+                )
+            }
             _ => return true,
         },
         None => (super::super::owned::installed(env, scope, entry).edits, 0),

@@ -328,10 +328,16 @@ fn plan_registration(
     // order they are collected — the other way round, an upsert under the
     // new event would leave the old one live and the hook would fire
     // twice.
-    let edits: Vec<(PathBuf, ConfigEdit)> = super::item_record::retire_previous(item, existing)
-        .into_iter()
-        .chain(edits.iter().cloned())
-        .collect();
+    let retire = match super::item_record::retire_previous(item, existing) {
+        super::item_record::Previous::Settled => None,
+        super::item_record::Previous::Retire(path, edit) => Some((path, edit)),
+        // Nothing is written beside entries kendex cannot tell its own
+        // from: this one registration holds, and says which document to
+        // look at.
+        super::item_record::Previous::Ambiguous(why) => return Ok(Planned::Conflict(why)),
+    };
+    let edits: Vec<(PathBuf, ConfigEdit)> =
+        retire.into_iter().chain(edits.iter().cloned()).collect();
     let edits = &edits;
     // Every edit is checked before anything is planned: a settings file
     // kendex cannot read back — comments in a JSON, a torn edit — blocks

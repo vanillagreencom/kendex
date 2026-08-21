@@ -259,7 +259,12 @@ changes carry a **Breaking** call-out with their migration note inline.
   that hook, and no other hook waits on it, while one you register under
   a matcher of your own is left where you put it — when the catalog moves
   kendex's, when kendex's is taken away, and on every tool that keeps
-  hooks this way; a hook whose catalog moves it
+  hooks this way. An install record from an older kendex, which says less
+  about what it registered, no longer leads to a second registration
+  beside the first: what the record cannot name is looked up in the file
+  itself, and a hook whose matcher you left empty registers once and stays
+  once. What `refresh` prints before it applies anything now reads as what
+  it is about to do, rather than as done; a hook whose catalog moves it
   to another event is not one of these: the entry it had comes out as the
   new one goes in, so it fires once, where the catalog now says, and
   switching it off in that same refresh still leaves nothing running — and a hook whose source is

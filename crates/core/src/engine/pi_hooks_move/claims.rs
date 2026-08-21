@@ -64,7 +64,7 @@ pub(super) fn claims(
             Found::Linked(path) => {
                 holds = true;
                 sink.notes.push(format!(
-                    "{} is a link kendex did not create, so it stayed in the directory pi reserved — move it yourself and pi stops warning",
+                    "{} is a link kendex did not create, so it stays in the directory pi reserved — move it yourself and pi stops warning",
                     path.display()
                 ));
             }
@@ -111,16 +111,16 @@ fn held_note(held: &Held, path: &Path, root: &Path) -> String {
     match held {
         Held::Unreadable(error) => unreadable_note(path, error),
         Held::NotAFile => format!(
-            "{} is not a plain file, so it is nothing kendex wrote there and it stayed in the directory pi reserved — move it aside yourself, then refresh again",
+            "{} is not a plain file, so it is nothing kendex wrote there and it stays in the directory pi reserved — move it aside yourself, then refresh again",
             path.display()
         ),
         Held::Unprovable => format!(
-            "{} predates the record kendex keeps of what it writes, so it stayed in the directory pi reserved — compare it with {} and delete the old file once you are happy",
+            "{} predates the record kendex keeps of what it writes, so it stays in the directory pi reserved — compare it with {} and delete the old file once you are happy",
             path.display(),
             new.display()
         ),
         Held::Edited => format!(
-            "{} was edited on disk, so it stayed in the directory pi reserved — copy your changes into {} and delete the old file",
+            "{} was edited on disk, so it stays in the directory pi reserved — copy your changes into {} and delete the old file",
             path.display(),
             new.display()
         ),
