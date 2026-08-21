@@ -57,9 +57,10 @@ fn follow(home: &Path, project: &Path, planned: &str) -> Output {
 }
 
 /// Every place the skill sits reads the kept content, nothing is left
-/// dangling, and the next plan has nothing to say.
+/// dangling, and the plan afterwards is done asking — except for whatever
+/// this offer was never about, which the caller names.
 #[allow(clippy::unwrap_used)]
-fn settled(home: &Path, project: &Path, at: &[&str], body: &str) {
+fn settled(home: &Path, project: &Path, at: &[&str], body: &str, still_waiting: &[&str]) {
     for place in at {
         let path = project.join(place);
         assert!(
@@ -75,9 +76,37 @@ fn settled(home: &Path, project: &Path, at: &[&str], body: &str) {
     }
     let after = plan(home, project);
     assert!(
-        after.contains("nothing to do") && !after.contains("conflict:"),
-        "settled once, and still asking: {after}"
+        !after.contains("to keep those files:"),
+        "the offer was followed and is still being offered: {after}"
     );
+    for waiting in still_waiting {
+        assert!(
+            after.contains(waiting),
+            "a decision this offer was not about went quiet: {after}"
+        );
+    }
+    if still_waiting.is_empty() {
+        assert!(
+            after.contains("nothing to do") && !after.contains("conflict:"),
+            "settled once, and still asking: {after}"
+        );
+    }
+}
+
+/// Point the declaration at a different set of tools.
+#[allow(clippy::unwrap_used)]
+fn retarget(project: &Path, tools: &str) {
+    let toml = fs::read_to_string(project.join("kendex.toml")).unwrap();
+    let line = toml
+        .lines()
+        .find(|line| line.starts_with("harnesses = "))
+        .unwrap()
+        .to_owned();
+    fs::write(
+        project.join("kendex.toml"),
+        toml.replace(&line, &format!("harnesses = {tools}")),
+    )
+    .unwrap();
 }
 
 /// A project asking two tools for one skill, and what each tool has at its
@@ -154,6 +183,7 @@ fn a_folder_shared_by_hand_is_kept_by_the_offer_it_prints() {
         &project,
         &[".claude/skills/deploy", ".agents/skills/deploy"],
         "Shared by hand.",
+        &[],
     );
     let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
     assert!(
@@ -184,6 +214,7 @@ fn a_folder_outside_every_tool_is_kept_through_the_tool_that_links_at_it() {
         &project,
         &[".claude/skills/deploy", ".agents/skills/deploy"],
         "Kept somewhere else.",
+        &[],
     );
 }
 
@@ -212,6 +243,7 @@ fn two_tools_holding_one_item_are_kept_by_one_offer() {
         &project,
         &[".claude/skills/deploy", ".agents/skills/deploy"],
         "Mine.",
+        &[],
     );
 }
 
@@ -261,6 +293,7 @@ fn one_tool_blocked_is_kept_through_the_tool_that_is_blocked() {
         &project,
         &[".opencode/skills/deploy"],
         "The one before.",
+        &[],
     );
 }
 
@@ -287,4 +320,48 @@ fn a_link_no_declared_tool_sits_at_offers_no_command() {
             .contains("Kept somewhere else."),
         "planning touched the folder"
     );
+}
+
+/// An item can be blocked for one tool and edited under another, and the two
+/// conflicts come out in whichever order the tools are listed. The way out
+/// of the hand-made files has to be said either way: printed only when it
+/// happens to come last, a reader whose tools are listed the other way is
+/// left the exit that sends those files to the trash and nothing else.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn hand_made_files_beside_an_edited_install_keep_their_offer() {
+    for tools in ["[\"codex\", \"claude\"]", "[\"claude\", \"codex\"]"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let project = project_with(home, "[\"claude\"]", "copy");
+        assert!(
+            kendex(home, &project, &["apply", "-y"]).status.success(),
+            "{tools}"
+        );
+        folder_at(&project.join(".claude/skills/deploy"), "Edited by hand.");
+        retarget(&project, tools);
+        folder_at(&project.join(".agents/skills/deploy"), "By hand.");
+
+        let planned = plan(home, &project);
+        assert!(
+            planned.contains("edited on disk"),
+            "the other tool's edit is the second conflict: {planned}"
+        );
+        assert_eq!(
+            offer(&planned),
+            "adopt skill deploy --harness codex",
+            "listed as {tools}, the way out went missing: {planned}"
+        );
+
+        follow(home, &project, &planned);
+        settled(
+            home,
+            &project,
+            &[".agents/skills/deploy"],
+            "By hand.",
+            // The edit under the other tool is its own decision, and this
+            // offer was never about it.
+            &["conflict: skill deploy for Claude Code"],
+        );
+    }
 }

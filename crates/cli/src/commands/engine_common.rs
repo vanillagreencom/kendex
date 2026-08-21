@@ -113,15 +113,22 @@ pub fn print_conflicts(env: &Env, report: &EngineReport) -> bool {
             continue;
         };
         replaceable |= cause.can_replace();
-        // One remedy per item, said under the last of its rows: keeping an
-        // item's files is a single move covering every tool it is blocked
-        // for, and run once per tool it lands each tool's copy on top of
-        // the last.
-        let same_item = |other: &&&DriftRow| other.kind == row.kind && other.name == row.name;
-        if rows[index + 1..].iter().any(|later| same_item(&later)) {
+        // One remedy per item, said under the last of the rows that have a
+        // way out: keeping an item's files is a single move covering every
+        // tool it is blocked for, and run once per tool it lands each
+        // tool's copy on top of the last. Only those rows count towards
+        // which is last — an item can also be edited under another tool,
+        // and waiting for a row that will never print the offer loses it
+        // altogether.
+        let blocked = |other: &&&DriftRow| {
+            other.kind == row.kind
+                && other.name == row.name
+                && other.cause.is_some_and(DriftCause::in_the_way)
+        };
+        if rows[index + 1..].iter().any(|later| blocked(&later)) {
             continue;
         }
-        let item: Vec<&DriftRow> = rows.iter().filter(same_item).copied().collect();
+        let item: Vec<&DriftRow> = rows.iter().filter(blocked).copied().collect();
         say(&format!("  to keep those files: {}", keep_exit(env, &item)));
     }
     let any = !rows.is_empty();
