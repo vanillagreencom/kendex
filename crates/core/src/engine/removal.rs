@@ -46,7 +46,7 @@ pub fn edit_holds(env: &Env, scope: &Scope, entry: &LockEntry) -> bool {
 /// link we manage. Anything edited between preview and apply fails the
 /// precondition and the whole apply rolls back, instead of moving work
 /// nobody looked at into the trash.
-fn trash(description: String, path: PathBuf) -> Result<PlannedOp> {
+pub(super) fn trash(description: String, path: PathBuf) -> Result<PlannedOp> {
     let pre = match path.is_symlink() {
         true => Pre::SymlinkTo {
             target: std::fs::read_link(&path).map_err(|e| crate::error::CoreError::io(&path, e))?,

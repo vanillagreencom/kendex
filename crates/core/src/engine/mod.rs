@@ -149,17 +149,24 @@ pub fn plan_scope(
 
     plan_settings_seed(scope, &state, &mut new_lock, &mut ops, &mut drift)?;
 
-    // The reserved-name move reads the lock, not the desired state: the
-    // old copies go whether or not the hook is still declared, and the
-    // writes this plan already made put every declared one at its new
-    // path.
-    let mut moved_notes = Vec::new();
-    pi_hooks_move::plan_move(env, scope, lock, &mut ops, &mut moved_notes)?;
-
     // Trash ops all pass one guard: writes for this pass are already
     // planned, so anything still wanted is known, and no path goes to the
     // trash twice.
     let mut guard = removal::TrashGuard::new(&state.items);
+
+    // The reserved-name move reads the lock, not the desired state: an
+    // old copy is retired whether or not the hook is still declared, and
+    // only once the replacement this plan writes is accounted for.
+    let mut moved_notes = Vec::new();
+    plan_pi_hooks_move(
+        env,
+        scope,
+        lock,
+        &mut ops,
+        &mut guard,
+        &mut config_edits,
+        &mut moved_notes,
+    )?;
     removal::stale_emitted(&state, lock, &mut guard, &mut ops)?;
 
     let refused_keys = plan_pass::plan_refusals(
@@ -212,6 +219,30 @@ pub fn plan_scope(
     report.notes.extend(moved_notes);
     unmanaged_rows(env, scope, manifest, lock, &state.items, &mut report.drift);
     Ok(report)
+}
+
+/// The reserved-name move, handed the plan's collectors.
+#[allow(clippy::too_many_arguments)]
+fn plan_pi_hooks_move(
+    env: &Env,
+    scope: &Scope,
+    lock: &Lock,
+    ops: &mut Vec<PlannedOp>,
+    guard: &mut removal::TrashGuard,
+    config_edits: &mut config_edits::ConfigEditPlan,
+    notes: &mut Vec<String>,
+) -> Result<()> {
+    pi_hooks_move::plan_move(
+        env,
+        scope,
+        lock,
+        &mut pi_hooks_move::Sink {
+            ops,
+            guard,
+            config_edits,
+            notes,
+        },
+    )
 }
 
 /// The plan's one manifest write, when anything needs it: skills an agent

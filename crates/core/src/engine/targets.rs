@@ -197,16 +197,13 @@ pub(crate) fn hook_target(
 /// Pi's shape: a script and the carrier's registry, both under the segment
 /// kendex owns inside the scope root.
 fn pi_hook(env: &Env, scope: &Scope, name: &str) -> HookTarget {
-    let root = match scope {
-        Scope::Global => adapter(HarnessId::Pi).default_global_root(env),
-        Scope::Project { root } => root.join(".pi"),
-    };
-    let path = crate::harness::pi::hook_dir(&root).join(format!("{name}.sh"));
+    let root = crate::harness::pi::scope_root(env, scope);
+    let path = crate::harness::pi::hook_path(&root, name);
     let command = match scope {
         Scope::Global => format!("bash \"{}\"", path.display()),
         Scope::Project { .. } => format!(
-            "bash \"$(git rev-parse --show-toplevel)/.pi/{}/hooks/{name}.sh\"",
-            crate::harness::pi::HOOK_HOME
+            "bash \"$(git rev-parse --show-toplevel)/.pi/{}\"",
+            crate::harness::pi::hook_rel(name)
         ),
     };
     HookTarget::Script {

@@ -239,9 +239,11 @@ changes carry a **Breaking** call-out with their migration note inline.
   they are shell scripts a carrier extension runs, not Pi extensions. They
   now live under `.pi/kendex/hooks/` and `~/.pi/agent/kendex/hooks/`, and
   the next `kendex refresh` moves an existing install out of the reserved
-  directory and takes the directory away with it. A file kendex did not
-  write, or one you edited after it was installed, stays where it is and
-  the plan tells you which.
+  directory and takes the directory away with it. Nothing moves that kendex
+  cannot account for: a file it did not write, one you edited after it was
+  installed, a hook registration you added by hand, and a hook whose source
+  is unreachable this run all stay exactly where they are, and the plan
+  tells you which and why.
 - On Linux, a helper command that ran past its time limit could take
   unrelated processes down with it: Ubuntu's `kill` misreads the negative
   process-group argument kendex passed, and for some process ids that

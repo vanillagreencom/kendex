@@ -44,8 +44,13 @@ same segment kendex's Pi extensions already keep per-session state in.
 kendex writes nothing to `tools/` at either scope — an extension's `bin`
 entries link into the scope's `bin/`. What an earlier kendex left in the
 reserved name comes off disk on the next plan, the directory with it
-(`engine::pi_hooks_move`): a file kendex did not write, or one edited
-since it was installed, stays where it is and the plan says so.
+(`engine::pi_hooks_move`). Nothing moves on a path alone: a file is taken
+only when this scope's lock names it and its bytes hash to what apply last
+wrote, the legacy registry gives up only the entries that lock accounts
+for (and is trashed only when that leaves nothing at all), and no old copy
+is retired before its replacement is on disk or written by the same plan —
+a declaration whose source did not resolve keeps the hook it is still
+running. Everything held back gets a line saying which file and why.
 Enforcement is read live (`pi_ext::carrier::enforcement`): with the carrier
 registered in either scope's settings the hook is enforced; with no carrier
 anywhere Pi loads, the install downgrades to advisory, said per item. Pi

@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use super::{HarnessAdapter, ProjectMarker, Reader, Surface};
 use crate::env::Env;
-use crate::model::{HarnessId, ItemKind};
+use crate::model::{HarnessId, ItemKind, Scope};
 
 pub struct Pi;
 
@@ -17,14 +17,45 @@ const EXTENSION_EXTS: &[&str] = &["ts", "js"];
 /// segment its Pi extensions already keep per-session state in.
 pub const HOOK_HOME: &str = "kendex";
 
+/// The scope's root — the directory Pi loads its settings, agents and
+/// prompts from, and the one kendex hangs `HOOK_HOME` off.
+pub fn scope_root(env: &Env, scope: &Scope) -> PathBuf {
+    match scope {
+        Scope::Global => Pi.default_global_root(env),
+        Scope::Project { root } => root.join(".pi"),
+    }
+}
+
 /// The registry the carrier reads, for one scope root.
 pub fn hook_registry(root: &Path) -> PathBuf {
     root.join(HOOK_HOME).join("hooks.json")
 }
 
+/// Where hook scripts live inside a scope root, slash-separated: the one
+/// spelling both a `Path` and a POSIX command line are built from.
+fn hook_rel_dir() -> String {
+    format!("{HOOK_HOME}/hooks")
+}
+
+/// One hook's file name.
+pub fn hook_file(name: &str) -> String {
+    format!("{name}.sh")
+}
+
+/// One hook script's place inside a scope root, as the text a registered
+/// command spells.
+pub fn hook_rel(name: &str) -> String {
+    format!("{}/{}", hook_rel_dir(), hook_file(name))
+}
+
 /// The directory the hook scripts live in, for one scope root.
 pub fn hook_dir(root: &Path) -> PathBuf {
-    root.join(HOOK_HOME).join("hooks")
+    root.join(hook_rel_dir())
+}
+
+/// One hook script's path, for one scope root.
+pub fn hook_path(root: &Path, name: &str) -> PathBuf {
+    root.join(hook_rel(name))
 }
 
 impl HarnessAdapter for Pi {
