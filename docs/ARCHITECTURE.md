@@ -744,42 +744,42 @@ lives in one capability table read by core and UI.
   `source/about.rs` renders the one typed report — what was found where,
   plus every finding — that the About tab and `kendex index` consume.
 - **Browsing is a read-side join, and installed state is derived, never
-  stored.** Every `source/browse.rs` read — packages across kinds, a
-  bundle's members, a package's preview — takes a `Catalog`,
-  `Subscription { scope, source }` or `Repo { repo }`, so a listed
-  marketplace opens before anyone subscribes on the pages a subscription
-  gets, not a parallel set. Each row's state is joined from the scope's
-  manifest and lock on every call — installed is a lock entry from this
-  subscription, held-back-by-safety is asked-for content whose catalog bytes
-  the gate's own verdict refuses, "partly installed (2 of 6)" is counted
+  stored.** Every `source/browse.rs` read — packages across kinds, a bundle's
+  members, a package's preview — takes a `Catalog`, `Subscription { scope,
+  source }` or `Repo { repo }`, so a listed marketplace opens before anyone
+  subscribes on the pages a subscription gets. Each row's state is joined from
+  the scope's manifest and lock on every call — installed is a lock entry from
+  this subscription, held-back-by-safety is asked-for content whose catalog
+  bytes the gate's own verdict refuses, "partly installed (2 of 6)" is counted
   from a bundle's members — so no stored flag can drift from the records it
-  summarizes; with no subscription the join answers Available and judges
-  name clashes against the personal scope, where Subscribe lands. A name
-  another source holds is surfaced on the row (`collision`) before the
-  click; the refusal stays in the engine (invariant 4). A bare repository is
-  fetched by `remote::sync` into the store a subscription reads from, under
-  the canonical `owner/repo` every GitHub spelling folds to — the key
-  Subscribe is prefilled with — so subscribing never downloads twice and the
-  safety record is shared per commit; only GitHub opens blind
-  (`NotBrowsable` otherwise), and a root skill's file list and file reads
-  are confined to the skill tree scoring and install read, never the
-  repository around it. `browse::summary`, a repository's first read,
-  refreshes (a failure is a warning over the store's copy) and names an
-  enabled, readable subscription this machine already holds for it;
-  `useCatalog` moves the page onto it the moment one exists, so "subscribe
-  from here" keeps your place. Installing still needs a subscription: a
-  repository page's one action is Subscribe. Pre-install safety
-  (`browse/safety.rs`) scores catalog bytes with the rules an install runs
-  and caches **findings and scores only**, beside the commit's receipt in
-  the immutable store (`<key>/<commit>.safety/…`, never inside the
-  receipt-signed checkout), keyed by the item's content hash plus the
-  rule-set, discovery-table and record-format versions, each recomputed and
-  verified before reuse. The warn/block verdict is derived from the current
-  thresholds at read time — thresholds in the key would re-score on every
-  settings change. Browse is a preview of the verdict, never a second gate.
-  `library.rs` is the same join for the Library table, mapping each
-  installation to its origin: a subscription, local content (with what a
-  fork replaced), or observed-and-unmanaged.
+  summarizes; with no subscription the join answers Available and judges name
+  clashes against the personal scope, where Subscribe lands. A name another
+  source holds is surfaced on the row (`collision`) before the click; the
+  refusal stays in the engine (invariant 4). A bare repository is fetched by
+  `remote::sync` into the store a subscription reads from, under the canonical
+  `owner/repo` every GitHub spelling folds to — the key Subscribe is prefilled
+  with — so subscribing never downloads twice and the safety record is shared
+  per commit; only GitHub opens blind (`NotBrowsable` otherwise), and a root
+  skill's file list and file reads are confined to the skill tree scoring and
+  install read, never the repository around it. `browse::summary`, a
+  repository's first read, refreshes (a failure is a warning over the store's
+  copy) and names an enabled, readable subscription this machine holds for it;
+  `useCatalog` moves the page onto it at once, so "subscribe from here" keeps
+  your place. Installing still needs a subscription; `RepoAction` offers the
+  one step there: Subscribe when none declares the repository, Turn on when a
+  declared one is off, Refresh when it is declared but unreadable, neutral
+  until the live list has loaded. Pre-install safety (`browse/safety.rs`)
+  scores catalog bytes with the rules an install runs and caches **findings
+  and scores only**, beside the commit's receipt in the immutable store
+  (`<key>/<commit>.safety/…`, never inside the receipt-signed checkout), keyed
+  by the item's content hash plus the rule-set, discovery-table and
+  record-format versions, each recomputed and verified before reuse. The
+  warn/block verdict is derived from the current thresholds at read time —
+  thresholds in the key would re-score on every settings change. Browse is a
+  preview of the verdict, never a second gate. `library.rs` is the same join
+  for the Library table, mapping each installation to its origin: a
+  subscription, local content (with what a fork replaced), or
+  observed-and-unmanaged.
 - **A subscription's closure is derived by re-expansion, and unsubscribing
   removes or keeps exactly it.** `engine/detach.rs` computes what leaves
   with a marketplace by expanding the installed set with the source present
