@@ -594,56 +594,52 @@ lives in one capability table read by core and UI.
   parses as real YAML under the same posture (aliases and duplicate
   keys refused, bounds enforced), and every interpolated value in a
   generated file is quoted so foreign text cannot mint config lines.
-- **The source store is immutable, and revisions are declared.** A
-  downloaded catalog is never a mutable checkout: each commit is
-  materialized once into a directory named after its object id, published
-  by rename, and read unchanged from then on, while fetching touches only
-  a bare mirror beside it. v0.1 hard-reset one checkout per repository on
-  every refresh — two scopes reading different revisions fought over it,
-  and a refresh in one window could shift bytes under a render in
-  another. A source declares which revision it reads: a full commit id is
-  a pin (that commit and no other, and once cached it resolves without
-  any network), a tag or branch is a tracking selector that re-resolves
-  on each refresh and is previewed like any other upstream change. Losing
-  the lock loses no intent either way — the manifest holds what is
-  wanted, the lock only records which commit that came out as. Offline
-  with an uncached pin is a hard error naming the pin; anything already
-  installed keeps working from what is on disk. Materialization runs
-  under a per-repository cache lock; a second resolver waits half a
-  second — enough to ride out a neighbour that is only starting up — and
-  is then told the cache is busy rather than left waiting on someone
-  else's download. A refresh treats that as an error; a read does not —
-  planning degrades to "not fetched yet" for that one source: a neighbour's
-  download must not decide whether the rest of a scope can be planned. The
-  lock's recorded commit is a fallback only for the exact declaration that
-  produced it; a manifest naming another repository or revision is never
-  served the previous one. An item declaration may hold its own `rev`,
-  outranking the source's, always as a full commit id: `kendex pin` and the
-  version picker resolve tags and branches at write time, since a hold a
-  moved tag can move is no hold. Holds flow through derivation — a pinned
-  bundle pins its members, a pinned skill's dependencies read the pinned
-  catalog, and two parents demanding different revisions of one dependency
-  are a conflict that writes nothing: one filesystem identity exists, and a
-  silent winner would install content somebody pinned away from. Updates are
-  a projection over the mirror, never drift: a held item hashes clean
-  against its held tree, and the Updates page asks the mirror (pinned
-  sources too — a pin says what installs, not what exists) what newer
-  content exists; its timeline lists only commits that touched the package's
-  files, tag-decorated, never tag-replaced. Rows are per package per scope;
-  the page folds them by package and expands by place (each is decided per
-  scope), and nothing applies on its own: followers come current on apply or
-  refresh, held ones when their hold moves. Muting a package's
-  update notifications is a machine-local settings entry, not manifest
-  intent: a preference committed to a shared repository would silence a
-  whole team.
-  Reuse is verified against a publish receipt written outside the
-  checkout: a full content hash of the tree, which costs a read of the
-  catalog per plan and is the only check a same-size edit cannot fool.
-  The pre-2.0 clones are read where the new layout has nothing yet, and
-  deleted never. Neither are published commits: the store keeps one tree
-  per commit it has ever resolved, so a tracked branch grows the cache by
-  a catalog per upstream change, and nothing prunes it yet — the cache is
-  rebuildable, so deleting it is the only cleanup there is.
+- **The source store is immutable, and revisions are declared.** A downloaded
+  catalog is never a mutable checkout: each commit is materialized once into a
+  directory named after its object id, published by rename, and read unchanged
+  from then on, while fetching touches only a bare mirror beside it. v0.1
+  hard-reset one checkout per repository on every refresh — two scopes reading
+  different revisions fought over it, and a refresh in one window could shift
+  bytes under a render in another. A source declares which revision it reads:
+  a full commit id is a pin (that commit and no other, and once cached it
+  resolves without any network), a tag or branch is a tracking selector that
+  re-resolves on each refresh and is previewed like any other upstream change.
+  Losing the lock loses no intent either way — the manifest holds what is
+  wanted, the lock only records which commit that came out as. Offline with an
+  uncached pin is a hard error naming the pin; anything already installed
+  keeps working from what is on disk. Materialization runs under a
+  per-repository cache lock; a second resolver waits half a second — enough to
+  ride out a neighbour that is only starting up — and is then told the cache
+  is busy rather than left waiting on someone else's download. A refresh
+  treats that as an error; a read does not — planning degrades to "not fetched
+  yet" for that one source: a neighbour's download must not decide whether the
+  rest of a scope can be planned. The lock's recorded commit is a fallback
+  only for the exact declaration that produced it; a manifest naming another
+  repository or revision is never served the previous one. An item declaration
+  may hold its own `rev`, outranking the source's, always as a full commit id:
+  `kendex pin` and the version picker resolve tags and branches at write time,
+  since a hold a moved tag can move is no hold. Holds flow through derivation
+  — a pinned bundle pins its members, a pinned skill's dependencies read the
+  pinned catalog, and two parents demanding different revisions of one
+  dependency are a conflict that writes nothing: one filesystem identity
+  exists, and a silent winner would install content somebody pinned away from.
+  Updates are a projection over the mirror, never drift: a held item hashes
+  clean against its held tree, and the Updates page asks the mirror (pinned
+  sources too — a pin says what installs, not what exists) what newer content
+  exists; its timeline lists only commits that touched the package's files,
+  tag-decorated, never tag-replaced. Rows are per package per scope; the page
+  folds them by package and expands by place (each is decided per scope), and
+  nothing applies on its own: followers come current on apply or refresh, held
+  ones when their hold moves. Muting a package's update notifications is a
+  machine-local settings entry, not manifest intent: a preference committed to
+  a shared repository would silence a whole team. Reuse is verified against a
+  publish receipt written outside the checkout: a full content hash of the
+  tree, which costs a read of the catalog per plan and is the only check a
+  same-size edit cannot fool. The pre-2.0 clones are read where the new layout
+  has nothing yet, and deleted never. Neither are published commits: the store
+  keeps one tree per commit it has ever resolved, so a tracked branch grows
+  the cache by a catalog per upstream change, and nothing prunes it yet — the
+  cache is rebuildable, so deleting it is the only cleanup there is.
 - **A subscription reference is parsed, never guessed, and one repository
   subscribes once per scope.** Two validators sit side by side in
   `core/source_ref.rs`, one per trust level: the typed one (the Subscribe
