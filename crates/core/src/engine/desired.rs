@@ -215,51 +215,29 @@ mod rebuild;
 pub use artifact::{artifact_disk_hash, artifact_paths};
 pub use rebuild::desired_as_installed;
 
-use super::expansion::Pins;
-
 pub fn desired_state(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
     lock: &Lock,
 ) -> Result<DesiredState> {
-    desired_state_at(env, scope, manifest, lock, &Pins::new())
-}
-
-/// The same, with each installation rebuilt from the revision `pins` names
-/// for it. Only the audit's rebuild has any: an ordinary plan reads what
-/// the declarations track now.
-pub(super) fn desired_state_at(
-    env: &Env,
-    scope: &Scope,
-    manifest: &Manifest,
-    lock: &Lock,
-    pins: &Pins,
-) -> Result<DesiredState> {
-    let first = compute(env, scope, manifest, lock, pins)?;
+    let first = compute(env, scope, manifest, lock)?;
     let Some(merged) = first.manifest_update else {
         return Ok(first);
     };
-    let mut second = compute(env, scope, &merged, lock, pins)?;
+    let mut second = compute(env, scope, &merged, lock)?;
     second.manifest_update = Some(merged);
     Ok(second)
 }
 
-fn compute(
-    env: &Env,
-    scope: &Scope,
-    manifest: &Manifest,
-    lock: &Lock,
-    pins: &Pins,
-) -> Result<DesiredState> {
+fn compute(env: &Env, scope: &Scope, manifest: &Manifest, lock: &Lock) -> Result<DesiredState> {
     let mut state = DesiredState::default();
     let mut updated_manifest = manifest.clone();
     let mut manifest_changed = false;
     // Everything is planned from the closure — what was declared, what the
     // installed bundles carry, and what those skills require — while the
     // manifest keeps holding only what was chosen.
-    let mut expansion = super::expansion::expand(env, scope, manifest, &mut state);
-    expansion.pin(pins);
+    let expansion = super::expansion::expand(env, scope, manifest, &mut state);
     // One parse of each catalog root's reviews file per pass: it is one
     // file, and every item that root carries would otherwise re-read it.
     // Keyed by root, since one declared source resolves to several when

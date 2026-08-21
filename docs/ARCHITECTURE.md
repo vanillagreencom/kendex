@@ -840,33 +840,33 @@ lives in one capability table read by core and UI.
   not one refused with it.
   **The record never travels in a file this project commits.** The lock
   carries none, and the fourth bound is why: a record kept there is a claim
-  about a catalog, and every attempt to authenticate one — its shape, the name
-  it carries, the numbers beside it — answers a different question than what
-  the content should be. So the audit rebuilds instead
-  (`engine::desired::desired_as_installed`): the plan that produced what is on
-  disk, each installation at the revision its own lock entry names — one item
-  can sit at two revisions at once, since a refresh applies per installation,
-  and a member or a dependency has no declaration to pin at all — and the
-  record read out of *that* catalog, the gate's derivation on the gate's
-  bytes. An installation answers for itself and nothing else — one row, one
-  entry, one revision, one record — and content its own rebuild did not
-  produce is content nobody reviewed. The commit an entry names chooses a
-  revision to rebuild from and asserts nothing: naming another produces
-  another artifact, which is not what is installed. An item no rebuild covers
-  — a catalog not on this machine, a manifest that will not resolve — carries
-  no review. No signing scheme here. A hook records none: the gate reads the
-  script and the audit the shared settings file, two readings of different
-  bytes by design — so it is refused where it is read, `dismiss --catalog`
-  refuses to write one, and `check --catalog` prints no token for one. The
-  audit matches an entry to an observation by kind and name — or those of the
-  artifact it emitted — and then by a review hash sealed by what is on disk.
-  Every settled finding is shown with the publisher and their reason — under
-  the line in the CLI, in its own row on a scope and in the app's held-back
-  panel, and on a marketplace package's page, which reads the same record
-  through `browse/safety.rs` so the preview cannot promise a verdict the
-  install will not give. Two decisions of theirs differing in reason or date
-  stay two rows. A record that settles nothing here is a note, never silence.
-  Finding identity is the rule and the sentence it fired with
+  about a catalog, and authenticating one — its shape, its name, its numbers —
+  answers a different question than what the content should be. So the audit
+  rebuilds instead (`engine::desired::desired_as_installed`): the plan that
+  produced what is on disk, each installation at the revision its lock entry
+  names, applied before the closure is derived and not to the bytes after it —
+  what a set carries and what a skill requires are read out of a catalog too,
+  so a member the set has since dropped comes back with it — and the record
+  out of *that* catalog, the gate's derivation on the gate's bytes. One item
+  can sit at two revisions at once, since a refresh applies per installation.
+  An installation answers for itself and nothing else — one row, one entry,
+  one revision, one record — and content no rebuild of its own produced is
+  content nobody reviewed. The commit an entry names chooses a revision and
+  asserts nothing, since naming another produces another artifact. An item no
+  rebuild covers — a catalog not on this machine, a manifest that will not
+  resolve — carries no review, and there is no signing scheme here. A hook
+  records none: the gate reads the script and the audit the shared settings
+  file, two readings of different bytes by design — so it is refused where it
+  is read, and neither `dismiss --catalog` nor `check --catalog` will produce
+  one. The audit matches an entry to an observation by kind and name, or those
+  of the artifact it emitted, and then by a review hash sealed by what is on
+  disk. Every settled finding is shown with the publisher and their reason —
+  under the line in the CLI, in its own row on a scope and in the app's
+  held-back panel, and on a marketplace package's page, which reads the same
+  record through `browse/safety.rs` so the preview cannot promise a verdict
+  the install will not give. Two decisions of theirs differing in reason or
+  date stay two rows. A record that settles nothing here is a note, never
+  silence. Finding identity is the rule and the sentence it fired with
   (`Finding::fingerprint`). Which puts a standing obligation on every message:
   it says what the rule fired *on* — the address the line actually runs, the
   characters a file hides — and never where it was found. Two different
@@ -875,12 +875,12 @@ lives in one capability table read by core and UI.
   of the sentence, so every one is `DIGEST_CHARS` wide: each stands for a
   value a project chooses, and a narrow one is ground against until an
   injected finding wears a settled one's words. Where a finding was found is
-  carried by its location, and every location a decision covers is listed
-  under it. Everything kendex's rendering moves is out of it: the line,
-  because rendering shifts lines; the file, because Codex renders a command as
-  a skill tree and an over-cap body splits into `references/`; the severity,
-  because a hit weighs one step less in a supporting file and the split moves
-  content between exactly those two. What bounds it instead is the item — a
+  its location, and every location a decision covers is listed under it.
+  Everything kendex's rendering moves is out of it: the line, because
+  rendering shifts lines; the file, because Codex renders a command as a skill
+  tree and an over-cap body splits into `references/`; the severity, because a
+  hit weighs one step less in a supporting file and the split moves content
+  between exactly those two. What bounds it instead is the item — a
   fingerprint is read only within one item's records — the content hash every
   decision binds to, and, for a publisher's record, which occurrences here are
   theirs (`quality::publishers`) — one question with how many, so the budget
