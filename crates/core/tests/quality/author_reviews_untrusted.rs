@@ -310,3 +310,52 @@ fn a_hand_edited_lock_record_settles_nothing() {
     );
     assert!(after.safety.score < 100, "and the finding counts again");
 }
+
+/// A total the record's own numbers cannot add up to is not a total this
+/// can check, so it is refused rather than added up anyway.
+///
+/// The per-weight allowance is what stops an injected occurrence spending
+/// a budget earned somewhere lighter, and every entry in it comes out of a
+/// file a pull request can edit. Two weights whose counts overflow the
+/// total wrap into a small number, which passes the bound they were meant
+/// to fail — and then the whole per-weight allowance is honoured, which is
+/// unlimited. It also has to answer the same with overflow checks on as
+/// off: a wrapping add panics in one build and lies in the other.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_record_whose_counts_do_not_add_up_settles_nothing() {
+    let f = fixture();
+    author_dismisses(&f.source, ItemKind::Skill, "hostile", &[]);
+    let report = plan(&f, &[]);
+    kendex_core::apply::execute(&f.env, &report.plan, None).unwrap();
+    assert!(
+        !observed(&f, "hostile").blocked(),
+        "the publisher's own record is what lets it install"
+    );
+
+    // Every claim is shaped like one this build could have written, and
+    // the two counts together are more than a total can hold.
+    let path = kendex_core::lock::lock_path(&f.env, &f.scope);
+    let mut lock: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    for entry in lock["entries"].as_object_mut().unwrap().values_mut() {
+        let Some(review) = entry.get_mut("authorReview") else {
+            continue;
+        };
+        for dismissal in review["dismissed"].as_object_mut().unwrap().values_mut() {
+            dismissal["occurrences"] = serde_json::json!({ "high": 4294967295u32, "critical": 1 });
+        }
+    }
+    fs::write(&path, lock.to_string()).unwrap();
+
+    let after = observed(&f, "hostile");
+    assert!(
+        after.decisions.iter().all(|decision| !matches!(
+            decision.state,
+            kendex_core::engine::decisions::DecisionState::AuthorDismissed { .. }
+        )),
+        "a record whose numbers do not add up settles nothing: {:?}",
+        after.decisions
+    );
+    assert!(after.blocked(), "and the item is held back again");
+}

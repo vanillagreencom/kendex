@@ -869,8 +869,8 @@ lives in one capability table read by core and UI.
   stales it and the hold returns. Finding identity
   is the rule and the sentence it fired with, and nothing else
   (`Finding::fingerprint`). Which puts a standing obligation on every
-  rule's message: it says what the rule fired *on* — the address a line
-  downloads from, the characters a file hides — and never where it was
+  rule's message: it says what the rule fired *on* — the address the line
+  actually runs, the characters a file hides — and never where it was
   found. Two different problems that read the same are one decision, and
   only one of them is ever displayed; naming the file instead would fix
   that by coupling identity to the thing rendering moves content between.

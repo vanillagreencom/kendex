@@ -50,8 +50,9 @@ changes carry a **Breaking** call-out with their migration note inline.
   publisher's name and reason so it is clear whose judgement it is. It
   settles only what the publisher wrote — as many occurrences as their own
   bytes carried, each carrying the weight theirs did, so nothing a project
-  adds to the item rides in on a reviewed finding however serious it reads
-  — and it can only carry reasons an author can give:
+  adds to the item rides in on a reviewed finding however serious it reads;
+  a record whose own numbers do not add up settles nothing at all — and it
+  can only carry reasons an author can give:
   a hand-written `trusted-source` record is refused on the installing
   machine. Any edit to the item, in the catalog or on the installed copy,
   brings the hold back, and a record that settles nothing where it lands —
@@ -96,9 +97,10 @@ changes carry a **Breaking** call-out with their migration note inline.
   single words ending in `)` is no longer read as a command, which is the
   price of the class of false positive it removes.
 - A safety finding's message now says what it fired on: which address a
-  command downloads from — however it is capitalized, and named by its own
-  arguments when the address is not written out — which characters a file
-  hides, and which unreadable content a file carries. Two different problems reading the same used to be
+  line actually runs — the command feeding the shell, however it is
+  capitalized, and named by its own arguments when the address is not
+  written out — which characters a file hides, and which unreadable content
+  a file carries. Two different problems reading the same used to be
   one decision, and only one of them was ever shown.
 - Safety findings are identified by the rule and the sentence it fired with,
   so a decision survives everything kendex does to an item on the way in —

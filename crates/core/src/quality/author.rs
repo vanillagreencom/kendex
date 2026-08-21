@@ -120,9 +120,21 @@ impl AuthorReview {
     /// printed. `counted` is how many findings are actually in front of us:
     /// a record cannot claim to have measured more occurrences than exist.
     pub fn is_honest(&self, counted: usize) -> bool {
+        // The total is added up, never wrapped into one. A record claiming
+        // more per weight than a total can hold has a total nothing here
+        // can check, and adding it up anyway reads as a small number — the
+        // record then passes the bound it was meant to fail, and its
+        // per-weight allowance is honoured in full out of a file a pull
+        // request can edit. A wrapping add would also answer differently
+        // with overflow checks on than off, which is two builds disagreeing
+        // about what is honest.
         let bounded = |occurrences: &BTreeMap<Severity, u32>| {
-            let claimed: u32 = occurrences.values().copied().sum();
-            usize::try_from(claimed).is_ok_and(|claimed| claimed <= counted)
+            occurrences
+                .values()
+                .try_fold(0u32, |total, count| total.checked_add(*count))
+                .is_some_and(|claimed| {
+                    usize::try_from(claimed).is_ok_and(|claimed| claimed <= counted)
+                })
         };
         crate::names::shown(&self.publisher) == self.publisher
             && self.dismissed.iter().all(|(fingerprint, dismissal)| {
