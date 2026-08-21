@@ -76,7 +76,11 @@ event only for a script-less hook; a script-backed one is named by its
 command alone, because the event an older version installed it under is
 not knowable and a catalog is free to have changed it since. What this
 pass renders names the entry at the new path only, so a registration
-somebody moved there by hand is never doubled by a second one beside it.
+somebody moved there by hand is never doubled by a second one beside it —
+asked wherever the old layout has got to, since "nothing of kendex's is
+under the reserved name" answers a different question from "this
+installation is in good order", and only the first is about that
+directory.
 Once a hook has finished moving, neither half under the reserved name is
 kendex's any more — not the script, and not an entry spelling the command
 kendex used to register. That is a fact about the past, so the lock keeps

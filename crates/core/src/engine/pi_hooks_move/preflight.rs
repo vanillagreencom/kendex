@@ -127,14 +127,31 @@ pub(crate) fn preflight(
 ) -> Preflight {
     let root = pi::scope_root(env, scope);
     let dir = root.join(LEGACY_DIR);
-    // Nothing under either reserved name means nothing to hold and
-    // nothing to ask about — the same answer everything below reaches,
-    // reached without reading a registry per hook on every later plan.
+    let ours: Vec<&LockEntry> = lock
+        .entries
+        .values()
+        .filter(|entry| entry.kind == ItemKind::Hook && entry.harness == HarnessId::Pi)
+        .collect();
+    // Nothing under either reserved name means nothing to hold about what
+    // is there — the same answer everything below reaches, reached
+    // without hashing a hook's bytes or reading a legacy path per hook on
+    // every later plan.
+    //
+    // It does not mean the installation is in good order, and only one of
+    // those two questions is about the reserved name. A registration
+    // somebody moved by hand at the new path would be doubled by the
+    // fresh one this pass writes wherever the old layout has got to, so
+    // that question is asked here too — and nothing else is.
     if matches!(look(&dir), Found::Absent)
         && matches!(look(&pi::legacy_hook_registry(&root)), Found::Absent)
     {
         return Preflight {
-            held: BTreeMap::new(),
+            held: ours
+                .iter()
+                .filter_map(|entry| {
+                    doubled(env, scope, &root, entry, state).map(|hold| (entry.name.clone(), hold))
+                })
+                .collect(),
             discard: BTreeSet::new(),
             migrated: BTreeSet::new(),
             recorded: BTreeSet::new(),
@@ -143,11 +160,6 @@ pub(crate) fn preflight(
             conflicts: BTreeMap::new(),
         };
     }
-    let ours: Vec<&LockEntry> = lock
-        .entries
-        .values()
-        .filter(|entry| entry.kind == ItemKind::Hook && entry.harness == HarnessId::Pi)
-        .collect();
     let discard: BTreeSet<String> = ours
         .iter()
         .filter(|entry| discarding(options, &entry.name))
@@ -207,6 +219,26 @@ pub(crate) fn preflight(
     this
 }
 
+/// The hold a registration somebody moved by hand at the new path earns:
+/// registering the fresh rendering beside it would leave the hook firing
+/// twice, under two events. Asked wherever the question comes up — with
+/// the old layout still on disk and with it long gone — from the one
+/// place, so the two cannot answer differently.
+fn doubled(
+    env: &Env,
+    scope: &Scope,
+    root: &std::path::Path,
+    entry: &LockEntry,
+    state: &DesiredState,
+) -> Option<Hold> {
+    moved_by_hand(env, scope, root, entry, state).then(|| {
+        Hold::ByHand(format!(
+            "its registration in {} sits under an event kendex did not put it under — registering it again would fire the hook twice; move it back or take it out",
+            pi::hook_registry(root).display()
+        ))
+    })
+}
+
 /// Why one hook's installation holds whole, when it does — asked of every
 /// hook the move has not finished with, and answered in the order the
 /// person would have to fix things in.
@@ -244,13 +276,8 @@ fn holding(
     if let Some(why) = pre.conflict(&entry.name) {
         return Some(Hold::ByHand(why.clone()));
     }
-    // Registering the fresh rendering beside a registration somebody
-    // moved by hand would leave the hook firing twice, under two events.
-    if moved_by_hand(env, scope, root, entry, state) {
-        return Some(Hold::ByHand(format!(
-            "its registration in {} sits under an event kendex did not put it under — registering it again would fire the hook twice; move it back or take it out",
-            pi::hook_registry(root).display()
-        )));
+    if let Some(hold) = doubled(env, scope, root, entry, state) {
+        return Some(hold);
     }
     let files = legacy_files(dir, &entry.name);
     if files.is_empty() {

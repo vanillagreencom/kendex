@@ -108,7 +108,29 @@ pub(crate) fn legacy_registry_lives(env: &Env, scope: &Scope) -> bool {
     .legacy_registry_lives()
 }
 
+/// What this pass finished moving out of the reserved name, for the
+/// record to keep.
+///
+/// Nothing an installation is being held over comes back through here.
+/// A hold is a thing for the person to fix, never a move that ended, and
+/// a completion written down while one stands cannot be taken back by a
+/// later pass — so the filter is here, at the one door every answer
+/// leaves by, rather than at each of them.
 pub(super) fn plan_move(
+    env: &Env,
+    scope: &Scope,
+    manifest: &crate::manifest::Manifest,
+    lock: &Lock,
+    state: &DesiredState,
+    pre: &Preflight,
+    sink: &mut Sink,
+) -> Result<BTreeSet<String>> {
+    let mut finished = move_out(env, scope, manifest, lock, state, pre, sink)?;
+    finished.retain(|name| pre.hold(name).is_none());
+    Ok(finished)
+}
+
+fn move_out(
     env: &Env,
     scope: &Scope,
     manifest: &crate::manifest::Manifest,

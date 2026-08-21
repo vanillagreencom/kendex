@@ -22,6 +22,7 @@ mod recorded;
 mod retirement;
 mod strangers;
 mod unreadable;
+mod written;
 
 struct World {
     _tmp: tempfile::TempDir,

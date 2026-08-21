@@ -317,9 +317,8 @@ fn a_finished_hook_does_not_keep_the_registry_in_anybodys_way() {
     fs::rename(&disabled, w.dot().join("hooks/other.sh.disabled")).unwrap();
     // Their own document, in a shape kendex's editor cannot rewrite, and
     // their own registration of the command kendex used to spell.
-    let theirs = format!(
-        "// mine\n{{\"hooks\":{{\"tool_call\":[{{\"hooks\":[{{\"command\":\"bash \\\"$(git rev-parse --show-toplevel)/.pi/hooks/guard.sh\\\"\"}}]}}]}}}}\n"
-    );
+    let theirs = "// mine\n{\"hooks\":{\"tool_call\":[{\"hooks\":[{\"command\":\"bash \\\"$(git rev-parse --show-toplevel)/.pi/hooks/guard.sh\\\"\"}]}]}}\n"
+        .to_owned();
     fs::write(w.dot().join("hooks.json"), &theirs).unwrap();
 
     apply(&w);
