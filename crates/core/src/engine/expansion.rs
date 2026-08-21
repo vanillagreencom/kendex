@@ -19,6 +19,11 @@ use crate::source_read::SealedSource;
 
 use super::desired::{DesiredState, target_harnesses};
 
+/// Which revision to rebuild each installation from, keyed by the
+/// installation rather than by any declaration. Empty for an ordinary plan,
+/// which reads whatever the declarations track now.
+pub(super) type Pins = BTreeMap<(ItemKind, String), Option<String>>;
+
 /// The kinds a plan installs, in the order it plans them.
 pub(super) const PLANNED_KINDS: [ItemKind; 5] = [
     ItemKind::Skill,
@@ -79,6 +84,25 @@ impl Expansion {
         self.items
             .get(&(kind, name.to_owned()))
             .map(|planned| planned.decl.clone())
+    }
+
+    /// Rebuild each installation from the revision it is actually at,
+    /// rather than from the one its declaration tracks now.
+    ///
+    /// Applied to the expansion and not to the manifest, because a derived
+    /// installation has no declaration to pin: a bundle member and a
+    /// dependency are here under a declaration written for something else,
+    /// and pinning by name reaches neither. Every installation the lock
+    /// records is in here under its own key, whatever put it here.
+    ///
+    /// A pin naming no revision — a path source has none — leaves the
+    /// declaration's own, which is the same answer reading it now gives.
+    pub(super) fn pin(&mut self, pins: &Pins) {
+        for ((kind, name), planned) in &mut self.items {
+            if let Some(rev) = pins.get(&(*kind, name.clone())) {
+                planned.decl.rev = rev.clone().or_else(|| planned.decl.rev.clone());
+            }
+        }
     }
 
     pub(super) fn harnesses(&self, kind: ItemKind, name: &str) -> Vec<HarnessId> {

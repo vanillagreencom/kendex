@@ -839,34 +839,34 @@ lives in one capability table read by core and UI.
   `trusted-source` refused on read and not only on write, a timestamp that is
   not one refused with it.
   **The record never travels in a file this project commits.** The lock
-  carries none, and the fourth bound is why: a record kept there would be a
-  claim about a catalog, and every attempt to authenticate such a claim — its
-  shape, the name it carries, the numbers beside it — answers a different
-  question than what the content should be. So the audit rebuilds instead
+  carries none, and the fourth bound is why: a record kept there is a claim
+  about a catalog, and every attempt to authenticate one — its shape, the name
+  it carries, the numbers beside it — answers a different question than what
+  the content should be. So the audit rebuilds instead
   (`engine::desired::desired_as_installed`): the plan that produced what is on
   disk, each installation at the revision its own lock entry names — one item
-  can sit at two revisions at once, since a refresh applies per installation —
-  and the record read out of *that* catalog, the gate's derivation on the
-  gate's bytes. An installation answers for itself and nothing else — one row,
-  one entry, one revision, one record — and content its own rebuild did not
-  produce is content the publisher never saw. The commit an entry names
-  chooses a revision to rebuild from and asserts nothing: naming another
-  produces another artifact, which is not what is installed. An item no
-  rebuild covers — a catalog not on this machine, a manifest that will not
-  resolve — carries no review. No signing scheme here. A hook records none:
-  the gate reads the script and the audit the shared settings file, two
-  readings of different bytes by design — so the record is refused where it is
-  read, `dismiss --catalog` refuses to write one, and `check --catalog` prints
-  no token for a hook's finding. The audit matches an entry to an observation
-  by kind and name — or those of the artifact it emitted — and then by a
-  review hash sealed by what is on disk. Every settled finding is shown with
-  the publisher and their reason — under the line in the CLI, in its own row
-  on a scope and beside the finding in the app's held-back panel, and on a
-  marketplace package's page, which reads the same record through
-  `browse/safety.rs` so the preview cannot promise a verdict the install will
-  not give. Two decisions of theirs differing in reason or date stay two rows.
-  A record that settles nothing here is a note, never silence. Finding
-  identity is the rule and the sentence it fired with
+  can sit at two revisions at once, since a refresh applies per installation,
+  and a member or a dependency has no declaration to pin at all — and the
+  record read out of *that* catalog, the gate's derivation on the gate's
+  bytes. An installation answers for itself and nothing else — one row, one
+  entry, one revision, one record — and content its own rebuild did not
+  produce is content nobody reviewed. The commit an entry names chooses a
+  revision to rebuild from and asserts nothing: naming another produces
+  another artifact, which is not what is installed. An item no rebuild covers
+  — a catalog not on this machine, a manifest that will not resolve — carries
+  no review. No signing scheme here. A hook records none: the gate reads the
+  script and the audit the shared settings file, two readings of different
+  bytes by design — so it is refused where it is read, `dismiss --catalog`
+  refuses to write one, and `check --catalog` prints no token for one. The
+  audit matches an entry to an observation by kind and name — or those of the
+  artifact it emitted — and then by a review hash sealed by what is on disk.
+  Every settled finding is shown with the publisher and their reason — under
+  the line in the CLI, in its own row on a scope and in the app's held-back
+  panel, and on a marketplace package's page, which reads the same record
+  through `browse/safety.rs` so the preview cannot promise a verdict the
+  install will not give. Two decisions of theirs differing in reason or date
+  stay two rows. A record that settles nothing here is a note, never silence.
+  Finding identity is the rule and the sentence it fired with
   (`Finding::fingerprint`). Which puts a standing obligation on every message:
   it says what the rule fired *on* — the address the line actually runs, the
   characters a file hides — and never where it was found. Two different

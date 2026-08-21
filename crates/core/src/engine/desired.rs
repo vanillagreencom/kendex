@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use crate::env::Env;
 use crate::error::Result;
 use crate::harness::{Surface, adapter};
-use crate::hash::{hash_bytes, hash_files};
 use crate::lock::Lock;
 use crate::manifest::{ItemDecl, Manifest, Method};
 use crate::model::{HarnessId, ItemKind, Scope};
@@ -179,17 +178,28 @@ pub fn skill_canonical(env: &Env, scope: &Scope, name: &str) -> PathBuf {
     }
 }
 
-pub(super) fn target_harnesses(
+pub(crate) fn target_harnesses(
     decl: &ItemDecl,
     manifest: &Manifest,
     kind: ItemKind,
     scope: &Scope,
 ) -> Vec<HarnessId> {
-    let requested = decl
-        .harnesses
-        .clone()
-        .unwrap_or_else(|| manifest.install.harnesses.clone());
+    harnesses_for(decl.harnesses.as_deref(), manifest, kind, scope)
+}
+
+/// The same from a declaration's `harnesses` list alone, so a reading with
+/// no declaration to hand — nothing here has asked for this item yet — gets
+/// its answer from this derivation rather than from a second spelling of
+/// it.
+pub(crate) fn harnesses_for(
+    requested: Option<&[HarnessId]>,
+    manifest: &Manifest,
+    kind: ItemKind,
+    scope: &Scope,
+) -> Vec<HarnessId> {
     requested
+        .map(<[HarnessId]>::to_vec)
+        .unwrap_or_else(|| manifest.install.harnesses.clone())
         .into_iter()
         .filter(|harness| crate::harness::installs_here(*harness, kind, scope))
         .collect()
@@ -200,8 +210,12 @@ pub(super) fn target_harnesses(
 /// and hashes and renderings must reflect that rewrite — otherwise the very
 /// next audit reads the merged manifest and calls a clean install stale. The
 /// merge is idempotent, so recomputing against it converges in one repeat.
+mod artifact;
 mod rebuild;
+pub use artifact::{artifact_disk_hash, artifact_paths};
 pub use rebuild::desired_as_installed;
+
+use super::expansion::Pins;
 
 pub fn desired_state(
     env: &Env,
@@ -209,23 +223,43 @@ pub fn desired_state(
     manifest: &Manifest,
     lock: &Lock,
 ) -> Result<DesiredState> {
-    let first = compute(env, scope, manifest, lock)?;
+    desired_state_at(env, scope, manifest, lock, &Pins::new())
+}
+
+/// The same, with each installation rebuilt from the revision `pins` names
+/// for it. Only the audit's rebuild has any: an ordinary plan reads what
+/// the declarations track now.
+pub(super) fn desired_state_at(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    lock: &Lock,
+    pins: &Pins,
+) -> Result<DesiredState> {
+    let first = compute(env, scope, manifest, lock, pins)?;
     let Some(merged) = first.manifest_update else {
         return Ok(first);
     };
-    let mut second = compute(env, scope, &merged, lock)?;
+    let mut second = compute(env, scope, &merged, lock, pins)?;
     second.manifest_update = Some(merged);
     Ok(second)
 }
 
-fn compute(env: &Env, scope: &Scope, manifest: &Manifest, lock: &Lock) -> Result<DesiredState> {
+fn compute(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    lock: &Lock,
+    pins: &Pins,
+) -> Result<DesiredState> {
     let mut state = DesiredState::default();
     let mut updated_manifest = manifest.clone();
     let mut manifest_changed = false;
     // Everything is planned from the closure — what was declared, what the
     // installed bundles carry, and what those skills require — while the
     // manifest keeps holding only what was chosen.
-    let expansion = super::expansion::expand(env, scope, manifest, &mut state);
+    let mut expansion = super::expansion::expand(env, scope, manifest, &mut state);
+    expansion.pin(pins);
     // One parse of each catalog root's reviews file per pass: it is one
     // file, and every item that root carries would otherwise re-read it.
     // Keyed by root, since one declared source resolves to several when
@@ -346,38 +380,5 @@ impl ItemCtx<'_> {
             .forks
             .get(&kind)
             .is_some_and(|forks| forks.contains_key(self.name))
-    }
-}
-
-/// Every path an artifact occupies. Cursor keeps hook rules in the same dir
-/// as agents and codex shares skill trees with pi: without this, the scanner
-/// reports content we just wrote as someone else's.
-pub fn artifact_paths(artifact: &Artifact) -> Vec<PathBuf> {
-    match artifact {
-        Artifact::File { path, .. } => vec![path.clone()],
-        Artifact::Tree {
-            canonical, link, ..
-        } => {
-            let mut paths = vec![canonical.clone()];
-            paths.extend(link.clone());
-            paths
-        }
-        Artifact::Registration { script, .. } => {
-            script.iter().map(|(path, _)| path.clone()).collect()
-        }
-    }
-}
-
-/// The on-disk hash the artifact will have — for clean/dirty comparison.
-/// A registration's config edits are compared by re-applying them, not by
-/// hash; only its backing file has one.
-pub fn artifact_disk_hash(artifact: &Artifact) -> String {
-    match artifact {
-        Artifact::File { bytes, .. } => hash_bytes(bytes),
-        Artifact::Tree { files, .. } => hash_files(files),
-        Artifact::Registration { script, .. } => match script {
-            Some((_, bytes)) => hash_bytes(bytes),
-            None => hash_bytes(&[]),
-        },
     }
 }

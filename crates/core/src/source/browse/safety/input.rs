@@ -56,26 +56,62 @@ fn installs_as(
     Ok(crate::render::split::enforce_body_cap(files, cap, None).files)
 }
 
-/// Which tools this item would install to: its own declaration where the
-/// project has one for it, the scope's default otherwise, and then only
-/// those that can take this kind here.
+/// Which tools this item would install to, through the plan's own
+/// derivation over the declaration it would install under.
 ///
-/// Both halves matter. Reading only the default models the wrong set for
-/// every item that names its own; keeping a tool that cannot take the kind
-/// in this scope models a rendering nobody installs — a requested Cursor
-/// has no body cap, so it would keep a long skill unsplit and hold the page
-/// back while the plan drops Cursor and splits for Codex. The filter is
-/// `harness::installs_here`, which is the one the plan uses.
+/// Both halves matter and neither is spelled here. Reading only the scope
+/// default models the wrong set for every item that names its own tools;
+/// keeping a tool that cannot take the kind in this scope models a
+/// rendering nobody installs — a requested Cursor has no body cap, so it
+/// would keep a long skill unsplit and hold the page back while the plan
+/// drops Cursor and splits for Codex. `target_harnesses` is what the plan
+/// asks, so it is what this asks.
 fn installs_to(browsed: &Browsed, kind: ItemKind, name: &str) -> Vec<crate::model::HarnessId> {
+    let under = decl_for(browsed, kind, name);
+    crate::engine::harnesses_for(
+        under.as_ref().and_then(|decl| decl.harnesses.as_deref()),
+        &browsed.manifest,
+        kind,
+        &browsed.scope,
+    )
+}
+
+/// The declaration this item would install under: its own where the project
+/// declared it by name, otherwise the one belonging to whatever put it
+/// there. `None` where nothing here has asked for it at all.
+///
+/// A bundle member has no declaration under its own name, and a lookup that
+/// assumes one falls through to the scope's defaults — a bundle targeting
+/// one tool then previews a rendering that tool never gets. What a member
+/// installs under is [`crate::engine::bundles::member_decl`], the same
+/// answer the plan builds from.
+///
+/// Only a bundle installed from this catalog can be what put it here: a
+/// set's members are its own catalog's items, so a bare name in another
+/// catalog's bundle names something else.
+fn decl_for(browsed: &Browsed, kind: ItemKind, name: &str) -> Option<crate::manifest::ItemDecl> {
+    if let Some(own) = browsed.manifest.declared(kind).get(name) {
+        return Some(own.clone());
+    }
     browsed
         .manifest
-        .declared(kind)
-        .get(name)
-        .and_then(|decl| decl.harnesses.clone())
-        .unwrap_or_else(|| browsed.manifest.install.harnesses.clone())
-        .into_iter()
-        .filter(|harness| crate::harness::installs_here(*harness, kind, &browsed.scope))
-        .collect()
+        .bundles
+        .iter()
+        .filter(|(_, decl)| browsed.owned_here(&decl.source))
+        .find(|(bundle, _)| carries(browsed, bundle, kind, name))
+        .map(|(_, decl)| crate::engine::bundles::member_decl(decl))
+}
+
+/// Whether one of this catalog's sets carries this item.
+fn carries(browsed: &Browsed, bundle: &str, kind: ItemKind, name: &str) -> bool {
+    crate::source::bundles::find(&browsed.sealed, &browsed.config, bundle)
+        .ok()
+        .flatten()
+        .is_some_and(|set| {
+            set.members
+                .iter()
+                .any(|member| member.kind == kind && member.name == name)
+        })
 }
 
 /// The same typed input `check --catalog` audits: a skill's whole tree,

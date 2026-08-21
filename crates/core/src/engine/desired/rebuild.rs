@@ -12,8 +12,8 @@ use crate::lock::Lock;
 use crate::manifest::Manifest;
 use crate::model::{HarnessId, ItemKind, Scope};
 
-use super::super::expansion::PLANNED_KINDS;
-use super::{Desired, desired_state};
+use super::super::expansion::Pins;
+use super::{Desired, desired_state_at};
 
 /// Which revisions one item is installed at, and which tools sit at each.
 type Installed = BTreeMap<(ItemKind, String), BTreeMap<Option<String>, BTreeSet<HarnessId>>>;
@@ -62,7 +62,7 @@ pub fn desired_as_installed(
     let mut built = Vec::new();
     for pass in 0..passes {
         built.extend(
-            desired_state(env, scope, &pinned_to(manifest, &installed, pass), lock)?
+            desired_state_at(env, scope, manifest, lock, &pinned_to(&installed, pass))?
                 .items
                 .into_iter()
                 .filter(|item| built_here(&installed, item, pass)),
@@ -85,22 +85,22 @@ fn installed_at(lock: &Lock) -> Installed {
     found
 }
 
-/// The manifest as this pass reads it: every declaration at the `pass`th
-/// revision anything is installed at, and left alone where there is no
-/// `pass`th one.
-fn pinned_to(manifest: &Manifest, installed: &Installed, pass: usize) -> Manifest {
-    let mut pinned = manifest.clone();
-    for kind in PLANNED_KINDS {
-        for (name, decl) in pinned.declared_mut(kind) {
-            if let Some(commit) = installed
-                .get(&(kind, name.clone()))
-                .and_then(|revisions| revisions.keys().nth(pass))
-            {
-                decl.rev = commit.clone().or_else(|| decl.rev.clone());
-            }
-        }
-    }
-    pinned
+/// What this pass rebuilds from: every installation at the `pass`th
+/// revision it is recorded at, and left alone where it has no `pass`th one.
+///
+/// Keyed by the installation, never by a declaration. A bundle member and a
+/// dependency are installed under a declaration written for something else
+/// — the bundle, the parent — and are not in `declared` under their own
+/// names at all, so pinning declarations rebuilt every derived installation
+/// from wherever its source has moved to. A member still installed at the
+/// commit its publisher reviewed then read as content that catalog does not
+/// publish, which is the whole failure this rebuild exists to prevent,
+/// coming back for anything a bundle brought in.
+fn pinned_to(installed: &Installed, pass: usize) -> Pins {
+    installed
+        .iter()
+        .filter_map(|(item, revisions)| Some((item.clone(), revisions.keys().nth(pass)?.clone())))
+        .collect()
 }
 
 /// Whether this pass is the one that rebuilt this installation: the tool
