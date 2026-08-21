@@ -99,7 +99,7 @@ pub fn print_conflicts(report: &EngineReport) {
             row.detail
         ));
         if row.cause == Some(DriftCause::UnmanagedContent) {
-            print_exits();
+            print_exits(row);
         }
     }
 }
@@ -107,9 +107,13 @@ pub fn print_conflicts(report: &EngineReport) {
 /// The two ways out of a conflict over files kendex never wrote. The drift
 /// row states the choice in the words both surfaces share; this names the
 /// verb and the flag that carry it out — as data, never as a command line
-/// to paste, which this product does not emit.
-fn print_exits() {
-    say("  to keep those files: adopt them by name");
+/// to paste, which this product does not emit. Adopt is named only for the
+/// kinds it takes; for the rest, keeping the files is the reader's own move.
+fn print_exits(row: &DriftRow) {
+    match kendex_core::engine::adopt::supports(row.kind) {
+        true => say("  to keep those files: adopt them by name"),
+        false => say("  to keep those files: move them somewhere else yourself"),
+    }
     say("  to install what you declared instead: apply with --replace-unmanaged");
 }
 

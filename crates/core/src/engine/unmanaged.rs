@@ -103,6 +103,11 @@ fn declared_paths(
                 paths.push(native.join(format!("{base}.disabled")));
                 paths.push(native.join(base));
             }
+            ItemKind::Command => {
+                let base = super::desired_command::command_file(harness, name);
+                paths.push(native.join(format!("{base}.disabled")));
+                paths.push(native.join(base));
+            }
             _ => paths.push(native.join(crate::harness::rendered_name(harness, name))),
         }
     }
@@ -126,17 +131,24 @@ fn declared_artifact_paths(env: &Env, scope: &Scope, manifest: &Manifest) -> BTr
 }
 
 /// Declarations kendex has no record of installing, with files already
-/// sitting where it would write them — the state an apply refuses on and
-/// nothing else reports. Manifest, lock and a stat: no source reads and no
-/// hashing, because the session check does no deep work, and "no lock
-/// entry names this installation" is already proof kendex did not write
-/// what is there.
+/// sitting where they would go — what an apply either takes over or
+/// refuses, and what nothing else reports. Manifest, lock and a stat: no
+/// source reads and no hashing, because the session check does no deep
+/// work. That is also the limit of what it may claim: whether the apply is
+/// blocked, and which way out fits, needs the render this cannot build, so
+/// the line states the two facts a stat proves and sends the reader to the
+/// plan.
 ///
 /// Only an item with nothing installed anywhere counts. One installed for
 /// some tools and not others shares its canonical tree with the rest, and
 /// calling that shared tree a stranger's would report kendex's own output
 /// back at the user.
-pub(crate) fn blocked_by_content(
+///
+/// Agents, skills and commands only: each lands at a path that is a pure
+/// function of kind, harness and name. A hook, an mcp-server, a plugin and
+/// a pi-extension live as entries inside shared config files — there is no
+/// path to stat, and an apply is what reports on them.
+pub(crate) fn declared_over_existing_files(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
@@ -154,6 +166,7 @@ pub(crate) fn blocked_by_content(
     for (kind, table) in [
         (ItemKind::Agent, &manifest.agents),
         (ItemKind::Skill, &manifest.skills),
+        (ItemKind::Command, &manifest.commands),
     ] {
         for (name, decl) in table {
             let harnesses = desired::target_harnesses(decl, manifest, kind, scope);

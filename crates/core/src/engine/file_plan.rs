@@ -3,6 +3,9 @@
 //! says is ours is ours to rewrite; anything else on it is the user's, and
 //! only an explicit take-over moves it (invariant 6).
 
+use std::collections::BTreeSet;
+use std::path::PathBuf;
+
 use super::DriftState;
 use super::desired::{Artifact, Desired};
 use super::item_plan::{Claim, Planned, unmanaged};
@@ -17,12 +20,13 @@ pub(super) fn plan_file(
     scope: &Scope,
     item: &Desired,
     claim: Claim,
+    owned: &BTreeSet<PathBuf>,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<Planned> {
     let Artifact::File { path, bytes } = &item.artifact else {
         return Ok(Planned::Clean);
     };
-    plan_written_file(env, scope, item, path, bytes, claim, ops)
+    plan_written_file(env, scope, item, path, bytes, claim, owned, ops)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -33,6 +37,7 @@ pub(super) fn plan_written_file(
     path: &std::path::Path,
     bytes: &[u8],
     claim: Claim,
+    owned: &BTreeSet<PathBuf>,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<Planned> {
     if path.is_symlink() {
@@ -62,9 +67,9 @@ pub(super) fn plan_written_file(
     match disk {
         Some(current) if current == wanted => Ok(Planned::Clean),
         Some(current) => {
-            if !claim.locked {
+            if !claim.owns(path, owned) {
                 if !claim.replace_unmanaged {
-                    return Ok(unmanaged(path));
+                    return Ok(unmanaged(item, path));
                 }
                 ops.push(set_aside(path, Pre::HashIs { hash: current }));
                 ops.push(install(env, scope, item, path, bytes, Pre::Absent));
@@ -89,7 +94,9 @@ pub(super) fn plan_written_file(
                 "newer content is available".into(),
             ))
         }
-        None => Ok(plan_absent_file(env, scope, item, path, bytes, claim, ops)),
+        None => Ok(plan_absent_file(
+            env, scope, item, path, bytes, claim, owned, ops,
+        )),
     }
 }
 
@@ -109,6 +116,7 @@ fn plan_absent_file(
     path: &std::path::Path,
     bytes: &[u8],
     claim: Claim,
+    owned: &BTreeSet<PathBuf>,
     ops: &mut Vec<PlannedOp>,
 ) -> Planned {
     let alternate = toggle_sibling(path);
@@ -119,9 +127,11 @@ fn plan_absent_file(
         ));
     }
     if alternate.is_file() {
-        if !claim.locked {
+        // A recorded install names one spelling of the toggled pair; the
+        // position is the same one either way.
+        if !claim.owns(path, owned) && !claim.owns(&alternate, owned) {
             if !claim.replace_unmanaged {
-                return unmanaged(&alternate);
+                return unmanaged(item, &alternate);
             }
             let hash = match hash_tree(&alternate) {
                 Ok(hash) => hash,

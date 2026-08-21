@@ -75,11 +75,11 @@ pub enum Remedy {
     Findings {
         global: bool,
     },
-    /// Install what the manifest declares over files kendex never wrote.
-    /// The other exit — keeping those files — is `adopt`, which needs the
-    /// item named, so the line says it in words and this spells the half a
-    /// pipeline can run unattended.
-    Replace {
+    /// Show what an apply would do here and why. Where a line names a
+    /// state whose right resolution depends on which of two directions the
+    /// reader wants, the preview that names both is the remedy: a report
+    /// built from stats alone must not prescribe the destructive one.
+    Plan {
         global: bool,
     },
 }
@@ -117,9 +117,7 @@ impl Remedy {
                 format!("kendex fork {} {name}{}", kind.name(), flag(global))
             }
             Remedy::Findings { global } => format!("kendex findings{}", flag(global)),
-            Remedy::Replace { global } => {
-                format!("kendex apply --replace-unmanaged{}", flag(global))
-            }
+            Remedy::Plan { global } => format!("kendex apply --plan{}", flag(global)),
         })
     }
 }
@@ -201,7 +199,7 @@ impl Sections {
             ("gone from their source", self.removed),
             ("mixed installs", self.mixed),
             ("missing on disk", self.missing),
-            ("blocked by files kendex did not write", self.blocked),
+            ("declared but not installed", self.blocked),
             ("broken references", self.references),
             ("safety findings", self.findings),
             ("not yet evaluated", self.unevaluated),

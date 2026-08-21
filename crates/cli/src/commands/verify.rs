@@ -9,7 +9,8 @@ use super::{resolve_scopes, say};
 use crate::scope::ScopeFilter;
 
 /// Drift check over lock entries; non-zero exit on any failing row — this
-/// is the signal consuming repos compose in shell pipelines.
+/// is the signal consuming repos compose in shell pipelines. Content
+/// nothing manages is named after the count, and never changes it.
 pub fn run(
     env: &Env,
     names: Vec<String>,
@@ -24,7 +25,20 @@ pub fn run(
 
     for scope in resolve_scopes(env, filter)? {
         let lock = load_lock(&lock_path(env, &scope))?;
-        let report = audit(env, &scope)?;
+        // A scope with nothing installed has nothing to verify, and this
+        // run reaches it only to name content nothing manages. That errand
+        // never costs the run: a manifest this build cannot plan against
+        // is a line here, where it used to be silence, and the exit code
+        // still answers about drift alone. A scope that does have installs
+        // keeps failing loudly, as it always has.
+        let report = match (audit(env, &scope), lock.entries.is_empty()) {
+            (Ok(report), _) => report,
+            (Err(error), true) => {
+                say(&format!("! {} not checked: {error}", scope.label()));
+                continue;
+            }
+            (Err(error), false) => return Err(error.into()),
+        };
         unmanaged.extend(
             report
                 .drift

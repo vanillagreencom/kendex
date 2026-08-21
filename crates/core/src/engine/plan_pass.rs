@@ -26,7 +26,7 @@ pub(super) fn plan_items(
     scope: &Scope,
     lock: &Lock,
     options: &PlanOptions,
-    emitted_paths: &BTreeSet<PathBuf>,
+    owned_paths: &BTreeSet<PathBuf>,
     drift: &mut Vec<DriftRow>,
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut config_edits::ConfigEditPlan,
@@ -61,7 +61,7 @@ pub(super) fn plan_items(
             item,
             scope,
             lock,
-            emitted_paths,
+            owned_paths,
             options.replace_unmanaged,
             &mut sink,
         )?;

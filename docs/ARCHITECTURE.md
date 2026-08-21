@@ -84,15 +84,20 @@ lives in one capability table read by core and UI.
    wrote is one conflict naming both exits, never a dead end: adopt keeps
    the files and rewrites the declaration around them, and the take-over
    (`replace_unmanaged` / `--replace-unmanaged`) keeps the declaration and
-   moves the files to the trash first, bound to the bytes the plan read. A
-   link is never either one's target. The sanctioned exceptions are that
-   take-over and a link the user explicitly adopts: when it resolves to a
-   real skill folder outside kendex's own trees, adopt captures that
-   folder's content, trashes the folder (bound to the exact bytes
-   captured) and every sibling link that read it, and the follow-up apply
-   restores the sharing from kendex's copy — a link at anything else stays
-   a conflict, and the confirm names the folder and every tool reading it,
-   because links kendex cannot see will break. Ownership is what kendex
+   moves the files to the trash first, bound to the bytes the plan read.
+   Only the kinds adopt can take are offered it; for the rest the refusal
+   says plainly that keeping the files is the reader's own move. A link is
+   never either exit's target, and neither is a position any install
+   recorded writing — those bytes are kendex's own, and what protects them
+   is the edit gate, whichever entry's key the declaration arrives under.
+   The sanctioned exceptions are that take-over and a link the user
+   explicitly adopts: when it resolves to a real skill folder outside
+   kendex's own trees, adopt captures that folder's content, trashes the
+   folder (bound to the exact bytes captured) and every sibling link that
+   read it, and the follow-up apply restores the sharing from kendex's
+   copy — a link at anything else stays a conflict, and the confirm names
+   the folder and every tool reading it, because links kendex cannot see
+   will break. Ownership is what kendex
    wrote, read from the lock — including the paths an installation
    recorded writing under another kind's name. A position we put something
    at is ours to replace or clear, whichever entry holds it now; deriving
@@ -1045,10 +1050,14 @@ lives in one capability table read by core and UI.
   it materializes no source trees, hashes no catalogs, and fans out no
   per-package subprocesses. A declaration with no lock entry and files
   already where it installs is one stat away, so it gets a section of its
-  own: blocked by files kendex did not write is a different problem from a
-  safety hold, and folding both into one held-back count sent readers to
-  `findings` for something no review could clear. The deep work runs where
-  time is free: `updates`, `refresh`, `apply`, and the detached
+  own — declared but not installed is a different problem from a safety
+  hold, and folding both into one held-back count sent readers to the
+  `findings` verb for something no review could clear. That section states
+  only what a stat proves and carries the plan as its remedy: which way out
+  fits depends on bytes the check may not read, and a report that guessed
+  would prescribe a destructive fix for a state that needs none. The deep
+  work runs where time is free: `updates`, `refresh`, `apply`, and the
+  detached
   `kendex source refresh --stale` the check spawns (TTL 6h, per-mirror
   lock, no stdio, never waited on) all re-derive the snapshot. A mirror
   that moved since its last evaluation reads as unevaluated — the honest
@@ -1233,6 +1242,6 @@ lives in one capability table read by core and UI.
   deliberate exception is the session-start drift report: it is written
   for an agent that can act, so each line may carry a remedy — built only
   from a fixed template set (refresh, remove, add, fork, findings, apply
-  --replace-unmanaged) with validated identifiers in argument positions,
+  --plan) with validated identifiers in argument positions,
   while free text from sources or errors renders in quoted informational
   positions, never in a command position.

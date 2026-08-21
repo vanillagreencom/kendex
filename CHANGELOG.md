@@ -13,10 +13,12 @@ changes carry a **Breaking** call-out with their migration note inline.
   already on disk — the normal shape of moving an existing repo onto
   kendex — used to have no way forward: the refusal named no way out, and
   `--discard-edits` did not clear it. The two directions are now both
-  available and both named: `kendex adopt` keeps the files that are there,
-  and this keeps your declaration. The replaced files move to the trash,
-  never straight to delete, and a link kendex did not create is still never
-  replaced.
+  available and both named: `kendex adopt` keeps the files that are there
+  (agents and skills, which is what it takes), and this keeps what you
+  declared, for anything you can declare. The replaced files move to the
+  trash, never straight to delete. Neither a link kendex did not create
+  nor files an existing install owns is ever replaced — those keep the
+  protections they always had.
 - The app has its own icon. Every channel that installs the app shipped the
   old vstack chevron; the icon is now the `x` from the kendex wordmark, in
   the wordmark's green, at every size the desktop, dock, and installer use
@@ -172,10 +174,18 @@ changes carry a **Breaking** call-out with their migration note inline.
 
 - A declared item whose files were already on disk no longer deadlocks.
   `kendex apply` says which files are in the way and names both ways out
-  instead of "not managed yet", `kendex check` reports it as its own
-  problem — "blocked by files kendex did not write" — instead of folding it
-  into the count of installs waiting on a safety review, and that count now
-  says what it is waiting for.
+  instead of "not managed yet", and `kendex check` reports it under
+  "declared but not installed" instead of folding it into the count of
+  installs waiting on a safety review — which now says what it is waiting
+  for.
+- A declaration blocked by files kendex did not write no longer leaves a
+  half-installed item behind. Where a skill is shared between tools, the
+  shared copy was written before the tool-specific part was checked, so a
+  blocked declaration still left a folder in your project that nothing
+  recorded and no command would ever clean up.
+- A skill you edited and then pointed at a second tool is reported as
+  edited, not as files kendex did not write. Your edit was already safe,
+  but the message named the wrong problem and offered the wrong ways out.
 - `kendex apply --plan` and `kendex verify` name content sitting in your
   tree that nothing declares, which `kendex list` showed and neither of
   them mentioned. Nothing about it changes — kendex still never touches it

@@ -142,10 +142,10 @@ impl ScopeCheck<'_> {
         }
     }
 
-    /// Declarations nothing installed because files kendex never wrote are
-    /// already where they go. A different problem from a safety hold and a
-    /// different fix, so it is a section of its own: this one is settled by
-    /// choosing which side wins, never by reading findings.
+    /// Declared, nothing installed, and files already where the install
+    /// goes. A different problem from a safety hold and a different fix, so
+    /// it is a section of its own — but a stat cannot tell which fix, so
+    /// the line states what it saw and the remedy is the plan that decides.
     fn blocked_lines(
         &self,
         manifest: Option<&crate::manifest::Manifest>,
@@ -166,15 +166,16 @@ impl ScopeCheck<'_> {
             Ok(crate::lock::LockFile::Absent) => &empty,
             _ => return,
         };
-        for (kind, name) in crate::engine::blocked_by_content(self.env, self.scope, manifest, lock)
+        for (kind, name) in
+            crate::engine::declared_over_existing_files(self.env, self.scope, manifest, lock)
         {
             sections.blocked.push(drift(
                 format!(
-                    "{prefix}{} '{}' is declared but nothing is installed — adopt the files that are there to keep them, or replace them with what you declared",
+                    "{prefix}{} '{}' is declared and nothing is installed for it — files are already where it goes",
                     kind.name(),
                     shown(&name)
                 ),
-                Some(Remedy::Replace {
+                Some(Remedy::Plan {
                     global: self.global,
                 }),
             ));

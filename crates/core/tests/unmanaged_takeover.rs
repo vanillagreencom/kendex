@@ -7,10 +7,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use kendex_core::apply;
 use kendex_core::engine::{DriftCause, DriftRow, DriftState, PlanOptions, audit, plan_apply};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::model::Scope;
-use kendex_core::{apply, drift};
 
 struct World {
     _tmp: tempfile::TempDir,
@@ -21,6 +21,18 @@ struct World {
 
 #[allow(clippy::unwrap_used)]
 fn world() -> World {
+    with_method("copy")
+}
+
+/// The other install shape: one canonical tree under `.agents/skills`, and
+/// a link at each harness's own position pointing at it.
+#[allow(clippy::unwrap_used)]
+fn linking_world() -> World {
+    with_method("symlink")
+}
+
+#[allow(clippy::unwrap_used)]
+fn with_method(method: &str) -> World {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().canonicalize().unwrap();
     let catalog = home.join("catalog/skills/deploy");
@@ -35,7 +47,7 @@ fn world() -> World {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"{method}\"\n\n[skills.deploy]\nsource = \"cat\"\n",
             home.join("catalog").display()
         ),
     )
@@ -46,6 +58,19 @@ fn world() -> World {
         home,
         _tmp: tmp,
     }
+}
+
+/// Point the declaration at a different set of tools.
+#[allow(clippy::unwrap_used)]
+fn declare_for(w: &World, harnesses: &str) {
+    fs::write(
+        w.home.join("app/kendex.toml"),
+        format!(
+            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = {harnesses}\nmethod = \"symlink\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+            w.home.join("catalog").display()
+        ),
+    )
+    .unwrap();
 }
 
 /// Where the declaration installs, holding bytes some earlier tool wrote.
@@ -196,33 +221,6 @@ fn a_link_kendex_did_not_create_is_never_taken_over() {
     assert!(position.is_symlink(), "the link is left exactly as it was");
 }
 
-/// Two different problems with two different fixes. Collapsed into one
-/// count, a reader who ran `kendex findings` found nothing to review and
-/// no reason the install was not happening.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn the_session_check_tells_this_apart_from_a_safety_hold() {
-    let w = world();
-    foreign_install(&w);
-
-    let checked = drift::report::check(&w.env, std::slice::from_ref(&w.scope));
-    assert_eq!(checked.status, drift::report::CheckStatus::Drift);
-    let text = drift::report::render_plain(&checked);
-    assert!(
-        text.contains("blocked by files kendex did not write"),
-        "{text}"
-    );
-    assert!(text.contains("skill 'deploy' is declared"), "{text}");
-    assert!(
-        text.contains("fix: kendex apply --replace-unmanaged"),
-        "{text}"
-    );
-    assert!(
-        !text.contains("held back"),
-        "nothing here is waiting on a safety review: {text}"
-    );
-}
-
 /// The state that must stay quiet: an installation kendex itself wrote is
 /// its own to replace, and reporting it as a stranger's would send the user
 /// to adopt their own output.
@@ -233,13 +231,7 @@ fn an_installation_kendex_wrote_is_never_called_a_stranger() {
     let report = audit(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &report.plan, None).unwrap();
 
-    let checked = drift::report::check(&w.env, std::slice::from_ref(&w.scope));
-    assert_eq!(
-        drift::report::render_plain(&checked),
-        "",
-        "{:?}",
-        checked.sections
-    );
+    assert!(audit(&w.env, &w.scope).unwrap().drift.is_empty());
     fs::write(
         w.home.join("app/.claude/skills/deploy/SKILL.md"),
         "---\nname: deploy\ndescription: ship it\n---\nEdited by hand.\n",
@@ -252,4 +244,98 @@ fn an_installation_kendex_wrote_is_never_called_a_stranger() {
         Some(DriftCause::LocalEdit),
         "an edit stays an edit, with its own two exits: {row:?}"
     );
+}
+
+/// A refusal plans nothing. The tree half of a linked skill is planned
+/// before its harness link is looked at, so a link that turns out to be a
+/// stranger's arrives after the tree's ops are already staged — and those
+/// ops would otherwise run: the user's canonical tree in the trash, the
+/// render in its place, and no lock entry recording any of it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_refusal_at_the_link_leaves_the_tree_untouched() {
+    let w = linking_world();
+    let canonical = w.home.join("app/.agents/skills/deploy");
+    fs::create_dir_all(&canonical).unwrap();
+    fs::write(canonical.join("SKILL.md"), "the tool that came before").unwrap();
+    let elsewhere = w.home.join("somewhere/deploy");
+    fs::create_dir_all(&elsewhere).unwrap();
+    fs::write(elsewhere.join("SKILL.md"), "someone else's copy").unwrap();
+    let link = w.home.join("app/.claude/skills/deploy");
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &link).unwrap();
+
+    let report = plan_apply(&w.env, &w.scope, &take_over()).unwrap();
+    let row = deploy_row(&report.drift);
+    assert_eq!(row.state, DriftState::Conflict, "{row:?}");
+    assert!(
+        !report
+            .plan
+            .ops
+            .iter()
+            .any(|op| format!("{:?}", op.op).contains("deploy")),
+        "nothing is planned for a refused item: {:?}",
+        report.plan.ops
+    );
+    apply::execute(&w.env, &report.plan, None).unwrap();
+    assert_eq!(
+        fs::read_to_string(canonical.join("SKILL.md")).unwrap(),
+        "the tool that came before"
+    );
+    assert!(!trashed(&w.env.trash_dir()));
+}
+
+/// The same refusal on the ordinary path: a blocked declaration must not
+/// leave a rendered canonical tree behind that nothing recorded, which no
+/// lock, no verify and no orphan sweep would ever reach.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_blocked_declaration_leaves_no_tree_nothing_recorded() {
+    let w = linking_world();
+    let position = w.home.join("app/.claude/skills/deploy");
+    fs::create_dir_all(&position).unwrap();
+    fs::write(position.join("SKILL.md"), "the tool that came before").unwrap();
+
+    let report = audit(&w.env, &w.scope).unwrap();
+    assert_eq!(deploy_row(&report.drift).state, DriftState::Conflict);
+    apply::execute(&w.env, &report.plan, None).unwrap();
+    assert!(
+        !w.home.join("app/.agents/skills/deploy").exists(),
+        "a refused item wrote its canonical tree anyway"
+    );
+}
+
+/// A second tool declared over a shared tree one tool already installed.
+/// The bytes are kendex's own with the user's hands on them: the second
+/// tool's declaration has no record of its own to hold it, and without one
+/// the take-over would read the edit as a stranger's files and trash them.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_edit_under_one_tool_holds_when_another_tool_is_declared_over_it() {
+    let w = linking_world();
+    let report = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &report.plan, None).unwrap();
+
+    let canonical = w.home.join("app/.agents/skills/deploy/SKILL.md");
+    fs::write(
+        &canonical,
+        "---\nname: deploy\ndescription: ship it\n---\nMine.\n",
+    )
+    .unwrap();
+    declare_for(&w, "[\"claude\", \"codex\"]");
+
+    let report = plan_apply(&w.env, &w.scope, &take_over()).unwrap();
+    let row = deploy_row(&report.drift);
+    assert_eq!(row.state, DriftState::Conflict, "{row:?}");
+    assert_eq!(
+        row.cause,
+        Some(DriftCause::LocalEdit),
+        "an edit is an edit whichever tool is asking: {row:?}"
+    );
+    apply::execute(&w.env, &report.plan, None).unwrap();
+    assert!(
+        fs::read_to_string(&canonical).unwrap().contains("Mine."),
+        "the take-over trashed an edit the edit gate protects"
+    );
+    assert!(!trashed(&w.env.trash_dir()));
 }

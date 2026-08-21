@@ -23,9 +23,10 @@ pub(super) struct PlanSink<'a> {
     pub(super) written: &'a mut Written,
 }
 
-/// `owned` holds every path an earlier install wrote under another kind's
-/// name: a codex command lands as a skill tree, and the skill that later
-/// claims that name is replacing our own output, not adopting a stranger's.
+/// `owned` holds every position this scope's installs recorded writing —
+/// a codex command that landed as a skill tree, and the tree several
+/// harnesses share. A path in it is ours to replace whichever entry holds
+/// it now, and never a stranger's to refuse or to take over.
 pub(super) fn plan_item(
     env: &Env,
     item: &Desired,
@@ -76,17 +77,26 @@ pub(super) fn plan_item(
         locked: existing.is_some(),
         replace_unmanaged,
     };
+    // A refusal plans nothing at all. The artifact planners write ops as
+    // they go and only learn of a refusal further in — a tree whose harness
+    // link turns out to be a stranger's, say — so what they staged for this
+    // item comes back off before the conflict row goes out. Leaving it
+    // would apply half an item nothing recorded.
+    let staged = ops.len();
+    written.start_item();
     let planned = match &item.artifact {
-        Artifact::File { .. } => plan_file(env, scope, item, claim, ops),
+        Artifact::File { .. } => plan_file(env, scope, item, claim, owned, ops),
         Artifact::Tree { .. } => plan_tree(env, item, claim, owned, written, ops),
         Artifact::Registration { .. } => {
-            plan_registration(env, scope, item, claim, ops, config_edits)
+            plan_registration(env, scope, item, claim, owned, ops, config_edits)
         }
     }?;
     let cause = matches!(planned, Planned::Unmanaged(_)).then_some(DriftCause::UnmanagedContent);
     let dirty = !matches!(planned, Planned::Clean);
     match planned {
         Planned::Conflict(detail) | Planned::Unmanaged(detail) => {
+            ops.truncate(staged);
+            written.undo_item();
             let mut conflict = row(DriftState::Conflict, detail);
             conflict.cause = cause;
             drift.push(conflict);
@@ -172,12 +182,28 @@ pub(super) struct Claim {
     pub(super) replace_unmanaged: bool,
 }
 
+impl Claim {
+    /// Whether the bytes at this position are kendex's own: this
+    /// installation's record, or any other install that wrote here.
+    pub(super) fn owns(&self, path: &std::path::Path, owned: &BTreeSet<PathBuf>) -> bool {
+        self.locked || owned.contains(path)
+    }
+}
+
 /// The refusal, naming both ways out. Neither is a command line: the app
 /// offers them as actions and the CLI spells them as verbs, and a drift row
 /// that hard-coded one surface's phrasing would be wrong on the other.
-pub(super) fn unmanaged(path: &std::path::Path) -> Planned {
+///
+/// Adoption is offered only for the kinds it can take. Naming it for a kind
+/// `adopt` refuses would send the reader to a command that errors, which is
+/// the same dead end this message exists to close.
+pub(super) fn unmanaged(item: &Desired, path: &std::path::Path) -> Planned {
+    let keep = match super::adopt::supports(item.kind) {
+        true => "adopt them to keep what is there",
+        false => "move them somewhere else to keep them",
+    };
     Planned::Unmanaged(format!(
-        "{} already holds files kendex did not write — adopt them to keep what is there, or replace them with what you declared",
+        "{} already holds files kendex did not write — {keep}, or replace them with what you declared",
         path.display()
     ))
 }
@@ -187,11 +213,13 @@ pub(super) fn unmanaged(path: &std::path::Path) -> Planned {
 /// check — unrelated keys in those shared files are never read as ours.
 /// Edits that would change the file go to the per-file collector, not
 /// straight to ops.
+#[allow(clippy::too_many_arguments)]
 fn plan_registration(
     env: &Env,
     scope: &Scope,
     item: &Desired,
     claim: Claim,
+    owned: &BTreeSet<PathBuf>,
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut ConfigEditPlan,
 ) -> Result<Planned> {
@@ -216,7 +244,7 @@ fn plan_registration(
         }
     }
     let mut planned = match script {
-        Some((path, bytes)) => plan_written_file(env, scope, item, path, bytes, claim, ops)?,
+        Some((path, bytes)) => plan_written_file(env, scope, item, path, bytes, claim, owned, ops)?,
         None => Planned::Clean,
     };
     if matches!(planned, Planned::Conflict(_) | Planned::Unmanaged(_)) {

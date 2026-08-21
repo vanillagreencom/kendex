@@ -37,8 +37,8 @@ pub struct ApplyArgs {
     /// Overwrite installations you edited by hand
     #[arg(long)]
     discard_edits: bool,
-    /// Replace files kendex did not write that sit where a declared item
-    /// installs — the old files move to the trash
+    /// Replace files kendex did not write, wherever a declared item
+    /// installs in this scope — the old files move to the trash
     #[arg(long)]
     replace_unmanaged: bool,
 }

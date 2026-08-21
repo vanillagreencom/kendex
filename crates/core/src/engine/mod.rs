@@ -77,7 +77,7 @@ use scope_writes::{
 };
 pub use set_change::{KeptInstall, SetChange, SetDirection};
 use set_change::{kept_members, set_changes};
-pub(crate) use unmanaged::blocked_by_content;
+pub(crate) use unmanaged::declared_over_existing_files;
 use unmanaged::unmanaged_rows;
 
 mod report_types;
@@ -125,13 +125,16 @@ pub fn plan_scope(
 
     plan_manifest_write(env, scope, repo_moved, manifest, &state, &mut ops)?;
 
-    // What earlier installs put on disk under another kind's name. A path
-    // one of them wrote is ours to replace, whichever entry holds it now.
-    let emitted_paths: BTreeSet<PathBuf> = lock
+    // Every position this scope's installs recorded writing — including the
+    // ones an earlier install wrote under another kind's name, and the ones
+    // several harnesses share. Ownership is a property of the path, not of
+    // the entry asking about it (invariant 6): read per key, one harness
+    // would call another harness's copy of the same tree a stranger's, and
+    // the take-over would then be free to destroy it.
+    let owned_paths: BTreeSet<PathBuf> = lock
         .entries
         .values()
-        .filter_map(|entry| entry.emitted.as_ref())
-        .flat_map(|emitted| emitted.paths.iter().cloned())
+        .flat_map(|entry| owned::installed(env, scope, entry).files)
         .collect();
 
     plan_pass::plan_items(
@@ -140,7 +143,7 @@ pub fn plan_scope(
         scope,
         lock,
         options,
-        &emitted_paths,
+        &owned_paths,
         &mut drift,
         &mut ops,
         &mut config_edits,

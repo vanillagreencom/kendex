@@ -23,6 +23,15 @@ use crate::source::local_source_root;
 /// sharing with kendex's copy as canonical; anything else a link points at
 /// stays a conflict, never a clobber target; broken symlink → nothing to
 /// adopt, the follow-up apply recreates from declaration.
+/// The kinds adoption can take. A declaration built around content already
+/// on disk needs somewhere in the local source to put that content, and
+/// only these two have one — the same two the local-source match below
+/// takes. Read wherever a refusal offers adoption as a way out, so no
+/// message ever names an action that would error.
+pub fn supports(kind: ItemKind) -> bool {
+    matches!(kind, ItemKind::Agent | ItemKind::Skill)
+}
+
 pub fn adopt(
     env: &Env,
     scope: &Scope,

@@ -52,18 +52,17 @@ pub(super) fn plan_tree(
     let mut result = Planned::Clean;
     if disk.as_deref() != Some(wanted.as_str()) {
         let unowned = disk.is_some()
-            && !claim.locked
-            && !written.canonicals.contains(canonical)
-            && !owned.contains(canonical);
+            && !claim.owns(canonical, owned)
+            && !written.canonicals.contains(canonical);
         if unowned && !claim.replace_unmanaged {
-            return Ok(unmanaged(canonical));
+            return Ok(unmanaged(item, canonical));
         }
         result = match (disk.is_some() || collapsed.is_some(), unowned) {
             (_, true) => Planned::Drift(DriftState::Missing, TAKEN_OVER.into()),
             (true, false) => Planned::Drift(DriftState::Stale, "newer content is available".into()),
             (false, false) => Planned::Drift(DriftState::Missing, "not installed yet".into()),
         };
-        if written.canonicals.insert(canonical.clone()) {
+        if written.claim_canonical(canonical) {
             // Taken over, the tree goes to the trash whole rather than
             // being written through: what kendex did not write is kept
             // recoverable, never quietly merged under the new render.
@@ -96,6 +95,50 @@ pub(super) fn plan_tree(
 pub(super) struct Written {
     pub(super) canonicals: BTreeSet<PathBuf>,
     links: BTreeSet<PathBuf>,
+    /// What the item being planned right now claimed. A refusal is reached
+    /// after the tree half has already claimed its position, and a claim
+    /// left standing for an item that plans nothing would silently drop the
+    /// next harness's install of the same tree.
+    claimed: Vec<Claimed>,
+}
+
+enum Claimed {
+    Canonical(PathBuf),
+    Link(PathBuf),
+}
+
+impl Written {
+    /// Start one item's pass. What it claims from here is undone together.
+    pub(super) fn start_item(&mut self) {
+        self.claimed.clear();
+    }
+
+    /// Take back everything the item just claimed — it plans nothing.
+    pub(super) fn undo_item(&mut self) {
+        for claimed in self.claimed.drain(..) {
+            match claimed {
+                Claimed::Canonical(path) => self.canonicals.remove(&path),
+                Claimed::Link(path) => self.links.remove(&path),
+            };
+        }
+    }
+
+    /// Whether this pass is the one that claims the position.
+    fn claim_canonical(&mut self, path: &Path) -> bool {
+        let first = self.canonicals.insert(path.to_path_buf());
+        if first {
+            self.claimed.push(Claimed::Canonical(path.to_path_buf()));
+        }
+        first
+    }
+
+    fn claim_link(&mut self, path: &Path) -> bool {
+        let first = self.links.insert(path.to_path_buf());
+        if first {
+            self.claimed.push(Claimed::Link(path.to_path_buf()));
+        }
+        first
+    }
 }
 
 /// A link where the tree belongs is this installation's own collapse onto a
@@ -187,7 +230,7 @@ fn plan_link(
                 points_to.display()
             )));
         }
-        if written.links.insert(link.to_path_buf()) {
+        if written.claim_link(link) {
             ops.push(PlannedOp {
                 description: format!(
                     "Drop {}'s link to the app's old folder",
@@ -221,11 +264,11 @@ fn plan_link(
         ));
     }
     let diverged = link.exists();
-    let unowned = diverged && !claim.locked && !owned.contains(link);
+    let unowned = diverged && !claim.owns(link, owned);
     if unowned && !claim.replace_unmanaged {
-        return Ok(unmanaged(link));
+        return Ok(unmanaged(item, link));
     }
-    let first = written.links.insert(link.to_path_buf());
+    let first = written.claim_link(link);
     if diverged && first {
         let hash = match hash_tree(link) {
             Ok(hash) => hash,

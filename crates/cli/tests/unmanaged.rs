@@ -140,3 +140,41 @@ fn content_nothing_declares_is_named_by_apply_and_by_verify() {
     assert!(printed.contains("not managed:"), "{printed}");
     assert!(printed.contains("shadcn"), "{printed}");
 }
+
+/// verify is the CI-facing gate: its exit code answers about drift and
+/// nothing else. Gathering unmanaged rows made it plan scopes it used to
+/// skip, and a scope whose manifest cannot be planned against — malformed
+/// TOML here — turned a clean run into a failed build.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_unplannable_scope_with_nothing_installed_does_not_fail_the_run() {
+    let (tmp, project) = home_with_project();
+    let home = tmp.path();
+    migrating_project(home);
+    assert!(
+        kendex(home, &project, &["apply", "-y", "--replace-unmanaged"])
+            .status
+            .success()
+    );
+
+    // A global manifest this build cannot read, and nothing installed
+    // globally to check against it.
+    #[cfg(target_os = "macos")]
+    let config = home.join("Library/Application Support/kendex");
+    #[cfg(not(target_os = "macos"))]
+    let config = home.join(".config/kendex");
+    fs::create_dir_all(&config).unwrap();
+    fs::write(config.join("kendex.toml"), "schema = 5\n[skills.\n").unwrap();
+
+    let verified = kendex(home, &project, &["verify", "--scope", "all"]);
+    let printed = said(&verified);
+    assert!(
+        printed.contains("1 checked, 1 OK, 0 failed"),
+        "the summary still prints: {printed}"
+    );
+    assert!(printed.contains("not checked"), "and says why: {printed}");
+    assert!(
+        verified.status.success(),
+        "nothing drifted, so nothing failed: {printed}"
+    );
+}

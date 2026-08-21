@@ -73,6 +73,42 @@ fn observed_artifact_hash(artifact: &Artifact) -> Option<String> {
     here(path).or_else(|| here(&disabled_sibling(path)))
 }
 
+/// One tool's install of a shared artifact, edited by hand, and a second
+/// tool now declared over the same physical position. Nothing is recorded
+/// for the second installation, so its own record cannot hold it — but the
+/// bytes are kendex's own output with the user's hands on them, and the
+/// second tool is not the one to decide their fate. Without this the edit
+/// protection would read as an unmanaged position: a refusal calling our
+/// own output a stranger's, and a take-over free to trash it.
+fn hold_shared_edit(
+    env: &Env,
+    scope: &Scope,
+    lock: &Lock,
+    item: &Desired,
+    here: &[PathBuf],
+    sink: &mut PlanSink,
+) -> bool {
+    let shared = lock.entries.values().any(|entry| {
+        super::owned::installed(env, scope, entry)
+            .files
+            .iter()
+            .any(|path| here.contains(path))
+    });
+    if !shared {
+        return false;
+    }
+    sink.drift.push(DriftRow {
+        kind: item.kind,
+        name: item.name.clone(),
+        harness: item.harness,
+        scope: scope.clone(),
+        state: DriftState::Conflict,
+        detail: "its files were edited on disk after another tool installed them — keep the edits as a fork, or apply with edits discarded".into(),
+        cause: Some(DriftCause::LocalEdit),
+    });
+    true
+}
+
 /// The `.disabled` counterpart of a path — the toggled name a disabled
 /// installation keeps its bytes under.
 fn disabled_sibling(path: &std::path::Path) -> std::path::PathBuf {
@@ -133,9 +169,6 @@ pub(super) fn hold_local_edit(
     lock: &Lock,
     sink: &mut PlanSink,
 ) -> bool {
-    let Some(entry) = lock.entries.get(&item.key) else {
-        return false;
-    };
     let Some(disk) = observed_artifact_hash(&item.artifact) else {
         return false;
     };
@@ -153,6 +186,9 @@ pub(super) fn hold_local_edit(
     if wrote_here(env, scope, lock, &here, &disk) {
         return false;
     }
+    let Some(entry) = lock.entries.get(&item.key) else {
+        return hold_shared_edit(env, scope, lock, item, &here, sink);
+    };
     let hash_moved = entry.source_hash != item.hash;
     let cause = match (&entry.rendered_hash, hash_moved) {
         (Some(_), true) => DriftCause::Both,
