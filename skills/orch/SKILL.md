@@ -27,7 +27,7 @@ Load `github` and `worktree` before anything else; a Linear work item also needs
 
 Get the issue → dev implements → review → dev fixes blockers → re-review → push PR → review gate → shepherd to merge.
 
-Four rules bound it:
+Five rules bound it:
 
 - **Bounded loops.** A fix round addresses blockers. Minor suggestions never trigger another cycle; re-review narrows to the fix diff and the domains it touched; two consecutive rounds that surface no new blocker end the review.
 - **No edge-case churn.** A finding that cannot affect real usage is declined with one line of rationale — not fixed in-PR, not filed. Issue creation is for critical follow-ups only, never the default disposal path for review output.
