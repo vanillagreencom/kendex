@@ -161,6 +161,14 @@ pub struct LockEntry {
     /// anything looked at it.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub reasons: BTreeSet<Reason>,
+    /// What the catalog publishing this item had already reviewed and
+    /// settled about it when the apply ran, bound to the bytes the apply
+    /// wrote. The audit reads what is on disk and has no catalog to ask, so
+    /// without this an item the gate let through would come back as
+    /// unreviewed the moment anyone looked at it. Bound like any other
+    /// review: edit the install and it stops applying.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author_review: Option<crate::quality::reviews::SafetyReview>,
 }
 
 /// One hook entry as a harness's registry keys it: event plus command.

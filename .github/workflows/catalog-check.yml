@@ -63,11 +63,14 @@ jobs:
       - name: Build the checker
         run: cargo build --release --locked -p kendex-cli
         working-directory: kendex
+      # This repository is the default marketplace: everyone who installs
+      # from it inherits whatever its safety pass still finds, so its own
+      # run is always strict. Callers choose for themselves.
       - name: Validate the catalog
         run: |
           kendex/target/release/kendex check \
             --catalog "catalog/${{ inputs.path || '.' }}" \
-            ${{ (inputs.strict && '--strict') || '' }}
+            ${{ ((inputs.strict || github.event_name != 'workflow_call') && '--strict') || '' }}
 
   # The one job that lets somebody other than kendex read kendex's output.
   # Freely installable without an account or an API key: OpenCode, Gemini

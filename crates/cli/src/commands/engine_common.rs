@@ -1,6 +1,7 @@
 use std::io::{IsTerminal, Write};
 
 use kendex_core::engine::EngineReport;
+use kendex_core::engine::decisions::DecisionState;
 use kendex_core::env::Env;
 use kendex_core::error::CoreError;
 use kendex_core::model::HarnessId;
@@ -104,14 +105,27 @@ fn print_safety_rows(
             row.harness.display_name(),
             row.safety.score
         ));
-        for finding in &row.findings {
+        for (finding, decision) in row.findings.iter().zip(&row.decisions) {
             say(&format!(
                 "  [{}] {}: {}",
                 finding.severity.name(),
                 finding.location,
                 finding.message
             ));
-            say(&format!("    fix: {}", finding.remediation));
+            // A finding the publisher already ruled on is still printed, and
+            // has to say so: a score of 100 beside seven criticals with no
+            // word about who settled them reads as a bug in the checker.
+            match &decision.state {
+                DecisionState::AuthorDismissed {
+                    reason,
+                    dismissed_at,
+                    source,
+                } => say(&format!(
+                    "    {source} reviewed this {dismissed_at} and recorded it as {} — it is reported, and does not count",
+                    reason.name()
+                )),
+                _ => say(&format!("    fix: {}", finding.remediation)),
+            }
         }
         print_skipped(row);
         if let Some(review_hash) = &row.review_hash

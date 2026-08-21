@@ -58,6 +58,17 @@ export function settledCount(rows: ItemSafety[]): number {
     .filter((occurrence) => occurrence.decision.state.state !== "open").length;
 }
 
+/** Of those, the ones the publishing catalog settled rather than the person
+ *  reading this. Counted apart because "you decided this" and "whoever you
+ *  installed it from decided this" are not the same sentence. */
+export function authorSettledCount(rows: ItemSafety[]): number {
+  return rows
+    .flatMap(occurrences)
+    .filter(
+      (occurrence) => occurrence.decision.state.state === "author-dismissed",
+    ).length;
+}
+
 export interface EvidenceItem {
   kind: ItemKind;
   name: string;

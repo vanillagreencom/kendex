@@ -8,6 +8,7 @@ use crate::hash::{hash_bytes, hash_files};
 use crate::lock::Lock;
 use crate::manifest::{ItemDecl, Manifest, Method};
 use crate::model::{HarnessId, ItemKind, Scope};
+use crate::quality::reviews::Dismissal;
 use crate::source::{SourceState, find_item};
 use crate::source_read::SealedSource;
 
@@ -40,6 +41,11 @@ pub struct Desired {
     pub emitted: Option<crate::lock::EmittedArtifact>,
     /// Every reason this installation is wanted, derived fresh each pass.
     pub reasons: BTreeSet<crate::lock::Reason>,
+    /// What this item's own catalog already settled about it, by finding
+    /// fingerprint, re-checked against the bytes this pass fetched. The
+    /// gate stops counting these and the lock records them; every one is
+    /// still reported, named as the author's.
+    pub author_dismissed: BTreeMap<String, Dismissal>,
     pub artifact: Artifact,
 }
 
@@ -237,6 +243,8 @@ fn compute(env: &Env, scope: &Scope, manifest: &Manifest, lock: &Lock) -> Result
                 continue;
             };
             state.processed.insert((kind, name.clone()));
+            let author_dismissed =
+                crate::check_catalog::dismissals::for_item(&sealed, kind, name, &item_path);
             let mut harnesses = planned.harnesses.clone();
             // Every tool this is declared for is one that holds no such kind
             // here. Nothing installs, and silence would read as success.
@@ -270,6 +278,7 @@ fn compute(env: &Env, scope: &Scope, manifest: &Manifest, lock: &Lock) -> Result
                 source_commit: source_commit.as_deref(),
                 harnesses,
                 reasons: &reasons,
+                author_dismissed,
             };
             let outcome = match kind {
                 ItemKind::Skill => desired_skill(&ctx, &mut state),
@@ -341,6 +350,7 @@ pub(super) struct ItemCtx<'a> {
     pub(super) source_commit: Option<&'a str>,
     pub(super) harnesses: Vec<HarnessId>,
     reasons: &'a BTreeMap<HarnessId, BTreeSet<crate::lock::Reason>>,
+    pub(super) author_dismissed: BTreeMap<String, Dismissal>,
 }
 
 impl ItemCtx<'_> {

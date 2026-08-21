@@ -46,6 +46,7 @@ fn lock_round_trips_and_missing_file_is_empty() {
                     },
                 },
             ]),
+            author_review: None,
         },
     );
     save(&path, &lock).unwrap();

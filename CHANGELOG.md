@@ -45,10 +45,12 @@ changes carry a **Breaking** call-out with their migration note inline.
   `kendex dismiss --catalog <dir> --reason intended '<token>'` records the
   decision in a committed `kendex-reviews.toml`, and `kendex check --catalog`
   stops holding the catalog back for that exact finding on that exact
-  content. Any edit to the item brings the hold back, dismissed findings are
-  still reported, and installs on other machines are unaffected — a catalog
-  can never pre-approve its own content for consumers. `check --catalog`
-  prints the token beside each blocking finding.
+  content. The decision reaches whoever installs the item too: the finding
+  stops counting for them, is still shown, and is labelled with the
+  publisher's name and reason so it is clear whose judgement it is. Any
+  edit to the item — in the catalog or on the installed copy — brings the
+  hold back. `check --catalog` prints the token beside each blocking
+  finding.
 
 ### Changed
 
@@ -104,6 +106,13 @@ changes carry a **Breaking** call-out with their migration note inline.
   kendex ships is installed, so launchers and docks match the running window
   to kendex and draw a sharp icon at any size. Both channels that write the
   entry are fixed: `curl … | sh` and `yay -S kendex-bin`.
+- Installing a security-adjacent package from a marketplace no longer held
+  it back over findings the publisher had already reviewed. A skill that
+  must name the flags it guards against — `growth-guards` and
+  `--no-verify`, say — installed with seven findings and a warning on every
+  session, in a fresh install of kendex's own default catalog. The
+  publisher's recorded review now travels with the package, and the default
+  catalog ships nothing its own check has not settled.
 - On Linux, a helper command that ran past its time limit could take
   unrelated processes down with it: Ubuntu's `kill` misreads the negative
   process-group argument kendex passed, and for some process ids that

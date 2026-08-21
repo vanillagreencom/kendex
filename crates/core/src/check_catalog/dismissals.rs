@@ -12,11 +12,18 @@
 //! complete content bytes and the rule set, with each dismissed finding's
 //! fingerprint beneath it. Editing the item makes every record for it
 //! stale and the hold comes back — a dismissal can never grow into a
-//! standing exemption. Nothing here touches the install side: a consumer's
-//! kendex never reads a catalog's committed reviews, because a catalog
-//! must not be able to pre-approve its own content on someone else's
-//! machine. Dismissed findings are still reported; they stop counting, not
-//! existing.
+//! standing exemption. Dismissed findings are still reported; they stop
+//! counting, not existing.
+//!
+//! A record travels with the content it is about. The plan re-reads it out
+//! of the source it actually fetched and re-checks it against those bytes,
+//! so an author can only settle findings on the exact item they published,
+//! and every dismissal they carry is shown to the person installing, named
+//! as the author's and with the author's reason. That is a real trust grant
+//! to whoever a person subscribes to, and it is the one that makes a
+//! committed review worth committing: without it every consumer of a
+//! security-adjacent skill re-answers a question its author already
+//! answered, with nothing on their machine that could tell them so.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -77,13 +84,45 @@ pub fn content_hash(sealed: &SealedSource, path: &Path) -> Option<String> {
 /// when the snapshot matches the content in front of us, nothing when the
 /// content or the rules have moved on.
 pub fn active(review: Option<&SafetyReview>, content_hash: Option<&str>) -> BTreeSet<String> {
+    live(review, content_hash).into_keys().collect()
+}
+
+/// The same answer with each record's reason and date, for the side that
+/// has to say who settled a finding and why.
+pub fn live(
+    review: Option<&SafetyReview>,
+    content_hash: Option<&str>,
+) -> BTreeMap<String, Dismissal> {
     let Some(review) = review else {
-        return BTreeSet::new();
+        return BTreeMap::new();
     };
     match review.stale_why(content_hash) {
-        Some(_) => BTreeSet::new(),
-        None => review.dismissed.keys().cloned().collect(),
+        Some(_) => BTreeMap::new(),
+        None => review.dismissed.clone(),
     }
+}
+
+/// What one item's own catalog has already settled about it, re-checked
+/// against the bytes in front of us.
+///
+/// The record is the author's, and it can only ever speak for the exact
+/// content it was committed against: the hash comes from the source being
+/// read, never from the file claiming the dismissal. A catalog whose
+/// reviews file cannot be read settles nothing — an unreadable claim is not
+/// a review, and every finding stays open.
+pub fn for_item(
+    sealed: &SealedSource,
+    kind: ItemKind,
+    name: &str,
+    item_path: &Path,
+) -> BTreeMap<String, Dismissal> {
+    let Ok(reviews) = load(sealed) else {
+        return BTreeMap::new();
+    };
+    live(
+        reviews.get(&review_key(kind, name)),
+        content_hash(sealed, item_path).as_deref(),
+    )
 }
 
 /// Record that these findings on this content are not problems. The same

@@ -7,8 +7,10 @@
 export const DECISION_ZONE_TITLE = "Needs your decision";
 export const cleanSummaryLead = (total: number): string =>
   `${total} item${total === 1 ? "" : "s"}, nothing to report`;
-export const settledSummaryLead = (count: number): string =>
-  `${count} finding${count === 1 ? "" : "s"} already decided`;
+export const settledSummaryLead = (count: number, byAuthor = 0): string => {
+  const noun = `${count} finding${count === 1 ? "" : "s"} already decided`;
+  return byAuthor > 0 ? `${noun} (${byAuthor} by the publisher)` : noun;
+};
 
 export const SAFETY_HELP =
   "Strict catches more, and flags more things that turn out fine. Lenient stops only the riskiest.";

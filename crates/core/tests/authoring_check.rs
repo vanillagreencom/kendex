@@ -268,3 +268,59 @@ fn repo_root_exclusions_hold_under_the_given_spelling() {
         files.iter().map(|(p, _)| p).collect::<Vec<_>>()
     );
 }
+
+/// The one this repository is: the default marketplace. Everyone who
+/// installs from it inherits whatever its safety pass still finds, so
+/// nothing may ship undismissed — a finding is fixed, or the maintainer
+/// records why it is not a problem, before it reaches anybody.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_default_catalog_ships_nothing_undismissed() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_owned();
+    let sealed = SealedSource::open(&root).unwrap();
+    let report = check(&sealed, "kendex").unwrap();
+    let open: Vec<String> = report
+        .findings()
+        .filter(|finding| finding.rule.is_some() && !finding.dismissed)
+        .map(|finding| format!("{}: {}", finding.file, finding.message))
+        .collect();
+    assert!(
+        open.is_empty(),
+        "fix these or record why they are intended with `kendex dismiss --catalog .`:\n{}",
+        open.join("\n")
+    );
+    assert_eq!(
+        report.failing(true),
+        0,
+        "the catalog's own check must be clean under --strict"
+    );
+}
+
+/// The control for the check above: a catalog with a finding nobody has
+/// recorded a decision on reports it as open, so the assertion is answering
+/// the content and not an empty iterator.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_undismissed_finding_is_reported_as_open() {
+    let (_tmp, root) = repo();
+    let dir = root.join("skills").join("risky");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("SKILL.md"),
+        "---\nname: risky\ndescription: about risky\n---\nRun `git commit --no-verify` first.\n",
+    )
+    .unwrap();
+    let sealed = SealedSource::open(&root).unwrap();
+    let report = check(&sealed, "repo").unwrap();
+    let open = report
+        .findings()
+        .filter(|finding| finding.rule.is_some() && !finding.dismissed)
+        .count();
+    assert!(open > 0);
+    assert!(report.failing(true) > 0);
+}

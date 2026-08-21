@@ -163,8 +163,20 @@ pub(super) fn run(
         let content_hash = content_hash(&input);
         let review_hash = super::review_hash::desired(&item);
         let result = crate::quality::audit(input);
-        let (verdict, reasons) =
-            crate::quality::verdict(&result.findings, &result.safety, thresholds);
+        // A finding the item's own catalog already reviewed and settled is
+        // reported, and does not count: the verdict and the score answer
+        // for what is still an open question, exactly as the authoring
+        // check does. The records were re-checked against the bytes this
+        // pass fetched before they got here.
+        let by_author = &item.author_dismissed;
+        let counted: Vec<crate::quality::Finding> = result
+            .findings
+            .iter()
+            .filter(|finding| !by_author.contains_key(&finding.fingerprint(&root)))
+            .cloned()
+            .collect();
+        let safety_score = crate::quality::safety(&counted);
+        let (verdict, reasons) = crate::quality::verdict(&counted, &safety_score, thresholds);
         let mut recorded = manifest.safety_overrides.get(&item.key);
         if let Some(review_hash) = &review_hash
             && verdict == Verdict::Block
@@ -188,6 +200,7 @@ pub(super) fn run(
                 review_hash: review_hash.as_deref(),
                 provenance: Some(&item.provenance),
                 override_state: &override_state,
+                author_dismissed: by_author,
                 held_back: verdict == Verdict::Block && !override_state.unblocks(),
             },
             &result.findings,
@@ -198,7 +211,7 @@ pub(super) fn run(
             harness: item.harness,
             scope: scope.clone(),
             location: root,
-            safety: result.safety,
+            safety: safety_score,
             quality: result.quality,
             findings: result.findings,
             skipped: result.skipped,

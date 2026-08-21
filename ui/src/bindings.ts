@@ -730,14 +730,21 @@ export type DecisionState_Deserialize =
  *  Nobody has ruled on this finding for this content. `earlier` says why
  *  a previous ruling no longer applies, when there was one.
  */
-({ state: "open"; earlier: string | null }) & { dismissedAt?: never; grantedAt?: never; reason?: never } | 
+({ state: "open"; earlier: string | null }) & { dismissedAt?: never; grantedAt?: never; reason?: never; source?: never } | 
 /**  Judged not to be a problem, for exactly this content. */
-({ state: "dismissed"; reason: DismissReason; dismissedAt: string }) & { earlier?: never; grantedAt?: never } | 
+({ state: "dismissed"; reason: DismissReason; dismissedAt: string }) & { earlier?: never; grantedAt?: never; source?: never } | 
+/**
+ *  The catalog that publishes this content committed a review saying
+ *  this finding is not a problem, and that review still describes the
+ *  exact bytes we fetched. It is reported, not hidden: `source` names
+ *  whose judgement this is, so a person can weigh it.
+ */
+({ state: "author-dismissed"; reason: DismissReason; dismissedAt: string; source: string }) & { earlier?: never; grantedAt?: never } | 
 /**
  *  Covered by an acceptance of the whole item: every finding on it was
  *  read and the item installed anyway.
  */
-({ state: "accepted"; grantedAt: string }) & { dismissedAt?: never; earlier?: never; reason?: never };
+({ state: "accepted"; grantedAt: string }) & { dismissedAt?: never; earlier?: never; reason?: never; source?: never };
 
 /**
  *  What is recorded about one finding, read against the content in front
@@ -748,14 +755,21 @@ export type DecisionState_Serialize =
  *  Nobody has ruled on this finding for this content. `earlier` says why
  *  a previous ruling no longer applies, when there was one.
  */
-({ state: "open"; earlier?: string | null }) & { dismissedAt?: never; grantedAt?: never; reason?: never } | 
+({ state: "open"; earlier?: string | null }) & { dismissedAt?: never; grantedAt?: never; reason?: never; source?: never } | 
 /**  Judged not to be a problem, for exactly this content. */
-({ state: "dismissed"; reason: DismissReason; dismissedAt: string }) & { earlier?: never; grantedAt?: never } | 
+({ state: "dismissed"; reason: DismissReason; dismissedAt: string }) & { earlier?: never; grantedAt?: never; source?: never } | 
+/**
+ *  The catalog that publishes this content committed a review saying
+ *  this finding is not a problem, and that review still describes the
+ *  exact bytes we fetched. It is reported, not hidden: `source` names
+ *  whose judgement this is, so a person can weigh it.
+ */
+({ state: "author-dismissed"; reason: DismissReason; dismissedAt: string; source: string }) & { earlier?: never; grantedAt?: never } | 
 /**
  *  Covered by an acceptance of the whole item: every finding on it was
  *  read and the item installed anyway.
  */
-({ state: "accepted"; grantedAt: string }) & { dismissedAt?: never; earlier?: never; reason?: never };
+({ state: "accepted"; grantedAt: string }) & { dismissedAt?: never; earlier?: never; reason?: never; source?: never };
 
 /**
  *  A scope whose decisions could not be read, carried as data beside the

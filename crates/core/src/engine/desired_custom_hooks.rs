@@ -5,7 +5,7 @@
 //! and the downgrade is a warning here; the two never both fire for one
 //! harness, or the same rule would exist twice with different strengths.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::desired::{Desired, DesiredState};
 use crate::env::Env;
@@ -91,6 +91,9 @@ pub(super) fn desired_custom_hooks(
                 upstream_skills: None,
                 emitted: None,
                 reasons: BTreeSet::from([Reason::Requested]),
+                // The person wrote this hook themselves; no catalog author
+                // stands behind it.
+                author_dismissed: BTreeMap::new(),
                 artifact,
             });
         }

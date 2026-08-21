@@ -19,6 +19,7 @@ use specta::Type;
 use crate::model::{HarnessId, ItemKind};
 
 pub mod dimensions;
+mod finding;
 mod homoglyph;
 pub mod observe;
 pub mod overrides;
@@ -30,6 +31,7 @@ mod secret;
 mod text;
 
 pub use dimensions::{AntiPattern, DimensionScore, QualityScore};
+pub use finding::Finding;
 pub use score::{Deduction, SafetyScore, Thresholds, Verdict, safety, verdict};
 pub use secret::{fingerprint_secret, redact};
 pub use text::{Line, Normalization};
@@ -82,49 +84,6 @@ impl Severity {
             Severity::Medium => "medium",
             Severity::Low => "low",
         }
-    }
-}
-
-/// One safety problem, where it is, and what to do about it. The message
-/// never holds a matched secret — only its fingerprint (invariant of
-/// `secret::fingerprint_secret`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct Finding {
-    pub rule: String,
-    pub severity: Severity,
-    /// The file and line, or the config key that holds the entry.
-    pub location: String,
-    pub message: String,
-    pub remediation: String,
-}
-
-impl Finding {
-    /// This exact finding's identity. An override binds to a set of these,
-    /// so a review of one problem can never wave through a different one
-    /// that appears later at the same place.
-    /// `root` is the item's own location, stripped from the finding's so
-    /// the print names the file *within* the item. The gate reads a skill
-    /// at its canonical tree and the audit reads it back through the
-    /// harness-native link — same bytes, two spellings of the path — and a
-    /// print that kept the absolute path would call every accepted
-    /// symlink-method install a different set of findings.
-    pub fn fingerprint(&self, root: &str) -> String {
-        let location = match self.location.strip_prefix(root) {
-            Some(rest) => rest.trim_start_matches('/'),
-            None => self.location.as_str(),
-        };
-        let material = format!(
-            "{}|{}|{}|{}",
-            self.rule,
-            self.severity.name(),
-            location,
-            self.message
-        );
-        crate::hash::hash_bytes(material.as_bytes())
-            .chars()
-            .take(16)
-            .collect()
     }
 }
 

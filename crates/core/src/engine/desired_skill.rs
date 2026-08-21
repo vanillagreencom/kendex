@@ -169,6 +169,7 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
                 upstream_skills: None,
                 emitted: None,
                 reasons: ctx.reasons_for(*harness),
+                author_dismissed: ctx.author_dismissed.clone(),
                 artifact: Artifact::Tree {
                     canonical: canonical.clone(),
                     files: variant.files.clone(),

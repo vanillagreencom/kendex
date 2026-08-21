@@ -49,6 +49,22 @@ pub(super) fn desired(item: &Desired) -> Option<String> {
     Some(seal(item.kind, &inner))
 }
 
+/// The catalog author's settled findings, bound to the bytes this plan
+/// writes — what the lock records so the audit can read them back without a
+/// catalog to ask. `None` where they settled nothing, or where the content
+/// has no identity a review could bind to: an unbound record would go on
+/// speaking for whatever landed there next.
+pub(super) fn author_review(item: &Desired) -> Option<crate::quality::reviews::SafetyReview> {
+    if item.author_dismissed.is_empty() {
+        return None;
+    }
+    Some(crate::quality::reviews::SafetyReview {
+        review_hash: desired(item)?,
+        ruleset: crate::quality::RULESET_VERSION,
+        dismissed: item.author_dismissed.clone(),
+    })
+}
+
 /// What is installed here right now, read back off disk.
 pub(super) fn observed(item: &ObservedItem) -> Option<String> {
     let inner = match item.kind {

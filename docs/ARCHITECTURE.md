@@ -816,12 +816,20 @@ lives in one capability table read by core and UI.
   `kendex-reviews.toml` at the catalog root (`check_catalog/dismissals.rs`):
   the same content-hash-bound dismissal records the install side keeps in a
   manifest, keyed `kind:name`, written by `dismiss --catalog` from the
-  tokens `check --catalog` prints. Only the authoring passes stop counting a
-  dismissed finding (still reported, marked); an install never reads a
-  catalog's own reviews, so a catalog cannot pre-approve itself on anyone
-  else's machine. Editing the item stales the record; the hold returns.
-- **The community directory is read like any remote: strictly, capped, and
-  honest about staleness.** `registry/` (core) consumes what
+  tokens `check --catalog` prints. A dismissed finding stops counting and
+  stays reported, marked — in the catalog's own passes and on the machines
+  that install from it. The record travels with the content: the plan
+  re-reads it out of the source it fetched and re-checks it against those
+  bytes, the apply writes it into the lock entry bound to the bytes it
+  wrote, and the audit reads it back from there, so an item the gate let
+  through does not return as unreviewed. Every one of them shows the
+  publisher's name and reason where the finding is printed, and editing
+  the item — in the catalog or on disk — stales the record and the hold
+  returns. Finding identity is deliberately non-positional (rule, file,
+  message, severity; `Finding::fingerprint`), because rendering moves
+  lines and a positional identity could never cross that boundary.
+- **The community directory is read like any remote: strictly, capped,
+  and honest about staleness.** `registry/` (core) consumes what
   `source/index.rs` producers feed kendex.ai: `index.rs` re-parses the
   site's schema-1 payload under the site's own caps (a spoofed registry
   cannot grow a row), refusing structural problems whole and dropping only

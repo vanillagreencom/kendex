@@ -3,7 +3,7 @@ import { RECORDED_DECISIONS_LINK } from "@/lib/copy-decisions";
 import { cleanSummaryLead, settledSummaryLead } from "@/lib/copy-safety";
 import { groupSkipped, groupWarnings } from "@/lib/group-notes";
 import { kindLabel, skipReasonShort } from "@/lib/labels";
-import { settledCount } from "@/lib/reviewable";
+import { authorSettledCount, settledCount } from "@/lib/reviewable";
 import { useNavStore } from "@/stores/nav";
 
 /**
@@ -52,9 +52,10 @@ export function ScopeFooter({
 }) {
   const goTo = useNavStore((s) => s.goTo);
   const decided = settledCount(settled);
+  const byAuthor = authorSettledCount(settled);
   const checked = [
     ...(clean.length > 0 ? [cleanSummaryLead(clean.length)] : []),
-    ...(decided > 0 ? [settledSummaryLead(decided)] : []),
+    ...(decided > 0 ? [settledSummaryLead(decided, byAuthor)] : []),
   ];
   const skipped = groupSkipped(clean).map((group) => {
     const noun = group.kind

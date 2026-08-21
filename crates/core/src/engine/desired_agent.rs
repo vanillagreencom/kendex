@@ -280,6 +280,7 @@ pub(super) fn desired_agent(
             upstream_skills: Some(skills.upstream_now.clone()),
             emitted: None,
             reasons: ctx.reasons_for(harness),
+            author_dismissed: ctx.author_dismissed.clone(),
             artifact: Artifact::File {
                 path: file,
                 bytes: rendered.text.into_bytes(),

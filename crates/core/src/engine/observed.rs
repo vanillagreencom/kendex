@@ -60,8 +60,6 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
         .zip(scored)
         .map(|(item, scored)| {
             let result = scored.result;
-            let (verdict, reasons) =
-                crate::quality::verdict(&result.findings, &result.safety, settings.safety);
             let key = crate::lock::entry_key(item.kind, &item.name, item.harness);
             let root = item.path.display().to_string();
             // Only the lock's word on where the bytes came from: what kendex
@@ -73,6 +71,15 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
                 .entries
                 .get(&key)
                 .map(|entry| entry.source_repo.clone());
+            let by_author = author_dismissed(&lock, item, scored.review.as_deref());
+            let counted: Vec<crate::quality::Finding> = result
+                .findings
+                .iter()
+                .filter(|finding| !by_author.contains_key(&finding.fingerprint(&root)))
+                .cloned()
+                .collect();
+            let safety = crate::quality::safety(&counted);
+            let (verdict, reasons) = crate::quality::verdict(&counted, &safety, settings.safety);
             let override_state = crate::quality::overrides::state(
                 manifest.safety_overrides.get(&key),
                 scored.review.as_deref(),
@@ -88,6 +95,7 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
                     review_hash: scored.review.as_deref(),
                     provenance: provenance.as_deref(),
                     override_state: &override_state,
+                    author_dismissed: &by_author,
                     held_back: verdict == crate::quality::Verdict::Block
                         && !override_state.unblocks(),
                 },
@@ -99,7 +107,7 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
                 harness: item.harness,
                 scope: item.scope.clone(),
                 location: root,
-                safety: result.safety,
+                safety,
                 quality: result.quality,
                 override_state,
                 findings: result.findings,
@@ -113,6 +121,30 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
             }
         })
         .collect())
+}
+
+/// What the item's catalog had settled when the apply ran, for the bytes in
+/// front of us now.
+///
+/// Keyed by the content, not by the installation: one shared skill tree is
+/// what several tools load, and each of them is scored as its own row while
+/// only the tool that was installed for has a lock entry. A record binds to
+/// bytes, so the same bytes are what it answers for — an edited install
+/// moves the hash and every record for it stops applying, which is the rule
+/// every other review answers to.
+fn author_dismissed(
+    lock: &crate::lock::Lock,
+    item: &crate::model::ObservedItem,
+    review_hash: Option<&str>,
+) -> std::collections::BTreeMap<String, crate::quality::reviews::Dismissal> {
+    lock.entries
+        .values()
+        .filter(|entry| entry.kind == item.kind && entry.name == item.name)
+        .map(|entry| {
+            crate::check_catalog::dismissals::live(entry.author_review.as_ref(), review_hash)
+        })
+        .find(|live| !live.is_empty())
+        .unwrap_or_default()
 }
 
 /// Every observation's score, one reading per distinct set of bytes, spread
