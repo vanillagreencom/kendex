@@ -2064,13 +2064,13 @@ RETRY_TIMEOUT_FLOOR=60
 # ignored the same TERM keeps running, unreached.
 KILL_AFTER=30
 
-# 124 is timeout's own report that the limit was reached. 137 is only a KILL,
-# and timeout passes it through whoever sent it — the grace after its TERM,
-# the OOM killer, anyone with the pid — so a run that reports it as a timeout
-# tells an operator to raise a limit that may never have been touched. Both
-# end the lane without an answer; only 124 may be called the deadline.
-hard_kill_reason() {
-  printf 'was killed (exit 137) before answering — the grace after the %ss deadline, or a signal from outside the run, the OOM killer among them; the limit may not have been reached' "$1"
+# 124 is timeout's own report that the limit was reached. A signal exit is not:
+# 137 (KILL) and 143 (TERM) arrive through timeout from whoever sent them — its
+# own kill grace, a BusyBox applet signalling the command it exec'd instead of
+# reporting 124, the OOM killer. Both end the lane without an answer, and
+# either read as a timeout would name a limit that may never have been touched.
+signal_end_reason() {
+  printf 'was ended by a signal (exit %s) before answering — the %ss deadline, or a signal from outside the run, the OOM killer among them; the limit may not have been reached, so raise --timeout only if it was' "$1" "$2"
 }
 
 remaining_budget() {
@@ -2082,8 +2082,8 @@ remaining_budget() {
 # Invoke the resolved target CLI with a prompt file on stdin, bounded by $2
 # seconds. The command line comes from target_cmd (env override or built-in
 # default). Echoes the CLI's stdout on our stdout and returns its exit code
-# (124 when the deadline's TERM ended it, 137 for any KILL — the deadline's
-# own grace among the possible senders). Reused for the retry on JSON-extraction failure, so it stays
+# (124 when the deadline's TERM ended it, 137 or 143 when a signal ended it —
+# the deadline's own grace among the possible senders). Reused for the retry on JSON-extraction failure, so it stays
 # side-effect-free beyond writing the CLI's stderr to STDERR_TMP.
 run_target_cli() {
   local prompt_file="$1" limit="$2"
@@ -2164,10 +2164,10 @@ if [[ $EXIT_CODE -eq 124 ]]; then
   $REVIEW_LIKE && preserve_cli_failure_and_fail "timed out after ${TIMEOUT}s" "$RESULT"
   echo "{\"error\": \"Timeout after ${TIMEOUT}s\", \"target\": \"$TARGET_CLI\"}" >&2
   exit 1
-elif [[ $EXIT_CODE -eq 137 ]]; then
-  KILL_REASON="$(hard_kill_reason "$TIMEOUT")"
-  $REVIEW_LIKE && preserve_cli_failure_and_fail "$KILL_REASON" "$RESULT"
-  echo "{\"error\": \"$TARGET_CLI $KILL_REASON\", \"target\": \"$TARGET_CLI\"}" >&2
+elif [[ $EXIT_CODE -eq 137 || $EXIT_CODE -eq 143 ]]; then
+  SIGNAL_REASON="$(signal_end_reason "$EXIT_CODE" "$TIMEOUT")"
+  $REVIEW_LIKE && preserve_cli_failure_and_fail "$SIGNAL_REASON" "$RESULT"
+  echo "{\"error\": \"$TARGET_CLI $SIGNAL_REASON\", \"target\": \"$TARGET_CLI\"}" >&2
   exit 1
 elif [[ $EXIT_CODE -ne 0 ]]; then
   $REVIEW_LIKE && preserve_cli_failure_and_fail "exited with code $EXIT_CODE" "$RESULT"
@@ -2469,8 +2469,8 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
     if [[ $RETRY_EXIT -eq 124 ]]; then
       echo "→ retry timed out after ${RETRY_TIMEOUT}s (remaining lane budget of the ${TIMEOUT}s total)" >&2
       preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
-    elif [[ $RETRY_EXIT -eq 137 ]]; then
-      echo "→ retry $(hard_kill_reason "$RETRY_TIMEOUT")" >&2
+    elif [[ $RETRY_EXIT -eq 137 || $RETRY_EXIT -eq 143 ]]; then
+      echo "→ retry $(signal_end_reason "$RETRY_EXIT" "$RETRY_TIMEOUT")" >&2
       preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
     elif [[ $RETRY_EXIT -ne 0 ]]; then
       echo "→ retry exited with code $RETRY_EXIT" >&2

@@ -2,10 +2,10 @@
 # Regression test: shipped project settings must keep the documented
 # second-opinion default timeout at 1080s, while caller env overrides still win,
 # the retry runs inside that one total budget, the run refuses when no timeout
-# binary can bound it, a CLI that ignores the deadline's TERM is killed and
-# reported as killed rather than timed out, and every doc and settings surface
-# spells the shipped default, the real upper bound, and what the deadline
-# leaves unbounded.
+# binary can bound it, a run the deadline ends with a signal is reported as
+# signal-ended rather than as a timeout it cannot prove, and every doc and
+# settings surface spells the shipped default, the real upper bound, and what
+# the deadline leaves unbounded.
 
 set -euo pipefail
 
@@ -382,13 +382,13 @@ stubborn_elapsed=$(( SECONDS - stubborn_started ))
 stubborn_pid=$(cat "$KILL_PID_FILE" 2>/dev/null || true)
 if [[ -n "$stubborn_pid" ]] && cli_reaped "$stubborn_pid" \
    && [[ "$stubborn_rc" -eq 5 ]] && [[ "$stubborn_elapsed" -lt 90 ]] \
-   && grep -q "was killed (exit 137) before answering" "$TMP_ROOT/stubborn.stderr" \
+   && grep -q "was ended by a signal (exit 137) before answering" "$TMP_ROOT/stubborn.stderr" \
    && grep -q "the limit may not have been reached" "$TMP_ROOT/stubborn.stderr" \
    && ! grep -q "timed out" "$TMP_ROOT/stubborn.stderr"; then
-  printf 'PASS: a TERM-ignoring CLI is killed and reported as killed, not timed out (%ss)\n' \
+  printf 'PASS: a TERM-ignoring CLI is killed and reported as signal-ended, not timed out (%ss)\n' \
     "$stubborn_elapsed"
 else
-  printf 'FAIL: a TERM-ignoring CLI is killed and reported as killed, not timed out (exit %s, %ss, pid %s)\n' \
+  printf 'FAIL: a TERM-ignoring CLI is killed and reported as signal-ended, not timed out (exit %s, %ss, pid %s)\n' \
     "$stubborn_rc" "$stubborn_elapsed" "${stubborn_pid:-none}" >&2
   sed -n '1,20p' "$TMP_ROOT/stubborn.stderr" >&2
   exit 1
@@ -409,6 +409,81 @@ fi
 [[ -z "$nokill_pid" ]] || kill -9 "$nokill_pid" 2>/dev/null || true
 wait "$NOKILL_JOB" 2>/dev/null || true
 $nokill_ok || exit 1
+
+# --- A deadline that arrives as a signal, not as 124 --------------------------
+# Only GNU timeout reports 124 for its own deadline. BusyBox's applet execs the
+# command and has its watchdog signal it, so an ordinary BusyBox deadline
+# reaches this script as 143 — a TERM, the same shape as 137's KILL. Neither
+# status names its sender, so both get the one message that covers every
+# origin: the deadline, or something outside the run. The fixture stands in for
+# the BusyBox applet so the suite needs no BusyBox on the host.
+mkdir -p "$TMP_ROOT/bin-busybox"
+cat > "$TMP_ROOT/bin-busybox/timeout" <<'SH'
+#!/usr/bin/env bash
+# BusyBox timeout's deadline: the command it exec'd takes a TERM, so the
+# status this script sees is 143 and never 124.
+exit 143
+SH
+chmod +x "$TMP_ROOT/bin-busybox/timeout"
+cat > "$TMP_ROOT/bin-busybox/codex" <<'SH'
+#!/usr/bin/env bash
+cat >/dev/null
+SH
+chmod +x "$TMP_ROOT/bin-busybox/codex"
+
+# The control is the same script with 143 stripped from the signal branch: it
+# must land in the bare "exited with code" arm and say nothing about a signal.
+BUSYBOX_CTL_ROOT="$TMP_ROOT/busybox-control"
+cp -R "$TMP_ROOT/proj" "$BUSYBOX_CTL_ROOT"
+BUSYBOX_CTL_SCRIPT="$BUSYBOX_CTL_ROOT/skills/second-opinion/scripts/second-opinion"
+sed 's/ || \$EXIT_CODE -eq 143//' "$SECOND_OPINION" > "$BUSYBOX_CTL_SCRIPT"
+chmod +x "$BUSYBOX_CTL_SCRIPT"
+if grep -qF -- '|| $EXIT_CODE -eq 143' "$BUSYBOX_CTL_SCRIPT" \
+   || ! grep -qF -- '|| $EXIT_CODE -eq 143' "$SECOND_OPINION"; then
+  printf 'FAIL: control setup did not strip 143 from the script copy\n' >&2
+  exit 1
+fi
+
+run_signal_deadline() {  # <script> <worktree> <stderr file>
+  local rc=0
+  PATH="$TMP_ROOT/bin-busybox:$PATH" \
+    SECOND_OPINION_TARGET=codex \
+    SECOND_OPINION_CODEX_CMD=codex \
+    SECOND_OPINION_TIMEOUT=1 \
+    "$1" review --range HEAD --cwd "$2" >/dev/null 2>"$3" || rc=$?
+  printf '%s' "$rc"
+}
+
+WORK_BUSYBOX="$TMP_ROOT/work-busybox"
+cp -R "$WORK" "$WORK_BUSYBOX"
+busybox_rc=$(run_signal_deadline "$SECOND_OPINION" "$WORK_BUSYBOX" "$TMP_ROOT/busybox.stderr")
+if [[ "$busybox_rc" -eq 5 ]] \
+   && grep -q "was ended by a signal (exit 143) before answering" "$TMP_ROOT/busybox.stderr" \
+   && grep -q "the limit may not have been reached" "$TMP_ROOT/busybox.stderr" \
+   && grep -q -- "raise --timeout only if it was" "$TMP_ROOT/busybox.stderr" \
+   && ! grep -q "exited with code 143" "$TMP_ROOT/busybox.stderr" \
+   && ! grep -q "timed out" "$TMP_ROOT/busybox.stderr"; then
+  printf 'PASS: a deadline delivered as 143 reads as ended by a signal, not as a bare exit code\n'
+else
+  printf 'FAIL: a deadline delivered as 143 reads as ended by a signal, not as a bare exit code (exit %s)\n' \
+    "$busybox_rc" >&2
+  sed -n '1,20p' "$TMP_ROOT/busybox.stderr" >&2
+  exit 1
+fi
+
+WORK_BUSYBOX_CTL="$TMP_ROOT/work-busybox-control"
+cp -R "$WORK" "$WORK_BUSYBOX_CTL"
+busybox_ctl_rc=$(run_signal_deadline "$BUSYBOX_CTL_SCRIPT" "$WORK_BUSYBOX_CTL" \
+  "$TMP_ROOT/busybox-control.stderr")
+if grep -q "exited with code 143" "$TMP_ROOT/busybox-control.stderr" \
+   && ! grep -q "ended by a signal" "$TMP_ROOT/busybox-control.stderr"; then
+  printf 'PASS: control — without 143 in the signal branch the same run reports a bare exit code\n'
+else
+  printf 'FAIL: control — without 143 in the signal branch the same run reports a bare exit code (exit %s)\n' \
+    "$busybox_ctl_rc" >&2
+  sed -n '1,20p' "$TMP_ROOT/busybox-control.stderr" >&2
+  exit 1
+fi
 
 # --- Every surface spells the script's default ------------------------------
 # The script's DEFAULT_TIMEOUT is the single source; the settings files and doc
