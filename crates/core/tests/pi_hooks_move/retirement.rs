@@ -137,3 +137,27 @@ fn a_held_move_completes_once_the_source_is_back() {
     assert!(w.dot().join("kendex/hooks/guard.sh").is_file());
     assert!(audit(&w.env, &w.scope()).unwrap().notes.is_empty());
 }
+
+/// A declaration that resolves and answers "pi gets nothing" — upstream
+/// dropped pi from the hook's harnesses — has said all it is going to
+/// say, so the old copy goes with it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_hook_upstream_stopped_offering_for_pi_takes_its_old_copy_with_it() {
+    let w = regressed();
+    let script = w.catalog.join("hooks/guard.sh");
+    let body = fs::read_to_string(&script).unwrap();
+    fs::write(
+        &script,
+        body.replace("harnesses: [pi]", "harnesses: [claude]"),
+    )
+    .unwrap();
+
+    apply(&w);
+
+    assert!(
+        !w.dot().join("hooks").exists(),
+        "the declaration resolved: nothing more is coming for pi"
+    );
+    assert!(!w.dot().join("hooks.json").exists());
+}

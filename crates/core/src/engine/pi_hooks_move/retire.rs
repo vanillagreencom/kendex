@@ -24,7 +24,12 @@ pub(super) fn retirable(
     ops: &[PlannedOp],
     config_edits: &ConfigEditPlan,
 ) -> bool {
-    if !manifest.hooks.contains_key(&entry.name) {
+    // Both shapes of declaration count: a catalog hook keyed by name, and
+    // a `[[custom-hooks]]` entry, whose name the same derivation produces
+    // that keyed its lock entry.
+    let declared = manifest.hooks.contains_key(&entry.name)
+        || crate::hook::custom_hook_names(manifest).contains(&entry.name);
+    if !declared {
         return true;
     }
     let key = crate::lock::entry_key(ItemKind::Hook, &entry.name, HarnessId::Pi);
@@ -49,7 +54,6 @@ fn script_ready(item: &Desired, ops: &[PlannedOp]) -> bool {
     };
     let planned = ops.iter().any(|planned| match &planned.op {
         Op::WriteFile { path: written, .. } => written == path,
-        Op::Rename { to, .. } => to == path,
         _ => false,
     });
     planned
@@ -59,8 +63,10 @@ fn script_ready(item: &Desired, ops: &[PlannedOp]) -> bool {
 }
 
 /// Whether this hook's own registration is in place — every edit it wants
-/// already satisfied on disk, or queued in this same plan. Another hook's
-/// edit to the same file proves nothing about this one.
+/// already satisfied on disk, or queued in this same plan as that exact
+/// edit. Another hook's edit to the same file proves nothing about this
+/// one; no reachable state tells the two apart today, and the narrower
+/// question is the one worth asking.
 fn registration_ready(item: &Desired, config_edits: &ConfigEditPlan) -> bool {
     let Artifact::Registration { edits, .. } = &item.artifact else {
         return true;

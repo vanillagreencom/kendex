@@ -29,7 +29,10 @@ pub(super) fn plan_directory(
     let strangers = match strangers(dir, ours) {
         Ok(strangers) => strangers,
         Err(error) => {
-            sink.notes.push(unreadable_note(dir, &error.to_string()));
+            sink.notes.push(format!(
+                "kendex could not list {} ({error}), so everything in the directory pi reserved stayed — fix its permissions, then refresh again",
+                dir.display()
+            ));
             return;
         }
     };
@@ -77,7 +80,7 @@ pub(super) fn plan_registry(
     deregister: &[(Option<String>, String)],
     sink: &mut Sink,
 ) -> Result<()> {
-    if deregister.is_empty() || !matches!(look(registry), Found::Plain(_)) {
+    if !matches!(look(registry), Found::Plain(_)) {
         return Ok(());
     }
     let current = match crate::fs::read_if_exists(registry) {
@@ -130,7 +133,15 @@ pub(super) fn plan_registry(
     // from must not be rewritten into kendex's own formatting.
     let after = match serde_json::from_str::<serde_json::Value>(&updated) {
         Ok(value) => value,
+        // The text came out of `apply`, which serialized it from a value
+        // it had just parsed, so this cannot happen — asserted rather than
+        // trusted, and still non-fatal in a release build.
         Err(error) => {
+            debug_assert!(
+                false,
+                "{} did not survive its own edits: {error}",
+                registry.display()
+            );
             sink.notes.push(format!(
                 "{} could not be rewritten ({error}), so it was left alone",
                 registry.display()

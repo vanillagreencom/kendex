@@ -83,7 +83,9 @@ pub(super) fn plan_move(
     let dir = root.join(LEGACY_DIR);
     let registry = root.join(LEGACY_REGISTRY);
     // The move retires itself: with neither reserved path there, there is
-    // nothing to take and nothing to say, on this plan or any later one.
+    // nothing to take and nothing to say — the same answer everything
+    // below reaches, reached without stat-ing both names of every hook
+    // the lock holds, on this plan and every later one.
     if matches!(look(&dir), Found::Absent) && matches!(look(&registry), Found::Absent) {
         return Ok(());
     }
@@ -98,7 +100,9 @@ pub(super) fn plan_move(
         .collect();
     // A link or an unreadable directory is never traversed: `dir.join(..)`
     // resolves through a link, so scanning one would put paths outside the
-    // managed scope into the plan.
+    // managed scope into the plan. A scope root this process cannot stat
+    // through fails earlier, in the registration read, so the unreadable
+    // arm is the safe default rather than a state a plan reaches.
     match look(&dir) {
         Found::Linked(path) => {
             sink.notes.push(format!(
@@ -158,9 +162,12 @@ pub(super) fn plan_move(
     plan_registry(&registry, &deregister, sink)
 }
 
-/// A trash op through the plan's one guard. A path that cannot be hashed
-/// is one this plan leaves alone: the whole audit must not fail over a
-/// legacy file somebody removed while it ran.
+/// A trash op through the plan's one guard. Nothing else in the plan
+/// derives a legacy path, so the guard has no overlap to catch today —
+/// it is the boundary every Trash op in a plan passes, kept so a future
+/// pass that does overlap cannot slip past it. A path that cannot be
+/// hashed is one this plan leaves alone: the whole audit must not fail
+/// over a legacy file somebody removed while it ran.
 fn trash(description: String, path: &Path, sink: &mut Sink) {
     match removal::trash(description, path.to_path_buf()) {
         Ok(op) => sink.guard.extend(sink.ops, [op]),
@@ -194,8 +201,9 @@ fn unreadable_of(found: &Found) -> Option<(&PathBuf, &String)> {
 }
 
 /// Both names one hook's bytes can sit under. kendex writes one or the
-/// other, but an interrupted toggle can leave the pair, and a name the
-/// lock accounts for is never reported as a stranger's.
+/// other, but an interrupted toggle can leave the pair; both are claimed
+/// and each stands on its own bytes, so the order here carries no meaning
+/// and a name the lock accounts for is never reported as a stranger's.
 fn legacy_files(dir: &Path, name: &str) -> Vec<Found> {
     let enabled = dir.join(pi::hook_file(name));
     [disabled_name(&enabled), enabled]

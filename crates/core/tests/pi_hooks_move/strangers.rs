@@ -190,6 +190,68 @@ fn a_structurally_empty_registry_kendex_removed_nothing_from_survives() {
     }
 }
 
+/// A registry that parses only because the reader tolerates jsonc, and
+/// that the edit itself cannot re-parse, is left exactly as it is — with
+/// a line saying which file and why.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_registry_the_edit_cannot_apply_to_is_left_alone_with_a_line() {
+    let w = regressed();
+    let registry = w.dot().join("hooks.json");
+    let text = fs::read_to_string(&registry).unwrap();
+    let jsonc = format!("// mine\n{text}");
+    fs::write(&registry, &jsonc).unwrap();
+
+    let said = audit(&w.env, &w.scope()).unwrap().notes;
+    assert!(
+        said.iter()
+            .any(|note| note.contains("could not be edited") && note.contains("hooks.json")),
+        "{said:?}"
+    );
+    apply(&w);
+    assert_eq!(fs::read_to_string(&registry).unwrap(), jsonc);
+}
+
+/// One the reader itself cannot make sense of is the same promise, said
+/// in its own cause.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_registry_that_does_not_parse_is_left_alone_with_a_line() {
+    let w = regressed();
+    let registry = w.dot().join("hooks.json");
+    fs::write(&registry, "not json at all\n").unwrap();
+
+    let said = audit(&w.env, &w.scope()).unwrap().notes;
+    assert!(
+        said.iter()
+            .any(|note| note.contains("could not be read") && note.contains("hooks.json")),
+        "{said:?}"
+    );
+    apply(&w);
+    assert_eq!(fs::read_to_string(&registry).unwrap(), "not json at all\n");
+}
+
+/// A registry the reader tolerates but the edit could not re-parse is
+/// left alone even when kendex has nothing in it to remove — the
+/// short-circuit before the rewrite is what keeps it from being read as
+/// a document kendex emptied.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_jsonc_registry_kendex_has_nothing_in_is_left_alone() {
+    let w = world();
+    apply(&w);
+    let registry = w.dot().join("hooks.json");
+    let theirs =
+        "// theirs\n{\"hooks\":{\"turn_end\":[{\"hooks\":[{\"command\":\"echo theirs\"}]}]}}\n";
+    fs::write(&registry, theirs).unwrap();
+
+    let report = audit(&w.env, &w.scope()).unwrap();
+    assert!(report.notes.is_empty(), "{:?}", report.notes);
+    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+
+    assert_eq!(fs::read_to_string(&registry).unwrap(), theirs);
+}
+
 /// The module holds back rather than fails: a legacy registry it cannot
 /// read must not take the whole audit down with it.
 #[test]

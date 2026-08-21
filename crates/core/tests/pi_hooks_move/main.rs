@@ -9,6 +9,8 @@ use kendex_core::engine::audit;
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::model::Scope;
 
+mod custom;
+mod gates;
 mod global;
 mod held_back;
 mod retirement;

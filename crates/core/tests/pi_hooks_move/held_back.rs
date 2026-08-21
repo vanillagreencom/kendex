@@ -31,28 +31,51 @@ fn an_edited_script_stays_put_and_earns_exactly_one_line() {
 }
 
 /// With a sibling still taken, the directory survives — and the held file
-/// must not be named twice: once as edited and once as a stranger's.
+/// must not be named twice: once for its own cause and once as a
+/// stranger's. Every hold cause has to satisfy that, not just the edited
+/// one.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_held_file_is_never_also_called_a_file_kendex_did_not_write() {
-    let w = world();
-    declare_second_hook(&w);
-    apply(&w);
-    regress(&w, "guard.sh");
-    regress(&w, "other.sh");
-    let edited = w.dot().join("hooks/guard.sh");
-    fs::write(&edited, "#!/bin/sh\n# mine\nexit 0\n").unwrap();
+    #[allow(clippy::type_complexity)]
+    let causes: [(&str, &dyn Fn(&super::World, &std::path::Path)); 4] = [
+        ("was edited on disk", &|_, path| {
+            fs::write(path, "#!/bin/sh\n# mine\nexit 0\n").unwrap()
+        }),
+        ("predates the record", &|w, _| forget_rendered_hash(w)),
+        ("is a link kendex did not create", &|w, path| {
+            let elsewhere = w.home.join("linked-guard.sh");
+            fs::rename(path, &elsewhere).unwrap();
+            symlink(&elsewhere, path).unwrap();
+        }),
+        ("could not read", &|_, path| {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o000)).unwrap()
+        }),
+    ];
+    for (cause, spoil) in causes {
+        let w = world();
+        declare_second_hook(&w);
+        apply(&w);
+        regress(&w, "guard.sh");
+        regress(&w, "other.sh");
+        let held = w.dot().join("hooks/guard.sh");
+        spoil(&w, &held);
 
-    let said = about(&notes(&w), "guard.sh");
-    assert_eq!(said.len(), 1, "one file, one line: {said:?}");
-    assert!(said[0].contains("was edited on disk"), "{said:?}");
-    apply(&w);
+        let said = about(&notes(&w), "guard.sh");
+        assert_eq!(said.len(), 1, "{cause}: one file, one line: {said:?}");
+        assert!(said[0].contains(cause), "{said:?}");
+        apply(&w);
 
-    assert!(edited.is_file(), "the edited file stays");
-    assert!(
-        !w.dot().join("hooks/other.sh").exists(),
-        "its sibling still moves"
-    );
+        assert!(
+            w.dot().join("hooks/guard.sh").exists(),
+            "{cause}: the held file stays"
+        );
+        assert!(
+            !w.dot().join("hooks/other.sh").exists(),
+            "{cause}: its sibling still moves"
+        );
+        let _ = fs::set_permissions(&held, fs::Permissions::from_mode(0o644));
+    }
 }
 
 /// A record from before `rendered_hash` existed proves nothing, so the
@@ -138,6 +161,12 @@ fn a_linked_directory_is_never_enumerated() {
     assert!(
         elsewhere.join("guard.sh").is_file(),
         "and nothing under it was touched"
+    );
+    assert!(
+        fs::read_to_string(w.dot().join("hooks.json"))
+            .unwrap()
+            .contains(".pi/hooks/guard.sh"),
+        "nor was the registration of what it holds"
     );
 }
 
@@ -237,14 +266,18 @@ fn an_unreadable_reserved_directory_retires_nothing() {
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o000)).unwrap();
 
     let report = audit(&w.env, &w.scope()).unwrap();
-    assert!(
-        report
-            .notes
-            .iter()
-            .any(|note| note.contains("could not read") && note.contains("hooks")),
-        "{:?}",
-        report.notes
-    );
+    // Two causes, two lines: the file that could not be stat-ed, and the
+    // directory that could not be listed.
+    for said in [
+        format!("could not read {}", dir.join("guard.sh").display()),
+        format!("could not list {}", dir.display()),
+    ] {
+        assert!(
+            report.notes.iter().any(|note| note.contains(&said)),
+            "no line saying {said}: {:?}",
+            report.notes
+        );
+    }
     kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
 
     assert!(dir.is_dir(), "nothing under it was retired");
@@ -255,6 +288,34 @@ fn an_unreadable_reserved_directory_retires_nothing() {
         "nor was its registration"
     );
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// A broken link at the reserved name is what pi's own existence check
+/// sees, so kendex has to see it too — and never mistake it for absence.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_broken_link_at_the_reserved_name_is_not_absence() {
+    let w = regressed();
+    let dir = w.dot().join("hooks");
+    fs::remove_file(dir.join("guard.sh")).unwrap();
+    fs::remove_dir(&dir).unwrap();
+    symlink(w.home.join("nowhere"), &dir).unwrap();
+
+    let said = notes(&w);
+    assert!(
+        said.iter()
+            .any(|note| note.contains("is a link kendex did not create")),
+        "{said:?}"
+    );
+    apply(&w);
+
+    assert!(dir.is_symlink(), "the link stays");
+    assert!(
+        fs::read_to_string(w.dot().join("hooks.json"))
+            .unwrap()
+            .contains(".pi/hooks/guard.sh"),
+        "and nothing beside it was retired either"
+    );
 }
 
 /// An interrupted toggle can leave both names. Neither is a stranger's,
