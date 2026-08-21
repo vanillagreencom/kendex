@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
+import { ADOPTABLE } from "@/lib/adoptable";
 import {
   hiddenUpdates,
   useUpdatesStore,
@@ -116,6 +117,7 @@ describe("updates store", () => {
         notes: [],
         warnings: [],
         safety: [],
+        adoptable: ADOPTABLE,
         heldBack: [],
         queued: [],
       },
@@ -151,6 +153,7 @@ describe("updates store", () => {
         notes: [],
         warnings: [],
         safety: [],
+        adoptable: ADOPTABLE,
         heldBack: [],
         queued: [],
       },

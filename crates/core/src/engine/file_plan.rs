@@ -47,21 +47,31 @@ pub(super) fn plan_written_file(
         )));
     }
     if path.exists() && !path.is_file() {
-        return Ok(Planned::Conflict(format!(
-            "a directory sits at {}",
-            path.display()
-        )));
+        // A directory where a file goes is unmanaged content like any
+        // other, in an awkward shape. Taken over, it goes to the trash
+        // whole and the file lands in its place; refused, it is the same
+        // conflict it always was. Anything that is neither a file nor a
+        // directory — a socket, a device — is nobody's to move.
+        let takeable = path.is_dir() && claim.replace_unmanaged && !claim.owns(path, owned);
+        if !takeable {
+            return Ok(Planned::Conflict(format!(
+                "a directory sits at {}",
+                crate::names::shown(&path.display().to_string())
+            )));
+        }
+        let hash = match hash_tree(path) {
+            Ok(hash) => hash,
+            Err(error) => return Ok(uncomparable(path, &error)),
+        };
+        ops.push(set_aside(path, Pre::HashIs { hash }));
+        ops.push(install(env, scope, item, path, bytes, Pre::Absent));
+        return Ok(Planned::Drift(DriftState::Missing, TAKEN_OVER.into()));
     }
     // An artifact we cannot hash is reported uncompared (invariant 12) —
     // a read error must never read as passing, and must not kill the scope.
     let disk = match path.is_file().then(|| hash_tree(path)).transpose() {
         Ok(disk) => disk,
-        Err(error) => {
-            return Ok(Planned::Conflict(format!(
-                "{} cannot be compared ({error}) — fix its permissions or remove it",
-                path.display()
-            )));
-        }
+        Err(error) => return Ok(uncomparable(path, &error)),
     };
     let wanted = crate::hash::hash_bytes(bytes);
     match disk {
@@ -135,12 +145,7 @@ fn plan_absent_file(
             }
             let hash = match hash_tree(&alternate) {
                 Ok(hash) => hash,
-                Err(error) => {
-                    return Planned::Conflict(format!(
-                        "{} cannot be compared ({error}) — fix its permissions or remove it",
-                        alternate.display()
-                    ));
-                }
+                Err(error) => return uncomparable(&alternate, &error),
             };
             ops.push(set_aside(&alternate, Pre::HashIs { hash }));
             ops.push(install(env, scope, item, path, bytes, Pre::Absent));
@@ -212,6 +217,15 @@ pub(super) fn advisory(env: &Env, scope: &Scope, item: &Desired) -> &'static str
         Enforcement::Advisory => " (advisory)",
         Enforcement::Enforced | Enforcement::NotApplicable => "",
     }
+}
+
+/// An artifact we cannot hash is reported uncompared (invariant 12) — a
+/// read error must never read as passing, and must not kill the scope.
+fn uncomparable(path: &std::path::Path, error: &crate::error::CoreError) -> Planned {
+    Planned::Conflict(format!(
+        "{} cannot be compared ({error}) — fix its permissions or remove it",
+        crate::names::shown(&path.display().to_string())
+    ))
 }
 
 /// A declared-disabled artifact keeps its content under the `.disabled`

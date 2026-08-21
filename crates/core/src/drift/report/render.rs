@@ -30,8 +30,11 @@ pub fn render_plain(report: &CheckReport) -> String {
             false => section.lines.len(),
         };
         for line in &section.lines[..shown_count] {
-            match line.remedy.as_ref().and_then(Remedy::render) {
-                Some(remedy) => lines.push(format!("  {} — fix: {remedy}", line.text)),
+            match line.remedy.as_ref().and_then(|remedy| {
+                Remedy::render(remedy).map(|rendered| (remedy.mutates(), rendered))
+            }) {
+                Some((true, remedy)) => lines.push(format!("  {} — fix: {remedy}", line.text)),
+                Some((false, remedy)) => lines.push(format!("  {} — see: {remedy}", line.text)),
                 None => lines.push(format!("  {}", line.text)),
             }
         }

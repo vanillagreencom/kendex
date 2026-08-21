@@ -303,6 +303,23 @@ pub(super) fn plugin_settings(env: &Env, scope: &Scope, harness: HarnessId) -> O
 
 /// A declared-disabled artifact keeps its content under the `.disabled`
 /// name; toggling is a rename (invariant 5).
+/// The one file a hook installation writes on this harness, whatever shape
+/// the harness takes it in — a script it runs, an instruction file it
+/// reads, an advisory rule. Derived from harness, scope and name alone, so
+/// a caller that may not read the source can still say where it goes.
+pub(super) fn hook_file(
+    env: &Env,
+    scope: &Scope,
+    harness: HarnessId,
+    name: &str,
+) -> Option<PathBuf> {
+    match hook_target(env, scope, harness, name)? {
+        HookTarget::Script { path, .. }
+        | HookTarget::Instruction { path, .. }
+        | HookTarget::Rule { path } => Some(path),
+    }
+}
+
 pub(super) fn disabled_name(path: &std::path::Path) -> PathBuf {
     PathBuf::from(format!("{}.disabled", path.display()))
 }

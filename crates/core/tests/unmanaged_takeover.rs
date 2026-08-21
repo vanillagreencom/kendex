@@ -99,9 +99,9 @@ fn take_over() -> PlanOptions {
 }
 
 /// The dead end this fixes: the refusal used to describe a state ("not
-/// managed yet") and name no way out of it. The row now carries the fact
-/// and the cause; what to do about it is each surface's to offer, and the
-/// cause is what lets it.
+/// managed yet") and name no way out of it. The row now carries where the
+/// files are and the cause that says what that means; the words, and the
+/// ways out, belong to whichever surface is doing the telling.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_refusal_says_which_files_are_in_the_way() {
@@ -116,15 +116,10 @@ fn the_refusal_says_which_files_are_in_the_way() {
         Some(DriftCause::UnmanagedContent),
         "the cause is what lets a surface offer the two exits: {row:?}"
     );
-    assert!(
-        row.detail.contains("files kendex did not write"),
-        "{}",
-        row.detail
-    );
-    assert!(
-        row.detail.contains(&dir.display().to_string()),
-        "and names them: {}",
-        row.detail
+    assert_eq!(
+        row.detail,
+        dir.display().to_string(),
+        "the row says where they are, and the surface says what that means"
     );
 
     // And nothing is planned for it — the files stay exactly as they are.

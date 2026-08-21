@@ -48,22 +48,43 @@ fn world() -> World {
         "---\ndescription: ships it\n---\nUpstream.\n",
     )
     .unwrap();
+    fs::create_dir_all(catalog.join("hooks")).unwrap();
+    fs::write(
+        catalog.join("hooks/guard.sh"),
+        "#!/usr/bin/env bash\n# ---\n# name: guard\n# event: PreToolUse\n# matcher: Bash\n# description: watches shell commands\n# ---\nexit 0\n",
+    )
+    .unwrap();
     let project = home.join("app");
     fs::create_dir_all(project.join(".claude")).unwrap();
+    let w = World {
+        env: Env::fake(&home, FakeOs::Linux),
+        scope: Scope::Project {
+            root: project.clone(),
+        },
+        home,
+        _tmp: tmp,
+    };
+    declare(
+        &w,
+        "copy",
+        "[\"claude\"]",
+        "[skills.deploy]\nsource = \"cat\"\n\n[agents.scout]\nsource = \"cat\"\n\n[commands.ship]\nsource = \"cat\"\n\n[hooks.guard]\nsource = \"cat\"\n",
+    );
+    w
+}
+
+/// Point the project at a set of tools, an install method, and a body of
+/// declarations.
+#[allow(clippy::unwrap_used)]
+fn declare(w: &World, method: &str, harnesses: &str, body: &str) {
     fs::write(
-        project.join("kendex.toml"),
+        w.home.join("app/kendex.toml"),
         format!(
-            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n\n[agents.scout]\nsource = \"cat\"\n\n[commands.ship]\nsource = \"cat\"\n",
-            catalog.display()
+            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = {harnesses}\nmethod = \"{method}\"\n\n{body}",
+            w.home.join("catalog").display()
         ),
     )
     .unwrap();
-    World {
-        env: Env::fake(&home, FakeOs::Linux),
-        scope: Scope::Project { root: project },
-        home,
-        _tmp: tmp,
-    }
 }
 
 #[allow(clippy::unwrap_used)]
@@ -98,7 +119,10 @@ fn it_is_told_apart_from_a_safety_hold() {
         text.contains("kendex.toml asks for skill 'deploy', and files are already where"),
         "{text}"
     );
-    assert!(text.contains("fix: kendex apply --plan"), "{text}");
+    assert!(
+        text.contains("see: kendex apply --plan"),
+        "a read-only next step is not a fix: {text}"
+    );
     assert!(
         !text.contains("held back"),
         "nothing here is waiting on a safety review: {text}"
@@ -148,7 +172,10 @@ fn a_link_at_the_position_is_never_answered_with_a_take_over() {
         !text.contains("--replace-unmanaged"),
         "the take-over provably refuses a link, so it is never the fix: {text}"
     );
-    assert!(text.contains("fix: kendex apply --plan"), "{text}");
+    assert!(
+        text.contains("see: kendex apply --plan"),
+        "a read-only next step is not a fix: {text}"
+    );
 }
 
 /// Bytes that already match the declared render block nothing: the apply
@@ -185,5 +212,98 @@ fn bytes_that_already_match_are_never_prescribed_a_replacement() {
             .any(|op| op.description.contains("trash")),
         "and nothing needed replacing: {:?}",
         re.plan.ops
+    );
+}
+
+/// Read per installation, not per declaration. One tool having its copy
+/// says nothing about the tool that does not — and the shared tree the
+/// first one wrote is kendex's own, never a stranger's.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_tool_without_its_copy_is_read_on_its_own() {
+    let w = world();
+    declare(
+        &w,
+        "copy",
+        "[\"claude\"]",
+        "[skills.deploy]\nsource = \"cat\"\n",
+    );
+    let planned = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &planned.plan, None).unwrap();
+    assert_eq!(report(&w), "", "what was asked for is installed");
+
+    // A second tool added to the list later, with the tool that came before
+    // still holding its place.
+    declare(
+        &w,
+        "copy",
+        "[\"claude\", \"opencode\"]",
+        "[skills.deploy]\nsource = \"cat\"\n",
+    );
+    write_at(
+        w.home.join("app/.opencode/skills/deploy/SKILL.md"),
+        "the tool that came before",
+    );
+
+    let text = report(&w);
+    assert!(
+        text.contains("kendex.toml asks for skill 'deploy'"),
+        "one tool having its copy says nothing about the tool that does not: {text}"
+    );
+}
+
+/// Copy keeps every tool's own directory. Unrelated content under the
+/// shared tree is not in that install's way, and reporting it would send a
+/// reader to decide about files their declaration will never touch.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_shared_tree_is_not_in_a_copied_installs_way() {
+    let w = world();
+    write_at(
+        w.home.join("app/.agents/skills/deploy/SKILL.md"),
+        "someone else's tree",
+    );
+
+    let text = report(&w);
+    assert!(!text.contains("'deploy'"), "{text}");
+}
+
+/// A hook lands at a path as derivable as an agent's — the script the tool
+/// runs, the instruction file it reads. Left out of the walk, an apply
+/// refused while the session check said all clear.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_hook_whose_script_position_is_taken_is_reported() {
+    let w = world();
+    write_at(
+        w.home.join("app/.claude/hooks/guard.sh"),
+        "#!/usr/bin/env bash\n# the tool that came before\n",
+    );
+
+    let text = report(&w);
+    assert!(text.contains("kendex.toml asks for hook 'guard'"), "{text}");
+}
+
+/// Codex takes a command as a one-file skill tree, so that tree is where
+/// its copy actually lands — not the command directory the name suggests.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_command_is_read_at_the_position_its_tool_installs_it_to() {
+    let w = world();
+    declare(
+        &w,
+        "copy",
+        "[\"codex\"]",
+        "[commands.ship]\nsource = \"cat\"\n",
+    );
+    write_at(
+        w.home.join("app/.agents/skills/ship/SKILL.md"),
+        "the tool that came before",
+    );
+
+    let text = report(&w);
+    assert!(
+        text.contains("kendex.toml asks for command 'ship'"),
+        "{text}"
     );
 }

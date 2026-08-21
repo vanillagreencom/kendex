@@ -27,6 +27,10 @@ export function replaceView(views: AuditView[], fresh: AuditView): AuditView[] {
 // top of the state update the page renders from. Failure is a modal, not a
 // toast: these are all user-initiated, so the user is looking right at the
 // button that just broke.
+//
+// The answer says whether it worked, so a caller running several of these
+// for one row can stop at the first that did not instead of carrying on
+// against a page that is now wrong.
 export function auditRunner(
   set: (partial: {
     busy?: boolean;
@@ -35,7 +39,7 @@ export function auditRunner(
   }) => void,
   get: () => { views: AuditView[] },
 ) {
-  const run = async (action: AuditAction, opts: RunOpts) => {
+  const run = async (action: AuditAction, opts: RunOpts): Promise<boolean> => {
     set({ busy: true });
     let response: Awaited<ReturnType<typeof action>>;
     try {
@@ -47,19 +51,20 @@ export function auditRunner(
       set({ views: replaceView(get().views, response.data), error: null });
       if (opts.successMessage) toast.success(opts.successMessage);
       await useScanStore.getState().refresh();
-    } else {
-      set({ error: response.error });
-      const retry: ErrorAction = {
-        label: "Retry",
-        onClick: () => void run(action, opts),
-      };
-      useProblemsStore.getState().showError({
-        title: opts.title,
-        message: response.error,
-        steps: opts.steps,
-        actions: [retry],
-      });
+      return true;
     }
+    set({ error: response.error });
+    const retry: ErrorAction = {
+      label: "Retry",
+      onClick: () => void run(action, opts),
+    };
+    useProblemsStore.getState().showError({
+      title: opts.title,
+      message: response.error,
+      steps: opts.steps,
+      actions: [retry],
+    });
+    return false;
   };
   return run;
 }

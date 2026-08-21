@@ -107,7 +107,7 @@ pub fn print_conflicts(report: &EngineReport) -> bool {
             row.kind.name(),
             kendex_core::names::shown(&row.name),
             row.harness.display_name(),
-            kendex_core::names::shown(&row.detail)
+            conflict_detail(row)
         ));
         if row.cause == Some(DriftCause::UnmanagedContent) {
             in_the_way = true;
@@ -117,10 +117,23 @@ pub fn print_conflicts(report: &EngineReport) -> bool {
     if in_the_way {
         // Once, not per row: the half that names the item differs line by
         // line and belongs on the row; the flag is the same for all of them,
-        // and forty copies of it bury the paths that differ.
-        say("to install what kendex.toml asks for instead, apply with --replace-unmanaged");
+        // and forty copies of it bury the paths that differ. Indented with
+        // them all the same — at column 0 it reads as a heading over the
+        // plan that follows, which is the plan that runs without it.
+        say("  to install what kendex.toml asks for instead: apply with --replace-unmanaged");
     }
     any
+}
+
+/// What a conflict row says on a terminal. A row whose files were already
+/// there carries the path alone — the cause is what says the rest, and only
+/// a surface knows how to word it — so the sentence is written here.
+pub fn conflict_detail(row: &DriftRow) -> String {
+    let detail = kendex_core::names::shown(&row.detail);
+    match row.cause == Some(DriftCause::UnmanagedContent) {
+        true => format!("{detail} already holds files kendex did not write"),
+        false => detail,
+    }
 }
 
 /// The way out that keeps the files, spelled with the item it applies to —
@@ -132,7 +145,15 @@ fn keep_exit(row: &DriftRow) -> String {
     let takeable = kendex_core::engine::adopt::supports(row.kind)
         && kendex_core::names::item_problem(&row.name).is_none();
     match takeable {
-        true => format!("adopt {} {}", row.kind.name(), row.name),
+        // The harness too: adoption reads one tool's position, and left
+        // unsaid it reads Claude Code's — which is not the one blocked
+        // unless that is the row being answered.
+        true => format!(
+            "adopt {} {} --harness {}",
+            row.kind.name(),
+            row.name,
+            row.harness.name()
+        ),
         false => "move them somewhere else first".to_owned(),
     }
 }

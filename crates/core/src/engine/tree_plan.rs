@@ -37,11 +37,27 @@ pub(super) fn plan_tree(
         Ok(collapsed) => collapsed,
         Err(conflict) => return Ok(conflict),
     };
+    // A file where a tree goes is unmanaged content in an awkward shape:
+    // taken over it goes to the trash and the tree lands in its place, and
+    // the write below binds to an empty position because of it. Refused, it
+    // is the conflict it always was; a socket or a device is nobody's to
+    // move either way.
+    let mut taken_over = false;
     if collapsed.is_none() && canonical.exists() && !canonical.is_dir() {
-        return Ok(Planned::Conflict(format!(
-            "a file sits at {}",
-            canonical.display()
-        )));
+        let takeable =
+            canonical.is_file() && claim.replace_unmanaged && !claim.owns(canonical, owned);
+        if !takeable {
+            return Ok(Planned::Conflict(format!(
+                "a file sits at {}",
+                crate::names::shown(&canonical.display().to_string())
+            )));
+        }
+        let hash = match hash_tree(canonical) {
+            Ok(hash) => hash,
+            Err(error) => return Ok(uncomparable(canonical, &error)),
+        };
+        ops.push(set_aside(canonical, Pre::HashIs { hash }));
+        taken_over = true;
     }
     let wanted = artifact_disk_hash(&item.artifact);
     let readable = collapsed.is_none() && canonical.is_dir();
@@ -51,9 +67,10 @@ pub(super) fn plan_tree(
     };
     let mut result = Planned::Clean;
     if disk.as_deref() != Some(wanted.as_str()) {
-        let unowned = disk.is_some()
-            && !claim.owns(canonical, owned)
-            && !written.canonicals.contains(canonical);
+        let unowned = taken_over
+            || (disk.is_some()
+                && !claim.owns(canonical, owned)
+                && !written.canonicals.contains(canonical));
         if unowned && !claim.replace_unmanaged {
             return Ok(unmanaged(canonical));
         }

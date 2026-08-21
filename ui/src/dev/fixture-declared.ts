@@ -4,6 +4,7 @@ import type {
   Manifest_Serialize,
   SourceRow,
 } from "@/bindings";
+import { ADOPTABLE } from "@/lib/adoptable";
 import { personalDrift, personalSafety } from "./fixture-safety";
 import { acmeHeldBack, acmeQueued, acmeSafety } from "./fixture-safety-acme";
 import { ACME, API, GLOBAL, proj } from "./fixture-scopes";
@@ -18,6 +19,7 @@ export function views(): AuditView[] {
       notes: [],
       warnings: [],
       safety: personalSafety(),
+      adoptable: ADOPTABLE,
       heldBack: [],
       queued: [],
     },
@@ -66,7 +68,7 @@ export function views(): AuditView[] {
           scope: acme,
           state: "conflict",
           cause: "unmanaged-content",
-          detail: `${ACME}/.claude/skills/release-notes already holds files kendex did not write`,
+          detail: `${ACME}/.claude/skills/release-notes`,
         },
         {
           kind: "skill",
@@ -75,7 +77,18 @@ export function views(): AuditView[] {
           scope: acme,
           state: "conflict",
           cause: "unmanaged-content",
-          detail: `${ACME}/.agents/skills/release-notes already holds files kendex did not write`,
+          detail: `${ACME}/.agents/skills/release-notes`,
+        },
+        // A kind adoption cannot take: one button, and the other way out
+        // said in words instead of offered as an action that would fail.
+        {
+          kind: "hook",
+          name: "pre-commit",
+          harness: "claude",
+          scope: acme,
+          state: "conflict",
+          cause: "unmanaged-content",
+          detail: `${ACME}/.claude/hooks/pre-commit.sh`,
         },
       ],
       plan: [
@@ -86,6 +99,7 @@ export function views(): AuditView[] {
       notes: [],
       warnings: [],
       safety: acmeSafety(),
+      adoptable: ADOPTABLE,
       heldBack: acmeHeldBack(),
       queued: acmeQueued(),
     },
@@ -96,6 +110,7 @@ export function views(): AuditView[] {
       notes: [],
       warnings: [],
       safety: [],
+      adoptable: ADOPTABLE,
       heldBack: [],
       queued: [],
       // Demoes the "scope couldn't be read" path: the review card and

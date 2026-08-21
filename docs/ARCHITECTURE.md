@@ -25,7 +25,11 @@ Four verbs over one model: **scan → declare → diff → apply**.
   not manage as a footnote pointing there. The one place adopt also
   appears on Review is where the two arrows meet: a declared item whose
   files were already on disk, where both directions are choices about the
-  same row and neither is a change Apply could make.
+  same row and neither is a change Apply could make. Taking one over is
+  scoped to the item the row names, revalidated against a fresh read before
+  anything is written — a page a minute old must not answer a question that
+  has gone away — and the apply it runs is the scope's whole plan, as every
+  apply is, which is why the confirm says so.
 
 Every page and every CLI verb is a projection of these four; none owns
 logic.

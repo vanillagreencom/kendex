@@ -43,18 +43,20 @@ export function SyncScopeCard({
   busy: boolean;
   onApply: (removeOrphans: boolean, allowUnsafe?: string[]) => void;
   onDismiss: (tokens: string[], reason: DismissReason) => void;
-  /** Hand the files already at an item's place to kendex as they are. */
+  /** Hand the files already at an item's place to kendex as they are.
+   *  Answers whether it worked, so a row with several tools stops at the
+   *  first one that did not. */
   onKeepFiles: (
     kind: AuditView["drift"][number]["kind"],
     name: string,
     harness: AuditView["drift"][number]["harness"],
     opts?: { silent?: boolean },
-  ) => void | Promise<void>;
-  /** Install what was asked for over them instead. */
+  ) => Promise<boolean>;
+  /** Install what kendex.toml asks for over them instead. */
   onReplaceFiles: (
     kind: AuditView["drift"][number]["kind"],
     name: string,
-  ) => void | Promise<void>;
+  ) => void | Promise<unknown>;
   /** Opens the Library's Installed tab on this scope, where adopting lives. */
   onSeeUnmanaged: () => void;
 }) {
@@ -76,7 +78,8 @@ export function SyncScopeCard({
   const [removeOrphans, setRemoveOrphans] = useState(orphansOnly);
   const canApply = view.plan.length > 0 || orphans.length > 0;
   const summary = scopeSummaryLabel({
-    changes: changes.length + inTheWay.length,
+    changes: changes.length,
+    decide: inTheWay.length,
     blocked: blockedCount,
     open: openCount,
     unmanaged: unmanaged.length,
@@ -140,6 +143,8 @@ export function SyncScopeCard({
               <div className="flex flex-col gap-3">
                 <BlockedDeclarations
                   rows={inTheWay}
+                  adoptable={view.adoptable}
+                  alsoApplies={view.plan.length > 0}
                   busy={busy}
                   onKeep={onKeepFiles}
                   onReplace={onReplaceFiles}

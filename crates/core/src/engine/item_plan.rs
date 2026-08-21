@@ -190,20 +190,21 @@ impl Claim {
     }
 }
 
-/// The refusal: which files are in the way, and nothing else. What can be
-/// done about them is each surface's to say — the app offers buttons, the
-/// CLI names verbs and flags, and neither one's phrasing would be right on
-/// the other. Said here as well, it would be the same sentence three times
-/// in one screen of output.
+/// The refusal: where the files in the way are, and nothing else. The
+/// cause carries what that means, and each surface says it in its own
+/// words — the app puts the path in a row with two buttons, the CLI writes
+/// a sentence. Said here as well, it would be the same sentence three
+/// times in one screen of output, and the app would have a sentence where
+/// it needs a path.
+///
+/// A `DriftState::Unmanaged` row's detail is a bare path for the same
+/// reason; these two are read by the same surfaces.
 ///
 /// The path is shown, not printed: these bytes were written by something
 /// that is not kendex, and a folder name carrying an escape sequence must
 /// reach a terminal as its own characters.
 pub(super) fn unmanaged(path: &std::path::Path) -> Planned {
-    Planned::Unmanaged(format!(
-        "{} already holds files kendex did not write",
-        crate::names::shown(&path.display().to_string())
-    ))
+    Planned::Unmanaged(crate::names::shown(&path.display().to_string()))
 }
 
 /// A registration is in sync when its backing file matches and re-applying

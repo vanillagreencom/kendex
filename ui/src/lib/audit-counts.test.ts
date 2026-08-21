@@ -6,6 +6,7 @@ import type {
   HarnessId,
   ItemSafety,
 } from "@/bindings";
+import { ADOPTABLE } from "@/lib/adoptable";
 import {
   auditCounts,
   decisionsPendingCount,
@@ -40,6 +41,7 @@ function view(
     notes: [],
     warnings: [],
     safety,
+    adoptable: ADOPTABLE,
     heldBack: [],
     queued: [],
   };

@@ -46,6 +46,11 @@ pub struct AuditView {
     /// carries two scores that are never combined: safety, which can hold an
     /// install back, and quality, which only ever informs.
     pub safety: Vec<ItemSafety>,
+    /// The kinds "keep these files" can be offered for. Adoption needs
+    /// somewhere in the local source to put the content, and only these
+    /// kinds have one — read from core so the page never offers an action
+    /// that would error, and never keeps its own copy of the list.
+    pub adoptable: Vec<ItemKind>,
     /// Installations the plan would write but the safety gate holds back.
     /// Kept apart from `safety` (which scores what is on disk) because the
     /// two describe different bytes: an accept has to name the hash of what
@@ -89,11 +94,20 @@ impl AuditView {
             notes: Vec::new(),
             warnings: Vec::new(),
             safety: Vec::new(),
+            adoptable: adoptable(),
             held_back: Vec::new(),
             queued: Vec::new(),
             error: Some(ScopeError::from(error)),
         }
     }
+}
+
+fn adoptable() -> Vec<ItemKind> {
+    ItemKind::ALL
+        .iter()
+        .copied()
+        .filter(|kind| engine::adopt::supports(*kind))
+        .collect()
 }
 
 pub fn view(env: &Env, scope: &Scope) -> AuditView {
@@ -119,6 +133,7 @@ pub fn view(env: &Env, scope: &Scope) -> AuditView {
         notes: report.notes,
         warnings: report.warnings,
         safety,
+        adoptable: adoptable(),
         held_back,
         queued: queued
             .into_iter()
@@ -233,6 +248,24 @@ pub fn replace_unmanaged(
     kind: ItemKind,
     name: String,
 ) -> Result<AuditView, String> {
+    // The page this was clicked on may be a minute old. Nothing is written
+    // over a choice that is no longer on offer: the apply that follows is
+    // the scope's whole plan, like every apply, and it must not run because
+    // a button answered a question that had already gone away.
+    let blocked = engine::audit(env, scope)
+        .map_err(|e| e.to_string())?
+        .drift
+        .into_iter()
+        .any(|row| {
+            row.kind == kind
+                && row.name == name
+                && row.cause == Some(engine::DriftCause::UnmanagedContent)
+        });
+    if !blocked {
+        return Err(format!(
+            "{name} has no files waiting on that choice any more — nothing was changed"
+        ));
+    }
     let manifest =
         kendex_core::manifest::load_for_mutation(&kendex_core::manifest::manifest_path(env, scope))
             .map_err(|e| e.to_string())?

@@ -49,12 +49,14 @@ export function UnmanagedItems({
   /** The list's heading — a project's name where several projects' lists
    *  sit under one panel heading, or nothing where the panel says it all. */
   title: string | null;
+  /** Answers whether it worked, so a row with several tools stops at the
+   *  first one that did not. */
   onAdopt: (
     kind: DriftRow["kind"],
     name: string,
     harness: DriftRow["harness"],
     opts?: { silent?: boolean },
-  ) => void | Promise<void>;
+  ) => Promise<boolean>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [confirmingShared, setConfirmingShared] = useState<SharedLink | null>(
@@ -65,7 +67,10 @@ export function UnmanagedItems({
   const showList = !foldable || expanded;
 
   // One adoption at a time: every apply takes the scope's writer lock, so
-  // firing them together turns all but the first into "scope is busy".
+  // firing them together turns all but the first into "scope is busy". The
+  // first failure stops the rest — after one has failed, the others are
+  // answering against a page that is now wrong, and the run would still
+  // finish looking like it worked.
   const adoptAll = async (groups: MergedDriftRow[]) => {
     let index = 0;
     let shared: SharedLink | null = null;
@@ -78,7 +83,10 @@ export function UnmanagedItems({
         continue;
       }
       for (const row of group.installations) {
-        await onAdopt(row.kind, row.name, row.harness, { silent: index > 0 });
+        const ok = await onAdopt(row.kind, row.name, row.harness, {
+          silent: index > 0,
+        });
+        if (!ok) return;
         index += 1;
       }
     }

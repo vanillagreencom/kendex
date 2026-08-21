@@ -2,6 +2,7 @@ import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuditView } from "@/bindings";
 import { commands } from "@/bindings";
+import { ADOPTABLE } from "@/lib/adoptable";
 import { useAuditStore } from "./audit";
 import { useProblemsStore } from "./problems";
 
@@ -32,6 +33,7 @@ const emptyView: AuditView = {
   notes: [],
   warnings: [],
   safety: [],
+  adoptable: ADOPTABLE,
   heldBack: [],
   queued: [],
 };

@@ -8,12 +8,13 @@ import {
   type ItemKind,
   type Scope,
 } from "@/bindings";
-import { adoptedToastLabel, replacedToastLabel } from "@/lib/copy";
+import { adoptedToastLabel } from "@/lib/copy";
 import {
   ignoredToast,
   TAKEN_BACK_TOAST,
   UNDO_LABEL,
 } from "@/lib/copy-decisions";
+import { replacedToastLabel } from "@/lib/copy-in-the-way";
 import { auditRunner, replaceView } from "./audit-run";
 import { useProblemsStore } from "./problems";
 
@@ -28,18 +29,21 @@ interface AuditState {
   /** Unix ms of the last audit that came back clean; null until one has. */
   auditedAt: number | null;
   refresh: (opts?: { force?: boolean }) => Promise<void>;
+  /** Every action here answers whether it worked. Most callers only need
+   *  the state update that comes with it; the ones running several in a
+   *  row need to stop at the first failure. */
   applyPlan: (
     scope: Scope,
     removeOrphans: boolean,
     allowUnsafe?: string[],
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   adopt: (
     scope: Scope,
     kind: ItemKind,
     name: string,
     harness: HarnessId,
     opts?: { silent?: boolean },
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   /** Install what kendex.toml asks for over the files already at one
    *  item's place. Named item only, so a neighbour blocked the same way
    *  keeps its files until that one is decided too. */
@@ -47,14 +51,14 @@ interface AuditState {
     scope: Scope,
     kind: ItemKind,
     name: string,
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   toggle: (
     scope: Scope,
     kind: ItemKind,
     name: string,
     enabled: boolean,
-  ) => Promise<void>;
-  removeItem: (scope: Scope, kind: ItemKind, name: string) => Promise<void>;
+  ) => Promise<boolean>;
+  removeItem: (scope: Scope, kind: ItemKind, name: string) => Promise<boolean>;
   /** Rule that these findings are not problems. The toast offers Undo,
    *  which takes back exactly the records this call wrote. */
   dismiss: (

@@ -9,11 +9,13 @@ changes carry a **Breaking** call-out with their migration note inline.
 ### Added
 
 - Asking for an item whose files are already on disk — the normal shape of
-  moving an existing repo onto kendex — now has a way forward, in both
-  directions. In the app, the item gets a row of its own on Review & apply
-  with both choices on it: **Keep these files**, and kendex manages them as
-  they are, or **Replace them**, and kendex installs what kendex.toml asks
-  for while the old files move to the trash. In the CLI they are
+  moving an existing repo onto kendex — now has a way forward. In the app,
+  the item gets a row of its own on Review & apply: **Replace them**, and
+  kendex installs what kendex.toml asks for while the old files move to the
+  trash, or, for an agent or a skill, **Keep these files**, and kendex
+  looks after them as they are. For other kinds, keeping them means moving
+  them somewhere else yourself, and the row says so rather than offering a
+  button that would fail. In the CLI the two are
   `kendex adopt <kind> <name>` and `kendex apply --replace-unmanaged`.
   Before this, the refusal named no way out and `--discard-edits` did not
   clear it. Nothing is deleted outright, and neither a link kendex did not

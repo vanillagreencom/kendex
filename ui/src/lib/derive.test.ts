@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AuditView, ObservedItem } from "@/bindings";
+import { ADOPTABLE } from "@/lib/adoptable";
 import {
   bundleSummary,
   countByKind,
@@ -208,6 +209,7 @@ describe("viewsInScope", () => {
     notes: [],
     warnings: [],
     safety: [],
+    adoptable: ADOPTABLE,
     heldBack: [],
     queued: [],
   });

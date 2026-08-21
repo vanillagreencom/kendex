@@ -97,6 +97,14 @@ fn safe_ident(name: &str) -> bool {
 }
 
 impl Remedy {
+    /// Whether running this changes anything. Every other remedy settles
+    /// the line it sits on; the plan prints and returns, so calling it a
+    /// fix would promise a person, and an agent acting on this report, a
+    /// resolution they will not get.
+    pub fn mutates(&self) -> bool {
+        !matches!(self, Remedy::Plan { .. })
+    }
+
     /// The pasteable spelling, or `None` when an identifier fails
     /// validation — the line then stands without a remedy.
     pub fn render(&self) -> Option<String> {

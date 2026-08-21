@@ -423,6 +423,13 @@ export type AuditView_Deserialize = {
 	 */
 	safety: ItemSafety_Deserialize[],
 	/**
+	 *  The kinds "keep these files" can be offered for. Adoption needs
+	 *  somewhere in the local source to put the content, and only these
+	 *  kinds have one — read from core so the page never offers an action
+	 *  that would error, and never keeps its own copy of the list.
+	 */
+	adoptable: ItemKind[],
+	/**
 	 *  Installations the plan would write but the safety gate holds back.
 	 *  Kept apart from `safety` (which scores what is on disk) because the
 	 *  two describe different bytes: an accept has to name the hash of what
@@ -462,6 +469,13 @@ export type AuditView_Serialize = {
 	 *  install back, and quality, which only ever informs.
 	 */
 	safety: ItemSafety_Serialize[],
+	/**
+	 *  The kinds "keep these files" can be offered for. Adoption needs
+	 *  somewhere in the local source to put the content, and only these
+	 *  kinds have one — read from core so the page never offers an action
+	 *  that would error, and never keeps its own copy of the list.
+	 */
+	adoptable: ItemKind[],
 	/**
 	 *  Installations the plan would write but the safety gate holds back.
 	 *  Kept apart from `safety` (which scores what is on disk) because the
