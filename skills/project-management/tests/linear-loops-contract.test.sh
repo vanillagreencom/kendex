@@ -35,6 +35,7 @@ require_fixed 'combined estimate of its children'"'"'s PR scope' 'single-PR pare
 require_fixed 'on the 1–5 scale — estimate
 the whole PR, never a sum past 5' 'combined estimate stays on the 1-5 scale'
 require_fixed '| Filter: Status | **Triage only** |' 'Loop 1 trigger is Triage-only'
+require_fixed 'A trigger that has a parent inherits the parent'"'"'s project' 'a parented trigger inherits its parent project'
 require_fixed '## First action — disarm the trigger' 'Loop 2 self-disarm section exists'
 require_fixed 'Before anything else, remove the "re-triage" label from the triggering' 'Loop 2 removes its trigger label before any other mutation'
 require_fixed 'stop

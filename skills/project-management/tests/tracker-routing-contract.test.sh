@@ -89,6 +89,11 @@ require "$audit_issues" '\*\*GitHub route \(TRACKER=github\)\*\*' 'GitHub execut
 linear_create_row="$(extract "$audit_issues" '^\*\*Linear route \(TRACKER=linear\)\*\*' '^\| expand, update' linear-create-row)" || fail "could not extract the Linear create row"
 grep -Fq -- '--state "Backlog"' "$linear_create_row" || fail 'Linear create route does not require --state "Backlog"'
 require_fixed "$audit_issues" 'Once every create has landed and its relations and parent are attached' 'Todo promotion waits for relations and parents'
+require_fixed "$audit_issues" 'Process creates in dependency order' 'creates are dependency-ordered and linked immediately'
+dev_implement="$SKILL_DIR/../dev/workflows/dev-implement.md"
+if [[ -f "$dev_implement" ]]; then
+  require_fixed "$dev_implement" 'issues create --state "Backlog" --project "[PARENT_PROJECT]" --parent [PARENT_ID]' 'dev-implement child create carries the parent project and Backlog'
+fi
 research_issue="$SKILL_DIR/workflows/research-issue.md"
 merge_pr="$SKILL_DIR/../orch/workflows/merge-pr.md"
 plan_issues="$SKILL_DIR/../orch/workflows/plan-issues.md"

@@ -7,9 +7,8 @@ by hand in the Linear UI at **Loops → New loop**.
 **How to use this template:** copy this file to a sibling named
 linear-loops-local.md in the same directory (the `docs/*-local.md` gitignore
 rule keeps that copy untracked), fill in every SETUP placeholder — the
-`[BRACKETED]` entries whose text tells you what to put there (team map, agent
-label definitions, schedule, multi-agent label) — and paste the finished
-sections into the Linear UI. Leave every RUNTIME slot untouched: the
+`[BRACKETED]` entries whose text tells you what to put there — and paste the
+finished sections into the Linear UI. Leave every RUNTIME slot untouched: the
 angle-bracket `<...>` values the loop substitutes per issue, and the
 square-bracket slots inside the parent issue format (`[SUMMARY]`,
 `[ISSUE_ID]`, `[title]`, `[Criterion …]`), which the loop fills when it
@@ -150,14 +149,16 @@ Do not close, merge, or mark either issue as a duplicate yourself. Flag only.
 ## Task 4 — Actionability nudge
 
 If the issue lacks clear scope, acceptance criteria, or a concrete
-deliverable (for example a vague one-line description with no target
-component), add one comment listing what is missing. One comment maximum.
+deliverable, add one comment listing what is missing. One comment maximum.
 
 ## Task 5 — Project assignment
 
-If the triggering issue has no project, pick the best-fitting ACTIVE
-project of its current team (Task 1 never moves issues) by matching the
-issue's content against project names and descriptions, and set it. Never
+A trigger that has a parent inherits the parent's project — set exactly
+that, never a content match, because children share their parent's
+project. Otherwise, if the triggering issue has no project, pick the
+best-fitting ACTIVE project of its current team (Task 1 never moves
+issues) by matching its content against project names and descriptions,
+and set it. Never
 invent a project, never move an issue that already has one, and skip when
 no project clearly fits — name the gap in your Task 4 comment instead.
 An issue that arrived already holding a project was routed by whoever
@@ -262,9 +263,8 @@ Comments are short, factual, and neutral. No greetings, no sign-offs.
 ---
 ## Loop 2 — Re-triage on demand
 
-Re-run handle: apply the `re-triage` label to any issue to get one janitor
-pass. Sources of the label: manual (an operator or a local agent) and
-Loop 3's weekly sweep. Create the workspace label `re-triage` first.
+Apply the `re-triage` label (manual, or from Loop 3's sweep) to any issue
+for one janitor pass. Create the workspace label `re-triage` first.
 
 ### Trigger
 

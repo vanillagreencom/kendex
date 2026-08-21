@@ -255,7 +255,7 @@ Order matters when both apply to one issue: relations first, then priority and l
 
 ### 7.2 Execute Approved Creations and Cancellations
 
-Process `create` first — created IDs resolve the `#N` references the other actions use. Action semantics are tracker-agnostic; the route comes from `TRACKER`. Never mix routes within one audit.
+Process creates in dependency order — every issue after the issues it is blocked by and its parent — and attach each issue's relations and parent immediately after its own create, never after the whole batch: created IDs resolve the `#N` references as they appear, and no issue sits unlinked while the rest of the batch is created, so the loop's ten-minute in-flight window bounds one create-and-link, never a batch. Action semantics are tracker-agnostic; the route comes from `TRACKER`. Never mix routes within one audit.
 
 **Linear route (TRACKER=linear)**
 
