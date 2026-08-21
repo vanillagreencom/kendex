@@ -89,7 +89,10 @@ lives in one capability table read by core and UI.
    foreign symlinks are conflicts, not clobber targets; adoption merges
    content, never loses it. A declaration landing on files kendex never
    wrote is a conflict with two exits, never a dead end: adopt keeps the
-   files and rewrites the declaration around them, and the take-over
+   files and rewrites the declaration around them — every tool the item is
+   blocked for in one plan, since capturing them one at a time would write
+   each tool's copy over the last, and tools holding different copies under
+   one name refuse rather than have one picked for them — and the take-over
    (`replace_unmanaged` / `--replace-unmanaged`, or the per-item
    `replace_unmanaged_names` a row's own button carries) keeps the
    declaration and moves the files to the trash first, bound to the bytes
@@ -100,6 +103,9 @@ lives in one capability table read by core and UI.
    never either exit's target, and neither is a position any install
    recorded writing — those bytes are kendex's own, and what protects them
    is the edit gate, whichever entry's key the declaration arrives under.
+   Ownership follows the artifact an entry actually emitted: a copy install
+   wrote the tool's own directory and never the shared tree, so it claims
+   no part of it.
    The sanctioned exceptions are that take-over and a link the user
    explicitly adopts: when it resolves to a real skill folder outside
    kendex's own trees, adopt captures that folder's content, trashes the

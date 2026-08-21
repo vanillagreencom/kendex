@@ -138,12 +138,14 @@ pub fn conflict_detail(row: &DriftRow) -> String {
 
 /// The way out that keeps the files, spelled with the item it applies to —
 /// the verb and its parameters as data, never a command line to paste.
-/// Adoption cannot take every kind, and a name that could not be an
-/// argument must not be printed as one; either way the files are still the
-/// reader's to keep, by moving them out of the way themselves.
+/// Adoption cannot take every kind, and a name a shell would read as more
+/// than one argument is never printed as one: a name may legally hold a
+/// space or a semicolon, and copied into a terminal that is somebody else's
+/// command. Either way the files are still the reader's to keep, by moving
+/// them out of the way themselves.
 fn keep_exit(row: &DriftRow) -> String {
     let takeable = kendex_core::engine::adopt::supports(row.kind)
-        && kendex_core::names::item_problem(&row.name).is_none();
+        && kendex_core::names::plain_argument(&row.name);
     match takeable {
         // The harness too: adoption reads one tool's position, and left
         // unsaid it reads Claude Code's — which is not the one blocked

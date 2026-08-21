@@ -49,13 +49,12 @@ export function UnmanagedItems({
   /** The list's heading — a project's name where several projects' lists
    *  sit under one panel heading, or nothing where the panel says it all. */
   title: string | null;
-  /** Answers whether it worked, so a row with several tools stops at the
-   *  first one that did not. */
+  /** Every tool an item sits at, handed over in one call. Answers whether
+   *  it worked, so a list stops at the first item that did not. */
   onAdopt: (
     kind: DriftRow["kind"],
     name: string,
-    harness: DriftRow["harness"],
-    opts?: { silent?: boolean },
+    harnesses: DriftRow["harness"][],
   ) => Promise<boolean>;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -66,13 +65,14 @@ export function UnmanagedItems({
   const foldable = canFold && rows.length > INLINE_LIMIT;
   const showList = !foldable || expanded;
 
-  // One adoption at a time: every apply takes the scope's writer lock, so
+  // One item at a time: every apply takes the scope's writer lock, so
   // firing them together turns all but the first into "scope is busy". The
   // first failure stops the rest — after one has failed, the others are
   // answering against a page that is now wrong, and the run would still
-  // finish looking like it worked.
+  // finish looking like it worked. An item's tools go in one call: taken
+  // one at a time, each tool's copy landed in the local source on top of
+  // the last and the declaration kept only the first.
   const adoptAll = async (groups: MergedDriftRow[]) => {
-    let index = 0;
     let shared: SharedLink | null = null;
     for (const group of groups) {
       const link = sharedLinkOf(group);
@@ -82,13 +82,10 @@ export function UnmanagedItems({
         shared ??= link;
         continue;
       }
-      for (const row of group.installations) {
-        const ok = await onAdopt(row.kind, row.name, row.harness, {
-          silent: index > 0,
-        });
-        if (!ok) return;
-        index += 1;
-      }
+      const harnesses = [
+        ...new Set(group.installations.map((row) => row.harness)),
+      ];
+      if (!(await onAdopt(group.kind, group.name, harnesses))) return;
     }
     if (shared) setConfirmingShared(shared);
   };
@@ -208,7 +205,7 @@ export function UnmanagedItems({
             void onAdopt(
               confirmingShared.group.kind,
               confirmingShared.group.name,
-              confirmingShared.harness,
+              [confirmingShared.harness],
             );
           }
           setConfirmingShared(null);

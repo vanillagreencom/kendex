@@ -66,7 +66,7 @@ export const auditHandlers: Record<string, Handler> = {
     scope: Scope;
     kind: ItemKind;
     name: string;
-    harness: HarnessId;
+    harnesses: HarnessId[];
   }) => {
     const v = view(args.scope);
     v.drift = v.drift.filter(
@@ -74,7 +74,7 @@ export const auditHandlers: Record<string, Handler> = {
         !(
           row.kind === args.kind &&
           row.name === args.name &&
-          row.harness === args.harness
+          args.harnesses.includes(row.harness)
         ),
     );
     const table = declTable(manifest(args.scope), args.kind);

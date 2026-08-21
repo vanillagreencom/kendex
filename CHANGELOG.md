@@ -16,7 +16,9 @@ changes carry a **Breaking** call-out with their migration note inline.
   looks after them as they are. For other kinds, keeping them means moving
   them somewhere else yourself, and the row says so rather than offering a
   button that would fail. In the CLI the two are
-  `kendex adopt <kind> <name>` and `kendex apply --replace-unmanaged`.
+  `kendex adopt <kind> <name> --harness <harness>` — adoption reads one
+  tool's position, and the blocked tool is the one to name — and
+  `kendex apply --replace-unmanaged`.
   Before this, the refusal named no way out and `--discard-edits` did not
   clear it. Nothing is deleted outright, and neither a link kendex did not
   create nor files an existing install owns is ever replaced — those keep

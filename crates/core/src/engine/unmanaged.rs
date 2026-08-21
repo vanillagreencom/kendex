@@ -192,9 +192,10 @@ fn declared_artifact_paths(env: &Env, scope: &Scope, manifest: &Manifest) -> BTr
 /// the line states the two facts a stat proves and sends the reader to the
 /// plan.
 ///
-/// Read per installation, not per declaration: an item installed for one
-/// tool and asked for by another is blocked at exactly the position the
-/// second tool has no record at. What any installation recorded writing is
+/// Read per installation, not per declaration, and answered the same way:
+/// an item installed for one tool and asked for by another is blocked at
+/// exactly the position the second tool has no record at, and a line that
+/// said only its name would be false about the tool that has it. What any installation recorded writing is
 /// kendex's own, whichever entry holds it now (invariant 6) — the shared
 /// tree two tools read one skill from is the case that matters, and calling
 /// it a stranger's would report kendex's own output back at the user.
@@ -203,7 +204,7 @@ pub(crate) fn declared_over_existing_files(
     scope: &Scope,
     manifest: &Manifest,
     lock: &Lock,
-) -> Vec<(ItemKind, String)> {
+) -> Vec<(ItemKind, String, crate::model::HarnessId)> {
     let owned: BTreeSet<PathBuf> = lock
         .entries
         .values()
@@ -217,19 +218,19 @@ pub(crate) fn declared_over_existing_files(
         (ItemKind::Hook, &manifest.hooks),
     ] {
         for (name, decl) in table {
-            let occupied = desired::target_harnesses(decl, manifest, kind, scope)
-                .into_iter()
-                .filter(|harness| {
-                    !lock
-                        .entries
-                        .contains_key(&crate::lock::entry_key(kind, name, *harness))
-                })
-                .flat_map(|harness| {
-                    installation_paths(env, scope, manifest, kind, name, decl, harness)
-                })
-                .any(|path| !owned.contains(&path) && (path.exists() || path.is_symlink()));
-            if occupied {
-                blocked.push((kind, name.clone()));
+            for harness in desired::target_harnesses(decl, manifest, kind, scope) {
+                if lock
+                    .entries
+                    .contains_key(&crate::lock::entry_key(kind, name, harness))
+                {
+                    continue;
+                }
+                let occupied = installation_paths(env, scope, manifest, kind, name, decl, harness)
+                    .into_iter()
+                    .any(|path| !owned.contains(&path) && (path.exists() || path.is_symlink()));
+                if occupied {
+                    blocked.push((kind, name.clone(), harness));
+                }
             }
         }
     }

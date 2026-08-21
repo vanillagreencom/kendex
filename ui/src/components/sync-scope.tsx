@@ -43,15 +43,13 @@ export function SyncScopeCard({
   busy: boolean;
   onApply: (removeOrphans: boolean, allowUnsafe?: string[]) => void;
   onDismiss: (tokens: string[], reason: DismissReason) => void;
-  /** Hand the files already at an item's place to kendex as they are.
-   *  Answers whether it worked, so a row with several tools stops at the
-   *  first one that did not. */
+  /** Hand the files already at an item's place to kendex as they are, for
+   *  every tool the item is blocked for. */
   onKeepFiles: (
     kind: AuditView["drift"][number]["kind"],
     name: string,
-    harness: AuditView["drift"][number]["harness"],
-    opts?: { silent?: boolean },
-  ) => Promise<boolean>;
+    harnesses: AuditView["drift"][number]["harness"][],
+  ) => Promise<unknown>;
   /** Install what kendex.toml asks for over them instead. */
   onReplaceFiles: (
     kind: AuditView["drift"][number]["kind"],

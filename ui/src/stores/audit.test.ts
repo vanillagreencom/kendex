@@ -153,7 +153,9 @@ describe("audit store run() actions", () => {
       error: "permission denied",
     });
 
-    await useAuditStore.getState().adopt(globalScope, "hook", "lint", "claude");
+    await useAuditStore
+      .getState()
+      .adopt(globalScope, "hook", "lint", ["claude"]);
 
     const dialog = useProblemsStore.getState().dialog;
     expect(dialog.open).toBe(true);
@@ -168,7 +170,9 @@ describe("audit store run() actions", () => {
       data: emptyView,
     });
 
-    await useAuditStore.getState().adopt(globalScope, "hook", "lint", "claude");
+    await useAuditStore
+      .getState()
+      .adopt(globalScope, "hook", "lint", ["claude"]);
 
     expect(toast.success).toHaveBeenCalledWith("Now managing lint");
     expect(toast.error).not.toHaveBeenCalled();

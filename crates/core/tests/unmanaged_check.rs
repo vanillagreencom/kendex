@@ -114,9 +114,9 @@ fn it_is_told_apart_from_a_safety_hold() {
     );
 
     let text = report(&w);
-    assert!(text.contains("asked for but not installed"), "{text}");
+    assert!(text.contains("blocked by files already there"), "{text}");
     assert!(
-        text.contains("kendex.toml asks for skill 'deploy', and files are already where"),
+        text.contains("kendex.toml asks for skill 'deploy' for Claude Code, and files are"),
         "{text}"
     );
     assert!(
@@ -144,7 +144,7 @@ fn a_command_over_existing_files_is_reported_like_any_other_kind() {
 
     let text = report(&w);
     assert!(
-        text.contains("kendex.toml asks for command 'ship', and files are already where"),
+        text.contains("kendex.toml asks for command 'ship' for Claude Code, and files are"),
         "{text}"
     );
 }
@@ -193,7 +193,7 @@ fn bytes_that_already_match_are_never_prescribed_a_replacement() {
     fs::remove_file(kendex_core::lock::lock_path(&w.env, &w.scope)).unwrap();
 
     let text = report(&w);
-    assert!(text.contains("asked for but not installed"), "{text}");
+    assert!(text.contains("blocked by files already there"), "{text}");
     assert!(
         !text.contains("replace") && !text.contains("adopt"),
         "no exit is prescribed for a state a stat cannot judge: {text}"
@@ -305,5 +305,43 @@ fn a_command_is_read_at_the_position_its_tool_installs_it_to() {
     assert!(
         text.contains("kendex.toml asks for command 'ship'"),
         "{text}"
+    );
+}
+
+/// One item, two tools, one of them installed. The line is about the tool
+/// that is blocked — said only by name it claimed nothing was installed,
+/// which the tool with its copy makes false, in a report an agent reads as
+/// the project's state.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_line_names_the_tool_it_is_about() {
+    let w = world();
+    declare(
+        &w,
+        "copy",
+        "[\"claude\"]",
+        "[skills.deploy]\nsource = \"cat\"\n",
+    );
+    let planned = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &planned.plan, None).unwrap();
+    declare(
+        &w,
+        "copy",
+        "[\"claude\", \"opencode\"]",
+        "[skills.deploy]\nsource = \"cat\"\n",
+    );
+    write_at(
+        w.home.join("app/.opencode/skills/deploy/SKILL.md"),
+        "the tool that came before",
+    );
+
+    let text = report(&w);
+    assert!(
+        text.contains("skill 'deploy' for OpenCode"),
+        "the blocked tool is named: {text}"
+    );
+    assert!(
+        !text.contains("for Claude Code"),
+        "and the one that has it is not: {text}"
     );
 }

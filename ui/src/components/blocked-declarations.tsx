@@ -1,18 +1,26 @@
 import { useState } from "react";
-import type { DriftRow, ItemKind } from "@/bindings";
+import type { DriftRow, HarnessId, ItemKind } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { KindHarnessChips } from "@/components/kind-harness-chips";
 import { Button } from "@/components/ui/button";
 import {
   IN_THE_WAY_BODY,
+  KEEP_FILES_CONFIRM_LABEL,
+  KEEP_FILES_CONSEQUENCE,
   KEEP_FILES_LABEL,
+  keepFilesConfirmBody,
+  keepFilesConfirmTitle,
   MOVE_FILES_YOURSELF,
   REPLACE_FILES_CONFIRM_LABEL,
+  REPLACE_FILES_CONSEQUENCE,
   REPLACE_FILES_LABEL,
   replaceFilesConfirmBody,
   replaceFilesConfirmTitle,
 } from "@/lib/copy-in-the-way";
 import { type MergedDriftRow, summarizePaths } from "@/lib/drift-merge";
+
+/** Which exit a row is waiting on a confirmation for. */
+type Pending = { group: MergedDriftRow; exit: "keep" | "replace" };
 
 /**
  * Items kendex.toml asks for whose files were already on disk. Both ways
@@ -22,9 +30,10 @@ import { type MergedDriftRow, summarizePaths } from "@/lib/drift-merge";
  * cannot move until one is picked — which is why this sits with the other
  * decisions rather than under the Apply button, which cannot move it.
  *
- * No heading of its own: its two neighbours in that zone have none either,
- * and a second heading at the same size as the zone's own would leave
- * everything below it reading as part of this one group.
+ * A bordered box with the explainer as its header strip, the shape its
+ * neighbour in the zone already has — so the sentence belongs to the rows
+ * under it rather than to the zone, which also holds findings about files
+ * kendex did write. No heading of its own: the zone's is the only one.
  */
 export function BlockedDeclarations({
   rows,
@@ -44,36 +53,33 @@ export function BlockedDeclarations({
   onKeep: (
     kind: DriftRow["kind"],
     name: string,
-    harness: DriftRow["harness"],
-    opts?: { silent?: boolean },
-  ) => Promise<boolean>;
+    harnesses: HarnessId[],
+  ) => Promise<unknown>;
   onReplace: (kind: DriftRow["kind"], name: string) => Promise<unknown>;
 }) {
-  const [confirming, setConfirming] = useState<MergedDriftRow | null>(null);
+  const [pending, setPending] = useState<Pending | null>(null);
   if (rows.length === 0) return null;
-
-  // One row is one item however many tools it targets, and every apply
-  // takes the scope's writer lock — so its installations are handed over
-  // one at a time, only the first speaks up, and the first failure stops
-  // the rest: after one has failed, the others are answering a question
-  // the page can no longer see.
-  const keepAll = async (group: MergedDriftRow) => {
-    let index = 0;
-    for (const row of group.installations) {
-      const ok = await onKeep(row.kind, row.name, row.harness, {
-        silent: index > 0,
-      });
-      if (!ok) return;
-      index += 1;
-    }
-  };
 
   const where = (group: MergedDriftRow) =>
     summarizePaths(group.installations.map((row) => row.detail));
 
+  // One row is one item however many tools it targets, and its tools are
+  // handed over together: one at a time, each tool's copy landed on top of
+  // the last and the declaration kept only the first.
+  const confirm = () => {
+    if (!pending) return;
+    const { group, exit } = pending;
+    const harnesses = [
+      ...new Set(group.installations.map((row) => row.harness)),
+    ];
+    if (exit === "keep") void onKeep(group.kind, group.name, harnesses);
+    else void onReplace(group.kind, group.name);
+    setPending(null);
+  };
+
   return (
-    <div className="flex flex-col gap-2">
-      <p className="max-w-prose text-[13px] text-muted-foreground">
+    <div className="overflow-hidden rounded-lg border">
+      <p className="border-b bg-muted/40 px-3 py-2 text-[13px] text-foreground/75">
         {IN_THE_WAY_BODY}
       </p>
       <div className="divide-y divide-border/60">
@@ -85,7 +91,7 @@ export function BlockedDeclarations({
           return (
             <div
               key={`${group.kind}:${group.name}`}
-              className="flex flex-wrap items-center gap-3 py-2.5 first:pt-0 last:pb-0"
+              className="flex flex-wrap items-start gap-3 px-3 py-3"
             >
               <span className="flex min-w-0 flex-1 flex-col gap-1">
                 <span className="truncate text-sm font-medium">
@@ -99,53 +105,91 @@ export function BlockedDeclarations({
                     {paths.text}
                   </span>
                 ) : null}
+                <KindHarnessChips kind={group.kind} harnesses={harnesses} />
               </span>
-              <KindHarnessChips kind={group.kind} harnesses={harnesses} />
-              <div className="flex shrink-0 items-center gap-2">
+              {/* Each exit says what it does, under the control that does
+                  it — a row with no Keep button then carries only the line
+                  telling the reader how to keep the files themselves. */}
+              <div className="flex shrink-0 flex-wrap items-start gap-4">
                 {adoptable.includes(group.kind) ? (
-                  <Button
-                    size="sm"
-                    disabled={busy}
-                    onClick={() => void keepAll(group)}
-                  >
-                    {KEEP_FILES_LABEL}
-                  </Button>
+                  <Exit
+                    consequence={KEEP_FILES_CONSEQUENCE}
+                    control={
+                      <Button
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => setPending({ group, exit: "keep" })}
+                      >
+                        {KEEP_FILES_LABEL}
+                      </Button>
+                    }
+                  />
                 ) : (
-                  <span className="text-[13px] text-muted-foreground">
+                  <span className="max-w-[16rem] text-[13px] text-muted-foreground">
                     {MOVE_FILES_YOURSELF}
                   </span>
                 )}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() => setConfirming(group)}
-                >
-                  {REPLACE_FILES_LABEL}
-                </Button>
+                <Exit
+                  consequence={REPLACE_FILES_CONSEQUENCE}
+                  control={
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => setPending({ group, exit: "replace" })}
+                    >
+                      {REPLACE_FILES_LABEL}
+                    </Button>
+                  }
+                />
               </div>
             </div>
           );
         })}
       </div>
       <ConfirmDialog
-        open={confirming != null}
+        open={pending != null}
         onOpenChange={(open) => {
-          if (!open) setConfirming(null);
+          if (!open) setPending(null);
         }}
-        title={replaceFilesConfirmTitle(confirming?.name ?? "")}
-        description={replaceFilesConfirmBody(
-          (confirming && where(confirming)?.title) ?? "",
-          alsoApplies,
-        )}
-        confirmLabel={REPLACE_FILES_CONFIRM_LABEL}
-        destructive
+        title={
+          pending?.exit === "keep"
+            ? keepFilesConfirmTitle(pending.group.name)
+            : replaceFilesConfirmTitle(pending?.group.name ?? "")
+        }
+        description={
+          pending?.exit === "keep"
+            ? keepFilesConfirmBody(alsoApplies)
+            : replaceFilesConfirmBody(
+                (pending && where(pending.group)?.text) ?? "",
+                alsoApplies,
+              )
+        }
+        confirmLabel={
+          pending?.exit === "keep"
+            ? KEEP_FILES_CONFIRM_LABEL
+            : REPLACE_FILES_CONFIRM_LABEL
+        }
+        destructive={pending?.exit === "replace"}
         busy={busy}
-        onConfirm={() => {
-          if (confirming) void onReplace(confirming.kind, confirming.name);
-          setConfirming(null);
-        }}
+        onConfirm={confirm}
       />
     </div>
+  );
+}
+
+/** One way out: the control, and under it what taking it does. */
+function Exit({
+  control,
+  consequence,
+}: {
+  control: React.ReactNode;
+  consequence: string;
+}) {
+  return (
+    <span className="flex max-w-[16rem] flex-col items-start gap-1">
+      {control}
+      <span className="text-[13px] text-muted-foreground">{consequence}</span>
+    </span>
   );
 }

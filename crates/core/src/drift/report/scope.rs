@@ -142,10 +142,11 @@ impl ScopeCheck<'_> {
         }
     }
 
-    /// Declared, nothing installed, and files already where the install
-    /// goes. A different problem from a safety hold and a different fix, so
-    /// it is a section of its own — but a stat cannot tell which fix, so
-    /// the line states what it saw and the remedy is the plan that decides.
+    /// Asked for, no record of installing it for this tool, and files
+    /// already where that install goes. A different problem from a safety
+    /// hold and a different fix, so it is a section of its own — but a stat
+    /// cannot tell which fix, so the line states what it saw and the remedy
+    /// is the plan that decides.
     fn blocked_lines(
         &self,
         manifest: Option<&crate::manifest::Manifest>,
@@ -166,14 +167,15 @@ impl ScopeCheck<'_> {
             Ok(crate::lock::LockFile::Absent) => &empty,
             _ => return,
         };
-        for (kind, name) in
+        for (kind, name, harness) in
             crate::engine::declared_over_existing_files(self.env, self.scope, manifest, lock)
         {
             sections.blocked.push(drift(
                 format!(
-                    "{prefix}kendex.toml asks for {} '{}', and files are already where it would go",
+                    "{prefix}kendex.toml asks for {} '{}' for {}, and files are already where it would go",
                     kind.name(),
-                    shown(&name)
+                    shown(&name),
+                    harness.display_name()
                 ),
                 Some(Remedy::Plan {
                     global: self.global,

@@ -31,9 +31,16 @@ pub(super) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
             if let Some(dir) = native_dir(env, scope, entry.harness, ItemKind::Skill) {
                 files.push(dir.join(crate::harness::rendered_name(entry.harness, &entry.name)));
             }
-            let canonical = super::desired::skill_canonical(env, scope, &entry.name);
-            if !files.contains(&canonical) {
-                files.push(canonical);
+            // Only a shared install has a shared tree. A copy install put
+            // its bytes in the tool's own directory and never wrote that
+            // tree, so claiming it here would call somebody else's content
+            // ours — and what protects unmanaged bytes is exactly not being
+            // called ours.
+            if entry.method != crate::manifest::Method::Copy {
+                let canonical = super::desired::skill_canonical(env, scope, &entry.name);
+                if !files.contains(&canonical) {
+                    files.push(canonical);
+                }
             }
         }
         // A codex command was written as a skill tree, under a name the

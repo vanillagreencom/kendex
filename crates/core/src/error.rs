@@ -82,6 +82,19 @@ pub enum CoreError {
     )]
     ForeignSymlink { target: PathBuf, points_to: PathBuf },
 
+    // Keeping the files hands one copy to kendex, and there is one place
+    // to put it. Two tools holding different files under one name is a
+    // choice, not a merge: saying which to keep is the reader's, and
+    // picking one for them would put the other in the trash unasked.
+    #[error(
+        "{name}'s files are different for {first} and {second}. kendex keeps one copy of an item, so move the copy you don't want somewhere else first."
+    )]
+    AdoptedCopiesDiffer {
+        name: String,
+        first: String,
+        second: String,
+    },
+
     #[error("scope is busy: another apply holds {lock}")]
     ScopeBusy { lock: PathBuf },
 

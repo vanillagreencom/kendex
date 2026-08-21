@@ -194,7 +194,14 @@ mod tests {
         std::os::unix::fs::symlink(&shared, project.join(".claude/skills/browser")).unwrap();
         std::os::unix::fs::symlink(&shared, project.join(".agents/skills/browser")).unwrap();
 
-        let plan = adopt(&env, &scope, ItemKind::Skill, "browser", HarnessId::Claude).unwrap();
+        let plan = adopt(
+            &env,
+            &scope,
+            ItemKind::Skill,
+            "browser",
+            &[HarnessId::Claude],
+        )
+        .unwrap();
         crate::apply::execute(&env, &plan, None).unwrap();
 
         // Content captured; the folder and every link that read it cleared.
@@ -241,7 +248,7 @@ mod tests {
             &scope,
             ItemKind::Skill,
             "documents",
-            HarnessId::Claude,
+            &[HarnessId::Claude],
         )
         .unwrap_err();
         assert!(matches!(error, CoreError::ForeignSymlink { .. }));
@@ -269,7 +276,14 @@ mod tests {
         fs::create_dir_all(project.join(".claude/skills")).unwrap();
         std::os::unix::fs::symlink(&managed, project.join(".claude/skills/stolen")).unwrap();
 
-        let error = adopt(&env, &scope, ItemKind::Skill, "stolen", HarnessId::Claude).unwrap_err();
+        let error = adopt(
+            &env,
+            &scope,
+            ItemKind::Skill,
+            "stolen",
+            &[HarnessId::Claude],
+        )
+        .unwrap_err();
         assert!(matches!(error, CoreError::ForeignSymlink { .. }));
         assert!(managed.join("SKILL.md").is_file());
     }
@@ -295,7 +309,14 @@ mod tests {
         fs::create_dir_all(project.join(".claude/skills")).unwrap();
         std::os::unix::fs::symlink(&shared, project.join(".claude/skills/browser")).unwrap();
 
-        let plan = adopt(&env, &scope, ItemKind::Skill, "browser", HarnessId::Claude).unwrap();
+        let plan = adopt(
+            &env,
+            &scope,
+            ItemKind::Skill,
+            "browser",
+            &[HarnessId::Claude],
+        )
+        .unwrap();
         fs::write(shared.join("SKILL.md"), "changed under the plan").unwrap();
 
         assert!(crate::apply::execute(&env, &plan, None).is_err());

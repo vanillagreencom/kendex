@@ -132,10 +132,38 @@ fn the_page_is_told_which_kinds_can_be_kept() {
         &f.scope,
         ItemKind::Command,
         "ship",
-        kendex_core::model::HarnessId::Claude,
+        &[kendex_core::model::HarnessId::Claude],
     );
     assert!(
         refused.is_err(),
         "the list and what adoption actually takes have drifted apart"
+    );
+}
+
+/// The take-over is an apply like any other, so it owes the scope the
+/// migrations an apply owes it. Planned from a copy of the manifest that
+/// had already been normalized in memory, an older schema looked current
+/// and was written back unmigrated.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_older_schema_is_brought_forward_by_the_same_apply() {
+    let f = fixture();
+    let path = f.project.join("kendex.toml");
+    let older = fs::read_to_string(&path).unwrap().replace(
+        "schema = 5",
+        &format!("schema = {}", kendex_core::manifest::MANIFEST_SCHEMA - 1),
+    );
+    fs::write(&path, older).unwrap();
+
+    replace_unmanaged(&f.env, &f.scope, ItemKind::Skill, "deploy".into()).unwrap();
+
+    assert!(body(&f, "deploy").contains("Upstream."));
+    assert!(
+        fs::read_to_string(&path).unwrap().contains(&format!(
+            "schema = {}",
+            kendex_core::manifest::MANIFEST_SCHEMA
+        )),
+        "the scope was written without the migration it was owed:\n{}",
+        fs::read_to_string(&path).unwrap()
     );
 }

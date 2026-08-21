@@ -336,3 +336,58 @@ fn an_edit_under_one_tool_holds_when_another_tool_is_declared_over_it() {
     );
     assert!(!trashed(&w.env.trash_dir()));
 }
+
+/// A copy install never wrote the shared tree, so it never owned it. Read
+/// as owned, a second tool's declaration over pre-existing files at
+/// `.agents/skills` came back as a local edit instead of files kendex did
+/// not write: `--replace-unmanaged` could not reach it, and `--discard-
+/// edits` was free to write straight over content nothing had recorded.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_copy_install_never_owns_the_shared_tree() {
+    let w = with_method("copy");
+    let report = plan_apply(&w.env, &w.scope, &PlanOptions::default()).unwrap();
+    apply::execute(&w.env, &report.plan, None).unwrap();
+
+    // The second tool reads the shared tree, and somebody's files are there.
+    fs::write(
+        w.home.join("app/kendex.toml"),
+        format!(
+            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+            w.home.join("catalog").display()
+        ),
+    )
+    .unwrap();
+    let stranger = w.home.join("app/.agents/skills/deploy");
+    fs::create_dir_all(&stranger).unwrap();
+    fs::write(
+        stranger.join("SKILL.md"),
+        "---\nname: deploy\ndescription: ship it\n---\nWritten by the tool that came before.\n",
+    )
+    .unwrap();
+
+    let row = audit(&w.env, &w.scope)
+        .unwrap()
+        .drift
+        .into_iter()
+        .find(|row| row.name == "deploy" && row.harness == kendex_core::model::HarnessId::Codex)
+        .unwrap();
+    assert_eq!(
+        row.cause,
+        Some(DriftCause::UnmanagedContent),
+        "read as kendex's own, the exits that keep these files are never offered: {row:?}"
+    );
+
+    let discard = PlanOptions {
+        overwrite_edited: true,
+        ..PlanOptions::default()
+    };
+    let report = plan_apply(&w.env, &w.scope, &discard).unwrap();
+    apply::execute(&w.env, &report.plan, None).unwrap();
+    assert!(
+        fs::read_to_string(stranger.join("SKILL.md"))
+            .unwrap()
+            .contains("the tool that came before"),
+        "files kendex did not write were overwritten by discarding edits"
+    );
+}

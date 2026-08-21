@@ -37,27 +37,27 @@ pub(super) fn plan_tree(
         Ok(collapsed) => collapsed,
         Err(conflict) => return Ok(conflict),
     };
-    // A file where a tree goes is unmanaged content in an awkward shape:
-    // taken over it goes to the trash and the tree lands in its place, and
-    // the write below binds to an empty position because of it. Refused, it
-    // is the conflict it always was; a socket or a device is nobody's to
-    // move either way.
-    let mut taken_over = false;
+    // A file where a tree goes is unmanaged content in an awkward shape.
+    // Its bytes are read here and moved aside below, with the position's
+    // one claimant — two tools reading one tree both arrive here, and a
+    // second trash op for a path the first one already emptied fails its
+    // precondition and rolls the whole apply back. A socket or a device is
+    // nobody's to move either way.
+    let mut wrong_shape: Option<String> = None;
     if collapsed.is_none() && canonical.exists() && !canonical.is_dir() {
-        let takeable =
-            canonical.is_file() && claim.replace_unmanaged && !claim.owns(canonical, owned);
-        if !takeable {
+        if !canonical.is_file() || claim.owns(canonical, owned) {
             return Ok(Planned::Conflict(format!(
                 "a file sits at {}",
                 crate::names::shown(&canonical.display().to_string())
             )));
         }
-        let hash = match hash_tree(canonical) {
-            Ok(hash) => hash,
+        if !claim.replace_unmanaged {
+            return Ok(unmanaged(canonical));
+        }
+        match hash_tree(canonical) {
+            Ok(hash) => wrong_shape = Some(hash),
             Err(error) => return Ok(uncomparable(canonical, &error)),
-        };
-        ops.push(set_aside(canonical, Pre::HashIs { hash }));
-        taken_over = true;
+        }
     }
     let wanted = artifact_disk_hash(&item.artifact);
     let readable = collapsed.is_none() && canonical.is_dir();
@@ -67,7 +67,7 @@ pub(super) fn plan_tree(
     };
     let mut result = Planned::Clean;
     if disk.as_deref() != Some(wanted.as_str()) {
-        let unowned = taken_over
+        let unowned = wrong_shape.is_some()
             || (disk.is_some()
                 && !claim.owns(canonical, owned)
                 && !written.canonicals.contains(canonical));
@@ -83,7 +83,7 @@ pub(super) fn plan_tree(
             // Taken over, the tree goes to the trash whole rather than
             // being written through: what kendex did not write is kept
             // recoverable, never quietly merged under the new render.
-            if let Some(hash) = disk.clone().filter(|_| unowned) {
+            if let Some(hash) = wrong_shape.or_else(|| disk.clone().filter(|_| unowned)) {
                 ops.push(set_aside(canonical, Pre::HashIs { hash }));
             }
             write_ops(
@@ -92,6 +92,7 @@ pub(super) fn plan_tree(
                 files,
                 &collapsed,
                 disk.filter(|_| !unowned),
+                link.is_some(),
                 ops,
             );
         }
@@ -178,12 +179,16 @@ fn collapsed_link(
     Ok(Some(std::fs::read_link(canonical).unwrap_or_default()))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_ops(
     item: &Desired,
     canonical: &Path,
     files: &[(PathBuf, Vec<u8>)],
     collapsed: &Option<PathBuf>,
     disk: Option<String>,
+    // Whether a tool-native link points at this tree — which is what makes
+    // it the shared one rather than this tool's own copy.
+    shared: bool,
     ops: &mut Vec<PlannedOp>,
 ) {
     if let Some(target) = collapsed {
@@ -202,8 +207,20 @@ fn write_ops(
             },
         });
     }
+    // Which position, in the words a reader has: on a project mid-migration
+    // one tool is blocked and another is not, and a line naming neither the
+    // tool nor the place reads as the write the conflict just refused.
     ops.push(PlannedOp {
-        description: format!("Write {} {}'s files", item.kind.name(), item.name),
+        description: format!(
+            "Write {} {}'s files for {}{}",
+            item.kind.name(),
+            item.name,
+            item.harness.display_name(),
+            match shared {
+                true => ", in the folder its tools share",
+                false => "",
+            }
+        ),
         op: Op::WriteTree {
             root: canonical.to_path_buf(),
             files: files.to_vec(),

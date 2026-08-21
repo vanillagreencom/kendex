@@ -48,16 +48,19 @@ pub(super) fn plan_written_file(
     }
     if path.exists() && !path.is_file() {
         // A directory where a file goes is unmanaged content like any
-        // other, in an awkward shape. Taken over, it goes to the trash
-        // whole and the file lands in its place; refused, it is the same
-        // conflict it always was. Anything that is neither a file nor a
-        // directory — a socket, a device — is nobody's to move.
-        let takeable = path.is_dir() && claim.replace_unmanaged && !claim.owns(path, owned);
-        if !takeable {
+        // other, in an awkward shape: taken over it goes to the trash whole
+        // and the file lands in its place, and refused it is the same
+        // choice as any other unmanaged position, so it is said the same
+        // way. Anything that is neither a file nor a directory — a socket,
+        // a device — is nobody's to move.
+        if !path.is_dir() || claim.owns(path, owned) {
             return Ok(Planned::Conflict(format!(
                 "a directory sits at {}",
                 crate::names::shown(&path.display().to_string())
             )));
+        }
+        if !claim.replace_unmanaged {
+            return Ok(unmanaged(path));
         }
         let hash = match hash_tree(path) {
             Ok(hash) => hash,

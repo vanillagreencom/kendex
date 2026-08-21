@@ -85,8 +85,8 @@ export function ReviewPage() {
                   onDismiss={(tokens, reason) =>
                     void dismiss(view.scope, tokens, reason)
                   }
-                  onKeepFiles={(kind, name, harness, opts) =>
-                    adopt(view.scope, kind, name, harness, opts)
+                  onKeepFiles={(kind, name, harnesses) =>
+                    adopt(view.scope, kind, name, harnesses)
                   }
                   onReplaceFiles={(kind, name) =>
                     replaceUnmanaged(view.scope, kind, name)

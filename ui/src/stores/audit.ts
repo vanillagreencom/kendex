@@ -37,12 +37,14 @@ interface AuditState {
     removeOrphans: boolean,
     allowUnsafe?: string[],
   ) => Promise<boolean>;
+  /** Hand the files already at an item's place to kendex as they are, for
+   *  every tool the item is blocked for — one call, so no tool's copy is
+   *  captured over another's. */
   adopt: (
     scope: Scope,
     kind: ItemKind,
     name: string,
-    harness: HarnessId,
-    opts?: { silent?: boolean },
+    harnesses: HarnessId[],
   ) => Promise<boolean>;
   /** Install what kendex.toml asks for over the files already at one
    *  item's place. Named item only, so a neighbour blocked the same way
@@ -122,13 +124,10 @@ export const useAuditStore = create<AuditState>((set, get) => {
           "If it keeps failing, check the project folder is writable",
         ],
       }),
-    // A merged row adopts every one of its installations in one click —
-    // each is its own backend call, but they're one thing to the user, so
-    // only the first speaks up with a toast.
-    adopt: (scope, kind, name, harness, opts) =>
-      run(() => commands.adoptItem(scope, kind, name, harness), {
+    adopt: (scope, kind, name, harnesses) =>
+      run(() => commands.adoptItem(scope, kind, name, harnesses), {
         title: `Couldn't start managing ${name}`,
-        successMessage: opts?.silent ? undefined : adoptedToastLabel(name),
+        successMessage: adoptedToastLabel(name),
         steps: ["Try again"],
       }),
     replaceUnmanaged: (scope, kind, name) =>

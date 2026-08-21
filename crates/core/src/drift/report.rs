@@ -5,9 +5,12 @@
 //! This report is the one deliberate exception to the no-command-lines
 //! rule: it is written for an agent that can act, so each line may carry a
 //! remedy built from a fixed template set — refresh, remove, add, fork,
-//! findings — with only validated identifiers in argument positions. Free
-//! text from sources or errors renders in quoted informational positions,
-//! never in a command position.
+//! findings, plan — with only validated identifiers in argument positions.
+//! Free text from sources or errors renders in quoted informational
+//! positions, never in a command position. A remedy that changes something
+//! is offered as the fix; the one that only prints is offered as what to
+//! see next, because a line an agent runs and meets again next session is
+//! worse than no remedy at all.
 
 use serde::Serialize;
 use specta::Type;
@@ -84,18 +87,6 @@ pub enum Remedy {
     },
 }
 
-/// Only characters every declared name already passed validation for. A
-/// name is data; this is the belt-and-braces check at the one place data
-/// enters a command position.
-fn safe_ident(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 200
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | '@'))
-        && !name.starts_with('-')
-}
-
 impl Remedy {
     /// Whether running this changes anything. Every other remedy settles
     /// the line it sits on; the plan prints and returns, so calling it a
@@ -111,7 +102,7 @@ impl Remedy {
         let flag = |global: &bool| if *global { " --global" } else { "" };
         if let Remedy::Remove { name, .. } | Remedy::Add { name, .. } | Remedy::Fork { name, .. } =
             self
-            && !safe_ident(name)
+            && !crate::names::plain_argument(name)
         {
             return None;
         }
@@ -207,7 +198,7 @@ impl Sections {
             ("gone from their source", self.removed),
             ("mixed installs", self.mixed),
             ("missing on disk", self.missing),
-            ("asked for but not installed", self.blocked),
+            ("blocked by files already there", self.blocked),
             ("broken references", self.references),
             ("safety findings", self.findings),
             ("not yet evaluated", self.unevaluated),

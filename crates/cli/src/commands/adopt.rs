@@ -25,7 +25,7 @@ pub fn run(
     };
     let scope = resolve_scopes(env, filter)?.remove(0);
 
-    let move_plan = adopt::adopt(env, &scope, kind, &name, harness)?;
+    let move_plan = adopt::adopt(env, &scope, kind, &name, &[harness])?;
     for op in &move_plan.ops {
         say(&format!("  - {}", op.description));
     }

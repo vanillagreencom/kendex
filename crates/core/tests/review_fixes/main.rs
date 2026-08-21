@@ -181,7 +181,8 @@ fn adoption_plans_never_mutate_at_plan_time() {
     fs::create_dir_all(link.parent().unwrap()).unwrap();
     std::os::unix::fs::symlink(w.home.join("gone"), &link).unwrap();
 
-    let error = adopt(&w.env, &scope, ItemKind::Skill, "ghost", HarnessId::Claude).unwrap_err();
+    let claude = [HarnessId::Claude];
+    let error = adopt(&w.env, &scope, ItemKind::Skill, "ghost", &claude).unwrap_err();
     assert!(matches!(error, CoreError::ItemNotInSource { .. }));
     assert!(link.is_symlink());
 }
