@@ -38,13 +38,15 @@ pub(super) fn build(
         Ok(()) => Ok(()),
         Err(crate::error::CoreError::SourceEscape { path, reason }) => {
             let name = ctx.name;
+            // The path is the catalog's own bytes — a filename a
+            // downloaded repository chose — and this note is printed.
             state.unreadable(
                 kind,
                 name,
-                format!(
+                crate::names::shown(&format!(
                     "{name}: unreadable — refused catalog read: {reason} ({})",
                     path.display()
-                ),
+                )),
             );
             Ok(())
         }

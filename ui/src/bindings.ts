@@ -203,13 +203,8 @@ export const commands = {
 	 */
 	marketplaceSummary: (catalog: Catalog) => typedError<CatalogSummary, string>(__TAURI_INVOKE("marketplace_summary", { catalog })),
 	/**  One curated set with per-member installed state. */
-	marketplaceBundle: (catalog: Catalog, name: string) => typedError<BundleDetail, string>(__TAURI_INVOKE("marketplace_bundle", { catalog, name })),
-	marketplacePackagePreview: (catalog: Catalog, kind: ItemKind, name: string) => typedError<PackageView, string>(__TAURI_INVOKE("marketplace_package_preview", { catalog, kind, name })),
-	/**
-	 *  One offered file's content before install — the same read an installed
-	 *  package's file gets, confined to the package inside the catalog.
-	 */
-	marketplacePackageFile: (catalog: Catalog, kind: ItemKind, name: string, path: string) => typedError<ItemSource, string>(__TAURI_INVOKE("marketplace_package_file", { catalog, kind, name, path })),
+	marketplaceBundle: (scope: Scope, source: string, name: string) => typedError<BundleDetail, string>(__TAURI_INVOKE("marketplace_bundle", { scope, source, name })),
+	marketplacePackagePreview: (scope: Scope, source: string, kind: ItemKind, name: string) => typedError<PackageView_Serialize, string>(__TAURI_INVOKE("marketplace_package_preview", { scope, source, kind, name })),
 	/**
 	 *  Install packages or a curated set from one subscription. `destination`
 	 *  redirects the install from the scope being browsed into a project: the
@@ -486,9 +481,34 @@ export type AuditView_Serialize = {
 };
 
 /**  One finding the publisher settled. */
-export type AuthorDismissal = {
+export type AuthorDismissal = AuthorDismissal_Serialize | AuthorDismissal_Deserialize;
+
+/**  One finding the publisher settled. */
+export type AuthorDismissal_Deserialize = {
 	reason: DismissReason,
 	dismissedAt: string,
+	/**
+	 *  How many occurrences of this finding the publisher's own text
+	 *  carries in what was installed. Written by the apply that measured
+	 *  it, so the audit reads the answer rather than deriving it a second
+	 *  time and risking a different one. `None` on a record that has not
+	 *  been measured yet — the catalog's own read, before any rendering.
+	 */
+	occurrences?: number | null,
+};
+
+/**  One finding the publisher settled. */
+export type AuthorDismissal_Serialize = {
+	reason: DismissReason,
+	dismissedAt: string,
+	/**
+	 *  How many occurrences of this finding the publisher's own text
+	 *  carries in what was installed. Written by the apply that measured
+	 *  it, so the audit reads the answer rather than deriving it a second
+	 *  time and risking a different one. `None` on a record that has not
+	 *  been measured yet — the catalog's own read, before any rendering.
+	 */
+	occurrences?: number | null,
 };
 
 /**  One package a subscription offers, as the Packages table lists it. */
@@ -1892,8 +1912,26 @@ export type PackageFile = {
  *  count toward the score or the verdict — the same answer the install
  *  gate gives, which is the only reason this preview is worth showing.
  */
-export type PackageFinding = {
-	settled: AuthorDismissal | null,
+export type PackageFinding = PackageFinding_Serialize | PackageFinding_Deserialize;
+
+/**
+ *  One finding on an offered package, with the publisher's record about it
+ *  when they have one. A settled finding is reported here and does not
+ *  count toward the score or the verdict — the same answer the install
+ *  gate gives, which is the only reason this preview is worth showing.
+ */
+export type PackageFinding_Deserialize = {
+	settled: AuthorDismissal_Deserialize | null,
+} & Finding;
+
+/**
+ *  One finding on an offered package, with the publisher's record about it
+ *  when they have one. A settled finding is reported here and does not
+ *  count toward the score or the verdict — the same answer the install
+ *  gate gives, which is the only reason this preview is worth showing.
+ */
+export type PackageFinding_Serialize = {
+	settled: AuthorDismissal_Serialize | null,
 } & Finding;
 
 export type PackageMeta = PackageMeta_Serialize | PackageMeta_Deserialize;
@@ -1961,14 +1999,48 @@ export type PackageRef = {
  *  them — the dot in the Packages table and the findings on the
  *  available-package page.
  */
-export type PackageSafety = {
+export type PackageSafety = PackageSafety_Serialize | PackageSafety_Deserialize;
+
+/**
+ *  One offered package's scores and the verdict today's thresholds give
+ *  them — the dot in the Packages table and the findings on the
+ *  available-package page.
+ */
+export type PackageSafety_Deserialize = {
 	kind: ItemKind,
 	name: string,
 	/**
 	 *  Every finding, each carrying whatever has already been decided about
 	 *  it. One row, not two arrays a reader has to keep in step by index.
 	 */
-	findings: PackageFinding[],
+	findings: PackageFinding_Deserialize[],
+	safety: SafetyScore,
+	/**  Advisory, never blocking. */
+	quality: QualityScore | null,
+	skipped: SkippedRule[],
+	verdict: Verdict,
+	reasons: string[],
+	contentHash: string,
+	ruleset: number,
+	/**  Whether a verified cache entry answered instead of a fresh score. */
+	fromCache: boolean,
+	/**  Who recorded the settled findings, when this package carries any. */
+	publisher: string | null,
+};
+
+/**
+ *  One offered package's scores and the verdict today's thresholds give
+ *  them — the dot in the Packages table and the findings on the
+ *  available-package page.
+ */
+export type PackageSafety_Serialize = {
+	kind: ItemKind,
+	name: string,
+	/**
+	 *  Every finding, each carrying whatever has already been decided about
+	 *  it. One row, not two arrays a reader has to keep in step by index.
+	 */
+	findings: PackageFinding_Serialize[],
 	safety: SafetyScore,
 	/**  Advisory, never blocking. */
 	quality: QualityScore | null,
@@ -1987,9 +2059,24 @@ export type PackageSafety = {
  *  The available-package page's one payload: the preview beside the safety
  *  verdict the same content would face at install.
  */
-export type PackageView = {
+export type PackageView = PackageView_Serialize | PackageView_Deserialize;
+
+/**
+ *  The available-package page's one payload: the preview beside the safety
+ *  verdict the same content would face at install.
+ */
+export type PackageView_Deserialize = {
 	preview: PackagePreview,
-	safety: PackageSafety,
+	safety: PackageSafety_Deserialize,
+};
+
+/**
+ *  The available-package page's one payload: the preview beside the safety
+ *  verdict the same content would face at install.
+ */
+export type PackageView_Serialize = {
+	preview: PackagePreview,
+	safety: PackageSafety_Serialize,
 };
 
 /**

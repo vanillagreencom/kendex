@@ -99,19 +99,19 @@ pub(super) fn read_catalog(
     let sealed = match SealedSource::open(root) {
         Ok(sealed) => sealed,
         Err(problem) => {
-            state.notes.push(format!(
+            state.notes.push(crate::names::shown(&format!(
                 "{name}: source '{source}' unreadable ({problem}) — skipped"
-            ));
+            )));
             return Ok(None);
         }
     };
     match source_config_for(&sealed, provenance) {
         Ok(config) => Ok(Some((sealed, config))),
         Err(CoreError::SourceEscape { path, reason }) => {
-            state.notes.push(format!(
+            state.notes.push(crate::names::shown(&format!(
                 "{name}: unreadable — refused catalog read: {reason} ({})",
                 path.display()
-            ));
+            )));
             Ok(None)
         }
         Err(other) => Err(other),

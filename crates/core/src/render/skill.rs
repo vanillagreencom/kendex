@@ -46,12 +46,31 @@ pub fn render_skill(
     manifest: &Manifest,
     name: &str,
 ) -> Result<Vec<(PathBuf, Vec<u8>)>> {
-    let mut files = sealed.collect_skill_tree(source_dir)?;
     let instructions = merged_instructions(&manifest.skill_instructions, name);
+    with_instructions(sealed, source_dir, instructions.as_deref())
+}
+
+/// The same tree from the publisher's own bytes alone. Not a subtraction
+/// from the rendered text — the renderer is asked what it produces from the
+/// publisher's inputs, so nothing in the project's own instructions, marker
+/// or otherwise, can be mistaken for the publisher's.
+pub fn render_authored(
+    sealed: &SealedSource,
+    source_dir: &Path,
+) -> Result<Vec<(PathBuf, Vec<u8>)>> {
+    with_instructions(sealed, source_dir, None)
+}
+
+fn with_instructions(
+    sealed: &SealedSource,
+    source_dir: &Path,
+    instructions: Option<&str>,
+) -> Result<Vec<(PathBuf, Vec<u8>)>> {
+    let mut files = sealed.collect_skill_tree(source_dir)?;
     for (rel, bytes) in &mut files {
         if rel == Path::new("SKILL.md") {
             let text = String::from_utf8_lossy(bytes).into_owned();
-            *bytes = inject_instructions(&text, instructions.as_deref()).into_bytes();
+            *bytes = inject_instructions(&text, instructions).into_bytes();
         }
     }
     Ok(files)

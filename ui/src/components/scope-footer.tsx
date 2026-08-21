@@ -4,7 +4,11 @@ import { RECORDED_DECISIONS_LINK } from "@/lib/copy-decisions";
 import { cleanSummaryLead, settledSummaryLead } from "@/lib/copy-safety";
 import { groupSkipped, groupWarnings } from "@/lib/group-notes";
 import { kindLabel, skipReasonShort } from "@/lib/labels";
-import { publisherGroups, settledCount } from "@/lib/reviewable";
+import {
+  authorSettledCount,
+  publisherGroups,
+  settledCount,
+} from "@/lib/reviewable";
 import { useNavStore } from "@/stores/nav";
 
 /**
@@ -57,13 +61,17 @@ export function ScopeFooter({
   onSeeUnmanaged: () => void;
 }) {
   const goTo = useNavStore((s) => s.goTo);
+  // Two numbers about two things, each counted the way the sentence around
+  // it counts. The settled sentence is about rows with nothing left to
+  // decide, in occurrences; the disclosure below is about every scored row,
+  // in decisions. Deriving one from the other made the parenthetical claim
+  // more than the total it sits inside.
   const decided = settledCount(settled);
-  // One row set behind both numbers: the sentence and the control under it
-  // saying different counts of the same thing is worse than either alone.
+  const byAuthor = authorSettledCount(settled);
   const publisher = publisherGroups([...settled, ...alsoScored]);
   const checked = [
     ...(clean.length > 0 ? [cleanSummaryLead(clean.length)] : []),
-    ...(decided > 0 ? [settledSummaryLead(decided, publisher.length)] : []),
+    ...(decided > 0 ? [settledSummaryLead(decided, byAuthor)] : []),
   ];
   const skipped = groupSkipped(clean).map((group) => {
     const noun = group.kind

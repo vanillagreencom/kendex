@@ -69,7 +69,32 @@ pub fn active(review: Option<&SafetyReview>, content_hash: Option<&str>) -> Budg
     let Some(review) = review.filter(|r| r.stale_why(content_hash).is_none()) else {
         return Budget::default();
     };
-    Budget::whole(review.dismissed.keys().cloned().collect())
+    // The same entries an install would honour, and no others. A record the
+    // installer refuses is one this check must refuse too, or a
+    // maintainer's CI goes green while their consumers are held back over
+    // it, with nothing on either side explaining the disagreement.
+    Budget::whole(
+        review
+            .dismissed
+            .iter()
+            .filter(|(fingerprint, dismissal)| {
+                crate::quality::author::honest(fingerprint, dismissal)
+            })
+            .map(|(fingerprint, _)| fingerprint.clone())
+            .collect(),
+    )
+}
+
+/// Every entry in this record an install would refuse: the reasons only the
+/// receiving machine can answer for, and anything whose shape says it was
+/// not written by `dismiss --catalog`.
+pub fn refused(review: Option<&SafetyReview>) -> Vec<String> {
+    review
+        .into_iter()
+        .flat_map(|review| review.dismissed.iter())
+        .filter(|(fingerprint, dismissal)| !crate::quality::author::honest(fingerprint, dismissal))
+        .map(|(fingerprint, _)| fingerprint.clone())
+        .collect()
 }
 
 /// Record that these findings on this content are not problems. The same

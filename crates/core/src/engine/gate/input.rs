@@ -36,14 +36,38 @@ pub(super) fn input_for(item: &Desired) -> AuditInput {
     }
 }
 
-/// The same input with everything the publisher did not write taken back
-/// out — what a publisher's record is allowed to answer for.
+/// This item as its publisher wrote it — what their record is allowed to
+/// answer for, and nothing else.
+///
+/// The builder that rendered the artifact reports it; nothing here derives
+/// it back out of the rendered text, because text a project supplied can
+/// carry anything, marker or otherwise. The match is exhaustive on purpose:
+/// a kind whose rendering starts splicing in project text has to be
+/// classified here, and a kind that should have reported one and did not
+/// reads as unreadable — so the record settles nothing and the plan says a
+/// carried review did not apply, which is the direction a mistake here has
+/// to fail in.
 pub(super) fn authored_for(item: &Desired) -> AuditInput {
     let input = input_for(item);
-    AuditInput {
-        content: crate::quality::author::authored(&input.content),
-        ..input
-    }
+    let content = match (&item.authored, item.kind) {
+        (Some(authored), _) => authored.clone(),
+        // Nothing in these renderings comes from the project: the
+        // publisher's bytes are the whole of what is read.
+        (
+            None,
+            ItemKind::Command
+            | ItemKind::Hook
+            | ItemKind::McpServer
+            | ItemKind::Plugin
+            | ItemKind::PiExtension,
+        ) => input.content.clone(),
+        // These two carry project text — `[skill-instructions]`, an agent's
+        // launch and additional instructions, its project-configured hooks.
+        (None, ItemKind::Skill | ItemKind::Agent) => Content::Unread {
+            why: "kendex could not tell this item's own content from this project's",
+        },
+    };
+    AuditInput { content, ..input }
 }
 
 type Script = (std::path::PathBuf, Vec<u8>);

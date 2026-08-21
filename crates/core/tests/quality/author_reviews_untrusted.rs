@@ -236,3 +236,24 @@ fn an_unreadable_item_with_a_record_is_contained() {
         "the rest of the scope was still planned"
     );
 }
+
+/// A refusal never carries what it is refusing. A catalog chooses its own
+/// filenames, and the note naming one is printed straight into a terminal.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_refused_catalog_read_carries_no_control_characters() {
+    let f = fixture();
+    let hostile = f.source.join("skills/hostile");
+    std::os::unix::fs::symlink("/etc/passwd", hostile.join("a\u{1b}[2J\u{1b}[31mPWNED")).unwrap();
+    let report = plan(&f, &[]);
+    let note = report
+        .notes
+        .iter()
+        .find(|note| note.contains("refused catalog read"))
+        .expect("the plan refuses to read through the link");
+    assert!(
+        !note.chars().any(char::is_control),
+        "a note never carries what it is refusing: {note:?}"
+    );
+    assert!(note.contains("\\u{1b}"), "and shows it instead: {note:?}");
+}

@@ -217,23 +217,19 @@ pub(super) fn desired_agent(
         let source_agent = namespaced.as_ref().unwrap_or(&parsed);
         let (overrides, permissions) = harness_overrides(ctx, source_agent, harness);
         harness_notices(ctx, state, harness, source_agent, &overrides);
-        let effective = EffectiveAgent {
-            source: source_agent,
+        let effective = effective_agent(
+            ctx,
+            source_agent,
+            &parsed,
             harness,
-            scope: ctx.scope,
-            skills: skills.effective.clone(),
+            skills.effective.clone(),
             overrides,
             permissions,
-            launch_instructions: merged_instructions(
-                &ctx.manifest.agent_launch_instructions,
-                ctx.name,
-            ),
-            additional_instructions: merged_instructions(
-                &ctx.manifest.agent_additional_instructions,
-                ctx.name,
-            ),
-            custom_hooks: hooks_for_agent(ctx.env, ctx.scope, harness, ctx.manifest, &parsed),
-        };
+        );
+        let authored = ctx
+            .author_review
+            .as_ref()
+            .and_then(|_| authored_agent(&effective));
         let rendered = match generate(&effective) {
             Ok(rendered) => rendered,
             // A refusal produces no artifact for this harness; the plan
@@ -281,6 +277,8 @@ pub(super) fn desired_agent(
             emitted: None,
             reasons: ctx.reasons_for(harness),
             author_review: ctx.author_review.clone(),
+            authored,
+            earned: Default::default(),
             artifact: Artifact::File {
                 path: file,
                 bytes: rendered.text.into_bytes(),
@@ -288,4 +286,52 @@ pub(super) fn desired_agent(
         });
     }
     Ok(())
+}
+
+/// One agent's effective intent for one harness: what the source asks for,
+/// narrowed by this project's overrides, and this project's own text spliced
+/// in beside it.
+#[allow(clippy::too_many_arguments)]
+fn effective_agent<'a>(
+    ctx: &'a ItemCtx,
+    source: &'a crate::render::agent::SourceAgent,
+    parsed: &crate::render::agent::SourceAgent,
+    harness: crate::model::HarnessId,
+    skills: Vec<String>,
+    overrides: crate::manifest::FrontmatterOverrides,
+    permissions: crate::render::permission::PermissionIntent,
+) -> EffectiveAgent<'a> {
+    EffectiveAgent {
+        source,
+        harness,
+        scope: ctx.scope,
+        skills,
+        overrides,
+        permissions,
+        launch_instructions: merged_instructions(&ctx.manifest.agent_launch_instructions, ctx.name),
+        additional_instructions: merged_instructions(
+            &ctx.manifest.agent_additional_instructions,
+            ctx.name,
+        ),
+        custom_hooks: hooks_for_agent(ctx.env, ctx.scope, harness, ctx.manifest, parsed),
+    }
+}
+
+/// The same agent from its publisher's inputs alone: no project
+/// instructions, no project-configured hooks. Asked of the renderer rather
+/// than subtracted from its output, because these are spliced inline with
+/// no marker to subtract by — and text a project supplied can carry any
+/// marker it likes. `None` where the publisher's own inputs render to
+/// nothing this harness can hold, which settles nothing.
+fn authored_agent(effective: &EffectiveAgent) -> Option<crate::quality::Content> {
+    generate(&EffectiveAgent {
+        launch_instructions: None,
+        additional_instructions: None,
+        custom_hooks: Vec::new(),
+        ..effective.clone()
+    })
+    .ok()
+    .map(|rendered| crate::quality::Content::Document {
+        text: rendered.text,
+    })
 }

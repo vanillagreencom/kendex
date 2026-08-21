@@ -47,6 +47,18 @@ pub struct Desired {
     /// findings and the lock records the review; every one is still
     /// reported, named as the publisher's.
     pub author_review: Option<AuthorReview>,
+    /// This item rendered from its publisher's own inputs alone — no
+    /// project instructions, no project-configured hooks — through every
+    /// transformation the real rendering applies. Present only where a
+    /// publisher's record needs measuring against it. The builder that
+    /// rendered the artifact owes this beside it: a kind that can carry
+    /// project text and does not produce one settles nothing at all, which
+    /// is the direction a mistake here has to fail in.
+    pub authored: Option<crate::quality::Content>,
+    /// What the publisher's record earned against `authored`, filled in by
+    /// the gate that measured it and written into the lock so the audit
+    /// reads the same number rather than deriving its own.
+    pub earned: crate::quality::author::Budget,
     pub artifact: Artifact,
 }
 

@@ -816,7 +816,12 @@ lives in one capability table read by core and UI.
   `kendex-reviews.toml` at the catalog root (`check_catalog/dismissals.rs`):
   the same content-hash-bound dismissal records the install side keeps in a
   manifest, keyed `kind:name`, written by `dismiss --catalog` from the
-  tokens `check --catalog` prints. A dismissed finding stops counting and
+  tokens `check --catalog` prints — for every kind whose review can travel,
+  which is every kind but a hook. The check refuses what an install
+  refuses, so a record a consumer would drop fails the maintainer's own run
+  rather than their consumers' installs, and it reads an item under the
+  same budget an install does, so it never mints a token for content no
+  install can see. A dismissed finding stops counting and
   stays reported, marked — in the catalog's own passes and on the machines
   that install from it. What that record is worth on somebody else's
   machine is `quality/author.rs`, the neutral home for the travelling
@@ -836,12 +841,18 @@ lives in one capability table read by core and UI.
   hash rather than by name — one shared skill tree is loaded by several
   tools and only one of them holds a lock entry. A hook records none: the
   gate reads the script and the audit reads the shared settings file, two
-  readings of different bytes by design. Every settled finding is shown
-  with the publisher recorded alongside it and their reason — under the
-  line in the CLI, under Checked on a scope in the app, and beside the
-  finding on a marketplace package's page, which reads the same record
-  through `browse/safety.rs` so the preview cannot promise a verdict the
-  install will not give. A record that settles nothing here is a note,
+  readings of different bytes by design — so the record is refused where
+  it is read, `dismiss --catalog` refuses to write one, and `check
+  --catalog` prints no token for a hook's finding. The audit matches an
+  entry to an observation by the item and then by the bytes: its kind and
+  name, or the kind and name of the artifact it emitted, and then a review
+  hash sealed by what the artifact is on disk. Every settled finding is
+  shown with the publisher recorded alongside it and their reason — under
+  the line in the CLI, in its own row on a scope and beside the finding in
+  the held-back panel in the app, and beside the finding on a marketplace
+  package's page, which reads the same record through `browse/safety.rs` so
+  the preview cannot promise a verdict the install will not give (and says
+  when this project's own instructions are not in what it read). A record that settles nothing here is a note,
   never silence; and editing the item — in the catalog or on disk —
   stales it and the hold returns. Finding identity
   is the rule and the sentence it fired with, and nothing else
@@ -1065,15 +1076,18 @@ lives in one capability table read by core and UI.
   counting toward the score and can therefore move an item out of Block;
   that is the whole point of a catalog reviewing its own content, and it is
   bounded by the three checks in `quality/author.rs` (bound to bytes,
-  capped at the occurrences the publisher's own source carried, and
-  refusing the reasons only the installer's machine could answer for). The
-  publisher's record does not live in the person's manifest and is not one
-  of their revocable records: it lives in the catalog's committed
-  `kendex-reviews.toml` and, once installed, in the lock entry — so it
-  never appears in the Recorded decisions registry, which lists what the
-  person can take back. It is shown instead wherever the finding is: the
-  CLI prints the publisher and reason under the line, and the app lists
-  them under Checked. A personal dismissal binds
+  capped at the occurrences the publisher's own text carries in what
+  actually installs, and refusing the reasons only the installer's machine
+  could answer for). That cap is measured by the apply that wrote the bytes
+  and recorded beside the review, so the audit reads the number rather than
+  deriving a second one. The publisher's record does not live in the
+  person's manifest and is not one of their revocable records: it lives in
+  the catalog's committed `kendex-reviews.toml` and, once installed, in the
+  lock entry — so it never appears in the Recorded decisions registry,
+  which lists what the person can take back. It is shown instead wherever
+  the finding is: the CLI prints the publisher and reason under the line,
+  and the app gives them their own row on a scope and marks them inline in
+  the held-back panel. A personal dismissal binds
   the same way — review hash and rule set — and it lives in the same place,
   the manifest of the scope the item belongs to: a personal decision stays
   on this machine, a project decision is committed and shows up in code

@@ -63,22 +63,44 @@ export interface FindingItem {
 }
 
 export interface FindingGroup extends Finding {
+  /** Every place this one identity was found, in the order they were
+   *  reported. `location` is the first of them. */
+  locations: string[];
   items: FindingItem[];
   /** The exact occurrences behind the group — what a decision targets.
    *  Grouping is presentation; these are the things a person rules on. */
   occurrences: Occurrence[];
 }
 
-/** Dedupes open findings by (rule, location, message) for display. */
+/** Dedupes open findings for display, by the identity a decision is made
+ *  against rather than by where each one was found.
+ *
+ *  One decision covers every occurrence of one rule and one sentence within
+ *  an item, so drawing them as separate rows would let a person act on the
+ *  row they read and silently clear rows in files they never opened. One
+ *  row, with every place it was found listed under it. */
 export function groupFindings(open: Occurrence[]): FindingGroup[] {
   const groups = new Map<string, FindingGroup>();
   for (const occurrence of open) {
     const { row, finding } = occurrence;
-    const key = `${finding.rule}::${finding.location}::${finding.message}`;
+    // The identity a decision is made against — the rule and the sentence,
+    // exactly what `Finding::fingerprint` hashes. Keying on the location
+    // too would draw one decision as several rows, and acting on the row a
+    // person read would clear rows in files they never opened.
+    const key = `${finding.rule}::${finding.message}`;
     let group = groups.get(key);
     if (!group) {
-      group = { ...finding, items: [], occurrences: [] };
+      group = { ...finding, locations: [], items: [], occurrences: [] };
       groups.set(key, group);
+    }
+    if (!group.locations.includes(finding.location)) {
+      group.locations.push(finding.location);
+    }
+    // One identity, read in two places that weigh differently — a body and
+    // a supporting file. The row leads with the worse of them, the way the
+    // held-back panel's groups do.
+    if (SEVERITY_RANK[finding.severity] > SEVERITY_RANK[group.severity]) {
+      group.severity = finding.severity;
     }
     group.items.push({
       kind: row.kind,
@@ -156,8 +178,10 @@ export function concernDetails(concern: ConcernGroup): ConcernDetail[] {
       byMessage.set(key, detail);
       ordered.push(detail);
     }
-    if (!detail.locations.includes(finding.location)) {
-      detail.locations.push(finding.location);
+    for (const location of finding.locations) {
+      if (!detail.locations.includes(location)) {
+        detail.locations.push(location);
+      }
     }
   }
   return ordered;

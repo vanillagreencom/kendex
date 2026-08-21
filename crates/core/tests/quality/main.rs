@@ -4,6 +4,8 @@
 #![cfg(unix)]
 
 mod author_reviews;
+mod author_reviews_emitted;
+mod author_reviews_injection;
 mod author_reviews_records;
 mod author_reviews_untrusted;
 mod convergence;
@@ -18,4 +20,5 @@ mod reading;
 mod review_hash;
 mod review_hash_entries;
 mod rules;
+mod rules_shapes;
 mod scoring;

@@ -156,7 +156,7 @@ pub(super) fn run(
     let mut safety = Vec::new();
     let mut kept = Vec::new();
     let mut unapplied: BTreeMap<(ItemKind, String, String), BTreeSet<String>> = BTreeMap::new();
-    for item in std::mem::take(&mut state.items) {
+    for mut item in std::mem::take(&mut state.items) {
         let input = input_for(&item);
         let root = input.location.clone();
         // The override binds to what the rules read, not to what lands on
@@ -186,6 +186,7 @@ pub(super) fn run(
                 Budget::earned(review, &authored.findings)
             })
             .unwrap_or_default();
+        item.earned = earned.budget.clone();
         let scored = crate::quality::author::score(&result.findings, &earned.budget);
         let (verdict, reasons) =
             crate::quality::verdict(&scored.counted, &scored.safety, thresholds);

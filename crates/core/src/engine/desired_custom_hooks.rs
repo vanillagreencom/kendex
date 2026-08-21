@@ -94,6 +94,8 @@ pub(super) fn desired_custom_hooks(
                 // The person wrote this hook themselves; no catalog author
                 // stands behind it.
                 author_review: None,
+                authored: None,
+                earned: Default::default(),
                 artifact,
             });
         }

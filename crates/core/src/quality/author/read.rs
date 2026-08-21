@@ -31,6 +31,11 @@ pub fn for_item(
     item_path: &Path,
     publisher: &str,
 ) -> Read {
+    // The lookup first: hashing a skill reads its whole tree, and most
+    // items in most catalogs carry no record for that read to answer.
+    if !reviews.contains_key(&review_key(kind, name)) {
+        return Read::default();
+    }
     for_item_read(
         reviews,
         kind,
@@ -81,6 +86,9 @@ pub fn for_item_read(
                     AuthorDismissal {
                         reason: dismissal.reason,
                         dismissed_at: dismissal.dismissed_at.clone(),
+                        // Nothing has been rendered yet, so nothing has
+                        // been earned yet.
+                        occurrences: None,
                     },
                 );
             }
@@ -123,7 +131,7 @@ pub struct Read {
 /// file a third party writes by hand. `trusted-source` is refused outright
 /// — it is a claim about where bytes came from, and only the machine
 /// receiving them can answer that.
-pub(super) fn honest(fingerprint: &str, dismissal: &crate::quality::reviews::Dismissal) -> bool {
+pub fn honest(fingerprint: &str, dismissal: &crate::quality::reviews::Dismissal) -> bool {
     fingerprint.len() == 16
         && fingerprint.bytes().all(|b| b.is_ascii_hexdigit())
         && dismissal.reason != DismissReason::TrustedSource

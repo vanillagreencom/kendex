@@ -126,8 +126,14 @@ impl AuditRule for ObfuscatedContent {
                         rule: self.id().to_owned(),
                         severity: Severity::Low,
                         location: report.location.clone(),
+                        // Named, not "this file": the identity is the rule
+                        // and the sentence, so a message that only says
+                        // "this file" is the same sentence in every file it
+                        // fires in — and a person would settle one they
+                        // were shown and one they were not.
                         message: format!(
-                            "this file reads differently than it looks: {}",
+                            "{} reads differently than it looks: {}",
+                            named(&report.location),
                             parts.join(", ")
                         ),
                         remediation:
@@ -137,6 +143,24 @@ impl AuditRule for ObfuscatedContent {
                 })
                 .collect(),
         )
+    }
+}
+
+/// The file a location names, for a message that is about the file rather
+/// than about something quoted from it. Two such findings differ only by
+/// which file they are about, so the sentence has to carry it: the
+/// identity a decision binds to is the rule and the message, and nothing
+/// else tells them apart.
+fn named(location: &str) -> String {
+    let file = location.rsplit_once(':').map_or(location, |(file, line)| {
+        match line.bytes().all(|b| b.is_ascii_digit()) && !line.is_empty() {
+            true => file,
+            false => location,
+        }
+    });
+    match file.rsplit_once('/') {
+        Some((_, leaf)) if !leaf.is_empty() => leaf.to_owned(),
+        _ => file.to_owned(),
     }
 }
 
@@ -166,8 +190,9 @@ impl AuditRule for UndecodableContent {
                     severity: Severity::Medium,
                     location: report.location.clone(),
                     message: format!(
-                        "{} byte(s) of this file are not text and were read as best they could be, so part of it was scanned as a guess",
-                        report.undecodable
+                        "{} byte(s) of {} are not text and were read as best they could be, so part of it was scanned as a guess",
+                        report.undecodable,
+                        named(&report.location)
                     ),
                     remediation:
                         "save the file as UTF-8 text, or remove it if it was never meant to be text"

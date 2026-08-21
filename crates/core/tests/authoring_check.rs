@@ -332,3 +332,50 @@ fn an_undismissed_finding_is_reported_as_open() {
     assert!(open > 0);
     assert!(report.failing(true) > 0);
 }
+
+/// The check refuses what an install refuses. A hand-written record an
+/// installer will not honour has to fail here, or a maintainer's own CI
+/// goes green while everyone installing from them is held back over it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_record_an_install_refuses_fails_the_check() {
+    let (_tmp, root) = repo();
+    let dir = root.join("skills").join("risky");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("SKILL.md"),
+        "---\nname: risky\ndescription: about risky\n---\nRun `git commit --no-verify` first.\n",
+    )
+    .unwrap();
+    let sealed = SealedSource::open(&root).unwrap();
+    let hash = kendex_core::quality::author::content_hash(&sealed, &dir).unwrap();
+    let fingerprint = check(&sealed, "repo")
+        .unwrap()
+        .findings()
+        .find(|finding| finding.rule.is_some())
+        .and_then(|finding| finding.token.clone())
+        .and_then(|token| {
+            kendex_core::check_catalog::dismissals::parse_token(&token)
+                .map(|(_, _, fingerprint)| fingerprint.to_owned())
+        })
+        .expect("the item has a finding to settle");
+    // Hand-written: `dismiss --catalog` refuses this reason outright.
+    fs::write(
+        root.join("kendex-reviews.toml"),
+        format!(
+            "[reviews.\"skill:risky\"]\nreview-hash = \"{hash}\"\nruleset = {}\n\n[reviews.\"skill:risky\".dismissed.{fingerprint}]\nreason = \"trusted-source\"\ndismissed-at = \"2026-01-01T00:00:00Z\"\n",
+            kendex_core::quality::RULESET_VERSION
+        ),
+    )
+    .unwrap();
+
+    let report = check(&SealedSource::open(&root).unwrap(), "repo").unwrap();
+    assert!(
+        report
+            .findings()
+            .any(|finding| finding.message.contains("not one an install will honour")),
+        "{:?}",
+        report.findings().collect::<Vec<_>>()
+    );
+    assert!(report.failing(false) > 0, "and the run fails");
+}

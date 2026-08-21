@@ -91,6 +91,27 @@ impl SafetyBypass {
     }
 }
 
+/// Whether this line is a shell `case` arm's pattern list rather than a
+/// command: alternatives separated by `|`, ending at the `)` that opens the
+/// arm. Naming `sudo` as one of the tokens a parser should skip is not
+/// running it, and reading it as a command is the rule mistaking a list of
+/// words for an instruction.
+///
+/// Only the pattern half is exempt. A `case` arm whose body follows on the
+/// same line still has that body read: everything from the `)` on is a
+/// command like any other.
+fn is_case_pattern(line: &str) -> bool {
+    let Some(head) = line.split_once(')') else {
+        return false;
+    };
+    let head = head.0.trim();
+    !head.is_empty()
+        && head
+            .split('|')
+            .map(str::trim)
+            .all(|token| !token.is_empty() && token.split_whitespace().count() == 1)
+}
+
 /// Commands whose ordinary outcome is destruction.
 const DESTRUCTIVE: &[(&str, &str)] = &[
     ("rm -rf /", "deletes everything from the root down"),
@@ -135,7 +156,7 @@ impl AuditRule for DangerousCommands {
                     hit(needle, what);
                 }
             }
-            if line.lower.trim_start().starts_with("sudo ") {
+            if line.lower.trim_start().starts_with("sudo ") && !is_case_pattern(&line.lower) {
                 hit("sudo", "runs the rest of the line as root");
             }
         })

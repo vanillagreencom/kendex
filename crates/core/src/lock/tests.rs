@@ -202,7 +202,7 @@ fn a_lock_carrying_a_publishers_review_declares_a_version_older_builds_refuse() 
     );
     save(&path, &lock).unwrap();
 
-    assert!(LOCK_VERSION > WITHOUT_AUTHOR_REVIEW);
+    const { assert!(LOCK_VERSION > WITHOUT_AUTHOR_REVIEW) };
     let written = std::fs::read_to_string(&path).unwrap();
     assert!(written.contains("authorReview"));
     assert_eq!(load(&path).unwrap(), lock);

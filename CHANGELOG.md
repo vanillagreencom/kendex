@@ -58,8 +58,10 @@ changes carry a **Breaking** call-out with their migration note inline.
   than passing in silence. A hook cannot carry one: it is scored from its
   script before it installs and from the harness's settings file
   afterwards, two readings of different bytes, so `dismiss --catalog`
-  refuses a hook token and says why. `check --catalog` prints the token
-  beside each blocking finding.
+  refuses a hook token and says why — a hook author answers a false
+  positive by narrowing the script or by getting the rule fixed, and there
+  is no record they can write instead. `check --catalog` prints the token
+  beside each finding it can be used on.
 
 ### Changed
 
@@ -85,6 +87,10 @@ changes carry a **Breaking** call-out with their migration note inline.
   they are reported as "the safety rules changed since it was reviewed"
   rather than as a different set of problems. Re-accept or re-dismiss from
   the tokens `kendex findings` prints now.
+- The `dangerous-commands` check no longer reads a shell `case` arm's
+  pattern list as a command: naming `sudo` among the words a parser should
+  skip is not running it. Skills and hooks that parse command lines stop
+  being flagged for the tokens they match on.
 - Safety findings are identified by the rule and the sentence it fired with,
   so a decision survives everything kendex does to an item on the way in —
   the line moving, the body being split into `references/` past a harness's
@@ -135,6 +141,16 @@ changes carry a **Breaking** call-out with their migration note inline.
   kendex ships is installed, so launchers and docks match the running window
   to kendex and draw a sharp icon at any size. Both channels that write the
   entry are fixed: `curl … | sh` and `yay -S kendex-bin`.
+- A note about a catalog it could not read no longer carries that catalog's
+  own bytes to the terminal. A refused path, an unreadable source and a
+  reviews file that will not parse all quote content a downloaded
+  repository chose, and the escapes in it are now shown rather than acted
+  on — the same guard names already had.
+- `kendex check --catalog` reads an item under the same budget an install
+  does, so it no longer reports findings, or mints tokens for them, in
+  content past the point any install stops reading. An item bigger than
+  that says so instead, and the standing "reviewed findings do not appear
+  in what this installs" warnings it caused are gone.
 - Installing a security-adjacent package from a marketplace no longer held
   it back over findings the publisher had already reviewed. A skill that
   must name the flags it guards against — `growth-guards` and

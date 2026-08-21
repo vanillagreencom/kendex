@@ -60,7 +60,11 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
         .zip(scored)
         .map(|(item, scored)| {
             let result = scored.result;
-            let key = crate::lock::entry_key(item.kind, &item.name, item.harness);
+            // The installation this observation belongs to, which is not
+            // always the one its own kind and name spell: a Codex command
+            // is written and scanned back as a skill tree, and its records
+            // were made under the command it is declared as.
+            let key = installation_key(&lock, item);
             let root = item.path.display().to_string();
             // Only the lock's word on where the bytes came from: what kendex
             // itself declared and resolved. The scanner's guess is a remote
@@ -71,20 +75,14 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
                 .entries
                 .get(&key)
                 .map(|entry| entry.source_repo.clone());
-            // The record answers for the bytes it was bound to, and within
-            // them only for what the publisher wrote: the installed
-            // SKILL.md carries the project's injected block, which is the
-            // project's own text and nobody's review.
+            // What the record earned was measured by the apply that wrote
+            // these bytes and written down beside it. The audit reads that
+            // answer rather than deriving it a second time: a live record
+            // proves the bytes are the ones that apply measured, and two
+            // derivations of one number are two chances to disagree.
             let by_author = author_review(&lock, item, scored.review.as_deref());
             let budget = by_author
-                .map(|review| {
-                    let input = crate::quality::observe::input_for(item);
-                    let authored = crate::quality::audit(crate::quality::AuditInput {
-                        content: crate::quality::author::authored(&input.content),
-                        ..input
-                    });
-                    crate::quality::author::Budget::earned(review, &authored.findings).budget
-                })
+                .map(crate::quality::author::AuthorReview::recorded_budget)
                 .unwrap_or_default();
             let scored_findings = crate::quality::author::score(&result.findings, &budget);
             let (verdict, reasons) = crate::quality::verdict(
@@ -158,6 +156,23 @@ fn author_review<'a>(
         .filter(|entry| names(entry, item))
         .filter_map(|entry| entry.author_review.as_ref())
         .find(|review| review.stale_why(Some(review_hash)).is_none())
+}
+
+/// The key this observation's records live under. An entry that emitted
+/// this artifact under another kind's name is the installation it belongs
+/// to — every decision about it, the person's own included, was made there.
+fn installation_key(lock: &crate::lock::Lock, item: &crate::model::ObservedItem) -> String {
+    lock.entries
+        .iter()
+        .find(|(_, entry)| {
+            entry.harness == item.harness
+                && entry
+                    .emitted
+                    .as_ref()
+                    .is_some_and(|emitted| emitted.kind == item.kind && emitted.name == item.name)
+        })
+        .map(|(key, _)| key.clone())
+        .unwrap_or_else(|| crate::lock::entry_key(item.kind, &item.name, item.harness))
 }
 
 /// Whether this lock entry is about this observation. The harness is left

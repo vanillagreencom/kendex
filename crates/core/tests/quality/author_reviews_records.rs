@@ -163,54 +163,6 @@ fn a_clean_item_is_unaffected() {
     }
 }
 
-/// Codex renders a command as a skill tree: the same authored document is
-/// the item's whole file in the catalog and `SKILL.md` once installed. A
-/// decision about it has to survive that, or a reviewed command is held
-/// back on Codex and nowhere else.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_reviewed_command_survives_being_rendered_as_a_skill() {
-    let f = fixture();
-    let commands = f.source.join("commands");
-    fs::create_dir_all(&commands).unwrap();
-    fs::write(
-        commands.join("ship.md"),
-        "---\ndescription: Ship it\n---\n\nRun `git commit --no-verify` to land it.\n",
-    )
-    .unwrap();
-    let path = kendex_core::manifest::manifest_path(&f.env, &f.scope);
-    let text = fs::read_to_string(&path).unwrap().replace(
-        "harnesses = [\"claude\"]",
-        "harnesses = [\"claude\", \"codex\"]",
-    ) + "\n[commands.ship]\nsource = \"cat\"\n";
-    fs::write(&path, text).unwrap();
-    assert!(
-        row(&plan(&f, &[]), "ship").blocked(),
-        "the control: nothing is settled yet"
-    );
-
-    author_dismisses(&f.source, ItemKind::Command, "ship", &[]);
-    let report = plan(&f, &[]);
-    let rows: Vec<&kendex_core::engine::ItemSafety> = report
-        .safety
-        .iter()
-        .filter(|row| row.name == "ship")
-        .collect();
-    assert!(rows.len() > 1, "more than one tool holds this command");
-    for row in rows {
-        assert!(
-            !row.blocked(),
-            "{} reads the publisher's record",
-            row.harness.name()
-        );
-        assert!(
-            row.decisions
-                .iter()
-                .all(|decision| matches!(decision.state, DecisionState::AuthorDismissed { .. }))
-        );
-    }
-}
-
 /// A hook is scored from the script a plan writes and audited from the
 /// shared settings file its registration lands in — two readings of
 /// different bytes, by design. A record can bind to one or the other and
@@ -233,7 +185,21 @@ fn a_hook_carries_no_publishers_review() {
         "the hook has something to settle"
     );
 
-    author_dismisses(&f.source, ItemKind::Hook, "guard", &[]);
+    // Written by hand, because `dismiss --catalog` refuses to write one and
+    // `check --catalog` prints no token to write it from — this is the only
+    // way such a record exists, and it still has to settle nothing.
+    let sealed = kendex_core::source_read::SealedSource::open(&f.source).unwrap();
+    let script = f.source.join("hooks/guard.sh");
+    let hash = kendex_core::quality::author::content_hash(&sealed, &script).unwrap();
+    let fingerprint = before.findings[0].fingerprint();
+    kendex_core::check_catalog::dismissals::record(
+        &sealed,
+        ItemKind::Hook,
+        "guard",
+        &hash,
+        &[(fingerprint, DismissReason::Intended)],
+    )
+    .unwrap();
     let report = plan(&f, &[]);
     let planned = row(&report, "guard");
     assert!(
@@ -254,49 +220,6 @@ fn a_hook_carries_no_publishers_review() {
             .filter(|entry| entry.kind == ItemKind::Hook)
             .all(|entry| entry.author_review.is_none())
     );
-}
-
-/// Codex writes a command as a skill tree and scans it back as one, so the
-/// record the lock holds has to be sealed as what the artifact *is* on disk.
-/// Sealed as the logical kind, a reviewed command installs and the very
-/// next audit reports it open again.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_reviewed_command_keeps_its_review_after_it_installs() {
-    let f = fixture();
-    let commands = f.source.join("commands");
-    fs::create_dir_all(&commands).unwrap();
-    fs::write(
-        commands.join("ship.md"),
-        "---\ndescription: Ship it\n---\n\nRun `git commit --no-verify` to land it.\n",
-    )
-    .unwrap();
-    let path = kendex_core::manifest::manifest_path(&f.env, &f.scope);
-    let text = fs::read_to_string(&path)
-        .unwrap()
-        .replace("harnesses = [\"claude\"]", "harnesses = [\"codex\"]")
-        + "\n[commands.ship]\nsource = \"cat\"\n";
-    fs::write(&path, text).unwrap();
-    author_dismisses(&f.source, ItemKind::Command, "ship", &[]);
-
-    let report = plan(&f, &[]);
-    assert!(!row(&report, "ship").blocked());
-    apply::execute(&f.env, &report.plan, None).unwrap();
-
-    let installed = observed_rows(&f, "ship");
-    assert!(!installed.is_empty(), "the command installed");
-    for row in installed {
-        assert!(
-            !row.blocked(),
-            "{} still reads the record",
-            row.harness.name()
-        );
-        assert!(
-            row.decisions
-                .iter()
-                .all(|decision| matches!(decision.state, DecisionState::AuthorDismissed { .. }))
-        );
-    }
 }
 
 /// A record belongs to the item it was recorded for. Two same-kind items
@@ -345,4 +268,48 @@ fn one_publishers_record_never_answers_for_anothers_copy() {
                 .all(|decision| !matches!(decision.state, DecisionState::AuthorDismissed { .. }))
         );
     }
+}
+
+/// The audit reads the number the apply measured rather than measuring
+/// again. An installed item carrying the project's own repeat of a reviewed
+/// sentence has one occurrence settled and one open, and the audit has to
+/// say the same — a second derivation is a second chance to disagree.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_audit_reads_the_budget_the_apply_measured() {
+    let f = fixture();
+    // Warn-level, so the item installs with the project's repeat in it and
+    // there is something on disk to audit.
+    skill(&f.source, "mild", "Then chmod 777 build.sh so it runs.\n");
+    declare(&f, "\n[skills.mild]\nsource = \"cat\"\n");
+    author_dismisses(&f.source, ItemKind::Skill, "mild", &[]);
+    declare(
+        &f,
+        "\n[skill-instructions]\nmild = \"Start by running chmod 777 on the tree.\"\n",
+    );
+
+    let report = plan(&f, &[]);
+    let planned = row(&report, "mild");
+    assert_eq!(planned.findings.len(), 2);
+    apply::execute(&f.env, &report.plan, None).unwrap();
+
+    let installed = observed(&f, "mild");
+    assert_eq!(installed.findings.len(), 2);
+    assert_eq!(
+        installed
+            .decisions
+            .iter()
+            .filter(|decision| matches!(decision.state, DecisionState::AuthorDismissed { .. }))
+            .count(),
+        1,
+        "the record paid for the publisher's occurrence and not the project's"
+    );
+    assert!(
+        installed
+            .decisions
+            .iter()
+            .any(|decision| matches!(decision.state, DecisionState::Open { .. })),
+        "so the project's own repeat is still a question"
+    );
+    assert_eq!(installed.safety.score, planned.safety.score);
 }

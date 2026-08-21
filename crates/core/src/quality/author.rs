@@ -12,11 +12,17 @@
 //!
 //! - It binds to bytes. The reader recomputes the hash from the source in
 //!   front of it and compares; nothing is taken on the record's own word.
-//! - It settles only what the publisher's own bytes said. Rendering can add
-//!   content the publisher never wrote — a project's `[skill-instructions]`
-//!   are injected straight into SKILL.md — so a decision speaks for as many
-//!   occurrences of a finding as the source carried, and no more. The extra
-//!   occurrence is a different question and stays counted.
+//! - It settles only what the publisher wrote. Rendering adds content they
+//!   never did — a project's `[skill-instructions]`, an agent's launch and
+//!   additional instructions, its project-configured hooks — so a decision
+//!   speaks for as many occurrences of a finding as the publisher's own
+//!   text carries in what actually installs, and no more. That number is
+//!   [`Budget::earned`]'s, counted against the item rendered from the
+//!   publisher's inputs alone: the renderer is asked what it produces
+//!   without the project's contributions rather than being read backwards
+//!   for markers, so nothing in the project's own text can be mistaken for
+//!   the publisher's. The extra occurrence is a different question and
+//!   stays counted.
 //! - It carries only the reasons an author can honestly give. A
 //!   `trusted-source` dismissal is a claim about where bytes came from,
 //!   which only the installer's own machine can check; the writer refuses
@@ -30,7 +36,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use super::reviews::DismissReason;
-use super::{Content, Finding, SafetyScore, TreeFile};
+use super::{Content, Finding, SafetyScore};
 use crate::error::Result;
 use crate::model::ItemKind;
 use crate::source_read::SealedSource;
@@ -44,6 +50,13 @@ use crate::source_read::SealedSource;
 pub struct AuthorDismissal {
     pub reason: DismissReason,
     pub dismissed_at: String,
+    /// How many occurrences of this finding the publisher's own text
+    /// carries in what was installed. Written by the apply that measured
+    /// it, so the audit reads the answer rather than deriving it a second
+    /// time and risking a different one. `None` on a record that has not
+    /// been measured yet — the catalog's own read, before any rendering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occurrences: Option<u32>,
 }
 
 /// A publisher's decisions about one item, as they travel to an install.
@@ -88,6 +101,38 @@ impl AuthorReview {
     /// preview, where nothing else has been added to it yet.
     pub fn whole_budget(&self) -> Budget {
         Budget::whole(self.dismissed.keys().cloned().collect())
+    }
+
+    /// The budget an apply already measured and wrote down. Valid exactly
+    /// while the record is live, since a live record proves the bytes are
+    /// the ones that apply wrote.
+    pub fn recorded_budget(&self) -> Budget {
+        Budget(
+            self.dismissed
+                .iter()
+                .filter_map(|(fingerprint, d)| Some((fingerprint.clone(), d.occurrences?)))
+                .collect(),
+        )
+    }
+
+    /// The same record carrying what it earned, for the lock to keep.
+    pub fn measured(&self, budget: &Budget) -> AuthorReview {
+        AuthorReview {
+            dismissed: self
+                .dismissed
+                .iter()
+                .map(|(fingerprint, dismissal)| {
+                    (
+                        fingerprint.clone(),
+                        AuthorDismissal {
+                            occurrences: budget.0.get(fingerprint).copied(),
+                            ..dismissal.clone()
+                        },
+                    )
+                })
+                .collect(),
+            ..self.clone()
+        }
     }
 }
 
@@ -238,37 +283,6 @@ pub fn content_hash_of(
     Some(crate::hash::hash_bytes(&sealed.read(path).ok()?))
 }
 
-/// The half of this content its publisher wrote: the same bytes the score
-/// is about, with the project's own injected instructions taken back out.
-///
-/// A skill's SKILL.md is the only place they can land, and the block that
-/// holds them is exactly recoverable — strip and inject are inverses — so
-/// this is a subtraction, never a re-render. What is left is what a
-/// publisher's record is allowed to answer for: the split that rendering
-/// applied is theirs, because their body is what overflowed; the sentence
-/// a project told the tool to add is not.
-pub fn authored(content: &Content) -> Content {
-    let Content::SkillTree { files } = content else {
-        return content.clone();
-    };
-    Content::SkillTree {
-        files: files
-            .iter()
-            .map(|file| match (file.path.file_name(), &file.text) {
-                (Some(name), Some(text)) if name == "SKILL.md" => {
-                    let stripped = crate::render::skill::inject_instructions(text, None);
-                    TreeFile {
-                        path: file.path.clone(),
-                        bytes: stripped.len(),
-                        text: Some(stripped),
-                    }
-                }
-                _ => file.clone(),
-            })
-            .collect(),
-    }
-}
-
 /// A skill's whole tree; anything else is one file. A repo-root skill's
 /// tree is the repository itself, whose VCS internals and dependency dirs
 /// are not content.
@@ -283,17 +297,33 @@ pub fn content(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Result<Con
             why: "a skill is a directory holding SKILL.md",
         });
     }
+    // Through the same budgeted constructor every install-side reading
+    // uses. A check that read further would report findings — and mint
+    // tokens for them — in content no gate or audit can ever see, leaving
+    // the record permanently unearned and the warning about it
+    // unfollowable.
     Ok(Content::SkillTree {
-        files: sealed
-            .collect_skill_tree(path)?
-            .into_iter()
-            .map(|(path, bytes)| TreeFile::read(path, &bytes))
-            .collect(),
+        files: super::observe::tree_files_from_bytes(&sealed.collect_skill_tree(path)?),
     })
 }
 
+/// Whether this item carries more than any install will read of it. The
+/// budget bounds what is scored, never what a decision covers, so an item
+/// past it is one whose tail nobody has judged — which is a thing to say,
+/// not a thing to score.
+pub fn past_budget(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Option<(usize, usize)> {
+    if kind != ItemKind::Skill || !sealed.is_dir(path) {
+        return None;
+    }
+    let files = sealed.collect_skill_tree(path).ok()?;
+    let read = super::observe::tree_files_from_bytes(&files);
+    let whole: usize = files.iter().map(|(_, bytes)| bytes.len()).sum();
+    let scanned: usize = read.iter().map(|file| file.bytes).sum();
+    (read.len() < files.len() || scanned < whole).then_some((scanned, whole))
+}
+
 mod read;
-pub use read::{Read, for_item, for_item_read};
+pub use read::{Read, for_item, for_item_read, honest};
 
 #[cfg(test)]
 mod tests;

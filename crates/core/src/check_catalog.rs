@@ -24,10 +24,13 @@ use crate::error::Result;
 use crate::model::{HarnessId, ItemKind};
 use crate::quality::author::review_key;
 use crate::quality::reviews::SafetyReview;
-use crate::quality::{self, AuditInput, Content, Verdict};
+use crate::quality::{self, Content, Verdict};
 use crate::render::validate;
 use crate::source::{CatalogMode, SourceConfig};
 use crate::source_read::SealedSource;
+
+mod safety;
+use safety::safety;
 
 pub mod dismissals;
 
@@ -82,6 +85,15 @@ impl CheckFinding {
     pub fn is_breakage(&self) -> bool {
         self.rule.is_none() && self.severity == "error"
     }
+
+    /// Something the check is saying about itself rather than about the
+    /// content — what it could not read, and why. There is nothing for a
+    /// maintainer to fix, so it counts toward nothing and fails nothing;
+    /// leaving it out entirely would be the check quietly not saying what
+    /// it did not look at.
+    pub fn is_note(&self) -> bool {
+        self.rule.is_none() && self.severity == "note"
+    }
 }
 
 /// One item with both passes run over it.
@@ -123,16 +135,21 @@ impl CatalogCheck {
             ..CheckTally::default()
         };
         for finding in &self.catalog {
-            match finding.is_breakage() {
-                true => tally.breakage += 1,
-                false => tally.advisory += 1,
+            match (finding.is_note(), finding.is_breakage()) {
+                (true, _) => {}
+                (false, true) => tally.breakage += 1,
+                (false, false) => tally.advisory += 1,
             }
         }
         for item in &self.items {
             for finding in &item.findings {
-                match (finding.rule.is_none(), finding.is_breakage()) {
-                    (true, true) => tally.breakage += 1,
-                    (true, false) => tally.advisory += 1,
+                match (
+                    finding.rule.is_none(),
+                    finding.is_note(),
+                    finding.is_breakage(),
+                ) {
+                    (true, false, true) => tally.breakage += 1,
+                    (true, false, false) => tally.advisory += 1,
                     _ => {}
                 }
             }
@@ -257,6 +274,45 @@ pub fn check_item(
     let hash = quality::author::content_hash(sealed, path);
     let dismissed = dismissals::active(review, hash.as_deref());
     let mut findings = structural(kind, name, &file, &content);
+    // An item bigger than any install reads has a tail nobody has judged.
+    // Saying so is the whole answer: scoring it would report findings no
+    // gate or audit can see, and mint tokens for them.
+    if let Some((scanned, whole)) = quality::author::past_budget(sealed, kind, path) {
+        findings.push(CheckFinding {
+            file: file.clone(),
+            kind: kind.name(),
+            name: name.to_owned(),
+            pass: CATALOG_PASS.to_owned(),
+            severity: "note",
+            rule: None,
+            message: format!(
+                "{scanned} of {whole} bytes were read: an install stops at the same point, so nothing past it is scored here or there"
+            ),
+            fix: "split what matters into a smaller tree, or accept that the tail is not checked"
+                .to_owned(),
+            token: None,
+            dismissed: false,
+        });
+    }
+    // A record an install would refuse is one this check refuses too, said
+    // where the maintainer is reading rather than discovered by their
+    // consumers being held back over it.
+    for fingerprint in dismissals::refused(review) {
+        findings.push(CheckFinding {
+            file: file.clone(),
+            kind: kind.name(),
+            name: name.to_owned(),
+            pass: CATALOG_PASS.to_owned(),
+            severity: "error",
+            rule: None,
+            message: format!(
+                "the review recorded for {fingerprint} is not one an install will honour"
+            ),
+            fix: "record it with `kendex dismiss --catalog`, whose reasons are the ones that travel — wrong-call or intended".to_owned(),
+            token: None,
+            dismissed: false,
+        });
+    }
     let (verdict, score) = safety(kind, name, &file, content, &dismissed, &mut findings);
     Ok(CheckedItem {
         kind,
@@ -317,49 +373,4 @@ fn structural(kind: ItemKind, name: &str, file: &str, content: &Content) -> Vec<
         }));
     }
     out
-}
-
-fn safety(
-    kind: ItemKind,
-    name: &str,
-    file: &str,
-    content: Content,
-    dismissed: &quality::author::Budget,
-    findings: &mut Vec<CheckFinding>,
-) -> (Verdict, u32) {
-    let result = quality::audit(AuditInput {
-        kind,
-        name: name.to_owned(),
-        harness: None,
-        location: file.to_owned(),
-        content,
-    });
-    // A dismissed finding is reported but no longer counted: the verdict
-    // and the score answer for what is still an open question.
-    let scored = quality::author::score(&result.findings, dismissed);
-    let (verdict, _) = quality::verdict(
-        &scored.counted,
-        &scored.safety,
-        quality::Thresholds::default(),
-    );
-    let score = scored.safety.score;
-    for (finding, was_dismissed) in result.findings.into_iter().zip(scored.settled) {
-        findings.push(CheckFinding {
-            token: Some(dismissals::token(
-                kind,
-                name,
-                &dismissals::fingerprint(&finding),
-            )),
-            file: finding.location,
-            kind: kind.name(),
-            name: name.to_owned(),
-            pass: SAFETY_PASS.to_owned(),
-            severity: finding.severity.name(),
-            rule: Some(finding.rule),
-            message: finding.message,
-            fix: finding.remediation,
-            dismissed: was_dismissed,
-        });
-    }
-    (verdict, score)
 }

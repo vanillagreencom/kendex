@@ -180,7 +180,13 @@ fn browsed(
     let config = super::source_config_for(&sealed, &source.provenance)?;
     let (reviews, reviews_unreadable) = match crate::check_catalog::dismissals::load(&sealed) {
         Ok(reviews) => (reviews, None),
-        Err(error) => (Default::default(), Some(error.to_string())),
+        // The parse error quotes the offending line of a downloaded file;
+        // it is captured escaped so every reader of it is safe, rather than
+        // each of them remembering.
+        Err(error) => (
+            Default::default(),
+            Some(crate::names::shown(&error.to_string())),
+        ),
     };
     Ok(Browsed {
         manifest,

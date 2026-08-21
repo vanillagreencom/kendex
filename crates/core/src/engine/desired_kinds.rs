@@ -45,6 +45,10 @@ pub(super) fn declared(
         emitted: None,
         reasons: ctx.reasons_for(harness),
         author_review: ctx.author_review.clone(),
+        // Hooks, commands and MCP servers render from the publisher's bytes
+        // and nothing else; there is nothing to subtract.
+        authored: None,
+        earned: Default::default(),
         artifact,
     })
 }
@@ -308,6 +312,8 @@ pub(super) fn desired_plugins(
             // A plugin is a switch in a settings file, not catalog content
             // an author could have reviewed.
             author_review: None,
+            authored: None,
+            earned: Default::default(),
             artifact: Artifact::Registration {
                 script: None,
                 edits: vec![(

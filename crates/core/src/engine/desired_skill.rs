@@ -25,10 +25,16 @@ struct SurfaceGroup {
 /// One rendered variant: the tree's files and their content hash. A group
 /// whose cap cannot be honored produces a refused placeholder and installs
 /// nothing.
+/// A rendered tree as apply materializes it: relative path, bytes.
+type Files = Vec<(PathBuf, Vec<u8>)>;
+
 struct Variant {
-    files: Vec<(PathBuf, Vec<u8>)>,
+    files: Files,
     hash: String,
     refused: bool,
+    /// The same tree from the publisher's own bytes, where a record needs
+    /// measuring against it.
+    authored: Option<Files>,
 }
 
 /// The tools that read a skill directory another tool owns, and what each
@@ -170,6 +176,12 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
                 emitted: None,
                 reasons: ctx.reasons_for(*harness),
                 author_review: ctx.author_review.clone(),
+                earned: Default::default(),
+                authored: variant.authored.as_deref().map(|files| {
+                    crate::quality::Content::SkillTree {
+                        files: crate::quality::observe::tree_files_from_bytes(files),
+                    }
+                }),
                 artifact: Artifact::Tree {
                     canonical: canonical.clone(),
                     files: variant.files.clone(),
@@ -231,6 +243,10 @@ fn render_variant(
     group: &SurfaceGroup,
     enabled: bool,
 ) -> Result<Variant> {
+    let authored = match ctx.author_review.is_some() {
+        true => authored_variant(ctx, group)?,
+        false => None,
+    };
     let mut files = render_skill(ctx.sealed, ctx.item_path, ctx.manifest, ctx.name)?;
     // A skill from a plugin-registry catalog installs under its plugin, and the
     // catalog's own SKILL.md knows nothing of that: the copy carries the
@@ -241,15 +257,7 @@ fn render_variant(
     // The tightest cap in the group and the member that enforces it, taken
     // together: they are one fact, and reading them from separate passes
     // invites a fallback for a state that cannot happen.
-    let capped = group
-        .members
-        .iter()
-        .filter_map(|h| {
-            crate::harness::format_caps(*h)
-                .skill_body_max_bytes
-                .map(|c| (c, *h))
-        })
-        .min_by_key(|(cap, _)| *cap);
+    let capped = tightest_cap(group);
     if let Some((cap, capped_by)) = capped {
         let outcome = crate::render::split::enforce_body_cap(files, cap);
         if let Some(reason) = outcome.refusal {
@@ -265,6 +273,7 @@ fn render_variant(
                 files: Vec::new(),
                 hash: String::new(),
                 refused: true,
+                authored: None,
             });
         }
         for warning in outcome.warnings {
@@ -303,6 +312,7 @@ fn render_variant(
                 files: Vec::new(),
                 hash: String::new(),
                 refused: true,
+                authored: None,
             });
         }
         for finding in findings
@@ -338,5 +348,42 @@ fn render_variant(
         files,
         hash,
         refused: false,
+        authored,
     })
+}
+
+/// The tightest body cap any member of this group enforces, and the member
+/// that enforces it — one fact, read once, so the two renderings below
+/// cannot be shaped differently.
+fn tightest_cap(group: &SurfaceGroup) -> Option<(usize, HarnessId)> {
+    group
+        .members
+        .iter()
+        .filter_map(|h| {
+            crate::harness::format_caps(*h)
+                .skill_body_max_bytes
+                .map(|c| (c, *h))
+        })
+        .min_by_key(|(cap, _)| *cap)
+}
+
+/// The publisher's own tree, through exactly the transformations the real
+/// rendering applies to theirs: the installed name, and the tightest
+/// member's body cap. Every warning and refusal this raises is the real
+/// rendering's to report, so they are dropped here; a refusal means there
+/// is no publisher-only tree to compare against, and the record then
+/// settles nothing.
+fn authored_variant(ctx: &ItemCtx, group: &SurfaceGroup) -> Result<Option<Files>> {
+    let mut files = crate::render::skill::render_authored(ctx.sealed, ctx.item_path)?;
+    if group.installed != ctx.name {
+        crate::render::skill::set_skill_name(&mut files, &group.installed);
+    }
+    if let Some((cap, _)) = tightest_cap(group) {
+        let outcome = crate::render::split::enforce_body_cap(files, cap);
+        if outcome.refusal.is_some() {
+            return Ok(None);
+        }
+        files = outcome.files;
+    }
+    Ok(Some(files))
 }

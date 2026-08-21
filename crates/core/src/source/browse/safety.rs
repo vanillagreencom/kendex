@@ -111,6 +111,15 @@ pub fn package_safety(
         })
         .collect();
     let mut reasons = judged.reasons;
+    // The preview reads the catalog, and this project adds its own text to
+    // what installs. Nobody has scored that combination yet, so the page
+    // says what it did not read rather than letting the number it shows be
+    // read as the one the install will give.
+    if injected_here(&browsed.manifest, kind, name) {
+        reasons.push(format!(
+            "this project adds its own instructions to {name}; they are not in this preview and are scored when it installs"
+        ));
+    }
     if let Some(problem) = &browsed.reviews_unreadable {
         reasons.push(format!(
             "{} could not be read, so nothing this catalog reviewed counts as reviewed — {problem}",
@@ -192,6 +201,29 @@ fn judge(env: &Env, score: &CachedScore, review: Option<&AuthorReview>) -> Resul
         safety: scored.safety,
         settled,
     })
+}
+
+/// Whether this project contributes text to this item's rendering. The
+/// same tables `gate::input::authored_for` classifies kinds by, read from
+/// the other side: browse scores catalog bytes, which carry none of it.
+fn injected_here(manifest: &crate::manifest::Manifest, kind: ItemKind, name: &str) -> bool {
+    let named = |table: &std::collections::BTreeMap<String, String>| {
+        [name, "all", "*"]
+            .iter()
+            .any(|key| table.contains_key(*key))
+    };
+    match kind {
+        ItemKind::Skill => named(&manifest.skill_instructions),
+        ItemKind::Agent => {
+            named(&manifest.agent_launch_instructions)
+                || named(&manifest.agent_additional_instructions)
+        }
+        ItemKind::Command
+        | ItemKind::Hook
+        | ItemKind::McpServer
+        | ItemKind::Plugin
+        | ItemKind::PiExtension => false,
+    }
 }
 
 /// The publisher's record for this package, re-checked against the catalog
