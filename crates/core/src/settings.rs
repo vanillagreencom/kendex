@@ -96,19 +96,47 @@ pub enum Appearance {
     Dark,
 }
 
+/// Bring a hand-edited zoom into range before the document is read as
+/// settings. `zoom` is a percent and a `u16`, so `-1` or `999999` would
+/// fail the field's own type — and the file is one document, so that one
+/// number would cost the person their theme, their projects and their
+/// safety thresholds along with it.
+///
+/// Only a whole number is moved. `zoom = 1.5` is left exactly where it is
+/// and the read refuses it: that is not a size out of range, it is not a
+/// size, and guessing which number was meant is worse than saying the line
+/// is wrong.
+fn bring_zoom_into_range(document: &mut toml::Table) {
+    let Some(toml::Value::Integer(percent)) = document.get("zoom") else {
+        return;
+    };
+    let in_range = match u16::try_from(*percent) {
+        Ok(percent) => clamp_zoom(percent),
+        Err(_) if percent.is_negative() => ZOOM.min,
+        Err(_) => ZOOM.max,
+    };
+    document.insert("zoom".to_owned(), toml::Value::Integer(in_range.into()));
+}
+
 pub fn load(env: &Env) -> Result<AppSettings> {
     let path = env.settings_file();
     match read_if_exists(&path)? {
         None => Ok(AppSettings::default()),
-        Some(text) => toml::from_str::<AppSettings>(&text)
-            .map(|mut settings| {
-                settings.zoom = clamp_zoom(settings.zoom);
-                settings
-            })
-            .map_err(|e| CoreError::TomlParse {
-                path,
-                message: e.to_string(),
-            }),
+        Some(text) => {
+            let mut document = text
+                .parse::<toml::Table>()
+                .map_err(|e| CoreError::TomlParse {
+                    path: path.clone(),
+                    message: e.to_string(),
+                })?;
+            bring_zoom_into_range(&mut document);
+            toml::Value::Table(document)
+                .try_into()
+                .map_err(|e: toml::de::Error| CoreError::TomlParse {
+                    path,
+                    message: e.to_string(),
+                })
+        }
     }
 }
 
@@ -225,6 +253,42 @@ mod tests {
         assert_eq!(load(&env).unwrap().zoom, ZOOM.max);
         write_settings(&env, "schema = 1\nzoom = 1\n");
         assert_eq!(load(&env).unwrap().zoom, ZOOM.min);
+    }
+
+    /// A number the field's own type cannot hold fails the parse, and the
+    /// file is one document, so a mistyped zoom would take the theme, the
+    /// projects and the safety thresholds down with it.
+    #[test]
+    fn a_hand_edited_zoom_too_big_for_a_percent_clamps_without_losing_the_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = env_in(tmp.path());
+        let rest = "schema = 1\nappearance = \"dark\"\n";
+
+        write_settings(&env, &format!("{rest}zoom = 999999\n"));
+        let settings = load(&env).unwrap();
+        assert_eq!(settings.zoom, ZOOM.max);
+        assert_eq!(settings.appearance, Appearance::Dark);
+
+        write_settings(&env, &format!("{rest}zoom = -1\n"));
+        let settings = load(&env).unwrap();
+        assert_eq!(settings.zoom, ZOOM.min);
+        assert_eq!(settings.appearance, Appearance::Dark);
+    }
+
+    /// The line between the two: a number outside the range is a size the
+    /// app will not give you, and anything that is not a whole number is
+    /// not a size at all.
+    #[test]
+    fn a_zoom_that_is_not_a_whole_number_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = env_in(tmp.path());
+        for line in ["zoom = 1.5", "zoom = \"big\"", "zoom = true"] {
+            write_settings(&env, &format!("schema = 1\n{line}\n"));
+            assert!(
+                matches!(load(&env), Err(CoreError::TomlParse { .. })),
+                "expected {line} to be refused as the wrong kind of value"
+            );
+        }
     }
 
     #[test]
