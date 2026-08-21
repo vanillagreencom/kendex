@@ -135,7 +135,18 @@ pub(super) fn commands(line: &str) -> Vec<Command> {
         // stays as written, and a line that changes what is inside the
         // substitution is a line that says something else.
         if !state.single {
-            if state.substituting(c, chars.peek().map(|(_, next)| *next)) {
+            // `$(` is one opening, so the parenthesis is taken with the
+            // dollar rather than left for the count below to reach — which
+            // would open the substitution twice and never close it.
+            if c == '$' && chars.peek().is_some_and(|(_, next)| *next == '(') {
+                state.opened();
+                state.push(at, c);
+                if let Some((at, opening)) = chars.next() {
+                    state.push(at, opening);
+                }
+                continue;
+            }
+            if state.substituting(c) {
                 state.push(at, c);
                 continue;
             }
@@ -216,6 +227,19 @@ impl Scan {
     /// Whether this character opens or closes a substitution, counting the
     /// nesting as it goes. A `)` inside quotes closes nothing.
     ///
+    /// Every parenthesis inside one is counted, not only the one `$(`
+    /// opened: a group written in there — `$( (true); printf … )` — closes
+    /// a parenthesis the substitution never opened, and taking that as the
+    /// end of it puts the separator after it back at the top level, where
+    /// it cuts the payload off the command that fetches it. Depth returns
+    /// to zero at the parenthesis that actually closes the substitution.
+    ///
+    /// A parenthesis outside one is left alone. A subshell at the top level
+    /// holds its separators the same way, but prose is full of brackets and
+    /// reading those as a group would swallow every separator on the line —
+    /// which is a rule that says nothing, where this is a rule that could
+    /// have said something sharper.
+    ///
     /// `$( )` and not the backtick spelling of the same thing. What these
     /// rules read is markdown with commands written into it, where a
     /// backtick is a code span far more often than it is a substitution —
@@ -223,9 +247,9 @@ impl Scan {
     /// pipe with it, so the rule says nothing about the most ordinary way
     /// anybody writes that line down. An identity that could have been
     /// sharper is the smaller cost.
-    fn substituting(&mut self, c: char, next: Option<char>) -> bool {
+    fn substituting(&mut self, c: char) -> bool {
         match c {
-            '$' if next == Some('(') => {
+            '(' if self.depth > 0 => {
                 self.depth += 1;
                 true
             }
@@ -235,6 +259,11 @@ impl Scan {
             }
             _ => false,
         }
+    }
+
+    /// A substitution begins here.
+    fn opened(&mut self) {
+        self.depth += 1;
     }
 
     /// Whether the reading is inside a substitution, where a separator is a

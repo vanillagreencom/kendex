@@ -63,7 +63,16 @@ impl Rendered {
     /// The rewrite is entirely inside the frontmatter, so everything after
     /// it keeps its place relative to the rest and the block moves by the
     /// number of bytes the frontmatter gained or lost.
+    ///
+    /// By the number *that file* gained or lost. A tree can hold a second
+    /// file this rewrites — a catalog shipping `SKILL.md.disabled` of its
+    /// own — and the block is in exactly one of them: a delta kept for the
+    /// tree is the last file's, applied to the first file's boundary, and a
+    /// boundary in the wrong place hands lines the project wrote to the
+    /// publisher who reviewed the file. The point of holding the two
+    /// together is that a fact about one file travels with that file.
     pub fn set_skill_name(&mut self, installed: &str) {
+        let holds = self.block.as_ref().map(|block| block.file.clone());
         let mut moved = 0;
         for (rel, bytes) in self.files.iter_mut() {
             if !matches!(rel.to_str(), Some("SKILL.md" | "SKILL.md.disabled")) {
@@ -71,7 +80,9 @@ impl Rendered {
             }
             let text = String::from_utf8_lossy(bytes).into_owned();
             if let Some(renamed) = with_name(&text, installed) {
-                moved = renamed.len() as isize - text.len() as isize;
+                if holds.as_deref() == Some(rel.as_path()) {
+                    moved = renamed.len() as isize - text.len() as isize;
+                }
                 *bytes = renamed.into_bytes();
             }
         }
@@ -128,5 +139,60 @@ impl Block {
     /// The same block after the file it sits in was renamed.
     pub(super) fn renamed(self, file: PathBuf) -> Block {
         Block { file, ..self }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::render::skill::{INSTRUCTIONS_END, INSTRUCTIONS_START};
+
+    fn skill(name: &str, body: &str) -> Vec<u8> {
+        format!("---\nname: {name}\n---\n{body}").into_bytes()
+    }
+
+    /// The block moves by what happened to *its* file.
+    ///
+    /// A tree can hold a second file the rename rewrites — a catalog
+    /// shipping a `SKILL.md.disabled` of its own — and the block is in one
+    /// of them. A delta kept for the tree is whichever file was rewritten
+    /// last, applied to a boundary in another file: the boundary lands
+    /// somewhere else in the text, and lines the project wrote fall outside
+    /// it and read as the publisher's, which is a review settling content
+    /// its publisher never saw.
+    #[test]
+    fn a_second_file_does_not_move_the_first_files_block() {
+        let block = format!("{INSTRUCTIONS_START}\nProject line.\n{INSTRUCTIONS_END}\n");
+        let body = format!("{block}Publisher line.\n");
+        let mut rendered = Rendered::injected(
+            vec![
+                (PathBuf::from("SKILL.md"), skill("gh", &body)),
+                (
+                    PathBuf::from("SKILL.md.disabled"),
+                    skill("a-much-longer-name-than-the-other-one", "Other.\n"),
+                ),
+            ],
+            Some(Block {
+                file: PathBuf::from("SKILL.md"),
+                start: skill("gh", "").len(),
+                end: skill("gh", "").len() + block.len(),
+            }),
+        );
+
+        rendered.set_skill_name("docs__gh");
+        let block_at = rendered.block().expect("the block came through").clone();
+        let (_, bytes) = rendered
+            .files()
+            .iter()
+            .find(|(rel, _)| *rel == block_at.file)
+            .expect("the file the block names");
+        let text = String::from_utf8_lossy(bytes).into_owned();
+        let held = &text[block_at.start..block_at.end];
+        assert!(
+            held.starts_with(INSTRUCTIONS_START)
+                && held.ends_with(&format!("{INSTRUCTIONS_END}\n")),
+            "the block still brackets what the project wrote, and nothing else: {held:?}"
+        );
     }
 }

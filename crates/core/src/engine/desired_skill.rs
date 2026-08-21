@@ -241,6 +241,15 @@ fn render_variant(
     enabled: bool,
 ) -> Result<Variant> {
     let mut rendered = render_skill(ctx.sealed, ctx.item_path, ctx.manifest, ctx.name)?;
+    // `SKILL.md.disabled` is the name kendex keeps a switched-off
+    // installation's content under, so a catalog shipping one of its own
+    // has written down a tree that cannot be installed both ways: turning
+    // this off renames one file onto the other, and one of the two is lost
+    // with nothing said about it. `fork` refuses the same shape for the
+    // same reason; there is nothing to choose between them here either.
+    if let Some(reason) = both_names(rendered.files()) {
+        return Ok(refuse(ctx, state, group, &reason));
+    }
     // A skill from a plugin-registry catalog installs under its plugin, and the
     // catalog's own SKILL.md knows nothing of that.
     if group.installed != ctx.name {
@@ -253,20 +262,7 @@ fn render_variant(
     if let Some((cap, capped_by)) = capped {
         let outcome = crate::render::split::enforce_body_cap(rendered, cap);
         if let Some(reason) = outcome.refusal {
-            for harness in &group.members {
-                state.refused.push(super::desired::Refused {
-                    kind: ItemKind::Skill,
-                    name: ctx.name.to_owned(),
-                    harness: *harness,
-                    reason: reason.clone(),
-                });
-            }
-            return Ok(Variant {
-                files: Vec::new(),
-                hash: String::new(),
-                refused: true,
-                authored: None,
-            });
+            return Ok(refuse(ctx, state, group, &reason));
         }
         for warning in outcome.warnings {
             state.warnings.push(super::ItemWarning {
@@ -292,20 +288,7 @@ fn render_variant(
             rendered.files(),
         );
         if let Some(reason) = super::desired::refusal_reason(&findings) {
-            for member in &group.members {
-                state.refused.push(super::desired::Refused {
-                    kind: ItemKind::Skill,
-                    name: ctx.name.to_owned(),
-                    harness: *member,
-                    reason: reason.clone(),
-                });
-            }
-            return Ok(Variant {
-                files: Vec::new(),
-                hash: String::new(),
-                refused: true,
-                authored: None,
-            });
+            return Ok(refuse(ctx, state, group, &reason));
         }
         for finding in findings
             .into_iter()
@@ -341,6 +324,39 @@ fn render_variant(
         hash,
         refused: false,
         authored,
+    })
+}
+
+/// Nothing installs for this group, and every member is told why.
+///
+/// One rendering serves the whole group — they read one file on disk — so a
+/// refusal is the group's, never one member's: installing it for the others
+/// would put the rejected bytes exactly where the refusing one reads.
+fn refuse(ctx: &ItemCtx, state: &mut DesiredState, group: &SurfaceGroup, reason: &str) -> Variant {
+    for harness in &group.members {
+        state.refused.push(super::desired::Refused {
+            kind: ItemKind::Skill,
+            name: ctx.name.to_owned(),
+            harness: *harness,
+            reason: reason.to_owned(),
+        });
+    }
+    Variant {
+        files: Vec::new(),
+        hash: String::new(),
+        refused: true,
+        authored: None,
+    }
+}
+
+/// Why a tree carrying both spellings of its own skill file installs
+/// nothing, or `None` where it carries one of them.
+fn both_names(files: &Files) -> Option<String> {
+    let holds = |name: &str| files.iter().any(|(rel, _)| rel.to_str() == Some(name));
+    (holds("SKILL.md") && holds("SKILL.md.disabled")).then(|| {
+        "the catalog ships both SKILL.md and SKILL.md.disabled, and switching this off \
+         would write one over the other"
+            .to_owned()
     })
 }
 
