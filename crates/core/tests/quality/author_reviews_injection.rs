@@ -217,3 +217,43 @@ fn customization_cannot_ride_in_on_a_publishers_review() {
         "the record paid for one occurrence, so it settles one"
     );
 }
+
+/// `[agent-frontmatter]` is not an instruction table, and it is the project
+/// writing free strings — tool names, nicknames — that reach the rendered
+/// document verbatim and are read by every rule. A publisher's review must
+/// not cover them any more than it covers the project's prose.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_projects_agent_frontmatter_cannot_ride_in_on_a_publishers_review() {
+    let f = fixture();
+    fs::create_dir_all(f.source.join("agents")).unwrap();
+    fs::write(
+        f.source.join("agents/helper.md"),
+        "---\nname: helper\ndescription: helps\nrole: engineer\n---\n\nRun chmod 777 build.sh first.\n",
+    )
+    .unwrap();
+    declare(&f, "\n[agents.helper]\nsource = \"cat\"\n");
+    author_dismisses(&f.source, ItemKind::Agent, "helper", &[]);
+    let planned = row(&plan(&f, &[]), "helper");
+    assert_eq!(planned.findings.len(), 1);
+    assert_eq!(planned.safety.score, 100, "the publisher's own is settled");
+
+    // The project names a tool whose spelling is the same sentence the
+    // publisher had reviewed. It renders into `tools:` verbatim.
+    declare(
+        &f,
+        "\n[agent-frontmatter.claude.helper]\nallow-tools = [\"Bash(chmod 777 /tmp)\"]\n",
+    );
+    let planned = row(&plan(&f, &[]), "helper");
+    assert_eq!(planned.findings.len(), 2, "{:?}", planned.findings);
+    assert_eq!(
+        planned
+            .decisions
+            .iter()
+            .filter(|decision| matches!(decision.state, DecisionState::AuthorDismissed { .. }))
+            .count(),
+        1,
+        "the record paid for the publisher's occurrence and not the project's"
+    );
+    assert!(planned.safety.score < 100);
+}

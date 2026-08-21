@@ -127,7 +127,9 @@ fn print_safety_rows(
                     dismissed_at,
                     publisher,
                 }) => say(&format!(
-                    "    {publisher} reviewed this {dismissed_at} and recorded it as {} — it is reported, and does not count",
+                    "    {} reviewed this {} and recorded it as {} — it is reported, and does not count",
+                    kendex_core::names::shown(publisher),
+                    kendex_core::names::shown(dismissed_at),
                     reason.name()
                 )),
                 Some(_) => say(&format!("    fix: {}", finding.remediation)),

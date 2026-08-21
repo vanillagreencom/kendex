@@ -90,7 +90,14 @@ changes carry a **Breaking** call-out with their migration note inline.
 - The `dangerous-commands` check no longer reads a shell `case` arm's
   pattern list as a command: naming `sudo` among the words a parser should
   skip is not running it. Skills and hooks that parse command lines stop
-  being flagged for the tokens they match on.
+  being flagged for the tokens they match on. This narrows what the check
+  catches — a command written as a bare list of single words ending in `)`
+  is no longer read as one — which is the price of the class of false
+  positive it removes.
+- A safety finding's message now says what it fired on: which address a line
+  downloads from, which characters a file hides. Two different problems
+  reading the same used to be one decision, and only one of them was ever
+  shown.
 - Safety findings are identified by the rule and the sentence it fired with,
   so a decision survives everything kendex does to an item on the way in —
   the line moving, the body being split into `references/` past a harness's

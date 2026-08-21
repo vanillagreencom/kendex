@@ -44,6 +44,14 @@ export function AvailableAside({
             {VERDICT_LABELS[view.safety.verdict]} · {view.safety.safety.score}
             /100
           </p>
+          {/* What this reading did not account for. A preview that showed a
+              number without its caveat would be the page a person reads
+              right before the install disagrees with it. */}
+          {view.safety.reasons.map((reason) => (
+            <p key={reason} className="mt-1 text-xs text-foreground/70">
+              {reason}
+            </p>
+          ))}
         </section>
       ) : null}
       {view && view.preview.bundles.length > 0 ? (

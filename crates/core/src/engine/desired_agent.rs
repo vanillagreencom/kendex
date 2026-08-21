@@ -74,16 +74,21 @@ fn harness_overrides(
     ctx: &ItemCtx,
     source_agent: &crate::render::agent::SourceAgent,
     harness: crate::model::HarnessId,
+    inputs: Inputs,
 ) -> (crate::manifest::FrontmatterOverrides, PermissionIntent) {
     let overrides = merge_overrides(
         ctx.config
             .frontmatter
             .get(harness.name())
             .and_then(|by_agent| by_agent.get(ctx.name)),
-        ctx.manifest
-            .agent_frontmatter
-            .get(harness.name())
-            .and_then(|by_agent| by_agent.get(ctx.name)),
+        match inputs {
+            Inputs::Everything => ctx
+                .manifest
+                .agent_frontmatter
+                .get(harness.name())
+                .and_then(|by_agent| by_agent.get(ctx.name)),
+            Inputs::PublisherOnly => None,
+        },
     );
     let permissions = PermissionIntent::effective(
         &source_agent.permissions,
@@ -215,21 +220,25 @@ pub(super) fn desired_agent(
         let installed = crate::harness::rendered_name(harness, ctx.name);
         let namespaced = installed_under(&parsed, ctx.name, &installed);
         let source_agent = namespaced.as_ref().unwrap_or(&parsed);
-        let (overrides, permissions) = harness_overrides(ctx, source_agent, harness);
-        harness_notices(ctx, state, harness, source_agent, &overrides);
+        notice_overrides(ctx, state, harness, source_agent);
         let effective = effective_agent(
             ctx,
             source_agent,
             &parsed,
             harness,
-            skills.effective.clone(),
-            overrides,
-            permissions,
+            &skills,
+            Inputs::Everything,
         );
-        let authored = ctx
-            .author_review
-            .as_ref()
-            .and_then(|_| authored_agent(&effective));
+        let authored = ctx.author_review.as_ref().and_then(|_| {
+            authored_agent(&effective_agent(
+                ctx,
+                source_agent,
+                &parsed,
+                harness,
+                &skills,
+                Inputs::PublisherOnly,
+            ))
+        });
         let rendered = match generate(&effective) {
             Ok(rendered) => rendered,
             // A refusal produces no artifact for this harness; the plan
@@ -248,12 +257,6 @@ pub(super) fn desired_agent(
         if !loadable(ctx, state, harness, &installed, &rendered) {
             continue;
         }
-        let base = file_name(harness, ctx.name);
-        let file = if enabled {
-            native.join(&base)
-        } else {
-            native.join(format!("{base}.disabled"))
-        };
         state.items.push(Desired {
             key: entry_key(ItemKind::Agent, ctx.name, harness),
             kind: ItemKind::Agent,
@@ -280,7 +283,7 @@ pub(super) fn desired_agent(
             authored,
             earned: Default::default(),
             artifact: Artifact::File {
-                path: file,
+                path: written_at(&native, harness, ctx.name, enabled),
                 bytes: rendered.text.into_bytes(),
             },
         });
@@ -288,50 +291,107 @@ pub(super) fn desired_agent(
     Ok(())
 }
 
+/// Where this agent's file lands. A disabled installation keeps the
+/// rendered content under the `.disabled` name — the rename is lossless.
+fn written_at(
+    native: &std::path::Path,
+    harness: crate::model::HarnessId,
+    name: &str,
+    enabled: bool,
+) -> std::path::PathBuf {
+    let base = file_name(harness, name);
+    match enabled {
+        true => native.join(&base),
+        false => native.join(format!("{base}.disabled")),
+    }
+}
+
+/// The advisories this harness's own overrides raise, said once per
+/// installation before anything is rendered from them.
+fn notice_overrides(
+    ctx: &ItemCtx,
+    state: &mut DesiredState,
+    harness: crate::model::HarnessId,
+    source_agent: &crate::render::agent::SourceAgent,
+) {
+    let (overrides, _) = harness_overrides(ctx, source_agent, harness, Inputs::Everything);
+    harness_notices(ctx, state, harness, source_agent, &overrides);
+}
+
+/// Whose inputs a rendering is built from.
+///
+/// Every input a project can contribute to is answered here, in one place,
+/// and every arm of every match below is written out: a new project-supplied
+/// input has to say what the publisher's own rendering does with it, or a
+/// publisher's review would silently cover text the project wrote. The
+/// fields with no arm — `source`, `harness`, `scope` — carry no project
+/// text at all: the first two are the catalog's own bytes and the tool
+/// being rendered for, and the third is a path.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Inputs {
+    Everything,
+    PublisherOnly,
+}
+
 /// One agent's effective intent for one harness: what the source asks for,
-/// narrowed by this project's overrides, and this project's own text spliced
-/// in beside it.
-#[allow(clippy::too_many_arguments)]
+/// narrowed by this project's overrides, and this project's own text
+/// spliced in beside it — or, under `PublisherOnly`, the source's alone.
 fn effective_agent<'a>(
     ctx: &'a ItemCtx,
     source: &'a crate::render::agent::SourceAgent,
     parsed: &crate::render::agent::SourceAgent,
     harness: crate::model::HarnessId,
-    skills: Vec<String>,
-    overrides: crate::manifest::FrontmatterOverrides,
-    permissions: crate::render::permission::PermissionIntent,
+    skills: &EffectiveSkills,
+    inputs: Inputs,
 ) -> EffectiveAgent<'a> {
+    let (overrides, permissions) = harness_overrides(ctx, source, harness, inputs);
     EffectiveAgent {
         source,
         harness,
         scope: ctx.scope,
-        skills,
+        // A project's `[agent-skills]` decides the effective list; the
+        // source's own assignment is what it asked for.
+        skills: match inputs {
+            Inputs::Everything => skills.effective.clone(),
+            Inputs::PublisherOnly => skills.upstream_now.clone(),
+        },
+        // `[agent-frontmatter]` writes free strings — tool names, nicknames
+        // — that reach the rendered document verbatim and are read by every
+        // rule, so they are the project's text as much as its prose is.
+        // Permissions derive from those same overrides.
         overrides,
         permissions,
-        launch_instructions: merged_instructions(&ctx.manifest.agent_launch_instructions, ctx.name),
-        additional_instructions: merged_instructions(
-            &ctx.manifest.agent_additional_instructions,
-            ctx.name,
-        ),
-        custom_hooks: hooks_for_agent(ctx.env, ctx.scope, harness, ctx.manifest, parsed),
+        launch_instructions: match inputs {
+            Inputs::Everything => {
+                merged_instructions(&ctx.manifest.agent_launch_instructions, ctx.name)
+            }
+            Inputs::PublisherOnly => None,
+        },
+        additional_instructions: match inputs {
+            Inputs::Everything => {
+                merged_instructions(&ctx.manifest.agent_additional_instructions, ctx.name)
+            }
+            Inputs::PublisherOnly => None,
+        },
+        custom_hooks: match inputs {
+            Inputs::Everything => {
+                hooks_for_agent(ctx.env, ctx.scope, harness, ctx.manifest, parsed)
+            }
+            Inputs::PublisherOnly => Vec::new(),
+        },
     }
 }
 
-/// The same agent from its publisher's inputs alone: no project
-/// instructions, no project-configured hooks. Asked of the renderer rather
-/// than subtracted from its output, because these are spliced inline with
-/// no marker to subtract by — and text a project supplied can carry any
-/// marker it likes. `None` where the publisher's own inputs render to
-/// nothing this harness can hold, which settles nothing.
-fn authored_agent(effective: &EffectiveAgent) -> Option<crate::quality::Content> {
-    generate(&EffectiveAgent {
-        launch_instructions: None,
-        additional_instructions: None,
-        custom_hooks: Vec::new(),
-        ..effective.clone()
-    })
-    .ok()
-    .map(|rendered| crate::quality::Content::Document {
-        text: rendered.text,
-    })
+/// The publisher's own agent, rendered. What it is built from is
+/// [`Inputs::PublisherOnly`]'s answer, so this only asks the renderer;
+/// subtracting from the rendered text instead would be reading a document
+/// backwards for text a project could have written to look like anything.
+/// `None` where the publisher's own inputs render to nothing this harness
+/// can hold, which settles nothing.
+fn authored_agent(publishers: &EffectiveAgent) -> Option<crate::quality::Content> {
+    generate(publishers)
+        .ok()
+        .map(|rendered| crate::quality::Content::Document {
+            text: rendered.text,
+        })
 }

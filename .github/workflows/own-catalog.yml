@@ -1,6 +1,7 @@
 # This repository's own catalog and renderers. It calls the reusable
 # workflow like any other caller, which is what lets that workflow honour
-# its inputs with no guard: nothing there has to work out whose run it is.
+# its inputs with no guard: nothing there can work out whose run it is, and
+# nothing there has to.
 name: own-catalog
 
 on:
@@ -16,6 +17,12 @@ jobs:
     with:
       path: .
       strict: true
+      # The commit under review, checked by its own checker. `ref` has a
+      # default, and workflow_call applies input defaults to a local caller
+      # exactly as to a remote one — so leaving it out validates this branch
+      # with main's engine, which is a different set of rules than the
+      # branch's own tests ran.
+      ref: ${{ github.sha }}
 
   # The one job that lets somebody other than kendex read kendex's output.
   # Freely installable without an account or an API key: OpenCode, Gemini

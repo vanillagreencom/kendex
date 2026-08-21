@@ -856,7 +856,14 @@ lives in one capability table read by core and UI.
   never silence; and editing the item — in the catalog or on disk —
   stales it and the hold returns. Finding identity
   is the rule and the sentence it fired with, and nothing else
-  (`Finding::fingerprint`). Everything kendex's own rendering moves is
+  (`Finding::fingerprint`). Which puts a standing obligation on every
+  rule's message: it says what the rule fired *on* — the address a line
+  downloads from, the characters a file hides — and never where it was
+  found. Two different problems that read the same are one decision, and
+  only one of them is ever displayed; naming the file instead would fix
+  that by coupling identity to the thing rendering moves content between.
+  Where a finding was found is carried by its location, and every location
+  one decision covers is listed under it. Everything kendex's own rendering moves is
   deliberately out of it: the line, because rendering shifts lines; the
   file, because Codex renders a command as a skill tree and an over-cap
   body is split into `references/`; the severity, because a hit weighs one

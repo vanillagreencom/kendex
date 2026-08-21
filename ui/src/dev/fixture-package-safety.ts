@@ -64,7 +64,10 @@ const WEBHOOK_SAFETY: PackageSafety = {
   quality: null,
   skipped: [],
   verdict: "warn",
-  reasons: ["safety 72 is below the warn threshold 80"],
+  reasons: [
+    "safety 72 is below the warn threshold 80",
+    "this project adds its own instructions to webhook-relay; they are not in this preview and are scored when it installs",
+  ],
   contentHash: "e0c574a2918bd63f",
   ruleset: 3,
   fromCache: false,

@@ -209,8 +209,7 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
               view={view}
               selectedFile={selectedFile}
               onSelectFile={setSelectedFile}
-            />
-          </div>
+            />          </div>
         </div>
       </div>
     </div>

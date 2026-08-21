@@ -103,6 +103,30 @@ impl AuthorReview {
         Budget::whole(self.dismissed.keys().cloned().collect())
     }
 
+    /// Whether every entry in this record is one kendex itself could have
+    /// written. The lock is a project file a pull request can edit, so a
+    /// record read back out of it is untrusted input exactly as the
+    /// catalog's own file is — and `publisher` and `dismissed_at` are
+    /// printed. `counted` is how many findings are actually in front of us:
+    /// a record cannot claim to have measured more occurrences than exist.
+    pub fn is_honest(&self, counted: usize) -> bool {
+        let bounded = |occurrences: Option<u32>| {
+            occurrences.is_none_or(|n| usize::try_from(n).is_ok_and(|n| n <= counted))
+        };
+        crate::names::shown(&self.publisher) == self.publisher
+            && self.dismissed.iter().all(|(fingerprint, dismissal)| {
+                bounded(dismissal.occurrences)
+                    && read::honest(
+                        fingerprint,
+                        &crate::quality::reviews::Dismissal {
+                            reason: dismissal.reason,
+                            dismissed_at: dismissal.dismissed_at.clone(),
+                            source: None,
+                        },
+                    )
+            })
+    }
+
     /// The budget an apply already measured and wrote down. Valid exactly
     /// while the record is live, since a live record proves the bytes are
     /// the ones that apply wrote.
@@ -323,7 +347,7 @@ pub fn past_budget(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Option
 }
 
 mod read;
-pub use read::{Read, for_item, for_item_read, honest};
+pub use read::{Read, for_item, for_item_read, honest, one};
 
 #[cfg(test)]
 mod tests;

@@ -28,6 +28,16 @@
 //! skill's supporting files. The one exception is `plaintext-secrets`: a
 //! credential in a code block is exactly as leaked as one in prose, so it
 //! never downgrades anywhere.
+//!
+//! Every message says what the rule fired *on*, never where it was found.
+//! A finding's identity is its rule and its sentence
+//! ([`crate::quality::Finding::fingerprint`]), so a sentence that describes
+//! only the kind of problem makes two different problems one decision — and
+//! the surfaces show one of them, so a person settles the other having
+//! never seen it. Where it was found is the finding's location, which is
+//! deliberately not in the identity: rendering moves content between files
+//! and an identity that moved with it would stop being the finding a
+//! decision was made about.
 
 use crate::model::ItemKind;
 
@@ -126,15 +136,17 @@ impl AuditRule for ObfuscatedContent {
                         rule: self.id().to_owned(),
                         severity: Severity::Low,
                         location: report.location.clone(),
-                        // Named, not "this file": the identity is the rule
-                        // and the sentence, so a message that only says
-                        // "this file" is the same sentence in every file it
-                        // fires in — and a person would settle one they
-                        // were shown and one they were not.
+                        // What was found, not where: the identity is the
+                        // rule and the sentence, so a sentence that says
+                        // only how many were found is the same sentence in
+                        // every file that found that many, and a person
+                        // shown one would settle the others unseen. Where
+                        // is carried by the finding's location, and every
+                        // location a decision covers is listed under it.
                         message: format!(
-                            "{} reads differently than it looks: {}",
-                            named(&report.location),
-                            parts.join(", ")
+                            "this file reads differently than it looks: {} ({})",
+                            parts.join(", "),
+                            spelled(&report.found)
                         ),
                         remediation:
                             "check the file for hidden characters; if the text is meant to be plain, retype the affected words in plain ASCII"
@@ -146,22 +158,23 @@ impl AuditRule for ObfuscatedContent {
     }
 }
 
-/// The file a location names, for a message that is about the file rather
-/// than about something quoted from it. Two such findings differ only by
-/// which file they are about, so the sentence has to carry it: the
-/// identity a decision binds to is the rule and the message, and nothing
-/// else tells them apart.
-fn named(location: &str) -> String {
-    let file = location.rsplit_once(':').map_or(location, |(file, line)| {
-        match line.bytes().all(|b| b.is_ascii_digit()) && !line.is_empty() {
-            true => file,
-            false => location,
-        }
-    });
-    match file.rsplit_once('/') {
-        Some((_, leaf)) if !leaf.is_empty() => leaf.to_owned(),
-        _ => file.to_owned(),
+/// The characters a normalization pass removed or folded, written as their
+/// code points. A hidden zero-width space and a Cyrillic letter dressed as
+/// a Latin one are two different questions, and the sentence has to say
+/// which — never which file, since a file is something rendering moves
+/// content between and an identity that moved with it would stop being the
+/// finding a decision was made about.
+fn spelled(found: &std::collections::BTreeSet<char>) -> String {
+    const SHOWN: usize = 6;
+    let mut points: Vec<String> = found
+        .iter()
+        .take(SHOWN)
+        .map(|c| format!("U+{:04X}", *c as u32))
+        .collect();
+    if found.len() > SHOWN {
+        points.push(format!("and {} more", found.len() - SHOWN));
     }
+    points.join(", ")
 }
 
 /// A file that is not the text it claims to be.
@@ -190,9 +203,8 @@ impl AuditRule for UndecodableContent {
                     severity: Severity::Medium,
                     location: report.location.clone(),
                     message: format!(
-                        "{} byte(s) of {} are not text and were read as best they could be, so part of it was scanned as a guess",
-                        report.undecodable,
-                        named(&report.location)
+                        "{} byte(s) of this file are not text and were read as best they could be, so part of it was scanned as a guess",
+                        report.undecodable
                     ),
                     remediation:
                         "save the file as UTF-8 text, or remove it if it was never meant to be text"

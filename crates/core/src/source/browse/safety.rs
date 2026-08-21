@@ -98,7 +98,8 @@ pub fn package_safety(
     let browsed = super::open(env, catalog)?;
     let item = item(&browsed, kind, name)?;
     let (score, from_cache) = scored(env, &browsed, kind, name, &item)?;
-    let review = published(&browsed, kind, name, &item);
+    let read = published(&browsed, kind, name, &item);
+    let review = read.review;
     let judged = judge(env, &score, review.as_ref())?;
     let findings = score
         .findings
@@ -115,6 +116,11 @@ pub fn package_safety(
     // what installs. Nobody has scored that combination yet, so the page
     // says what it did not read rather than letting the number it shows be
     // read as the one the install will give.
+    if let Some(why) = &read.stale {
+        reasons.push(crate::names::shown(&format!(
+            "this catalog reviewed {name}, but that review no longer applies — {why}"
+        )));
+    }
     if injected_here(&browsed.manifest, kind, name) {
         reasons.push(format!(
             "this project adds its own instructions to {name}; they are not in this preview and are scored when it installs"
@@ -151,7 +157,7 @@ pub(super) fn verdict_for(
 ) -> Result<Verdict> {
     let item = item(browsed, kind, name)?;
     let (score, _) = scored(env, browsed, kind, name, &item)?;
-    let review = published(browsed, kind, name, &item);
+    let review = published(browsed, kind, name, &item).review;
     Ok(judge(env, &score, review.as_ref())?.verdict)
 }
 
@@ -228,7 +234,12 @@ fn injected_here(manifest: &crate::manifest::Manifest, kind: ItemKind, name: &st
 
 /// The publisher's record for this package, re-checked against the catalog
 /// bytes in front of us — the same read the plan does.
-fn published(browsed: &Browsed, kind: ItemKind, name: &str, item: &Item) -> Option<AuthorReview> {
+fn published(
+    browsed: &Browsed,
+    kind: ItemKind,
+    name: &str,
+    item: &Item,
+) -> crate::quality::author::Read {
     crate::quality::author::for_item_read(
         &browsed.reviews,
         kind,
@@ -236,7 +247,6 @@ fn published(browsed: &Browsed, kind: ItemKind, name: &str, item: &Item) -> Opti
         crate::quality::author::content_hash_of(&browsed.sealed, &item.path, item.tree.as_deref()),
         &browsed.source.provenance,
     )
-    .review
 }
 
 fn scored(

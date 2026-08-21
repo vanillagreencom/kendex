@@ -78,7 +78,10 @@ impl AuditRule for Rce {
                 rule: self.id().to_owned(),
                 severity: line.weigh(Severity::Critical),
                 location: at(doc, line),
-                message: format!("this line {what}, so whatever the far end serves is what runs"),
+                message: format!(
+                    "this line {what}{}, so whatever the far end serves is what runs",
+                    target(line)
+                ),
                 remediation:
                     "download to a file, show the user what it contains, and run it as a separate step they can refuse"
                         .to_owned(),
@@ -89,6 +92,29 @@ impl AuditRule for Rce {
     fn id(&self) -> &'static str {
         "rce"
     }
+}
+
+/// What this line reaches for, quoted, so two lines fetching two different
+/// things are two questions. A finding's identity is its rule and its
+/// sentence, and a sentence that says only "this line" is the same sentence
+/// wherever it fires — the person is shown one and settles both.
+///
+/// Named from the line, never from the file it sits in: a file is something
+/// kendex's own rendering moves between (an over-cap body is split into
+/// `references/`), and an identity that moved with it would stop being the
+/// finding a decision was made about.
+fn target(line: &Line) -> String {
+    const BOUNDARY: &[char] = &['"', '\'', '`', ' ', '\t', ')', '(', '<', '>', ';', ','];
+    for scheme in ["https://", "http://"] {
+        if let Some(at) = line.text.find(scheme) {
+            let rest = &line.text[at..];
+            let url = rest.split(BOUNDARY).next().unwrap_or(rest);
+            if url.len() > scheme.len() {
+                return format!(" from `{}`", crate::quality::redact(url));
+            }
+        }
+    }
+    String::new()
 }
 
 /// A plain description of what this line fetches and runs, if it does.

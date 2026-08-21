@@ -2,15 +2,15 @@
 # calls it from `own-catalog.yml` like any other caller, so nothing in here
 # has to work out whose run it is.
 #
-# It used to. Three guards tried and all three were wrong: `github.event_name
-# != 'workflow_call'` (the github context in a called workflow is the
-# caller's, so event_name is their trigger and never workflow_call);
-# `!inputs.path` (a caller passing an empty string reads as this
-# repository); and `inputs.strict == null` (GitHub coerces mismatched types
-# to numbers for `==`, so `false == null` is `0 == 0`, which is true). Each
-# forced --strict on every caller and ran kendex's own renderer suite
-# against their checkout. There is no discriminator here now — do not add
-# one.
+# Nothing here may ask whose run it is. There is no expression that can
+# answer: `github.event_name` in a called workflow is the CALLER's trigger,
+# never the string workflow_call; `inputs.path` is a string a caller can
+# hand an empty value; and `inputs.strict == null` is `0 == 0` under
+# GitHub's numeric coercion for `==`, so it is true for every caller who
+# passes `false`. Each of those forces --strict on callers who asked for
+# none and runs kendex's own renderer suite against their checkout. A
+# caller's inputs are honoured as given, and this repository is a caller
+# like any other.
 #
 # Catalog repositories call the first job from their own workflow:
 #
@@ -54,13 +54,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: catalog
-      # Callers pin the checker with inputs.ref; this repo's own PR and push
-      # runs build it from the event's own sha, so an engine change and the
-      # catalog change it validates travel through review together.
+      # The checker every caller gets is the revision they name. A caller
+      # who names none gets main; this repository names its own sha from
+      # own-catalog.yml, so an engine change and the catalog change it
+      # validates travel through review together.
       - uses: actions/checkout@v4
         with:
           repository: vanillagreencom/kendex
-          ref: ${{ inputs.ref || github.sha }}
+          ref: ${{ inputs.ref }}
           path: kendex
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2

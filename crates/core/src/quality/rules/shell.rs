@@ -97,6 +97,14 @@ impl SafetyBypass {
 /// running it, and reading it as a command is the rule mistaking a list of
 /// words for an instruction.
 ///
+/// This is a deliberate narrowing of what the rule catches, and the price
+/// is stated: a line that is a bare list of single words ending in `)` is
+/// not read as a command, so a command written in exactly that shape is
+/// missed. Every such word is a pattern to match, not a program to run —
+/// `sudo)` runs nothing — and the content that pays for the narrowing is
+/// the class of skills and hooks that parse command lines, which name the
+/// dangerous verbs precisely because they exist to catch them.
+///
 /// Only the pattern half is exempt. A `case` arm whose body follows on the
 /// same line still has that body read: everything from the `)` on is a
 /// command like any other.

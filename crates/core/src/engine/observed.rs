@@ -80,7 +80,8 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
             // answer rather than deriving it a second time: a live record
             // proves the bytes are the ones that apply measured, and two
             // derivations of one number are two chances to disagree.
-            let by_author = author_review(&lock, item, scored.review.as_deref());
+            let by_author =
+                author_review(&lock, item, scored.review.as_deref(), result.findings.len());
             let budget = by_author
                 .map(crate::quality::author::AuthorReview::recorded_budget)
                 .unwrap_or_default();
@@ -149,6 +150,7 @@ fn author_review<'a>(
     lock: &'a crate::lock::Lock,
     item: &crate::model::ObservedItem,
     review_hash: Option<&str>,
+    counted: usize,
 ) -> Option<&'a crate::quality::author::AuthorReview> {
     let review_hash = review_hash?;
     lock.entries
@@ -156,6 +158,11 @@ fn author_review<'a>(
         .filter(|entry| names(entry, item))
         .filter_map(|entry| entry.author_review.as_ref())
         .find(|review| review.stale_why(Some(review_hash)).is_none())
+        // The lock travels in the project repository and a pull request can
+        // edit it, so what comes back out of it gets the checks the
+        // catalog's own file gets. A record that fails them settles
+        // nothing, which is the same answer as no record.
+        .filter(|review| review.is_honest(counted))
 }
 
 /// The key this observation's records live under. An entry that emitted

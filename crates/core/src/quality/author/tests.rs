@@ -123,4 +123,9 @@ fn a_timestamp_carries_nothing_a_terminal_would_obey() {
     assert!(!is_timestamp("2026-08-20T06:52:15Z\u{1b}[2J"));
     assert!(!is_timestamp("short"));
     assert!(!is_timestamp(&"9".repeat(41)));
+    // Shaped like a date is not the same as being one.
+    assert!(!is_timestamp("2026-13-45T99:99:99Z"));
+    assert!(!is_timestamp("2026-02-30T00:00:00Z"));
+    assert!(is_timestamp("2024-02-29T00:00:00Z"));
+    assert!(!is_timestamp("2026-02-29T00:00:00Z"));
 }

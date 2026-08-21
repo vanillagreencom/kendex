@@ -272,7 +272,7 @@ pub fn check_item(
         .display()
         .to_string();
     let hash = quality::author::content_hash(sealed, path);
-    let dismissed = dismissals::active(review, hash.as_deref());
+    let dismissed = dismissals::active(kind, review, hash.as_deref());
     let mut findings = structural(kind, name, &file, &content);
     // An item bigger than any install reads has a tail nobody has judged.
     // Saying so is the whole answer: scoring it would report findings no
@@ -297,7 +297,7 @@ pub fn check_item(
     // A record an install would refuse is one this check refuses too, said
     // where the maintainer is reading rather than discovered by their
     // consumers being held back over it.
-    for fingerprint in dismissals::refused(review) {
+    for fingerprint in dismissals::refused(kind, review, hash.as_deref()) {
         findings.push(CheckFinding {
             file: file.clone(),
             kind: kind.name(),
@@ -308,7 +308,10 @@ pub fn check_item(
             message: format!(
                 "the review recorded for {fingerprint} is not one an install will honour"
             ),
-            fix: "record it with `kendex dismiss --catalog`, whose reasons are the ones that travel — wrong-call or intended".to_owned(),
+            fix: match kind {
+                ItemKind::Hook => "remove it: a hook's review cannot travel to an install — it is scored from its script here and from the harness's settings file once installed".to_owned(),
+                _ => "record it with `kendex dismiss --catalog`, whose reasons are the ones that travel — wrong-call or intended".to_owned(),
+            },
             token: None,
             dismissed: false,
         });

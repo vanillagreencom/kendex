@@ -54,9 +54,35 @@ pub fn for_item_read(
     hash: Option<String>,
     publisher: &str,
 ) -> Read {
-    let Some(review) = reviews.get(&review_key(kind, name)) else {
+    one(kind, reviews.get(&review_key(kind, name)), hash, publisher)
+}
+
+/// The one reader. Every path to a publisher's record — the authoring
+/// check, the pre-install preview, the plan — comes through here, so none
+/// of them can honour a record another refuses.
+pub fn one(
+    kind: ItemKind,
+    review: Option<&SafetyReview>,
+    hash: Option<String>,
+    publisher: &str,
+) -> Read {
+    let Some(review) = review else {
         return Read::default();
     };
+    // A hook is scored from the script a plan writes and from the shared
+    // settings file its registration lands in once installed — two readings
+    // of different bytes, by design. A record can bind to one or the other
+    // and never both, so no reading of one is honoured anywhere: refused
+    // here, in the one reader every path goes through, rather than at each
+    // of them, so the authoring check, the preview and the install cannot
+    // answer differently.
+    if kind == ItemKind::Hook {
+        return Read {
+            review: None,
+            refused: review.dismissed.keys().cloned().collect(),
+            stale: None,
+        };
+    }
     // Bytes nobody can read cannot be the bytes somebody reviewed, and a
     // record with nothing to compare itself against never applies — the
     // same rule every other decision answers to. This is also what contains
@@ -143,8 +169,5 @@ pub fn honest(fingerprint: &str, dismissal: &crate::quality::reviews::Dismissal)
 /// one. Not a full RFC 3339 parse — enough that nothing printable-hostile
 /// and nothing unbounded reaches a terminal.
 pub(super) fn is_timestamp(value: &str) -> bool {
-    (16..=40).contains(&value.len())
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || matches!(b, b'-' | b':' | b'.' | b'+' | b'T' | b'Z'))
+    value.len() <= 40 && crate::clock::is_instant(value)
 }

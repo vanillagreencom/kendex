@@ -65,36 +65,41 @@ pub fn load(sealed: &SealedSource) -> Result<BTreeMap<String, SafetyReview>> {
 /// when the snapshot matches the content in front of us, nothing when the
 /// content or the rules have moved on. The catalog's own check made these
 /// decisions against these very bytes, so each covers every occurrence.
-pub fn active(review: Option<&SafetyReview>, content_hash: Option<&str>) -> Budget {
-    let Some(review) = review.filter(|r| r.stale_why(content_hash).is_none()) else {
-        return Budget::default();
-    };
-    // The same entries an install would honour, and no others. A record the
-    // installer refuses is one this check must refuse too, or a
-    // maintainer's CI goes green while their consumers are held back over
-    // it, with nothing on either side explaining the disagreement.
-    Budget::whole(
-        review
-            .dismissed
-            .iter()
-            .filter(|(fingerprint, dismissal)| {
-                crate::quality::author::honest(fingerprint, dismissal)
-            })
-            .map(|(fingerprint, _)| fingerprint.clone())
-            .collect(),
-    )
+pub fn active(kind: ItemKind, review: Option<&SafetyReview>, content_hash: Option<&str>) -> Budget {
+    read(kind, review, content_hash)
+        .review
+        .map(|review| review.whole_budget())
+        .unwrap_or_default()
 }
 
-/// Every entry in this record an install would refuse: the reasons only the
-/// receiving machine can answer for, and anything whose shape says it was
-/// not written by `dismiss --catalog`.
-pub fn refused(review: Option<&SafetyReview>) -> Vec<String> {
-    review
+/// Every entry in this record an install would refuse — a reason only the
+/// receiving machine can answer for, a shape `dismiss --catalog` would not
+/// have written, or a kind whose review cannot travel at all.
+pub fn refused(
+    kind: ItemKind,
+    review: Option<&SafetyReview>,
+    content_hash: Option<&str>,
+) -> Vec<String> {
+    read(kind, review, content_hash)
+        .refused
         .into_iter()
-        .flat_map(|review| review.dismissed.iter())
-        .filter(|(fingerprint, dismissal)| !crate::quality::author::honest(fingerprint, dismissal))
-        .map(|(fingerprint, _)| fingerprint.clone())
         .collect()
+}
+
+/// Through the one reader an install uses, so this check cannot go green
+/// over a record a consumer will drop. The catalog is reading its own
+/// bytes, so the publisher this names is itself and nothing here prints it.
+fn read(
+    kind: ItemKind,
+    review: Option<&SafetyReview>,
+    content_hash: Option<&str>,
+) -> crate::quality::author::Read {
+    crate::quality::author::one(
+        kind,
+        review,
+        content_hash.map(str::to_owned),
+        "this catalog",
+    )
 }
 
 /// Record that these findings on this content are not problems. The same
