@@ -314,14 +314,13 @@ export const commands = {
 	/**
 	 *  Zoom is set on the webview rather than by restyling the page: it holds
 	 *  across reloads, and it scales the app's own titlebar along with
-	 *  everything else, the way a browser scales a page.
+	 *  everything else, the way a browser scales a page. Holding across reloads
+	 *  is also why the size is recorded here — the page forgets, the webview
+	 *  does not.
 	 */
 	windowSetZoom: (percent: number) => typedError<null, string>(__TAURI_INVOKE("window_set_zoom", { percent })),
-	/**
-	 *  What the window opened at, so the app steps from the size in front of
-	 *  the person rather than from the size the settings file asked for.
-	 */
-	windowLaunchZoom: () => __TAURI_INVOKE<number>("window_launch_zoom"),
+	/**  What the webview is showing, for a page with no memory of its own. */
+	windowZoomState: () => __TAURI_INVOKE<ZoomState>("window_zoom_state"),
 	windowMinimize: () => typedError<null, string>(__TAURI_INVOKE("window_minimize")),
 	windowToggleMaximize: () => typedError<null, string>(__TAURI_INVOKE("window_toggle_maximize")),
 	windowClose: () => typedError<null, string>(__TAURI_INVOKE("window_close")),
@@ -2363,6 +2362,21 @@ export type VersionSel =
 { at: "commit"; commit: string } | 
 /**  What is installed on disk right now. */
 { at: "installed" };
+
+export type ZoomState = {
+	/**
+	 *  The size on screen. Every resize the window takes moves it, so a
+	 *  page that has just reloaded reads what it is looking at.
+	 */
+	percent: number,
+	/**
+	 *  The window would not take the saved size when it opened, so
+	 *  `percent` is the fallback and the saved size is not on screen. A
+	 *  fact about the opening: a resize that works later moves the size but
+	 *  does not make the opening have worked.
+	 */
+	launchRefused: boolean,
+};
 
 /* Tauri Specta runtime */
 async function typedError<T, E>(result: Promise<T>): Promise<{ status: "ok"; data: T } | { status: "error"; error: E }> {

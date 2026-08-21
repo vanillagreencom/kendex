@@ -15,8 +15,12 @@ export const coreHandlers: Record<string, Handler> = {
     document.documentElement.style.zoom = String(percent / 100);
     return null;
   },
-  // The mock page always takes the size, so it opened at the stored one.
-  window_launch_zoom: () => store.state.settings.zoom,
+  // Read off the page, the way the real reader reads it off the webview:
+  // the mock takes every size, so it is never at one it refused.
+  window_zoom_state: () => ({
+    percent: Math.round(Number(document.documentElement.style.zoom || 1) * 100),
+    launchRefused: false,
+  }),
   pick_folder: () => null,
   reveal_path: () => null,
   open_in_editor: () => null,

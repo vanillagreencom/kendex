@@ -24,7 +24,7 @@ vi.mock("@/bindings", () => ({
     discoverProjects: vi.fn(),
     scanMachine: vi.fn(),
     windowSetZoom: vi.fn(),
-    windowLaunchZoom: vi.fn(),
+    windowZoomState: vi.fn(),
     saveZoom: vi.fn(),
   },
   ZOOM: { min: 50, max: 200, step: 10, default: 100 },
@@ -57,7 +57,10 @@ describe("zoom, on screen", () => {
       ok({ ...settings, zoom: 150 }),
     );
     vi.mocked(commands.capabilityTable).mockResolvedValue([]);
-    vi.mocked(commands.windowLaunchZoom).mockResolvedValue(100);
+    vi.mocked(commands.windowZoomState).mockResolvedValue({
+      percent: 100,
+      launchRefused: true,
+    });
 
     await useSettingsStore.getState().load();
 
@@ -72,6 +75,40 @@ describe("zoom, on screen", () => {
     // take it away.
     expect(commands.windowSetZoom).toHaveBeenLastCalledWith(110);
     expect(stored()).toBe(150);
+
+    controls.flush();
+    await tick();
+  });
+
+  /// The webview keeps its zoom across a page reload and the page does not,
+  /// so the reloaded page has to read the size back rather than assume the
+  /// opening still speaks for it. Getting this wrong shows the opening size
+  /// at a resized window, raises a failure for an opening that worked, and
+  /// steps the person backwards.
+  it("re-reads the size the window is at when the page reloads", async () => {
+    await useSettingsStore.getState().setZoom(150);
+    await useSettingsStore.getState().saveZoom();
+
+    // The reload: a new store, and a window still at the resized size.
+    useSettingsStore.setState({
+      settings: null,
+      shownZoom: null,
+      tookZoom: null,
+    });
+    vi.mocked(commands.getSettings).mockResolvedValue(
+      ok({ ...settings, zoom: 150 }),
+    );
+    vi.mocked(commands.capabilityTable).mockResolvedValue([]);
+
+    await useSettingsStore.getState().load();
+
+    expect(dialog().open).toBe(false);
+    expect(zoom()).toBe(150);
+
+    controls.step(ZOOM.step);
+    await tick();
+
+    expect(commands.windowSetZoom).toHaveBeenLastCalledWith(160);
 
     controls.flush();
     await tick();

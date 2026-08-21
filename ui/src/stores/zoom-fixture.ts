@@ -26,10 +26,6 @@ export type ZoomReply =
   | { status: "ok"; data: number }
   | { status: "error"; error: string };
 
-/** What the launch put on screen. The mock window takes every size, so it
- *  is the stored one. */
-const openedAt = settings.zoom ?? 100;
-
 export const ok = <T>(data: T) => ({ status: "ok" as const, data });
 export const failed = (error: string) => ({ status: "error" as const, error });
 
@@ -51,26 +47,37 @@ export const zoom = () => currentZoom();
 export const stored = () => useSettingsStore.getState().settings?.zoom;
 export const dialog = () => useProblemsStore.getState().dialog;
 
+/** The size the stand-in webview is at. It keeps its own, the way the real
+ *  one does: the zoom outlives the page, so a reload has to read it back. */
+let webviewAt = settings.zoom ?? 100;
+
 /** A store at 100%, a closed dialog, and a window that takes every size —
  *  including at launch, so `tookZoom` starts where the stored size is. */
 export function freshZoomStore() {
+  webviewAt = settings.zoom ?? 100;
   useSettingsStore.setState({
     settings,
     shownZoom: null,
-    tookZoom: openedAt,
+    tookZoom: webviewAt,
     capabilities: [],
   });
   useProblemsStore.setState({
     dialog: { open: false, title: "", steps: [], actions: [] },
   });
   vi.clearAllMocks();
-  vi.mocked(commands.windowSetZoom).mockResolvedValue(ok(null));
+  vi.mocked(commands.windowSetZoom).mockImplementation(async (percent) => {
+    webviewAt = percent;
+    return ok(null);
+  });
+  vi.mocked(commands.windowZoomState).mockImplementation(async () => ({
+    percent: webviewAt,
+    launchRefused: false,
+  }));
   vi.mocked(commands.updateSettings).mockImplementation(async (next) =>
     ok(next),
   );
   vi.mocked(commands.saveZoom).mockImplementation(async (percent) =>
     ok(percent),
   );
-  vi.mocked(commands.windowLaunchZoom).mockResolvedValue(openedAt);
   expect(zoom()).toBe(100);
 }

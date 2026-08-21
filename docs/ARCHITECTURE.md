@@ -349,37 +349,37 @@ lives in one capability table read by core and UI.
   so a hand-edited 137 is honoured. This is also the answer to a compositor
   set to a fractional scale, which GTK3 and WebKitGTK round to a whole
   number: the person nudges the difference back by hand. A webview that
-  refuses the size opens at full size, and the launch records what it
-  applied: the readout follows that, and the stored percent is left alone.
+  refuses the size still opens, at full size. What the webview is at is kept
+  beside it and read back on load, since the zoom outlives the page that set
+  it, while the stored percent stays a preference and is left alone.
 - **Zoom moves in steps, and writes once the stepping stops.** Nothing
   offers a continuous zoom: a held `Ctrl` `+` and a repeatedly clicked
   button are the two inputs, and both take one step per press. That is the
   whole reason the control has buttons rather than a slider — every step
-  re-lays out the webview on the GTK thread, so a drag turned the app into
-  a flicker while a keypress never did. The window follows every step so
-  the control feels live, and the settings file is written once the steps
-  stop. Both inputs start the same timer, so neither can rewrite the file
-  per press. The window is asked for one size at a time, each press queued
+  re-lays out the webview on the GTK thread, so a drag turned the app into a
+  flicker while a keypress never did. The window follows every step so the
+  control feels live, and the settings file is written once the steps stop.
+  Both inputs start the same timer, so neither can rewrite the file per
+  press. The window is asked for one size at a time, each press queued
   behind the last, so there is never a second reply to interleave with: a
   queue removes those orderings rather than reconciling them. The size still
   shows the moment it is pressed, so the control stays immediate and two
   presses in one frame cannot collapse into one. Three values track the
   size, each with a single writer: what the app shows moves on a press, what
-  the window has taken starts at the launch and moves only on the window's
-  reply, and what the settings object holds moves only when the file does.
-  The first two are kept out of that object because every settings action
-  writes it whole — a preview sitting in it would be persisted, faithfully,
-  by an unrelated save, and a reply that predates the last resize would put
-  an older size back over one the window has taken. The size reaches the
-  file through a command of its own for the same reason: it carries a
-  percent and nothing else, so no other setting can ride back with it, and
-  it cannot ride back with any other setting. `update_settings` leaves the
-  stored size exactly as it found it. At most one save is ever in flight,
-  and asks made while it runs collapse into a single follow-up that writes
-  whatever is on screen by then, so replies can never land out of order and
-  put back a size the person has already moved past. A write waits for the
-  resize before it reads what to write, so a size the window refuses is
-  never offered to the file; a size the file refuses stays on screen,
+  the window has taken moves only on the window's reply, and what the
+  settings object holds moves only when the file does. The first two are
+  kept out of that object because every settings action writes it whole — a
+  preview sitting in it would be persisted, faithfully, by an unrelated
+  save, and a reply that predates the last resize would put an older size
+  back over one the window has taken. The size reaches the file through a
+  command of its own for the same reason: it carries a percent and nothing
+  else, so no other setting can ride back with it, and `update_settings`
+  leaves the stored size exactly as it found it. At most one save is ever in
+  flight, and asks made while it runs collapse into a single follow-up that
+  writes whatever is on screen by then, so replies can never land out of
+  order and put back a size the person has already moved past. A write waits
+  for the resize before it reads what to write, so a size the window refuses
+  is never offered to the file; a size the file refuses stays on screen,
   because taking it away would cost the person the size they are using to
   read the message. What the settle costs is the last size chosen before
   quitting: the write is IPC behind a promise chain, so unloading starts it
