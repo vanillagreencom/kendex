@@ -134,13 +134,27 @@ export function MineTab() {
           <DialogHeader>
             <DialogTitle>How a marketplace repo works</DialogTitle>
           </DialogHeader>
-          <div className="max-h-[70vh] overflow-y-auto pr-3">
+          {/* biome-ignore-start lint/a11y/noNoninteractiveTabindex: the
+              document is longer than the dialog and carries almost no links,
+              so without a tab stop of its own everything past the first
+              screen needs a mouse — WKWebView and WebKitGTK, two of the three
+              engines the app ships on, do not focus an overflowing container
+              by themselves. Reaching a scrollable region by keyboard is what
+              the WCAG scrollable-region-focusable rule asks for, and what
+              this rule would take away. */}
+          <section
+            tabIndex={0}
+            aria-label="How a marketplace repo works"
+            className="max-h-[70vh] overflow-y-auto pr-3 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          >
             {doc === null ? (
               <TextBar width="w-64" />
             ) : (
               <MarkdownView source={doc} />
             )}
-          </div>
+          </section>
+          {/* biome-ignore-end lint/a11y/noNoninteractiveTabindex: the rule
+              stands for everything else here. */}
         </DialogContent>
       </Dialog>
       <MineSubmitDialog

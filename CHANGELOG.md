@@ -134,17 +134,18 @@ changes carry a **Breaking** call-out with their migration note inline.
   card — Personal included — shows everything installed there, unfiltered.
   Seeing a whole project used to mean picking a kind you did not want and
   then clearing the filter.
-- Following a link into My Library starts from a clean filter strip. Type,
-  tool, tag, source, search and location are set to exactly what the link
-  asked for and nothing an earlier visit left narrowed carries over, so a
-  count badge, Home's "Installed" tile and a recently-changed row each land
-  on the list they name rather than on that list narrowed again by whatever
-  was on screen last time.
+- Following a link into My Library starts from a clean filter strip. The
+  whole strip — every picker, the search box and where the table is looking —
+  is set to exactly what the link asked for, and nothing an earlier visit
+  left narrowed carries over, so a count badge, Home's "Installed" tile and a
+  recently-changed row each land on the list they name rather than on that
+  list narrowed again by whatever was on screen last time.
 - Scrolling surfaces are the app's own colour rather than the desktop's: a
   long list used to end in a stripe of system chrome, and the thumb is now
   drawn from the app's foreground with the track taken away, in light and
-  dark. Each platform keeps its own scrollbar shape and width, so no list
-  shifts sideways as it grows past the window.
+  dark. Each platform keeps its own scrollbar shape and width, so on Linux
+  and macOS — where the bar floats over the list — no list shifts sideways as
+  it grows past the window.
 - The app uses the Geist typeface, with titles and navigation in Geist Mono
   to match the website.
 - **Breaking**: the default Homebrew install is now the app —

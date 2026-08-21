@@ -135,6 +135,12 @@ describe("nav store", () => {
     });
   });
 
+  it("hands off a link asking for the personal setup alone", () => {
+    useNavStore.getState().goToLibrary({ scope: "global" });
+
+    expect(useNavStore.getState().libraryFilter?.scope).toBe("global");
+  });
+
   it("pushes the prior page onto history on a cross-page nav", () => {
     useNavStore.getState().goToLibrary();
 

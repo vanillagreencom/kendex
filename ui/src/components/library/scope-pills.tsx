@@ -2,8 +2,9 @@ import { Pill } from "@/components/pill";
 import type { ScopeSelection } from "@/lib/derive";
 import { scopeName } from "@/lib/labels";
 
-/** Where the table is looking: the same app-wide scope the sidebar sets, so
- *  the two can never disagree about which project is on screen. */
+/** Where the table is looking. The Library's own location filter — no other
+ *  page narrows by location, they state it on each row — and a link into the
+ *  Library can name one on the way in. */
 export function ScopePills({
   scope,
   onScopeChange,

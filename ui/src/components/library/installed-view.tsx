@@ -6,7 +6,10 @@ import { LibraryFilters } from "@/components/library/library-filters";
 import { LibraryLegend } from "@/components/library/library-legend";
 import { NotManagedPanel } from "@/components/library/not-managed";
 import { TableEmptyRow } from "@/components/library/table-empty";
-import { useFilterHandoff } from "@/components/library/use-filter-handoff";
+import {
+  applyLibraryView,
+  useFilterHandoff,
+} from "@/components/library/use-filter-handoff";
 import {
   Table,
   TableBody,
@@ -23,6 +26,7 @@ import {
   scopeChoices,
 } from "@/lib/derive";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
+import { isNarrowed, UNFILTERED } from "@/lib/library-handoff";
 import { scopeKey } from "@/lib/scope";
 import { cn } from "@/lib/utils";
 import { useEditorStore } from "@/stores/editor";
@@ -54,7 +58,6 @@ export function InstalledView() {
     setTag,
     setFrom,
     setScrollTop,
-    clearFilters: clearViewFilters,
   } = useLibraryViewStore();
   const provenance = useProvenanceStore((s) => s.rows);
   const loadProvenance = useProvenanceStore((s) => s.load);
@@ -92,16 +95,17 @@ export function InstalledView() {
       customizedKeys.has(`${scopeKey(scope)}|${group.kind}:${group.name}`),
     );
 
-  useFilterHandoff();
+  const replaced = useFilterHandoff();
 
   // Pick up where the table was last scrolled to, and record it again on the
-  // way out. A link that replaced the view has already reset that to the top.
+  // way out — unless a link replaced the list, in which case that offset
+  // belongs to something no longer on screen.
   useEffect(() => {
     const node = scroller.current;
     if (!node) return;
-    node.scrollTop = useLibraryViewStore.getState().scrollTop;
+    node.scrollTop = replaced ? 0 : useLibraryViewStore.getState().scrollTop;
     return () => setScrollTop(node.scrollTop);
-  }, [setScrollTop]);
+  }, [replaced, setScrollTop]);
 
   const groups = useMemo(() => {
     if (!result) return [];
@@ -137,19 +141,13 @@ export function InstalledView() {
   // Nothing has been counted yet — distinct from "counted, found nothing".
   const scanning = result === null;
   const hasAnyItems = (result?.items.length ?? 0) > 0;
-  const filtered =
-    search !== "" ||
-    kind !== "any" ||
-    harness !== "any" ||
-    tag !== "any" ||
-    from !== "any" ||
-    scope !== "all";
+  const filtered = isNarrowed({
+    filters: { kind, harness, tag, from },
+    search,
+    scope,
+  });
 
-  const clearFilters = () => {
-    clearViewFilters();
-    setSearch("");
-    setScope("all");
-  };
+  const clearFilters = () => applyLibraryView(UNFILTERED);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
