@@ -144,3 +144,43 @@ fn a_linked_new_registry_is_never_written_through() {
     );
     assert!(registry.is_symlink(), "and the link is still theirs");
 }
+
+/// The same link, before there is any hook to have a history. Whether
+/// kendex may write that document is the scope's question and not a lock
+/// entry's, so the first install has to meet it too — reached only
+/// through the entries the lock already names, it never would.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_linked_new_registry_holds_the_first_install_too() {
+    let w = world();
+    let registry = w.dot().join("kendex/hooks.json");
+    let theirs = w.home.join("their-hooks.json");
+    fs::create_dir_all(w.dot().join("kendex")).unwrap();
+    fs::write(&theirs, "{\"hooks\":{}}\n").unwrap();
+    symlink(&theirs, &registry).unwrap();
+
+    let report = audit(&w.env, &w.scope()).unwrap();
+    let row = report
+        .drift
+        .iter()
+        .find(|row| row.name == "guard" && row.state == DriftState::Conflict)
+        .unwrap_or_else(|| panic!("the hold has to be reported: {:?}", report.drift));
+    assert!(
+        row.detail.contains("is a link kendex did not create"),
+        "and name what is in the way: {}",
+        row.detail
+    );
+    assert!(
+        !format!("{:?}", report.plan.ops).contains("kendex/hooks.json"),
+        "nothing is planned against it: {:?}",
+        report.plan.ops
+    );
+    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(&theirs).unwrap(),
+        "{\"hooks\":{}}\n",
+        "the file at the other end is untouched"
+    );
+    assert!(registry.is_symlink(), "and the link is still theirs");
+}

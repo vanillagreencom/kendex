@@ -92,6 +92,17 @@ fn new_registration_stands(
     }
 }
 
+/// Whether the registry every pi hook in a scope registers in is a link
+/// kendex did not create.
+///
+/// A property of the scope and its file, never of one hook's history, so
+/// it is asked once before anything reads that document: a link is read
+/// through no more than it is written through, and editing one would
+/// rewrite a file outside the directory kendex manages.
+pub(super) fn linked_registry(root: &std::path::Path) -> bool {
+    matches!(look(&pi::hook_registry(root)), Found::Linked(_))
+}
+
 /// What is at the new path that this pass would run into.
 pub(super) enum Moved {
     /// Nothing: the entry is kendex's own to act on, or there is none.
@@ -102,15 +113,12 @@ pub(super) enum Moved {
     /// An entry kendex's own edits step over: registering again would add
     /// a second beside it, and retiring it would take nothing.
     Unreachable,
-    /// A registry that is a link kendex did not create.
-    Linked,
 }
 
 /// Whether this pass can act on what is at the new path at all. Somebody
-/// moved the entry, or wrote it in a shape kendex's edits step over, or
-/// put a link where the registry goes — in each case what the pass would
-/// write lands somewhere other than on what is there, so the installation
-/// holds instead.
+/// moved the entry, or wrote it in a shape kendex's edits step over —
+/// either way what the pass would write lands somewhere other than on
+/// what is there, so the installation holds instead.
 pub(super) fn moved_by_hand(
     env: &Env,
     scope: &Scope,
@@ -121,7 +129,6 @@ pub(super) fn moved_by_hand(
     match new_registration(env, scope, root, entry, state) {
         Registered::Ours | Registered::Absent => Moved::No,
         Registered::Unreachable => Moved::Unreachable,
-        Registered::Linked => Moved::Linked,
         Registered::Elsewhere | Registered::Ambiguous => Moved::Elsewhere,
     }
 }
@@ -140,12 +147,6 @@ fn new_registration(
 ) -> Registered {
     let here = installed(env, scope, root, entry, state);
     let registry = pi::hook_registry(root);
-    // Read like everything else this module reads: a link is never
-    // followed, in or out. Editing through one writes to a file outside
-    // the directory kendex manages.
-    if matches!(look(&registry), Found::Linked(_)) {
-        return Registered::Linked;
-    }
     let found = match crate::scan::hooks::read_registrations(&registry) {
         Ok(entries) => registered(&entries, &here),
         // A registry that is not there, or cannot be read, carries no

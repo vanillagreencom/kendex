@@ -40,6 +40,7 @@ use super::targets::disabled_name;
 
 pub(super) mod claims;
 mod disposal;
+mod holding;
 mod identity;
 mod migrated;
 mod preflight;
