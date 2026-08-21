@@ -38,8 +38,8 @@ fn a_held_file_is_never_also_called_a_file_kendex_did_not_write() {
     let w = world();
     declare_second_hook(&w);
     apply(&w);
-    regress(&w, "guard");
-    regress(&w, "other");
+    regress(&w, "guard.sh");
+    regress(&w, "other.sh");
     let edited = w.dot().join("hooks/guard.sh");
     fs::write(&edited, "#!/bin/sh\n# mine\nexit 0\n").unwrap();
 

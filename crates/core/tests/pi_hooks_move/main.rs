@@ -3,13 +3,13 @@
 #![cfg(unix)]
 
 use std::fs;
-
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use kendex_core::engine::audit;
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::model::Scope;
 
+mod global;
 mod held_back;
 mod strangers;
 
@@ -33,8 +33,29 @@ impl World {
     }
 }
 
+/// A source catalog carrying one pi hook and one agent.
 #[allow(clippy::unwrap_used)]
-fn world() -> World {
+fn catalog(home: &Path) -> PathBuf {
+    let catalog = home.join("cat");
+    fs::create_dir_all(catalog.join("hooks")).unwrap();
+    fs::create_dir_all(catalog.join("agents")).unwrap();
+    fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    fs::write(
+        catalog.join("hooks/guard.sh"),
+        "#!/bin/sh\n# ---\n# name: guard\n# event: PreToolUse\n# description: a guard\n# harnesses: [pi]\n# ---\nexit 0\n",
+    )
+    .unwrap();
+    fs::write(
+        catalog.join("agents/helper.md"),
+        "---\nname: helper\ndescription: a helper\n---\n\nHelp.\n",
+    )
+    .unwrap();
+    catalog
+}
+
+/// A project managing one pi hook, declared by the given manifest body.
+#[allow(clippy::unwrap_used)]
+fn world_declaring(body: &str) -> World {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().canonicalize().unwrap();
     let project = home.join("app");
@@ -44,18 +65,11 @@ fn world() -> World {
         r#"{ "packages": ["./packages/pi-hooks"] }"#,
     )
     .unwrap();
-    let catalog = home.join("cat");
-    fs::create_dir_all(catalog.join("hooks")).unwrap();
-    fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
-    fs::write(
-        catalog.join("hooks/guard.sh"),
-        "#!/bin/sh\n# ---\n# name: guard\n# event: PreToolUse\n# description: a guard\n# harnesses: [pi]\n# ---\nexit 0\n",
-    )
-    .unwrap();
+    let catalog = catalog(&home);
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"pi\"]\nmethod = \"symlink\"\n\n[hooks.guard]\nsource = \"cat\"\n",
+            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"pi\"]\nmethod = \"symlink\"\n\n{body}",
             catalog.display()
         ),
     )
@@ -67,6 +81,16 @@ fn world() -> World {
         catalog,
         _tmp: tmp,
     }
+}
+
+fn world() -> World {
+    world_declaring("[hooks.guard]\nsource = \"cat\"\n")
+}
+
+/// A managed project with no pi hook at all — so the move runs with an
+/// empty set of lock entries to claim anything by.
+fn world_without_hooks() -> World {
+    world_declaring("[agents.helper]\nsource = \"cat\"\n")
 }
 
 #[allow(clippy::unwrap_used)]
@@ -97,45 +121,38 @@ fn declare_second_hook(w: &World) {
     .unwrap();
 }
 
-/// One hook's artifacts, put back under the reserved name.
+/// One hook's script, put back under the reserved name, and the registry
+/// with it when the hook has one — a hook installed disabled does not.
 #[allow(clippy::unwrap_used)]
-fn regress(w: &World, name: &str) {
+fn regress(w: &World, file: &str) {
     let dot = w.dot();
     fs::create_dir_all(dot.join("hooks")).unwrap();
     fs::rename(
-        dot.join(format!("kendex/hooks/{name}.sh")),
-        dot.join(format!("hooks/{name}.sh")),
+        dot.join("kendex/hooks").join(file),
+        dot.join("hooks").join(file),
     )
     .unwrap();
-    let registry = fs::read_to_string(dot.join("kendex/hooks.json")).unwrap();
-    fs::write(
-        dot.join("hooks.json"),
-        registry.replace(".pi/kendex/hooks/", ".pi/hooks/"),
-    )
-    .unwrap();
+    if let Ok(registry) = fs::read_to_string(dot.join("kendex/hooks.json")) {
+        fs::write(
+            dot.join("hooks.json"),
+            registry.replace(".pi/kendex/hooks/", ".pi/hooks/"),
+        )
+        .unwrap();
+    }
 }
 
 /// A world already installed at the new paths, then regressed to the
-/// layout an earlier kendex wrote — so the lock records exactly what a
-/// real one would, and the registry spells the old command.
+/// layout an earlier kendex wrote. A hook's lock entry records no path of
+/// its own — no `emitted`, and `rendered_hash` is a hash of the script's
+/// bytes — so the lock a current install writes is the same one an older
+/// kendex wrote, and moving the files with the registry command rewritten
+/// is the whole of the old layout.
 #[allow(clippy::unwrap_used)]
 fn regressed() -> World {
     let w = world();
     apply(&w);
-    let dot = w.dot();
-    fs::create_dir_all(dot.join("hooks")).unwrap();
-    fs::rename(
-        dot.join("kendex/hooks/guard.sh"),
-        dot.join("hooks/guard.sh"),
-    )
-    .unwrap();
-    let registry = fs::read_to_string(dot.join("kendex/hooks.json")).unwrap();
-    fs::write(
-        dot.join("hooks.json"),
-        registry.replace(".pi/kendex/hooks/", ".pi/hooks/"),
-    )
-    .unwrap();
-    fs::remove_dir_all(dot.join("kendex")).unwrap();
+    regress(&w, "guard.sh");
+    fs::remove_dir_all(w.dot().join("kendex")).unwrap();
     w
 }
 
@@ -183,4 +200,25 @@ fn an_older_install_in_the_reserved_directory_moves_out_of_it() {
     let report = audit(&w.env, &w.scope()).unwrap();
     assert!(report.plan.ops.is_empty(), "{:?}", report.plan.ops);
     assert!(report.notes.is_empty(), "{:?}", report.notes);
+}
+
+/// A hook installed disabled keeps its bytes under the `.disabled` name,
+/// and that copy is kendex's too — read as a stranger it would keep the
+/// reserved directory, and pi's warning, alive forever.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_disabled_hook_moves_under_its_disabled_name() {
+    let w = world_declaring("[hooks.guard]\nsource = \"cat\"\nenabled = false\n");
+    apply(&w);
+    assert!(w.dot().join("kendex/hooks/guard.sh.disabled").is_file());
+    regress(&w, "guard.sh.disabled");
+    fs::remove_dir_all(w.dot().join("kendex")).unwrap();
+
+    apply(&w);
+
+    assert!(
+        !w.dot().join("hooks").exists(),
+        "the reserved directory goes with the file it held"
+    );
+    assert!(w.dot().join("kendex/hooks/guard.sh.disabled").is_file());
 }

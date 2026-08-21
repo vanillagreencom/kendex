@@ -71,18 +71,19 @@ pub(super) fn plan_move(env: &Env, scope: &Scope, lock: &Lock, sink: &mut Sink) 
     if !present(&dir) && !present(&registry) {
         return Ok(());
     }
-    // A lock entry is the only proof kendex ever wrote here. With none, a
-    // `hooks/` beside this root is somebody else's directory and a
-    // `hooks.json` beside it is somebody else's file.
+    // A lock entry is the only claim kendex has on anything here: what it
+    // may take is derived from these and nothing else, so a `hooks/`
+    // beside this root that none of them names stays whole, and so does a
+    // `hooks.json` holding nobody's entries but its own.
     let entries: Vec<&LockEntry> = lock
         .entries
         .values()
         .filter(|entry| entry.kind == ItemKind::Hook && entry.harness == HarnessId::Pi)
         .collect();
-    if entries.is_empty() {
-        return Ok(());
-    }
-    let registry_ready = replacement_registry_ready(&root, sink);
+    // Nothing to retire in the registry is its own kind of ready: a hook
+    // installed disabled registered nothing, so there is no legacy entry
+    // waiting on a replacement.
+    let registry_ready = !present(&registry) || replacement_registry_ready(&root, sink);
 
     // What the lock accounts for under the reserved name, and the subset
     // this plan may take: an edited or unreadable copy is one of ours and

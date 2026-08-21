@@ -33,16 +33,18 @@ beside them — `kendex/hooks/<name>.sh` plus `kendex/hooks.json`, keyed by Pi's
 listener names (`pi_listener`: tool call, tool result, turn end, session
 start). An event outside that map installs nothing on Pi, said as a note.
 
-**The reserved names.** Pi warns at every start about a `hooks/` or a
-`tools/` directory sitting directly beside a root it loads, on the name
-alone — it never looks inside — and the migration it names, into
-`extensions/`, is one these files cannot take: Pi extensions are
-TypeScript registered in `settings.json`, these are shell scripts a
-carrier runs. So both the scripts and the registry sit one level down,
-under `kendex/`, where Pi does not look (`harness::pi::HOOK_HOME`) — the
-same segment kendex's Pi extensions already keep per-session state in.
-kendex writes nothing to `tools/` at either scope — an extension's `bin`
-entries link into the scope's `bin/`. What an earlier kendex left in the
+**The reserved names.** Pi warns about two directory names sitting
+directly beside a root it loads, and halts the start until a keypress:
+`hooks/` on the name alone, whatever the directory holds, and `tools/`
+only when it holds entries beyond Pi's own `fd`/`rg` binaries. The
+migration it names, into `extensions/`, is one kendex's hooks cannot
+take: Pi extensions are TypeScript registered in `settings.json`, these
+are shell scripts a carrier runs. So both the scripts and the registry
+sit one level down, under `kendex/`, where Pi does not look
+(`harness::pi::HOOK_HOME`) — the same segment kendex's Pi extensions
+already keep per-session state in. kendex writes nothing to `tools/` at
+either scope either — an extension's `bin` entries link into the scope's
+`bin/`, which is where Pi's own migration moved `tools/`. What an earlier kendex left in the
 reserved name comes off disk on the next plan, the directory with it
 (`engine::pi_hooks_move`). Nothing moves on a path alone: a file is taken
 only when this scope's lock names it and its bytes hash to what apply last

@@ -228,7 +228,4 @@ fn nothing_lands_in_the_directory_names_pi_reserved() {
         !w.project.join(".pi/hooks").exists(),
         "the reserved directory name makes pi warn at every start"
     );
-    assert!(!w.project.join(".pi/tools").exists());
-    assert!(!w.home.join(".pi/agent/hooks").exists());
-    assert!(!w.home.join(".pi/agent/tools").exists());
 }

@@ -18,10 +18,18 @@ pub fn parse_harnesses(values: &[String]) -> Result<Vec<HarnessId>, String> {
         .collect()
 }
 
-pub fn print_report(report: &EngineReport) {
+/// What the plan declined to do, in its own words. A note is the only
+/// channel some passes have — the reserved-name move says here which file
+/// it left alone and why — so a verb that prints nothing else about the
+/// plan still prints these.
+pub fn print_notes(report: &EngineReport) {
     for note in &report.notes {
         say(&format!("note: {note}"));
     }
+}
+
+pub fn print_report(report: &EngineReport) {
+    print_notes(report);
     for warning in &report.warnings {
         let target = match warning.harness {
             Some(harness) => format!("{} ({})", warning.name, harness.display_name()),

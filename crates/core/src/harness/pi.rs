@@ -9,12 +9,12 @@ pub struct Pi;
 const EXTENSION_EXTS: &[&str] = &["ts", "js"];
 
 /// The segment kendex parks its Pi hook storage under, at both scopes.
-/// Pi warns about a `hooks/` or `tools/` directory sitting directly beside
-/// a root it loads — on the name alone, never on the contents — and the
-/// migration it names, into `extensions/`, is not one these files can
-/// take: they are shell scripts the `pi-hooks` carrier runs, not Pi
-/// extensions. Under a segment of kendex's own, Pi never looks — the same
-/// segment its Pi extensions already keep per-session state in.
+/// Pi warns about a `hooks/` directory sitting directly beside a root it
+/// loads on the name alone, whatever it holds, and the migration it names
+/// — into `extensions/` — is not one these files can take: they are shell
+/// scripts the `pi-hooks` carrier runs, not Pi extensions. Under a segment
+/// of kendex's own, Pi never looks — the same segment its Pi extensions
+/// already keep per-session state in.
 pub const HOOK_HOME: &str = "kendex";
 
 /// The scope's root — the directory Pi loads its settings, agents and

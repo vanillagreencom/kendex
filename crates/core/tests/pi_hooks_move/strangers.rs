@@ -7,7 +7,7 @@ use std::fs;
 use kendex_core::engine::audit;
 use kendex_core::model::Scope;
 
-use super::{about, apply, notes, regressed, world};
+use super::{about, apply, notes, regressed, world, world_without_hooks};
 
 #[test]
 #[allow(clippy::unwrap_used)]
@@ -121,4 +121,31 @@ fn a_global_registry_kendex_never_wrote_to_is_left_alone() {
             .contains("echo theirs")
     );
     assert!(agent.join("kendex/hooks/guard.sh").is_file());
+}
+
+/// A managed project where kendex holds no pi hook at all: the reserved
+/// names beside its root are entirely somebody else's.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_reserved_directory_kendex_never_wrote_to_is_left_alone() {
+    let w = world_without_hooks();
+    apply(&w);
+    fs::create_dir_all(w.dot().join("hooks")).unwrap();
+    fs::write(w.dot().join("hooks/theirs.sh"), "#!/bin/sh\nexit 0\n").unwrap();
+    fs::write(
+        w.dot().join("hooks.json"),
+        "{\"hooks\":{\"turn_end\":[{\"hooks\":[{\"command\":\"echo theirs\"}]}]}}\n",
+    )
+    .unwrap();
+
+    let report = audit(&w.env, &w.scope()).unwrap();
+    assert!(report.notes.is_empty(), "{:?}", report.notes);
+    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+
+    assert!(w.dot().join("hooks/theirs.sh").is_file());
+    assert!(
+        fs::read_to_string(w.dot().join("hooks.json"))
+            .unwrap()
+            .contains("echo theirs")
+    );
 }
