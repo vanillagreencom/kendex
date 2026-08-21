@@ -83,7 +83,8 @@ export function SkillsShSearch({
       ) : hits === null ? (
         <p className="text-sm text-muted-foreground">
           Search the skills.sh index — installing brings the skill in the kendex
-          way: subscribed, locked and safety-checked.
+          way: subscribed, locked, and scanned for risky patterns before it
+          lands.
         </p>
       ) : hits.length === 0 ? (
         <p className="text-sm text-muted-foreground">

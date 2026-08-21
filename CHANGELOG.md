@@ -89,6 +89,15 @@ changes carry a **Breaking** call-out with their migration note inline.
   publishes is told so plainly, and settles nothing.
 ### Changed
 
+- The safety check says what it found and nothing more. A package's page
+  now states, beside its verdict, that kendex neither wrote nor reviewed
+  the package, that the check looks for risky patterns in what it read,
+  and that a large package is read only in part; Settings › Safety check
+  says the same about the check itself. A marketplace's About tab said
+  "Nothing wrong with this catalog" and now says "Nothing wrong with how
+  this catalog is put together" — that report reads the catalog's layout
+  and has not looked inside a single package. A clean check has never
+  been an approval, and the wording no longer suggests otherwise.
 - The Updates page is a table with one row per package. A package out of
   date in several projects shows how many places, expands into a row per
   place — User level and each project by name — and each place has its

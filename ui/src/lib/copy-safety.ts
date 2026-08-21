@@ -33,6 +33,20 @@ export const publisherSettledNote = (
 export const SAFETY_HELP =
   "Strict catches more, and flags more things that turn out fine. Lenient stops only the riskiest.";
 
+// The check matches patterns over as much of a package as it reads, and
+// kendex has no hand in what a catalog offers. So every place a verdict is
+// shown says what was determined and nothing more: a verdict with nothing
+// in it means nothing was matched, never that the package is safe to run.
+export const SAFETY_SECTION_EXPLAINER =
+  "kendex looks for risky patterns in each package before it installs. It doesn't write or review what a catalog offers, and it reads only the first part of a large package.";
+// Sits under the verdict on the page where somebody decides to install.
+export const PREINSTALL_SAFETY_CAVEAT =
+  "kendex didn't write or review this package — it looked for risky patterns in what it read, and it reads only the first part of a large package.";
+// The About tab's findings are about the catalog's own layout and
+// configuration. Nothing here has read a single package.
+export const CATALOG_LAYOUT_CLEAN =
+  "Nothing wrong with how this catalog is put together.";
+
 // This list scores what is on disk right now, not what a plan would write —
 // so every row here is a thing the harnesses will load the next time they start.
 // "Held back" describes what kendex refuses to do with it, and must never be

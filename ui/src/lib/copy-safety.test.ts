@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  CATALOG_LAYOUT_CLEAN,
+  PREINSTALL_SAFETY_CAVEAT,
   publisherSettledLabel,
   publisherSettledNote,
+  SAFETY_SECTION_EXPLAINER,
   settledSummaryLead,
 } from "./copy-safety";
+import { VERDICT_LABELS } from "./labels";
 
 describe("settledSummaryLead", () => {
   // The second argument is optional, so a caller that forgets it drops the
@@ -36,6 +40,51 @@ describe("the publisher's own decisions", () => {
     );
     expect(publisherSettledNote("owner/repo", "wrong-call", null)).toBe(
       "owner/repo reviewed this — not actually a problem",
+    );
+  });
+});
+
+describe("what a verdict is allowed to claim", () => {
+  // Everything a person reads beside a scan result. A pass means "nothing
+  // was matched in what we read", so none of these may promise more: kendex
+  // does not write, review or vouch for a catalog's packages. The
+  // disclaimers below say "write or review" rather than "verify" precisely
+  // so this list needs no exception for a negated form.
+  const besideAVerdict = [
+    ...Object.values(VERDICT_LABELS),
+    PREINSTALL_SAFETY_CAVEAT,
+    SAFETY_SECTION_EXPLAINER,
+    CATALOG_LAYOUT_CLEAN,
+  ];
+
+  it("never vouches for a package kendex neither wrote nor reviewed", () => {
+    const copy = besideAVerdict.join(" ").toLowerCase();
+    for (const banned of [
+      "safe",
+      "verified",
+      "verifies",
+      "approved",
+      "trusted",
+      "vetted",
+      "endorse",
+      "guarantee",
+    ]) {
+      expect(copy).not.toContain(banned);
+    }
+  });
+
+  it("discloses that the read is partial wherever it shows a verdict", () => {
+    expect(PREINSTALL_SAFETY_CAVEAT).toBe(
+      "kendex didn't write or review this package — it looked for risky patterns in what it read, and it reads only the first part of a large package.",
+    );
+    expect(SAFETY_SECTION_EXPLAINER).toBe(
+      "kendex looks for risky patterns in each package before it installs. It doesn't write or review what a catalog offers, and it reads only the first part of a large package.",
+    );
+  });
+
+  it("keeps the About tab's clean line about layout, not about content", () => {
+    expect(CATALOG_LAYOUT_CLEAN).toBe(
+      "Nothing wrong with how this catalog is put together.",
     );
   });
 });

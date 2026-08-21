@@ -1,5 +1,6 @@
 import type { Catalog, PackageView } from "@/bindings";
 import { FileList } from "@/components/package/file-list";
+import { PREINSTALL_SAFETY_CAVEAT } from "@/lib/copy-safety";
 import { VERDICT_LABELS } from "@/lib/labels";
 import { catalogLabel } from "@/stores/marketplaces";
 
@@ -43,6 +44,12 @@ export function AvailableAside({
           <p>
             {VERDICT_LABELS[view.safety.verdict]} · {view.safety.safety.score}
             /100
+          </p>
+          {/* What the number is a reading of. Without it, a verdict under a
+              heading called Safety reads as kendex vouching for a package
+              it neither wrote nor reviewed. */}
+          <p className="mt-1 text-xs text-foreground/70">
+            {PREINSTALL_SAFETY_CAVEAT}
           </p>
           {/* What this reading did not account for. A preview that showed a
               number without its caveat would be the page a person reads

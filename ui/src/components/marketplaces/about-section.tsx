@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import type { Catalog, MarketplaceMeta } from "@/bindings";
 import { useCachedRead } from "@/components/marketplaces/use-catalog";
 import { Badge } from "@/components/ui/badge";
+import { CATALOG_LAYOUT_CLEAN } from "@/lib/copy-safety";
 import { kindLabel } from "@/lib/labels";
 import {
   catalogKey,
@@ -124,9 +125,7 @@ export function AboutSection({
           </div>
         </section>
       ) : (
-        <p className="text-sm text-muted-foreground">
-          Nothing wrong with this catalog.
-        </p>
+        <p className="text-sm text-muted-foreground">{CATALOG_LAYOUT_CLEAN}</p>
       )}
     </div>
   );
