@@ -105,6 +105,10 @@ pub(super) fn registration_conflict(
         Registered::Elsewhere => say(format!(
             "no longer registers {command} where kendex recorded it"
         )),
+        // Only the new path's reading answers this, and only about its
+        // own document; the reserved name's entry is proven the same way
+        // a line above, by taking it out and reading the file back.
+        Registered::Unreachable => None,
         Registered::Ambiguous => say(format!(
             "registers {command} more than once, so kendex cannot tell its own entry from the others"
         )),

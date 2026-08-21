@@ -27,6 +27,10 @@ pub(super) enum Registered {
     /// More than one registration answers to it; none can be told from
     /// the others.
     Ambiguous,
+    /// It is exactly where the record says — and written in a shape
+    /// kendex's own edit cannot reach, so applying that edit would put a
+    /// second entry beside it rather than keep it up to date.
+    Unreachable,
 }
 
 /// What the record kept of one registration — everything the identity has

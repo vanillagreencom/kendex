@@ -90,7 +90,9 @@ named by its command alone — its record describes the entry at the new
 path, and what an older kendex wrote under the old name is not knowable
 from it. What this
 pass renders names the entry at the new path only, so a registration
-somebody moved there by hand is never doubled by a second one beside it —
+somebody moved there by hand — or wrote in a shape kendex's own edit
+steps over, which it proves by applying that edit and reading the file
+back — is never doubled by a second one beside it —
 asked wherever the old layout has got to, since "nothing of kendex's is
 under the reserved name" answers a different question from "this
 installation is in good order", and only the first is about that

@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::desired::DesiredState;
 use super::claims::Held;
-use super::migrated::{moved, moved_by_hand};
+use super::migrated::{Moved, moved, moved_by_hand};
 use super::registry::{registration_conflict, registry_block};
 use super::{Found, LEGACY_DIR, legacy_files, look, plain_file, provenance};
 use crate::env::Env;
@@ -235,12 +235,18 @@ fn doubled(
     entry: &LockEntry,
     state: &DesiredState,
 ) -> Option<Hold> {
-    moved_by_hand(env, scope, root, entry, state).then(|| {
-        Hold::ByHand(format!(
+    let registry = pi::hook_registry(root);
+    match moved_by_hand(env, scope, root, entry, state) {
+        Moved::No => None,
+        Moved::Elsewhere => Some(Hold::ByHand(format!(
             "its registration in {} sits under an event kendex did not put it under — registering it again would fire the hook twice; move it back or take it out",
-            pi::hook_registry(root).display()
-        ))
-    })
+            registry.display()
+        ))),
+        Moved::Unreachable => Some(Hold::ByHand(format!(
+            "its registration in {} is written in a shape kendex cannot edit — a handler standing directly under its event, rather than inside a matcher group — so refreshing it would add a second entry beside it and the hook would fire twice; move it inside a matcher group, or take it out",
+            registry.display()
+        ))),
+    }
 }
 
 /// Why one hook's installation holds whole, when it does — asked of every

@@ -550,39 +550,38 @@ lives in one capability table read by core and UI.
 - **A registration is reconciled, not added to.** What a hook registered
   is recorded (`engine::item_record`), so a catalog moving it to another
   event is a move: retire what the record names, apply what is rendered,
-  record that — in that order, whichever way round the pass names its
-  entry, since switching a hook off renders the removal of an entry that
-  may not be the one there. Otherwise it fires twice, or keeps firing with
-  nothing naming it. Removal reads the same record.
+  record that — whichever way round the pass names its entry, since
+  switching a hook off renders the removal of an entry that may not be the
+  one there. Otherwise it fires twice, or keeps firing with nothing naming
+  it. Removal reads the same record, and an entry no edit of kendex's can
+  reach is nobody's to reconcile: proven by applying it and reading back.
 - **Pi hooks are enforced through the carrier.** Pi has no per-hook
   artifact: the `pi-hooks` extension package hosts native listeners, and
   hook content rides in the registry kendex renders beside them
   (`kendex/hooks/<name>.sh` plus `kendex/hooks.json`, keyed by Pi's own
   listener names — tool call, tool result, turn end, session start). Pi
   reserved `hooks/` beside every root it loads and warns on that name
-  whatever the directory holds, so the storage sits one level down under
-  `kendex/`; `engine::pi_hooks_move` retires the old layout, taking only
-  what this scope's lock names and its bytes prove, holding whole what it
-  cannot — installation and registration together — and saying why. Two rules hold that together, and
-  [docs/adapters/pi.md](adapters/pi.md) carries them in full. A finished
-  move is a fact about the past: recorded in the lock
+  whatever it holds, so the storage sits one level down under `kendex/`;
+  `engine::pi_hooks_move` retires the old layout, taking only what this
+  scope's lock names and its bytes prove, holding whole what it cannot —
+  installation and registration together — and saying why;
+  [docs/adapters/pi.md](adapters/pi.md) carries the rules in full. A
+  finished move is a fact about the past: recorded in the lock
   (`LockEntry::left_pi_reserved_name`), read back, never re-derived, and
-  written only where completion is proven — an unrecorded one costs a
-  derived pass, a wrong one cannot be taken back. Past it, ownership is
-  not asked about at all, of either half. And what authorizes a
-  deletion asks for a plain file and binds the type it proved with the
-  hash (`claims::provenance`, `preflight::discardable`,
-  `Pre::PlainHashIs`), while every hold reaches the conflict row through
-  one rendering (`Hold::row`), so no path offers a remedy that cannot work. A hook held that way runs from the old registry and nowhere
-  else, so Pi's hook surface list carries that registry too while an
-  installation of kendex's is still under the reserved name
-  (`pi_hooks_move::legacy_registry_lives`). An event outside that map
-  cannot fire on Pi and installs nothing there, said as a note. The capability row says what the
-  mechanism supports; the surfaces that label an installation read carrier
-  reality (`pi_ext::carrier`), and Pi loads project and global settings
-  both, so a project-installed hook with only a global carrier is still
-  enforced — the v1 #1407 lesson, carried as behavior. A scope with no
-  carrier registered anywhere Pi loads gets the downgrade said per item.
+  written only where proven, since a wrong one cannot be taken back —
+  past it, ownership is not asked about at all. What authorizes a deletion
+  asks for a plain file and binds the type it proved with the hash
+  (`claims::provenance`, `preflight::discardable`, `Pre::PlainHashIs`),
+  and every hold reaches the conflict row through one rendering
+  (`Hold::row`). A hook held that way runs from the old registry and
+  nowhere else, so Pi's hook surface list carries that registry too while
+  an installation of kendex's is still under the reserved name
+  (`pi_hooks_move::legacy_registry_lives`). The capability row says what
+  the mechanism supports; the surfaces that label an installation read
+  carrier reality (`pi_ext::carrier`), and Pi loads project and global
+  settings both, so a project-installed hook with only a global carrier is
+  still enforced — the v1 #1407 lesson, carried as behavior. A scope with
+  no carrier registered anywhere gets the downgrade said per item.
   The session-start drift report rides the same mechanism: same script,
   same kill-switch, fire-and-forget into session start, and a reloaded or
   resumed session never repeats it.

@@ -280,8 +280,8 @@ changes carry a **Breaking** call-out with their migration note inline.
   attention is not the one you cannot see. A registration
   kendex cannot take out holds the script it names, so a hook is never left
   half-retired — including one written in a shape kendex does not write
-  and cannot edit, which it finds out by taking the entry out and reading
-  the file back rather than by the edit reporting success. A registration kendex wrote down in full — the ones you
+  and cannot edit — at either path, and found out by making the edit and
+  reading the file back rather than by the edit reporting success. A registration kendex wrote down in full — the ones you
   declare under `[[custom-hooks]]` — is known by the event and matcher it
   went in under, so one you move by hand stays where you moved it and
   nothing is registered beside it; and at the new path, a registration you

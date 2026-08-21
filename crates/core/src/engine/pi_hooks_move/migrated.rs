@@ -92,31 +92,37 @@ fn new_registration_stands(
     }
 }
 
-/// Whether this hook's registration in the new registry sits under an
-/// event kendex did not put it under. Upserting beside it would register
-/// the same hook twice, under two events, and the second one is the
-/// person's own doing — so the installation holds instead.
+/// What is at the new path that a fresh registration would run into.
+pub(super) enum Moved {
+    /// Nothing: the entry is kendex's own to keep up to date, or there is
+    /// none.
+    No,
+    /// An entry somebody moved: registering again would leave the hook
+    /// firing under two events.
+    Elsewhere,
+    /// An entry kendex's own edit cannot reach: registering again would
+    /// add a second beside it.
+    Unreachable,
+}
+
+/// Whether registering this hook again would leave two of it. Somebody
+/// moved the entry, or wrote it in a shape kendex's edits step over —
+/// either way the fresh rendering lands beside what is there instead of
+/// on it, and the installation holds instead.
 pub(super) fn moved_by_hand(
     env: &Env,
     scope: &Scope,
     root: &std::path::Path,
     entry: &LockEntry,
     state: &DesiredState,
-) -> bool {
-    matches!(
-        new_registration(env, scope, root, entry, state),
-        Registered::Elsewhere | Registered::Ambiguous
-    )
+) -> Moved {
+    match new_registration(env, scope, root, entry, state) {
+        Registered::Ours | Registered::Absent => Moved::No,
+        Registered::Unreachable => Moved::Unreachable,
+        Registered::Elsewhere | Registered::Ambiguous => Moved::Elsewhere,
+    }
 }
 
-/// What the new registry says about this hook, under the identity this
-/// pass would render it with. Asked once for both questions that ask it —
-/// whether the move has finished, and whether a fresh registration would
-/// double one the person moved — so the two can never disagree.
-///
-/// This is the one place the rendered event belongs: what goes into the
-/// new registry this pass is exactly what this pass renders, whatever a
-/// previous version of the hook was installed under.
 fn new_registration(
     env: &Env,
     scope: &Scope,
@@ -125,12 +131,75 @@ fn new_registration(
     state: &DesiredState,
 ) -> Registered {
     let here = installed(env, scope, root, entry, state);
-    match crate::scan::hooks::read_registrations(&pi::hook_registry(root)) {
+    let registry = pi::hook_registry(root);
+    let found = match crate::scan::hooks::read_registrations(&registry) {
         Ok(entries) => registered(&entries, &here),
         // A registry that is not there, or cannot be read, carries no
         // registration of this hook's that anything could act on.
         Err(_) => Registered::Absent,
+    };
+    match found {
+        // Found where the record says is not the same as ours to keep up
+        // to date. Proven, not assumed — the same reading the old path
+        // gets, in the one place both questions about the new one come
+        // through.
+        Registered::Ours if !reachable(&registry, entry, &here, state) => Registered::Unreachable,
+        found => found,
     }
+}
+
+/// Whether this pass's own edits reach the entry it just matched.
+///
+/// An upsert refreshes a handler standing inside a matcher group and
+/// steps over one written directly under its event — a shape a person
+/// writes and kendex never does. The document reads the same either way,
+/// so the entry answers to the record while the edit meant to keep it
+/// current would add a second beside it, and the hook would fire twice
+/// for ever after.
+///
+/// Asked by applying what this pass would apply — the retirement of a
+/// moved identity included, or an ordinary catalog event change would
+/// read as unreachable — and counting what carries the command
+/// afterwards. More than one is an edit that added where it meant to
+/// amend.
+///
+/// A pass that renders nothing for this hook writes nothing, and an edit
+/// the document refuses is a conflict the item pass raises on its own;
+/// neither is this question's to answer.
+fn reachable(
+    registry: &std::path::Path,
+    entry: &LockEntry,
+    here: &Identity,
+    state: &DesiredState,
+) -> bool {
+    let key = crate::lock::entry_key(ItemKind::Hook, &entry.name, HarnessId::Pi);
+    let Some(item) = state.items.iter().find(|item| item.key == key) else {
+        return true;
+    };
+    let Artifact::Registration { edits, .. } = &item.artifact else {
+        return true;
+    };
+    let Ok(Some(text)) = crate::fs::read_if_exists(registry) else {
+        return true;
+    };
+    let mut after = text;
+    let planned = super::super::item_record::retire_previous(item, Some(entry))
+        .into_iter()
+        .chain(edits.iter().cloned())
+        .filter(|(path, _)| path == registry);
+    for (_, edit) in planned {
+        match edit.apply(&after) {
+            Ok(updated) => after = updated,
+            Err(_) => return true,
+        }
+    }
+    crate::scan::hooks::registrations_text(&after).is_ok_and(|entries| {
+        entries
+            .iter()
+            .filter(|entry| entry.command == here.command)
+            .count()
+            <= 1
+    })
 }
 
 /// The entry this hook has at the new path, as the record names it.
