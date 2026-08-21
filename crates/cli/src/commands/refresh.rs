@@ -3,7 +3,8 @@ use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
 
 use super::engine_common::{
-    confirm_and_execute, conflict_detail, print_conflicts, print_held_back, refresh_failures,
+    confirm_and_execute, conflict_detail, print_conflicts, print_exits, print_held_back,
+    refresh_failures,
 };
 use super::{CliResult, resolve_scopes, say};
 use crate::scope::ScopeFilter;
@@ -115,7 +116,12 @@ pub fn run(
         // nothing to do is that the gate refused its content is.
         print_held_back(&report);
         match verbose {
-            true => print_drift(&report),
+            // Every row, and the ways out under the ones that have them:
+            // asking for more detail must not cost the reader the way out.
+            true => {
+                print_drift(&report);
+                print_exits(env, &report);
+            }
             false => {
                 print_conflicts(env, &report);
             }

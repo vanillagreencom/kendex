@@ -186,16 +186,10 @@ changes carry a **Breaking** call-out with their migration note inline.
   `KENDEX_REAL_HOME=1` — only that exact value opts out. Release builds are
   unaffected, whether you installed one or built it with `--release`.
 
-- A declared item whose files were already on disk no longer deadlocks.
-  `kendex apply` says which files are in the way and names both ways out
-  instead of "not managed yet", and `kendex check` reports it under
-  "declared but not installed" instead of folding it into the count of
-  installs waiting on a safety review — which now says what it is waiting
-  for.
 - An item whose files were already on disk no longer deadlocks.
   `kendex apply` names the files in the way and both ways out instead of
-  saying "not managed yet", and `kendex check` reports it under "asked for
-  but not installed" instead of folding it into the count of installs
+  saying "not managed yet", and `kendex check` reports it under "blocked by
+  files already there" instead of folding it into the count of installs
   waiting on a safety review — which now says what it is waiting for.
 - A declaration blocked by files kendex did not write no longer leaves a
   half-installed item behind. Where a skill is shared between tools, the

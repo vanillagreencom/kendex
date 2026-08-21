@@ -89,11 +89,11 @@ pub enum Remedy {
 
 impl Remedy {
     /// Whether running this changes anything. Every other remedy settles
-    /// the line it sits on; the plan prints and returns, so calling it a
-    /// fix would promise a person, and an agent acting on this report, a
-    /// resolution they will not get.
+    /// the line it sits on; the plan and the findings list print and
+    /// return, so calling either a fix would promise a person, and an agent
+    /// acting on this report, a resolution they will not get.
     pub fn mutates(&self) -> bool {
-        !matches!(self, Remedy::Plan { .. })
+        !matches!(self, Remedy::Plan { .. } | Remedy::Findings { .. })
     }
 
     /// The pasteable spelling, or `None` when an identifier fails
@@ -351,6 +351,8 @@ mod render;
 mod scope;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_evidence;
 #[cfg(test)]
 mod tests_render;
 

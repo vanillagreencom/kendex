@@ -7,7 +7,7 @@ use super::ops::manifest_for_mutation;
 use crate::apply::{Op, Plan, PlannedOp, Pre};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-use crate::manifest::{self, ItemDecl, LOCAL_SOURCE_NAME};
+use crate::manifest;
 use crate::model::{HarnessId, ItemKind, Scope};
 use crate::source::local_source_root;
 
@@ -71,18 +71,26 @@ pub fn adopt(
     // catalog-tracked item quietly becoming a fork of itself. The page a
     // keep was clicked on can be a minute old, and something else can have
     // installed the item in between.
+    //
+    // A lock that cannot be read is not an empty one: read as empty, every
+    // installation on this machine would look like a stranger's files.
     let owned: std::collections::BTreeSet<PathBuf> =
-        crate::lock::load(&crate::lock::lock_path(env, scope))
-            .unwrap_or_default()
+        crate::lock::load(&crate::lock::lock_path(env, scope))?
             .entries
             .values()
             .flat_map(|entry| super::owned::installed(env, scope, entry).files)
             .collect();
-    if let Some((_, held)) = positions.iter().find(|(_, path)| owned.contains(path)) {
-        return Err(CoreError::AlreadyManaged {
-            name: name.to_owned(),
-            path: crate::names::shown(&held.display().to_string()),
-        });
+    // Where a position leads, not only where it sits: a link somebody made
+    // can point at another item's installation, and the capture moves what
+    // it points at.
+    let managed = |path: &Path| {
+        let at = path.canonicalize();
+        owned
+            .iter()
+            .any(|ours| ours == path || at.as_ref().is_ok_and(|at| ours == at))
+    };
+    if let Some((_, held)) = positions.iter().find(|(_, path)| managed(path)) {
+        return Err(already_managed(name, held));
     }
 
     let Seen {
@@ -267,51 +275,6 @@ fn look(
     Ok(seen)
 }
 
-/// Write the item into the manifest, bound to the tools that had it. Only
-/// when the [install] defaults name exactly that set may the list be left
-/// off: a wider default would install the item for tools the user never
-/// gave it to.
-fn declare(
-    manifest: &mut manifest::Manifest,
-    kind: ItemKind,
-    name: &str,
-    wanted: Vec<HarnessId>,
-    already_declared: bool,
-) {
-    let defaults_match = {
-        let defaults: std::collections::BTreeSet<&HarnessId> =
-            manifest.install.harnesses.iter().collect();
-        wanted
-            .iter()
-            .collect::<std::collections::BTreeSet<&HarnessId>>()
-            == defaults
-    };
-    let decl = manifest
-        .declared_mut(kind)
-        .entry(name.to_owned())
-        .or_insert_with(|| ItemDecl::from_source(LOCAL_SOURCE_NAME));
-    decl.source = LOCAL_SOURCE_NAME.to_owned();
-    match &mut decl.harnesses {
-        // A list already there is extended, never replaced: the tools it
-        // names still have the item, and pinning it to the ones being kept
-        // now would leave the rest with files nothing manages.
-        Some(listed) => {
-            for harness in wanted {
-                if !listed.contains(&harness) {
-                    listed.push(harness);
-                }
-            }
-        }
-        // A declaration that was already here and left the tools to the
-        // [install] defaults keeps them. Pinning it to what was observed
-        // would narrow it — a tool that had nothing at its place this pass
-        // would stop getting the item at all, which is not what keeping
-        // files was asked to do.
-        None if !defaults_match && !already_declared => decl.harnesses = Some(wanted),
-        None => {}
-    }
-}
-
 /// The one copy every tool had goes into the local source, and every
 /// position it sat at is cleared. Nothing here runs at plan time: every
 /// byte read becomes an op.
@@ -366,6 +329,13 @@ fn capture_ops(
     Ok(ops)
 }
 
+fn already_managed(name: &str, path: &Path) -> CoreError {
+    CoreError::AlreadyManaged {
+        name: name.to_owned(),
+        path: crate::names::shown(&path.display().to_string()),
+    }
+}
+
 /// Two tools hold different files under one name, and adoption has one
 /// place to put them. Said as a choice only the reader can make, never
 /// settled by picking one.
@@ -380,6 +350,10 @@ fn copies_differ(name: &str, first: HarnessId, second: HarnessId) -> CoreError {
 pub(super) mod capture;
 
 pub(crate) use capture::read_tree;
+
+mod declare;
+
+use declare::declare;
 
 #[cfg(test)]
 mod tests;

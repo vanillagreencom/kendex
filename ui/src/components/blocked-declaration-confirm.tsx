@@ -30,7 +30,7 @@ export const isShared = (group: MergedDriftRow) =>
 export function BlockedDeclarationConfirm({
   pending,
   where,
-  toolsOf,
+  named,
   alsoApplies,
   busy,
   onConfirm,
@@ -38,7 +38,9 @@ export function BlockedDeclarationConfirm({
 }: {
   pending: Pending | null;
   where: (group: MergedDriftRow) => { text: string; count: number } | null;
-  toolsOf: (group: MergedDriftRow) => HarnessId[];
+  /** Every tool the row is about, which is what the sentence names — not
+   *  only the ones the keep is carried out through. */
+  named: (group: MergedDriftRow) => HarnessId[];
   alsoApplies: boolean;
   busy: boolean;
   onConfirm: () => void;
@@ -50,7 +52,7 @@ export function BlockedDeclarationConfirm({
     body: isShared(group)
       ? keepSharedConfirmBody(
           where(group)?.text ?? "",
-          toolsOf(group).map(harnessName),
+          named(group).map(harnessName),
           alsoApplies,
         )
       : keepFilesConfirmBody(alsoApplies),

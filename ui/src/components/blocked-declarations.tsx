@@ -71,6 +71,12 @@ export function BlockedDeclarations({
 
   const where = (group: MergedDriftRow) =>
     summarizePaths(group.installations.map((row) => row.detail));
+  // Every tool the row is about. The confirmation is what a person reads
+  // before a folder moves, and a tool left out of that sentence is one
+  // whose shortcut breaks without warning.
+  const named = (group: MergedDriftRow) => [
+    ...new Set(group.installations.map((row) => row.harness)),
+  ];
   // Only the tools keeping can be entered through. Adoption works at a
   // tool's own place, so one reading the item through a shortcut somebody
   // made has nothing there to take — its share is kept by the tool that
@@ -189,7 +195,7 @@ export function BlockedDeclarations({
       <BlockedDeclarationConfirm
         pending={pending}
         where={where}
-        toolsOf={toolsOf}
+        named={named}
         alsoApplies={alsoApplies}
         busy={busy}
         onConfirm={confirm}

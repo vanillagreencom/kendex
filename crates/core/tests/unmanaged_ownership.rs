@@ -349,3 +349,42 @@ fn the_take_over_shows_the_path_it_moves() {
         "an escape reached the terminal as itself: {moves:?}"
     );
 }
+
+/// A link somebody made can point at another item's installation. The
+/// position being a stranger's says nothing about where it leads, and the
+/// capture moves what it leads to.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_link_pointing_at_an_installation_is_never_captured() {
+    let w = with_method("copy");
+    declare_for(&w, "[\"claude\", \"codex\"]");
+    let report = plan_apply(&w.env, &w.scope, &PlanOptions::default()).unwrap();
+    apply::execute(&w.env, &report.plan, None).unwrap();
+
+    // A second declaration whose position is a link into the first's copy.
+    let installed = w.home.join("app/.agents/skills/deploy");
+    assert!(installed.is_dir(), "the fixture never installed anything");
+    let stolen = w.home.join("app/.claude/skills/stolen");
+    fs::create_dir_all(stolen.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&installed, &stolen).unwrap();
+
+    let refused = kendex_core::engine::adopt::adopt(
+        &w.env,
+        &w.scope,
+        kendex_core::model::ItemKind::Skill,
+        "stolen",
+        &[kendex_core::model::HarnessId::Claude],
+    );
+
+    assert!(
+        matches!(
+            refused,
+            Err(kendex_core::error::CoreError::AlreadyManaged { .. })
+        ),
+        "an installation was captured through a link: {refused:?}"
+    );
+    assert!(
+        installed.join("SKILL.md").is_file(),
+        "and the installation it pointed at is left alone"
+    );
+}
