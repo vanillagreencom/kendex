@@ -58,12 +58,25 @@ pub(super) struct Identity {
 /// kendex's own, and a command carried twice is nobody's to take.
 pub(super) fn legacy_registration(entry: &LockEntry, scope: &Scope, root: &Path) -> Identity {
     match &entry.registration {
-        Some(recorded) => Identity {
+        // A hook with no script of its own is one registry entry and
+        // nothing else — the person's own command, which says nothing
+        // about a path and so reads the same wherever the entry lives.
+        // The record names it under the reserved name as surely as at the
+        // new one.
+        Some(recorded) if entry.rendered_hash.is_none() => Identity {
             event: Some(recorded.event.clone()),
             matcher: recorded.matcher.clone(),
             command: recorded.command.clone(),
         },
-        None => {
+        // A script-backed hook's record describes the entry at the new
+        // path: its command spells that path, and its event is the one
+        // this install registered there — neither of them evidence about
+        // what an older kendex wrote under the reserved name. So the
+        // command is derived from the old layout and the rest stays
+        // unsaid, which is where it was left when reading the new event
+        // onto the old entry turned a catalog's own change into
+        // tampering.
+        _ => {
             let file = pi::hook_file(&entry.name);
             let command = match scope {
                 Scope::Global => {

@@ -291,3 +291,44 @@ fn a_completed_hook_still_holds_over_a_registration_moved_at_the_new_path() {
         );
     }
 }
+
+/// An installation from before kendex recorded what it registered keeps
+/// the reading it always had: nothing invents a record for it, and the
+/// guard that matters most — a registration somebody moved being doubled
+/// by a fresh one — still holds without one.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_entry_from_before_the_record_still_holds_over_a_moved_registration() {
+    let w = world();
+    apply(&w);
+    let path = w.project.join(".kendex-lock.json");
+    let mut lock: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    lock["entries"]["hook:guard:pi"]
+        .as_object_mut()
+        .unwrap()
+        .remove("registration");
+    fs::write(&path, serde_json::to_string_pretty(&lock).unwrap()).unwrap();
+
+    let registry = w.dot().join("kendex/hooks.json");
+    let moved = fs::read_to_string(&registry)
+        .unwrap()
+        .replace("tool_call", "turn_end");
+    fs::write(&registry, &moved).unwrap();
+
+    let report = audit(&w.env, &w.scope()).unwrap();
+    assert!(
+        report
+            .drift
+            .iter()
+            .any(|row| row.name == "guard" && row.state == DriftState::Conflict),
+        "unknown stays unknown, and what is unknown holds: {:?}",
+        report.drift
+    );
+    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    assert_eq!(
+        fs::read_to_string(&registry).unwrap(),
+        moved,
+        "so what they moved is left where they moved it"
+    );
+}

@@ -124,31 +124,51 @@ fn new_registration(
     entry: &LockEntry,
     state: &DesiredState,
 ) -> Registered {
-    let legacy = legacy_registration(entry, scope, root);
-    let rendered = match crate::engine::targets::hook_target(env, scope, HarnessId::Pi, &entry.name)
-    {
-        Some(crate::engine::targets::HookTarget::Script { command, .. }) => command,
-        _ => legacy.command.clone(),
-    };
-    // A script-less hook registered the person's own command, which the
-    // new path does not change; a script-backed one registered the
-    // command its new path spells.
-    let command = entry
-        .registration
-        .as_ref()
-        .map_or(rendered, |recorded| recorded.command.clone());
-    let here = Identity {
-        event: legacy.event.or_else(|| rendered_event(state, &entry.name)),
-        // Only what the record kept: the matcher this pass renders is not
-        // evidence about an entry a previous pass wrote.
-        matcher: legacy.matcher,
-        command,
-    };
+    let here = installed(env, scope, root, entry, state);
     match crate::scan::hooks::read_registrations(&pi::hook_registry(root)) {
         Ok(entries) => registered(&entries, &here),
         // A registry that is not there, or cannot be read, carries no
         // registration of this hook's that anything could act on.
         Err(_) => Registered::Absent,
+    }
+}
+
+/// The entry this hook has at the new path, as the record names it.
+///
+/// The record is the whole answer where there is one, and it is kept for
+/// every hook that registers anything now: what a later pass has to find
+/// is what an earlier one wrote. Reading it off the current rendering
+/// instead is how a catalog moving a hook to another event came to look
+/// like the person moving it by hand — the same mistake this module had
+/// to unlearn about the old path, made again about the new one.
+///
+/// An entry from before the record was kept has no such answer, and
+/// nothing invents one: it keeps the reading it always had, which errs
+/// towards holding, and earns the record on the first pass that does not
+/// hold it.
+fn installed(
+    env: &Env,
+    scope: &Scope,
+    root: &std::path::Path,
+    entry: &LockEntry,
+    state: &DesiredState,
+) -> Identity {
+    if let Some(recorded) = &entry.registration {
+        return Identity {
+            event: Some(recorded.event.clone()),
+            matcher: recorded.matcher.clone(),
+            command: recorded.command.clone(),
+        };
+    }
+    let command = match crate::engine::targets::hook_target(env, scope, HarnessId::Pi, &entry.name)
+    {
+        Some(crate::engine::targets::HookTarget::Script { command, .. }) => command,
+        _ => legacy_registration(entry, scope, root).command,
+    };
+    Identity {
+        event: rendered_event(state, &entry.name),
+        matcher: None,
+        command,
     }
 }
 

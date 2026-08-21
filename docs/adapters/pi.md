@@ -81,10 +81,14 @@ under — read from the parts a document keys, never from the one line a
 scan displays them on, since the character joining that line is legal
 inside a matcher and inside a command alike — and by uniqueness either
 way: a command carried twice in a document is one
-kendex cannot tell its own copy of, so it holds. The record keeps an
-event only for a script-less hook; a script-backed one is named by its
-command alone, because the event an older version installed it under is
-not knowable and a catalog is free to have changed it since. What this
+kendex cannot tell its own copy of, so it holds. At the new path the record keeps
+the event and matcher a hook went in under, whatever the catalog renders
+today: a catalog is free to move a hook to another event, and reading
+where the entry should be off the current rendering called that the
+person's doing. Under the reserved name a script-backed hook is still
+named by its command alone — its record describes the entry at the new
+path, and what an older kendex wrote under the old name is not knowable
+from it. What this
 pass renders names the entry at the new path only, so a registration
 somebody moved there by hand is never doubled by a second one beside it —
 asked wherever the old layout has got to, since "nothing of kendex's is

@@ -92,11 +92,18 @@ pub(super) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
     Owned { files, edits }
 }
 
-/// A hook's remains. A script-less hook (custom) registered the person's own
-/// command and the lock recorded it, so removal names exactly that entry; a
-/// hook with a script re-derives its command from the target it was placed
-/// at. Codex's feature flag stays on either way: other hooks may still rely
-/// on it, and it enables nothing by itself.
+/// A hook's remains: the entry it registered, and the script it wrote if
+/// it wrote one.
+///
+/// Which of those two shapes it is reads off the record, not off the
+/// registration alone — every hook that registers something records what
+/// it registered, and only a hook with no script of its own leaves no
+/// `rendered_hash` behind. The registration is named by the record where
+/// there is one, so an entry whose event has changed since it went in
+/// still comes out; an entry from before the record was kept is named by
+/// the command this path spells, as it always was. Codex's feature flag
+/// stays on either way: other hooks may still rely on it, and it enables
+/// nothing by itself.
 fn hook_owned(
     env: &Env,
     scope: &Scope,
@@ -115,20 +122,19 @@ fn hook_owned(
             registry,
             format,
             ..
-        }) => match &entry.registration {
-            Some(recorded) => edits.push((
-                registry,
-                removal(
-                    Some(recorded.event.clone()),
-                    recorded.command.clone(),
-                    &format,
-                ),
-            )),
-            None => {
+        }) => {
+            // A hook with no script of its own is that registration and
+            // nothing else; everything else wrote a file, and the entry
+            // that runs it comes out with it.
+            if entry.rendered_hash.is_some() || entry.registration.is_none() {
                 files.push(path);
-                edits.push((registry, removal(None, command, &format)));
             }
-        },
+            let (event, command) = match &entry.registration {
+                Some(recorded) => (Some(recorded.event.clone()), recorded.command.clone()),
+                None => (None, command),
+            };
+            edits.push((registry, removal(event, command, &format)));
+        }
         Some(HookTarget::Instruction {
             path,
             config,

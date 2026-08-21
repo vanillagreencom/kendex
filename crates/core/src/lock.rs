@@ -14,7 +14,8 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// shapes are compatible and the next lock write records the current
 /// version. A lock newer than this build refuses to load. Version 3 added
 /// `source_commit` and `rendered_hash`; version 4 added `settings-seeds`;
-/// version 5 added `left_pi_reserved_name` and a registration's matcher.
+/// version 5 added `left_pi_reserved_name`, a registration's matcher, and
+/// a recorded registration for hooks with a script of their own.
 /// Each bump is what stops an older build from reading the lock, dropping
 /// the newer record on its next write, and erasing evidence — of which
 /// bytes are whose, of which comment blocks seeding wrote, or of a move
@@ -155,10 +156,16 @@ pub struct LockEntry {
     /// never took.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emitted: Option<EmittedArtifact>,
-    /// The registry entry a script-less hook registered (custom hooks: the
-    /// person's own command, verbatim). Removal must name that command to
-    /// take the entry back out, and it cannot be re-derived once the
-    /// manifest entry that carried it is gone.
+    /// The registry entry this hook registered, as the registry keys it.
+    /// Kept for every hook that registers one: what a later pass has to
+    /// find is what an earlier one wrote, and what the catalog renders
+    /// today is a different question — deriving one from the other read a
+    /// catalog moving a hook to another event as the person moving it by
+    /// hand. A script-less hook is recorded for a second reason: its
+    /// command is the person's own and cannot be re-derived once the
+    /// manifest entry that carried it is gone. `rendered_hash` is what
+    /// tells the two shapes apart — it is set exactly when kendex wrote a
+    /// script.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registration: Option<HookRegistration>,
     /// Pi hooks only: this installation's move out of the directory pi

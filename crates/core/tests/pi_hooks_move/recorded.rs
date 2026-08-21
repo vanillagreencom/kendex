@@ -6,7 +6,7 @@
 
 use std::fs;
 
-use kendex_core::engine::{PlanOptions, plan_apply};
+use kendex_core::engine::{DriftState, PlanOptions, audit, plan_apply};
 
 use super::{World, apply, regressed, world};
 
@@ -119,5 +119,48 @@ fn a_fresh_install_has_left_the_reserved_name_too() {
         fs::read_to_string(w.dot().join("hooks/guard.sh")).unwrap(),
         theirs,
         "and nothing kendex does afterwards reaches into that directory"
+    );
+}
+
+/// What kendex registered is recorded, so a catalog moving the hook to
+/// another event afterwards is read as what it is: the record still names
+/// the entry that is there, so nothing is held and the refresh goes
+/// through. Worked out from what the catalog renders now instead, the
+/// entry kendex itself wrote read as one the person had moved, and no
+/// discard could release the hold that followed.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_catalog_moving_the_event_after_the_move_is_not_a_hand_moved_entry() {
+    let w = world();
+    apply(&w);
+    let registry = w.dot().join("kendex/hooks.json");
+    assert!(
+        fs::read_to_string(&registry).unwrap().contains("tool_call"),
+        "the hook went in under the event the catalog then asked for"
+    );
+
+    let source = w.catalog.join("hooks/guard.sh");
+    let text = fs::read_to_string(&source).unwrap();
+    fs::write(
+        &source,
+        text.replace("# event: PreToolUse", "# event: Stop"),
+    )
+    .unwrap();
+
+    let report = audit(&w.env, &w.scope()).unwrap();
+    assert!(
+        report
+            .drift
+            .iter()
+            .all(|row| row.state != DriftState::Conflict),
+        "a catalog is allowed to change an event: {:?}",
+        report.drift
+    );
+    assert!(report.notes.is_empty(), "{:?}", report.notes);
+    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+
+    assert!(
+        fs::read_to_string(&registry).unwrap().contains("turn_end"),
+        "and the refresh registers what it now asks for"
     );
 }

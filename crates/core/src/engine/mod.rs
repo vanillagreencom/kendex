@@ -32,6 +32,7 @@ mod gate;
 mod gemini;
 mod holds;
 mod item_plan;
+mod item_record;
 mod item_source;
 mod observed;
 pub mod ops;

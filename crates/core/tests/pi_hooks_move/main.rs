@@ -201,17 +201,19 @@ fn forget_the_move(lock: &Path) {
     fs::write(path, serde_json::to_string_pretty(&lock).unwrap()).unwrap();
 }
 
-/// Drop the record of what apply wrote, as a lock from before that record
-/// existed carries it.
+/// Drop what this pass would have recorded about the installation, as a
+/// lock from before those records existed carries it.
 #[allow(clippy::unwrap_used)]
 fn forget_rendered_hash(w: &World) {
     let path = w.project.join(".kendex-lock.json");
     let mut lock: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-    lock["entries"]["hook:guard:pi"]
-        .as_object_mut()
-        .unwrap()
-        .remove("renderedHash");
+    let entry = lock["entries"]["hook:guard:pi"].as_object_mut().unwrap();
+    entry.remove("renderedHash");
+    // A lock old enough to have kept no record of what apply wrote kept
+    // no record of what it registered either — the two arrived together
+    // for a hook with a script of its own.
+    entry.remove("registration");
     fs::write(&path, serde_json::to_string_pretty(&lock).unwrap()).unwrap();
 }
 
