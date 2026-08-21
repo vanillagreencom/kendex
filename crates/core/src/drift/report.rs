@@ -199,7 +199,7 @@ impl Sections {
             ("gone from their source", self.removed),
             ("mixed installs", self.mixed),
             ("missing on disk", self.missing),
-            ("declared but not installed", self.blocked),
+            ("asked for but not installed", self.blocked),
             ("broken references", self.references),
             ("safety findings", self.findings),
             ("not yet evaluated", self.unevaluated),

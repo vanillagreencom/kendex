@@ -42,6 +42,7 @@ export const commands = {
 	auditAll: () => typedError<AuditView_Serialize[], string>(__TAURI_INVOKE("audit_all")),
 	applyPlan: (scope: Scope, removeOrphans: boolean, allowUnsafe: string[]) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("apply_plan", { scope, removeOrphans, allowUnsafe })),
 	adoptItem: (scope: Scope, kind: ItemKind, name: string, harness: HarnessId) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("adopt_item", { scope, kind, name, harness })),
+	replaceUnmanagedItem: (scope: Scope, kind: ItemKind, name: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("replace_unmanaged_item", { scope, kind, name })),
 	toggleItem: (scope: Scope, kind: ItemKind, name: string, enabled: boolean) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("toggle_item", { scope, kind, name, enabled })),
 	removeItem: (scope: Scope, kind: ItemKind, name: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("remove_item", { scope, kind, name })),
 	/**

@@ -99,10 +99,12 @@ fn take_over() -> PlanOptions {
 }
 
 /// The dead end this fixes: the refusal used to describe a state ("not
-/// managed yet") and name no way out of it.
+/// managed yet") and name no way out of it. The row now carries the fact
+/// and the cause; what to do about it is each surface's to offer, and the
+/// cause is what lets it.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn the_refusal_names_both_ways_out() {
+fn the_refusal_says_which_files_are_in_the_way() {
     let w = world();
     let dir = foreign_install(&w);
 
@@ -120,8 +122,8 @@ fn the_refusal_names_both_ways_out() {
         row.detail
     );
     assert!(
-        row.detail.contains("adopt") && row.detail.contains("replace"),
-        "both exits are named: {}",
+        row.detail.contains(&dir.display().to_string()),
+        "and names them: {}",
         row.detail
     );
 

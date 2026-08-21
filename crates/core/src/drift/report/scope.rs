@@ -171,7 +171,7 @@ impl ScopeCheck<'_> {
         {
             sections.blocked.push(drift(
                 format!(
-                    "{prefix}{} '{}' is declared and nothing is installed for it — files are already where it goes",
+                    "{prefix}kendex.toml asks for {} '{}', and files are already where it would go",
                     kind.name(),
                     shown(&name)
                 ),

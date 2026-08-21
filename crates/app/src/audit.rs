@@ -223,6 +223,47 @@ pub fn adopt_item(
     Ok(view(&env, &scope))
 }
 
+/// Install what the manifest declares over the files already sitting where
+/// one item goes — the other direction from adopting them. Scoped to the
+/// item the person clicked, so a neighbour blocked the same way keeps its
+/// files until they decide about it too.
+pub fn replace_unmanaged(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: String,
+) -> Result<AuditView, String> {
+    let manifest =
+        kendex_core::manifest::load_for_mutation(&kendex_core::manifest::manifest_path(env, scope))
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "no manifest".to_owned())?;
+    let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope))
+        .map_err(|e| e.to_string())?;
+    let report = engine::plan_scope(
+        env,
+        scope,
+        &manifest,
+        &lock,
+        &engine::PlanOptions {
+            replace_unmanaged_names: Some(vec![(kind, name)]),
+            ..Default::default()
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    apply::execute(env, &report.plan, None).map_err(|e| e.to_string())?;
+    Ok(view(env, scope))
+}
+
+#[tauri::command(async)]
+#[specta::specta]
+pub fn replace_unmanaged_item(
+    scope: Scope,
+    kind: ItemKind,
+    name: String,
+) -> Result<AuditView, String> {
+    replace_unmanaged(&env()?, &scope, kind, name)
+}
+
 #[tauri::command(async)]
 #[specta::specta]
 pub fn toggle_item(

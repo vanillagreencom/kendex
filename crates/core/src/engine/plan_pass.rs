@@ -44,29 +44,38 @@ pub(super) fn plan_items(
         if holds::hold_rev_conflict(item, scope, lock, &state.rev_conflicts, &mut sink) {
             continue;
         }
-        let discard = options.overwrite_edited
-            || options
-                .overwrite_edited_names
-                .as_ref()
-                .is_some_and(|names| {
-                    names
-                        .iter()
-                        .any(|(k, n)| *k == item.kind && n == &item.name)
-                });
+        let discard = named(
+            item,
+            options.overwrite_edited,
+            &options.overwrite_edited_names,
+        );
         if !discard && holds::hold_local_edit(env, item, scope, lock, &mut sink) {
             continue;
         }
-        plan_item(
-            env,
+        let replace = named(
             item,
-            scope,
-            lock,
-            owned_paths,
             options.replace_unmanaged,
-            &mut sink,
-        )?;
+            &options.replace_unmanaged_names,
+        );
+        plan_item(env, item, scope, lock, owned_paths, replace, &mut sink)?;
     }
     Ok(())
+}
+
+/// Whether an override reaches this item: the scope-wide form, or the
+/// per-item list naming exactly it. Kind and name both, so a same-named
+/// item of another kind is never taken along.
+fn named(
+    item: &desired::Desired,
+    scope_wide: bool,
+    names: &Option<Vec<(crate::model::ItemKind, String)>>,
+) -> bool {
+    scope_wide
+        || names.as_ref().is_some_and(|names| {
+            names
+                .iter()
+                .any(|(kind, name)| *kind == item.kind && name == &item.name)
+        })
 }
 
 /// A refusal is a conflict the user must resolve, and any previous, wider

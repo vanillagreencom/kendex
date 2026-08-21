@@ -69,7 +69,7 @@ pub(super) fn plan_written_file(
         Some(current) => {
             if !claim.owns(path, owned) {
                 if !claim.replace_unmanaged {
-                    return Ok(unmanaged(item, path));
+                    return Ok(unmanaged(path));
                 }
                 ops.push(set_aside(path, Pre::HashIs { hash: current }));
                 ops.push(install(env, scope, item, path, bytes, Pre::Absent));
@@ -131,7 +131,7 @@ fn plan_absent_file(
         // position is the same one either way.
         if !claim.owns(path, owned) && !claim.owns(&alternate, owned) {
             if !claim.replace_unmanaged {
-                return unmanaged(item, &alternate);
+                return unmanaged(&alternate);
             }
             let hash = match hash_tree(&alternate) {
                 Ok(hash) => hash,

@@ -22,6 +22,23 @@ export const ALL_IN_SYNC_BODY =
 export const UNMANAGED_SECTION_EXPLAINER =
   "Hand one over and kendex keeps it updated, checked and copied to every harness.";
 export const START_MANAGING_LABEL = "Start managing";
+// A declared item with files already in its place. Two ways forward and no
+// way to guess which one is wanted, so the section says what each does and
+// puts both on the row. "Adopt" and "take over" are the engine's words for
+// these; what a person needs is what happens to the files in front of them.
+export const IN_THE_WAY_TITLE = "Files are already there";
+export const IN_THE_WAY_BODY =
+  "kendex didn't write these files, so it won't touch them until you say which way to go.";
+export const KEEP_FILES_LABEL = "Keep these files";
+export const REPLACE_FILES_LABEL = "Replace them";
+export const KEEP_FILES_HINT = "kendex manages them as they are";
+export const REPLACE_FILES_HINT = "installs what you asked for instead";
+export const replaceFilesConfirmTitle = (name: string): string =>
+  `Replace ${name}?`;
+export const REPLACE_FILES_CONFIRM_BODY =
+  "The files that are there now move to the trash, and kendex installs what kendex.toml asks for in their place.";
+export const REPLACE_FILES_CONFIRM_LABEL = "Replace them";
+export const replacedToastLabel = (name: string): string => `Installed ${name}`;
 // The apply flow, said as what will happen rather than as what the engine
 // calls it. "Orphan" is a word for whoever wrote the planner; the person
 // reading this wants to know something will be deleted and what it is.

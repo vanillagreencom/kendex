@@ -123,6 +123,11 @@ pub struct PlanOptions {
     /// place. The opposite direction from adopt, which keeps the files and
     /// rewrites the declaration around them.
     pub replace_unmanaged: bool,
+    /// Replace them for these items only, by kind and name — leaving every
+    /// other blocked declaration in the scope exactly as it is. The
+    /// per-item choice the app offers on the row a person is reading,
+    /// which must never reach past the item it names.
+    pub replace_unmanaged_names: Option<Vec<(ItemKind, String)>>,
     /// Discard edits for these items only, by kind and name — leaving
     /// every other edited item in the scope held. The per-package
     /// "discard" the app offers, which must never take a neighbour's

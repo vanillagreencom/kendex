@@ -41,6 +41,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             audit::audit_all,
             audit::apply_plan,
             audit::adopt_item,
+            audit::replace_unmanaged_item,
             audit::toggle_item,
             audit::remove_item,
             decisions::list_decisions,

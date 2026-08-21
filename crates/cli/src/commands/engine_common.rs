@@ -33,16 +33,20 @@ pub fn print_report(report: &EngineReport) {
         }
     }
     print_safety(report);
-    print_conflicts(report);
+    let blocked = print_conflicts(report);
     if report.plan.is_empty() {
-        say("nothing to do");
-    } else {
-        say("plan:");
-        for op in &report.plan.ops {
-            say(&format!("  - {}", op.description));
-        }
+        // "nothing to do" directly under a conflict reads as "and nothing
+        // you can do" — the run has plenty to do, once the reader picks.
+        say(match blocked {
+            true => "nothing to do until you settle the conflicts above",
+            false => "nothing to do",
+        });
+        return;
     }
-    print_unmanaged(&report.drift);
+    say("plan:");
+    for op in &report.plan.ops {
+        say(&format!("  - {}", op.description));
+    }
 }
 
 /// Content in a managed folder that no declaration and no lock claims.
@@ -50,6 +54,7 @@ pub fn print_report(report: &EngineReport) {
 /// to be said here: seen in `list` and nowhere else, it reads as checked
 /// and passing rather than as never looked at.
 pub fn print_unmanaged(drift: &[DriftRow]) {
+    use kendex_core::names::shown;
     let rows: Vec<&DriftRow> = drift
         .iter()
         .filter(|row| row.state == DriftState::Unmanaged)
@@ -58,16 +63,19 @@ pub fn print_unmanaged(drift: &[DriftRow]) {
         return;
     }
     say(&format!(
-        "not managed: {} item(s) kendex did not install and will not touch",
-        rows.len()
+        "not managed: {} item{} kendex did not install and does not touch",
+        rows.len(),
+        if rows.len() == 1 { "" } else { "s" }
     ));
     for row in rows.iter().take(UNMANAGED_SHOWN) {
+        // Names and paths read off a tree kendex did not write: printed as
+        // what they are, never as the escape sequences they might hold.
         say(&format!(
             "  - {} {} [{}] {}",
             row.kind.name(),
-            row.name,
-            row.harness.name(),
-            row.detail
+            shown(&row.name),
+            row.harness.display_name(),
+            shown(&row.detail)
         ));
     }
     if rows.len() > UNMANAGED_SHOWN {
@@ -86,35 +94,47 @@ const UNMANAGED_SHOWN: usize = 10;
 /// the safety section said twice: they carry what happens to the copy
 /// already installed — moved to the trash, or kept because the user's
 /// edits are in it and still standing in the way of the accepted content.
-pub fn print_conflicts(report: &EngineReport) {
+pub fn print_conflicts(report: &EngineReport) -> bool {
+    let mut any = false;
+    let mut in_the_way = false;
     for row in &report.drift {
         if row.state != DriftState::Conflict {
             continue;
         }
+        any = true;
         say(&format!(
             "conflict: {} {} for {}: {}",
             row.kind.name(),
-            row.name,
+            kendex_core::names::shown(&row.name),
             row.harness.display_name(),
-            row.detail
+            kendex_core::names::shown(&row.detail)
         ));
         if row.cause == Some(DriftCause::UnmanagedContent) {
-            print_exits(row);
+            in_the_way = true;
+            say(&format!("  to keep those files: {}", keep_exit(row)));
         }
     }
+    if in_the_way {
+        // Once, not per row: the half that names the item differs line by
+        // line and belongs on the row; the flag is the same for all of them,
+        // and forty copies of it bury the paths that differ.
+        say("to install what kendex.toml asks for instead, apply with --replace-unmanaged");
+    }
+    any
 }
 
-/// The two ways out of a conflict over files kendex never wrote. The drift
-/// row states the choice in the words both surfaces share; this names the
-/// verb and the flag that carry it out — as data, never as a command line
-/// to paste, which this product does not emit. Adopt is named only for the
-/// kinds it takes; for the rest, keeping the files is the reader's own move.
-fn print_exits(row: &DriftRow) {
-    match kendex_core::engine::adopt::supports(row.kind) {
-        true => say("  to keep those files: adopt them by name"),
-        false => say("  to keep those files: move them somewhere else yourself"),
+/// The way out that keeps the files, spelled with the item it applies to —
+/// the verb and its parameters as data, never a command line to paste.
+/// Adoption cannot take every kind, and a name that could not be an
+/// argument must not be printed as one; either way the files are still the
+/// reader's to keep, by moving them out of the way themselves.
+fn keep_exit(row: &DriftRow) -> String {
+    let takeable = kendex_core::engine::adopt::supports(row.kind)
+        && kendex_core::names::item_problem(&row.name).is_none();
+    match takeable {
+        true => format!("adopt {} {}", row.kind.name(), row.name),
+        false => "move them somewhere else first".to_owned(),
     }
-    say("  to install what you declared instead: apply with --replace-unmanaged");
 }
 
 /// What the safety rules found in the content this plan would write. Held

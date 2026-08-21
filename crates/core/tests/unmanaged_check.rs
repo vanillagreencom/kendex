@@ -93,9 +93,9 @@ fn it_is_told_apart_from_a_safety_hold() {
     );
 
     let text = report(&w);
-    assert!(text.contains("declared but not installed"), "{text}");
+    assert!(text.contains("asked for but not installed"), "{text}");
     assert!(
-        text.contains("skill 'deploy' is declared and nothing is installed"),
+        text.contains("kendex.toml asks for skill 'deploy', and files are already where"),
         "{text}"
     );
     assert!(text.contains("fix: kendex apply --plan"), "{text}");
@@ -120,7 +120,7 @@ fn a_command_over_existing_files_is_reported_like_any_other_kind() {
 
     let text = report(&w);
     assert!(
-        text.contains("command 'ship' is declared and nothing is installed"),
+        text.contains("kendex.toml asks for command 'ship', and files are already where"),
         "{text}"
     );
 }
@@ -140,7 +140,10 @@ fn a_link_at_the_position_is_never_answered_with_a_take_over() {
     std::os::unix::fs::symlink(&elsewhere, &position).unwrap();
 
     let text = report(&w);
-    assert!(text.contains("skill 'deploy' is declared"), "{text}");
+    assert!(
+        text.contains("kendex.toml asks for skill 'deploy'"),
+        "{text}"
+    );
     assert!(
         !text.contains("--replace-unmanaged"),
         "the take-over provably refuses a link, so it is never the fix: {text}"
@@ -163,7 +166,7 @@ fn bytes_that_already_match_are_never_prescribed_a_replacement() {
     fs::remove_file(kendex_core::lock::lock_path(&w.env, &w.scope)).unwrap();
 
     let text = report(&w);
-    assert!(text.contains("declared but not installed"), "{text}");
+    assert!(text.contains("asked for but not installed"), "{text}");
     assert!(
         !text.contains("replace") && !text.contains("adopt"),
         "no exit is prescribed for a state a stat cannot judge: {text}"
@@ -182,47 +185,5 @@ fn bytes_that_already_match_are_never_prescribed_a_replacement() {
             .any(|op| op.description.contains("trash")),
         "and nothing needed replacing: {:?}",
         re.plan.ops
-    );
-}
-
-/// The refusal offers adoption as one of its two ways out. For a kind
-/// `kendex adopt` refuses, naming it would send the reader to a command
-/// that errors — the same dead end the message exists to close.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn the_refusal_offers_adoption_only_where_adoption_can_go() {
-    let w = world();
-    write_at(
-        w.home.join("app/.claude/skills/deploy/SKILL.md"),
-        "the tool that came before",
-    );
-    write_at(
-        w.home.join("app/.claude/commands/ship.md"),
-        "the tool that came before",
-    );
-
-    let report = audit(&w.env, &w.scope).unwrap();
-    let detail = |name: &str| {
-        report
-            .drift
-            .iter()
-            .find(|row| row.name == name && row.state == DriftState::Conflict)
-            .map(|row| row.detail.clone())
-            .unwrap_or_default()
-    };
-    assert!(
-        detail("deploy").contains("adopt them"),
-        "{}",
-        detail("deploy")
-    );
-    assert!(
-        !detail("ship").contains("adopt"),
-        "adopt refuses a command: {}",
-        detail("ship")
-    );
-    assert!(
-        detail("ship").contains("replace them with what you declared"),
-        "{}",
-        detail("ship")
     );
 }

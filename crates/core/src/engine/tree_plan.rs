@@ -55,7 +55,7 @@ pub(super) fn plan_tree(
             && !claim.owns(canonical, owned)
             && !written.canonicals.contains(canonical);
         if unowned && !claim.replace_unmanaged {
-            return Ok(unmanaged(item, canonical));
+            return Ok(unmanaged(canonical));
         }
         result = match (disk.is_some() || collapsed.is_some(), unowned) {
             (_, true) => Planned::Drift(DriftState::Missing, TAKEN_OVER.into()),
@@ -266,7 +266,7 @@ fn plan_link(
     let diverged = link.exists();
     let unowned = diverged && !claim.owns(link, owned);
     if unowned && !claim.replace_unmanaged {
-        return Ok(unmanaged(item, link));
+        return Ok(unmanaged(link));
     }
     let first = written.claim_link(link);
     if diverged && first {

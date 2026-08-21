@@ -1,7 +1,7 @@
 import type { HarnessId } from "@/bindings";
 import type { MergedDriftRow } from "@/lib/drift-merge";
 import { harnessName } from "@/lib/labels";
-import { sameScope } from "@/stores/audit";
+import { sameScope } from "@/lib/scope";
 import { useScanStore } from "@/stores/scan";
 
 export interface SharedLink {

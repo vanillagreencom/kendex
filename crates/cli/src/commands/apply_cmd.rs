@@ -3,7 +3,7 @@ use kendex_core::env::Env;
 use kendex_core::error::CoreError;
 use kendex_core::manifest::{self, ManifestFile};
 
-use super::engine_common::{confirm_and_execute, print_report};
+use super::engine_common::{confirm_and_execute, print_report, print_unmanaged};
 use super::{CliResult, resolve_scopes, say};
 use crate::scope::ScopeFilter;
 
@@ -23,11 +23,13 @@ pub struct ApplyArgs {
     /// Print the plan and change nothing
     #[arg(long)]
     plan: bool,
+    /// Apply to the user-level scope
     #[arg(short = 'g', long)]
     global: bool,
     /// project | global | all (default project)
     #[arg(long)]
     scope: Option<String>,
+    /// Skip the confirmation prompt
     #[arg(short = 'y', long)]
     yes: bool,
     /// Install an item despite its safety findings, as `name@hash` using
@@ -89,6 +91,10 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
     for (scope, report) in planned {
         say(&format!("{}:", scope.label()));
         print_report(&report);
+        // Only here and in verify: a report is printed by add and pin too,
+        // and an inventory of hand-made content is not what those were
+        // asked for.
+        print_unmanaged(&report.drift);
         if !args.plan {
             confirm_and_execute(env, &report, args.yes)?;
             // The deep work just ran; record it for the session-start check.

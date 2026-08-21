@@ -22,7 +22,10 @@ Four verbs over one model: **scan → declare → diff → apply**.
   the Library's Installed tab, beside the item, because it is an offer a
   person takes up rather than work the diff owes; the Review page is for
   what needs deciding and what needs applying, and counts what it does
-  not manage as a footnote pointing there.
+  not manage as a footnote pointing there. The one place adopt also
+  appears on Review is where the two arrows meet: a declared item whose
+  files were already on disk, where both directions are choices about the
+  same row and neither is a change Apply could make.
 
 Every page and every CLI verb is a projection of these four; none owns
 logic.
@@ -81,12 +84,15 @@ lives in one capability table read by core and UI.
 6. Never touch the unowned: unmanaged files are reported, never deleted;
    foreign symlinks are conflicts, not clobber targets; adoption merges
    content, never loses it. A declaration landing on files kendex never
-   wrote is one conflict naming both exits, never a dead end: adopt keeps
-   the files and rewrites the declaration around them, and the take-over
-   (`replace_unmanaged` / `--replace-unmanaged`) keeps the declaration and
-   moves the files to the trash first, bound to the bytes the plan read.
-   Only the kinds adopt can take are offered it; for the rest the refusal
-   says plainly that keeping the files is the reader's own move. A link is
+   wrote is a conflict with two exits, never a dead end: adopt keeps the
+   files and rewrites the declaration around them, and the take-over
+   (`replace_unmanaged` / `--replace-unmanaged`, or the per-item
+   `replace_unmanaged_names` a row's own button carries) keeps the
+   declaration and moves the files to the trash first, bound to the bytes
+   the plan read. The row states which files are in the way; naming what
+   can be done about them belongs to the surface that can do it — the app
+   offers the two as buttons on that row, the CLI names the verb and the
+   flag, and only the kinds adopt can take are ever offered it. A link is
    never either exit's target, and neither is a position any install
    recorded writing — those bytes are kendex's own, and what protects them
    is the edit gate, whichever entry's key the declaration arrives under.

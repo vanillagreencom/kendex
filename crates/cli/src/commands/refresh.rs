@@ -116,7 +116,9 @@ pub fn run(
         print_held_back(&report);
         match verbose {
             true => print_drift(&report),
-            false => print_conflicts(&report),
+            false => {
+                print_conflicts(&report);
+            }
         }
         let lock = load_lock(&lock_path(env, &scope))?;
         if lock.entries.is_empty() && report.plan.is_empty() {

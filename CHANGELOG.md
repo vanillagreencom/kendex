@@ -8,17 +8,17 @@ changes carry a **Breaking** call-out with their migration note inline.
 
 ### Added
 
-- `kendex apply --replace-unmanaged` installs what your kendex.toml declares
-  over files kendex did not write. Declaring an item whose files were
-  already on disk — the normal shape of moving an existing repo onto
-  kendex — used to have no way forward: the refusal named no way out, and
-  `--discard-edits` did not clear it. The two directions are now both
-  available and both named: `kendex adopt` keeps the files that are there
-  (agents and skills, which is what it takes), and this keeps what you
-  declared, for anything you can declare. The replaced files move to the
-  trash, never straight to delete. Neither a link kendex did not create
-  nor files an existing install owns is ever replaced — those keep the
-  protections they always had.
+- Asking for an item whose files are already on disk — the normal shape of
+  moving an existing repo onto kendex — now has a way forward, in both
+  directions. In the app, the item gets a row of its own on Review & apply
+  with both choices on it: **Keep these files**, and kendex manages them as
+  they are, or **Replace them**, and kendex installs what kendex.toml asks
+  for while the old files move to the trash. In the CLI they are
+  `kendex adopt <kind> <name>` and `kendex apply --replace-unmanaged`.
+  Before this, the refusal named no way out and `--discard-edits` did not
+  clear it. Nothing is deleted outright, and neither a link kendex did not
+  create nor files an existing install owns is ever replaced — those keep
+  the protections they always had.
 - The app has its own icon. Every channel that installs the app shipped the
   old vstack chevron; the icon is now the `x` from the kendex wordmark, in
   the wordmark's green, at every size the desktop, dock, and installer use
@@ -178,6 +178,11 @@ changes carry a **Breaking** call-out with their migration note inline.
   "declared but not installed" instead of folding it into the count of
   installs waiting on a safety review — which now says what it is waiting
   for.
+- An item whose files were already on disk no longer deadlocks.
+  `kendex apply` names the files in the way and both ways out instead of
+  saying "not managed yet", and `kendex check` reports it under "asked for
+  but not installed" instead of folding it into the count of installs
+  waiting on a safety review — which now says what it is waiting for.
 - A declaration blocked by files kendex did not write no longer leaves a
   half-installed item behind. Where a skill is shared between tools, the
   shared copy was written before the tool-specific part was checked, so a

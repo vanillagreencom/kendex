@@ -190,21 +190,19 @@ impl Claim {
     }
 }
 
-/// The refusal, naming both ways out. Neither is a command line: the app
-/// offers them as actions and the CLI spells them as verbs, and a drift row
-/// that hard-coded one surface's phrasing would be wrong on the other.
+/// The refusal: which files are in the way, and nothing else. What can be
+/// done about them is each surface's to say — the app offers buttons, the
+/// CLI names verbs and flags, and neither one's phrasing would be right on
+/// the other. Said here as well, it would be the same sentence three times
+/// in one screen of output.
 ///
-/// Adoption is offered only for the kinds it can take. Naming it for a kind
-/// `adopt` refuses would send the reader to a command that errors, which is
-/// the same dead end this message exists to close.
-pub(super) fn unmanaged(item: &Desired, path: &std::path::Path) -> Planned {
-    let keep = match super::adopt::supports(item.kind) {
-        true => "adopt them to keep what is there",
-        false => "move them somewhere else to keep them",
-    };
+/// The path is shown, not printed: these bytes were written by something
+/// that is not kendex, and a folder name carrying an escape sequence must
+/// reach a terminal as its own characters.
+pub(super) fn unmanaged(path: &std::path::Path) -> Planned {
     Planned::Unmanaged(format!(
-        "{} already holds files kendex did not write — {keep}, or replace them with what you declared",
-        path.display()
+        "{} already holds files kendex did not write",
+        crate::names::shown(&path.display().to_string())
     ))
 }
 
