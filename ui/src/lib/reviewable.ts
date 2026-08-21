@@ -58,15 +58,20 @@ export function settledCount(rows: ItemSafety[]): number {
     .filter((occurrence) => occurrence.decision.state.state !== "open").length;
 }
 
-/** Of those, the ones the publishing catalog settled rather than the person
- *  reading this. Counted apart because "you decided this" and "whoever you
- *  installed it from decided this" are not the same sentence. */
-export function authorSettledCount(rows: ItemSafety[]): number {
+/** The findings the publishing catalog settled rather than the person
+ *  reading this. Kept apart because "you decided this" and "whoever you
+ *  installed it from decided this" are not the same sentence — and because
+ *  showing them is the whole justification for honouring them at all. */
+export function authorOccurrences(rows: ItemSafety[]): Occurrence[] {
   return rows
     .flatMap(occurrences)
     .filter(
       (occurrence) => occurrence.decision.state.state === "author-dismissed",
-    ).length;
+    );
+}
+
+export function authorSettledCount(rows: ItemSafety[]): number {
+  return authorOccurrences(rows).length;
 }
 
 export interface EvidenceItem {

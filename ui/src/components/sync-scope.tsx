@@ -151,6 +151,7 @@ export function SyncScopeCard({
           <ScopeFooter
             clean={clean}
             settled={settled}
+            alsoScored={undecided}
             notes={view.notes}
             warnings={view.warnings}
             unmanaged={unmanaged.length}

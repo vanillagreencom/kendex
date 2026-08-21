@@ -105,7 +105,7 @@ fn print_safety_rows(
             row.harness.display_name(),
             row.safety.score
         ));
-        for (finding, decision) in row.findings.iter().zip(&row.decisions) {
+        for (index, finding) in row.findings.iter().enumerate() {
             say(&format!(
                 "  [{}] {}: {}",
                 finding.severity.name(),
@@ -113,18 +113,28 @@ fn print_safety_rows(
                 finding.message
             ));
             // A finding the publisher already ruled on is still printed, and
-            // has to say so: a score of 100 beside seven criticals with no
+            // has to say so: a score of 100 beside seven findings with no
             // word about who settled them reads as a bug in the checker.
-            match &decision.state {
-                DecisionState::AuthorDismissed {
+            //
+            // `decisions[i]` speaks for `findings[i]`. If it does not, that
+            // is a defect in the engine and this is the one surface whose
+            // whole job is to show every finding — so it says so out loud
+            // rather than dropping the line, which is what zipping the two
+            // would have done.
+            match row.decisions.get(index).map(|decision| &decision.state) {
+                Some(DecisionState::AuthorDismissed {
                     reason,
                     dismissed_at,
                     publisher,
-                } => say(&format!(
+                }) => say(&format!(
                     "    {publisher} reviewed this {dismissed_at} and recorded it as {} — it is reported, and does not count",
                     reason.name()
                 )),
-                _ => say(&format!("    fix: {}", finding.remediation)),
+                Some(_) => say(&format!("    fix: {}", finding.remediation)),
+                None => say(&format!(
+                    "    fix: {} (no decision recorded beside this finding — please report this)",
+                    finding.remediation
+                )),
             }
         }
         print_skipped(row);

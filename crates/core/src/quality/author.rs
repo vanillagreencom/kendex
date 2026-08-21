@@ -36,20 +36,23 @@ use crate::model::ItemKind;
 use crate::source_read::SealedSource;
 
 /// One finding the publisher settled, and how far that reaches.
+// Written into the lock, which is JSON in camelCase throughout; the
+// authoring file's own kebab-case shape is `reviews::Dismissal`, and these
+// are two different records that happen to rhyme.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "camelCase")]
 pub struct AuthorDismissal {
     pub reason: DismissReason,
     pub dismissed_at: String,
     /// How many times the publisher's own bytes carried this finding. The
     /// budget a reader spends: past it, an occurrence is content the
     /// publisher never reviewed.
-    pub occurrences: usize,
+    pub occurrences: u32,
 }
 
 /// A publisher's decisions about one item, as they travel to an install.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "camelCase")]
 pub struct AuthorReview {
     /// The bytes this speaks for: the source content at plan time, the
     /// installed content once the lock records it.
@@ -96,7 +99,7 @@ impl AuthorReview {
 /// How many occurrences of each finding are already settled. Empty settles
 /// nothing, which is what every failure here falls back to.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Budget(BTreeMap<String, usize>);
+pub struct Budget(BTreeMap<String, u32>);
 
 impl Budget {
     /// A decision made against these very bytes, which therefore speaks for
@@ -105,7 +108,7 @@ impl Budget {
         Budget(
             fingerprints
                 .into_iter()
-                .map(|fingerprint| (fingerprint, usize::MAX))
+                .map(|fingerprint| (fingerprint, u32::MAX))
                 .collect(),
         )
     }
@@ -283,7 +286,7 @@ fn source_occurrences(
     kind: ItemKind,
     name: &str,
     item_path: &Path,
-) -> Result<BTreeMap<String, usize>> {
+) -> Result<BTreeMap<String, u32>> {
     let file = item_path
         .strip_prefix(sealed.root())
         .unwrap_or(item_path)
@@ -296,7 +299,7 @@ fn source_occurrences(
         location: file.clone(),
         content: content(sealed, kind, item_path)?,
     });
-    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut counts: BTreeMap<String, u32> = BTreeMap::new();
     for finding in &result.findings {
         *counts.entry(finding.fingerprint(&file)).or_default() += 1;
     }

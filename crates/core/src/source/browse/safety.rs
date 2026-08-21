@@ -9,7 +9,11 @@
 //! parser change that moves bytes between items re-scores, and so does any
 //! bump of the rule set, the discovery table, or the record format below.
 //! Browse is a preview of the same verdict, never a second gate — a
-//! held-back item still installs through the normal gate.
+//! held-back item still installs through the normal gate. That means it
+//! reads the publisher's committed review the same way the gate does: the
+//! cache holds what the rules found, and both the thresholds and the
+//! publisher's record are applied at read time, so a review recorded after
+//! the score was cached takes effect without re-scoring anything.
 
 use std::path::PathBuf;
 
@@ -19,6 +23,7 @@ use specta::Type;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::model::ItemKind;
+use crate::quality::author::{AuthorDismissal, AuthorReview};
 use crate::quality::{
     AuditInput, Content, Finding, QualityScore, RULESET_VERSION, SafetyScore, SkippedRule,
     TreeFile, Verdict,
@@ -66,6 +71,12 @@ pub struct PackageSafety {
     pub ruleset: u32,
     /// Whether a verified cache entry answered instead of a fresh score.
     pub from_cache: bool,
+    /// For each finding, in `findings` order, the publisher's record that
+    /// settles it — reported here, and not counted toward the score or the
+    /// verdict, exactly as at the install gate.
+    pub settled: Vec<Option<AuthorDismissal>>,
+    /// Who recorded them, when this package carries any.
+    pub publisher: Option<String>,
 }
 
 pub fn package_safety(
@@ -76,20 +87,39 @@ pub fn package_safety(
 ) -> Result<PackageSafety> {
     let browsed = super::open(env, catalog)?;
     let (score, from_cache) = scored(env, &browsed, kind, name)?;
-    let thresholds = crate::settings::load(env)?.safety;
-    let (verdict, reasons) = crate::quality::verdict(&score.findings, &score.safety, thresholds);
+    let published = published(&browsed, kind, name)?;
+    let review = published.review;
+    let judged = judge(env, &score, &published.root, review.as_ref())?;
+    let settled = judged
+        .settled
+        .iter()
+        .map(|settled| {
+            settled
+                .clone()
+                .and_then(|f| review.as_ref()?.dismissed.get(&f).cloned())
+        })
+        .collect();
+    let mut reasons = judged.reasons;
+    if let Some(problem) = &browsed.reviews_unreadable {
+        reasons.push(format!(
+            "{} could not be read, so nothing this catalog reviewed counts as reviewed — {problem}",
+            crate::check_catalog::dismissals::REVIEWS_FILE
+        ));
+    }
     Ok(PackageSafety {
         kind,
         name: name.to_owned(),
         findings: score.findings,
-        safety: score.safety,
+        safety: judged.safety,
         quality: score.quality,
         skipped: score.skipped,
-        verdict,
+        verdict: judged.verdict,
         reasons,
         content_hash: score.content_hash,
         ruleset: score.ruleset,
         from_cache,
+        settled,
+        publisher: review.map(|review| review.publisher),
     })
 }
 
@@ -101,8 +131,89 @@ pub(super) fn verdict_for(
     name: &str,
 ) -> Result<Verdict> {
     let (score, _) = scored(env, browsed, kind, name)?;
+    let published = published(browsed, kind, name)?;
+    Ok(judge(env, &score, &published.root, published.review.as_ref())?.verdict)
+}
+
+/// What today's thresholds and the publisher's record make of a scored
+/// package. The one derivation the gate, the audit and the authoring check
+/// use, so browse cannot preview a verdict the install will not give.
+struct Judged {
+    verdict: Verdict,
+    reasons: Vec<String>,
+    safety: SafetyScore,
+    /// The fingerprint that settled each finding, in `findings` order.
+    settled: Vec<Option<String>>,
+}
+
+fn judge(
+    env: &Env,
+    score: &CachedScore,
+    root: &str,
+    review: Option<&AuthorReview>,
+) -> Result<Judged> {
     let thresholds = crate::settings::load(env)?.safety;
-    Ok(crate::quality::verdict(&score.findings, &score.safety, thresholds).0)
+    let budget = AuthorReview::budget(review, review.map(|review| review.review_hash.as_str()));
+    // Nothing settled means nothing to re-derive: the cached score is what
+    // the rules found, and it stays the record that answers. Re-deriving it
+    // here would make the cache a set of findings the score is recomputed
+    // from, which is not what the record vouches for.
+    if budget.is_empty() {
+        let (verdict, reasons) =
+            crate::quality::verdict(&score.findings, &score.safety, thresholds);
+        return Ok(Judged {
+            verdict,
+            reasons,
+            safety: score.safety.clone(),
+            settled: vec![None; score.findings.len()],
+        });
+    }
+    let scored = crate::quality::author::score(&score.findings, root, &budget);
+    let (verdict, reasons) = crate::quality::verdict(&scored.counted, &scored.safety, thresholds);
+    let settled = score
+        .findings
+        .iter()
+        .zip(&scored.settled)
+        .map(|(finding, settled)| settled.then(|| finding.fingerprint(root)))
+        .collect();
+    Ok(Judged {
+        verdict,
+        reasons,
+        safety: scored.safety,
+        settled,
+    })
+}
+
+/// The publisher's record for this package, re-checked against the catalog
+/// bytes in front of us — the same read the plan does — and the item's own
+/// path, which every finding's fingerprint is relative to.
+struct Published {
+    review: Option<AuthorReview>,
+    root: String,
+}
+
+fn published(browsed: &Browsed, kind: ItemKind, name: &str) -> Result<Published> {
+    let Some(path) = crate::source::find_item(&browsed.sealed, &browsed.config, kind, name) else {
+        return Ok(Published {
+            review: None,
+            root: String::new(),
+        });
+    };
+    let root = path
+        .strip_prefix(browsed.sealed.root())
+        .unwrap_or(&path)
+        .display()
+        .to_string();
+    let review = crate::quality::author::for_item(
+        &browsed.reviews,
+        &browsed.sealed,
+        kind,
+        name,
+        &path,
+        &browsed.source.provenance,
+    )?
+    .review;
+    Ok(Published { review, root })
 }
 
 fn scored(env: &Env, browsed: &Browsed, kind: ItemKind, name: &str) -> Result<(CachedScore, bool)> {

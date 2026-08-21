@@ -485,6 +485,18 @@ export type AuditView_Serialize = {
 	error?: ScopeError | null,
 };
 
+/**  One finding the publisher settled, and how far that reaches. */
+export type AuthorDismissal = {
+	reason: DismissReason,
+	dismissedAt: string,
+	/**
+	 *  How many times the publisher's own bytes carried this finding. The
+	 *  budget a reader spends: past it, an occurrence is content the
+	 *  publisher never reviewed.
+	 */
+	occurrences: number,
+};
+
 /**  One package a subscription offers, as the Packages table lists it. */
 export type AvailablePackage = {
 	kind: ItemKind,
@@ -1959,6 +1971,14 @@ export type PackageSafety = {
 	ruleset: number,
 	/**  Whether a verified cache entry answered instead of a fresh score. */
 	fromCache: boolean,
+	/**
+	 *  For each finding, in `findings` order, the publisher's record that
+	 *  settles it — reported here, and not counted toward the score or the
+	 *  verdict, exactly as at the install gate.
+	 */
+	settled: (AuthorDismissal | null)[],
+	/**  Who recorded them, when this package carries any. */
+	publisher: string | null,
 };
 
 /**

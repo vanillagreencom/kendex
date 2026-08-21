@@ -215,3 +215,28 @@ describe("concernDetails", () => {
     expect(concernDetails(concern)).toHaveLength(2);
   });
 });
+
+describe("partitionSafety and the publisher's own decisions", () => {
+  it("keeps a row whose findings the publisher settled out of the clean bucket", () => {
+    // Every finding settled means nothing counts, so the verdict is clean —
+    // but the findings are still there to read, and a row in `clean` is
+    // rendered as "nothing to report".
+    const settled = row({
+      verdict: "clean",
+      name: "growth-guards",
+      findings: [FINDING],
+    });
+    settled.decisions[0].state = {
+      state: "author-dismissed",
+      reason: "intended",
+      dismissedAt: "2026-08-16T00:00:00Z",
+      publisher: "vanillagreencom/kendex",
+    };
+    const nothingFound = row({ verdict: "clean", name: "quiet" });
+
+    const groups = partitionSafety([settled, nothingFound]);
+    expect(groups.settled).toEqual([settled]);
+    expect(groups.clean).toEqual([nothingFound]);
+    expect(groups.open).toEqual([]);
+  });
+});

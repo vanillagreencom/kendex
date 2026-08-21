@@ -22,9 +22,14 @@ import { SEVERITY_DOT_TONE, SEVERITY_LABELS, sentence } from "@/lib/labels";
 export function FindingLine({
   finding,
   locations = [finding.location],
+  settledBy,
 }: {
   finding: Finding;
   locations?: string[];
+  /** Present where somebody has already ruled on this finding: their line
+   *  replaces the fix, because there is nothing here for the reader to do
+   *  and the sentence that matters is whose call it was. */
+  settledBy?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const shown = expanded ? locations : locations.slice(0, 1);
@@ -43,10 +48,16 @@ export function FindingLine({
         {/* The fix and the places sit on the claim's own left edge, not
             stepped in from it: an indent would read as a sub-list of the
             sentence rather than the rest of the same thought. */}
-        <p className="pt-0.5 text-[13px] break-words text-foreground/70">
-          <span className="font-medium text-foreground">Fix: </span>
-          {finding.remediation}
-        </p>
+        {settledBy ? (
+          <p className="pt-0.5 text-[13px] break-words text-foreground/70">
+            {settledBy}
+          </p>
+        ) : (
+          <p className="pt-0.5 text-[13px] break-words text-foreground/70">
+            <span className="font-medium text-foreground">Fix: </span>
+            {finding.remediation}
+          </p>
+        )}
         <div className="flex flex-wrap items-center gap-1.5">
           {shown.map((location) => (
             <FileLink key={location} location={location} />

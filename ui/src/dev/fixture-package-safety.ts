@@ -15,6 +15,8 @@ const CLEAN_SAFETY = (kind: ItemKind, name: string): PackageSafety => ({
   contentHash: "b3a19f04c7d2e851",
   ruleset: 3,
   fromCache: true,
+  settled: [],
+  publisher: null,
 });
 
 const WEBHOOK_SAFETY: PackageSafety = {
@@ -63,6 +65,17 @@ const WEBHOOK_SAFETY: PackageSafety = {
   contentHash: "e0c574a2918bd63f",
   ruleset: 3,
   fromCache: false,
+  // The publisher settled the second one; the first is still an open
+  // question and still counts.
+  settled: [
+    null,
+    {
+      reason: "intended",
+      dismissedAt: "2026-08-19T09:12:00Z",
+      occurrences: 1,
+    },
+  ],
+  publisher: "vanillagreencom/kendex",
 };
 
 export const packageSafety = (kind: ItemKind, name: string): PackageSafety =>

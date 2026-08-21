@@ -203,8 +203,10 @@ pub fn check_with(
         catalog,
         items: Vec::new(),
     };
-    // The maintainer's committed decisions about their own findings —
-    // authoring CI honors them; a consumer's install never reads them.
+    // The maintainer's committed decisions about their own findings. This
+    // pass judges the bytes they were made against, so each covers every
+    // occurrence in them; an install re-checks the same records against
+    // what it fetched (quality::author).
     let reviews = dismissals::load(sealed)?;
     for kind in CHECKED_KINDS {
         for name in crate::source::list_items(sealed, config, kind) {

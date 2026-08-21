@@ -1,4 +1,5 @@
 import type { ItemSafety, ItemWarning } from "@/bindings";
+import { PublisherSettled } from "@/components/safety-findings-publisher";
 import { RECORDED_DECISIONS_LINK } from "@/lib/copy-decisions";
 import { cleanSummaryLead, settledSummaryLead } from "@/lib/copy-safety";
 import { groupSkipped, groupWarnings } from "@/lib/group-notes";
@@ -36,6 +37,7 @@ const LINK = "underline underline-offset-2 hover:text-muted-foreground";
 export function ScopeFooter({
   clean,
   settled,
+  alsoScored,
   notes,
   warnings,
   unmanaged,
@@ -45,6 +47,9 @@ export function ScopeFooter({
   clean: ItemSafety[];
   /** Rows whose findings someone already ruled on. */
   settled: ItemSafety[];
+  /** Every other scored row a publisher's record could speak for — an item
+   *  with open findings can carry settled ones beside them. */
+  alsoScored: ItemSafety[];
   notes: string[];
   warnings: ItemWarning[];
   unmanaged: number;
@@ -95,6 +100,7 @@ export function ScopeFooter({
           {skipped.map((line) => (
             <p key={line}>Not checked: {line}</p>
           ))}
+          <PublisherSettled rows={[...settled, ...alsoScored]} />
         </Fact>
       ) : null}
 

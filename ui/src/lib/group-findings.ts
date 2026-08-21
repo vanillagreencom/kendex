@@ -31,10 +31,15 @@ export interface SafetyGroups {
   /** Installed with findings, every one of them decided — dismissed, or
    *  covered by an acceptance. Nothing left to ask, and not clean either. */
   settled: ItemSafety[];
-  /** verdict "clean" — collapsed to a single summary line. */
+  /** Nothing was found at all — collapsed to a single summary line. */
   clean: ItemSafety[];
 }
 
+// A row carrying findings is never "clean", whatever its verdict says. A
+// verdict answers "does this install"; the publisher settling every finding
+// on an item makes it install and leaves the findings there to be read. Ask
+// the findings, not the verdict, or an item carrying settled criticals reads
+// as nothing to report.
 export function partitionSafety(rows: ItemSafety[]): SafetyGroups {
   const blocked: ItemSafety[] = [];
   const open: ItemSafety[] = [];
@@ -42,7 +47,7 @@ export function partitionSafety(rows: ItemSafety[]): SafetyGroups {
   const clean: ItemSafety[] = [];
   for (const row of rows) {
     if (row.verdict === "block") blocked.push(row);
-    else if (row.verdict === "clean") clean.push(row);
+    else if (row.findings.length === 0) clean.push(row);
     else if (openOccurrences([row]).length > 0) open.push(row);
     else settled.push(row);
   }

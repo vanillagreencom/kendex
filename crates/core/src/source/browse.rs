@@ -107,6 +107,12 @@ pub(crate) struct Browsed {
     pub(crate) config: super::SourceConfig,
     /// The subscription's name when there is one — see [`Browsed::owned_here`].
     subscription: Option<String>,
+    /// The source's committed reviews, parsed once for this browse. A file
+    /// that will not parse settles nothing and says so through
+    /// `reviews_unreadable` — browsing a catalog whose review file is
+    /// broken still shows the catalog.
+    pub(crate) reviews: std::collections::BTreeMap<String, crate::quality::reviews::SafetyReview>,
+    pub(crate) reviews_unreadable: Option<String>,
 }
 
 /// The scope records the join reads. Browsing observes: a scope whose
@@ -172,6 +178,10 @@ fn browsed(
 ) -> Result<Browsed> {
     let sealed = SealedSource::open(&source.root)?;
     let config = super::source_config_for(&sealed, &source.provenance)?;
+    let (reviews, reviews_unreadable) = match crate::check_catalog::dismissals::load(&sealed) {
+        Ok(reviews) => (reviews, None),
+        Err(error) => (Default::default(), Some(error.to_string())),
+    };
     Ok(Browsed {
         manifest,
         lock,
@@ -179,6 +189,8 @@ fn browsed(
         sealed,
         config,
         subscription,
+        reviews,
+        reviews_unreadable,
     })
 }
 

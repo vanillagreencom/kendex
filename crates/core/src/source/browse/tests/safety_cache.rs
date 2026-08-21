@@ -169,3 +169,59 @@ fn thresholds_move_the_verdict_without_touching_the_cache() {
     assert_eq!(fs::read_to_string(&path).unwrap(), written);
     assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), modified);
 }
+
+/// Browse is a preview of the same verdict, never a second gate: a finding
+/// the publisher has already settled stops counting here exactly as it does
+/// at the install gate, and is still shown with their name and reason.
+///
+/// The record is read at read time, beside the thresholds — a cache hit
+/// still applies it, which is why the cache can hold findings and scores
+/// alone.
+#[test]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+fn a_settled_finding_stops_counting_in_the_preview_too() {
+    let (tmp, env, scope) = fixture();
+    let before = score(&env, &scope);
+    assert_eq!(before.verdict, Verdict::Warn);
+    assert!(before.settled.iter().all(Option::is_none));
+    assert!(before.publisher.is_none());
+
+    // The maintainer records their decision and publishes it.
+    let upstream = tmp.path().join("base/owner/repo");
+    let sealed = crate::source_read::SealedSource::open(&upstream).unwrap();
+    let item = upstream.join("skills/gh");
+    let hash = crate::quality::author::content_hash(&sealed, &item).unwrap();
+    let fingerprint = before.findings[0].fingerprint("skills/gh");
+    crate::check_catalog::dismissals::record(
+        &sealed,
+        ItemKind::Skill,
+        "gh",
+        &hash,
+        &[(
+            fingerprint,
+            crate::quality::reviews::DismissReason::Intended,
+        )],
+    )
+    .unwrap();
+    commit(&upstream, "reviewed");
+    crate::remote::sync(&env, REPO, None).unwrap();
+
+    let after = score(&env, &scope);
+    assert_eq!(after.verdict, Verdict::Clean);
+    assert_eq!(after.safety.score, 100);
+    // Reported, not hidden, and it says whose judgement settled it.
+    assert_eq!(after.findings, before.findings);
+    let settled = after.settled[0].as_ref().expect("the record settles it");
+    assert_eq!(
+        settled.reason,
+        crate::quality::reviews::DismissReason::Intended
+    );
+    assert_eq!(after.publisher.as_deref(), Some(REPO));
+
+    // And a cache hit says the same, because the record is applied here and
+    // not baked into what was cached.
+    let cached = score(&env, &scope);
+    assert!(cached.from_cache);
+    assert_eq!(cached.verdict, Verdict::Clean);
+    assert!(cached.settled[0].is_some());
+}

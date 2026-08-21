@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { Finding, FindingDecision, ItemSafety } from "@/bindings";
-import { evidenceGroups, openOccurrences, settledCount } from "./reviewable";
+import {
+  authorOccurrences,
+  authorSettledCount,
+  evidenceGroups,
+  openOccurrences,
+  settledCount,
+} from "./reviewable";
 
 const FINDING: Finding = {
   rule: "dangerous-commands",
@@ -164,5 +170,47 @@ describe("evidenceGroups", () => {
     const groups = evidenceGroups(openOccurrences([unreadable]));
     expect(groups).toHaveLength(1);
     expect(groups[0].tokens).toEqual([]);
+  });
+});
+
+describe("authorOccurrences", () => {
+  const settledByPublisher = decision({
+    fingerprint: "p",
+    state: {
+      state: "author-dismissed",
+      reason: "intended",
+      dismissedAt: "2026-08-16T00:00:00Z",
+      publisher: "vanillagreencom/kendex",
+    },
+  });
+  const settledByMe = decision({
+    fingerprint: "m",
+    state: {
+      state: "dismissed",
+      reason: "wrong-call",
+      dismissedAt: "2026-08-16T00:00:00Z",
+    },
+  });
+
+  it("counts what the publisher settled and not what the person did", () => {
+    const mixed = row({
+      findings: [FINDING, { ...FINDING, location: "SKILL.md:9" }],
+      decisions: [settledByPublisher, settledByMe],
+    });
+    expect(
+      authorOccurrences([mixed]).map((o) => o.decision.fingerprint),
+    ).toEqual(["p"]);
+    expect(authorSettledCount([mixed])).toBe(1);
+    // Always a subset: both are decided, only one of them by the publisher.
+    expect(settledCount([mixed])).toBe(2);
+  });
+
+  it("finds them on a row that still has open findings beside them", () => {
+    const beside = row({
+      findings: [FINDING, { ...FINDING, location: "SKILL.md:9" }],
+      decisions: [settledByPublisher, decision({ fingerprint: "o" })],
+    });
+    expect(authorSettledCount([beside])).toBe(1);
+    expect(openOccurrences([beside])).toHaveLength(1);
   });
 });

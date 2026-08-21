@@ -66,11 +66,19 @@ jobs:
       # This repository is the default marketplace: everyone who installs
       # from it inherits whatever its safety pass still finds, so its own
       # run is always strict. Callers choose for themselves.
+      #
+      # "Is this a called run?" is asked of inputs, never of
+      # github.event_name: in a called workflow the github context is the
+      # caller's, so event_name holds *their* trigger (push, pull_request)
+      # and never the string workflow_call — actions/runner#3146. inputs is
+      # empty on this repository's own events and always carries path (it
+      # defaults to ".") under workflow_call, which is the same
+      # discriminator the checkout step above uses for ref.
       - name: Validate the catalog
         run: |
           kendex/target/release/kendex check \
             --catalog "catalog/${{ inputs.path || '.' }}" \
-            ${{ ((inputs.strict || github.event_name != 'workflow_call') && '--strict') || '' }}
+            ${{ (inputs.strict || !inputs.path) && '--strict' || '' }}
 
   # The one job that lets somebody other than kendex read kendex's output.
   # Freely installable without an account or an API key: OpenCode, Gemini
@@ -82,7 +90,10 @@ jobs:
   smoke:
     name: real-CLI round trip
     runs-on: ${{ vars.CI_RUNNER_8V || 'ubuntu-latest' }}
-    if: github.event_name != 'workflow_call'
+    # This repository's own events only — a caller's checkout is their
+    # catalog, not kendex's renderers. Asked of inputs for the reason the
+    # check job spells out.
+    if: ${{ !inputs.path }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
