@@ -167,6 +167,29 @@ lives in one capability table read by core and UI.
     case is a near-miss (`tests` for `testing`) that would otherwise look
     like a tag and do nothing.
 
+16. A debug build gets its own machine. Every root `core/env.rs` resolves
+    hangs off `Env::home`, and a build with `debug_assertions` roots that
+    at `<data>/kendex-dev` instead of the real home, so a branch cannot
+    leave lock records, harness files or caches an installed kendex will
+    not read. Inherited vars naming a harness root are dropped with it
+    (`env/sandbox.rs`); vars naming a git host or a read-only policy file
+    are kept, because dropping those sends the build to the real ones.
+    `KENDEX_REAL_HOME=1`, and only that value, opts back out.
+
+    Two things a sandbox cannot move, and both ask `env/sandbox.rs`
+    directly rather than inferring: the OS credential store is keyed by
+    name, not path, so its service name carries the sandbox — otherwise a
+    debug `logout` deletes the sign-in the installed app holds. And the
+    real home stays reachable as `Env::real_home()`, because it is where
+    the person lives: project discovery stops there so it never calls the
+    home a project, and a `~` someone typed means their home. Anything new
+    that is keyed by name, or that answers a question about the person
+    rather than about this build's state, belongs on that list.
+
+    The boundary is the home, not the whole filesystem. A project path
+    handed to a debug build is still that project: `--scope project`
+    reads and writes the repository it was pointed at.
+
 ## Decisions
 
 - Tauri 2 · React 19 · Vite · Tailwind v4 · shadcn/ui · zustand ·

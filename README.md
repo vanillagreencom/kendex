@@ -82,9 +82,11 @@ cd crates/app && ../../ui/node_modules/.bin/tauri dev   # the desktop app
 
 A debug build keeps its own home under the platform data directory
 (`kendex-dev`) instead of yours, so a branch cannot leave records your
-installed kendex will not read. Your own skills and agents are not visible
-to it, and nothing it writes reaches them. To dogfood a build against your
-real setup, say so:
+installed kendex will not read. Your global skills and agents are not
+visible to it, and nothing it writes reaches them. Projects are not
+covered: a repository you point a debug build at is the real one, so
+`--scope project` reads and writes it as usual. To dogfood a build against
+your real setup, say so:
 
 ```sh
 KENDEX_REAL_HOME=1 cargo run -p kendex-cli --bin kendex -- list
