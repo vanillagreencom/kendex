@@ -172,10 +172,11 @@ pub fn run() -> tauri::Result<()> {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(builder.invoke_handler())
         // The window is configured hidden, so this line is the only thing
-        // that ever shows it. Nothing can test that from here — tauri's
-        // mock runtime answers `is_visible` with a constant — but `zoom`
-        // has no other reader, so deleting this fails `clippy -D warnings`
-        // on an unused variable. Give `zoom` another use and that goes away.
+        // that ever shows it. What it does to the window — the saved size
+        // first, then the reveal — is asserted in `window`; that it is
+        // wired up here is not, because tauri's mock runtime answers for a
+        // window it never draws. Deleting the line leaves `zoom` with no
+        // reader, which fails `clippy -D warnings`.
         .setup(move |app| window::show_at_zoom(app, zoom))
         .run(tauri::generate_context!())
 }
