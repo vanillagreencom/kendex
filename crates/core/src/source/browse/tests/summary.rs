@@ -21,6 +21,7 @@ fn a_subscription_summary_answers_with_itself_and_counts_its_offer() {
         })
     );
     assert_eq!(report.provenance, catalog.display().to_string());
+    assert_eq!(report.repo_key, None, "a path is no GitHub repository");
     assert_eq!(report.commit, None);
     assert_eq!(report.warning, None);
     assert_eq!(report.counts.get("skill"), Some(&2));

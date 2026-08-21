@@ -12,7 +12,7 @@ import { aboutViews, repoSummaries } from "./fixture-marketplaces";
 import { packageSafety } from "./fixture-package-safety";
 import { bundleDetail, offeredHere, specSource } from "./mock-catalog";
 import { installHandlers } from "./mock-install";
-import { type Handler, store } from "./mock-state";
+import { type Handler, same, store } from "./mock-state";
 import { subscribeHandlers } from "./mock-subscribe";
 import { unsubscribeHandlers } from "./mock-unsubscribe";
 
@@ -36,6 +36,11 @@ export const marketplaceHandlers: Record<string, Handler> = {
     if (catalog.by === "subscription") {
       return {
         provenance: catalog.source,
+        repoKey:
+          store.state.marketplaces.find(
+            (row) =>
+              row.name === catalog.source && same(row.scope, catalog.scope),
+          )?.repoKey ?? null,
         commit: null,
         meta: null,
         mode: "discovered",

@@ -28,6 +28,10 @@ pub struct SubscriptionRef {
 pub struct CatalogSummary {
     /// `owner/repo`, a path, or `local` — what the catalog is.
     pub provenance: String,
+    /// The canonical `owner/repo` the provenance folds to on GitHub — what
+    /// a subscription's `repo_key` and a directory row are matched by,
+    /// however the declaration spells it.
+    pub repo_key: Option<String>,
     /// The commit being read, for a remote.
     pub commit: Option<String>,
     /// `[marketplace]` from the catalog's own kendex.toml.
@@ -89,6 +93,7 @@ pub fn summary(env: &Env, catalog: &Catalog) -> Result<CatalogSummary> {
         }
     }
     Ok(CatalogSummary {
+        repo_key: crate::repo_move::owner_repo(&browsed.source.provenance),
         provenance: browsed.source.provenance.clone(),
         commit: browsed.source.commit.clone(),
         meta: browsed.config.marketplace.clone(),

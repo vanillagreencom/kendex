@@ -83,6 +83,7 @@ fn the_summary_counts_and_names_the_head_and_knows_no_subscription() {
     let (_tmp, env, _upstream) = fixture();
     let first = summary(&env, &repo()).unwrap();
     assert_eq!(first.provenance, REPO);
+    assert_eq!(first.repo_key.as_deref(), Some(REPO));
     assert!(first.commit.is_some());
     assert_eq!(first.counts.get("skill"), Some(&1));
     assert_eq!(
@@ -171,6 +172,7 @@ fn a_listing_never_picks_the_transport() {
     // Fetched as the shorthand — over https in production — under the one
     // key the shorthand, the safety cache and Subscribe all share.
     assert_eq!(first.provenance, REPO);
+    assert_eq!(first.repo_key.as_deref(), Some(REPO));
     assert!(crate::remote::cached(&env, REPO, None).unwrap().is_some());
     assert_ne!(
         crate::remote::cache_key(&env, &format!("ssh://git@github.com/{REPO}")),
@@ -304,6 +306,8 @@ fn a_ready_subscription_under_another_spelling_answers_offline() {
 
     let report = summary(&env, &repo()).unwrap();
     assert_eq!(report.subscription.unwrap().source, "tools");
+    assert_eq!(report.provenance, spelled);
+    assert_eq!(report.repo_key.as_deref(), Some(REPO));
     assert_eq!(report.counts.get("skill"), Some(&1));
     assert_eq!(report.warning, None);
     // The shorthand was never fetched: nothing went to the network.

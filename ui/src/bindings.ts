@@ -618,6 +618,12 @@ export type CatalogMode = "plugin-registry" | "explicit" | "discovered" | "unusa
 export type CatalogSummary = {
 	/**  `owner/repo`, a path, or `local` — what the catalog is. */
 	provenance: string,
+	/**
+	 *  The canonical `owner/repo` the provenance folds to on GitHub — what
+	 *  a subscription's `repo_key` and a directory row are matched by,
+	 *  however the declaration spells it.
+	 */
+	repoKey: string | null,
 	/**  The commit being read, for a remote. */
 	commit: string | null,
 	/**  `[marketplace]` from the catalog's own kendex.toml. */

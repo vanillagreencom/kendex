@@ -103,6 +103,7 @@ export const repoSummaries: Record<
 > = {
   "acme/agent-kit": {
     provenance: "acme/agent-kit",
+    repoKey: "acme/agent-kit",
     commit: "9f3a1c2d4e5f60718293a4b5c6d7e8f901234567",
     meta: {
       description: "Agent kit for TypeScript teams",
@@ -116,6 +117,7 @@ export const repoSummaries: Record<
   },
   "wshobson/agents": {
     provenance: "wshobson/agents",
+    repoKey: "wshobson/agents",
     commit: PLUGINS_HEAD,
     meta: null,
     mode: "plugin-registry",
@@ -125,6 +127,7 @@ export const repoSummaries: Record<
   },
   "vercel-labs/agent-skills": {
     provenance: "vercel-labs/agent-skills",
+    repoKey: "vercel-labs/agent-skills",
     commit: KENDEX_HEAD,
     meta: null,
     mode: "discovered",

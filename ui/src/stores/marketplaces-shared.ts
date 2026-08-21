@@ -116,21 +116,34 @@ export async function openLead(scope: Scope, source: string, lead: string) {
   });
 }
 
-/** Every summary about one repository — however it was requested, and
- * whether or not it is carried by a subscription — so a toggled holder is
- * re-asked in both directions: turned off, the page falls back to the bare
- * repository; turned on, it carries on again. */
-export function dropSummariesForRepo(
+/** Every summary about one subscription's repository — matched by the
+ * canonical key, however the declaration spells the repository, or by the
+ * subscription itself — so a toggled holder is re-asked in both
+ * directions: turned off, the page falls back to the bare repository;
+ * turned on, it carries on again. */
+export function dropSummariesHeldBy(
   set: (
     fn: (state: { summaries: Record<string, CatalogSummary> }) => object,
   ) => void,
-  repoKey: string,
+  rows: MarketplaceRow[],
+  scope: Scope,
+  source: string,
 ) {
+  const held = marketKey(scope, source);
+  const repoKey =
+    rows.find((row) => marketKey(row.scope, row.name) === held)?.repoKey ??
+    null;
   set((state) => ({
     summaries: Object.fromEntries(
-      Object.entries(state.summaries).filter(
-        ([key, summary]) => !isRepoKey(key) || summary.provenance !== repoKey,
-      ),
+      Object.entries(state.summaries).filter(([key, summary]) => {
+        if (!isRepoKey(key)) return true;
+        const sameRepo = repoKey !== null && summary.repoKey === repoKey;
+        const carried =
+          summary.subscription !== null &&
+          marketKey(summary.subscription.scope, summary.subscription.source) ===
+            held;
+        return !sameRepo && !carried;
+      }),
     ),
   }));
 }

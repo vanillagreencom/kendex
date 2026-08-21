@@ -15,9 +15,8 @@ import { catalogReads } from "./marketplaces-reads";
 import {
   catalogKey,
   dropCatalogCaches,
-  dropSummariesForRepo,
+  dropSummariesHeldBy,
   isRepoKey,
-  marketKey,
   openLead,
   refreshDownstream,
   subscription,
@@ -182,12 +181,7 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
       return;
     }
     dropCatalogCaches(set);
-    const toggled = get().rows.find(
-      (row) =>
-        row.name === source &&
-        marketKey(row.scope, row.name) === marketKey(scope, source),
-    );
-    if (toggled?.repoKey) dropSummariesForRepo(set, toggled.repoKey);
+    dropSummariesHeldBy(set, get().rows, scope, source);
     await get().load();
     await refreshDownstream();
   },
