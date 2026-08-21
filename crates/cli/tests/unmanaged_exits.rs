@@ -46,7 +46,10 @@ fn offer(planned: &str) -> String {
 #[allow(clippy::unwrap_used)]
 fn follow(home: &Path, project: &Path, planned: &str) -> Output {
     let offered = offer(planned);
-    let args: Vec<&str> = offered.split_whitespace().collect();
+    let typed = offered
+        .strip_prefix("kendex ")
+        .unwrap_or_else(|| panic!("'{offered}' is not something a reader could type"));
+    let args: Vec<&str> = typed.split_whitespace().collect();
     let run = kendex(home, project, &args);
     assert!(
         run.status.success(),
@@ -174,7 +177,7 @@ fn a_folder_shared_by_hand_is_kept_by_the_offer_it_prints() {
     assert!(!planned.contains("--replace-unmanaged"), "{planned}");
     assert_eq!(
         offer(&planned),
-        "adopt skill deploy --harness claude --harness codex"
+        "kendex adopt skill deploy --harness claude --harness codex"
     );
 
     follow(home, &project, &planned);
@@ -206,7 +209,7 @@ fn a_folder_outside_every_tool_is_kept_through_the_tool_that_links_at_it() {
     link_at(&project.join(".agents/skills/deploy"), &elsewhere);
 
     let planned = plan(home, &project);
-    assert_eq!(offer(&planned), "adopt skill deploy --harness codex");
+    assert_eq!(offer(&planned), "kendex adopt skill deploy --harness codex");
 
     follow(home, &project, &planned);
     settled(
@@ -234,7 +237,7 @@ fn two_tools_holding_one_item_are_kept_by_one_offer() {
     let planned = plan(home, &project);
     assert_eq!(
         offer(&planned),
-        "adopt skill deploy --harness claude --harness codex"
+        "kendex adopt skill deploy --harness claude --harness codex"
     );
 
     follow(home, &project, &planned);
@@ -285,7 +288,10 @@ fn one_tool_blocked_is_kept_through_the_tool_that_is_blocked() {
     folder_at(&project.join(".opencode/skills/deploy"), "The one before.");
 
     let planned = plan(home, &project);
-    assert_eq!(offer(&planned), "adopt skill deploy --harness opencode");
+    assert_eq!(
+        offer(&planned),
+        "kendex adopt skill deploy --harness opencode"
+    );
 
     follow(home, &project, &planned);
     settled(
@@ -349,7 +355,7 @@ fn hand_made_files_beside_an_edited_install_keep_their_offer() {
         );
         assert_eq!(
             offer(&planned),
-            "adopt skill deploy --harness codex",
+            "kendex adopt skill deploy --harness codex",
             "listed as {tools}, the way out went missing: {planned}"
         );
 

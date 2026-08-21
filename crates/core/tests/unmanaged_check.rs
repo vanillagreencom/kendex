@@ -345,3 +345,45 @@ fn the_line_names_the_tool_it_is_about() {
         "and the one that has it is not: {text}"
     );
 }
+
+/// The check and the plan have to name the same problem. Skipping an item
+/// because the lock holds a key for it is the ownership error this section
+/// exists to close, one surface further along: a skill that moves from a
+/// copy per tool to one shared tree installs somewhere the old install
+/// never wrote, and whatever already lives there is a stranger's. The plan
+/// says so; the check said the session was clean, so nothing pointed at
+/// the plan that would have said it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_skill_that_changed_how_it_installs_is_reported_by_the_check_too() {
+    let w = world();
+    let first = plan_apply(&w.env, &w.scope, &PlanOptions::default()).unwrap();
+    apply::execute(&w.env, &first.plan, None).unwrap();
+
+    declare(
+        &w,
+        "symlink",
+        "[\"claude\"]",
+        "[skills.deploy]\nsource = \"cat\"\n",
+    );
+    write_at(
+        w.home.join("app/.agents/skills/deploy/SKILL.md"),
+        "the tool that came before",
+    );
+
+    let planned = plan_apply(&w.env, &w.scope, &PlanOptions::default()).unwrap();
+    assert!(
+        planned.drift.iter().any(
+            |row| row.name == "deploy" && row.state == DriftState::Unmanaged
+                || row.cause.is_some_and(|cause| cause.in_the_way())
+        ),
+        "the fixture is not the state it is testing: {:?}",
+        planned.drift
+    );
+
+    let text = report(&w);
+    assert!(
+        text.contains("blocked by files already there"),
+        "the check called the session clean while the plan was blocked: {text}"
+    );
+}

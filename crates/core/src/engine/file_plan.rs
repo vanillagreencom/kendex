@@ -81,7 +81,7 @@ pub(super) fn plan_written_file(
     match disk {
         Some(current) if current == wanted => Ok(Planned::Clean),
         Some(current) => {
-            if !claim.owns(path, owned) {
+            if !ours(claim, path, owned) {
                 if !claim.replace_unmanaged {
                     return Ok(unmanaged(DriftCause::UnmanagedContent, path));
                 }
@@ -141,9 +141,7 @@ fn plan_absent_file(
         ));
     }
     if alternate.is_file() {
-        // A recorded install names one spelling of the toggled pair; the
-        // position is the same one either way.
-        if !claim.owns(path, owned) && !claim.owns(&alternate, owned) {
+        if !ours(claim, path, owned) {
             if !claim.replace_unmanaged {
                 return unmanaged(DriftCause::UnmanagedContent, &alternate);
             }
@@ -234,7 +232,19 @@ fn uncomparable(path: &std::path::Path, error: &crate::error::CoreError) -> Plan
 
 /// A declared-disabled artifact keeps its content under the `.disabled`
 /// name; toggling is a rename.
-fn toggle_sibling(path: &std::path::Path) -> std::path::PathBuf {
+/// Whether the bytes at this position are kendex's own.
+///
+/// A recorded install names one spelling of the toggled pair — an artifact
+/// switched off parks its content under the suffixed name and the lock
+/// still holds the plain one — and the position is the same one either
+/// way. Asking about the spelling alone reads a switched-off install of
+/// ours as somebody else's files, which blocks its next update behind a
+/// take-over.
+pub(super) fn ours(claim: Claim, path: &std::path::Path, owned: &BTreeSet<PathBuf>) -> bool {
+    claim.owns(path, owned) || claim.owns(&toggle_sibling(path), owned)
+}
+
+pub(super) fn toggle_sibling(path: &std::path::Path) -> std::path::PathBuf {
     let text = path.display().to_string();
     match text.strip_suffix(".disabled") {
         Some(base) => std::path::PathBuf::from(base),

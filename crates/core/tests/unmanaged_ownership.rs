@@ -194,3 +194,74 @@ fn a_copy_declaration_does_not_hide_the_shared_folder() {
         report.drift
     );
 }
+
+/// An artifact switched off parks its content under a suffixed name, while
+/// the lock still records the plain one. Asking whether the suffixed
+/// spelling is ours — instead of whether the position is — reads kendex's
+/// own output back at the user as files it did not write, and the next
+/// ordinary update is refused until they take their own content over.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_switched_off_install_is_still_ours_to_update() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().canonicalize().unwrap();
+    let catalog = home.join("catalog/agents");
+    fs::create_dir_all(&catalog).unwrap();
+    let upstream = catalog.join("scout.md");
+    fs::write(
+        &upstream,
+        "---\nname: scout\ndescription: looks around\n---\nUpstream.\n",
+    )
+    .unwrap();
+    let project = home.join("app");
+    fs::create_dir_all(&project).unwrap();
+    let declare = |enabled: &str| {
+        fs::write(
+            project.join("kendex.toml"),
+            format!(
+                "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[agents.scout]\nsource = \"cat\"\n{enabled}",
+                home.join("catalog").display()
+            ),
+        )
+        .unwrap();
+    };
+    let env = Env::fake(&home, FakeOs::Linux);
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    let apply_now = || {
+        let report = plan_apply(&env, &scope, &PlanOptions::default()).unwrap();
+        apply::execute(&env, &report.plan, None).unwrap();
+    };
+
+    declare("");
+    apply_now();
+    declare("enabled = false\n");
+    apply_now();
+    let parked = project.join(".claude/agents/scout.md.disabled");
+    assert!(parked.is_file(), "the fixture never switched the agent off");
+
+    fs::write(
+        &upstream,
+        "---\nname: scout\ndescription: looks around\n---\nNewer upstream.\n",
+    )
+    .unwrap();
+
+    let row = deploy_row_named(&audit(&env, &scope).unwrap().drift, "scout").clone();
+    assert_eq!(
+        row.cause, None,
+        "a switched-off install of ours was read as somebody else's files: {row:?}"
+    );
+    assert_eq!(row.state, DriftState::Stale, "{row:?}");
+
+    apply_now();
+    assert!(
+        fs::read_to_string(&parked).unwrap().contains("Newer"),
+        "the update never reached the switched-off copy"
+    );
+}
+
+#[allow(clippy::unwrap_used)]
+fn deploy_row_named<'a>(rows: &'a [DriftRow], name: &str) -> &'a DriftRow {
+    rows.iter().find(|row| row.name == name).unwrap()
+}

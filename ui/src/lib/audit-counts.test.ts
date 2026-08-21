@@ -18,6 +18,7 @@ function drift(
   harness: HarnessId,
   state: DriftRow["state"],
   root?: string,
+  cause?: DriftRow["cause"],
 ): DriftRow {
   return {
     kind: "skill",
@@ -26,6 +27,7 @@ function drift(
     scope: root ? { scope: "project", root } : { scope: "global" },
     state,
     detail: "",
+    cause,
   };
 }
 
@@ -175,5 +177,24 @@ describe("auditCounts", () => {
     expect(counts.blocked).toBe(1);
     expect(counts.open).toBe(0);
     expect(decisionsPendingCount(counts)).toBe(1);
+  });
+});
+
+describe("a declaration whose files are already there", () => {
+  // Apply cannot move these rows — only a person picking which way they go
+  // — so counting them beside the writes it is about to make tells Home and
+  // the footer to promise a button that will not touch them.
+  it("is a decision waiting, not a change ready to apply", () => {
+    const counts = auditCounts([
+      view([
+        drift("deploy", "claude", "conflict", undefined, "unmanaged-content"),
+        drift("lint", "claude", "stale"),
+      ]),
+    ]);
+
+    expect(counts.changes).toBe(1);
+    expect(counts.inTheWay).toBe(1);
+    expect(decisionsPendingCount(counts)).toBe(1);
+    expect(needsReviewCount(counts)).toBe(2);
   });
 });

@@ -7,6 +7,7 @@ use crate::manifest::{ItemDecl, Manifest};
 use crate::model::{ItemKind, Scope};
 
 use super::desired::{self, Desired};
+use super::item_plan::Claim;
 use super::{DriftRow, DriftState};
 
 pub(super) fn unmanaged_rows(
@@ -224,15 +225,20 @@ pub(crate) fn declared_over_existing_files(
     ] {
         for (name, decl) in table {
             for harness in desired::target_harnesses(decl, manifest, kind, scope) {
-                if lock
-                    .entries
-                    .contains_key(&crate::lock::entry_key(kind, name, harness))
-                {
-                    continue;
-                }
+                // What the lock recorded writing, not merely that it holds
+                // a key for this item: an installation that changed method
+                // writes somewhere new, and a key alone would call that new
+                // position ours while a stranger's files sit on it.
+                let claim = Claim {
+                    locked: true,
+                    replace_unmanaged: false,
+                };
                 let occupied = installation_paths(env, scope, manifest, kind, name, decl, harness)
                     .into_iter()
-                    .any(|path| !owned.contains(&path) && (path.exists() || path.is_symlink()));
+                    .any(|path| {
+                        !super::file_plan::ours(claim, &path, &owned)
+                            && (path.exists() || path.is_symlink())
+                    });
                 if occupied {
                     blocked.push((kind, name.clone(), harness));
                 }

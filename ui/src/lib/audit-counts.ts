@@ -9,6 +9,7 @@
 import type { AuditView, DriftRow } from "@/bindings";
 import { heldBack } from "@/lib/derive";
 import { mergeDriftRows } from "@/lib/drift-merge";
+import { isInTheWay } from "@/lib/drift-zones";
 import { partitionSafety } from "@/lib/group-findings";
 import { mergeHeldBack } from "@/lib/group-findings-blocked";
 import { evidenceGroups, openOccurrences } from "@/lib/reviewable";
@@ -16,6 +17,10 @@ import { evidenceGroups, openOccurrences } from "@/lib/reviewable";
 export interface AuditCounts {
   /** Writes kendex is ready to make: install, update, remove. */
   changes: number;
+  /** Declared, with files already where they go. Apply cannot move these —
+   *  only a person choosing which way they go — so counting them as work
+   *  ready to apply promises a button that will not touch them. */
+  inTheWay: number;
   /** On disk, but kendex was never asked to look after it. Not a debt —
    *  adopting is an offer the user takes up, so it is counted apart from
    *  the work that is actually queued. */
@@ -57,7 +62,11 @@ export function openCount(view: AuditView): number {
 
 export function auditCounts(views: AuditView[]): AuditCounts {
   return {
-    changes: countMerged(views, (row) => row.state !== "unmanaged"),
+    changes: countMerged(
+      views,
+      (row) => row.state !== "unmanaged" && !isInTheWay(row.cause),
+    ),
+    inTheWay: countMerged(views, (row) => isInTheWay(row.cause)),
     unmanaged: countMerged(views, (row) => row.state === "unmanaged"),
     blocked: views.reduce((sum, view) => sum + blockedCount(view), 0),
     open: views.reduce((sum, view) => sum + openCount(view), 0),
@@ -67,10 +76,10 @@ export function auditCounts(views: AuditView[]): AuditCounts {
 /** What the Review page has waiting for a person: work to apply, plus
  *  the decisions only they can make — held-back items and open findings. */
 export function needsReviewCount(counts: AuditCounts): number {
-  return counts.changes + counts.blocked + counts.open;
+  return counts.changes + counts.inTheWay + counts.blocked + counts.open;
 }
 
 /** The decisions alone: what "Needs your decision" holds across scopes. */
 export function decisionsPendingCount(counts: AuditCounts): number {
-  return counts.blocked + counts.open;
+  return counts.inTheWay + counts.blocked + counts.open;
 }

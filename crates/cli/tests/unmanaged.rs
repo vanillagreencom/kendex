@@ -79,11 +79,11 @@ fn a_blocked_declaration_is_printed_with_both_exits_that_resolve_it() {
         "{planned}"
     );
     assert!(
-        planned.contains("to keep those files: adopt skill deploy"),
+        planned.contains("to keep those files: kendex adopt skill deploy"),
         "the exit that keeps the files names the item it applies to: {planned}"
     );
     assert!(
-        planned.contains("apply with --replace-unmanaged"),
+        planned.contains("kendex apply --replace-unmanaged"),
         "the exit that installs what was asked for: {planned}"
     );
     assert!(
@@ -285,7 +285,7 @@ fn the_way_out_that_keeps_files_is_spelled_for_every_kind() {
 
     let planned = said(&kendex(home, &project, &["apply", "--plan"]));
     assert!(
-        planned.contains("to keep those files: adopt skill deploy"),
+        planned.contains("to keep those files: kendex adopt skill deploy"),
         "{planned}"
     );
     assert!(
@@ -337,7 +337,7 @@ fn the_shared_way_out_is_said_once_however_many_items_are_blocked() {
     );
     for name in ["deploy", "lint", "ship"] {
         assert!(
-            planned.contains(&format!("to keep those files: adopt skill {name}")),
+            planned.contains(&format!("to keep those files: kendex adopt skill {name}")),
             "{planned}"
         );
     }

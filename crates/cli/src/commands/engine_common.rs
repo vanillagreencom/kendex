@@ -138,7 +138,7 @@ pub fn print_conflicts(env: &Env, report: &EngineReport) -> bool {
         // and forty copies of it bury the paths that differ. Indented with
         // them all the same — at column 0 it reads as a heading over the
         // plan that follows, which is the plan that runs without it.
-        say("  to install what kendex.toml asks for instead: apply with --replace-unmanaged");
+        say("  to install what kendex.toml asks for instead: kendex apply --replace-unmanaged");
     }
     any
 }
@@ -161,8 +161,8 @@ pub fn conflict_detail(row: &DriftRow) -> String {
     }
 }
 
-/// The way out that keeps the files, spelled with the item it applies to —
-/// the verb and its parameters as data, never a command line to paste.
+/// The way out that keeps the files, spelled as the command that takes it —
+/// printed to be read once and typed, so it carries the program name.
 ///
 /// Every tool it names is one adoption can actually act through: it works
 /// at a tool's own place and nowhere else, so a tool with nothing there —
@@ -199,7 +199,7 @@ fn keep_exit(env: &Env, item: &[&DriftRow]) -> String {
         .iter()
         .map(|harness| format!(" --harness {}", harness.name()))
         .collect();
-    format!("adopt {} {}{named}", row.kind.name(), row.name)
+    format!("kendex adopt {} {}{named}", row.kind.name(), row.name)
 }
 
 /// What the safety rules found in the content this plan would write. Held
