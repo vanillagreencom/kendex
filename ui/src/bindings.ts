@@ -494,12 +494,22 @@ export type AuthorDismissal_Deserialize = {
 	dismissedAt: string,
 	/**
 	 *  How many occurrences of this finding the publisher's own text
-	 *  carries in what was installed. Written by the apply that measured
-	 *  it, so the audit reads the answer rather than deriving it a second
-	 *  time and risking a different one. `None` on a record that has not
-	 *  been measured yet — the catalog's own read, before any rendering.
+	 *  carries in what was installed, by the weight each one was read at.
+	 *  Written by the apply that measured it, so the audit reads the answer
+	 *  rather than deriving it a second time and risking a different one.
+	 *  Empty on a record that has not been measured yet — the catalog's own
+	 *  read, before any rendering.
+	 * 
+	 *  By weight, not a single number, because a number is spendable on
+	 *  anything. Findings are scored highest severity first, so a bare
+	 *  count settles the heaviest matching occurrence whoever wrote it: a
+	 *  project that injects the publisher's own sentence into the body,
+	 *  where it weighs Critical, spends the budget a publisher earned for
+	 *  their own copy in a supporting file, where it weighs High — and the
+	 *  blocker disappears. The weight is what tells the two apart, because
+	 *  it is exactly what the renderer's placement decided.
 	 */
-	occurrences?: number | null,
+	occurrences?: Partial<{ [key in Severity]: number }>,
 };
 
 /**  One finding the publisher settled. */
@@ -508,12 +518,22 @@ export type AuthorDismissal_Serialize = {
 	dismissedAt: string,
 	/**
 	 *  How many occurrences of this finding the publisher's own text
-	 *  carries in what was installed. Written by the apply that measured
-	 *  it, so the audit reads the answer rather than deriving it a second
-	 *  time and risking a different one. `None` on a record that has not
-	 *  been measured yet — the catalog's own read, before any rendering.
+	 *  carries in what was installed, by the weight each one was read at.
+	 *  Written by the apply that measured it, so the audit reads the answer
+	 *  rather than deriving it a second time and risking a different one.
+	 *  Empty on a record that has not been measured yet — the catalog's own
+	 *  read, before any rendering.
+	 * 
+	 *  By weight, not a single number, because a number is spendable on
+	 *  anything. Findings are scored highest severity first, so a bare
+	 *  count settles the heaviest matching occurrence whoever wrote it: a
+	 *  project that injects the publisher's own sentence into the body,
+	 *  where it weighs Critical, spends the budget a publisher earned for
+	 *  their own copy in a supporting file, where it weighs High — and the
+	 *  blocker disappears. The weight is what tells the two apart, because
+	 *  it is exactly what the renderer's placement decided.
 	 */
-	occurrences?: number | null,
+	occurrences?: Partial<{ [key in Severity]: number }>,
 };
 
 /**  One package a subscription offers, as the Packages table lists it. */

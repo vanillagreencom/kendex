@@ -831,10 +831,10 @@ lives in one capability table read by core and UI.
   the record arrives from content kendex does not control: it binds to
   bytes (the reader recomputes the hash from the source in front of it);
   it settles as many occurrences of a finding as the publisher's own bytes
-  carried and no more, so a project's injected `[skill-instructions]`
-  cannot ride in on a reviewed one; and it carries only reasons an author
-  can give — `trusted-source` is refused on read, not only on write, and
-  a timestamp that is not a timestamp is refused with it. The record
+  carried and at the weight each was read at, so nothing a project repeats
+  rides in on a reviewed one, however heavy; and it carries only reasons
+  an author can give — `trusted-source` is refused on read, not only on
+  write, and a timestamp that is not a timestamp is refused with it. The record
   travels with the content: the plan re-reads it out of the source it
   fetched, the apply writes it into the lock entry (`authorReview`, lock
   version 5) bound to the bytes it wrote, and the audit finds it by that
@@ -1096,10 +1096,10 @@ lives in one capability table read by core and UI.
   that is the whole point of a catalog reviewing its own content, and it is
   bounded by the three checks in `quality/author.rs` (bound to bytes,
   capped at the occurrences the publisher's own text carries in what
-  actually installs, and refusing the reasons only the installer's machine
-  could answer for). That cap is measured by the apply that wrote the bytes
-  and recorded beside the review, so the audit reads the number rather than
-  deriving a second one. The publisher's record does not live in the
+  actually installs and at the weight each was read at, and refusing the
+  reasons only the installer's machine could answer for). That cap is
+  measured by the apply that wrote the bytes and recorded beside the
+  review, so the audit reads it rather than deriving a second one. The publisher's record does not live in the
   person's manifest and is not one of their revocable records: it lives in
   the catalog's committed `kendex-reviews.toml` and, once installed, in the
   lock entry — so it never appears in the Recorded decisions registry,

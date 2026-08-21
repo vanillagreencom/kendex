@@ -295,7 +295,7 @@ fn a_hand_edited_lock_record_settles_nothing() {
         review["publisher"] = "\u{1b}[2J\u{1b}[31mTRUSTED-CORP".into();
         for dismissal in review["dismissed"].as_object_mut().unwrap().values_mut() {
             dismissal["dismissedAt"] = "\u{1b}[5mYESTERDAY".into();
-            dismissal["occurrences"] = 4294967295u32.into();
+            dismissal["occurrences"] = serde_json::json!({ "critical": 4294967295u32 });
         }
     }
     fs::write(&path, lock.to_string()).unwrap();

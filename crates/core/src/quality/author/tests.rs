@@ -4,9 +4,13 @@ use crate::quality::Severity;
 use crate::quality::reviews::Dismissal;
 
 fn finding(location: &str, message: &str) -> Finding {
+    weighed(Severity::Critical, location, message)
+}
+
+fn weighed(severity: Severity, location: &str, message: &str) -> Finding {
     Finding {
         rule: "safety-bypass".to_owned(),
-        severity: Severity::Critical,
+        severity,
         location: location.to_owned(),
         message: message.to_owned(),
         remediation: "leave the check in place".to_owned(),
@@ -39,13 +43,21 @@ fn a_decision_settles_only_as_many_occurrences_as_it_paid_for() {
         ),
     ];
     let fingerprint = findings[0].fingerprint();
-    let one = Budget([(fingerprint.clone(), 1)].into_iter().collect());
+    let one = Budget(
+        [((fingerprint.clone(), Severity::Critical), 1)]
+            .into_iter()
+            .collect(),
+    );
     let scored = score(&findings, &one);
     assert_eq!(scored.settled, vec![true, false]);
     assert_eq!(scored.counted.len(), 1);
     assert!(scored.unmatched.is_empty());
 
-    let both = Budget([(fingerprint, 2)].into_iter().collect());
+    let both = Budget(
+        [((fingerprint, Severity::Critical), 2)]
+            .into_iter()
+            .collect(),
+    );
     assert_eq!(score(&findings, &both).counted.len(), 0);
 }
 
@@ -69,12 +81,47 @@ fn a_whole_budget_settles_every_occurrence() {
     assert_eq!(scored.safety.score, 100);
 }
 
+/// What a record earned for its own copy of a sentence cannot be spent on
+/// the same sentence somewhere heavier.
+///
+/// Findings arrive heaviest first, so a budget matched on the sentence
+/// alone settles whichever occurrence sorted first — and that is the
+/// heaviest, which is the one the publisher is least likely to have
+/// written: a project's injected text lands in the body at full weight,
+/// while the publisher's own copy may have been split into a supporting
+/// file and lowered. Matching the weight too is what keeps the publisher's
+/// occurrence the one that is settled.
+#[test]
+fn a_budget_earned_at_one_weight_is_not_spendable_at_another() {
+    let message = "`--no-verify` skips the checks a commit runs";
+    let injected = weighed(Severity::Critical, "s/SKILL.md:12", message);
+    let publishers = weighed(Severity::High, "s/references/detail.md:4", message);
+    let fingerprint = publishers.fingerprint();
+    assert_eq!(injected.fingerprint(), fingerprint);
+
+    // The publisher earned one occurrence, in a supporting file.
+    let budget = Budget([((fingerprint, Severity::High), 1)].into_iter().collect());
+    let scored = score(&[injected, publishers], &budget);
+    assert_eq!(
+        scored.settled,
+        vec![false, true],
+        "the record settles its own occurrence, not the injected one"
+    );
+    assert_eq!(scored.counted.len(), 1);
+    assert_eq!(scored.counted[0].severity, Severity::Critical);
+    assert!(scored.unmatched.is_empty());
+}
+
 /// A record naming something nothing here carries is reported as such: it
 /// is not the same as no record, and the caller has to be able to say so.
 #[test]
 fn a_record_that_matches_nothing_says_so() {
     let findings = vec![finding("s/SKILL.md:10", "one thing")];
-    let budget = Budget([("deadbeefdeadbeef".to_owned(), 3)].into_iter().collect());
+    let budget = Budget(
+        [(("deadbeefdeadbeef".to_owned(), Severity::Critical), 3)]
+            .into_iter()
+            .collect(),
+    );
     let scored = score(&findings, &budget);
     assert_eq!(scored.settled, vec![false]);
     assert_eq!(

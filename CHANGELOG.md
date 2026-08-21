@@ -49,8 +49,9 @@ changes carry a **Breaking** call-out with their migration note inline.
   stops counting for them, is still shown, and is labelled with the
   publisher's name and reason so it is clear whose judgement it is. It
   settles only what the publisher wrote — as many occurrences as their own
-  bytes carried, so a project's own `[skill-instructions]` cannot ride in
-  on a reviewed finding — and it can only carry reasons an author can give:
+  bytes carried, each carrying the weight theirs did, so nothing a project
+  adds to the item rides in on a reviewed finding however serious it reads
+  — and it can only carry reasons an author can give:
   a hand-written `trusted-source` record is refused on the installing
   machine. Any edit to the item, in the catalog or on the installed copy,
   brings the hold back, and a record that settles nothing where it lands —
@@ -94,10 +95,10 @@ changes carry a **Breaking** call-out with their migration note inline.
   narrows what the check catches: a whole line written as a bare list of
   single words ending in `)` is no longer read as a command, which is the
   price of the class of false positive it removes.
-- A safety finding's message now says what it fired on: which address a line
-  downloads from — however it is capitalized, and named by the variable when
-  it is not written out — which characters a file hides, and which unreadable
-  content a file carries. Two different problems reading the same used to be
+- A safety finding's message now says what it fired on: which address a
+  command downloads from — however it is capitalized, and named by its own
+  arguments when the address is not written out — which characters a file
+  hides, and which unreadable content a file carries. Two different problems reading the same used to be
   one decision, and only one of them was ever shown.
 - Safety findings are identified by the rule and the sentence it fired with,
   so a decision survives everything kendex does to an item on the way in —

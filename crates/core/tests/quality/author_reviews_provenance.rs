@@ -120,7 +120,7 @@ fn one_corrupt_entry_does_not_hide_a_valid_one() {
         .unwrap()
         .values_mut()
     {
-        dismissal["occurrences"] = 4294967295u32.into();
+        dismissal["occurrences"] = serde_json::json!({ "critical": 4294967295u32 });
     }
     fs::write(&path, lock.to_string()).unwrap();
 

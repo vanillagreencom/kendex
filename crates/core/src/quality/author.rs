@@ -29,14 +29,14 @@
 //!   to record one, and the reader drops one anyway, because the file is
 //!   committed TOML anybody can hand-write.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use super::reviews::DismissReason;
-use super::{Content, Finding, SafetyScore};
+use super::{Content, Finding, SafetyScore, Severity};
 use crate::error::Result;
 use crate::model::ItemKind;
 use crate::source_read::SealedSource;
@@ -51,12 +51,22 @@ pub struct AuthorDismissal {
     pub reason: DismissReason,
     pub dismissed_at: String,
     /// How many occurrences of this finding the publisher's own text
-    /// carries in what was installed. Written by the apply that measured
-    /// it, so the audit reads the answer rather than deriving it a second
-    /// time and risking a different one. `None` on a record that has not
-    /// been measured yet — the catalog's own read, before any rendering.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub occurrences: Option<u32>,
+    /// carries in what was installed, by the weight each one was read at.
+    /// Written by the apply that measured it, so the audit reads the answer
+    /// rather than deriving it a second time and risking a different one.
+    /// Empty on a record that has not been measured yet — the catalog's own
+    /// read, before any rendering.
+    ///
+    /// By weight, not a single number, because a number is spendable on
+    /// anything. Findings are scored highest severity first, so a bare
+    /// count settles the heaviest matching occurrence whoever wrote it: a
+    /// project that injects the publisher's own sentence into the body,
+    /// where it weighs Critical, spends the budget a publisher earned for
+    /// their own copy in a supporting file, where it weighs High — and the
+    /// blocker disappears. The weight is what tells the two apart, because
+    /// it is exactly what the renderer's placement decided.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub occurrences: BTreeMap<Severity, u32>,
 }
 
 /// A publisher's decisions about one item, as they travel to an install.
@@ -110,12 +120,13 @@ impl AuthorReview {
     /// printed. `counted` is how many findings are actually in front of us:
     /// a record cannot claim to have measured more occurrences than exist.
     pub fn is_honest(&self, counted: usize) -> bool {
-        let bounded = |occurrences: Option<u32>| {
-            occurrences.is_none_or(|n| usize::try_from(n).is_ok_and(|n| n <= counted))
+        let bounded = |occurrences: &BTreeMap<Severity, u32>| {
+            let claimed: u32 = occurrences.values().copied().sum();
+            usize::try_from(claimed).is_ok_and(|claimed| claimed <= counted)
         };
         crate::names::shown(&self.publisher) == self.publisher
             && self.dismissed.iter().all(|(fingerprint, dismissal)| {
-                bounded(dismissal.occurrences)
+                bounded(&dismissal.occurrences)
                     && read::honest(
                         fingerprint,
                         &crate::quality::reviews::Dismissal {
@@ -134,7 +145,12 @@ impl AuthorReview {
         Budget(
             self.dismissed
                 .iter()
-                .filter_map(|(fingerprint, d)| Some((fingerprint.clone(), d.occurrences?)))
+                .flat_map(|(fingerprint, dismissal)| {
+                    dismissal
+                        .occurrences
+                        .iter()
+                        .map(|(severity, count)| ((fingerprint.clone(), *severity), *count))
+                })
                 .collect(),
         )
     }
@@ -149,7 +165,7 @@ impl AuthorReview {
                     (
                         fingerprint.clone(),
                         AuthorDismissal {
-                            occurrences: budget.0.get(fingerprint).copied(),
+                            occurrences: budget.of(fingerprint),
                             ..dismissal.clone()
                         },
                     )
@@ -157,119 +173,6 @@ impl AuthorReview {
                 .collect(),
             ..self.clone()
         }
-    }
-}
-
-/// How many occurrences of each finding are already settled. Empty settles
-/// nothing, which is what every failure here falls back to.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Budget(BTreeMap<String, u32>);
-
-impl Budget {
-    /// A decision made against these very bytes, which therefore speaks for
-    /// every occurrence in them.
-    pub fn whole(fingerprints: BTreeSet<String>) -> Budget {
-        Budget(
-            fingerprints
-                .into_iter()
-                .map(|fingerprint| (fingerprint, u32::MAX))
-                .collect(),
-        )
-    }
-
-    /// What a record has earned against content kendex itself has added to.
-    ///
-    /// `authored` is the same content the score is about with everything
-    /// the publisher did not write taken back out — the project's injected
-    /// instructions, and nothing else. Counting there rather than in the
-    /// fetched source is the whole point: rendering strips marked blocks
-    /// and splits an over-cap body into `references/`, so a count taken
-    /// from the source pays for occurrences that never install (which is
-    /// budget free to settle somebody else's content) and misses the ones
-    /// that moved (which is the publisher's own review failing to apply).
-    pub fn earned(review: &AuthorReview, authored: &[Finding]) -> Earned {
-        let mut counts: BTreeMap<String, u32> = BTreeMap::new();
-        for finding in authored {
-            let fingerprint = finding.fingerprint();
-            if review.dismissed.contains_key(&fingerprint) {
-                *counts.entry(fingerprint).or_default() += 1;
-            }
-        }
-        let unearned = review
-            .dismissed
-            .keys()
-            .filter(|fingerprint| !counts.contains_key(*fingerprint))
-            .cloned()
-            .collect();
-        Earned {
-            budget: Budget(counts),
-            unearned,
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-}
-
-/// A record measured against the content it landed in: what it can spend,
-/// and every finding it named that this content does not carry. The second
-/// half is the only thing that tells a person a review was carried and did
-/// not apply — the publisher's own check stays green either way.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Earned {
-    pub budget: Budget,
-    pub unearned: BTreeSet<String>,
-}
-
-/// Findings split into what still counts and what is settled, with the
-/// score the counted half earns.
-///
-/// The one derivation of "a settled finding is reported and does not
-/// count". Every caller that scores content someone may have already ruled
-/// on comes through here, so none of them can spell the rule differently.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Scored {
-    /// One flag per finding, in the findings' own order.
-    pub settled: Vec<bool>,
-    pub counted: Vec<Finding>,
-    pub safety: SafetyScore,
-    /// Fingerprints the record named that nothing here carried. A record
-    /// that matched nothing is not the same as no record, and the caller
-    /// has to be able to say so.
-    pub unmatched: BTreeSet<String>,
-}
-
-pub fn score(findings: &[Finding], budget: &Budget) -> Scored {
-    let mut left = budget.0.clone();
-    let mut settled = Vec::with_capacity(findings.len());
-    let mut counted = Vec::new();
-    for finding in findings {
-        let spend = left
-            .get_mut(&finding.fingerprint())
-            .filter(|remaining| **remaining > 0);
-        match spend {
-            Some(remaining) => {
-                *remaining = remaining.saturating_sub(1);
-                settled.push(true);
-            }
-            None => {
-                settled.push(false);
-                counted.push(finding.clone());
-            }
-        }
-    }
-    let unmatched = budget
-        .0
-        .iter()
-        .filter(|(fingerprint, allowed)| left.get(*fingerprint) == Some(allowed))
-        .map(|(fingerprint, _)| fingerprint.clone())
-        .collect();
-    Scored {
-        safety: super::safety(&counted),
-        settled,
-        counted,
-        unmatched,
     }
 }
 
@@ -346,7 +249,9 @@ pub fn past_budget(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Option
     (read.len() < files.len() || scanned < whole).then_some((scanned, whole))
 }
 
+mod budget;
 mod read;
+pub use budget::{Budget, Earned, Scored, score};
 pub use read::{Read, for_item, for_item_read, honest, one};
 
 #[cfg(test)]

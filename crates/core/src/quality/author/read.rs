@@ -20,7 +20,7 @@ use crate::source_read::SealedSource;
 /// `reviews` is the source's parsed reviews file, read once per source root.
 /// `publisher` is the provenance kendex resolved for this source. What the
 /// record is worth against the content that finally installs is decided
-/// later, by [`Budget::earned`]; this answers only whether the record
+/// later, by [`super::Budget::earned`]; this answers only whether the record
 /// describes these bytes and whether its entries are ones an author can
 /// honestly make.
 pub fn for_item(
@@ -114,7 +114,7 @@ pub fn one(
                         dismissed_at: dismissal.dismissed_at.clone(),
                         // Nothing has been rendered yet, so nothing has
                         // been earned yet.
-                        occurrences: None,
+                        occurrences: BTreeMap::new(),
                     },
                 );
             }

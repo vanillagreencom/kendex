@@ -175,12 +175,32 @@ export function acceptTokens(planned: ItemSafety[]): string[] {
   ];
 }
 
+// Who settled one occurrence, as a merge key. A decision is part of what a
+// row says, not a detail hanging off it: two harnesses whose findings match
+// but whose decisions do not are two things to tell the reader, and the
+// panel's attribution line is the disclosure the publisher's review is
+// justified by. Reading it off whichever row arrived first would credit a
+// publisher for somebody else's dismissal, or drop their review because
+// another harness had one of its own. The timestamp is left out: the same
+// record read on two harnesses carries the same date, and a personal
+// dismissal made a second apart is still the same answer.
+function attribution(decision: FindingDecision | undefined): string {
+  const state = decision?.state;
+  if (!state) return "undecided";
+  return state.state === "author-dismissed"
+    ? `${state.state}::${state.publisher}::${state.reason}`
+    : state.state;
+}
+
 export function groupBlocked(blocked: ItemSafety[]): BlockedGroup[] {
   const ordered: BlockedGroup[] = [];
   const byKey = new Map<string, BlockedGroup>();
   for (const row of blocked) {
     const setKey = row.findings
-      .map((f) => `${f.rule}::${f.message}::${f.remediation}::${f.location}`)
+      .map(
+        (f, index) =>
+          `${f.rule}::${f.message}::${f.remediation}::${f.location}::${attribution(row.decisions[index])}`,
+      )
       .sort()
       .join("|");
     const key = `${row.kind}::${row.name}::${setKey}`;
@@ -190,6 +210,9 @@ export function groupBlocked(blocked: ItemSafety[]): BlockedGroup[] {
         kind: row.kind,
         name: row.name,
         rows: [],
+        // Sound to read from this row alone: every row that merges here
+        // carries the same findings decided the same way, which is what
+        // the key above is for.
         findingGroups: groupFindingsByRule(row.findings, row.decisions),
       };
       byKey.set(key, group);

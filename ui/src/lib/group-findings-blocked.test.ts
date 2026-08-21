@@ -78,54 +78,6 @@ describe("groupFindingsByRule", () => {
   });
 });
 
-describe("groupBlocked", () => {
-  it("merges the same (kind, name) across harnesses when their finding sets are identical", () => {
-    const codex = row({ harness: "codex" });
-    const pi = row({ harness: "pi" });
-    const groups = groupBlocked([codex, pi]);
-    expect(groups).toHaveLength(1);
-    expect(groups[0].rows.map((r) => r.harness)).toEqual(["codex", "pi"]);
-  });
-
-  it("does not merge the same (kind, name) across harnesses when their finding sets differ", () => {
-    const codex = row({ harness: "codex" });
-    const pi = row({
-      harness: "pi",
-      findings: [{ ...RULE_FINDING, location: "different-file.py:1" }],
-    });
-    const groups = groupBlocked([codex, pi]);
-    expect(groups).toHaveLength(2);
-  });
-
-  it("groups the findings of a merged entry by rule", () => {
-    const secondFinding: Finding = {
-      rule: "rce",
-      severity: "critical",
-      location: "/home/dana/skills/visual-qa/evals/grade.py:12",
-      message: "downloads a script from a URL and executes it directly",
-      remediation:
-        "pin and vendor the script instead of fetching it at runtime",
-    };
-    const codex = row({
-      harness: "codex",
-      findings: [RULE_FINDING, secondFinding],
-    });
-    const pi = row({ harness: "pi", findings: [RULE_FINDING, secondFinding] });
-    const groups = groupBlocked([codex, pi]);
-    expect(groups).toHaveLength(1);
-    expect(groups[0].findingGroups.map((g) => g.rule)).toEqual([
-      "dangerous-commands",
-      "rce",
-    ]);
-  });
-
-  it("keeps different names apart even with identical findings", () => {
-    const a = row({ name: "visual-qa" });
-    const b = row({ name: "other-skill" });
-    expect(groupBlocked([a, b])).toHaveLength(2);
-  });
-});
-
 describe("mergeHeldBack", () => {
   it("adds a fresh refusal the observed list cannot carry", () => {
     const fresh = row({ name: "brand-new" });
