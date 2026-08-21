@@ -112,9 +112,17 @@ fn installs_to(browsed: &Browsed, kind: ItemKind, name: &str) -> Vec<crate::mode
 ///
 /// Only what this catalog holds can be any of them: a set's members and a
 /// skill's dependencies are its own catalog's items, so a bare name in
-/// another catalog names something else.
+/// another catalog names something else — and a declaration of the same
+/// kind and name from another source is a name collision, never a request
+/// for this package. Every one of the three is filtered the same way,
+/// because two of three having the guard is how the third went unnoticed.
 fn asked_by(browsed: &Browsed, kind: ItemKind, name: &str) -> Vec<crate::manifest::ItemDecl> {
-    let own = browsed.manifest.declared(kind).get(name).cloned();
+    let own = browsed
+        .manifest
+        .declared(kind)
+        .get(name)
+        .filter(|decl| browsed.owned_here(&decl.source))
+        .cloned();
     let sets = browsed
         .manifest
         .bundles

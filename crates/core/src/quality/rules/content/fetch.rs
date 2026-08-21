@@ -44,27 +44,32 @@ impl Reach {
     }
 }
 
-/// Places where a line hands something to an interpreter.
-const SHELLS: &[&str] = &["| sh", "|sh", "| bash", "|bash", "| zsh", "| python"];
+/// Interpreters a download can be handed straight to.
+const SHELLS: &[&str] = &["sh", "bash", "zsh", "python"];
 
-/// The same, for a file that was downloaded first and run afterwards.
-const THEN_RUNS: &[&str] = &["&& sh", "&& bash", "chmod +x"];
+/// The commands a line runs, read once with the shell's own quoting.
+mod tokens;
+use tokens::{Command, Reached};
 
 /// A plain description of what this line fetches and runs, if it does.
 pub(super) fn fetch_and_run(line: &Line) -> Option<Reach> {
-    let verbs = fetch_verbs(line);
-    if !verbs.is_empty() {
-        let piped = marks(line, SHELLS);
+    let commands = tokens::commands(&line.text);
+    // Firing is about presence and naming is about structure: a line that
+    // says `curl` anywhere fired this rule, and answering with silence
+    // because nothing on it parses as a command would give every such line
+    // one sentence.
+    if line.has("curl") || line.has("wget") {
+        let piped = runners(&commands, Reached::Pipe);
         let run = match piped.is_empty() {
             false => Some(("pipes a download straight into a shell", piped)),
             true => {
-                let then = marks(line, THEN_RUNS);
+                let then = then_runs(&commands);
                 (line.has("/tmp/") && !then.is_empty())
                     .then_some(("downloads a file and then executes it", then))
             }
         };
         if let Some((what, run)) = run {
-            let (preposition, operand) = downloads(line, &verbs, &run);
+            let (preposition, operand) = downloads(line, &commands, &run);
             return Some(Reach {
                 what,
                 preposition,
@@ -78,13 +83,10 @@ pub(super) fn fetch_and_run(line: &Line) -> Option<Reach> {
             preposition: "out of",
             // Where an encoded payload is written, whether it is piped in
             // or passed on the decoding command itself.
-            operand: line
-                .text
-                .split('|')
-                .next()
-                .unwrap_or(&line.text)
-                .trim()
-                .to_owned(),
+            operand: match commands.first() {
+                Some(first) => line.text[first.at.clone()].trim().to_owned(),
+                None => line.text.trim().to_owned(),
+            },
         });
     }
     line.find("eval(").map(|at| Reach {
@@ -99,52 +101,51 @@ pub(super) fn fetch_and_run(line: &Line) -> Option<Reach> {
     })
 }
 
-/// Every fetch verb on this line, as the offset just past it, in the order
-/// they are written.
-///
-/// In the order they are written, never the order the verbs are listed in:
-/// `curl …; wget … | sh` and `wget … | sh; curl …` are the same two
-/// commands, and reading them by the table's order names whichever verb the
-/// table happens to put first — which on the first of those is the one that
-/// does not run.
-fn fetch_verbs(line: &Line) -> Vec<std::ops::Range<usize>> {
-    let mut found: Vec<std::ops::Range<usize>> = ["curl", "wget"]
+/// Which commands on this line are an interpreter reached by `reached`.
+fn runners(commands: &[Command], reached: Reached) -> Vec<usize> {
+    commands
         .iter()
-        .flat_map(|verb| {
-            line.occurrences(verb)
-                .into_iter()
-                .map(move |at| at..at + verb.len())
+        .enumerate()
+        .filter(|(_, command)| command.reached_by == reached)
+        .filter(|(_, command)| {
+            command
+                .verb()
+                .is_some_and(|verb| SHELLS.contains(&verb.as_str()))
         })
-        .collect();
-    found.sort_unstable_by_key(|verb| verb.start);
-    found
+        .map(|(at, _)| at)
+        .collect()
 }
 
-/// Whether this match is the line calling the program rather than the same
-/// letters turning up inside something else. `curl` in `a.curl.se/x` is
-/// part of an address, and reading it as the command names the tail of that
-/// address — which every host under one domain shares.
-///
-/// Only which verb is *named* narrows here. What the rule fires on does
-/// not: a line where nothing looks like a command is still named by every
-/// match on it, because the rule fired on their presence and answering with
-/// silence would give every such line one sentence.
-fn starts_a_command(line: &Line, verb: &std::ops::Range<usize>) -> bool {
-    line.before(verb.start)
-        .is_none_or(|c| !c.is_alphanumeric() && !matches!(c, '.' | '-' | '_' | '/'))
-        && line
-            .after(verb.start, verb.len())
-            .is_none_or(char::is_whitespace)
-}
-
-/// Every place on this line where one of `these` sits.
-fn marks(line: &Line, these: &[&str]) -> Vec<usize> {
-    let mut found: Vec<usize> = these
-        .iter()
-        .flat_map(|mark| line.occurrences(mark))
-        .collect();
+/// Which commands run a file that was downloaded first: a shell the line
+/// goes on to, and making a downloaded file executable.
+fn then_runs(commands: &[Command]) -> Vec<usize> {
+    let mut found = runners(commands, Reached::And);
+    found.extend(commands.iter().enumerate().filter_map(|(at, command)| {
+        let marks = command.verb()? == "chmod" && command.has_word("+x");
+        marks.then_some(at)
+    }));
     found.sort_unstable();
+    found.dedup();
     found
+}
+
+/// Which commands on this line are a fetch, by index.
+///
+/// The program being run, never the same letters somewhere inside an
+/// argument: `curl` in `a.curl.se/x` is part of an address, and reading it
+/// as the command names the tail of that address — which every host under
+/// one domain shares.
+fn fetches(commands: &[Command]) -> Vec<usize> {
+    commands
+        .iter()
+        .enumerate()
+        .filter(|(_, command)| {
+            command
+                .verb()
+                .is_some_and(|verb| verb == "curl" || verb == "wget")
+        })
+        .map(|(at, _)| at)
+        .collect()
 }
 
 /// What this line downloads and then runs, named.
@@ -156,32 +157,26 @@ fn marks(line: &Line, these: &[&str]) -> Vec<usize> {
 /// sentence and one decision, whatever each of them actually runs.
 ///
 /// A line whose fetches all come after everything it runs is still named by
-/// what it fetches: the rule fired on it either way, and saying nothing
-/// would be the same sentence for every such line.
-fn downloads(
-    line: &Line,
-    verbs: &[std::ops::Range<usize>],
-    run: &[usize],
-) -> (&'static str, String) {
-    let commands: Vec<usize> = verbs
-        .iter()
-        .filter(|verb| starts_a_command(line, verb))
-        .map(|verb| verb.end)
-        .collect();
-    let written: Vec<usize> = match commands.is_empty() {
-        true => verbs.iter().map(|verb| verb.end).collect(),
-        false => commands,
-    };
+/// what it fetches, and a line where nothing parses as a fetch command at
+/// all is named by every address on it: the rule fired either way, and
+/// saying nothing would be the same sentence for every such line.
+fn downloads(line: &Line, commands: &[Command], run: &[usize]) -> (&'static str, String) {
+    let written = fetches(commands);
+    if written.is_empty() {
+        return ("with", every_address(line));
+    }
     let mut feeding: Vec<usize> = run
         .iter()
-        .filter_map(|at| written.iter().rev().find(|after| *after < at).copied())
+        .filter_map(|at| written.iter().rev().find(|before| *before < at).copied())
         .collect();
     feeding.dedup();
     if feeding.is_empty() {
         feeding = written;
     }
-    let named: Vec<(&'static str, String)> =
-        feeding.iter().map(|after| fetched(line, *after)).collect();
+    let named: Vec<(&'static str, String)> = feeding
+        .iter()
+        .filter_map(|at| Some(fetched(commands.get(*at)?)))
+        .collect();
     let preposition = match named.iter().all(|(said, _)| *said == "from") {
         true => "from",
         false => "with",
@@ -209,52 +204,57 @@ fn downloads(
 /// than one candidate the whole list is kept and none of them is called the
 /// operand — which still makes two fetches that differ anywhere in it two
 /// questions, and still shows the reader every address the line carries.
-///
-/// The address is located in the flattened line and cut from the original,
-/// so `CURL HTTPS://…` is the match the detector already made — which reads
-/// the flattened text — and still prints the way it was written.
-fn fetched(line: &Line, after: usize) -> (&'static str, String) {
-    let args = arguments(line, after);
-    let mut addresses = addresses(line, &args);
+fn fetched(command: &Command) -> (&'static str, String) {
+    let mut addresses: Vec<String> = command
+        .arguments()
+        .iter()
+        .filter_map(|word| address_in(&word.text))
+        .collect();
     if addresses.len() == 1 {
         return ("from", addresses.remove(0));
     }
-    let spelled = line.text[args]
-        .split_whitespace()
-        .collect::<Vec<&str>>()
-        .join(" ");
-    ("with", spelled)
-}
-
-/// Every address written out in `range`, in the order they appear.
-fn addresses(line: &Line, range: &std::ops::Range<usize>) -> Vec<String> {
-    const BOUNDARY: &[char] = &['"', '\'', '`', ' ', '\t', ')', '(', '<', '>', ';', ','];
-    let mut found: Vec<(usize, String)> = Vec::new();
-    for scheme in ["https://", "http://"] {
-        let mut from = range.start;
-        while let Some(at) = line.lower[from..range.end].find(scheme) {
-            let at = from + at;
-            let rest = &line.text[at..range.end];
-            let url = rest.split(BOUNDARY).next().unwrap_or(rest);
-            if url.len() > scheme.len() {
-                found.push((at, url.to_owned()));
-            }
-            from = at + scheme.len();
-        }
-    }
-    found.sort_by_key(|(at, _)| *at);
-    found.into_iter().map(|(_, url)| url).collect()
-}
-
-/// Where this fetch command's own arguments end: at the first `|`, `&&` or
-/// `;` that begins the next command, or at the end of the line. Without the
-/// separator the arguments of a command run afterwards read as this one's.
-fn arguments(line: &Line, after: usize) -> std::ops::Range<usize> {
-    let rest = &line.lower[after..];
-    let end = ["|", "&&", ";"]
+    let spelled: Vec<&str> = command
+        .arguments()
         .iter()
-        .filter_map(|separator| rest.find(separator))
-        .min()
-        .unwrap_or(rest.len());
-    after..after + end
+        .map(|word| word.text.as_str())
+        .collect();
+    ("with", spelled.join(" "))
+}
+
+/// The address one word carries, if it carries one.
+///
+/// From the scheme to the end of the word, because the word is what the
+/// shell hands the command: a separator inside it was quoted, and cutting
+/// there would give `'https://host/p;v=1'` and `'https://host/p;v=2'` one
+/// address, one sentence and one decision. What is trimmed is punctuation
+/// the surrounding prose put there — a line of documentation writes an
+/// address inside brackets — which is never part of the address and would
+/// otherwise make one address two.
+fn address_in(word: &str) -> Option<String> {
+    const TRAILING: &[char] = &[')', '(', '<', '>', ',', '.', '"', '\'', '`'];
+    let lower = word.to_ascii_lowercase();
+    let at = ["https://", "http://"]
+        .iter()
+        .filter_map(|scheme| lower.find(scheme))
+        .min()?;
+    let url = word[at..].trim_end_matches(TRAILING);
+    (url.len() > "http://".len()).then(|| url.to_owned())
+}
+
+/// Every address the line carries, for a line that fired this rule without
+/// anything on it parsing as a fetch command.
+fn every_address(line: &Line) -> String {
+    let found: Vec<String> = tokens::commands(&line.text)
+        .iter()
+        .flat_map(|command| command.words.iter())
+        .filter_map(|word| address_in(&word.text))
+        .collect();
+    match found.is_empty() {
+        true => line
+            .text
+            .split_whitespace()
+            .collect::<Vec<&str>>()
+            .join(" "),
+        false => found.join(", "),
+    }
 }

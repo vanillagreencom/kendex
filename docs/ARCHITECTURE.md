@@ -868,39 +868,39 @@ lives in one capability table read by core and UI.
   date stay two rows. A record that settles nothing here is a note, never
   silence. Finding identity is the rule and the sentence it fired with
   (`Finding::fingerprint`). Which puts a standing obligation on every message:
-  it says what the rule fired *on* — the address the line actually runs, the
-  characters a file hides — and never where it was found. Two different
-  problems that read the same are one decision, and one is displayed. A digest
-  standing in for what a message cannot print decides identity like the rest
-  of the sentence, so every one is `DIGEST_CHARS` wide: each stands for a
-  value a project chooses, and a narrow one is ground against until an
-  injected finding wears a settled one's words. Where a finding was found is
-  its location, and every location a decision covers is listed under it.
-  Everything kendex's rendering moves is out of it: the line, because
-  rendering shifts lines; the file, because Codex renders a command as a skill
-  tree and an over-cap body splits into `references/`; the severity, because a
-  hit weighs one step less in a supporting file and the split moves content
-  between exactly those two. What bounds it instead is the item — a
-  fingerprint is read only within one item's records — the content hash every
-  decision binds to, and, for a publisher's record, which occurrences here are
-  theirs (`quality::publishers`) — one question with how many, so the budget
-  counts what it may be spent on. Where the rendering is their own content
-  with the project's block put into it, that boundary is the answer: outside
-  it is theirs at whatever weight this artifact gives it, so a line the split
-  carried into a supporting file is still theirs and settles a step lighter.
-  **A boundary is carried from the code that drew it, never found again in the
-  finished text.** That text is half the project's own and answers any
-  question put to it — a marker it spells itself ends the block early and the
-  rest reads as the publisher's — so the renderer hands the tree and its
-  offsets down as one value that no step can rename apart, and every location
-  they cover is composed rather than matched. Where the artifact is generated
-  from inputs instead, the answer is a rendering from their inputs alone
-  walked beside the real one, both sides read in the one deobfuscated space or
-  a hidden character makes a repeat match a raw comparison never sees. Prose
-  the project supplied is skipped there rather than credited to whichever copy
-  came first, which loses a review they did make and asks the person instead;
-  and a finding naming a whole document is theirs only where their own
-  rendering produces it.
+  it says what the rule fired *on* — the address a line runs, read as a shell
+  reads a line rather than searched for in one, the characters a file hides —
+  and never where it was found. Two different problems reading the same are
+  one decision, and one is displayed. A digest standing in for what a message
+  cannot print decides identity like the rest of the sentence, so every one is
+  `DIGEST_CHARS` wide: each stands for a value a project chooses, and a narrow
+  one is ground against until an injected finding wears a settled one's words.
+  Where a finding was found is its location, and every location a decision
+  covers is listed under it. Everything kendex's rendering moves is out of it:
+  the line, because rendering shifts lines; the file, because Codex renders a
+  command as a skill tree and an over-cap body splits into `references/`; the
+  severity, because a hit weighs one step less in a supporting file and the
+  split moves content between exactly those two. What bounds it instead is the
+  item — a fingerprint is read only within one item's records — the content
+  hash every decision binds to, and, for a publisher's record, which
+  occurrences here are theirs (`quality::publishers`) — one question with how
+  many, so the budget counts what it may be spent on. Where the rendering is
+  their own content with the project's block put into it, that boundary is the
+  answer: outside it is theirs at whatever weight this artifact gives it, so a
+  line the split carried into a supporting file is still theirs and settles a
+  step lighter. **A boundary is carried from the code that drew it, never
+  found again in the finished text.** That text is half the project's own and
+  answers any question put to it — a marker it spells itself ends the block
+  early and the rest reads as the publisher's — so the renderer hands the tree
+  and its offsets down as one value that no step can rename apart, and every
+  location they cover is composed rather than matched. Where the artifact is
+  generated from inputs instead, the answer is a rendering from their inputs
+  alone walked beside the real one, both sides read in the one deobfuscated
+  space or a hidden character makes a repeat match a raw comparison never
+  sees. Prose the project supplied is skipped there rather than credited to
+  whichever copy came first, which loses a review they did make and asks the
+  person instead; and a finding naming a whole document is theirs only where
+  their own rendering produces it.
 - **The community directory is read like any remote: strictly, capped,
   and honest about staleness.** `registry/` (core) consumes what
   `source/index.rs` producers feed kendex.ai: `index.rs` re-parses the

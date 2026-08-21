@@ -156,12 +156,19 @@ fn owners_of(
                 owners.insert(Owner::Bundle(bundle.name.clone()));
             }
             Reason::RequiredBy { by } => {
+                // A copy of the guard per parent, not one shared between
+                // them. One item is one entry per tool and those entries
+                // can carry different reasons — requested for one tool,
+                // carried by a set for another — so a shared guard stops at
+                // the first and drops every owner the rest would have
+                // named. The guard is here to stop a cycle, not to visit a
+                // parent once.
                 for parent in lock
                     .entries
                     .values()
                     .filter(|parent| parent.kind == by.kind && parent.name == by.name)
                 {
-                    owners.extend(owners_of(lock, parent, seen));
+                    owners.extend(owners_of(lock, parent, &mut seen.clone()));
                 }
             }
         }
@@ -210,5 +217,95 @@ fn as_installed(installed: &Installed, item: &Desired) -> bool {
     match installed.get(&(item.kind, item.name.clone(), item.harness)) {
         Some(commit) => *commit == item.source_commit,
         None => true,
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::lock::{BundleRef, InstallRef};
+
+    fn entry(name: &str, harness: HarnessId, commit: &str, reasons: &[Reason]) -> LockEntry {
+        LockEntry {
+            name: name.to_owned(),
+            kind: ItemKind::Skill,
+            harness,
+            source: "cat".to_owned(),
+            source_repo: "owner/repo".to_owned(),
+            method: crate::manifest::Method::Copy,
+            installed_at: "2026-01-01T00:00:00Z".to_owned(),
+            source_hash: "x".to_owned(),
+            source_commit: Some(commit.to_owned()),
+            rendered_hash: None,
+            enabled: true,
+            upstream_skills: None,
+            emitted: None,
+            registration: None,
+            reasons: reasons.iter().cloned().collect(),
+        }
+    }
+
+    /// One item's installations can be here for different reasons, and a
+    /// dependency of it has to be recoverable through every one of them.
+    ///
+    /// The cycle guard is there to stop a pair of skills that require each
+    /// other from walking forever. Sharing it between a parent's own
+    /// installations makes it prune siblings instead: the first entry is
+    /// walked, the rest are skipped, and every owner they would have named
+    /// is dropped — so the declaration that has to be read at the
+    /// dependency's revision never is, and a review of the bytes on disk is
+    /// rejected.
+    #[test]
+    fn a_parent_reached_twice_names_the_owners_of_both() {
+        let by = InstallRef {
+            source: "cat".to_owned(),
+            kind: ItemKind::Skill,
+            name: "parent".to_owned(),
+            harness: HarnessId::Claude,
+            scope: Scope::Global,
+        };
+        let bundle = BundleRef {
+            source: "cat".to_owned(),
+            name: "kit".to_owned(),
+            scope: Scope::Global,
+        };
+        let mut lock = Lock::default();
+        for (key, entry) in [
+            (
+                "skill:parent:claude",
+                entry("parent", HarnessId::Claude, "aaa", &[Reason::Requested]),
+            ),
+            (
+                "skill:parent:codex",
+                entry(
+                    "parent",
+                    HarnessId::Codex,
+                    "bbb",
+                    &[Reason::MemberOf {
+                        bundle: bundle.clone(),
+                    }],
+                ),
+            ),
+            (
+                "skill:dep:codex",
+                entry("dep", HarnessId::Codex, "ccc", &[Reason::RequiredBy { by }]),
+            ),
+        ] {
+            lock.entries.insert(key.to_owned(), entry);
+        }
+
+        let governed = governed_by(&lock);
+        let owned = |owner: Owner| governed.get(&owner).cloned().unwrap_or_default();
+        let held = owned(Owner::Item(ItemKind::Skill, "parent".to_owned()));
+        assert!(
+            held.contains(&Some("ccc".to_owned())),
+            "the declaration reads at the dependency's revision: {held:?}"
+        );
+        let carried = owned(Owner::Bundle("kit".to_owned()));
+        assert!(
+            carried.contains(&Some("ccc".to_owned())),
+            "and so does the set, which is the other way to reach the same parent: {carried:?}"
+        );
     }
 }
