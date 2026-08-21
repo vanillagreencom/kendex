@@ -647,216 +647,198 @@ lives in one capability table read by core and UI.
 - **A subscription reference is parsed, never guessed, and one repository
   subscribes once per scope.** Two validators sit side by side in
   `core/source_ref.rs`, one per trust level: the typed one (the Subscribe
-  dialog, `marketplace subscribe`, `source add`, `add`'s positional
-  source) keeps the full range a person may need — `owner/repo[@rev]`,
-  any-host remote URLs kept as typed (an `ssh://` spelling can be what
-  their auth requires), local paths, GitHub tree URLs, skills.sh package
-  URLs — while the untrusted one (directory rows, collections, deep
-  links) is GitHub-only and normalizes to `owner/repo`. Both refuse a
-  leading `-`, `..` in repository components, and percent-escapes that
-  would smuggle a separator, decoding exactly once. A tree URL always
-  subscribes the whole repository and surfaces the package path as a
-  lead to open, never an identity; its `<ref>` resolves against the
-  mirror's real refs (branch names contain `/`), and two split points
-  both naming refs, or a branch and tag sharing a name, refuse naming
-  every candidate — offline, normalization is a refusal before any
-  write. One repository per scope, compared by canonical identity
+  dialog, `marketplace subscribe`, `source add`, `add`'s positional source)
+  keeps the full range a person may need — `owner/repo[@rev]`, any-host
+  remote URLs kept as typed (an `ssh://` spelling can be what their auth
+  requires), local paths, GitHub tree URLs, skills.sh package URLs — while
+  the untrusted one (directory rows, collections, deep links) is GitHub-only
+  and normalizes to `owner/repo`. Both refuse a leading `-`, `..` in
+  repository components, and percent-escapes that would smuggle a separator,
+  decoding exactly once. A tree URL always subscribes the whole repository
+  and surfaces the package path as a lead to open, never an identity; its
+  `<ref>` resolves against the mirror's real refs (branch names contain
+  `/`), and two split points both naming refs, or a branch and tag sharing a
+  name, refuse naming every candidate — offline, normalization is a refusal
+  before any write. One repository per scope, compared by canonical identity
   (`.git`, case, and redirect spellings are one repo), with the refusal
   naming the existing subscription. The default marketplace is found by
-  repo, never by name and never by sort order: the subscription whose
-  repo is the default repo; two of them prefer the seeded name and
-  otherwise refuse naming both; none is a typed error with no fallback —
-  what the cross-source search catches rather than a guessed install.
-  Installing into a project from a personal subscription copies the
-  declaration into the project in that plan — exactly one scope mutated,
-  the personal manifest read-only, the cache shared by construction.
+  repo, never by name and never by sort order: the subscription whose repo
+  is the default repo; two of them prefer the seeded name and otherwise
+  refuse naming both; none is a typed error with no fallback — what the
+  cross-source search catches rather than a guessed install. Installing into
+  a project from a personal subscription copies the declaration into the
+  project in that plan — exactly one scope mutated, the personal manifest
+  read-only, the cache shared by construction.
 - **A name says where it comes from, or the search does — never a
   fallback.** Every installable kind declares through `add`
   (`engine/ops/add`): agents, skills, hooks, commands, MCP servers; Pi
   extensions are carrier-only and a direct add is a typed refusal. The
-  qualifier is `marketplace::name` (`add/place.rs`) — `::` never appears
-  in an item name, so `/` keeps meaning `plugin/item` or, positionally,
-  `owner/repo` — and it resolves against subscription aliases only,
-  refusing with the subscribed list when nothing matches. A bare name
-  searches every enabled subscription in the scope for its kind: one
-  offer installs, two refuse printing the `::` spellings beside each
-  subscription's canonical repo, and zero is not found with the fix
-  named — the default subscription participates like any other, and
-  `default_source` serves only requests that name no item at all
-  (`--all`, a bare bundle). Installing a whole bundle subsumes, in the
-  same plan, the previously-declared members whose effective options
-  equal what the bundle derives (`add/subsume.rs`) — a member the user
-  shaped keeps its declaration with the preview saying why — and
-  `[bundles.<name>]` stays keyed by bare name, so a second marketplace's
+  qualifier is `marketplace::name` (`add/place.rs`) — `::` never appears in
+  an item name, so `/` keeps meaning `plugin/item` or, positionally,
+  `owner/repo` — and it resolves against subscription aliases only, refusing
+  with the subscribed list when nothing matches. A bare name searches every
+  enabled subscription in the scope for its kind: one offer installs, two
+  refuse printing the `::` spellings beside each subscription's canonical
+  repo, and zero is not found with the fix named — the default subscription
+  participates like any other, and `default_source` serves only requests
+  that name no item at all (`--all`, a bare bundle). Installing a whole
+  bundle subsumes, in the same plan, the previously-declared members whose
+  effective options equal what the bundle derives (`add/subsume.rs`) — a
+  member the user shaped keeps its declaration with the preview saying why —
+  and `[bundles.<name>]` stays keyed by bare name, so a second marketplace's
   same-named bundle is refused naming the first.
-- **A plugin-registry-shaped catalog is recognized, never guessed.** A source
-  is read one plugin deep (`plugins/<name>/{agents,commands,skills}`)
+- **A plugin-registry-shaped catalog is recognized, never guessed.** A
+  source is read one plugin deep (`plugins/<name>/{agents,commands,skills}`)
   exactly when it carries `.claude-plugin/marketplace.json`; a `plugins/`
-  directory on its own is not evidence, and guessing renames every item in
-  a catalog that never asked for it. The registry, not the directory
-  listing, decides what such a catalog offers: an item resolves only under
-  a plugin the registry validated, and only entries pointing at a
-  directory inside the repository are consumed — an entry naming another
-  repository or a URL is skipped with a finding, since fetching it would
-  be a second, unpinned download behind the one the user asked for.
-  Everything the catalog gets wrong is a finding with a fix, cross-file
-  included: a registry that disagrees with a plugin's own manifest about
-  its name or version, a plugin describing parts that live outside itself,
-  and two names one filesystem would fold together. Registry metadata
-  (category, version, author, license, homepage, and the plugin's items as
-  a named group) is read-side only — it feeds browsing and, later,
-  installing a plugin as a unit; the manifest records what the user chose,
-  never what a catalog says about itself.
+  directory on its own is not evidence, and guessing renames every item in a
+  catalog that never asked for it. The registry, not the directory listing,
+  decides what such a catalog offers: an item resolves only under a plugin
+  the registry validated, and only entries pointing at a directory inside
+  the repository are consumed — an entry naming another repository or a URL
+  is skipped with a finding, since fetching it would be a second, unpinned
+  download behind the one the user asked for. Everything the catalog gets
+  wrong is a finding with a fix, cross-file included: a registry that
+  disagrees with a plugin's own manifest about its name or version, a plugin
+  describing parts that live outside itself, and two names one filesystem
+  would fold together. Registry metadata (category, version, author,
+  license, homepage, and the plugin's items as a named group) is read-side
+  only — it feeds browsing and, later, installing a plugin as a unit; the
+  manifest records what the user chose, never what a catalog says about
+  itself.
 - **Any repo holding skills is a marketplace — discovered from a closed
-  table, never guessed wider.** `source/discover.rs` owns a versioned
-  search table (`DISCOVERY_VERSION`, part of the safety-cache key):
-  `skills/` and `skills/.curated`, each harness's project skills dir
-  (pinned to the adapters by test), `<dir>/**/SKILL.md` up to three levels
-  down for category nesting — stopping below a found skill, skipping
-  `.git`, `node_modules` and friends — and a repo-root `SKILL.md` as a
-  one-skill repo named by its validated frontmatter `name`, else by the
-  repository leaf the caller passes, since a store directory is a commit
-  id. The table yields skills only: hooks, MCP servers, commands and
-  agents install from a declared kendex layout, `kendex.toml`, or a
-  plugin registry — executable content is never discovered into
-  existence, so a `hooks/` folder in an undeclared skills repo is
-  repository tooling, not an offer. Precedence is fixed and fail-closed:
-  a `.claude-plugin/marketplace.json` registry wins outright and root
-  dirs are not read; else a parsed control file declares the fixed
-  layout (`[catalog]` overriding which dirs) and the search table stays
-  out — discovery exists for repos that never declared anything; else
-  the search runs. A control file that is present but unreadable, or a
-  wrong-typed `[catalog]` value, makes the source unusable with a
-  finding — presence selects the mode, and breakage never falls through
-  to a different one, because serving defaults would offer a different
-  catalog than the author published. Every probe goes through
+  table, never guessed wider.** `source/discover.rs` owns a versioned search
+  table (`DISCOVERY_VERSION`, part of the safety-cache key): `skills/` and
+  `skills/.curated`, each harness's project skills dir (pinned to the
+  adapters by test), `<dir>/**/SKILL.md` up to three levels down for
+  category nesting — stopping below a found skill, skipping `.git`,
+  `node_modules` and friends — and a repo-root `SKILL.md` as a one-skill
+  repo named by its validated frontmatter `name`, else by the repository
+  leaf the caller passes, since a store directory is a commit id. The table
+  yields skills only: hooks, MCP servers, commands and agents install from a
+  declared kendex layout, `kendex.toml`, or a plugin registry — executable
+  content is never discovered into existence, so a `hooks/` folder in an
+  undeclared skills repo is tooling, not an offer. Precedence is fixed and
+  fail-closed: a `.claude-plugin/marketplace.json` registry wins outright
+  and root dirs are not read; else a parsed control file declares the fixed
+  layout (`[catalog]` overriding which dirs) and the search table stays out
+  — discovery exists for repos that never declared anything; else the search
+  runs. A control file present but unreadable, or a wrong-typed `[catalog]`,
+  makes the source unusable with a finding — presence selects the mode and
+  breakage never falls through to another, since serving defaults would
+  offer a catalog the author never published. Every probe goes through
   `SealedSource` (symlinks skipped, budgets held, hard caps on found
   skills); items dedupe by normalized repository-relative path, never
-  `canonicalize`; two directories that fold to one name are **both**
-  skipped with a finding naming both — unless their bytes are identical, in
-  which case one skill served under two harness layouts is deduplicated by
-  content, not treated as a clash — so which directory the walk reached
-  first can never decide which of two clashing skills installs. A
-  frontmatter `name` disagreeing with its directory is a finding (the
-  directory is the identity), and submodule or LFS pointers under a
-  recognized root are findings, not hydrated. A name that carries an
-  invisible or direction-reversing character is refused (`names::segment_problem`)
-  and shown with it escaped (`names::shown`), so one marketplace's package
-  cannot wear another's name on screen while installing under a different
-  one; a declared-layout catalog lists only names that install, so the
-  Packages table never draws a row `find_item` would refuse. The walk stops
-  at its skill cap rather than reading the rest of a hostile tree, bounding
-  the work, not just the output. `source/about.rs` renders the one typed report — what was
-  found where, plus every finding — that the About tab and `kendex
-  index` consume.
+  `canonicalize`; two directories that fold to one name are **both** skipped
+  with a finding naming both — identical bytes excepted, that being one
+  skill served under two harness layouts — so the walk's order never decides
+  which of two clashing skills installs. A frontmatter `name` disagreeing
+  with its directory is a finding (the directory is the identity), and
+  submodule or LFS pointers under a recognized root are findings, not
+  hydrated. A name carrying an invisible or direction-reversing character is
+  refused (`names::segment_problem`) and shown escaped (`names::shown`), so
+  one marketplace's package cannot wear another's name on screen while
+  installing under a different one; a declared-layout catalog lists only
+  names that install, so the Packages table never draws a row `find_item`
+  would refuse. The walk stops at its skill cap rather than reading the rest
+  of a hostile tree, bounding the work, not just the output.
+  `source/about.rs` renders the one typed report — what was found where,
+  plus every finding — that the About tab and `kendex index` consume.
 - **Browsing is a read-side join, and installed state is derived, never
-  stored.** `source/browse.rs` answers what one catalog offers — every
-  package across kinds, a bundle's members, a package's preview — with each
-  row's state joined from the scope's manifest and lock on every call:
-  installed is a lock entry from this subscription, held-back-by-safety is
-  asked-for content whose catalog bytes the gate's own verdict refuses, and
-  a bundle's "partly installed (2 of 6)" is counted from its members, so no
-  stored flag can drift from the records it summarizes. A name another
-  source already holds is surfaced on the row (`collision`) before the
-  click; the refusal itself stays in the engine (invariant 4). Pre-install
-  safety (`browse/safety.rs`) scores catalog bytes with the same rules an
-  install runs and caches **findings and scores only**, beside the commit's
-  receipt in the immutable store (`<key>/<commit>.safety/…` — never inside
-  the checkout, whose receipt-signed tree must not change), keyed by the
-  item's content hash plus the rule-set, discovery-table and record-format
-  versions, each recomputed and verified before reuse. The warn/block
-  verdict is derived from the current thresholds at read time — thresholds
-  in the key would re-score on every settings change and imply a different
-  analysis where only the judgment moved. Browse is a preview of the
-  verdict, never a second gate. `library.rs` is the same posture for the
-  Library table: one lock+manifest join mapping every installation to its
-  origin — a subscription, the user's own local content (with what a fork
-  replaced), or observed-and-unmanaged.
+  stored.** Every `source/browse.rs` read — packages across kinds, a
+  bundle's members, a package's preview — takes a `Catalog`,
+  `Subscription { scope, source }` or `Repo { repo }`, so a listed
+  marketplace opens before anyone subscribes on the pages a subscription
+  gets, not a parallel set. Each row's state is joined from the scope's
+  manifest and lock on every call — installed is a lock entry from this
+  subscription, held-back-by-safety is asked-for content whose catalog bytes
+  the gate's own verdict refuses, "partly installed (2 of 6)" is counted
+  from a bundle's members — so no stored flag can drift from the records it
+  summarizes; with no subscription the join answers Available and judges
+  name clashes against the personal scope, where Subscribe lands. A name
+  another source holds is surfaced on the row (`collision`) before the
+  click; the refusal stays in the engine (invariant 4). A bare repository is
+  fetched by `remote::sync` into the store a subscription reads from, under
+  the canonical `owner/repo` every GitHub spelling folds to — the key
+  Subscribe is prefilled with — so subscribing never downloads twice and the
+  safety record is shared per commit; only GitHub opens blind
+  (`NotBrowsable` otherwise), and a root skill's file list and file reads
+  are confined to the skill tree scoring and install read, never the
+  repository around it. `browse::summary`, a repository's first read,
+  refreshes (a failure is a warning over the store's copy) and names an
+  enabled, readable subscription this machine already holds for it;
+  `useCatalog` moves the page onto it the moment one exists, so "subscribe
+  from here" keeps your place. Installing still needs a subscription: a
+  repository page's one action is Subscribe. Pre-install safety
+  (`browse/safety.rs`) scores catalog bytes with the rules an install runs
+  and caches **findings and scores only**, beside the commit's receipt in
+  the immutable store (`<key>/<commit>.safety/…`, never inside the
+  receipt-signed checkout), keyed by the item's content hash plus the
+  rule-set, discovery-table and record-format versions, each recomputed and
+  verified before reuse. The warn/block verdict is derived from the current
+  thresholds at read time — thresholds in the key would re-score on every
+  settings change. Browse is a preview of the verdict, never a second gate.
+  `library.rs` is the same join for the Library table, mapping each
+  installation to its origin: a subscription, local content (with what a
+  fork replaced), or observed-and-unmanaged.
 - **A subscription's closure is derived by re-expansion, and unsubscribing
   removes or keeps exactly it.** `engine/detach.rs` computes what leaves
   with a marketplace by expanding the installed set with the source present
   and again with its declarations gone, then diffing — a derived dependency
-  never names the source, so only the difference tells the truth about what
-  its going takes with it. A member another marketplace's bundle still
-  carries is in both expansions, so it stays. The closure refuses while the
-  source cannot be read, rather than infer a wrong one. **Remove** drops the
-  closure's declarations and sweeps their installations (orphan removal
-  filtered to the exact kind+name pairs, so an unrelated same-named orphan is
-  never taken); an edited installation is never swept without `--discard-edits`.
-  **Keep** (`detach/keep.rs`) copies each installation's *source-form* bytes —
-  read through the sealed catalog at the exact commit it installed from, a
-  parent skill excluding any nested child skill — into the scope's local
-  source, flips the declaration to `local` with fork provenance, and removes
-  the subscription; the local writes are ordered before the manifest flip in
-  one plan, so a failed apply rolls the whole conversion back (invariant 11).
-  Keep refuses an edited package (fork or discard first — hooks compared to
-  what apply wrote, so an edited script is caught), and preflights the local
-  target: a symlink, or a case/composition-folding sibling, or different bytes
-  already there is a refusal, never a clobber (invariants 4 and 6). The local
-  source lists a `plugin/item` name beside a plain `plugin`, so a detached
-  plugin-registry package round-trips.
-- **The machine seam reads through the same core installing reads
-  through.** `check_catalog.rs` (core) owns the two authoring passes —
-  structural (would each harness's loader hold this item) and safety (the
-  same rules an install runs) — so `kendex check --catalog [--json]`, the
-  indexer's per-package verdicts, and authoring preflight ask one
-  implementation; the CLI only prints, as lines or as a versioned envelope
-  (`schema`, typed findings, counts, `ok`). `source/index.rs` emits the
-  per-marketplace summary the community directory consumes (`kendex index
-  [<dir>] --json`, schema 1, plain directory, no network): metadata from
-  the catalog's own `[marketplace]` table (`source/meta.rs` — read-only,
-  every string capped and control-char-safe), packages built from
-  `list_items` so what the summary offers is exactly what subscribing
-  finds (pinned by test), safety scores from the check passes, bundles
-  with members, About rows, findings. Field order in both JSON shapes is
-  the schema — serde structs, no maps. `kendex marketplace check` is the
-  alias of `check --catalog --strict`, same exit codes. A maintainer's
-  reviewed findings live in a committed `kendex-reviews.toml` at the
-  catalog root (`check_catalog/dismissals.rs`): the same
-  content-hash-bound dismissal records the install side keeps in a
+  never names the source, so only the difference is true. A member another
+  marketplace's bundle still carries is in both expansions, so it stays. It
+  refuses while the source cannot be read. **Remove** drops the closure's
+  declarations and sweeps their installations (orphan removal filtered to
+  exact kind+name pairs); an edited installation is never swept without
+  `--discard-edits`. **Keep** (`detach/keep.rs`) copies each installation's
+  *source-form* bytes — read through the sealed catalog at the exact commit
+  it installed from, a parent skill excluding any nested child skill — into
+  the scope's local source, flips the declaration to `local` with fork
+  provenance, and removes the subscription; the local writes are ordered
+  before the manifest flip in one plan, so a failed apply rolls the
+  conversion back (invariant 11). Keep refuses an edited package (fork or
+  discard first; hooks are compared to what apply wrote) and preflights the
+  local target: a symlink, a case/composition-folding sibling, or different
+  bytes already there is a refusal, never a clobber (invariants 4 and 6).
+  The local source lists a `plugin/item` name beside a plain `plugin`, so a
+  detached plugin-registry package round-trips.
+- **The machine seam reads through the same core installing reads through.**
+  `check_catalog.rs` (core) owns the two authoring passes — structural
+  (would each harness's loader hold this item) and safety (the rules an
+  install runs) — so `kendex check --catalog [--json]`, the indexer's
+  per-package verdicts, and authoring preflight ask one implementation; the
+  CLI only prints, as lines or as a versioned envelope (`schema`, typed
+  findings, counts, `ok`). `source/index.rs` emits the per-marketplace
+  summary the community directory consumes (`kendex index [<dir>] --json`,
+  schema 1, plain directory, no network): metadata from the catalog's own
+  `[marketplace]` table (`source/meta.rs` — read-only, every string capped
+  and control-char-safe), packages built from `list_items` so the summary
+  offers exactly what subscribing finds (pinned by test), safety scores from
+  the check passes, bundles with members, About rows, findings. Field order
+  in both JSON shapes is the schema — serde structs, no maps.
+  `kendex marketplace check` aliases `check --catalog --strict`, same exit
+  codes. A maintainer's reviewed findings live in a committed
+  `kendex-reviews.toml` at the catalog root (`check_catalog/dismissals.rs`):
+  the same content-hash-bound dismissal records the install side keeps in a
   manifest, keyed `kind:name`, written by `dismiss --catalog` from the
-  tokens `check --catalog` prints. The authoring passes stop counting a
-  dismissed finding (still reported, marked) — and only the authoring
-  passes: a consumer's install never reads a catalog's own reviews, so a
-  catalog cannot pre-approve its content on anyone else's machine. Editing
-  the item stales the record and the hold returns.
-- **The community directory is read like any remote: strictly, capped,
-  and honest about staleness.** `registry/` (core) consumes what
+  tokens `check --catalog` prints. Only the authoring passes stop counting a
+  dismissed finding (still reported, marked); an install never reads a
+  catalog's own reviews, so a catalog cannot pre-approve itself on anyone
+  else's machine. Editing the item stales the record; the hold returns.
+- **The community directory is read like any remote: strictly, capped, and
+  honest about staleness.** `registry/` (core) consumes what
   `source/index.rs` producers feed kendex.ai: `index.rs` re-parses the
-  site's schema-1 payload under the site's own caps (a spoofed or
-  compromised registry cannot grow a row), refusing structural problems
-  whole and dropping only unusable rows; `cache.rs` holds one body and
-  one meta line on disk (`Env::registry_cache_dir`) behind an ETag and a
-  one-hour TTL, and a failed refresh serves the last fetch labeled stale
-  with its real fetch time — the Community tab is never blank. All reads
-  go through the `Fetch` trait (curl via `Hardened`, plain http only when
-  an explicit `KENDEX_API` override asks); tests inject canned
-  transports. `skillssh.rs` is the versioned adapter over their public
-  search: pinned wire schema refused on mismatch, capped, kill-switched
-  (`KENDEX_SKILLSSH=off`), and a hit is a lead, never an identity —
-  installing routes through the same subscribe path as any marketplace.
-  Sign-in, collections and deep links arrive with W3/W4.
-- **A listed marketplace is browsable before anyone subscribes to it, on
-  the same pages a subscription gets.** Every browse read in
-  `source/browse` takes a `Catalog` — `Subscription { scope, source }` or
-  `Repo { repo }` — so the app has one detail, package and bundle surface
-  rather than a parallel set. A bare repository is fetched by
-  `remote::sync` into the same store a subscription reads from, keyed by
-  the canonical `owner/repo` every GitHub spelling folds to — the same key
-  Subscribe is prefilled with — so subscribing never downloads twice, the
-  pre-install safety record is shared per commit, and a listing never
-  picks the transport; only GitHub is openable blind (`NotBrowsable` for
-  anything else), because that is what the directory and skills.sh hand
-  over. With no subscription the
-  installed-state join answers Available for everything and judges name
-  clashes against the personal scope, where Subscribe lands by default.
-  `browse::summary` is a repository's first read — it refreshes, reports a
-  failed refresh as a warning over the store's copy, and names an enabled
-  subscription this machine already holds for that repository whose
-  content is readable — and the
-  UI's `useCatalog` switches the page onto that subscription the moment one
-  exists, which is how "subscribe from here" keeps your place. Installing
-  still needs a subscription: a repository page's one action is Subscribe.
+  site's schema-1 payload under the site's own caps (a spoofed registry
+  cannot grow a row), refusing structural problems whole and dropping only
+  unusable rows; `cache.rs` holds one body and one meta line on disk
+  (`Env::registry_cache_dir`) behind an ETag and a one-hour TTL, and a
+  failed refresh serves the last fetch labeled stale with its real fetch
+  time — the Community tab is never blank. All reads go through the `Fetch`
+  trait (curl via `Hardened`, plain http only when an explicit `KENDEX_API`
+  override asks); tests inject canned transports. `skillssh.rs` is the
+  versioned adapter over their public search: pinned wire schema refused on
+  mismatch, capped, kill-switched (`KENDEX_SKILLSSH=off`); a hit is a lead,
+  never an identity, installing through the same subscribe path as any
+  marketplace. Sign-in, collections and deep links arrive with W3/W4.
 - **Intent in the manifest, closure in the plan, edges in the lock.** The
   manifest records choices and never their consequences: the items asked
   for, the bundles installed, which optional dependencies were taken, what
