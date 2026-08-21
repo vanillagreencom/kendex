@@ -254,3 +254,66 @@ fn a_skill_shared_by_symlink_counts_as_one_edited_rendering() {
     assert_eq!(row.edited_harnesses.len(), 1, "{:?}", row.edited_harnesses);
     assert!(row.forkable_harness.is_some(), "{row:?}");
 }
+
+/// The discard needs the source content, not its history: with the mirror
+/// gone the row loses its version labels and keeps the way out. A package
+/// the source no longer carries has nothing to put in the edits' place.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn discard_survives_an_unreadable_history_but_not_a_vanished_package() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "Upstream.");
+    commit(&w.upstream, "one");
+    declare(&w, "[skills.gh]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    fs::write(skill_file(&w), "my edited version").unwrap();
+
+    // The checkout the plan renders from stays; only the mirror's history
+    // becomes unreadable.
+    let mirrors = w.home.join(".cache/kendex/sources/mirrors");
+    let mirror = fs::read_dir(&mirrors)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let config = fs::read_to_string(mirror.join("config")).unwrap();
+    fs::write(
+        mirror.join("config"),
+        format!("{config}[log]\n\tdiffMerges = bogus\n"),
+    )
+    .unwrap();
+    let report = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();
+    let row = report
+        .rows
+        .iter()
+        .find(|row| row.kind == ItemKind::Skill && row.name == "gh")
+        .unwrap();
+    assert!(row.blocked_by_local_edit);
+    assert!(row.latest.is_none(), "{row:?}");
+    assert!(row.can_discard, "{row:?}");
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|warning| warning.message.contains("history could not be read")),
+        "{:?}",
+        report.warnings
+    );
+    fs::write(mirror.join("config"), config).unwrap();
+
+    fs::remove_dir_all(w.upstream.join("skills/gh")).unwrap();
+    commit(&w.upstream, "gone");
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
+    let report = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();
+    let row = report
+        .rows
+        .iter()
+        .find(|row| row.kind == ItemKind::Skill && row.name == "gh")
+        .unwrap();
+    assert!(row.removed_upstream, "{row:?}");
+    assert!(!row.can_discard);
+}

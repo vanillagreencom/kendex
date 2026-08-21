@@ -2283,9 +2283,10 @@ export type UpdateRow = {
 	 */
 	forkableHarness: HarnessId | null,
 	/**
-	 *  Whether dropping the edits can put replacement content in place:
-	 *  false once the source no longer carries the package, and false for
-	 *  a derived place whose owner holds it at an older revision — either
+	 *  Whether dropping the edits can put replacement content in place —
+	 *  the source content resolved, whether or not its history could be
+	 *  read. False once the source no longer carries the package, and for
+	 *  a derived place whose owner holds it at an older revision: either
 	 *  way the discard would only bring back what is already there.
 	 */
 	canDiscard: boolean,

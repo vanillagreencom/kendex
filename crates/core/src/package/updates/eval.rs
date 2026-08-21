@@ -214,8 +214,10 @@ impl Eval<'_> {
             // A derived place held by its owner cannot take the newer
             // content on its own: the discard would replan the unchanged
             // manifest, restore the old held copy, and leave the update
-            // pending — the edit gone for nothing.
-            can_discard: latest.is_some() && !(planned.derived && pinned && update_available),
+            // pending — the edit gone for nothing. Reaching this row at all
+            // means the source content resolved, so an unreadable history
+            // (no `latest`) takes the version labels, never the discard.
+            can_discard: !(planned.derived && pinned && update_available),
             derived: planned.derived,
             edited_harnesses,
             forked,
