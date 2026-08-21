@@ -1,6 +1,5 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useState } from "react";
-import type { ItemSafety } from "@/bindings";
 import { FileLink } from "@/components/file-link";
 import { InlineMarkdown } from "@/components/inline-markdown";
 import { StatusDot } from "@/components/status-dot";
@@ -9,9 +8,14 @@ import {
   publisherSettledLabel,
   publisherSettledNote,
 } from "@/lib/copy-safety";
-import { SEVERITY_DOT_TONE, SEVERITY_LABELS, sentence } from "@/lib/labels";
+import {
+  harnessName,
+  SEVERITY_DOT_TONE,
+  SEVERITY_LABELS,
+  sentence,
+} from "@/lib/labels";
 import { relativeTime } from "@/lib/relative-time";
-import { authorOccurrences } from "@/lib/reviewable";
+import type { PublisherGroup } from "@/lib/reviewable";
 
 /**
  * What the publisher of an item already ruled on, on the machine that
@@ -24,10 +28,9 @@ import { authorOccurrences } from "@/lib/reviewable";
  * closed by default because nothing here needs doing — and it is one click
  * from open because "nothing to do" is not the same as "nothing happened".
  */
-export function PublisherSettled({ rows }: { rows: ItemSafety[] }) {
+export function PublisherSettled({ groups }: { groups: PublisherGroup[] }) {
   const [open, setOpen] = useState(false);
-  const occurrences = authorOccurrences(rows);
-  if (occurrences.length === 0) return null;
+  if (groups.length === 0) return null;
   return (
     <div className="flex flex-col gap-2">
       <button
@@ -40,34 +43,36 @@ export function PublisherSettled({ rows }: { rows: ItemSafety[] }) {
         ) : (
           <ChevronRight className="size-3.5" />
         )}
-        {publisherSettledLabel(occurrences.length)}
+        {publisherSettledLabel(groups.length)}
       </button>
       {open ? (
         <div className="flex flex-col gap-3 pl-5">
           <p className="text-xs text-foreground/70">
             {publisherSettledExplainer}
           </p>
-          {occurrences.map(({ row, finding, decision }) => {
-            if (decision.state.state !== "author-dismissed") return null;
-            const when = Date.parse(decision.state.dismissedAt);
+          {groups.map((group) => {
+            const when = Date.parse(group.dismissedAt);
+            const tools = [
+              ...new Set(group.items.map((item) => harnessName(item.harness))),
+            ];
             return (
               <div
-                key={`${row.kind}:${row.name}:${row.harness}:${decision.fingerprint}`}
+                key={`${group.items[0]?.kind}:${group.items[0]?.name}:${group.finding.rule}:${group.finding.location}`}
                 className="flex items-start gap-2.5"
               >
                 <StatusDot
-                  tone={SEVERITY_DOT_TONE[finding.severity]}
+                  tone={SEVERITY_DOT_TONE[group.finding.severity]}
                   className="mt-[7px]"
-                  title={SEVERITY_LABELS[finding.severity]}
+                  title={SEVERITY_LABELS[group.finding.severity]}
                 />
                 <div className="flex min-w-0 flex-1 flex-col gap-1.5">
                   <p className="text-sm break-words">
-                    <InlineMarkdown source={sentence(finding.message)} />
+                    <InlineMarkdown source={sentence(group.finding.message)} />
                   </p>
                   <p className="text-[13px] break-words text-foreground/70">
                     {publisherSettledNote(
-                      decision.state.publisher,
-                      decision.state.reason,
+                      group.publisher,
+                      group.reason,
                       Number.isNaN(when)
                         ? null
                         : relativeTime(when, Date.now()),
@@ -75,9 +80,12 @@ export function PublisherSettled({ rows }: { rows: ItemSafety[] }) {
                   </p>
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className="font-mono text-xs text-muted-foreground">
-                      {finding.rule}
+                      {group.finding.rule}
                     </span>
-                    <FileLink location={finding.location} />
+                    <FileLink location={group.finding.location} />
+                    <span className="text-xs text-muted-foreground">
+                      {group.items[0]?.name} · {tools.join(", ")}
+                    </span>
                   </div>
                 </div>
               </div>

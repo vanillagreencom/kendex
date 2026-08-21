@@ -485,16 +485,10 @@ export type AuditView_Serialize = {
 	error?: ScopeError | null,
 };
 
-/**  One finding the publisher settled, and how far that reaches. */
+/**  One finding the publisher settled. */
 export type AuthorDismissal = {
 	reason: DismissReason,
 	dismissedAt: string,
-	/**
-	 *  How many times the publisher's own bytes carried this finding. The
-	 *  budget a reader spends: past it, an occurrence is content the
-	 *  publisher never reviewed.
-	 */
-	occurrences: number,
 };
 
 /**  One package a subscription offers, as the Packages table lists it. */
@@ -1892,6 +1886,16 @@ export type PackageFile = {
 	isReadme: boolean,
 };
 
+/**
+ *  One finding on an offered package, with the publisher's record about it
+ *  when they have one. A settled finding is reported here and does not
+ *  count toward the score or the verdict — the same answer the install
+ *  gate gives, which is the only reason this preview is worth showing.
+ */
+export type PackageFinding = {
+	settled: AuthorDismissal | null,
+} & Finding;
+
 export type PackageMeta = PackageMeta_Serialize | PackageMeta_Deserialize;
 
 export type PackageMeta_Deserialize = {
@@ -1960,7 +1964,11 @@ export type PackageRef = {
 export type PackageSafety = {
 	kind: ItemKind,
 	name: string,
-	findings: Finding[],
+	/**
+	 *  Every finding, each carrying whatever has already been decided about
+	 *  it. One row, not two arrays a reader has to keep in step by index.
+	 */
+	findings: PackageFinding[],
 	safety: SafetyScore,
 	/**  Advisory, never blocking. */
 	quality: QualityScore | null,
@@ -1971,13 +1979,7 @@ export type PackageSafety = {
 	ruleset: number,
 	/**  Whether a verified cache entry answered instead of a fresh score. */
 	fromCache: boolean,
-	/**
-	 *  For each finding, in `findings` order, the publisher's record that
-	 *  settles it — reported here, and not counted toward the score or the
-	 *  verdict, exactly as at the install gate.
-	 */
-	settled: (AuthorDismissal | null)[],
-	/**  Who recorded them, when this package carries any. */
+	/**  Who recorded the settled findings, when this package carries any. */
 	publisher: string | null,
 };
 

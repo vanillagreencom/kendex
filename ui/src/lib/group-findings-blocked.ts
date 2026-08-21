@@ -4,7 +4,14 @@
 // single rule firing at several locations in one skill, otherwise renders
 // as several verbatim repeats of the same problem; this collapses both
 // before anything renders.
-import type { Finding, ItemKind, ItemSafety, Severity } from "@/bindings";
+import type {
+  DismissReason,
+  Finding,
+  FindingDecision,
+  ItemKind,
+  ItemSafety,
+  Severity,
+} from "@/bindings";
 import { SEVERITY_RANK } from "@/lib/group-findings";
 
 export interface RuleGroup {
@@ -13,16 +20,32 @@ export interface RuleGroup {
   message: string;
   remediation: string;
   locations: string[];
+  /** The publisher's record, where one settled every occurrence behind this
+   *  group. A held-back item's score already excludes them, so a line that
+   *  printed a plain fix here would be asking the reader to act on
+   *  something nobody is counting. Absent where any occurrence is still an
+   *  open question. */
+  settledBy: SettledBy | null;
+}
+
+export interface SettledBy {
+  reason: DismissReason;
+  dismissedAt: string;
+  publisher: string;
 }
 
 // Within one item's finding list, the same rule can fire once per line it
 // matched (a hook shelling through the same wrapper at four call sites) —
 // same message, same fix, four locations. This collapses those into one
 // entry so the fix sentence prints once instead of once per location.
-export function groupFindingsByRule(findings: Finding[]): RuleGroup[] {
+export function groupFindingsByRule(
+  findings: Finding[],
+  decisions: FindingDecision[] = [],
+): RuleGroup[] {
   const ordered: RuleGroup[] = [];
   const byKey = new Map<string, RuleGroup>();
-  for (const finding of findings) {
+  const decided = new Map<string, (SettledBy | null)[]>();
+  for (const [index, finding] of findings.entries()) {
     const key = `${finding.rule}::${finding.message}::${finding.remediation}`;
     let group = byKey.get(key);
     if (!group) {
@@ -32,14 +55,37 @@ export function groupFindingsByRule(findings: Finding[]): RuleGroup[] {
         message: finding.message,
         remediation: finding.remediation,
         locations: [],
+        settledBy: null,
       };
       byKey.set(key, group);
       ordered.push(group);
+      decided.set(key, []);
     }
     if (SEVERITY_RANK[finding.severity] > SEVERITY_RANK[group.severity]) {
       group.severity = finding.severity;
     }
     group.locations.push(finding.location);
+    const state = decisions[index]?.state;
+    decided.get(key)?.push(
+      state?.state === "author-dismissed"
+        ? {
+            reason: state.reason,
+            dismissedAt: state.dismissedAt,
+            publisher: state.publisher,
+          }
+        : null,
+    );
+  }
+  // A group speaks for the publisher only if every occurrence behind it
+  // does: one occurrence nobody has ruled on and the reader still has
+  // something to do here.
+  for (const group of ordered) {
+    const key = `${group.rule}::${group.message}::${group.remediation}`;
+    const states = decided.get(key) ?? [];
+    group.settledBy =
+      states.length > 0 && states.every((state) => state !== null)
+        ? states[0]
+        : null;
   }
   return ordered;
 }
@@ -140,7 +186,7 @@ export function groupBlocked(blocked: ItemSafety[]): BlockedGroup[] {
         kind: row.kind,
         name: row.name,
         rows: [],
-        findingGroups: groupFindingsByRule(row.findings),
+        findingGroups: groupFindingsByRule(row.findings, row.decisions),
       };
       byKey.set(key, group);
       ordered.push(group);

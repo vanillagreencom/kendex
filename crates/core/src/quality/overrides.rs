@@ -53,24 +53,19 @@ impl OverrideState {
 /// The fingerprints of a finding set, in the one order two sets can be
 /// compared in. `root` is the item's location, stripped from each print so
 /// two readings of the same bytes at different paths compare equal.
-pub fn fingerprints(findings: &[Finding], root: &str) -> Vec<String> {
-    let mut prints: Vec<String> = findings.iter().map(|f| f.fingerprint(root)).collect();
+pub fn fingerprints(findings: &[Finding]) -> Vec<String> {
+    let mut prints: Vec<String> = findings.iter().map(Finding::fingerprint).collect();
     prints.sort();
     prints.dedup();
     prints
 }
 
 /// Record a review of exactly this content and these findings.
-pub fn mint(
-    review_hash: &str,
-    findings: &[Finding],
-    root: &str,
-    note: Option<String>,
-) -> SafetyOverride {
+pub fn mint(review_hash: &str, findings: &[Finding], note: Option<String>) -> SafetyOverride {
     SafetyOverride {
         review_hash: review_hash.to_owned(),
         ruleset: RULESET_VERSION,
-        findings: fingerprints(findings, root),
+        findings: fingerprints(findings),
         granted_at: crate::clock::timestamp(),
         note,
     }
@@ -107,7 +102,6 @@ pub fn state(
     recorded: Option<&SafetyOverride>,
     review_hash: Option<&str>,
     findings: &[Finding],
-    root: &str,
 ) -> OverrideState {
     let Some(recorded) = recorded else {
         return OverrideState::Absent;
@@ -115,7 +109,7 @@ pub fn state(
     if let Some(why) = snapshot_stale(&recorded.review_hash, recorded.ruleset, review_hash) {
         return OverrideState::Stale { why };
     }
-    if recorded.findings != fingerprints(findings, root) {
+    if recorded.findings != fingerprints(findings) {
         return OverrideState::Stale {
             why: "different problems were found than the ones that were reviewed".to_owned(),
         };
@@ -152,7 +146,7 @@ mod tests {
             granted_at: "2026-01-01T00:00:00Z".to_owned(),
             note: None,
         };
-        match state(Some(&recorded), Some("same-bytes"), &findings, "s") {
+        match state(Some(&recorded), Some("same-bytes"), &findings) {
             OverrideState::Stale { why } => {
                 assert!(why.contains("safety rules changed"), "{why}");
                 assert!(!why.contains("different problems"), "{why}");

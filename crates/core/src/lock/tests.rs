@@ -160,10 +160,10 @@ fn an_empty_lock_reads_as_current() {
 
 /// What a version bump is for: an older build must refuse the lock rather
 /// than read it, drop the record it does not know about, and write the file
-/// back without it. A publisher's review lives in the entry now, so the
-/// file it appears in has to declare a version the build that predates it
-/// refuses — every such build refuses anything above its own ceiling, and
-/// 4 was the ceiling before this field existed.
+/// back without it. An entry carrying a publisher's review therefore has to
+/// sit in a file declaring a version above 4, the ceiling of every build
+/// whose `LockEntry` has no such field — each of which refuses anything
+/// above its own ceiling.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_lock_carrying_a_publishers_review_declares_a_version_older_builds_refuse() {

@@ -180,29 +180,25 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
                     Before you install
                   </h3>
                   <div className="space-y-3">
-                    {view.safety.findings.map((finding, index) => {
-                      const settled = view.safety.settled[index];
-                      // A finding the publisher already ruled on is shown
-                      // like any other and says whose call it was: it does
-                      // not count toward the score here, exactly as it will
-                      // not count when this installs.
-                      return settled ? (
-                        <FindingLine
-                          key={`${finding.location}:${finding.message}`}
-                          finding={finding}
-                          settledBy={publisherSettledNote(
-                            view.safety.publisher ?? "The publisher",
-                            settled.reason,
-                            null,
-                          )}
-                        />
-                      ) : (
-                        <FindingLine
-                          key={`${finding.location}:${finding.message}`}
-                          finding={finding}
-                        />
-                      );
-                    })}
+                    {/* A finding the publisher already ruled on is shown
+                        like any other and says whose call it was: it does
+                        not count toward the score here, exactly as it will
+                        not count when this installs. */}
+                    {view.safety.findings.map((row) => (
+                      <FindingLine
+                        key={`${row.rule}:${row.location}:${row.message}`}
+                        finding={row}
+                        settledBy={
+                          row.settled
+                            ? publisherSettledNote(
+                                view.safety.publisher ?? "The publisher",
+                                row.settled.reason,
+                                null,
+                              )
+                            : undefined
+                        }
+                      />
+                    ))}
                   </div>
                 </section>
               ) : null}

@@ -4,7 +4,7 @@ import { RECORDED_DECISIONS_LINK } from "@/lib/copy-decisions";
 import { cleanSummaryLead, settledSummaryLead } from "@/lib/copy-safety";
 import { groupSkipped, groupWarnings } from "@/lib/group-notes";
 import { kindLabel, skipReasonShort } from "@/lib/labels";
-import { authorSettledCount, settledCount } from "@/lib/reviewable";
+import { publisherGroups, settledCount } from "@/lib/reviewable";
 import { useNavStore } from "@/stores/nav";
 
 /**
@@ -48,7 +48,8 @@ export function ScopeFooter({
   /** Rows whose findings someone already ruled on. */
   settled: ItemSafety[];
   /** Every other scored row a publisher's record could speak for — an item
-   *  with open findings can carry settled ones beside them. */
+   *  with open findings, or one the gate is holding back, can carry settled
+   *  findings beside them. */
   alsoScored: ItemSafety[];
   notes: string[];
   warnings: ItemWarning[];
@@ -57,10 +58,12 @@ export function ScopeFooter({
 }) {
   const goTo = useNavStore((s) => s.goTo);
   const decided = settledCount(settled);
-  const byAuthor = authorSettledCount(settled);
+  // One row set behind both numbers: the sentence and the control under it
+  // saying different counts of the same thing is worse than either alone.
+  const publisher = publisherGroups([...settled, ...alsoScored]);
   const checked = [
     ...(clean.length > 0 ? [cleanSummaryLead(clean.length)] : []),
-    ...(decided > 0 ? [settledSummaryLead(decided, byAuthor)] : []),
+    ...(decided > 0 ? [settledSummaryLead(decided, publisher.length)] : []),
   ];
   const skipped = groupSkipped(clean).map((group) => {
     const noun = group.kind
@@ -74,7 +77,8 @@ export function ScopeFooter({
     skipped.length === 0 &&
     notes.length === 0 &&
     noted.length === 0 &&
-    unmanaged === 0
+    unmanaged === 0 &&
+    publisher.length === 0
   )
     return null;
 
@@ -100,7 +104,15 @@ export function ScopeFooter({
           {skipped.map((line) => (
             <p key={line}>Not checked: {line}</p>
           ))}
-          <PublisherSettled rows={[...settled, ...alsoScored]} />
+        </Fact>
+      ) : null}
+
+      {/* Its own row, never inside another: what a publisher decided on the
+          reader's behalf has to be readable whether or not this scope
+          happens to have a clean item or a skipped rule to report. */}
+      {publisher.length > 0 ? (
+        <Fact label="Reviewed by the publisher">
+          <PublisherSettled groups={publisher} />
         </Fact>
       ) : null}
 

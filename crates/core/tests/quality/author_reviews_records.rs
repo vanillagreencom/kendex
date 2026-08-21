@@ -210,3 +210,139 @@ fn a_reviewed_command_survives_being_rendered_as_a_skill() {
         );
     }
 }
+
+/// A hook is scored from the script a plan writes and audited from the
+/// shared settings file its registration lands in — two readings of
+/// different bytes, by design. A record can bind to one or the other and
+/// never both, so it is refused where it is read: honouring it at the gate
+/// would install an item the very next audit re-opens.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_hook_carries_no_publishers_review() {
+    let f = fixture();
+    fs::create_dir_all(f.source.join("hooks")).unwrap();
+    fs::write(
+        f.source.join("hooks/guard.sh"),
+        "#!/usr/bin/env bash\n# ---\n# name: guard\n# event: PreToolUse\n# matcher: Bash\n# description: check\n# ---\nsudo rm -rf /tmp/x\n",
+    )
+    .unwrap();
+    declare(&f, "\n[hooks.guard]\nsource = \"cat\"\n");
+    let before = row(&plan(&f, &[]), "guard");
+    assert!(
+        !before.findings.is_empty(),
+        "the hook has something to settle"
+    );
+
+    author_dismisses(&f.source, ItemKind::Hook, "guard", &[]);
+    let report = plan(&f, &[]);
+    let planned = row(&report, "guard");
+    assert!(
+        planned
+            .decisions
+            .iter()
+            .all(|decision| !matches!(decision.state, DecisionState::AuthorDismissed { .. })),
+        "the record is refused at the gate, not spent and then dropped"
+    );
+    assert_eq!(planned.safety.score, before.safety.score);
+
+    // And nothing lands in the lock for a later audit to disagree with.
+    apply::execute(&f.env, &report.plan, None).unwrap();
+    let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap();
+    assert!(
+        lock.entries
+            .values()
+            .filter(|entry| entry.kind == ItemKind::Hook)
+            .all(|entry| entry.author_review.is_none())
+    );
+}
+
+/// Codex writes a command as a skill tree and scans it back as one, so the
+/// record the lock holds has to be sealed as what the artifact *is* on disk.
+/// Sealed as the logical kind, a reviewed command installs and the very
+/// next audit reports it open again.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_reviewed_command_keeps_its_review_after_it_installs() {
+    let f = fixture();
+    let commands = f.source.join("commands");
+    fs::create_dir_all(&commands).unwrap();
+    fs::write(
+        commands.join("ship.md"),
+        "---\ndescription: Ship it\n---\n\nRun `git commit --no-verify` to land it.\n",
+    )
+    .unwrap();
+    let path = kendex_core::manifest::manifest_path(&f.env, &f.scope);
+    let text = fs::read_to_string(&path)
+        .unwrap()
+        .replace("harnesses = [\"claude\"]", "harnesses = [\"codex\"]")
+        + "\n[commands.ship]\nsource = \"cat\"\n";
+    fs::write(&path, text).unwrap();
+    author_dismisses(&f.source, ItemKind::Command, "ship", &[]);
+
+    let report = plan(&f, &[]);
+    assert!(!row(&report, "ship").blocked());
+    apply::execute(&f.env, &report.plan, None).unwrap();
+
+    let installed = observed_rows(&f, "ship");
+    assert!(!installed.is_empty(), "the command installed");
+    for row in installed {
+        assert!(
+            !row.blocked(),
+            "{} still reads the record",
+            row.harness.name()
+        );
+        assert!(
+            row.decisions
+                .iter()
+                .all(|decision| matches!(decision.state, DecisionState::AuthorDismissed { .. }))
+        );
+    }
+}
+
+/// A record belongs to the item it was recorded for. Two same-kind items
+/// installed side by side from different catalogs, one reviewed and one
+/// not, must read as exactly that — `publisher` is a name a person is asked
+/// to weigh, so one catalog being named as the reviewer of another's copy
+/// would be a lie about who answered for it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn one_publishers_record_never_answers_for_anothers_copy() {
+    let f = fixture();
+    let other = f.project.parent().unwrap().join("other-catalog");
+    fs::create_dir_all(&other).unwrap();
+    fs::write(other.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    // A finding that warns rather than blocks, so both copies install and
+    // both are there to be audited.
+    let body = "Then chmod 777 build.sh so it runs.\n";
+    skill(&f.source, "reviewed", body);
+    skill(&other, "twin", body);
+    declare(
+        &f,
+        &format!(
+            "\n[sources.other]\npath = \"{}\"\n\n[skills.reviewed]\nsource = \"cat\"\n\n[skills.twin]\nsource = \"other\"\n",
+            other.display()
+        ),
+    );
+    author_dismisses(&f.source, ItemKind::Skill, "reviewed", &[]);
+
+    let report = plan(&f, &[]);
+    apply::execute(&f.env, &report.plan, None).unwrap();
+    let twins = observed_rows(&f, "twin");
+    assert!(!twins.is_empty(), "the twin installed and is scored");
+    assert!(!observed_rows(&f, "reviewed").is_empty());
+    for row in observed_rows(&f, "reviewed") {
+        assert!(row.decisions.iter().all(|decision| matches!(
+            &decision.state,
+            DecisionState::AuthorDismissed { publisher, .. } if publisher.contains("catalog")
+        )));
+    }
+    // And the twin's own rows carry nobody's review: the record belongs to
+    // the item it was recorded for, not to every item that hashes alike.
+    for row in twins {
+        assert!(
+            row.decisions
+                .iter()
+                .all(|decision| !matches!(decision.state, DecisionState::AuthorDismissed { .. }))
+        );
+    }
+}

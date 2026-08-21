@@ -310,7 +310,7 @@ classify_segment() {
       fi
       case "$tok" in
         [A-Za-z_]*=*) continue ;;
-        sudo | command | env | nohup | time) continue ;;
+        command | env | nohup | sudo | time) continue ;;
       esac
       base="${tok##*/}"
       case "$base" in

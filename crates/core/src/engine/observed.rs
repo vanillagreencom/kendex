@@ -71,10 +71,22 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
                 .entries
                 .get(&key)
                 .map(|entry| entry.source_repo.clone());
-            let by_author = author_review(&lock, scored.review.as_deref());
-            let budget =
-                crate::quality::author::AuthorReview::budget(by_author, scored.review.as_deref());
-            let scored_findings = crate::quality::author::score(&result.findings, &root, &budget);
+            // The record answers for the bytes it was bound to, and within
+            // them only for what the publisher wrote: the installed
+            // SKILL.md carries the project's injected block, which is the
+            // project's own text and nobody's review.
+            let by_author = author_review(&lock, item, scored.review.as_deref());
+            let budget = by_author
+                .map(|review| {
+                    let input = crate::quality::observe::input_for(item);
+                    let authored = crate::quality::audit(crate::quality::AuditInput {
+                        content: crate::quality::author::authored(&input.content),
+                        ..input
+                    });
+                    crate::quality::author::Budget::earned(review, &authored.findings).budget
+                })
+                .unwrap_or_default();
+            let scored_findings = crate::quality::author::score(&result.findings, &budget);
             let (verdict, reasons) = crate::quality::verdict(
                 &scored_findings.counted,
                 &scored_findings.safety,
@@ -84,7 +96,6 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
                 manifest.safety_overrides.get(&key),
                 scored.review.as_deref(),
                 &result.findings,
-                &root,
             );
             let decisions = super::decisions::decisions(
                 &super::decisions::Installation {
@@ -138,14 +149,37 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
 /// for it stops applying, the rule every other review answers to.
 fn author_review<'a>(
     lock: &'a crate::lock::Lock,
+    item: &crate::model::ObservedItem,
     review_hash: Option<&str>,
 ) -> Option<&'a crate::quality::author::AuthorReview> {
     let review_hash = review_hash?;
     lock.entries
         .values()
+        .filter(|entry| names(entry, item))
         .filter_map(|entry| entry.author_review.as_ref())
         .find(|review| review.stale_why(Some(review_hash)).is_none())
-        .map(|review| review as &crate::quality::author::AuthorReview)
+}
+
+/// Whether this lock entry is about this observation. The harness is left
+/// out on purpose — one shared skill tree is what several tools load, each
+/// scored as its own row, while only the tool it was installed for has an
+/// entry. The kind and name are not: a review hash is sealed by kind, so
+/// two same-kind items carrying identical bytes hash alike, and `publisher`
+/// is a name a person is asked to weigh — being told one catalog reviewed
+/// another's copy would be a lie about who answered for it. Rendering
+/// writes an installed skill's own name into its frontmatter, so that
+/// collision is hard to reach today; the record still belongs to the item
+/// it was recorded for, and matching on the bytes alone would make that an
+/// accident rather than a rule. An entry that emitted this artifact under
+/// another kind's name is the one that wrote it, so it answers for it.
+fn names(entry: &crate::lock::LockEntry, item: &crate::model::ObservedItem) -> bool {
+    if entry.kind == item.kind && entry.name == item.name {
+        return true;
+    }
+    entry
+        .emitted
+        .as_ref()
+        .is_some_and(|emitted| emitted.kind == item.kind && emitted.name == item.name)
 }
 
 /// Every observation's score, one reading per distinct set of bytes, spread

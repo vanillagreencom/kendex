@@ -1,3 +1,4 @@
+use super::read::{honest, is_timestamp};
 use super::*;
 use crate::quality::Severity;
 use crate::quality::reviews::Dismissal;
@@ -37,15 +38,15 @@ fn a_decision_settles_only_as_many_occurrences_as_it_paid_for() {
             "`--no-verify` skips the checks a commit runs",
         ),
     ];
-    let fingerprint = findings[0].fingerprint("s");
+    let fingerprint = findings[0].fingerprint();
     let one = Budget([(fingerprint.clone(), 1)].into_iter().collect());
-    let scored = score(&findings, "s", &one);
+    let scored = score(&findings, &one);
     assert_eq!(scored.settled, vec![true, false]);
     assert_eq!(scored.counted.len(), 1);
     assert!(scored.unmatched.is_empty());
 
     let both = Budget([(fingerprint, 2)].into_iter().collect());
-    assert_eq!(score(&findings, "s", &both).counted.len(), 0);
+    assert_eq!(score(&findings, &both).counted.len(), 0);
 }
 
 /// A decision made against these very bytes covers every occurrence in
@@ -62,8 +63,8 @@ fn a_whole_budget_settles_every_occurrence() {
             "`--no-verify` skips the checks a commit runs",
         ),
     ];
-    let budget = Budget::whole([findings[0].fingerprint("s")].into_iter().collect());
-    let scored = score(&findings, "s", &budget);
+    let budget = Budget::whole([findings[0].fingerprint()].into_iter().collect());
+    let scored = score(&findings, &budget);
     assert_eq!(scored.settled, vec![true, true]);
     assert_eq!(scored.safety.score, 100);
 }
@@ -74,7 +75,7 @@ fn a_whole_budget_settles_every_occurrence() {
 fn a_record_that_matches_nothing_says_so() {
     let findings = vec![finding("s/SKILL.md:10", "one thing")];
     let budget = Budget([("deadbeefdeadbeef".to_owned(), 3)].into_iter().collect());
-    let scored = score(&findings, "s", &budget);
+    let scored = score(&findings, &budget);
     assert_eq!(scored.settled, vec![false]);
     assert_eq!(
         scored.unmatched,

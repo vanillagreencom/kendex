@@ -844,10 +844,18 @@ lives in one capability table read by core and UI.
   install will not give. A record that settles nothing here is a note,
   never silence; and editing the item — in the catalog or on disk —
   stales it and the hold returns. Finding identity
-  is deliberately non-positional and body-normalized (rule, file with
-  `SKILL.md` spelled as the item body, message, severity;
-  `Finding::fingerprint`), because rendering moves lines and Codex renders
-  a command as a skill tree.
+  is the rule and the sentence it fired with, and nothing else
+  (`Finding::fingerprint`). Everything kendex's own rendering moves is
+  deliberately out of it: the line, because rendering shifts lines; the
+  file, because Codex renders a command as a skill tree and an over-cap
+  body is split into `references/`; the severity, because a hit weighs one
+  step less in a supporting file than in the body and the split moves
+  content between exactly those two. What bounds it instead is the item —
+  a fingerprint is only read within one item's records — the content hash
+  every decision binds to, and, for a publisher's record, the number of
+  occurrences the content they wrote actually carried
+  (`author::Budget::earned`, counted against the render with the project's
+  injected instructions taken back out).
 - **The community directory is read like any remote: strictly, capped,
   and honest about staleness.** `registry/` (core) consumes what
   `source/index.rs` producers feed kendex.ai: `index.rs` re-parses the

@@ -121,11 +121,17 @@ pub(super) fn read_catalog(
 /// What this item's publisher already settled about it, read out of the
 /// source this pass fetched.
 ///
-/// `reviews` caches each source's parsed reviews file for the pass. A file
-/// that exists and cannot be parsed settles nothing — failing closed is
-/// right — but it never does so quietly: without a word, an installer sees
-/// a package held back over findings its publisher reviewed and has no way
-/// to tell that from a publisher who reviewed nothing.
+/// `reviews` caches each source root's parsed reviews file for the pass —
+/// keyed by the root and not by the source name, because one source can
+/// resolve to several roots in one pass when items pin different revisions,
+/// and a record read from one commit must never answer for another.
+///
+/// Every way this can settle nothing is said out loud. Failing closed is
+/// right; failing closed in silence leaves an installer looking at a
+/// package held back over findings its publisher reviewed, unable to tell
+/// that from a publisher who reviewed nothing. Catalog-derived text is
+/// escaped on the way in: a parse error quotes the offending line, and a
+/// line of a downloaded file is not something to hand a terminal.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn published_review(
     sealed: &SealedSource,
@@ -135,22 +141,31 @@ pub(super) fn published_review(
     name: &str,
     item_path: &Path,
     reviews: &mut std::collections::BTreeMap<
-        String,
+        PathBuf,
         std::collections::BTreeMap<String, crate::quality::reviews::SafetyReview>,
     >,
     state: &mut DesiredState,
 ) -> Result<Option<crate::quality::author::AuthorReview>> {
+    // A hook is scored from the script this plan writes and audited from
+    // the shared settings file its registration lands in — two readings of
+    // different bytes, by design (see `engine::review_hash`). A record can
+    // bind to one or the other and never both, so honouring one at the gate
+    // would install an item the very next audit re-opens. Refused where it
+    // is read, so the plan, the lock and the audit all answer alike.
+    if kind == crate::model::ItemKind::Hook {
+        return Ok(None);
+    }
     let mut unreadable = None;
-    let parsed = reviews.entry(source_name.to_owned()).or_insert_with(|| {
-        match crate::check_catalog::dismissals::load(sealed) {
+    let parsed = reviews
+        .entry(sealed.root().to_path_buf())
+        .or_insert_with(|| match crate::check_catalog::dismissals::load(sealed) {
             Ok(parsed) => parsed,
             Err(error) => {
-                unreadable = Some(error.to_string());
+                unreadable = Some(crate::names::shown(&error.to_string()));
                 Default::default()
             }
-        }
-    });
-    let read = crate::quality::author::for_item(parsed, sealed, kind, name, item_path, provenance)?;
+        });
+    let read = crate::quality::author::for_item(parsed, sealed, kind, name, item_path, provenance);
     if let Some(problem) = unreadable {
         state.notes.push(format!(
             "source '{source_name}': {} could not be read, so nothing it reviewed counts as reviewed — {problem}",
@@ -159,11 +174,17 @@ pub(super) fn published_review(
     }
     if !read.refused.is_empty() {
         state.notes.push(format!(
-            "{} {name}: {} of the {} record(s) {source_name} carries for it settle nothing here — the finding is gone or the claim is not one an author can make",
+            "{} {name}: {} of the {} record(s) {source_name} carries for it settle nothing here — the claim is not one an author can make",
             kind.name(),
             read.refused.len(),
             crate::check_catalog::dismissals::REVIEWS_FILE
         ));
+    }
+    if let Some(why) = read.stale {
+        state.notes.push(crate::names::shown(&format!(
+            "{} {name}: {source_name} reviewed it, but that review no longer applies — {why}",
+            kind.name()
+        )));
     }
     Ok(read.review)
 }

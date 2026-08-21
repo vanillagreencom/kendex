@@ -14,6 +14,7 @@
 // accepted finding is not one of them, and neither is a held-back item's
 // individual finding — that item is counted once, as held back.
 import type {
+  DismissReason,
   Finding,
   FindingDecision,
   HarnessId,
@@ -72,6 +73,44 @@ export function authorOccurrences(rows: ItemSafety[]): Occurrence[] {
 
 export function authorSettledCount(rows: ItemSafety[]): number {
   return authorOccurrences(rows).length;
+}
+
+/** One finding the publisher settled, wherever it was found. */
+export interface PublisherGroup {
+  finding: Finding;
+  reason: DismissReason;
+  dismissedAt: string;
+  publisher: string;
+  items: EvidenceItem[];
+}
+
+/** The publisher's settled findings, one entry per decision rather than one
+ *  per installation: a shared skill tree is what three tools load, and the
+ *  same sentence printed three times reads as three problems. Grouped the
+ *  way the decision zone groups evidence — the same bytes carrying the same
+ *  finding is one thing to say, with every tool that loads it named. */
+export function publisherGroups(rows: ItemSafety[]): PublisherGroup[] {
+  const ordered: PublisherGroup[] = [];
+  const byEvidence = new Map<string, PublisherGroup>();
+  for (const { row, finding, decision } of authorOccurrences(rows)) {
+    if (decision.state.state !== "author-dismissed") continue;
+    const content = row.reviewHash ?? `${row.kind}:${row.name}`;
+    const key = `${content}::${decision.fingerprint}`;
+    let group = byEvidence.get(key);
+    if (!group) {
+      group = {
+        finding,
+        reason: decision.state.reason,
+        dismissedAt: decision.state.dismissedAt,
+        publisher: decision.state.publisher,
+        items: [],
+      };
+      byEvidence.set(key, group);
+      ordered.push(group);
+    }
+    group.items.push({ kind: row.kind, name: row.name, harness: row.harness });
+  }
+  return ordered;
 }
 
 export interface EvidenceItem {

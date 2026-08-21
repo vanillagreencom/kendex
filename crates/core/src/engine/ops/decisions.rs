@@ -55,7 +55,7 @@ pub fn dismiss(
                 "the content changed since the finding was read",
             ));
         }
-        if !fingerprints(&row.findings, &row.location).contains(&token.fingerprint) {
+        if !fingerprints(&row.findings).contains(&token.fingerprint) {
             return Err(stale(token, "the finding is no longer there"));
         }
         if row.override_state.unblocks() {
@@ -299,7 +299,7 @@ pub fn list_decisions(env: &Env, scope: &Scope) -> Result<Vec<RecordedDecision>>
                     let finding = row
                         .findings
                         .iter()
-                        .find(|finding| finding.fingerprint(&row.location) == *fingerprint)
+                        .find(|finding| finding.fingerprint() == *fingerprint)
                         .cloned();
                     let state = match dismissal_state(
                         review,

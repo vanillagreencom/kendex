@@ -221,9 +221,11 @@ fn compute(env: &Env, scope: &Scope, manifest: &Manifest, lock: &Lock) -> Result
     // installed bundles carry, and what those skills require — while the
     // manifest keeps holding only what was chosen.
     let expansion = super::expansion::expand(env, scope, manifest, &mut state);
-    // One parse of each source's reviews file per pass: it is one file, and
-    // every item the source carries would otherwise re-read it.
-    let mut reviews: BTreeMap<String, BTreeMap<String, crate::quality::reviews::SafetyReview>> =
+    // One parse of each catalog root's reviews file per pass: it is one
+    // file, and every item that root carries would otherwise re-read it.
+    // Keyed by root, since one declared source resolves to several when
+    // its items pin different revisions.
+    let mut reviews: BTreeMap<PathBuf, BTreeMap<String, crate::quality::reviews::SafetyReview>> =
         BTreeMap::new();
     let collisions = super::catalog::Collisions::find(&expansion, &mut state);
 

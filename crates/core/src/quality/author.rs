@@ -29,13 +29,13 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use super::reviews::{DismissReason, SafetyReview};
-use super::{Finding, SafetyScore, TreeFile};
+use super::reviews::DismissReason;
+use super::{Content, Finding, SafetyScore, TreeFile};
 use crate::error::Result;
 use crate::model::ItemKind;
 use crate::source_read::SealedSource;
 
-/// One finding the publisher settled, and how far that reaches.
+/// One finding the publisher settled.
 // Written into the lock, which is JSON in camelCase throughout; the
 // authoring file's own kebab-case shape is `reviews::Dismissal`, and these
 // are two different records that happen to rhyme.
@@ -44,10 +44,6 @@ use crate::source_read::SealedSource;
 pub struct AuthorDismissal {
     pub reason: DismissReason,
     pub dismissed_at: String,
-    /// How many times the publisher's own bytes carried this finding. The
-    /// budget a reader spends: past it, an occurrence is content the
-    /// publisher never reviewed.
-    pub occurrences: u32,
 }
 
 /// A publisher's decisions about one item, as they travel to an install.
@@ -67,6 +63,13 @@ pub struct AuthorReview {
 impl AuthorReview {
     /// Whether this still describes the content in front of us: the same
     /// bytes, judged by the same rules.
+    ///
+    /// Asked exactly once per reading, by whoever holds a hash the record
+    /// did not supply: `read::for_item` against the source it just read,
+    /// and `engine::observed` against what is on disk. Building a budget
+    /// does not ask again — a check whose two sides come from one record is
+    /// a check that cannot fail, and one written where it reads as
+    /// load-bearing is worse than none.
     pub fn stale_why(&self, review_hash: Option<&str>) -> Option<String> {
         super::overrides::snapshot_stale(&self.review_hash, self.ruleset, review_hash)
     }
@@ -80,19 +83,11 @@ impl AuthorReview {
         }
     }
 
-    /// How many occurrences of each fingerprint this record answers for,
-    /// once it has been checked against the content in front of us.
-    pub fn budget(review: Option<&AuthorReview>, review_hash: Option<&str>) -> Budget {
-        let Some(review) = review.filter(|r| r.stale_why(review_hash).is_none()) else {
-            return Budget::default();
-        };
-        Budget(
-            review
-                .dismissed
-                .iter()
-                .map(|(fingerprint, d)| (fingerprint.clone(), d.occurrences))
-                .collect(),
-        )
+    /// Every fingerprint this record names, for a reading where all of the
+    /// content is the publisher's — the authoring check and the pre-install
+    /// preview, where nothing else has been added to it yet.
+    pub fn whole_budget(&self) -> Budget {
+        Budget::whole(self.dismissed.keys().cloned().collect())
     }
 }
 
@@ -103,7 +98,7 @@ pub struct Budget(BTreeMap<String, u32>);
 
 impl Budget {
     /// A decision made against these very bytes, which therefore speaks for
-    /// every occurrence in them — what the authoring check has.
+    /// every occurrence in them.
     pub fn whole(fingerprints: BTreeSet<String>) -> Budget {
         Budget(
             fingerprints
@@ -113,9 +108,49 @@ impl Budget {
         )
     }
 
+    /// What a record has earned against content kendex itself has added to.
+    ///
+    /// `authored` is the same content the score is about with everything
+    /// the publisher did not write taken back out — the project's injected
+    /// instructions, and nothing else. Counting there rather than in the
+    /// fetched source is the whole point: rendering strips marked blocks
+    /// and splits an over-cap body into `references/`, so a count taken
+    /// from the source pays for occurrences that never install (which is
+    /// budget free to settle somebody else's content) and misses the ones
+    /// that moved (which is the publisher's own review failing to apply).
+    pub fn earned(review: &AuthorReview, authored: &[Finding]) -> Earned {
+        let mut counts: BTreeMap<String, u32> = BTreeMap::new();
+        for finding in authored {
+            let fingerprint = finding.fingerprint();
+            if review.dismissed.contains_key(&fingerprint) {
+                *counts.entry(fingerprint).or_default() += 1;
+            }
+        }
+        let unearned = review
+            .dismissed
+            .keys()
+            .filter(|fingerprint| !counts.contains_key(*fingerprint))
+            .cloned()
+            .collect();
+        Earned {
+            budget: Budget(counts),
+            unearned,
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+}
+
+/// A record measured against the content it landed in: what it can spend,
+/// and every finding it named that this content does not carry. The second
+/// half is the only thing that tells a person a review was carried and did
+/// not apply — the publisher's own check stays green either way.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Earned {
+    pub budget: Budget,
+    pub unearned: BTreeSet<String>,
 }
 
 /// Findings split into what still counts and what is settled, with the
@@ -136,13 +171,13 @@ pub struct Scored {
     pub unmatched: BTreeSet<String>,
 }
 
-pub fn score(findings: &[Finding], root: &str, budget: &Budget) -> Scored {
+pub fn score(findings: &[Finding], budget: &Budget) -> Scored {
     let mut left = budget.0.clone();
     let mut settled = Vec::with_capacity(findings.len());
     let mut counted = Vec::new();
     for finding in findings {
         let spend = left
-            .get_mut(&finding.fingerprint(root))
+            .get_mut(&finding.fingerprint())
             .filter(|remaining| **remaining > 0);
         match spend {
             Some(remaining) => {
@@ -169,143 +204,6 @@ pub fn score(findings: &[Finding], root: &str, budget: &Budget) -> Scored {
     }
 }
 
-/// What one item's own catalog has already settled about it, re-checked
-/// against the bytes in front of us and against what those bytes say.
-///
-/// `reviews` is the source's parsed reviews file, read once per source.
-/// `publisher` is the provenance kendex resolved for this source. `None`
-/// where the catalog settled nothing that survives the checks — which is
-/// the same answer as a catalog that reviewed nothing, and deliberately so:
-/// every one of these is a claim that failed to hold up, and a claim that
-/// does not hold up settles nothing.
-pub fn for_item(
-    reviews: &BTreeMap<String, SafetyReview>,
-    sealed: &SealedSource,
-    kind: ItemKind,
-    name: &str,
-    item_path: &Path,
-    publisher: &str,
-) -> Result<Read> {
-    let Some(review) = reviews.get(&review_key(kind, name)) else {
-        return Ok(Read::default());
-    };
-    let Some(hash) = content_hash(sealed, item_path) else {
-        return Ok(Read::default());
-    };
-    if review.stale_why(Some(&hash)).is_some() {
-        return Ok(Read::default());
-    }
-    let (claimed, mut refused): (Vec<_>, BTreeSet<String>) = (
-        review
-            .dismissed
-            .iter()
-            .filter(|(fingerprint, dismissal)| honest(fingerprint, dismissal))
-            .collect(),
-        review
-            .dismissed
-            .iter()
-            .filter(|(fingerprint, dismissal)| !honest(fingerprint, dismissal))
-            .map(|(fingerprint, _)| fingerprint.clone())
-            .collect(),
-    );
-    if claimed.is_empty() {
-        return Ok(Read {
-            review: None,
-            refused,
-        });
-    }
-    let occurrences = source_occurrences(sealed, kind, name, item_path)?;
-    let mut dismissed: BTreeMap<String, AuthorDismissal> = BTreeMap::new();
-    for (fingerprint, dismissal) in claimed {
-        match occurrences.get(fingerprint).copied() {
-            Some(count) => {
-                dismissed.insert(
-                    fingerprint.clone(),
-                    AuthorDismissal {
-                        reason: dismissal.reason,
-                        dismissed_at: dismissal.dismissed_at.clone(),
-                        occurrences: count,
-                    },
-                );
-            }
-            None => {
-                refused.insert(fingerprint.clone());
-            }
-        }
-    }
-    let review = (!dismissed.is_empty()).then(|| AuthorReview {
-        review_hash: hash,
-        ruleset: review.ruleset,
-        publisher: publisher.to_owned(),
-        dismissed,
-    });
-    Ok(Read { review, refused })
-}
-
-/// What reading one item's record produced: the part that holds up, and
-/// every entry that did not. A record naming a finding this content does
-/// not carry, or making a claim an author cannot make, is not the same as
-/// no record — the publisher believes they settled something, and nobody
-/// learns otherwise unless it is said out loud.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Read {
-    pub review: Option<AuthorReview>,
-    pub refused: BTreeSet<String>,
-}
-
-/// Whether one entry is something a publisher can honestly claim.
-///
-/// The key must be a fingerprint this build could have produced, and the
-/// timestamp must be a timestamp: both are printed, and both come out of a
-/// file a third party writes by hand. `trusted-source` is refused outright
-/// — it is a claim about where bytes came from, and only the machine
-/// receiving them can answer that.
-fn honest(fingerprint: &str, dismissal: &crate::quality::reviews::Dismissal) -> bool {
-    fingerprint.len() == 16
-        && fingerprint.bytes().all(|b| b.is_ascii_hexdigit())
-        && dismissal.reason != DismissReason::TrustedSource
-        && dismissal.source.is_none()
-        && is_timestamp(&dismissal.dismissed_at)
-}
-
-/// A bounded instant, spelled the way [`crate::clock::timestamp`] spells
-/// one. Not a full RFC 3339 parse — enough that nothing printable-hostile
-/// and nothing unbounded reaches a terminal.
-fn is_timestamp(value: &str) -> bool {
-    (16..=40).contains(&value.len())
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || matches!(b, b'-' | b':' | b'.' | b'+' | b'T' | b'Z'))
-}
-
-/// How many times each finding occurs in the bytes the publisher authored.
-/// Read from the source, before any rendering added to it: that is the only
-/// content their decision was ever about.
-fn source_occurrences(
-    sealed: &SealedSource,
-    kind: ItemKind,
-    name: &str,
-    item_path: &Path,
-) -> Result<BTreeMap<String, u32>> {
-    let file = item_path
-        .strip_prefix(sealed.root())
-        .unwrap_or(item_path)
-        .display()
-        .to_string();
-    let result = super::audit(super::AuditInput {
-        kind,
-        name: name.to_owned(),
-        harness: None,
-        location: file.clone(),
-        content: content(sealed, kind, item_path)?,
-    });
-    let mut counts: BTreeMap<String, u32> = BTreeMap::new();
-    for finding in &result.findings {
-        *counts.entry(finding.fingerprint(&file)).or_default() += 1;
-    }
-    Ok(counts)
-}
-
 /// The record's key within a reviews file: `kind:name` — no harness,
 /// because authoring judges the source item, not any one installation.
 pub fn review_key(kind: ItemKind, name: &str) -> String {
@@ -318,6 +216,20 @@ pub fn review_key(kind: ItemKind, name: &str) -> String {
 /// bytes cannot be read — a decision with nothing to compare against must
 /// never read as live.
 pub fn content_hash(sealed: &SealedSource, path: &Path) -> Option<String> {
+    content_hash_of(sealed, path, None)
+}
+
+/// The same hash from a tree the caller has already read. A skill's bytes
+/// are the expensive part of every one of these questions, and scoring, the
+/// cache key and this hash are all about one read of them.
+pub fn content_hash_of(
+    sealed: &SealedSource,
+    path: &Path,
+    tree: Option<&[(std::path::PathBuf, Vec<u8>)]>,
+) -> Option<String> {
+    if let Some(tree) = tree {
+        return Some(crate::hash::hash_files(tree));
+    }
     if sealed.is_dir(path) {
         return Some(crate::hash::hash_files(
             &sealed.collect_skill_tree(path).ok()?,
@@ -326,21 +238,52 @@ pub fn content_hash(sealed: &SealedSource, path: &Path) -> Option<String> {
     Some(crate::hash::hash_bytes(&sealed.read(path).ok()?))
 }
 
+/// The half of this content its publisher wrote: the same bytes the score
+/// is about, with the project's own injected instructions taken back out.
+///
+/// A skill's SKILL.md is the only place they can land, and the block that
+/// holds them is exactly recoverable — strip and inject are inverses — so
+/// this is a subtraction, never a re-render. What is left is what a
+/// publisher's record is allowed to answer for: the split that rendering
+/// applied is theirs, because their body is what overflowed; the sentence
+/// a project told the tool to add is not.
+pub fn authored(content: &Content) -> Content {
+    let Content::SkillTree { files } = content else {
+        return content.clone();
+    };
+    Content::SkillTree {
+        files: files
+            .iter()
+            .map(|file| match (file.path.file_name(), &file.text) {
+                (Some(name), Some(text)) if name == "SKILL.md" => {
+                    let stripped = crate::render::skill::inject_instructions(text, None);
+                    TreeFile {
+                        path: file.path.clone(),
+                        bytes: stripped.len(),
+                        text: Some(stripped),
+                    }
+                }
+                _ => file.clone(),
+            })
+            .collect(),
+    }
+}
+
 /// A skill's whole tree; anything else is one file. A repo-root skill's
 /// tree is the repository itself, whose VCS internals and dependency dirs
 /// are not content.
-pub fn content(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Result<super::Content> {
+pub fn content(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Result<Content> {
     if kind != ItemKind::Skill {
-        return Ok(super::Content::Document {
+        return Ok(Content::Document {
             text: sealed.read_to_string(path)?,
         });
     }
     if !sealed.is_dir(path) {
-        return Ok(super::Content::Unread {
+        return Ok(Content::Unread {
             why: "a skill is a directory holding SKILL.md",
         });
     }
-    Ok(super::Content::SkillTree {
+    Ok(Content::SkillTree {
         files: sealed
             .collect_skill_tree(path)?
             .into_iter()
@@ -348,6 +291,9 @@ pub fn content(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Result<sup
             .collect(),
     })
 }
+
+mod read;
+pub use read::{Read, for_item, for_item_read};
 
 #[cfg(test)]
 mod tests;

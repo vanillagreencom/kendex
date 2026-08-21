@@ -336,7 +336,7 @@ fn safety(
     });
     // A dismissed finding is reported but no longer counted: the verdict
     // and the score answer for what is still an open question.
-    let scored = quality::author::score(&result.findings, file, dismissed);
+    let scored = quality::author::score(&result.findings, dismissed);
     let (verdict, _) = quality::verdict(
         &scored.counted,
         &scored.safety,
@@ -348,7 +348,7 @@ fn safety(
             token: Some(dismissals::token(
                 kind,
                 name,
-                &dismissals::fingerprint(&finding, file),
+                &dismissals::fingerprint(&finding),
             )),
             file: finding.location,
             kind: kind.name(),

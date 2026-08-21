@@ -16,10 +16,13 @@ use specta::Type;
 
 use crate::manifest::Manifest;
 use crate::model::{HarnessId, ItemKind, Scope};
+use crate::quality::author::Budget;
 use crate::quality::overrides::{self, OverrideState};
 use crate::quality::{
     AuditInput, Content, QualityScore, SafetyScore, SkippedRule, Thresholds, Verdict,
 };
+use settle::{drop_settings_from_blocked_skills, warn_unapplied};
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::PlanOptions;
 use super::desired::{Desired, DesiredState, Refused};
@@ -152,6 +155,7 @@ pub(super) fn run(
 ) -> Vec<ItemSafety> {
     let mut safety = Vec::new();
     let mut kept = Vec::new();
+    let mut unapplied: BTreeMap<(ItemKind, String, String), BTreeSet<String>> = BTreeMap::new();
     for item in std::mem::take(&mut state.items) {
         let input = input_for(&item);
         let root = input.location.clone();
@@ -166,49 +170,53 @@ pub(super) fn run(
         // A finding this item's publisher already reviewed and settled is
         // reported, and does not count: the verdict and the score answer
         // for what is still an open question, exactly as the authoring
-        // check does. The record was re-checked against the bytes this pass
-        // fetched, and against how many times those bytes carried each
-        // finding, before it got here.
-        let budget = crate::quality::author::AuthorReview::budget(
-            item.author_review.as_ref(),
-            item.author_review.as_ref().map(|r| r.review_hash.as_str()),
-        );
-        let scored = crate::quality::author::score(&result.findings, &root, &budget);
+        // check does.
+        //
+        // What the record has earned is measured against the same content
+        // this scores, minus what the project injected into it — never
+        // against the fetched source, which rendering strips blocks out of
+        // and splits over-cap bodies out of. The record was bound to the
+        // source bytes when it was read; that binding is not re-checked at
+        // this distance from it.
+        let earned = item
+            .author_review
+            .as_ref()
+            .map(|review| {
+                let authored = crate::quality::audit(input::authored_for(&item));
+                Budget::earned(review, &authored.findings)
+            })
+            .unwrap_or_default();
+        let scored = crate::quality::author::score(&result.findings, &earned.budget);
         let (verdict, reasons) =
             crate::quality::verdict(&scored.counted, &scored.safety, thresholds);
         // A record that named findings nothing here carries is not the same
         // as no record: the publisher believes they settled something, and
-        // neither side learns otherwise unless this is said out loud.
-        if !scored.unmatched.is_empty() {
-            state.warnings.push(super::ItemWarning {
-                kind: item.kind,
-                name: item.name.clone(),
-                harness: Some(item.harness),
-                message: format!(
-                    "{} of {}'s reviewed findings do not appear in what {} installs here, so they settle nothing",
-                    scored.unmatched.len(),
-                    item.provenance,
-                    item.name
-                ),
-                remediation: Some(
-                    "re-run `kendex check --catalog` in the source and re-record the tokens it prints now".to_owned(),
-                ),
-            });
+        // neither side learns otherwise unless this is said out loud. One
+        // item declared for four tools is one thing to say, so it is
+        // gathered here and said once, after the loop.
+        if let Some(review) = &item.author_review {
+            let missed: BTreeSet<String> =
+                earned.unearned.union(&scored.unmatched).cloned().collect();
+            if !missed.is_empty() {
+                unapplied
+                    .entry((item.kind, item.name.clone(), review.publisher.clone()))
+                    .or_default()
+                    .extend(missed);
+            }
         }
         let mut recorded = manifest.safety_overrides.get(&item.key);
         if let Some(review_hash) = &review_hash
             && verdict == Verdict::Block
             && granted(options, &item, review_hash)
         {
-            let minted = overrides::mint(review_hash, &result.findings, &root, None);
+            let minted = overrides::mint(review_hash, &result.findings, None);
             let updated = state
                 .manifest_update
                 .get_or_insert_with(|| manifest.clone());
             updated.safety_overrides.insert(item.key.clone(), minted);
             recorded = updated.safety_overrides.get(&item.key);
         }
-        let override_state =
-            overrides::state(recorded, review_hash.as_deref(), &result.findings, &root);
+        let override_state = overrides::state(recorded, review_hash.as_deref(), &result.findings);
         let decisions = super::decisions::decisions(
             &super::decisions::Installation {
                 manifest: state.manifest_update.as_ref().unwrap_or(manifest),
@@ -249,30 +257,9 @@ pub(super) fn run(
         safety.push(row);
     }
     state.items = kept;
+    warn_unapplied(unapplied, state);
     drop_settings_from_blocked_skills(state);
     safety
-}
-
-/// A skill held back on every harness also loses its say over the project's
-/// settings file: what it would seed or refresh there is content the gate
-/// refused.
-fn drop_settings_from_blocked_skills(state: &mut DesiredState) {
-    let surviving: std::collections::BTreeSet<&str> = state
-        .items
-        .iter()
-        .filter(|item| item.kind == ItemKind::Skill)
-        .map(|item| item.name.as_str())
-        .collect();
-    let blocked: std::collections::BTreeSet<String> = state
-        .refused
-        .iter()
-        .filter(|refused| refused.kind == ItemKind::Skill)
-        .filter(|refused| !surviving.contains(refused.name.as_str()))
-        .map(|refused| refused.name.clone())
-        .collect();
-    state
-        .settings_env
-        .retain(|seeded| !blocked.contains(&seeded.owner));
 }
 
 /// Whether this run was asked to record a review of *this* content.
@@ -381,4 +368,5 @@ pub(crate) fn content_hash(input: &AuditInput) -> String {
 }
 
 mod input;
+mod settle;
 use input::input_for;

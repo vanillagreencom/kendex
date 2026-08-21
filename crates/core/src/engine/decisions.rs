@@ -197,7 +197,7 @@ pub fn decisions(installation: &Installation<'_>, findings: &[Finding]) -> Vec<F
         .iter()
         .enumerate()
         .map(|(index, finding)| {
-            let fingerprint = finding.fingerprint(installation.root);
+            let fingerprint = finding.fingerprint();
             let token = installation
                 .review_hash
                 .filter(|_| !installation.held_back)

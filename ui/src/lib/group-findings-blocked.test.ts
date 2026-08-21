@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Finding, ItemSafety } from "@/bindings";
+import type { Finding, FindingDecision, ItemSafety } from "@/bindings";
 import {
   acceptTokens,
   groupBlocked,
@@ -197,5 +197,45 @@ describe("acceptTokens", () => {
     const [group] = groupBlocked([held]);
     const shown = group.findingGroups.flatMap((rule) => rule.locations);
     expect(shown).toHaveLength(2);
+  });
+});
+
+describe("a held-back item's settled findings", () => {
+  it("names the publisher only where every occurrence behind the group is theirs", () => {
+    const settled: FindingDecision = {
+      fingerprint: "p",
+      token: null,
+      state: {
+        state: "author-dismissed",
+        reason: "intended",
+        dismissedAt: "2026-08-16T00:00:00Z",
+        publisher: "vanillagreencom/kendex",
+      },
+    };
+    const open: FindingDecision = {
+      fingerprint: "o",
+      token: null,
+      state: { state: "open", earlier: null },
+    };
+    const first: Finding = {
+      rule: "safety-bypass",
+      severity: "critical",
+      location: "SKILL.md:4",
+      message: "`--no-verify` skips the checks a commit runs",
+      remediation: "leave the check in place",
+    };
+    const second: Finding = { ...first, location: "SKILL.md:9" };
+
+    const both = groupFindingsByRule([first, second], [settled, settled]);
+    expect(both).toHaveLength(1);
+    expect(both[0].settledBy?.publisher).toBe("vanillagreencom/kendex");
+
+    // One occurrence nobody ruled on and the reader still has something to
+    // do here, so the group is not the publisher's to speak for.
+    const mixed = groupFindingsByRule([first, second], [settled, open]);
+    expect(mixed[0].settledBy).toBeNull();
+
+    // And with no decisions at all — every other caller — nothing changes.
+    expect(groupFindingsByRule([first, second])[0].settledBy).toBeNull();
   });
 });

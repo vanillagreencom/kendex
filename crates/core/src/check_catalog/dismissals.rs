@@ -127,9 +127,7 @@ pub fn parse_token(token: &str) -> Option<(ItemKind, &str, &str)> {
     (!name.is_empty() && !fingerprint.is_empty()).then_some((kind, name, fingerprint))
 }
 
-/// A finding's fingerprint within its item, rooted at the item's catalog
-/// path so the same bytes fingerprint the same wherever the catalog is
-/// checked out.
-pub fn fingerprint(finding: &Finding, item_file: &str) -> String {
-    finding.fingerprint(item_file)
+/// A finding's fingerprint within its item.
+pub fn fingerprint(finding: &Finding) -> String {
+    finding.fingerprint()
 }

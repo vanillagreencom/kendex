@@ -60,7 +60,9 @@ struct CachedScore {
 pub struct PackageSafety {
     pub kind: ItemKind,
     pub name: String,
-    pub findings: Vec<Finding>,
+    /// Every finding, each carrying whatever has already been decided about
+    /// it. One row, not two arrays a reader has to keep in step by index.
+    pub findings: Vec<PackageFinding>,
     pub safety: SafetyScore,
     /// Advisory, never blocking.
     pub quality: Option<QualityScore>,
@@ -71,12 +73,20 @@ pub struct PackageSafety {
     pub ruleset: u32,
     /// Whether a verified cache entry answered instead of a fresh score.
     pub from_cache: bool,
-    /// For each finding, in `findings` order, the publisher's record that
-    /// settles it — reported here, and not counted toward the score or the
-    /// verdict, exactly as at the install gate.
-    pub settled: Vec<Option<AuthorDismissal>>,
-    /// Who recorded them, when this package carries any.
+    /// Who recorded the settled findings, when this package carries any.
     pub publisher: Option<String>,
+}
+
+/// One finding on an offered package, with the publisher's record about it
+/// when they have one. A settled finding is reported here and does not
+/// count toward the score or the verdict — the same answer the install
+/// gate gives, which is the only reason this preview is worth showing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageFinding {
+    #[serde(flatten)]
+    pub finding: Finding,
+    pub settled: Option<AuthorDismissal>,
 }
 
 pub fn package_safety(
@@ -86,17 +96,18 @@ pub fn package_safety(
     name: &str,
 ) -> Result<PackageSafety> {
     let browsed = super::open(env, catalog)?;
-    let (score, from_cache) = scored(env, &browsed, kind, name)?;
-    let published = published(&browsed, kind, name)?;
-    let review = published.review;
-    let judged = judge(env, &score, &published.root, review.as_ref())?;
-    let settled = judged
-        .settled
-        .iter()
-        .map(|settled| {
-            settled
-                .clone()
-                .and_then(|f| review.as_ref()?.dismissed.get(&f).cloned())
+    let item = item(&browsed, kind, name)?;
+    let (score, from_cache) = scored(env, &browsed, kind, name, &item)?;
+    let review = published(&browsed, kind, name, &item);
+    let judged = judge(env, &score, review.as_ref())?;
+    let findings = score
+        .findings
+        .into_iter()
+        .zip(judged.settled)
+        .map(|(finding, settled)| PackageFinding {
+            settled: settled
+                .and_then(|fingerprint| review.as_ref()?.dismissed.get(&fingerprint).cloned()),
+            finding,
         })
         .collect();
     let mut reasons = judged.reasons;
@@ -109,7 +120,7 @@ pub fn package_safety(
     Ok(PackageSafety {
         kind,
         name: name.to_owned(),
-        findings: score.findings,
+        findings,
         safety: judged.safety,
         quality: score.quality,
         skipped: score.skipped,
@@ -118,7 +129,6 @@ pub fn package_safety(
         content_hash: score.content_hash,
         ruleset: score.ruleset,
         from_cache,
-        settled,
         publisher: review.map(|review| review.publisher),
     })
 }
@@ -130,9 +140,10 @@ pub(super) fn verdict_for(
     kind: ItemKind,
     name: &str,
 ) -> Result<Verdict> {
-    let (score, _) = scored(env, browsed, kind, name)?;
-    let published = published(browsed, kind, name)?;
-    Ok(judge(env, &score, &published.root, published.review.as_ref())?.verdict)
+    let item = item(browsed, kind, name)?;
+    let (score, _) = scored(env, browsed, kind, name, &item)?;
+    let review = published(browsed, kind, name, &item);
+    Ok(judge(env, &score, review.as_ref())?.verdict)
 }
 
 /// What today's thresholds and the publisher's record make of a scored
@@ -146,14 +157,13 @@ struct Judged {
     settled: Vec<Option<String>>,
 }
 
-fn judge(
-    env: &Env,
-    score: &CachedScore,
-    root: &str,
-    review: Option<&AuthorReview>,
-) -> Result<Judged> {
+fn judge(env: &Env, score: &CachedScore, review: Option<&AuthorReview>) -> Result<Judged> {
     let thresholds = crate::settings::load(env)?.safety;
-    let budget = AuthorReview::budget(review, review.map(|review| review.review_hash.as_str()));
+    // Nothing has been added to these bytes yet — no project instructions,
+    // no split — so every occurrence in them is the publisher's own and
+    // their record speaks for all of them, exactly as it does in the
+    // catalog's own check.
+    let budget = review.map(AuthorReview::whole_budget).unwrap_or_default();
     // Nothing settled means nothing to re-derive: the cached score is what
     // the rules found, and it stays the record that answers. Re-deriving it
     // here would make the cache a set of findings the score is recomputed
@@ -168,13 +178,13 @@ fn judge(
             settled: vec![None; score.findings.len()],
         });
     }
-    let scored = crate::quality::author::score(&score.findings, root, &budget);
+    let scored = crate::quality::author::score(&score.findings, &budget);
     let (verdict, reasons) = crate::quality::verdict(&scored.counted, &scored.safety, thresholds);
     let settled = score
         .findings
         .iter()
         .zip(&scored.settled)
-        .map(|(finding, settled)| settled.then(|| finding.fingerprint(root)))
+        .map(|(finding, settled)| settled.then(|| finding.fingerprint()))
         .collect();
     Ok(Judged {
         verdict,
@@ -185,39 +195,26 @@ fn judge(
 }
 
 /// The publisher's record for this package, re-checked against the catalog
-/// bytes in front of us — the same read the plan does — and the item's own
-/// path, which every finding's fingerprint is relative to.
-struct Published {
-    review: Option<AuthorReview>,
-    root: String,
-}
-
-fn published(browsed: &Browsed, kind: ItemKind, name: &str) -> Result<Published> {
-    let Some(path) = crate::source::find_item(&browsed.sealed, &browsed.config, kind, name) else {
-        return Ok(Published {
-            review: None,
-            root: String::new(),
-        });
-    };
-    let root = path
-        .strip_prefix(browsed.sealed.root())
-        .unwrap_or(&path)
-        .display()
-        .to_string();
-    let review = crate::quality::author::for_item(
+/// bytes in front of us — the same read the plan does.
+fn published(browsed: &Browsed, kind: ItemKind, name: &str, item: &Item) -> Option<AuthorReview> {
+    crate::quality::author::for_item_read(
         &browsed.reviews,
-        &browsed.sealed,
         kind,
         name,
-        &path,
+        crate::quality::author::content_hash_of(&browsed.sealed, &item.path, item.tree.as_deref()),
         &browsed.source.provenance,
-    )?
-    .review;
-    Ok(Published { review, root })
+    )
+    .review
 }
 
-fn scored(env: &Env, browsed: &Browsed, kind: ItemKind, name: &str) -> Result<(CachedScore, bool)> {
-    let input = input_for(browsed, kind, name)?;
+fn scored(
+    env: &Env,
+    browsed: &Browsed,
+    kind: ItemKind,
+    name: &str,
+    item: &Item,
+) -> Result<(CachedScore, bool)> {
+    let input = input_for(browsed, kind, name, item)?;
     let content_hash = crate::engine::content_hash(&input);
     let cache = cache_path(env, browsed, kind, name);
     if let Some(path) = &cache
@@ -284,27 +281,45 @@ fn cache_path(env: &Env, browsed: &Browsed, kind: ItemKind, name: &str) -> Optio
     )
 }
 
-/// The same typed input `check --catalog` audits: a skill's whole tree,
-/// one document for every file-per-item kind.
-fn input_for(browsed: &Browsed, kind: ItemKind, name: &str) -> Result<AuditInput> {
+/// This item's own path in the catalog, and its whole tree where it has
+/// one. Read once per call and handed to everything that needs those bytes:
+/// scoring, the cache key, and the hash a publisher's record binds to all
+/// answer for the same read.
+struct Item {
+    path: PathBuf,
+    tree: Option<Vec<(PathBuf, Vec<u8>)>>,
+}
+
+fn item(browsed: &Browsed, kind: ItemKind, name: &str) -> Result<Item> {
     let Some(path) = crate::source::find_item(&browsed.sealed, &browsed.config, kind, name) else {
         return Err(CoreError::ItemNotInSource {
             name: name.to_owned(),
             source_name: browsed.source.name.clone(),
         });
     };
+    let tree = match kind == ItemKind::Skill {
+        true => Some(browsed.sealed.collect_skill_tree(&path)?),
+        false => None,
+    };
+    Ok(Item { path, tree })
+}
+
+/// The same typed input `check --catalog` audits: a skill's whole tree,
+/// one document for every file-per-item kind.
+fn input_for(browsed: &Browsed, kind: ItemKind, name: &str, item: &Item) -> Result<AuditInput> {
+    let path = &item.path;
     let location = path
         .strip_prefix(browsed.sealed.root())
-        .unwrap_or(&path)
+        .unwrap_or(path)
         .display()
         .to_string();
     let content = match kind {
         ItemKind::Skill => Content::SkillTree {
-            files: browsed
-                .sealed
-                .collect_skill_tree(&path)?
-                .into_iter()
-                .map(|(rel, bytes)| TreeFile::read(rel, &bytes))
+            files: item
+                .tree
+                .iter()
+                .flatten()
+                .map(|(rel, bytes)| TreeFile::read(rel.clone(), bytes))
                 .collect(),
         },
         // A hook's script is what the harness runs; browse scores it as a hook
@@ -315,10 +330,10 @@ fn input_for(browsed: &Browsed, kind: ItemKind, name: &str) -> Result<AuditInput
             event: String::new(),
             matcher: None,
             command: location.clone(),
-            script: Some(browsed.sealed.read_to_string(&path)?),
+            script: Some(browsed.sealed.read_to_string(path)?),
         },
         _ => Content::Document {
-            text: browsed.sealed.read_to_string(&path)?,
+            text: browsed.sealed.read_to_string(path)?,
         },
     };
     Ok(AuditInput {

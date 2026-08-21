@@ -20,64 +20,32 @@ pub struct Finding {
 }
 
 impl Finding {
-    /// This exact finding's identity. An override binds to a set of these,
-    /// so a review of one problem can never wave through a different one
-    /// that appears later at the same place.
-    /// `root` is the item's own location, stripped from the finding's so
-    /// the print names the file *within* the item. The gate reads a skill
-    /// at its canonical tree and the audit reads it back through the
-    /// harness-native link — same bytes, two spellings of the path — and a
-    /// print that kept the absolute path would call every accepted
-    /// symlink-method install a different set of findings.
+    /// This exact finding's identity: the rule that fired and the sentence
+    /// it fired with. An override binds to a set of these, so a review of
+    /// one problem can never wave through a different one that appears
+    /// later at the same place.
     ///
-    /// The line number is left out on purpose. A catalog author reviews the
-    /// source and a consumer scores the render, and rendering moves lines —
-    /// so a positional identity is one an author's decision can never carry
-    /// across the boundary. What is left names the rule, the file and the
-    /// sentence, which is the same question wherever in the file it is
-    /// asked; a decision on it covers every line of that file saying it.
-    /// Nothing widens past the file, because a decision binds to the whole
-    /// content anyway: add a line and the snapshot it sits under is stale.
-    pub fn fingerprint(&self, root: &str) -> String {
-        let location = match self.location.strip_prefix(root) {
-            Some(rest) => rest.trim_start_matches('/'),
-            None => self.location.as_str(),
-        };
-        let material = format!(
-            "{}|{}|{}|{}",
-            self.rule,
-            self.severity.name(),
-            within_item(location),
-            self.message
-        );
+    /// What is deliberately *not* in it is everything kendex's own
+    /// rendering moves. The line, because rendering shifts lines. The file,
+    /// because a harness decides what shape an item takes — Codex renders a
+    /// command as a skill tree, and an over-cap body is split into
+    /// `references/`, so the same authored sentence is read at three
+    /// different paths in three readings of one item. The severity, because
+    /// a hit weighs one step less in a supporting file than in the body,
+    /// and the split moves content between exactly those two. An identity
+    /// carrying any of them is one a decision cannot survive.
+    ///
+    /// Nothing widens past the item: a fingerprint is only ever read within
+    /// one item's records, a decision binds to that item's whole content,
+    /// and a publisher's record is capped at the number of occurrences the
+    /// content they wrote actually carried. Two occurrences of one sentence
+    /// are one question, asked twice.
+    pub fn fingerprint(&self) -> String {
+        let material = format!("{}|{}", self.rule, self.message);
         crate::hash::hash_bytes(material.as_bytes())
             .chars()
             .take(16)
             .collect()
-    }
-}
-
-/// Where in the item a finding is, in the one spelling every reading of
-/// that item agrees on: no line number, and the body under one name.
-///
-/// A harness decides for itself what shape an item takes. Codex renders a
-/// command as a skill tree, so the same authored document is the item's
-/// whole file in the catalog and `SKILL.md` once installed — one body, two
-/// spellings, and a decision about it has to survive the trip.
-fn within_item(location: &str) -> &str {
-    match strip_line(location) {
-        "SKILL.md" => "",
-        rest => rest,
-    }
-}
-
-/// A location with its `:line` suffix removed. A config-key location
-/// (`mcpServers.foo`) has none, and a Windows-style `C:\...` never ends in
-/// digits after a colon, so only the suffix a rule appended is taken.
-fn strip_line(location: &str) -> &str {
-    match location.rsplit_once(':') {
-        Some((file, line)) if !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit()) => file,
-        _ => location,
     }
 }
 
@@ -95,56 +63,44 @@ mod tests {
         }
     }
 
-    /// The whole point of the identity: the catalog reads the source and a
-    /// consumer reads the render, and rendering moves lines. Same rule,
-    /// same file, same sentence — same decision, wherever the line landed.
+    /// The whole point of the identity: one authored sentence, read through
+    /// every shape kendex's rendering gives it. The catalog reads the
+    /// source, the gate reads the render, the split moves the body into
+    /// `references/` and lowers what it finds there, and Codex spells a
+    /// command's body `SKILL.md`. One decision, every reading.
     #[test]
-    fn a_moved_line_is_the_same_finding() {
-        let source = finding("skills/g/SKILL.md:69").fingerprint("skills/g");
-        let rendered = finding("/home/u/p/.agents/skills/g/SKILL.md:68")
-            .fingerprint("/home/u/p/.agents/skills/g");
-        assert_eq!(source, rendered);
-    }
-
-    /// And nothing beyond the line is waved through: another file, another
-    /// sentence, another rule are all different questions.
-    #[test]
-    fn everything_but_the_line_still_separates_findings() {
-        let base = finding("skills/g/SKILL.md:69").fingerprint("skills/g");
-        assert_ne!(
-            base,
-            finding("skills/g/README.md:69").fingerprint("skills/g")
+    fn every_reading_of_one_sentence_is_one_finding() {
+        let source = finding("skills/g/SKILL.md:69").fingerprint();
+        assert_eq!(
+            source,
+            finding("/home/u/p/.agents/skills/g/SKILL.md:68").fingerprint()
         );
-        let mut other = finding("skills/g/SKILL.md:69");
-        other.message = "something else entirely".to_owned();
-        assert_ne!(base, other.fingerprint("skills/g"));
-        let mut louder = finding("skills/g/SKILL.md:69");
-        louder.severity = Severity::High;
-        assert_ne!(base, louder.fingerprint("skills/g"));
-    }
-
-    /// A location that is a config key, not a file, keeps every character.
-    #[test]
-    fn a_key_location_is_not_trimmed() {
-        assert_eq!(strip_line("mcpServers.deploy"), "mcpServers.deploy");
-        assert_eq!(strip_line("skills/g/SKILL.md:69"), "skills/g/SKILL.md");
-        assert_eq!(strip_line("skills/g/SKILL.md:"), "skills/g/SKILL.md:");
-    }
-
-    /// Codex renders a command as a skill tree. The catalog reads the
-    /// authored document as the item itself, the install reads it as
-    /// `SKILL.md`, and one decision has to cover both.
-    #[test]
-    fn the_item_body_fingerprints_the_same_under_either_spelling() {
-        let document = finding("commands/ship.md:12").fingerprint("commands/ship.md");
-        let rendered = finding("/home/u/p/.agents/skills/ship/SKILL.md:14")
-            .fingerprint("/home/u/p/.agents/skills/ship");
-        assert_eq!(document, rendered);
-        // A supporting file is still its own question.
-        assert_ne!(
-            document,
-            finding("/home/u/p/.agents/skills/ship/references/a.md:14")
-                .fingerprint("/home/u/p/.agents/skills/ship")
+        assert_eq!(
+            source,
+            finding("/home/u/p/.agents/skills/g/references/details.md:14").fingerprint()
         );
+        assert_eq!(source, finding("commands/ship.md:12").fingerprint());
+        let lowered = Finding {
+            severity: Severity::High,
+            ..finding("skills/g/references/details.md:14")
+        };
+        assert_eq!(source, lowered.fingerprint());
+    }
+
+    /// And a different question is still a different question: another rule
+    /// or another sentence is not this one.
+    #[test]
+    fn a_different_problem_is_a_different_finding() {
+        let base = finding("skills/g/SKILL.md:69").fingerprint();
+        let other_message = Finding {
+            message: "`--dangerously-skip-permissions` turns off permission prompts".to_owned(),
+            ..finding("skills/g/SKILL.md:69")
+        };
+        assert_ne!(base, other_message.fingerprint());
+        let other_rule = Finding {
+            rule: "rce".to_owned(),
+            ..finding("skills/g/SKILL.md:69")
+        };
+        assert_ne!(base, other_rule.fingerprint());
     }
 }

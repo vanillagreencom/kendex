@@ -36,6 +36,16 @@ pub(super) fn input_for(item: &Desired) -> AuditInput {
     }
 }
 
+/// The same input with everything the publisher did not write taken back
+/// out — what a publisher's record is allowed to answer for.
+pub(super) fn authored_for(item: &Desired) -> AuditInput {
+    let input = input_for(item);
+    AuditInput {
+        content: crate::quality::author::authored(&input.content),
+        ..input
+    }
+}
+
 type Script = (std::path::PathBuf, Vec<u8>);
 
 fn registration(

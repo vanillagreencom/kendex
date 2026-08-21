@@ -16,9 +16,9 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// `source_commit` and `rendered_hash`; version 4 added `settings-seeds`;
 /// version 5 added `authorReview`, the publisher's settled findings for the
 /// bytes an apply wrote. Each bump is what stops an older build from
-/// reading the lock, dropping the newer record on its next write, and
-/// erasing evidence — of which bytes are whose, of which comment blocks
-/// seeding wrote, or of what a publisher already reviewed.
+/// reading the lock, dropping the record it does not know about on its next
+/// write, and erasing evidence — of which bytes are whose, of which comment
+/// blocks seeding wrote, or of what a publisher already reviewed.
 pub const LOCK_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, Type)]

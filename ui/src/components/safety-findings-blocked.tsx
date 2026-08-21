@@ -14,6 +14,7 @@ import {
   BLOCKED_SECTION_EXPLAINER,
   HELD_BACK_NOT_ON_DISK_NOTE,
   NOTHING_TO_ACCEPT,
+  publisherSettledNote,
 } from "@/lib/copy-safety";
 import { findingHeadline } from "@/lib/finding-headlines";
 import {
@@ -140,11 +141,24 @@ function BlockedGroupRow({
               }
             />
           ))}
+          {/* A held-back item can carry findings its publisher already
+              settled beside the ones holding it back. The score beside it
+              already excludes those, so the line has to say whose call it
+              was rather than print a fix nobody is counting. */}
           {group.findingGroups.map((ruleGroup) => (
             <FindingLine
               key={`${ruleGroup.rule}:${ruleGroup.message}`}
               finding={ruleGroupAsFinding(ruleGroup)}
               locations={ruleGroup.locations}
+              settledBy={
+                ruleGroup.settledBy
+                  ? publisherSettledNote(
+                      ruleGroup.settledBy.publisher,
+                      ruleGroup.settledBy.reason,
+                      null,
+                    )
+                  : undefined
+              }
             />
           ))}
           {tokens.length > 0 ? (

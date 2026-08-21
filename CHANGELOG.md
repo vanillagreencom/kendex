@@ -53,9 +53,13 @@ changes carry a **Breaking** call-out with their migration note inline.
   on a reviewed finding — and it can only carry reasons an author can give:
   a hand-written `trusted-source` record is refused on the installing
   machine. Any edit to the item, in the catalog or on the installed copy,
-  brings the hold back, and a record that settles nothing where it lands
-  says so rather than passing in silence. `check --catalog` prints the
-  token beside each blocking finding.
+  brings the hold back, and a record that settles nothing where it lands —
+  stale, refused, or naming a finding that is not there — says so rather
+  than passing in silence. A hook cannot carry one: it is scored from its
+  script before it installs and from the harness's settings file
+  afterwards, two readings of different bytes, so `dismiss --catalog`
+  refuses a hook token and says why. `check --catalog` prints the token
+  beside each blocking finding.
 
 ### Changed
 
@@ -81,6 +85,15 @@ changes carry a **Breaking** call-out with their migration note inline.
   they are reported as "the safety rules changed since it was reviewed"
   rather than as a different set of problems. Re-accept or re-dismiss from
   the tokens `kendex findings` prints now.
+- Safety findings are identified by the rule and the sentence it fired with,
+  so a decision survives everything kendex does to an item on the way in —
+  the line moving, the body being split into `references/` past a harness's
+  size cap, a command being rendered as a skill. Recorded acceptances and
+  dismissals made before this release no longer match and read as needing
+  review again — the rule set version carries the change, so they are
+  reported as "the safety rules changed since it was reviewed" rather than
+  as a different set of problems. Re-accept or re-dismiss from the tokens
+  `kendex findings` prints now.
 - The install record (`.kendex-lock.json`) is version 5: it carries what a
   package's publisher had already reviewed. Older kendex builds refuse to
   read it rather than quietly dropping that record, so upgrade every kendex

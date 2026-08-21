@@ -183,7 +183,7 @@ fn a_settled_finding_stops_counting_in_the_preview_too() {
     let (tmp, env, scope) = fixture();
     let before = score(&env, &scope);
     assert_eq!(before.verdict, Verdict::Warn);
-    assert!(before.settled.iter().all(Option::is_none));
+    assert!(before.findings.iter().all(|row| row.settled.is_none()));
     assert!(before.publisher.is_none());
 
     // The maintainer records their decision and publishes it.
@@ -191,7 +191,7 @@ fn a_settled_finding_stops_counting_in_the_preview_too() {
     let sealed = crate::source_read::SealedSource::open(&upstream).unwrap();
     let item = upstream.join("skills/gh");
     let hash = crate::quality::author::content_hash(&sealed, &item).unwrap();
-    let fingerprint = before.findings[0].fingerprint("skills/gh");
+    let fingerprint = before.findings[0].finding.fingerprint();
     crate::check_catalog::dismissals::record(
         &sealed,
         ItemKind::Skill,
@@ -210,8 +210,22 @@ fn a_settled_finding_stops_counting_in_the_preview_too() {
     assert_eq!(after.verdict, Verdict::Clean);
     assert_eq!(after.safety.score, 100);
     // Reported, not hidden, and it says whose judgement settled it.
-    assert_eq!(after.findings, before.findings);
-    let settled = after.settled[0].as_ref().expect("the record settles it");
+    assert_eq!(
+        after
+            .findings
+            .iter()
+            .map(|row| &row.finding)
+            .collect::<Vec<_>>(),
+        before
+            .findings
+            .iter()
+            .map(|row| &row.finding)
+            .collect::<Vec<_>>()
+    );
+    let settled = after.findings[0]
+        .settled
+        .as_ref()
+        .expect("the record settles it");
     assert_eq!(
         settled.reason,
         crate::quality::reviews::DismissReason::Intended
@@ -223,5 +237,35 @@ fn a_settled_finding_stops_counting_in_the_preview_too() {
     let cached = score(&env, &scope);
     assert!(cached.from_cache);
     assert_eq!(cached.verdict, Verdict::Clean);
-    assert!(cached.settled[0].is_some());
+    assert!(cached.findings[0].settled.is_some());
+}
+
+/// A reviews file the catalog cannot parse settles nothing here either, and
+/// the page says so: a preview that quietly showed a package held back over
+/// findings its publisher reviewed would send a person after a problem
+/// somebody already answered.
+#[test]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+fn a_reviews_file_that_will_not_parse_is_named_on_the_page() {
+    let (tmp, env, scope) = fixture();
+    let upstream = tmp.path().join("base/owner/repo");
+    fs::write(
+        upstream.join("kendex-reviews.toml"),
+        "this is not toml [[[\n",
+    )
+    .unwrap();
+    commit(&upstream, "broken reviews");
+    crate::remote::sync(&env, REPO, None).unwrap();
+
+    let scored = score(&env, &scope);
+    assert_eq!(scored.verdict, Verdict::Warn);
+    assert!(
+        scored
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("kendex-reviews.toml")
+                && reason.contains("could not be read")),
+        "{:?}",
+        scored.reasons
+    );
 }

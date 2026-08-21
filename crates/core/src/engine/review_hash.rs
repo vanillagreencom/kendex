@@ -54,19 +54,25 @@ pub(super) fn desired(item: &Desired) -> Option<String> {
 /// — what the lock records so the audit can read them back without a
 /// catalog to ask.
 ///
-/// `None` where they settled nothing, where the content has no identity a
-/// review could bind to, or where this kind's two readings are deliberately
-/// different bytes. That last one is the hook: the gate reads the script
-/// this plan writes and the audit reads the whole shared settings file the
-/// registration lands in (see the module doc), so a record bound to either
-/// could never be live against the other. Recording it anyway would leave a
-/// row of state that can only ever read as stale.
+/// The hash is sealed by the kind the artifact *is* on disk, not the kind
+/// it is declared as: a Codex command is written and scanned back as a
+/// skill tree, so a record sealed as a command could never match what the
+/// audit reads. Kinds whose two readings are deliberately different bytes
+/// never get here at all — the record is refused where it is read
+/// (`desired_source::published_review`), so the plan, the lock and the
+/// audit answer alike.
 pub(super) fn author_review(item: &Desired) -> Option<AuthorReview> {
     let review = item.author_review.as_ref()?;
-    if item.kind == ItemKind::Hook {
-        return None;
-    }
-    Some(review.rebound(desired(item)?))
+    let kind = item
+        .emitted
+        .as_ref()
+        .map_or(item.kind, |emitted| emitted.kind);
+    let inner = match &item.artifact {
+        Artifact::File { bytes, .. } => hash_bytes(bytes),
+        Artifact::Tree { files, .. } => hash_files(files),
+        Artifact::Registration { script, edits } => registration(script.as_ref(), edits)?,
+    };
+    Some(review.rebound(seal(kind, &inner)))
 }
 
 /// What is installed here right now, read back off disk.
