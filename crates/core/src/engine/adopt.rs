@@ -48,15 +48,11 @@ pub fn adopt(
 
     let mut positions: Vec<(HarnessId, PathBuf)> = Vec::new();
     for &harness in harnesses {
-        let Some(dir) = native_dir(env, scope, harness, kind) else {
+        let Some(original) = position(env, scope, kind, name, harness) else {
             return Err(CoreError::ItemNotInSource {
                 name: name.to_owned(),
                 source_name: format!("{} {}", harness.name(), kind.name()),
             });
-        };
-        let original = match kind {
-            ItemKind::Agent => dir.join(crate::render::agent::file_name(harness, name)),
-            _ => dir.join(name),
         };
         // Two tools reading one directory sit at one position, captured once.
         if !positions.iter().any(|(_, path)| path == &original) {
@@ -105,7 +101,8 @@ pub fn adopt(
             }
         }
     }
-    declare(&mut manifest, kind, name, wanted);
+    let already_declared = manifest.declared(kind).contains_key(name);
+    declare(&mut manifest, kind, name, wanted, already_declared);
 
     let manifest_path = manifest::manifest_path(env, scope);
     ops.push(PlannedOp {
@@ -120,6 +117,41 @@ pub fn adopt(
         scope: scope.clone(),
         ops,
     })
+}
+
+/// The place one tool reads this item from — the only place adoption looks
+/// for it. Read wherever a surface asks whether adoption could keep a
+/// tool's copy, so the question and the action are one rule: an offer
+/// naming a tool that has nothing here would error the moment it was
+/// followed.
+pub(super) fn position(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    harness: HarnessId,
+) -> Option<PathBuf> {
+    let dir = native_dir(env, scope, harness, kind)?;
+    Some(match kind {
+        ItemKind::Agent => dir.join(crate::render::agent::file_name(harness, name)),
+        _ => dir.join(name),
+    })
+}
+
+/// Whether this tool has something adoption can keep. A tool with an empty
+/// position is never named in an offer: adoption works at that position and
+/// nowhere else, and the folder a link points at is reached through the
+/// tool whose own place is the link.
+pub fn can_keep_for(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    harness: HarnessId,
+) -> bool {
+    supports(kind)
+        && position(env, scope, kind, name, harness)
+            .is_some_and(|path| path.exists() || path.is_symlink())
 }
 
 /// Where in the scope's local source the kept content lands. Read wherever
@@ -220,7 +252,13 @@ fn look(
 /// when the [install] defaults name exactly that set may the list be left
 /// off: a wider default would install the item for tools the user never
 /// gave it to.
-fn declare(manifest: &mut manifest::Manifest, kind: ItemKind, name: &str, wanted: Vec<HarnessId>) {
+fn declare(
+    manifest: &mut manifest::Manifest,
+    kind: ItemKind,
+    name: &str,
+    wanted: Vec<HarnessId>,
+    already_declared: bool,
+) {
     let defaults_match = {
         let defaults: std::collections::BTreeSet<&HarnessId> =
             manifest.install.harnesses.iter().collect();
@@ -245,7 +283,12 @@ fn declare(manifest: &mut manifest::Manifest, kind: ItemKind, name: &str, wanted
                 }
             }
         }
-        None if !defaults_match => decl.harnesses = Some(wanted),
+        // A declaration that was already here and left the tools to the
+        // [install] defaults keeps them. Pinning it to what was observed
+        // would narrow it — a tool that had nothing at its place this pass
+        // would stop getting the item at all, which is not what keeping
+        // files was asked to do.
+        None if !defaults_match && !already_declared => decl.harnesses = Some(wanted),
         None => {}
     }
 }
@@ -315,72 +358,9 @@ fn copies_differ(name: &str, first: HarnessId, second: HarnessId) -> CoreError {
     }
 }
 
-/// Far beyond any real skill, but a hard stop before a link at a huge
-/// folder turns a capture into a memory problem. Fail-loud: the error
-/// names the file that broke the budget.
-pub(super) const MAX_CAPTURE_FILES: usize = 2000;
-pub(super) const MAX_CAPTURE_BYTES: u64 = 100 * 1024 * 1024;
+pub(super) mod capture;
 
-pub(crate) fn read_tree(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>> {
-    fn walk(
-        dir: &Path,
-        rel: &Path,
-        files: &mut Vec<(PathBuf, Vec<u8>)>,
-        bytes: &mut u64,
-    ) -> Result<()> {
-        for entry in fs::read_dir(dir).map_err(|e| CoreError::io(dir, e))? {
-            // A per-entry read error is not silently skipped: dropping it
-            // would capture an incomplete tree and then trash the
-            // original, losing content the caller asked to keep.
-            let entry = entry.map_err(|e| CoreError::io(dir, e))?;
-            let path = entry.path();
-            let Some(name) = path.file_name() else {
-                continue;
-            };
-            let rel = rel.join(name);
-            // A link is not plain content: following it would read whatever
-            // it points at into the capture under this tree's name. Rather
-            // than silently drop it (and then trash the original), refuse —
-            // nothing the user asked to keep is lost without a word.
-            if path.is_symlink() {
-                return Err(CoreError::ForeignSymlink {
-                    points_to: fs::read_link(&path).unwrap_or_default(),
-                    target: path,
-                });
-            }
-            if path.is_dir() {
-                walk(&path, &rel, files, bytes)?;
-                continue;
-            }
-            // A FIFO would block the read forever and a device is not
-            // content; capturing arbitrary user folders means saying so
-            // instead of hanging.
-            let meta = fs::symlink_metadata(&path).map_err(|e| CoreError::io(&path, e))?;
-            if !meta.is_file() {
-                return Err(CoreError::io(
-                    &path,
-                    std::io::Error::other("not a regular file — adopt captures plain files only"),
-                ));
-            }
-            *bytes += meta.len();
-            if files.len() >= MAX_CAPTURE_FILES || *bytes > MAX_CAPTURE_BYTES {
-                return Err(CoreError::io(
-                    &path,
-                    std::io::Error::other(format!(
-                        "this folder is bigger than adopt will capture (over {MAX_CAPTURE_FILES} files or {} MB)",
-                        MAX_CAPTURE_BYTES / (1024 * 1024)
-                    )),
-                ));
-            }
-            files.push((rel, fs::read(&path).map_err(|e| CoreError::io(&path, e))?));
-        }
-        Ok(())
-    }
-    let mut files = Vec::new();
-    let mut bytes = 0;
-    walk(root, Path::new(""), &mut files, &mut bytes)?;
-    Ok(files)
-}
+pub(crate) use capture::read_tree;
 
 #[cfg(test)]
 mod tests;

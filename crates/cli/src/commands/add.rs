@@ -119,7 +119,7 @@ pub fn run(env: &Env, args: AddArgs) -> CliResult {
         }
         other => other?,
     };
-    print_report(&report);
+    print_report(env, &report);
     confirm_and_execute(env, &report, args.yes)?;
     say("done");
     Ok(())

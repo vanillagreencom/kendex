@@ -1,8 +1,8 @@
-//! Which way out the CLI prints, for the states where only one of the two
-//! works. A folder several tools read through links they made themselves
-//! can be kept and must never be written over; a file sitting where a
-//! folder goes is the reverse. Printing the wrong one is worse than
-//! printing none: the reader follows it and the command errors.
+//! Which way out the CLI prints for an item whose files are already there,
+//! and whether following it works. Every offer here is run as it was
+//! printed and the state checked afterwards: a row that advertises a
+//! command nobody has run is how a way out that trashes the reader's files
+//! ships, and the state it lands on can be worse than the one it answered.
 #![cfg(unix)]
 
 use std::fs;
@@ -26,10 +26,64 @@ fn said(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
-/// A project asking two tools for one skill, with a folder already at one
-/// tool's place and the other tool's place a link at it.
+fn plan(home: &Path, project: &Path) -> String {
+    said(&kendex(home, project, &["apply", "--plan"]))
+}
+
+/// The offer the plan just printed, word for word.
+#[allow(clippy::expect_used)]
+fn offer(planned: &str) -> String {
+    planned
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("to keep those files: "))
+        .expect("the plan offered a way out that keeps the files")
+        .to_owned()
+}
+
+/// Run the offer exactly as printed. Reading the command back off the
+/// output is the point: a test that retypes it proves the two agree only
+/// with each other.
 #[allow(clippy::unwrap_used)]
-fn shared_by_hand(home: &Path) -> PathBuf {
+fn follow(home: &Path, project: &Path, planned: &str) -> Output {
+    let offered = offer(planned);
+    let args: Vec<&str> = offered.split_whitespace().collect();
+    let run = kendex(home, project, &args);
+    assert!(
+        run.status.success(),
+        "following '{offered}' failed: {}",
+        said(&run)
+    );
+    run
+}
+
+/// Every place the skill sits reads the kept content, nothing is left
+/// dangling, and the next plan has nothing to say.
+#[allow(clippy::unwrap_used)]
+fn settled(home: &Path, project: &Path, at: &[&str], body: &str) {
+    for place in at {
+        let path = project.join(place);
+        assert!(
+            !path.is_symlink() || path.exists(),
+            "{place} was left pointing at nothing"
+        );
+        assert!(
+            fs::read_to_string(path.join("SKILL.md"))
+                .unwrap_or_default()
+                .contains(body),
+            "{place} does not read the files that were kept"
+        );
+    }
+    let after = plan(home, project);
+    assert!(
+        after.contains("nothing to do") && !after.contains("conflict:"),
+        "settled once, and still asking: {after}"
+    );
+}
+
+/// A project asking two tools for one skill, and what each tool has at its
+/// own place.
+#[allow(clippy::unwrap_used)]
+fn project_with(home: &Path, tools: &str, method: &str) -> PathBuf {
     let project = home.join("dev/app");
     let catalog = home.join("catalog");
     fs::create_dir_all(catalog.join("skills/deploy")).unwrap();
@@ -38,53 +92,126 @@ fn shared_by_hand(home: &Path) -> PathBuf {
         "---\nname: deploy\ndescription: ship it\n---\nUpstream.\n",
     )
     .unwrap();
+    fs::create_dir_all(project.join(".claude")).unwrap();
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"symlink\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = {tools}\nmethod = \"{method}\"\n\n[skills.deploy]\nsource = \"cat\"\n",
             catalog.display()
         ),
     )
     .unwrap();
-    let folder = project.join(".claude/skills/deploy");
-    fs::create_dir_all(&folder).unwrap();
-    fs::write(
-        folder.join("SKILL.md"),
-        "---\nname: deploy\ndescription: ship it\n---\nShared by hand.\n",
-    )
-    .unwrap();
-    let link = project.join(".agents/skills/deploy");
-    fs::create_dir_all(link.parent().unwrap()).unwrap();
-    std::os::unix::fs::symlink(&folder, &link).unwrap();
     project
 }
 
+#[allow(clippy::unwrap_used)]
+fn folder_at(path: &Path, body: &str) {
+    fs::create_dir_all(path).unwrap();
+    fs::write(
+        path.join("SKILL.md"),
+        format!("---\nname: deploy\ndescription: ship it\n---\n{body}\n"),
+    )
+    .unwrap();
+}
+
+#[allow(clippy::unwrap_used)]
+fn link_at(path: &Path, target: &Path) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(target, path).unwrap();
+}
+
+/// The layout the whole issue started from: one real folder at one tool's
+/// place, the other tool reading it through a link somebody made. Both
+/// tools are blocked, and keeping it is one move covering both — named for
+/// the tools adoption can act through, not the tool a row happens to be
+/// about.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_folder_shared_by_hand_is_offered_the_way_out_that_keeps_it() {
+fn a_folder_shared_by_hand_is_kept_by_the_offer_it_prints() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
-    fs::create_dir_all(home.join("dev/app/.claude")).unwrap();
-    let project = shared_by_hand(home);
+    let project = project_with(home, "[\"claude\", \"codex\"]", "symlink");
+    let folder = project.join(".claude/skills/deploy");
+    folder_at(&folder, "Shared by hand.");
+    link_at(&project.join(".agents/skills/deploy"), &folder);
 
-    let planned = said(&kendex(home, &project, &["apply", "--plan"]));
-    assert!(
-        planned.contains("to keep those files: adopt skill deploy --harness"),
-        "the state with a way out was printed without it: {planned}"
-    );
+    let planned = plan(home, &project);
     assert!(
         planned.contains(".claude/skills/deploy"),
-        "the folder the link points at is what the reader has to decide about: {planned}"
+        "the folder the link points at is what the reader decides about: {planned}"
     );
-    // Replacing a link is never right: the bytes are not at this position,
+    // Replacing a link is never right: the files are not at that position,
     // and writing over it breaks the sharing somebody set up.
-    assert!(
-        !planned.contains("--replace-unmanaged"),
-        "an exit that cannot work here was offered: {planned}"
+    assert!(!planned.contains("--replace-unmanaged"), "{planned}");
+    assert_eq!(
+        offer(&planned),
+        "adopt skill deploy --harness claude --harness codex"
     );
+
+    follow(home, &project, &planned);
+    settled(
+        home,
+        &project,
+        &[".claude/skills/deploy", ".agents/skills/deploy"],
+        "Shared by hand.",
+    );
+    let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
     assert!(
-        project.join(".claude/skills/deploy/SKILL.md").is_file(),
-        "planning changed the folder"
+        !manifest.contains("[skills.deploy]\nsource = \"local\"\nharnesses"),
+        "a tool that was blocked a moment ago lost the skill:\n{manifest}"
+    );
+}
+
+/// The same sharing, with the folder somewhere neither tool would look. It
+/// is reached through the one tool whose own place is the link, and naming
+/// the other — which has nothing there — would error on the spot.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_folder_outside_every_tool_is_kept_through_the_tool_that_links_at_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let project = project_with(home, "[\"claude\", \"codex\"]", "symlink");
+    let elsewhere = home.join("shared/deploy");
+    folder_at(&elsewhere, "Kept somewhere else.");
+    link_at(&project.join(".agents/skills/deploy"), &elsewhere);
+
+    let planned = plan(home, &project);
+    assert_eq!(offer(&planned), "adopt skill deploy --harness codex");
+
+    follow(home, &project, &planned);
+    settled(
+        home,
+        &project,
+        &[".claude/skills/deploy", ".agents/skills/deploy"],
+        "Kept somewhere else.",
+    );
+}
+
+/// One item blocked for two tools, each holding its own copy. One offer
+/// naming both, because keeping them one command at a time lands each
+/// tool's copy in the local source on top of the last and leaves the
+/// declaration pinned to the first.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn two_tools_holding_one_item_are_kept_by_one_offer() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let project = project_with(home, "[\"claude\", \"codex\"]", "copy");
+    folder_at(&project.join(".claude/skills/deploy"), "Mine.");
+    folder_at(&project.join(".agents/skills/deploy"), "Mine.");
+
+    let planned = plan(home, &project);
+    assert_eq!(
+        offer(&planned),
+        "adopt skill deploy --harness claude --harness codex"
+    );
+
+    follow(home, &project, &planned);
+    settled(
+        home,
+        &project,
+        &[".claude/skills/deploy", ".agents/skills/deploy"],
+        "Mine.",
     );
 }
 
@@ -96,28 +223,68 @@ fn a_folder_shared_by_hand_is_offered_the_way_out_that_keeps_it() {
 fn a_file_where_a_folder_goes_is_not_offered_the_adopt() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
-    fs::create_dir_all(home.join("dev/app/.claude/skills")).unwrap();
-    let project = shared_by_hand(home);
-    fs::remove_dir_all(project.join(".claude/skills/deploy")).unwrap();
-    fs::remove_file(project.join(".agents/skills/deploy")).unwrap();
+    let project = project_with(home, "[\"claude\", \"codex\"]", "symlink");
+    fs::create_dir_all(project.join(".claude/skills")).unwrap();
     fs::write(
         project.join(".claude/skills/deploy"),
         "laid out by the tool that came before",
     )
     .unwrap();
 
-    let planned = said(&kendex(home, &project, &["apply", "--plan"]));
+    let planned = plan(home, &project);
     assert!(planned.contains("conflict: skill deploy"), "{planned}");
-    assert!(
-        !planned.contains("adopt skill deploy"),
-        "a way out that errors on the spot was printed: {planned}"
-    );
-    assert!(
-        planned.contains("to keep those files: move them somewhere else first"),
-        "and the way out that does work was not said: {planned}"
-    );
+    assert_eq!(offer(&planned), "move them somewhere else first");
     assert!(
         planned.contains("--replace-unmanaged"),
         "the exit that handles this shape was not offered: {planned}"
+    );
+}
+
+/// Adoption reads one tool's position, and left unsaid it reads Claude
+/// Code's. A conflict on any other tool was directing the reader at a
+/// place that is not the one blocked — so the offer names the tool, and
+/// following it settles the item.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn one_tool_blocked_is_kept_through_the_tool_that_is_blocked() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let project = project_with(home, "[\"opencode\"]", "copy");
+    folder_at(&project.join(".opencode/skills/deploy"), "The one before.");
+
+    let planned = plan(home, &project);
+    assert_eq!(offer(&planned), "adopt skill deploy --harness opencode");
+
+    follow(home, &project, &planned);
+    settled(
+        home,
+        &project,
+        &[".opencode/skills/deploy"],
+        "The one before.",
+    );
+}
+
+/// The same folder, with no declared tool sitting at the link that reads
+/// it. Adoption works at a tool's own place, and every tool here has an
+/// empty one — so the row says the way out that does work rather than a
+/// command that would error on the spot.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_link_no_declared_tool_sits_at_offers_no_command() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let project = project_with(home, "[\"claude\"]", "symlink");
+    let elsewhere = home.join("shared/deploy");
+    folder_at(&elsewhere, "Kept somewhere else.");
+    link_at(&project.join(".agents/skills/deploy"), &elsewhere);
+
+    let planned = plan(home, &project);
+    assert!(planned.contains("conflict: skill deploy"), "{planned}");
+    assert_eq!(offer(&planned), "move them somewhere else first");
+    assert!(
+        fs::read_to_string(elsewhere.join("SKILL.md"))
+            .unwrap()
+            .contains("Kept somewhere else."),
+        "planning touched the folder"
     );
 }

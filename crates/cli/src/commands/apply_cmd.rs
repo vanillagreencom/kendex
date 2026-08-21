@@ -90,7 +90,7 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
 
     for (scope, report) in planned {
         say(&format!("{}:", scope.label()));
-        print_report(&report);
+        print_report(env, &report);
         // Only here and in verify: a report is printed by add and pin too,
         // and an inventory of hand-made content is not what those were
         // asked for.

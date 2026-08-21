@@ -117,7 +117,7 @@ pub fn run(
         match verbose {
             true => print_drift(&report),
             false => {
-                print_conflicts(&report);
+                print_conflicts(env, &report);
             }
         }
         let lock = load_lock(&lock_path(env, &scope))?;

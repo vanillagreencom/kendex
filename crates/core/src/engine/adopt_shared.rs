@@ -85,17 +85,19 @@ pub(super) fn shared_target(
             continue;
         };
         let candidate = dir.join(crate::harness::rendered_name(h, name));
-        if !candidate.is_symlink() {
-            continue;
-        }
         let Ok(resolved) = fs::canonicalize(&candidate) else {
             continue;
         };
         if resolved != target {
             continue;
         }
+        // The tool whose own place IS the folder reads it too — in the
+        // hand-made layout it is the one holding it, and the rest link at
+        // it. Left out, adoption would settle the others and quietly drop
+        // this one from the declaration, taking the skill away from the
+        // tool that had it all along. It has no link to clear.
         harnesses.push(h);
-        if !links.iter().any(|(path, _)| path == &candidate) {
+        if candidate.is_symlink() && !links.iter().any(|(path, _)| path == &candidate) {
             let raw = fs::read_link(&candidate).map_err(|e| CoreError::io(&candidate, e))?;
             links.push((candidate, raw));
         }
@@ -353,7 +355,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("huge");
         fs::create_dir_all(&dir).unwrap();
-        for i in 0..(super::super::adopt::MAX_CAPTURE_FILES + 1) {
+        for i in 0..(super::super::adopt::capture::MAX_CAPTURE_FILES + 1) {
             fs::write(dir.join(format!("f{i}")), "x").unwrap();
         }
         let error = read_tree(&dir).unwrap_err();

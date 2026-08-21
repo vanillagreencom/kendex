@@ -92,8 +92,11 @@ enum Command {
         /// agent | skill
         kind: String,
         name: String,
+        /// The tool whose files to keep; repeat it to keep one item for
+        /// several tools in a single pass, which is what a folder they
+        /// share needs
         #[arg(long)]
-        harness: Option<String>,
+        harness: Vec<String>,
         #[arg(short = 'g', long)]
         global: bool,
         /// project | global (default project)

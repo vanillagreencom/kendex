@@ -20,8 +20,10 @@ changes carry a **Breaking** call-out with their migration note inline.
   file goes — the row says to move the files somewhere else yourself rather
   than offering a button that would fail. In the CLI the two are
   `kendex adopt <kind> <name> --harness <harness>` — adoption reads one
-  tool's position, and the blocked tool is the one to name — and
-  `kendex apply --replace-unmanaged`.
+  tool's position, so the blocked tool is the one to name, and `--harness`
+  repeats where several tools are blocked, which is what a folder they
+  share needs — and `kendex apply --replace-unmanaged`. `kendex apply
+  --plan` prints the whole command, tools and all.
   Before this, the refusal named no way out and `--discard-edits` did not
   clear it. Nothing is deleted outright, and neither a link kendex did not
   create nor files an existing install owns is ever replaced — those keep

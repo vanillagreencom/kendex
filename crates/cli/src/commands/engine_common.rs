@@ -18,7 +18,7 @@ pub fn parse_harnesses(values: &[String]) -> Result<Vec<HarnessId>, String> {
         .collect()
 }
 
-pub fn print_report(report: &EngineReport) {
+pub fn print_report(env: &Env, report: &EngineReport) {
     for note in &report.notes {
         say(&format!("note: {note}"));
     }
@@ -33,7 +33,7 @@ pub fn print_report(report: &EngineReport) {
         }
     }
     print_safety(report);
-    let blocked = print_conflicts(report);
+    let blocked = print_conflicts(env, report);
     if report.plan.is_empty() {
         // "nothing to do" directly under a conflict reads as "and nothing
         // you can do" — the run has plenty to do, once the reader picks.
@@ -94,14 +94,14 @@ const UNMANAGED_SHOWN: usize = 10;
 /// the safety section said twice: they carry what happens to the copy
 /// already installed — moved to the trash, or kept because the user's
 /// edits are in it and still standing in the way of the accepted content.
-pub fn print_conflicts(report: &EngineReport) -> bool {
-    let mut any = false;
+pub fn print_conflicts(env: &Env, report: &EngineReport) -> bool {
+    let rows: Vec<&DriftRow> = report
+        .drift
+        .iter()
+        .filter(|row| row.state == DriftState::Conflict)
+        .collect();
     let mut replaceable = false;
-    for row in &report.drift {
-        if row.state != DriftState::Conflict {
-            continue;
-        }
-        any = true;
+    for (index, row) in rows.iter().enumerate() {
         say(&format!(
             "conflict: {} {} for {}: {}",
             row.kind.name(),
@@ -109,11 +109,22 @@ pub fn print_conflicts(report: &EngineReport) -> bool {
             row.harness.display_name(),
             conflict_detail(row)
         ));
-        if let Some(cause) = row.cause.filter(|cause| cause.in_the_way()) {
-            replaceable |= cause.can_replace();
-            say(&format!("  to keep those files: {}", keep_exit(row, cause)));
+        let Some(cause) = row.cause.filter(|cause| cause.in_the_way()) else {
+            continue;
+        };
+        replaceable |= cause.can_replace();
+        // One remedy per item, said under the last of its rows: keeping an
+        // item's files is a single move covering every tool it is blocked
+        // for, and run once per tool it lands each tool's copy on top of
+        // the last.
+        let same_item = |other: &&&DriftRow| other.kind == row.kind && other.name == row.name;
+        if rows[index + 1..].iter().any(|later| same_item(&later)) {
+            continue;
         }
+        let item: Vec<&DriftRow> = rows.iter().filter(same_item).copied().collect();
+        say(&format!("  to keep those files: {}", keep_exit(env, &item)));
     }
+    let any = !rows.is_empty();
     if replaceable {
         // Once, not per row: the half that names the item differs line by
         // line and belongs on the row; the flag is the same for all of them,
@@ -145,28 +156,43 @@ pub fn conflict_detail(row: &DriftRow) -> String {
 
 /// The way out that keeps the files, spelled with the item it applies to —
 /// the verb and its parameters as data, never a command line to paste.
-/// Adoption cannot take every kind, nor a folder where one file goes or a
-/// file where a folder goes; and a name a shell would read as more than
-/// one argument is never printed as one: a name may legally hold a space
-/// or a semicolon, and copied into a terminal that is somebody else's
-/// command. Wherever it cannot be offered the files are still the reader's
-/// to keep, by moving them out of the way themselves.
-fn keep_exit(row: &DriftRow, cause: DriftCause) -> String {
-    let takeable = cause.can_keep()
-        && kendex_core::engine::adopt::supports(row.kind)
-        && kendex_core::names::plain_argument(&row.name);
-    match takeable {
-        // The harness too: adoption reads one tool's position, and left
-        // unsaid it reads Claude Code's — which is not the one blocked
-        // unless that is the row being answered.
-        true => format!(
-            "adopt {} {} --harness {}",
-            row.kind.name(),
-            row.name,
-            row.harness.name()
-        ),
-        false => "move them somewhere else first".to_owned(),
+///
+/// Every tool it names is one adoption can actually act through: it works
+/// at a tool's own place and nowhere else, so a tool with nothing there —
+/// a folder its neighbours reach by a shortcut, say — would error the
+/// moment the reader followed the offer. Adoption cannot take every kind
+/// either, nor a folder where one file goes or a file where a folder goes;
+/// and a name a shell would read as more than one argument is never
+/// printed as one, since a name may legally hold a space or a semicolon
+/// and copied into a terminal that is somebody else's command. Wherever
+/// nothing can be offered the files are still the reader's to keep, by
+/// moving them out of the way themselves.
+fn keep_exit(env: &Env, item: &[&DriftRow]) -> String {
+    let mut tools: Vec<HarnessId> = Vec::new();
+    for row in item {
+        let keepable = row.cause.is_some_and(DriftCause::can_keep)
+            && kendex_core::engine::adopt::can_keep_for(
+                env,
+                &row.scope,
+                row.kind,
+                &row.name,
+                row.harness,
+            );
+        if keepable && !tools.contains(&row.harness) {
+            tools.push(row.harness);
+        }
     }
+    let Some(row) = item.first() else {
+        return "move them somewhere else first".to_owned();
+    };
+    if tools.is_empty() || !kendex_core::names::plain_argument(&row.name) {
+        return "move them somewhere else first".to_owned();
+    }
+    let named: String = tools
+        .iter()
+        .map(|harness| format!(" --harness {}", harness.name()))
+        .collect();
+    format!("adopt {} {}{named}", row.kind.name(), row.name)
 }
 
 /// What the safety rules found in the content this plan would write. Held

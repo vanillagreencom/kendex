@@ -98,9 +98,12 @@ lives in one capability table read by core and UI.
    declaration and moves the files to the trash first, bound to the bytes
    the plan read. The row states which files are in the way; naming what
    can be done about them belongs to the surface that can do it — the app
-   offers the two as buttons on that row, the CLI names the verb and the
-   flag. Which exits a state has travels with the row as its cause, so no
-   surface decides that for itself: only the kinds adopt can take are
+   offers the two as buttons on that row, the CLI names the verb, the flag
+   and every tool the one keep covers — adoption works at a tool's own
+   place and nowhere else, so an offer may only name tools that have
+   something there. Which exits a state has travels with the row as its
+   cause, so no surface decides that for itself: only the kinds adopt can
+   take are
    offered keeping, and not a folder where one file goes or one file where
    a folder goes — the replacement handles those and adoption cannot. A
    link somebody else made, pointing at a real skill folder several tools
@@ -113,7 +116,9 @@ lives in one capability table read by core and UI.
    entries actually wrote, never from an entry merely being on the books: a
    copy install wrote the tool's own directory and never the shared tree,
    and an install that changes how it installs is a stranger at its new
-   position until it writes there.
+   position until it writes there. Keeping files declares the tools that
+   had them, the one holding a shared folder along with the ones linking
+   at it, and never narrows a declaration that was already there.
    The sanctioned exceptions are that take-over and a link the user
    explicitly adopts: when it resolves to a real skill folder outside
    kendex's own trees, adopt captures that folder's content, trashes the
