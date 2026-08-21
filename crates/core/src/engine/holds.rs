@@ -53,12 +53,12 @@ pub(super) fn hold_legacy_copy(
     item: &Desired,
     scope: &Scope,
     lock: &Lock,
-    held: &BTreeSet<String>,
+    held: &super::pi_hooks_move::Preflight,
     sink: &mut PlanSink,
 ) -> bool {
     if item.kind != crate::model::ItemKind::Hook
         || item.harness != crate::model::HarnessId::Pi
-        || !held.contains(&item.name)
+        || !held.holds(&item.name)
     {
         return false;
     }

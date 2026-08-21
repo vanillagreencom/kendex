@@ -556,8 +556,8 @@ lives in one capability table read by core and UI.
   whatever the directory holds, so the storage sits one level down under
   `kendex/`; `engine::pi_hooks_move` retires the old layout, taking only
   files this scope's lock names whose bytes hash to what apply wrote,
-  holding a still-declared hook this pass could not render, and saying
-  what it left and why. An event outside that map cannot fire on Pi and
+  holding a still-declared hook this pass could not render — the whole
+  installation, registration included — and saying what it left and why. An event outside that map cannot fire on Pi and
   installs nothing there, said as a note. The capability row says what the
   mechanism supports; the surfaces that label an installation read carrier
   reality (`pi_ext::carrier`), and Pi loads project and global settings

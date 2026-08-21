@@ -60,8 +60,11 @@ the registration could not be written. "Nothing asks for it" is the
 question the orphan sweep asks, so a bundle member, which the manifest
 never keys, is not mistaken for an install nobody wants. A copy kendex
 cannot prove it wrote holds the whole installation, not just the file:
-its old registration stays live and no fresh rendering takes over, until
-the edits are discarded. Everything held back gets a line saying which
+its old registration stays live and no fresh rendering takes over. A
+registration kendex cannot take out holds the script it names, so neither
+half is ever left without the other. Discarding edits finishes the move
+in that same pass — the old copy goes to the trash and one registration
+is left. Everything held back gets a line saying which
 file and why, and `refresh` prints them.
 Enforcement is read live (`pi_ext::carrier::enforcement`): with the carrier
 registered in either scope's settings the hook is enforced; with no carrier

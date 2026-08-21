@@ -190,12 +190,12 @@ fn a_structurally_empty_registry_kendex_removed_nothing_from_survives() {
     }
 }
 
-/// A registry that parses only because the reader tolerates jsonc, and
-/// that the edit itself cannot re-parse, is left exactly as it is — with
-/// a line saying which file and why.
+/// A registry holding kendex's own entry that the edit cannot re-parse
+/// blocks the whole retirement: taking the script while its registration
+/// has to stay would leave that registration naming nothing.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_registry_the_edit_cannot_apply_to_is_left_alone_with_a_line() {
+fn a_registration_that_cannot_be_taken_out_holds_its_script() {
     let w = regressed();
     let registry = w.dot().join("hooks.json");
     let text = fs::read_to_string(&registry).unwrap();
@@ -204,12 +204,21 @@ fn a_registry_the_edit_cannot_apply_to_is_left_alone_with_a_line() {
 
     let said = audit(&w.env, &w.scope()).unwrap().notes;
     assert!(
-        said.iter()
-            .any(|note| note.contains("could not be edited") && note.contains("hooks.json")),
+        said.iter().any(|note| note.contains("hooks.json")
+            && note.contains("registration and the script it names have to go together")),
         "{said:?}"
     );
     apply(&w);
+
     assert_eq!(fs::read_to_string(&registry).unwrap(), jsonc);
+    assert!(
+        w.dot().join("hooks/guard.sh").is_file(),
+        "the script stays with the registration that names it"
+    );
+    assert!(
+        !w.dot().join("kendex/hooks/guard.sh").exists(),
+        "and nothing was installed beside it"
+    );
 }
 
 /// One the reader itself cannot make sense of is the same promise, said

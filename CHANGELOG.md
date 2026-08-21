@@ -248,8 +248,11 @@ changes carry a **Breaking** call-out with their migration note inline.
   they are, and that last one completes the move as soon as the source is
   back. A copy kendex cannot prove it wrote keeps its whole installation,
   not just the file — the old copy stays the one that runs, and nothing
-  replaces it until you discard the edits. Hooks that came in with a
-  bundle move like any other. `refresh` now prints those reasons, which it
+  replaces it until you discard the edits — and discarding them finishes
+  the move in that run, leaving one registration and nothing more to say.
+  A registration kendex cannot take out holds the script it names, so a
+  hook is never left half-retired. Hooks that came in with a bundle move
+  like any other. `refresh` now prints those reasons, which it
   previously worked out and dropped.
 - On Linux, a helper command that ran past its time limit could take
   unrelated processes down with it: Ubuntu's `kill` misreads the negative

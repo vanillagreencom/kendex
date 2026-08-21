@@ -8,7 +8,7 @@ use std::fs;
 
 use kendex_core::engine::{PlanOptions, audit, plan_apply};
 
-use super::{World, apply, regress, regressed, world};
+use super::{World, about, apply, notes, regress, regressed, world};
 
 #[allow(clippy::unwrap_used)]
 fn undeclare(w: &World) {
@@ -49,6 +49,9 @@ fn reconcile() -> PlanOptions {
 fn a_hook_nobody_declares_takes_its_old_copy_with_it_on_refresh() {
     let w = regressed();
     undeclare(&w);
+    // With the catalog gone too, nothing can say why it was ever here —
+    // and it was asked for by name, so that is answer enough.
+    fs::remove_dir_all(&w.catalog).unwrap();
 
     apply_with(&w, &refresh());
 
@@ -300,5 +303,63 @@ fn a_bundle_member_whose_rendering_is_held_keeps_its_old_copy() {
         fs::read_to_string(w.dot().join("hooks.json"))
             .unwrap()
             .contains(".pi/hooks/guard.sh")
+    );
+}
+
+/// A finished move cannot be re-opened by a stranger wearing the hook's
+/// name: the installation lives at the new path now, and upstream
+/// updates have to keep landing on it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_same_named_stranger_does_not_freeze_a_finished_move() {
+    let w = regressed();
+    apply(&w);
+    assert!(!w.dot().join("hooks").exists());
+    fs::create_dir_all(w.dot().join("hooks")).unwrap();
+    fs::write(
+        w.dot().join("hooks/guard.sh"),
+        "#!/bin/sh\n# somebody else's\n",
+    )
+    .unwrap();
+    let script = w.catalog.join("hooks/guard.sh");
+    let body = fs::read_to_string(&script).unwrap();
+    fs::write(&script, body.replace("exit 0", "exit 1")).unwrap();
+
+    apply(&w);
+
+    assert!(
+        fs::read_to_string(w.dot().join("kendex/hooks/guard.sh"))
+            .unwrap()
+            .contains("exit 1"),
+        "the update still lands on the installation that moved"
+    );
+    assert!(
+        w.dot().join("hooks/guard.sh").is_file(),
+        "and the stranger's file is nobody's to take"
+    );
+    assert!(
+        about(&notes(&w), "hooks/guard.sh").is_empty(),
+        "nor is it reported as a copy of this hook: {:?}",
+        notes(&w)
+    );
+}
+
+/// The one line that says a hook stopped running: a refresh keeps an
+/// orphan's record, so without it nothing reports the change.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn retiring_an_orphans_copy_says_the_hook_stopped_running() {
+    let w = regressed();
+    undeclare(&w);
+
+    let report = plan_apply(&w.env, &w.scope(), &refresh()).unwrap();
+    assert!(
+        report
+            .notes
+            .iter()
+            .any(|note| note.contains("nothing asks for the pi hook guard")
+                && note.contains("stops running")),
+        "{:?}",
+        report.notes
     );
 }

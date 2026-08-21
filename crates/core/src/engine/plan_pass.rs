@@ -27,7 +27,7 @@ pub(super) fn plan_items(
     lock: &Lock,
     options: &PlanOptions,
     emitted_paths: &BTreeSet<PathBuf>,
-    legacy_pi_holds: &BTreeSet<String>,
+    legacy_pi: &super::pi_hooks_move::Preflight,
     drift: &mut Vec<DriftRow>,
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut config_edits::ConfigEditPlan,
@@ -57,7 +57,11 @@ pub(super) fn plan_items(
         if !discard && holds::hold_local_edit(env, item, scope, lock, &mut sink) {
             continue;
         }
-        if !discard && holds::hold_legacy_copy(item, scope, lock, legacy_pi_holds, &mut sink) {
+        // Not gated on `discard`: the preflight already took the discard
+        // into account, so a hold that survives it is one discarding
+        // cannot settle — a copy kendex cannot read, or a registration it
+        // cannot take out.
+        if holds::hold_legacy_copy(item, scope, lock, legacy_pi, &mut sink) {
             continue;
         }
         plan_item(env, item, scope, lock, emitted_paths, &mut sink)?;

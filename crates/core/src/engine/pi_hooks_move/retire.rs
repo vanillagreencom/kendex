@@ -19,6 +19,17 @@ use super::{Found, look};
 /// pass did not put its replacement in place — the source did not
 /// resolve, or the script or the registration could not be written —
 /// the one case where holding on is repair rather than abandonment.
+/// What the move should do with one hook's copy under the reserved name.
+pub(super) enum Retire {
+    /// Nothing asks for this hook any more: the copy goes, and with it
+    /// whatever it was still running.
+    Unwanted,
+    /// Its replacement is in place, so the copy has been superseded.
+    Replaced,
+    /// Its replacement is not in place yet: the copy is what runs.
+    Wait,
+}
+
 pub(super) fn retirable(
     env: &Env,
     scope: &Scope,
@@ -27,17 +38,24 @@ pub(super) fn retirable(
     state: &DesiredState,
     ops: &[PlannedOp],
     config_edits: &ConfigEditPlan,
-) -> bool {
+) -> Retire {
     if !asked_for(env, scope, entry, manifest, state) {
-        return true;
+        return Retire::Unwanted;
     }
     let key = crate::lock::entry_key(ItemKind::Hook, &entry.name, HarnessId::Pi);
     let Some(item) = state.items.iter().find(|item| item.key == key) else {
-        return state
+        return match state
             .processed
-            .contains(&(ItemKind::Hook, entry.name.clone()));
+            .contains(&(ItemKind::Hook, entry.name.clone()))
+        {
+            true => Retire::Unwanted,
+            false => Retire::Wait,
+        };
     };
-    script_ready(item, ops) && registration_ready(item, config_edits)
+    match script_ready(item, ops) && registration_ready(item, config_edits) {
+        true => Retire::Replaced,
+        false => Retire::Wait,
+    }
 }
 
 /// Whether anything still asks for this hook — the same question the

@@ -16,6 +16,7 @@ mod held_back;
 mod links;
 mod retirement;
 mod strangers;
+mod unreadable;
 
 struct World {
     _tmp: tempfile::TempDir,

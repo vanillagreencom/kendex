@@ -4,9 +4,10 @@
 
 use std::fs;
 
-use kendex_core::engine::audit;
+use kendex_core::engine::{PlanOptions, audit, plan_apply};
+use kendex_core::model::ItemKind;
 
-use super::{World, apply, notes, regress, world};
+use super::{World, apply, notes, regress, regressed, world};
 
 /// Installed at the new paths, then regressed — with the pieces of the
 /// new layout handed back so a test can put exactly one of them in place.
@@ -99,4 +100,41 @@ fn both_halves_in_place_complete_the_move() {
 
     assert!(!w.dot().join("hooks").exists());
     assert!(!w.dot().join("hooks.json").exists());
+}
+
+/// The remedy kendex prints has to work. Applying with edits discarded
+/// finishes the move in that same pass: the reserved directory goes, one
+/// registration is left, and the next audit has nothing to say.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn discarding_edits_finishes_the_move_in_one_pass() {
+    for options in [
+        PlanOptions {
+            overwrite_edited: true,
+            ..PlanOptions::default()
+        },
+        PlanOptions {
+            overwrite_edited_names: Some(vec![(ItemKind::Hook, "guard".to_owned())]),
+            ..PlanOptions::default()
+        },
+    ] {
+        let w = regressed();
+        let edited = w.dot().join("hooks/guard.sh");
+        fs::write(&edited, "#!/bin/sh\n# mine\nexit 0\n").unwrap();
+
+        let report = plan_apply(&w.env, &w.scope(), &options).unwrap();
+        kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+
+        assert!(!w.dot().join("hooks").exists(), "the move finished");
+        assert!(!w.dot().join("hooks.json").exists());
+        assert!(w.dot().join("kendex/hooks/guard.sh").is_file());
+        let registry = fs::read_to_string(w.dot().join("kendex/hooks.json")).unwrap();
+        assert!(registry.contains("kendex/hooks/guard.sh"), "{registry}");
+
+        // One registration, and nothing left to say about it.
+        let after = audit(&w.env, &w.scope()).unwrap();
+        assert!(after.plan.ops.is_empty(), "{:?}", after.plan.ops);
+        assert!(after.notes.is_empty(), "{:?}", after.notes);
+        assert!(after.drift.is_empty(), "{:?}", after.drift);
+    }
 }

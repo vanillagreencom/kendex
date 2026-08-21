@@ -113,23 +113,6 @@ fn a_script_older_than_the_byte_record_stays_put_and_says_so() {
     assert!(w.dot().join("hooks/guard.sh").is_file());
 }
 
-/// A file kendex cannot read is never reported as one somebody edited.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_script_that_cannot_be_read_is_named_for_that_and_not_for_an_edit() {
-    let w = regressed();
-    let script = w.dot().join("hooks/guard.sh");
-    fs::set_permissions(&script, fs::Permissions::from_mode(0o000)).unwrap();
-
-    let said = about(&notes(&w), "guard.sh");
-    assert_eq!(said.len(), 1, "{said:?}");
-    assert!(said[0].contains("could not read"), "{said:?}");
-    assert!(!said[0].contains("edited"), "{said:?}");
-    apply(&w);
-    assert!(script.is_file());
-    fs::set_permissions(&script, fs::Permissions::from_mode(0o644)).unwrap();
-}
-
 /// A declaration whose source cannot be resolved plans no write, so the
 /// old copy is all that is running — and it stays running.
 #[test]
@@ -194,40 +177,6 @@ fn a_hook_that_did_not_resolve_keeps_its_copy_while_its_sibling_moves() {
     assert!(!w.dot().join("hooks/other.sh").exists());
 }
 
-/// "I could not look" is not absence. A reserved directory kendex cannot
-/// stat through must retire neither the file nor its registration.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn an_unreadable_reserved_directory_retires_nothing() {
-    let w = regressed();
-    let dir = w.dot().join("hooks");
-    fs::set_permissions(&dir, fs::Permissions::from_mode(0o000)).unwrap();
-
-    let report = audit(&w.env, &w.scope()).unwrap();
-    // Two causes, two lines: the file that could not be stat-ed, and the
-    // directory that could not be listed.
-    for said in [
-        format!("could not read {}", dir.join("guard.sh").display()),
-        format!("could not list {}", dir.display()),
-    ] {
-        assert!(
-            report.notes.iter().any(|note| note.contains(&said)),
-            "no line saying {said}: {:?}",
-            report.notes
-        );
-    }
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
-
-    assert!(dir.is_dir(), "nothing under it was retired");
-    assert!(
-        fs::read_to_string(w.dot().join("hooks.json"))
-            .unwrap()
-            .contains(".pi/hooks/guard.sh"),
-        "nor was its registration"
-    );
-    fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
-}
-
 /// An interrupted toggle can leave both names. Neither is a stranger's,
 /// and the one whose bytes prove out still moves.
 #[test]
@@ -242,12 +191,19 @@ fn a_leftover_twin_is_not_reported_as_a_strangers_file() {
         !said.iter().any(|note| note.contains("did not write")),
         "kendex wrote both names: {said:?}"
     );
-    assert_eq!(
-        said.iter()
-            .filter(|note| note.contains("guard.sh.disabled"))
-            .count(),
-        1,
-        "{said:?}"
+    let about_twin: Vec<&String> = said
+        .iter()
+        .filter(|note| note.contains("guard.sh.disabled"))
+        .collect();
+    assert_eq!(about_twin.len(), 1, "{said:?}");
+    assert!(
+        about_twin[0].contains(
+            &w.dot()
+                .join("kendex/hooks/guard.sh.disabled")
+                .display()
+                .to_string()
+        ),
+        "the line points at where those bytes belong: {about_twin:?}"
     );
     apply(&w);
     assert!(
@@ -285,4 +241,95 @@ fn both_of_a_hooks_names_are_taken_when_both_prove_out() {
         "and so does the name it keeps its bytes under when it is off"
     );
     assert!(dir.join("theirs.sh").is_file());
+}
+
+/// A hold is not a disappearance: the record that this hook is kendex's
+/// has to survive it, or the next pass has nothing to claim the file
+/// with and the person's copy becomes an unclaimable stranger forever.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_held_installation_keeps_its_record() {
+    let w = regressed();
+    fs::write(
+        w.dot().join("hooks/guard.sh"),
+        "#!/bin/sh\n# mine\nexit 0\n",
+    )
+    .unwrap();
+
+    apply(&w);
+
+    let lock: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(w.project.join(".kendex-lock.json")).unwrap())
+            .unwrap();
+    assert!(
+        lock["entries"].get("hook:guard:pi").is_some(),
+        "the record has to outlive the hold: {lock}"
+    );
+    // And the next pass still knows the file is kendex's.
+    assert!(
+        about(&notes(&w), "guard.sh")
+            .iter()
+            .any(|note| note.contains("was edited on disk")),
+        "{:?}",
+        notes(&w)
+    );
+}
+
+/// A hook nobody declares any more, with both its names on disk and one
+/// of them unclaimable: neither goes. Taking the provable half would
+/// leave half an installation under a name pi warns about.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_undeclared_hook_with_an_unclaimable_twin_keeps_both_names() {
+    let w = regressed();
+    let dir = w.dot().join("hooks");
+    fs::write(dir.join("guard.sh.disabled"), "#!/bin/sh\n# theirs\n").unwrap();
+    let manifest = w.project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        text.replace("[hooks.guard]\nsource = \"cat\"\n", ""),
+    )
+    .unwrap();
+
+    apply(&w);
+
+    assert!(
+        dir.join("guard.sh").is_file(),
+        "the provable half stays too"
+    );
+    assert!(dir.join("guard.sh.disabled").is_file());
+}
+
+/// The hold is a pi-hook answer: an item of another kind that happens to
+/// share the name is planned exactly as it would have been.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_same_named_item_of_another_kind_is_not_held() {
+    let w = regressed();
+    let manifest = w.project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        format!("{text}\n[agents.guard]\nsource = \"cat\"\n"),
+    )
+    .unwrap();
+    fs::write(
+        w.catalog.join("agents/guard.md"),
+        "---\nname: guard\ndescription: a guard agent\n---\n\nGuard.\n",
+    )
+    .unwrap();
+    fs::write(
+        w.dot().join("hooks/guard.sh"),
+        "#!/bin/sh\n# mine\nexit 0\n",
+    )
+    .unwrap();
+
+    apply(&w);
+
+    assert!(
+        w.dot().join("agents/guard.md").is_file(),
+        "the agent has nothing to do with the pi hook's hold"
+    );
+    assert!(w.dot().join("hooks/guard.sh").is_file());
 }

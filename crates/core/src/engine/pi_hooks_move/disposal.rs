@@ -26,6 +26,14 @@ pub(super) fn plan_directory(
     if !matches!(look(dir), Found::Plain(_)) {
         return;
     }
+    // The binding hash is taken BEFORE the listing that proves ownership,
+    // so every arrival is covered: a file that lands before it is in the
+    // listing too and becomes a stranger, and one that lands after makes
+    // the apply-time hash differ and the op abort. Taken after, a file
+    // arriving between the two reads would be in neither.
+    // A directory that cannot be hashed cannot be taken whole; what is
+    // wrong with it is said by the listing below, in its own words.
+    let whole = crate::hash::hash_tree(dir).ok();
     let strangers = match strangers(dir, ours) {
         Ok(strangers) => strangers,
         Err(error) => {
@@ -56,18 +64,30 @@ pub(super) fn plan_directory(
     }
     // Nothing here is anybody else's, so the whole directory goes when
     // this pass takes everything the lock names in it.
-    if !take.is_empty() && take.len() == ours.len() {
-        whole(format!("Move pi hooks out of {}", dir.display()), dir, sink);
+    if let Some(whole) = &whole
+        && !take.is_empty()
+        && take.len() == ours.len()
+    {
+        trash(
+            format!("Move pi hooks out of {}", dir.display()),
+            dir,
+            whole,
+            sink,
+        );
         return;
     }
     // And when it names nothing and the directory is empty — the shell a
     // finished move leaves behind, which pi still warns about and which
     // holds nothing anyone could lose. Said out loud: a directory this
     // scope's hooks no longer sit in is not one kendex can prove it made.
-    if claimed && ours.is_empty() {
-        whole(
+    if let Some(whole) = &whole
+        && claimed
+        && ours.is_empty()
+    {
+        trash(
             format!("Remove the empty {} pi warns about", dir.display()),
             dir,
+            whole,
             sink,
         );
         sink.notes.push(format!(
@@ -77,16 +97,6 @@ pub(super) fn plan_directory(
         return;
     }
     each(sink);
-}
-
-/// The whole directory, bound to a hash of everything in it — the same
-/// read that proved nothing else is in there, so a file added between the
-/// two fails the precondition instead of going to the trash unnoticed.
-fn whole(description: String, dir: &Path, sink: &mut Sink) {
-    match crate::hash::hash_tree(dir) {
-        Ok(proven) => trash(description, dir, &proven, sink),
-        Err(error) => sink.notes.push(list_note(dir, &error.to_string())),
-    }
 }
 
 fn list_note(dir: &Path, error: &str) -> String {

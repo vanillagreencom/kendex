@@ -4,7 +4,7 @@
 //! through one, at either end of the move.
 
 use std::fs;
-use std::os::unix::fs::symlink;
+use std::os::unix::fs::{PermissionsExt, symlink};
 
 use super::{about, apply, notes, regress, regressed, world};
 
@@ -129,4 +129,37 @@ fn a_linked_directory_is_never_enumerated() {
             .contains(".pi/hooks/guard.sh"),
         "nor was the registration of what it holds"
     );
+}
+
+/// A directory kendex cannot look inside is one it cannot install beside:
+/// a replacement written there would run alongside whatever is still
+/// under the reserved name, and nobody would have been told there are now
+/// two of them.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_opaque_reserved_directory_holds_the_installation() {
+    for opaque in ["link", "unreadable"] {
+        let w = regressed();
+        let dir = w.dot().join("hooks");
+        if opaque == "link" {
+            let elsewhere = w.home.join("hooks");
+            fs::rename(&dir, &elsewhere).unwrap();
+            symlink(&elsewhere, &dir).unwrap();
+        } else {
+            fs::set_permissions(&dir, fs::Permissions::from_mode(0o000)).unwrap();
+        }
+
+        apply(&w);
+
+        assert!(
+            !w.dot().join("kendex/hooks/guard.sh").exists(),
+            "{opaque}: nothing is installed beside a copy kendex cannot see"
+        );
+        let new = w.dot().join("kendex/hooks.json");
+        assert!(
+            !new.exists() || !fs::read_to_string(&new).unwrap().contains("guard.sh"),
+            "{opaque}: and nothing is registered beside it"
+        );
+        let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o755));
+    }
 }

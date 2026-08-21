@@ -112,23 +112,18 @@ pub fn plan_scope(
     let state = state;
     let mut drift = Vec::new();
     let mut ops: Vec<PlannedOp> = Vec::new();
-    let mut new_lock = Lock {
-        version: crate::lock::LOCK_VERSION,
-        entries: BTreeMap::new(),
-        sources: source_revisions(manifest, lock, &state),
-        // Evidence carried forward; only seeding and refresh may move it.
-        settings_seeds: lock.settings_seeds.clone(),
-    };
+    let mut new_lock = fresh_lock(manifest, lock, &state);
     let mut written = tree_plan::Written::default();
     let mut config_edits = config_edits::ConfigEditPlan::default();
 
     plan_manifest_write(env, scope, repo_moved, manifest, &state, &mut ops)?;
 
     let emitted_paths = emitted_paths(lock);
-    // Answered before anything is planned: a pi hook whose copy under the
-    // name pi reserved is not provably kendex's holds whole, so the fresh
-    // rendering never quietly takes over from bytes the person kept.
-    let legacy_pi_holds = pi_hooks_move::held_installations(env, scope, lock);
+    // Answered before anything is planned, and read again when the move
+    // is planned: a pi hook whose copy under the name pi reserved is not
+    // this pass's to take holds whole, so the fresh rendering never
+    // quietly takes over from bytes the person kept.
+    let legacy_pi = pi_hooks_move::preflight(env, scope, lock, options);
 
     plan_pass::plan_items(
         env,
@@ -137,7 +132,7 @@ pub fn plan_scope(
         lock,
         options,
         &emitted_paths,
-        &legacy_pi_holds,
+        &legacy_pi,
         &mut drift,
         &mut ops,
         &mut config_edits,
@@ -163,6 +158,7 @@ pub fn plan_scope(
         manifest,
         lock,
         &state,
+        &legacy_pi,
         &mut pi_hooks_move::Sink {
             ops: &mut ops,
             guard: &mut guard,
@@ -222,6 +218,18 @@ pub fn plan_scope(
     report.notes.extend(moved_notes);
     unmanaged_rows(env, scope, manifest, lock, &state.items, &mut report.drift);
     Ok(report)
+}
+
+/// The record this pass will write, before any of it is filled in: the
+/// per-source resolutions it just made, and the seeding evidence carried
+/// forward — only seeding and refresh may move that.
+fn fresh_lock(manifest: &Manifest, lock: &Lock, state: &desired::DesiredState) -> Lock {
+    Lock {
+        version: crate::lock::LOCK_VERSION,
+        entries: BTreeMap::new(),
+        sources: source_revisions(manifest, lock, state),
+        settings_seeds: lock.settings_seeds.clone(),
+    }
 }
 
 /// What earlier installs put on disk under another kind's name. A path
