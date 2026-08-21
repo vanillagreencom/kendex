@@ -8,18 +8,18 @@
 use std::collections::BTreeSet;
 
 use super::super::desired::DesiredState;
-use super::Sink;
 use crate::lock::LockEntry;
 use crate::model::{HarnessId, ItemKind};
 
-/// A finished move goes into the record this plan writes, so no later
-/// pass has to work it out again from bytes and registrations that have
-/// every right to change afterwards. It rides the same plan as the
-/// removals it describes: an apply that fails rolls both back.
-pub(super) fn record_finished(finished: BTreeSet<String>, sink: &mut Sink) {
+/// The one place the record is written, once every entry that will exist
+/// does. A finished move is a fact about the past, so no later pass has to
+/// work it out again from bytes and registrations that have every right to
+/// change afterwards; it rides the same plan as the removals it describes,
+/// so an apply that fails rolls both back.
+pub(crate) fn record_finished(new_lock: &mut crate::lock::Lock, finished: &BTreeSet<String>) {
     for name in finished {
-        let key = crate::lock::entry_key(ItemKind::Hook, &name, HarnessId::Pi);
-        if let Some(entry) = sink.new_lock.entries.get_mut(&key) {
+        let key = crate::lock::entry_key(ItemKind::Hook, name, HarnessId::Pi);
+        if let Some(entry) = new_lock.entries.get_mut(&key) {
             entry.left_pi_reserved_name = true;
         }
     }

@@ -51,7 +51,8 @@ use claims::{claim, claims, provenance};
 use disposal::{plan_directory, plan_registry};
 use identity::{Identity, Registered, legacy_registration, registered};
 pub(crate) use preflight::{Preflight, preflight};
-use record::{every_pi_hook, newly_installed, record_finished};
+pub(crate) use record::record_finished;
+use record::{every_pi_hook, newly_installed};
 use retire::{Retire, retirable};
 
 /// The directory name Pi reserved. The registry an earlier kendex wrote
@@ -66,9 +67,6 @@ pub(super) struct Sink<'a> {
     pub(super) guard: &'a mut TrashGuard,
     pub(super) config_edits: &'a mut ConfigEditPlan,
     pub(super) notes: &'a mut Vec<String>,
-    /// The record this plan writes, where a finished move is written
-    /// down.
-    pub(super) new_lock: &'a mut Lock,
 }
 
 /// What sits at a path kendex might take. `Absent` is proven absence —
@@ -118,7 +116,7 @@ pub(super) fn plan_move(
     state: &DesiredState,
     pre: &Preflight,
     sink: &mut Sink,
-) -> Result<()> {
+) -> Result<BTreeSet<String>> {
     let root = pi::scope_root(env, scope);
     let dir = root.join(LEGACY_DIR);
     let registry = pi::legacy_hook_registry(&root);
@@ -138,7 +136,7 @@ pub(super) fn plan_move(
     // the directory empty would leave a fresh install reading its own
     // completion off the disk, and a script the person writes at the old
     // name meanwhile would meet that reading instead of this record.
-    record_finished(newly_installed(&entries, state), sink);
+    let mut finished = newly_installed(&entries, state);
     // The move retires itself: with neither reserved path there, there is
     // nothing to take and nothing to say — the same answer everything
     // below reaches, reached without stat-ing both names of every hook
@@ -151,8 +149,8 @@ pub(super) fn plan_move(
     // the new path, and one that moved before there was a record to
     // keep.
     if matches!(look(&dir), Found::Absent) && matches!(look(&registry), Found::Absent) {
-        record_finished(every_pi_hook(&entries, state), sink);
-        return Ok(());
+        finished.extend(every_pi_hook(&entries, state));
+        return Ok(finished);
     }
     // A link or an unreadable directory is never traversed: `dir.join(..)`
     // resolves through a link, so scanning one would put paths outside the
@@ -165,7 +163,7 @@ pub(super) fn plan_move(
                 "{} is a link kendex did not create, so nothing under it was touched — move it yourself and pi stops warning",
                 path.display()
             ));
-            return Ok(());
+            return Ok(finished);
         }
         // A scope root nothing else touched this pass — no pi hook
         // desired, so no registration to read — reaches this with an
@@ -173,7 +171,7 @@ pub(super) fn plan_move(
         // this module cannot look at.
         Found::Unreadable(path, error) => {
             sink.notes.push(unreadable_note(&path, &error));
-            return Ok(());
+            return Ok(finished);
         }
         Found::Absent | Found::Plain(_) => {}
     }
@@ -189,7 +187,7 @@ pub(super) fn plan_move(
     let mut ours: BTreeSet<OsString> = BTreeSet::new();
     let mut take: Vec<(PathBuf, String)> = Vec::new();
     let mut deregister: Vec<Identity> = Vec::new();
-    let mut finished: BTreeSet<String> = BTreeSet::new();
+    let mut moved_out: BTreeSet<String> = BTreeSet::new();
     for entry in entries.iter().copied() {
         // An installation on record as having left the reserved name is
         // done with it. Whatever wears its name there now — a file, a
@@ -274,7 +272,7 @@ pub(super) fn plan_move(
         // Everything this hook had under the reserved name is on its way
         // off disk. Said out loud in the lock, so no later pass has to
         // work it out again from bytes that have every right to change.
-        finished.insert(entry.name.clone());
+        moved_out.insert(entry.name.clone());
     }
 
     // Only what the plan really takes is called finished: a listing it
@@ -283,9 +281,9 @@ pub(super) fn plan_move(
     // abandon them there.
     let cleared = plan_directory(&dir, &ours, &take, !entries.is_empty(), sink);
     if cleared && plan_registry(&registry, &deregister, sink)? {
-        record_finished(finished, sink);
+        finished.extend(moved_out);
     }
-    Ok(())
+    Ok(finished)
 }
 
 /// A trash op through the plan's one guard, bound to the bytes ownership

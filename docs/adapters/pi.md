@@ -89,7 +89,10 @@ asks for, which for a hook installed disabled is nothing at all. A hook
 installed for the first time is over before it starts, whoever else's
 files happen to be in that directory. A lock written before the record falls back to the
 reading, and the first pass that finds nothing under the reserved name
-writes the record down. Discarding edits finishes the move
+writes the record down. The record is what moved the install record's
+version to 5: an older kendex would load the file, ignore the field and
+drop it on its next write, and then read a finished move as unfinished —
+so it refuses the file instead. Discarding edits finishes the move
 in that same pass — the old copy goes to the trash and one registration
 is left. Discarding covers bytes, and only bytes: every gate that lets a
 deletion through asks for a plain file first, so a directory or a link

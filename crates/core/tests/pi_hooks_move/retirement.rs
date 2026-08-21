@@ -10,18 +10,7 @@ use kendex_core::engine::{DriftState, PlanOptions, audit, plan_apply};
 
 use std::os::unix::fs::PermissionsExt;
 
-use super::{World, about, apply, forget_rendered_hash, notes, regressed};
-
-#[allow(clippy::unwrap_used)]
-fn undeclare(w: &World) {
-    let manifest = w.project.join("kendex.toml");
-    let text = fs::read_to_string(&manifest).unwrap();
-    let kept: String = text
-        .split_inclusive("\n\n")
-        .filter(|block| !block.starts_with("[hooks."))
-        .collect();
-    fs::write(&manifest, kept).unwrap();
-}
+use super::{World, about, apply, forget_rendered_hash, notes, regressed, undeclare};
 
 #[allow(clippy::unwrap_used)]
 fn apply_with(w: &World, options: &PlanOptions) {

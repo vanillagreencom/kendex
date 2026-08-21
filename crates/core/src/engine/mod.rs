@@ -152,7 +152,7 @@ pub fn plan_scope(
     // coming — a hook nothing declares any more is retired outright, one
     // this pass could not render keeps what it has.
     let mut moved_notes = Vec::new();
-    pi_hooks_move::plan_move(
+    let moved_out = pi_hooks_move::plan_move(
         env,
         scope,
         manifest,
@@ -164,7 +164,6 @@ pub fn plan_scope(
             guard: &mut guard,
             config_edits: &mut config_edits,
             notes: &mut moved_notes,
-            new_lock: &mut new_lock,
         },
     )?;
     removal::stale_emitted(&state, lock, &mut guard, &mut ops)?;
@@ -198,6 +197,9 @@ pub fn plan_scope(
         &mut new_lock,
     )?;
 
+    // Written here and nowhere else: every entry this pass keeps is in
+    // the record by now, the sweep's carry-forwards included.
+    pi_hooks_move::record_finished(&mut new_lock, &moved_out);
     plan_config_edits(config_edits, &mut ops)?;
     let set_changes = set_changes(scope, lock, &new_lock);
     let kept = kept_members(scope, lock, &new_lock, &options.uninstalled_bundles);

@@ -10,14 +10,19 @@ use crate::fs::{atomic_write, read_if_exists};
 use crate::manifest::Method;
 use crate::model::{HarnessId, ItemKind, Scope};
 
-/// Current lock version. Versions 1 (v0.1) through 3 still load — the
+/// Current lock version. Versions 1 (v0.1) through 4 still load — the
 /// shapes are compatible and the next lock write records the current
 /// version. A lock newer than this build refuses to load. Version 3 added
 /// `source_commit` and `rendered_hash`; version 4 added `settings-seeds`;
-/// each bump is what stops an older build from reading the lock, dropping
+/// version 5 added `left_pi_reserved_name` and a registration's matcher.
+/// Each bump is what stops an older build from reading the lock, dropping
 /// the newer record on its next write, and erasing evidence — of which
-/// bytes are whose, or of which comment blocks seeding wrote.
-pub const LOCK_VERSION: u32 = 4;
+/// bytes are whose, of which comment blocks seeding wrote, or of a move
+/// out of the directory pi reserved being over. That last one is why
+/// this bump is not optional: a build that dropped the record would read
+/// a finished move as unfinished, and reclaim what the person has since
+/// put under the reserved name.
+pub const LOCK_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
 pub struct Lock {

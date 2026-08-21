@@ -18,6 +18,7 @@ mod held_back;
 mod links;
 mod moved_by_hand;
 mod observed;
+mod recorded;
 mod retirement;
 mod strangers;
 mod unreadable;
@@ -164,6 +165,19 @@ fn regressed() -> World {
     regress(&w, "guard.sh");
     fs::remove_dir_all(w.dot().join("kendex")).unwrap();
     w
+}
+
+/// Take the hook's declaration out of the manifest: nothing asks for it
+/// any more, and its record is all that is left of it.
+#[allow(clippy::unwrap_used)]
+fn undeclare(w: &World) {
+    let manifest = w.project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    let kept: String = text
+        .split_inclusive("\n\n")
+        .filter(|block| !block.starts_with("[hooks."))
+        .collect();
+    fs::write(&manifest, kept).unwrap();
 }
 
 /// Drop the record that the move is over, the way a lock written before

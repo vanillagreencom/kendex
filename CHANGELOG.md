@@ -89,6 +89,16 @@ changes carry a **Breaking** call-out with their migration note inline.
   publishes is told so plainly, and settles nothing.
 ### Changed
 
+- **Breaking:** the install record's version moves to 5. Older files still
+  load and the first apply upgrades them in place, through the normal
+  journaled, previewed plan. What moves the version is the new evidence in
+  it: which Pi hooks have finished moving out of the directory pi
+  reserved, and the matcher a hook registration went in under. An earlier
+  kendex would load the file, ignore both, and drop them the next time it
+  wrote — and then read a finished move as unfinished and take back files
+  you had put there yourself. It refuses the file instead. Migration:
+  automatic on first apply; if you run two versions of kendex against one
+  project, update both.
 - The Updates page is a table with one row per package. A package out of
   date in several projects shows how many places, expands into a row per
   place — User level and each project by name — and each place has its
