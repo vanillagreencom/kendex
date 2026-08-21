@@ -92,9 +92,12 @@ impl Drive for tauri::WebviewWindow {
     }
 }
 
-/// The size and the record of it move together. A record left behind sends
-/// the next page that reloads back to a size nobody is looking at.
+/// The size and the record of it move together, off one clamped number.
+/// `zoom_scale` clamps on its own, so a percent that went unclamped to the
+/// record would name a size the window was never put at — and a record left
+/// behind sends the next page that reloads back to a size nobody is at.
 fn resize(window: &impl Drive, zoom: &WebviewZoom, percent: u16) -> Result<(), String> {
+    let percent = kendex_core::settings::clamp_zoom(percent);
     window.scale_to(kendex_core::settings::zoom_scale(percent))?;
     zoom.moved_to(percent);
     Ok(())
@@ -109,6 +112,7 @@ fn resize(window: &impl Drive, zoom: &WebviewZoom, percent: u16) -> Result<(), S
 fn reveal_at(window: &impl Drive, percent: u16) -> Result<WebviewZoom, String> {
     use std::io::Write;
 
+    let percent = kendex_core::settings::clamp_zoom(percent);
     // A webview that will not zoom is a far smaller problem than a window
     // that never opens, so this is said out loud and the window still shows.
     let opened = match window.scale_to(kendex_core::settings::zoom_scale(percent)) {
@@ -262,6 +266,35 @@ mod tests {
         resize(&window, &zoom, 150).unwrap();
 
         assert_eq!(zoom.read(), state(150, false));
+    }
+
+    /// The scaling clamps whatever it is handed, so a record taken from the
+    /// raw number would claim a size the window was never put at — and the
+    /// page that reloads believes the record. Both ends of the range, and
+    /// both ways in: the opening and a resize.
+    #[test]
+    fn a_size_outside_the_range_is_recorded_as_the_one_the_window_was_given() {
+        for (asked, given) in [
+            (5000u16, kendex_core::settings::ZOOM.max),
+            (1, kendex_core::settings::ZOOM.min),
+        ] {
+            let window = Recorder::default();
+            let zoom = reveal_at(&window, asked).unwrap();
+            assert_eq!(zoom.read(), state(given, false), "the opening");
+            assert_eq!(
+                window.told.borrow()[0],
+                Told::ScaleTo(kendex_core::settings::zoom_scale(given)),
+                "the opening put the window at a different size than it recorded"
+            );
+
+            resize(&window, &zoom, asked).unwrap();
+            assert_eq!(zoom.read(), state(given, false), "a resize");
+            assert_eq!(
+                window.told.borrow().last(),
+                Some(&Told::ScaleTo(kendex_core::settings::zoom_scale(given))),
+                "the resize put the window at a different size than it recorded"
+            );
+        }
     }
 
     /// A refused resize left recorded would send the next reload to a size
