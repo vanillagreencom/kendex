@@ -1,3 +1,10 @@
+//! Windows is out of scope here: `dirs::data_dir()` reads a Known Folder
+//! there, so neither the fixture HOME nor the XDG overrides below reach it
+//! and the child would write into the real profile. The sandbox itself
+//! holds on Windows — this is the test that cannot be pointed somewhere
+//! safe, not the behaviour.
+#![cfg(not(windows))]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

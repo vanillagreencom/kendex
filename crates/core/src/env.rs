@@ -34,17 +34,19 @@ const HARNESS_VARS: [&str; 7] = [
     "KENDEX_GIT_BASE",
 ];
 
-/// The subset of [`HARNESS_VARS`] that names a directory beside the home. A
-/// sandboxed build drops these and keeps the rest: an inherited CODEX_HOME
-/// would aim it straight back at the real machine, while KENDEX_GIT_BASE
-/// names a git host and belongs to the build wherever it runs.
-const HOME_RELOCATING_VARS: [&str; 6] = [
+/// The subset of [`HARNESS_VARS`] naming a harness root a build would write
+/// into. A sandboxed build drops these and keeps the rest: an inherited
+/// CODEX_HOME would aim it straight back at the real machine, while
+/// KENDEX_GIT_BASE names a git host and
+/// `GEMINI_CLI_SYSTEM_SETTINGS_PATH` a read-only policy file — dropping
+/// those two would not protect the machine, it would send the build to the
+/// real git host and the real machine-wide settings instead.
+const HOME_RELOCATING_VARS: [&str; 5] = [
     "CODEX_HOME",
     "OPENCODE_CONFIG",
     "OPENCODE_CONFIG_DIR",
     "PI_CODING_AGENT_DIR",
     "COPILOT_HOME",
-    "GEMINI_CLI_SYSTEM_SETTINGS_PATH",
 ];
 
 /// Every filesystem root the app reads or writes flows through here so tests
@@ -317,13 +319,18 @@ mod tests {
         assert_eq!(dev_home(false, Some(""), Path::new(DATA)), None);
     }
 
-    /// A git base names a host, not a directory beside the home, so a
-    /// sandboxed build resolving `owner/repo` still reaches the fixture tree
-    /// its launcher pointed it at.
+    /// A git base names a host and the Gemini override a read-only policy
+    /// file, so a sandboxed build still reaches the fixture tree and the
+    /// fixture settings its launcher pointed it at — dropping either would
+    /// send it to the real ones.
     #[test]
     fn a_sandbox_keeps_what_does_not_point_at_a_home() {
         let vars = BTreeMap::from([
             ("KENDEX_GIT_BASE".to_owned(), "file:///fixtures".to_owned()),
+            (
+                "GEMINI_CLI_SYSTEM_SETTINGS_PATH".to_owned(),
+                "/fixtures/gemini.json".to_owned(),
+            ),
             ("CODEX_HOME".to_owned(), "/home/real/.codex".to_owned()),
             ("COPILOT_HOME".to_owned(), "/home/real/.copilot".to_owned()),
         ]);
@@ -331,6 +338,11 @@ mod tests {
         assert_eq!(
             kept.get("KENDEX_GIT_BASE").map(String::as_str),
             Some("file:///fixtures")
+        );
+        assert_eq!(
+            kept.get("GEMINI_CLI_SYSTEM_SETTINGS_PATH")
+                .map(String::as_str),
+            Some("/fixtures/gemini.json")
         );
         assert!(!kept.contains_key("CODEX_HOME"));
         assert!(!kept.contains_key("COPILOT_HOME"));
