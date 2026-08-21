@@ -5,10 +5,8 @@ use crate::manifest::{Manifest, Method};
 use crate::mapping::{EffectiveSkills, effective_skills};
 use crate::model::ItemKind;
 use crate::render::agent::{
-    EffectiveAgent, RenderedAgent, Role, file_name, generate, hooks_for_agent, merge_overrides,
-    merged_instructions, parse_source_agent,
+    EffectiveAgent, RenderedAgent, Role, file_name, generate, parse_source_agent,
 };
-use crate::render::permission::PermissionIntent;
 use crate::render::validate::validate_agent;
 use crate::source::list_items;
 
@@ -66,36 +64,6 @@ fn merge_key(manifest: &Manifest, name: &str) -> String {
         true => stripped.to_owned(),
         false => name.to_owned(),
     }
-}
-
-/// Source-catalog defaults merged with project overrides for one harness,
-/// and the permission intent that merge produces.
-fn harness_overrides(
-    ctx: &ItemCtx,
-    source_agent: &crate::render::agent::SourceAgent,
-    harness: crate::model::HarnessId,
-    inputs: Inputs,
-) -> (crate::manifest::FrontmatterOverrides, PermissionIntent) {
-    let overrides = merge_overrides(
-        ctx.config
-            .frontmatter
-            .get(harness.name())
-            .and_then(|by_agent| by_agent.get(ctx.name)),
-        match inputs {
-            Inputs::Everything => ctx
-                .manifest
-                .agent_frontmatter
-                .get(harness.name())
-                .and_then(|by_agent| by_agent.get(ctx.name)),
-            Inputs::PublisherOnly => None,
-        },
-    );
-    let permissions = PermissionIntent::effective(
-        &source_agent.permissions,
-        overrides.allow_tools.as_deref(),
-        overrides.deny_tools.as_deref(),
-    );
-    (overrides, permissions)
 }
 
 /// The agent as this tool will know it, or `None` where that is the agent
@@ -220,39 +188,34 @@ pub(super) fn desired_agent(
         let installed = crate::harness::rendered_name(harness, ctx.name);
         let namespaced = installed_under(&parsed, ctx.name, &installed);
         let source_agent = namespaced.as_ref().unwrap_or(&parsed);
-        notice_overrides(ctx, state, harness, source_agent);
+        notice_overrides(
+            ctx,
+            state,
+            harness,
+            source_agent,
+            &parsed,
+            &skills.upstream_now,
+        );
         let effective = effective_agent(
             ctx,
             source_agent,
-            &parsed,
             harness,
-            &skills,
-            Inputs::Everything,
+            &skills.upstream_now,
+            gathered(ctx, &parsed, harness),
         );
+        // The publisher's own: this project contributes nothing to it, by
+        // construction rather than by a list of what to leave out.
         let authored = ctx.author_review.as_ref().and_then(|_| {
             authored_agent(&effective_agent(
                 ctx,
                 source_agent,
-                &parsed,
                 harness,
-                &skills,
-                Inputs::PublisherOnly,
+                &skills.upstream_now,
+                Project::default(),
             ))
         });
-        let rendered = match generate(&effective) {
-            Ok(rendered) => rendered,
-            // A refusal produces no artifact for this harness; the plan
-            // turns it into a conflict row plus removal of any previous,
-            // wider rendering — never a silent widen, never a leftover.
-            Err(refusal) => {
-                state.refused.push(super::desired::Refused {
-                    kind: ItemKind::Agent,
-                    name: ctx.name.to_owned(),
-                    harness,
-                    reason: refusal,
-                });
-                continue;
-            }
+        let Some(rendered) = render_or_refuse(ctx, state, harness, &effective) else {
+            continue;
         };
         if !loadable(ctx, state, harness, &installed, &rendered) {
             continue;
@@ -313,72 +276,40 @@ fn notice_overrides(
     state: &mut DesiredState,
     harness: crate::model::HarnessId,
     source_agent: &crate::render::agent::SourceAgent,
-) {
-    let (overrides, _) = harness_overrides(ctx, source_agent, harness, Inputs::Everything);
-    harness_notices(ctx, state, harness, source_agent, &overrides);
-}
-
-/// Whose inputs a rendering is built from.
-///
-/// Every input a project can contribute to is answered here, in one place,
-/// and every arm of every match below is written out: a new project-supplied
-/// input has to say what the publisher's own rendering does with it, or a
-/// publisher's review would silently cover text the project wrote. The
-/// fields with no arm — `source`, `harness`, `scope` — carry no project
-/// text at all: the first two are the catalog's own bytes and the tool
-/// being rendered for, and the third is a path.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Inputs {
-    Everything,
-    PublisherOnly,
-}
-
-/// One agent's effective intent for one harness: what the source asks for,
-/// narrowed by this project's overrides, and this project's own text
-/// spliced in beside it — or, under `PublisherOnly`, the source's alone.
-fn effective_agent<'a>(
-    ctx: &'a ItemCtx,
-    source: &'a crate::render::agent::SourceAgent,
     parsed: &crate::render::agent::SourceAgent,
-    harness: crate::model::HarnessId,
-    skills: &EffectiveSkills,
-    inputs: Inputs,
-) -> EffectiveAgent<'a> {
-    let (overrides, permissions) = harness_overrides(ctx, source, harness, inputs);
-    EffectiveAgent {
-        source,
+    upstream_skills: &[String],
+) {
+    let effective = effective_agent(
+        ctx,
+        source_agent,
         harness,
-        scope: ctx.scope,
-        // A project's `[agent-skills]` decides the effective list; the
-        // source's own assignment is what it asked for.
-        skills: match inputs {
-            Inputs::Everything => skills.effective.clone(),
-            Inputs::PublisherOnly => skills.upstream_now.clone(),
-        },
-        // `[agent-frontmatter]` writes free strings — tool names, nicknames
-        // — that reach the rendered document verbatim and are read by every
-        // rule, so they are the project's text as much as its prose is.
-        // Permissions derive from those same overrides.
-        overrides,
-        permissions,
-        launch_instructions: match inputs {
-            Inputs::Everything => {
-                merged_instructions(&ctx.manifest.agent_launch_instructions, ctx.name)
-            }
-            Inputs::PublisherOnly => None,
-        },
-        additional_instructions: match inputs {
-            Inputs::Everything => {
-                merged_instructions(&ctx.manifest.agent_additional_instructions, ctx.name)
-            }
-            Inputs::PublisherOnly => None,
-        },
-        custom_hooks: match inputs {
-            Inputs::Everything => {
-                hooks_for_agent(ctx.env, ctx.scope, harness, ctx.manifest, parsed)
-            }
-            Inputs::PublisherOnly => Vec::new(),
-        },
+        upstream_skills,
+        gathered(ctx, parsed, harness),
+    );
+    harness_notices(ctx, state, harness, source_agent, &effective.overrides);
+}
+
+/// This agent for this harness, or `None` where the harness cannot express
+/// its permission intent. A refusal produces no artifact: the plan turns it
+/// into a conflict row plus removal of any previous, wider rendering —
+/// never a silent widen, never a leftover.
+fn render_or_refuse(
+    ctx: &ItemCtx,
+    state: &mut DesiredState,
+    harness: crate::model::HarnessId,
+    effective: &EffectiveAgent,
+) -> Option<RenderedAgent> {
+    match generate(effective) {
+        Ok(rendered) => Some(rendered),
+        Err(refusal) => {
+            state.refused.push(super::desired::Refused {
+                kind: ItemKind::Agent,
+                name: ctx.name.to_owned(),
+                harness,
+                reason: refusal,
+            });
+            None
+        }
     }
 }
 
@@ -395,3 +326,7 @@ fn authored_agent(publishers: &EffectiveAgent) -> Option<crate::quality::Content
             text: rendered.text,
         })
 }
+
+mod project;
+pub(crate) use project::contributes_to_agent;
+use project::{Project, effective_agent, gathered};

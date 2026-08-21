@@ -269,3 +269,49 @@ fn a_reviews_file_that_will_not_parse_is_named_on_the_page() {
         scored.reasons
     );
 }
+
+/// The preview reads catalog bytes, so anything this project adds to the
+/// rendering is missing from the number it shows. It says so — for every
+/// input the rendering counts as the project's, not only the ones that read
+/// as prose.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_preview_says_what_this_projects_own_settings_add() {
+    let (tmp, env, scope) = fixture();
+    let upstream = tmp.path().join("base/owner/repo");
+    fs::create_dir_all(upstream.join("agents")).unwrap();
+    fs::write(
+        upstream.join("agents/helper.md"),
+        "---\nname: helper\ndescription: helps\nrole: engineer\n---\n\nBody.\n",
+    )
+    .unwrap();
+    commit(&upstream, "an agent");
+    crate::remote::sync(&env, REPO, None).unwrap();
+    let quiet = package_safety(&env, &scope, "cat", ItemKind::Agent, "helper").unwrap();
+    assert!(
+        !quiet
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("adds its own instructions")),
+        "{:?}",
+        quiet.reasons
+    );
+
+    // Frontmatter alone, which is not an instruction table.
+    let Scope::Project { root } = &scope else {
+        unreachable!()
+    };
+    let manifest = root.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap()
+        + "\n[agent-frontmatter.claude.helper]\nnickname-candidates = [\"Scout\"]\n";
+    fs::write(&manifest, text).unwrap();
+
+    let loud = package_safety(&env, &scope, "cat", ItemKind::Agent, "helper").unwrap();
+    assert!(
+        loud.reasons
+            .iter()
+            .any(|reason| reason.contains("adds its own instructions")),
+        "{:?}",
+        loud.reasons
+    );
+}

@@ -209,21 +209,24 @@ fn judge(env: &Env, score: &CachedScore, review: Option<&AuthorReview>) -> Resul
     })
 }
 
-/// Whether this project contributes text to this item's rendering. The
-/// same tables `gate::input::authored_for` classifies kinds by, read from
-/// the other side: browse scores catalog bytes, which carry none of it.
+/// Whether this project contributes anything to this item's rendering.
+///
+/// Asked of the same enumeration the rendering subtracts by, never of a
+/// second transcription of it: two lists of one thing is how both ended up
+/// missing the same entries. Browse scores catalog bytes, which carry none
+/// of this, so the page says what it did not read rather than showing a
+/// number the install will not give.
 fn injected_here(manifest: &crate::manifest::Manifest, kind: ItemKind, name: &str) -> bool {
-    let named = |table: &std::collections::BTreeMap<String, String>| {
-        [name, "all", "*"]
-            .iter()
-            .any(|key| table.contains_key(*key))
-    };
     match kind {
-        ItemKind::Skill => named(&manifest.skill_instructions),
-        ItemKind::Agent => {
-            named(&manifest.agent_launch_instructions)
-                || named(&manifest.agent_additional_instructions)
-        }
+        ItemKind::Skill => [name, "all", "*"]
+            .iter()
+            .any(|key| manifest.skill_instructions.contains_key(*key)),
+        // Any harness: the preview is not for one of them, and a project
+        // that overrides frontmatter for a single tool still makes this
+        // reading incomplete.
+        ItemKind::Agent => crate::model::HarnessId::ALL
+            .into_iter()
+            .any(|harness| crate::engine::contributes_to_agent(manifest, harness, name)),
         ItemKind::Command
         | ItemKind::Hook
         | ItemKind::McpServer

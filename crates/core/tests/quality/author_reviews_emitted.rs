@@ -203,9 +203,19 @@ fn only_the_kinds_that_say_so_carry_the_projects_own_text() {
     // One project, read twice: the same paths, the same bytes, and the only
     // thing that moved is what the manifest contributes.
     let quiet = bytes();
+    // Every table a project writes into, not only the ones that read as
+    // prose: `[agent-frontmatter]` and `[agent-skills]` reach the rendered
+    // document too, and an enumeration that names some of them is the shape
+    // this has leaked through before.
     declare(
         &f,
-        "\n[skill-instructions]\nclean = \"Project text.\"\n\n[agent-launch-instructions]\nhelper = \"Project text.\"\n\n[agent-additional-instructions]\nhelper = \"More project text.\"\n",
+        concat!(
+            "\n[skill-instructions]\nclean = \"Project text.\"\n",
+            "\n[agent-launch-instructions]\nhelper = \"Project text.\"\n",
+            "\n[agent-additional-instructions]\nhelper = \"More project text.\"\n",
+            "\n[agent-frontmatter.claude.helper]\nnickname-candidates = [\"Scout\"]\n",
+            "\n[agent-skills]\nhelper = [\"clean\"]\n",
+        ),
     );
     let loud = bytes();
 
