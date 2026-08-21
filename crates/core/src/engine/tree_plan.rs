@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 
 use super::DriftState;
 use super::desired::{Artifact, Desired, artifact_disk_hash};
-use super::item_plan::Planned;
+use super::file_plan::{TAKEN_OVER, set_aside};
+use super::item_plan::{Claim, Planned, unmanaged};
 use crate::apply::{Op, PlannedOp, Pre};
 use crate::env::Env;
 use crate::error::Result;
@@ -19,7 +20,7 @@ use crate::hash::hash_tree;
 pub(super) fn plan_tree(
     env: &Env,
     item: &Desired,
-    locked: bool,
+    claim: Claim,
     owned: &BTreeSet<PathBuf>,
     written: &mut Written,
     ops: &mut Vec<PlannedOp>,
@@ -32,7 +33,7 @@ pub(super) fn plan_tree(
     else {
         return Ok(Planned::Clean);
     };
-    let collapsed = match collapsed_link(canonical, locked, owned) {
+    let collapsed = match collapsed_link(canonical, claim.locked, owned) {
         Ok(collapsed) => collapsed,
         Err(conflict) => return Ok(conflict),
     };
@@ -50,29 +51,40 @@ pub(super) fn plan_tree(
     };
     let mut result = Planned::Clean;
     if disk.as_deref() != Some(wanted.as_str()) {
-        if disk.is_some()
-            && !locked
+        let unowned = disk.is_some()
+            && !claim.locked
             && !written.canonicals.contains(canonical)
-            && !owned.contains(canonical)
-        {
-            return Ok(Planned::Conflict(format!(
-                "{} is not managed yet — start managing it first",
-                canonical.display()
-            )));
+            && !owned.contains(canonical);
+        if unowned && !claim.replace_unmanaged {
+            return Ok(unmanaged(canonical));
         }
-        result = match disk.is_some() || collapsed.is_some() {
-            true => Planned::Drift(DriftState::Stale, "newer content is available".into()),
-            false => Planned::Drift(DriftState::Missing, "not installed yet".into()),
+        result = match (disk.is_some() || collapsed.is_some(), unowned) {
+            (_, true) => Planned::Drift(DriftState::Missing, TAKEN_OVER.into()),
+            (true, false) => Planned::Drift(DriftState::Stale, "newer content is available".into()),
+            (false, false) => Planned::Drift(DriftState::Missing, "not installed yet".into()),
         };
         if written.canonicals.insert(canonical.clone()) {
-            write_ops(item, canonical, files, &collapsed, disk, ops);
+            // Taken over, the tree goes to the trash whole rather than
+            // being written through: what kendex did not write is kept
+            // recoverable, never quietly merged under the new render.
+            if let Some(hash) = disk.clone().filter(|_| unowned) {
+                ops.push(set_aside(canonical, Pre::HashIs { hash }));
+            }
+            write_ops(
+                item,
+                canonical,
+                files,
+                &collapsed,
+                disk.filter(|_| !unowned),
+                ops,
+            );
         }
     }
     let Some(link) = link else {
         return Ok(result);
     };
     plan_link(
-        env, item, link, canonical, locked, owned, written, ops, result,
+        env, item, link, canonical, claim, owned, written, ops, result,
     )
 }
 
@@ -152,7 +164,7 @@ fn plan_link(
     item: &Desired,
     link: &Path,
     canonical: &Path,
-    locked: bool,
+    claim: Claim,
     owned: &BTreeSet<PathBuf>,
     written: &mut Written,
     ops: &mut Vec<PlannedOp>,
@@ -209,11 +221,9 @@ fn plan_link(
         ));
     }
     let diverged = link.exists();
-    if diverged && !locked && !owned.contains(link) {
-        return Ok(Planned::Conflict(format!(
-            "{} is not managed yet — start managing it first",
-            link.display()
-        )));
+    let unowned = diverged && !claim.locked && !owned.contains(link);
+    if unowned && !claim.replace_unmanaged {
+        return Ok(unmanaged(link));
     }
     let first = written.links.insert(link.to_path_buf());
     if diverged && first {
@@ -221,16 +231,19 @@ fn plan_link(
             Ok(hash) => hash,
             Err(error) => return Ok(uncomparable(link, &error)),
         };
-        ops.push(PlannedOp {
-            description: format!(
-                "Put {} back on the shared {} {}",
-                item.harness.display_name(),
-                item.kind.name(),
-                item.name
-            ),
-            op: Op::Trash {
-                path: link.to_path_buf(),
-                pre: Pre::HashIs { hash },
+        ops.push(match unowned {
+            true => set_aside(link, Pre::HashIs { hash }),
+            false => PlannedOp {
+                description: format!(
+                    "Put {} back on the shared {} {}",
+                    item.harness.display_name(),
+                    item.kind.name(),
+                    item.name
+                ),
+                op: Op::Trash {
+                    path: link.to_path_buf(),
+                    pre: Pre::HashIs { hash },
+                },
             },
         });
     }
@@ -250,12 +263,15 @@ fn plan_link(
         });
     }
     let tool = item.harness.display_name();
-    Ok(match diverged {
-        true => Planned::Drift(
+    Ok(match (diverged, unowned) {
+        (_, true) => Planned::Drift(DriftState::Missing, TAKEN_OVER.into()),
+        (true, false) => Planned::Drift(
             DriftState::Stale,
             format!("{tool}'s own copy is no longer needed"),
         ),
-        false => Planned::Drift(DriftState::Missing, format!("{tool} is not connected yet")),
+        (false, false) => {
+            Planned::Drift(DriftState::Missing, format!("{tool} is not connected yet"))
+        }
     })
 }
 

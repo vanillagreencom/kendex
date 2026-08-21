@@ -124,3 +124,52 @@ fn declared_artifact_paths(env: &Env, scope: &Scope, manifest: &Manifest) -> BTr
     }
     paths
 }
+
+/// Declarations kendex has no record of installing, with files already
+/// sitting where it would write them — the state an apply refuses on and
+/// nothing else reports. Manifest, lock and a stat: no source reads and no
+/// hashing, because the session check does no deep work, and "no lock
+/// entry names this installation" is already proof kendex did not write
+/// what is there.
+///
+/// Only an item with nothing installed anywhere counts. One installed for
+/// some tools and not others shares its canonical tree with the rest, and
+/// calling that shared tree a stranger's would report kendex's own output
+/// back at the user.
+pub(crate) fn blocked_by_content(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    lock: &Lock,
+) -> Vec<(ItemKind, String)> {
+    // Paths an installation recorded writing under another kind's name are
+    // ours, whichever entry holds them now (invariant 6).
+    let emitted: BTreeSet<&PathBuf> = lock
+        .entries
+        .values()
+        .filter_map(|entry| entry.emitted.as_ref())
+        .flat_map(|emitted| emitted.paths.iter())
+        .collect();
+    let mut blocked = Vec::new();
+    for (kind, table) in [
+        (ItemKind::Agent, &manifest.agents),
+        (ItemKind::Skill, &manifest.skills),
+    ] {
+        for (name, decl) in table {
+            let harnesses = desired::target_harnesses(decl, manifest, kind, scope);
+            if harnesses.iter().any(|harness| {
+                lock.entries
+                    .contains_key(&crate::lock::entry_key(kind, name, *harness))
+            }) {
+                continue;
+            }
+            let occupied = declared_paths(env, scope, manifest, kind, name, decl)
+                .into_iter()
+                .any(|path| !emitted.contains(&path) && (path.exists() || path.is_symlink()));
+            if occupied {
+                blocked.push((kind, name.clone()));
+            }
+        }
+    }
+    blocked
+}

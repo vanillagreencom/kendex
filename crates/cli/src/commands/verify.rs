@@ -1,9 +1,10 @@
 use std::process::ExitCode;
 
-use kendex_core::engine::{DriftState, audit};
+use kendex_core::engine::{DriftRow, DriftState, audit};
 use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
 
+use super::engine_common::print_unmanaged;
 use super::{resolve_scopes, say};
 use crate::scope::ScopeFilter;
 
@@ -16,13 +17,25 @@ pub fn run(
 ) -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut checked = 0usize;
     let mut failed = 0usize;
+    // What this run did not check, gathered across scopes and said once at
+    // the end: a count of installations is only honest beside the content
+    // that was never one.
+    let mut unmanaged: Vec<DriftRow> = Vec::new();
 
     for scope in resolve_scopes(env, filter)? {
         let lock = load_lock(&lock_path(env, &scope))?;
+        let report = audit(env, &scope)?;
+        unmanaged.extend(
+            report
+                .drift
+                .iter()
+                .filter(|row| row.state == DriftState::Unmanaged)
+                .filter(|row| names.is_empty() || names.contains(&row.name))
+                .cloned(),
+        );
         if lock.entries.is_empty() {
             continue;
         }
-        let report = audit(env, &scope)?;
         for entry in lock.entries.values() {
             if !names.is_empty() && !names.contains(&entry.name) {
                 continue;
@@ -92,12 +105,14 @@ pub fn run(
 
     if checked == 0 {
         say("nothing installed");
+        print_unmanaged(&unmanaged);
         return Ok(ExitCode::SUCCESS);
     }
     say(&format!(
         "{checked} checked, {} OK, {failed} failed",
         checked - failed
     ));
+    print_unmanaged(&unmanaged);
     Ok(if failed > 0 {
         ExitCode::FAILURE
     } else {

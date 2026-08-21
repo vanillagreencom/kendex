@@ -1,7 +1,7 @@
 use std::io::{IsTerminal, Write};
 
-use kendex_core::engine::EngineReport;
 use kendex_core::engine::decisions::DecisionState;
+use kendex_core::engine::{DriftCause, DriftRow, DriftState, EngineReport};
 use kendex_core::env::Env;
 use kendex_core::error::CoreError;
 use kendex_core::model::HarnessId;
@@ -36,13 +36,47 @@ pub fn print_report(report: &EngineReport) {
     print_conflicts(report);
     if report.plan.is_empty() {
         say("nothing to do");
+    } else {
+        say("plan:");
+        for op in &report.plan.ops {
+            say(&format!("  - {}", op.description));
+        }
+    }
+    print_unmanaged(&report.drift);
+}
+
+/// Content in a managed folder that no declaration and no lock claims.
+/// apply leaves it exactly where it is (invariant 6) — which is why it has
+/// to be said here: seen in `list` and nowhere else, it reads as checked
+/// and passing rather than as never looked at.
+pub fn print_unmanaged(drift: &[DriftRow]) {
+    let rows: Vec<&DriftRow> = drift
+        .iter()
+        .filter(|row| row.state == DriftState::Unmanaged)
+        .collect();
+    if rows.is_empty() {
         return;
     }
-    say("plan:");
-    for op in &report.plan.ops {
-        say(&format!("  - {}", op.description));
+    say(&format!(
+        "not managed: {} item(s) kendex did not install and will not touch",
+        rows.len()
+    ));
+    for row in rows.iter().take(UNMANAGED_SHOWN) {
+        say(&format!(
+            "  - {} {} [{}] {}",
+            row.kind.name(),
+            row.name,
+            row.harness.name(),
+            row.detail
+        ));
+    }
+    if rows.len() > UNMANAGED_SHOWN {
+        say(&format!("  … and {} more", rows.len() - UNMANAGED_SHOWN));
     }
 }
+
+/// Enough to recognise what is there without burying the plan above it.
+const UNMANAGED_SHOWN: usize = 10;
 
 /// What this apply cannot write and why. A conflict plans no op, so
 /// without this the run ends on "nothing to do" while the thing the user
@@ -54,7 +88,7 @@ pub fn print_report(report: &EngineReport) {
 /// edits are in it and still standing in the way of the accepted content.
 pub fn print_conflicts(report: &EngineReport) {
     for row in &report.drift {
-        if row.state != kendex_core::engine::DriftState::Conflict {
+        if row.state != DriftState::Conflict {
             continue;
         }
         say(&format!(
@@ -64,7 +98,19 @@ pub fn print_conflicts(report: &EngineReport) {
             row.harness.display_name(),
             row.detail
         ));
+        if row.cause == Some(DriftCause::UnmanagedContent) {
+            print_exits();
+        }
     }
+}
+
+/// The two ways out of a conflict over files kendex never wrote. The drift
+/// row states the choice in the words both surfaces share; this names the
+/// verb and the flag that carry it out — as data, never as a command line
+/// to paste, which this product does not emit.
+fn print_exits() {
+    say("  to keep those files: adopt them by name");
+    say("  to install what you declared instead: apply with --replace-unmanaged");
 }
 
 /// What the safety rules found in the content this plan would write. Held

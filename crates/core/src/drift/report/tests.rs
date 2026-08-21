@@ -367,7 +367,7 @@ fn open_findings_and_held_back_render_with_the_findings_remedy() {
     assert_eq!(report.status, CheckStatus::Drift);
     let text = render_plain(&report);
     assert!(
-        text.contains("1 install(s) held back, 3 finding(s) awaiting review")
+        text.contains("1 install(s) held back by the safety check, 3 finding(s) awaiting review")
             && text.contains("fix: kendex findings"),
         "{text}"
     );

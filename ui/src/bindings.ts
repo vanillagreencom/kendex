@@ -956,11 +956,19 @@ export type Dismissed_Serialize = {
 };
 
 /**
- *  Why an installation diverged, when the plan can tell. `LocalEdit` and
- *  `Both` are the causes that block writes: the user's bytes are on disk
- *  and only an explicit choice may take them.
+ *  Why an installation diverged, when the plan can tell. `LocalEdit`,
+ *  `Both` and `UnmanagedContent` are the causes that block writes: bytes
+ *  kendex did not write are on disk and only an explicit choice may take
+ *  them.
  */
-export type DriftCause = "upstream-changed" | "local-edit" | "both";
+export type DriftCause = "upstream-changed" | "local-edit" | "both" | 
+/**
+ *  Files are already where a declaration installs, and no lock entry
+ *  says kendex put them there. The two ways out are opposite
+ *  directions: adopt keeps the files, `replace_unmanaged` keeps the
+ *  declaration.
+ */
+"unmanaged-content";
 
 export type DriftRow = DriftRow_Serialize | DriftRow_Deserialize;
 

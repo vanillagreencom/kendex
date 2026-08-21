@@ -27,6 +27,7 @@ mod desired_skill;
 mod desired_source;
 pub mod detach;
 mod expansion;
+mod file_plan;
 pub mod fork;
 mod gate;
 mod gemini;
@@ -76,6 +77,7 @@ use scope_writes::{
 };
 pub use set_change::{KeptInstall, SetChange, SetDirection};
 use set_change::{kept_members, set_changes};
+pub(crate) use unmanaged::blocked_by_content;
 use unmanaged::unmanaged_rows;
 
 mod report_types;

@@ -75,6 +75,13 @@ pub enum Remedy {
     Findings {
         global: bool,
     },
+    /// Install what the manifest declares over files kendex never wrote.
+    /// The other exit — keeping those files — is `adopt`, which needs the
+    /// item named, so the line says it in words and this spells the half a
+    /// pipeline can run unattended.
+    Replace {
+        global: bool,
+    },
 }
 
 /// Only characters every declared name already passed validation for. A
@@ -110,6 +117,9 @@ impl Remedy {
                 format!("kendex fork {} {name}{}", kind.name(), flag(global))
             }
             Remedy::Findings { global } => format!("kendex findings{}", flag(global)),
+            Remedy::Replace { global } => {
+                format!("kendex apply --replace-unmanaged{}", flag(global))
+            }
         })
     }
 }
@@ -159,6 +169,7 @@ struct Sections {
     removed: Vec<Line>,
     mixed: Vec<Line>,
     missing: Vec<Line>,
+    blocked: Vec<Line>,
     references: Vec<Line>,
     findings: Vec<Line>,
     unevaluated: Vec<Line>,
@@ -173,6 +184,7 @@ impl Sections {
             removed: Vec::new(),
             mixed: Vec::new(),
             missing: Vec::new(),
+            blocked: Vec::new(),
             references: Vec::new(),
             findings: Vec::new(),
             unevaluated: Vec::new(),
@@ -189,6 +201,7 @@ impl Sections {
             ("gone from their source", self.removed),
             ("mixed installs", self.mixed),
             ("missing on disk", self.missing),
+            ("blocked by files kendex did not write", self.blocked),
             ("broken references", self.references),
             ("safety findings", self.findings),
             ("not yet evaluated", self.unevaluated),

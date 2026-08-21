@@ -25,15 +25,21 @@ pub enum DriftState {
     Conflict,
 }
 
-/// Why an installation diverged, when the plan can tell. `LocalEdit` and
-/// `Both` are the causes that block writes: the user's bytes are on disk
-/// and only an explicit choice may take them.
+/// Why an installation diverged, when the plan can tell. `LocalEdit`,
+/// `Both` and `UnmanagedContent` are the causes that block writes: bytes
+/// kendex did not write are on disk and only an explicit choice may take
+/// them.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum DriftCause {
     UpstreamChanged,
     LocalEdit,
     Both,
+    /// Files are already where a declaration installs, and no lock entry
+    /// says kendex put them there. The two ways out are opposite
+    /// directions: adopt keeps the files, `replace_unmanaged` keeps the
+    /// declaration.
+    UnmanagedContent,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -111,6 +117,12 @@ pub struct PlanOptions {
     /// explicit "discard my edits" everything destructive has to go
     /// through.
     pub overwrite_edited: bool,
+    /// Replace files kendex never wrote that sit where a declaration
+    /// installs. Off, they are a conflict and no write touches them; on,
+    /// each one moves to the trash and the declared render takes its
+    /// place. The opposite direction from adopt, which keeps the files and
+    /// rewrites the declaration around them.
+    pub replace_unmanaged: bool,
     /// Discard edits for these items only, by kind and name — leaving
     /// every other edited item in the scope held. The per-package
     /// "discard" the app offers, which must never take a neighbour's

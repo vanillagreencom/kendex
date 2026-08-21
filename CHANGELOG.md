@@ -8,6 +8,15 @@ changes carry a **Breaking** call-out with their migration note inline.
 
 ### Added
 
+- `kendex apply --replace-unmanaged` installs what your kendex.toml declares
+  over files kendex did not write. Declaring an item whose files were
+  already on disk — the normal shape of moving an existing repo onto
+  kendex — used to have no way forward: the refusal named no way out, and
+  `--discard-edits` did not clear it. The two directions are now both
+  available and both named: `kendex adopt` keeps the files that are there,
+  and this keeps your declaration. The replaced files move to the trash,
+  never straight to delete, and a link kendex did not create is still never
+  replaced.
 - The app has its own icon. Every channel that installs the app shipped the
   old vstack chevron; the icon is now the `x` from the kendex wordmark, in
   the wordmark's green, at every size the desktop, dock, and installer use
@@ -161,6 +170,16 @@ changes carry a **Breaking** call-out with their migration note inline.
   `KENDEX_REAL_HOME=1` — only that exact value opts out. Release builds are
   unaffected, whether you installed one or built it with `--release`.
 
+- A declared item whose files were already on disk no longer deadlocks.
+  `kendex apply` says which files are in the way and names both ways out
+  instead of "not managed yet", `kendex check` reports it as its own
+  problem — "blocked by files kendex did not write" — instead of folding it
+  into the count of installs waiting on a safety review, and that count now
+  says what it is waiting for.
+- `kendex apply --plan` and `kendex verify` name content sitting in your
+  tree that nothing declares, which `kendex list` showed and neither of
+  them mentioned. Nothing about it changes — kendex still never touches it
+  — but a count of what was checked now says what was not.
 - The project-management skill's issue pipeline creates Linear issues
   directly in Backlog instead of the team's Triage default. Pipeline output
   is already fully triaged — project, labels, priority, relations — and a

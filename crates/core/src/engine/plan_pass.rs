@@ -56,7 +56,15 @@ pub(super) fn plan_items(
         if !discard && holds::hold_local_edit(env, item, scope, lock, &mut sink) {
             continue;
         }
-        plan_item(env, item, scope, lock, emitted_paths, &mut sink)?;
+        plan_item(
+            env,
+            item,
+            scope,
+            lock,
+            emitted_paths,
+            options.replace_unmanaged,
+            &mut sink,
+        )?;
     }
     Ok(())
 }

@@ -1,17 +1,17 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use super::{DriftRow, DriftState};
-use crate::apply::{Op, PlannedOp, Pre};
+use super::{DriftCause, DriftRow, DriftState};
+use crate::apply::PlannedOp;
 use crate::clock::timestamp;
 use crate::env::Env;
 use crate::error::Result;
-use crate::hash::hash_tree;
 use crate::lock::{Lock, LockEntry};
 use crate::model::Scope;
 
 use super::config_edits::ConfigEditPlan;
 use super::desired::{Artifact, Desired};
+use super::file_plan::{plan_file, plan_written_file};
 use super::tree_plan::{Written, plan_tree};
 
 /// Everything one pass over the desired items accumulates.
@@ -32,6 +32,7 @@ pub(super) fn plan_item(
     scope: &Scope,
     lock: &Lock,
     owned: &BTreeSet<PathBuf>,
+    replace_unmanaged: bool,
     sink: &mut PlanSink,
 ) -> Result<()> {
     let PlanSink {
@@ -71,17 +72,24 @@ pub(super) fn plan_item(
         return Ok(());
     }
 
+    let claim = Claim {
+        locked: existing.is_some(),
+        replace_unmanaged,
+    };
     let planned = match &item.artifact {
-        Artifact::File { .. } => plan_file(env, scope, item, existing.is_some(), ops),
-        Artifact::Tree { .. } => plan_tree(env, item, existing.is_some(), owned, written, ops),
+        Artifact::File { .. } => plan_file(env, scope, item, claim, ops),
+        Artifact::Tree { .. } => plan_tree(env, item, claim, owned, written, ops),
         Artifact::Registration { .. } => {
-            plan_registration(env, scope, item, existing.is_some(), ops, config_edits)
+            plan_registration(env, scope, item, claim, ops, config_edits)
         }
     }?;
+    let cause = matches!(planned, Planned::Unmanaged(_)).then_some(DriftCause::UnmanagedContent);
     let dirty = !matches!(planned, Planned::Clean);
     match planned {
-        Planned::Conflict(detail) => {
-            drift.push(row(DriftState::Conflict, detail));
+        Planned::Conflict(detail) | Planned::Unmanaged(detail) => {
+            let mut conflict = row(DriftState::Conflict, detail);
+            conflict.cause = cause;
+            drift.push(conflict);
             if let Some(entry) = existing {
                 new_lock.entries.insert(item.key.clone(), entry.clone());
             }
@@ -145,174 +153,33 @@ fn rendered_hash(artifact: &Artifact) -> Option<String> {
     }
 }
 
-/// A hook the tool only reads is named as such wherever the plan is shown.
-/// An op that reads like protection must not hide that this tool is free to
-/// ignore what it installs. Read through `hook_enforcement`, so a Pi hook
-/// with no carrier registered anywhere is labeled advisory, not enforced.
-fn advisory(env: &Env, scope: &Scope, item: &Desired) -> &'static str {
-    use crate::harness::Enforcement;
-    if item.kind != crate::model::ItemKind::Hook {
-        return "";
-    }
-    match crate::harness::hook_enforcement(env, scope, item.harness) {
-        Enforcement::Advisory => " (advisory)",
-        Enforcement::Enforced | Enforcement::NotApplicable => "",
-    }
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub(super) enum Planned {
     Clean,
     Drift(DriftState, String),
     Conflict(String),
+    /// Files kendex never wrote sit where this item installs. A conflict
+    /// like any other, with the one cause that has two opposite exits.
+    Unmanaged(String),
 }
 
-fn plan_file(
-    env: &Env,
-    scope: &Scope,
-    item: &Desired,
-    locked: bool,
-    ops: &mut Vec<PlannedOp>,
-) -> Result<Planned> {
-    let Artifact::File { path, bytes } = &item.artifact else {
-        return Ok(Planned::Clean);
-    };
-    plan_written_file(env, scope, item, path, bytes, locked, ops)
+/// What a plan may do with the position an item installs at. `locked` is
+/// the lock's word that kendex wrote these bytes; `replace_unmanaged` is
+/// the user's word that a declaration outranks whatever else is there.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Claim {
+    pub(super) locked: bool,
+    pub(super) replace_unmanaged: bool,
 }
 
-#[allow(clippy::too_many_arguments)]
-fn plan_written_file(
-    env: &Env,
-    scope: &Scope,
-    item: &Desired,
-    path: &std::path::Path,
-    bytes: &[u8],
-    locked: bool,
-    ops: &mut Vec<PlannedOp>,
-) -> Result<Planned> {
-    if path.is_symlink() {
-        return Ok(Planned::Conflict(format!(
-            "{} is a link kendex did not create",
-            path.display()
-        )));
-    }
-    if path.exists() && !path.is_file() {
-        return Ok(Planned::Conflict(format!(
-            "a directory sits at {}",
-            path.display()
-        )));
-    }
-    // An artifact we cannot hash is reported uncompared (invariant 12) —
-    // a read error must never read as passing, and must not kill the scope.
-    let disk = match path.is_file().then(|| hash_tree(path)).transpose() {
-        Ok(disk) => disk,
-        Err(error) => {
-            return Ok(Planned::Conflict(format!(
-                "{} cannot be compared ({error}) — fix its permissions or remove it",
-                path.display()
-            )));
-        }
-    };
-    let wanted = crate::hash::hash_bytes(bytes);
-    match disk {
-        Some(current) if current == wanted => Ok(Planned::Clean),
-        Some(current) => {
-            if !locked {
-                return Ok(Planned::Conflict(format!(
-                    "{} is not managed yet — start managing it first",
-                    path.display()
-                )));
-            }
-            ops.push(PlannedOp {
-                description: format!(
-                    "Update {} {} for {}{}",
-                    item.kind.name(),
-                    item.name,
-                    item.harness.display_name(),
-                    advisory(env, scope, item)
-                ),
-                op: Op::WriteFile {
-                    path: path.to_path_buf(),
-                    bytes: bytes.to_vec(),
-                    pre: Pre::HashIs { hash: current },
-                },
-            });
-            Ok(Planned::Drift(
-                DriftState::Stale,
-                "newer content is available".into(),
-            ))
-        }
-        None => Ok(plan_absent_file(env, scope, item, path, bytes, locked, ops)),
-    }
-}
-
-/// Nothing at the target: our own content may be waiting under the toggled
-/// name, otherwise this is a fresh install. Anything else occupying the
-/// toggled name belongs to someone else and is never written through.
-#[allow(clippy::too_many_arguments)]
-fn plan_absent_file(
-    env: &Env,
-    scope: &Scope,
-    item: &Desired,
-    path: &std::path::Path,
-    bytes: &[u8],
-    locked: bool,
-    ops: &mut Vec<PlannedOp>,
-) -> Planned {
-    let alternate = toggle_sibling(path);
-    if alternate.is_symlink() {
-        return Planned::Conflict(format!(
-            "{} is a link kendex did not create",
-            alternate.display()
-        ));
-    }
-    if alternate.is_file() {
-        if !locked {
-            return Planned::Conflict(format!(
-                "{} is not managed yet — start managing it first",
-                alternate.display()
-            ));
-        }
-        let flip = if item.enabled { "on" } else { "off" };
-        ops.push(PlannedOp {
-            description: format!("Turn {} {flip}", item.name),
-            op: Op::Rename {
-                from: alternate,
-                to: path.to_path_buf(),
-                to_pre: Pre::Absent,
-            },
-        });
-        ops.push(PlannedOp {
-            description: format!(
-                "Update {} {} for {}{}",
-                item.kind.name(),
-                item.name,
-                item.harness.display_name(),
-                advisory(env, scope, item)
-            ),
-            op: Op::WriteFile {
-                path: path.to_path_buf(),
-                bytes: bytes.to_vec(),
-                pre: Pre::Any,
-            },
-        });
-        return Planned::Drift(DriftState::Stale, format!("should be turned {flip}"));
-    }
-    ops.push(PlannedOp {
-        description: format!(
-            "Install {} {} for {}{}",
-            item.kind.name(),
-            item.name,
-            item.harness.display_name(),
-            advisory(env, scope, item)
-        ),
-        op: Op::WriteFile {
-            path: path.to_path_buf(),
-            bytes: bytes.to_vec(),
-            pre: Pre::Absent,
-        },
-    });
-    Planned::Drift(DriftState::Missing, "not installed yet".into())
+/// The refusal, naming both ways out. Neither is a command line: the app
+/// offers them as actions and the CLI spells them as verbs, and a drift row
+/// that hard-coded one surface's phrasing would be wrong on the other.
+pub(super) fn unmanaged(path: &std::path::Path) -> Planned {
+    Planned::Unmanaged(format!(
+        "{} already holds files kendex did not write — adopt them to keep what is there, or replace them with what you declared",
+        path.display()
+    ))
 }
 
 /// A registration is in sync when its backing file matches and re-applying
@@ -324,7 +191,7 @@ fn plan_registration(
     env: &Env,
     scope: &Scope,
     item: &Desired,
-    locked: bool,
+    claim: Claim,
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut ConfigEditPlan,
 ) -> Result<Planned> {
@@ -349,10 +216,10 @@ fn plan_registration(
         }
     }
     let mut planned = match script {
-        Some((path, bytes)) => plan_written_file(env, scope, item, path, bytes, locked, ops)?,
+        Some((path, bytes)) => plan_written_file(env, scope, item, path, bytes, claim, ops)?,
         None => Planned::Clean,
     };
-    if matches!(planned, Planned::Conflict(_)) {
+    if matches!(planned, Planned::Conflict(_) | Planned::Unmanaged(_)) {
         return Ok(planned);
     }
     for (path, edit) in pending {
@@ -362,7 +229,7 @@ fn plan_registration(
             edit.clone(),
         );
         if matches!(planned, Planned::Clean) {
-            planned = match locked {
+            planned = match claim.locked {
                 true => Planned::Drift(
                     DriftState::Stale,
                     "its settings entry is out of sync".into(),
@@ -372,14 +239,4 @@ fn plan_registration(
         }
     }
     Ok(planned)
-}
-
-/// A declared-disabled artifact keeps its content under the `.disabled`
-/// name; toggling is a rename.
-fn toggle_sibling(path: &std::path::Path) -> PathBuf {
-    let text = path.display().to_string();
-    match text.strip_suffix(".disabled") {
-        Some(base) => PathBuf::from(base),
-        None => PathBuf::from(format!("{text}.disabled")),
-    }
 }

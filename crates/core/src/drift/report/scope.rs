@@ -20,7 +20,11 @@ pub(super) fn check_scope(
         now,
     };
     let manifest = ctx.manifest_lines(sections);
-    ctx.lock_lines(sections);
+    // Read once, read by two checks: what the lock says is on disk, and
+    // what it says nothing about.
+    let lock = crate::lock::load_file(&crate::lock::lock_path(env, scope));
+    ctx.lock_lines(&lock, sections);
+    ctx.blocked_lines(manifest.as_ref(), &lock, sections);
     ctx.snapshot_lines(manifest.as_ref(), sections, oldest_age);
     ctx.stamp_lines(manifest.as_ref(), sections);
 }
@@ -94,9 +98,13 @@ impl ScopeCheck<'_> {
 
     /// The lock: what should be on disk. A file the lock says an enabled
     /// installation wrote, absent under both its names, is missing.
-    fn lock_lines(&self, sections: &mut Sections) {
+    fn lock_lines(
+        &self,
+        lock: &crate::error::Result<crate::lock::LockFile>,
+        sections: &mut Sections,
+    ) {
         let prefix = self.prefix;
-        match crate::lock::load_file(&crate::lock::lock_path(self.env, self.scope)) {
+        match lock {
             Ok(crate::lock::LockFile::Current(lock)) => {
                 for entry in lock.entries.values() {
                     if !entry.enabled {
@@ -131,6 +139,45 @@ impl ScopeCheck<'_> {
                 "{prefix}lock: {}",
                 shown(&error.to_string())
             ))),
+        }
+    }
+
+    /// Declarations nothing installed because files kendex never wrote are
+    /// already where they go. A different problem from a safety hold and a
+    /// different fix, so it is a section of its own: this one is settled by
+    /// choosing which side wins, never by reading findings.
+    fn blocked_lines(
+        &self,
+        manifest: Option<&crate::manifest::Manifest>,
+        lock: &crate::error::Result<crate::lock::LockFile>,
+        sections: &mut Sections,
+    ) {
+        let prefix = self.prefix;
+        let Some(manifest) = manifest else {
+            return;
+        };
+        // No lock file at all is the state this reports on most often: a
+        // repository declaring what an earlier tool already put on disk.
+        // A lock this build cannot read says nothing either way, and the
+        // `could not check` line above already carries that.
+        let empty = crate::lock::Lock::default();
+        let lock = match lock {
+            Ok(crate::lock::LockFile::Current(lock)) => lock,
+            Ok(crate::lock::LockFile::Absent) => &empty,
+            _ => return,
+        };
+        for (kind, name) in crate::engine::blocked_by_content(self.env, self.scope, manifest, lock)
+        {
+            sections.blocked.push(drift(
+                format!(
+                    "{prefix}{} '{}' is declared but nothing is installed — adopt the files that are there to keep them, or replace them with what you declared",
+                    kind.name(),
+                    shown(&name)
+                ),
+                Some(Remedy::Replace {
+                    global: self.global,
+                }),
+            ));
         }
     }
 
@@ -191,7 +238,7 @@ impl ScopeCheck<'_> {
         if open > 0 || held > 0 {
             let mut parts = Vec::new();
             if held > 0 {
-                parts.push(format!("{held} install(s) held back"));
+                parts.push(format!("{held} install(s) held back by the safety check"));
             }
             if open > 0 {
                 parts.push(format!("{open} finding(s) awaiting review"));

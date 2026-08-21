@@ -14,14 +14,38 @@ use crate::scope::ScopeFilter;
 /// accepted. Nothing is granted in advance: the review is recorded against
 /// the exact content and findings this run produced, by the same plan that
 /// installs them, so it expires the moment either one changes.
-pub fn run(
-    env: &Env,
-    filter: ScopeFilter,
-    plan_only: bool,
+///
+/// The two overrides say which bytes on disk a declaration outranks: ones
+/// the user edited, and ones kendex never wrote at all. Both are refusals
+/// by default and neither implies the other.
+#[derive(clap::Args)]
+pub struct ApplyArgs {
+    /// Print the plan and change nothing
+    #[arg(long)]
+    plan: bool,
+    #[arg(short = 'g', long)]
+    global: bool,
+    /// project | global | all (default project)
+    #[arg(long)]
+    scope: Option<String>,
+    #[arg(short = 'y', long)]
     yes: bool,
+    /// Install an item despite its safety findings, as `name@hash` using
+    /// the hash printed beside them — a bare name does not grant
+    #[arg(long = "allow-unsafe")]
     allow_unsafe: Vec<String>,
+    /// Overwrite installations you edited by hand
+    #[arg(long)]
     discard_edits: bool,
-) -> CliResult {
+    /// Replace files kendex did not write that sit where a declared item
+    /// installs — the old files move to the trash
+    #[arg(long)]
+    replace_unmanaged: bool,
+}
+
+pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
+    let filter = ScopeFilter::resolve(args.scope.as_deref(), args.global, ScopeFilter::Project)?;
+    let allow_unsafe = args.allow_unsafe;
     // Every scope is planned before any of them is written. A grant is
     // judged against the whole run and not against one scope at a time:
     // with `--scope all` a flag for the project would otherwise be a hard
@@ -46,7 +70,8 @@ pub fn run(
             remove_orphans: true,
             removal_filter: None,
             allow_unsafe: allow_unsafe.clone(),
-            overwrite_edited: discard_edits,
+            overwrite_edited: args.discard_edits,
+            replace_unmanaged: args.replace_unmanaged,
             ..PlanOptions::default()
         };
         planned.push((scope.clone(), plan_apply(env, &scope, &options)?));
@@ -64,8 +89,8 @@ pub fn run(
     for (scope, report) in planned {
         say(&format!("{}:", scope.label()));
         print_report(&report);
-        if !plan_only {
-            confirm_and_execute(env, &report, yes)?;
+        if !args.plan {
+            confirm_and_execute(env, &report, args.yes)?;
             // The deep work just ran; record it for the session-start check.
             if let Err(error) = kendex_core::drift::snapshot::record(env, &scope) {
                 say(&format!("warning: snapshot not derived ({error})"));

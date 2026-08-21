@@ -80,22 +80,27 @@ lives in one capability table read by core and UI.
    app changes nothing.
 6. Never touch the unowned: unmanaged files are reported, never deleted;
    foreign symlinks are conflicts, not clobber targets; adoption merges
-   content, never loses it. The one sanctioned exception is a link the
-   user explicitly adopts: when it resolves to a real skill folder outside
-   kendex's own trees, adopt captures that folder's content, trashes the
-   folder (bound to the exact bytes captured) and every sibling link that
-   read it, and the follow-up apply restores the sharing from kendex's
-   copy — a link at anything else stays a conflict, and the confirm names
-   the folder and every tool reading it, because links kendex cannot see
-   will break. Ownership is what kendex wrote, read from the
-   lock — including the paths an installation recorded writing under
-   another kind's name. A position we put something at is ours to replace
-   or clear, whichever entry holds it now; deriving ownership from the
-   lock key alone calls our own output a stranger's. A link the user put
-   at a shared config file or a manifest (dotfiles) is not foreign: the
-   edit goes through it, link kept, and a precondition binds to the bytes
-   reachable there — whether a link may sit at a position is decided at
-   plan time, never by the write.
+   content, never loses it. A declaration landing on files kendex never
+   wrote is one conflict naming both exits, never a dead end: adopt keeps
+   the files and rewrites the declaration around them, and the take-over
+   (`replace_unmanaged` / `--replace-unmanaged`) keeps the declaration and
+   moves the files to the trash first, bound to the bytes the plan read. A
+   link is never either one's target. The sanctioned exceptions are that
+   take-over and a link the user explicitly adopts: when it resolves to a
+   real skill folder outside kendex's own trees, adopt captures that
+   folder's content, trashes the folder (bound to the exact bytes
+   captured) and every sibling link that read it, and the follow-up apply
+   restores the sharing from kendex's copy — a link at anything else stays
+   a conflict, and the confirm names the folder and every tool reading it,
+   because links kendex cannot see will break. Ownership is what kendex
+   wrote, read from the lock — including the paths an installation
+   recorded writing under another kind's name. A position we put something
+   at is ours to replace or clear, whichever entry holds it now; deriving
+   ownership from the lock key alone calls our own output a stranger's. A
+   link the user put at a shared config file or a manifest (dotfiles) is
+   not foreign: the edit goes through it, link kept, and a precondition
+   binds to the bytes reachable there — whether a link may sit at a
+   position is decided at plan time, never by the write.
 7. Applies are transactional: preconditions revalidate against observed
    hashes immediately before mutation; pre-images are journaled first; any
    failure rolls back and interrupted applies recover on next launch.
@@ -1038,8 +1043,12 @@ lives in one capability table read by core and UI.
   for machines. The check reads the manifest, the lock, the per-scope
   drift snapshot (`core/drift/snapshot.rs`), and per-mirror fetch stamps —
   it materializes no source trees, hashes no catalogs, and fans out no
-  per-package subprocesses. The deep work runs where time is free:
-  `updates`, `refresh`, `apply`, and the detached
+  per-package subprocesses. A declaration with no lock entry and files
+  already where it installs is one stat away, so it gets a section of its
+  own: blocked by files kendex did not write is a different problem from a
+  safety hold, and folding both into one held-back count sent readers to
+  `findings` for something no review could clear. The deep work runs where
+  time is free: `updates`, `refresh`, `apply`, and the detached
   `kendex source refresh --stale` the check spawns (TTL 6h, per-mirror
   lock, no stdio, never waited on) all re-derive the snapshot. A mirror
   that moved since its last evaluation reads as unevaluated — the honest
@@ -1223,7 +1232,7 @@ lives in one capability table read by core and UI.
   and a hint built by concatenation is an injection surface. The one
   deliberate exception is the session-start drift report: it is written
   for an agent that can act, so each line may carry a remedy — built only
-  from a fixed template set (refresh, remove, add, fork, findings) with
-  validated identifiers in argument positions, while free text from
-  sources or errors renders in quoted informational positions, never in
-  a command position.
+  from a fixed template set (refresh, remove, add, fork, findings, apply
+  --replace-unmanaged) with validated identifiers in argument positions,
+  while free text from sources or errors renders in quoted informational
+  positions, never in a command position.

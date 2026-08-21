@@ -77,25 +77,7 @@ enum Command {
         scope: Option<String>,
     },
     /// Make disk match declaration, orphan cleanup included
-    Apply {
-        /// Print the plan and change nothing
-        #[arg(long)]
-        plan: bool,
-        #[arg(short = 'g', long)]
-        global: bool,
-        /// project | global | all (default project)
-        #[arg(long)]
-        scope: Option<String>,
-        #[arg(short = 'y', long)]
-        yes: bool,
-        /// Install an item despite its safety findings, as `name@hash` using
-        /// the hash printed beside them — a bare name does not grant
-        #[arg(long = "allow-unsafe")]
-        allow_unsafe: Vec<String>,
-        /// Overwrite installations you edited by hand
-        #[arg(long)]
-        discard_edits: bool,
-    },
+    Apply(commands::apply_cmd::ApplyArgs),
     /// What the safety check found in installed content, with the token
     /// each finding is dismissed by
     Findings(commands::findings::FindingsArgs),
@@ -303,17 +285,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             let filter = ScopeFilter::resolve(scope.as_deref(), global, ScopeFilter::All)?;
             return commands::verify::run(&env, names, filter);
         }
-        Command::Apply {
-            plan,
-            global,
-            scope,
-            yes,
-            allow_unsafe,
-            discard_edits,
-        } => {
-            let filter = ScopeFilter::resolve(scope.as_deref(), global, ScopeFilter::Project)?;
-            commands::apply_cmd::run(&env, filter, plan, yes, allow_unsafe, discard_edits)?;
-        }
+        Command::Apply(args) => commands::apply_cmd::run(&env, args)?,
         Command::Findings(args) => commands::findings::findings(&env, args)?,
         Command::Dismiss(args) => commands::decisions_cmd::dismiss_cmd(&env, args)?,
         Command::Decisions(args) => commands::decisions_cmd::decisions(&env, args)?,
