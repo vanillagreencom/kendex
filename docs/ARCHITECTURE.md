@@ -551,16 +551,14 @@ lives in one capability table read by core and UI.
   artifact: the `pi-hooks` extension package hosts native listeners, and
   hook content rides in the registry kendex renders beside them
   (`kendex/hooks/<name>.sh` plus `kendex/hooks.json`, keyed by Pi's own
-  listener names — tool call, tool result, turn end, session start). The
-  `kendex/` segment is not decoration: Pi reserved `hooks/` beside every
-  root it loads and warns about the name whatever the directory holds, so
-  kendex parks its storage one level down where Pi does not look. What an
-  earlier kendex left under the reserved name comes off disk through the
-  `engine::pi_hooks_move` pass, which takes only files this scope's lock
-  names and whose bytes hash to what apply wrote, retires nothing before
-  its replacement is written, and says which file it left and why. An
-  event outside that map cannot fire on Pi and installs nothing there,
-  said as a note — honesty over stale advisory prose. The capability row says what the
+  listener names — tool call, tool result, turn end, session start). Pi
+  reserved `hooks/` beside every root it loads and warns on that name
+  whatever the directory holds, so the storage sits one level down under
+  `kendex/`; `engine::pi_hooks_move` retires the old layout, taking only
+  files this scope's lock names whose bytes hash to what apply wrote,
+  holding a still-declared hook this pass could not render, and saying
+  what it left and why. An event outside that map cannot fire on Pi and
+  installs nothing there, said as a note. The capability row says what the
   mechanism supports; the surfaces that label an installation read carrier
   reality (`pi_ext::carrier`), and Pi loads project and global settings
   both, so a project-installed hook with only a global carrier is still

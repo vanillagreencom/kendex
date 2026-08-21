@@ -123,3 +123,20 @@ fn a_global_registry_entry_kendex_never_wrote_survives() {
     );
     assert!(g.agent.join("kendex/hooks/guard.sh").is_file());
 }
+
+/// The registry ownership gate at the global scope too.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_structurally_empty_global_registry_survives() {
+    let g = global("[hooks.guard]\nsource = \"cat\"\n");
+    apply(&g);
+    let shape = "{\"hooks\":{\"tool_call\":[]}}\n";
+    fs::write(g.agent.join("hooks.json"), shape).unwrap();
+
+    apply(&g);
+
+    assert_eq!(
+        fs::read_to_string(g.agent.join("hooks.json")).unwrap(),
+        shape
+    );
+}

@@ -11,6 +11,7 @@ use kendex_core::model::Scope;
 
 mod global;
 mod held_back;
+mod retirement;
 mod strangers;
 
 struct World {

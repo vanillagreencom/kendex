@@ -34,9 +34,10 @@ listener names (`pi_listener`: tool call, tool result, turn end, session
 start). An event outside that map installs nothing on Pi, said as a note.
 
 **The reserved names.** Pi warns about two directory names sitting
-directly beside a root it loads, and halts the start until a keypress:
-`hooks/` on the name alone, whatever the directory holds, and `tools/`
-only when it holds entries beyond Pi's own `fd`/`rg` binaries. The
+directly beside a root it loads, and halts an interactive start until a
+keypress: `hooks/` on the name alone, whatever the directory holds, and
+`tools/` only when it holds entries beyond Pi's own `fd`/`rg` binaries and
+dotfiles. The
 migration it names, into `extensions/`, is one kendex's hooks cannot
 take: Pi extensions are TypeScript registered in `settings.json`, these
 are shell scripts a carrier runs. So both the scripts and the registry
@@ -46,13 +47,16 @@ already keep per-session state in. kendex writes nothing to `tools/` at
 either scope either — an extension's `bin` entries link into the scope's
 `bin/`, which is where Pi's own migration moved `tools/`. What an earlier kendex left in the
 reserved name comes off disk on the next plan, the directory with it
-(`engine::pi_hooks_move`). Nothing moves on a path alone: a file is taken
-only when this scope's lock names it and its bytes hash to what apply last
-wrote, the legacy registry gives up only the entries that lock accounts
-for (and is trashed only when that leaves nothing at all), and no old copy
-is retired before its replacement is on disk or written by the same plan —
-a declaration whose source did not resolve keeps the hook it is still
-running. Everything held back gets a line saying which file and why.
+(`engine::pi_hooks_move`). Two questions stay apart there. *May kendex
+take this file*: only one this scope's lock names, whose bytes hash to
+what apply last wrote — and the legacy registry gives up only entries
+that lock accounts for and that are really in the file, trashed only when
+that leaves nothing at all. *Is a replacement coming*: a hook nothing
+declares any more is retired outright (leaving it would keep a removed
+hook firing), a hook this pass rendered is retired against that
+rendering, and only a declaration this pass could not resolve waits.
+Everything held back gets a line saying which file and why, and `refresh`
+prints them.
 Enforcement is read live (`pi_ext::carrier::enforcement`): with the carrier
 registered in either scope's settings the hook is enforced; with no carrier
 anywhere Pi loads, the install downgrades to advisory, said per item. Pi

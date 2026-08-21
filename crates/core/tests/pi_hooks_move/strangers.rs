@@ -3,6 +3,7 @@
 //! holding somebody's own hook.
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 
 use kendex_core::engine::audit;
 use kendex_core::model::Scope;
@@ -40,23 +41,37 @@ fn a_directory_appearing_after_the_move_says_nothing() {
     assert!(w.dot().join("hooks/theirs.sh").is_file());
 }
 
-/// An empty `hooks/` holds nothing kendex can claim, so the whole-
-/// directory take must not fire on it.
+/// The shell a finished move leaves behind is still pi's warning, and an
+/// empty directory holds nothing anyone can lose — but the registry
+/// beside it is a file kendex removed nothing from.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn an_empty_reserved_directory_nobody_claimed_survives() {
+fn an_empty_reserved_directory_left_behind_is_retired() {
     let w = world();
     apply(&w);
     fs::create_dir_all(w.dot().join("hooks")).unwrap();
     fs::write(w.dot().join("hooks.json"), "{\"hooks\":{}}\n").unwrap();
 
     apply(&w);
-    assert!(w.dot().join("hooks").is_dir());
+    assert!(!w.dot().join("hooks").exists());
     assert_eq!(
         fs::read_to_string(w.dot().join("hooks.json")).unwrap(),
         "{\"hooks\":{}}\n",
         "a file kendex has nothing to remove from is not even reformatted"
     );
+}
+
+/// The same empty directory where kendex holds no pi hook at all is
+/// somebody else's, and stays.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_empty_reserved_directory_nobody_claimed_survives() {
+    let w = world_without_hooks();
+    apply(&w);
+    fs::create_dir_all(w.dot().join("hooks")).unwrap();
+
+    apply(&w);
+    assert!(w.dot().join("hooks").is_dir());
 }
 
 /// The registry is the one file kendex shares: a hook somebody wrote by
@@ -148,4 +163,50 @@ fn a_reserved_directory_kendex_never_wrote_to_is_left_alone() {
             .unwrap()
             .contains("echo theirs")
     );
+}
+
+/// A registry kendex removed nothing from is never taken, however empty
+/// the shape it happens to be in: the removal edit's own pruning would
+/// otherwise collapse a stranger's structurally-empty document to `{}`
+/// and read that as "kendex emptied it".
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_structurally_empty_registry_kendex_removed_nothing_from_survives() {
+    for shape in [
+        "{\"hooks\":{\"tool_call\":[]}}\n",
+        "{\"hooks\":{\"tool_call\":[{\"hooks\":[]}]}}\n",
+    ] {
+        let w = world();
+        apply(&w);
+        fs::write(w.dot().join("hooks.json"), shape).unwrap();
+
+        apply(&w);
+
+        assert_eq!(
+            fs::read_to_string(w.dot().join("hooks.json")).unwrap(),
+            shape,
+            "kendex removed nothing from it, so it is neither rewritten nor taken"
+        );
+    }
+}
+
+/// The module holds back rather than fails: a legacy registry it cannot
+/// read must not take the whole audit down with it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_unreadable_registry_is_a_note_not_a_failed_audit() {
+    let w = regressed();
+    let registry = w.dot().join("hooks.json");
+    fs::set_permissions(&registry, fs::Permissions::from_mode(0o000)).unwrap();
+
+    let report = audit(&w.env, &w.scope()).unwrap();
+    assert!(
+        report
+            .notes
+            .iter()
+            .any(|note| note.contains("could not read") && note.contains("hooks.json")),
+        "{:?}",
+        report.notes
+    );
+    fs::set_permissions(&registry, fs::Permissions::from_mode(0o644)).unwrap();
 }

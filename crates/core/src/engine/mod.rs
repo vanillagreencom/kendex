@@ -124,14 +124,7 @@ pub fn plan_scope(
 
     plan_manifest_write(env, scope, repo_moved, manifest, &state, &mut ops)?;
 
-    // What earlier installs put on disk under another kind's name. A path
-    // one of them wrote is ours to replace, whichever entry holds it now.
-    let emitted_paths: BTreeSet<PathBuf> = lock
-        .entries
-        .values()
-        .filter_map(|entry| entry.emitted.as_ref())
-        .flat_map(|emitted| emitted.paths.iter().cloned())
-        .collect();
+    let emitted_paths = emitted_paths(lock);
 
     plan_pass::plan_items(
         env,
@@ -154,18 +147,23 @@ pub fn plan_scope(
     // trash twice.
     let mut guard = removal::TrashGuard::new(&state.items);
 
-    // The reserved-name move reads the lock, not the desired state: an
-    // old copy is retired whether or not the hook is still declared, and
-    // only once the replacement this plan writes is accounted for.
+    // The reserved-name move reads both records: the lock says what
+    // kendex may take, and the desired state says whether a replacement is
+    // coming — a hook nothing declares any more is retired outright, one
+    // this pass could not render keeps what it has.
     let mut moved_notes = Vec::new();
-    plan_pi_hooks_move(
+    pi_hooks_move::plan_move(
         env,
         scope,
+        manifest,
         lock,
-        &mut ops,
-        &mut guard,
-        &mut config_edits,
-        &mut moved_notes,
+        &state,
+        &mut pi_hooks_move::Sink {
+            ops: &mut ops,
+            guard: &mut guard,
+            config_edits: &mut config_edits,
+            notes: &mut moved_notes,
+        },
     )?;
     removal::stale_emitted(&state, lock, &mut guard, &mut ops)?;
 
@@ -221,28 +219,14 @@ pub fn plan_scope(
     Ok(report)
 }
 
-/// The reserved-name move, handed the plan's collectors.
-#[allow(clippy::too_many_arguments)]
-fn plan_pi_hooks_move(
-    env: &Env,
-    scope: &Scope,
-    lock: &Lock,
-    ops: &mut Vec<PlannedOp>,
-    guard: &mut removal::TrashGuard,
-    config_edits: &mut config_edits::ConfigEditPlan,
-    notes: &mut Vec<String>,
-) -> Result<()> {
-    pi_hooks_move::plan_move(
-        env,
-        scope,
-        lock,
-        &mut pi_hooks_move::Sink {
-            ops,
-            guard,
-            config_edits,
-            notes,
-        },
-    )
+/// What earlier installs put on disk under another kind's name. A path
+/// one of them wrote is ours to replace, whichever entry holds it now.
+fn emitted_paths(lock: &Lock) -> BTreeSet<PathBuf> {
+    lock.entries
+        .values()
+        .filter_map(|entry| entry.emitted.as_ref())
+        .flat_map(|emitted| emitted.paths.iter().cloned())
+        .collect()
 }
 
 /// The plan's one manifest write, when anything needs it: skills an agent

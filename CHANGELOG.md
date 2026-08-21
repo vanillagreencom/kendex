@@ -240,11 +240,14 @@ changes carry a **Breaking** call-out with their migration note inline.
   extension runs, not Pi extensions. They now live under
   `.pi/kendex/hooks/` and `~/.pi/agent/kendex/hooks/`, and the next
   `kendex refresh` moves an existing install out of the reserved directory
-  and takes the directory away with it. Nothing moves that kendex cannot
-  account for: a file it did not write, one you edited after it was
-  installed, a hook registration you added by hand, and a hook whose source
-  is unreachable this run all stay exactly where they are. `refresh` now
-  prints those reasons, which it previously worked out and dropped.
+  and takes the directory away with it — including for a hook you removed
+  or switched off, which leaves nothing behind to keep firing. Nothing
+  moves that kendex cannot account for: a file it did not write, one you
+  edited after it was installed, a hook registration you added by hand,
+  and a hook whose source is unreachable this run all stay exactly where
+  they are, and that last one completes the move as soon as the source is
+  back. `refresh` now prints those reasons, which it previously worked out
+  and dropped.
 - On Linux, a helper command that ran past its time limit could take
   unrelated processes down with it: Ubuntu's `kill` misreads the negative
   process-group argument kendex passed, and for some process ids that

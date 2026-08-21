@@ -171,3 +171,109 @@ fn a_hook_with_no_replacement_this_pass_keeps_its_old_copy() {
         "and it keeps its registration"
     );
 }
+
+/// A file at the new path is not proof unless it is this hook's own
+/// rendering: a link there is a conflict the plan reports, not a
+/// replacement that licenses taking the working copy away.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_link_at_the_new_path_is_not_this_hooks_replacement() {
+    let w = regressed();
+    let elsewhere = w.home.join("someone-elses.sh");
+    fs::write(&elsewhere, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::create_dir_all(w.dot().join("kendex/hooks")).unwrap();
+    symlink(&elsewhere, w.dot().join("kendex/hooks/guard.sh")).unwrap();
+
+    apply(&w);
+
+    assert!(
+        w.dot().join("hooks/guard.sh").is_file(),
+        "the working copy stays while the new path is somebody else's link"
+    );
+    assert!(
+        fs::read_to_string(w.dot().join("hooks.json"))
+            .unwrap()
+            .contains(".pi/hooks/guard.sh"),
+        "and it keeps its registration, so the hook keeps running"
+    );
+    assert!(w.dot().join("kendex/hooks/guard.sh").is_symlink());
+}
+
+/// One hook's registry edit says nothing about another hook's move.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_sibling_hooks_registry_edit_is_not_this_hooks_replacement() {
+    let w = world();
+    declare_second_hook(&w);
+    apply(&w);
+    regress(&w, "guard.sh");
+    regress(&w, "other.sh");
+    fs::remove_dir_all(w.dot().join("kendex")).unwrap();
+    // `guard` alone loses its source, so only `other` renders this pass.
+    fs::remove_file(w.catalog.join("hooks/guard.sh")).unwrap();
+
+    apply(&w);
+
+    assert!(
+        w.dot().join("hooks/guard.sh").is_file(),
+        "the sibling's write and registry edit are not this hook's replacement"
+    );
+    assert!(
+        fs::read_to_string(w.dot().join("hooks.json"))
+            .unwrap()
+            .contains(".pi/hooks/guard.sh"),
+        "and guard keeps its old registration"
+    );
+    assert!(!w.dot().join("hooks/other.sh").exists());
+}
+
+/// "I could not look" is not absence. A reserved directory kendex cannot
+/// stat through must retire neither the file nor its registration.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_unreadable_reserved_directory_retires_nothing() {
+    let w = regressed();
+    let dir = w.dot().join("hooks");
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o000)).unwrap();
+
+    let report = audit(&w.env, &w.scope()).unwrap();
+    assert!(
+        report
+            .notes
+            .iter()
+            .any(|note| note.contains("could not read") && note.contains("hooks")),
+        "{:?}",
+        report.notes
+    );
+    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+
+    assert!(dir.is_dir(), "nothing under it was retired");
+    assert!(
+        fs::read_to_string(w.dot().join("hooks.json"))
+            .unwrap()
+            .contains(".pi/hooks/guard.sh"),
+        "nor was its registration"
+    );
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// An interrupted toggle can leave both names. Neither is a stranger's,
+/// and the one whose bytes prove out still moves.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_leftover_twin_is_not_reported_as_a_strangers_file() {
+    let w = regressed();
+    let twin = w.dot().join("hooks/guard.sh.disabled");
+    fs::write(&twin, "#!/bin/sh\n# stale\nexit 0\n").unwrap();
+
+    let said = notes(&w);
+    assert!(
+        !said.iter().any(|note| note.contains("did not write")),
+        "kendex wrote both names: {said:?}"
+    );
+    apply(&w);
+    assert!(
+        !w.dot().join("hooks/guard.sh").exists(),
+        "the proven copy still moves"
+    );
+}

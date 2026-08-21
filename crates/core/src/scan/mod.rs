@@ -12,7 +12,7 @@ mod copilot;
 mod entry;
 pub use entry::RawEntry;
 mod files;
-mod hooks;
+pub(crate) mod hooks;
 pub(crate) mod jsonc;
 pub mod metadata;
 mod pi_packages;
