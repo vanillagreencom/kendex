@@ -1,6 +1,8 @@
 //! Where the signed-in credential lives: the OS credential store, keyed
-//! by the endpoint it belongs to — a staging token can never be replayed
-//! against production because the credential says where it is from. No
+//! by the endpoint it belongs to and by whether the build is sandboxed —
+//! a staging token can never be replayed against production because the
+//! credential says where it is from, and a build kept off the real machine
+//! can neither spend nor delete the sign-in the installed app holds. No
 //! silent plaintext fallback exists: where no store answers, the caller
 //! says so and offers session-only auth.
 
@@ -9,6 +11,19 @@ use crate::registry::base_url;
 use serde::{Deserialize, Serialize};
 
 const SERVICE: &str = "kendex";
+/// What a sandboxed build asks for instead. The keyring is named, not
+/// pathed, so a debug build sent to its own home still reaches this entry —
+/// and `logout` deletes what it reaches, which would be the sign-in the
+/// installed app is holding. Separating the name separates the account the
+/// same way the endpoint already separates staging from production.
+const DEV_SERVICE: &str = "kendex-dev";
+
+fn service(sandboxed: bool) -> &'static str {
+    match sandboxed {
+        true => DEV_SERVICE,
+        false => SERVICE,
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Credential {
@@ -29,8 +44,10 @@ pub struct KeyringStore;
 
 fn entry() -> Result<keyring::Entry> {
     let endpoint = base_url();
-    keyring::Entry::new(SERVICE, &endpoint).map_err(|error| CoreError::RegistryUnavailable {
-        why: format!("no usable credential store: {error}"),
+    keyring::Entry::new(service(crate::env::sandboxed()), &endpoint).map_err(|error| {
+        CoreError::RegistryUnavailable {
+            why: format!("no usable credential store: {error}"),
+        }
     })
 }
 
@@ -77,5 +94,21 @@ impl CredentialStore for KeyringStore {
                 why: format!("the credential store refused the removal: {error}"),
             }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_sandboxed_build_never_reaches_the_real_sign_in() {
+        assert_ne!(service(true), service(false));
+    }
+
+    #[test]
+    fn only_a_sandboxed_build_gets_the_sandbox_entry() {
+        assert_eq!(service(false), SERVICE);
+        assert_eq!(service(true), DEV_SERVICE);
     }
 }
