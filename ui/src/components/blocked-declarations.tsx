@@ -47,7 +47,7 @@ export function BlockedDeclarations({
     harness: DriftRow["harness"],
     opts?: { silent?: boolean },
   ) => Promise<boolean>;
-  onReplace: (kind: DriftRow["kind"], name: string) => void | Promise<unknown>;
+  onReplace: (kind: DriftRow["kind"], name: string) => Promise<unknown>;
 }) {
   const [confirming, setConfirming] = useState<MergedDriftRow | null>(null);
   if (rows.length === 0) return null;

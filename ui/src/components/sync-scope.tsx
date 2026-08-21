@@ -56,7 +56,7 @@ export function SyncScopeCard({
   onReplaceFiles: (
     kind: AuditView["drift"][number]["kind"],
     name: string,
-  ) => void | Promise<unknown>;
+  ) => Promise<unknown>;
   /** Opens the Library's Installed tab on this scope, where adopting lives. */
   onSeeUnmanaged: () => void;
 }) {
