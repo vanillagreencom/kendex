@@ -213,3 +213,63 @@ fn a_folder_shared_by_hand_is_offered_only_the_way_out_that_keeps_it() {
     );
     assert!(position.is_symlink(), "the link is left exactly as it was");
 }
+
+/// A skill declared for two tools, with hand-made files at both places.
+#[allow(clippy::unwrap_used)]
+fn two_tools() -> Fixture {
+    let f = fixture();
+    let path = f.project.join("kendex.toml");
+    let both = fs::read_to_string(&path).unwrap().replace(
+        "harnesses = [\"claude\"]",
+        "harnesses = [\"claude\", \"codex\"]",
+    );
+    fs::write(&path, both).unwrap();
+    for name in ["deploy", "lint"] {
+        let here = f.project.join(format!(".agents/skills/{name}"));
+        fs::create_dir_all(&here).unwrap();
+        fs::write(here.join("SKILL.md"), "the tool that came before").unwrap();
+    }
+    f
+}
+
+/// One exit for one item, however many tools hold it. The row offers
+/// replacing only where every place allows it, so a check that asks whether
+/// any one of them does approves a choice the page in front of the reader
+/// would not draw — and takes over half the item, leaving the rest blocked.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn replacing_stops_when_one_of_an_item_s_places_stops_allowing_it() {
+    let f = two_tools();
+    // Codex's place turns into a folder somebody else shares by hand, which
+    // is never written over.
+    let folder = f.project.join("elsewhere/deploy");
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(
+        folder.join("SKILL.md"),
+        "---\nname: deploy\ndescription: does deploy\n---\nShared by hand.\n",
+    )
+    .unwrap();
+    let position = f.project.join(".agents/skills/deploy");
+    fs::remove_dir_all(&position).unwrap();
+    std::os::unix::fs::symlink(&folder, &position).unwrap();
+
+    let causes: Vec<_> = view(&f.env, &f.scope)
+        .drift
+        .into_iter()
+        .filter(|row| row.name == "deploy")
+        .filter_map(|row| row.cause)
+        .collect();
+    assert!(
+        causes.iter().any(|c| !c.can_replace()) && causes.iter().any(|c| c.can_replace()),
+        "the fixture is not the mixed state it is testing: {causes:?}"
+    );
+
+    let refused = replace_unmanaged(&f.env, &f.scope, ItemKind::Skill, "deploy".into());
+    assert!(refused.is_err(), "half the item was taken over");
+    assert_eq!(
+        body(&f, "deploy"),
+        "the tool that came before",
+        "one tool's copy was written over while the other stayed blocked"
+    );
+    assert!(position.is_symlink(), "the link is left exactly as it was");
+}

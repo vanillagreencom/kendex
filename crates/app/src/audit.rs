@@ -255,16 +255,19 @@ pub fn replace_unmanaged(
     // over a choice that is no longer on offer: the apply that follows is
     // the scope's whole plan, like every apply, and it must not run because
     // a button answered a question that had already gone away.
-    let blocked = engine::audit(env, scope)
+    //
+    // Every place the item sits has to still allow it, which is the rule the
+    // row is drawn by. Asking whether any one of them does would take over
+    // the places that still can and leave the rest blocked.
+    let waiting: Vec<engine::DriftCause> = engine::audit(env, scope)
         .map_err(|e| e.to_string())?
         .drift
         .into_iter()
-        .any(|row| {
-            row.kind == kind
-                && row.name == name
-                && row.cause.is_some_and(engine::DriftCause::can_replace)
-        });
-    if !blocked {
+        .filter(|row| row.kind == kind && row.name == name)
+        .filter_map(|row| row.cause)
+        .filter(|cause| cause.in_the_way())
+        .collect();
+    if waiting.is_empty() || !waiting.into_iter().all(engine::DriftCause::can_replace) {
         return Err(format!(
             "{name} has no files waiting on that choice any more — nothing was changed"
         ));
