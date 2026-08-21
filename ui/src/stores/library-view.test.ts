@@ -50,10 +50,27 @@ describe("library view store", () => {
     useLibraryViewStore.getState().setKind("agent");
     useLibraryViewStore.getState().setTag("deploy");
 
-    const state = useLibraryViewStore.getState();
-    expect(state.kind).toBe("agent");
-    expect(state.tag).toBe("deploy");
-    expect(state.harness).toBe("any");
-    expect(state.from).toBe("any");
+    expect(useLibraryViewStore.getState()).toMatchObject({
+      kind: "agent",
+      tag: "deploy",
+      harness: "any",
+      from: "any",
+    });
+
+    useLibraryViewStore.getState().setHarness("codex");
+    useLibraryViewStore.getState().setFrom("some marketplace");
+
+    expect(useLibraryViewStore.getState()).toMatchObject({
+      kind: "agent",
+      tag: "deploy",
+      harness: "codex",
+      from: "some marketplace",
+    });
+  });
+
+  it("remembers where the table was scrolled to", () => {
+    useLibraryViewStore.getState().setScrollTop(320);
+
+    expect(useLibraryViewStore.getState().scrollTop).toBe(320);
   });
 });

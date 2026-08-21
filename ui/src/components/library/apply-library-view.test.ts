@@ -5,9 +5,16 @@ import { useNavStore } from "@/stores/nav";
 import { applyLibraryView } from "./use-filter-handoff";
 
 describe("applyLibraryView", () => {
+  // Both halves start from the one definition of an unfiltered view, so a
+  // change to what unfiltered means reaches this suite. Only the two fields
+  // the view owns are touched: the nav store also holds the page, its history
+  // and refs, which this suite has no business resetting.
   beforeEach(() => {
     useLibraryViewStore.setState(useLibraryViewStore.getInitialState(), true);
-    useNavStore.setState({ search: "", libraryScope: "all" });
+    useNavStore.setState({
+      search: UNFILTERED.search,
+      libraryScope: UNFILTERED.scope,
+    });
   });
 
   it("puts every part of a view where that part is kept", () => {
@@ -33,7 +40,7 @@ describe("applyLibraryView", () => {
     const view = useLibraryViewStore.getState();
     expect(view.kind).toBe("any");
     expect(view.tag).toBe("any");
-    expect(useNavStore.getState().search).toBe("");
-    expect(useNavStore.getState().libraryScope).toBe("all");
+    expect(useNavStore.getState().search).toBe(UNFILTERED.search);
+    expect(useNavStore.getState().libraryScope).toBe(UNFILTERED.scope);
   });
 });
