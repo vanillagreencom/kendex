@@ -339,22 +339,18 @@ lives in one capability table read by core and UI.
   session and never overridden; inside the AppImage the `x11` sitting there
   is the hook's rather than theirs, so `KENDEX_GDK_BACKEND` names one
   instead. `GDK_SCALE` and `GDK_DPI_SCALE` are never written at all.
-- **Zoom is the webview's, applied before the window is shown.** The
-  window is configured hidden and revealed in `setup` once the saved zoom
-  is on the webview, so the first frame is already the right size — a page
-  restyle would re-lay out the app in front of the person. The range lives
-  in core and reaches the UI as a generated constant. The floor and the
-  ceiling bind the controls and the settings file alike — a value outside
-  them is clamped on the way in and on the way out — while the step is the
-  controls' alone, so a hand-edited 137 is honoured. This is also the answer
-  to a compositor set to a fractional scale, which GTK3 and WebKitGTK round
-  to a whole number: the person nudges the difference back by hand. A
-  webview that refuses the size still opens, at full size, and the launch
-  records the percent it really applied for the UI to read — the readout and
-  the next step come from the window rather than from the preference, so the
-  app never shows a size it is not at. The stored percent is left alone in
-  that case: it is what the person asked for, and it outlives a session that
-  could not honour it.
+- **Zoom is the webview's, applied before the window is shown.** The window
+  is configured hidden and revealed in `setup` once the saved zoom is on the
+  webview, so the first frame is already the right size — a page restyle
+  would re-lay out the app in front of the person. The range lives in core
+  and reaches the UI as a generated constant. The floor and the ceiling bind
+  the controls and the settings file alike — a value outside them is clamped
+  on the way in and on the way out — while the step is the controls' alone,
+  so a hand-edited 137 is honoured. This is also the answer to a compositor
+  set to a fractional scale, which GTK3 and WebKitGTK round to a whole
+  number: the person nudges the difference back by hand. A webview that
+  refuses the size opens at full size, and the launch records what it
+  applied: the readout follows that, and the stored percent is left alone.
 - **Zoom moves in steps, and writes once the stepping stops.** Nothing
   offers a continuous zoom: a held `Ctrl` `+` and a repeatedly clicked
   button are the two inputs, and both take one step per press. That is the
@@ -365,33 +361,32 @@ lives in one capability table read by core and UI.
   stop. Both inputs start the same timer, so neither can rewrite the file
   per press. The window is asked for one size at a time, each press queued
   behind the last, so there is never a second reply to interleave with: a
-  queue removes those orderings rather than reconciling them afterwards. The size still shows the moment it is pressed,
-  so the control stays immediate and two presses in one frame cannot
-  collapse into one. Three values track the size, each with a single
-  writer: what the app shows moves on a press, what the window has taken
-  starts at the size the launch put on screen and moves only on the
-  window's reply, and what the settings object holds moves only when the
-  file does. The first two are kept out of that object
-  because every settings action writes it whole — a preview sitting in it
-  would be persisted, faithfully, by an unrelated save, and a reply that
-  predates the last resize would put an older size back over one the window
-  has taken. The size reaches the file through a command of its own for the
-  same reason: it carries a percent and nothing else, so no other setting
-  can ride back with it, and it cannot ride back with any other setting.
-  `update_settings` leaves the stored size exactly as it found it.
-  At most one save is ever in flight, and asks made
-  while it runs collapse into a single follow-up that writes whatever is on
-  screen by then, so replies can never land out of order and put back a
-  size the person has already moved past. A write waits for the resize
-  before it reads what to write, so a size the window refuses is never
-  offered to the file; a size the file refuses stays on screen, because
-  taking it away would cost the person the size they are using to read the
-  message. What the settle costs is the last size chosen before quitting:
-  the write is IPC behind a promise chain, so unloading starts it but
-  cannot wait for it, and a close can end the runtime first. The close is
-  not held open to fix that — a window that will not shut while the webview
-  is busy is worse than losing one zoom step, and a timeout on the wait
-  brings the loss back anyway.
+  queue removes those orderings rather than reconciling them. The size still
+  shows the moment it is pressed, so the control stays immediate and two
+  presses in one frame cannot collapse into one. Three values track the
+  size, each with a single writer: what the app shows moves on a press, what
+  the window has taken starts at the launch and moves only on the window's
+  reply, and what the settings object holds moves only when the file does.
+  The first two are kept out of that object because every settings action
+  writes it whole — a preview sitting in it would be persisted, faithfully,
+  by an unrelated save, and a reply that predates the last resize would put
+  an older size back over one the window has taken. The size reaches the
+  file through a command of its own for the same reason: it carries a
+  percent and nothing else, so no other setting can ride back with it, and
+  it cannot ride back with any other setting. `update_settings` leaves the
+  stored size exactly as it found it. At most one save is ever in flight,
+  and asks made while it runs collapse into a single follow-up that writes
+  whatever is on screen by then, so replies can never land out of order and
+  put back a size the person has already moved past. A write waits for the
+  resize before it reads what to write, so a size the window refuses is
+  never offered to the file; a size the file refuses stays on screen,
+  because taking it away would cost the person the size they are using to
+  read the message. What the settle costs is the last size chosen before
+  quitting: the write is IPC behind a promise chain, so unloading starts it
+  but cannot wait for it, and a close can end the runtime first. The close
+  is not held open to fix that — a window that will not shut while the
+  webview is busy is worse than losing one zoom step, and a timeout on the
+  wait brings the loss back anyway.
 - **Every atomic write gets its own temp file.** `write_then_rename` names
   its temp file per write, not per process: the app saves from a thread
   pool, so two writes of one path really do overlap, and a shared name
