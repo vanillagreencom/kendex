@@ -15,6 +15,7 @@ mod gates;
 mod global;
 mod held_back;
 mod links;
+mod observed;
 mod retirement;
 mod strangers;
 mod unreadable;

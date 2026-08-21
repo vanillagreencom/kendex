@@ -36,7 +36,7 @@ mod item_source;
 mod observed;
 pub mod ops;
 mod owned;
-mod pi_hooks_move;
+pub(crate) mod pi_hooks_move;
 mod plan_pass;
 mod planned;
 mod removal;

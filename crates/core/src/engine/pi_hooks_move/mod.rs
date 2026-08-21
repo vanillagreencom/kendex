@@ -48,10 +48,10 @@ use identity::{Registered, registered};
 pub(super) use preflight::{Preflight, preflight};
 use retire::{Retire, retirable};
 
-/// The directory name Pi reserved, and the registry an earlier kendex
-/// wrote beside it.
+/// The directory name Pi reserved. The registry an earlier kendex wrote
+/// beside it is `pi::legacy_hook_registry`, which the observation surface
+/// reads too.
 const LEGACY_DIR: &str = "hooks";
-const LEGACY_REGISTRY: &str = "hooks.json";
 
 /// Everything the move writes into: the plan's ops behind the one trash
 /// guard, the per-file edit collector, and the lines the report carries.
@@ -78,6 +78,26 @@ enum Held {
     Unreadable(String),
 }
 
+/// Whether the registry an older kendex wrote under the name pi reserved
+/// still runs a hook of kendex's in this scope — asked by the Pi
+/// observation surface, which reads that registry while the answer is yes.
+/// A hook the move is holding back runs from there and from nowhere else,
+/// so a surface list that named only the new path would leave the one
+/// installation needing attention out of every list and every scan.
+///
+/// A scope whose lock this build cannot read claims nothing under the
+/// reserved name — the same evidence the move itself takes ownership by,
+/// and the reading that keeps the legacy path from becoming a second home
+/// for pi hooks in scopes kendex never installed one in.
+pub(crate) fn legacy_registry_lives(env: &Env, scope: &Scope) -> bool {
+    let Ok(crate::lock::LockFile::Current(lock)) =
+        crate::lock::load_file(&crate::lock::lock_path(env, scope))
+    else {
+        return false;
+    };
+    preflight(env, scope, &lock, &crate::engine::PlanOptions::default()).legacy_registry_lives()
+}
+
 pub(super) fn plan_move(
     env: &Env,
     scope: &Scope,
@@ -89,7 +109,7 @@ pub(super) fn plan_move(
 ) -> Result<()> {
     let root = pi::scope_root(env, scope);
     let dir = root.join(LEGACY_DIR);
-    let registry = root.join(LEGACY_REGISTRY);
+    let registry = pi::legacy_hook_registry(&root);
     // The move retires itself: with neither reserved path there, there is
     // nothing to take and nothing to say — the same answer everything
     // below reaches, reached without stat-ing both names of every hook

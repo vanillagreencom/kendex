@@ -10,7 +10,7 @@
 
 use std::collections::BTreeSet;
 
-use super::{Found, LEGACY_DIR, LEGACY_REGISTRY, legacy_files, look, provenance};
+use super::{Found, LEGACY_DIR, legacy_files, look, provenance};
 use crate::env::Env;
 use crate::harness::pi;
 use crate::lock::{Lock, LockEntry};
@@ -27,6 +27,10 @@ pub(crate) struct Preflight {
     /// installation lives there now, so a same-named file left under the
     /// reserved name is nobody's copy of it.
     migrated: BTreeSet<String>,
+    /// Whether an installation of kendex's is still where the move has to
+    /// take it from. While that is true the legacy registry is a place a
+    /// hook runs from, and so a place to observe.
+    lingering: bool,
     /// Why the legacy registry cannot give up an entry, when it cannot.
     /// A script is never retired while its registration has to stay, or
     /// the registration would point at a path with nothing at it.
@@ -45,6 +49,14 @@ impl Preflight {
     pub(super) fn moved_on(&self, name: &str) -> bool {
         self.migrated.contains(name)
     }
+
+    /// Whether the registry beside the reserved directory still runs
+    /// something of kendex's — the question the observation surface asks,
+    /// so a held hook is listed while it is the copy that fires, and the
+    /// legacy path stops being read once nothing of kendex's is there.
+    pub(crate) fn legacy_registry_lives(&self) -> bool {
+        self.lingering
+    }
 }
 
 pub(crate) fn preflight(
@@ -59,12 +71,13 @@ pub(crate) fn preflight(
     // nothing to ask about — the same answer everything below reaches,
     // reached without reading a registry per hook on every later plan.
     if matches!(look(&dir), Found::Absent)
-        && matches!(look(&root.join(LEGACY_REGISTRY)), Found::Absent)
+        && matches!(look(&pi::legacy_hook_registry(&root)), Found::Absent)
     {
         return Preflight {
             held: BTreeSet::new(),
             discard: BTreeSet::new(),
             migrated: BTreeSet::new(),
+            lingering: false,
             registry_block: None,
         };
     }
@@ -83,11 +96,18 @@ pub(crate) fn preflight(
         .filter(|entry| moved(env, scope, &root, entry))
         .map(|entry| entry.name.clone())
         .collect();
+    // An installation the move has not finished is one whose registration
+    // is still the legacy one — a hold is only ever that, since nothing is
+    // written or registered at the new path behind one. Without a lock
+    // entry to claim by, kendex has nothing under the reserved name at all.
+    let lingering = ours.iter().any(|entry| !migrated.contains(&entry.name));
+    let registry_block = registry_block(&root, scope, &ours);
     let mut this = Preflight {
         held: BTreeSet::new(),
         discard,
         migrated,
-        registry_block: registry_block(&root, scope, &ours),
+        lingering,
+        registry_block,
     };
     // A directory kendex cannot look inside is one it cannot install
     // beside either: a replacement written there would run alongside
@@ -211,10 +231,10 @@ fn new_registration_runs_it(
         .map_or(new, |recorded| recorded.command.clone());
     live(&pi::hook_registry(root), &recorded)
         || !matches!(
-            look(&root.join(LEGACY_REGISTRY)),
+            look(&pi::legacy_hook_registry(root)),
             Found::Plain(_) | Found::Linked(_)
         )
-        || crate::scan::hooks::read(&root.join(LEGACY_REGISTRY)).is_ok_and(|entries| {
+        || crate::scan::hooks::read(&pi::legacy_hook_registry(root)).is_ok_and(|entries| {
             matches!(
                 super::registered(&entries, event.as_deref(), &command),
                 super::Registered::Absent
@@ -227,7 +247,7 @@ fn new_registration_runs_it(
 /// nobody's entries but somebody else's — there is nothing there to take
 /// out, so nothing is blocked by it.
 fn registry_block(root: &std::path::Path, scope: &Scope, ours: &[&LockEntry]) -> Option<String> {
-    let path = root.join(LEGACY_REGISTRY);
+    let path = pi::legacy_hook_registry(root);
     let say = |why: String| {
         Some(format!(
             "{} {why}, so nothing under the name pi reserved was retired — a hook's registration and the script it names have to go together",

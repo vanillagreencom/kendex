@@ -65,7 +65,11 @@ registration kendex cannot take out holds the script it names, so neither
 half is ever left without the other. Discarding edits finishes the move
 in that same pass — the old copy goes to the trash and one registration
 is left. Everything held back gets a line saying which
-file and why, and `refresh` prints them.
+file and why, and `refresh` prints them. A held hook is also still
+observed where it runs from: while any installation of kendex's remains
+under the reserved name, the registry beside it is a scan surface of its
+own, so `kendex list`, the app and the safety scan carry the copy that is
+firing. Once nothing of kendex's is left there, that registry goes unread.
 Enforcement is read live (`pi_ext::carrier::enforcement`): with the carrier
 registered in either scope's settings the hook is enforced; with no carrier
 anywhere Pi loads, the install downgrades to advisory, said per item. Pi

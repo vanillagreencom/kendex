@@ -250,7 +250,10 @@ changes carry a **Breaking** call-out with their migration note inline.
   whole installation, not just the file — the old copy stays the one that
   runs, and nothing replaces it until you discard the edits — and
   discarding them, or removing the hook by name, finishes the move in that
-  run, leaving one registration and nothing more to say. A registration
+  run, leaving one registration and nothing more to say. A hook held that
+  way still shows up in `kendex list`, in the app, and in the safety scan,
+  read from the old registry it fires from, so the copy that needs your
+  attention is not the one you cannot see. A registration
   kendex cannot take out holds the script it names, so a hook is never left
   half-retired. Hooks that came in with a bundle move like any other. And a
   cleanup nobody asked for by name now leaves a hook's files alone when
