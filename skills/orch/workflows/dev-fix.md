@@ -110,6 +110,7 @@ Cancel ends the workflow; a selection goes to § 2.
    Round ID: [DEV_ROUND_ID]
    Artifact Key: [ISSUE_ID]
    QA: [QA_AGENT]
+   Convergence: [CHOICE] — [REASON]
 
    Decisions:
    [For each verified decision: "- [DECISION_ID]: [ONE_LINE_SUMMARY] — [DECISION_FILE_PATH]"]
@@ -119,6 +120,8 @@ Cancel ends the workflow; a selection goes to § 2.
    Review items:
    [FORMATTED_ITEMS]
    </delegation_format>
+
+   The `Convergence:` line is omitted when the caller passed no `convergence`, per [Format Tags Are Literal](../SKILL.md#format-tags-are-literal). When it is present it tells the agent what shape the round's answer takes: `structural` asks for the recurring class to be fixed once rather than each item patched, and `cut` or `split` means `[FORMATTED_ITEMS]` already reflects the decision.
 
 5. **Accept the round.** Acceptance is a pure function of **A** (the round-scoped artifact) and **B** (git completion), never the return message — a return is routinely absent when a long validation outlasts the agent's turn.
 
