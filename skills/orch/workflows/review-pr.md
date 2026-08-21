@@ -271,7 +271,7 @@ Omit empty categories. Decline any item that cannot affect real usage with one l
 **Disposition is by rule, not by prompt** — never present a selection menu over the findings. Every blocker and `category == "fix"` suggestion that survives declining goes to the fix round below, in EVERY decision mode: which findings to fix is a mechanics question the rule settles, so `ORCH_DECISION_MODE` does not gate it. The always-ask set in [SKILL.md § The Cycle](../SKILL.md#the-cycle) is unaffected and still applies. Nothing left after declines → § 5.
 
 ### Fix Delegation
-**From `cycles` 3 on, converge before delegating this round** ([SKILL.md § The Cycle](../SKILL.md#the-cycle)): a diff still yielding new blockers is answered by cutting a surface the issue did not require, or by fixing the recurring class structurally, or by splitting — decided BEFORE the delegation below runs, because per-comment patching past that point is the failure the rule names.
+**At `cycles` 3, converge before delegating this round** ([SKILL.md § The Cycle](../SKILL.md#the-cycle)): a diff still yielding new blockers is answered by cutting a surface the issue did not require, or by fixing the recurring class structurally, or by splitting — decided BEFORE the delegation below runs, because per-comment patching past that point is the failure the rule names.
 
 Record it in its own key, which nothing later overwrites:
 
@@ -279,12 +279,12 @@ Record it in its own key, which nothing later overwrites:
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] convergence '{"cycle": [CYCLES], "choice": "[cut|structural|split]", "reason": "[ONE_LINE]"}'
 ```
 
-It applies to every later round too, not only the third: the verification pass the cap allows can surface blockers, and the round answering those is the one most likely to be patching comment by comment.
+Three is the last cycle that delegates. At `cycles` 4 the cap below governs instead: its verification pass may surface blockers, and those are reported at § 5 rather than answered by another round — so this gate is the final chance to change the shape of the work, not one checkpoint among many.
 
 Then carry it into the delegation as `convergence`, so the round is told what shape its answer takes rather than receiving the same per-comment list again. `cut` and `split` both change `items`, and they dispose of what leaves differently:
 
 - `cut` removes a surface the issue never required, so findings on it are declined with their rationale per [finding-disposition](../references/finding-disposition.md) — there is nothing left for them to be about.
-- `split` moves a surface into its own change, so findings on it are still live: file them against that change, or hold them with the split, and never decline them. A blocker does not stop being one because it moved.
+- `split` moves a surface into its own change, so findings on it are still live: record each one in `escalated_items` with the split named as its reason before narrowing `items`, so § 8 reports them as outstanding and the audit files them against the new change. A finding absent from both `fixed_items` and `escalated_items` reads as declined, and a blocker does not stop being one because it moved.
 
 Never fix as the main agent.
 

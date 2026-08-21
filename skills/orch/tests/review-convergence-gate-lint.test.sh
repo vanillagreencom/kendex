@@ -69,12 +69,30 @@ else
   fail "the gate does not pin a threshold, so it bounds nothing"
 fi
 
-# It has to keep applying past the third, or the round answering the
-# verification pass — the one most likely to be patching — escapes it.
-if printf '%s' "$GATE_LINE" | grep -qi 'from `cycles` 3 on'; then
-  pass "the gate applies from that cycle onward, not at it alone"
+# Three is the last cycle that delegates: at four the cap reports and exits,
+# so a gate claiming to govern later rounds would license a round the cap
+# forbids.
+if sed -n '/### Fix Delegation/,/Run Workflow.*dev-fix.md/p' "$REVIEW_PR_WF" \
+  | grep -qi 'last cycle that delegates'; then
+  pass "the gate says three is the last cycle that delegates"
 else
-  fail "the gate applies to one cycle only, so later rounds escape it"
+  fail "the gate does not say where delegation stops, so the cap and the gate can disagree"
+fi
+
+if grep -q 'when `cycles` reaches 4' "$REVIEW_PR_WF" \
+  && grep -q 'report the outstanding items after that pass and proceed' "$REVIEW_PR_WF"; then
+  pass "the cap still reports and exits at four rather than delegating"
+else
+  fail "the cap no longer exits to the verdict pass at four"
+fi
+
+# A split moves findings; it does not answer them. Absent from both records
+# they read as declined, which is how a live blocker goes quiet.
+if sed -n '/### Fix Delegation/,/Run Workflow.*dev-fix.md/p' "$REVIEW_PR_WF" \
+  | grep -q 'escalated_items'; then
+  pass "a split records its findings instead of dropping them"
+else
+  fail "split findings are narrowed out of items with nothing recording them"
 fi
 
 # The decision has to land somewhere the panel-scoping write does not clobber.
@@ -125,7 +143,7 @@ plant() {
   printf '%s' "$scratch"
 }
 
-CTRL_THRESHOLD="$(plant threshold 's/From .cycles. 3 on, converge/Converge/')"
+CTRL_THRESHOLD="$(plant threshold 's/At .cycles. 3, converge/Converge/')"
 CTRL_LINE="$(grep -m1 "$GATE_RE" "$CTRL_THRESHOLD" || true)"
 if printf '%s' "$CTRL_LINE" | grep -q '`cycles` 3'; then
   fail "control: a gate with its threshold removed still reads as pinned"
