@@ -31,6 +31,7 @@ Four rules bound it:
 
 - **Bounded loops.** A fix round addresses blockers. Minor suggestions never trigger another cycle; re-review narrows to the fix diff and the domains it touched; two consecutive rounds that surface no new blocker end the review.
 - **No edge-case churn.** A finding that cannot affect real usage is declined with one line of rationale — not fixed in-PR, not filed. Issue creation is for critical follow-ups only, never the default disposal path for review output.
+- **Review must converge.** A change still yielding new defects at round 3 stops per-comment patching: cut any surface the report did not require, fix the recurring class structurally, or split. Never keep iterating.
 - **Ask the user only about product or experience.** Every technical choice is settled by rule here or by the specialist who owns it. Scope expansion beyond the issue and revisiting a recorded decision always ask, whatever `ORCH_DECISION_MODE` says. Merge asks unless `ORCH_MERGE_AUTONOMY=auto`, which merges without asking when — and only when — every merge gate is green.
 - **Acceptance is artifact-based, never prose-based.** A round closes on a validated on-disk artifact plus git/tracker state. A return message is display material.
 
