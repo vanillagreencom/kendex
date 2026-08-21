@@ -2,16 +2,18 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { NO_FILTERS, useLibraryViewStore } from "./library-view";
 
 describe("library view store", () => {
+  // Reset to what the store was created with rather than to a restatement of
+  // it, so a filter added to the strip is reset here without anyone editing
+  // this line — and so the opening state below is the store's own answer.
   beforeEach(() => {
-    useLibraryViewStore.setState({ ...NO_FILTERS, scrollTop: 0 });
+    useLibraryViewStore.setState(useLibraryViewStore.getInitialState(), true);
   });
 
-  it("opens narrowed by nothing", () => {
-    const state = useLibraryViewStore.getState();
-    expect(state.kind).toBe("any");
-    expect(state.harness).toBe("any");
-    expect(state.tag).toBe("any");
-    expect(state.from).toBe("any");
+  it("opens narrowed by nothing, at the top", () => {
+    expect(useLibraryViewStore.getInitialState()).toMatchObject({
+      ...NO_FILTERS,
+      scrollTop: 0,
+    });
   });
 
   it("adopts every picker of a whole narrowing, stale values included", () => {

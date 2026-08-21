@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { UNFILTERED } from "@/lib/library-handoff";
-import { NO_FILTERS, useLibraryViewStore } from "@/stores/library-view";
+import { useLibraryViewStore } from "@/stores/library-view";
 import { useNavStore } from "@/stores/nav";
 import { applyLibraryView } from "./use-filter-handoff";
 
 describe("applyLibraryView", () => {
   beforeEach(() => {
-    useLibraryViewStore.setState({ ...NO_FILTERS, scrollTop: 0 });
+    useLibraryViewStore.setState(useLibraryViewStore.getInitialState(), true);
     useNavStore.setState({ search: "", libraryScope: "all" });
   });
 

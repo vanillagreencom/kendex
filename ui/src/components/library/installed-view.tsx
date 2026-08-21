@@ -30,7 +30,10 @@ import { isNarrowed, UNFILTERED } from "@/lib/library-handoff";
 import { scopeKey } from "@/lib/scope";
 import { cn } from "@/lib/utils";
 import { useEditorStore } from "@/stores/editor";
-import { useLibraryViewStore } from "@/stores/library-view";
+import {
+  type FilterSelection,
+  useLibraryViewStore,
+} from "@/stores/library-view";
 import { useNavStore } from "@/stores/nav";
 import {
   originFor,
@@ -141,11 +144,8 @@ export function InstalledView() {
   // Nothing has been counted yet — distinct from "counted, found nothing".
   const scanning = result === null;
   const hasAnyItems = (result?.items.length ?? 0) > 0;
-  const filtered = isNarrowed({
-    filters: { kind, harness, tag, from },
-    search,
-    scope,
-  });
+  const filters: FilterSelection = { kind, harness, tag, from };
+  const filtered = isNarrowed({ filters, search, scope });
 
   const clearFilters = () => applyLibraryView(UNFILTERED);
 

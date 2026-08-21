@@ -1,5 +1,5 @@
 import type { ScopeSelection } from "@/lib/derive";
-import { type LibraryFilters, NO_FILTERS } from "@/stores/library-view";
+import { type FilterSelection, NO_FILTERS } from "@/stores/library-view";
 import type { LibraryFilter } from "@/stores/nav-types";
 
 /** Everything the Library's table is showing: the narrowing its filter strip
@@ -7,7 +7,7 @@ import type { LibraryFilter } from "@/stores/nav-types";
  * fields stay grouped as the store defines them rather than being restated
  * here, so a filter added to the strip is part of the view by construction. */
 export interface LibraryView {
-  filters: LibraryFilters;
+  filters: FilterSelection;
   search: string;
   scope: ScopeSelection;
 }
@@ -27,7 +27,7 @@ export function isNarrowed(view: LibraryView): boolean {
   if (view.search !== UNFILTERED.search || view.scope !== UNFILTERED.scope) {
     return true;
   }
-  const names = Object.keys(NO_FILTERS) as (keyof LibraryFilters)[];
+  const names = Object.keys(NO_FILTERS) as (keyof FilterSelection)[];
   return names.some((name) => view.filters[name] !== NO_FILTERS[name]);
 }
 

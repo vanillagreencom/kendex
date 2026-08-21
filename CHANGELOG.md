@@ -143,9 +143,10 @@ changes carry a **Breaking** call-out with their migration note inline.
 - Scrolling surfaces are the app's own colour rather than the desktop's: a
   long list used to end in a stripe of system chrome, and the thumb is now
   drawn from the app's foreground with the track taken away, in light and
-  dark. Each platform keeps its own scrollbar shape and width, so on Linux
-  and macOS — where the bar floats over the list — no list shifts sideways as
-  it grows past the window.
+  dark. Nothing gives up any width for it, so no list shifts sideways as it
+  grows past the window. A system that does not let the app recolour its
+  scrollbar keeps exactly the bar it draws today, and will pick the app's
+  colour up on its own once it supports the setting.
 - The app uses the Geist typeface, with titles and navigation in Geist Mono
   to match the website.
 - **Breaking**: the default Homebrew install is now the app —
@@ -177,6 +178,10 @@ changes carry a **Breaking** call-out with their migration note inline.
   `KENDEX_REAL_HOME=1` — only that exact value opts out. Release builds are
   unaffected, whether you installed one or built it with `--release`.
 
+- "How a marketplace repo works" can be read from the keyboard. The document
+  is longer than the box it opens in, and only a mouse could scroll it, so
+  everything past the first screen was out of reach; `Tab` now reaches the
+  document itself and the keyboard scrolls it.
 - The project-management skill's issue pipeline creates Linear issues
   directly in Backlog instead of the team's Triage default. Pipeline output
   is already fully triaged — project, labels, priority, relations — and a
