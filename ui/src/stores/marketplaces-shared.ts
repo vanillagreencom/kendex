@@ -15,10 +15,12 @@ import { useScanStore } from "./scan";
  * a root or alias containing the delimiter can never collide with another
  * subscription's key. */
 export const marketKey = (scope: Scope, source: string): string =>
-  JSON.stringify([scope.scope === "global" ? null : scope.root, source]);
+  JSON.stringify(["sub", scope.scope === "global" ? null : scope.root, source]);
 
 /** Any catalog's cache key — a subscription's is [marketKey], so what a
- * subscription's rows cached stays found when a page addresses it. */
+ * subscription's rows cached stays found when a page addresses it. Each
+ * shape carries its own tag, so a project root and alias can never spell
+ * a repository's key. */
 export const catalogKey = (catalog: Catalog): string =>
   catalog.by === "subscription"
     ? marketKey(catalog.scope, catalog.source)
@@ -54,7 +56,7 @@ export const rowSubscribed = (
 
 /** Whether a [catalogKey] names a repository rather than a subscription. */
 export const isRepoKey = (key: string): boolean =>
-  key.startsWith(JSON.stringify(["repo", ""]).slice(0, -3));
+  (JSON.parse(key) as unknown[])[0] === "repo";
 
 /** Every repository catalog with a cached summary — the pages to re-ask
  * after a refresh may have made a holder readable. The key is the way

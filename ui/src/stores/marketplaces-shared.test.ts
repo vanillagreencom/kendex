@@ -17,6 +17,19 @@ describe("catalog addressing", () => {
     );
   });
 
+  it("never lets a project root and alias spell a repository's key", () => {
+    // A project checked out at a relative root named "repo", subscribed to
+    // an alias that reads like a repository reference.
+    const project = subscription(
+      { scope: "project", root: "repo" },
+      "acme/kit",
+    );
+    const repo = { by: "repo" as const, repo: "acme/kit" };
+    expect(catalogKey(project)).not.toBe(catalogKey(repo));
+    expect(isRepoKey(catalogKey(project))).toBe(false);
+    expect(isRepoKey(catalogKey(repo))).toBe(true);
+  });
+
   it("never folds a repository into a subscription of the same name", () => {
     const repo = catalogKey({ by: "repo", repo: "acme/kendex" });
     expect(repo).not.toBe(
