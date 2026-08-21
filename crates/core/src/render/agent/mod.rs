@@ -17,6 +17,7 @@ pub use source::{Role, SourceAgent, default_pane, parse_source_agent};
 /// Everything a per-harness generator needs, already merged. `permissions`
 /// is the effective intent — source `tools:` narrowed by manifest overrides;
 /// renderers read it, never `overrides.deny_tools` directly.
+#[derive(Clone)]
 pub struct EffectiveAgent<'a> {
     pub source: &'a SourceAgent,
     pub harness: HarnessId,

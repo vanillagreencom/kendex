@@ -17,8 +17,11 @@ const CHIP_VIEWS: { view: Exclude<SkillsShMode, "search">; label: string }[] = [
  * the skill opens for install, bound to what kendex's own discovery
  * finds there. */
 export function SkillsShSearch({
+  onOpen,
   onInstall,
 }: {
+  /** Open the repository a hit lives in, to browse before installing. */
+  onOpen: (repo: string) => void;
   onInstall: (url: string) => void;
 }) {
   const hits = useCommunityStore((s) => s.skillsshHits);
@@ -95,12 +98,16 @@ export function SkillsShSearch({
               key={`${hit.repo}/${hit.skill}`}
               className="flex items-center gap-3 px-4 py-3"
             >
-              <div className="min-w-0 flex-1">
+              <button
+                type="button"
+                className="min-w-0 flex-1 cursor-pointer text-left"
+                onClick={() => onOpen(hit.repo)}
+              >
                 <p className="truncate text-sm font-medium">{hit.skill}</p>
                 <p className="truncate font-mono text-xs text-muted-foreground">
                   {hit.repo}
                 </p>
-              </div>
+              </button>
               <span className="shrink-0 text-xs text-muted-foreground">
                 {installsLabel(hit.installs)} installs
               </span>

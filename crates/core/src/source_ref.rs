@@ -357,8 +357,21 @@ pub fn repo_identity(repo: &str) -> String {
     if let Some(owner_repo) = crate::repo_move::github_owner_repo(repo) {
         return format!("github.com/{owner_repo}");
     }
-    let lower = repo.trim().trim_end_matches('/').to_ascii_lowercase();
-    lower.strip_suffix(".git").unwrap_or(&lower).to_owned()
+    let trimmed = repo.trim().trim_end_matches('/');
+    let trimmed = trimmed.strip_suffix(".git").unwrap_or(trimmed);
+    // Scheme and host are case-insensitive everywhere; the path is not on
+    // an arbitrary host, where `Team/catalog` and `team/catalog` can be two
+    // repositories — and the mirror store keeps them apart, so identity
+    // must too.
+    let path_start = match trimmed.find("://") {
+        Some(scheme_end) => trimmed[scheme_end + 3..]
+            .find('/')
+            .map_or(trimmed.len(), |host_len| scheme_end + 3 + host_len),
+        // scp-style `user@host:path`
+        None => trimmed.find(':').unwrap_or(0),
+    };
+    let (head, path) = trimmed.split_at(path_start);
+    format!("{}{path}", head.to_ascii_lowercase())
 }
 
 mod tree;

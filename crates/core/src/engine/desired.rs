@@ -4,15 +4,16 @@ use std::path::PathBuf;
 use crate::env::Env;
 use crate::error::Result;
 use crate::harness::{Surface, adapter};
-use crate::hash::{hash_bytes, hash_files};
 use crate::lock::Lock;
 use crate::manifest::{ItemDecl, Manifest, Method};
 use crate::model::{HarnessId, ItemKind, Scope};
+use crate::quality::author::AuthorReview;
 use crate::source::{SourceState, find_item};
 use crate::source_read::SealedSource;
 
-use super::desired_source::{read_catalog, resolve_source};
-use super::{desired_agent, desired_kinds, desired_skill::desired_skill};
+use super::desired_item::{build, no_harness_note};
+use super::desired_kinds;
+use super::desired_source::{published_review, read_catalog, resolve_source};
 
 /// One installation as declaration says it should exist on disk.
 #[derive(Debug, Clone, PartialEq)]
@@ -40,6 +41,19 @@ pub struct Desired {
     pub emitted: Option<crate::lock::EmittedArtifact>,
     /// Every reason this installation is wanted, derived fresh each pass.
     pub reasons: BTreeSet<crate::lock::Reason>,
+    /// What this item's publisher already settled about it, re-checked
+    /// against the bytes this pass fetched. The gate stops counting those
+    /// findings and the lock records the review; every one is still
+    /// reported, named as the publisher's.
+    pub author_review: Option<AuthorReview>,
+    /// How much of this artifact its publisher wrote: where the project's
+    /// block landed in it, or their own rendering of it beside the real
+    /// one. Present only where a publisher's record needs measuring
+    /// against it. The builder that rendered the artifact owes this beside
+    /// it: a kind that can carry project text and does not answer settles
+    /// nothing at all, which is the direction a mistake here has to fail
+    /// in.
+    pub authored: Option<crate::quality::Authored>,
     pub artifact: Artifact,
 }
 
@@ -164,25 +178,30 @@ pub fn skill_canonical(env: &Env, scope: &Scope, name: &str) -> PathBuf {
     }
 }
 
-pub(super) fn target_harnesses(
+pub(crate) fn target_harnesses(
     decl: &ItemDecl,
     manifest: &Manifest,
     kind: ItemKind,
     scope: &Scope,
 ) -> Vec<HarnessId> {
-    let requested = decl
-        .harnesses
-        .clone()
-        .unwrap_or_else(|| manifest.install.harnesses.clone());
+    harnesses_for(decl.harnesses.as_deref(), manifest, kind, scope)
+}
+
+/// The same from a declaration's `harnesses` list alone, so a reading with
+/// no declaration to hand — nothing here has asked for this item yet — gets
+/// its answer from this derivation rather than from a second spelling of
+/// it.
+pub(crate) fn harnesses_for(
+    requested: Option<&[HarnessId]>,
+    manifest: &Manifest,
+    kind: ItemKind,
+    scope: &Scope,
+) -> Vec<HarnessId> {
     requested
+        .map(<[HarnessId]>::to_vec)
+        .unwrap_or_else(|| manifest.install.harnesses.clone())
         .into_iter()
-        .filter(|harness| {
-            let support = crate::harness::capabilities(*harness, kind).install;
-            match scope {
-                Scope::Global => support.global,
-                Scope::Project { .. } => support.project,
-            }
-        })
+        .filter(|harness| crate::harness::installs_here(*harness, kind, scope))
         .collect()
 }
 
@@ -191,6 +210,11 @@ pub(super) fn target_harnesses(
 /// and hashes and renderings must reflect that rewrite — otherwise the very
 /// next audit reads the merged manifest and calls a clean install stale. The
 /// merge is idempotent, so recomputing against it converges in one repeat.
+mod artifact;
+mod rebuild;
+pub use artifact::{artifact_disk_hash, artifact_paths};
+pub use rebuild::desired_as_installed;
+
 pub fn desired_state(
     env: &Env,
     scope: &Scope,
@@ -214,6 +238,12 @@ fn compute(env: &Env, scope: &Scope, manifest: &Manifest, lock: &Lock) -> Result
     // installed bundles carry, and what those skills require — while the
     // manifest keeps holding only what was chosen.
     let expansion = super::expansion::expand(env, scope, manifest, &mut state);
+    // One parse of each catalog root's reviews file per pass: it is one
+    // file, and every item that root carries would otherwise re-read it.
+    // Keyed by root, since one declared source resolves to several when
+    // its items pin different revisions.
+    let mut reviews: BTreeMap<PathBuf, BTreeMap<String, crate::quality::reviews::SafetyReview>> =
+        BTreeMap::new();
     let collisions = super::catalog::Collisions::find(&expansion, &mut state);
 
     for kind in super::expansion::PLANNED_KINDS {
@@ -237,22 +267,20 @@ fn compute(env: &Env, scope: &Scope, manifest: &Manifest, lock: &Lock) -> Result
                 continue;
             };
             state.processed.insert((kind, name.clone()));
+            let author_review = published_review(
+                &sealed,
+                &decl.source,
+                &provenance,
+                &config,
+                kind,
+                name,
+                &item_path,
+                &mut reviews,
+                &mut state,
+            )?;
             let mut harnesses = planned.harnesses.clone();
-            // Every tool this is declared for is one that holds no such kind
-            // here. Nothing installs, and silence would read as success.
             if harnesses.is_empty() {
-                let asked: Vec<&str> = decl
-                    .harnesses
-                    .as_ref()
-                    .unwrap_or(&manifest.install.harnesses)
-                    .iter()
-                    .map(|harness| harness.display_name())
-                    .collect();
-                state.notes.push(format!(
-                    "{} {name}: {} cannot hold one at this scope — nothing was installed",
-                    kind.name(),
-                    asked.join(", ")
-                ));
+                no_harness_note(kind, name, decl, manifest, &mut state);
             }
             harnesses.retain(|harness| collisions.allows(kind, name, *harness));
             let reasons = reasons_for(kind, name, &harnesses, &expansion);
@@ -270,39 +298,15 @@ fn compute(env: &Env, scope: &Scope, manifest: &Manifest, lock: &Lock) -> Result
                 source_commit: source_commit.as_deref(),
                 harnesses,
                 reasons: &reasons,
+                author_review,
             };
-            let outcome = match kind {
-                ItemKind::Skill => desired_skill(&ctx, &mut state),
-                ItemKind::Agent => desired_agent::desired_agent(
-                    &ctx,
-                    &mut state,
-                    &mut updated_manifest,
-                    &mut manifest_changed,
-                ),
-                ItemKind::Hook => desired_kinds::desired_hook(&ctx, &mut state),
-                ItemKind::Command => super::desired_command::desired_command(&ctx, &mut state),
-                ItemKind::McpServer => super::desired_mcp::desired_mcp(&ctx, &mut state),
-                _ => Ok(()),
-            };
-            match outcome {
-                Ok(()) => {}
-                // One hostile item must not take the whole scope down: the
-                // refused read becomes an unreadable note, and what it
-                // already installed stays out of the orphan sweep.
-                // "unreadable" is the phrase verify keys on: a refused item
-                // must fail verification, never print a green tick.
-                Err(crate::error::CoreError::SourceEscape { path, reason }) => {
-                    state.unreadable(
-                        kind,
-                        name,
-                        format!(
-                            "{name}: unreadable — refused catalog read: {reason} ({})",
-                            path.display()
-                        ),
-                    );
-                }
-                Err(other) => return Err(other),
-            }
+            build(
+                kind,
+                &ctx,
+                &mut state,
+                &mut updated_manifest,
+                &mut manifest_changed,
+            )?;
         }
     }
     desired_kinds::desired_plugins(env, scope, manifest, &mut state);
@@ -341,6 +345,7 @@ pub(super) struct ItemCtx<'a> {
     pub(super) source_commit: Option<&'a str>,
     pub(super) harnesses: Vec<HarnessId>,
     reasons: &'a BTreeMap<HarnessId, BTreeSet<crate::lock::Reason>>,
+    pub(super) author_review: Option<AuthorReview>,
 }
 
 impl ItemCtx<'_> {
@@ -353,38 +358,5 @@ impl ItemCtx<'_> {
             .forks
             .get(&kind)
             .is_some_and(|forks| forks.contains_key(self.name))
-    }
-}
-
-/// Every path an artifact occupies. Cursor keeps hook rules in the same dir
-/// as agents and codex shares skill trees with pi: without this, the scanner
-/// reports content we just wrote as someone else's.
-pub fn artifact_paths(artifact: &Artifact) -> Vec<PathBuf> {
-    match artifact {
-        Artifact::File { path, .. } => vec![path.clone()],
-        Artifact::Tree {
-            canonical, link, ..
-        } => {
-            let mut paths = vec![canonical.clone()];
-            paths.extend(link.clone());
-            paths
-        }
-        Artifact::Registration { script, .. } => {
-            script.iter().map(|(path, _)| path.clone()).collect()
-        }
-    }
-}
-
-/// The on-disk hash the artifact will have — for clean/dirty comparison.
-/// A registration's config edits are compared by re-applying them, not by
-/// hash; only its backing file has one.
-pub fn artifact_disk_hash(artifact: &Artifact) -> String {
-    match artifact {
-        Artifact::File { bytes, .. } => hash_bytes(bytes),
-        Artifact::Tree { files, .. } => hash_files(files),
-        Artifact::Registration { script, .. } => match script {
-            Some((_, bytes)) => hash_bytes(bytes),
-            None => hash_bytes(&[]),
-        },
     }
 }

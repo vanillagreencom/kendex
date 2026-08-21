@@ -14,6 +14,7 @@ import { groupScopes, type ItemGroup } from "@/lib/derive";
 import { kindLabel, scopeName } from "@/lib/labels";
 import { relativeTime } from "@/lib/relative-time";
 import { versionLabel } from "@/lib/versions";
+import { subscription } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 import {
   originFor,
@@ -85,10 +86,7 @@ export function PackageMetaBlock({
               className="underline underline-offset-2 hover:text-foreground"
               title={originTitle(origin)}
               onClick={() =>
-                goToMarketplace({
-                  scope: primary.scope,
-                  source: origin.source,
-                })
+                goToMarketplace(subscription(primary.scope, origin.source))
               }
             >
               {origin.source}

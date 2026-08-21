@@ -9,6 +9,7 @@ import {
   WIDE_CONTENT_WIDTH,
 } from "@/lib/layout";
 import { cn } from "@/lib/utils";
+import { catalogLabel } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 
 // A quiet strip above the page content — only worth showing at all once a
@@ -58,11 +59,9 @@ export function NavBar() {
               : availableRef
                 ? packageDisplayName(availableRef)
                 : null,
-            marketplaceName:
-              marketplaceRef?.source ??
-              bundleRef?.source ??
-              availableRef?.source ??
-              null,
+            marketplaceName: catalogLabel(
+              marketplaceRef ?? bundleRef?.catalog ?? availableRef?.catalog,
+            ),
             bundleName: bundleRef?.bundle ?? null,
           })}
         </span>

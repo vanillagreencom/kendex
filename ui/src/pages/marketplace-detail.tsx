@@ -1,178 +1,149 @@
-import { MoreHorizontal, RefreshCw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
+import type { Catalog } from "@/bindings";
 import { AboutSection } from "@/components/marketplaces/about-section";
 import { BundleCards } from "@/components/marketplaces/bundle-cards";
+import { DetailHeader } from "@/components/marketplaces/detail-header";
 import { PackagesTable } from "@/components/marketplaces/packages-table";
-import { UnsubscribeDialog } from "@/components/marketplaces/unsubscribe-dialog";
-import { PageHeader } from "@/components/page-header";
-import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Switch } from "@/components/ui/switch";
+  useCachedRead,
+  useCatalog,
+} from "@/components/marketplaces/use-catalog";
+import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PAGE_BODY, PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { cn } from "@/lib/utils";
-import { marketKey, useMarketplacesStore } from "@/stores/marketplaces";
+import {
+  catalogKey,
+  marketKey,
+  readErrorKey,
+  useMarketplacesStore,
+} from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 
-/** One subscription's own page: what it offers and what it says about
- * itself. Nested under Marketplaces — the breadcrumb strip above carries
- * the way back. */
+/** One marketplace's own page: what it offers and what it says about
+ * itself — a subscription, or a repository opened from the Community tab
+ * before subscribing, on the same surface. Nested under Marketplaces — the
+ * breadcrumb strip above carries the way back. */
 export function MarketplaceDetailPage() {
   const marketplaceRef = useNavStore((s) => s.marketplaceRef);
+  if (!marketplaceRef) return null;
+  return <MarketplaceDetail requested={marketplaceRef} />;
+}
+
+function MarketplaceDetail({ requested }: { requested: Catalog }) {
+  const { catalog, summary, error, ready, retry } = useCatalog(requested);
   const rows = useMarketplacesStore((s) => s.rows);
   const packages = useMarketplacesStore((s) => s.packages);
   const load = useMarketplacesStore((s) => s.load);
   const loadPackages = useMarketplacesStore((s) => s.loadPackages);
-  const toggle = useMarketplacesStore((s) => s.toggle);
-  const checkForUpdates = useMarketplacesStore((s) => s.checkForUpdates);
-  const busy = useMarketplacesStore((s) => s.busy);
-  const [unsubscribeOpen, setUnsubscribeOpen] = useState(false);
 
-  const key = marketplaceRef
-    ? marketKey(marketplaceRef.scope, marketplaceRef.source)
-    : null;
-  const row = marketplaceRef
-    ? rows.find(
-        (r) =>
-          r.name === marketplaceRef.source &&
-          marketKey(r.scope, r.name) === key,
-      )
-    : undefined;
-  const offered = key ? (packages[key] ?? []) : [];
+  const row =
+    catalog.by === "subscription"
+      ? rows.find(
+          (r) =>
+            r.name === catalog.source &&
+            marketKey(r.scope, r.name) === catalogKey(catalog),
+        )
+      : undefined;
+  const cached = packages[catalogKey(catalog)];
+  const offered = cached ?? [];
+  const packagesError = useMarketplacesStore(
+    (s) => s.readErrors[readErrorKey(catalogKey(catalog), "packages")],
+  );
 
   useEffect(() => {
     void load();
   }, [load]);
-  useEffect(() => {
-    if (!marketplaceRef) return;
-    void loadPackages(marketplaceRef.scope, marketplaceRef.source);
-  }, [marketplaceRef, loadPackages]);
-
-  if (!marketplaceRef) return null;
-  const { scope, source } = marketplaceRef;
-  const meta = row?.meta;
-  const metaLine = [
-    row?.repo ?? row?.path,
-    row?.commit ? `@ ${row.commit.slice(0, 7)}` : null,
-    meta?.license,
-    meta?.author ? `by ${meta.author}` : null,
-  ].filter(Boolean);
+  const readPackages = useCallback(
+    () => loadPackages(catalog),
+    [loadPackages, catalog],
+  );
+  useCachedRead(cached !== undefined, !!packagesError, ready, readPackages);
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeader
-        wide
-        title={source}
-        subtitle={
-          <>
-            {meta?.description ? <p>{meta.description}</p> : null}
-            {metaLine.length > 0 ? (
-              <p className="mt-1 font-mono text-xs">{metaLine.join(" · ")}</p>
-            ) : null}
-          </>
-        }
-        action={
-          <>
-            {row ? (
-              <Switch
-                checked={row.enabled}
-                onCheckedChange={(enabled) =>
-                  void toggle(scope, source, enabled)
-                }
-                aria-label={row.enabled ? "Turn off" : "Turn on"}
-              />
-            ) : null}
+      <DetailHeader
+        requested={requested}
+        catalog={catalog}
+        row={row}
+        summary={summary}
+      />
+      {error ? (
+        <div className={cn(PAGE_BODY, "pt-0")}>
+          <div className={WIDE_CONTENT_WIDTH}>
+            <p className="text-sm text-critical" role="alert">
+              This marketplace can't be reached right now — {error}
+            </p>
             <Button
+              className="mt-3"
               size="sm"
               variant="outline"
-              disabled={busy}
-              onClick={() => void checkForUpdates()}
+              onClick={retry}
             >
-              <RefreshCw className={cn("size-4", busy && "animate-spin")} />
-              Check for updates
+              Try again
             </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    size="icon-xs"
-                    variant="quiet"
-                    aria-label="More actions"
-                  >
-                    <MoreHorizontal className="size-4" />
-                  </Button>
-                }
-              />
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  className="text-critical"
-                  onClick={() => setUnsubscribeOpen(true)}
-                >
-                  Unsubscribe…
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </>
-        }
-      />
-      <UnsubscribeDialog
-        open={unsubscribeOpen}
-        onOpenChange={setUnsubscribeOpen}
-        scope={scope}
-        source={source}
-      />
-      <Tabs
-        defaultValue="bundles"
-        className="flex min-h-0 flex-1 flex-col gap-0"
-      >
-        <div className={cn("pb-3", PAGE_GUTTER)}>
-          <div className={WIDE_CONTENT_WIDTH}>
-            <TabsList>
-              <TabsTrigger value="bundles">Bundles</TabsTrigger>
-              <TabsTrigger value="packages">Packages</TabsTrigger>
-              <TabsTrigger value="about">About</TabsTrigger>
-            </TabsList>
           </div>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className={cn(PAGE_BODY, "pt-0")}>
+      ) : !ready ? (
+        <p className="py-16 text-center text-sm text-muted-foreground">
+          Reaching {requested.by === "repo" ? requested.repo : ""}…
+        </p>
+      ) : (
+        <Tabs
+          defaultValue="bundles"
+          className="flex min-h-0 flex-1 flex-col gap-0"
+        >
+          <div className={cn("pb-6", PAGE_GUTTER)}>
             <div className={WIDE_CONTENT_WIDTH}>
-              <TabsContent value="bundles">
-                <BundleCards scope={scope} source={source} offered={offered} />
-              </TabsContent>
-              <TabsContent value="packages">
-                {offered.length === 0 ? (
-                  <p className="py-16 text-center text-sm text-muted-foreground">
-                    Nothing to list yet — this marketplace hasn't been fetched,
-                    or offers no packages.
-                  </p>
-                ) : (
-                  <PackagesTable
-                    entries={offered.map((pkg) => ({
-                      scope,
-                      source,
-                      row: pkg,
-                    }))}
-                    showMarketplace={false}
-                  />
-                )}
-              </TabsContent>
-              <TabsContent value="about">
-                <AboutSection
-                  scope={scope}
-                  source={source}
-                  meta={meta ?? null}
-                />
-              </TabsContent>
+              <TabsList>
+                <TabsTrigger value="bundles">Bundles</TabsTrigger>
+                <TabsTrigger value="packages">Packages</TabsTrigger>
+                <TabsTrigger value="about">About</TabsTrigger>
+              </TabsList>
             </div>
           </div>
-        </div>
-      </Tabs>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className={cn(PAGE_BODY, "pt-0")}>
+              <div className={WIDE_CONTENT_WIDTH}>
+                {summary?.warning ? (
+                  <p className="mb-4 text-xs text-warning">
+                    Shown from the last download — {summary.warning}
+                  </p>
+                ) : null}
+                <TabsContent value="bundles">
+                  <BundleCards catalog={catalog} offered={offered} />
+                </TabsContent>
+                <TabsContent value="packages">
+                  {packagesError ? (
+                    <p
+                      className="py-16 text-center text-sm text-critical"
+                      role="alert"
+                    >
+                      Its packages can't be read right now — {packagesError}
+                    </p>
+                  ) : offered.length === 0 ? (
+                    <p className="py-16 text-center text-sm text-muted-foreground">
+                      Nothing to list yet — this marketplace hasn't been
+                      fetched, or offers no packages.
+                    </p>
+                  ) : (
+                    <PackagesTable
+                      entries={offered.map((pkg) => ({ catalog, row: pkg }))}
+                      showMarketplace={false}
+                    />
+                  )}
+                </TabsContent>
+                <TabsContent value="about">
+                  <AboutSection
+                    catalog={catalog}
+                    meta={row?.meta ?? summary?.meta ?? null}
+                  />
+                </TabsContent>
+              </div>
+            </div>
+          </div>
+        </Tabs>
+      )}
     </div>
   );
 }

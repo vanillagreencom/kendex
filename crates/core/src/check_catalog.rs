@@ -22,11 +22,15 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::model::{HarnessId, ItemKind};
+use crate::quality::author::review_key;
 use crate::quality::reviews::SafetyReview;
-use crate::quality::{self, AuditInput, Content, TreeFile, Verdict};
+use crate::quality::{self, Content, Verdict};
 use crate::render::validate;
 use crate::source::{CatalogMode, SourceConfig};
 use crate::source_read::SealedSource;
+
+mod safety;
+use safety::safety;
 
 pub mod dismissals;
 
@@ -81,6 +85,15 @@ impl CheckFinding {
     pub fn is_breakage(&self) -> bool {
         self.rule.is_none() && self.severity == "error"
     }
+
+    /// Something the check is saying about itself rather than about the
+    /// content — what it could not read, and why. There is nothing for a
+    /// maintainer to fix, so it counts toward nothing and fails nothing;
+    /// leaving it out entirely would be the check quietly not saying what
+    /// it did not look at.
+    pub fn is_note(&self) -> bool {
+        self.rule.is_none() && self.severity == "note"
+    }
 }
 
 /// One item with both passes run over it.
@@ -122,16 +135,21 @@ impl CatalogCheck {
             ..CheckTally::default()
         };
         for finding in &self.catalog {
-            match finding.is_breakage() {
-                true => tally.breakage += 1,
-                false => tally.advisory += 1,
+            match (finding.is_note(), finding.is_breakage()) {
+                (true, _) => {}
+                (false, true) => tally.breakage += 1,
+                (false, false) => tally.advisory += 1,
             }
         }
         for item in &self.items {
             for finding in &item.findings {
-                match (finding.rule.is_none(), finding.is_breakage()) {
-                    (true, true) => tally.breakage += 1,
-                    (true, false) => tally.advisory += 1,
+                match (
+                    finding.rule.is_none(),
+                    finding.is_note(),
+                    finding.is_breakage(),
+                ) {
+                    (true, false, true) => tally.breakage += 1,
+                    (true, false, false) => tally.advisory += 1,
                     _ => {}
                 }
             }
@@ -202,17 +220,19 @@ pub fn check_with(
         catalog,
         items: Vec::new(),
     };
-    // The maintainer's committed decisions about their own findings —
-    // authoring CI honors them; a consumer's install never reads them.
+    // The maintainer's committed decisions about their own findings. This
+    // pass judges the bytes they were made against, so each covers every
+    // occurrence in them; an install re-checks the same records against
+    // what it fetched (quality::author).
     let reviews = dismissals::load(sealed)?;
     for kind in CHECKED_KINDS {
         for name in crate::source::list_items(sealed, config, kind) {
             match crate::source::find_item(sealed, config, kind, &name) {
                 Some(path) => {
-                    let review = reviews.get(&dismissals::review_key(kind, &name));
+                    let review = reviews.get(&review_key(kind, &name));
                     report
                         .items
-                        .push(check_item(sealed, kind, &name, &path, review)?)
+                        .push(check_item(sealed, config, kind, &name, &path, review)?)
                 }
                 // A listed name every lookup refuses (an illegal spelling,
                 // say) is a catalog problem, not content to score.
@@ -240,20 +260,64 @@ pub fn check_with(
 /// this item, if it carries one.
 pub fn check_item(
     sealed: &SealedSource,
+    config: &crate::source::SourceConfig,
     kind: ItemKind,
     name: &str,
     path: &Path,
     review: Option<&SafetyReview>,
 ) -> Result<CheckedItem> {
-    let content = content(sealed, kind, path)?;
+    let content = quality::author::content(sealed, kind, path)?;
     let file = path
         .strip_prefix(sealed.root())
         .unwrap_or(path)
         .display()
         .to_string();
-    let hash = dismissals::content_hash(sealed, path);
-    let dismissed = dismissals::active(review, hash.as_deref());
+    let hash =
+        quality::author::content_hash(sealed, path, &config.rendering_inputs(sealed, kind, name));
+    let dismissed = dismissals::active(kind, review, hash.as_deref());
     let mut findings = structural(kind, name, &file, &content);
+    // An item bigger than any install reads has a tail nobody has judged.
+    // Saying so is the whole answer: scoring it would report findings no
+    // gate or audit can see, and mint tokens for them.
+    if let Some((scanned, whole)) = quality::author::past_budget(sealed, kind, path) {
+        findings.push(CheckFinding {
+            file: file.clone(),
+            kind: kind.name(),
+            name: name.to_owned(),
+            pass: CATALOG_PASS.to_owned(),
+            severity: "note",
+            rule: None,
+            message: format!(
+                "{scanned} of {whole} bytes were read: an install stops at the same point, so nothing past it is scored here or there"
+            ),
+            fix: "split what matters into a smaller tree, or accept that the tail is not checked"
+                .to_owned(),
+            token: None,
+            dismissed: false,
+        });
+    }
+    // A record an install would refuse is one this check refuses too, said
+    // where the maintainer is reading rather than discovered by their
+    // consumers being held back over it.
+    for fingerprint in dismissals::refused(kind, review, hash.as_deref()) {
+        findings.push(CheckFinding {
+            file: file.clone(),
+            kind: kind.name(),
+            name: name.to_owned(),
+            pass: CATALOG_PASS.to_owned(),
+            severity: "error",
+            rule: None,
+            message: format!(
+                "the review recorded for {fingerprint} is not one an install will honour"
+            ),
+            fix: match kind {
+                ItemKind::Hook => "remove it: a hook's review cannot travel to an install — it is scored from its script here and from the harness's settings file once installed".to_owned(),
+                _ => "record it with `kendex dismiss --catalog`, whose reasons are the ones that travel — wrong-call or intended".to_owned(),
+            },
+            token: None,
+            dismissed: false,
+        });
+    }
     let (verdict, score) = safety(kind, name, &file, content, &dismissed, &mut findings);
     Ok(CheckedItem {
         kind,
@@ -262,29 +326,6 @@ pub fn check_item(
         findings,
         verdict,
         score,
-    })
-}
-
-/// A skill's whole tree; anything else is one file. A repo-root skill's
-/// tree is the repository itself, whose VCS internals and dependency dirs
-/// are not content.
-fn content(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Result<Content> {
-    if kind != ItemKind::Skill {
-        return Ok(Content::Document {
-            text: sealed.read_to_string(path)?,
-        });
-    }
-    if !sealed.is_dir(path) {
-        return Ok(Content::Unread {
-            why: "a skill is a directory holding SKILL.md",
-        });
-    }
-    Ok(Content::SkillTree {
-        files: sealed
-            .collect_skill_tree(path)?
-            .into_iter()
-            .map(|(path, bytes)| TreeFile::read(path, &bytes))
-            .collect(),
     })
 }
 
@@ -337,53 +378,4 @@ fn structural(kind: ItemKind, name: &str, file: &str, content: &Content) -> Vec<
         }));
     }
     out
-}
-
-fn safety(
-    kind: ItemKind,
-    name: &str,
-    file: &str,
-    content: Content,
-    dismissed: &std::collections::BTreeSet<String>,
-    findings: &mut Vec<CheckFinding>,
-) -> (Verdict, u32) {
-    let result = quality::audit(AuditInput {
-        kind,
-        name: name.to_owned(),
-        harness: None,
-        location: file.to_owned(),
-        content,
-    });
-    // A dismissed finding is reported but no longer counted: the verdict
-    // and the score answer for what is still an open question.
-    let (counted, settled): (Vec<_>, Vec<_>) = result
-        .findings
-        .into_iter()
-        .partition(|finding| !dismissed.contains(&dismissals::fingerprint(finding, file)));
-    let safety = quality::safety(&counted);
-    let (verdict, _) = quality::verdict(&counted, &safety, quality::Thresholds::default());
-    let score = safety.score;
-    for (finding, was_dismissed) in counted
-        .into_iter()
-        .map(|f| (f, false))
-        .chain(settled.into_iter().map(|f| (f, true)))
-    {
-        findings.push(CheckFinding {
-            token: Some(dismissals::token(
-                kind,
-                name,
-                &dismissals::fingerprint(&finding, file),
-            )),
-            file: finding.location,
-            kind: kind.name(),
-            name: name.to_owned(),
-            pass: SAFETY_PASS.to_owned(),
-            severity: finding.severity.name(),
-            rule: Some(finding.rule),
-            message: finding.message,
-            fix: finding.remediation,
-            dismissed: was_dismissed,
-        });
-    }
-    (verdict, score)
 }

@@ -118,6 +118,25 @@ pub(super) fn expand(
     }
 }
 
+/// A member installs the way its bundle does: same source, same tools,
+/// same method, same held revision, and off while the bundle is off.
+///
+/// One definition, because a member has no declaration of its own and every
+/// reading that wants one has to arrive at the same answer. A preview that
+/// reached for the member's own name found nothing and fell back to the
+/// scope's default tools — so a bundle targeting one tool previewed a
+/// rendering that tool never gets, and the page and the gate disagreed
+/// about the same package.
+pub(crate) fn member_decl(bundle: &ItemDecl) -> ItemDecl {
+    ItemDecl {
+        source: bundle.source.clone(),
+        harnesses: bundle.harnesses.clone(),
+        method: bundle.method,
+        rev: bundle.rev.clone(),
+        enabled: bundle.enabled,
+    }
+}
+
 /// The members of one set this plan can actually install, each with the
 /// declaration it installs under and the tools it lands on. Every member left
 /// out is accounted for: held back by a removal, not offered by the catalog,
@@ -170,16 +189,7 @@ fn installable(
             });
             continue;
         }
-        // A member installs the way the bundle does: same source, same
-        // tools, same method, same held revision, and off while the bundle
-        // is off.
-        let member_decl = ItemDecl {
-            source: decl.source.clone(),
-            harnesses: decl.harnesses.clone(),
-            method: decl.method,
-            rev: decl.rev.clone(),
-            enabled: decl.enabled,
-        };
+        let member_decl = member_decl(decl);
         let harnesses = target_harnesses(&member_decl, manifest, member.kind, scope);
         if harnesses.is_empty() {
             state.notes.push(format!(

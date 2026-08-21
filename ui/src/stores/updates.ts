@@ -1,12 +1,19 @@
 import { toast } from "sonner";
 import { create } from "zustand";
 import { commands, type ItemWarning, type UpdateRow } from "@/bindings";
+import { UPDATE_ERROR_TITLE, updatedToastLabel } from "@/lib/copy";
 import {
-  UPDATE_ERROR_TITLE,
-  UPDATED_ALL_TOAST,
-  updatedToastLabel,
-} from "@/lib/copy";
+  nothingToUpdateToastLabel,
+  updatedWithPlaceToastLabel,
+} from "@/lib/copy-updates";
 import { scopeKey } from "@/lib/scope";
+import {
+  packageCount,
+  placeName,
+  skippedPlaces,
+  updatablePlaces,
+} from "@/lib/update-groups";
+import { bulkUpdateToast } from "@/lib/update-toasts";
 import { useAuditStore } from "./audit";
 import { useProblemsStore } from "./problems";
 import { useScanStore } from "./scan";
@@ -18,10 +25,11 @@ const noteworthy = (row: UpdateRow): boolean =>
   row.updateAvailable || row.removedUpstream || row.mixed;
 
 /** The sidebar badge's number: packages with news someone would want to
- *  hear. Ignored ones asked not to be counted; held ones still count — a
- *  hold is "not yet", not "never tell me". */
+ *  hear, counted once however many places they are installed in. Ignored
+ *  ones asked not to be counted; held ones still count — a hold is "not
+ *  yet", not "never tell me". */
 export const visibleUpdateCount = (rows: UpdateRow[]): number =>
-  rows.filter((row) => noteworthy(row) && !row.ignored).length;
+  packageCount(visibleUpdates(rows));
 
 /** The Updates page's main list: everything noteworthy that has not been
  *  muted. */
@@ -45,7 +53,9 @@ interface UpdatesState {
   load: () => Promise<void>;
   check: () => Promise<void>;
   updateOne: (row: UpdateRow) => Promise<void>;
-  updateAll: () => Promise<void>;
+  /** Bring every updatable place among `rows` current — the page-level
+   *  button passes every visible row, a package's button its own places. */
+  updateRows: (rows: UpdateRow[]) => Promise<void>;
   setAutoUpdate: (row: UpdateRow, auto: boolean) => Promise<void>;
   setIgnored: (row: UpdateRow, ignored: boolean) => Promise<void>;
 }
@@ -123,7 +133,14 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
       set({ busy: true });
       try {
         if (await apply(row)) {
-          toast.success(updatedToastLabel(row.name));
+          // A follower comes current by applying its scope, which brings
+          // that scope's other followers along — the toast says so rather
+          // than letting the extra changes look like a surprise.
+          toast.success(
+            row.pinned
+              ? updatedToastLabel(row.name)
+              : updatedWithPlaceToastLabel(row.name, placeName(row.scope)),
+          );
           await reload();
           await useScanStore.getState().refresh();
           await useAuditStore.getState().refresh({ force: true });
@@ -133,26 +150,32 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
       }
     },
 
-    updateAll: async () => {
+    updateRows: async (wanted) => {
       set({ busy: true });
       try {
         // Edited packages are held by the engine and cannot be updated
         // this way — they need the fork decision first, so they are left
-        // out of "update all" rather than silently surviving it. Rows that
-        // are news without an update (gone upstream, mixed installs) have
-        // nothing for this button to do.
-        const rows = visibleUpdates(get().rows).filter(
-          (row) => row.updateAvailable && !row.blockedByLocalEdit,
-        );
-        // Move every hold first, then one apply per scope brings the
-        // followers current — never two applies for one scope.
+        // out rather than silently surviving the click. Rows that are news
+        // without an update (gone upstream, mixed installs) have nothing
+        // for this button to do.
+        const rows = updatablePlaces(wanted);
+        const skipped = skippedPlaces(wanted).length;
+        if (rows.length === 0) {
+          toast.info(nothingToUpdateToastLabel(skipped));
+          return;
+        }
+        // Move every hold first — each move applies its whole scope, so
+        // that scope's followers are already current — then one apply per
+        // scope no hold touched. Never two applies for one scope.
         let ok = true;
+        const applied = new Set<string>();
         for (const row of rows.filter((row) => row.pinned)) {
-          ok = (await apply(row)) && ok;
+          if (await apply(row)) applied.add(scopeKey(row.scope));
+          else ok = false;
         }
         const scopes = new Map(
           rows
-            .filter((row) => !row.pinned)
+            .filter((row) => !row.pinned && !applied.has(scopeKey(row.scope)))
             .map((row) => [scopeKey(row.scope), row] as const),
         );
         for (const row of scopes.values()) {
@@ -162,8 +185,11 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
             ok = false;
           }
         }
-        if (ok) toast.success(UPDATED_ALL_TOAST);
         await reload();
+        if (ok)
+          toast.success(
+            bulkUpdateToast(rows, skipped, visibleUpdates(get().rows)),
+          );
         await useScanStore.getState().refresh();
         await useAuditStore.getState().refresh({ force: true });
       } finally {
@@ -172,7 +198,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     },
 
     setAutoUpdate: async (row, auto) => {
-      // Turning automatic OFF holds the package at what is installed now.
+      // Switching following OFF holds the package at what is installed now.
       // With nothing installed to hold at, there is nothing to switch —
       // never fall through to null, which means "follow" (the opposite).
       const hold = row.current?.commit ?? null;

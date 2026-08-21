@@ -107,8 +107,11 @@ export function EvidenceLine({
         <span className="truncate">
           {tools.join(", ")}
           {" · "}
+          {/* Every place, not the first: one decision settles this
+              sentence wherever the item carries it, and a person deciding
+              is owed the whole of what they are deciding about. */}
           <span className="font-mono">
-            {abbreviateHome(group.finding.location)}
+            {group.locations.map(abbreviateHome).join(", ")}
           </span>
         </span>
         {group.earlier ? (

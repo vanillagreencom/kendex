@@ -83,12 +83,18 @@ fn lines(report: &CatalogCheck) {
             say(&format!("    fix: {}", finding.fix));
             // A held-back item is waiting on the maintainer's review; the
             // token is how a reviewed finding is recorded as intended.
-            if item.verdict == Verdict::Block
-                && let Some(token) = &finding.token
-            {
-                say(&format!(
-                    "    reviewed and intended? kendex dismiss --catalog <dir> --reason intended '{token}'"
-                ));
+            // A hook has none — its review cannot travel to an install — so
+            // the reason arrives here rather than after the maintainer acts
+            // on a token the tool printed and then refuses.
+            if item.verdict == Verdict::Block && finding.rule.is_some() {
+                match &finding.token {
+                    Some(token) => say(&format!(
+                        "    reviewed and intended? kendex dismiss --catalog <dir> --reason intended '{token}'"
+                    )),
+                    None => say(
+                        "    a hook's review cannot travel to an install — it is scored from its script here and from the harness's settings file once installed, so narrow what the script does",
+                    ),
+                }
             }
         }
         if item.verdict != Verdict::Clean {

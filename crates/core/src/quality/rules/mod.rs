@@ -28,6 +28,16 @@
 //! skill's supporting files. The one exception is `plaintext-secrets`: a
 //! credential in a code block is exactly as leaked as one in prose, so it
 //! never downgrades anywhere.
+//!
+//! Every message says what the rule fired *on*, never where it was found.
+//! A finding's identity is its rule and its sentence
+//! ([`crate::quality::Finding::fingerprint`]), so a sentence that describes
+//! only the kind of problem makes two different problems one decision — and
+//! the surfaces show one of them, so a person settles the other having
+//! never seen it. Where it was found is the finding's location, which is
+//! deliberately not in the identity: rendering moves content between files
+//! and an identity that moved with it would stop being the finding a
+//! decision was made about.
 
 use crate::model::ItemKind;
 
@@ -48,6 +58,14 @@ pub(super) fn registry() -> Vec<Box<dyn AuditRule>> {
     rules.extend(mcp::rules());
     rules.extend(plugin::rules());
     rules
+}
+
+/// Every rule's id. The one list of what the registry holds, so a test that
+/// has to cover all of them cannot quietly stop covering one: a rule added
+/// without a case in `every_rule_says_what_it_fired_on` fails that test
+/// rather than shipping an identity nothing checked.
+pub fn ids() -> Vec<&'static str> {
+    registry().into_iter().map(|rule| rule.id()).collect()
 }
 
 /// Kinds that carry authored text the content rules read.
@@ -126,9 +144,17 @@ impl AuditRule for ObfuscatedContent {
                         rule: self.id().to_owned(),
                         severity: Severity::Low,
                         location: report.location.clone(),
+                        // What was found, not where: the identity is the
+                        // rule and the sentence, so a sentence that says
+                        // only how many were found is the same sentence in
+                        // every file that found that many, and a person
+                        // shown one would settle the others unseen. Where
+                        // is carried by the finding's location, and every
+                        // location a decision covers is listed under it.
                         message: format!(
-                            "this file reads differently than it looks: {}",
-                            parts.join(", ")
+                            "this file reads differently than it looks: {} ({})",
+                            parts.join(", "),
+                            spelled(&report.found)
                         ),
                         remediation:
                             "check the file for hidden characters; if the text is meant to be plain, retype the affected words in plain ASCII"
@@ -138,6 +164,32 @@ impl AuditRule for ObfuscatedContent {
                 .collect(),
         )
     }
+}
+
+/// The characters a normalization pass removed or folded, written as their
+/// code points. A hidden zero-width space and a Cyrillic letter dressed as
+/// a Latin one are two different questions, and the sentence has to say
+/// which — never which file, since a file is something rendering moves
+/// content between and an identity that moved with it would stop being the
+/// finding a decision was made about.
+fn spelled(found: &std::collections::BTreeSet<char>) -> String {
+    const SHOWN: usize = 6;
+    let point = |c: &char| format!("U+{:04X}", *c as u32);
+    let mut points: Vec<String> = found.iter().take(SHOWN).map(point).collect();
+    if found.len() > SHOWN {
+        // The tail is named by a digest of the whole set, not left out.
+        // Two files sharing their first six code points and differing
+        // after would otherwise read the same sentence, and one sentence
+        // is one decision — the reader would settle the second having
+        // seen only the first.
+        let whole: Vec<String> = found.iter().map(point).collect();
+        points.push(format!(
+            "and {} more, {}",
+            found.len() - SHOWN,
+            super::digest(&whole.join(","))
+        ));
+    }
+    points.join(", ")
 }
 
 /// A file that is not the text it claims to be.
@@ -160,18 +212,26 @@ impl AuditRule for UndecodableContent {
             prepared
                 .normalized
                 .iter()
-                .filter(|report| report.undecodable > 0)
-                .map(|report| Finding {
+                // Named by what would not decode, so the reading that found
+                // nothing to name is the same reading that reports nothing.
+                .filter_map(|report| {
+                    let unreadable = report.unreadable.as_deref()?;
+                    Some(Finding {
                     rule: self.id().to_owned(),
                     severity: Severity::Medium,
                     location: report.location.clone(),
+                    // Which unreadable content, not which file. The count
+                    // alone is the same sentence in every file that has
+                    // that many, and one sentence is one decision — the
+                    // reader would settle a file they were never shown.
                     message: format!(
-                        "{} byte(s) of this file are not text and were read as best they could be, so part of it was scanned as a guess",
-                        report.undecodable
+                        "{} byte(s) of this file are not text and were read as best they could be, so part of it was scanned as a guess (unreadable content {unreadable})",
+                        report.undecodable,
                     ),
                     remediation:
                         "save the file as UTF-8 text, or remove it if it was never meant to be text"
                             .to_owned(),
+                    })
                 })
                 .collect(),
         )

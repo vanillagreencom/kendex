@@ -55,8 +55,15 @@ pub fn dismiss(
                 "the content changed since the finding was read",
             ));
         }
-        if !fingerprints(&row.findings, &row.location).contains(&token.fingerprint) {
-            return Err(stale(token, "the finding is no longer there"));
+        if !fingerprints(&row.findings).contains(&token.fingerprint) {
+            // A token carries the bytes it was minted against but not the
+            // rule set, so a token from an older printed output can name a
+            // finding that is still there under a new identity. Say both,
+            // rather than telling somebody a finding they can see is gone.
+            return Err(stale(
+                token,
+                "the finding is no longer there, or an upgrade changed how it is identified — re-run `kendex findings` for the token it prints now",
+            ));
         }
         if row.override_state.unblocks() {
             return Err(stale(
@@ -299,7 +306,7 @@ pub fn list_decisions(env: &Env, scope: &Scope) -> Result<Vec<RecordedDecision>>
                     let finding = row
                         .findings
                         .iter()
-                        .find(|finding| finding.fingerprint(&row.location) == *fingerprint)
+                        .find(|finding| finding.fingerprint() == *fingerprint)
                         .cloned();
                     let state = match dismissal_state(
                         review,

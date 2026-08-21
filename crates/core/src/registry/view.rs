@@ -6,7 +6,6 @@
 use crate::clock;
 use crate::env::Env;
 use crate::error::Result;
-use crate::model::Scope;
 use crate::registry::index::{DirectoryBundle, DirectoryPackage};
 use crate::registry::{Fetch, cache};
 use crate::repo_move;
@@ -27,6 +26,9 @@ pub struct DirectoryView {
 #[serde(rename_all = "camelCase")]
 pub struct DirectoryRow {
     pub repo: String,
+    /// The canonical key a subscription's `repo_key` is compared with, so
+    /// the row can flip to Subscribed from the live subscription list.
+    pub repo_key: Option<String>,
     pub name: String,
     pub description: Option<String>,
     pub tags: Vec<String>,
@@ -47,10 +49,13 @@ pub fn directory(env: &Env, fetch: &dyn Fetch, force_refresh: bool) -> Result<Di
         .into_iter()
         .map(|market| {
             let name = market.name.clone().unwrap_or_else(|| leaf_of(&market.repo));
-            let is_subscribed =
-                repo_move::owner_repo(&market.repo).is_some_and(|key| subscribed.contains(&key));
+            let repo_key = repo_move::owner_repo(&market.repo);
+            let is_subscribed = repo_key
+                .as_ref()
+                .is_some_and(|key| subscribed.contains(key));
             DirectoryRow {
                 repo: market.repo,
+                repo_key,
                 name,
                 description: market.description,
                 tags: market.tags,
@@ -71,30 +76,12 @@ pub fn directory(env: &Env, fetch: &dyn Fetch, force_refresh: bool) -> Result<Di
 }
 
 /// Every repository any scope subscribes to, spelled the one canonical
-/// way. A scope that cannot be read contributes nothing rather than
-/// blocking the tab.
+/// way.
 fn subscribed_repos(env: &Env) -> BTreeSet<String> {
-    let mut repos = BTreeSet::new();
-    let mut scopes = vec![Scope::Global];
-    if let Ok(settings) = crate::settings::load(env) {
-        scopes.extend(
-            settings
-                .projects
-                .into_iter()
-                .map(|root| Scope::Project { root }),
-        );
-    }
-    for scope in scopes {
-        let Ok(rows) = crate::source_ops::list_subscriptions(env, &scope) else {
-            continue;
-        };
-        for row in rows {
-            if let Some(key) = row.repo.as_deref().and_then(repo_move::owner_repo) {
-                repos.insert(key);
-            }
-        }
-    }
-    repos
+    crate::source_ops::repo_subscriptions(env)
+        .into_iter()
+        .filter_map(|row| row.repo_key)
+        .collect()
 }
 
 fn leaf_of(repo: &str) -> String {

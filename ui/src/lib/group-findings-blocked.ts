@@ -4,7 +4,14 @@
 // single rule firing at several locations in one skill, otherwise renders
 // as several verbatim repeats of the same problem; this collapses both
 // before anything renders.
-import type { Finding, ItemKind, ItemSafety, Severity } from "@/bindings";
+import type {
+  DismissReason,
+  Finding,
+  FindingDecision,
+  ItemKind,
+  ItemSafety,
+  Severity,
+} from "@/bindings";
 import { SEVERITY_RANK } from "@/lib/group-findings";
 
 export interface RuleGroup {
@@ -13,33 +20,81 @@ export interface RuleGroup {
   message: string;
   remediation: string;
   locations: string[];
+  /** What this entry was grouped by, so a list of them can be keyed by the
+   *  same thing that made them distinct entries — never by a subset of it,
+   *  which is how two entries come to share one key. */
+  key: string;
+  /** The publisher's record, where one settled every occurrence behind this
+   *  group. A held-back item's score already excludes them, so a line that
+   *  printed a plain fix here would be asking the reader to act on
+   *  something nobody is counting. Absent where any occurrence is still an
+   *  open question. */
+  settledBy: SettledBy | null;
+}
+
+export interface SettledBy {
+  reason: DismissReason;
+  dismissedAt: string;
+  publisher: string;
 }
 
 // Within one item's finding list, the same rule can fire once per line it
 // matched (a hook shelling through the same wrapper at four call sites) —
 // same message, same fix, four locations. This collapses those into one
 // entry so the fix sentence prints once instead of once per location.
-export function groupFindingsByRule(findings: Finding[]): RuleGroup[] {
+// `decisions` has no default on purpose: it is what carries the publisher's
+// name onto a held-back item's settled findings, and a default would let the
+// one caller drop it with nothing to notice. The type checker holds the
+// wiring instead.
+export function groupFindingsByRule(
+  findings: Finding[],
+  decisions: FindingDecision[],
+): RuleGroup[] {
   const ordered: RuleGroup[] = [];
   const byKey = new Map<string, RuleGroup>();
-  for (const finding of findings) {
+  const decided = new Map<string, (SettledBy | null)[]>();
+  for (const [index, finding] of findings.entries()) {
     const key = `${finding.rule}::${finding.message}::${finding.remediation}`;
     let group = byKey.get(key);
     if (!group) {
       group = {
+        key,
         rule: finding.rule,
         severity: finding.severity,
         message: finding.message,
         remediation: finding.remediation,
         locations: [],
+        settledBy: null,
       };
       byKey.set(key, group);
       ordered.push(group);
+      decided.set(key, []);
     }
     if (SEVERITY_RANK[finding.severity] > SEVERITY_RANK[group.severity]) {
       group.severity = finding.severity;
     }
     group.locations.push(finding.location);
+    const state = decisions[index]?.state;
+    decided.get(key)?.push(
+      state?.state === "author-dismissed"
+        ? {
+            reason: state.reason,
+            dismissedAt: state.dismissedAt,
+            publisher: state.publisher,
+          }
+        : null,
+    );
+  }
+  // A group speaks for the publisher only if every occurrence behind it
+  // does: one occurrence nobody has ruled on and the reader still has
+  // something to do here.
+  for (const group of ordered) {
+    const key = `${group.rule}::${group.message}::${group.remediation}`;
+    const states = decided.get(key) ?? [];
+    group.settledBy =
+      states.length > 0 && states.every((state) => state !== null)
+        ? states[0]
+        : null;
   }
   return ordered;
 }
@@ -125,12 +180,32 @@ export function acceptTokens(planned: ItemSafety[]): string[] {
   ];
 }
 
+// Who settled one occurrence, as a merge key. A decision is part of what a
+// row says, not a detail hanging off it: two harnesses whose findings match
+// but whose decisions do not are two things to tell the reader, and the
+// panel's attribution line is the disclosure the publisher's review is
+// justified by. Reading it off whichever row arrived first would credit a
+// publisher for somebody else's dismissal, or drop their review because
+// another harness had one of its own. The timestamp is left out: the same
+// record read on two harnesses carries the same date, and a personal
+// dismissal made a second apart is still the same answer.
+function attribution(decision: FindingDecision | undefined): string {
+  const state = decision?.state;
+  if (!state) return "undecided";
+  return state.state === "author-dismissed"
+    ? `${state.state}::${state.publisher}::${state.reason}`
+    : state.state;
+}
+
 export function groupBlocked(blocked: ItemSafety[]): BlockedGroup[] {
   const ordered: BlockedGroup[] = [];
   const byKey = new Map<string, BlockedGroup>();
   for (const row of blocked) {
     const setKey = row.findings
-      .map((f) => `${f.rule}::${f.message}::${f.remediation}::${f.location}`)
+      .map(
+        (f, index) =>
+          `${f.rule}::${f.message}::${f.remediation}::${f.location}::${attribution(row.decisions[index])}`,
+      )
       .sort()
       .join("|");
     const key = `${row.kind}::${row.name}::${setKey}`;
@@ -140,7 +215,10 @@ export function groupBlocked(blocked: ItemSafety[]): BlockedGroup[] {
         kind: row.kind,
         name: row.name,
         rows: [],
-        findingGroups: groupFindingsByRule(row.findings),
+        // Sound to read from this row alone: every row that merges here
+        // carries the same findings decided the same way, which is what
+        // the key above is for.
+        findingGroups: groupFindingsByRule(row.findings, row.decisions),
       };
       byKey.set(key, group);
       ordered.push(group);

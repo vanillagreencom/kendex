@@ -154,7 +154,7 @@ fn a_secret_finding_never_repeats_the_token() {
     assert!(!finding.message.contains(TOKEN));
     assert!(!finding.remediation.contains(TOKEN));
     assert!(!finding.location.contains(TOKEN));
-    assert!(!finding.fingerprint("").contains(TOKEN));
+    assert!(!finding.fingerprint().contains(TOKEN));
     assert!(finding.message.contains(&fingerprint_secret(TOKEN)));
     assert!(finding.message.contains("ghp_…#"));
 }

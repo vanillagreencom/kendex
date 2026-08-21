@@ -12,20 +12,26 @@
 //! complete content bytes and the rule set, with each dismissed finding's
 //! fingerprint beneath it. Editing the item makes every record for it
 //! stale and the hold comes back — a dismissal can never grow into a
-//! standing exemption. Nothing here touches the install side: a consumer's
-//! kendex never reads a catalog's committed reviews, because a catalog
-//! must not be able to pre-approve its own content on someone else's
-//! machine. Dismissed findings are still reported; they stop counting, not
-//! existing.
+//! standing exemption. Dismissed findings are still reported; they stop
+//! counting, not existing.
+//!
+//! A record travels with the content it is about, which is what makes a
+//! committed review worth committing: without it every consumer of a
+//! security-adjacent skill re-answers a question its author already
+//! answered, with nothing on their machine that could tell them so. What
+//! that record is worth on somebody else's machine — the checks it has to
+//! survive, and the one it can never make — is
+//! [`crate::quality::author`]. This file is the authoring side: the file
+//! format, the writer, and the token vocabulary.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, Result};
 use crate::model::ItemKind;
 use crate::quality::Finding;
+use crate::quality::author::{Budget, review_key};
 use crate::quality::reviews::{DismissReason, Dismissal, SafetyReview};
 use crate::source_read::SealedSource;
 
@@ -37,10 +43,6 @@ pub const REVIEWS_FILE: &str = "kendex-reviews.toml";
 struct ReviewsFile {
     #[serde(default)]
     reviews: BTreeMap<String, SafetyReview>,
-}
-
-pub fn review_key(kind: ItemKind, name: &str) -> String {
-    format!("{}:{name}", kind.name())
 }
 
 /// Every committed review record, or an empty map where the catalog has
@@ -59,31 +61,45 @@ pub fn load(sealed: &SealedSource) -> Result<BTreeMap<String, SafetyReview>> {
     Ok(parsed.reviews)
 }
 
-/// The hash a catalog decision binds to: every authored byte of the item.
-/// A skill is its collected tree (VCS internals and dependency dirs are not
-/// authored content); anything else is one file. `None` where the bytes
-/// cannot be read — a decision with nothing to compare against must never
-/// read as live.
-pub fn content_hash(sealed: &SealedSource, path: &Path) -> Option<String> {
-    if sealed.is_dir(path) {
-        return Some(crate::hash::hash_files(
-            &sealed.collect_skill_tree(path).ok()?,
-        ));
-    }
-    Some(crate::hash::hash_bytes(&sealed.read(path).ok()?))
-}
-
 /// The fingerprints this item's record still answers for: its dismissals
 /// when the snapshot matches the content in front of us, nothing when the
-/// content or the rules have moved on.
-pub fn active(review: Option<&SafetyReview>, content_hash: Option<&str>) -> BTreeSet<String> {
-    let Some(review) = review else {
-        return BTreeSet::new();
-    };
-    match review.stale_why(content_hash) {
-        Some(_) => BTreeSet::new(),
-        None => review.dismissed.keys().cloned().collect(),
-    }
+/// content or the rules have moved on. The catalog's own check made these
+/// decisions against these very bytes, so each covers every occurrence.
+pub fn active(kind: ItemKind, review: Option<&SafetyReview>, content_hash: Option<&str>) -> Budget {
+    read(kind, review, content_hash)
+        .review
+        .map(|review| review.whole_budget())
+        .unwrap_or_default()
+}
+
+/// Every entry in this record an install would refuse — a reason only the
+/// receiving machine can answer for, a shape `dismiss --catalog` would not
+/// have written, or a kind whose review cannot travel at all.
+pub fn refused(
+    kind: ItemKind,
+    review: Option<&SafetyReview>,
+    content_hash: Option<&str>,
+) -> Vec<String> {
+    read(kind, review, content_hash)
+        .refused
+        .into_iter()
+        .collect()
+}
+
+/// Through the one reader an install uses, so this check cannot go green
+/// over a record a consumer will drop. The catalog is reading its own
+/// bytes, so the publisher this names is itself and nothing here prints it.
+fn read(
+    kind: ItemKind,
+    review: Option<&SafetyReview>,
+    content_hash: Option<&str>,
+) -> crate::quality::author::Read {
+    crate::quality::author::one(
+        kind,
+        review,
+        content_hash.map(str::to_owned),
+        "this catalog",
+    )
 }
 
 /// Record that these findings on this content are not problems. The same
@@ -141,9 +157,7 @@ pub fn parse_token(token: &str) -> Option<(ItemKind, &str, &str)> {
     (!name.is_empty() && !fingerprint.is_empty()).then_some((kind, name, fingerprint))
 }
 
-/// A finding's fingerprint within its item, rooted at the item's catalog
-/// path so the same bytes fingerprint the same wherever the catalog is
-/// checked out.
-pub fn fingerprint(finding: &Finding, item_file: &str) -> String {
-    finding.fingerprint(item_file)
+/// A finding's fingerprint within its item.
+pub fn fingerprint(finding: &Finding) -> String {
+    finding.fingerprint()
 }

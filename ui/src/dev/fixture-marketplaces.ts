@@ -6,6 +6,7 @@
 import type {
   AboutView,
   AvailablePackage,
+  CatalogSummary,
   MarketplaceRow,
   Scope,
 } from "@/bindings";
@@ -77,10 +78,69 @@ const counts = (offered: Offered[]) => {
   return out;
 };
 
+/** Which subscription fixture backs each listed repository: its packages,
+ * bundle specs and About report are that source's. */
+export const REPO_FIXTURE_SOURCE: Record<string, string> = {
+  "acme/agent-kit": "kendex",
+  "wshobson/agents": "claude-plugins",
+  "vercel-labs/agent-skills": "kendex",
+};
+
+/** What the Community tab's listed repositories offer when opened before
+ * subscribing — the kendex catalog's packages, unsubscribed. A listed repo
+ * absent here reads as unreachable, so the page's error path is exercised. */
+export function repoPackages(): Record<string, AvailablePackage[]> {
+  return {
+    "acme/agent-kit": packageList(KENDEX_OFFERED, []),
+    "wshobson/agents": packageList(PLUGINS_OFFERED, []),
+    "vercel-labs/agent-skills": packageList(KENDEX_OFFERED, []),
+  };
+}
+
+export const repoSummaries: Record<
+  string,
+  Omit<CatalogSummary, "subscription">
+> = {
+  "acme/agent-kit": {
+    provenance: "acme/agent-kit",
+    repoKey: "acme/agent-kit",
+    commit: "9f3a1c2d4e5f60718293a4b5c6d7e8f901234567",
+    meta: {
+      description: "Agent kit for TypeScript teams",
+      author: "Acme",
+      license: "MIT",
+      tags: ["typescript", "agents"],
+    },
+    mode: "explicit",
+    counts: counts(KENDEX_OFFERED),
+    warning: null,
+  },
+  "wshobson/agents": {
+    provenance: "wshobson/agents",
+    repoKey: "wshobson/agents",
+    commit: PLUGINS_HEAD,
+    meta: null,
+    mode: "plugin-registry",
+    counts: counts(PLUGINS_OFFERED),
+    warning:
+      "wshobson/agents: using cached version (could not reach github.com)",
+  },
+  "vercel-labs/agent-skills": {
+    provenance: "vercel-labs/agent-skills",
+    repoKey: "vercel-labs/agent-skills",
+    commit: KENDEX_HEAD,
+    meta: null,
+    mode: "discovered",
+    counts: counts(KENDEX_OFFERED),
+    warning: null,
+  },
+};
+
 export function marketplaces(): MarketplaceRow[] {
   const kendex = {
     name: "kendex",
     repo: KENDEX_REPO,
+    repoKey: KENDEX_REPO,
     path: null,
     rev: null,
     commit: KENDEX_HEAD,
@@ -103,6 +163,7 @@ export function marketplaces(): MarketplaceRow[] {
       scope: GLOBAL,
       name: "claude-plugins",
       repo: PLUGINS_REPO,
+      repoKey: PLUGINS_REPO,
       path: null,
       rev: null,
       commit: PLUGINS_HEAD,
@@ -116,6 +177,7 @@ export function marketplaces(): MarketplaceRow[] {
       scope: proj(ACME),
       name: "team",
       repo: null,
+      repoKey: null,
       path: "../team-catalog",
       rev: null,
       commit: null,

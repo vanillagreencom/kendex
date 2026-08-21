@@ -2,12 +2,12 @@
 
 use crate::configedit::ConfigEdit;
 use crate::model::ItemKind;
-use crate::quality::{AuditInput, Content, McpEntry, UNREADABLE_PLUGIN};
+use crate::quality::{AuditInput, Authored, Content, McpEntry, UNREADABLE_PLUGIN};
 
 use super::super::desired::{Artifact, Desired};
 
 /// What this item's rendering gives the rules to read.
-pub(super) fn input_for(item: &Desired) -> AuditInput {
+pub(in crate::engine) fn input_for(item: &Desired) -> AuditInput {
     let (location, content) = match &item.artifact {
         Artifact::File { path, bytes } => (
             path.display().to_string(),
@@ -33,6 +33,56 @@ pub(super) fn input_for(item: &Desired) -> AuditInput {
         harness: Some(item.harness),
         location,
         content,
+    }
+}
+
+/// How much of this item its publisher wrote — what their record is
+/// allowed to answer for, and nothing else.
+///
+/// The builder that rendered the artifact reports it; nothing here derives
+/// it back out of the rendered text, because text a project supplied can
+/// carry anything, marker or otherwise. The match is exhaustive on purpose:
+/// a kind whose rendering starts splicing in project text has to be
+/// classified here, and a kind that should have reported one and did not
+/// reads as unreadable — so the record settles nothing and the plan says a
+/// carried review did not apply, which is the direction a mistake here has
+/// to fail in.
+pub(in crate::engine) fn authored_for(item: &Desired) -> Authored {
+    match (&item.authored, item.kind) {
+        (Some(authored), _) => authored.clone(),
+        // Nothing in these renderings comes from the project: the
+        // publisher's bytes are the whole of what is read, so there is no
+        // block in them and no line of one.
+        //
+        // This arm is a standing obligation on the renderers, and the one
+        // half of this match the compiler cannot hold. A new kind cannot be
+        // added without answering here — that part it does hold. But
+        // teaching one of these kinds to splice in project text compiles
+        // clean and silently widens every publisher review for that kind,
+        // which is the failure this whole match exists to prevent. Adding
+        // project text to any kind listed here means moving it to the arm
+        // below and making its builder report where that text went.
+        (
+            None,
+            ItemKind::Command
+            | ItemKind::Hook
+            | ItemKind::McpServer
+            | ItemKind::Plugin
+            | ItemKind::PiExtension,
+        ) => Authored::Around(None),
+        // These two carry project text — `[skill-instructions]`, and
+        // everything in `desired_agent::Project`. Their builders owe an
+        // answer beside the artifact; reaching here means one did not give
+        // it, which a body-cap refusal, a harness that cannot express the
+        // agent, and instructions whose block the rendering does not carry
+        // all do. Unreadable is the answer: nothing is settled, and the
+        // plan says a carried review did not apply.
+        (None, ItemKind::Skill | ItemKind::Agent) => Authored::Rendered {
+            publishers: Content::Unread {
+                why: "kendex could not tell this item's own content from this project's",
+            },
+            supplied: std::collections::BTreeSet::new(),
+        },
     }
 }
 
@@ -118,3 +168,6 @@ fn mcp_entry(edits: &[(std::path::PathBuf, ConfigEdit)]) -> Option<McpEntry> {
         })
         .map(McpEntry::from_json)
 }
+
+#[cfg(test)]
+mod tests;

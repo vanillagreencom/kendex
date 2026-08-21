@@ -1,97 +1,107 @@
 import { useState } from "react";
-import { toast } from "sonner";
-import {
-  commands,
-  type HarnessId,
-  type ItemKind,
-  type Scope,
-} from "@/bindings";
+import type { HarnessId, ItemKind, Scope, UpdateRow } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { StatusDot } from "@/components/status-dot";
 import { Button } from "@/components/ui/button";
 import {
+  DERIVED_FORK_NOTE,
+  DISCARD_ALL_EDITS_LABEL,
   DISCARD_EDITS_CONFIRM_BODY,
   DISCARD_EDITS_CONFIRM_LABEL,
   DISCARD_EDITS_CONFIRM_TITLE,
   DISCARD_EDITS_LABEL,
-  FORK_ERROR_TITLE,
+  editedInToolsLabel,
   FORK_NOTICE_DETAIL,
   FORK_NOTICE_TITLE,
-  forkedToastLabel,
   KEEP_AS_FORK_LABEL,
+  MULTI_TOOL_FORK_NOTE,
+  unforkableCopyNote,
   VIEW_CHANGES_LABEL,
+  viewChangesInLabel,
 } from "@/lib/copy";
+import { harnessName } from "@/lib/labels";
 import { sameScope } from "@/lib/scope";
-import { useAuditStore } from "@/stores/audit";
-import { useProblemsStore } from "@/stores/problems";
-import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
+import { keepAsOwn, takeNewVersion } from "@/stores/updates-edits";
 
 /** The package page's edited-files notice: the app found changes it did
- *  not write, held everything, and here are the three ways forward. */
+ *  not write, held everything, and here are the ways forward — the same
+ *  facts the Updates page acts on, so neither screen offers a fork the
+ *  engine would refuse or one that would drop another tool's edit. */
 export function ForkNotice({
-  scope,
-  kind,
-  name,
-  harness,
+  row,
   onViewChanges,
   onResolved,
 }: {
-  scope: Scope;
-  kind: ItemKind;
-  name: string;
-  harness: HarnessId;
-  onViewChanges: () => void;
+  row: UpdateRow;
+  /** Opens the comparison for one tool's edited copy — the primary
+   *  rendering when no tool is named. */
+  onViewChanges: (harness?: HarnessId) => void;
   onResolved: () => void;
 }) {
-  const showError = useProblemsStore((s) => s.showError);
+  const busy = useUpdatesStore((s) => s.busy);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
-  const [busy, setBusy] = useState(false);
-
-  const refreshAll = async () => {
-    await useScanStore.getState().refresh();
-    await useAuditStore.getState().refresh({ force: true });
-    await useUpdatesStore.getState().load();
-    onResolved();
-  };
-
-  const keepAsFork = () => {
-    setBusy(true);
-    void commands
-      .packageFork(scope, kind, name, harness)
-      .then(async (response) => {
-        setBusy(false);
-        if (response.status === "error") {
-          showError({ title: FORK_ERROR_TITLE, message: response.error });
-          return;
-        }
-        toast.success(forkedToastLabel(name));
-        await refreshAll();
-      });
-  };
+  const several = row.editedHarnesses.length > 1;
+  const whyNoFork = row.derived
+    ? DERIVED_FORK_NOTE
+    : several
+      ? MULTI_TOOL_FORK_NOTE
+      : row.editedHarnesses[0]
+        ? unforkableCopyNote(harnessName(row.editedHarnesses[0]))
+        : null;
 
   return (
     <div className="flex items-start gap-3 rounded-xl border bg-card p-4">
       <StatusDot tone="warning" className="mt-1" />
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium">{FORK_NOTICE_TITLE}</p>
-        <p className="text-sm text-muted-foreground">{FORK_NOTICE_DETAIL}</p>
+        <p className="text-sm text-muted-foreground">
+          {several
+            ? `${editedInToolsLabel(row.editedHarnesses.map(harnessName))} `
+            : null}
+          {row.forkableHarness ? FORK_NOTICE_DETAIL : whyNoFork}
+        </p>
       </div>
       <div className="flex shrink-0 flex-wrap gap-2">
-        <Button size="sm" disabled={busy} onClick={keepAsFork}>
-          {KEEP_AS_FORK_LABEL}
-        </Button>
-        <Button size="sm" variant="outline" onClick={onViewChanges}>
-          {VIEW_CHANGES_LABEL}
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={busy}
-          onClick={() => setConfirmDiscard(true)}
-        >
-          {DISCARD_EDITS_LABEL}
-        </Button>
+        {row.forkableHarness ? (
+          <Button
+            size="sm"
+            disabled={busy}
+            onClick={() => void keepAsOwn(row).then(onResolved)}
+          >
+            {KEEP_AS_FORK_LABEL}
+          </Button>
+        ) : null}
+        {several ? (
+          row.editedHarnesses.map((harness) => (
+            <Button
+              key={harness}
+              size="sm"
+              variant="outline"
+              onClick={() => onViewChanges(harness)}
+            >
+              {viewChangesInLabel(harnessName(harness))}
+            </Button>
+          ))
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => onViewChanges(row.editedHarnesses[0])}
+          >
+            {VIEW_CHANGES_LABEL}
+          </Button>
+        )}
+        {row.canDiscard ? (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            onClick={() => setConfirmDiscard(true)}
+          >
+            {several ? DISCARD_ALL_EDITS_LABEL : DISCARD_EDITS_LABEL}
+          </Button>
+        ) : null}
       </div>
       <ConfirmDialog
         open={confirmDiscard}
@@ -101,20 +111,12 @@ export function ForkNotice({
         confirmLabel={DISCARD_EDITS_CONFIRM_LABEL}
         destructive
         busy={busy}
-        onConfirm={() => {
-          setBusy(true);
-          void commands
-            .applyDiscardEdits(scope, kind, name)
-            .then(async (response) => {
-              setBusy(false);
-              setConfirmDiscard(false);
-              if (response.status === "error") {
-                showError({ title: FORK_ERROR_TITLE, message: response.error });
-                return;
-              }
-              await refreshAll();
-            });
-        }}
+        onConfirm={() =>
+          void takeNewVersion(row).then(() => {
+            setConfirmDiscard(false);
+            onResolved();
+          })
+        }
       />
     </div>
   );
@@ -126,7 +128,6 @@ export function EditedNotice({
   scope,
   kind,
   name,
-  harness,
   alreadyForked,
   onViewChanges,
   onResolved,
@@ -134,27 +135,24 @@ export function EditedNotice({
   scope: Scope;
   kind: ItemKind;
   name: string;
-  harness: HarnessId;
   alreadyForked: boolean;
-  onViewChanges: () => void;
+  onViewChanges: (harness?: HarnessId) => void;
   onResolved: () => void;
 }) {
-  const rows = useUpdatesStore((s) => s.rows);
-  const edited = rows.some(
-    (row) =>
-      row.kind === kind &&
-      row.name === name &&
-      sameScope(row.scope, scope) &&
-      row.blockedByLocalEdit,
+  const row = useUpdatesStore((s) =>
+    s.rows.find(
+      (row) =>
+        row.kind === kind &&
+        row.name === name &&
+        sameScope(row.scope, scope) &&
+        row.blockedByLocalEdit,
+    ),
   );
-  if (!edited || alreadyForked) return null;
+  if (!row || alreadyForked) return null;
   return (
     <div className="mb-6">
       <ForkNotice
-        scope={scope}
-        kind={kind}
-        name={name}
-        harness={harness}
+        row={row}
         onViewChanges={onViewChanges}
         onResolved={onResolved}
       />

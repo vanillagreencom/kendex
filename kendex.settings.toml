@@ -112,3 +112,132 @@ SECOND_OPINION_ARTIFACT_DIR = "tmp/second-opinion"
 # Repo instruction files appended to the review prompt (repo-rule lens).
 # Empty disables.
 SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md review-bots.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
+
+# Commit-status context the gate posts — the required check name in branch
+# protection. Keep it stable: changing it strands the old required context
+# on open PRs.
+REVIEW_GATE_CONTEXT = "Review gate"
+
+# Check/status names whose success on the current head counts as review
+# evidence (for bots that only file a review object when they have
+# findings). SECURITY: matched by NAME and anyone can publish under any
+# name — list only trusted bots' checks. github-actions-published check-runs
+# are rejected automatically. Empty = source disabled.
+REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = "CodeRabbit;copilot-pull-request-reviewer"
+
+# A trusted "pass" whose output contains one of these substrings never ran
+# (e.g. "Review rate limited") and is NOT-EVIDENCE. Empty disables.
+REVIEW_GATE_CHECKRUN_SKIP_PATTERNS = "rate limited;skipped;queued"
+
+# 'login:binding-pattern' pairs for bots whose clean pass is only an issue
+# comment binding a commit sha (e.g. "bot[bot]:Reviewed commit:").
+# SECURITY: trust keys on the author LOGIN. Empty disables.
+REVIEW_GATE_COMMENT_REVIEWERS = "chatgpt-codex-connector[bot]:Reviewed commit:;bmethod:REVIEWED-CLEAN"
+
+# Shortest sha prefix (4–40) a comment-form reviewer may bind evidence to.
+REVIEW_GATE_SHA_PREFIX_FLOOR = "7"
+
+# MANUAL operator override status — posted by a human, never automation.
+# Substitutes for MISSING evidence only; the description must carry a
+# reason (enforced). SECURITY: same trusted-publisher model as the
+# contexts above.
+# Alias over legacy REVIEW_GATE_OUTAGE_CONTEXT; set only this key in new
+# installs. Empty disables.
+REVIEW_GATE_OVERRIDE_CONTEXT = "kendex-reviewer-outage"
+
+# Creator logins whose commit statuses are never evidence. SECURITY:
+# wherever PR workflows hold statuses:write, PR content can mint statuses
+# through github-actions[bot] — list it; the override must then come from a
+# non-Actions identity. Empty disables.
+REVIEW_GATE_STATUS_PUBLISHER_REJECT = "github-actions[bot]"
+
+# Logins whose review objects at the exact head count as evidence. Empty =
+# any non-author — on repos with outside collaborators, set the list so a
+# drive-by review cannot satisfy the gate.
+REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "coderabbitai[bot];copilot-pull-request-reviewer[bot];qodo-code-review[bot];chatgpt-codex-connector[bot];bmethod"
+
+# "any", or "approved" (an APPROVED at head not withdrawn by a later
+# CHANGES_REQUESTED from the same login).
+REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "any"
+
+# Substrings marking a review row's body as the reviewer's own errored-run
+# attestation — such a row is NOT-EVIDENCE, never a blocker, never carried.
+# Empty disables.
+REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS = "encountered an error and was unable to review"
+
+# "enforce" fails closed on unresolved threads CI-side; "off" only where a
+# server-side zero-bypass ruleset already enforces thread hygiene. Evidence
+# and changes-requested still fail closed either way.
+REVIEW_GATE_THREADS = "enforce"
+
+# Bounded attempts per predicate evidence read, and the pause between them.
+# A read failing every attempt is still exit 2 (no verdict).
+REVIEW_GATE_API_ATTEMPTS = "1"
+
+REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
+
+# Evidence carry-forward across carry-safe deltas ("docs", "comments";
+# empty = off): ancestor evidence extends to head when the delta is entirely
+# carry-safe. Never a waiver — code changes always need fresh evidence, and
+# changes-requested / threads still fail closed. CAVEAT: "comments" is
+# line-lexical and cannot see heredocs; "docs" has no such caveat.
+REVIEW_GATE_CARRY_FORWARD = ""
+
+# Path globs that DISQUALIFY a carry — for policy-bearing markdown obeyed
+# mechanically (e.g. "*AGENTS.md;.github/*"), which deserves fresh review.
+# Inert while REVIEW_GATE_CARRY_FORWARD is empty.
+REVIEW_GATE_CARRY_FORWARD_EXCLUDE = ""
+
+# Exclusion globs DECLARED to match no tracked path yet, so the selftest
+# accepts them; a declaration not in the exclude list is an orphan and
+# fails the selftest.
+REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
+
+# ── Skill settings ───────────────────────────────────────────────────────
+# What the installed skills read for repo-specific names, paths and commands.
+
+# Commit identity for agent-authored work. Empty uses the ambient git identity.
+BOT_EMAIL = ""
+BOT_NAME = ""
+BOT_REMOTE_NAME = ""
+
+# Where the decider skill keeps architecture decision records.
+DECISIONS_DIR = "docs/decisions"
+
+# The repo's own validation command: the same checks the pre-commit hook
+# runs, so a skill validating a change gets the answer that will gate it.
+DEV_VALIDATE_CMD = "tools/guard"
+
+GH_BOT_USERNAME = ""
+GH_VERIFY_CMD = ""
+
+# How a branch names its Linear issue, matched case-insensitively, so
+# ken-450 resolves to KEN-450. GitHub issues are deliberately absent: they
+# reach their issue through the PR's Closes line, not through the branch.
+GH_ISSUE_PATTERN = "ken-[0-9]+"
+
+LINEAR_FORMAT = "safe"
+ORCH_STATE_DIR = "tmp"
+
+# File-size ratchet classes: the ceiling a path gets when it is not the
+# default. Tests and generated READMEs earn room the default does not give.
+SIZE_RATCHET_CLASSES = "*/README.md=120;*/tests/*=800;*/test/*=800;*/__tests__/*=800;*/tests.rs=800;*test_util.rs=800;*.test.*=800"
+
+# ── Worktrees ────────────────────────────────────────────────────────────
+# What a fresh issue worktree gets from this checkout. Symlink untracked
+# paths only: an entry over tracked files makes git refuse writes in that
+# worktree while `git status` still reports clean.
+#
+# The harness directories are named whole (.pi, .codex, .opencode) because
+# nothing under them is tracked. .claude is named child by child instead:
+# it holds tracked files beside the kendex-rendered, gitignored ones, and
+# only the latter may be links.
+WORKTREE_BASE_DIR = "~/dev/.worktrees/kendex"
+WORKTREE_COPIES = ".kendex-lock.json"
+WORKTREE_DEFAULT_BRANCH = "main"
+WORKTREE_MKDIRS = "tmp"
+WORKTREE_SYMLINKS = ".env.local .agents .cache .codex .opencode .pi .claude/agents .claude/hooks .claude/skills .claude/settings.json"
+
+# Nothing needs one: .claude/CLAUDE.md is a tracked symlink, so it arrives
+# through git, and naming it here would shadow tracked content.
+WORKTREE_RELATIVE_SYMLINKS = ""

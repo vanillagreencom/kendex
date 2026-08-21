@@ -8,6 +8,7 @@ const directory: DirectoryView = {
   rows: [
     {
       repo: "acme/agent-kit",
+      repoKey: "acme/agent-kit",
       name: "agent-kit",
       description: "Agent kit for TypeScript teams",
       tags: ["typescript", "agents"],
@@ -20,6 +21,7 @@ const directory: DirectoryView = {
     },
     {
       repo: "wshobson/agents",
+      repoKey: "wshobson/agents",
       name: "agents",
       description: "87 plugins for Claude Code",
       tags: ["plugins"],
@@ -32,6 +34,7 @@ const directory: DirectoryView = {
     },
     {
       repo: "acme/acme-tools",
+      repoKey: "acme/acme-tools",
       name: "acme-tools",
       description: "Rust skills",
       tags: ["rust"],

@@ -10,7 +10,7 @@ use crate::model::Scope;
 
 pub mod adopt;
 mod adopt_shared;
-mod bundles;
+pub(crate) mod bundles;
 mod catalog;
 mod config_edits;
 mod copilot;
@@ -20,6 +20,7 @@ pub mod desired;
 mod desired_agent;
 mod desired_command;
 mod desired_custom_hooks;
+mod desired_item;
 mod desired_kinds;
 mod desired_mcp;
 mod desired_skill;
@@ -46,6 +47,8 @@ mod targets;
 mod tree_plan;
 mod unmanaged;
 
+pub(crate) use desired::harnesses_for;
+pub(crate) use desired_agent::contributes_to_agent;
 pub(crate) use gate::content_hash;
 pub use gate::{ItemSafety, allow_unsafe_flag, refuse_unmatched_grants};
 pub use item_source::{ItemSource, item_source};

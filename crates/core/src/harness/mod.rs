@@ -15,8 +15,8 @@ mod caps;
 pub mod models;
 pub use caps::{
     CANONICAL_SEPARATOR, Enforcement, FormatCaps, KindCaps, McpTransport, NameRule, OpSupport,
-    canonical_name, capabilities, format_caps, installable, namespace_separator, pi_listener,
-    rendered_name,
+    canonical_name, capabilities, format_caps, installable, installs_here, namespace_separator,
+    pi_listener, rendered_name,
 };
 
 /// What a hook label may claim for this harness at this scope. The static

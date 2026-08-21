@@ -10,7 +10,7 @@ use specta::Type;
 use crate::engine::ItemWarning;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-use crate::model::{ItemKind, Scope};
+use crate::model::{HarnessId, ItemKind, Scope};
 use crate::remote::history;
 use crate::settings;
 
@@ -24,6 +24,19 @@ pub struct VersionRef {
     pub date: Option<String>,
 }
 
+/// Whose hold keeps a place at its revision — what the Follow source
+/// switch may release, and what it may not.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum HoldOwner {
+    /// This declaration's own `rev`: the switch releases it.
+    Package,
+    /// The source is pinned as a whole; released where the source is declared.
+    Source { name: String },
+    /// Propagated from the bundle or package that pulled this one in.
+    Parent,
+}
+
 /// One declared package's update standing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -33,6 +46,10 @@ pub struct UpdateRow {
     pub name: String,
     pub source: String,
     pub repo: String,
+    /// `repo` as [`crate::source_ref::repo_identity`] spells it — the one
+    /// identity two scopes' rows share when they name one repository two
+    /// ways, on any host.
+    pub repo_identity: String,
     /// The content revision installed now, when the lock records it.
     pub current: Option<VersionRef>,
     /// The newest content revision the mirror knows.
@@ -44,11 +61,35 @@ pub struct UpdateRow {
     /// only the item's own `rev`: a pinned source, a pinned bundle, or a
     /// pinned dependency parent all hold what they carry.
     pub pinned: bool,
+    /// Who holds it, when `pinned`.
+    pub hold_owner: Option<HoldOwner>,
     /// The user asked to stop hearing about this package's updates.
     pub ignored: bool,
     /// The installed files were edited by hand; updating is blocked until
     /// the edit is kept as a fork or discarded.
     pub blocked_by_local_edit: bool,
+    /// Which renderings carry the edit, one entry per physical rendering:
+    /// an agent renders once per tool, while tools sharing a skill's
+    /// canonical tree count once. Keeping the edit as a fork captures one
+    /// rendering's bytes — it has to be the one that was changed.
+    pub edited_harnesses: Vec<HarnessId>,
+    /// The edited rendering a fork can capture, when one exists — an
+    /// agent edited only in a tool whose format cannot be read back has
+    /// none, and the UI must not offer what the engine will refuse.
+    pub forkable_harness: Option<HarnessId>,
+    /// Whether dropping the edits can put the currently resolved content
+    /// back in place, without moving any revision — the source content
+    /// resolved, whether or not its history could be read. False once the
+    /// source no longer carries the package.
+    pub can_discard: bool,
+    /// Whether this place can move to the newest content on its own: the
+    /// newest is known, and the hold — if any — is this declaration's to
+    /// move rather than a bundle's or parent's.
+    pub can_take_latest: bool,
+    /// Installed as a bundle member or a dependency, with no declaration
+    /// of its own: whatever pulled it in owns its revision, and a fork
+    /// needs a declaration to turn local.
+    pub derived: bool,
     /// This package is a local fork of a catalog item.
     pub forked: bool,
     /// Installations of this package disagree on their source commit.
@@ -137,8 +178,9 @@ fn edited_items(
     scope: &Scope,
     manifest: &crate::manifest::Manifest,
     lock: &crate::lock::Lock,
-) -> std::collections::BTreeSet<(ItemKind, String)> {
-    match crate::engine::plan_scope(
+) -> std::collections::BTreeMap<(ItemKind, String), Vec<HarnessId>> {
+    let mut edited = std::collections::BTreeMap::<(ItemKind, String), Vec<HarnessId>>::new();
+    let rows: Vec<(ItemKind, String, HarnessId)> = match crate::engine::plan_scope(
         env,
         scope,
         manifest,
@@ -154,7 +196,7 @@ fn edited_items(
                     Some(crate::engine::DriftCause::LocalEdit | crate::engine::DriftCause::Both)
                 )
             })
-            .map(|row| (row.kind, row.name))
+            .map(|row| (row.kind, row.name, row.harness))
             .collect(),
         // A plan the scope cannot produce (a broken manifest, an
         // unreadable source) must not fail open — reporting nothing edited
@@ -165,9 +207,41 @@ fn edited_items(
             .entries
             .values()
             .filter(|entry| crate::engine::edit_holds(env, scope, entry))
-            .map(|entry| (entry.kind, entry.name.clone()))
+            .map(|entry| (entry.kind, entry.name.clone(), entry.harness))
             .collect(),
+    };
+    for (kind, name, harness) in rows {
+        let harnesses = edited.entry((kind, name.clone())).or_default();
+        // One entry per physical rendering: tools that symlink a skill's
+        // shared tree report one edit several times, and a fork through
+        // any of them captures the same bytes.
+        let seen = harnesses.iter().any(|known| {
+            *known == harness || same_artifact(env, scope, kind, &name, *known, harness)
+        });
+        if !seen {
+            harnesses.push(harness);
+        }
     }
+    edited
+}
+
+/// Whether two tools read one item from the same files on disk.
+fn same_artifact(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    a: HarnessId,
+    b: HarnessId,
+) -> bool {
+    if kind != ItemKind::Skill {
+        return false;
+    }
+    let resolved = |harness| {
+        crate::engine::fork::skill_content_path(env, scope, name, harness)
+            .map(|path| path.canonicalize().unwrap_or(path))
+    };
+    matches!((resolved(a), resolved(b)), (Some(x), Some(y)) if x == y)
 }
 
 /// A fork's row: no versions, no update — the Library still needs to
@@ -184,12 +258,19 @@ fn fork_row(
         name: name.to_owned(),
         source: decl.source.clone(),
         repo: String::new(),
+        repo_identity: String::new(),
         current: None,
         latest: None,
         update_available: false,
         pinned: false,
+        hold_owner: None,
         ignored: false,
         blocked_by_local_edit: false,
+        edited_harnesses: Vec::new(),
+        forkable_harness: None,
+        can_discard: false,
+        can_take_latest: false,
+        derived: false,
         forked: true,
         mixed: false,
         removed_upstream: false,

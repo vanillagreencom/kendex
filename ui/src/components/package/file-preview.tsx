@@ -84,11 +84,25 @@ export function FilePreview({
     );
   }
 
-  const isMarkdown = state.path.toLowerCase().endsWith(".md");
-  const basename = state.path.split("/").pop() ?? state.path;
+  return <FileContent {...state} />;
+}
+
+/** One file, rendered — markdown lightly styled, everything else
+ *  syntax-highlighted — under a bar naming it. */
+export function FileContent({
+  path,
+  content,
+  truncated,
+}: {
+  path: string;
+  content: string;
+  truncated: boolean;
+}) {
+  const isMarkdown = path.toLowerCase().endsWith(".md");
+  const basename = path.split("/").pop() ?? path;
 
   const copyPath = () => {
-    void navigator.clipboard.writeText(state.path).then(() => {
+    void navigator.clipboard.writeText(path).then(() => {
       toast.success("Path copied");
     });
   };
@@ -100,7 +114,7 @@ export function FilePreview({
           {basename}
         </span>
         <span className="flex shrink-0 items-center gap-2">
-          {state.truncated ? (
+          {truncated ? (
             <span className="text-[11px] text-muted-foreground">
               Showing first 64 KB
             </span>
@@ -118,9 +132,9 @@ export function FilePreview({
       </div>
       <div className="p-3">
         {isMarkdown ? (
-          <MarkdownView source={state.content} />
+          <MarkdownView source={content} />
         ) : (
-          <CodeBlock path={state.path} content={state.content} />
+          <CodeBlock path={path} content={content} />
         )}
       </div>
     </div>

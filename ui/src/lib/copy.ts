@@ -159,7 +159,7 @@ export const UPDATE_LABEL = "Update";
 export const PREVIEW_CHANGES_LABEL = "Preview changes";
 export const SWITCH_VERSION_LABEL = "Switch to this version";
 export const COMPARE_WITH_INSTALLED_LABEL = "Compare with installed";
-export const FOLLOW_SOURCE_LABEL = "Resume automatic updates";
+export const FOLLOW_SOURCE_LABEL = "Follow the source again";
 export const INSTALLED_VERSION_TAG = "installed";
 export const HELD_VERSION_TAG = "held here";
 export const NO_VERSIONS_NOTE =
@@ -170,7 +170,6 @@ export const DIFF_TRUNCATED_NOTE =
 export const VERSION_ERROR_TITLE = "Couldn't switch versions";
 
 // Updates page.
-export const UPDATES_SUBTITLE = "Newer versions of what you already have.";
 export const UPDATES_EMPTY = "Everything is up to date";
 export const UPDATES_EMPTY_BODY =
   "Every package you installed is on its latest version.";
@@ -178,7 +177,6 @@ export const UPDATES_UNCHECKED_TITLE = "Couldn't be checked";
 export const REMOVED_UPSTREAM_TAG = "No longer in its source";
 export const UPDATE_ALL_LABEL = "Update all";
 export const CHECK_FOR_UPDATES_LABEL = "Check for updates";
-export const AUTO_UPDATE_LABEL = "Update automatically";
 export const IGNORE_UPDATES_LABEL = "Stop notifying…";
 export const ignoreConfirmTitle = (name: string): string =>
   `Stop notifying about ${name}?`;
@@ -201,7 +199,18 @@ export const FORK_NOTICE_DETAIL =
   "Updates are paused so your edits stay. Keep it as your own copy, see what changed, or discard the edits and go back to the catalog's version.";
 export const KEEP_AS_FORK_LABEL = "Keep as my own";
 export const VIEW_CHANGES_LABEL = "View changes";
+export const viewChangesInLabel = (tool: string): string =>
+  `View changes in ${tool}`;
 export const DISCARD_EDITS_LABEL = "Discard edits…";
+export const DISCARD_ALL_EDITS_LABEL = "Discard all edits…";
+export const editedInToolsLabel = (tools: string[]): string =>
+  `Edited in ${tools.slice(0, -1).join(", ")} and ${tools.at(-1)}.`;
+export const unforkableCopyNote = (tool: string): string =>
+  `${tool}'s copy can't be kept as your own.`;
+export const MULTI_TOOL_FORK_NOTE =
+  "Keeping one tool's copy would drop the other edits, so the choice here is to discard them all.";
+export const DERIVED_FORK_NOTE =
+  "It came with a bundle or another package, so it can't become your own copy.";
 export const DISCARD_EDITS_CONFIRM_TITLE = "Discard your edits?";
 export const DISCARD_EDITS_CONFIRM_BODY =
   "The catalog's version replaces your edits to this package, and your changes are gone. Keep them as your own copy instead if you're unsure.";
@@ -216,9 +225,4 @@ export const forkedAttentionTitle = (count: number): string =>
 export const FORKED_ATTENTION_DETAIL =
   "Your changes are safe — nothing will overwrite them. Decide whether to keep each as your own copy.";
 
-// The install-time ask, answered by default: installs keep themselves
-// current unless the toast's one tap says otherwise.
-export const installedAutoToastLabel = (name: string): string =>
-  `Installed ${name} — it will keep itself up to date`;
-export const UPDATE_MANUALLY_ACTION = "Update manually instead";
-export const FOLLOW_SOURCE_TOAST = "Now updating automatically";
+export const FOLLOW_SOURCE_TOAST = "Now following its source";

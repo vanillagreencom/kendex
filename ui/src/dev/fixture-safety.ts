@@ -59,10 +59,53 @@ const cleanPluginSafety = (name: string, index: number): ItemSafety => ({
   override: { state: "absent" },
 });
 
+// A skill whose publisher named the flag it exists to guard against, and
+// recorded why. Nothing here needs a decision — the point is that the
+// person can still read what was decided on their behalf, and by whom.
+const PUBLISHER_SETTLED: ItemSafety = {
+  kind: "skill",
+  name: "growth-guards",
+  harness: "claude",
+  scope: GLOBAL,
+  safety: { score: 100, deductions: [] },
+  quality: null,
+  findings: [
+    {
+      rule: "safety-bypass",
+      severity: "critical",
+      location: "~/.agents/skills/growth-guards/SKILL.md:69",
+      message: "`--no-verify` skips the checks a commit runs",
+      remediation:
+        "leave the check in place and let the user answer for themselves",
+    },
+  ],
+  skipped: [],
+  verdict: "clean",
+  reasons: [],
+  contentHash: "growth-guards",
+  reviewHash: "growth-guards",
+  location: "",
+  provenance: "vanillagreencom/kendex",
+  decisions: [
+    {
+      fingerprint: "f2c72fb521054194",
+      token: null,
+      state: {
+        state: "author-dismissed",
+        reason: "intended",
+        dismissedAt: "2026-08-19T09:12:00Z",
+        publisher: "vanillagreencom/kendex",
+      },
+    },
+  ],
+  override: { state: "absent" },
+};
+
 export function personalSafety(): ItemSafety[] {
   return [
     ...CLAUDE_HOOK_IDS.map(hookSafety),
     ...CLEAN_PLUGINS.map(cleanPluginSafety),
+    PUBLISHER_SETTLED,
   ];
 }
 

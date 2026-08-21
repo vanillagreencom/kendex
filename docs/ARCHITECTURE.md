@@ -617,248 +617,328 @@ lives in one capability table read by core and UI.
   parses as real YAML under the same posture (aliases and duplicate
   keys refused, bounds enforced), and every interpolated value in a
   generated file is quoted so foreign text cannot mint config lines.
-- **The source store is immutable, and revisions are declared.** A
-  downloaded catalog is never a mutable checkout: each commit is
-  materialized once into a directory named after its object id, published
-  by rename, and read unchanged from then on, while fetching touches only
-  a bare mirror beside it. v0.1 hard-reset one checkout per repository on
-  every refresh — two scopes reading different revisions fought over it,
-  and a refresh in one window could shift bytes under a render in
-  another. A source declares which revision it reads: a full commit id is
-  a pin (that commit and no other, and once cached it resolves without
-  any network), a tag or branch is a tracking selector that re-resolves
-  on each refresh and is previewed like any other upstream change. Losing
-  the lock loses no intent either way — the manifest holds what is
-  wanted, the lock only records which commit that came out as. Offline
-  with an uncached pin is a hard error naming the pin; anything already
-  installed keeps working from what is on disk. Materialization runs
-  under a per-repository cache lock; a second resolver waits half a
-  second — enough to ride out a neighbour that is only starting up — and
-  is then told the cache is busy rather than left waiting on someone
-  else's download. A refresh treats that as an error; a read does not —
-  planning degrades to "not fetched yet" for that one source, since a
-  neighbour's download must not decide whether the rest of a scope can be
-  planned. The lock's recorded commit is a fallback only for the exact
-  declaration that produced it: a manifest now naming another repository,
-  or another revision, is never served the previous one under the new
-  one's name.
-  An item declaration may hold its own `rev`, outranking the source's —
-  and an item's rev is always the full commit id: `kendex pin` and the
-  version picker resolve tags and branches at write time, because a hold
-  a moved tag can move is not a hold. Holds flow through derivation: a
-  pinned bundle pins its members, a pinned skill's dependencies read the
+- **The source store is immutable, and revisions are declared.** A downloaded
+  catalog is never a mutable checkout: each commit is materialized once into a
+  directory named after its object id, published by rename, and read unchanged
+  from then on, while fetching touches only a bare mirror beside it. v0.1
+  hard-reset one checkout per repository on every refresh — two scopes reading
+  different revisions fought over it, and a refresh in one window could shift
+  bytes under a render in another. A source declares which revision it reads:
+  a full commit id is a pin (that commit and no other, and once cached it
+  resolves without any network), a tag or branch is a tracking selector that
+  re-resolves on each refresh and is previewed like any other upstream change.
+  Losing the lock loses no intent either way — the manifest holds what is
+  wanted, the lock only records which commit that came out as. Offline with an
+  uncached pin is a hard error naming the pin; anything already installed
+  keeps working from what is on disk. Materialization runs under a
+  per-repository cache lock; a second resolver waits half a second — enough to
+  ride out a neighbour that is only starting up — and is then told the cache
+  is busy rather than left waiting on someone else's download. A refresh
+  treats that as an error; a read does not — planning degrades to "not fetched
+  yet" for that one source: a neighbour's download must not decide whether the
+  rest of a scope can be planned. The lock's recorded commit is a fallback
+  only for the exact declaration that produced it; a manifest naming another
+  repository or revision is never served the previous one. An item declaration
+  may hold its own `rev`, outranking the source's, always as a full commit id:
+  `kendex pin` and the version picker resolve tags and branches at write time,
+  since a hold a moved tag can move is no hold. Holds flow through derivation
+  — a pinned bundle pins its members, a pinned skill's dependencies read the
   pinned catalog, and two parents demanding different revisions of one
-  dependency become a conflict that writes nothing — one filesystem
-  identity exists, and a silent winner would install content somebody
-  pinned away from. Updates are a projection over the mirror, never
-  drift: a held item hashes clean against its held tree, and the Updates
-  page separately asks the mirror what newer content exists (fetching
-  pinned sources too — a pin says what installs, not what exists). A
-  version timeline lists only commits that touched the package's files,
-  decorated with tag names, never replaced by them. Muting a package's
-  update notifications is a machine-local settings entry, not manifest
-  intent: a preference committed to a shared repository would silence a
-  whole team.
-  Reuse is verified against a publish receipt written outside the
-  checkout: a full content hash of the tree, which costs a read of the
-  catalog per plan and is the only check a same-size edit cannot fool.
-  The pre-2.0 clones are read where the new layout has nothing yet, and
-  deleted never. Neither are published commits: the store keeps one tree
-  per commit it has ever resolved, so a tracked branch grows the cache by
-  a catalog per upstream change, and nothing prunes it yet — the cache is
-  rebuildable, so deleting it is the only cleanup there is.
+  dependency are a conflict that writes nothing: one filesystem identity
+  exists, and a silent winner would install content somebody pinned away from.
+  Updates are a projection over the mirror, never drift: a held item hashes
+  clean against its held tree, and the Updates page asks the mirror (pinned
+  sources too — a pin says what installs, not what exists) what newer content
+  exists; its timeline lists only commits that touched the package's files,
+  tag-decorated, never tag-replaced. Rows are per package per scope; the page
+  folds them by package and expands by place (each is decided per scope), and
+  nothing applies on its own: followers come current on apply or refresh, held
+  ones when their hold moves. Muting a package's update notifications is a
+  machine-local settings entry, not manifest intent: a preference committed to
+  a shared repository would silence a whole team. Reuse is verified against a
+  publish receipt written outside the checkout: a full content hash of the
+  tree, which costs a read of the catalog per plan and is the only check a
+  same-size edit cannot fool. The pre-2.0 clones are read where the new layout
+  has nothing yet, and deleted never. Neither are published commits: the store
+  keeps one tree per commit it has ever resolved, so a tracked branch grows
+  the cache by a catalog per upstream change, and nothing prunes it yet — the
+  cache is rebuildable, so deleting it is the only cleanup there is.
 - **A subscription reference is parsed, never guessed, and one repository
   subscribes once per scope.** Two validators sit side by side in
   `core/source_ref.rs`, one per trust level: the typed one (the Subscribe
-  dialog, `marketplace subscribe`, `source add`, `add`'s positional
-  source) keeps the full range a person may need — `owner/repo[@rev]`,
-  any-host remote URLs kept as typed (an `ssh://` spelling can be what
-  their auth requires), local paths, GitHub tree URLs, skills.sh package
-  URLs — while the untrusted one (directory rows, collections, deep
-  links) is GitHub-only and normalizes to `owner/repo`. Both refuse a
-  leading `-`, `..` in repository components, and percent-escapes that
-  would smuggle a separator, decoding exactly once. A tree URL always
-  subscribes the whole repository and surfaces the package path as a
-  lead to open, never an identity; its `<ref>` resolves against the
-  mirror's real refs (branch names contain `/`), and two split points
-  both naming refs, or a branch and tag sharing a name, refuse naming
-  every candidate — offline, normalization is a refusal before any
-  write. One repository per scope, compared by canonical identity
+  dialog, `marketplace subscribe`, `source add`, `add`'s positional source)
+  keeps the full range a person may need — `owner/repo[@rev]`, any-host
+  remote URLs kept as typed (an `ssh://` spelling can be what their auth
+  requires), local paths, GitHub tree URLs, skills.sh package URLs — while
+  the untrusted one (directory rows, collections, deep links) is GitHub-only
+  and normalizes to `owner/repo`. Both refuse a leading `-`, `..` in
+  repository components, and percent-escapes that would smuggle a separator,
+  decoding exactly once. A tree URL always subscribes the whole repository
+  and surfaces the package path as a lead to open, never an identity; its
+  `<ref>` resolves against the mirror's real refs (branch names contain
+  `/`), and two split points both naming refs, or a branch and tag sharing a
+  name, refuse naming every candidate — offline, normalization is a refusal
+  before any write. One repository per scope, compared by canonical identity
   (`.git`, case, and redirect spellings are one repo), with the refusal
   naming the existing subscription. The default marketplace is found by
-  repo, never by name and never by sort order: the subscription whose
-  repo is the default repo; two of them prefer the seeded name and
-  otherwise refuse naming both; none is a typed error with no fallback —
-  what the cross-source search catches rather than a guessed install.
-  Installing into a project from a personal subscription copies the
-  declaration into the project in that plan — exactly one scope mutated,
-  the personal manifest read-only, the cache shared by construction.
+  repo, never by name and never by sort order: the subscription whose repo
+  is the default repo; two of them prefer the seeded name and otherwise
+  refuse naming both; none is a typed error with no fallback — what the
+  cross-source search catches rather than a guessed install. Installing into
+  a project from a personal subscription copies the declaration into the
+  project in that plan — exactly one scope mutated, the personal manifest
+  read-only, the cache shared by construction.
 - **A name says where it comes from, or the search does — never a
   fallback.** Every installable kind declares through `add`
   (`engine/ops/add`): agents, skills, hooks, commands, MCP servers; Pi
   extensions are carrier-only and a direct add is a typed refusal. The
-  qualifier is `marketplace::name` (`add/place.rs`) — `::` never appears
-  in an item name, so `/` keeps meaning `plugin/item` or, positionally,
-  `owner/repo` — and it resolves against subscription aliases only,
-  refusing with the subscribed list when nothing matches. A bare name
-  searches every enabled subscription in the scope for its kind: one
-  offer installs, two refuse printing the `::` spellings beside each
-  subscription's canonical repo, and zero is not found with the fix
-  named — the default subscription participates like any other, and
-  `default_source` serves only requests that name no item at all
-  (`--all`, a bare bundle). Installing a whole bundle subsumes, in the
-  same plan, the previously-declared members whose effective options
-  equal what the bundle derives (`add/subsume.rs`) — a member the user
-  shaped keeps its declaration with the preview saying why — and
-  `[bundles.<name>]` stays keyed by bare name, so a second marketplace's
+  qualifier is `marketplace::name` (`add/place.rs`) — `::` never appears in
+  an item name, so `/` keeps meaning `plugin/item` or, positionally,
+  `owner/repo` — and it resolves against subscription aliases only, refusing
+  with the subscribed list when nothing matches. A bare name searches every
+  enabled subscription in the scope for its kind: one offer installs, two
+  refuse printing the `::` spellings beside each subscription's canonical
+  repo, and zero is not found with the fix named — the default subscription
+  participates like any other, and `default_source` serves only requests
+  that name no item at all (`--all`, a bare bundle). Installing a whole
+  bundle subsumes, in the same plan, the previously-declared members whose
+  effective options equal what the bundle derives (`add/subsume.rs`) — a
+  member the user shaped keeps its declaration with the preview saying why —
+  and `[bundles.<name>]` stays keyed by bare name, so a second marketplace's
   same-named bundle is refused naming the first.
-- **A plugin-registry-shaped catalog is recognized, never guessed.** A source
-  is read one plugin deep (`plugins/<name>/{agents,commands,skills}`)
+- **A plugin-registry-shaped catalog is recognized, never guessed.** A
+  source is read one plugin deep (`plugins/<name>/{agents,commands,skills}`)
   exactly when it carries `.claude-plugin/marketplace.json`; a `plugins/`
-  directory on its own is not evidence, and guessing renames every item in
-  a catalog that never asked for it. The registry, not the directory
-  listing, decides what such a catalog offers: an item resolves only under
-  a plugin the registry validated, and only entries pointing at a
-  directory inside the repository are consumed — an entry naming another
-  repository or a URL is skipped with a finding, since fetching it would
-  be a second, unpinned download behind the one the user asked for.
-  Everything the catalog gets wrong is a finding with a fix, cross-file
-  included: a registry that disagrees with a plugin's own manifest about
-  its name or version, a plugin describing parts that live outside itself,
-  and two names one filesystem would fold together. Registry metadata
-  (category, version, author, license, homepage, and the plugin's items as
-  a named group) is read-side only — it feeds browsing and, later,
-  installing a plugin as a unit; the manifest records what the user chose,
-  never what a catalog says about itself.
+  directory on its own is not evidence, and guessing renames every item in a
+  catalog that never asked for it. The registry, not the directory listing,
+  decides what such a catalog offers: an item resolves only under a plugin
+  the registry validated, and only entries pointing at a directory inside
+  the repository are consumed — an entry naming another repository or a URL
+  is skipped with a finding, since fetching it would be a second, unpinned
+  download behind the one the user asked for. Everything the catalog gets
+  wrong is a finding with a fix, cross-file included: a registry that
+  disagrees with a plugin's own manifest about its name or version, a plugin
+  describing parts that live outside itself, and two names one filesystem
+  would fold together. Registry metadata (category, version, author,
+  license, homepage, and the plugin's items as a named group) is read-side
+  only — it feeds browsing and, later, installing a plugin as a unit; the
+  manifest records what the user chose, never what a catalog says about
+  itself.
 - **Any repo holding skills is a marketplace — discovered from a closed
-  table, never guessed wider.** `source/discover.rs` owns a versioned
-  search table (`DISCOVERY_VERSION`, part of the safety-cache key):
-  `skills/` and `skills/.curated`, each harness's project skills dir
-  (pinned to the adapters by test), `<dir>/**/SKILL.md` up to three levels
-  down for category nesting — stopping below a found skill, skipping
-  `.git`, `node_modules` and friends — and a repo-root `SKILL.md` as a
-  one-skill repo named by its validated frontmatter `name`, else by the
-  repository leaf the caller passes, since a store directory is a commit
-  id. The table yields skills only: hooks, MCP servers, commands and
-  agents install from a declared kendex layout, `kendex.toml`, or a
-  plugin registry — executable content is never discovered into
-  existence, so a `hooks/` folder in an undeclared skills repo is
-  repository tooling, not an offer. Precedence is fixed and fail-closed:
-  a `.claude-plugin/marketplace.json` registry wins outright and root
-  dirs are not read; else a parsed control file declares the fixed
-  layout (`[catalog]` overriding which dirs) and the search table stays
-  out — discovery exists for repos that never declared anything; else
-  the search runs. A control file that is present but unreadable, or a
-  wrong-typed `[catalog]` value, makes the source unusable with a
-  finding — presence selects the mode, and breakage never falls through
-  to a different one, because serving defaults would offer a different
-  catalog than the author published. Every probe goes through
+  table, never guessed wider.** `source/discover.rs` owns a versioned search
+  table (`DISCOVERY_VERSION`, part of the safety-cache key): `skills/` and
+  `skills/.curated`, each harness's project skills dir (pinned to the
+  adapters by test), `<dir>/**/SKILL.md` up to three levels down for
+  category nesting — stopping below a found skill, skipping `.git`,
+  `node_modules` and friends — and a repo-root `SKILL.md` as a one-skill
+  repo named by its validated frontmatter `name`, else by the repository
+  leaf the caller passes, since a store directory is a commit id. The table
+  yields skills only: hooks, MCP servers, commands and agents install from a
+  declared kendex layout, `kendex.toml`, or a plugin registry — executable
+  content is never discovered into existence, so a `hooks/` folder in an
+  undeclared skills repo is tooling, not an offer. Precedence is fixed and
+  fail-closed: a `.claude-plugin/marketplace.json` registry wins outright
+  and root dirs are not read; else a parsed control file declares the fixed
+  layout (`[catalog]` overriding which dirs) and the search table stays out
+  — discovery exists for repos that never declared anything; else the search
+  runs. A control file present but unreadable, or a wrong-typed `[catalog]`,
+  makes the source unusable with a finding — presence selects the mode and
+  breakage never falls through to another, since serving defaults would
+  offer a catalog the author never published. Every probe goes through
   `SealedSource` (symlinks skipped, budgets held, hard caps on found
   skills); items dedupe by normalized repository-relative path, never
-  `canonicalize`; two directories that fold to one name are **both**
-  skipped with a finding naming both — unless their bytes are identical, in
-  which case one skill served under two harness layouts is deduplicated by
-  content, not treated as a clash — so which directory the walk reached
-  first can never decide which of two clashing skills installs. A
-  frontmatter `name` disagreeing with its directory is a finding (the
-  directory is the identity), and submodule or LFS pointers under a
-  recognized root are findings, not hydrated. A name that carries an
-  invisible or direction-reversing character is refused (`names::segment_problem`)
-  and shown with it escaped (`names::shown`), so one marketplace's package
-  cannot wear another's name on screen while installing under a different
-  one; a declared-layout catalog lists only names that install, so the
-  Packages table never draws a row `find_item` would refuse. The walk stops
-  at its skill cap rather than reading the rest of a hostile tree, bounding
-  the work, not just the output. `source/about.rs` renders the one typed report — what was
-  found where, plus every finding — that the About tab and `kendex
-  index` consume.
+  `canonicalize`; two directories that fold to one name are **both** skipped
+  with a finding naming both — identical bytes excepted, that being one
+  skill served under two harness layouts — so the walk's order never decides
+  which of two clashing skills installs. A frontmatter `name` disagreeing
+  with its directory is a finding (the directory is the identity), and
+  submodule or LFS pointers under a recognized root are findings, not
+  hydrated. A name carrying an invisible or direction-reversing character is
+  refused (`names::segment_problem`) and shown escaped (`names::shown`), so
+  one marketplace's package cannot wear another's name on screen while
+  installing under a different one; a declared-layout catalog lists only
+  names that install, so the Packages table never draws a row `find_item`
+  would refuse. The walk stops at its skill cap rather than reading the rest
+  of a hostile tree, bounding the work, not just the output.
+  `source/about.rs` renders the one typed report — what was found where,
+  plus every finding — that the About tab and `kendex index` consume.
 - **Browsing is a read-side join, and installed state is derived, never
-  stored.** `source/browse.rs` answers what one subscription offers — every
-  package across kinds, a bundle's members, a package's preview — with each
-  row's state joined from the scope's manifest and lock on every call:
-  installed is a lock entry from this subscription, held-back-by-safety is
-  asked-for content whose catalog bytes the gate's own verdict refuses, and
-  a bundle's "partly installed (2 of 6)" is counted from its members, so no
-  stored flag can drift from the records it summarizes. A name another
-  source already holds is surfaced on the row (`collision`) before the
-  click; the refusal itself stays in the engine (invariant 4). Pre-install
-  safety (`browse/safety.rs`) scores catalog bytes with the same rules an
-  install runs and caches **findings and scores only**, beside the commit's
-  receipt in the immutable store (`<key>/<commit>.safety/…` — never inside
-  the checkout, whose receipt-signed tree must not change), keyed by the
-  item's content hash plus the rule-set, discovery-table and record-format
-  versions, each recomputed and verified before reuse. The warn/block
-  verdict is derived from the current thresholds at read time — thresholds
-  in the key would re-score on every settings change and imply a different
-  analysis where only the judgment moved. Browse is a preview of the
-  verdict, never a second gate. `library.rs` is the same posture for the
-  Library table: one lock+manifest join mapping every installation to its
-  origin — a subscription, the user's own local content (with what a fork
-  replaced), or observed-and-unmanaged.
+  stored.** Every `source/browse.rs` read — packages across kinds, a bundle's
+  members, a package's preview — takes a `Catalog`, `Subscription { scope,
+  source }` or `Repo { repo }`, so a listed marketplace opens before anyone
+  subscribes on the pages a subscription gets. Each row's state is joined from
+  the scope's manifest and lock on every call — installed is a lock entry from
+  this subscription, held-back-by-safety is asked-for content whose catalog
+  bytes the gate's own verdict refuses, "partly installed (2 of 6)" is counted
+  from a bundle's members — so no stored flag can drift from the records it
+  summarizes; with no subscription the join answers Available and judges name
+  clashes against the personal scope, where Subscribe lands. A name another
+  source holds is surfaced on the row (`collision`) before the click; the
+  refusal stays in the engine (invariant 4). A bare repository is fetched by
+  `remote::sync` into the store a subscription reads from, under the canonical
+  `owner/repo` every GitHub spelling folds to — the key Subscribe is prefilled
+  with — so subscribing never downloads twice and the safety record is shared
+  per commit; only GitHub opens blind (`NotBrowsable` otherwise), and a root
+  skill's file list and file reads are confined to the skill tree scoring and
+  install read, never the repository around it. `browse::summary`, a
+  repository's first read, refreshes (a failure is a warning over the store's
+  copy) and names an enabled, readable subscription this machine holds for it;
+  `useCatalog` moves the page onto it at once, so "subscribe from here" keeps
+  your place. Installing still needs a subscription; `RepoAction` offers the
+  one step there: Subscribe when none declares the repository, Turn on when a
+  declared one is off, Refresh when it is declared but unreadable, neutral
+  until the live list has loaded. Pre-install safety (`browse/safety.rs`)
+  scores catalog bytes with the rules an install runs and caches **findings
+  and scores only**, beside the commit's receipt in the immutable store
+  (`<key>/<commit>.safety/…`, never inside the receipt-signed checkout), keyed
+  by the item's content hash plus the rule-set, discovery-table and
+  record-format versions, each recomputed and verified before reuse. The
+  warn/block verdict is derived from the current thresholds at read time —
+  thresholds in the key would re-score on every settings change. Browse is a
+  preview of the verdict, never a second gate. `library.rs` is the same join
+  for the Library table, mapping each installation to its origin: a
+  subscription, local content (with what a fork replaced), or
+  observed-and-unmanaged.
 - **A subscription's closure is derived by re-expansion, and unsubscribing
   removes or keeps exactly it.** `engine/detach.rs` computes what leaves
   with a marketplace by expanding the installed set with the source present
   and again with its declarations gone, then diffing — a derived dependency
-  never names the source, so only the difference tells the truth about what
-  its going takes with it. A member another marketplace's bundle still
-  carries is in both expansions, so it stays. The closure refuses while the
-  source cannot be read, rather than infer a wrong one. **Remove** drops the
-  closure's declarations and sweeps their installations (orphan removal
-  filtered to the exact kind+name pairs, so an unrelated same-named orphan is
-  never taken); an edited installation is never swept without `--discard-edits`.
-  **Keep** (`detach/keep.rs`) copies each installation's *source-form* bytes —
-  read through the sealed catalog at the exact commit it installed from, a
-  parent skill excluding any nested child skill — into the scope's local
-  source, flips the declaration to `local` with fork provenance, and removes
-  the subscription; the local writes are ordered before the manifest flip in
-  one plan, so a failed apply rolls the whole conversion back (invariant 11).
-  Keep refuses an edited package (fork or discard first — hooks compared to
-  what apply wrote, so an edited script is caught), and preflights the local
-  target: a symlink, or a case/composition-folding sibling, or different bytes
-  already there is a refusal, never a clobber (invariants 4 and 6). The local
-  source lists a `plugin/item` name beside a plain `plugin`, so a detached
-  plugin-registry package round-trips.
-- **The machine seam reads through the same core installing reads
-  through.** `check_catalog.rs` (core) owns the two authoring passes —
-  structural (would each harness's loader hold this item) and safety (the
-  same rules an install runs) — so `kendex check --catalog [--json]`, the
-  indexer's per-package verdicts, and authoring preflight ask one
-  implementation; the CLI only prints, as lines or as a versioned envelope
-  (`schema`, typed findings, counts, `ok`). `source/index.rs` emits the
-  per-marketplace summary the community directory consumes (`kendex index
-  [<dir>] --json`, schema 1, plain directory, no network): metadata from
-  the catalog's own `[marketplace]` table (`source/meta.rs` — read-only,
-  every string capped and control-char-safe), packages built from
-  `list_items` so what the summary offers is exactly what subscribing
-  finds (pinned by test), safety scores from the check passes, bundles
-  with members, About rows, findings. Field order in both JSON shapes is
-  the schema — serde structs, no maps. `kendex marketplace check` is the
-  alias of `check --catalog --strict`, same exit codes. A maintainer's
-  reviewed findings live in a committed `kendex-reviews.toml` at the
-  catalog root (`check_catalog/dismissals.rs`): the same
-  content-hash-bound dismissal records the install side keeps in a
+  never names the source, so only the difference is true. A member another
+  marketplace's bundle still carries is in both expansions, so it stays. It
+  refuses while the source cannot be read. **Remove** drops the closure's
+  declarations and sweeps their installations (orphan removal filtered to
+  exact kind+name pairs); an edited installation is never swept without
+  `--discard-edits`. **Keep** (`detach/keep.rs`) copies each installation's
+  *source-form* bytes — read through the sealed catalog at the exact commit
+  it installed from, a parent skill excluding any nested child skill — into
+  the scope's local source, flips the declaration to `local` with fork
+  provenance, and removes the subscription; the local writes are ordered
+  before the manifest flip in one plan, so a failed apply rolls the
+  conversion back (invariant 11). Keep refuses an edited package (fork or
+  discard first; hooks are compared to what apply wrote) and preflights the
+  local target: a symlink, a case/composition-folding sibling, or different
+  bytes already there is a refusal, never a clobber (invariants 4 and 6).
+  The local source lists a `plugin/item` name beside a plain `plugin`, so a
+  detached plugin-registry package round-trips.
+- **The machine seam reads through the same core installing reads through.**
+  `check_catalog.rs` (core) owns the two authoring passes — structural
+  (would each harness's loader hold this item) and safety (the rules an
+  install runs) — so `kendex check --catalog [--json]`, the indexer's
+  per-package verdicts, and authoring preflight ask one implementation; the
+  CLI only prints, as lines or as a versioned envelope (`schema`, typed
+  findings, counts, `ok`). `source/index.rs` emits the per-marketplace
+  summary the community directory consumes (`kendex index [<dir>] --json`,
+  schema 1, plain directory, no network): metadata from the catalog's own
+  `[marketplace]` table (`source/meta.rs` — read-only, every string capped
+  and control-char-safe), packages built from `list_items` so the summary
+  offers exactly what subscribing finds (pinned by test), safety scores from
+  the check passes, bundles with members, About rows, findings. Field order
+  in both JSON shapes is the schema — serde structs, no maps.
+  `kendex marketplace check` aliases `check --catalog --strict`, same exit
+  codes. A maintainer's reviewed findings live in a committed
+  `kendex-reviews.toml` at the catalog root (`check_catalog/dismissals.rs`):
+  the same content-hash-bound dismissal records the install side keeps in a
   manifest, keyed `kind:name`, written by `dismiss --catalog` from the
-  tokens `check --catalog` prints. The authoring passes stop counting a
-  dismissed finding (still reported, marked) — and only the authoring
-  passes: a consumer's install never reads a catalog's own reviews, so a
-  catalog cannot pre-approve its content on anyone else's machine. Editing
-  the item stales the record and the hold returns.
+  tokens `check --catalog` prints — for every kind whose review can travel,
+  which is every kind but a hook. The check refuses what an install
+  refuses, so a record a consumer would drop fails the maintainer's own run
+  rather than their consumers' installs, and it reads an item under the
+  same budget an install does, so it never mints a token for content no
+  install can see. A dismissed finding stops counting and
+  stays reported, marked — in the catalog's own passes and on the machines
+  that install from it. What that record is worth on somebody else's machine
+  is `quality/author.rs`, the neutral home for the travelling shape
+  (`AuthorReview`) and for the one derivation of "a settled finding is
+  reported and does not count" (`author::score`) the authoring check, the
+  gate, the audit and browsing all call. Three bounds, because the record
+  arrives from content kendex does not control: it binds to bytes — the item's
+  own plus all else its rendering reads, the control-file tables and the skill
+  list an agent resolves to, however it resolves
+  (`SourceConfig::rendering_inputs`), so editing any of it stales it; it
+  settles the publisher's own occurrences, at the weight the artifact being
+  scored gives each of them, so nothing a project repeats rides in on a
+  reviewed one however heavy and no injected line wears a publisher's name
+  while theirs stays open; and it carries only reasons an author can give —
+  `trusted-source` refused on read and not only on write, a timestamp that is
+  not one refused with it.
+  **The record never travels in a file this project commits.** The lock
+  carries none, and the fourth bound is why: a record kept there is a claim
+  about a catalog, and authenticating one — its shape, its name, its numbers —
+  answers a different question than what the content should be. So the audit
+  rebuilds instead (`engine::desired::desired_as_installed`): the plan that
+  produced what is on disk, each installation at the revision its lock entry
+  names, applied before the closure is derived and not to the bytes after it —
+  what a set carries and what a skill requires are read out of a catalog too,
+  so a member the set has since dropped comes back with it — and the record
+  out of *that* catalog, the gate's derivation on the gate's bytes. One item
+  can sit at two revisions at once, since a refresh applies per installation.
+  An installation answers for itself and nothing else — one row, one entry,
+  one revision, one record — and content no rebuild of its own produced is
+  content nobody reviewed. The commit an entry names chooses a revision and
+  asserts nothing, since naming another produces another artifact. An item no
+  rebuild covers — a catalog not on this machine, a manifest that will not
+  resolve — carries no review, and there is no signing scheme here. A hook
+  records none: the gate reads the script and the audit the shared settings
+  file, two readings of different bytes by design — so it is refused where it
+  is read, and neither `dismiss --catalog` nor `check --catalog` will produce
+  one. The audit matches an entry to an observation by kind and name, or those
+  of the artifact it emitted, and then by a review hash sealed by what is on
+  disk. Every settled finding is shown with the publisher and their reason —
+  under the line in the CLI, in its own row on a scope and in the app's
+  held-back panel, and on a marketplace package's page, which reads the same
+  record through `browse/safety.rs` so the preview cannot promise a verdict
+  the install will not give. Two decisions of theirs differing in reason or
+  date stay two rows. A record that settles nothing here is a note, never
+  silence. Finding identity is the rule and the sentence it fired with
+  (`Finding::fingerprint`). Which puts a standing obligation on every message:
+  it says what the rule fired *on* — the address a line runs, read as a shell
+  reads a line rather than searched for in one, the characters a file hides —
+  and never where it was found. Two different problems reading the same are
+  one decision, and one is displayed. A digest standing in for what a message
+  cannot print decides identity like the rest of the sentence, so every one is
+  `DIGEST_CHARS` wide: each stands for a value a project chooses, and a narrow
+  one is ground against until an injected finding wears a settled one's words.
+  Where a finding was found is its location, and every location a decision
+  covers is listed under it. Everything kendex's rendering moves is out of it:
+  the line, because rendering shifts lines; the file, because Codex renders a
+  command as a skill tree and an over-cap body splits into `references/`; the
+  severity, because a hit weighs one step less in a supporting file and the
+  split moves content between exactly those two. What bounds it instead is the
+  item — a fingerprint is read only within one item's records — the content
+  hash every decision binds to, and, for a publisher's record, which
+  occurrences here are theirs (`quality::publishers`) — one question with how
+  many, so the budget counts what it may be spent on. Where the rendering is
+  their own content with the project's block put into it, that boundary is the
+  answer: outside it is theirs at whatever weight this artifact gives it, so a
+  line the split carried into a supporting file is still theirs and settles a
+  step lighter. **A boundary is carried from the code that drew it, never
+  found again in the finished text.** That text is half the project's own and
+  answers any question put to it — a marker it spells itself ends the block
+  early and the rest reads as the publisher's — so the renderer hands the tree
+  and its offsets down as one value that no step can rename apart, and every
+  location they cover is composed rather than matched. Where the artifact is
+  generated from inputs instead, the answer is a rendering from their inputs
+  alone walked beside the real one, both sides read in the one deobfuscated
+  space or a hidden character makes a repeat match a raw comparison never
+  sees. Prose the project supplied is skipped there rather than credited to
+  whichever copy came first, which loses a review they did make and asks the
+  person instead; and a finding naming a whole document is theirs only where
+  their own rendering produces it.
 - **The community directory is read like any remote: strictly, capped,
   and honest about staleness.** `registry/` (core) consumes what
   `source/index.rs` producers feed kendex.ai: `index.rs` re-parses the
-  site's schema-1 payload under the site's own caps (a spoofed or
-  compromised registry cannot grow a row), refusing structural problems
-  whole and dropping only unusable rows; `cache.rs` holds one body and
-  one meta line on disk (`Env::registry_cache_dir`) behind an ETag and a
-  one-hour TTL, and a failed refresh serves the last fetch labeled stale
-  with its real fetch time — the Community tab is never blank. All reads
-  go through the `Fetch` trait (curl via `Hardened`, plain http only when
-  an explicit `KENDEX_API` override asks); tests inject canned
-  transports. `skillssh.rs` is the versioned adapter over their public
-  search: pinned wire schema refused on mismatch, capped, kill-switched
-  (`KENDEX_SKILLSSH=off`), and a hit is a lead, never an identity —
-  installing routes through the same subscribe path as any marketplace.
-  Sign-in, collections and deep links arrive with W3/W4.
+  site's schema-1 payload under the site's own caps (a spoofed registry
+  cannot grow a row), refusing structural problems whole and dropping only
+  unusable rows; `cache.rs` holds one body and one meta line on disk
+  (`Env::registry_cache_dir`) behind an ETag and a one-hour TTL, and a
+  failed refresh serves the last fetch labeled stale with its real fetch
+  time — the Community tab is never blank. All reads go through the `Fetch`
+  trait (curl via `Hardened`, plain http only when an explicit `KENDEX_API`
+  override asks); tests inject canned transports. `skillssh.rs` is the
+  versioned adapter over their public search: pinned wire schema refused on
+  mismatch, capped, kill-switched (`KENDEX_SKILLSSH=off`); a hit is a lead,
+  never an identity, installing through the same subscribe path as any
+  marketplace. Sign-in, collections and deep links arrive with W3/W4.
 - **Intent in the manifest, closure in the plan, edges in the lock.** The
   manifest records choices and never their consequences: the items asked
   for, the bundles installed, which optional dependencies were taken, what
@@ -1043,71 +1123,83 @@ lives in one capability table read by core and UI.
   they belong: they bound what is read for scoring, never what a decision
   covers, so content past a budget going unreviewable is said out loud
   instead of waved through.
-- **A dismissal settles one finding and unblocks nothing.** Beside the
-  item-level acceptance sits the smaller decision: this one finding, on
-  this one installation, is not the problem the rule says it is. It binds
-  the same way — review hash and rule set — and it lives in the same place,
-  the manifest of the scope the item belongs to: a personal decision stays
-  on this machine, a project decision is committed and shows up in code
-  review, which is what a security judgment should do. Because a project's
-  file travels, a dismissal carries a reason from a closed vocabulary and
-  never free text (`wrong-call`, `intended`, `trusted-source`) — every
-  reason is a claim about the content that means the same thing to whoever
-  reads it next, and none is one person's tolerance for risk. Trusting a
-  source binds the source: the record names the provenance it trusted and
-  goes stale when the same bytes arrive from anywhere else, a fork
+- - - - - - **A dismissal settles one finding; whose it is decides what it
+  buys.** Beside the item-level acceptance sits the smaller decision: this one
+  finding, on this one installation, is not the problem the rule says it is.
+  The two classes are not interchangeable. The person's own dismissal unblocks
+  nothing — it settles a question and is never offered on a held-back item at
+  all. The publisher's committed review is read *before* the verdict, so a
+  finding it settles stops counting toward the score and can therefore move an
+  item out of Block; that is the whole point of a catalog reviewing its own
+  content, and it is bounded by the checks above — every one of which is a
+  question put to the catalog rather than to a file this project commits. The
+  publisher's record does not live in the person's manifest and is not one of
+  their revocable records: it lives in the catalog's committed
+  `kendex-reviews.toml` and nowhere else, and an audit rebuilds the plan to
+  read it — so it never appears in the Recorded decisions registry, which
+  lists what the person can take back. It is shown instead wherever the
+  finding is, as above. A personal dismissal binds the same way — review hash
+  and rule set — and it lives in the same place, the manifest of the scope the
+  item belongs to: a personal decision stays on this machine, a project
+  decision is committed and shows up in code review, where a security judgment
+  belongs. Because a project's file travels, a dismissal carries a reason from
+  a closed vocabulary and never free text (`wrong-call`, `intended`,
+  `trusted-source`) — every reason is a claim about the content that means the
+  same thing to whoever reads it next, and none is one person's tolerance for
+  risk. Trusting a source binds the source: the record names the provenance it
+  trusted and goes stale when the same bytes arrive from anywhere else, a fork
   included. One snapshot per installation holds the proof once with each
-  dismissal beneath it; a decision on newer content replaces the snapshot,
-  since the older dismissals spoke for bytes that are gone. A held-back
-  item cannot be dismissed into silence — it is decided by accepting or
-  removing it — and an accepted item's findings already read as accepted.
-  The UI never spells a decision key: the backend issues a token per
-  finding (`kind:name:harness#fingerprint@review-hash/scope-digest`), and
-  a dismiss re-audits before it writes, refusing the whole batch if any
-  token no longer names what is installed or was minted for another
-  scope's manifest. Trusting a source needs a source kendex itself
-  resolved and recorded in the lock; a remote url found beside unmanaged
-  files is not one, since the files could have written it. Every write is one journaled manifest
-  op for one scope. Removing an item reaps its decisions; the registry
-  (`kendex decisions`, Recorded decisions) reads every record against what
-  is installed now — active, stale with the reason, or obsolete. An undo
-  from the app takes back exactly the record it was shown, never a newer
-  one at the same key; the CLI's revoke names the record by key.
-  How the two decisions compose, written down so no surface has to guess:
-  a held-back item's findings are decided by accepting or removing the
-  item, so they are never offered for dismissal and the item stays visible
-  with every finding whatever was decided about any of them; an active
-  acceptance covers every finding on its item, so those read as accepted
-  and cannot be dismissed on top; a threshold change that turns a warning
-  into a block leaves the dismissals recorded but the item shows as held
-  back with its findings in full, and one that turns a block into a warning
-  leaves the acceptance covering the findings until it is withdrawn;
-  withdrawing an acceptance uncovers the findings, and any dismissal made
-  before it applies again. What still needs a person is one derivation
-  (`lib/reviewable.ts`): held-back items, counted once each, plus open
-  findings counted once per distinct evidence — the same bytes carrying the
-  same finding through several tools, which one decision legitimately
+  dismissal beneath it, and a decision on newer content replaces it: the older
+  dismissals spoke for bytes that are gone. A held-back item cannot be
+  dismissed into silence: it is decided by accepting or removing it, and an
+  accepted item's findings already read as accepted. The UI never spells a
+  decision key: the backend issues a token per finding
+  (`kind:name:harness#fingerprint@review-hash/scope-digest`), and a dismiss
+  re-audits before it writes, refusing the whole batch if any token no longer
+  names what is installed or was minted for another scope's manifest. Trusting
+  a source needs one kendex itself resolved and recorded in the lock; a remote
+  url found beside unmanaged files is not one, since the files could have
+  written it. Every write is one journaled manifest op for one scope. Removing
+  an item reaps its decisions; the registry (`kendex decisions`, Recorded
+  decisions) reads every record against what is installed now — active, stale
+  with the reason, or obsolete. An undo from the app takes back exactly the
+  record it was shown, never a newer one at the same key; the CLI's revoke
+  names the record by key. How the two decisions compose, written down so no
+  surface has to guess: a held-back item's findings are decided by accepting
+  or removing the item, so they are never offered for dismissal and the item
+  stays visible with every finding whatever was decided about any of them; an
+  active acceptance covers every finding on its item, so those read as
+  accepted and cannot be dismissed on top; below that the person's own live
+  dismissal answers, and below that the publisher's record — so a personal
+  dismissal that has gone stale falls through to the publisher's rather than
+  straight to open, and a finding nobody has ruled on is open; a threshold
+  change that turns a warning into a block leaves the dismissals recorded but
+  the item shows as held back with its findings in full, and one that turns a
+  block into a warning leaves the acceptance covering the findings until it is
+  withdrawn; withdrawing an acceptance uncovers the findings, and any
+  dismissal made before it applies again. What still needs a person is one
+  derivation (`lib/reviewable.ts`): held-back items, counted once each, plus
+  open findings counted once per distinct evidence — the same bytes carrying
+  the same finding through several tools, which one decision legitimately
   covers because no rule reads the tool. Everything else is presentation.
-  Every count in the app — the sidebar, Home, the footer, a scope's
-  summary, and whether the Review page is finished — reads that one number,
-  so dismissing a finding moves all of them at once, and a scope whose every
-  finding is decided reads as done rather than as warning forever.
-  A dismissal is about installed bytes and is never made on a plan: the
-  observed audit is what a tool would load right now, and that is what a
-  decision has to bind to. What a plan would install is scored the same
-  way, and the rows that will install with findings travel with the view
+  Every count in the app — the sidebar, Home, the footer, a scope's summary,
+  and whether the Review page is finished — reads that one number, so
+  dismissing a finding moves all of them at once, and a scope whose every
+  finding is decided reads as done rather than as warning forever. A dismissal
+  is about installed bytes, never about a plan: what a tool would load right
+  now is what a decision binds to. What a plan would install is scored the
+  same way, and the rows that will install with findings travel with the view
   as `queued`, so the apply preview says how many decisions will be waiting
   once the content lands — review-after-install, said before the install
-  instead of discovered after it.
-  Grouping on the page is presentation only. A concern row collapses one
-  rule across everything it touched, which is how a person reads a list;
-  a decision is made per piece of evidence, which is how a person is
-  honest. Where a concern is one piece of evidence its row carries the
-  verb; where it spans different content, each piece has its own, and the
-  page offers a one-at-a-time walk through the scope's open evidence,
-  worst first, rather than any button that would decide twenty different
-  contents at once. There is no rule-level mute, no time-based snooze and
-  no cross-scope action: a plan belongs to one scope and locks one scope.
+  instead of discovered after it. Grouping on the page is presentation only. A
+  concern row collapses one rule across everything it touched, which is how a
+  person reads a list; a decision is made per piece of evidence, which is how
+  a person is honest. Where a concern is one piece of evidence its row carries
+  the verb; where it spans different content, each piece has its own, and the
+  page walks the scope's open evidence one at a time, worst first, never a
+  button that decides twenty contents at once. There is no rule-level mute, no
+  time-based snooze and no cross-scope action: a plan belongs to one scope and
+  locks one scope.
 - **Rule severities are calibrated against real catalogs, not inherited.**
   A Critical blocks an install on its own, so the tier is only worth
   something if it is precise. Patterns that fired only on legitimate

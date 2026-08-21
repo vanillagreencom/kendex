@@ -163,3 +163,55 @@ fn consuming_repo_installs_customizes_and_refreshes_from_the_default_catalog() {
             .contains("Upstream v1")
     );
 }
+
+/// `kendex updates` names the place at the head of every line: the same
+/// package out of date at user level and in a project must never read as
+/// two copies of one line.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn updates_lines_lead_with_their_place() {
+    let tmp = fixture();
+    let home = tmp.path();
+    let proj = home.join("proj");
+    for args in [
+        &["add", "--skill", "gh", "-y"][..],
+        &["add", "--skill", "gh", "-y", "--global"][..],
+    ] {
+        let output = kendex(home, &proj, args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let upstream = home.join("git/vanillagreencom/kendex");
+    fs::write(
+        upstream.join("skills/gh/SKILL.md"),
+        "---\nname: gh\ndescription: github flows\n---\nUpstream v2.\n",
+    )
+    .unwrap();
+    git(&upstream, &["commit", "--quiet", "-am", "two"]);
+
+    let output = kendex(home, &proj, &["updates", "--refresh"]);
+    assert!(output.status.success());
+    let said = String::from_utf8_lossy(&output.stderr);
+    let line = said
+        .lines()
+        .find(|line| line.contains("skill gh"))
+        .unwrap_or_else(|| panic!("no gh line in {said}"));
+    let root = proj.canonicalize().unwrap();
+    assert!(
+        line.starts_with(&format!("{}  skill gh", root.display())),
+        "{line}"
+    );
+
+    let output = kendex(home, &proj, &["updates", "--global"]);
+    assert!(output.status.success());
+    let said = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        said.lines()
+            .any(|line| line.starts_with("global  skill gh")),
+        "{said}"
+    );
+}

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { Finding, FindingDecision, ItemSafety } from "@/bindings";
-import { evidenceGroups, openOccurrences, settledCount } from "./reviewable";
+import {
+  authorOccurrences,
+  authorSettledCount,
+  evidenceGroups,
+  openOccurrences,
+  settledCount,
+} from "./reviewable";
 
 const FINDING: Finding = {
   rule: "dangerous-commands",
@@ -127,6 +133,21 @@ describe("evidenceGroups", () => {
     expect(groups[0].items.map((i) => i.harness)).toEqual(["codex", "pi"]);
   });
 
+  // One decision covers every place the evidence was found, and a person
+  // about to make it is owed the whole of what they are deciding about —
+  // the same disclosure the publisher's list owes about somebody else's
+  // decision.
+  it("names every place one decision would cover", () => {
+    const at = (location: string): Finding => ({ ...FINDING, location });
+    const twice = row({
+      findings: [at("SKILL.md:5"), at("SKILL.md:41")],
+      decisions: [decision(), decision()],
+    });
+    const groups = evidenceGroups(openOccurrences([twice]));
+    expect(groups).toHaveLength(1);
+    expect(groups[0].locations).toEqual(["SKILL.md:5", "SKILL.md:41"]);
+  });
+
   it("keeps different content apart however alike the sentence reads", () => {
     const one = row({ name: "plugin-a", reviewHash: "hash-a" });
     const two = row({
@@ -137,6 +158,25 @@ describe("evidenceGroups", () => {
       ],
     });
     expect(evidenceGroups(openOccurrences([one, two]))).toHaveLength(2);
+  });
+
+  // A review hash seals the kind and the bytes, so two commands with the
+  // same body share one. One row for both would carry one name over a
+  // button that settles the other as well.
+  it("keeps two items' identical bytes apart, each under its own name", () => {
+    const ship = row({ kind: "command", name: "ship" });
+    const deploy = row({
+      kind: "command",
+      name: "deploy",
+      decisions: [
+        decision({ token: "command:deploy:claude#aaaaaaaaaaaaaaaa@hash-1" }),
+      ],
+    });
+    const groups = evidenceGroups(openOccurrences([ship, deploy]));
+    expect(groups.map((group) => group.items[0].name)).toEqual([
+      "ship",
+      "deploy",
+    ]);
   });
 
   it("only offers trusting a source when every installation can name one", () => {
@@ -164,5 +204,47 @@ describe("evidenceGroups", () => {
     const groups = evidenceGroups(openOccurrences([unreadable]));
     expect(groups).toHaveLength(1);
     expect(groups[0].tokens).toEqual([]);
+  });
+});
+
+describe("authorOccurrences", () => {
+  const settledByPublisher = decision({
+    fingerprint: "p",
+    state: {
+      state: "author-dismissed",
+      reason: "intended",
+      dismissedAt: "2026-08-16T00:00:00Z",
+      publisher: "vanillagreencom/kendex",
+    },
+  });
+  const settledByMe = decision({
+    fingerprint: "m",
+    state: {
+      state: "dismissed",
+      reason: "wrong-call",
+      dismissedAt: "2026-08-16T00:00:00Z",
+    },
+  });
+
+  it("counts what the publisher settled and not what the person did", () => {
+    const mixed = row({
+      findings: [FINDING, { ...FINDING, location: "SKILL.md:9" }],
+      decisions: [settledByPublisher, settledByMe],
+    });
+    expect(
+      authorOccurrences([mixed]).map((o) => o.decision.fingerprint),
+    ).toEqual(["p"]);
+    expect(authorSettledCount([mixed])).toBe(1);
+    // Always a subset: both are decided, only one of them by the publisher.
+    expect(settledCount([mixed])).toBe(2);
+  });
+
+  it("finds them on a row that still has open findings beside them", () => {
+    const beside = row({
+      findings: [FINDING, { ...FINDING, location: "SKILL.md:9" }],
+      decisions: [settledByPublisher, decision({ fingerprint: "o" })],
+    });
+    expect(authorSettledCount([beside])).toBe(1);
+    expect(openOccurrences([beside])).toHaveLength(1);
   });
 });

@@ -10,7 +10,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
-import { UpdateRowView } from "@/components/update-row";
+import { UpdatesTable } from "@/components/updates-table";
 import {
   CHECK_FOR_UPDATES_LABEL,
   hiddenUpdatesLabel,
@@ -20,10 +20,11 @@ import {
   UPDATE_ALL_LABEL,
   UPDATES_EMPTY,
   UPDATES_EMPTY_BODY,
-  UPDATES_SUBTITLE,
   UPDATES_UNCHECKED_TITLE,
 } from "@/lib/copy";
-import { CONTENT_WIDTH, PAGE_GUTTER } from "@/lib/layout";
+import { FOLLOW_SOURCE_HELP, updatesSubtitle } from "@/lib/copy-updates";
+import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
+import { packageCount, updatablePlaces } from "@/lib/update-groups";
 import { cn } from "@/lib/utils";
 import {
   hiddenUpdates,
@@ -34,7 +35,7 @@ import {
 /** Which packages have newer versions, what changed, and per-package
  *  control over how loudly to hear about it. */
 export function UpdatesPage() {
-  const { rows, warnings, busy, checking, check, updateAll } =
+  const { rows, warnings, busy, checking, check, updateRows } =
     useUpdatesStore();
   const load = useUpdatesStore((s) => s.load);
   const [showHidden, setShowHidden] = useState(false);
@@ -77,7 +78,19 @@ export function UpdatesPage() {
     <div className="flex min-h-0 flex-1 flex-col">
       <PageHeader
         title="Updates"
-        subtitle={UPDATES_SUBTITLE}
+        wide
+        subtitle={
+          visible.length > 0 ? (
+            <>
+              {updatesSubtitle(packageCount(visible), visible.length)}
+              <span className="block text-muted-foreground">
+                {FOLLOW_SOURCE_HELP}
+              </span>
+            </>
+          ) : (
+            FOLLOW_SOURCE_HELP
+          )
+        }
         action={
           <div className="flex gap-2">
             {visible.length > 0 ? (
@@ -93,11 +106,11 @@ export function UpdatesPage() {
                 {CHECK_FOR_UPDATES_LABEL}
               </Button>
             ) : null}
-            {visible.length > 1 ? (
+            {packageCount(visible) > 1 ? (
               <Button
                 size="sm"
-                disabled={busy}
-                onClick={() => void updateAll()}
+                disabled={busy || updatablePlaces(visible).length === 0}
+                onClick={() => void updateRows(visible)}
               >
                 {UPDATE_ALL_LABEL}
               </Button>
@@ -106,21 +119,13 @@ export function UpdatesPage() {
         }
       />
       <div className={cn("min-h-0 flex-1 overflow-y-auto", PAGE_GUTTER)}>
-        <div className={cn("pb-8", CONTENT_WIDTH)}>
+        <div className={cn("pb-8", WIDE_CONTENT_WIDTH)}>
           {visible.length === 0 ? (
             <EmptyState icon={CheckCircle2} title={UPDATES_EMPTY}>
               {UPDATES_EMPTY_BODY}
             </EmptyState>
           ) : (
-            <div className="divide-y">
-              {visible.map((row) => (
-                <UpdateRowView
-                  key={`${row.kind}:${row.name}:${JSON.stringify(row.scope)}`}
-                  row={row}
-                  onIgnore={setConfirmIgnore}
-                />
-              ))}
-            </div>
+            <UpdatesTable rows={visible} onIgnore={setConfirmIgnore} />
           )}
           {warnings.length > 0 ? (
             <div className="mt-8">
@@ -146,16 +151,11 @@ export function UpdatesPage() {
                 onClick={() => setShowHidden((value) => !value)}
               >
                 <HiddenChevron className="size-3.5" />
-                {hiddenUpdatesLabel(hidden.length)}
+                {hiddenUpdatesLabel(packageCount(hidden))}
               </button>
               {showHidden ? (
-                <div className="mt-2 divide-y opacity-80">
-                  {hidden.map((row) => (
-                    <UpdateRowView
-                      key={`${row.kind}:${row.name}:${JSON.stringify(row.scope)}`}
-                      row={row}
-                    />
-                  ))}
+                <div className="mt-2 opacity-80">
+                  <UpdatesTable rows={hidden} />
                 </div>
               ) : null}
             </div>

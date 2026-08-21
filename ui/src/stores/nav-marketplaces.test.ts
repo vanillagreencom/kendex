@@ -52,6 +52,7 @@ describe("nav store — marketplaces", () => {
   it("remembers which Marketplaces tab was open through back", () => {
     useNavStore.getState().goToMarketplaces("packages");
     useNavStore.getState().goToMarketplace({
+      by: "subscription",
       scope: { scope: "global" },
       source: "kendex",
     });
@@ -63,11 +64,15 @@ describe("nav store — marketplaces", () => {
   });
 
   it("opens nested marketplace pages with their refs, cleared on a pick", () => {
-    const ref = { scope: { scope: "global" as const }, source: "kendex" };
+    const ref = {
+      by: "subscription" as const,
+      scope: { scope: "global" as const },
+      source: "kendex",
+    };
     useNavStore.getState().goToMarketplace(ref);
     expect(useNavStore.getState().marketplaceRef).toEqual(ref);
 
-    useNavStore.getState().goToBundle({ ...ref, bundle: "starter" });
+    useNavStore.getState().goToBundle({ catalog: ref, bundle: "starter" });
     expect(useNavStore.getState().page).toBe("bundleDetail");
 
     useNavStore.getState().setPage("home");

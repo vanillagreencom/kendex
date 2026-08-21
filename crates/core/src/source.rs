@@ -80,6 +80,18 @@ pub fn local_source_root(env: &Env, scope: &Scope) -> PathBuf {
     }
 }
 
+/// Where a declared source's checkout sits on this machine, before asking
+/// whether anything is there.
+fn path_root(env: &Env, scope: &Scope, path: &str) -> PathBuf {
+    if Path::new(path).is_absolute() {
+        return PathBuf::from(path);
+    }
+    match scope {
+        Scope::Global => env.home.join(path),
+        Scope::Project { root } => root.join(path),
+    }
+}
+
 pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Result<SourceState> {
     if name == LOCAL_SOURCE_NAME {
         // Adopt creates this root; until then the reserved source has no
@@ -109,15 +121,7 @@ pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Res
         });
     }
     if let Some(path) = &decl.path {
-        let base = match scope {
-            Scope::Global => env.home.clone(),
-            Scope::Project { root } => root.clone(),
-        };
-        let joined = if Path::new(path).is_absolute() {
-            PathBuf::from(path)
-        } else {
-            base.join(path)
-        };
+        let joined = path_root(env, scope, path);
         return match joined.canonicalize() {
             Ok(root) if root.is_dir() => Ok(SourceState::Ready(ResolvedSource {
                 name: name.to_owned(),

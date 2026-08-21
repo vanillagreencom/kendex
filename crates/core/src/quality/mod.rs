@@ -18,27 +18,60 @@ use specta::Type;
 
 use crate::model::{HarnessId, ItemKind};
 
+pub mod author;
+mod authorship;
 pub mod dimensions;
+mod finding;
 mod homoglyph;
 pub mod observe;
 pub mod overrides;
 mod phrase;
 pub mod reviews;
-mod rules;
+pub mod rules;
 mod score;
 mod secret;
 mod text;
 
+pub use authorship::{Authored, Injection, Publishers, publishers};
 pub use dimensions::{AntiPattern, DimensionScore, QualityScore};
+pub use finding::Finding;
 pub use score::{Deduction, SafetyScore, Thresholds, Verdict, safety, verdict};
 pub use secret::{fingerprint_secret, redact};
 pub use text::{Line, Normalization};
 
+/// How much of a hash stands in for the thing it names, wherever that name
+/// reaches a finding's message.
+///
+/// A finding's identity is its rule and its sentence
+/// ([`Finding::fingerprint`]), so a digest inside a sentence decides
+/// identity as surely as the sentence around it — and every one of them
+/// names something a project can choose. Grind a hidden suffix until the
+/// digest matches, and an injected finding reads as one a publisher already
+/// settled, which is the guarantee this whole feature rests on, defeated by
+/// arithmetic rather than by any of the structural routes. Sixteen
+/// hexadecimal characters is sixty-four bits, the same as a fingerprint
+/// collision costs. Eight was thirty-two, which is an afternoon.
+pub(crate) const DIGEST_CHARS: usize = 16;
+
+/// A short, stable name for content a message cannot print — too long, or
+/// no longer in hand at all. Never an identity on its own: it goes beside
+/// what *is* printed, so the sentence still says what the rule fired on and
+/// the digest only tells apart what the printing left out.
+fn digest(material: &str) -> String {
+    crate::hash::hash_bytes(material.as_bytes())
+        .chars()
+        .take(DIGEST_CHARS)
+        .collect()
+}
+
 /// The rule set findings were produced by. An override binds to it, so any
-/// change to what the rules catch — a new rule, a widened pattern, a
-/// re-calibrated severity — must bump this and stale every override that
-/// was granted against the old behaviour.
-pub const RULESET_VERSION: u32 = 2;
+/// change to what a finding *is* must bump this and stale every override
+/// granted against the old behaviour — a new rule, a widened pattern, a
+/// re-calibrated severity, and equally a change to how a finding is
+/// identified. Version 3 made [`Finding::fingerprint`] non-positional: the
+/// same problems, under new identities, which without a bump would read as
+/// "different problems were found than the ones that were reviewed".
+pub const RULESET_VERSION: u32 = 3;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Type, Hash,
@@ -52,6 +85,14 @@ pub enum Severity {
 }
 
 impl Severity {
+    /// Every weight a finding can be read at, lightest first.
+    pub const ALL: [Severity; 4] = [
+        Severity::Low,
+        Severity::Medium,
+        Severity::High,
+        Severity::Critical,
+    ];
+
     /// What one finding at this severity costs the safety score.
     pub fn deduction(self) -> u32 {
         match self {
@@ -82,49 +123,6 @@ impl Severity {
             Severity::Medium => "medium",
             Severity::Low => "low",
         }
-    }
-}
-
-/// One safety problem, where it is, and what to do about it. The message
-/// never holds a matched secret — only its fingerprint (invariant of
-/// `secret::fingerprint_secret`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct Finding {
-    pub rule: String,
-    pub severity: Severity,
-    /// The file and line, or the config key that holds the entry.
-    pub location: String,
-    pub message: String,
-    pub remediation: String,
-}
-
-impl Finding {
-    /// This exact finding's identity. An override binds to a set of these,
-    /// so a review of one problem can never wave through a different one
-    /// that appears later at the same place.
-    /// `root` is the item's own location, stripped from the finding's so
-    /// the print names the file *within* the item. The gate reads a skill
-    /// at its canonical tree and the audit reads it back through the
-    /// harness-native link — same bytes, two spellings of the path — and a
-    /// print that kept the absolute path would call every accepted
-    /// symlink-method install a different set of findings.
-    pub fn fingerprint(&self, root: &str) -> String {
-        let location = match self.location.strip_prefix(root) {
-            Some(rest) => rest.trim_start_matches('/'),
-            None => self.location.as_str(),
-        };
-        let material = format!(
-            "{}|{}|{}|{}",
-            self.rule,
-            self.severity.name(),
-            location,
-            self.message
-        );
-        crate::hash::hash_bytes(material.as_bytes())
-            .chars()
-            .take(16)
-            .collect()
     }
 }
 
@@ -335,6 +333,11 @@ pub struct SkippedRule {
 pub struct AuditResult {
     pub findings: Vec<Finding>,
     pub skipped: Vec<SkippedRule>,
+    /// What every finding here costs, before anybody's decision is read.
+    /// The score a person is shown comes from [`author::score`], which
+    /// answers for what is still an open question; this is the number the
+    /// rules alone produced, and the two differ wherever a finding has
+    /// been settled.
     pub safety: SafetyScore,
     /// Advisory, never blocking, and `None` for kinds that carry no
     /// authored prose to judge — a settings toggle has no writing in it.

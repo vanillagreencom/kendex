@@ -10,11 +10,202 @@
 set -euo pipefail
 
 INPUT=$(cat)
-COMMAND=$(echo "$INPUT" | grep -o '"command"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"command"[[:space:]]*:[[:space:]]*"//;s/"$//' 2>/dev/null || true)
+# The payload is JSON, and a quoted path — `git -C "$repo" commit`, which is
+# what a path with a space requires — arrives with its quotes escaped. A
+# reader that stops at the first `"` sees `git -C \` and finds no commit,
+# so every check below passes a command it never looked at.
+# `block-repo-copy.sh` decodes the same field the same way.
+COMMAND=""
+decoded=0
+if command -v jq >/dev/null 2>&1; then
+  # jq's own exit status decides: 2 means it could not read the payload at
+  # all, and a swallowed 2 would leave COMMAND empty and every lane below
+  # skipped on a commit nobody inspected.
+  if COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // .command // ""' 2>/dev/null); then
+    decoded=1
+  fi
+fi
+if [ "$decoded" -eq 0 ]; then
+  COMMAND=$(printf '%s' "$INPUT" \
+    | grep -oE '"command"[[:space:]]*:[[:space:]]*"(\\.|[^"\\])*"' \
+    | head -1 \
+    | sed 's/.*"command"[[:space:]]*:[[:space:]]*"//; s/"$//' \
+    | sed 's/\\n/ /g; s/\\t/ /g; s/\\"/"/g; s/\\\\/\\/g') || COMMAND=""
+fi
 
-# Only relevant for git commit commands
-if ! echo "$COMMAND" | grep -qE 'git[[:space:]]+commit'; then
+# A payload carrying no command is not a commit and passes; one that carries
+# a command the decoder could not recover is refused, because the checks
+# below would otherwise run on an empty string and report success for a
+# commit they never saw. `block-repo-copy.sh` draws the same line.
+if [ -z "$COMMAND" ] && printf '%s' "$INPUT" | grep -q '"command"[[:space:]]*:'; then
+  echo "pre-commit-check: could not read the command out of the hook payload" >&2
+  exit 2
+fi
+
+# Whether a command commits must never come back "no" because of how it was
+# quoted: a no skips every check below, so a wrong no is a commit nobody
+# inspected. `git -C "/my repo" commit`, `env X=1 git commit`, a commit
+# behind `&&` — each of those needs its own case in a parser, and the cases
+# nobody thought of are exactly the ones that fail open. So this does not
+# parse. It asks whether the words `git` and `commit` both appear, in that
+# order. `git log --grep=commit` pays for that with a lint run it did not
+# need, which is the side worth being wrong on.
+FLAT=$(printf '%s' "$COMMAND" | tr '\n\t' '  ')
+WORDS=" $(printf '%s' "$FLAT" | tr -c 'a-zA-Z0-9_=-' ' ') "
+if ! printf '%s' "$WORDS" | grep -qE ' git( .*)? commit '; then
   exit 0
+fi
+
+# Split a command into shell words with quotes honoured. Nothing is
+# evaluated: this walks characters and tracks which quote is open, so
+# `-C "/my repo"` stays one word instead of becoming `"/my` and `repo"` —
+# a directory that does not exist, which drops the checks back onto the
+# hook's own cwd and answers for another repository's staged work.
+TOKENS=()
+tokenize() {
+  local s=$1 i=0 c quote='' word='' started=0
+  TOKENS=()
+  while [ "$i" -lt "${#s}" ]; do
+    c=${s:$i:1}
+    i=$((i + 1))
+    if [ -n "$quote" ]; then
+      if [ "$c" = "$quote" ]; then
+        quote=''
+      elif [ "$c" = '\' ] && [ "$quote" = '"' ]; then
+        word+=${s:$i:1}
+        i=$((i + 1))
+      else
+        word+=$c
+      fi
+      continue
+    fi
+    case $c in
+      "'" | '"')
+        quote=$c
+        started=1
+        ;;
+      ' ')
+        if [ "$started" -eq 1 ]; then
+          TOKENS+=("$word")
+          word=''
+          started=0
+        fi
+        ;;
+      '\')
+        word+=${s:$i:1}
+        i=$((i + 1))
+        started=1
+        ;;
+      *)
+        word+=$c
+        started=1
+        ;;
+    esac
+  done
+  if [ "$started" -eq 1 ]; then
+    TOKENS+=("$word")
+  fi
+}
+
+# Where the commit lands, which is not always where this hook started: a
+# session working in a git worktree commits with `git -C <path>` or a
+# `cd <path> &&` prefix. Reading the staged set from the wrong place answers
+# for another repository's work — either blocking a commit it has nothing to
+# do with, or clearing one nobody checked.
+#
+# A command is a sequence of segments, so the `-C` that counts is the one
+# belonging to the git that commits: in `git -C clean status && git -C dirty
+# commit` the first names a repository this hook must not answer for.
+git_home=${HOME:-}
+
+# Join a path onto the running target the way the shell would.
+move_target() {
+  local path=$1
+  case $path in
+    '~') path=$git_home ;;
+    '~/'*) path=$git_home/${path#'~/'} ;;
+  esac
+  case $path in
+    /*) TARGET_DIR=$path ;;
+    *) TARGET_DIR=${TARGET_DIR:-.}/$path ;;
+  esac
+}
+
+tokenize "$FLAT"
+TARGET_DIR=""
+committing=0
+at_segment_start=1
+i=0
+n=${#TOKENS[@]}
+while [ "$i" -lt "$n" ]; do
+  token=${TOKENS[$i]}
+  case $token in
+    '&&' | '||' | ';' | '|' | '&')
+      at_segment_start=1
+      i=$((i + 1))
+      continue
+      ;;
+  esac
+  # A `cd` ahead of the commit moves it; one after belongs to whatever comes
+  # next and must not drag the check along with it.
+  if [ "$at_segment_start" -eq 1 ] && [ "$token" = "cd" ] && [ "$committing" -eq 0 ]; then
+    j=$((i + 1))
+    [ "${TOKENS[$j]:-}" = "--" ] && j=$((j + 1))
+    [ -n "${TOKENS[$j]:-}" ] && move_target "${TOKENS[$j]}"
+    at_segment_start=0
+    i=$((i + 1))
+    continue
+  fi
+  at_segment_start=0
+  case $token in
+    git | */git) ;;
+    *)
+      i=$((i + 1))
+      continue
+      ;;
+  esac
+  # git's own options sit between it and the subcommand, and these carry
+  # their value in the next word, so the subcommand is not what follows them.
+  pending=()
+  j=$((i + 1))
+  while [ "$j" -lt "$n" ]; do
+    case ${TOKENS[$j]} in
+      -C)
+        pending+=("${TOKENS[$((j + 1))]:-}")
+        j=$((j + 2))
+        ;;
+      -C?*)
+        pending+=("${TOKENS[$j]#-C}")
+        j=$((j + 1))
+        ;;
+      -c | --git-dir | --work-tree | --namespace | --exec-path | --config-env)
+        j=$((j + 2))
+        ;;
+      -*) j=$((j + 1)) ;;
+      *) break ;;
+    esac
+  done
+  if [ "${TOKENS[$j]:-}" = "commit" ]; then
+    committing=$((committing + 1))
+    for path in ${pending[@]+"${pending[@]}"}; do
+      move_target "$path"
+    done
+  fi
+  i=$((j + 1))
+done
+
+if [ "$committing" -gt 1 ]; then
+  echo "pre-commit-check: more than one commit in this command — run them separately so each is checked" >&2
+  exit 2
+fi
+
+# A named target this hook cannot enter is refused, never dropped. A path
+# the shell expands and this reader cannot — `git -C "$repo" commit` — used
+# to fall back to the checkout the hook started in, so the commit landed
+# somewhere nothing had looked at and the run reported success.
+if [ -n "$TARGET_DIR" ] && ! cd "$TARGET_DIR" 2>/dev/null; then
+  echo "pre-commit-check: cannot enter '$TARGET_DIR' — name the repository with a literal path so its commit can be checked" >&2
+  exit 2
 fi
 
 # Check staged files

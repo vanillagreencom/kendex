@@ -1,5 +1,16 @@
-# Authoring validation for a kendex catalog, and the round-trip smoke
-# suite for this repository's own renderers.
+# Authoring validation for a kendex catalog. Reusable only: this repository
+# calls it from `own-catalog.yml` like any other caller, so nothing in here
+# has to work out whose run it is.
+#
+# Nothing here may ask whose run it is. There is no expression that can
+# answer: `github.event_name` in a called workflow is the CALLER's trigger,
+# never the string workflow_call; `inputs.path` is a string a caller can
+# hand an empty value; and `inputs.strict == null` is `0 == 0` under
+# GitHub's numeric coercion for `==`, so it is true for every caller who
+# passes `false`. Each of those forces --strict on callers who asked for
+# none and runs kendex's own renderer suite against their checkout. A
+# caller's inputs are honoured as given, and this repository is a caller
+# like any other.
 #
 # Catalog repositories call the first job from their own workflow:
 #
@@ -31,9 +42,6 @@ on:
         description: kendex revision to build the checker from
         type: string
         default: main
-  push:
-    branches: [main]
-  pull_request:
 
 jobs:
   check:
@@ -46,13 +54,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: catalog
-      # Callers pin the checker with inputs.ref; this repo's own PR and push
-      # runs build it from the event's own sha, so an engine change and the
-      # catalog change it validates travel through review together.
+      # The checker every caller gets is the revision they name. A caller
+      # who names none gets main; this repository names its own sha from
+      # own-catalog.yml, so an engine change and the catalog change it
+      # validates travel through review together.
       - uses: actions/checkout@v4
         with:
           repository: vanillagreencom/kendex
-          ref: ${{ inputs.ref || github.sha }}
+          ref: ${{ inputs.ref }}
           path: kendex
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -63,40 +72,12 @@ jobs:
       - name: Build the checker
         run: cargo build --release --locked -p kendex-cli
         working-directory: kendex
+      # The caller's own answer, honoured as given. This repository asks
+      # for `strict: true` from own-catalog.yml, because everyone who
+      # installs from the default marketplace inherits whatever its safety
+      # pass still finds.
       - name: Validate the catalog
         run: |
           kendex/target/release/kendex check \
             --catalog "catalog/${{ inputs.path || '.' }}" \
-            ${{ (inputs.strict && '--strict') || '' }}
-
-  # The one job that lets somebody other than kendex read kendex's output.
-  # Freely installable without an account or an API key: OpenCode, Gemini
-  # CLI, Codex and Claude Code all ship on npm and all answer a local
-  # list/version command offline. Cursor's agent CLI and the GitHub Copilot
-  # CLI are not installed here — both want an authenticated session — so
-  # the suite skips them and says so. A run where every harness was absent
-  # fails; see crates/cli/tests/cli_smoke.rs.
-  smoke:
-    name: real-CLI round trip
-    runs-on: ${{ vars.CI_RUNNER_8V || 'ubuntu-latest' }}
-    if: github.event_name != 'workflow_call'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: System dependencies for the keychain store
-        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - name: Install the freely installable harness CLIs
-        run: |
-          npm install -g \
-            opencode-ai \
-            @google/gemini-cli \
-            @openai/codex \
-            @anthropic-ai/claude-code
-      - name: Round-trip the emitted trees
-        env:
-          KENDEX_CLI_SMOKE: "1"
-        run: cargo test -p kendex-cli --test cli_smoke -- --nocapture
+            ${{ inputs.strict && '--strict' || '' }}

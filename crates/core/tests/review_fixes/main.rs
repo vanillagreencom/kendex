@@ -394,4 +394,5 @@ fn a_directory_at_a_file_target_is_a_conflict_not_a_retry_loop() {
     apply::execute(&w.env, &report.plan, None).unwrap();
 }
 
+mod agent_skills;
 mod roots;

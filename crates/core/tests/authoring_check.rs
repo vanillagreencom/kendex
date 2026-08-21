@@ -140,73 +140,6 @@ fn check_and_index_agree_on_the_offered_set() {
     }
 }
 
-/// A committed review record settles a finding: the item stops being held
-/// back, the finding is still reported (marked dismissed), and editing the
-/// item's content makes the record stale so the hold comes back.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_committed_dismissal_unblocks_until_the_content_moves() {
-    use kendex_core::check_catalog::dismissals;
-    use kendex_core::quality::Verdict;
-
-    let (_tmp, root) = repo();
-    let dir = root.join("skills/guardy");
-    fs::create_dir_all(&dir).unwrap();
-    let body = "---\nname: guardy\ndescription: a commit guard\n---\nIf the hook blocks a commit, `git commit --no-verify` is the deliberate bypass.\n";
-    fs::write(dir.join("SKILL.md"), body).unwrap();
-    fs::write(root.join("kendex.toml"), "[marketplace]\nname = \"demo\"\n").unwrap();
-
-    let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo").unwrap();
-    let item = &report.items[0];
-    assert_eq!(item.verdict, Verdict::Block);
-    let token = item
-        .findings
-        .iter()
-        .find_map(|finding| finding.token.clone())
-        .unwrap();
-    let (kind, name, fingerprint) = dismissals::parse_token(&token).unwrap();
-    assert_eq!(kind, ItemKind::Skill);
-    assert_eq!(name, "guardy");
-
-    let hash = dismissals::content_hash(&sealed, &dir).unwrap();
-    dismissals::record(
-        &sealed,
-        kind,
-        name,
-        &hash,
-        &[(
-            fingerprint.to_owned(),
-            kendex_core::quality::reviews::DismissReason::Intended,
-        )],
-    )
-    .unwrap();
-
-    // Re-open so the reviews file is inside the sealed root's view.
-    let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo").unwrap();
-    let item = &report.items[0];
-    assert_ne!(
-        item.verdict,
-        Verdict::Block,
-        "the reviewed finding no longer holds the item back"
-    );
-    let settled = item
-        .findings
-        .iter()
-        .find(|finding| finding.token.as_deref() == Some(token.as_str()))
-        .unwrap();
-    assert!(
-        settled.dismissed,
-        "the finding is still reported, marked dismissed"
-    );
-
-    // The content moves: the snapshot is stale and the hold returns.
-    fs::write(dir.join("SKILL.md"), format!("{body}\nOne more line.\n")).unwrap();
-    let report = check(&sealed, "repo").unwrap();
-    assert_eq!(report.items[0].verdict, Verdict::Block);
-}
-
 /// Tokens parse only in their printed shape.
 #[test]
 fn authoring_tokens_parse_in_their_printed_shape() {
@@ -267,4 +200,68 @@ fn repo_root_exclusions_hold_under_the_given_spelling() {
         "{:?}",
         files.iter().map(|(p, _)| p).collect::<Vec<_>>()
     );
+}
+
+/// The one this repository is: the default marketplace. Everyone who
+/// installs from it inherits whatever its safety pass still finds, so
+/// nothing may ship undismissed — a finding is fixed, or the maintainer
+/// records why it is not a problem, before it reaches anybody.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_default_catalog_ships_nothing_undismissed() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_owned();
+    let sealed = SealedSource::open(&root).unwrap();
+    let report = check(&sealed, "kendex").unwrap();
+    // The clean assertions below are only worth something if the check read
+    // the catalog at all: a moved declaration or a widened exclusion would
+    // otherwise pass this test green over an empty item set.
+    assert!(
+        report.tally().items >= 30,
+        "the default catalog's own check read {} items — discovery has narrowed",
+        report.tally().items
+    );
+    let open: Vec<String> = report
+        .findings()
+        .filter(|finding| finding.rule.is_some() && !finding.dismissed)
+        .map(|finding| format!("{}: {}", finding.file, finding.message))
+        .collect();
+    assert!(
+        open.is_empty(),
+        "fix these or record why they are intended with `kendex dismiss --catalog .`:\n{}",
+        open.join("\n")
+    );
+    assert_eq!(
+        report.failing(true),
+        0,
+        "the catalog's own check must be clean under --strict"
+    );
+}
+
+/// The control for the check above: a catalog with a finding nobody has
+/// recorded a decision on reports it as open, so the assertion is answering
+/// the content and not an empty iterator.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_undismissed_finding_is_reported_as_open() {
+    let (_tmp, root) = repo();
+    let dir = root.join("skills").join("risky");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("SKILL.md"),
+        "---\nname: risky\ndescription: about risky\n---\nRun `git commit --no-verify` first.\n",
+    )
+    .unwrap();
+    let sealed = SealedSource::open(&root).unwrap();
+    let report = check(&sealed, "repo").unwrap();
+    let open = report
+        .findings()
+        .filter(|finding| finding.rule.is_some() && !finding.dismissed)
+        .count();
+    assert!(open > 0);
+    assert!(report.failing(true) > 0);
 }

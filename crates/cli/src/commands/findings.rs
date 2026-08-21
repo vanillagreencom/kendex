@@ -161,6 +161,16 @@ fn print_row(reading: &Reading) {
                 "      dismissed {dismissed_at} — {}",
                 reason.name()
             )),
+            DecisionState::AuthorDismissed {
+                reason,
+                dismissed_at,
+                publisher,
+            } => say(&format!(
+                "      {} reviewed this {} and recorded it as {}",
+                kendex_core::names::shown(publisher),
+                kendex_core::names::shown(dismissed_at),
+                reason.name()
+            )),
             DecisionState::Accepted { granted_at } => {
                 say(&format!("      accepted {granted_at}"));
             }

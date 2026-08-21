@@ -15,6 +15,7 @@ const CLEAN_SAFETY = (kind: ItemKind, name: string): PackageSafety => ({
   contentHash: "b3a19f04c7d2e851",
   ruleset: 3,
   fromCache: true,
+  publisher: null,
 });
 
 const WEBHOOK_SAFETY: PackageSafety = {
@@ -27,6 +28,7 @@ const WEBHOOK_SAFETY: PackageSafety = {
       location: "skills/webhook-relay/SKILL.md:24",
       message: "posts file contents to an address the skill itself chooses",
       remediation: "pin the destination and show it to the user before sending",
+      settled: null,
     },
     {
       rule: "credential-theft",
@@ -35,6 +37,9 @@ const WEBHOOK_SAFETY: PackageSafety = {
       message: "reads GITHUB_TOKEN and forwards it with the request",
       remediation:
         "drop the token from the request; the webhook does not need it",
+      // The publisher settled this one; the first is still an open question
+      // and still counts.
+      settled: { reason: "intended", dismissedAt: "2026-08-19T09:12:00Z" },
     },
   ],
   safety: {
@@ -59,10 +64,14 @@ const WEBHOOK_SAFETY: PackageSafety = {
   quality: null,
   skipped: [],
   verdict: "warn",
-  reasons: ["safety 72 is below the warn threshold 80"],
+  reasons: [
+    "safety 72 is below the warn threshold 80",
+    "this project adds its own instructions to webhook-relay; they are not in this preview and are scored when it installs",
+  ],
   contentHash: "e0c574a2918bd63f",
   ruleset: 3,
   fromCache: false,
+  publisher: "vanillagreencom/kendex",
 };
 
 export const packageSafety = (kind: ItemKind, name: string): PackageSafety =>

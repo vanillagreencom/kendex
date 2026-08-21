@@ -8,12 +8,12 @@ use specta::Type;
 
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-use crate::model::{ItemKind, Scope};
+use crate::model::ItemKind;
 use crate::names;
 use crate::package::detail::PackageFile;
 use crate::tags::Tag;
 
-use super::item_header;
+use super::{Catalog, item_header};
 
 /// What the available-package page shows before anything installs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -35,21 +35,22 @@ pub struct PackagePreview {
 
 pub fn package_preview(
     env: &Env,
-    scope: &Scope,
-    source_name: &str,
+    catalog: &Catalog,
     kind: ItemKind,
     name: &str,
 ) -> Result<PackagePreview> {
-    let browsed = super::open(env, scope, source_name)?;
+    let browsed = super::open(env, catalog)?;
     let Some(path) = crate::source::find_item(&browsed.sealed, &browsed.config, kind, name) else {
         return Err(CoreError::ItemNotInSource {
             name: name.to_owned(),
-            source_name: source_name.to_owned(),
+            source_name: catalog.label().to_owned(),
         });
     };
     let mut files = Vec::new();
     let readme = if browsed.sealed.is_dir(&path) {
-        for (rel, bytes) in browsed.sealed.collect_tree(&path, &[])? {
+        // The same tree scoring and install read: a repo-root skill's
+        // `.git`, `node_modules` and build output are not its files.
+        for (rel, bytes) in browsed.sealed.collect_skill_tree(&path)? {
             files.push(file_row(&rel, bytes.len()));
         }
         browsed
@@ -134,4 +135,41 @@ fn file_row(rel: &Path, len: usize) -> PackageFile {
         size: len.min(u32::MAX as usize) as u32,
         path,
     }
+}
+
+/// One offered file's content, capped for preview, before anything
+/// installs — the same validated read an installed package's file gets,
+/// confined to the package's own directory inside the sealed catalog.
+pub fn package_file(
+    env: &Env,
+    catalog: &Catalog,
+    kind: ItemKind,
+    name: &str,
+    rel: &str,
+) -> Result<crate::engine::ItemSource> {
+    let browsed = super::open(env, catalog)?;
+    let Some(path) = crate::source::find_item(&browsed.sealed, &browsed.config, kind, name) else {
+        return Err(CoreError::ItemNotInSource {
+            name: name.to_owned(),
+            source_name: catalog.label().to_owned(),
+        });
+    };
+    // Only a file the preview lists is readable: the skill tree scoring
+    // and install use, never the repository around a repo-root skill.
+    let offered = if browsed.sealed.is_dir(&path) {
+        browsed
+            .sealed
+            .collect_skill_tree(&path)?
+            .into_iter()
+            .any(|(tree_rel, _)| file_row(&tree_rel, 0).path == rel)
+    } else {
+        Path::new(rel).file_name() == path.file_name() && !rel.contains('/')
+    };
+    if !offered {
+        return Err(CoreError::SourceEscape {
+            path: Path::new(rel).to_path_buf(),
+            reason: "not one of this package's offered files".to_owned(),
+        });
+    }
+    crate::package::item_file::item_file(&browsed.sealed, &path, rel)
 }

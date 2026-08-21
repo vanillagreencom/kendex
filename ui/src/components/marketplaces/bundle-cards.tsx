@@ -1,10 +1,10 @@
 import { Package } from "lucide-react";
 import { useEffect, useMemo } from "react";
-import type { AvailablePackage, ItemKind, Scope } from "@/bindings";
+import type { AvailablePackage, Catalog, ItemKind } from "@/bindings";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { kindLabel } from "@/lib/labels";
-import { marketKey, useMarketplacesStore } from "@/stores/marketplaces";
+import { bundleKey, useMarketplacesStore } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 
 /** The curated sets one marketplace offers, as cards: what each carries and
@@ -12,12 +12,10 @@ import { useNavStore } from "@/stores/nav";
  * every member names its sets — and each card's counts come from its own
  * bundle read. */
 export function BundleCards({
-  scope,
-  source,
+  catalog,
   offered,
 }: {
-  scope: Scope;
-  source: string;
+  catalog: Catalog;
   offered: AvailablePackage[];
 }) {
   const bundles = useMarketplacesStore((s) => s.bundles);
@@ -31,9 +29,9 @@ export function BundleCards({
 
   useEffect(() => {
     for (const name of names) {
-      void loadBundle(scope, source, name);
+      void loadBundle(catalog, name);
     }
-  }, [names, scope, source, loadBundle]);
+  }, [names, catalog, loadBundle]);
 
   if (names.length === 0) {
     return (
@@ -47,7 +45,7 @@ export function BundleCards({
   return (
     <div className="grid grid-cols-[repeat(auto-fill,minmax(18rem,1fr))] gap-4">
       {names.map((name) => {
-        const detail = bundles[`${marketKey(scope, source)}::${name}`];
+        const detail = bundles[bundleKey(catalog, name)];
         const state = !detail
           ? null
           : detail.installedMembers === detail.totalMembers &&
@@ -76,7 +74,7 @@ export function BundleCards({
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => goToBundle({ scope, source, bundle: name })}
+                  onClick={() => goToBundle({ catalog, bundle: name })}
                 >
                   Open
                 </Button>

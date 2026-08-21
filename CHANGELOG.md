@@ -24,6 +24,13 @@ changes carry a **Breaking** call-out with their migration note inline.
   opens. It is also the fix for a display set to a fractional scale, which
   GTK rounds to a whole number. If the window cannot take your size, it
   opens at 100% and says so, and the size you chose is kept for next time.
+- Marketplaces › Community: a listed marketplace opens in the app before
+  you subscribe — its packages and bundles, each package's README, files
+  and safety findings, and the About report — on the same pages a
+  subscription gets. Subscribe from any of them and the page carries on as
+  the subscription, Install and all. A Skills.sh hit opens its repository
+  the same way. An unreachable repository says so on the page, with a way
+  to try again.
 - New ways to install. A one-line installer,
   `curl -fsSL https://kendex.ai/install.sh | sh`, that installs the app and
   the CLI on Linux and the CLI on macOS;
@@ -34,17 +41,95 @@ changes carry a **Breaking** call-out with their migration note inline.
 - The default catalog now offers curated bundles and tagged packages, so you
   can install a working set in one step: orchestration, code-review,
   research, and commit-guards.
-- Catalog authors can settle a reviewed safety finding:
-  `kendex dismiss --catalog <dir> --reason intended '<token>'` records the
-  decision in a committed `kendex-reviews.toml`, and `kendex check --catalog`
-  stops holding the catalog back for that exact finding on that exact
-  content. Any edit to the item brings the hold back, dismissed findings are
-  still reported, and installs on other machines are unaffected — a catalog
-  can never pre-approve its own content for consumers. `check --catalog`
-  prints the token beside each blocking finding.
-
+- Catalog authors can settle a reviewed safety finding: `kendex dismiss
+  --catalog <dir> --reason intended '<token>'` records the decision in a
+  committed `kendex-reviews.toml`, and `kendex check --catalog` stops
+  holding the catalog back for that exact finding on that exact content. The
+  decision reaches whoever installs the item too: the finding stops counting
+  for them, is still shown, and is labelled with the publisher's name and
+  reason so it is clear whose judgement it is — and where the publisher
+  decided differently for two tools, each decision is listed with its own
+  reason and date rather than the first one standing in for both. It settles
+  only what the publisher wrote — their occurrences rather than yours, each
+  at the weight the installed copy gives it — so nothing a project adds to
+  the item rides in on a reviewed finding however serious it reads, and no
+  line your project injected is ever shown under a publisher's name. Adding
+  instructions to a skill cannot cost the publisher their review either,
+  even when the added bytes are what pushes the file past a tool's size
+  limit and moves their line into `references/`. Neither can a project take
+  the credit by writing the publisher's own sentence itself — not word for
+  word, not with characters that only read the same, and not by spelling
+  kendex's own end-of-block marker inside its instructions to make the rest
+  look like the publisher's. Where a repeat cannot be told from the
+  publisher's own line in an agent's instructions, neither copy is shown as
+  reviewed and the report says the review settled nothing: an open finding
+  is a question you can answer, where your own text under someone else's
+  name is not. A review is only ever read out of the catalog that published
+  it. Your install record keeps no copy: kendex rebuilds what each
+  installation should be, from the catalog at the revision that installation
+  came from — one package can sit at two revisions when a refresh goes
+  through for one tool and not another — and reads the review there. A
+  package you have not fetched, and content that is not what its catalog
+  publishes, settle nothing. It can only carry reasons an author can give: a
+  hand-written `trusted-source` record is refused on the installing machine.
+  Any edit to the item, in the catalog or on the installed copy, brings the
+  hold back, as does an edit to anything else the catalog renders it from —
+  an agent's frontmatter overrides, or the set of skills it goes out with. A
+  record that settles nothing where it lands — stale, refused, or naming a
+  finding that is not there — says so rather than passing in silence. A hook
+  cannot carry one: it is scored from its script before it installs and from
+  the harness's settings file afterwards, two readings of different bytes,
+  so `dismiss --catalog` refuses a hook token and says why — a hook author
+  answers a false positive by narrowing the script or by getting the rule
+  fixed, and there is no record they can write instead. `check --catalog`
+  prints the token beside each finding it can be used on. A review in a
+  publisher's name is worth more than your own dismissal — yours settles a
+  question, theirs can lift a hold — so none of it is taken from a file your
+  project commits: an installation whose content is not what its catalog
+  publishes is told so plainly, and settles nothing.
 ### Changed
 
+- The Updates page is a table with one row per package. A package out of
+  date in several projects shows how many places, expands into a row per
+  place — User level and each project by name — and each place has its
+  own versions, Follow source switch, Preview, and Update, plus an
+  "Update all" for that package. A place whose files you edited says
+  "Customized here" and offers Keep as my own or Use new version, since
+  an edit in one project says nothing about the copy in another. The
+  subtitle counts packages and places, and the sidebar badge counts
+  packages.
+- The "Update automatically" switch is now "Follow source": nothing in the
+  app applies updates on its own. A following package comes current when
+  its project refreshes or you press Update; a held one waits until you
+  choose. The package page's version menu and toasts say the same.
+- `kendex updates` names the place — global or the project path — at the
+  start of every line.
+- The `dangerous-commands` check no longer reads a shell `case` arm's
+  pattern list as a command: naming `sudo` among the words a parser should
+  skip is not running it. Skills and hooks that parse command lines stop
+  being flagged for the tokens they match on. Only the pattern is exempt —
+  an arm that runs something on the same line still has that half read. This
+  narrows what the check catches: a whole line written as a bare list of
+  single words ending in `)` is no longer read as a command, which is the
+  price of the class of false positive it removes.
+- A safety finding's message now says what it fired on: which address a
+  line actually runs — the command feeding the shell, however it is
+  capitalized, and named by its own arguments when the address is not
+  written out — which credential file a command sends away and by which
+  command, which characters a file hides, and which unreadable content a
+  file carries. Where a message stands in for something it cannot print, it
+  does so at the same width the finding's own identity uses, so nothing can
+  be ground into looking like a finding somebody already settled. Two different problems reading the same used to be
+  one decision, and only one of them was ever shown.
+- Safety findings are identified by the rule and the sentence it fired with,
+  so a decision survives everything kendex does to an item on the way in —
+  the line moving, the body being split into `references/` past a harness's
+  size cap, a command being rendered as a skill. Recorded acceptances and
+  dismissals made before this release no longer match and read as needing
+  review again — the rule set version carries the change, so they are
+  reported as "the safety rules changed since it was reviewed" rather than
+  as a different set of problems. Re-accept or re-dismiss from the tokens
+  `kendex findings` prints now.
 - The app uses the Geist typeface, with titles and navigation in Geist Mono
   to match the website.
 - **Breaking**: the default Homebrew install is now the app —
@@ -82,6 +167,33 @@ changes carry a **Breaking** call-out with their migration note inline.
   kendex ships is installed, so launchers and docks match the running window
   to kendex and draw a sharp icon at any size. Both channels that write the
   entry are fixed: `curl … | sh` and `yay -S kendex-bin`.
+- An agent now renders the skills it actually has. A skill you listed that
+  the catalog does not carry was written into the agent's file anyway, and
+  for a reviewer agent — whose list is kept under its base agent's name —
+  a skill you removed came back on every apply.
+- A note about a catalog it could not read no longer carries that catalog's
+  own bytes to the terminal. A refused path, an unreadable source and a
+  reviews file that will not parse all quote content a downloaded
+  repository chose, and the escapes in it are now shown rather than acted
+  on — the same guard names already had.
+- A marketplace package's preview scores what installing it would write,
+  not what the catalog holds: the same read budget as an install, and the
+  body cap of whichever tool this package installs to reads it hardest. A
+  long package could read held back on the page while its install went
+  through with a warning, or warn while the install was held back, because
+  a line past a tool's cap moves into `references/` where it weighs less and
+  not every tool has a cap. `kendex check --catalog` reads under that budget too, so neither
+  reports findings, or mints tokens for them, in content past the point any
+  install stops reading; an item bigger than that says so instead, and the
+  standing "reviewed findings do not appear in what this installs" warnings
+  it caused are gone.
+- Installing a security-adjacent package from a marketplace no longer held
+  it back over findings the publisher had already reviewed. A skill that
+  must name the flags it guards against — `growth-guards` and
+  `--no-verify`, say — installed with seven findings and a warning on every
+  session, in a fresh install of kendex's own default catalog. The
+  publisher's recorded review now travels with the package, and the default
+  catalog ships nothing its own check has not settled.
 - On Linux, a helper command that ran past its time limit could take
   unrelated processes down with it: Ubuntu's `kill` misreads the negative
   process-group argument kendex passed, and for some process ids that

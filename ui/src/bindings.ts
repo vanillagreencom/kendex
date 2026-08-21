@@ -192,13 +192,24 @@ export const commands = {
 	 */
 	marketplacesOverview: () => typedError<MarketplaceRow[], string>(__TAURI_INVOKE("marketplaces_overview")),
 	/**
-	 *  Every package one subscription offers, across kinds, with installed
-	 *  state joined in.
+	 *  Every package one catalog offers, across kinds, with installed state
+	 *  joined in.
 	 */
-	marketplacePackages: (scope: Scope, source: string) => typedError<AvailablePackage[], string>(__TAURI_INVOKE("marketplace_packages", { scope, source })),
+	marketplacePackages: (catalog: Catalog) => typedError<AvailablePackage[], string>(__TAURI_INVOKE("marketplace_packages", { catalog })),
+	/**
+	 *  What a catalog says about itself, fetched fresh for a repository nobody
+	 *  subscribes to — the marketplace page's header, and the subscription to
+	 *  carry on as when this machine already holds one.
+	 */
+	marketplaceSummary: (catalog: Catalog) => typedError<CatalogSummary, string>(__TAURI_INVOKE("marketplace_summary", { catalog })),
 	/**  One curated set with per-member installed state. */
-	marketplaceBundle: (scope: Scope, source: string, name: string) => typedError<BundleDetail, string>(__TAURI_INVOKE("marketplace_bundle", { scope, source, name })),
-	marketplacePackagePreview: (scope: Scope, source: string, kind: ItemKind, name: string) => typedError<PackageView, string>(__TAURI_INVOKE("marketplace_package_preview", { scope, source, kind, name })),
+	marketplaceBundle: (catalog: Catalog, name: string) => typedError<BundleDetail, string>(__TAURI_INVOKE("marketplace_bundle", { catalog, name })),
+	marketplacePackagePreview: (catalog: Catalog, kind: ItemKind, name: string) => typedError<PackageView, string>(__TAURI_INVOKE("marketplace_package_preview", { catalog, kind, name })),
+	/**
+	 *  One offered file's content before install — the same read an installed
+	 *  package's file gets, confined to the package inside the catalog.
+	 */
+	marketplacePackageFile: (catalog: Catalog, kind: ItemKind, name: string, path: string) => typedError<ItemSource, string>(__TAURI_INVOKE("marketplace_package_file", { catalog, kind, name, path })),
 	/**
 	 *  Install packages or a curated set from one subscription. `destination`
 	 *  redirects the install from the scope being browsed into a project: the
@@ -242,7 +253,7 @@ export const commands = {
 	 *  sub-tab when it is not, rather than showing a dead search box.
 	 */
 	communitySkillsshAvailable: () => typedError<boolean, string>(__TAURI_INVOKE("community_skillssh_available")),
-	marketplaceAbout: (scope: Scope, source: string) => typedError<AboutView, string>(__TAURI_INVOKE("marketplace_about", { scope, source })),
+	marketplaceAbout: (catalog: Catalog) => typedError<AboutView, string>(__TAURI_INVOKE("marketplace_about", { catalog })),
 	/**
 	 *  Where every installation came from, across every scope — the Library
 	 *  table's From column in one query.
@@ -302,7 +313,7 @@ export const commands = {
 	 *  "the catalog's version wins", scoped to the package the user named so
 	 *  a neighbour's edits are never taken along.
 	 */
-	applyDiscardEdits: (scope: Scope, kind: ItemKind, name: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("apply_discard_edits", { scope, kind, name })),
+	applyDiscardEdits: (scope: Scope, kind: ItemKind, name: string, rev: string | null) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("apply_discard_edits", { scope, kind, name, rev })),
 	packageFiles: (scope: Scope, kind: ItemKind, name: string) => typedError<PackageFile[], string>(__TAURI_INVOKE("package_files", { scope, kind, name })),
 	packageFile: (scope: Scope, kind: ItemKind, name: string, path: string) => typedError<ItemSource, string>(__TAURI_INVOKE("package_file", { scope, kind, name, path })),
 	packageReadme: (scope: Scope, kind: ItemKind, name: string) => typedError<{
@@ -474,6 +485,12 @@ export type AuditView_Serialize = {
 	error?: ScopeError | null,
 };
 
+/**  One finding the publisher settled. */
+export type AuthorDismissal = {
+	reason: DismissReason,
+	dismissedAt: string,
+};
+
 /**  One package a subscription offers, as the Packages table lists it. */
 export type AvailablePackage = {
 	kind: ItemKind,
@@ -563,6 +580,19 @@ export type CapabilityRow = {
 	caps: KindCaps,
 };
 
+/**
+ *  What a browse read addresses: a subscription, or a GitHub repository
+ *  browsed before anyone subscribes to it. The second fetches into the same
+ *  store a later subscription reads from, so subscribing never downloads
+ *  twice and the pages keep working across the switch.
+ */
+export type Catalog = { by: "subscription"; scope: Scope; source: string } | 
+/**
+ *  A GitHub repository, in any spelling `repo_move::owner_repo` folds
+ *  to the canonical `owner/repo` everything is keyed by.
+ */
+{ by: "repo"; repo: string };
+
 /**  Something wrong with a catalog, said in the catalog author's terms. */
 export type CatalogFinding = {
 	location: string,
@@ -590,6 +620,31 @@ export type CatalogGroupMeta = {
  *  control file makes the source unusable, never a different mode.
  */
 export type CatalogMode = "plugin-registry" | "explicit" | "discovered" | "unusable";
+
+export type CatalogSummary = {
+	/**  `owner/repo`, a path, or `local` — what the catalog is. */
+	provenance: string,
+	/**
+	 *  The canonical `owner/repo` the provenance folds to on GitHub — what
+	 *  a subscription's `repo_key` and a directory row are matched by,
+	 *  however the declaration spells it.
+	 */
+	repoKey: string | null,
+	/**  The commit being read, for a remote. */
+	commit: string | null,
+	/**  `[marketplace]` from the catalog's own kendex.toml. */
+	meta: MarketplaceMeta | null,
+	mode: CatalogMode,
+	/**  Packages offered, by kind name. */
+	counts: { [key in string]: number },
+	/**  Set when the catalog is read from the store because a refresh failed. */
+	warning: string | null,
+	/**
+	 *  For a repository: the subscription this machine already holds for
+	 *  it, if any. A subscription answers with itself.
+	 */
+	subscription: SubscriptionRef | null,
+};
 
 export type CreateRequest = {
 	/**  Folder and repository name; must be a plain installable spelling. */
@@ -681,14 +736,22 @@ export type DecisionState_Deserialize =
  *  Nobody has ruled on this finding for this content. `earlier` says why
  *  a previous ruling no longer applies, when there was one.
  */
-({ state: "open"; earlier: string | null }) & { dismissedAt?: never; grantedAt?: never; reason?: never } | 
+({ state: "open"; earlier: string | null }) & { dismissedAt?: never; grantedAt?: never; publisher?: never; reason?: never } | 
 /**  Judged not to be a problem, for exactly this content. */
-({ state: "dismissed"; reason: DismissReason; dismissedAt: string }) & { earlier?: never; grantedAt?: never } | 
+({ state: "dismissed"; reason: DismissReason; dismissedAt: string }) & { earlier?: never; grantedAt?: never; publisher?: never } | 
+/**
+ *  The catalog that publishes this content committed a review saying
+ *  this finding is not a problem, and that review still describes the
+ *  exact bytes we fetched. It is reported, not hidden: `publisher` is
+ *  the source the record was read from, recorded when it was read, so a
+ *  person can weigh whose judgement this is.
+ */
+({ state: "author-dismissed"; reason: DismissReason; dismissedAt: string; publisher: string }) & { earlier?: never; grantedAt?: never } | 
 /**
  *  Covered by an acceptance of the whole item: every finding on it was
  *  read and the item installed anyway.
  */
-({ state: "accepted"; grantedAt: string }) & { dismissedAt?: never; earlier?: never; reason?: never };
+({ state: "accepted"; grantedAt: string }) & { dismissedAt?: never; earlier?: never; publisher?: never; reason?: never };
 
 /**
  *  What is recorded about one finding, read against the content in front
@@ -699,14 +762,22 @@ export type DecisionState_Serialize =
  *  Nobody has ruled on this finding for this content. `earlier` says why
  *  a previous ruling no longer applies, when there was one.
  */
-({ state: "open"; earlier?: string | null }) & { dismissedAt?: never; grantedAt?: never; reason?: never } | 
+({ state: "open"; earlier?: string | null }) & { dismissedAt?: never; grantedAt?: never; publisher?: never; reason?: never } | 
 /**  Judged not to be a problem, for exactly this content. */
-({ state: "dismissed"; reason: DismissReason; dismissedAt: string }) & { earlier?: never; grantedAt?: never } | 
+({ state: "dismissed"; reason: DismissReason; dismissedAt: string }) & { earlier?: never; grantedAt?: never; publisher?: never } | 
+/**
+ *  The catalog that publishes this content committed a review saying
+ *  this finding is not a problem, and that review still describes the
+ *  exact bytes we fetched. It is reported, not hidden: `publisher` is
+ *  the source the record was read from, recorded when it was read, so a
+ *  person can weigh whose judgement this is.
+ */
+({ state: "author-dismissed"; reason: DismissReason; dismissedAt: string; publisher: string }) & { earlier?: never; grantedAt?: never } | 
 /**
  *  Covered by an acceptance of the whole item: every finding on it was
  *  read and the item installed anyway.
  */
-({ state: "accepted"; grantedAt: string }) & { dismissedAt?: never; earlier?: never; reason?: never };
+({ state: "accepted"; grantedAt: string }) & { dismissedAt?: never; earlier?: never; publisher?: never; reason?: never };
 
 /**
  *  A scope whose decisions could not be read, carried as data beside the
@@ -769,6 +840,11 @@ export type DirectoryPackage = {
 
 export type DirectoryRow = {
 	repo: string,
+	/**
+	 *  The canonical key a subscription's `repo_key` is compared with, so
+	 *  the row can flip to Subscribed from the live subscription list.
+	 */
+	repoKey: string | null,
 	name: string,
 	description: string | null,
 	tags: string[],
@@ -1144,6 +1220,18 @@ export type GitReadiness = {
 };
 
 export type HarnessId = "claude" | "codex" | "opencode" | "cursor" | "pi" | "gemini" | "copilot";
+
+/**
+ *  Whose hold keeps a place at its revision — what the Follow source
+ *  switch may release, and what it may not.
+ */
+export type HoldOwner = 
+/**  This declaration's own `rev`: the switch releases it. */
+{ kind: "package" } | 
+/**  The source is pinned as a whole; released where the source is declared. */
+{ kind: "source"; name: string } | 
+/**  Propagated from the bundle or package that pulled this one in. */
+{ kind: "parent" };
 
 export type HookAgents = 
 /**  `"all"`, a role name, or a single agent name. */
@@ -1650,6 +1738,11 @@ export type MarketplaceRow = {
 	scope: Scope,
 	name: string,
 	repo: string | null,
+	/**
+	 *  The canonical `owner/repo` a GitHub declaration folds to — what a
+	 *  directory row is matched against, however the subscription spells it.
+	 */
+	repoKey: string | null,
 	path: string | null,
 	rev: string | null,
 	/**  The commit the subscription reads right now, when the cache holds one. */
@@ -1793,6 +1886,16 @@ export type PackageFile = {
 	isReadme: boolean,
 };
 
+/**
+ *  One finding on an offered package, with the publisher's record about it
+ *  when they have one. A settled finding is reported here and does not
+ *  count toward the score or the verdict — the same answer the install
+ *  gate gives, which is the only reason this preview is worth showing.
+ */
+export type PackageFinding = {
+	settled: AuthorDismissal | null,
+} & Finding;
+
 export type PackageMeta = PackageMeta_Serialize | PackageMeta_Deserialize;
 
 export type PackageMeta_Deserialize = {
@@ -1861,7 +1964,11 @@ export type PackageRef = {
 export type PackageSafety = {
 	kind: ItemKind,
 	name: string,
-	findings: Finding[],
+	/**
+	 *  Every finding, each carrying whatever has already been decided about
+	 *  it. One row, not two arrays a reader has to keep in step by index.
+	 */
+	findings: PackageFinding[],
 	safety: SafetyScore,
 	/**  Advisory, never blocking. */
 	quality: QualityScore | null,
@@ -1872,6 +1979,8 @@ export type PackageSafety = {
 	ruleset: number,
 	/**  Whether a verified cache entry answered instead of a fresh score. */
 	fromCache: boolean,
+	/**  Who recorded the settled findings, when this package carries any. */
+	publisher: string | null,
 };
 
 /**
@@ -2204,6 +2313,15 @@ export type SubscribeOutcome = {
 	notes: string[],
 };
 
+/**
+ *  The subscription a browsed repository already has on this machine, so
+ *  the page can carry on as that subscription instead of a stranger.
+ */
+export type SubscriptionRef = {
+	scope: Scope,
+	source: string,
+};
+
 /**  The job an item helps with. */
 export type Tag = 
 /**  Reading code and saying what is wrong with it. */
@@ -2266,6 +2384,12 @@ export type UpdateRow = {
 	name: string,
 	source: string,
 	repo: string,
+	/**
+	 *  `repo` as [`crate::source_ref::repo_identity`] spells it — the one
+	 *  identity two scopes' rows share when they name one repository two
+	 *  ways, on any host.
+	 */
+	repoIdentity: string,
 	/**  The content revision installed now, when the lock records it. */
 	current: VersionRef | null,
 	/**  The newest content revision the mirror knows. */
@@ -2281,6 +2405,8 @@ export type UpdateRow = {
 	 *  pinned dependency parent all hold what they carry.
 	 */
 	pinned: boolean,
+	/**  Who holds it, when `pinned`. */
+	holdOwner: HoldOwner | null,
 	/**  The user asked to stop hearing about this package's updates. */
 	ignored: boolean,
 	/**
@@ -2288,6 +2414,38 @@ export type UpdateRow = {
 	 *  the edit is kept as a fork or discarded.
 	 */
 	blockedByLocalEdit: boolean,
+	/**
+	 *  Which renderings carry the edit, one entry per physical rendering:
+	 *  an agent renders once per tool, while tools sharing a skill's
+	 *  canonical tree count once. Keeping the edit as a fork captures one
+	 *  rendering's bytes — it has to be the one that was changed.
+	 */
+	editedHarnesses: HarnessId[],
+	/**
+	 *  The edited rendering a fork can capture, when one exists — an
+	 *  agent edited only in a tool whose format cannot be read back has
+	 *  none, and the UI must not offer what the engine will refuse.
+	 */
+	forkableHarness: HarnessId | null,
+	/**
+	 *  Whether dropping the edits can put the currently resolved content
+	 *  back in place, without moving any revision — the source content
+	 *  resolved, whether or not its history could be read. False once the
+	 *  source no longer carries the package.
+	 */
+	canDiscard: boolean,
+	/**
+	 *  Whether this place can move to the newest content on its own: the
+	 *  newest is known, and the hold — if any — is this declaration's to
+	 *  move rather than a bundle's or parent's.
+	 */
+	canTakeLatest: boolean,
+	/**
+	 *  Installed as a bundle member or a dependency, with no declaration
+	 *  of its own: whatever pulled it in owns its revision, and a fork
+	 *  needs a declaration to turn local.
+	 */
+	derived: boolean,
 	/**  This package is a local fork of a catalog item. */
 	forked: boolean,
 	/**  Installations of this package disagree on their source commit. */

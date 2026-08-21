@@ -7,7 +7,7 @@ use crate::{CURL, ICONS, installer_output, posix_shell, repo_root};
 /// The encoder itself, run out of `install.sh` rather than copied here: the
 /// function is sliced out of the shipped script and handed one argument, so
 /// renaming or moving it fails this instead of quietly testing nothing.
-#[allow(clippy::expect_used, clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 fn desktop_arg(path: &str) -> String {
     let script = std::fs::read_to_string(repo_root().join("install.sh")).expect("install.sh");
     let body = script
@@ -34,6 +34,7 @@ fn desktop_arg(path: &str) -> String {
 /// a literal percent, and a percent before a letter is a code the launcher
 /// fills in or drops. A percent that arrives any other way is not part of a
 /// path.
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 fn without_field_codes(argument: &str) -> Result<String, String> {
     let mut literal = String::new();
     let mut argument = argument.chars();

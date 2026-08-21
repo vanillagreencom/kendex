@@ -49,7 +49,7 @@ export function MarketplacesPage() {
         onValueChange={(value) => goToMarketplaces(value as MarketplacesTab)}
         className="flex min-h-0 flex-1 flex-col gap-0"
       >
-        <div className={cn("pb-3", PAGE_GUTTER)}>
+        <div className={cn("pb-6", PAGE_GUTTER)}>
           <div className={WIDE_CONTENT_WIDTH}>
             <TabsList>
               <TabsTrigger value="subscribed">Subscribed</TabsTrigger>

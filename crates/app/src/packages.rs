@@ -192,8 +192,28 @@ pub fn apply_discard_edits(
     scope: Scope,
     kind: ItemKind,
     name: String,
+    rev: Option<String>,
 ) -> Result<AuditView, String> {
     let env = env()?;
+    // A held package's "use new version" moves the hold and drops the
+    // edits in one apply; planned from the old manifest, the discard would
+    // only restore the version the edits were made on.
+    if let Some(rev) = rev {
+        let report = package::set_rev_with(
+            &env,
+            &scope,
+            kind,
+            &name,
+            Some(&rev),
+            &engine::PlanOptions {
+                overwrite_edited_names: Some(vec![(kind, name.clone())]),
+                ..Default::default()
+            },
+        )
+        .map_err(|e| e.to_string())?;
+        apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
+        return Ok(view(&env, &scope));
+    }
     let manifest = manifest::load_for_mutation(&manifest::manifest_path(&env, &scope))
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "no manifest".to_owned())?;

@@ -14,6 +14,7 @@
 // accepted finding is not one of them, and neither is a held-back item's
 // individual finding — that item is counted once, as held back.
 import type {
+  DismissReason,
   Finding,
   FindingDecision,
   HarnessId,
@@ -58,6 +59,93 @@ export function settledCount(rows: ItemSafety[]): number {
     .filter((occurrence) => occurrence.decision.state.state !== "open").length;
 }
 
+/** The findings the publishing catalog settled rather than the person
+ *  reading this. Kept apart because "you decided this" and "whoever you
+ *  installed it from decided this" are not the same sentence — and because
+ *  showing them is the whole justification for honouring them at all. */
+export function authorOccurrences(rows: ItemSafety[]): Occurrence[] {
+  return rows
+    .flatMap(occurrences)
+    .filter(
+      (occurrence) => occurrence.decision.state.state === "author-dismissed",
+    );
+}
+
+export function authorSettledCount(rows: ItemSafety[]): number {
+  return authorOccurrences(rows).length;
+}
+
+/** One finding the publisher settled, wherever it was found. */
+export interface PublisherGroup {
+  /** What this entry was grouped by, so a list of them can be keyed by the
+   *  same thing that made them distinct entries. Rebuilding a key at the
+   *  render site is how two entries come to share one: rule and location
+   *  used to tell findings apart, and identity is the rule and the sentence
+   *  now, so one line matching a rule twice is two entries under one key
+   *  and React is free to show either one's decision against the other. */
+  key: string;
+  finding: Finding;
+  /** Every distinct place this decision covers, in the order they were
+   *  found. A record settles a sentence wherever the item carries it, so
+   *  showing the first and dropping the rest tells a person a publisher
+   *  ruled on one line when they ruled on five — and what this list exists
+   *  to disclose is exactly how far somebody else's judgement reaches. */
+  locations: string[];
+  reason: DismissReason;
+  dismissedAt: string;
+  publisher: string;
+  items: EvidenceItem[];
+}
+
+/** The publisher's settled findings, one entry per decision rather than one
+ *  per installation: a shared skill tree is what three tools load, and the
+ *  same sentence printed three times reads as three problems. Grouped the
+ *  way the decision zone groups evidence — the same bytes carrying the same
+ *  finding is one thing to say, with every tool that loads it named.
+ *
+ *  The item and the publisher are part of the key, never the harness. The
+ *  harness is what makes one file three rows, so leaving it out is the
+ *  grouping. The other two are not: two differently named commands can
+ *  carry identical bytes, and a review hash seals the kind and the bytes
+ *  alone — merging them would print one catalog's name over content it
+ *  never saw, which is the one thing this list exists to state.
+ *
+ *  So are the reason and the date, for the same reason. Two tools can sit
+ *  at revisions whose bytes are identical while the record between them
+ *  changed — `wrong-call` re-recorded as `intended` — and an entry can
+ *  only show one reason and one date. Merging those prints a judgement the
+ *  publisher made for one tool over the other, on the one surface built to
+ *  disclose what they actually decided. */
+export function publisherGroups(rows: ItemSafety[]): PublisherGroup[] {
+  const ordered: PublisherGroup[] = [];
+  const byEvidence = new Map<string, PublisherGroup>();
+  for (const { row, finding, decision } of authorOccurrences(rows)) {
+    if (decision.state.state !== "author-dismissed") continue;
+    const content = row.reviewHash ?? `${row.kind}:${row.name}`;
+    const { publisher, reason, dismissedAt } = decision.state;
+    const key = `${content}::${row.kind}:${row.name}::${publisher}::${reason}::${dismissedAt}::${decision.fingerprint}`;
+    let group = byEvidence.get(key);
+    if (!group) {
+      group = {
+        key,
+        finding,
+        locations: [],
+        reason,
+        dismissedAt,
+        publisher,
+        items: [],
+      };
+      byEvidence.set(key, group);
+      ordered.push(group);
+    }
+    group.items.push({ kind: row.kind, name: row.name, harness: row.harness });
+    if (!group.locations.includes(finding.location)) {
+      group.locations.push(finding.location);
+    }
+  }
+  return ordered;
+}
+
 export interface EvidenceItem {
   kind: ItemKind;
   name: string;
@@ -71,6 +159,9 @@ export interface EvidenceItem {
  *  separate group, however alike the sentence looks. */
 export interface EvidenceGroup {
   finding: Finding;
+  /** Every distinct place this evidence was found. One decision covers all
+   *  of them, so a person deciding is shown all of them. */
+  locations: string[];
   /** The tokens a dismissal of this group sends — one per installation.
    *  Empty where the content cannot be read here: the finding still needs
    *  a person, it just cannot be settled from this machine, and the page
@@ -90,10 +181,17 @@ export function evidenceGroups(open: Occurrence[]): EvidenceGroup[] {
   const byEvidence = new Map<string, EvidenceGroup>();
   for (const { row, finding, decision } of open) {
     const content = row.reviewHash ?? `${row.kind}:${row.name}:${row.harness}`;
-    const key = `${content}::${decision.fingerprint}`;
+    // The item is in the key and the harness is not. The harness is what
+    // makes one file three rows, so leaving it out is the grouping. The
+    // item is not: a review hash seals the kind and the bytes alone, so two
+    // differently named commands with identical bodies share one — and
+    // merging them puts one row's name over a decision that would settle
+    // the other, with its token in the same batch.
+    const key = `${content}::${row.kind}:${row.name}::${decision.fingerprint}`;
     const existing = byEvidence.get(key);
     const group: EvidenceGroup = existing ?? {
       finding,
+      locations: [],
       tokens: [],
       items: [],
       canTrustSource: true,
@@ -108,6 +206,9 @@ export function evidenceGroups(open: Occurrence[]): EvidenceGroup[] {
     }
     if (decision.token) group.tokens.push(decision.token);
     group.items.push({ kind: row.kind, name: row.name, harness: row.harness });
+    if (!group.locations.includes(finding.location)) {
+      group.locations.push(finding.location);
+    }
     if (row.provenance == null) group.canTrustSource = false;
   }
   return ordered;

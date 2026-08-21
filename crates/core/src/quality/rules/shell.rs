@@ -91,6 +91,39 @@ impl SafetyBypass {
     }
 }
 
+/// The part of this line that is a command, with a shell `case` arm's
+/// pattern list taken off the front: alternatives separated by `|`, ending
+/// at the `)` that opens the arm. Naming `sudo` as one of the tokens a
+/// parser should skip is not running it, and reading it as a command is the
+/// rule mistaking a list of words for an instruction.
+///
+/// This is a deliberate narrowing of what the rule catches, and the price
+/// is stated: a line that is a bare list of single words ending in `)` is
+/// not read as a command, so a command written in exactly that shape is
+/// missed. Every such word is a pattern to match, not a program to run —
+/// `sudo)` runs nothing — and the content that pays for the narrowing is
+/// the class of skills and hooks that parse command lines, which name the
+/// dangerous verbs precisely because they exist to catch them.
+///
+/// Only the pattern half is exempt, so only the pattern half is cut. A
+/// `case` arm whose body follows on the same line still has that body read:
+/// everything from the `)` on comes back as a command like any other.
+fn command_half(line: &str) -> &str {
+    let Some((head, body)) = line.split_once(')') else {
+        return line;
+    };
+    let pattern = head.trim();
+    let is_pattern = !pattern.is_empty()
+        && pattern
+            .split('|')
+            .map(str::trim)
+            .all(|token| !token.is_empty() && token.split_whitespace().count() == 1);
+    match is_pattern {
+        true => body,
+        false => line,
+    }
+}
+
 /// Commands whose ordinary outcome is destruction.
 const DESTRUCTIVE: &[(&str, &str)] = &[
     ("rm -rf /", "deletes everything from the root down"),
@@ -135,7 +168,7 @@ impl AuditRule for DangerousCommands {
                     hit(needle, what);
                 }
             }
-            if line.lower.trim_start().starts_with("sudo ") {
+            if command_half(&line.lower).trim_start().starts_with("sudo ") {
                 hit("sudo", "runs the rest of the line as root");
             }
         })

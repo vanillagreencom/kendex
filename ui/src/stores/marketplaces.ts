@@ -5,38 +5,63 @@ import {
   type AboutView,
   type AvailablePackage,
   type BundleDetail,
+  type Catalog,
+  type CatalogSummary,
   commands,
   type InstallItem,
   type Scope,
 } from "@/bindings";
+import { catalogReads } from "./marketplaces-reads";
 import {
+  cachedRepoCatalogs,
+  catalogKey,
   dropCatalogCaches,
-  marketKey,
+  dropSummariesHeldBy,
+  isRepoKey,
   openLead,
   refreshDownstream,
-  without,
+  subscription,
 } from "./marketplaces-shared";
 
-export { marketKey } from "./marketplaces-shared";
+export {
+  bundleKey,
+  catalogKey,
+  catalogLabel,
+  declaredHolder,
+  marketKey,
+  readErrorKey,
+  repoAction,
+  rowSubscribed,
+  subscribedKeys,
+  subscription,
+} from "./marketplaces-shared";
 
 interface MarketplacesState {
   rows: MarketplaceRow[];
-  /** Each opened subscription's offered packages, by [marketKey]. */
+  /** Each opened catalog's offered packages, by [catalogKey]. */
   packages: Record<string, AvailablePackage[]>;
-  /** Each opened subscription's About report, by [marketKey]. */
+  /** Each opened catalog's About report, by [catalogKey]. */
   about: Record<string, AboutView>;
-  /** Each opened curated set, by [marketKey]::bundle. */
+  /** Each opened catalog's own account of itself, by [catalogKey] — for a
+   * repository this is the read that fetches it. */
+  summaries: Record<string, CatalogSummary>;
+  /** Each opened curated set, by [catalogKey]::bundle. */
   bundles: Record<string, BundleDetail>;
   /** Why a read produced nothing, by the same keys — the page the person is
    * looking at says it instead of loading forever. */
   readErrors: Record<string, string>;
   loaded: boolean;
+  /** Whether `rows` is the answer of the last overview read. A failed read
+   * leaves the rows it had, and nothing may treat them as the truth about
+   * what is subscribed until a read succeeds again. */
+  rowsCurrent: boolean;
   busy: boolean;
   error: string | null;
   load: () => Promise<void>;
-  loadPackages: (scope: Scope, source: string) => Promise<void>;
-  loadAbout: (scope: Scope, source: string) => Promise<void>;
-  loadBundle: (scope: Scope, source: string, name: string) => Promise<void>;
+  loadPackages: (catalog: Catalog) => Promise<void>;
+  loadSummary: (catalog: Catalog) => Promise<void>;
+  loadAbout: (catalog: Catalog) => Promise<void>;
+  loadBundle: (catalog: Catalog, name: string) => Promise<void>;
   subscribe: (
     scope: Scope,
     reference: string,
@@ -63,65 +88,29 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
   rows: [],
   packages: {},
   about: {},
+  summaries: {},
   bundles: {},
   readErrors: {},
   loaded: false,
+  rowsCurrent: false,
   busy: false,
   error: null,
 
   load: async () => {
     const response = await commands.marketplacesOverview();
     if (response.status === "ok") {
-      set({ rows: response.data, loaded: true, error: null });
+      set({
+        rows: response.data,
+        loaded: true,
+        rowsCurrent: true,
+        error: null,
+      });
     } else {
-      set({ loaded: true, error: response.error });
+      set({ loaded: true, rowsCurrent: false, error: response.error });
     }
   },
 
-  loadPackages: async (scope, source) => {
-    const key = marketKey(scope, source);
-    const response = await commands.marketplacePackages(scope, source);
-    if (response.status === "ok") {
-      set((state) => ({
-        packages: { ...state.packages, [key]: response.data },
-        readErrors: without(state.readErrors, key),
-      }));
-    } else {
-      set((state) => ({
-        readErrors: { ...state.readErrors, [key]: response.error },
-      }));
-    }
-  },
-
-  loadAbout: async (scope, source) => {
-    const key = marketKey(scope, source);
-    const response = await commands.marketplaceAbout(scope, source);
-    if (response.status === "ok") {
-      set((state) => ({
-        about: { ...state.about, [key]: response.data },
-        readErrors: without(state.readErrors, key),
-      }));
-    } else {
-      set((state) => ({
-        readErrors: { ...state.readErrors, [key]: response.error },
-      }));
-    }
-  },
-
-  loadBundle: async (scope, source, name) => {
-    const key = `${marketKey(scope, source)}::${name}`;
-    const response = await commands.marketplaceBundle(scope, source, name);
-    if (response.status === "ok") {
-      set((state) => ({
-        bundles: { ...state.bundles, [key]: response.data },
-        readErrors: without(state.readErrors, key),
-      }));
-    } else {
-      set((state) => ({
-        readErrors: { ...state.readErrors, [key]: response.error },
-      }));
-    }
-  },
+  ...catalogReads(set),
 
   subscribe: async (scope, reference, name) => {
     set({ busy: true });
@@ -140,6 +129,14 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
     toast.success(`Subscribed to '${response.data.name}'`);
     for (const note of response.data.notes) toast.message(note);
     dropCatalogCaches(set);
+    // A repository page may now have a subscription to carry on as, under
+    // whatever spelling the dialog was submitted with — every repository
+    // summary re-reads, and only one such page can be open.
+    set((state) => ({
+      summaries: Object.fromEntries(
+        Object.entries(state.summaries).filter(([key]) => !isRepoKey(key)),
+      ),
+    }));
     await get().load();
     if (response.data.lead) {
       await openLead(scope, response.data.name, response.data.lead);
@@ -171,6 +168,8 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
         : `Unsubscribed from '${source}'`,
     );
     dropCatalogCaches(set);
+    // A page carried on as this subscription must stop pointing at it.
+    set({ summaries: {} });
     await get().load();
     await refreshDownstream();
     return true;
@@ -183,6 +182,7 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
       return;
     }
     dropCatalogCaches(set);
+    dropSummariesHeldBy(set, get().rows, scope, source);
     await get().load();
     await refreshDownstream();
   },
@@ -197,6 +197,9 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
         // derived from catalog bytes re-reads.
         dropCatalogCaches(set);
         await get().load();
+        for (const repo of cachedRepoCatalogs(get().summaries)) {
+          void get().loadSummary(repo);
+        }
       } else {
         toast.error(response.error);
       }
@@ -226,7 +229,7 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
     }
     // The command answers with the refreshed package list for this
     // subscription, so the table flips to Installed without a second query.
-    const key = marketKey(destination ?? scope, source);
+    const key = catalogKey(subscription(destination ?? scope, source));
     set((state) => ({
       packages: { ...state.packages, [key]: response.data },
       // Member states in every open set moved with this install.

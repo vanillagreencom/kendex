@@ -5,6 +5,11 @@ use crate::error::Result;
 use crate::manifest::Manifest;
 use crate::source_read::SealedSource;
 
+mod rendered;
+pub use rendered::{Block, Files, Rendered};
+
+const SKILL_FILE: &str = "SKILL.md";
+
 pub const INSTRUCTIONS_START: &str = "<!-- kendex:project-instructions:start -->";
 pub const INSTRUCTIONS_END: &str = "<!-- kendex:project-instructions:end -->";
 
@@ -14,11 +19,17 @@ pub const INSTRUCTIONS_END: &str = "<!-- kendex:project-instructions:end -->";
 const LEGACY_INSTRUCTIONS_START: &str = "<!-- vstack:project-instructions:start -->";
 const LEGACY_INSTRUCTIONS_END: &str = "<!-- vstack:project-instructions:end -->";
 
-/// Byte range of the injected block, either marker generation: from the
-/// start marker through the end marker and its trailing newline. `None`
-/// when there is no block — or when a start marker has no matching end,
-/// which is user damage we leave in place rather than guess at.
-pub(crate) fn instructions_block_range(text: &str) -> Option<(usize, usize)> {
+/// Byte range of a block already written into a file kendex rendered
+/// earlier, either marker generation: from the start marker through the end
+/// marker and its trailing newline. `None` when there is no block — or when
+/// a start marker has no matching end, which is user damage we leave in
+/// place rather than guess at.
+///
+/// Only [`strip_block`] asks this, and only of a file kendex wrote before,
+/// so that re-rendering replaces that block instead of stacking another on
+/// top of it. Nothing decides who wrote what by asking: the answer is
+/// whatever the text says, and half of the text is the project's.
+fn instructions_block_range(text: &str) -> Option<(usize, usize)> {
     for (start_marker, end_marker) in [
         (INSTRUCTIONS_START, INSTRUCTIONS_END),
         (LEGACY_INSTRUCTIONS_START, LEGACY_INSTRUCTIONS_END),
@@ -45,34 +56,35 @@ pub fn render_skill(
     source_dir: &Path,
     manifest: &Manifest,
     name: &str,
-) -> Result<Vec<(PathBuf, Vec<u8>)>> {
-    let mut files = sealed.collect_skill_tree(source_dir)?;
+) -> Result<Rendered> {
     let instructions = merged_instructions(&manifest.skill_instructions, name);
-    for (rel, bytes) in &mut files {
-        if rel == Path::new("SKILL.md") {
-            let text = String::from_utf8_lossy(bytes).into_owned();
-            *bytes = inject_instructions(&text, instructions.as_deref()).into_bytes();
-        }
-    }
-    Ok(files)
+    with_instructions(sealed, source_dir, instructions.as_deref())
 }
 
-/// Rename the tree's SKILL.md to the name the skill installs under. Every
-/// tool keys a skill on its directory and answers to the name the file
-/// gives, so the two have to agree — and a plugin-registry catalog's file knows
-/// only its leaf name, never the plugin the item is installed under. The
-/// catalog keeps the name it wrote; the copy carries the installed one.
-pub fn set_skill_name(files: &mut [(PathBuf, Vec<u8>)], installed: &str) {
-    for (rel, bytes) in files.iter_mut() {
-        let is_skill_md = matches!(rel.to_str(), Some("SKILL.md" | "SKILL.md.disabled"));
-        if !is_skill_md {
-            continue;
-        }
-        let text = String::from_utf8_lossy(bytes).into_owned();
-        if let Some(renamed) = with_name(&text, installed) {
-            *bytes = renamed.into_bytes();
+/// The same tree from the publisher's own bytes alone. Not a subtraction
+/// from the rendered text — the renderer is asked what it produces from the
+/// publisher's inputs, so nothing in the project's own instructions, marker
+/// or otherwise, can be mistaken for the publisher's.
+pub fn render_authored(sealed: &SealedSource, source_dir: &Path) -> Result<Files> {
+    Ok(with_instructions(sealed, source_dir, None)?.into_files())
+}
+
+fn with_instructions(
+    sealed: &SealedSource,
+    source_dir: &Path,
+    instructions: Option<&str>,
+) -> Result<Rendered> {
+    let mut files = sealed.collect_skill_tree(source_dir)?;
+    let mut block = None;
+    for (rel, bytes) in &mut files {
+        if rel == Path::new(SKILL_FILE) {
+            let text = String::from_utf8_lossy(bytes).into_owned();
+            let (rendered, put) = injected(&text, instructions);
+            block = put.map(|put| put.renamed(rel.clone()));
+            *bytes = rendered.into_bytes();
         }
     }
+    Ok(Rendered::injected(files, block))
 }
 
 /// `None` when the file carries no frontmatter to name the skill in — the
@@ -104,20 +116,36 @@ fn with_name(text: &str, installed: &str) -> Option<String> {
 /// between markers, and strip + inject are exact inverses so re-rendering
 /// is byte-stable.
 pub fn inject_instructions(skill_md: &str, instructions: Option<&str>) -> String {
+    injected(skill_md, instructions).0
+}
+
+/// The same, and where the block went — the fact every later reading of
+/// "whose bytes are these" depends on, stated once by the code that puts
+/// them there.
+fn injected(skill_md: &str, instructions: Option<&str>) -> (String, Option<Block>) {
     let stripped = strip_block(skill_md);
     let Some(instructions) = instructions else {
-        return stripped;
+        return (stripped, None);
     };
     let block = format!(
         "{INSTRUCTIONS_START}\n## Project Instructions\n\n{instructions}\n{INSTRUCTIONS_END}\n"
     );
     let insert_at = frontmatter_end(&stripped);
     let (head, tail) = stripped.split_at(insert_at);
-    if head.is_empty() {
-        format!("{block}{tail}")
-    } else {
-        format!("{head}\n{block}{tail}")
-    }
+    let separator = usize::from(!head.is_empty());
+    let start = head.len() + separator;
+    let text = match head.is_empty() {
+        true => format!("{block}{tail}"),
+        false => format!("{head}\n{block}{tail}"),
+    };
+    (
+        text,
+        Some(Block {
+            file: PathBuf::from(SKILL_FILE),
+            start,
+            end: start + block.len(),
+        }),
+    )
 }
 
 fn strip_block(text: &str) -> String {
@@ -206,9 +234,9 @@ mod tests {
     #[test]
     fn a_crlf_skill_takes_the_name_it_installs_under() {
         let crlf = SKILL.replace('\n', "\r\n");
-        let mut files = vec![(PathBuf::from("SKILL.md"), crlf.into_bytes())];
-        set_skill_name(&mut files, "docs__github");
-        let text = String::from_utf8_lossy(&files[0].1).into_owned();
+        let mut rendered = Rendered::plain(vec![(PathBuf::from(SKILL_FILE), crlf.into_bytes())]);
+        rendered.set_skill_name("docs__github");
+        let text = String::from_utf8_lossy(&rendered.files()[0].1).into_owned();
         assert!(text.contains("name: docs__github"), "{text:?}");
         assert!(!text.contains("name: github\r"), "{text:?}");
         assert!(text.contains("description: gh"), "{text:?}");
@@ -237,14 +265,31 @@ mod tests {
 
         let sealed = crate::source_read::SealedSource::open(tmp.path()).unwrap();
         let src = sealed.root().join("github");
-        let files = render_skill(&sealed, &src, &manifest, "github").unwrap();
-        assert_eq!(files.len(), 2);
-        let skill_md = files
+        let rendered = render_skill(&sealed, &src, &manifest, "github").unwrap();
+        assert_eq!(rendered.files().len(), 2);
+        let skill_md = rendered
+            .files()
             .iter()
             .find(|(p, _)| p == Path::new("SKILL.md"))
             .unwrap();
         assert!(String::from_utf8_lossy(&skill_md.1).contains("use gh"));
-        let script = files.iter().find(|(p, _)| p.ends_with("run.sh")).unwrap();
+        let script = rendered
+            .files()
+            .iter()
+            .find(|(p, _)| p.ends_with("run.sh"))
+            .unwrap();
         assert_eq!(script.1, b"#!/bin/sh\n");
+
+        // The offsets come back with the tree, and they are the block the
+        // renderer wrote — not whatever a later search of the file finds.
+        let block = rendered
+            .block()
+            .expect("the render says where it put the block");
+        assert_eq!(block.file, PathBuf::from(SKILL_FILE));
+        let text = String::from_utf8_lossy(&skill_md.1).into_owned();
+        assert!(text[block.start..block.end].starts_with(INSTRUCTIONS_START));
+        assert!(text[block.start..block.end].ends_with(&format!("{INSTRUCTIONS_END}\n")));
+        assert!(text[block.start..block.end].contains("use gh"));
+        assert!(!text[..block.start].contains("use gh") && !text[block.end..].contains("use gh"));
     }
 }

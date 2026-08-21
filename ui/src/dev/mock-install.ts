@@ -54,7 +54,7 @@ export const installHandlers: Record<string, Handler> = {
           }));
       }
     }
-    const offered = offeredHere(target, source);
+    const offered = offeredHere({ by: "subscription", scope: target, source });
     if (offered instanceof Promise) return offered;
     const wanted: { kind: ItemKind; name: string }[] = [];
     const takeBundle = (name: string) => {

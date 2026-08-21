@@ -91,6 +91,10 @@ pub(super) fn desired_custom_hooks(
                 upstream_skills: None,
                 emitted: None,
                 reasons: BTreeSet::from([Reason::Requested]),
+                // The person wrote this hook themselves; no catalog author
+                // stands behind it.
+                author_review: None,
+                authored: None,
                 artifact,
             });
         }

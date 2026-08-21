@@ -1,6 +1,7 @@
 use std::io::{IsTerminal, Write};
 
 use kendex_core::engine::EngineReport;
+use kendex_core::engine::decisions::DecisionState;
 use kendex_core::env::Env;
 use kendex_core::error::CoreError;
 use kendex_core::model::HarnessId;
@@ -104,14 +105,39 @@ fn print_safety_rows(
             row.harness.display_name(),
             row.safety.score
         ));
-        for finding in &row.findings {
+        for (index, finding) in row.findings.iter().enumerate() {
             say(&format!(
                 "  [{}] {}: {}",
                 finding.severity.name(),
                 finding.location,
                 finding.message
             ));
-            say(&format!("    fix: {}", finding.remediation));
+            // A finding the publisher already ruled on is still printed, and
+            // has to say so: a score of 100 beside seven findings with no
+            // word about who settled them reads as a bug in the checker.
+            //
+            // `decisions[i]` speaks for `findings[i]`. If it does not, that
+            // is a defect in the engine and this is the one surface whose
+            // whole job is to show every finding — so it says so out loud
+            // rather than dropping the line, which is what zipping the two
+            // would have done.
+            match row.decisions.get(index).map(|decision| &decision.state) {
+                Some(DecisionState::AuthorDismissed {
+                    reason,
+                    dismissed_at,
+                    publisher,
+                }) => say(&format!(
+                    "    {} reviewed this {} and recorded it as {} — it is reported, and does not count",
+                    kendex_core::names::shown(publisher),
+                    kendex_core::names::shown(dismissed_at),
+                    reason.name()
+                )),
+                Some(_) => say(&format!("    fix: {}", finding.remediation)),
+                None => say(&format!(
+                    "    fix: {} (no decision recorded beside this finding — please report this)",
+                    finding.remediation
+                )),
+            }
         }
         print_skipped(row);
         if let Some(review_hash) = &row.review_hash

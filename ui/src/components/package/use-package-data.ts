@@ -15,9 +15,11 @@ import {
 } from "@/lib/copy";
 import { versionRowLabel } from "@/lib/versions";
 import { useAuditStore } from "@/stores/audit";
+import { useEditorStore } from "@/stores/editor";
 import type { PackageRef } from "@/stores/nav";
 import { useProblemsStore } from "@/stores/problems";
 import { useScanStore } from "@/stores/scan";
+import { useUpdatesStore } from "@/stores/updates";
 
 export type PackageView =
   | { mode: "files"; file: string | null }
@@ -27,7 +29,19 @@ export type PackageView =
       to: string;
       fromLabel: string;
       toLabel: string;
+      /** The rendering to read the installed side from, when the
+       *  comparison is about one tool's edited copy rather than the
+       *  package's primary installation. */
+      harness?: HarnessId;
     };
+
+/** Which rendering a diff reads: the one the view names, else the
+ *  package's primary installation. */
+export const diffHarness = (
+  view: PackageView,
+  primary: HarnessId | null,
+): HarnessId | null =>
+  view.mode === "diff" && view.harness ? view.harness : primary;
 
 /** The package page's reads, refetchable as one unit after a mutation. */
 export function usePackageData(ref: PackageRef | null) {
@@ -159,4 +173,14 @@ export function packageVersionActions(
     );
 
   return { switchTo, updateToLatest, follow };
+}
+
+/** One gate for every control that rewrites this package's manifest: the
+ *  audit store's apply, a version switch in flight, the updates store's
+ *  fork or discard, and the editor's save all touch the same file. */
+export function useManifestBusy(switching: boolean): boolean {
+  const auditBusy = useAuditStore((s) => s.busy);
+  const updatesBusy = useUpdatesStore((s) => s.busy);
+  const saving = useEditorStore((s) => s.saving);
+  return auditBusy || switching || updatesBusy || saving;
 }

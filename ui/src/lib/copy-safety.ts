@@ -1,14 +1,34 @@
 // Product prose for the safety surfaces: the decision zone, the held-back
 // panel, accepting findings, and taking over a shared folder. Split from copy.ts for the file line cap — same house style,
 // same rules (see the top of copy.ts).
+import type { DismissReason } from "@/bindings";
+import { REASON_LABELS } from "@/lib/copy-decisions";
 
 // The zone only a person can clear: held-back installs first, then the
 // findings nobody has ruled on. Its caption counts both halves.
 export const DECISION_ZONE_TITLE = "Needs your decision";
 export const cleanSummaryLead = (total: number): string =>
   `${total} item${total === 1 ? "" : "s"}, nothing to report`;
-export const settledSummaryLead = (count: number): string =>
-  `${count} finding${count === 1 ? "" : "s"} already decided`;
+export const settledSummaryLead = (count: number, byAuthor = 0): string => {
+  const noun = `${count} finding${count === 1 ? "" : "s"} already decided`;
+  return byAuthor > 0 ? `${noun} (${byAuthor} by the publisher)` : noun;
+};
+
+// What a package's publisher already ruled on. Named as theirs every time:
+// the person reading this did not make these calls, and a line that let
+// them read as their own would be the one dishonest thing on the page.
+export const publisherSettledLabel = (count: number): string =>
+  `${count} finding${count === 1 ? "" : "s"} the publisher already reviewed`;
+export const publisherSettledExplainer =
+  "Recorded by whoever publishes these items, against exactly these bytes. Reported here and not counted toward the score — edit the item and they come back.";
+export const publisherSettledNote = (
+  publisher: string,
+  reason: DismissReason,
+  when: string | null,
+): string =>
+  `${publisher} reviewed this${when ? ` ${when}` : ""} — ${REASON_LABELS[
+    reason
+  ].toLowerCase()}`;
 
 export const SAFETY_HELP =
   "Strict catches more, and flags more things that turn out fine. Lenient stops only the riskiest.";

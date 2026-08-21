@@ -102,10 +102,24 @@ fn dismiss_catalog(
         let Some((kind, name, fingerprint)) = dismissals::parse_token(token) else {
             return Err(format!("'{token}' is not a kind:name#fingerprint token").into());
         };
+        // A hook is scored from its script when a plan writes it and from
+        // the shared settings file its registration lands in when an audit
+        // reads it back. A record can bind to one or the other, never both,
+        // so an install refuses one — and writing a record nobody will ever
+        // honour is worse than saying so here.
+        if kind == kendex_core::model::ItemKind::Hook {
+            return Err(format!(
+                "{token}: a hook's review cannot travel to an install — it is scored from its \
+                 script here and from the harness's settings file once installed. Fix the \
+                 finding, or narrow what the script does."
+            )
+            .into());
+        }
         let Some(path) = kendex_core::source::find_item(&sealed, &config, kind, name) else {
             return Err(format!("{}: no {} '{name}' in this catalog", token, kind.name()).into());
         };
-        let item = kendex_core::check_catalog::check_item(&sealed, kind, name, &path, None)?;
+        let item =
+            kendex_core::check_catalog::check_item(&sealed, &config, kind, name, &path, None)?;
         let known = item.findings.iter().any(|finding| {
             finding
                 .token
@@ -118,7 +132,11 @@ fn dismiss_catalog(
             )
             .into());
         }
-        let Some(hash) = dismissals::content_hash(&sealed, &path) else {
+        let Some(hash) = kendex_core::quality::author::content_hash(
+            &sealed,
+            &path,
+            &config.rendering_inputs(&sealed, kind, name),
+        ) else {
             return Err(format!("{token}: the item's content cannot be read").into());
         };
         match batches

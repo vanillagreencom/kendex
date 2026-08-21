@@ -1,9 +1,14 @@
 import type { ItemSafety, ItemWarning } from "@/bindings";
+import { PublisherSettled } from "@/components/safety-findings-publisher";
 import { RECORDED_DECISIONS_LINK } from "@/lib/copy-decisions";
 import { cleanSummaryLead, settledSummaryLead } from "@/lib/copy-safety";
 import { groupSkipped, groupWarnings } from "@/lib/group-notes";
 import { kindLabel, skipReasonShort } from "@/lib/labels";
-import { settledCount } from "@/lib/reviewable";
+import {
+  authorSettledCount,
+  publisherGroups,
+  settledCount,
+} from "@/lib/reviewable";
 import { useNavStore } from "@/stores/nav";
 
 /**
@@ -36,6 +41,7 @@ const LINK = "underline underline-offset-2 hover:text-muted-foreground";
 export function ScopeFooter({
   clean,
   settled,
+  alsoScored,
   notes,
   warnings,
   unmanaged,
@@ -45,16 +51,27 @@ export function ScopeFooter({
   clean: ItemSafety[];
   /** Rows whose findings someone already ruled on. */
   settled: ItemSafety[];
+  /** Every other scored row a publisher's record could speak for — an item
+   *  with open findings, or one the gate is holding back, can carry settled
+   *  findings beside them. */
+  alsoScored: ItemSafety[];
   notes: string[];
   warnings: ItemWarning[];
   unmanaged: number;
   onSeeUnmanaged: () => void;
 }) {
   const goTo = useNavStore((s) => s.goTo);
+  // Two numbers about two things, each counted the way the sentence around
+  // it counts. The settled sentence is about rows with nothing left to
+  // decide, in occurrences; the disclosure below is about every scored row,
+  // in decisions. Deriving one from the other made the parenthetical claim
+  // more than the total it sits inside.
   const decided = settledCount(settled);
+  const byAuthor = authorSettledCount(settled);
+  const publisher = publisherGroups([...settled, ...alsoScored]);
   const checked = [
     ...(clean.length > 0 ? [cleanSummaryLead(clean.length)] : []),
-    ...(decided > 0 ? [settledSummaryLead(decided)] : []),
+    ...(decided > 0 ? [settledSummaryLead(decided, byAuthor)] : []),
   ];
   const skipped = groupSkipped(clean).map((group) => {
     const noun = group.kind
@@ -68,7 +85,8 @@ export function ScopeFooter({
     skipped.length === 0 &&
     notes.length === 0 &&
     noted.length === 0 &&
-    unmanaged === 0
+    unmanaged === 0 &&
+    publisher.length === 0
   )
     return null;
 
@@ -94,6 +112,15 @@ export function ScopeFooter({
           {skipped.map((line) => (
             <p key={line}>Not checked: {line}</p>
           ))}
+        </Fact>
+      ) : null}
+
+      {/* Its own row, never inside another: what a publisher decided on the
+          reader's behalf has to be readable whether or not this scope
+          happens to have a clean item or a skipped rule to report. */}
+      {publisher.length > 0 ? (
+        <Fact label="Reviewed by the publisher">
+          <PublisherSettled groups={publisher} />
         </Fact>
       ) : null}
 

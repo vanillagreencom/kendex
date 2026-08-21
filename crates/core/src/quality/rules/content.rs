@@ -3,6 +3,9 @@
 
 use super::{AUTHORED, AuditRule, Finding, Line, Outcome, Prepared, Severity, at, scan_docs};
 
+mod fetch;
+use fetch::fetch_and_run;
+
 pub(super) fn rules() -> Vec<Box<dyn AuditRule>> {
     vec![
         Box::new(PromptInjection),
@@ -74,11 +77,14 @@ impl AuditRule for Rce {
             let Some(what) = fetch_and_run(line) else {
                 return;
             };
+            let what = what.said();
             findings.push(Finding {
                 rule: self.id().to_owned(),
                 severity: line.weigh(Severity::Critical),
                 location: at(doc, line),
-                message: format!("this line {what}, so whatever the far end serves is what runs"),
+                message: format!(
+                    "this line {what}, so whatever the far end serves is what runs"
+                ),
                 remediation:
                     "download to a file, show the user what it contains, and run it as a separate step they can refuse"
                         .to_owned(),
@@ -89,28 +95,6 @@ impl AuditRule for Rce {
     fn id(&self) -> &'static str {
         "rce"
     }
-}
-
-/// A plain description of what this line fetches and runs, if it does.
-fn fetch_and_run(line: &Line) -> Option<&'static str> {
-    const SHELLS: &[&str] = &["| sh", "|sh", "| bash", "|bash", "| zsh", "| python"];
-    if ["curl", "wget"].iter().any(|verb| line.has(verb)) {
-        if SHELLS.iter().any(|shell| line.has(shell)) {
-            return Some("pipes a download straight into a shell");
-        }
-        if line.has("/tmp/")
-            && ["&& sh", "&& bash", "chmod +x"]
-                .iter()
-                .any(|run| line.has(run))
-        {
-            return Some("downloads a file and then executes it");
-        }
-    }
-    if line.has("base64") && line.has("|") && (line.has("-d") || line.has("--decode")) {
-        return Some("decodes hidden text and pipes it onward");
-    }
-    line.has("eval(")
-        .then_some("hands a built-up string to an interpreter")
 }
 
 /// Files that hold credentials, and the verbs that would send them
@@ -149,17 +133,27 @@ impl AuditRule for CredentialTheft {
     fn check(&self, prepared: &Prepared) -> Outcome {
         scan_docs(prepared, AUTHORED, |doc, line, findings| {
             let sends = OUTBOUND.iter().find(|verb| line.has(verb));
-            let Some(file) = CREDENTIAL_FILES
+            let Some(found) = CREDENTIAL_FILES
                 .iter()
-                .find(|path| names_file(line, path, sends.is_some()))
+                .find_map(|path| names_file(line, path, sends.is_some()))
             else {
                 return;
             };
+            // The path this line writes, and a name for the command that
+            // carries it. Two lines sending the same key to two hosts read
+            // the same otherwise, and a sentence that reads the same is one
+            // decision — the reader settles a destination they were never
+            // shown. The digest is of the redacted line, never of anything
+            // in the file: what it distinguishes is which command, and it
+            // survives rendering because rendering moves lines between
+            // files without rewriting them.
+            let file = written_path(line, found);
+            let command = crate::quality::digest(&spelled(line));
             let (base, message) = match sends {
                 Some(verb) => (
                     Severity::Critical,
                     format!(
-                        "this line reads `{file}` and sends it away with `{}`",
+                        "this line reads `{file}` and sends it away with `{}` (command {command})",
                         verb.trim()
                     ),
                 ),
@@ -167,7 +161,9 @@ impl AuditRule for CredentialTheft {
                 // moving what is in it is what theft does.
                 None => (
                     Severity::Medium,
-                    format!("this line reads `{file}`, which holds credentials"),
+                    format!(
+                        "this line reads `{file}`, which holds credentials (command {command})"
+                    ),
                 ),
             };
             findings.push(Finding {
@@ -201,20 +197,47 @@ impl AuditRule for CredentialTheft {
 /// none of that says anything — so unlike `~/.ssh/` and `~/.aws/`, naming it
 /// is not a finding at all. `.env` counts only when the same line is also
 /// sending something away, which is the shape of `cat .env | curl …`.
-fn names_file(line: &Line, path: &str, sends: bool) -> bool {
+fn names_file(line: &Line, path: &str, sends: bool) -> Option<usize> {
     let env_file = path == ".env";
     if env_file && !sends {
-        return false;
+        return None;
     }
-    line.occurrences(path).into_iter().any(|at| {
+    line.occurrences(path).into_iter().find(|at| {
         let starts = !line
-            .before(at)
+            .before(*at)
             .is_some_and(|c| c.is_alphanumeric() || c == '.');
         // `.environment` is not `.env`; `.env.local` is.
         let ends = !env_file
             || !line
-                .after(at, path.len())
+                .after(*at, path.len())
                 .is_some_and(|c| c.is_alphanumeric() || c == '_');
         starts && ends
     })
+}
+
+/// Ends a word on a command line.
+const EDGE: &[char] = &['"', '\'', '`', ' ', '\t', ')', '(', '<', '>', ';', ',', '|'];
+
+/// The path as this line writes it, from the match outward to the nearest
+/// thing that ends a word. `~/.ssh/id_rsa` and `~/.ssh/config` are two
+/// files, and a sentence that names only the `.ssh/` it matched calls them
+/// one thing.
+fn written_path(line: &Line, at: usize) -> String {
+    let start = line.text[..at].rfind(EDGE).map_or(0, |edge| edge + 1);
+    let end = line.text[at..]
+        .find(EDGE)
+        .map_or(line.text.len(), |edge| at + edge);
+    crate::quality::redact(&line.text[start..end])
+}
+
+/// This line as one string, with runs of whitespace flattened so that
+/// reformatting it is not a different command.
+fn spelled(line: &Line) -> String {
+    crate::quality::redact(
+        &line
+            .text
+            .split_whitespace()
+            .collect::<Vec<&str>>()
+            .join(" "),
+    )
 }

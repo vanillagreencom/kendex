@@ -9,6 +9,9 @@ use crate::render::skill::render_skill;
 
 use super::desired::{Artifact, Desired, DesiredState, ItemCtx, native_dir, skill_canonical};
 
+mod authored;
+use authored::authored_tree;
+
 /// One physical skill surface and the harnesses that read it. Codex and Pi
 /// both consume `.agents/skills` in a project, so they form one group and
 /// carry exactly one variant; every other pairing today reads its own
@@ -25,10 +28,15 @@ struct SurfaceGroup {
 /// One rendered variant: the tree's files and their content hash. A group
 /// whose cap cannot be honored produces a refused placeholder and installs
 /// nothing.
+use crate::render::skill::Files;
+
 struct Variant {
-    files: Vec<(PathBuf, Vec<u8>)>,
+    files: Files,
     hash: String,
     refused: bool,
+    /// How much of this tree its publisher wrote, where a record needs
+    /// measuring against it.
+    authored: Option<crate::quality::Authored>,
 }
 
 /// The tools that read a skill directory another tool owns, and what each
@@ -169,6 +177,8 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
                 upstream_skills: None,
                 emitted: None,
                 reasons: ctx.reasons_for(*harness),
+                author_review: ctx.author_review.clone(),
+                authored: variant.authored.clone(),
                 artifact: Artifact::Tree {
                     canonical: canonical.clone(),
                     files: variant.files.clone(),
@@ -230,41 +240,29 @@ fn render_variant(
     group: &SurfaceGroup,
     enabled: bool,
 ) -> Result<Variant> {
-    let mut files = render_skill(ctx.sealed, ctx.item_path, ctx.manifest, ctx.name)?;
+    let mut rendered = render_skill(ctx.sealed, ctx.item_path, ctx.manifest, ctx.name)?;
+    // `SKILL.md.disabled` is the name kendex keeps a switched-off
+    // installation's content under, so a catalog shipping one of its own
+    // has written down a tree that cannot be installed both ways: turning
+    // this off renames one file onto the other, and one of the two is lost
+    // with nothing said about it. `fork` refuses the same shape for the
+    // same reason; there is nothing to choose between them here either.
+    if let Some(reason) = both_names(rendered.files()) {
+        return Ok(refuse(ctx, state, group, &reason));
+    }
     // A skill from a plugin-registry catalog installs under its plugin, and the
-    // catalog's own SKILL.md knows nothing of that: the copy carries the
-    // name the tool will list it under, the catalog keeps the name it wrote.
+    // catalog's own SKILL.md knows nothing of that.
     if group.installed != ctx.name {
-        crate::render::skill::set_skill_name(&mut files, &group.installed);
+        rendered.set_skill_name(&group.installed);
     }
     // The tightest cap in the group and the member that enforces it, taken
     // together: they are one fact, and reading them from separate passes
     // invites a fallback for a state that cannot happen.
-    let capped = group
-        .members
-        .iter()
-        .filter_map(|h| {
-            crate::harness::format_caps(*h)
-                .skill_body_max_bytes
-                .map(|c| (c, *h))
-        })
-        .min_by_key(|(cap, _)| *cap);
+    let capped = tightest_cap(group);
     if let Some((cap, capped_by)) = capped {
-        let outcome = crate::render::split::enforce_body_cap(files, cap);
+        let outcome = crate::render::split::enforce_body_cap(rendered, cap);
         if let Some(reason) = outcome.refusal {
-            for harness in &group.members {
-                state.refused.push(super::desired::Refused {
-                    kind: ItemKind::Skill,
-                    name: ctx.name.to_owned(),
-                    harness: *harness,
-                    reason: reason.clone(),
-                });
-            }
-            return Ok(Variant {
-                files: Vec::new(),
-                hash: String::new(),
-                refused: true,
-            });
+            return Ok(refuse(ctx, state, group, &reason));
         }
         for warning in outcome.warnings {
             state.warnings.push(super::ItemWarning {
@@ -275,7 +273,7 @@ fn render_variant(
                 remediation: warning.remediation,
             });
         }
-        files = outcome.files;
+        rendered = outcome.rendered;
     }
     // The group's members share one physical tree, so a rendering one of
     // their loaders rejects is refused for all of them — installing it for
@@ -287,22 +285,10 @@ fn render_variant(
             *harness,
             ctx.name,
             &group.installed,
-            &files,
+            rendered.files(),
         );
         if let Some(reason) = super::desired::refusal_reason(&findings) {
-            for member in &group.members {
-                state.refused.push(super::desired::Refused {
-                    kind: ItemKind::Skill,
-                    name: ctx.name.to_owned(),
-                    harness: *member,
-                    reason: reason.clone(),
-                });
-            }
-            return Ok(Variant {
-                files: Vec::new(),
-                hash: String::new(),
-                refused: true,
-            });
+            return Ok(refuse(ctx, state, group, &reason));
         }
         for finding in findings
             .into_iter()
@@ -326,16 +312,65 @@ fn render_variant(
         });
     }
     if !enabled {
-        for (rel, _) in &mut files {
-            if rel == std::path::Path::new("SKILL.md") {
-                *rel = PathBuf::from("SKILL.md.disabled");
-            }
-        }
+        rendered.disable();
     }
-    let hash = hash_files(&files);
+    let hash = hash_files(rendered.files());
+    let authored = match ctx.author_review.is_some() {
+        true => authored_tree(&rendered),
+        false => None,
+    };
     Ok(Variant {
-        files,
+        files: rendered.into_files(),
         hash,
         refused: false,
+        authored,
     })
+}
+
+/// Nothing installs for this group, and every member is told why.
+///
+/// One rendering serves the whole group — they read one file on disk — so a
+/// refusal is the group's, never one member's: installing it for the others
+/// would put the rejected bytes exactly where the refusing one reads.
+fn refuse(ctx: &ItemCtx, state: &mut DesiredState, group: &SurfaceGroup, reason: &str) -> Variant {
+    for harness in &group.members {
+        state.refused.push(super::desired::Refused {
+            kind: ItemKind::Skill,
+            name: ctx.name.to_owned(),
+            harness: *harness,
+            reason: reason.to_owned(),
+        });
+    }
+    Variant {
+        files: Vec::new(),
+        hash: String::new(),
+        refused: true,
+        authored: None,
+    }
+}
+
+/// Why a tree carrying both spellings of its own skill file installs
+/// nothing, or `None` where it carries one of them.
+fn both_names(files: &Files) -> Option<String> {
+    let holds = |name: &str| files.iter().any(|(rel, _)| rel.to_str() == Some(name));
+    (holds("SKILL.md") && holds("SKILL.md.disabled")).then(|| {
+        "the catalog ships both SKILL.md and SKILL.md.disabled, and switching this off \
+         would write one over the other"
+            .to_owned()
+    })
+}
+
+/// The tightest body cap any member of this group enforces, and the member
+/// that enforces it — one fact, read once, so the two renderings below
+/// cannot be shaped differently.
+fn tightest_cap(group: &SurfaceGroup) -> Option<(usize, HarnessId)> {
+    group
+        .members
+        .iter()
+        .filter_map(|h| {
+            crate::harness::format_caps(*h)
+                .skill_body_max_bytes
+                .map(|c| (c, *h))
+        })
+        .min_by_key(|(cap, _)| *cap)
 }

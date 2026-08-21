@@ -1,8 +1,9 @@
 //! The Marketplaces pages' commands: every subscription with what its
-//! catalog says about itself, one subscription's packages and curated sets,
-//! a package's preview beside its safety verdict, installing, subscribing,
-//! and the Library's From column — thin shells over core, like every other
-//! command here.
+//! catalog says about itself, one catalog's packages and curated sets, a
+//! package's preview beside its safety verdict, installing, subscribing, and
+//! the Library's From column — thin shells over core, like every other
+//! command here. Reads take a [`Catalog`]: a subscription, or a repository
+//! opened from the Community tab before subscribing.
 
 use kendex_core::apply;
 use kendex_core::engine::ops::{self as engine_ops, AddRequest};
@@ -11,7 +12,7 @@ use kendex_core::library::{self, ProvenanceRow};
 use kendex_core::manifest::{Manifest, ManifestFile, manifest_path};
 use kendex_core::model::{ItemKind, Scope};
 use kendex_core::source::browse::{
-    self, AvailablePackage, BundleDetail, PackagePreview, PackageSafety,
+    self, AvailablePackage, BundleDetail, Catalog, CatalogSummary, PackagePreview, PackageSafety,
 };
 use kendex_core::source::{CatalogFinding, CatalogMode, MarketplaceMeta, SourceConfig};
 use kendex_core::source_ops;
@@ -72,6 +73,9 @@ pub struct MarketplaceRow {
     pub scope: Scope,
     pub name: String,
     pub repo: Option<String>,
+    /// The canonical `owner/repo` a GitHub declaration folds to — what a
+    /// directory row is matched against, however the subscription spells it.
+    pub repo_key: Option<String>,
     pub path: Option<String>,
     pub rev: Option<String>,
     /// The commit the subscription reads right now, when the cache holds one.
@@ -99,6 +103,10 @@ pub fn marketplaces_overview() -> Result<Vec<MarketplaceRow>, String> {
             rows.push(MarketplaceRow {
                 scope: row.scope,
                 name: row.name,
+                repo_key: row
+                    .repo
+                    .as_deref()
+                    .and_then(kendex_core::repo_move::owner_repo),
                 repo: row.repo,
                 path: row.path,
                 rev: row.rev,
@@ -118,25 +126,31 @@ pub fn marketplaces_overview() -> Result<Vec<MarketplaceRow>, String> {
     Ok(rows)
 }
 
-/// Every package one subscription offers, across kinds, with installed
-/// state joined in.
+/// Every package one catalog offers, across kinds, with installed state
+/// joined in.
 #[tauri::command(async)]
 #[specta::specta]
-pub fn marketplace_packages(scope: Scope, source: String) -> Result<Vec<AvailablePackage>, String> {
+pub fn marketplace_packages(catalog: Catalog) -> Result<Vec<AvailablePackage>, String> {
     let env = env()?;
-    browse::packages(&env, &scope, &source).map_err(|e| e.to_string())
+    browse::packages(&env, &catalog).map_err(|e| e.to_string())
+}
+
+/// What a catalog says about itself, fetched fresh for a repository nobody
+/// subscribes to — the marketplace page's header, and the subscription to
+/// carry on as when this machine already holds one.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn marketplace_summary(catalog: Catalog) -> Result<CatalogSummary, String> {
+    let env = env()?;
+    browse::summary(&env, &catalog).map_err(|e| e.to_string())
 }
 
 /// One curated set with per-member installed state.
 #[tauri::command(async)]
 #[specta::specta]
-pub fn marketplace_bundle(
-    scope: Scope,
-    source: String,
-    name: String,
-) -> Result<BundleDetail, String> {
+pub fn marketplace_bundle(catalog: Catalog, name: String) -> Result<BundleDetail, String> {
     let env = env()?;
-    browse::bundle(&env, &scope, &source, &name).map_err(|e| e.to_string())
+    browse::bundle(&env, &catalog, &name).map_err(|e| e.to_string())
 }
 
 /// The available-package page's one payload: the preview beside the safety
@@ -151,17 +165,29 @@ pub struct PackageView {
 #[tauri::command(async)]
 #[specta::specta]
 pub fn marketplace_package_preview(
-    scope: Scope,
-    source: String,
+    catalog: Catalog,
     kind: ItemKind,
     name: String,
 ) -> Result<PackageView, String> {
     let env = env()?;
     let preview =
-        browse::package_preview(&env, &scope, &source, kind, &name).map_err(|e| e.to_string())?;
-    let safety =
-        browse::package_safety(&env, &scope, &source, kind, &name).map_err(|e| e.to_string())?;
+        browse::package_preview(&env, &catalog, kind, &name).map_err(|e| e.to_string())?;
+    let safety = browse::package_safety(&env, &catalog, kind, &name).map_err(|e| e.to_string())?;
     Ok(PackageView { preview, safety })
+}
+
+/// One offered file's content before install — the same read an installed
+/// package's file gets, confined to the package inside the catalog.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn marketplace_package_file(
+    catalog: Catalog,
+    kind: ItemKind,
+    name: String,
+    path: String,
+) -> Result<kendex_core::engine::ItemSource, String> {
+    let env = env()?;
+    browse::package_file(&env, &catalog, kind, &name, &path).map_err(|e| e.to_string())
 }
 
 /// One selected package, by the kind and name the catalog offers it under.
@@ -232,7 +258,10 @@ pub fn marketplace_install(
     }
     .map_err(|e| e.to_string())?;
     apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
-    marketplace_packages(target, source)
+    marketplace_packages(Catalog::Subscription {
+        scope: target,
+        source,
+    })
 }
 
 /// What subscribing declared, after the plan ran.
@@ -303,10 +332,9 @@ pub struct AboutView {
 
 #[tauri::command(async)]
 #[specta::specta]
-pub fn marketplace_about(scope: Scope, source: String) -> Result<AboutView, String> {
+pub fn marketplace_about(catalog: Catalog) -> Result<AboutView, String> {
     let env = env()?;
-    let (sealed, config) = open_catalog(&env, &scope, &source)?;
-    let about = kendex_core::source::about(&sealed, &config);
+    let about = browse::about(&env, &catalog).map_err(|e| e.to_string())?;
     Ok(AboutView {
         mode: about.mode,
         found: about

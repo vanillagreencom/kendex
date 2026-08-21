@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Finding, ItemSafety } from "@/bindings";
+import type { Finding, FindingDecision, ItemSafety } from "@/bindings";
 import {
   acceptTokens,
   groupBlocked,
@@ -50,7 +50,7 @@ describe("groupFindingsByRule", () => {
         location: "/home/dana/skills/visual-qa/process.py:111",
       },
     ];
-    const groups = groupFindingsByRule(findings);
+    const groups = groupFindingsByRule(findings, []);
     expect(groups).toHaveLength(1);
     expect(groups[0].locations).toEqual([
       RULE_FINDING.location,
@@ -65,7 +65,7 @@ describe("groupFindingsByRule", () => {
       { ...RULE_FINDING, message: "different message" },
       { ...RULE_FINDING, remediation: "different fix" },
     ];
-    expect(groupFindingsByRule(findings)).toHaveLength(3);
+    expect(groupFindingsByRule(findings, [])).toHaveLength(3);
   });
 
   it("keeps the highest severity across a rule's findings", () => {
@@ -74,55 +74,7 @@ describe("groupFindingsByRule", () => {
       { ...RULE_FINDING, severity: "critical" },
       { ...RULE_FINDING, severity: "low" },
     ];
-    expect(groupFindingsByRule(findings)[0].severity).toBe("critical");
-  });
-});
-
-describe("groupBlocked", () => {
-  it("merges the same (kind, name) across harnesses when their finding sets are identical", () => {
-    const codex = row({ harness: "codex" });
-    const pi = row({ harness: "pi" });
-    const groups = groupBlocked([codex, pi]);
-    expect(groups).toHaveLength(1);
-    expect(groups[0].rows.map((r) => r.harness)).toEqual(["codex", "pi"]);
-  });
-
-  it("does not merge the same (kind, name) across harnesses when their finding sets differ", () => {
-    const codex = row({ harness: "codex" });
-    const pi = row({
-      harness: "pi",
-      findings: [{ ...RULE_FINDING, location: "different-file.py:1" }],
-    });
-    const groups = groupBlocked([codex, pi]);
-    expect(groups).toHaveLength(2);
-  });
-
-  it("groups the findings of a merged entry by rule", () => {
-    const secondFinding: Finding = {
-      rule: "rce",
-      severity: "critical",
-      location: "/home/dana/skills/visual-qa/evals/grade.py:12",
-      message: "downloads a script from a URL and executes it directly",
-      remediation:
-        "pin and vendor the script instead of fetching it at runtime",
-    };
-    const codex = row({
-      harness: "codex",
-      findings: [RULE_FINDING, secondFinding],
-    });
-    const pi = row({ harness: "pi", findings: [RULE_FINDING, secondFinding] });
-    const groups = groupBlocked([codex, pi]);
-    expect(groups).toHaveLength(1);
-    expect(groups[0].findingGroups.map((g) => g.rule)).toEqual([
-      "dangerous-commands",
-      "rce",
-    ]);
-  });
-
-  it("keeps different names apart even with identical findings", () => {
-    const a = row({ name: "visual-qa" });
-    const b = row({ name: "other-skill" });
-    expect(groupBlocked([a, b])).toHaveLength(2);
+    expect(groupFindingsByRule(findings, [])[0].severity).toBe("critical");
   });
 });
 
@@ -197,5 +149,45 @@ describe("acceptTokens", () => {
     const [group] = groupBlocked([held]);
     const shown = group.findingGroups.flatMap((rule) => rule.locations);
     expect(shown).toHaveLength(2);
+  });
+});
+
+describe("a held-back item's settled findings", () => {
+  it("names the publisher only where every occurrence behind the group is theirs", () => {
+    const settled: FindingDecision = {
+      fingerprint: "p",
+      token: null,
+      state: {
+        state: "author-dismissed",
+        reason: "intended",
+        dismissedAt: "2026-08-16T00:00:00Z",
+        publisher: "vanillagreencom/kendex",
+      },
+    };
+    const open: FindingDecision = {
+      fingerprint: "o",
+      token: null,
+      state: { state: "open", earlier: null },
+    };
+    const first: Finding = {
+      rule: "safety-bypass",
+      severity: "critical",
+      location: "SKILL.md:4",
+      message: "`--no-verify` skips the checks a commit runs",
+      remediation: "leave the check in place",
+    };
+    const second: Finding = { ...first, location: "SKILL.md:9" };
+
+    const both = groupFindingsByRule([first, second], [settled, settled]);
+    expect(both).toHaveLength(1);
+    expect(both[0].settledBy?.publisher).toBe("vanillagreencom/kendex");
+
+    // One occurrence nobody ruled on and the reader still has something to
+    // do here, so the group is not the publisher's to speak for.
+    const mixed = groupFindingsByRule([first, second], [settled, open]);
+    expect(mixed[0].settledBy).toBeNull();
+
+    // And with no decisions at all — every other caller — nothing changes.
+    expect(groupFindingsByRule([first, second], [])[0].settledBy).toBeNull();
   });
 });

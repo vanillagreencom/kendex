@@ -112,6 +112,14 @@ pub enum CoreError {
     #[error("unknown source '{name}' — declare [sources.{name}] first")]
     UnknownSource { name: String },
 
+    #[error(
+        "'{reference}' is not a GitHub repository (owner/repo) — subscribe to it to browse its contents"
+    )]
+    NotBrowsable { reference: String },
+
+    #[error("{repo} could not be fetched: {reason}")]
+    FetchFailed { repo: String, reason: String },
+
     #[error("'{reference}': {reason}")]
     SourceRefInvalid { reference: String, reason: String },
 
@@ -140,6 +148,14 @@ pub enum CoreError {
 
     #[error("'{name}' not found in source '{source_name}'")]
     ItemNotInSource { name: String, source_name: String },
+
+    /// A skill tree carrying both `SKILL.md` and `SKILL.md.disabled` has
+    /// two claims on one source file; a fork would keep one and lose the
+    /// other, so it keeps neither until the tree says which is meant.
+    #[error(
+        "'{name}' has both SKILL.md and SKILL.md.disabled — remove one before keeping it as your own"
+    )]
+    ForkAmbiguous { name: String },
 
     /// Case 4 of naming a catalog: a qualifier that names no subscription
     /// refuses, listing what is subscribed — never a guess, never a

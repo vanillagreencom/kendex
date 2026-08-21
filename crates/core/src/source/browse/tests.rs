@@ -4,9 +4,14 @@ use std::path::Path;
 use super::*;
 use crate::env::FakeOs;
 use crate::lock::{Lock, LockEntry};
-use crate::model::HarnessId;
+use crate::model::{HarnessId, Scope};
 
+mod repo;
+mod root_skill;
+mod safety_asks;
+mod safety_budget;
 mod safety_cache;
+mod summary;
 
 fn skill(catalog: &Path, dir: &str, name: &str, body: &str) {
     let home = catalog.join(dir).join(name);
@@ -62,6 +67,14 @@ fn save_lock(env: &Env, scope: &Scope, members: &[(ItemKind, &str)]) {
     crate::lock::save(&crate::lock::lock_path(env, scope), &lock).unwrap();
 }
 
+/// The subscription every test here browses.
+fn cat(scope: &Scope) -> Catalog {
+    Catalog::Subscription {
+        scope: scope.clone(),
+        source: "cat".to_owned(),
+    }
+}
+
 fn sources_decl(catalog: &Path) -> String {
     format!(
         "schema = 5\n[sources.cat]\npath = \"{}\"\n",
@@ -77,7 +90,7 @@ fn packages_listed_for_a_plain_discovered_marketplace() {
     skill(&catalog, ".claude/skills", "extra", "body");
     let (env, scope) = project(tmp.path(), &sources_decl(&catalog));
 
-    let rows = packages(&env, &scope, "cat").unwrap();
+    let rows = packages(&env, &cat(&scope)).unwrap();
     let gh = rows.iter().find(|row| row.name == "gh").expect("gh listed");
     assert_eq!(gh.kind, ItemKind::Skill);
     assert_eq!(gh.description.as_deref(), Some("does gh things"));
@@ -106,7 +119,7 @@ fn packages_listed_for_a_plugin_registry_marketplace() {
     .unwrap();
     let (env, scope) = project(tmp.path(), &sources_decl(&catalog));
 
-    let rows = packages(&env, &scope, "cat").unwrap();
+    let rows = packages(&env, &cat(&scope)).unwrap();
     let names: Vec<&str> = rows.iter().map(|row| row.name.as_str()).collect();
     assert!(names.contains(&"tools/eda"), "{names:?}");
     assert!(names.contains(&"tools/helper"), "{names:?}");
@@ -165,7 +178,7 @@ fn bundle_detail_derives_partly_installed_and_full() {
     let (env, scope) = project(tmp.path(), &manifest);
     save_lock(&env, &scope, &SIX[..2]);
 
-    let partly = bundle(&env, &scope, "cat", "starter").unwrap();
+    let partly = bundle(&env, &cat(&scope), "starter").unwrap();
     assert_eq!(partly.total_members, 6);
     assert_eq!(partly.installed_members, 2);
     assert_eq!(partly.description.as_deref(), Some("six things"));
@@ -181,7 +194,7 @@ fn bundle_detail_derives_partly_installed_and_full() {
     assert_eq!(state_of(&partly, "guard"), InstallState::Available);
 
     save_lock(&env, &scope, &SIX);
-    let full = bundle(&env, &scope, "cat", "starter").unwrap();
+    let full = bundle(&env, &cat(&scope), "starter").unwrap();
     assert_eq!(full.installed_members, 6);
     assert!(
         full.members
@@ -210,7 +223,7 @@ fn a_bundle_member_the_catalog_no_longer_carries_is_a_row_not_an_error() {
     );
     let (env, scope) = project(tmp.path(), &manifest);
 
-    let detail = bundle(&env, &scope, "cat", "starter").unwrap();
+    let detail = bundle(&env, &cat(&scope), "starter").unwrap();
     assert_eq!(detail.total_members, 2);
     let state_of = |name: &str| {
         detail
@@ -244,7 +257,7 @@ fn a_member_the_user_removed_shows_removed_by_you() {
     );
     let (env, scope) = project(tmp.path(), &manifest);
 
-    let detail = bundle(&env, &scope, "cat", "starter").unwrap();
+    let detail = bundle(&env, &cat(&scope), "starter").unwrap();
     let state_of = |name: &str| {
         detail
             .members
@@ -274,7 +287,7 @@ fn a_declared_package_the_gate_refuses_shows_held_back() {
     );
     let (env, scope) = project(tmp.path(), &manifest);
 
-    let rows = packages(&env, &scope, "cat").unwrap();
+    let rows = packages(&env, &cat(&scope)).unwrap();
     let state = |name: &str| rows.iter().find(|row| row.name == name).unwrap().state;
     assert_eq!(state("risky"), InstallState::HeldBackBySafety);
     assert_eq!(state("gh"), InstallState::Available);
@@ -294,7 +307,7 @@ fn a_name_taken_by_another_source_is_shown_before_the_click() {
     );
     let (env, scope) = project(tmp.path(), &manifest);
 
-    let rows = packages(&env, &scope, "cat").unwrap();
+    let rows = packages(&env, &cat(&scope)).unwrap();
     let gh = rows.iter().find(|row| row.name == "gh").unwrap();
     assert_eq!(gh.collision.as_deref(), Some("two"));
     assert_eq!(gh.state, InstallState::Available);
@@ -303,7 +316,7 @@ fn a_name_taken_by_another_source_is_shown_before_the_click() {
             .all(|row| row.name == "gh" || row.collision.is_none())
     );
 
-    let detail = bundle(&env, &scope, "cat", "starter").unwrap();
+    let detail = bundle(&env, &cat(&scope), "starter").unwrap();
     assert_eq!(detail.collision.as_deref(), Some("two"));
 }
 
@@ -315,7 +328,7 @@ fn preview_carries_readme_files_tags_and_sets() {
     fs::write(catalog.join("skills/gh/notes.md"), "extra notes\n").unwrap();
     let (env, scope) = project(tmp.path(), &sources_decl(&catalog));
 
-    let preview = package_preview(&env, &scope, "cat", ItemKind::Skill, "gh").unwrap();
+    let preview = package_preview(&env, &cat(&scope), ItemKind::Skill, "gh").unwrap();
     assert_eq!(preview.description.as_deref(), Some("does gh things"));
     assert_eq!(preview.tags, vec![Tag::Review]);
     assert_eq!(preview.readme.as_deref(), Some("body"));
@@ -327,7 +340,7 @@ fn preview_carries_readme_files_tags_and_sets() {
     assert_eq!(paths, ["SKILL.md", "notes.md"]);
     assert_eq!(preview.bundles, vec!["starter".to_owned()]);
 
-    let hook = package_preview(&env, &scope, "cat", ItemKind::Hook, "guard").unwrap();
+    let hook = package_preview(&env, &cat(&scope), ItemKind::Hook, "guard").unwrap();
     assert_eq!(hook.readme.as_deref(), Some("#!/bin/sh\necho ok"));
     assert_eq!(hook.files.len(), 1);
 }
@@ -341,7 +354,7 @@ fn preview_shows_control_characters_instead_of_acting_on_them() {
     skill(&catalog, "skills", "gh", "red \u{1b}[31m text");
     let (env, scope) = project(tmp.path(), &sources_decl(&catalog));
 
-    let preview = package_preview(&env, &scope, "cat", ItemKind::Skill, "gh").unwrap();
+    let preview = package_preview(&env, &cat(&scope), ItemKind::Skill, "gh").unwrap();
     let readme = preview.readme.unwrap();
     assert!(!readme.contains('\u{1b}'), "{readme:?}");
     assert!(readme.contains("\\u{1b}"), "{readme:?}");
@@ -362,9 +375,9 @@ fn preview_reads_only_through_the_sealed_source() {
     let (env, scope) = project(tmp.path(), &sources_decl(&catalog));
 
     assert!(matches!(
-        package_preview(&env, &scope, "cat", ItemKind::Skill, "gh"),
+        package_preview(&env, &cat(&scope), ItemKind::Skill, "gh"),
         Err(CoreError::SourceEscape { .. })
     ));
-    let rows = packages(&env, &scope, "cat").unwrap();
+    let rows = packages(&env, &cat(&scope)).unwrap();
     assert!(!rows.iter().any(|row| row.name == "lnk"));
 }

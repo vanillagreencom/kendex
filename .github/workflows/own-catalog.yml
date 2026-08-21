@@ -1,0 +1,64 @@
+# This repository's own catalog and renderers. It calls the reusable
+# workflow like any other caller, which is what lets that workflow honour
+# its inputs with no guard: nothing there can work out whose run it is, and
+# nothing there has to.
+name: own-catalog
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # The default marketplace holds itself to the strictest reading: everyone
+  # who installs from it inherits whatever its safety pass still finds.
+  catalog:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/catalog-check.yml
+    with:
+      path: .
+      strict: true
+      # The commit under review, checked by its own checker. `ref` has a
+      # default, and workflow_call applies input defaults to a local caller
+      # exactly as to a remote one — so leaving it out validates this branch
+      # with main's engine, which is a different set of rules than the
+      # branch's own tests ran.
+      ref: ${{ github.sha }}
+
+  # The one job that lets somebody other than kendex read kendex's output.
+  # Freely installable without an account or an API key: OpenCode, Gemini
+  # CLI, Codex and Claude Code all ship on npm and all answer a local
+  # list/version command offline. Cursor's agent CLI and the GitHub Copilot
+  # CLI are not installed here — both want an authenticated session — so
+  # the suite skips them and says so. A run where every harness was absent
+  # fails; see crates/cli/tests/cli_smoke.rs.
+  #
+  # It lives here rather than in the reusable workflow because it exercises
+  # kendex's own renderers: a caller's checkout is their catalog, and
+  # running it against theirs would fail them for our content.
+  smoke:
+    name: real-CLI round trip
+    permissions:
+      contents: read
+    runs-on: ${{ vars.CI_RUNNER_8V || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: System dependencies for the keychain store
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install the freely installable harness CLIs
+        run: |
+          npm install -g \
+            opencode-ai \
+            @google/gemini-cli \
+            @openai/codex \
+            @anthropic-ai/claude-code
+      - name: Round-trip the emitted trees
+        env:
+          KENDEX_CLI_SMOKE: "1"
+        run: cargo test -p kendex-cli --test cli_smoke -- --nocapture

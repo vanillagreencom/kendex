@@ -336,7 +336,8 @@ fn convert_lock(
                             .and_then(|h| h.as_str())
                             .unwrap_or("")
                     ),
-                    // v1 recorded neither; the first refresh fills both in.
+                    // v1 recorded none of these; the first refresh fills
+                    // them in.
                     source_commit: None,
                     rendered_hash: None,
                     enabled: true,

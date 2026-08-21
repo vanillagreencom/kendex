@@ -40,13 +40,27 @@ use crate::model::{ItemKind, ObservedItem};
 use super::desired::{Artifact, Desired};
 
 /// What this plan would install, hashed before a byte of it is written.
+///
+/// Sealed by the kind the artifact *is* on disk, not the kind it is
+/// declared as: a Codex command is written and scanned back as a skill
+/// tree, and a decision that sealed itself as a command would read as
+/// absent the moment the audit looked.
 pub(super) fn desired(item: &Desired) -> Option<String> {
-    let inner = match &item.artifact {
+    Some(seal(installed_kind(item), &inner_hash(item)?))
+}
+
+fn inner_hash(item: &Desired) -> Option<String> {
+    Some(match &item.artifact {
         Artifact::File { bytes, .. } => hash_bytes(bytes),
         Artifact::Tree { files, .. } => hash_files(files),
         Artifact::Registration { script, edits } => registration(script.as_ref(), edits)?,
-    };
-    Some(seal(item.kind, &inner))
+    })
+}
+
+fn installed_kind(item: &Desired) -> ItemKind {
+    item.emitted
+        .as_ref()
+        .map_or(item.kind, |emitted| emitted.kind)
 }
 
 /// What is installed here right now, read back off disk.

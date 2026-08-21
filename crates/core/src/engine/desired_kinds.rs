@@ -44,6 +44,10 @@ pub(super) fn declared(
         upstream_skills: None,
         emitted: None,
         reasons: ctx.reasons_for(harness),
+        author_review: ctx.author_review.clone(),
+        // Hooks, commands and MCP servers render from the publisher's bytes
+        // and nothing else; there is nothing to subtract.
+        authored: None,
         artifact,
     })
 }
@@ -304,6 +308,10 @@ pub(super) fn desired_plugins(
             upstream_skills: None,
             emitted: None,
             reasons: BTreeSet::from([Reason::Requested]),
+            // A plugin is a switch in a settings file, not catalog content
+            // an author could have reviewed.
+            author_review: None,
+            authored: None,
             artifact: Artifact::Registration {
                 script: None,
                 edits: vec![(

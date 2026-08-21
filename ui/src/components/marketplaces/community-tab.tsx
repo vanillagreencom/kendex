@@ -14,6 +14,11 @@ import {
 import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import { useCommunityStore } from "@/stores/community";
+import {
+  rowSubscribed,
+  subscribedKeys,
+  useMarketplacesStore,
+} from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 import { agoLabel, DirectoryRowLine, dayOf } from "./directory-row";
 import { SkillsShSearch } from "./skillssh-search";
@@ -30,6 +35,9 @@ export function CommunityTab() {
   const skillsshAvailable = useCommunityStore((s) => s.skillsshAvailable);
   const load = useCommunityStore((s) => s.load);
   const goToMarketplaces = useNavStore((s) => s.goToMarketplaces);
+  const goToMarketplace = useNavStore((s) => s.goToMarketplace);
+  const subscriptions = useMarketplacesStore((s) => s.rows);
+  const subscriptionsCurrent = useMarketplacesStore((s) => s.rowsCurrent);
 
   const [section, setSection] = useState<"directory" | "skillssh">("directory");
   const [query, setQuery] = useState("");
@@ -41,6 +49,10 @@ export function CommunityTab() {
     void load(false);
   }, [load]);
 
+  const held = useMemo(
+    () => (subscriptionsCurrent ? subscribedKeys(subscriptions) : null),
+    [subscriptions, subscriptionsCurrent],
+  );
   const tags = useMemo(
     () =>
       [...new Set((directory?.rows ?? []).flatMap((row) => row.tags))].sort(),
@@ -81,7 +93,10 @@ export function CommunityTab() {
         </div>
 
         {section === "skillssh" ? (
-          <SkillsShSearch onInstall={(url) => setSubscribeTo(url)} />
+          <SkillsShSearch
+            onOpen={(repo) => goToMarketplace({ by: "repo", repo })}
+            onInstall={(url) => setSubscribeTo(url)}
+          />
         ) : error && !directory ? (
           <EmptyState icon={Globe} title="kendex.ai is not reachable">
             {error}
@@ -155,6 +170,10 @@ export function CommunityTab() {
                   <DirectoryRowLine
                     key={row.repo}
                     row={row}
+                    subscribed={rowSubscribed(row, held)}
+                    onOpen={() =>
+                      goToMarketplace({ by: "repo", repo: row.repo })
+                    }
                     onSubscribe={() => setSubscribeTo(row.repo)}
                   />
                 ))}

@@ -391,6 +391,153 @@ printf 'src/big.rs\t1200\n' >"$REPO_G/ci/ratchet.tsv"
 run_hook "$REPO_G" RATCHET_EXIT=1
 assert_eq "$rc" "2" "settings-relocated baseline still adopts the ratchet lane"
 
+# A commit aimed at another repository is checked there, not here. A session
+# working in a git worktree runs `git -C <path> commit` or `cd <path> && git
+# commit` while the hook starts in the project directory; reading the staged
+# set from here would lint whatever the main checkout happens to be holding.
+# The target repo stages no Rust, so a passing run can only mean the hook
+# read the target's staged set and not this one's.
+REPO_W="$TMP_ROOT/worktree"
+mkdir -p "$REPO_W"
+git -C "$REPO_W" init -q
+git -C "$REPO_W" config user.email t@t
+git -C "$REPO_W" config user.name t
+printf 'notes\n' >"$REPO_W/NOTES.md"
+git -C "$REPO_W" add NOTES.md
+
+printf 'fn other() {}\n' >"$REPO_G/dirty.rs"
+git -C "$REPO_G" add dirty.rs
+
+# Run the hook from $1 against the command in $2. Where it starts matters:
+# a starting checkout with failing Rust staged makes rc 2 the answer for a
+# hook that never moved, so any test proving it moved has to start clean.
+aimed_from() {
+  set +e
+  out=$( (cd "$1" && env -u KENDEX_PRE_COMMIT_RUST_CLIPPY \
+    PATH="$BIN_DIR:$PATH" CARGO_LOG="$CARGO_LOG" CARGO_CLIPPY_EXIT=1 \
+    bash "$HOOK" <<<"{\"command\": \"$2\"}") 2>"$ERR_FILE")
+  rc=$?
+  set -e
+  err="$(cat "$ERR_FILE")"
+}
+
+aimed_at() {
+  aimed_from "$REPO_G" "$1"
+}
+
+# Control: with no target named, the hook answers for the repo it starts in,
+# whose staged Rust fails the lane.
+aimed_at "git commit -m test"
+assert_eq "$rc" "2" "with no target named the hook answers for its own repo"
+
+aimed_at "git -C $REPO_W commit -m test"
+assert_eq "$rc" "0" "git -C names the repo the hook checks"
+
+aimed_at "cd $REPO_W && git commit -m test"
+assert_eq "$rc" "0" "a cd prefix names the repo the hook checks"
+
+# The command matcher allows git's own options between `git` and `commit`.
+# A pattern demanding the two words be adjacent skipped `git -C <path>
+# commit` entirely, so every lane here fail-opened for it. Staging Rust in
+# the repo the hook starts in makes a skipped run indistinguishable from a
+# clean one only if the matcher fires: rc 2 proves it ran.
+aimed_at "git -C $REPO_G commit -m test"
+assert_eq "$rc" "2" "git -C with an explicit path still reaches the lanes"
+
+aimed_at "git --no-pager commit -m test"
+assert_eq "$rc" "2" "a git option before commit still reaches the lanes"
+
+aimed_at "git log --oneline"
+assert_eq "$rc" "0" "a command that is not a commit is left alone"
+
+# A path with a space has to be quoted, and JSON escapes those quotes. A
+# reader that stops at the first quote sees `git -C \` and finds no commit,
+# so every lane below passes a command it never read.
+aimed_at "git -C \\\"$REPO_G\\\" commit -m test"
+assert_eq "$rc" "2" "git -C with a quoted path still reaches the lanes"
+
+aimed_at "cd \\\"$REPO_G\\\" && git commit -m test"
+assert_eq "$rc" "2" "a quoted cd prefix still reaches the lanes"
+
+# A directory whose name contains a space is the case the whitespace reader
+# could not reach: `git -C "/my repo" commit` has to be quoted, and splitting
+# on spaces hands back `"/my`, which is no directory, so the hook silently
+# answered for its own checkout. The fixture's name carries a real space —
+# the earlier quoted-path cases interpolated a path that had none, so they
+# passed against a reader that still split on whitespace.
+REPO_SP="$TMP_ROOT/repo with space"
+mkdir -p "$REPO_SP"
+git -C "$REPO_SP" init -q
+git -C "$REPO_SP" config user.email t@t
+git -C "$REPO_SP" config user.name t
+printf 'notes\n' >"$REPO_SP/NOTES.md"
+git -C "$REPO_SP" add NOTES.md
+
+# Nothing Rust is staged there, so passing can only mean the hook read that
+# repo's staged set; the repo it starts in stages Rust that fails the lane.
+aimed_at "git -C \\\"$REPO_SP\\\" commit -m test"
+assert_eq "$rc" "0" "git -C with a path containing a space names that repo"
+
+aimed_at "cd \\\"$REPO_SP\\\" && git commit -m test"
+assert_eq "$rc" "0" "a cd prefix with a path containing a space names that repo"
+
+# The other direction, so a pass above cannot be the matcher fail-opening:
+# stage failing Rust in the same space-named repo and the lane must block.
+printf 'fn spaced() {}\n' >"$REPO_SP/dirty.rs"
+git -C "$REPO_SP" add dirty.rs
+aimed_at "git -C \\\"$REPO_SP\\\" commit -m test"
+assert_eq "$rc" "2" "the lanes run in the space-named repo, not just skip"
+
+# A target this reader cannot resolve is refused, not dropped. The shell
+# expands `$repo` and commits there; a hook that shrugs and stays put lets
+# the commit through on a repository nothing looked at.
+aimed_from "$REPO_W" "repo=$REPO_W; git -C \\\"\$repo\\\" commit -m test"
+assert_eq "$rc" "2" "an unresolvable git -C target is refused"
+assert_contains "$err" "cannot enter" "the refusal names what it could not enter"
+
+aimed_from "$REPO_W" "cd -- \\\"\$repo\\\" && git commit -m test"
+assert_eq "$rc" "2" "an unresolvable cd target is refused"
+
+# The -C that counts belongs to the git that commits. Reading the first one
+# anywhere in the command checks a repository the commit never touches.
+aimed_at "git -C $REPO_W status && git -C $REPO_SP commit -m test"
+assert_eq "$rc" "2" "the -C of the committing git is the one that counts"
+
+# A cd after the commit belongs to whatever runs next.
+aimed_at "git commit -m test && cd $REPO_W"
+assert_eq "$rc" "2" "a cd after the commit does not move the check"
+
+# A tilde is the shell's, and the hook has to read it the same way.
+set +e
+out=$( (cd "$REPO_G" && env -u KENDEX_PRE_COMMIT_RUST_CLIPPY HOME="$TMP_ROOT" \
+  PATH="$BIN_DIR:$PATH" CARGO_LOG="$CARGO_LOG" CARGO_CLIPPY_EXIT=1 \
+  bash "$HOOK" <<<"{\"command\": \"git -C ~/worktree commit -m test\"}") 2>"$ERR_FILE")
+rc=$?
+set -e
+assert_eq "$rc" "0" "a tilde in the target resolves against HOME"
+
+# Two commits in one command would each need their own answer; one run
+# cannot give it, so it refuses rather than checking whichever it saw first.
+aimed_from "$REPO_W" "git -C $REPO_G commit -m a && git -C $REPO_W commit -m b"
+assert_eq "$rc" "2" "more than one commit in a command is refused"
+
+# `commit` as an option value is not a subcommand, and a read-only command
+# must not pay for the over-approximation with a blocked lane.
+aimed_at "git log --grep=commit"
+assert_eq "$rc" "0" "commit inside an option value is not a commit"
+
+# A payload carrying no command is not a commit; one carrying a command the
+# decoder cannot recover would otherwise run every lane on an empty string.
+set +e
+out=$(printf '{"note":"about to commit"}' | bash "$HOOK" 2>/dev/null); rc=$?
+set -e
+assert_eq "$rc" "0" "a payload with no command at all is left alone"
+
+set +e
+out=$(printf '{"tool_input":{"command":' | bash "$HOOK" 2>/dev/null); rc=$?
+set -e
+assert_eq "$rc" "2" "a command the decoder cannot recover is refused"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

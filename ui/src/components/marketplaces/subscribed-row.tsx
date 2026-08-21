@@ -10,7 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
-import { useMarketplacesStore } from "@/stores/marketplaces";
+import { subscription, useMarketplacesStore } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 
 /** How many packages a subscription offers, in one phrase. */
@@ -61,7 +61,7 @@ export function SubscribedRow({ row }: { row: MarketplaceRow }) {
       <Button
         size="sm"
         variant="outline"
-        onClick={() => goToMarketplace({ scope: row.scope, source: row.name })}
+        onClick={() => goToMarketplace(subscription(row.scope, row.name))}
       >
         Open
       </Button>

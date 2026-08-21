@@ -48,6 +48,8 @@ pub struct SourceConfig {
     pub config_findings: Vec<CatalogFinding>,
 }
 
+mod rendering;
+
 impl SourceConfig {
     /// Everything wrong with the catalog, wherever it was read from.
     pub fn findings(&self) -> impl Iterator<Item = &CatalogFinding> {

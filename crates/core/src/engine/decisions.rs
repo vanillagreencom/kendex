@@ -15,6 +15,7 @@ use specta::Type;
 use crate::manifest::Manifest;
 use crate::model::Scope;
 use crate::quality::Finding;
+use crate::quality::author::AuthorReview;
 use crate::quality::overrides::OverrideState;
 use crate::quality::reviews::{DismissReason, DismissalState, dismissal_state};
 
@@ -39,6 +40,16 @@ pub enum DecisionState {
     Dismissed {
         reason: DismissReason,
         dismissed_at: String,
+    },
+    /// The catalog that publishes this content committed a review saying
+    /// this finding is not a problem, and that review still describes the
+    /// exact bytes we fetched. It is reported, not hidden: `publisher` is
+    /// the source the record was read from, recorded when it was read, so a
+    /// person can weigh whose judgement this is.
+    AuthorDismissed {
+        reason: DismissReason,
+        dismissed_at: String,
+        publisher: String,
     },
     /// Covered by an acceptance of the whole item: every finding on it was
     /// read and the item installed anyway.
@@ -148,11 +159,22 @@ pub struct Installation<'a> {
     pub manifest: &'a Manifest,
     pub scope: &'a Scope,
     pub key: &'a str,
-    /// The item's location, which every finding's fingerprint is relative to.
-    pub root: &'a str,
     pub review_hash: Option<&'a str>,
     pub provenance: Option<&'a str>,
     pub override_state: &'a OverrideState,
+    /// What the item's publisher already settled about it, and which of
+    /// the findings in front of us that record actually paid for — decided
+    /// by the scorer, since a record settles as many occurrences as the
+    /// publisher's own bytes carried and no more.
+    pub author_review: Option<&'a AuthorReview>,
+    /// Why that record settles nothing here, when it is one this project
+    /// cannot vouch for. Set together with `author_review`, whose budget the
+    /// scorer was then not given — so `settled` is all false for it, and the
+    /// findings it names carry this sentence instead of reading as findings
+    /// nobody ever looked at.
+    pub unvouched: Option<&'a str>,
+    /// One flag per finding, in the findings' order.
+    pub settled: &'a [bool],
     /// Held back by the gate with no live acceptance. Decided by accepting
     /// or removing the item, so its findings get no token: one would be
     /// refused on arrival.
@@ -177,8 +199,9 @@ pub fn decisions(installation: &Installation<'_>, findings: &[Finding]) -> Vec<F
     let scope = scope_tag(installation.scope);
     findings
         .iter()
-        .map(|finding| {
-            let fingerprint = finding.fingerprint(installation.root);
+        .enumerate()
+        .map(|(index, finding)| {
+            let fingerprint = finding.fingerprint();
             let token = installation
                 .review_hash
                 .filter(|_| !installation.held_back)
@@ -192,6 +215,29 @@ pub fn decisions(installation: &Installation<'_>, findings: &[Finding]) -> Vec<F
                     .to_string()
                 });
             let dismissed = review.and_then(|r| r.dismissed.get(&fingerprint).map(|d| (r, d)));
+            let by_author = installation
+                .settled
+                .get(index)
+                .filter(|settled| **settled)
+                .and(installation.author_review)
+                .and_then(|review| {
+                    review
+                        .dismissed
+                        .get(&fingerprint)
+                        .map(|dismissal| (review, dismissal))
+                });
+            // A record that paid nothing still has something to say about
+            // the findings it named, and saying it is the difference
+            // between "nobody has looked at this" and "somebody claimed to
+            // and this project could not confirm it".
+            let unvouched = installation
+                .unvouched
+                .filter(|_| {
+                    installation
+                        .author_review
+                        .is_some_and(|review| review.dismissed.contains_key(&fingerprint))
+                })
+                .map(str::to_owned);
             let state = match (accepted, dismissed) {
                 (Some(recorded), _) => DecisionState::Accepted {
                     granted_at: recorded.granted_at.clone(),
@@ -207,10 +253,16 @@ pub fn decisions(installation: &Installation<'_>, findings: &[Finding]) -> Vec<F
                             reason: dismissal.reason,
                             dismissed_at: dismissal.dismissed_at.clone(),
                         },
-                        DismissalState::Stale { why } => DecisionState::Open { earlier: Some(why) },
+                        // The person's own record spoke for bytes that have
+                        // moved on. The author's, which was re-checked
+                        // against the bytes actually here, still stands.
+                        DismissalState::Stale { why } => author_state(by_author)
+                            .unwrap_or(DecisionState::Open { earlier: Some(why) }),
                     }
                 }
-                (None, None) => DecisionState::Open { earlier: None },
+                (None, None) => {
+                    author_state(by_author).unwrap_or(DecisionState::Open { earlier: unvouched })
+                }
             };
             FindingDecision {
                 fingerprint,
@@ -219,6 +271,20 @@ pub fn decisions(installation: &Installation<'_>, findings: &[Finding]) -> Vec<F
             }
         })
         .collect()
+}
+
+/// The publisher's record as a decision state, when one paid for this
+/// finding. Their reason and the name recorded with the record travel with
+/// it: this settles nothing on the person's own authority, and a page that
+/// said otherwise would be lying about whose judgement is on the line.
+fn author_state(
+    settled: Option<(&AuthorReview, &crate::quality::author::AuthorDismissal)>,
+) -> Option<DecisionState> {
+    settled.map(|(review, dismissal)| DecisionState::AuthorDismissed {
+        reason: dismissal.reason,
+        dismissed_at: dismissal.dismissed_at.clone(),
+        publisher: review.publisher.clone(),
+    })
 }
 
 #[cfg(test)]

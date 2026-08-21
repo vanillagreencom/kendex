@@ -192,25 +192,8 @@ pub fn package_file(
     name: &str,
     rel: &str,
 ) -> Result<ItemSource> {
-    let clean = Path::new(rel);
-    let traversal = clean.is_absolute()
-        || clean
-            .components()
-            .any(|c| !matches!(c, std::path::Component::Normal(_)));
-    if rel.is_empty() || traversal {
-        return Err(CoreError::SourceEscape {
-            path: clean.to_path_buf(),
-            reason: "a package file is named by a plain relative path".to_owned(),
-        });
-    }
     let (sealed, item_path) = effective_item(env, scope, kind, name)?;
-    let target = if sealed.is_dir(&item_path) {
-        item_path.join(clean)
-    } else {
-        item_path.clone()
-    };
-    let bytes = sealed.read(&target)?;
-    Ok(capped(&target, bytes))
+    super::item_file::item_file(&sealed, &item_path, rel)
 }
 
 /// The package's readme, when it ships one at its root: exact `README.md`
@@ -374,7 +357,7 @@ fn catalog_meta(
     })
 }
 
-fn capped(path: &Path, bytes: Vec<u8>) -> ItemSource {
+pub(crate) fn capped(path: &Path, bytes: Vec<u8>) -> ItemSource {
     const MAX: usize = 64 * 1024;
     let taken = {
         let mut at = bytes.len().min(MAX);
