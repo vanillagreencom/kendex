@@ -1,9 +1,7 @@
 //! Which registration in a document is the one a record names.
 //!
 //! Every field the lock kept is part of that identity — the command, and
-//! the event when it kept one — never the command alone. Three rounds of
-//! this question were answered from the command by itself, and each time
-//! the gap moved to the next axis rather than closing: a command found
+//! the event when it kept one — never the command alone: a command found
 //! under an event the record does not name is not this registration, and
 //! removing by the recorded event would take nothing while the one
 //! somebody moved kept firing.
