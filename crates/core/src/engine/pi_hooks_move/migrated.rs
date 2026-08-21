@@ -239,12 +239,38 @@ fn reaches(
             Err(_) => return true,
         }
     }
-    crate::scan::hooks::registrations_text(&after).is_ok_and(|entries| {
-        entries
-            .iter()
-            .filter(|entry| entry.command == here.command)
-            .count()
-            == wanted
+    crate::scan::hooks::registrations_text(&after).is_ok_and(|entries| match wanted {
+        // Putting one in: the entry this pass writes is there, under the
+        // identity it writes it with — where the record says the old one
+        // was is a different question, and one a catalog is free to have
+        // changed the answer to. Nothing is asked about what else runs
+        // that command, since a different event or matcher is somebody's
+        // own registration and holding kendex's over it would freeze this
+        // hook for good.
+        1 => rendered_identity(&edits)
+            .is_some_and(|written| matches!(registered(&entries, &written), Registered::Ours)),
+        // Taking one away: the command is gone wherever it was
+        // registered, because the script it names goes with it and an
+        // entry left naming a path with nothing at it is the thing this
+        // whole pass is careful about.
+        _ => !entries.iter().any(|entry| entry.command == here.command),
+    })
+}
+
+/// The entry this pass writes, as the edit that writes it names it.
+fn rendered_identity(edits: &[(std::path::PathBuf, ConfigEdit)]) -> Option<Identity> {
+    edits.iter().find_map(|(_, edit)| match edit {
+        ConfigEdit::UpsertHook {
+            event,
+            matcher,
+            command,
+            ..
+        } => Some(Identity {
+            event: Some(event.clone()),
+            matcher: Some(crate::configedit::spelled(matcher.as_deref()).to_owned()),
+            command: command.clone(),
+        }),
+        _ => None,
     })
 }
 

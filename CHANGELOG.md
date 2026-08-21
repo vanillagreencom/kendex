@@ -260,7 +260,9 @@ changes carry a **Breaking** call-out with their migration note inline.
   a matcher of your own is left where you put it — when the catalog moves
   kendex's, when kendex's is taken away, and on every tool that keeps
   hooks this way. Two hooks that run one script on different events are two hooks, and
-  both refresh; only entries kendex genuinely cannot tell apart hold. An
+  both refresh; only entries kendex genuinely cannot tell apart hold. A
+  hook you declare for the first time takes nothing with it on the way in,
+  so a command you already register yourself keeps the entry you gave it. An
   install record from an older kendex, which says less
   about what it registered, no longer leads to a second registration
   beside the first: what the record cannot name is looked up in the file

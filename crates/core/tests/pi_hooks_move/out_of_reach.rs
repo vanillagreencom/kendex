@@ -223,3 +223,44 @@ fn a_registry_that_became_a_link_after_planning_is_not_written_through() {
         "and the file at the other end is untouched"
     );
 }
+
+/// What else runs a command says nothing about whether kendex's own edit
+/// lands. Counted across the document, a registration somebody adds under
+/// a matcher of their own makes every later refresh hold kendex's
+/// perfectly reachable entry — their setup is legitimate and kendex
+/// freezes itself over it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_second_entry_of_their_own_does_not_hold_kendexs() {
+    let w = world();
+    apply(&w);
+    let registry = w.dot().join("kendex/hooks.json");
+    let mut value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&registry).unwrap()).unwrap();
+    let command = value["hooks"]["tool_call"][0]["hooks"][0]["command"].clone();
+    // Theirs, same command, a matcher they chose.
+    value["hooks"]["tool_call"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "matcher": "edit",
+            "hooks": [{ "type": "command", "command": command }]
+        }));
+    fs::write(&registry, serde_json::to_string_pretty(&value).unwrap()).unwrap();
+
+    // One pass to write the file in kendex's own hand, since the fixture
+    // wrote it in serde's; what matters is what the pass after that says.
+    apply(&w);
+    let settled = audit(&w.env, &w.scope()).unwrap();
+    assert!(
+        settled.drift.is_empty(),
+        "nothing of kendex's is in anybody's way: {:?}",
+        settled.drift
+    );
+    assert!(settled.notes.is_empty(), "{:?}", settled.notes);
+    let after = fs::read_to_string(&registry).unwrap();
+    assert!(
+        after.contains("\"edit\""),
+        "and what they registered is still theirs: {after}"
+    );
+}

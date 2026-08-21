@@ -53,30 +53,35 @@ pub(super) fn retire_previous(item: &Desired, existing: Option<&LockEntry>) -> P
     let Some(named) = named(item) else {
         return Previous::Settled;
     };
-    let recorded = existing.and_then(|entry| entry.registration.as_ref());
-    let previous = match recorded {
-        // Everything the identity needs is written down.
-        Some(recorded) if recorded.matcher.is_some() => Recorded {
-            event: recorded.event.clone(),
-            matcher: recorded.matcher.clone().unwrap_or_default(),
-            command: recorded.command.clone(),
-        },
-        // The record says which command, and where the event was, but was
-        // kept before matchers were: the document says the rest.
-        Some(recorded) => match found(&named, Some(&recorded.event), &recorded.command) {
-            Found::One(entry) => entry,
-            Found::None => return Previous::Settled,
-            Found::Several(why) => return Previous::Ambiguous(why),
-        },
-        // The record says nothing at all. What this pass renders names no
-        // entry of the past, but the command it renders is the one a
-        // script-backed hook has always registered — enough to look one
-        // up by, and the document says what it is.
-        None => match found(&named, None, named.command) {
-            Found::One(entry) => entry,
-            Found::None => return Previous::Settled,
-            Found::Several(why) => return Previous::Ambiguous(why),
-        },
+    // Nothing kendex has installed here has nothing kendex left behind.
+    // A hook going in for the first time has no past of its own, so
+    // whatever else in the document happens to run the command it is
+    // about to register — a `[[custom-hooks]]` command is the person's
+    // own words, and they may already have registered it — is theirs,
+    // and looking for it would only find something to take.
+    let Some(entry) = existing else {
+        return Previous::Settled;
+    };
+    let previous = match &entry.registration {
+        // The record names an entry. Whether it is still there is the
+        // document's to say, not the record's: trusting the record here
+        // is how a registration somebody moved by hand came to be left
+        // alone while a second one went in beside it.
+        Some(recorded) => found(
+            &named,
+            Some(&recorded.event),
+            recorded.matcher.as_deref(),
+            &recorded.command,
+        ),
+        // A record too old to name what it registered, over an
+        // installation kendex did make: the command is what there is to
+        // look one up by, and the document says the rest.
+        None => found(&named, None, None, named.command),
+    };
+    let previous = match previous {
+        Found::One(entry) => entry,
+        Found::None => return Previous::Settled,
+        Found::Several(why) | Found::Moved(why) => return Previous::Ambiguous(why),
     };
     if previous.event == named.event
         && previous.command == named.command
@@ -111,18 +116,24 @@ struct Recorded {
     command: String,
 }
 
-/// What the document says about the entry a record could not name.
+/// What the document says about the entry kendex left.
 enum Found {
     One(Recorded),
     None,
     Several(String),
+    Moved(String),
 }
 
-/// The entry running this command, read out of the document this pass
-/// registers in. Exactly one is an answer; more than one is a question
+/// The entry kendex left, read out of the document this pass registers
+/// in, by everything there is to look it up by: the command, and the
+/// event and matcher wherever the record kept them.
+///
+/// Exactly one answering is the answer. More than one is a question
 /// nothing here can settle, since what the record kept cannot tell them
-/// apart and what this pass renders is not evidence about any of them.
-fn found(named: &Named, event: Option<&str>, command: &str) -> Found {
+/// apart. And nothing answering, while something else runs that command,
+/// is an entry somebody moved: it is not kendex's to take, and writing
+/// beside it would leave the hook firing twice — so it waits for them.
+fn found(named: &Named, event: Option<&str>, matcher: Option<&str>, command: &str) -> Found {
     let Ok(Some(text)) = crate::fs::read_if_exists(named.path) else {
         return Found::None;
     };
@@ -133,22 +144,30 @@ fn found(named: &Named, event: Option<&str>, command: &str) -> Found {
     let Ok(entries) = read else {
         return Found::None;
     };
-    let mut carrying = entries
-        .into_iter()
-        .filter(|entry| entry.command == command && event.is_none_or(|event| entry.event == event));
-    let Some(only) = carrying.next() else {
-        return Found::None;
+    let mut answering = entries.iter().filter(|entry| {
+        entry.command == command
+            && event.is_none_or(|event| entry.event == event)
+            && matcher.is_none_or(|matcher| entry.matcher == matcher)
+    });
+    let Some(only) = answering.next() else {
+        return match entries.iter().any(|entry| entry.command == command) {
+            true => Found::Moved(format!(
+                "{} no longer runs {command} where kendex left it, and what runs it now is not kendex's to take — move it back, or take it out, and the next refresh settles this",
+                named.path.display()
+            )),
+            false => Found::None,
+        };
     };
-    if carrying.next().is_some() {
+    if answering.next().is_some() {
         return Found::Several(format!(
             "{} runs {command} more than once and the record does not say which entry is kendex's — take the ones you did not put there out, and the next refresh settles the rest",
             named.path.display()
         ));
     }
     Found::One(Recorded {
-        event: only.event,
-        matcher: only.matcher,
-        command: only.command,
+        event: only.event.clone(),
+        matcher: only.matcher.clone(),
+        command: only.command.clone(),
     })
 }
 

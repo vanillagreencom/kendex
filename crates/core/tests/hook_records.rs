@@ -198,3 +198,67 @@ fn an_empty_matcher_registers_once_and_stays_once() {
     apply::execute(&f.env, &second.plan, None).unwrap();
     assert_eq!(settings(&f), first, "so the file does not grow");
 }
+
+/// A hook going in for the first time has no past of its own. Its command
+/// is the person's own words in `[[custom-hooks]]`, so they may well have
+/// registered it themselves already — and looking through the file for
+/// "the entry kendex left" would find theirs and take it on the way in.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_first_install_takes_nothing_that_was_already_there() {
+    let f = fixture(MINE);
+    // Theirs, running the same command under an event of their own.
+    fs::write(
+        f.project.join(".claude/settings.json"),
+        r#"{"hooks":{"Stop":[{"matcher":"Edit","hooks":[{"type":"command","command":"./scripts/mine.sh"}]}]}}"#,
+    )
+    .unwrap();
+
+    apply_now(&f);
+
+    let value = settings(&f);
+    assert_eq!(
+        value["hooks"]["Stop"][0]["hooks"][0]["command"], "./scripts/mine.sh",
+        "what they registered is untouched: {value}"
+    );
+    assert_eq!(
+        groups(&f),
+        vec![("Bash".to_owned(), 1)],
+        "and kendex's goes in beside it: {value}"
+    );
+}
+
+/// The other side of the same question: a record that names an entry is
+/// not proof the entry is still there. Moved by hand with its command
+/// unchanged, the record still matches what this pass means to render, so
+/// nothing is retired and the upsert puts a second one in beside theirs.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_recorded_entry_moved_by_hand_is_never_doubled() {
+    let f = fixture(MINE);
+    apply_now(&f);
+    assert_eq!(groups(&f), vec![("Bash".to_owned(), 1)]);
+
+    let mut value = settings(&f);
+    let group = value["hooks"]["PreToolUse"][0].clone();
+    value["hooks"] = serde_json::json!({ "Stop": [group] });
+    let theirs = serde_json::to_string_pretty(&value).unwrap();
+    fs::write(f.project.join(".claude/settings.json"), &theirs).unwrap();
+
+    let report = audit(&f.env, &f.scope).unwrap();
+    assert!(
+        report
+            .drift
+            .iter()
+            .any(|row| row.name == "mine" && row.detail.contains("no longer runs")),
+        "the person is told what is in the way: {:?}",
+        report.drift
+    );
+    apply::execute(&f.env, &report.plan, None).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(f.project.join(".claude/settings.json")).unwrap(),
+        theirs,
+        "and nothing is registered beside what they moved"
+    );
+}

@@ -548,13 +548,14 @@ lives in one capability table read by core and UI.
   config never asked for.
 - **A registration is reconciled, not added to.** What a hook registered
   is recorded (`engine::item_record`), so a catalog moving it to another
-  event is a move: retire what the record names, by the key that named it,
-  apply what is rendered, record that — whichever way round, since
-  switching a hook off renders the removal of an entry that may not be the
-  one there. Otherwise it fires twice, or keeps firing with nothing naming
-  it. Removal reads the same record, an editor rewrites only what its own
-  registration names, and an entry no edit of kendex's can reach is
-  neither reconciled nor retired — proven by applying it and reading back.
+  event is a move: retire the entry the record names — where the document
+  still has it, which the document is asked — apply what is rendered,
+  record that, whichever way round the pass names its entry. A first
+  install has no past to retire and no business looking for one; otherwise
+  a hook fires twice, or keeps firing with nothing naming it. Removal
+  reads the same record, an editor rewrites only what its own registration
+  names, and an entry no edit of kendex's can reach is neither reconciled
+  nor retired — proven by applying and reading back.
 - **Pi hooks are enforced through the carrier.** Pi has no per-hook
   artifact: the `pi-hooks` extension package hosts native listeners, and
   hook content rides in the registry kendex renders beside them
