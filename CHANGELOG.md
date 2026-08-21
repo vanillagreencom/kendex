@@ -257,7 +257,8 @@ changes carry a **Breaking** call-out with their migration note inline.
   script was — a directory of your own, say — a hook registration you
   added or duplicated by hand — the same command registered twice holds
   that hook, and no other hook waits on it; a hook whose catalog moves it
-  to another event is not one of these, and refreshes as it always did — and a hook whose source is
+  to another event is not one of these: the entry it had comes out as the
+  new one goes in, so it fires once, where the catalog now says — and a hook whose source is
   unreachable this run all stay exactly where they are, and that last one completes the move as soon
   as the source is back. A copy kendex cannot prove it wrote keeps its
   whole installation, not just the file — the old copy stays the one that

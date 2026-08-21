@@ -62,6 +62,11 @@ fn a_catalog_that_changed_the_event_still_migrates() {
         new.contains("turn_end") && !new.contains("tool_call"),
         "and what runs the hook is the event the catalog now asks for: {new}"
     );
+    // A move that happened is a move with nothing left to do.
+    let settled = audit(&w.env, &w.scope()).unwrap();
+    assert!(settled.plan.ops.is_empty(), "{:?}", settled.plan.ops);
+    assert!(settled.drift.is_empty(), "{:?}", settled.drift);
+    assert!(settled.notes.is_empty(), "{:?}", settled.notes);
 }
 
 /// A command carried twice is one kendex cannot tell its own copy of,

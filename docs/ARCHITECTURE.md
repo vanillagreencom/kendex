@@ -547,6 +547,11 @@ lives in one capability table read by core and UI.
   uninstall — while anything else in it stays where it is, named. A
   worktree git lists as prunable is dead here: its lease is reaped, its
   config never asked for.
+- **A registration is reconciled, not added to.** What a hook registered
+  is recorded (`engine::item_record`), so a catalog moving it to another
+  event is a move: retire what the record names, install what is rendered,
+  record that — in that order, or it fires twice and the next pass cannot
+  tell which entry is kendex's. Removal reads the same record.
 - **Pi hooks are enforced through the carrier.** Pi has no per-hook
   artifact: the `pi-hooks` extension package hosts native listeners, and
   hook content rides in the registry kendex renders beside them
@@ -556,26 +561,21 @@ lives in one capability table read by core and UI.
   whatever the directory holds, so the storage sits one level down under
   `kendex/`; `engine::pi_hooks_move` retires the old layout, taking only
   what this scope's lock names and its bytes prove, holding whole what it
-  cannot — the whole installation, registration included — and saying
-  what it left and why. Three rules hold that together, and
+  cannot — installation and registration together — and saying why. Two rules hold that together, and
   [docs/adapters/pi.md](adapters/pi.md) carries them in full. A finished
   move is a fact about the past: recorded in the lock
   (`LockEntry::left_pi_reserved_name`), read back, never re-derived, and
   written only where completion is proven — an unrecorded one costs a
-  derived pass, a wrong one cannot be taken back. Past it the ownership
-  question is not asked at all, of either half. A registration is
-  identified by what the record kept of it and by being the only entry
-  carrying its command, never by what this pass would render. And what
-  authorizes a deletion asks for a plain file and binds the type it
-  proved with the hash (`claims::provenance`, `preflight::discardable`,
+  derived pass, a wrong one cannot be taken back. Past it, ownership is
+  not asked about at all, of either half. And what authorizes a
+  deletion asks for a plain file and binds the type it proved with the
+  hash (`claims::provenance`, `preflight::discardable`,
   `Pre::PlainHashIs`), while every hold reaches the conflict row through
-  one rendering (`Hold::row`), so no path offers a remedy that cannot
-  work. A hook held that way runs from the old registry and nowhere else,
-  so Pi's hook surface list carries that registry too while an
+  one rendering (`Hold::row`), so no path offers a remedy that cannot work. A hook held that way runs from the old registry and nowhere
+  else, so Pi's hook surface list carries that registry too while an
   installation of kendex's is still under the reserved name
-  (`pi_hooks_move::legacy_registry_lives`) and drops it once none is. An
-  event outside that map cannot fire on Pi and installs nothing there,
-  said as a note. The capability row says what the
+  (`pi_hooks_move::legacy_registry_lives`). An event outside that map
+  cannot fire on Pi and installs nothing there, said as a note. The capability row says what the
   mechanism supports; the surfaces that label an installation read carrier
   reality (`pi_ext::carrier`), and Pi loads project and global settings
   both, so a project-installed hook with only a global carrier is still

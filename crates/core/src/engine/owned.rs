@@ -130,7 +130,19 @@ fn hook_owned(
                 files.push(path);
             }
             let (event, command) = match &entry.registration {
-                Some(recorded) => (Some(recorded.event.clone()), recorded.command.clone()),
+                // A hook with no script of its own is that entry and
+                // nothing else, so it comes out by the identity the
+                // record kept, exactly.
+                Some(recorded) if entry.rendered_hash.is_none() => {
+                    (Some(recorded.event.clone()), recorded.command.clone())
+                }
+                // A hook whose script goes with it takes its registration
+                // wherever that has got to. An entry taken from an event
+                // somebody moved it to is a smaller wrong than a command
+                // left pointing at a script that is no longer there — and
+                // the command is the record's, which is what kendex
+                // registered, not what it would render today.
+                Some(recorded) => (None, recorded.command.clone()),
                 None => (None, command),
             };
             edits.push((registry, removal(event, command, &format)));

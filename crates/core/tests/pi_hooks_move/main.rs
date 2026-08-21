@@ -268,4 +268,8 @@ fn a_disabled_hook_moves_under_its_disabled_name() {
         "the reserved directory goes with the file it held"
     );
     assert!(w.dot().join("kendex/hooks/guard.sh.disabled").is_file());
+    // A move that happened is a move with nothing left to do.
+    let settled = audit(&w.env, &w.scope()).unwrap();
+    assert!(settled.plan.ops.is_empty(), "{:?}", settled.plan.ops);
+    assert!(settled.notes.is_empty(), "{:?}", settled.notes);
 }

@@ -159,8 +159,19 @@ fn a_catalog_moving_the_event_after_the_move_is_not_a_hand_moved_entry() {
     assert!(report.notes.is_empty(), "{:?}", report.notes);
     kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
 
+    let after = fs::read_to_string(&registry).unwrap();
     assert!(
-        fs::read_to_string(&registry).unwrap().contains("turn_end"),
-        "and the refresh registers what it now asks for"
+        after.contains("turn_end"),
+        "the refresh registers what it now asks for: {after}"
     );
+    assert!(
+        !after.contains("tool_call"),
+        "and takes out what it used to, or the hook fires twice: {after}"
+    );
+
+    // A move that happened is a move nothing has left to do.
+    let settled = audit(&w.env, &w.scope()).unwrap();
+    assert!(settled.plan.ops.is_empty(), "{:?}", settled.plan.ops);
+    assert!(settled.drift.is_empty(), "{:?}", settled.drift);
+    assert!(settled.notes.is_empty(), "{:?}", settled.notes);
 }

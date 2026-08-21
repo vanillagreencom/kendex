@@ -94,6 +94,10 @@ fn an_older_global_install_moves_out_of_the_reserved_directory() {
         registry.contains("/kendex/hooks/guard.sh"),
         "the carrier is pointed at the new path: {registry}"
     );
+    // A move that happened is a move with nothing left to do.
+    let settled = audit(&g.env, &Scope::Global).unwrap();
+    assert!(settled.plan.ops.is_empty(), "{:?}", settled.plan.ops);
+    assert!(settled.notes.is_empty(), "{:?}", settled.notes);
 }
 
 /// The same ownership proof at the global scope: a hook somebody wrote by

@@ -14,6 +14,7 @@ use super::config_edits::ConfigEditPlan;
 use super::desired::{Artifact, Desired};
 use super::item_record::{registration, rendered_hash};
 use super::tree_plan::{Written, plan_tree};
+use crate::configedit::ConfigEdit;
 
 /// Everything one pass over the desired items accumulates.
 pub(super) struct PlanSink<'a> {
@@ -76,7 +77,7 @@ pub(super) fn plan_item(
         Artifact::File { .. } => plan_file(env, scope, item, existing.is_some(), ops),
         Artifact::Tree { .. } => plan_tree(env, item, existing.is_some(), owned, written, ops),
         Artifact::Registration { .. } => {
-            plan_registration(env, scope, item, existing.is_some(), ops, config_edits)
+            plan_registration(env, scope, item, existing, ops, config_edits)
         }
     }?;
     let dirty = !matches!(planned, Planned::Clean);
@@ -312,13 +313,26 @@ fn plan_registration(
     env: &Env,
     scope: &Scope,
     item: &Desired,
-    locked: bool,
+    existing: Option<&LockEntry>,
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut ConfigEditPlan,
 ) -> Result<Planned> {
     let Artifact::Registration { script, edits } = &item.artifact else {
         return Ok(Planned::Clean);
     };
+    let locked = existing.is_some();
+    // What the record says this installation registered, where that is no
+    // longer what it registers: a changed event or matcher is a move, and
+    // a move takes the old entry out before it puts the new one in. Added
+    // in front of this item's own edits, since the file is edited in the
+    // order they are collected — the other way round, an upsert under the
+    // new event would leave the old one live and the hook would fire
+    // twice.
+    let edits: Vec<(PathBuf, ConfigEdit)> = super::item_record::retire_previous(item, existing)
+        .into_iter()
+        .chain(edits.iter().cloned())
+        .collect();
+    let edits = &edits;
     // Every edit is checked before anything is planned: a settings file
     // kendex cannot read back — comments in a JSON, a torn edit — blocks
     // this one registration whole, script included, not the whole scope.
