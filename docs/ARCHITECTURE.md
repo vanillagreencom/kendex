@@ -533,31 +533,26 @@ lives in one capability table read by core and UI.
   second — enough to ride out a neighbour that is only starting up — and
   is then told the cache is busy rather than left waiting on someone
   else's download. A refresh treats that as an error; a read does not —
-  planning degrades to "not fetched yet" for that one source, since a
-  neighbour's download must not decide whether the rest of a scope can be
-  planned. The lock's recorded commit is a fallback only for the exact
-  declaration that produced it: a manifest now naming another repository,
-  or another revision, is never served the previous one under the new
-  one's name.
-  An item declaration may hold its own `rev`, outranking the source's —
-  and an item's rev is always the full commit id: `kendex pin` and the
-  version picker resolve tags and branches at write time, because a hold
-  a moved tag can move is not a hold. Holds flow through derivation: a
-  pinned bundle pins its members, a pinned skill's dependencies read the
-  pinned catalog, and two parents demanding different revisions of one
-  dependency become a conflict that writes nothing — one filesystem
-  identity exists, and a silent winner would install content somebody
-  pinned away from. Updates are a projection over the mirror, never
-  drift: a held item hashes clean against its held tree, and the Updates
-  page separately asks the mirror what newer content exists (fetching
-  pinned sources too — a pin says what installs, not what exists). A
-  version timeline lists only commits that touched the package's files,
-  decorated with tag names, never replaced by them. The overview is one
-  flat row per package per scope; the Updates page folds rows into one
-  line per package and expands them by place, because a hold, an edit,
-  and an Update are each decided per scope. Nothing applies an update on
-  its own: a following package comes current when its scope is applied
-  or refreshed, a held one when its hold is moved. Muting a package's
+  planning degrades to "not fetched yet" for that one source: a neighbour's
+  download must not decide whether the rest of a scope can be planned. The
+  lock's recorded commit is a fallback only for the exact declaration that
+  produced it; a manifest naming another repository or revision is never
+  served the previous one. An item declaration may hold its own `rev`,
+  outranking the source's, always as a full commit id: `kendex pin` and the
+  version picker resolve tags and branches at write time, since a hold a
+  moved tag can move is no hold. Holds flow through derivation — a pinned
+  bundle pins its members, a pinned skill's dependencies read the pinned
+  catalog, and two parents demanding different revisions of one dependency
+  are a conflict that writes nothing: one filesystem identity exists, and a
+  silent winner would install content somebody pinned away from. Updates are
+  a projection over the mirror, never drift: a held item hashes clean
+  against its held tree, and the Updates page asks the mirror (pinned
+  sources too — a pin says what installs, not what exists) what newer
+  content exists; its timeline lists only commits that touched the package's
+  files, tag-decorated, never tag-replaced. Rows are per package per scope;
+  the page folds them by package and expands by place (each is decided per
+  scope), and nothing applies on its own: followers come current on apply or
+  refresh, held ones when their hold moves. Muting a package's
   update notifications is a machine-local settings entry, not manifest
   intent: a preference committed to a shared repository would silence a
   whole team.
