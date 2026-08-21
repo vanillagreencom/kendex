@@ -1,5 +1,28 @@
-import type { DriftRow } from "@/bindings";
+import type { DriftCause, DriftRow } from "@/bindings";
 import { type MergedDriftRow, mergeDriftRows } from "@/lib/drift-merge";
+
+/** Files kendex did not write are at an item's place. Which ways out the
+ *  row has differs by cause — core's own split, mirrored here because the
+ *  page is what renders the buttons. */
+const IN_THE_WAY: DriftCause[] = [
+  "unmanaged-content",
+  "unmanaged-wrong-shape",
+  "shared-link",
+];
+
+export function isInTheWay(cause: DriftCause | null | undefined): boolean {
+  return !!cause && IN_THE_WAY.includes(cause);
+}
+
+/** Adoption can take what is at this position. */
+export function canKeep(cause: DriftCause | null | undefined): boolean {
+  return cause === "unmanaged-content" || cause === "shared-link";
+}
+
+/** Installing what kendex.toml asks for over it is an answer. */
+export function canReplace(cause: DriftCause | null | undefined): boolean {
+  return cause === "unmanaged-content" || cause === "unmanaged-wrong-shape";
+}
 
 /**
  * Which part of a project's card a drift row belongs in.
@@ -23,7 +46,7 @@ export interface DriftZones {
 }
 
 export function driftZones(rows: DriftRow[]): DriftZones {
-  const inTheWay = rows.filter((row) => row.cause === "unmanaged-content");
+  const inTheWay = rows.filter((row) => isInTheWay(row.cause));
   return {
     inTheWay: mergeDriftRows(inTheWay),
     changes: mergeDriftRows(

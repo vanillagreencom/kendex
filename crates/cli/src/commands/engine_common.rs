@@ -96,7 +96,7 @@ const UNMANAGED_SHOWN: usize = 10;
 /// edits are in it and still standing in the way of the accepted content.
 pub fn print_conflicts(report: &EngineReport) -> bool {
     let mut any = false;
-    let mut in_the_way = false;
+    let mut replaceable = false;
     for row in &report.drift {
         if row.state != DriftState::Conflict {
             continue;
@@ -109,12 +109,12 @@ pub fn print_conflicts(report: &EngineReport) -> bool {
             row.harness.display_name(),
             conflict_detail(row)
         ));
-        if row.cause == Some(DriftCause::UnmanagedContent) {
-            in_the_way = true;
-            say(&format!("  to keep those files: {}", keep_exit(row)));
+        if let Some(cause) = row.cause.filter(|cause| cause.in_the_way()) {
+            replaceable |= cause.can_replace();
+            say(&format!("  to keep those files: {}", keep_exit(row, cause)));
         }
     }
-    if in_the_way {
+    if replaceable {
         // Once, not per row: the half that names the item differs line by
         // line and belongs on the row; the flag is the same for all of them,
         // and forty copies of it bury the paths that differ. Indented with
@@ -130,21 +130,30 @@ pub fn print_conflicts(report: &EngineReport) -> bool {
 /// a surface knows how to word it — so the sentence is written here.
 pub fn conflict_detail(row: &DriftRow) -> String {
     let detail = kendex_core::names::shown(&row.detail);
-    match row.cause == Some(DriftCause::UnmanagedContent) {
-        true => format!("{detail} already holds files kendex did not write"),
-        false => detail,
+    match row.cause {
+        Some(DriftCause::UnmanagedContent | DriftCause::UnmanagedWrongShape) => {
+            format!("{detail} already holds files kendex did not write")
+        }
+        // The path here is the folder the link points at, not the link:
+        // that folder is the thing the reader has to decide about.
+        Some(DriftCause::SharedLink) => {
+            format!("{detail} is a folder kendex did not write, read through a shortcut")
+        }
+        _ => detail,
     }
 }
 
 /// The way out that keeps the files, spelled with the item it applies to —
 /// the verb and its parameters as data, never a command line to paste.
-/// Adoption cannot take every kind, and a name a shell would read as more
-/// than one argument is never printed as one: a name may legally hold a
-/// space or a semicolon, and copied into a terminal that is somebody else's
-/// command. Either way the files are still the reader's to keep, by moving
-/// them out of the way themselves.
-fn keep_exit(row: &DriftRow) -> String {
-    let takeable = kendex_core::engine::adopt::supports(row.kind)
+/// Adoption cannot take every kind, nor a folder where one file goes or a
+/// file where a folder goes; and a name a shell would read as more than
+/// one argument is never printed as one: a name may legally hold a space
+/// or a semicolon, and copied into a terminal that is somebody else's
+/// command. Wherever it cannot be offered the files are still the reader's
+/// to keep, by moving them out of the way themselves.
+fn keep_exit(row: &DriftRow, cause: DriftCause) -> String {
+    let takeable = cause.can_keep()
+        && kendex_core::engine::adopt::supports(row.kind)
         && kendex_core::names::plain_argument(&row.name);
     match takeable {
         // The harness too: adoption reads one tool's position, and left

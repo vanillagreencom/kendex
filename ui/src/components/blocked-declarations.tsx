@@ -10,6 +10,7 @@ import {
   KEEP_FILES_LABEL,
   keepFilesConfirmBody,
   keepFilesConfirmTitle,
+  keepSharedConfirmBody,
   MOVE_FILES_YOURSELF,
   REPLACE_FILES_CONFIRM_LABEL,
   REPLACE_FILES_CONSEQUENCE,
@@ -17,10 +18,20 @@ import {
   replaceFilesConfirmBody,
   replaceFilesConfirmTitle,
 } from "@/lib/copy-in-the-way";
+import { ADOPT_SHARED_CONFIRM, ADOPT_SHARED_TITLE } from "@/lib/copy-safety";
 import { type MergedDriftRow, summarizePaths } from "@/lib/drift-merge";
+import { canKeep, canReplace } from "@/lib/drift-zones";
+import { harnessName } from "@/lib/labels";
 
 /** Which exit a row is waiting on a confirmation for. */
 type Pending = { group: MergedDriftRow; exit: "keep" | "replace" };
+
+/** A row where every tool reads one folder through a link somebody else
+ *  set up. Keeping it is a bigger move than keeping a plain folder — the
+ *  folder itself goes to the trash and links kendex cannot see will break
+ *  — so it gets the confirmation that names the folder and every tool. */
+const isShared = (group: MergedDriftRow) =>
+  group.installations.some((row) => row.cause === "shared-link");
 
 /**
  * Items kendex.toml asks for whose files were already on disk. Both ways
@@ -29,6 +40,11 @@ type Pending = { group: MergedDriftRow; exit: "keep" | "replace" };
  * the old copies to the trash. Neither is safe to guess, and the plan
  * cannot move until one is picked — which is why this sits with the other
  * decisions rather than under the Apply button, which cannot move it.
+ *
+ * Not every row has both. A folder where one file goes cannot be kept as
+ * it stands, and a link somebody else set up is not this position's bytes
+ * to replace — so each control is drawn from what core said the position
+ * allows, never from the kind alone.
  *
  * A bordered box with the explainer as its header strip, the shape its
  * neighbour in the zone already has — so the sentence belongs to the rows
@@ -62,6 +78,9 @@ export function BlockedDeclarations({
 
   const where = (group: MergedDriftRow) =>
     summarizePaths(group.installations.map((row) => row.detail));
+  const toolsOf = (group: MergedDriftRow) => [
+    ...new Set(group.installations.map((row) => row.harness)),
+  ];
 
   // One row is one item however many tools it targets, and its tools are
   // handed over together: one at a time, each tool's copy landed on top of
@@ -69,13 +88,27 @@ export function BlockedDeclarations({
   const confirm = () => {
     if (!pending) return;
     const { group, exit } = pending;
-    const harnesses = [
-      ...new Set(group.installations.map((row) => row.harness)),
-    ];
-    if (exit === "keep") void onKeep(group.kind, group.name, harnesses);
+    if (exit === "keep") void onKeep(group.kind, group.name, toolsOf(group));
     else void onReplace(group.kind, group.name);
     setPending(null);
   };
+
+  const keepConfirm = (group: MergedDriftRow) =>
+    isShared(group)
+      ? {
+          title: ADOPT_SHARED_TITLE,
+          body: keepSharedConfirmBody(
+            where(group)?.text ?? "",
+            toolsOf(group).map(harnessName),
+            alsoApplies,
+          ),
+          label: ADOPT_SHARED_CONFIRM,
+        }
+      : {
+          title: keepFilesConfirmTitle(group.name),
+          body: keepFilesConfirmBody(alsoApplies),
+          label: KEEP_FILES_CONFIRM_LABEL,
+        };
 
   return (
     <div className="overflow-hidden rounded-lg border">
@@ -85,9 +118,15 @@ export function BlockedDeclarations({
       <div className="divide-y divide-border/60">
         {rows.map((group) => {
           const paths = where(group);
-          const harnesses = [
-            ...new Set(group.installations.map((row) => row.harness)),
-          ];
+          // Every installation has to allow an exit for the row to offer
+          // it: one tool's position in a shape kendex cannot keep makes
+          // the whole click fail.
+          const keepable =
+            adoptable.includes(group.kind) &&
+            group.installations.every((row) => canKeep(row.cause));
+          const replaceable = group.installations.every((row) =>
+            canReplace(row.cause),
+          );
           return (
             <div
               key={`${group.kind}:${group.name}`}
@@ -105,13 +144,16 @@ export function BlockedDeclarations({
                     {paths.text}
                   </span>
                 ) : null}
-                <KindHarnessChips kind={group.kind} harnesses={harnesses} />
+                <KindHarnessChips
+                  kind={group.kind}
+                  harnesses={toolsOf(group)}
+                />
               </span>
               {/* Each exit says what it does, under the control that does
                   it — a row with no Keep button then carries only the line
                   telling the reader how to keep the files themselves. */}
               <div className="flex shrink-0 flex-wrap items-start gap-4">
-                {adoptable.includes(group.kind) ? (
+                {keepable ? (
                   <Exit
                     consequence={KEEP_FILES_CONSEQUENCE}
                     control={
@@ -129,19 +171,21 @@ export function BlockedDeclarations({
                     {MOVE_FILES_YOURSELF}
                   </span>
                 )}
-                <Exit
-                  consequence={REPLACE_FILES_CONSEQUENCE}
-                  control={
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={busy}
-                      onClick={() => setPending({ group, exit: "replace" })}
-                    >
-                      {REPLACE_FILES_LABEL}
-                    </Button>
-                  }
-                />
+                {replaceable ? (
+                  <Exit
+                    consequence={REPLACE_FILES_CONSEQUENCE}
+                    control={
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => setPending({ group, exit: "replace" })}
+                      >
+                        {REPLACE_FILES_LABEL}
+                      </Button>
+                    }
+                  />
+                ) : null}
               </div>
             </div>
           );
@@ -154,20 +198,21 @@ export function BlockedDeclarations({
         }}
         title={
           pending?.exit === "keep"
-            ? keepFilesConfirmTitle(pending.group.name)
+            ? keepConfirm(pending.group).title
             : replaceFilesConfirmTitle(pending?.group.name ?? "")
         }
         description={
           pending?.exit === "keep"
-            ? keepFilesConfirmBody(alsoApplies)
+            ? keepConfirm(pending.group).body
             : replaceFilesConfirmBody(
                 (pending && where(pending.group)?.text) ?? "",
+                (pending && where(pending.group)?.count) ?? 0,
                 alsoApplies,
               )
         }
         confirmLabel={
           pending?.exit === "keep"
-            ? KEEP_FILES_CONFIRM_LABEL
+            ? keepConfirm(pending.group).label
             : REPLACE_FILES_CONFIRM_LABEL
         }
         destructive={pending?.exit === "replace"}

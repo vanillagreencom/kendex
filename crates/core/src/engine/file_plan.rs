@@ -6,9 +6,9 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use super::DriftState;
 use super::desired::{Artifact, Desired};
 use super::item_plan::{Claim, Planned, unmanaged};
+use super::{DriftCause, DriftState};
 use crate::apply::{Op, PlannedOp, Pre};
 use crate::env::Env;
 use crate::error::Result;
@@ -47,12 +47,13 @@ pub(super) fn plan_written_file(
         )));
     }
     if path.exists() && !path.is_file() {
-        // A directory where a file goes is unmanaged content like any
-        // other, in an awkward shape: taken over it goes to the trash whole
-        // and the file lands in its place, and refused it is the same
-        // choice as any other unmanaged position, so it is said the same
-        // way. Anything that is neither a file nor a directory — a socket,
-        // a device — is nobody's to move.
+        // A directory where a file goes is unmanaged content in an awkward
+        // shape: taken over it goes to the trash whole and the file lands
+        // in its place. Refused, it carries its own cause — adoption puts
+        // one file in the local source and cannot read a folder as one, so
+        // a row that offered to keep it would fail on the click. Anything
+        // that is neither a file nor a directory — a socket, a device — is
+        // nobody's to move.
         if !path.is_dir() || claim.owns(path, owned) {
             return Ok(Planned::Conflict(format!(
                 "a directory sits at {}",
@@ -60,7 +61,7 @@ pub(super) fn plan_written_file(
             )));
         }
         if !claim.replace_unmanaged {
-            return Ok(unmanaged(path));
+            return Ok(unmanaged(DriftCause::UnmanagedWrongShape, path));
         }
         let hash = match hash_tree(path) {
             Ok(hash) => hash,
@@ -82,7 +83,7 @@ pub(super) fn plan_written_file(
         Some(current) => {
             if !claim.owns(path, owned) {
                 if !claim.replace_unmanaged {
-                    return Ok(unmanaged(path));
+                    return Ok(unmanaged(DriftCause::UnmanagedContent, path));
                 }
                 ops.push(set_aside(path, Pre::HashIs { hash: current }));
                 ops.push(install(env, scope, item, path, bytes, Pre::Absent));
@@ -144,7 +145,7 @@ fn plan_absent_file(
         // position is the same one either way.
         if !claim.owns(path, owned) && !claim.owns(&alternate, owned) {
             if !claim.replace_unmanaged {
-                return unmanaged(&alternate);
+                return unmanaged(DriftCause::UnmanagedContent, &alternate);
             }
             let hash = match hash_tree(&alternate) {
                 Ok(hash) => hash,

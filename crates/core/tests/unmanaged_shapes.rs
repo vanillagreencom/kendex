@@ -9,9 +9,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use kendex_core::apply;
+use kendex_core::engine::adopt::adopt;
 use kendex_core::engine::{DriftCause, DriftState, PlanOptions, audit, plan_apply};
 use kendex_core::env::{Env, FakeOs};
-use kendex_core::model::Scope;
+use kendex_core::model::{HarnessId, ItemKind, Scope};
 
 const BEFORE: &str = "laid out by the tool that came before";
 
@@ -190,9 +191,15 @@ fn one_tree_shared_by_two_tools_is_moved_aside_once() {
 /// surfaces read to offer the ways out. Without it the app showed neither
 /// choice and the CLI printed neither remedy, for shapes the take-over
 /// handles perfectly well.
+/// A file where a folder goes is files kendex did not write, and the
+/// replacement handles it — but adoption puts a folder in the local source
+/// and cannot read one file as one, so the row must not offer to keep it.
+/// The cause is what both surfaces read to decide, and asserting adoption
+/// itself refuses is what keeps the offer and the action from drifting
+/// apart.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_wrong_shape_is_named_as_files_kendex_did_not_write() {
+fn a_file_where_a_folder_goes_is_never_offered_the_keep() {
     let w = world("[skills.deploy]\nsource = \"cat\"\n");
     let position = w.home.join("app/.claude/skills/deploy");
     fs::create_dir_all(position.parent().unwrap()).unwrap();
@@ -201,15 +208,28 @@ fn a_wrong_shape_is_named_as_files_kendex_did_not_write() {
     let row = audit(&w.env, &w.scope).unwrap();
     let row = row.drift.iter().find(|row| row.name == "deploy").unwrap();
     assert_eq!(row.state, DriftState::Conflict);
-    assert_eq!(row.cause, Some(DriftCause::UnmanagedContent), "{row:?}");
+    assert_eq!(row.cause, Some(DriftCause::UnmanagedWrongShape), "{row:?}");
     assert_eq!(row.detail, position.display().to_string());
+    assert!(!row.cause.unwrap().can_keep());
+    assert!(row.cause.unwrap().can_replace());
+    assert!(
+        adopt(
+            &w.env,
+            &w.scope,
+            ItemKind::Skill,
+            "deploy",
+            &[HarnessId::Claude]
+        )
+        .is_err(),
+        "the gate and what adoption can take have drifted apart"
+    );
 }
 
-/// The other way round — a folder where a file goes — is the same content
-/// in the same awkward shape, and carries the same cause.
+/// The other way round — a folder where one file goes — is the same state
+/// with the same exits: replaceable, never keepable.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_folder_where_a_file_goes_is_named_the_same_way() {
+fn a_folder_where_a_file_goes_is_never_offered_the_keep() {
     let w = world("[agents.scout]\nsource = \"cat\"\n");
     let position = w.home.join("app/.claude/agents/scout.md");
     fs::create_dir_all(&position).unwrap();
@@ -218,8 +238,20 @@ fn a_folder_where_a_file_goes_is_named_the_same_way() {
     let row = audit(&w.env, &w.scope).unwrap();
     let row = row.drift.iter().find(|row| row.name == "scout").unwrap();
     assert_eq!(row.state, DriftState::Conflict);
-    assert_eq!(row.cause, Some(DriftCause::UnmanagedContent), "{row:?}");
+    assert_eq!(row.cause, Some(DriftCause::UnmanagedWrongShape), "{row:?}");
     assert_eq!(row.detail, position.display().to_string());
+    assert!(!row.cause.unwrap().can_keep());
+    assert!(
+        adopt(
+            &w.env,
+            &w.scope,
+            ItemKind::Agent,
+            "scout",
+            &[HarnessId::Claude]
+        )
+        .is_err(),
+        "the gate and what adoption can take have drifted apart"
+    );
 }
 
 /// A repo mid-migration is normally blocked for one tool and clean for

@@ -163,9 +163,19 @@ fn every_tool_the_item_sits_at_is_kept_in_one_pass() {
     )
     .unwrap();
     crate::apply::execute(&env, &plan, None).unwrap();
+
+    // Every position is cleared, not only the first. Asserted before the
+    // follow-up apply: the render puts the same bytes back, so a position
+    // left behind would look settled a moment later.
+    for dir in [".claude/skills/handmade", ".agents/skills/handmade"] {
+        assert!(
+            !project.join(dir).exists(),
+            "{dir} was left where it was, with nothing recording it"
+        );
+    }
+
     let report = audit(&env, &scope).unwrap();
     crate::apply::execute(&env, &report.plan, None).unwrap();
-
     for dir in [".claude/skills/handmade", ".agents/skills/handmade"] {
         let installed = fs::read_to_string(project.join(dir).join("SKILL.md")).unwrap_or_default();
         assert!(
@@ -175,6 +185,106 @@ fn every_tool_the_item_sits_at_is_kept_in_one_pass() {
     }
     let after = audit(&env, &scope).unwrap();
     assert_eq!(after.drift, vec![], "one tool is still waiting");
+}
+
+/// The hand-made sharing layout: one real folder at one tool's place, every
+/// other tool reading it through a link. Both tools are blocked there, and
+/// the two positions hold the same files — so this is one capture, not two
+/// copies to choose between.
+#[test]
+fn one_folder_read_through_a_link_is_not_two_different_copies() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let project = tmp.path().join("app");
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    fs::create_dir_all(&project).unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        "schema = 5\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"symlink\"\n",
+    )
+    .unwrap();
+    let folder = project.join(".claude/skills/handmade");
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(
+        folder.join("SKILL.md"),
+        "---\nname: handmade\ndescription: mine\n---\nShared by hand.\n",
+    )
+    .unwrap();
+    let link = project.join(".agents/skills/handmade");
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&folder, &link).unwrap();
+
+    let plan = adopt(
+        &env,
+        &scope,
+        ItemKind::Skill,
+        "handmade",
+        &[HarnessId::Claude, HarnessId::Codex],
+    )
+    .unwrap();
+    crate::apply::execute(&env, &plan, None).unwrap();
+    assert!(
+        fs::read_to_string(project.join(".kendex-local/skills/handmade/SKILL.md"))
+            .unwrap()
+            .contains("Shared by hand.")
+    );
+
+    let report = audit(&env, &scope).unwrap();
+    crate::apply::execute(&env, &report.plan, None).unwrap();
+    for at in [".claude/skills/handmade", ".agents/skills/handmade"] {
+        assert!(
+            fs::read_to_string(project.join(at).join("SKILL.md"))
+                .unwrap()
+                .contains("Shared by hand."),
+            "{at} lost the sharing it had"
+        );
+    }
+    assert_eq!(audit(&env, &scope).unwrap().drift, vec![]);
+}
+
+/// The declaration already names a tool, and the files being kept are
+/// another tool's. The list is extended: pinning it to the tool being
+/// answered now would leave the one already on it with files nothing
+/// manages.
+#[test]
+fn a_harness_list_already_there_is_extended_not_replaced() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let project = tmp.path().join("app");
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    fs::create_dir_all(&project).unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        "schema = 5\n\n[install]\nharnesses = [\"claude\", \"opencode\"]\nmethod = \"copy\"\n\n[skills.handmade]\nsource = \"local\"\nharnesses = [\"claude\"]\n",
+    )
+    .unwrap();
+    fs::create_dir_all(project.join(".opencode/skills/handmade")).unwrap();
+    fs::write(
+        project.join(".opencode/skills/handmade/SKILL.md"),
+        "---\nname: handmade\ndescription: mine\n---\nMy content.\n",
+    )
+    .unwrap();
+
+    let plan = adopt(
+        &env,
+        &scope,
+        ItemKind::Skill,
+        "handmade",
+        &[HarnessId::Opencode],
+    )
+    .unwrap();
+    crate::apply::execute(&env, &plan, None).unwrap();
+
+    let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
+    let declared = manifest.split("[skills.handmade]").nth(1).unwrap_or("");
+    assert!(
+        declared.contains("\"claude\"") && declared.contains("\"opencode\""),
+        "the tool already on the list was dropped:\n{manifest}"
+    );
 }
 
 /// The tools hold different files under one name, and there is one

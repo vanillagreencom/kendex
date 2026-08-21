@@ -262,7 +262,7 @@ pub fn replace_unmanaged(
         .any(|row| {
             row.kind == kind
                 && row.name == name
-                && row.cause == Some(engine::DriftCause::UnmanagedContent)
+                && row.cause.is_some_and(engine::DriftCause::can_replace)
         });
     if !blocked {
         return Err(format!(

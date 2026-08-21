@@ -156,7 +156,12 @@ fn declared_paths(
     decl: &ItemDecl,
 ) -> Vec<PathBuf> {
     let mut paths = Vec::new();
-    if kind == ItemKind::Skill {
+    // Only a shared install has a shared tree. Reading it for a copy
+    // declaration hides whatever else lives there from the inventory of
+    // content nothing manages — the same mistake as claiming to own it.
+    if kind == ItemKind::Skill
+        && decl.method.unwrap_or(manifest.install.method) != crate::manifest::Method::Copy
+    {
         paths.push(desired::skill_canonical(env, scope, name));
     }
     for harness in desired::target_harnesses(decl, manifest, kind, scope) {

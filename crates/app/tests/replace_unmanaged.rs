@@ -167,3 +167,49 @@ fn an_older_schema_is_brought_forward_by_the_same_apply() {
         fs::read_to_string(&path).unwrap()
     );
 }
+
+/// The state the app has to answer for the hand-made sharing layout: the
+/// row carries the folder the link points at, and the cause that offers
+/// keeping alone. Replacing a link is never right — the bytes are not at
+/// that position, and writing over it breaks the sharing somebody set up —
+/// so the app's replacement refuses it as well.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_folder_shared_by_hand_is_offered_only_the_way_out_that_keeps_it() {
+    let f = fixture();
+    let folder = f.project.join("elsewhere/deploy");
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(
+        folder.join("SKILL.md"),
+        "---\nname: deploy\ndescription: does deploy\n---\nShared by hand.\n",
+    )
+    .unwrap();
+    let position = f.project.join(".claude/skills/deploy");
+    fs::remove_dir_all(&position).unwrap();
+    std::os::unix::fs::symlink(&folder, &position).unwrap();
+
+    let row = view(&f.env, &f.scope)
+        .drift
+        .into_iter()
+        .find(|row| row.name == "deploy")
+        .unwrap();
+    assert_eq!(
+        row.cause,
+        Some(kendex_core::engine::DriftCause::SharedLink),
+        "{row:?}"
+    );
+    assert!(row.cause.unwrap().can_keep());
+    assert!(!row.cause.unwrap().can_replace());
+    assert!(
+        row.detail.contains("elsewhere/deploy"),
+        "the row names the folder, not the link: {}",
+        row.detail
+    );
+
+    let refused = replace_unmanaged(&f.env, &f.scope, ItemKind::Skill, "deploy".into());
+    assert!(
+        refused.is_err(),
+        "a link somebody else made was written over"
+    );
+    assert!(position.is_symlink(), "the link is left exactly as it was");
+}

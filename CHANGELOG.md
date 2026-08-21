@@ -13,9 +13,12 @@ changes carry a **Breaking** call-out with their migration note inline.
   the item gets a row of its own on Review & apply: **Replace them**, and
   kendex installs what kendex.toml asks for while the old files move to the
   trash, or, for an agent or a skill, **Keep these files**, and kendex
-  looks after them as they are. For other kinds, keeping them means moving
-  them somewhere else yourself, and the row says so rather than offering a
-  button that would fail. In the CLI the two are
+  looks after them as they are. A folder several tools already read through
+  shortcuts they set up themselves is offered only **Keep these files** —
+  writing over a shortcut would break that sharing. Where keeping is not
+  something kendex can do — another kind, or a folder sitting where one
+  file goes — the row says to move the files somewhere else yourself rather
+  than offering a button that would fail. In the CLI the two are
   `kendex adopt <kind> <name> --harness <harness>` — adoption reads one
   tool's position, and the blocked tool is the one to name — and
   `kendex apply --replace-unmanaged`.

@@ -90,6 +90,37 @@ export function views(): AuditView[] {
           cause: "unmanaged-content",
           detail: `${ACME}/.claude/hooks/pre-commit.sh`,
         },
+        // A folder sitting where one file goes: replaceable, and the same
+        // words for the other way out.
+        {
+          kind: "agent",
+          name: "scout",
+          harness: "claude",
+          scope: acme,
+          state: "conflict",
+          cause: "unmanaged-wrong-shape",
+          detail: `${ACME}/.claude/agents/scout.md`,
+        },
+        // One folder both tools read through shortcuts somebody set up:
+        // keeping it is the only answer, and the row names the folder.
+        {
+          kind: "skill",
+          name: "browser",
+          harness: "claude",
+          scope: acme,
+          state: "conflict",
+          cause: "shared-link",
+          detail: `${ACME}/shared/browser`,
+        },
+        {
+          kind: "skill",
+          name: "browser",
+          harness: "codex",
+          scope: acme,
+          state: "conflict",
+          cause: "shared-link",
+          detail: `${ACME}/shared/browser`,
+        },
       ],
       plan: [
         "Update skill github for Claude Code",

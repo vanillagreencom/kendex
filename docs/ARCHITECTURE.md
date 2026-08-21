@@ -99,13 +99,21 @@ lives in one capability table read by core and UI.
    the plan read. The row states which files are in the way; naming what
    can be done about them belongs to the surface that can do it — the app
    offers the two as buttons on that row, the CLI names the verb and the
-   flag, and only the kinds adopt can take are ever offered it. A link is
-   never either exit's target, and neither is a position any install
-   recorded writing — those bytes are kendex's own, and what protects them
-   is the edit gate, whichever entry's key the declaration arrives under.
-   Ownership follows the artifact an entry actually emitted: a copy install
-   wrote the tool's own directory and never the shared tree, so it claims
-   no part of it.
+   flag. Which exits a state has travels with the row as its cause, so no
+   surface decides that for itself: only the kinds adopt can take are
+   offered keeping, and not a folder where one file goes or one file where
+   a folder goes — the replacement handles those and adoption cannot. A
+   link somebody else made, pointing at a real skill folder several tools
+   read, is the mirror: only keeping is offered, since the bytes are not at
+   that position to replace and writing over the link would break the
+   sharing. A link is never the replacement's target, and neither is a
+   position any install recorded writing — those bytes are kendex's own,
+   and what protects them is the edit gate, whichever entry's key the
+   declaration arrives under. Ownership is read from the positions lock
+   entries actually wrote, never from an entry merely being on the books: a
+   copy install wrote the tool's own directory and never the shared tree,
+   and an install that changes how it installs is a stranger at its new
+   position until it writes there.
    The sanctioned exceptions are that take-over and a link the user
    explicitly adopts: when it resolves to a real skill folder outside
    kendex's own trees, adopt captures that folder's content, trashes the

@@ -25,10 +25,11 @@ pub enum DriftState {
     Conflict,
 }
 
-/// Why an installation diverged, when the plan can tell. `LocalEdit`,
-/// `Both` and `UnmanagedContent` are the causes that block writes: bytes
-/// kendex did not write are on disk and only an explicit choice may take
-/// them.
+/// Why an installation diverged, when the plan can tell. `LocalEdit` and
+/// `Both`, and the three that say files kendex did not write are on disk,
+/// block writes: only an explicit choice may take them. Which choices are
+/// on offer differs by cause, which is what `can_keep` and `can_replace`
+/// answer — a surface that guesses ends up offering a way out that errors.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum DriftCause {
@@ -40,6 +41,40 @@ pub enum DriftCause {
     /// directions: adopt keeps the files, `replace_unmanaged` keeps the
     /// declaration.
     UnmanagedContent,
+    /// The same, in a shape adoption cannot take as it stands: a folder
+    /// where one file goes, or a file where a folder goes. Only the
+    /// replacement is on offer — keeping these means moving them.
+    UnmanagedWrongShape,
+    /// A link somebody set up, pointing at a real folder that several
+    /// tools read. Only keeping is on offer: the files are not at this
+    /// position to replace, and writing over the link breaks the sharing.
+    /// The detail is the folder the link points at, which is the one a
+    /// reader needs to see.
+    SharedLink,
+}
+
+impl DriftCause {
+    /// Whether files kendex did not write are what this row is about — the
+    /// causes every surface offers a way out of.
+    pub fn in_the_way(self) -> bool {
+        matches!(
+            self,
+            DriftCause::UnmanagedContent | DriftCause::UnmanagedWrongShape | DriftCause::SharedLink
+        )
+    }
+
+    /// Whether adoption can take what is at this position.
+    pub fn can_keep(self) -> bool {
+        matches!(self, DriftCause::UnmanagedContent | DriftCause::SharedLink)
+    }
+
+    /// Whether installing what kendex.toml asks for over it is an answer.
+    pub fn can_replace(self) -> bool {
+        matches!(
+            self,
+            DriftCause::UnmanagedContent | DriftCause::UnmanagedWrongShape
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]

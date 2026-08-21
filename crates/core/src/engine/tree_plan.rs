@@ -8,17 +8,20 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use super::DriftState;
 use super::desired::{Artifact, Desired, artifact_disk_hash};
 use super::file_plan::{TAKEN_OVER, set_aside};
 use super::item_plan::{Claim, Planned, unmanaged};
+use super::{DriftCause, DriftState};
 use crate::apply::{Op, PlannedOp, Pre};
 use crate::env::Env;
 use crate::error::Result;
 use crate::hash::hash_tree;
+use crate::model::Scope;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn plan_tree(
     env: &Env,
+    scope: &Scope,
     item: &Desired,
     claim: Claim,
     owned: &BTreeSet<PathBuf>,
@@ -33,7 +36,7 @@ pub(super) fn plan_tree(
     else {
         return Ok(Planned::Clean);
     };
-    let collapsed = match collapsed_link(canonical, claim.locked, owned) {
+    let collapsed = match collapsed_link(env, scope, item, canonical, owned) {
         Ok(collapsed) => collapsed,
         Err(conflict) => return Ok(conflict),
     };
@@ -50,9 +53,6 @@ pub(super) fn plan_tree(
                 "a file sits at {}",
                 crate::names::shown(&canonical.display().to_string())
             )));
-        }
-        if !claim.replace_unmanaged {
-            return Ok(unmanaged(canonical));
         }
         match hash_tree(canonical) {
             Ok(hash) => wrong_shape = Some(hash),
@@ -72,7 +72,7 @@ pub(super) fn plan_tree(
                 && !claim.owns(canonical, owned)
                 && !written.canonicals.contains(canonical));
         if unowned && !claim.replace_unmanaged {
-            return Ok(unmanaged(canonical));
+            return Ok(in_the_way(canonical));
         }
         result = match (disk.is_some() || collapsed.is_some(), unowned) {
             (_, true) => Planned::Drift(DriftState::Missing, TAKEN_OVER.into()),
@@ -159,22 +159,47 @@ impl Written {
     }
 }
 
+/// Files kendex did not write, where a tree goes. Adoption puts a folder
+/// in the local source, so a folder there is something it can take and
+/// anything else is not — said as the cause, because a surface that
+/// offered to keep the wrong shape would fail on the click.
+fn in_the_way(path: &Path) -> Planned {
+    let cause = match path.is_dir() {
+        true => DriftCause::UnmanagedContent,
+        false => DriftCause::UnmanagedWrongShape,
+    };
+    unmanaged(cause, path)
+}
+
 /// A link where the tree belongs is this installation's own collapse onto a
-/// shared tree — the lock says the position is ours — so it comes off before
-/// the directory that replaces it. A link nobody recorded stays untouched.
+/// shared tree — some install recorded writing this position — so it comes
+/// off before the directory that replaces it.
+///
+/// A link nobody recorded is somebody else's, and stays untouched. Where it
+/// points at a real folder adoption can take, that is a state with a way
+/// out rather than a dead end: the hand-made sharing layout, one folder
+/// read by several tools. Asked through adoption's own boundary check, so
+/// no surface offers a way out that would refuse.
 fn collapsed_link(
+    env: &Env,
+    scope: &Scope,
+    item: &Desired,
     canonical: &Path,
-    locked: bool,
     owned: &BTreeSet<PathBuf>,
 ) -> std::result::Result<Option<PathBuf>, Planned> {
     if !canonical.is_symlink() {
         return Ok(None);
     }
-    if !locked && !owned.contains(canonical) {
-        return Err(Planned::Conflict(format!(
-            "{} is a link kendex did not create",
-            canonical.display()
-        )));
+    if !owned.contains(canonical) {
+        return Err(
+            match super::adopt_shared::link_target(env, scope, item.kind, &item.name, canonical) {
+                Some(target) => unmanaged(DriftCause::SharedLink, &target),
+                None => Planned::Conflict(format!(
+                    "{} is a link kendex did not create",
+                    canonical.display()
+                )),
+            },
+        );
     }
     Ok(Some(std::fs::read_link(canonical).unwrap_or_default()))
 }
@@ -300,7 +325,7 @@ fn plan_link(
     let diverged = link.exists();
     let unowned = diverged && !claim.owns(link, owned);
     if unowned && !claim.replace_unmanaged {
-        return Ok(unmanaged(link));
+        return Ok(in_the_way(link));
     }
     let first = written.claim_link(link);
     if diverged && first {

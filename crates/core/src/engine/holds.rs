@@ -10,7 +10,7 @@ use super::desired::{Artifact, Desired};
 use super::item_plan::PlanSink;
 use super::{DriftCause, DriftRow, DriftState};
 use crate::env::Env;
-use crate::lock::Lock;
+use crate::lock::{Lock, LockEntry};
 use crate::model::Scope;
 
 /// An item wanted at two revisions at once writes nothing: the conflict
@@ -59,18 +59,46 @@ fn observed_artifact_hash(artifact: &Artifact) -> Option<String> {
             .then(|| crate::hash::hash_tree(p).ok())
             .flatten()
     };
-    let path = match artifact {
-        Artifact::File { path, .. } => path,
-        Artifact::Tree { canonical, .. } => canonical,
-        // Only the backing script is ours to compare; the shared config a
-        // registration also edits holds other people's keys.
+    let path = compared_position(artifact)?;
+    here(path).or_else(|| here(&disabled_sibling(path)))
+}
+
+/// The one position an artifact's bytes are read at. Only the backing
+/// script of a registration is ours to compare; the shared config it also
+/// edits holds other people's keys.
+fn compared_position(artifact: &Artifact) -> Option<&std::path::Path> {
+    match artifact {
+        Artifact::File { path, .. } => Some(path),
+        Artifact::Tree { canonical, .. } => Some(canonical),
         Artifact::Registration {
             script: Some((path, _)),
             ..
-        } => return here(path),
-        Artifact::Registration { script: None, .. } => return None,
-    };
-    here(path).or_else(|| here(&disabled_sibling(path)))
+        } => Some(path),
+        Artifact::Registration { script: None, .. } => None,
+    }
+}
+
+/// A path with the toggled-off suffix stripped: an enabled render and its
+/// disabled twin are one location.
+fn base_position(path: &std::path::Path) -> PathBuf {
+    let text = path.display().to_string();
+    text.strip_suffix(".disabled")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| path.to_path_buf())
+}
+
+/// Whether this entry recorded writing the position the bytes were read
+/// at. An entry's word covers where it actually wrote, never every
+/// position the declaration now points at — an installation that changed
+/// how it installs compares against somewhere it never wrote, and reading
+/// that as its own edit puts a stranger's files under the edit gate, where
+/// neither way out reaches them.
+fn recorded_at(env: &Env, scope: &Scope, entry: &LockEntry, position: &std::path::Path) -> bool {
+    let position = base_position(position);
+    super::owned::installed(env, scope, entry)
+        .files
+        .iter()
+        .any(|owned| base_position(owned) == position)
 }
 
 /// One tool's install of a shared artifact, edited by hand, and a second
@@ -85,15 +113,15 @@ fn hold_shared_edit(
     scope: &Scope,
     lock: &Lock,
     item: &Desired,
-    here: &[PathBuf],
     sink: &mut PlanSink,
 ) -> bool {
-    let shared = lock.entries.values().any(|entry| {
-        super::owned::installed(env, scope, entry)
-            .files
-            .iter()
-            .any(|path| here.contains(path))
-    });
+    let Some(position) = compared_position(&item.artifact) else {
+        return false;
+    };
+    let shared = lock
+        .entries
+        .values()
+        .any(|entry| recorded_at(env, scope, entry, position));
     if !shared {
         return false;
     }
@@ -127,13 +155,7 @@ fn wrote_here(env: &Env, scope: &Scope, lock: &Lock, here: &[PathBuf], disk: &st
     // A toggled item's desired path carries `.disabled` while its recorded
     // install path does not (or the reverse); compared with the suffix
     // stripped, an enabled render and its disabled twin are one location.
-    let base = |p: &std::path::Path| {
-        let text = p.display().to_string();
-        text.strip_suffix(".disabled")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| p.to_path_buf())
-    };
-    let here_bases: Vec<PathBuf> = here.iter().map(|p| base(p)).collect();
+    let here_bases: Vec<PathBuf> = here.iter().map(|p| base_position(p)).collect();
     lock.entries.values().any(|entry| {
         let Some(rendered) = &entry.rendered_hash else {
             return false;
@@ -145,7 +167,7 @@ fn wrote_here(env: &Env, scope: &Scope, lock: &Lock, here: &[PathBuf], disk: &st
         owned
             .files
             .iter()
-            .any(|path| here_bases.contains(&base(path)))
+            .any(|path| here_bases.contains(&base_position(path)))
     })
 }
 
@@ -169,7 +191,10 @@ pub(super) fn hold_local_edit(
     lock: &Lock,
     sink: &mut PlanSink,
 ) -> bool {
-    let Some(disk) = observed_artifact_hash(&item.artifact) else {
+    let (Some(disk), Some(compared)) = (
+        observed_artifact_hash(&item.artifact),
+        compared_position(&item.artifact),
+    ) else {
         return false;
     };
     let wanted = super::desired::artifact_disk_hash(&item.artifact);
@@ -186,8 +211,12 @@ pub(super) fn hold_local_edit(
     if wrote_here(env, scope, lock, &here, &disk) {
         return false;
     }
-    let Some(entry) = lock.entries.get(&item.key) else {
-        return hold_shared_edit(env, scope, lock, item, &here, sink);
+    let recorded = lock
+        .entries
+        .get(&item.key)
+        .filter(|entry| recorded_at(env, scope, entry, compared));
+    let Some(entry) = recorded else {
+        return hold_shared_edit(env, scope, lock, item, sink);
     };
     let hash_moved = entry.source_hash != item.hash;
     let cause = match (&entry.rendered_hash, hash_moved) {

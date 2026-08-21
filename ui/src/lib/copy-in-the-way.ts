@@ -1,3 +1,5 @@
+import { adoptSharedBody } from "@/lib/copy-safety";
+
 // The words for one state: kendex.toml asks for something, and files are
 // already where it goes. Two ways forward and no way to guess which is
 // wanted, so the group says only what is true of every row and each
@@ -13,8 +15,11 @@ export const REPLACE_FILES_LABEL = "Replace them";
 export const REPLACE_FILES_CONSEQUENCE =
   "kendex installs what kendex.toml asks for. The old files move to the trash.";
 // Keeping the files means handing them to kendex, which needs somewhere in
-// the local source to put them — and only some kinds have one. Where they
-// do not, keeping them is the reader's own move, in the words the CLI uses.
+// the local source to put them — and only some kinds have one, and only
+// where what is there has the shape the item installs as: a folder where
+// one file goes, or one file where a folder goes, is not something kendex
+// can look after as it stands. Where it cannot, keeping them is the
+// reader's own move, in the words the CLI uses.
 export const MOVE_FILES_YOURSELF =
   "To keep these, move them somewhere else first.";
 // Every apply is the whole project's, so the changes listed under Apply
@@ -30,14 +35,32 @@ export const keepFilesConfirmBody = (alsoApplies: boolean): string =>
     alsoApplies ? ALSO_APPLIES : ""
   }`;
 export const KEEP_FILES_CONFIRM_LABEL = "Keep them";
-export const replaceFilesConfirmTitle = (name: string): string =>
-  `Replace ${name}?`;
-export const replaceFilesConfirmBody = (
-  where: string,
+// Keeping a folder several tools read through links is a bigger move than
+// keeping a plain folder, and the words for it already exist where the
+// Library offers the same thing. Only the whole-project note is added, so
+// both exits on a row disclose the same apply.
+export const keepSharedConfirmBody = (
+  target: string,
+  tools: string[],
   alsoApplies: boolean,
 ): string =>
-  `${where} moves to the trash, and kendex installs what kendex.toml asks for in its place.${
-    alsoApplies ? ALSO_APPLIES : ""
-  }`;
+  `${adoptSharedBody(target, tools)}${alsoApplies ? ALSO_APPLIES : ""}`;
+export const replaceFilesConfirmTitle = (name: string): string =>
+  `Replace ${name}?`;
+// One or two places read as themselves. Past that the summary is "<first>
+// +2 more", which spliced into a sentence reads as a fragment, so the
+// count carries it instead — every path is still on the row above, in full.
+export const replaceFilesConfirmBody = (
+  where: string,
+  count: number,
+  alsoApplies: boolean,
+): string => {
+  const also = alsoApplies ? ALSO_APPLIES : "";
+  if (count > 2) {
+    return `Files at ${count} places move to the trash, and kendex installs what kendex.toml asks for instead.${also}`;
+  }
+  const [verb, whose] = count > 1 ? ["move", "their"] : ["moves", "its"];
+  return `${where} ${verb} to the trash, and kendex installs what kendex.toml asks for in ${whose} place.${also}`;
+};
 export const REPLACE_FILES_CONFIRM_LABEL = "Replace them";
 export const replacedToastLabel = (name: string): string => `Installed ${name}`;

@@ -190,14 +190,19 @@ fn trashed(trash: &Path) -> bool {
 /// Invariant 6 holds under the take-over: a link is not this position's
 /// content, it is somebody else's, and following it would take bytes the
 /// user never named. Only adopt, which names the folder and every tool
-/// reading it, may go there.
+/// reading it, may go there — so the row says the folder and carries the
+/// cause that offers keeping alone.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_link_kendex_did_not_create_is_never_taken_over() {
     let w = world();
     let elsewhere = w.home.join("somewhere/deploy");
     fs::create_dir_all(&elsewhere).unwrap();
-    fs::write(elsewhere.join("SKILL.md"), "someone else's copy").unwrap();
+    fs::write(
+        elsewhere.join("SKILL.md"),
+        "---\nname: deploy\ndescription: ship it\n---\nSomeone else's copy.\n",
+    )
+    .unwrap();
     let position = w.home.join("app/.claude/skills/deploy");
     fs::create_dir_all(position.parent().unwrap()).unwrap();
     std::os::unix::fs::symlink(&elsewhere, &position).unwrap();
@@ -205,17 +210,44 @@ fn a_link_kendex_did_not_create_is_never_taken_over() {
     let report = plan_apply(&w.env, &w.scope, &take_over()).unwrap();
     let row = deploy_row(&report.drift);
     assert_eq!(row.state, DriftState::Conflict, "{row:?}");
+    assert_eq!(row.cause, Some(DriftCause::SharedLink), "{row:?}");
+    assert!(
+        row.detail.contains("somewhere/deploy"),
+        "the row names the folder, not the link: {}",
+        row.detail
+    );
+    assert!(!row.cause.unwrap().can_replace(), "{row:?}");
+    apply::execute(&w.env, &report.plan, None).unwrap();
+    assert!(
+        fs::read_to_string(elsewhere.join("SKILL.md"))
+            .unwrap()
+            .contains("Someone else's copy.")
+    );
+    assert!(position.is_symlink(), "the link is left exactly as it was");
+}
+
+/// A link at something adoption would refuse — a folder that is no skill at
+/// all — stays the hard conflict it always was. The offer is only made
+/// where the action behind it works.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_link_at_a_folder_adoption_would_refuse_is_still_a_dead_stop() {
+    let w = world();
+    let elsewhere = w.home.join("documents");
+    fs::create_dir_all(&elsewhere).unwrap();
+    fs::write(elsewhere.join("notes.txt"), "private").unwrap();
+    let position = w.home.join("app/.claude/skills/deploy");
+    fs::create_dir_all(position.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &position).unwrap();
+
+    let report = plan_apply(&w.env, &w.scope, &take_over()).unwrap();
+    let row = deploy_row(&report.drift);
+    assert_eq!(row.cause, None, "{row:?}");
     assert!(
         row.detail.contains("link kendex did not create"),
         "{}",
         row.detail
     );
-    apply::execute(&w.env, &report.plan, None).unwrap();
-    assert_eq!(
-        fs::read_to_string(elsewhere.join("SKILL.md")).unwrap(),
-        "someone else's copy"
-    );
-    assert!(position.is_symlink(), "the link is left exactly as it was");
 }
 
 /// The state that must stay quiet: an installation kendex itself wrote is
@@ -335,59 +367,4 @@ fn an_edit_under_one_tool_holds_when_another_tool_is_declared_over_it() {
         "the take-over trashed an edit the edit gate protects"
     );
     assert!(!trashed(&w.env.trash_dir()));
-}
-
-/// A copy install never wrote the shared tree, so it never owned it. Read
-/// as owned, a second tool's declaration over pre-existing files at
-/// `.agents/skills` came back as a local edit instead of files kendex did
-/// not write: `--replace-unmanaged` could not reach it, and `--discard-
-/// edits` was free to write straight over content nothing had recorded.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_copy_install_never_owns_the_shared_tree() {
-    let w = with_method("copy");
-    let report = plan_apply(&w.env, &w.scope, &PlanOptions::default()).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
-
-    // The second tool reads the shared tree, and somebody's files are there.
-    fs::write(
-        w.home.join("app/kendex.toml"),
-        format!(
-            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
-            w.home.join("catalog").display()
-        ),
-    )
-    .unwrap();
-    let stranger = w.home.join("app/.agents/skills/deploy");
-    fs::create_dir_all(&stranger).unwrap();
-    fs::write(
-        stranger.join("SKILL.md"),
-        "---\nname: deploy\ndescription: ship it\n---\nWritten by the tool that came before.\n",
-    )
-    .unwrap();
-
-    let row = audit(&w.env, &w.scope)
-        .unwrap()
-        .drift
-        .into_iter()
-        .find(|row| row.name == "deploy" && row.harness == kendex_core::model::HarnessId::Codex)
-        .unwrap();
-    assert_eq!(
-        row.cause,
-        Some(DriftCause::UnmanagedContent),
-        "read as kendex's own, the exits that keep these files are never offered: {row:?}"
-    );
-
-    let discard = PlanOptions {
-        overwrite_edited: true,
-        ..PlanOptions::default()
-    };
-    let report = plan_apply(&w.env, &w.scope, &discard).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
-    assert!(
-        fs::read_to_string(stranger.join("SKILL.md"))
-            .unwrap()
-            .contains("the tool that came before"),
-        "files kendex did not write were overwritten by discarding edits"
-    );
 }

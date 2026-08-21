@@ -86,15 +86,19 @@ pub(super) fn plan_item(
     written.start_item();
     let planned = match &item.artifact {
         Artifact::File { .. } => plan_file(env, scope, item, claim, owned, ops),
-        Artifact::Tree { .. } => plan_tree(env, item, claim, owned, written, ops),
+        Artifact::Tree { .. } => plan_tree(env, scope, item, claim, owned, written, ops),
         Artifact::Registration { .. } => {
             plan_registration(env, scope, item, claim, owned, ops, config_edits)
         }
     }?;
-    let cause = matches!(planned, Planned::Unmanaged(_)).then_some(DriftCause::UnmanagedContent);
     let dirty = !matches!(planned, Planned::Clean);
     match planned {
-        Planned::Conflict(detail) | Planned::Unmanaged(detail) => {
+        Planned::Conflict(_) | Planned::Unmanaged(..) => {
+            let (cause, detail) = match planned {
+                Planned::Unmanaged(cause, detail) => (Some(cause), detail),
+                Planned::Conflict(detail) => (None, detail),
+                _ => unreachable!("only the two refusals reach here"),
+            };
             ops.truncate(staged);
             written.undo_item();
             let mut conflict = row(DriftState::Conflict, detail);
@@ -169,13 +173,16 @@ pub(super) enum Planned {
     Drift(DriftState, String),
     Conflict(String),
     /// Files kendex never wrote sit where this item installs. A conflict
-    /// like any other, with the one cause that has two opposite exits.
-    Unmanaged(String),
+    /// like any other, carrying the cause that says which ways out this
+    /// position has.
+    Unmanaged(DriftCause, String),
 }
 
-/// What a plan may do with the position an item installs at. `locked` is
-/// the lock's word that kendex wrote these bytes; `replace_unmanaged` is
-/// the user's word that a declaration outranks whatever else is there.
+/// What a plan may do with the position an item installs at. `locked` says
+/// this installation is on the books — which is what tells a registration
+/// apart from a first one, and nothing about who wrote any file;
+/// `replace_unmanaged` is the user's word that a declaration outranks
+/// whatever else is there.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Claim {
     pub(super) locked: bool,
@@ -183,10 +190,14 @@ pub(super) struct Claim {
 }
 
 impl Claim {
-    /// Whether the bytes at this position are kendex's own: this
-    /// installation's record, or any other install that wrote here.
+    /// Whether the bytes at this position are kendex's own: some install
+    /// recorded writing exactly here. Read from the paths the lock's
+    /// entries actually emitted, never from the entry merely existing — an
+    /// installation that changed method writes somewhere new, and calling
+    /// that new position ours because the old one was recorded hands a
+    /// stranger's files to the writer.
     pub(super) fn owns(&self, path: &std::path::Path, owned: &BTreeSet<PathBuf>) -> bool {
-        self.locked || owned.contains(path)
+        owned.contains(path)
     }
 }
 
@@ -203,8 +214,8 @@ impl Claim {
 /// The path is shown, not printed: these bytes were written by something
 /// that is not kendex, and a folder name carrying an escape sequence must
 /// reach a terminal as its own characters.
-pub(super) fn unmanaged(path: &std::path::Path) -> Planned {
-    Planned::Unmanaged(crate::names::shown(&path.display().to_string()))
+pub(super) fn unmanaged(cause: DriftCause, path: &std::path::Path) -> Planned {
+    Planned::Unmanaged(cause, crate::names::shown(&path.display().to_string()))
 }
 
 /// A registration is in sync when its backing file matches and re-applying
@@ -246,7 +257,7 @@ fn plan_registration(
         Some((path, bytes)) => plan_written_file(env, scope, item, path, bytes, claim, owned, ops)?,
         None => Planned::Clean,
     };
-    if matches!(planned, Planned::Conflict(_) | Planned::Unmanaged(_)) {
+    if matches!(planned, Planned::Conflict(_) | Planned::Unmanaged(..)) {
         return Ok(planned);
     }
     for (path, edit) in pending {

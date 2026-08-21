@@ -44,17 +44,7 @@ pub fn adopt(
     harnesses: &[HarnessId],
 ) -> Result<Plan> {
     let mut manifest = manifest_for_mutation(env, scope)?;
-    let local_root = local_source_root(env, scope);
-    let local_item = match kind {
-        ItemKind::Skill => local_root.join("skills").join(name),
-        ItemKind::Agent => local_root.join("agents").join(format!("{name}.md")),
-        other => {
-            return Err(CoreError::ItemNotInSource {
-                name: name.to_owned(),
-                source_name: format!("adopt does not support {} yet", other.name()),
-            });
-        }
-    };
+    let local_item = local_item_path(env, scope, kind, name)?;
 
     let mut positions: Vec<(HarnessId, PathBuf)> = Vec::new();
     for &harness in harnesses {
@@ -132,6 +122,26 @@ pub fn adopt(
     })
 }
 
+/// Where in the scope's local source the kept content lands. Read wherever
+/// a surface asks whether adoption could take a position, so the question
+/// and the answer are never two different rules.
+pub(super) fn local_item_path(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+) -> Result<PathBuf> {
+    let local_root = local_source_root(env, scope);
+    match kind {
+        ItemKind::Skill => Ok(local_root.join("skills").join(name)),
+        ItemKind::Agent => Ok(local_root.join("agents").join(format!("{name}.md"))),
+        other => Err(CoreError::ItemNotInSource {
+            name: name.to_owned(),
+            source_name: format!("adopt does not support {} yet", other.name()),
+        }),
+    }
+}
+
 /// What the named tools have where the item goes: a shared folder several
 /// of them link at, the plain copies they hold, and the links whose target
 /// is gone.
@@ -181,6 +191,16 @@ fn look(
         if original.exists() {
             seen.content.push((*harness, original.clone()));
         }
+    }
+    // A tool whose own position IS the folder the others link at holds the
+    // same files, not a second copy — the hand-made sharing layout, where
+    // one real folder sits at one tool's place and the rest read it through
+    // links. Folded into the shared capture rather than called a
+    // disagreement; only a position that resolves somewhere else is one.
+    if let Some((_, shared)) = &seen.shared {
+        let target = shared.target.clone();
+        seen.content
+            .retain(|(_, path)| path.canonicalize().is_ok_and(|at| at != target));
     }
     if let (Some((linked, _)), Some((held, _))) = (seen.shared.as_ref(), seen.content.first()) {
         return Err(copies_differ(name, *linked, *held));

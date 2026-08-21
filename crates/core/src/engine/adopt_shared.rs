@@ -107,6 +107,25 @@ pub(super) fn shared_target(
     })
 }
 
+/// The folder a link at this position could be adopted through, or nothing
+/// where the link is one adoption would refuse. The planner asks this so a
+/// hand-made sharing layout — one real folder, several tools reading it
+/// through links — is offered the exit that works instead of being called
+/// a dead end, and asks it through the same boundary the adoption itself
+/// applies, so the offer and the action can never drift apart.
+pub(super) fn link_target(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    link: &Path,
+) -> Option<PathBuf> {
+    let points_to = fs::read_link(link).ok()?;
+    let local_item = super::adopt::local_item_path(env, scope, kind, name).ok()?;
+    let shared = shared_target(env, scope, kind, name, link, points_to, &local_item).ok()?;
+    Some(shared.target)
+}
+
 /// The ops that take over a shared folder: capture its bytes into the
 /// local source, move the folder itself to the trash — bound to the exact
 /// bytes just captured, so a folder that changed under the plan aborts the

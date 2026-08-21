@@ -971,10 +971,11 @@ export type Dismissed_Serialize = {
 };
 
 /**
- *  Why an installation diverged, when the plan can tell. `LocalEdit`,
- *  `Both` and `UnmanagedContent` are the causes that block writes: bytes
- *  kendex did not write are on disk and only an explicit choice may take
- *  them.
+ *  Why an installation diverged, when the plan can tell. `LocalEdit` and
+ *  `Both`, and the three that say files kendex did not write are on disk,
+ *  block writes: only an explicit choice may take them. Which choices are
+ *  on offer differs by cause, which is what `can_keep` and `can_replace`
+ *  answer — a surface that guesses ends up offering a way out that errors.
  */
 export type DriftCause = "upstream-changed" | "local-edit" | "both" | 
 /**
@@ -983,7 +984,21 @@ export type DriftCause = "upstream-changed" | "local-edit" | "both" |
  *  directions: adopt keeps the files, `replace_unmanaged` keeps the
  *  declaration.
  */
-"unmanaged-content";
+"unmanaged-content" | 
+/**
+ *  The same, in a shape adoption cannot take as it stands: a folder
+ *  where one file goes, or a file where a folder goes. Only the
+ *  replacement is on offer — keeping these means moving them.
+ */
+"unmanaged-wrong-shape" | 
+/**
+ *  A link somebody set up, pointing at a real folder that several
+ *  tools read. Only keeping is on offer: the files are not at this
+ *  position to replace, and writing over the link breaks the sharing.
+ *  The detail is the folder the link points at, which is the one a
+ *  reader needs to see.
+ */
+"shared-link";
 
 export type DriftRow = DriftRow_Serialize | DriftRow_Deserialize;
 
