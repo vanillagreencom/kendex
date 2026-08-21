@@ -69,6 +69,10 @@ pub(crate) struct Preflight {
     /// every one of them is on record as gone, the name is the person's,
     /// and what they put under it is theirs however empty it is.
     claims_reserved_name: bool,
+    /// Installations the person named for removal. Nothing is written or
+    /// registered for one of these, so a hold that exists to keep this
+    /// pass from writing has nothing to keep it from.
+    removing: BTreeSet<String>,
     /// Whether an installation of kendex's is still where the move has to
     /// take it from. While that is true the legacy registry is a place a
     /// hook runs from, and so a place to observe.
@@ -90,6 +94,13 @@ impl Preflight {
     /// not hold at all.
     pub(crate) fn hold(&self, name: &str) -> Option<&Hold> {
         self.held.get(name)
+    }
+
+    /// Whether the person asked for this installation to go by name.
+    /// A hold is kendex declining to act on evidence it cannot read; a
+    /// removal they typed is them saying what to do about it.
+    pub(super) fn asked_to_remove(&self, name: &str) -> bool {
+        self.removing.contains(name)
     }
 
     pub(super) fn discards(&self, name: &str) -> bool {
@@ -172,6 +183,15 @@ pub(crate) fn preflight(
         .filter(|entry| !recorded.contains(&entry.name))
         .collect();
     let claims_reserved_name = !unfinished.is_empty();
+    // What the person typed the name of. Every hold a typed removal
+    // releases reads the one answer, so the reserved name's copies and
+    // the registration at the new path cannot disagree about whether it
+    // was asked for.
+    let removing: BTreeSet<String> = ours
+        .iter()
+        .filter(|entry| options.named_for_removal(ItemKind::Hook, &entry.name))
+        .map(|entry| entry.name.clone())
+        .collect();
     // Nothing under either reserved name means nothing to work out about
     // what is there — the same answer everything below reaches, reached
     // without hashing a hook's bytes or reading a legacy path per hook on
@@ -186,6 +206,7 @@ pub(crate) fn preflight(
             migrated: BTreeSet::new(),
             recorded,
             claims_reserved_name,
+            removing,
             lingering: false,
             registry_block: None,
             conflicts: BTreeMap::new(),
@@ -230,6 +251,7 @@ pub(crate) fn preflight(
         migrated,
         recorded,
         claims_reserved_name,
+        removing,
         lingering,
         registry_block,
         conflicts,
@@ -252,16 +274,7 @@ pub(crate) fn preflight(
 /// cleanup cannot take what nobody asked it to, and a removal they typed
 /// is the opposite of that. The trash keeps what it takes either way.
 fn discarding(options: &crate::engine::PlanOptions, name: &str) -> bool {
-    let named_for_removal = match &options.removal_filter_typed {
-        Some(names) => names
-            .iter()
-            .any(|(kind, n)| *kind == ItemKind::Hook && n == name),
-        None => options
-            .removal_filter
-            .as_ref()
-            .is_some_and(|names| names.iter().any(|n| n == name)),
-    };
-    named_for_removal
+    options.named_for_removal(ItemKind::Hook, name)
         || options.overwrite_edited
         || options
             .overwrite_edited_names

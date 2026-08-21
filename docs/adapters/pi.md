@@ -95,7 +95,11 @@ somebody moved there by hand — or wrote in a shape kendex's own edits
 step over, which it proves by applying what this pass would apply and
 reading the file back, in whichever direction it is going: a refresh
 never doubles such an entry, and a removal never takes the script out
-from under one. A link where that registry goes is read through no more
+from under one. Naming the hook for removal releases the first of those
+— nothing is written for a hook the person asked to be rid of, so there
+is nothing to double, and the removal names the command wherever they
+moved it — and never the second, where the edit cannot take their entry
+with the script. A link where that registry goes is read through no more
 than any other link here, and that is the scope's question rather than
 any hook's: it holds the first install as surely as the hundredth, and
 answers nothing about a move the record already says is over —

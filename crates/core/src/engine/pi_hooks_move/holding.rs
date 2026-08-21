@@ -88,20 +88,31 @@ pub(super) fn held(
 /// twice, under two events. Asked wherever the question comes up — with
 /// the old layout still on disk and with it long gone — from the one
 /// place, so the two cannot answer differently.
+///
+/// `removing` is the person naming this hook to be rid of it. Nothing is
+/// written for one of those, so there is nothing for their entry to be
+/// doubled by, and the removal names the command wherever they moved it
+/// to — the same reading a typed removal gets under the reserved name.
 fn doubled(
     env: &Env,
     scope: &Scope,
     root: &std::path::Path,
     entry: &LockEntry,
     state: &DesiredState,
+    removing: bool,
 ) -> Option<Hold> {
     let registry = pi::hook_registry(root);
     match moved_by_hand(env, scope, root, entry, state) {
         Moved::No => None,
+        Moved::Elsewhere if removing => None,
         Moved::Elsewhere => Some(Hold::ByHand(format!(
             "its registration in {} sits under an event kendex did not put it under — registering it again would fire the hook twice; move it back or take it out",
             registry.display()
         ))),
+        // Not even then: this is the shape kendex's own edits step over,
+        // so the removal would take the script and the record and leave
+        // their entry running a path with nothing at it. Taking that
+        // entry out is theirs to do, here as under the reserved name.
         Moved::Unreachable => Some(Hold::ByHand(format!(
             "its registration in {} is written in a shape kendex cannot edit — a handler standing directly under its event, rather than inside a matcher group — so refreshing it would add a second entry beside it and the hook would fire twice; move it inside a matcher group, or take it out",
             registry.display()
@@ -125,7 +136,14 @@ fn holding(
     // the reserved name and says nothing about the new path, where a
     // registration somebody moved would be doubled by the fresh one this
     // pass writes.
-    if let Some(hold) = doubled(env, scope, root, entry, state) {
+    if let Some(hold) = doubled(
+        env,
+        scope,
+        root,
+        entry,
+        state,
+        pre.asked_to_remove(&entry.name),
+    ) {
         return Some(hold);
     }
     // Everything below is about the reserved name, which an installation

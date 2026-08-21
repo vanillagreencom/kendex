@@ -301,7 +301,9 @@ changes carry a **Breaking** call-out with their migration note inline.
   declare under `[[custom-hooks]]` — is known by the event and matcher it
   went in under, so one you move by hand stays where you moved it and
   nothing is registered beside it; and at the new path, a registration you
-  move is never doubled by a second one either. Hooks that came in with a bundle move like any other. And a
+  move is never doubled by a second one either — though removing the hook
+  by name still takes it, wherever you moved the entry to, since nothing
+  is being registered for a hook you asked to be rid of. Hooks that came in with a bundle move like any other. And a
   cleanup nobody asked for by name now leaves a hook's files alone when
   they are not the ones kendex wrote — the rule skills, agents and commands
   already followed. `refresh` now prints those reasons, which it previously

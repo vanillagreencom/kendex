@@ -232,17 +232,7 @@ pub(super) fn orphans(
         // is stranded and must be cleaned up like any other orphan.
         let unreachable_source = manifest.declared(entry.kind).contains_key(&entry.name)
             && !state.processed.contains(&(entry.kind, entry.name.clone()));
-        // The caller named this installation: an instruction about this exact
-        // item, not a judgement about what anything still wants.
-        let named = match &options.removal_filter_typed {
-            Some(pairs) => pairs
-                .iter()
-                .any(|(kind, name)| *kind == entry.kind && name == &entry.name),
-            None => options
-                .removal_filter
-                .as_ref()
-                .is_some_and(|names| names.contains(&entry.name)),
-        };
+        let named = options.named_for_removal(entry.kind, &entry.name);
         // An installation nobody declared was derived from one that was, and
         // the catalog it came from is where its reason is written down. With
         // that catalog offline, "nothing requires it anymore" is not

@@ -111,6 +111,50 @@ fn a_registration_the_edit_cannot_reach_keeps_its_script_through_a_removal() {
     );
 }
 
+/// And naming the hook does not change it. A typed removal is the person
+/// saying they mean to take these bytes, which releases what kendex is
+/// holding over a registration they moved — but not this shape, where the
+/// removal cannot take their entry with the script and would leave it
+/// running a path with nothing at it. Taking that entry out is theirs.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn naming_a_hook_does_not_reach_an_entry_the_edit_steps_over() {
+    let w = world();
+    apply(&w);
+    let registry = w.dot().join("kendex/hooks.json");
+    let script = w.dot().join("kendex/hooks/guard.sh");
+    let mut value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&registry).unwrap()).unwrap();
+    let command = value["hooks"]["tool_call"][0]["hooks"][0]["command"].clone();
+    value["hooks"]["tool_call"] = serde_json::json!([{ "command": command }]);
+    let theirs = serde_json::to_string_pretty(&value).unwrap();
+    fs::write(&registry, &theirs).unwrap();
+    super::undeclare(&w);
+
+    let report = plan_apply(
+        &w.env,
+        &w.scope(),
+        &PlanOptions {
+            remove_orphans: true,
+            removal_filter: Some(vec!["guard".to_owned()]),
+            ..PlanOptions::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        report
+            .drift
+            .iter()
+            .any(|row| row.name == "guard" && row.detail.contains("cannot edit")),
+        "the person is told which shape is in the way: {:?}",
+        report.drift
+    );
+    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+
+    assert!(script.is_file(), "the script stays with what runs it");
+    assert_eq!(fs::read_to_string(&registry).unwrap(), theirs);
+}
+
 /// A link where the new registry goes is a file kendex did not make, and
 /// editing through one writes outside the directory it manages.
 #[test]
