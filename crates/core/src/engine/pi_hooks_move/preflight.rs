@@ -64,6 +64,11 @@ pub(crate) struct Preflight {
     /// the fact a pass wrote down, so nothing under the reserved name is
     /// theirs any more and no question about bytes is asked about it.
     recorded: BTreeSet<String>,
+    /// Whether any installation of this scope's has yet to leave the
+    /// reserved name. The lock naming pi hooks is not that question: once
+    /// every one of them is on record as gone, the name is the person's,
+    /// and what they put under it is theirs however empty it is.
+    claims_reserved_name: bool,
     /// Whether an installation of kendex's is still where the move has to
     /// take it from. While that is true the legacy registry is a place a
     /// hook runs from, and so a place to observe.
@@ -109,6 +114,13 @@ impl Preflight {
         self.recorded.contains(name)
     }
 
+    /// Whether kendex still claims the name pi reserved in this scope —
+    /// asked of the directory itself, which is taken only for the sake of
+    /// an installation that has not left it.
+    pub(super) fn claims_reserved_name(&self) -> bool {
+        self.claims_reserved_name
+    }
+
     /// Whether the registry beside the reserved directory still runs
     /// something of kendex's — the question the observation surface asks,
     /// so a held hook is listed while it is the copy that fires, and the
@@ -138,6 +150,28 @@ pub(crate) fn preflight(
     // decides whether the question is asked, and nothing reads through a
     // link on the way to finding out.
     let linked = linked_registry(&root);
+    // Which installations are on record as having left the reserved name,
+    // worked out once. Three questions read it — whether kendex claims
+    // that name at all, which hooks the legacy registry can be in the way
+    // of, and whether one hook's copies there are still anybody's
+    // business — and a consumer deriving its own answer is how a finished
+    // move came to be re-opened three separate times.
+    let recorded: BTreeSet<String> = ours
+        .iter()
+        .filter(|entry| entry.left_pi_reserved_name)
+        .map(|entry| entry.name.clone())
+        .collect();
+    // A hook on record as having left the reserved name has no
+    // registration of kendex's there to identify: what wears its command
+    // now is the person's, by the very fact the record states. It has no
+    // business blocking anything, and neither has a document that is only
+    // in anybody's way for its sake.
+    let unfinished: Vec<&LockEntry> = ours
+        .iter()
+        .copied()
+        .filter(|entry| !recorded.contains(&entry.name))
+        .collect();
+    let claims_reserved_name = !unfinished.is_empty();
     // Nothing under either reserved name means nothing to work out about
     // what is there — the same answer everything below reaches, reached
     // without hashing a hook's bytes or reading a legacy path per hook on
@@ -150,7 +184,8 @@ pub(crate) fn preflight(
             held: BTreeMap::new(),
             discard: BTreeSet::new(),
             migrated: BTreeSet::new(),
-            recorded: BTreeSet::new(),
+            recorded,
+            claims_reserved_name,
             lingering: false,
             registry_block: None,
             conflicts: BTreeMap::new(),
@@ -175,26 +210,11 @@ pub(crate) fn preflight(
         .filter(|entry| moved(env, scope, &root, entry, state, linked))
         .map(|entry| entry.name.clone())
         .collect();
-    let recorded: BTreeSet<String> = ours
-        .iter()
-        .filter(|entry| entry.left_pi_reserved_name)
-        .map(|entry| entry.name.clone())
-        .collect();
     // An installation the move has not finished is one whose registration
     // is still the legacy one — a hold is only ever that, since nothing is
     // written or registered at the new path behind one. Without a lock
     // entry to claim by, kendex has nothing under the reserved name at all.
     let lingering = ours.iter().any(|entry| !migrated.contains(&entry.name));
-    // A hook on record as having left the reserved name has no
-    // registration of kendex's there to identify: what wears its command
-    // now is the person's, by the very fact the record states. It has no
-    // business blocking anything, and neither has a document that is only
-    // in anybody's way for its sake.
-    let unfinished: Vec<&LockEntry> = ours
-        .iter()
-        .copied()
-        .filter(|entry| !entry.left_pi_reserved_name)
-        .collect();
     let registry_block = (!unfinished.is_empty())
         .then(|| registry_block(&root, scope, &unfinished))
         .flatten();
@@ -209,6 +229,7 @@ pub(crate) fn preflight(
         discard,
         migrated,
         recorded,
+        claims_reserved_name,
         lingering,
         registry_block,
         conflicts,

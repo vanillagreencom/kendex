@@ -25,6 +25,29 @@ fn a_directory_appearing_after_the_move_says_nothing() {
     assert!(w.dot().join("hooks/theirs.sh").is_file());
 }
 
+/// And an empty one is theirs too: the record, not the fact that the lock
+/// still names pi hooks, is what says whether kendex claims that name.
+/// Read the other way, a directory holding nothing anyone could lose was
+/// taken from under the person who made it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_empty_directory_recreated_after_the_move_survives() {
+    let w = regressed();
+    apply(&w);
+    assert!(!w.dot().join("hooks").exists(), "the move finished");
+    fs::create_dir_all(w.dot().join("hooks")).unwrap();
+
+    for pass in 1..=2 {
+        let report = audit(&w.env, &w.scope()).unwrap();
+        assert!(report.notes.is_empty(), "pass {pass}: {:?}", report.notes);
+        kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+        assert!(
+            w.dot().join("hooks").is_dir(),
+            "pass {pass}: the directory is the person's"
+        );
+    }
+}
+
 /// What a person puts under the reserved name after the move has finished
 /// is theirs, registration included. The registry can outlive the move by
 /// holding somebody else's entries, and a command spelled exactly as the

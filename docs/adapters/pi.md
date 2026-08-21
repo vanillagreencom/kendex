@@ -103,9 +103,10 @@ asked wherever the old layout has got to, since "nothing of kendex's is
 under the reserved name" answers a different question from "this
 installation is in good order", and only the first is about that
 directory.
-Once a hook has finished moving, neither half under the reserved name is
-kendex's any more — not the script, and not an entry spelling the command
-kendex used to register. That is a fact about the past, so the lock keeps
+Once a hook has finished moving, nothing under the reserved name is
+kendex's any more — not the script, not an entry spelling the command
+kendex used to register, and not the empty directory itself, which is
+taken only for the sake of an installation that has not left it. That is a fact about the past, so the lock keeps
 it (`left_pi_reserved_name`) and the move reads it back instead of
 working it out again from bytes and registrations that have every right
 to change afterwards. It is written only where the move is proven over —

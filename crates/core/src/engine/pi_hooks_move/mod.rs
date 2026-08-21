@@ -302,7 +302,7 @@ fn move_out(
     // could not read or a registry it could not edit leaves remains under
     // the reserved name, and recording a move that did not happen would
     // abandon them there.
-    let cleared = plan_directory(&dir, &ours, &take, !entries.is_empty(), sink);
+    let cleared = plan_directory(&dir, &ours, &take, pre.claims_reserved_name(), sink);
     if cleared && plan_registry(&registry, &deregister, sink)? {
         finished.extend(moved_out);
     }

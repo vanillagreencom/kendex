@@ -55,6 +55,7 @@ fn the_line_about_a_retirement_is_read_before_the_retirement() {
 fn the_line_about_an_empty_directory_is_read_before_it_goes() {
     let w = regressed();
     super::apply(&w);
+    super::forget_the_move(&w.project.join(".kendex-lock.json"));
     fs::create_dir_all(w.dot().join("hooks")).unwrap();
 
     let report = audit(&w.env, &w.scope()).unwrap();

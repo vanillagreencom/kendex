@@ -252,28 +252,29 @@ changes carry a **Breaking** call-out with their migration note inline.
   refresh` moves an existing install out of the reserved directory and
   takes the directory away with it — including for a hook you removed or
   switched off, which leaves nothing behind to keep firing. Nothing moves
-  that kendex cannot account for: a file it did not write, one you edited
+  that kendex cannot account for. A file it did not write, one you edited
   after it was installed, anything that is not a plain file where the
   script was — a directory of your own, say — a hook registration you
-  added or duplicated by hand — the same command registered twice holds
-  that hook, and no other hook waits on it, while one you register under
-  a matcher of your own is left where you put it — when the catalog moves
-  kendex's, when kendex's is taken away, and on every tool that keeps
-  hooks this way. Two hooks that run one script on different events are two hooks, and
-  both refresh; only entries kendex genuinely cannot tell apart hold. A
-  hook you declare for the first time takes nothing with it on the way in,
-  so a command you already register yourself keeps the entry you gave it. An
-  install record from an older kendex, which says less
-  about what it registered, no longer leads to a second registration
-  beside the first: what the record cannot name is looked up in the file
-  itself, and a hook whose matcher you left empty registers once and stays
-  once. What `refresh` prints before it applies anything now reads as what
-  it is about to do, rather than as done; a hook whose catalog moves it
-  to another event is not one of these: the entry it had comes out as the
-  new one goes in, so it fires once, where the catalog now says, and
-  switching it off in that same refresh still leaves nothing running — and a hook whose source is
-  unreachable this run all stay exactly where they are, and that last one completes the move as soon
-  as the source is back. A copy kendex cannot prove it wrote keeps its
+  added or duplicated by hand, and a hook whose source is unreachable this
+  run all stay exactly where they are; that last one completes the move as
+  soon as the source is back. The same holds when the catalog moves
+  kendex's hook, when kendex's is taken away, and on every tool that keeps
+  hooks this way. The same command registered twice holds that hook, and
+  no other hook waits on it, while one you register under a matcher of
+  your own is left where you put it. Two hooks that run one script on
+  different events are two hooks, and both refresh; only entries kendex
+  genuinely cannot tell apart hold. A hook you declare for the first time
+  takes nothing with it on the way in, so a command you already register
+  yourself keeps the entry you gave it. An install record from an older
+  kendex, which says less about what it registered, no longer leads to a
+  second registration beside the first: what the record cannot name is
+  looked up in the file itself, and a hook whose matcher you left empty
+  registers once and stays once. A hook whose catalog moves it to another
+  event is not held either: the entry it had comes out as the new one goes
+  in, so it fires once, where the catalog now says, and switching it off
+  in that same refresh still leaves nothing running. What `refresh` prints
+  before it applies anything now reads as what it is about to do, rather
+  than as done. A copy kendex cannot prove it wrote keeps its
   whole installation, not just the file — the old copy stays the one that
   runs, and nothing replaces it until you discard the edits — and
   discarding them, or removing the hook by name, finishes the move in that
@@ -284,7 +285,8 @@ changes carry a **Breaking** call-out with their migration note inline.
   again, so nothing under the old name is kendex's afterwards — a script
   and a registration you put back there yourself both stay, however
   exactly they match what kendex used to write, and whatever else you
-  change about the hook later. A hook you install for the first time
+  change about the hook later, and so does the directory itself if you
+  make it again, empty or not. A hook you install for the first time
   counts as finished too, so files of your own already sitting in that
   directory are never mistaken for an older kendex's. A hook held that
   way still shows up in `kendex list`, in the app, and in the safety scan,

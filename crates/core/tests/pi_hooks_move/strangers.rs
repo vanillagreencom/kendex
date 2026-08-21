@@ -25,7 +25,7 @@ fn a_file_kendex_did_not_write_keeps_the_reserved_directory_alive() {
     assert!(w.dot().join("kendex/hooks/guard.sh").is_file());
 }
 
-/// The shell a finished move leaves behind is still pi's warning, and an
+/// The shell an unfinished move left behind is still pi's warning, and an
 /// empty directory holds nothing anyone can lose — but the registry
 /// beside it is a file kendex removed nothing from.
 #[test]
@@ -33,6 +33,7 @@ fn a_file_kendex_did_not_write_keeps_the_reserved_directory_alive() {
 fn an_empty_reserved_directory_left_behind_is_retired() {
     let w = world();
     apply(&w);
+    super::forget_the_move(&w.project.join(".kendex-lock.json"));
     fs::create_dir_all(w.dot().join("hooks")).unwrap();
     fs::write(w.dot().join("hooks.json"), "{\"hooks\":{}}\n").unwrap();
 
@@ -273,6 +274,7 @@ fn an_unreadable_registry_is_a_note_not_a_failed_audit() {
 fn the_empty_directory_op_says_what_it_does() {
     let w = world();
     apply(&w);
+    super::forget_the_move(&w.project.join(".kendex-lock.json"));
     fs::create_dir_all(w.dot().join("hooks")).unwrap();
 
     let report = audit(&w.env, &w.scope()).unwrap();

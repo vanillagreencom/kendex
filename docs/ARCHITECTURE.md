@@ -567,10 +567,12 @@ lives in one capability table read by core and UI.
   scope's lock names and its bytes prove, holding whole what it cannot —
   installation and registration together — and saying why;
   [docs/adapters/pi.md](adapters/pi.md) carries the rules in full. A
-  finished move is a fact about the past: recorded in the lock
-  (`LockEntry::left_pi_reserved_name`), read back, never re-derived, and
-  written only where proven, since a wrong one cannot be taken back —
-  past it, ownership is not asked about at all. What authorizes a deletion
+  finished move is a fact about the past, recorded in the lock
+  (`LockEntry::left_pi_reserved_name`) and written only where proven,
+  since a wrong one cannot be taken back. Every consumer reads that one
+  record (`Preflight`) rather than re-deriving the answer from the scope's
+  lock, and past it nothing under the reserved name is asked about, the
+  directory included. What authorizes a deletion
   asks for a plain file and binds the type it proved with the hash
   (`claims::provenance`, `preflight::discardable`, `Pre::PlainHashIs`),
   and every hold reaches the conflict row through one rendering

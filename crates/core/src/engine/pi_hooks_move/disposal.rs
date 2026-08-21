@@ -78,8 +78,9 @@ pub(super) fn plan_directory(
     }
     // And when it names nothing and the directory is empty — the shell a
     // finished move leaves behind, which pi still warns about and which
-    // holds nothing anyone could lose. Said out loud: a directory this
-    // scope's hooks no longer sit in is not one kendex can prove it made.
+    // holds nothing anyone could lose. Only while some installation has
+    // yet to leave the name: once every one of them is on record as gone,
+    // an empty directory here is one the person made, and theirs.
     if claimed && ours.is_empty() {
         let taken = whole(
             format!("Remove the empty {} pi warns about", dir.display()),
