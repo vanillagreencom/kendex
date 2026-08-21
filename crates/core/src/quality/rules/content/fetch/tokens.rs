@@ -16,6 +16,11 @@
 /// One word, as the shell would pass it: quotes and escapes taken out.
 pub(super) struct Word {
     pub(super) text: String,
+    /// Whether any of it was written inside quotes. A quoted word is an
+    /// operand the shell hands over exactly as it stands; a bare one is a
+    /// word in prose, and may have picked up punctuation from the sentence
+    /// around it.
+    pub(super) quoted: bool,
 }
 
 /// How a command was reached from the one before it.
@@ -40,20 +45,53 @@ pub(super) struct Command {
 }
 
 impl Command {
+    /// Where the program name sits: the first word that is not a variable
+    /// assignment. `MODE=x sh` runs `sh` with `MODE` set for it, and
+    /// reading the assignment as the program name misses the command
+    /// entirely — which for a runner means going quiet on a line that
+    /// pipes a download into a shell.
+    fn names_program(&self) -> Option<usize> {
+        self.words.iter().position(|word| !assigns(word))
+    }
+
     /// The program being run, lowercased. `None` for a command that is
-    /// nothing but an assignment or an empty stretch between separators.
+    /// nothing but assignments, or an empty stretch between separators.
     pub(super) fn verb(&self) -> Option<String> {
-        Some(self.words.first()?.text.to_ascii_lowercase())
+        Some(
+            self.words
+                .get(self.names_program()?)?
+                .text
+                .to_ascii_lowercase(),
+        )
     }
 
     pub(super) fn has_word(&self, word: &str) -> bool {
         self.words.iter().any(|held| held.text == word)
     }
 
-    /// Everything after the program name, as the shell would pass it.
+    /// Everything after the program name, as the shell would pass it —
+    /// counted from the program and not from the start of the command, or
+    /// an assignment before it shifts every argument by one.
     pub(super) fn arguments(&self) -> &[Word] {
-        self.words.get(1..).unwrap_or_default()
+        let Some(at) = self.names_program() else {
+            return &[];
+        };
+        self.words.get(at + 1..).unwrap_or_default()
     }
+}
+
+/// Whether this word sets a variable for the command rather than being one:
+/// a name the shell would accept, then `=`. `--referer=https://x` is not
+/// one — the name has to be a name.
+fn assigns(word: &Word) -> bool {
+    let Some((name, _)) = word.text.split_once('=') else {
+        return false;
+    };
+    let mut letters = name.chars();
+    letters
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && letters.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// The commands one line holds, in the order they are written.
@@ -62,15 +100,32 @@ pub(super) fn commands(line: &str) -> Vec<Command> {
     let mut state = Scan::default();
     let mut chars = line.char_indices().peekable();
     while let Some((at, c)) = chars.next() {
-        if state.quoted(c) {
+        // The escape is read first. Inside single quotes there are none;
+        // inside double quotes it covers only what the shell says it
+        // covers, and reading it any earlier or later is how a `\"` closed
+        // a quote it was written to keep open.
+        if c == '\\' && !state.single {
+            let escapes =
+                !state.double || matches!(chars.peek(), Some((_, '"' | '\\' | '$' | '`')));
+            match (escapes, chars.next_if(|_| escapes)) {
+                (true, Some((at, escaped))) => state.push(at, escaped),
+                _ => state.push(at, c),
+            }
+            continue;
+        }
+        // A quote mark is syntax the shell takes out, so it is consumed
+        // here rather than falling through to be pushed: a word that keeps
+        // its quotes is a program nothing has heard of, and the rule goes
+        // quiet on the line.
+        if state.delimits(c) {
+            state.opens(at, c);
+            continue;
+        }
+        if state.inside() {
             state.push(at, c);
             continue;
         }
         match c {
-            '\\' => match chars.next() {
-                Some((at, escaped)) => state.push(at, escaped),
-                None => state.push(at, c),
-            },
             c if c.is_whitespace() => state.end_word(),
             '|' | '&' => {
                 let doubled = chars.peek().is_some_and(|(_, next)| *next == c);
@@ -99,6 +154,11 @@ struct Scan {
     single: bool,
     double: bool,
     word: String,
+    /// Whether a word is being read at all, which a quote mark is enough to
+    /// say on its own.
+    started: bool,
+    /// Whether any of the word being read was written inside quotes.
+    quoted: bool,
     start: Option<usize>,
     end: usize,
     words: Vec<Word>,
@@ -106,27 +166,46 @@ struct Scan {
 }
 
 impl Scan {
-    /// Whether this character is inside quotes, taking the quote marks
-    /// themselves out as it goes. A quote is a word boundary the shell
-    /// removes, never part of what the command is handed.
-    fn quoted(&mut self, c: char) -> bool {
+    /// Whether this character is a quote mark rather than content,
+    /// switching the quoting in force as it goes.
+    fn delimits(&mut self, c: char) -> bool {
         match c {
             '\'' if !self.double => {
                 self.single = !self.single;
-                false
+                true
             }
             '"' if !self.single => {
                 self.double = !self.double;
-                false
+                true
             }
-            _ => self.single || self.double,
+            _ => false,
         }
+    }
+
+    fn inside(&self) -> bool {
+        self.single || self.double
+    }
+
+    /// A quote mark begins a word even where the word is empty: the shell
+    /// passes `""` as an argument, and one that vanished would shift every
+    /// argument after it. It stakes out the same ground a character does,
+    /// so a command that is nothing but an empty argument is still a
+    /// command with somewhere to be.
+    fn opens(&mut self, at: usize, c: char) {
+        if self.start.is_none() {
+            self.start = Some(at);
+        }
+        self.started = true;
+        self.quoted = true;
+        self.end = at + c.len_utf8();
     }
 
     fn push(&mut self, at: usize, c: char) {
         if self.start.is_none() {
             self.start = Some(at);
         }
+        self.started = true;
+        self.quoted |= self.inside();
         self.word.push(c);
         self.end = at + c.len_utf8();
     }
@@ -140,12 +219,26 @@ impl Scan {
     /// that fired the rule gets named by nothing.
     fn end_word(&mut self) {
         let word = std::mem::take(&mut self.word);
-        let trimmed = word.trim_matches('`');
-        if !trimmed.is_empty() {
-            self.words.push(Word {
-                text: trimmed.to_owned(),
-            });
+        let quoted = std::mem::take(&mut self.quoted);
+        if !std::mem::take(&mut self.started) {
+            return;
         }
+        // A bare word keeps the backticks off its edges: these rules read
+        // markdown with commands written into it, and `` `curl `` inside a
+        // code span is `curl`. A quoted word is an operand the shell hands
+        // over as it stands, and nothing in prose put those there.
+        let text = match quoted {
+            true => word,
+            false => word.trim_matches('`').to_owned(),
+        };
+        // A bare word that was nothing but backticks was punctuation in a
+        // sentence, never an argument, and printing it as one leaves a gap
+        // in the middle of the sentence the finding says. A quoted empty
+        // word is an argument: the shell passes it.
+        if !quoted && text.is_empty() {
+            return;
+        }
+        self.words.push(Word { text, quoted });
     }
 
     fn end_command(&mut self, reached: Reached, found: &mut Vec<Command>) {
@@ -170,3 +263,7 @@ impl Scan {
         });
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests;

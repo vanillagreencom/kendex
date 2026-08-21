@@ -25,5 +25,6 @@ mod reading;
 mod review_hash;
 mod review_hash_entries;
 mod rules;
+mod rules_fetch;
 mod rules_shapes;
 mod scoring;

@@ -205,11 +205,7 @@ fn downloads(line: &Line, commands: &[Command], run: &[usize]) -> (&'static str,
 /// operand — which still makes two fetches that differ anywhere in it two
 /// questions, and still shows the reader every address the line carries.
 fn fetched(command: &Command) -> (&'static str, String) {
-    let mut addresses: Vec<String> = command
-        .arguments()
-        .iter()
-        .filter_map(|word| address_in(&word.text))
-        .collect();
+    let mut addresses: Vec<String> = command.arguments().iter().filter_map(address_in).collect();
     if addresses.len() == 1 {
         return ("from", addresses.remove(0));
     }
@@ -226,18 +222,25 @@ fn fetched(command: &Command) -> (&'static str, String) {
 /// From the scheme to the end of the word, because the word is what the
 /// shell hands the command: a separator inside it was quoted, and cutting
 /// there would give `'https://host/p;v=1'` and `'https://host/p;v=2'` one
-/// address, one sentence and one decision. What is trimmed is punctuation
-/// the surrounding prose put there — a line of documentation writes an
-/// address inside brackets — which is never part of the address and would
-/// otherwise make one address two.
-fn address_in(word: &str) -> Option<String> {
-    const TRAILING: &[char] = &[')', '(', '<', '>', ',', '.', '"', '\'', '`'];
-    let lower = word.to_ascii_lowercase();
+/// address, one sentence and one decision.
+///
+/// A bare word loses the punctuation the sentence around it put there — a
+/// line of documentation writes an address inside brackets or ends one with
+/// a full stop, and neither is part of the address. A quoted word loses
+/// nothing: there is no prose inside quotes, only an operand, and
+/// `'…/p,v1,'` and `'…/p,v1.'` are two different requests to the same host.
+fn address_in(word: &tokens::Word) -> Option<String> {
+    const PROSE: &[char] = &[')', '(', '<', '>', ',', '.', ';', ':', '!', '?'];
+    let lower = word.text.to_ascii_lowercase();
     let at = ["https://", "http://"]
         .iter()
         .filter_map(|scheme| lower.find(scheme))
         .min()?;
-    let url = word[at..].trim_end_matches(TRAILING);
+    let url = &word.text[at..];
+    let url = match word.quoted {
+        true => url,
+        false => url.trim_end_matches(PROSE),
+    };
     (url.len() > "http://".len()).then(|| url.to_owned())
 }
 
@@ -247,7 +250,7 @@ fn every_address(line: &Line) -> String {
     let found: Vec<String> = tokens::commands(&line.text)
         .iter()
         .flat_map(|command| command.words.iter())
-        .filter_map(|word| address_in(&word.text))
+        .filter_map(address_in)
         .collect();
     match found.is_empty() {
         true => line
