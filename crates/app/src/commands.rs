@@ -230,6 +230,16 @@ mod tests {
         Env::fake(dir, FakeOs::Linux)
     }
 
+    /// A debug build's shape: state under a sandbox home, the person still
+    /// living in the real one. A fixture where the two coincide cannot tell
+    /// a `~` read against the wrong one from a `~` read against the right
+    /// one — both answers look the same.
+    fn sandboxed_env_in(real_home: &std::path::Path) -> Env {
+        let sandbox = real_home.join(".local/share/kendex-dev");
+        std::fs::create_dir_all(&sandbox).unwrap();
+        Env::fake(&sandbox, FakeOs::Linux).with_real_home(real_home)
+    }
+
     #[test]
     fn register_project_expands_a_typed_tilde_path() {
         let tmp = tempfile::tempdir().unwrap();
@@ -243,10 +253,44 @@ mod tests {
         );
     }
 
+    /// A `~` is where the person lives, and a sandbox does not move that.
+    /// Resolving it against the build's own home names a directory nobody
+    /// has, so the repository they picked never registers.
+    #[test]
+    fn register_project_reads_a_typed_tilde_against_the_real_home() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = sandboxed_env_in(tmp.path());
+        std::fs::create_dir_all(tmp.path().join("dev/hyprtrade")).unwrap();
+
+        let settings = register_project_at(&env, "~/dev/hyprtrade").unwrap();
+        assert_eq!(
+            settings.projects,
+            [tmp.path().join("dev/hyprtrade").canonicalize().unwrap()]
+        );
+    }
+
     #[test]
     fn discover_projects_expands_a_typed_tilde_root() {
         let tmp = tempfile::tempdir().unwrap();
         let env = env_in(tmp.path());
+        std::fs::create_dir_all(tmp.path().join("dev/app/.claude")).unwrap();
+
+        let found = discover_projects_at(&env, "~/dev").unwrap();
+        assert_eq!(
+            found,
+            [tmp.path()
+                .join("dev/app")
+                .canonicalize()
+                .unwrap()
+                .display()
+                .to_string()]
+        );
+    }
+
+    #[test]
+    fn discover_projects_reads_a_typed_tilde_against_the_real_home() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = sandboxed_env_in(tmp.path());
         std::fs::create_dir_all(tmp.path().join("dev/app/.claude")).unwrap();
 
         let found = discover_projects_at(&env, "~/dev").unwrap();

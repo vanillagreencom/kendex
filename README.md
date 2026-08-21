@@ -80,6 +80,19 @@ npm ci --prefix ui
 cd crates/app && ../../ui/node_modules/.bin/tauri dev   # the desktop app
 ```
 
+A debug build keeps its own home under the platform data directory
+(`kendex-dev`) instead of yours, so a branch cannot leave records your
+installed kendex will not read. Your own skills and agents are not visible
+to it, and nothing it writes reaches them. To dogfood a build against your
+real setup, say so:
+
+```sh
+KENDEX_REAL_HOME=1 cargo run -p kendex-cli --bin kendex -- list
+```
+
+Only `1` opts out — the hatch permits writes to a real machine, so a value
+nobody could read as consent leaves the sandbox on.
+
 ## How it works
 
 ```

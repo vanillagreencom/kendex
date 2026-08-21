@@ -5,7 +5,7 @@ use crate::error::{CoreError, Result};
 
 mod sandbox;
 
-pub use sandbox::sandboxed;
+pub(crate) use sandbox::sandboxed;
 use sandbox::{dev_home, real_home_opt_in, sandbox_vars};
 
 /// The one spelling of the app's directory segment under config/cache/data.
@@ -110,6 +110,14 @@ impl Env {
             data_dir: data,
             vars: BTreeMap::new(),
         }
+    }
+
+    /// A fixture whose sandbox home and real home differ, the way a debug
+    /// build's do. Without it a test cannot tell the two apart, and a call
+    /// that reads the wrong one still passes.
+    pub fn with_real_home(mut self, home: impl Into<PathBuf>) -> Self {
+        self.real_home = home.into();
+        self
     }
 
     /// The machine's own home, which a sandbox does not move: it is where

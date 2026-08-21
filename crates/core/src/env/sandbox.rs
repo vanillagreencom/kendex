@@ -60,7 +60,7 @@ fn is_sandboxed(debug_build: bool, real_home_opt_in: Option<&str>) -> bool {
 /// filesystem roots are not all a build owns: the OS credential store is
 /// keyed by name rather than by path, so it cannot be relocated by pointing
 /// at another home and asks here instead.
-pub fn sandboxed() -> bool {
+pub(crate) fn sandboxed() -> bool {
     is_sandboxed(cfg!(debug_assertions), real_home_opt_in().as_deref())
 }
 
