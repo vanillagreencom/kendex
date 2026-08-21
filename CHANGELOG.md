@@ -104,8 +104,11 @@ changes carry a **Breaking** call-out with their migration note inline.
   choose. The package page's version menu and toasts say the same.
 - `kendex updates` names the place — global or the project path — at the
   start of every line.
-- The `second-opinion` skill waits up to 18 minutes (1080 seconds) for an
-  external review by default, up from 5. Deep-reasoning reviewers were
+- The `second-opinion` skill now budgets 18 minutes (1080 seconds) for an
+  external review by default, up from 5. It is a budget, not a ceiling: a
+  retry started near the deadline and the grace before the kill can carry a
+  run about 90 seconds past it, plus the script's own work, so size a
+  caller-side watchdog above 1170 seconds. Deep-reasoning reviewers were
   timing out on every cycle at the old limit; set `SECOND_OPINION_TIMEOUT`
   to override. Existing installs keep their seeded value — `kendex refresh`
   never rewrites settings you already have — so a project whose

@@ -2095,7 +2095,7 @@ run_target_cli() {
   fi
   echo "→ cmd: timeout ${limit}s $cmd" >&2
   # shellcheck disable=SC2086
-  (cd -- "$CWD" && "$TIMEOUT_BIN" --kill-after="$KILL_AFTER" "$limit" $cmd < "$prompt_file" 2>"$STDERR_TMP") || rc=$?
+  (cd -- "$CWD" && "$TIMEOUT_BIN" -k "$KILL_AFTER" "$limit" $cmd < "$prompt_file" 2>"$STDERR_TMP") || rc=$?
   return "$rc"
 }
 

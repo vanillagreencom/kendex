@@ -305,7 +305,7 @@ fi
 # --- A CLI that ignores TERM is still reaped ---------------------------------
 # The deadline sends TERM, and TERM can be caught. A CLI that ignores it would
 # outlive its own deadline and keep running — and billing — long after the
-# lane it belonged to was resolved, so the deadline carries --kill-after and
+# lane it belonged to was resolved, so the deadline carries a kill grace and
 # the KILL is what finally ends such a CLI. Its exit is 137, which is a KILL
 # of unstated origin rather than proof the limit was reached, so the run
 # reports a kill and never a timeout — while keeping the same no-verdict exit.
@@ -344,10 +344,11 @@ SH
 NOKILL_ROOT="$TMP_ROOT/nokill"
 cp -R "$TMP_ROOT/proj" "$NOKILL_ROOT"
 NOKILL_SCRIPT="$NOKILL_ROOT/skills/second-opinion/scripts/second-opinion"
-sed 's/ --kill-after="\$KILL_AFTER"//' "$SECOND_OPINION" > "$NOKILL_SCRIPT"
+sed 's/ -k "\$KILL_AFTER"//' "$SECOND_OPINION" > "$NOKILL_SCRIPT"
 chmod +x "$NOKILL_SCRIPT"
-if grep -q -- '--kill-after' "$NOKILL_SCRIPT" || ! grep -q -- '--kill-after' "$SECOND_OPINION"; then
-  printf 'FAIL: control setup did not strip --kill-after from the script copy\n' >&2
+if grep -qF -- '-k "$KILL_AFTER"' "$NOKILL_SCRIPT" \
+   || ! grep -qF -- '-k "$KILL_AFTER"' "$SECOND_OPINION"; then
+  printf 'FAIL: control setup did not strip the kill grace from the script copy\n' >&2
   exit 1
 fi
 
@@ -398,10 +399,10 @@ fi
 while (( SECONDS - nokill_started < 40 )); do sleep 1; done
 nokill_pid=$(cat "$NOKILL_PID_FILE" 2>/dev/null || true)
 if [[ -n "$nokill_pid" ]] && ! cli_reaped "$nokill_pid"; then
-  printf 'PASS: control — without --kill-after the same CLI is still running\n'
+  printf 'PASS: control — without the kill grace the same CLI is still running\n'
   nokill_ok=true
 else
-  printf 'FAIL: control — without --kill-after the same CLI is still running (pid %s)\n' \
+  printf 'FAIL: control — without the kill grace the same CLI is still running (pid %s)\n' \
     "${nokill_pid:-none}" >&2
   nokill_ok=false
 fi
