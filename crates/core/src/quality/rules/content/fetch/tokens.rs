@@ -112,9 +112,9 @@ pub(super) fn commands(line: &str) -> Vec<Command> {
         // inside double quotes it covers only what the shell says it
         // covers, and reading it any earlier or later is how a `\"` closed
         // a quote it was written to keep open.
-        if c == '\\' && !state.single {
-            let escapes =
-                !state.double || matches!(chars.peek(), Some((_, '"' | '\\' | '$' | '`')));
+        if c == '\\' && !state.innermost().single {
+            let escapes = !state.innermost().double
+                || matches!(chars.peek(), Some((_, '"' | '\\' | '$' | '`')));
             match (escapes, chars.next_if(|_| escapes)) {
                 (true, Some((at, escaped))) => state.push(at, escaped),
                 _ => state.push(at, c),
@@ -134,10 +134,10 @@ pub(super) fn commands(line: &str) -> Vec<Command> {
         // produces is expansion, which nothing here does — the operand
         // stays as written, and a line that changes what is inside the
         // substitution is a line that says something else.
-        if !state.single {
+        if !state.innermost().single {
             // `$(` is one opening, so the parenthesis is taken with the
-            // dollar rather than left for the count below to reach — which
-            // would open the substitution twice and never close it.
+            // dollar rather than left for the reading below to reach —
+            // which would open the substitution twice and never close it.
             if c == '$' && chars.peek().is_some_and(|(_, next)| *next == '(') {
                 state.opened();
                 state.push(at, c);
@@ -181,16 +181,24 @@ pub(super) fn commands(line: &str) -> Vec<Command> {
     found
 }
 
-/// What has been read so far: the quoting in force, the word being built,
-/// and the command it belongs to.
-#[derive(Default)]
-struct Scan {
+/// The quoting in force in one line: what a quote mark has opened and not
+/// closed again.
+#[derive(Clone, Copy, Default)]
+struct Quoting {
     single: bool,
     double: bool,
-    /// How deep inside `$( )` the reading is: the shell is not acting on
-    /// what is written there, it is handing it to a reading of its own, so
-    /// a separator inside one ends nothing.
-    depth: usize,
+}
+
+/// What has been read so far: the quoting in force, the word being built,
+/// and the command it belongs to.
+struct Scan {
+    /// One frame per line being read: the line itself, then the inside of
+    /// every `$( )` still open and of every group written inside one. The
+    /// shell does not act on what a substitution holds, it hands it to a
+    /// reading of its own — with quoting of its own, which the quoting
+    /// around it neither continues nor answers for. A separator inside one
+    /// ends nothing.
+    quoting: Vec<Quoting>,
     word: String,
     /// Whether a word is being read at all, which a quote mark is enough to
     /// say on its own.
@@ -203,42 +211,72 @@ struct Scan {
     reached_by: Option<Reached>,
 }
 
+impl Default for Scan {
+    /// The base frame is the line itself, so there is always a quoting to
+    /// read and a substitution has somewhere to close back to.
+    fn default() -> Self {
+        Self {
+            quoting: vec![Quoting::default()],
+            word: String::new(),
+            started: false,
+            quoted: false,
+            start: None,
+            end: 0,
+            words: Vec::new(),
+            reached_by: None,
+        }
+    }
+}
+
 impl Scan {
+    /// The quoting that answers for the character being read: the innermost
+    /// frame, which is the line that character was written in.
+    fn innermost(&self) -> Quoting {
+        self.quoting.last().copied().unwrap_or_default()
+    }
+
     /// Whether this character is a quote mark rather than content,
     /// switching the quoting in force as it goes.
     fn delimits(&mut self, c: char) -> bool {
-        match c {
-            '\'' if !self.double => {
-                self.single = !self.single;
+        self.quoting.last_mut().is_some_and(|quoting| match c {
+            '\'' if !quoting.double => {
+                quoting.single = !quoting.single;
                 true
             }
-            '"' if !self.single => {
-                self.double = !self.double;
+            '"' if !quoting.single => {
+                quoting.double = !quoting.double;
                 true
             }
             _ => false,
-        }
+        })
     }
 
     fn inside(&self) -> bool {
-        self.single || self.double
+        let quoting = self.innermost();
+        quoting.single || quoting.double
     }
 
-    /// Whether this character opens or closes a substitution, counting the
-    /// nesting as it goes. A `)` inside quotes closes nothing.
+    /// Whether this character opens or closes a substitution, keeping a
+    /// frame for the quoting each one is read with.
     ///
-    /// Every parenthesis inside one is counted, not only the one `$(`
-    /// opened: a group written in there — `$( (true); printf … )` — closes
-    /// a parenthesis the substitution never opened, and taking that as the
-    /// end of it puts the separator after it back at the top level, where
-    /// it cuts the payload off the command that fetches it. Depth returns
-    /// to zero at the parenthesis that actually closes the substitution.
+    /// A group written inside a substitution — `$( (true); printf … )` — is
+    /// a line of its own in the same way, so it opens a frame of its own and
+    /// the parenthesis that closes it closes the group rather than the
+    /// substitution around it. The separator after it is still inside, where
+    /// it cuts nothing off the command that fetches the payload.
     ///
-    /// A parenthesis outside one is left alone. A subshell at the top level
-    /// holds its separators the same way, but prose is full of brackets and
-    /// reading those as a group would swallow every separator on the line —
-    /// which is a rule that says nothing, where this is a rule that could
-    /// have said something sharper.
+    /// A parenthesis inside quotes is a character in a word, opening and
+    /// closing nothing. The quoting that says so is the frame's own: read
+    /// against a quote mark written outside the substitution, a `)` closes
+    /// nothing, the substitution never ends, and every separator after it —
+    /// the pipe that hands a download to a shell among them — stops being
+    /// one.
+    ///
+    /// A parenthesis outside a substitution is left alone. A subshell at the
+    /// top level holds its separators the same way, but prose is full of
+    /// brackets and reading those as a group would swallow every separator
+    /// on the line — which is a rule that says nothing, where this is a rule
+    /// that could have said something sharper.
     ///
     /// `$( )` and not the backtick spelling of the same thing. What these
     /// rules read is markdown with commands written into it, where a
@@ -248,28 +286,32 @@ impl Scan {
     /// anybody writes that line down. An identity that could have been
     /// sharper is the smaller cost.
     fn substituting(&mut self, c: char) -> bool {
+        if self.inside() || !self.substituted() {
+            return false;
+        }
         match c {
-            '(' if self.depth > 0 => {
-                self.depth += 1;
+            '(' => {
+                self.opened();
                 true
             }
-            ')' if self.depth > 0 && !self.inside() => {
-                self.depth -= 1;
+            ')' => {
+                self.quoting.pop();
                 true
             }
             _ => false,
         }
     }
 
-    /// A substitution begins here.
+    /// A substitution begins here, and what is written inside it is a line
+    /// of its own.
     fn opened(&mut self) {
-        self.depth += 1;
+        self.quoting.push(Quoting::default());
     }
 
     /// Whether the reading is inside a substitution, where a separator is a
     /// character in a word rather than the end of a command.
     fn substituted(&self) -> bool {
-        self.depth > 0
+        self.quoting.len() > 1
     }
 
     /// A quote mark begins a word even where the word is empty: the shell
