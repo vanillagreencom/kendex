@@ -18,6 +18,11 @@ const DEV_HOME_DIR: &str = "kendex-dev";
 /// Opts a debug build back onto the real home, for deliberate dogfooding.
 const REAL_HOME_VAR: &str = "KENDEX_REAL_HOME";
 
+/// The one value that opts out. Anything else — `0`, `false`, a typo —
+/// leaves the sandbox on: this hatch permits writes to a real machine, so
+/// a value nobody can read as consent must not spend it.
+const REAL_HOME_OPT_IN: &str = "1";
+
 /// Process env vars that relocate harness roots.
 const HARNESS_VARS: [&str; 7] = [
     "CODEX_HOME",
@@ -272,7 +277,7 @@ const HOST_OS: FakeOs = if cfg!(target_os = "macos") {
 /// one that writes records a release build cannot read; `KENDEX_REAL_HOME`
 /// is how someone dogfooding says they meant the real machine.
 fn dev_home(debug_build: bool, real_home_opt_in: Option<&str>, data_dir: &Path) -> Option<PathBuf> {
-    let opted_in = real_home_opt_in.is_some_and(|v| !v.is_empty());
+    let opted_in = real_home_opt_in == Some(REAL_HOME_OPT_IN);
     match debug_build && !opted_in {
         true => Some(data_dir.join(DEV_HOME_DIR)),
         false => None,
@@ -310,13 +315,18 @@ mod tests {
         assert_eq!(dev_home(true, Some("1"), Path::new(DATA)), None);
     }
 
+    /// The hatch permits writes to a real machine, so only the documented
+    /// value spends it — a `0` or a typo reads as nobody's consent.
     #[test]
-    fn an_empty_opt_in_is_not_an_opt_in() {
-        assert_eq!(
-            dev_home(true, Some(""), Path::new(DATA)),
-            Some(PathBuf::from("/data/kendex-dev"))
-        );
-        assert_eq!(dev_home(false, Some(""), Path::new(DATA)), None);
+    fn only_the_documented_value_opts_out() {
+        for value in ["", "0", "false", "no", "2", "1 ", "true", "TRUE", "yes"] {
+            assert_eq!(
+                dev_home(true, Some(value), Path::new(DATA)),
+                Some(PathBuf::from("/data/kendex-dev")),
+                "{value:?} opted out of the sandbox"
+            );
+            assert_eq!(dev_home(false, Some(value), Path::new(DATA)), None);
+        }
     }
 
     /// A git base names a host and the Gemini override a read-only policy
