@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { LibraryView } from "@/lib/library-handoff";
 
 /** The Installed table's view state, kept outside the component so opening
  * a package (a real page, which unmounts the table) and coming back lands
@@ -20,6 +21,9 @@ interface LibraryViewState {
   setTag: (tag: string) => void;
   setFrom: (from: string) => void;
   setScrollTop: (scrollTop: number) => void;
+  /** Adopt the whole view a link into the Library asked for — the parts of
+   * it this store owns. */
+  setView: (view: LibraryView) => void;
   clearFilters: () => void;
 }
 
@@ -34,6 +38,8 @@ export const useLibraryViewStore = create<LibraryViewState>((set) => ({
   setTag: (tag) => set({ tag }),
   setFrom: (from) => set({ from }),
   setScrollTop: (scrollTop) => set({ scrollTop }),
+  setView: ({ kind, harness, tag, from, scrollTop }) =>
+    set({ kind, harness, tag, from, scrollTop }),
   clearFilters: () =>
     set({ kind: "any", harness: "any", tag: "any", from: "any" }),
 }));

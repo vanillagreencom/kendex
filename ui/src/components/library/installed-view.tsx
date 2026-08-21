@@ -20,7 +20,7 @@ import {
   filterItems,
   groupItems,
   groupScopes,
-  projectScopes,
+  scopeChoices,
 } from "@/lib/derive";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { scopeKey } from "@/lib/scope";
@@ -62,7 +62,7 @@ export function InstalledView() {
   // back lands on the same narrowed table.
   const search = useNavStore((s) => s.search);
   const setSearch = useNavStore((s) => s.setSearch);
-  const projects = result ? projectScopes(result) : [];
+  const projects = scopeChoices(result, scope);
   const scroller = useRef<HTMLDivElement | null>(null);
   // Every scope's manifest, so a row can say whether you have changed the
   // package wherever it is installed — not only in the scope last edited.
@@ -94,8 +94,8 @@ export function InstalledView() {
 
   useFilterHandoff();
 
-  // Restore where the table was scrolled to when it last unmounted, and
-  // record it again on the way out.
+  // Pick up where the table was last scrolled to, and record it again on the
+  // way out. A link that replaced the view has already reset that to the top.
   useEffect(() => {
     const node = scroller.current;
     if (!node) return;

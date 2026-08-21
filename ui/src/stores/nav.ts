@@ -32,7 +32,9 @@ interface NavState {
    *  is ever hidden behind a filter set somewhere else. */
   libraryScope: ScopeSelection;
   /** What the Library's search box holds, kept here so leaving the page and
-   * coming back keeps the table narrowed the same way. */
+   * coming back — by the sidebar, by back, or from a package page — keeps the
+   * table narrowed the same way. A link into the Library states the whole
+   * view it wants instead, so following one clears it. */
   search: string;
   /** Bumped whenever something asks for the search box. The mounted box
    * focuses itself on every change, so the "/" shortcut reaches whichever
@@ -119,10 +121,10 @@ export const useNavStore = create<NavState>((set) => ({
   // Always a handoff, even an empty one: a link that names no filter is
   // asking for everything, and the Library has to be able to tell that
   // apart from arriving with no link at all, where the stored view stands.
-  goToLibrary: ({ harness, kind } = {}) =>
+  goToLibrary: ({ harness, kind, scope } = {}) =>
     set((state) => ({
       page: "library",
-      libraryFilter: { harness, kind },
+      libraryFilter: { harness, kind, scope },
       history: pushHistory(state, "library"),
       future: [],
     })),

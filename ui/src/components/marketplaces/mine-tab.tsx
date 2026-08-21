@@ -11,7 +11,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAccountStore } from "@/stores/account";
 import { useMineStore } from "@/stores/mine";
 import { MineCreateDialog } from "./mine-create-dialog";
@@ -135,13 +134,13 @@ export function MineTab() {
           <DialogHeader>
             <DialogTitle>How a marketplace repo works</DialogTitle>
           </DialogHeader>
-          <ScrollArea className="max-h-[70vh] pr-3">
+          <div className="max-h-[70vh] overflow-y-auto pr-3">
             {doc === null ? (
               <TextBar width="w-64" />
             ) : (
               <MarkdownView source={doc} />
             )}
-          </ScrollArea>
+          </div>
         </DialogContent>
       </Dialog>
       <MineSubmitDialog

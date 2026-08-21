@@ -24,8 +24,8 @@ export function ProjectCard({
   name: string;
   subtitle: string;
   counts: [ItemKind, number][];
-  /** Open this project's whole library. The card is the target for it —
-   * a count badge narrows to one kind, and there was no way to ask for
+  /** Show everything installed here — what the project's name is a button
+   * for. A count badge narrows to one kind, and there was no way to ask for
    * everything without picking a kind first. */
   onOpen: () => void;
   onKindClick: (kind: ItemKind) => void;
@@ -36,28 +36,29 @@ export function ProjectCard({
 }) {
   return (
     <Card
-      role="button"
-      tabIndex={0}
-      aria-label={`Show everything in ${name}`}
-      // The controls inside the card mean their own thing, not "open the
-      // project" — a click that lands on one has already been answered, and
-      // a key pressed there belongs to whatever has focus.
-      onClick={(e) => {
-        if ((e.target as HTMLElement).closest("button")) return;
+      // A shortcut for the mouse, on top of the name's own button: the card
+      // reads as one target, so clicking its empty space should do what the
+      // card is for. Every control inside it means something else and has
+      // already answered the click; a drag that ends here was someone
+      // keeping the path, not asking to leave the page.
+      onClick={(event) => {
+        if ((event.target as HTMLElement).closest("button")) return;
+        if (window.getSelection()?.isCollapsed === false) return;
         onOpen();
       }}
-      onKeyDown={(e) => {
-        if (e.target !== e.currentTarget) return;
-        if (e.key !== "Enter" && e.key !== " ") return;
-        e.preventDefault();
-        onOpen();
-      }}
-      className="gap-3 py-4 hover:bg-accent/40 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+      className="cursor-pointer gap-3 py-4 hover:bg-accent/40"
     >
       <div className="flex items-start justify-between gap-3 px-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="truncate text-sm font-medium">{name}</span>
+            <button
+              type="button"
+              onClick={onOpen}
+              aria-label={`Show everything in ${name}`}
+              className="truncate text-sm font-medium hover:underline"
+            >
+              {name}
+            </button>
             {badge ? <Badge variant="destructive">{badge}</Badge> : null}
           </div>
           <p className="truncate text-[13px] text-muted-foreground">

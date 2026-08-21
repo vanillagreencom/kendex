@@ -1,32 +1,29 @@
 import { useEffect } from "react";
+import { libraryViewFromHandoff } from "@/lib/library-handoff";
 import { useLibraryViewStore } from "@/stores/library-view";
 import { useNavStore } from "@/stores/nav";
 
 /**
- * Apply the filter a link into the Library asked for, once, on arrival.
+ * Adopt the view a link into the Library asked for, once, on arrival.
  *
- * The handoff comes from wherever the link was clicked — Harnesses,
- * Projects, Home — and a link states the whole narrowing it wants, so
- * whatever an earlier visit left behind goes first: otherwise "everything
- * in this project" arrives still narrowed to the last kind looked at.
- * Where to look is not part of it — the caller sets the scope on the way
- * here. Arriving with no link at all leaves the stored view standing.
+ * The handoff comes from wherever the link was clicked — Harnesses, Projects,
+ * Home. What it means is {@link libraryViewFromHandoff}'s to decide; this
+ * writes that answer to the stores holding each part of the view, then
+ * consumes the handoff so a later visit starts from the stored view again.
  */
 export function useFilterHandoff() {
   const clearLibraryFilter = useNavStore((s) => s.clearLibraryFilter);
   const setSearch = useNavStore((s) => s.setSearch);
-  const setKind = useLibraryViewStore((s) => s.setKind);
-  const setHarness = useLibraryViewStore((s) => s.setHarness);
-  const clearViewFilters = useLibraryViewStore((s) => s.clearFilters);
+  const setScope = useNavStore((s) => s.setLibraryScope);
+  const setView = useLibraryViewStore((s) => s.setView);
 
   useEffect(() => {
-    const handoff = useNavStore.getState().libraryFilter;
-    if (handoff) {
-      clearViewFilters();
-      setSearch("");
-      setKind(handoff.kind ?? "any");
-      setHarness(handoff.harness ?? "any");
+    const view = libraryViewFromHandoff(useNavStore.getState().libraryFilter);
+    if (view) {
+      setView(view);
+      setSearch(view.search);
+      setScope(view.scope);
     }
     clearLibraryFilter();
-  }, [clearLibraryFilter, clearViewFilters, setSearch, setKind, setHarness]);
+  }, [clearLibraryFilter, setSearch, setScope, setView]);
 }

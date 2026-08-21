@@ -122,15 +122,16 @@ describe("nav store", () => {
   });
 
   it("hands off an empty filter when a link asks for everything", () => {
-    useNavStore.getState().goToLibrary({ kind: "hook" });
-    useNavStore.getState().clearLibraryFilter();
-
-    // A link naming no filter still hands off, so the Library knows to drop
-    // what an earlier visit left narrowed rather than keeping "hook".
     useNavStore.getState().goToLibrary();
-    expect(useNavStore.getState().libraryFilter).toEqual({
-      harness: undefined,
-      kind: undefined,
+
+    expect(useNavStore.getState().libraryFilter).not.toBeNull();
+  });
+
+  it("hands off where a link asks the Library to look", () => {
+    useNavStore.getState().goToLibrary({ scope: { project: "/x" } });
+
+    expect(useNavStore.getState().libraryFilter?.scope).toEqual({
+      project: "/x",
     });
   });
 

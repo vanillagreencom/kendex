@@ -171,6 +171,22 @@ export function projectScopes(result: ScanResult): string[] {
   return [...roots].sort();
 }
 
+/** The places the Library offers to look: every project with something
+ * installed, plus the one being looked at. A project can be picked before it
+ * holds anything — from its card on Projects, or by emptying it while the
+ * table is open — and a place with no pill would leave an empty table with
+ * nothing on screen saying where it is looking. */
+export function scopeChoices(
+  result: ScanResult | null,
+  selection: ScopeSelection,
+): string[] {
+  const roots = new Set(result ? projectScopes(result) : []);
+  if (selection !== "all" && selection !== "global") {
+    roots.add(selection.project);
+  }
+  return [...roots].sort();
+}
+
 // An item whose findings someone read and accepted is installed and staying,
 // so calling it held back would be the opposite of the truth. Only a block
 // with no live acceptance behind it is held back.

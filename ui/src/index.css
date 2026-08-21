@@ -184,32 +184,18 @@
   ) {
     cursor: pointer;
   }
-  /* The platform scrollbar is a different width, shape and colour on every
-     desktop kendex runs on, so a long list ended in a stripe of someone
-     else's chrome. One thumb, drawn from the app's own foreground, reads the
-     same on all of them. Sized to match the space the layout already
-     reserves via scrollbar-gutter, so nothing reflows. */
-  ::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
-  }
-  ::-webkit-scrollbar-track,
-  ::-webkit-scrollbar-corner {
-    background: transparent;
-  }
-  ::-webkit-scrollbar-thumb {
-    /* The border is transparent and clipped to the padding box: it insets the
-       thumb without shrinking the grab target. */
-    background-color: color-mix(in oklab, var(--foreground) 20%, transparent);
-    background-clip: padding-box;
-    border: 3px solid transparent;
-    border-radius: 9999px;
-  }
-  ::-webkit-scrollbar-thumb:hover {
-    background-color: color-mix(in oklab, var(--foreground) 35%, transparent);
-  }
-  ::-webkit-scrollbar-thumb:active {
-    background-color: color-mix(in oklab, var(--foreground) 45%, transparent);
+  /* The desktop's own scrollbar ends a long list in a pale stripe of someone
+     else's chrome, so the thumb is drawn from the app's foreground and the
+     track is taken away. Colour only — each platform keeps its own scrollbar
+     shape and width, which is what stops a list from jumping sideways as it
+     starts and stops overflowing: on WebKitGTK 2.52, the Linux runtime, the
+     bar is a zero-width overlay and scrollbar-gutter reserves nothing, so a
+     width set here would be content width taken away the moment a list
+     overflows and handed back when it stops. Inherited, so every scroller in
+     the app is covered without naming any of them. */
+  html {
+    scrollbar-color: color-mix(in oklab, var(--foreground) 30%, transparent)
+      transparent;
   }
 }
 

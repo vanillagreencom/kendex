@@ -11,7 +11,8 @@ export function ScopePills({
 }: {
   scope: ScopeSelection;
   onScopeChange: (scope: ScopeSelection) => void;
-  /** Project roots that currently have at least one item. */
+  /** Project roots to offer: the ones holding something, and the one being
+   * looked at. */
   projects: string[];
 }) {
   return (

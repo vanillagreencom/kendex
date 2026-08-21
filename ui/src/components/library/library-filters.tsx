@@ -157,9 +157,11 @@ export function LibraryFilters({
           />
         </div>
         <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
-          {projects.length > 0 ? (
-            // With no projects there is nothing to choose between — the pills
-            // would offer two buttons that show the same list.
+          {projects.length > 0 || scope !== "all" ? (
+            // With no projects and nowhere picked there is nothing to choose
+            // between — the pills would offer two buttons showing the same
+            // list. Once somewhere is picked they always show, so where the
+            // table is looking is never a narrowing with no cause on screen.
             <ScopePills
               scope={scope}
               onScopeChange={onScopeChange}
