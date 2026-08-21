@@ -891,16 +891,16 @@ lives in one capability table read by core and UI.
   **A boundary is carried from the code that drew it, never found again in the
   finished text.** That text is half the project's own and answers any
   question put to it — a marker it spells itself ends the block early and the
-  rest reads as the publisher's — so the renderer hands its offsets down
-  through the rename and the split, and every location they cover is composed
-  rather than matched. Where the artifact is generated from inputs instead,
-  the answer is a rendering from their inputs alone walked beside the real
-  one, both sides read in the one deobfuscated space or a hidden character
-  makes a repeat match a raw comparison never sees. Prose the project supplied
-  is skipped there rather than credited to whichever copy came first, which
-  loses a review they did make and asks the person instead; and a finding
-  naming a whole document is theirs only where their own rendering produces
-  it.
+  rest reads as the publisher's — so the renderer hands the tree and its
+  offsets down as one value that no step can rename apart, and every location
+  they cover is composed rather than matched. Where the artifact is generated
+  from inputs instead, the answer is a rendering from their inputs alone
+  walked beside the real one, both sides read in the one deobfuscated space or
+  a hidden character makes a repeat match a raw comparison never sees. Prose
+  the project supplied is skipped there rather than credited to whichever copy
+  came first, which loses a review they did make and asks the person instead;
+  and a finding naming a whole document is theirs only where their own
+  rendering produces it.
 - **The community directory is read like any remote: strictly, capped,
   and honest about staleness.** `registry/` (core) consumes what
   `source/index.rs` producers feed kendex.ai: `index.rs` re-parses the

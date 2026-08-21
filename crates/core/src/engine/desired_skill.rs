@@ -240,20 +240,18 @@ fn render_variant(
     group: &SurfaceGroup,
     enabled: bool,
 ) -> Result<Variant> {
-    let (mut files, mut block) = render_skill(ctx.sealed, ctx.item_path, ctx.manifest, ctx.name)?;
+    let mut rendered = render_skill(ctx.sealed, ctx.item_path, ctx.manifest, ctx.name)?;
     // A skill from a plugin-registry catalog installs under its plugin, and the
-    // catalog's own SKILL.md knows nothing of that: the copy carries the
-    // name the tool will list it under, the catalog keeps the name it wrote.
+    // catalog's own SKILL.md knows nothing of that.
     if group.installed != ctx.name {
-        let moved = crate::render::skill::set_skill_name(&mut files, &group.installed);
-        block = block.map(|block| block.shifted(moved));
+        rendered.set_skill_name(&group.installed);
     }
     // The tightest cap in the group and the member that enforces it, taken
     // together: they are one fact, and reading them from separate passes
     // invites a fallback for a state that cannot happen.
     let capped = tightest_cap(group);
     if let Some((cap, capped_by)) = capped {
-        let outcome = crate::render::split::enforce_body_cap(files, cap, block);
+        let outcome = crate::render::split::enforce_body_cap(rendered, cap);
         if let Some(reason) = outcome.refusal {
             for harness in &group.members {
                 state.refused.push(super::desired::Refused {
@@ -279,8 +277,7 @@ fn render_variant(
                 remediation: warning.remediation,
             });
         }
-        files = outcome.files;
-        block = outcome.block;
+        rendered = outcome.rendered;
     }
     // The group's members share one physical tree, so a rendering one of
     // their loaders rejects is refused for all of them — installing it for
@@ -292,7 +289,7 @@ fn render_variant(
             *harness,
             ctx.name,
             &group.installed,
-            &files,
+            rendered.files(),
         );
         if let Some(reason) = super::desired::refusal_reason(&findings) {
             for member in &group.members {
@@ -332,19 +329,15 @@ fn render_variant(
         });
     }
     if !enabled {
-        for (rel, _) in &mut files {
-            if rel == std::path::Path::new("SKILL.md") {
-                *rel = PathBuf::from("SKILL.md.disabled");
-            }
-        }
+        rendered.disable();
     }
-    let hash = hash_files(&files);
+    let hash = hash_files(rendered.files());
     let authored = match ctx.author_review.is_some() {
-        true => authored_tree(&files, block),
+        true => authored_tree(&rendered),
         false => None,
     };
     Ok(Variant {
-        files,
+        files: rendered.into_files(),
         hash,
         refused: false,
         authored,

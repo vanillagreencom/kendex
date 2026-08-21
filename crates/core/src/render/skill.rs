@@ -5,8 +5,10 @@ use crate::error::Result;
 use crate::manifest::Manifest;
 use crate::source_read::SealedSource;
 
-/// A rendered tree as apply materializes it: relative path, bytes.
-pub type Files = Vec<(PathBuf, Vec<u8>)>;
+mod rendered;
+pub use rendered::{Block, Files, Rendered};
+
+const SKILL_FILE: &str = "SKILL.md";
 
 pub const INSTRUCTIONS_START: &str = "<!-- kendex:project-instructions:start -->";
 pub const INSTRUCTIONS_END: &str = "<!-- kendex:project-instructions:end -->";
@@ -16,38 +18,6 @@ pub const INSTRUCTIONS_END: &str = "<!-- kendex:project-instructions:end -->";
 // reading as a hand edit.
 const LEGACY_INSTRUCTIONS_START: &str = "<!-- vstack:project-instructions:start -->";
 const LEGACY_INSTRUCTIONS_END: &str = "<!-- vstack:project-instructions:end -->";
-
-/// Where a rendering put text the item's publisher did not write: a byte
-/// range in one rendered file.
-///
-/// Produced where the text is written and carried from there. The finished
-/// file is the project's own text as much as the publisher's, and it can
-/// spell a marker as readily as anything else — so finding this range again
-/// by searching that text is finding whatever the project wanted found.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Block {
-    /// The rendered file it sits in, relative to the tree's root.
-    pub file: PathBuf,
-    pub start: usize,
-    pub end: usize,
-}
-
-impl Block {
-    /// The same block after bytes were added or removed ahead of it.
-    pub fn shifted(self, by: isize) -> Block {
-        let moved = |at: usize| at.saturating_add_signed(by);
-        Block {
-            start: moved(self.start),
-            end: moved(self.end),
-            ..self
-        }
-    }
-
-    /// The same block after the file it sits in was renamed.
-    pub fn renamed(self, file: PathBuf) -> Block {
-        Block { file, ..self }
-    }
-}
 
 /// Byte range of a block already written into a file kendex rendered
 /// earlier, either marker generation: from the start marker through the end
@@ -86,7 +56,7 @@ pub fn render_skill(
     source_dir: &Path,
     manifest: &Manifest,
     name: &str,
-) -> Result<(Files, Option<Block>)> {
+) -> Result<Rendered> {
     let instructions = merged_instructions(&manifest.skill_instructions, name);
     with_instructions(sealed, source_dir, instructions.as_deref())
 }
@@ -96,50 +66,25 @@ pub fn render_skill(
 /// publisher's inputs, so nothing in the project's own instructions, marker
 /// or otherwise, can be mistaken for the publisher's.
 pub fn render_authored(sealed: &SealedSource, source_dir: &Path) -> Result<Files> {
-    Ok(with_instructions(sealed, source_dir, None)?.0)
+    Ok(with_instructions(sealed, source_dir, None)?.into_files())
 }
 
 fn with_instructions(
     sealed: &SealedSource,
     source_dir: &Path,
     instructions: Option<&str>,
-) -> Result<(Files, Option<Block>)> {
+) -> Result<Rendered> {
     let mut files = sealed.collect_skill_tree(source_dir)?;
     let mut block = None;
     for (rel, bytes) in &mut files {
-        if rel == Path::new("SKILL.md") {
+        if rel == Path::new(SKILL_FILE) {
             let text = String::from_utf8_lossy(bytes).into_owned();
             let (rendered, put) = injected(&text, instructions);
             block = put.map(|put| put.renamed(rel.clone()));
             *bytes = rendered.into_bytes();
         }
     }
-    Ok((files, block))
-}
-
-/// Rename the tree's SKILL.md to the name the skill installs under,
-/// returning how many bytes its frontmatter grew or shrank so anything
-/// holding an offset into that file can move with it — the rewrite is
-/// entirely inside the frontmatter, and every byte after it keeps its
-/// place relative to the rest. Every
-/// tool keys a skill on its directory and answers to the name the file
-/// gives, so the two have to agree — and a plugin-registry catalog's file knows
-/// only its leaf name, never the plugin the item is installed under. The
-/// catalog keeps the name it wrote; the copy carries the installed one.
-pub fn set_skill_name(files: &mut [(PathBuf, Vec<u8>)], installed: &str) -> isize {
-    let mut moved = 0;
-    for (rel, bytes) in files.iter_mut() {
-        let is_skill_md = matches!(rel.to_str(), Some("SKILL.md" | "SKILL.md.disabled"));
-        if !is_skill_md {
-            continue;
-        }
-        let text = String::from_utf8_lossy(bytes).into_owned();
-        if let Some(renamed) = with_name(&text, installed) {
-            moved = renamed.len() as isize - text.len() as isize;
-            *bytes = renamed.into_bytes();
-        }
-    }
-    moved
+    Ok(Rendered::injected(files, block))
 }
 
 /// `None` when the file carries no frontmatter to name the skill in — the
@@ -196,7 +141,7 @@ fn injected(skill_md: &str, instructions: Option<&str>) -> (String, Option<Block
     (
         text,
         Some(Block {
-            file: PathBuf::from("SKILL.md"),
+            file: PathBuf::from(SKILL_FILE),
             start,
             end: start + block.len(),
         }),
@@ -289,9 +234,9 @@ mod tests {
     #[test]
     fn a_crlf_skill_takes_the_name_it_installs_under() {
         let crlf = SKILL.replace('\n', "\r\n");
-        let mut files = vec![(PathBuf::from("SKILL.md"), crlf.into_bytes())];
-        set_skill_name(&mut files, "docs__github");
-        let text = String::from_utf8_lossy(&files[0].1).into_owned();
+        let mut rendered = Rendered::plain(vec![(PathBuf::from(SKILL_FILE), crlf.into_bytes())]);
+        rendered.set_skill_name("docs__github");
+        let text = String::from_utf8_lossy(&rendered.files()[0].1).into_owned();
         assert!(text.contains("name: docs__github"), "{text:?}");
         assert!(!text.contains("name: github\r"), "{text:?}");
         assert!(text.contains("description: gh"), "{text:?}");
@@ -320,20 +265,27 @@ mod tests {
 
         let sealed = crate::source_read::SealedSource::open(tmp.path()).unwrap();
         let src = sealed.root().join("github");
-        let (files, block) = render_skill(&sealed, &src, &manifest, "github").unwrap();
-        assert_eq!(files.len(), 2);
-        let skill_md = files
+        let rendered = render_skill(&sealed, &src, &manifest, "github").unwrap();
+        assert_eq!(rendered.files().len(), 2);
+        let skill_md = rendered
+            .files()
             .iter()
             .find(|(p, _)| p == Path::new("SKILL.md"))
             .unwrap();
         assert!(String::from_utf8_lossy(&skill_md.1).contains("use gh"));
-        let script = files.iter().find(|(p, _)| p.ends_with("run.sh")).unwrap();
+        let script = rendered
+            .files()
+            .iter()
+            .find(|(p, _)| p.ends_with("run.sh"))
+            .unwrap();
         assert_eq!(script.1, b"#!/bin/sh\n");
 
         // The offsets come back with the tree, and they are the block the
         // renderer wrote — not whatever a later search of the file finds.
-        let block = block.expect("the render says where it put the block");
-        assert_eq!(block.file, PathBuf::from("SKILL.md"));
+        let block = rendered
+            .block()
+            .expect("the render says where it put the block");
+        assert_eq!(block.file, PathBuf::from(SKILL_FILE));
         let text = String::from_utf8_lossy(&skill_md.1).into_owned();
         assert!(text[block.start..block.end].starts_with(INSTRUCTIONS_START));
         assert!(text[block.start..block.end].ends_with(&format!("{INSTRUCTIONS_END}\n")));

@@ -4,9 +4,7 @@
 //! instructions go into that tree as one block, and where the block landed
 //! is the render's own answer rather than anything read back out of it.
 
-use crate::render::skill::Block;
-
-use super::Files;
+use crate::render::skill::Rendered;
 
 /// How much of this rendered tree its publisher wrote: everything outside
 /// the block the renderer put the project's instructions in.
@@ -27,14 +25,14 @@ use super::Files;
 /// `None` when the project supplied instructions the rendering does not
 /// carry the offsets of: nothing here can then say which lines are whose,
 /// and a record that cannot be bounded settles nothing.
-pub(super) fn authored_tree(
-    files: &Files,
-    block: Option<Block>,
-) -> Option<crate::quality::Authored> {
-    let Some(block) = block else {
+pub(super) fn authored_tree(rendered: &Rendered) -> Option<crate::quality::Authored> {
+    let Some(block) = rendered.block() else {
         return Some(crate::quality::Authored::Around(None));
     };
-    let (_, bytes) = files.iter().find(|(rel, _)| *rel == block.file)?;
+    let (_, bytes) = rendered
+        .files()
+        .iter()
+        .find(|(rel, _)| *rel == block.file)?;
     let text = std::str::from_utf8(bytes.get(..block.end)?).ok()?;
     Some(crate::quality::Authored::Around(Some(
         crate::quality::Injection {

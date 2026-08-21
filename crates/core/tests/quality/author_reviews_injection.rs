@@ -290,3 +290,40 @@ fn an_injected_occurrence_cannot_outweigh_the_one_the_record_paid_for() {
         "the record settles the occurrence it paid for, not the heavier one"
     );
 }
+
+/// A disabled installation keeps its content under another name, and the
+/// block goes with the file it is in.
+///
+/// The rename is lossless and changes nothing about who wrote what — but a
+/// block left naming the file the tree no longer has cannot be found, so
+/// nothing here can say which lines are whose and the publisher's review
+/// earns no budget. It fails in the safe direction and it is still the
+/// reported bug, arriving for every disabled skill a project adds
+/// instructions to.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_disabled_skill_keeps_its_publishers_review() {
+    let f = fixture();
+    author_dismisses(&f.source, ItemKind::Skill, "hostile", &[]);
+    declare(&f, "enabled = false\n");
+    declare(
+        &f,
+        "\n[skill-instructions]\nhostile = \"Notes for this project.\"\n",
+    );
+
+    let report = plan(&f, &[]);
+    let planned = row(&report, "hostile");
+    assert!(
+        !planned.blocked(),
+        "the record answers for the disabled rendering too: {:?}",
+        planned.findings
+    );
+    assert!(
+        !report
+            .warnings
+            .iter()
+            .any(|warning| warning.message.contains("settle nothing")),
+        "and nothing says it did not apply: {:?}",
+        report.warnings
+    );
+}

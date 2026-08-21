@@ -120,26 +120,27 @@ fn as_skill(
     };
     let body = String::from_utf8_lossy(bytes);
     let tree = dir.join(&name);
-    let mut files = vec![(
+    // Through the same value a skill's tree travels in, so the file names
+    // and anything that points into them can only ever move together —
+    // there is nothing of the project's in a command's rendering today, and
+    // this is not a thing to remember if that changes.
+    let mut rendered = crate::render::skill::Rendered::plain(vec![(
         PathBuf::from("SKILL.md"),
         crate::render::command::codex_skill(&name, &body, ctx.name).into_bytes(),
-    )];
+    )]);
     // A command is one file the author cannot split themselves, so an
     // oversized one is cut into references/ exactly like a skill — nothing
     // is dropped, and only a body the splitter cannot cut is refused.
     if let Some(cap) = crate::harness::format_caps(harness).skill_body_max_bytes {
-        let Some(capped) = split_to_cap(ctx, state, harness, files, cap) else {
+        let Some(capped) = split_to_cap(ctx, state, harness, rendered, cap) else {
             return Ok(None);
         };
-        files = capped;
+        rendered = capped;
     }
     if !ctx.decl.enabled {
-        for (rel, _) in &mut files {
-            if rel == std::path::Path::new("SKILL.md") {
-                *rel = PathBuf::from("SKILL.md.disabled");
-            }
-        }
+        rendered.disable();
     }
+    let files = rendered.into_files();
     // Installed as a skill, it answers to the skill loader's rules — under
     // the emitted name, which is the one the user will type.
     let findings = crate::render::validate::validate_skill_tree(harness, ctx.name, &name, &files);
@@ -199,10 +200,10 @@ fn split_to_cap(
     ctx: &ItemCtx,
     state: &mut DesiredState,
     harness: HarnessId,
-    files: Vec<(PathBuf, Vec<u8>)>,
+    rendered: crate::render::skill::Rendered,
     cap: usize,
-) -> Option<Vec<(PathBuf, Vec<u8>)>> {
-    let outcome = crate::render::split::enforce_body_cap(files, cap, None);
+) -> Option<crate::render::skill::Rendered> {
+    let outcome = crate::render::split::enforce_body_cap(rendered, cap);
     if let Some(reason) = outcome.refusal {
         state.refused.push(super::desired::Refused {
             kind: ItemKind::Command,
@@ -224,7 +225,7 @@ fn split_to_cap(
             )),
         });
     }
-    Some(outcome.files)
+    Some(outcome.rendered)
 }
 
 /// The name the generated skill takes. A real skill keeps its own name, so

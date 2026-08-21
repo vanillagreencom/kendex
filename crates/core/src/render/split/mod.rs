@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use super::RenderWarning;
 use super::fences::fenced_ranges;
-use super::skill::Block;
+use super::skill::{Block, Rendered};
 
 const SKILL_FILE: &str = "SKILL.md";
 const PROVENANCE: &str = "<!-- continued from SKILL.md -->\n";
@@ -16,12 +16,10 @@ const FIX: &str = "shorten SKILL.md or move detail into references/ yourself";
 
 pub struct SplitOutcome {
     /// The adjusted tree (SKILL.md possibly shortened, an overflow file
-    /// possibly added). Unchanged when the body already fits.
-    pub files: Vec<(PathBuf, Vec<u8>)>,
-    /// Where the project's block sits now. The split keeps it in the head
-    /// and can move everything around it, so the range it came in as is not
-    /// the range it leaves as.
-    pub block: Option<Block>,
+    /// possibly added), and where the project's block sits in it now. The
+    /// split keeps the block in the head and can move everything around it,
+    /// so the range it came in as is not the range it leaves as.
+    pub rendered: Rendered,
     pub warnings: Vec<RenderWarning>,
     /// Set when the cap cannot be honored at all (a single fenced block
     /// larger than the cap): the caller refuses the install for that
@@ -32,8 +30,7 @@ pub struct SplitOutcome {
 impl SplitOutcome {
     fn unchanged(files: Vec<(PathBuf, Vec<u8>)>, block: Option<Block>) -> SplitOutcome {
         SplitOutcome {
-            files,
-            block,
+            rendered: Rendered::split(files, block),
             warnings: Vec::new(),
             refusal: None,
         }
@@ -41,8 +38,7 @@ impl SplitOutcome {
 
     fn refused(files: Vec<(PathBuf, Vec<u8>)>, reason: String) -> SplitOutcome {
         SplitOutcome {
-            files,
-            block: None,
+            rendered: Rendered::split(files, None),
             warnings: Vec::new(),
             refusal: Some(reason),
         }
@@ -57,11 +53,9 @@ impl SplitOutcome {
 /// `block` is where the renderer put that block, passed in rather than
 /// looked for: the text spanning this file is half the project's own, so a
 /// marker found in it says only that the project wrote one.
-pub fn enforce_body_cap(
-    mut files: Vec<(PathBuf, Vec<u8>)>,
-    max_bytes: usize,
-    block: Option<Block>,
-) -> SplitOutcome {
+pub fn enforce_body_cap(rendered: Rendered, max_bytes: usize) -> SplitOutcome {
+    let block = rendered.block().cloned();
+    let mut files = rendered.into_files();
     let Some(index) = files
         .iter()
         .position(|(path, _)| path == Path::new(SKILL_FILE))
@@ -160,8 +154,7 @@ pub fn enforce_body_cap(
         false => block,
     });
     SplitOutcome {
-        files,
-        block,
+        rendered: Rendered::split(files, block),
         warnings: vec![warning],
         refusal: None,
     }

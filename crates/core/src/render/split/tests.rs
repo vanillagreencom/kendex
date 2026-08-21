@@ -1,5 +1,5 @@
 use super::*;
-use crate::render::skill::{Block, INSTRUCTIONS_END, INSTRUCTIONS_START};
+use crate::render::skill::{Block, INSTRUCTIONS_END, INSTRUCTIONS_START, Rendered};
 
 const NOTE: &str = "\n> Continued in references/details.md — read it for the remaining sections.\n";
 
@@ -39,12 +39,13 @@ fn capped(files: Vec<(PathBuf, Vec<u8>)>, max_bytes: usize) -> SplitOutcome {
                 end,
             })
         });
-    enforce_body_cap(files, max_bytes, block)
+    enforce_body_cap(Rendered::split(files, block), max_bytes)
 }
 
 fn read(outcome: &SplitOutcome, name: &str) -> String {
     let (_, bytes) = outcome
-        .files
+        .rendered
+        .files()
         .iter()
         .find(|(path, _)| path == Path::new(name))
         .unwrap_or_else(|| panic!("{name} is not in the tree"));
@@ -55,7 +56,7 @@ fn read(outcome: &SplitOutcome, name: &str) -> String {
 fn a_body_under_the_cap_is_left_alone() {
     let files = tree(&skill("\n## One\n\nshort\n"));
     let outcome = capped(files.clone(), 4096);
-    assert_eq!(outcome.files, files);
+    assert_eq!(*outcome.rendered.files(), files);
     assert!(outcome.warnings.is_empty());
     assert!(outcome.refusal.is_none());
 }
@@ -64,7 +65,7 @@ fn a_body_under_the_cap_is_left_alone() {
 fn a_tree_without_a_skill_file_is_left_alone() {
     let files = vec![(PathBuf::from("references/details.md"), vec![b'x'; 900])];
     let outcome = capped(files.clone(), 10);
-    assert_eq!(outcome.files, files);
+    assert_eq!(*outcome.rendered.files(), files);
     assert!(outcome.refusal.is_none());
 }
 
@@ -189,7 +190,7 @@ fn a_fenced_block_larger_than_the_cap_is_refused() {
     let files = tree(&skill(&format!("```\n{}```\n", "line\n".repeat(200))));
     let outcome = capped(files.clone(), 300);
 
-    assert_eq!(outcome.files, files);
+    assert_eq!(*outcome.rendered.files(), files);
     assert!(outcome.warnings.is_empty());
     assert!(outcome.refusal.unwrap().contains("fenced code block"));
 }
@@ -271,7 +272,12 @@ fn the_returned_tree_stays_sorted() {
     files.push((PathBuf::from("assets/logo.svg"), b"<svg/>".to_vec()));
     let outcome = capped(files, 400);
 
-    let paths: Vec<&PathBuf> = outcome.files.iter().map(|(path, _)| path).collect();
+    let paths: Vec<&PathBuf> = outcome
+        .rendered
+        .files()
+        .iter()
+        .map(|(path, _)| path)
+        .collect();
     let mut sorted = paths.clone();
     sorted.sort();
     assert_eq!(paths, sorted);
