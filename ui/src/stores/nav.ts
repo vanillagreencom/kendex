@@ -116,10 +116,13 @@ export const useNavStore = create<NavState>((set) => ({
           }),
       searchFocus: state.searchFocus + 1,
     })),
+  // Always a handoff, even an empty one: a link that names no filter is
+  // asking for everything, and the Library has to be able to tell that
+  // apart from arriving with no link at all, where the stored view stands.
   goToLibrary: ({ harness, kind } = {}) =>
     set((state) => ({
       page: "library",
-      libraryFilter: harness || kind ? { harness, kind } : null,
+      libraryFilter: { harness, kind },
       history: pushHistory(state, "library"),
       future: [],
     })),

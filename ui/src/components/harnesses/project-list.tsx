@@ -45,6 +45,10 @@ export function ProjectList() {
           subtitle="Works in every project on this computer"
           counts={[...countByKind(globalItems).entries()]}
           emptyLabel="Nothing from kendex yet."
+          onOpen={() => {
+            setLibraryScope("global");
+            goToLibrary();
+          }}
           onKindClick={(kind) => {
             setLibraryScope("global");
             goToLibrary({ kind });
@@ -74,6 +78,10 @@ export function ProjectList() {
                     ? "Folder not found"
                     : undefined
                 }
+                onOpen={() => {
+                  setLibraryScope({ project: root });
+                  goToLibrary();
+                }}
                 onKindClick={(kind) => {
                   setLibraryScope({ project: root });
                   goToLibrary({ kind });

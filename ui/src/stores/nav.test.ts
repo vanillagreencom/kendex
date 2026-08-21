@@ -121,6 +121,19 @@ describe("nav store", () => {
     expect(useNavStore.getState().libraryFilter).toBeNull();
   });
 
+  it("hands off an empty filter when a link asks for everything", () => {
+    useNavStore.getState().goToLibrary({ kind: "hook" });
+    useNavStore.getState().clearLibraryFilter();
+
+    // A link naming no filter still hands off, so the Library knows to drop
+    // what an earlier visit left narrowed rather than keeping "hook".
+    useNavStore.getState().goToLibrary();
+    expect(useNavStore.getState().libraryFilter).toEqual({
+      harness: undefined,
+      kind: undefined,
+    });
+  });
+
   it("pushes the prior page onto history on a cross-page nav", () => {
     useNavStore.getState().goToLibrary();
 

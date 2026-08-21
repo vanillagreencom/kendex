@@ -130,6 +130,15 @@ changes carry a **Breaking** call-out with their migration note inline.
   reported as "the safety rules changed since it was reviewed" rather than
   as a different set of problems. Re-accept or re-dismiss from the tokens
   `kendex findings` prints now.
+- A project card on Projects opens that project's library. Clicking the
+  card — Personal included — shows everything installed there, unfiltered;
+  the count badges keep narrowing to one kind, as before. Seeing a whole
+  project used to mean picking a kind you did not want and then clearing
+  the filter.
+- Scrolling surfaces draw the app's own scrollbar rather than the desktop's.
+  A long list used to end in a stripe of system chrome — arrow buttons and
+  a pale track on Linux, something else on macOS and Windows; it is now one
+  quiet thumb, the same on every platform, in light and dark.
 - The app uses the Geist typeface, with titles and navigation in Geist Mono
   to match the website.
 - **Breaking**: the default Homebrew install is now the app —

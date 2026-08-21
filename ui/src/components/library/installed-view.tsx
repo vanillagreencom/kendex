@@ -6,6 +6,7 @@ import { LibraryFilters } from "@/components/library/library-filters";
 import { LibraryLegend } from "@/components/library/library-legend";
 import { NotManagedPanel } from "@/components/library/not-managed";
 import { TableEmptyRow } from "@/components/library/table-empty";
+import { useFilterHandoff } from "@/components/library/use-filter-handoff";
 import {
   Table,
   TableBody,
@@ -43,7 +44,6 @@ export function InstalledView() {
   const setScope = useNavStore((s) => s.setLibraryScope);
   const goToMarketplaces = useNavStore((s) => s.goToMarketplaces);
   const goToPackage = useNavStore((s) => s.goToPackage);
-  const clearLibraryFilter = useNavStore((s) => s.clearLibraryFilter);
   const {
     kind,
     harness,
@@ -92,17 +92,7 @@ export function InstalledView() {
       customizedKeys.has(`${scopeKey(scope)}|${group.kind}:${group.name}`),
     );
 
-  // The filter is a one-time handoff from wherever the link was clicked
-  // (Harnesses, Projects); once applied, further tab visits start from the
-  // stored view again rather than reapplying a stale filter.
-  useEffect(() => {
-    const handoff = useNavStore.getState().libraryFilter;
-    if (handoff) {
-      setKind(handoff.kind ?? "any");
-      setHarness(handoff.harness ?? "any");
-    }
-    clearLibraryFilter();
-  }, [clearLibraryFilter, setKind, setHarness]);
+  useFilterHandoff();
 
   // Restore where the table was scrolled to when it last unmounted, and
   // record it again on the way out.
