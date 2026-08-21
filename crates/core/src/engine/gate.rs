@@ -233,7 +233,6 @@ pub(super) fn run(
                 manifest: state.manifest_update.as_ref().unwrap_or(manifest),
                 scope,
                 key: &item.key,
-                root: &root,
                 review_hash: review_hash.as_deref(),
                 provenance: Some(&item.provenance),
                 override_state: &override_state,

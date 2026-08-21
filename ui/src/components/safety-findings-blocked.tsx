@@ -147,7 +147,7 @@ function BlockedGroupRow({
               was rather than print a fix nobody is counting. */}
           {group.findingGroups.map((ruleGroup) => (
             <FindingLine
-              key={`${ruleGroup.rule}:${ruleGroup.message}`}
+              key={ruleGroup.key}
               finding={ruleGroupAsFinding(ruleGroup)}
               locations={ruleGroup.locations}
               settledBy={

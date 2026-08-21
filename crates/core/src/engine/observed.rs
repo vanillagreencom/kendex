@@ -202,7 +202,6 @@ impl Reading<'_> {
                 manifest: self.manifest,
                 scope: self.scope,
                 key: &key,
-                root: &root,
                 review_hash: scored.review.as_deref(),
                 provenance: provenance.as_deref(),
                 override_state: &override_state,

@@ -77,6 +77,13 @@ export function authorSettledCount(rows: ItemSafety[]): number {
 
 /** One finding the publisher settled, wherever it was found. */
 export interface PublisherGroup {
+  /** What this entry was grouped by, so a list of them can be keyed by the
+   *  same thing that made them distinct entries. Rebuilding a key at the
+   *  render site is how two entries come to share one: rule and location
+   *  used to tell findings apart, and identity is the rule and the sentence
+   *  now, so one line matching a rule twice is two entries under one key
+   *  and React is free to show either one's decision against the other. */
+  key: string;
   finding: Finding;
   reason: DismissReason;
   dismissedAt: string;
@@ -113,7 +120,7 @@ export function publisherGroups(rows: ItemSafety[]): PublisherGroup[] {
     const key = `${content}::${row.kind}:${row.name}::${publisher}::${reason}::${dismissedAt}::${decision.fingerprint}`;
     let group = byEvidence.get(key);
     if (!group) {
-      group = { finding, reason, dismissedAt, publisher, items: [] };
+      group = { key, finding, reason, dismissedAt, publisher, items: [] };
       byEvidence.set(key, group);
       ordered.push(group);
     }

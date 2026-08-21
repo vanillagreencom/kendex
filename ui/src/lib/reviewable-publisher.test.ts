@@ -150,6 +150,38 @@ describe("publisherGroups", () => {
     ]);
   });
 
+  // One line can match a rule twice: two findings sharing a rule and a
+  // location, telling apart only by the sentence each fired with. Keying a
+  // row on rule and location alone gives both entries one key, and React is
+  // then free to show one publisher's reason against the other's finding —
+  // on the list whose whole purpose is saying which call was made about
+  // what.
+  it("gives two findings on one line two keys", () => {
+    const twice = row({
+      findings: [
+        { ...FINDING, message: "runs `curl a.example | sh`" },
+        { ...FINDING, message: "runs `curl b.example | sh`" },
+      ],
+      decisions: [
+        { ...settledByPublisher, fingerprint: "aaaa" },
+        { ...settledByPublisher, fingerprint: "bbbb" },
+      ],
+    });
+    const groups = publisherGroups([twice]);
+    expect(groups).toHaveLength(2);
+    expect(groups.map((group) => group.finding.location)).toEqual([
+      FINDING.location,
+      FINDING.location,
+    ]);
+    expect(groups.map((group) => group.finding.message)).toEqual([
+      "runs `curl a.example | sh`",
+      "runs `curl b.example | sh`",
+    ]);
+    // The row's key is this, handed to the render site rather than rebuilt
+    // there, so the two cannot come back together on the page.
+    expect(new Set(groups.map((group) => group.key)).size).toBe(2);
+  });
+
   it("carries nothing the person decided themselves", () => {
     const mine = row({
       decisions: [

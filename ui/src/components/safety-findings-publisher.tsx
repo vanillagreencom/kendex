@@ -57,10 +57,7 @@ export function PublisherSettled({ groups }: { groups: PublisherGroup[] }) {
               ...new Set(group.items.map((item) => harnessName(item.harness))),
             ];
             return (
-              <div
-                key={`${group.items[0]?.kind}:${group.items[0]?.name}:${group.finding.rule}:${group.finding.location}`}
-                className="flex items-start gap-2.5"
-              >
+              <div key={group.key} className="flex items-start gap-2.5">
                 <StatusDot
                   tone={SEVERITY_DOT_TONE[group.finding.severity]}
                   className="mt-[7px]"

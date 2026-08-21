@@ -159,8 +159,6 @@ pub struct Installation<'a> {
     pub manifest: &'a Manifest,
     pub scope: &'a Scope,
     pub key: &'a str,
-    /// The item's location, which every finding's fingerprint is relative to.
-    pub root: &'a str,
     pub review_hash: Option<&'a str>,
     pub provenance: Option<&'a str>,
     pub override_state: &'a OverrideState,

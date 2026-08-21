@@ -20,6 +20,10 @@ export interface RuleGroup {
   message: string;
   remediation: string;
   locations: string[];
+  /** What this entry was grouped by, so a list of them can be keyed by the
+   *  same thing that made them distinct entries — never by a subset of it,
+   *  which is how two entries come to share one key. */
+  key: string;
   /** The publisher's record, where one settled every occurrence behind this
    *  group. A held-back item's score already excludes them, so a line that
    *  printed a plain fix here would be asking the reader to act on
@@ -54,6 +58,7 @@ export function groupFindingsByRule(
     let group = byKey.get(key);
     if (!group) {
       group = {
+        key,
         rule: finding.rule,
         severity: finding.severity,
         message: finding.message,
