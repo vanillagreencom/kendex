@@ -554,7 +554,8 @@ lives in one capability table read by core and UI.
   switching a hook off renders the removal of an entry that may not be the
   one there. Otherwise it fires twice, or keeps firing with nothing naming
   it. Removal reads the same record, and an entry no edit of kendex's can
-  reach is nobody's to reconcile: proven by applying it and reading back.
+  reach is neither reconciled nor retired: proven by applying it and
+  reading back.
 - **Pi hooks are enforced through the carrier.** Pi has no per-hook
   artifact: the `pi-hooks` extension package hosts native listeners, and
   hook content rides in the registry kendex renders beside them
@@ -580,8 +581,7 @@ lives in one capability table read by core and UI.
   the mechanism supports; the surfaces that label an installation read
   carrier reality (`pi_ext::carrier`), and Pi loads project and global
   settings both, so a project-installed hook with only a global carrier is
-  still enforced — the v1 #1407 lesson, carried as behavior. A scope with
-  no carrier registered anywhere gets the downgrade said per item.
+  still enforced — the v1 #1407 lesson, carried as behavior.
   The session-start drift report rides the same mechanism: same script,
   same kill-switch, fire-and-forget into session start, and a reloaded or
   resumed session never repeats it.

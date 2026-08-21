@@ -92,23 +92,25 @@ fn new_registration_stands(
     }
 }
 
-/// What is at the new path that a fresh registration would run into.
+/// What is at the new path that this pass would run into.
 pub(super) enum Moved {
-    /// Nothing: the entry is kendex's own to keep up to date, or there is
-    /// none.
+    /// Nothing: the entry is kendex's own to act on, or there is none.
     No,
     /// An entry somebody moved: registering again would leave the hook
     /// firing under two events.
     Elsewhere,
-    /// An entry kendex's own edit cannot reach: registering again would
-    /// add a second beside it.
+    /// An entry kendex's own edits step over: registering again would add
+    /// a second beside it, and retiring it would take nothing.
     Unreachable,
+    /// A registry that is a link kendex did not create.
+    Linked,
 }
 
-/// Whether registering this hook again would leave two of it. Somebody
-/// moved the entry, or wrote it in a shape kendex's edits step over —
-/// either way the fresh rendering lands beside what is there instead of
-/// on it, and the installation holds instead.
+/// Whether this pass can act on what is at the new path at all. Somebody
+/// moved the entry, or wrote it in a shape kendex's edits step over, or
+/// put a link where the registry goes — in each case what the pass would
+/// write lands somewhere other than on what is there, so the installation
+/// holds instead.
 pub(super) fn moved_by_hand(
     env: &Env,
     scope: &Scope,
@@ -119,10 +121,16 @@ pub(super) fn moved_by_hand(
     match new_registration(env, scope, root, entry, state) {
         Registered::Ours | Registered::Absent => Moved::No,
         Registered::Unreachable => Moved::Unreachable,
+        Registered::Linked => Moved::Linked,
         Registered::Elsewhere | Registered::Ambiguous => Moved::Elsewhere,
     }
 }
 
+/// What the new registry says about this hook, under the identity the
+/// record names. Asked once for both questions that ask it — whether the
+/// move has finished, and whether this pass could act on what is there —
+/// so the two can never disagree, and neither can be answered without the
+/// proof below.
 fn new_registration(
     env: &Env,
     scope: &Scope,
@@ -132,6 +140,12 @@ fn new_registration(
 ) -> Registered {
     let here = installed(env, scope, root, entry, state);
     let registry = pi::hook_registry(root);
+    // Read like everything else this module reads: a link is never
+    // followed, in or out. Editing through one writes to a file outside
+    // the directory kendex manages.
+    if matches!(look(&registry), Found::Linked(_)) {
+        return Registered::Linked;
+    }
     let found = match crate::scan::hooks::read_registrations(&registry) {
         Ok(entries) => registered(&entries, &here),
         // A registry that is not there, or cannot be read, carries no
@@ -139,55 +153,67 @@ fn new_registration(
         Err(_) => Registered::Absent,
     };
     match found {
-        // Found where the record says is not the same as ours to keep up
-        // to date. Proven, not assumed — the same reading the old path
-        // gets, in the one place both questions about the new one come
-        // through.
-        Registered::Ours if !reachable(&registry, entry, &here, state) => Registered::Unreachable,
+        // Found where the record says is not the same as kendex's to act
+        // on. Proven, not assumed — the same reading the old path gets,
+        // in the one place every question about the new one comes
+        // through, whichever direction the pass is going.
+        Registered::Ours if !reaches(env, scope, &registry, entry, &here, state) => {
+            Registered::Unreachable
+        }
         found => found,
     }
 }
 
-/// Whether this pass's own edits reach the entry it just matched.
+/// Whether this pass's own edits reach the entry it just matched, in
+/// whichever direction the pass is going.
 ///
 /// An upsert refreshes a handler standing inside a matcher group and
 /// steps over one written directly under its event — a shape a person
-/// writes and kendex never does. The document reads the same either way,
-/// so the entry answers to the record while the edit meant to keep it
-/// current would add a second beside it, and the hook would fire twice
-/// for ever after.
+/// writes and kendex never does. A removal steps over the same shape. The
+/// document reads the same either way, so the entry answers to the record
+/// while the edit meant to act on it does nothing: a refresh adds a
+/// second beside it, and a removal takes the script and the record and
+/// leaves it running with nothing left to find it by.
 ///
-/// Asked by applying what this pass would apply — the retirement of a
-/// moved identity included, or an ordinary catalog event change would
-/// read as unreachable — and counting what carries the command
-/// afterwards. More than one is an edit that added where it meant to
-/// amend.
+/// Asked by applying what this pass would apply and counting what carries
+/// the command afterwards. Installing means one, removing means none, and
+/// anything else is an edit that missed what it was aimed at. The
+/// retirement of a moved identity is applied too, or an ordinary catalog
+/// event change would read as unreachable.
 ///
-/// A pass that renders nothing for this hook writes nothing, and an edit
-/// the document refuses is a conflict the item pass raises on its own;
-/// neither is this question's to answer.
-fn reachable(
+/// A document that refuses the edit is a conflict the item pass raises on
+/// its own, and is not this question's to answer.
+fn reaches(
+    env: &Env,
+    scope: &Scope,
     registry: &std::path::Path,
     entry: &LockEntry,
     here: &Identity,
     state: &DesiredState,
 ) -> bool {
     let key = crate::lock::entry_key(ItemKind::Hook, &entry.name, HarnessId::Pi);
-    let Some(item) = state.items.iter().find(|item| item.key == key) else {
-        return true;
-    };
-    let Artifact::Registration { edits, .. } = &item.artifact else {
-        return true;
+    let item = state.items.iter().find(|item| item.key == key);
+    // Nothing rendered for it means nothing is being installed: what this
+    // pass would do with it is take it away, and that is simulated from
+    // the same record every removal is built from.
+    let (edits, wanted) = match item {
+        Some(item) => match &item.artifact {
+            Artifact::Registration { edits, .. } => (
+                super::super::item_record::retire_previous(item, Some(entry))
+                    .into_iter()
+                    .chain(edits.iter().cloned())
+                    .collect::<Vec<_>>(),
+                usize::from(registers(edits, &here.command)),
+            ),
+            _ => return true,
+        },
+        None => (super::super::owned::installed(env, scope, entry).edits, 0),
     };
     let Ok(Some(text)) = crate::fs::read_if_exists(registry) else {
         return true;
     };
     let mut after = text;
-    let planned = super::super::item_record::retire_previous(item, Some(entry))
-        .into_iter()
-        .chain(edits.iter().cloned())
-        .filter(|(path, _)| path == registry);
-    for (_, edit) in planned {
+    for (_, edit) in edits.iter().filter(|(path, _)| path == registry) {
         match edit.apply(&after) {
             Ok(updated) => after = updated,
             Err(_) => return true,
@@ -198,7 +224,18 @@ fn reachable(
             .iter()
             .filter(|entry| entry.command == here.command)
             .count()
-            <= 1
+            == wanted
+    })
+}
+
+/// Whether this item's edits put the command into the registry, rather
+/// than take it out — a hook installed disabled renders the removal of
+/// its own entry, and wants none there afterwards.
+fn registers(edits: &[(std::path::PathBuf, ConfigEdit)], command: &str) -> bool {
+    edits.iter().any(|(_, edit)| match edit {
+        ConfigEdit::UpsertHook { command: put, .. }
+        | ConfigEdit::UpsertCopilotHook { command: put, .. } => put == command,
+        _ => false,
     })
 }
 

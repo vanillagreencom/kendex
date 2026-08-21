@@ -242,6 +242,10 @@ fn doubled(
             "its registration in {} sits under an event kendex did not put it under — registering it again would fire the hook twice; move it back or take it out",
             registry.display()
         ))),
+        Moved::Linked => Some(Hold::ByHand(format!(
+            "{} is a link kendex did not create, so nothing was written through it — move it aside yourself, then refresh again",
+            registry.display()
+        ))),
         Moved::Unreachable => Some(Hold::ByHand(format!(
             "its registration in {} is written in a shape kendex cannot edit — a handler standing directly under its event, rather than inside a matcher group — so refreshing it would add a second entry beside it and the hook would fire twice; move it inside a matcher group, or take it out",
             registry.display()

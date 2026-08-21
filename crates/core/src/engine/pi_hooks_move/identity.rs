@@ -15,8 +15,13 @@ use crate::harness::pi;
 use crate::lock::LockEntry;
 use crate::model::Scope;
 
-/// What the identity the lock recorded for one hook's legacy
-/// registration resolves to in a parsed registry.
+/// What the identity the lock recorded for one hook's registration
+/// resolves to in a registry.
+///
+/// The first four are what identity matching alone can say. The last two
+/// are answers about what kendex may do with what it found, which the
+/// caller that reads the document adds — a shape its edits step over, and
+/// a document they must not be applied to at all.
 pub(super) enum Registered {
     /// Exactly one registration answers to the recorded identity.
     Ours,
@@ -29,8 +34,12 @@ pub(super) enum Registered {
     Ambiguous,
     /// It is exactly where the record says — and written in a shape
     /// kendex's own edit cannot reach, so applying that edit would put a
-    /// second entry beside it rather than keep it up to date.
+    /// second entry beside it rather than keep it up to date, or leave it
+    /// running when the pass meant to take it out.
     Unreachable,
+    /// The document is a link kendex did not create, so nothing was read
+    /// through it and nothing will be written through it.
+    Linked,
 }
 
 /// What the record kept of one registration — everything the identity has

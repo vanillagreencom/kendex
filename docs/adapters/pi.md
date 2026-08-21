@@ -90,9 +90,12 @@ named by its command alone — its record describes the entry at the new
 path, and what an older kendex wrote under the old name is not knowable
 from it. What this
 pass renders names the entry at the new path only, so a registration
-somebody moved there by hand — or wrote in a shape kendex's own edit
-steps over, which it proves by applying that edit and reading the file
-back — is never doubled by a second one beside it —
+somebody moved there by hand — or wrote in a shape kendex's own edits
+step over, which it proves by applying what this pass would apply and
+reading the file back, in whichever direction it is going: a refresh
+never doubles such an entry, and a removal never takes the script out
+from under one. A link where that registry goes is read through no more
+than any other link here —
 asked wherever the old layout has got to, since "nothing of kendex's is
 under the reserved name" answers a different question from "this
 installation is in good order", and only the first is about that
