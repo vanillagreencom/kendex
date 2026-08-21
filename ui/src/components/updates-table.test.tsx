@@ -123,6 +123,20 @@ describe("UpdatesTable", () => {
     expect(html).toMatch(/<span[^>]*data-disabled=""[^>]*role="switch"/);
   });
 
+  it("locks the switch on a place its source holds, and says where to release it", () => {
+    const html = render([
+      row("gh", null, {
+        pinned: true,
+        holdOwner: { kind: "source", name: "cat" },
+      }),
+    ]);
+    expect(html).toMatch(/<span[^>]*data-disabled=""[^>]*role="switch"/);
+    expect(html).toContain(
+      "Held by the source &quot;cat&quot; as a whole — release it where that source is declared",
+    );
+    expect(html).toMatch(/<button[^>]*>Update</);
+  });
+
   it("offers no package-wide Update all in the muted table", () => {
     const html = renderToStaticMarkup(
       <UpdatesTable

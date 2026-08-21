@@ -22,6 +22,8 @@ export const CUSTOMIZED_HERE_LABEL = "Customized here";
 export const USE_NEW_VERSION_LABEL = "Use new version…";
 export const UNFORKABLE_EDIT_NOTE =
   "Edited in a tool whose copy can't be kept as your own";
+export const heldBySourceNote = (source: string): string =>
+  `Held by the source "${source}" as a whole — release it where that source is declared`;
 export const HELD_BY_OWNER_NOTE =
   "Held by the bundle or package it came with — update or release it from there";
 export const DERIVED_EDIT_NOTE =

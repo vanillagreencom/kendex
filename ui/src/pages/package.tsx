@@ -218,6 +218,7 @@ export function PackagePage() {
       {dirty ? (
         <SaveBar
           saving={saving}
+          busy={mutating}
           onSave={() => void save()}
           onDiscard={() => void load()}
         />

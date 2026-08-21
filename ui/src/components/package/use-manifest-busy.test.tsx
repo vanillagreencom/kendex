@@ -4,7 +4,11 @@ import { useManifestBusy } from "./use-package-data";
 
 // Static rendering reads each store's initial snapshot, so both store hooks
 // are wrapped to let a test flip their busy flags.
-const stub = vi.hoisted(() => ({ audit: false, updates: false }));
+const stub = vi.hoisted(() => ({
+  audit: false,
+  updates: false,
+  saving: false,
+}));
 vi.mock("@/stores/updates", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/stores/updates")>();
   const hook = (selector?: (state: unknown) => unknown) => {
@@ -22,6 +26,15 @@ vi.mock("@/stores/audit", async (importOriginal) => {
   return { ...mod, useAuditStore: Object.assign(hook, mod.useAuditStore) };
 });
 
+vi.mock("@/stores/editor", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("@/stores/editor")>();
+  const hook = (selector?: (state: unknown) => unknown) => {
+    const state = { ...mod.useEditorStore.getState(), saving: stub.saving };
+    return selector ? selector(state) : state;
+  };
+  return { ...mod, useEditorStore: Object.assign(hook, mod.useEditorStore) };
+});
+
 function Probe({ switching }: { switching: boolean }) {
   return <span>{useManifestBusy(switching) ? "busy" : "idle"}</span>;
 }
@@ -30,7 +43,7 @@ const render = (switching: boolean) =>
   renderToStaticMarkup(<Probe switching={switching} />);
 
 describe("useManifestBusy", () => {
-  it("is one gate over the audit apply, a version switch, and updates-store work", () => {
+  it("is one gate over the audit apply, a version switch, updates-store work, and a save", () => {
     expect(render(false)).toContain("idle");
     expect(render(true)).toContain("busy");
     stub.updates = true;
@@ -39,5 +52,8 @@ describe("useManifestBusy", () => {
     stub.audit = true;
     expect(render(false)).toContain("busy");
     stub.audit = false;
+    stub.saving = true;
+    expect(render(false)).toContain("busy");
+    stub.saving = false;
   });
 });

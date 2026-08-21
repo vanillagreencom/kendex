@@ -16,9 +16,13 @@ import {
   PREVIEW_CHANGES_LABEL,
   UPDATE_LABEL,
 } from "@/lib/copy";
-import { followSourceLabel, HELD_BY_OWNER_NOTE } from "@/lib/copy-updates";
+import {
+  followSourceLabel,
+  HELD_BY_OWNER_NOTE,
+  heldBySourceNote,
+} from "@/lib/copy-updates";
 import { packageDisplayName } from "@/lib/labels";
-import { heldByOwner, placeName } from "@/lib/update-groups";
+import { heldByOwner, placeName, switchLockedBy } from "@/lib/update-groups";
 import { versionLabel } from "@/lib/versions";
 import { useNavStore } from "@/stores/nav";
 import { useUpdatesStore } from "@/stores/updates";
@@ -41,6 +45,7 @@ export function PlaceCells({
   const goToPackage = useNavStore((s) => s.goToPackage);
   const name = packageDisplayName(row);
   const place = placeName(row.scope, among);
+  const locked = switchLockedBy(row);
 
   const preview = () => {
     if (!row.current || !row.latest) return;
@@ -78,8 +83,14 @@ export function PlaceCells({
             <Switch
               aria-label={followSourceLabel(name, place)}
               checked={!row.pinned}
-              disabled={busy || row.derived}
-              title={row.derived ? HELD_BY_OWNER_NOTE : undefined}
+              disabled={busy || locked !== null}
+              title={
+                locked?.kind === "source"
+                  ? heldBySourceNote(locked.name)
+                  : locked
+                    ? HELD_BY_OWNER_NOTE
+                    : undefined
+              }
               onCheckedChange={(follow) => void setAutoUpdate(row, follow)}
             />
           </TableCell>

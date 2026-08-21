@@ -16,6 +16,10 @@ use crate::manifest::{self, ForkProvenance, LOCAL_SOURCE_NAME};
 use crate::model::{HarnessId, ItemKind, Scope};
 use crate::source::local_source_root;
 
+mod forkable;
+use forkable::{ambiguous_skill_tree, source_form};
+pub use forkable::{forkable_harness, forkable_rendering};
+
 /// Turn one edited installation into a local fork. The harness names which
 /// installation's bytes are captured — an agent renders per tool, and the
 /// edit lives in exactly one rendering. Skills capture the canonical tree,
@@ -41,20 +45,28 @@ pub fn fork(
         });
     };
     let edited = match kind {
-        ItemKind::Skill => skill_content_path(env, scope, name, harness).ok_or({
-            CoreError::ItemNotFound {
-                kind,
-                name: name.to_owned(),
-                harness,
+        ItemKind::Skill => {
+            let tree = skill_content_path(env, scope, name, harness).ok_or({
+                CoreError::ItemNotFound {
+                    kind,
+                    name: name.to_owned(),
+                    harness,
+                }
+            })?;
+            if ambiguous_skill_tree(&tree) {
+                return Err(CoreError::ForkAmbiguous {
+                    name: name.to_owned(),
+                });
             }
-        })?,
+            tree
+        }
         ItemKind::Agent => {
             // The local source stores an agent as `agents/<name>.md` in
             // source form, so only a harness whose rendering round-trips
             // through the source parser can be forked. Claude's `.md` is
             // the proven one; a codex `.toml`, a cursor `.mdc`, or an
             // opencode `.md`-without-frontmatter cannot be re-read.
-            if !forkable_agent_harness(harness) {
+            if !forkable_harness(ItemKind::Agent, harness) {
                 return Err(CoreError::ItemNotInSource {
                     name: name.to_owned(),
                     source_name: format!(
@@ -350,42 +362,6 @@ fn managed_skill_tree(env: &Env, scope: &Scope, name: &str, path: &std::path::Pa
 /// source. Only the plain `.md`-with-frontmatter shape round-trips; codex
 /// (TOML), cursor (`.mdc`), copilot (`.agent.md`), and opencode (`.md`
 /// without a name field) do not.
-/// Whether keeping an edit as a fork can capture this rendering: a skill's
-/// canonical tree always round-trips, an agent's only from the tools whose
-/// format the source parser reads back. The Updates page asks before it
-/// offers the action, so the answer is the same one `fork` enforces.
-pub fn forkable_harness(kind: ItemKind, harness: HarnessId) -> bool {
-    match kind {
-        ItemKind::Skill => true,
-        ItemKind::Agent => forkable_agent_harness(harness),
-        _ => false,
-    }
-}
-
-fn forkable_agent_harness(harness: HarnessId) -> bool {
-    matches!(
-        harness,
-        HarnessId::Claude | HarnessId::Gemini | HarnessId::Pi
-    )
-}
-
-/// A captured skill tree in source form: a disabled rendering's
-/// `SKILL.md.disabled` becomes `SKILL.md` — unless the tree already has
-/// one, in which case both files pass through untouched rather than one
-/// silently overwriting the other on the way into the local source.
-fn source_form(files: Vec<(PathBuf, Vec<u8>)>) -> Vec<(PathBuf, Vec<u8>)> {
-    let has_enabled = files
-        .iter()
-        .any(|(rel, _)| rel.to_str() == Some("SKILL.md"));
-    files
-        .into_iter()
-        .map(|(rel, bytes)| match rel.to_str() {
-            Some("SKILL.md.disabled") if !has_enabled => (PathBuf::from("SKILL.md"), bytes),
-            _ => (rel, bytes),
-        })
-        .collect()
-}
-
 /// A disabled installation keeps its bytes under the `.disabled` name.
 fn existing_or_disabled(path: PathBuf) -> PathBuf {
     if path.exists() || path.is_symlink() {

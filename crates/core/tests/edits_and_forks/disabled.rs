@@ -2,6 +2,8 @@
 
 use std::fs;
 
+use kendex_core::error::CoreError;
+
 use super::*;
 
 #[test]
@@ -152,12 +154,12 @@ fn a_disabled_skills_edit_forks_in_source_form() {
     );
 }
 
-/// A tree carrying both `SKILL.md` and a stray `SKILL.md.disabled` forks
-/// with both files intact: the rename is for a disabled rendering, never
-/// a way for one file to overwrite the other.
+/// A tree carrying both `SKILL.md` and `SKILL.md.disabled` has two claims
+/// on one source file: the row offers no fork, and `fork` refuses without
+/// touching anything.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_fork_keeps_both_skill_files_when_both_exist() {
+fn a_tree_with_both_skill_files_is_not_forkable() {
     let w = world();
     write_skill(&w.upstream, "gh", "Upstream.");
     commit(&w.upstream, "one");
@@ -171,16 +173,28 @@ fn a_fork_keeps_both_skill_files_when_both_exist() {
     .unwrap();
     fs::write(tree.join("SKILL.md.disabled"), "stray disabled copy").unwrap();
 
-    let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
-    let local = w.home.join("app/.kendex-local/skills/gh");
+    let report = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();
+    let row = report
+        .rows
+        .iter()
+        .find(|row| row.kind == ItemKind::Skill && row.name == "gh")
+        .unwrap();
+    assert!(row.blocked_by_local_edit);
+    assert_eq!(row.forkable_harness, None, "{row:?}");
+
+    let refused = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude);
     assert!(
-        fs::read_to_string(local.join("SKILL.md"))
+        matches!(refused, Err(CoreError::ForkAmbiguous { .. })),
+        "{refused:?}"
+    );
+    assert!(
+        fs::read_to_string(tree.join("SKILL.md"))
             .unwrap()
             .contains("My edit.")
     );
     assert_eq!(
-        fs::read_to_string(local.join("SKILL.md.disabled")).unwrap(),
+        fs::read_to_string(tree.join("SKILL.md.disabled")).unwrap(),
         "stray disabled copy"
     );
+    assert!(!w.home.join("app/.kendex-local/skills/gh").exists());
 }

@@ -3,6 +3,8 @@
 
 use std::fs;
 
+use kendex_core::package::updates::HoldOwner;
+
 use super::*;
 
 #[test]
@@ -218,6 +220,7 @@ fn a_held_bundle_member_with_newer_upstream_can_discard_but_not_move() {
         .find(|row| row.kind == ItemKind::Skill && row.name == "gh")
         .unwrap();
     assert!(row.derived && row.pinned && row.update_available, "{row:?}");
+    assert_eq!(row.hold_owner, Some(HoldOwner::Parent));
     assert!(row.blocked_by_local_edit);
     assert!(row.can_discard, "the owner's held content can come back");
     assert!(!row.can_take_latest, "only the owner can move the hold");
@@ -320,4 +323,63 @@ fn discard_survives_an_unreadable_history_but_not_a_vanished_package() {
     assert!(row.removed_upstream, "{row:?}");
     assert!(!row.can_discard);
     assert!(!row.can_take_latest);
+}
+
+/// A source pinned as a whole holds every package it carries; the row
+/// names the source as the hold's owner, since the package's own switch
+/// has nothing of its own to release.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_source_level_hold_names_the_source_as_owner() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "Upstream.");
+    commit(&w.upstream, "one");
+    let one = String::from_utf8(
+        std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&w.upstream)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_OBJECT_DIRECTORY")
+            .env_remove("GIT_PREFIX")
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        format!(
+            "schema = 5\n\n[sources.cat]\nrepo = \"{REPO}\"\nrev = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            one.trim()
+        ),
+    )
+    .unwrap();
+    sync_and_apply(&w);
+
+    let report = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();
+    let row = report
+        .rows
+        .iter()
+        .find(|row| row.kind == ItemKind::Skill && row.name == "gh")
+        .unwrap();
+    assert!(row.pinned);
+    assert_eq!(
+        row.hold_owner,
+        Some(HoldOwner::Source {
+            name: "cat".to_owned()
+        })
+    );
+
+    // A package's own hold is its own to release.
+    declare(
+        &w,
+        &format!("[skills.gh]\nsource = \"cat\"\nrev = \"{}\"\n", one.trim()),
+    );
+    let report = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();
+    let row = report.rows.iter().find(|row| row.name == "gh").unwrap();
+    assert_eq!(row.hold_owner, Some(HoldOwner::Package));
 }

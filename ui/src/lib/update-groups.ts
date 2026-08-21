@@ -58,6 +58,19 @@ export const updatablePlaces = (rows: UpdateRow[]): UpdateRow[] =>
 export const heldByOwner = (row: UpdateRow): boolean =>
   row.pinned && row.derived;
 
+/** Why the Follow source switch is not this row's to flip, if it is not:
+ *  a derived package has no declaration of its own to set a hold on, and a
+ *  hold that belongs to the source or to a parent is released there. */
+export const switchLockedBy = (
+  row: UpdateRow,
+): { kind: "source"; name: string } | { kind: "parent" } | null => {
+  if (row.holdOwner?.kind === "source")
+    return { kind: "source", name: row.holdOwner.name };
+  if (row.derived || row.holdOwner?.kind === "parent")
+    return { kind: "parent" };
+  return null;
+};
+
 /** Places with news that a bulk update has to leave alone — edited ones
  *  waiting on a decision, held derived ones waiting on their owner. */
 export const skippedPlaces = (rows: UpdateRow[]): UpdateRow[] =>

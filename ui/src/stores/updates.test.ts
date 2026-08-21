@@ -42,6 +42,7 @@ function row(overrides: Partial<UpdateRow>): UpdateRow {
     forkableHarness: null,
     canDiscard: true,
     canTakeLatest: true,
+    holdOwner: null,
     derived: false,
     forked: false,
     mixed: false,

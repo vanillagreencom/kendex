@@ -44,11 +44,22 @@ impl Eval<'_> {
             .get(&decl.source)
             .and_then(|s| s.rev.as_deref())
             .is_some_and(crate::remote::store::is_pin);
-        let pinned = decl.rev.is_some() || source_pinned;
+        let hold_owner = if decl.rev.is_some() {
+            Some(match planned.derived {
+                true => HoldOwner::Parent,
+                false => HoldOwner::Package,
+            })
+        } else if source_pinned {
+            Some(HoldOwner::Source {
+                name: decl.source.clone(),
+            })
+        } else {
+            None
+        };
         match crate::package::package_ref_for(self.env, self.scope, self.manifest, kind, name, decl)
         {
-            Ok(package) => self.evaluated(planned, &package, pinned, forked, report),
-            Err(error) => self.unevaluated(planned, &error, pinned, forked, report),
+            Ok(package) => self.evaluated(planned, &package, hold_owner, forked, report),
+            Err(error) => self.unevaluated(planned, &error, hold_owner, forked, report),
         }
     }
 
@@ -60,13 +71,14 @@ impl Eval<'_> {
         &self,
         planned: &crate::engine::PlannedDeclaration,
         error: &CoreError,
-        pinned: bool,
+        hold_owner: Option<HoldOwner>,
         forked: bool,
         report: &mut UpdatesReport,
     ) {
         let kind = planned.kind;
         let name = &planned.name;
         let decl = &planned.decl;
+        let pinned = hold_owner.is_some();
         let warn = |message: String, remediation: Option<String>| ItemWarning {
             kind,
             name: name.clone(),
@@ -107,9 +119,17 @@ impl Eval<'_> {
                     latest: None,
                     update_available: false,
                     pinned,
+                    hold_owner: hold_owner.clone(),
                     ignored: self.is_ignored(kind, name, &repo),
                     blocked_by_local_edit: !edited_harnesses.is_empty(),
-                    forkable_harness: forkable_among(kind, &edited_harnesses, planned.derived),
+                    forkable_harness: forkable_among(
+                        self.env,
+                        self.scope,
+                        kind,
+                        name,
+                        &edited_harnesses,
+                        planned.derived,
+                    ),
                     can_discard: false,
                     can_take_latest: false,
                     derived: planned.derived,
@@ -135,12 +155,13 @@ impl Eval<'_> {
         &self,
         planned: &crate::engine::PlannedDeclaration,
         package: &crate::package::PackageRef,
-        pinned: bool,
+        hold_owner: Option<HoldOwner>,
         forked: bool,
         report: &mut UpdatesReport,
     ) {
         let kind = planned.kind;
         let name = &planned.name;
+        let pinned = hold_owner.is_some();
         let warn = |report: &mut UpdatesReport, message: String| {
             report.warnings.push(ItemWarning {
                 kind,
@@ -209,9 +230,17 @@ impl Eval<'_> {
             name: name.clone(),
             source: package.source_name.clone(),
             pinned,
+            hold_owner: hold_owner.clone(),
             ignored: self.is_ignored(kind, name, &package.repo),
             blocked_by_local_edit: !edited_harnesses.is_empty(),
-            forkable_harness: forkable_among(kind, &edited_harnesses, planned.derived),
+            forkable_harness: forkable_among(
+                self.env,
+                self.scope,
+                kind,
+                name,
+                &edited_harnesses,
+                planned.derived,
+            ),
             // Reaching this row at all means the source content resolved, so
             // a discard can always put it back; an unreadable history (no
             // `latest`) costs the version labels, never the discard. Moving
@@ -250,9 +279,21 @@ impl Eval<'_> {
 /// the package page, where each rendering can be compared.
 /// A derived package has no declaration to flip to a local source, so the
 /// fork engine refuses it; its owner is where the edit gets settled.
-fn forkable_among(kind: ItemKind, edited: &[HarnessId], derived: bool) -> Option<HarnessId> {
+fn forkable_among(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    edited: &[HarnessId],
+    derived: bool,
+) -> Option<HarnessId> {
     match edited {
-        [only] if !derived && crate::engine::fork::forkable_harness(kind, *only) => Some(*only),
+        [only]
+            if !derived
+                && crate::engine::fork::forkable_rendering(env, scope, kind, name, *only) =>
+        {
+            Some(*only)
+        }
         _ => None,
     }
 }

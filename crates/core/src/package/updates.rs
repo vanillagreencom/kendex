@@ -24,6 +24,19 @@ pub struct VersionRef {
     pub date: Option<String>,
 }
 
+/// Whose hold keeps a place at its revision — what the Follow source
+/// switch may release, and what it may not.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum HoldOwner {
+    /// This declaration's own `rev`: the switch releases it.
+    Package,
+    /// The source is pinned as a whole; released where the source is declared.
+    Source { name: String },
+    /// Propagated from the bundle or package that pulled this one in.
+    Parent,
+}
+
 /// One declared package's update standing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -48,6 +61,8 @@ pub struct UpdateRow {
     /// only the item's own `rev`: a pinned source, a pinned bundle, or a
     /// pinned dependency parent all hold what they carry.
     pub pinned: bool,
+    /// Who holds it, when `pinned`.
+    pub hold_owner: Option<HoldOwner>,
     /// The user asked to stop hearing about this package's updates.
     pub ignored: bool,
     /// The installed files were edited by hand; updating is blocked until
@@ -248,6 +263,7 @@ fn fork_row(
         latest: None,
         update_available: false,
         pinned: false,
+        hold_owner: None,
         ignored: false,
         blocked_by_local_edit: false,
         edited_harnesses: Vec::new(),

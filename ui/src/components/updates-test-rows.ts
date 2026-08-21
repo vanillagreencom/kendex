@@ -22,6 +22,7 @@ export const updateRow = (
   forkableHarness: null,
   canDiscard: true,
   canTakeLatest: true,
+  holdOwner: null,
   derived: false,
   removedUpstream: false,
   mixed: false,

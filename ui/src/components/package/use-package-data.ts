@@ -15,6 +15,7 @@ import {
 } from "@/lib/copy";
 import { versionRowLabel } from "@/lib/versions";
 import { useAuditStore } from "@/stores/audit";
+import { useEditorStore } from "@/stores/editor";
 import type { PackageRef } from "@/stores/nav";
 import { useProblemsStore } from "@/stores/problems";
 import { useScanStore } from "@/stores/scan";
@@ -175,10 +176,11 @@ export function packageVersionActions(
 }
 
 /** One gate for every control that rewrites this package's manifest: the
- *  audit store's apply, a version switch in flight, and the updates
- *  store's fork or discard all touch the same file. */
+ *  audit store's apply, a version switch in flight, the updates store's
+ *  fork or discard, and the editor's save all touch the same file. */
 export function useManifestBusy(switching: boolean): boolean {
   const auditBusy = useAuditStore((s) => s.busy);
   const updatesBusy = useUpdatesStore((s) => s.busy);
-  return auditBusy || switching || updatesBusy;
+  const saving = useEditorStore((s) => s.saving);
+  return auditBusy || switching || updatesBusy || saving;
 }

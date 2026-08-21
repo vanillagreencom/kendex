@@ -1120,6 +1120,18 @@ export type GitReadiness = {
 
 export type HarnessId = "claude" | "codex" | "opencode" | "cursor" | "pi" | "gemini" | "copilot";
 
+/**
+ *  Whose hold keeps a place at its revision — what the Follow source
+ *  switch may release, and what it may not.
+ */
+export type HoldOwner = 
+/**  This declaration's own `rev`: the switch releases it. */
+{ kind: "package" } | 
+/**  The source is pinned as a whole; released where the source is declared. */
+{ kind: "source"; name: string } | 
+/**  Propagated from the bundle or package that pulled this one in. */
+{ kind: "parent" };
+
 export type HookAgents = 
 /**  `"all"`, a role name, or a single agent name. */
 string | string[];
@@ -2262,6 +2274,8 @@ export type UpdateRow = {
 	 *  pinned dependency parent all hold what they carry.
 	 */
 	pinned: boolean,
+	/**  Who holds it, when `pinned`. */
+	holdOwner: HoldOwner | null,
 	/**  The user asked to stop hearing about this package's updates. */
 	ignored: boolean,
 	/**
