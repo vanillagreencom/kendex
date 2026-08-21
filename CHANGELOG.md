@@ -53,9 +53,11 @@ changes carry a **Breaking** call-out with their migration note inline.
   adds to the item rides in on a reviewed finding however serious it reads;
   and a review is only ever read out of the catalog that published it. Your
   install record keeps no copy: kendex rebuilds what each installation
-  should be, from the catalog at the revision you installed from, and reads
-  the review there — so a package you have not fetched, and content that is
-  not what that catalog publishes, settle nothing. It can only carry reasons
+  should be, from the catalog at the revision that installation came from —
+  one package can sit at two revisions when a refresh goes through for one
+  tool and not another — and reads the review there. A package you have not
+  fetched, and content that is not what its catalog publishes, settle
+  nothing. It can only carry reasons
   an author can give:
   a hand-written `trusted-source` record is refused on the installing
   machine. Any edit to the item, in the catalog or on the installed copy,

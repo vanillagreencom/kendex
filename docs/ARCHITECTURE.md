@@ -843,13 +843,13 @@ lives in one capability table read by core and UI.
   different question than the one that matters, which is what the content
   should be. So the audit rebuilds instead
   (`engine::desired::desired_as_installed`): the plan that produced what is
-  on disk, every declaration read at the revision its lock entry names, and
-  the record read out of *that* catalog and measured against the item
-  rendered from the publisher's own inputs, which is the gate's own
-  derivation on the gate's own bytes. A rebuild is looked up by the bytes it
-  produced, so finding one is the proof — one shared tree is loaded by
-  several tools and rebuilt once, and content no rebuild produced is content
-  the publisher never saw, which is said rather than passed over. The commit
+  on disk, each installation at the revision its own lock entry names — one
+  item can sit at two revisions at once, since a refresh applies per
+  installation, and is planned at both — and the record read out of *that*
+  catalog, measured against the item rendered from the publisher's own
+  inputs, which is the gate's own derivation on the gate's own bytes. A
+  rebuild is looked up by the bytes it produced, so finding one is the proof,
+  and content no rebuild produced is content the publisher never saw. The commit
   an entry names chooses which revision to rebuild from and asserts nothing;
   naming another produces another artifact, which is not what is installed.
   An item that cannot be rebuilt at all — a catalog not on this machine, a

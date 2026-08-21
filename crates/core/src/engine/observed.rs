@@ -62,9 +62,8 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
     // nothing. A pass that cannot be built at all — a source that is not on
     // this machine, a manifest that will not resolve — leaves no
     // reconstruction, and then no record settles anything.
-    let planned = super::desired::desired_as_installed(env, &scope, &manifest, &lock)
-        .unwrap_or_default()
-        .items;
+    let planned =
+        super::desired::desired_as_installed(env, &scope, &manifest, &lock).unwrap_or_default();
     // Keyed by what a rebuild produced, so finding one *is* the check that
     // the bytes on disk are that rebuild. Not by harness: one shared tree is
     // what several tools load, each scanned as its own row, while the plan
