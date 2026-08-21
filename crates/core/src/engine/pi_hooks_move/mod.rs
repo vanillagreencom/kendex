@@ -46,8 +46,8 @@ mod preflight;
 mod retire;
 
 use claims::{claim, claims, provenance};
-use disposal::{legacy_registration, plan_directory, plan_registry};
-use identity::{Registered, registered};
+use disposal::{plan_directory, plan_registry};
+use identity::{Identity, Registered, legacy_registration, registered};
 pub(crate) use preflight::{Preflight, preflight};
 use retire::{Retire, retirable};
 
@@ -63,6 +63,9 @@ pub(super) struct Sink<'a> {
     pub(super) guard: &'a mut TrashGuard,
     pub(super) config_edits: &'a mut ConfigEditPlan,
     pub(super) notes: &'a mut Vec<String>,
+    /// The record this plan writes, where a finished move is written
+    /// down.
+    pub(super) new_lock: &'a mut Lock,
 }
 
 /// What sits at a path kendex might take. `Absent` is proven absence —
@@ -104,6 +107,19 @@ pub(crate) fn legacy_registry_lives(env: &Env, scope: &Scope) -> bool {
     .legacy_registry_lives()
 }
 
+/// A finished move goes into the record this plan writes, so no later
+/// pass has to work it out again from bytes and registrations that have
+/// every right to change afterwards. It rides the same plan as the
+/// removals it describes: an apply that fails rolls both back.
+fn record_finished(finished: BTreeSet<String>, sink: &mut Sink) {
+    for name in finished {
+        let key = crate::lock::entry_key(ItemKind::Hook, &name, HarnessId::Pi);
+        if let Some(entry) = sink.new_lock.entries.get_mut(&key) {
+            entry.left_pi_reserved_name = true;
+        }
+    }
+}
+
 pub(super) fn plan_move(
     env: &Env,
     scope: &Scope,
@@ -116,13 +132,6 @@ pub(super) fn plan_move(
     let root = pi::scope_root(env, scope);
     let dir = root.join(LEGACY_DIR);
     let registry = pi::legacy_hook_registry(&root);
-    // The move retires itself: with neither reserved path there, there is
-    // nothing to take and nothing to say — the same answer everything
-    // below reaches, reached without stat-ing both names of every hook
-    // the lock holds, on this plan and every later one.
-    if matches!(look(&dir), Found::Absent) && matches!(look(&registry), Found::Absent) {
-        return Ok(());
-    }
     // A lock entry is the only claim kendex has here: what it may take is
     // derived from these and nothing else, so a `hooks/` beside this root
     // that none of them names stays whole, and so does a `hooks.json`
@@ -132,6 +141,21 @@ pub(super) fn plan_move(
         .values()
         .filter(|entry| entry.kind == ItemKind::Hook && entry.harness == HarnessId::Pi)
         .collect();
+    // The move retires itself: with neither reserved path there, there is
+    // nothing to take and nothing to say — the same answer everything
+    // below reaches, reached without stat-ing both names of every hook
+    // the lock holds, on this plan and every later one.
+    //
+    // It is also the plainest reading of a finished move there is —
+    // nothing of anybody's is under the reserved name — so it is the
+    // reading that gets written down. That covers the two shapes the
+    // pass below never sees: an installation this kendex wrote fresh at
+    // the new path, and one that moved before there was a record to
+    // keep.
+    if matches!(look(&dir), Found::Absent) && matches!(look(&registry), Found::Absent) {
+        record_finished(every_pi_hook(&entries, state), sink);
+        return Ok(());
+    }
     // A link or an unreadable directory is never traversed: `dir.join(..)`
     // resolves through a link, so scanning one would put paths outside the
     // managed scope into the plan. A scope root this process cannot stat
@@ -168,13 +192,23 @@ pub(super) fn plan_move(
 
     let mut ours: BTreeSet<OsString> = BTreeSet::new();
     let mut take: Vec<(PathBuf, String)> = Vec::new();
-    let mut deregister: Vec<(Option<String>, String)> = Vec::new();
+    let mut deregister: Vec<Identity> = Vec::new();
+    let mut finished: BTreeSet<String> = BTreeSet::new();
     for entry in entries.iter().copied() {
+        // An installation on record as having left the reserved name is
+        // done with it. Whatever wears its name there now — a file, a
+        // registration, even a copy spelled byte for byte the way kendex
+        // spelled it — is somebody else's, and the question of whose is
+        // not asked at all. Asking it is what re-opened finished moves.
+        if pre.left_for_good(&entry.name) {
+            continue;
+        }
         let found = legacy_files(&dir, &entry.name);
-        // A hook whose bytes already sit at the new path has finished
-        // moving, so anything wearing its name under the reserved one
-        // that kendex cannot claim is a stranger's — never a copy of
-        // this installation, and never a reason to re-open the move.
+        // Where there is no record — an installation that finished
+        // before there was one to write — the reading takes its place,
+        // and it is only ever as good as the bytes: a copy this pass can
+        // prove it wrote is still its own to take, and one it cannot is
+        // a stranger's.
         let claimable = |path: &Path| {
             !pre.moved_on(&entry.name) || claim(entry, path, pre.discards(&entry.name)).is_ok()
         };
@@ -223,22 +257,48 @@ pub(super) fn plan_move(
             )),
             Retire::Replaced => {}
         }
-        // A finished migration stops touching the reserved name — both
-        // halves of it. The file half is the claim above: a copy this
-        // pass cannot prove it wrote is filtered out, so a person's own
-        // script at the old path survives. The registration half is this:
-        // with nothing of theirs left to claim, the entry beside it is
-        // theirs too, however exactly it spells the command kendex used
-        // to register. Only a hook still on its way out gives up a
-        // registration kendex did not just prove it owns bytes for.
+        // The registration half of the same reading: with nothing of
+        // theirs left to claim, the entry beside it is theirs too,
+        // however exactly it spells the command kendex used.
         if !pre.moved_on(&entry.name) || !mine.is_empty() {
             deregister.push(legacy_registration(entry, scope, &root));
         }
         take.extend(mine);
+        // Everything this hook had under the reserved name is on its way
+        // off disk. Said out loud in the lock, so no later pass has to
+        // work it out again from bytes that have every right to change.
+        finished.insert(entry.name.clone());
     }
 
-    plan_directory(&dir, &ours, &take, !entries.is_empty(), sink);
-    plan_registry(&registry, &deregister, sink)
+    // Only what the plan really takes is called finished: a listing it
+    // could not read or a registry it could not edit leaves remains under
+    // the reserved name, and recording a move that did not happen would
+    // abandon them there.
+    let cleared = plan_directory(&dir, &ours, &take, !entries.is_empty(), sink);
+    if cleared && plan_registry(&registry, &deregister, sink)? {
+        record_finished(finished, sink);
+    }
+    Ok(())
+}
+
+/// Every pi hook this scope knows about, installed or being installed —
+/// what a plan that finds nothing at all under the reserved name may call
+/// finished. A hook whose first apply put it at the new path was never
+/// there, which is the same fact by another road, and it is written down
+/// on that pass rather than the one after: the person can reach for that
+/// directory before any second pass.
+fn every_pi_hook(entries: &[&LockEntry], state: &DesiredState) -> BTreeSet<String> {
+    entries
+        .iter()
+        .map(|entry| entry.name.clone())
+        .chain(
+            state
+                .items
+                .iter()
+                .filter(|item| item.kind == ItemKind::Hook && item.harness == HarnessId::Pi)
+                .map(|item| item.name.clone()),
+        )
+        .collect()
 }
 
 /// A trash op through the plan's one guard, bound to the bytes ownership

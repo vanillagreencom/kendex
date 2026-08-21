@@ -561,9 +561,17 @@ lives in one capability table read by core and UI.
   Discarding edits or naming the hook for removal releases a hold over
   bytes, never over a directory or a link somebody left where the script
   was: both gates (`claims::provenance` and `preflight::discardable`) ask
-  for a plain file in the same words. A registration is identified by its
-  command plus the event the record kept, and by being the only entry
-  carrying that command; the event a previous version installed a
+  for a plain file in the same words. A finished move is recorded in the lock
+  (`LockEntry::left_pi_reserved_name`) and read back from there, never
+  re-derived: an edit to the new copy or a catalog changing the hook's
+  event would otherwise re-open a move that was over, and a re-opened
+  move reads whatever the person has since put under the reserved name as
+  the copy it is owed. Past that record the ownership question is not
+  asked at all. A lock from before the record falls back to reading the
+  disk, and the first pass that sees nothing under the reserved name
+  writes the record. A registration is identified by its
+  command plus the event and matcher the record kept, and by being the
+  only entry carrying that command; the event a previous version installed a
   script-backed hook under is not knowable, so only the entry this pass
   renders at the new path is identified by the rendered event
   (`migrated::new_registration`). A finished migration claims neither

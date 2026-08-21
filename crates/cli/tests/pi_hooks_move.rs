@@ -7,6 +7,25 @@ use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
 
+/// Drop the record that the move is over, the way a lock written before
+/// there was one to keep carries it: a fixture that puts files back under
+/// the reserved name is pretending to be an older kendex, and an older
+/// kendex wrote no such record.
+#[allow(clippy::unwrap_used)]
+fn forget_the_move(project: &Path) {
+    let path = project.join(".kendex-lock.json");
+    let mut lock: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    for entry in lock["entries"].as_object_mut().into_iter().flatten() {
+        entry
+            .1
+            .as_object_mut()
+            .unwrap()
+            .remove("leftPiReservedName");
+    }
+    fs::write(&path, serde_json::to_string_pretty(&lock).unwrap()).unwrap();
+}
+
 #[allow(clippy::expect_used)]
 fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_kendex"))
@@ -51,6 +70,7 @@ fn refresh_says_which_file_it_left_under_the_name_pi_reserved() {
     // Back to the layout an earlier kendex wrote, with the script edited
     // so the move has to leave it — and say so.
     let dot = project.join(".pi");
+    forget_the_move(&project);
     fs::create_dir_all(dot.join("hooks")).unwrap();
     fs::rename(
         dot.join("kendex/hooks/guard.sh"),
@@ -103,6 +123,7 @@ fn remove_by_name_takes_a_held_hook_out_of_the_reserved_directory() {
 
     // Back to the old layout, with the script edited so it is held.
     let dot = project.join(".pi");
+    forget_the_move(&project);
     fs::create_dir_all(dot.join("hooks")).unwrap();
     fs::rename(
         dot.join("kendex/hooks/guard.sh"),

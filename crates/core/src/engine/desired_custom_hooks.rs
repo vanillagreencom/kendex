@@ -116,15 +116,37 @@ pub(super) fn hook_registration(item: &Desired) -> Option<crate::lock::HookRegis
     if item.kind != ItemKind::Hook {
         return None;
     }
-    let record = |event: &String, command: &String| {
+    let record = |event: &String, matcher: Option<&String>, command: &String| {
         Some(crate::lock::HookRegistration {
             event: event.clone(),
             command: command.clone(),
+            // Spelled the way the registry spells it, so the record and a
+            // reading of the file are comparable without either guessing.
+            matcher: Some(
+                matcher
+                    .map(String::as_str)
+                    .filter(|matcher| !matcher.is_empty())
+                    .unwrap_or(crate::scan::hooks::ANY_MATCHER)
+                    .to_owned(),
+            ),
         })
     };
     edits.iter().find_map(|(_, edit)| match edit {
-        ConfigEdit::UpsertHook { event, command, .. }
-        | ConfigEdit::UpsertCopilotHook { event, command, .. } => record(event, command),
+        ConfigEdit::UpsertHook {
+            event,
+            matcher,
+            command,
+            ..
+        }
+        | ConfigEdit::UpsertCopilotHook {
+            event,
+            matcher,
+            command,
+            ..
+        } => record(event, matcher.as_ref(), command),
+        // A disabled hook renders the reversed registration, which names
+        // the event its entry was written under; its matcher is not part
+        // of that edit, so it stays unknown rather than assumed.
         ConfigEdit::RemoveHook {
             event: Some(event),
             command,
@@ -132,7 +154,11 @@ pub(super) fn hook_registration(item: &Desired) -> Option<crate::lock::HookRegis
         | ConfigEdit::RemoveCopilotHook {
             event: Some(event),
             command,
-        } => record(event, command),
+        } => Some(crate::lock::HookRegistration {
+            event: event.clone(),
+            command: command.clone(),
+            matcher: None,
+        }),
         _ => None,
     })
 }

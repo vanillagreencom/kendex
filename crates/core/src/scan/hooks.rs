@@ -4,6 +4,11 @@ use super::RawEntry;
 use super::readers::read_json;
 use crate::hook::command_stem;
 
+/// How a registry spells "every operation": the matcher an entry with
+/// none is named by, and the one spelling anything comparing a recorded
+/// matcher with a read one has to use.
+pub(crate) const ANY_MATCHER: &str = "*";
+
 /// `{"hooks": {"<Event>": [{matcher?, hooks: [{command}]} | {command}]}}` —
 /// claude settings.json and codex/cursor hooks.json share this shape; cursor
 /// omits `matcher` and nests no handler array.
@@ -22,7 +27,7 @@ pub fn read(path: &Path) -> Result<Vec<RawEntry>, String> {
                 .get("matcher")
                 .and_then(|m| m.as_str())
                 .filter(|m| !m.is_empty())
-                .unwrap_or("*");
+                .unwrap_or(ANY_MATCHER);
             let handlers = match group.get("hooks").and_then(|h| h.as_array()) {
                 Some(list) => list.iter().collect::<Vec<_>>(),
                 None => vec![group],

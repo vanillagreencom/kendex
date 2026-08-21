@@ -63,8 +63,8 @@ cannot prove it wrote holds the whole installation, not just the file:
 its old registration stays live and no fresh rendering takes over. A
 registration kendex cannot take out holds the script it names, so neither
 half is ever left without the other. A registration is named by the command it
-runs and, where the record kept one, the event it fires on — and by
-uniqueness either way: a command carried twice in a document is one
+runs and, where the record kept them, the event and matcher it fires
+under — and by uniqueness either way: a command carried twice in a document is one
 kendex cannot tell its own copy of, so it holds. The record keeps an
 event only for a script-less hook; a script-backed one is named by its
 command alone, because the event an older version installed it under is
@@ -73,7 +73,12 @@ pass renders names the entry at the new path only, so a registration
 somebody moved there by hand is never doubled by a second one beside it.
 Once a hook has finished moving, neither half under the reserved name is
 kendex's any more — not the script, and not an entry spelling the command
-kendex used to register. Discarding edits finishes the move
+kendex used to register. That is a fact about the past, so the lock keeps
+it (`left_pi_reserved_name`) and the move reads it back instead of
+working it out again from bytes and registrations that have every right
+to change afterwards. A lock written before the record falls back to the
+reading, and the first pass that finds nothing under the reserved name
+writes the record down. Discarding edits finishes the move
 in that same pass — the old copy goes to the trash and one registration
 is left. Discarding covers bytes, and only bytes: every gate that lets a
 deletion through asks for a plain file first, so a directory or a link

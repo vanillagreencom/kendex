@@ -55,7 +55,8 @@ fn apply(env: &Env, scope: &Scope) {
 /// pi reserved. A custom hook's command is the person's own, so the move
 /// changes nothing inside it — only where it lives.
 #[allow(clippy::unwrap_used)]
-fn regress(root: &Path) {
+fn regress(root: &Path, lock: &Path) {
+    super::forget_the_move(lock);
     let registry = fs::read_to_string(root.join("kendex/hooks.json")).unwrap();
     fs::write(root.join("hooks.json"), registry).unwrap();
     fs::remove_dir_all(root.join("kendex")).unwrap();
@@ -81,7 +82,7 @@ fn a_command_bodied_hook_leaves_the_reserved_registry_behind() {
             .contains("./scripts/mine.sh"),
         "the person's own command is what is registered"
     );
-    regress(&dot);
+    regress(&dot, &w.project.join(".kendex-lock.json"));
 
     apply(&w.env, &scope);
 
@@ -110,7 +111,7 @@ fn a_command_bodied_global_hook_leaves_the_reserved_registry_behind() {
     .unwrap();
     apply(&w.env, &Scope::Global);
     let agent = w.home.join(".pi/agent");
-    regress(&agent);
+    regress(&agent, &w.env.global_lock_file());
 
     apply(&w.env, &Scope::Global);
 
@@ -139,7 +140,7 @@ fn a_declared_custom_hook_is_not_read_as_one_nobody_declares() {
     .unwrap();
     apply(&w.env, &scope);
     let dot = w.project.join(".pi");
-    regress(&dot);
+    regress(&dot, &w.project.join(".kendex-lock.json"));
     // The new registry cannot be written, so nothing proves the move.
     fs::create_dir_all(dot.join("kendex")).unwrap();
     fs::write(dot.join("kendex/hooks.json"), "{ not json").unwrap();
@@ -173,7 +174,7 @@ fn a_command_bodied_hook_is_held_by_a_registry_that_cannot_give_it_up() {
         .unwrap();
         apply(&w.env, &scope);
         let dot = w.project.join(".pi");
-        regress(&dot);
+        regress(&dot, &w.project.join(".kendex-lock.json"));
         let registry = dot.join("hooks.json");
         if spoil == "link" {
             let elsewhere = w.home.join("hooks.json");
@@ -215,7 +216,7 @@ fn a_registration_moved_to_another_event_holds_rather_than_migrating() {
     .unwrap();
     apply(&w.env, &scope);
     let dot = w.project.join(".pi");
-    regress(&dot);
+    regress(&dot, &w.project.join(".kendex-lock.json"));
     let registry = dot.join("hooks.json");
     let text = fs::read_to_string(&registry).unwrap();
     let moved = text.replace("tool_call", "turn_end");

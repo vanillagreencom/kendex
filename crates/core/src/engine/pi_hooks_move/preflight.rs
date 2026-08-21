@@ -61,6 +61,11 @@ pub(crate) struct Preflight {
     /// installation lives there now, so a same-named file left under the
     /// reserved name is nobody's copy of it.
     migrated: BTreeSet<String>,
+    /// Hooks whose record says the move finished. Stronger than
+    /// `migrated`, which a reading of the disk can also answer: this is
+    /// the fact a pass wrote down, so nothing under the reserved name is
+    /// theirs any more and no question about bytes is asked about it.
+    recorded: BTreeSet<String>,
     /// Whether an installation of kendex's is still where the move has to
     /// take it from. While that is true the legacy registry is a place a
     /// hook runs from, and so a place to observe.
@@ -84,6 +89,13 @@ impl Preflight {
 
     pub(super) fn moved_on(&self, name: &str) -> bool {
         self.migrated.contains(name)
+    }
+
+    /// Whether this installation is on record as having left the reserved
+    /// name. Everything there is somebody else's from then on — the move
+    /// does not look, and does not ask whose the bytes are.
+    pub(super) fn left_for_good(&self, name: &str) -> bool {
+        self.recorded.contains(name)
     }
 
     /// Whether the registry beside the reserved directory still runs
@@ -114,6 +126,7 @@ pub(crate) fn preflight(
             held: BTreeMap::new(),
             discard: BTreeSet::new(),
             migrated: BTreeSet::new(),
+            recorded: BTreeSet::new(),
             lingering: false,
             registry_block: None,
         };
@@ -133,6 +146,11 @@ pub(crate) fn preflight(
         .filter(|entry| moved(env, scope, &root, entry, state))
         .map(|entry| entry.name.clone())
         .collect();
+    let recorded: BTreeSet<String> = ours
+        .iter()
+        .filter(|entry| entry.left_pi_reserved_name)
+        .map(|entry| entry.name.clone())
+        .collect();
     // An installation the move has not finished is one whose registration
     // is still the legacy one — a hold is only ever that, since nothing is
     // written or registered at the new path behind one. Without a lock
@@ -143,6 +161,7 @@ pub(crate) fn preflight(
         held: BTreeMap::new(),
         discard,
         migrated,
+        recorded,
         lingering,
         registry_block,
     };
@@ -295,8 +314,9 @@ fn registry_block(root: &std::path::Path, scope: &Scope, ours: &[&LockEntry]) ->
     // — is held, not guessed at.
     let mut holds_ours = false;
     for entry in ours {
-        let (event, command) = legacy_registration(entry, scope, root);
-        match registered(&entries, event.as_deref(), &command) {
+        let legacy = legacy_registration(entry, scope, root);
+        let command = &legacy.command;
+        match registered(&entries, &legacy) {
             Registered::Ours => holds_ours = true,
             Registered::Absent => {}
             Registered::Elsewhere => {

@@ -7,30 +7,32 @@ use std::path::{Path, PathBuf};
 
 use crate::configedit::ConfigEdit;
 use crate::error::Result;
-use crate::harness::pi;
-use crate::lock::LockEntry;
-use crate::model::Scope;
 
-use super::{Found, LEGACY_DIR, Sink, look, trash, unreadable_note};
+use super::{Found, Identity, Sink, look, trash, unreadable_note};
 
 /// The reserved directory, once every file's fate is known: taken whole
 /// when everything in it is kendex's to take, file by file when something
 /// stays, and taken empty when a finished move left the shell behind.
+///
+/// Answers whether everything in `take` is on its way off disk, which is
+/// what a pass may call a finished move: a directory it could not read,
+/// or one whose hash it could not take, leaves them where they are.
 pub(super) fn plan_directory(
     dir: &Path,
     ours: &BTreeSet<OsString>,
     take: &[(PathBuf, String)],
     claimed: bool,
     sink: &mut Sink,
-) {
+) -> bool {
     if !matches!(look(dir), Found::Plain(_)) {
-        return;
+        // Nothing there to take, so nothing was left behind.
+        return true;
     }
     let strangers = match strangers(dir, ours) {
         Ok(strangers) => strangers,
         Err(error) => {
             sink.notes.push(list_note(dir, &error.to_string()));
-            return;
+            return false;
         }
     };
     let each = |sink: &mut Sink| {
@@ -58,37 +60,41 @@ pub(super) fn plan_directory(
                 strangers.join(", ")
             ));
         }
-        return;
+        return true;
     }
     // Nothing here is anybody else's, so the whole directory goes when
     // this pass takes everything the lock names in it.
     if !take.is_empty() && take.len() == ours.len() {
-        whole(
+        return whole(
             format!("Move pi hooks out of {}", dir.display()),
             dir,
             ours,
             sink,
         );
-        return;
     }
     // And when it names nothing and the directory is empty — the shell a
     // finished move leaves behind, which pi still warns about and which
     // holds nothing anyone could lose. Said out loud: a directory this
     // scope's hooks no longer sit in is not one kendex can prove it made.
     if claimed && ours.is_empty() {
-        whole(
+        let taken = whole(
             format!("Remove the empty {} pi warns about", dir.display()),
             dir,
             ours,
             sink,
         );
-        sink.notes.push(format!(
-            "{} was empty and pi warns about the name, so it was removed — nothing was in it",
-            dir.display()
-        ));
-        return;
+        if taken {
+            sink.notes.push(format!(
+                "{} was empty and pi warns about the name, so it was removed — nothing was in it",
+                dir.display()
+            ));
+        }
+        // An empty directory holds nothing this pass was taking, so
+        // whether it went is not what says the move finished.
+        return true;
     }
     each(sink);
+    true
 }
 
 /// The whole directory, bound to a hash of everything in it.
@@ -101,7 +107,7 @@ pub(super) fn plan_directory(
 /// unchanged: that, not the order of two reads, is what makes the proof
 /// and the binding describe one state. A file arriving at any point
 /// either shows up in a listing or changes the hash the apply checks.
-fn whole(description: String, dir: &Path, ours: &BTreeSet<OsString>, sink: &mut Sink) {
+fn whole(description: String, dir: &Path, ours: &BTreeSet<OsString>, sink: &mut Sink) -> bool {
     // Checked here rather than inferred from the caller: `hash_tree`
     // resolves links, so one child link would walk a tree kendex does not
     // own. The caller only asks about a directory whose every child it
@@ -109,25 +115,31 @@ fn whole(description: String, dir: &Path, ours: &BTreeSet<OsString>, sink: &mut 
     // that a check instead of an argument.
     match every_child_is_a_plain_file(dir) {
         Ok(true) => {}
-        Ok(false) => return,
+        Ok(false) => return false,
         Err(note) => {
             sink.notes.push(note);
-            return;
+            return false;
         }
     }
     let proven = match crate::hash::hash_tree(dir) {
         Ok(proven) => proven,
         Err(error) => {
             sink.notes.push(list_note(dir, &error.to_string()));
-            return;
+            return false;
         }
     };
     match strangers(dir, ours) {
         // Something arrived while kendex was looking. Nothing is taken
         // this pass; the next one sees it as the stranger it is.
-        Ok(again) if !again.is_empty() => {}
-        Ok(_) => trash(description, dir, &proven, sink),
-        Err(error) => sink.notes.push(list_note(dir, &error.to_string())),
+        Ok(again) if !again.is_empty() => false,
+        Ok(_) => {
+            trash(description, dir, &proven, sink);
+            true
+        }
+        Err(error) => {
+            sink.notes.push(list_note(dir, &error.to_string()));
+            false
+        }
     }
 }
 
@@ -165,20 +177,27 @@ fn list_note(dir: &Path, error: &str) -> String {
 /// come out, and only when one of them is really in the file — a document
 /// kendex removed nothing from is never rewritten and never taken, however
 /// empty the shape it happens to be in.
+///
+/// Answers whether the entries in `deregister` are on their way out: a
+/// document this pass could not read or could not edit keeps them, and a
+/// move with a registration still live is not a move that finished.
 pub(super) fn plan_registry(
     registry: &Path,
-    deregister: &[(Option<String>, String)],
+    deregister: &[Identity],
     sink: &mut Sink,
-) -> Result<()> {
+) -> Result<bool> {
     if !matches!(look(registry), Found::Plain(_)) {
-        return Ok(());
+        // A registry that is not a plain file holds nothing this pass can
+        // be leaving behind: a link or an absent one was never read as
+        // kendex's to edit, and the hold that says so is elsewhere.
+        return Ok(!matches!(look(registry), Found::Linked(_)));
     }
     let current = match crate::fs::read_if_exists(registry) {
         Ok(text) => text.unwrap_or_default(),
         Err(error) => {
             sink.notes
                 .push(unreadable_note(registry, &error.to_string()));
-            return Ok(());
+            return Ok(false);
         }
     };
     let registered = match crate::scan::hooks::read(registry) {
@@ -188,23 +207,25 @@ pub(super) fn plan_registry(
                 "{} could not be read ({message}), so it was left alone",
                 registry.display()
             ));
-            return Ok(());
+            return Ok(false);
         }
     };
     let edits: Vec<ConfigEdit> = deregister
         .iter()
-        .filter(|(_, command)| {
+        .filter(|identity| {
             registered
                 .iter()
-                .any(|entry| entry.description.as_deref() == Some(command.as_str()))
+                .any(|entry| entry.description.as_deref() == Some(identity.command.as_str()))
         })
-        .map(|(event, command)| ConfigEdit::RemoveHook {
-            event: event.clone(),
-            command: command.clone(),
+        .map(|identity| ConfigEdit::RemoveHook {
+            event: identity.event.clone(),
+            command: identity.command.clone(),
         })
         .collect();
+    // Nothing of this pass's is in the document, so nothing of its is
+    // being left in it.
     if edits.is_empty() {
-        return Ok(());
+        return Ok(true);
     }
     let mut updated = current.clone();
     for edit in &edits {
@@ -215,7 +236,7 @@ pub(super) fn plan_registry(
                     "{} could not be edited ({message}), so it was left alone",
                     registry.display()
                 ));
-                return Ok(());
+                return Ok(false);
             }
         };
     }
@@ -236,7 +257,7 @@ pub(super) fn plan_registry(
                 "{} could not be rewritten ({error}), so it was left alone",
                 registry.display()
             ));
-            return Ok(());
+            return Ok(false);
         }
     };
     if after.as_object().is_some_and(|object| object.is_empty()) {
@@ -246,7 +267,7 @@ pub(super) fn plan_registry(
             &crate::hash::hash_bytes(current.as_bytes()),
             sink,
         );
-        return Ok(());
+        return Ok(true);
     }
     for edit in edits {
         sink.config_edits.push(
@@ -255,46 +276,7 @@ pub(super) fn plan_registry(
             edit,
         );
     }
-    Ok(())
-}
-
-/// The registry entry one hook left behind, as the identity that names
-/// it: the event it fires on and the command that runs.
-///
-/// The record carries both for a script-less custom hook, whose command
-/// is the person's own and cannot be re-derived. A script-backed hook
-/// keeps no record of either, so the command is re-derived from the old
-/// layout and the event is left unsaid — because the event the older
-/// kendex registered it under is not knowable here. It is not the event
-/// this pass renders: a catalog is free to change a hook's event, and
-/// then the registration waiting to be migrated sits under the event the
-/// previous version installed. Reading the new event onto the old entry
-/// would call an ordinary catalog change tampering and hold the
-/// installation with nothing the person could do about it.
-///
-/// What keeps that honest is the uniqueness rule the identity applies:
-/// with no event to check, a command carried once in the document is
-/// kendex's own, and a command carried twice is nobody's to take.
-pub(super) fn legacy_registration(
-    entry: &LockEntry,
-    scope: &Scope,
-    root: &Path,
-) -> (Option<String>, String) {
-    match &entry.registration {
-        Some(recorded) => (Some(recorded.event.clone()), recorded.command.clone()),
-        None => {
-            let file = pi::hook_file(&entry.name);
-            let command = match scope {
-                Scope::Global => {
-                    format!("bash \"{}\"", root.join(LEGACY_DIR).join(&file).display())
-                }
-                Scope::Project { .. } => {
-                    format!("bash \"$(git rev-parse --show-toplevel)/.pi/{LEGACY_DIR}/{file}\"")
-                }
-            };
-            (None, command)
-        }
-    }
+    Ok(true)
 }
 
 /// Everything in the reserved directory the lock does not account for.

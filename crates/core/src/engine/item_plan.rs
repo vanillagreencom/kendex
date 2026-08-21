@@ -119,6 +119,9 @@ pub(super) fn plan_item(
             upstream_skills: item.upstream_skills.clone(),
             emitted: item.emitted.clone(),
             registration: super::desired_custom_hooks::hook_registration(item),
+            // Carried, never re-derived: what a pass records about a
+            // finished move outlives every later rendering of the item.
+            left_pi_reserved_name: existing.is_some_and(|entry| entry.left_pi_reserved_name),
             reasons: item.reasons.clone(),
         },
     );

@@ -255,10 +255,12 @@ changes carry a **Breaking** call-out with their migration note inline.
   discarding them, or removing the hook by name, finishes the move in that
   run, leaving one registration and nothing more to say. Each hold says
   which one it is, wherever it is reported, so a conflict offers to
-  discard edits only where discarding edits is what settles it. And once
-  a hook has finished moving, nothing under the old name is kendex's any
-  more: a script and a registration you put back there yourself both
-  stay, however exactly they match what kendex used to write. A hook held that
+  discard edits only where discarding edits is what settles it. And a finished
+  move stays finished: kendex writes it down rather than working it out
+  again, so nothing under the old name is kendex's afterwards — a script
+  and a registration you put back there yourself both stay, however
+  exactly they match what kendex used to write, and whatever else you
+  change about the hook later. A hook held that
   way still shows up in `kendex list`, in the app, and in the safety scan,
   read from the old registry it fires from, so the copy that needs your
   attention is not the one you cannot see. A registration

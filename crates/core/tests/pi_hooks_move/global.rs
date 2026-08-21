@@ -58,6 +58,7 @@ fn apply(g: &Global) {
 /// then had.
 #[allow(clippy::unwrap_used)]
 fn regress(g: &Global) {
+    super::forget_the_move(&g.env.global_lock_file());
     fs::create_dir_all(g.agent.join("hooks")).unwrap();
     fs::rename(
         g.agent.join("kendex/hooks/guard.sh"),

@@ -108,6 +108,7 @@ fn pre_move_fixture() -> Fixture {
                 upstream_skills: None,
                 emitted: None,
                 registration: None,
+                left_pi_reserved_name: false,
                 reasons: BTreeSet::from([Reason::Requested]),
             },
         )]

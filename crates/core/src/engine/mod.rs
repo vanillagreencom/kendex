@@ -164,6 +164,7 @@ pub fn plan_scope(
             guard: &mut guard,
             config_edits: &mut config_edits,
             notes: &mut moved_notes,
+            new_lock: &mut new_lock,
         },
     )?;
     removal::stale_emitted(&state, lock, &mut guard, &mut ops)?;

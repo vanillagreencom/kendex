@@ -134,6 +134,7 @@ fn declare_second_hook(w: &World) {
 /// with it when the hook has one — a hook installed disabled does not.
 #[allow(clippy::unwrap_used)]
 fn regress(w: &World, file: &str) {
+    forget_the_move(&w.project.join(".kendex-lock.json"));
     let dot = w.dot();
     fs::create_dir_all(dot.join("hooks")).unwrap();
     fs::rename(
@@ -163,6 +164,25 @@ fn regressed() -> World {
     regress(&w, "guard.sh");
     fs::remove_dir_all(w.dot().join("kendex")).unwrap();
     w
+}
+
+/// Drop the record that the move is over, the way a lock written before
+/// there was one to keep carries it. Every fixture that puts files back
+/// under the reserved name is pretending to be an older kendex, and an
+/// older kendex wrote no such record.
+#[allow(clippy::unwrap_used)]
+fn forget_the_move(lock: &Path) {
+    let path = lock;
+    let mut lock: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    for entry in lock["entries"].as_object_mut().into_iter().flatten() {
+        entry
+            .1
+            .as_object_mut()
+            .unwrap()
+            .remove("leftPiReservedName");
+    }
+    fs::write(path, serde_json::to_string_pretty(&lock).unwrap()).unwrap();
 }
 
 /// Drop the record of what apply wrote, as a lock from before that record

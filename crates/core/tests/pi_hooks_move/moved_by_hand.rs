@@ -20,6 +20,7 @@ fn command_bodied_in_the_legacy_layout() -> World {
         "[[custom-hooks]]\nname = \"mine\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./scripts/mine.sh\"\nagents = \"all\"\n",
     );
     apply(&w);
+    super::forget_the_move(&w.project.join(".kendex-lock.json"));
     let registry = fs::read_to_string(w.dot().join("kendex/hooks.json")).unwrap();
     fs::write(w.dot().join("hooks.json"), registry).unwrap();
     fs::remove_dir_all(w.dot().join("kendex")).unwrap();
@@ -104,7 +105,9 @@ fn a_new_registration_moved_to_another_event_is_never_doubled() {
     apply(&w);
     let script = fs::read_to_string(w.dot().join("kendex/hooks/guard.sh")).unwrap();
     let registry = fs::read_to_string(w.dot().join("kendex/hooks.json")).unwrap();
-    // The layout an older kendex left, still beside the new one.
+    // The layout an older kendex left, still beside the new one — and a
+    // lock from before there was any record of a finished move.
+    super::forget_the_move(&w.project.join(".kendex-lock.json"));
     fs::create_dir_all(w.dot().join("hooks")).unwrap();
     fs::write(w.dot().join("hooks/guard.sh"), &script).unwrap();
     fs::write(
@@ -173,5 +176,39 @@ fn a_hold_no_discard_can_release_does_not_ask_for_a_discard() {
         row.cause.is_none(),
         "nor one the app would offer for it: {:?}",
         row.cause
+    );
+}
+
+/// A matcher is half of where a registration fires. Moved by hand within
+/// the recorded event, the entry is still the only one carrying the
+/// command, so uniqueness says nothing about it and the event says
+/// nothing about it — and taking it would put the manifest's matcher back
+/// silently, changing which operations run the person's hook.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_registration_moved_to_another_matcher_is_not_kendexs_to_take() {
+    let w = command_bodied_in_the_legacy_layout();
+    let registry = w.dot().join("hooks.json");
+    let text = fs::read_to_string(&registry).unwrap();
+    let moved = text.replace("\"Bash\"", "\"Edit\"");
+    assert_ne!(moved, text, "the fixture has to move the matcher");
+    fs::write(&registry, &moved).unwrap();
+
+    let said = about(&notes(&w), "hooks.json");
+    assert!(
+        said.iter().any(|note| note.contains("no longer registers")),
+        "the person is told the entry is not where kendex left it: {said:?}"
+    );
+    apply(&w);
+
+    assert_eq!(
+        fs::read_to_string(&registry).unwrap(),
+        moved,
+        "the matcher they chose stays, and so does the entry"
+    );
+    let new = w.dot().join("kendex/hooks.json");
+    assert!(
+        !new.exists() || !fs::read_to_string(&new).unwrap().contains("mine.sh"),
+        "and nothing put the old matcher back beside it"
     );
 }

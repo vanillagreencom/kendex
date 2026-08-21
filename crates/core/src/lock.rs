@@ -156,11 +156,24 @@ pub struct LockEntry {
     /// manifest entry that carried it is gone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registration: Option<HookRegistration>,
+    /// Pi hooks only: this installation's move out of the directory pi
+    /// reserved has finished. A finished move is a fact about the past,
+    /// so it is recorded here instead of being re-derived from what is on
+    /// disk now — an edit to the new copy, or a catalog that changes the
+    /// hook's event, would otherwise re-open a move that is over. Once
+    /// this is set, everything under the reserved name is somebody
+    /// else's, whatever its bytes or its command happen to be.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub left_pi_reserved_name: bool,
     /// Every reason this installation exists. Never empty once written: an
     /// installation nothing can account for would be swept the moment
     /// anything looked at it.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub reasons: BTreeSet<Reason>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// One hook entry as a harness's registry keys it: event plus command.
@@ -169,6 +182,13 @@ pub struct LockEntry {
 pub struct HookRegistration {
     pub event: String,
     pub command: String,
+    /// The matcher the entry was written under, spelled the way a
+    /// registry spells it — `*` where the hook names none. `None` is a
+    /// record from before this was kept: unknown, never "none", so a
+    /// matcher somebody changed by hand is not read off a record that
+    /// never held one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matcher: Option<String>,
 }
 
 /// The artifact one installation actually put on disk, in the harness's own
