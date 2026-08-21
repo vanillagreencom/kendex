@@ -32,6 +32,9 @@ pub fn get_settings() -> Result<AppSettings, String> {
 }
 
 fn update_settings_at(env: &Env, mut settings: AppSettings) -> Result<AppSettings, String> {
+    // A harness root is where this build applies packages, so its `~` is
+    // this build's home — a sandboxed one included. The two calls that take
+    // a path to a repository on the machine read the real home instead.
     for root in settings.harness_roots.values_mut() {
         *root = crate::paths::expand_tilde(&env.home, &root.to_string_lossy());
     }
@@ -67,7 +70,7 @@ pub fn save_zoom(percent: u16) -> Result<u16, String> {
 }
 
 fn register_project_at(env: &Env, path: &str) -> Result<AppSettings, String> {
-    let expanded = crate::paths::expand_tilde(&env.home, path);
+    let expanded = crate::paths::expand_tilde(env.real_home(), path);
     settings::register_project(env, &expanded).map_err(|e| e.to_string())
 }
 
@@ -111,7 +114,7 @@ pub fn install_drift_hook(scope: kendex_core::model::Scope) -> Result<bool, Stri
 }
 
 fn discover_projects_at(env: &Env, root: &str) -> Result<Vec<String>, String> {
-    let expanded = crate::paths::expand_tilde(&env.home, root);
+    let expanded = crate::paths::expand_tilde(env.real_home(), root);
     Ok(discover::discover_projects(&expanded)
         .map_err(|e| e.to_string())?
         .into_iter()

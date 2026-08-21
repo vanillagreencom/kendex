@@ -23,6 +23,20 @@ fn find(dir: &Path, name: &str) -> Option<PathBuf> {
     None
 }
 
+/// A debug build pointed at a fixture home, with the platform dirs sent
+/// there too so `dirs` cannot reach the real machine.
+fn kendex(home: &Path) -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kendex"));
+    cmd.env("HOME", home)
+        // Empty is not an opt-in — these tests are the sandboxed case.
+        .env("KENDEX_REAL_HOME", "")
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .env("PATH", std::env::var("PATH").unwrap_or_default());
+    cmd
+}
+
 /// The guarantee the sandbox exists for: a build from a branch writes to its
 /// own home, never to the one it was handed. Helper-level tests cannot see
 /// this — it takes the real binary, the real `dirs` resolution and the debug
@@ -35,16 +49,9 @@ fn a_debug_build_writes_to_the_dev_home_not_the_one_it_was_given() {
     std::fs::create_dir_all(&project).expect("project dir");
     std::fs::write(project.join("kendex.toml"), "").expect("manifest");
 
-    let out = Command::new(env!("CARGO_BIN_EXE_kendex"))
+    let out = kendex(&home)
         .args(["project", "add"])
         .arg(&project)
-        .env("HOME", &home)
-        // Empty is not an opt-in — this test is the sandboxed case.
-        .env("KENDEX_REAL_HOME", "")
-        .env("XDG_DATA_HOME", home.join(".local/share"))
-        .env("XDG_CONFIG_HOME", home.join(".config"))
-        .env("XDG_CACHE_HOME", home.join(".cache"))
-        .env("PATH", std::env::var("PATH").unwrap_or_default())
         .output()
         .expect("run kendex");
     assert!(out.status.success(), "{out:?}");
@@ -66,4 +73,36 @@ fn a_debug_build_writes_to_the_dev_home_not_the_one_it_was_given() {
             escaped.display()
         );
     }
+}
+
+/// A sandbox moves where this build writes, not where the person lives.
+/// Discovery walks up from the cwd and refuses to call the home itself a
+/// project; hand it the sandbox home instead and the real home stops being
+/// that boundary, so a `~/.claude` is all it takes for the home to look
+/// like a project and take every project write.
+#[test]
+fn a_sandboxed_build_still_knows_the_real_home_is_not_a_project() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let home = tmp.path().join("home");
+    // The marker that makes an ordinary home look like a project.
+    std::fs::create_dir_all(home.join(".claude")).expect("marker");
+    let cwd = home.join("scratch");
+    std::fs::create_dir_all(&cwd).expect("cwd");
+
+    let out = kendex(&home)
+        .args(["apply", "--scope", "project", "--yes"])
+        .current_dir(&cwd)
+        .output()
+        .expect("run kendex");
+
+    let said =
+        String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    assert!(
+        said.contains("not inside a project"),
+        "the home was taken for a project: {said}"
+    );
+    assert!(
+        !home.join("kendex.toml").exists(),
+        "a sandboxed build wrote a manifest into the real home"
+    );
 }

@@ -35,6 +35,7 @@ const HARNESS_VARS: [&str; 7] = [
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Env {
     pub home: PathBuf,
+    real_home: PathBuf,
     config_dir: PathBuf,
     cache_dir: PathBuf,
     data_dir: PathBuf,
@@ -49,15 +50,18 @@ impl Env {
             .iter()
             .filter_map(|k| std::env::var(k).ok().map(|v| ((*k).to_owned(), v)))
             .collect();
+        let real_home = dirs::home_dir().ok_or(CoreError::NoHomeDir)?;
         if let Some(home) = dev_home(cfg!(debug_assertions), opt_in.as_deref(), &data_dir) {
             let mut env = Self::rooted(home, HOST_OS);
+            env.real_home = real_home;
             for (key, value) in sandbox_vars(vars) {
                 env = env.with_var(&key, &value);
             }
             return Ok(env);
         }
         Ok(Env {
-            home: dirs::home_dir().ok_or(CoreError::NoHomeDir)?,
+            home: real_home.clone(),
+            real_home,
             config_dir: dirs::config_dir().ok_or(CoreError::NoHomeDir)?,
             cache_dir: dirs::cache_dir().ok_or(CoreError::NoHomeDir)?,
             data_dir,
@@ -99,12 +103,21 @@ impl Env {
             ),
         };
         Env {
+            real_home: home.clone(),
             home,
             config_dir: config,
             cache_dir: cache,
             data_dir: data,
             vars: BTreeMap::new(),
         }
+    }
+
+    /// The machine's own home, which a sandbox does not move: it is where
+    /// the person lives, not where this build keeps its state. Discovery
+    /// asks so it does not mistake the real home for a project, and a `~`
+    /// someone typed resolves to the directory they meant.
+    pub fn real_home(&self) -> &Path {
+        &self.real_home
     }
 
     /// The platform config root itself — v1 kept its `vstack` state

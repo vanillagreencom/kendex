@@ -75,5 +75,5 @@ pub fn resolve_scopes(env: &Env, filter: ScopeFilter) -> Result<Vec<Scope>, Stri
 
 fn current_project(env: &Env) -> Option<PathBuf> {
     let cwd = std::env::current_dir().ok()?;
-    discover::project_root_from(&cwd, &env.home)
+    discover::project_root_from(&cwd, env.real_home())
 }
