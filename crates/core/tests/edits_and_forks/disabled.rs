@@ -106,3 +106,48 @@ fn upstream_changing_while_disabled_is_not_a_false_edit() {
         "a disabled item nobody touched must not read as edited: {row:?}"
     );
 }
+
+/// A disabled skill renders its SKILL.md under the `.disabled` name; an
+/// edit made to it forks in source form, so the local source is a skill
+/// discovery can read and the declaration's `enabled` keeps it off.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_disabled_skills_edit_forks_in_source_form() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "Upstream.");
+    commit(&w.upstream, "one");
+    declare(&w, "[skills.gh]\nsource = \"cat\"\nenabled = false\n");
+    sync_and_apply(&w);
+    let disabled = w.home.join("app/.agents/skills/gh/SKILL.md.disabled");
+    assert!(disabled.is_file(), "disabled skill keeps its bytes");
+    fs::write(
+        &disabled,
+        "---\nname: gh\ndescription: mine\n---\nMy edit.\n",
+    )
+    .unwrap();
+
+    let report = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();
+    let row = report
+        .rows
+        .iter()
+        .find(|row| row.kind == ItemKind::Skill && row.name == "gh")
+        .unwrap();
+    assert!(row.blocked_by_local_edit);
+    assert_eq!(row.forkable_harness, Some(HarnessId::Claude));
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    let local = w.home.join("app/.kendex-local/skills/gh");
+    assert!(
+        local.join("SKILL.md").is_file(),
+        "the fork is in source form"
+    );
+    assert!(!local.join("SKILL.md.disabled").exists());
+    let report = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &report.plan, None).unwrap();
+    assert!(audit(&w.env, &w.scope).unwrap().drift.is_empty());
+    assert!(
+        fs::read_to_string(&disabled).unwrap().contains("My edit."),
+        "the fork renders disabled, with the edit"
+    );
+}

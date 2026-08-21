@@ -161,7 +161,18 @@ fn capture_ops(
     let capture = match kind {
         ItemKind::Skill => Op::WriteTree {
             root: local_item,
-            files: super::adopt::read_tree(edited)?,
+            // A disabled rendering carries its SKILL.md under the
+            // `.disabled` name; the local source holds source form, and
+            // the declaration's `enabled` keeps the fork off when it
+            // renders — a tree copied verbatim would be a skill source
+            // discovery cannot see.
+            files: super::adopt::read_tree(edited)?
+                .into_iter()
+                .map(|(rel, bytes)| match rel.to_str() {
+                    Some("SKILL.md.disabled") => (PathBuf::from("SKILL.md"), bytes),
+                    _ => (rel, bytes),
+                })
+                .collect(),
             pre: Pre::Absent,
         },
         _ => Op::WriteFile {
