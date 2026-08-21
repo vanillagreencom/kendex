@@ -109,7 +109,6 @@ fn pre_move_fixture() -> Fixture {
                 emitted: None,
                 registration: None,
                 reasons: BTreeSet::from([Reason::Requested]),
-                author_review: None,
             },
         )]
         .into(),

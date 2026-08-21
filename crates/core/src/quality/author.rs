@@ -100,39 +100,11 @@ impl AuthorReview {
         super::overrides::snapshot_stale(&self.review_hash, self.ruleset, review_hash)
     }
 
-    /// The same record bound to different bytes — what the lock stores once
-    /// the apply knows what it wrote.
-    pub fn rebound(&self, review_hash: String) -> AuthorReview {
-        AuthorReview {
-            review_hash,
-            ..self.clone()
-        }
-    }
-
     /// Every fingerprint this record names, for a reading where all of the
     /// content is the publisher's — the authoring check and the pre-install
     /// preview, where nothing else has been added to it yet.
     pub fn whole_budget(&self) -> Budget {
         Budget::whole(self.dismissed.keys().cloned().collect())
-    }
-
-    /// Whether every entry in this record is one kendex itself could have
-    /// written. The lock is a project file a pull request can edit, so a
-    /// record read back out of it is untrusted input exactly as the
-    /// catalog's own file is — and `publisher` and `dismissed_at` are
-    /// printed.
-    pub fn is_honest(&self) -> bool {
-        crate::names::shown(&self.publisher) == self.publisher
-            && self.dismissed.iter().all(|(fingerprint, dismissal)| {
-                read::honest(
-                    fingerprint,
-                    &crate::quality::reviews::Dismissal {
-                        reason: dismissal.reason,
-                        dismissed_at: dismissal.dismissed_at.clone(),
-                        source: None,
-                    },
-                )
-            })
     }
 }
 

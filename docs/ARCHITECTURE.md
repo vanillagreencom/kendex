@@ -835,28 +835,26 @@ lives in one capability table read by core and UI.
   carried and at the weight each was read at, so nothing a project repeats
   rides in on a reviewed one, however heavy; and it carries only reasons
   an author can give — `trusted-source` is refused on read, not only on
-  write, and a timestamp that is not a timestamp is refused with it. The record
-  travels with the content: the plan re-reads it out of the source it
-  fetched, the apply writes it into the lock entry (`authorReview`, lock
-  version 5) bound to the bytes it wrote, and the audit finds it by that
-  hash rather than by name — one shared skill tree is loaded by several
-  tools and only one of them holds a lock entry, so one entry that does not
-  hold up never ends the search for one that does. A fourth bound is the
-  audit's alone, since only there does the record arrive out of the lock, a
-  committed file a pull request can edit. **A lock-carried record is
-  evidence of what an apply read, never proof of who wrote it.** Shape
-  checks answer shape, and the name cannot be authenticated — anyone
-  editing the lock copies a declared source out of `kendex.toml` — so the
-  audit re-reads the catalog: the name has to be one this project
-  subscribes to (`source::declared_provenance`, from the manifest, never
-  the lock), and the catalog at the commit the entry names, or the
-  directory a path source points at, has to publish that record — same
-  rule set, same fingerprints, same reasons, same dates. What it is worth is
-  counted there too, from the publisher's own bytes, and since the weight an
-  occurrence was read at cannot be recovered from finished content, the
-  budget settles the lightest, leaving the heaviest counted. Anything else,
-  and a catalog not on this machine, buys nothing and is still reported
-  under the name it carries. No signing scheme here. A hook records none: the
+  write, and a timestamp that is not a timestamp is refused with it.
+  **The record never travels in a file this project commits.** The lock
+  carries none, and the fourth bound is why: a record kept there would be a
+  claim about a catalog, and every attempt to authenticate such a claim —
+  its shape, the name it carries, the numbers beside it — answers a
+  different question than the one that matters, which is what the content
+  should be. So the audit rebuilds instead
+  (`engine::desired::desired_as_installed`): the plan that produced what is
+  on disk, every declaration read at the revision its lock entry names, and
+  the record read out of *that* catalog and measured against the item
+  rendered from the publisher's own inputs, which is the gate's own
+  derivation on the gate's own bytes. A rebuild is looked up by the bytes it
+  produced, so finding one is the proof — one shared tree is loaded by
+  several tools and rebuilt once, and content no rebuild produced is content
+  the publisher never saw, which is said rather than passed over. The commit
+  an entry names chooses which revision to rebuild from and asserts nothing;
+  naming another produces another artifact, which is not what is installed.
+  An item that cannot be rebuilt at all — a catalog not on this machine, a
+  manifest that will not resolve — carries no review. No signing scheme
+  here. A hook records none: the
   gate reads the script and the audit reads the shared settings file, two
   readings of different bytes by design — so the record is refused where
   it is read, `dismiss --catalog` refuses to write one, and `check
@@ -1099,13 +1097,13 @@ lives in one capability table read by core and UI.
   review is read *before* the verdict, so a finding it settles stops
   counting toward the score and can therefore move an item out of Block;
   that is the whole point of a catalog reviewing its own content, and it is
-  bounded by the checks above — and, read out of a lock, by the catalog that
-  published it, which is also where the cap is counted from rather than
-  carried. The publisher's record does not live in the
-  person's manifest and is not one of their revocable records: it lives in
-  the catalog's committed `kendex-reviews.toml` and, once installed, in the
-  lock entry — so it never appears in the Recorded decisions registry,
-  which lists what the person can take back. It is shown instead wherever
+  bounded by the checks above — every one of which is a question put to the
+  catalog rather than to a file this project commits. The publisher's record
+  does not live in the person's manifest and is not one of their revocable
+  records: it lives in the catalog's committed `kendex-reviews.toml` and
+  nowhere else, and an audit rebuilds the plan to read it — so it never
+  appears in the Recorded decisions registry, which lists what the person
+  can take back. It is shown instead wherever
   the finding is: the CLI prints the publisher and reason under the line,
   and the app gives them their own row on a scope and marks them inline in
   the held-back panel. A personal dismissal binds

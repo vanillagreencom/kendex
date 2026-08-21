@@ -371,6 +371,6 @@ pub(crate) fn content_hash(input: &AuditInput) -> String {
     crate::hash::hash_bytes(material.as_bytes())
 }
 
-mod input;
+pub(super) mod input;
 mod settle;
 use input::input_for;

@@ -126,7 +126,10 @@ pub fn one(
     let review = (!dismissed.is_empty()).then(|| AuthorReview {
         review_hash: hash,
         ruleset: review.ruleset,
-        publisher: publisher.to_owned(),
+        // Printed beside the finding, and resolved from a repository name
+        // this project's own manifest supplies — a file, like every other,
+        // whose text reaches a terminal.
+        publisher: crate::names::shown(publisher),
         dismissed,
     });
     Read {

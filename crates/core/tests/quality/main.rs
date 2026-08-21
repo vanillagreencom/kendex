@@ -6,7 +6,6 @@
 mod author_reviews;
 mod author_reviews_emitted;
 mod author_reviews_injection;
-mod author_reviews_numbers;
 mod author_reviews_provenance;
 mod author_reviews_records;
 mod author_reviews_untrusted;

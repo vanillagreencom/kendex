@@ -217,15 +217,19 @@ fn a_hook_carries_no_publishers_review() {
     );
     assert_eq!(planned.safety.score, before.safety.score);
 
-    // And nothing lands in the lock for a later audit to disagree with.
+    // And the audit says the same, having read the same refusal from the
+    // same catalog rather than a copy of it.
     apply::execute(&f.env, &report.plan, None).unwrap();
-    let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap();
-    assert!(
-        lock.entries
-            .values()
-            .filter(|entry| entry.kind == ItemKind::Hook)
-            .all(|entry| entry.author_review.is_none())
-    );
+    for installed in observed_rows(&f, "guard") {
+        assert!(
+            installed
+                .decisions
+                .iter()
+                .all(|decision| !matches!(decision.state, DecisionState::AuthorDismissed { .. })),
+            "{:?}",
+            installed.decisions
+        );
+    }
 }
 
 /// A record belongs to the item it was recorded for. Two same-kind items

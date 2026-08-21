@@ -36,7 +36,6 @@ use sha2::{Digest, Sha256};
 
 use crate::hash::{hash_bytes, hash_files};
 use crate::model::{ItemKind, ObservedItem};
-use crate::quality::author::AuthorReview;
 
 use super::desired::{Artifact, Desired};
 
@@ -62,23 +61,6 @@ fn installed_kind(item: &Desired) -> ItemKind {
     item.emitted
         .as_ref()
         .map_or(item.kind, |emitted| emitted.kind)
-}
-
-/// The publisher's settled findings, rebound to the bytes this plan writes
-/// — what the lock records so the audit knows there is a record to go and
-/// check. What it is worth is never recorded here: the audit reads the
-/// catalog anyway (`engine::observed::vouching`), and a number in the lock
-/// is a number a pull request can edit.
-///
-/// The hash is sealed by the kind the artifact *is* on disk, not the kind
-/// it is declared as: a Codex command is written and scanned back as a
-/// skill tree, so a record sealed as a command could never match what the
-/// audit reads. Kinds whose two readings are deliberately different bytes
-/// never get here at all — the record is refused where it is read
-/// (`desired_source::published_review`), so the plan, the lock and the
-/// audit answer alike.
-pub(super) fn author_review(item: &Desired) -> Option<AuthorReview> {
-    Some(item.author_review.as_ref()?.rebound(desired(item)?))
 }
 
 /// What is installed here right now, read back off disk.

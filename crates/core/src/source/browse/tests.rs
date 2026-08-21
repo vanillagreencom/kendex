@@ -49,7 +49,6 @@ fn lock_entry(kind: ItemKind, name: &str, source: &str) -> LockEntry {
         emitted: None,
         registration: None,
         reasons: std::collections::BTreeSet::from([crate::lock::Reason::Requested]),
-        author_review: None,
     }
 }
 

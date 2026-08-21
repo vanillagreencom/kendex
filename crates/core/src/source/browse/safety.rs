@@ -24,12 +24,13 @@ use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::model::ItemKind;
 use crate::quality::author::{AuthorDismissal, AuthorReview};
-use crate::quality::{
-    AuditInput, Content, Finding, QualityScore, RULESET_VERSION, SafetyScore, SkippedRule, Verdict,
-};
+use crate::quality::{Finding, QualityScore, RULESET_VERSION, SafetyScore, SkippedRule, Verdict};
 use crate::source::DISCOVERY_VERSION;
 
 use super::{Browsed, Catalog};
+
+mod input;
+use input::input_for;
 
 /// The shape of one cached record — the scanner/parser half of the cache
 /// key, beside the rule-set and discovery-table versions. Bump it when what
@@ -351,46 +352,4 @@ fn item(browsed: &Browsed, kind: ItemKind, name: &str) -> Result<Item> {
         false => None,
     };
     Ok(Item { path, tree })
-}
-
-/// The same typed input `check --catalog` audits: a skill's whole tree,
-/// one document for every file-per-item kind.
-fn input_for(browsed: &Browsed, kind: ItemKind, name: &str, item: &Item) -> Result<AuditInput> {
-    let path = &item.path;
-    let location = path
-        .strip_prefix(browsed.sealed.root())
-        .unwrap_or(path)
-        .display()
-        .to_string();
-    let content = match kind {
-        // Through the same budgeted constructor the install gate reads a
-        // tree with. A preview that read further would score findings the
-        // gate never sees, and the two would disagree about the verdict on
-        // the same bytes — which is the whole thing a preview is for.
-        ItemKind::Skill => Content::SkillTree {
-            files: crate::quality::observe::tree_files_from_bytes(
-                item.tree.as_deref().unwrap_or_default(),
-            ),
-        },
-        // A hook's script is what the harness runs; browse scores it as a hook
-        // so the rules that read event/command/script fire here too, not only
-        // at the install gate. The MCP declaration and command bodies read as
-        // their file text; the install gate stays the authoritative verdict.
-        ItemKind::Hook => Content::Hook {
-            event: String::new(),
-            matcher: None,
-            command: location.clone(),
-            script: Some(browsed.sealed.read_to_string(path)?),
-        },
-        _ => Content::Document {
-            text: browsed.sealed.read_to_string(path)?,
-        },
-    };
-    Ok(AuditInput {
-        kind,
-        name: name.to_owned(),
-        harness: None,
-        location,
-        content,
-    })
 }

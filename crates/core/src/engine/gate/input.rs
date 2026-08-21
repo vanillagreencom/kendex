@@ -47,7 +47,7 @@ pub(super) fn input_for(item: &Desired) -> AuditInput {
 /// reads as unreadable — so the record settles nothing and the plan says a
 /// carried review did not apply, which is the direction a mistake here has
 /// to fail in.
-pub(super) fn authored_for(item: &Desired) -> AuditInput {
+pub(in crate::engine) fn authored_for(item: &Desired) -> AuditInput {
     let input = input_for(item);
     let content = match (&item.authored, item.kind) {
         (Some(authored), _) => authored.clone(),

@@ -8,7 +8,7 @@ use std::fs;
 
 use kendex_core::model::ItemKind;
 
-use super::author_reviews::{author_dismisses, declare, observed, row};
+use super::author_reviews::{author_dismisses, row};
 use super::fixture::{fixture, plan, skill};
 
 /// `trusted-source` is a claim about where bytes came from, and only the
@@ -261,57 +261,4 @@ fn a_refused_catalog_read_carries_no_control_characters() {
         "a note never carries what it is refusing: {note:?}"
     );
     assert!(note.contains("\\u{1b}"), "and shows it instead: {note:?}");
-}
-
-/// The lock travels in the project repository and a pull request can edit
-/// it, so a record read back out of it gets the checks the catalog's own
-/// file gets. A hand-edited one settles nothing — and the fields it carries
-/// are printed, so nothing in them reaches a terminal unescaped either.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_hand_edited_lock_record_settles_nothing() {
-    let f = fixture();
-    // Warn-level, so the item installs and there is a lock record to edit.
-    skill(&f.source, "mild", "Then chmod 777 build.sh so it runs.\n");
-    declare(&f, "\n[skills.mild]\nsource = \"cat\"\n");
-    author_dismisses(&f.source, ItemKind::Skill, "mild", &[]);
-    let report = plan(&f, &[]);
-    kendex_core::apply::execute(&f.env, &report.plan, None).unwrap();
-    assert!(
-        observed(&f, "mild")
-            .decisions
-            .iter()
-            .any(|decision| matches!(
-                decision.state,
-                kendex_core::engine::decisions::DecisionState::AuthorDismissed { .. }
-            )),
-        "the record applies before anyone edits it"
-    );
-
-    // A name of the attacker's choosing, a date that is not one, and a
-    // count larger than there are findings.
-    let path = kendex_core::lock::lock_path(&f.env, &f.scope);
-    let mut lock: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-    for entry in lock["entries"].as_object_mut().unwrap().values_mut() {
-        let Some(review) = entry.get_mut("authorReview") else {
-            continue;
-        };
-        review["publisher"] = "\u{1b}[2J\u{1b}[31mTRUSTED-CORP".into();
-        for dismissal in review["dismissed"].as_object_mut().unwrap().values_mut() {
-            dismissal["dismissedAt"] = "\u{1b}[5mYESTERDAY".into();
-            dismissal["occurrences"] = serde_json::json!({ "critical": 4294967295u32 });
-        }
-    }
-    fs::write(&path, lock.to_string()).unwrap();
-
-    let after = observed(&f, "mild");
-    assert!(
-        after.decisions.iter().all(|decision| !matches!(
-            decision.state,
-            kendex_core::engine::decisions::DecisionState::AuthorDismissed { .. }
-        )),
-        "an edited record settles nothing"
-    );
-    assert!(after.safety.score < 100, "and the finding counts again");
 }

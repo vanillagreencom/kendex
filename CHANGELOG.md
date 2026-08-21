@@ -51,13 +51,12 @@ changes carry a **Breaking** call-out with their migration note inline.
   settles only what the publisher wrote — as many occurrences as their own
   bytes carried, each carrying the weight theirs did, so nothing a project
   adds to the item rides in on a reviewed finding however serious it reads;
-  and the record travelling in your install record is only honoured while
-  the catalog it names still publishes it, checked by re-reading that
-  catalog at the commit you installed from rather than by the name the
-  record carries — a catalog you have not fetched settles nothing until you
-  do, and what the review is worth is counted there too rather than taken
-  from a number in the install record. It can only carry reasons an author
-  can give:
+  and a review is only ever read out of the catalog that published it. Your
+  install record keeps no copy: kendex rebuilds what each installation
+  should be, from the catalog at the revision you installed from, and reads
+  the review there — so a package you have not fetched, and content that is
+  not what that catalog publishes, settle nothing. It can only carry reasons
+  an author can give:
   a hand-written `trusted-source` record is refused on the installing
   machine. Any edit to the item, in the catalog or on the installed copy,
   brings the hold back, and a record that settles nothing where it lands —
@@ -68,13 +67,11 @@ changes carry a **Breaking** call-out with their migration note inline.
   refuses a hook token and says why — a hook author answers a false
   positive by narrowing the script or by getting the rule fixed, and there
   is no record they can write instead. `check --catalog` prints the token
-  beside each finding it can be used on. A publisher's review is only
-  honoured where the project can say whose it is: the audit checks the name
-  it carries against the source your `kendex.toml` installs the item from,
-  because the install record is a committed file a pull request can edit and
-  a review in a publisher's name is worth more than your own dismissal —
-  yours settles a question, theirs can lift a hold. A record naming a
-  publisher you do not install from is still shown, and settles nothing.
+  beside each finding it can be used on. A review in a publisher's name is
+  worth more than your own dismissal — yours settles a question, theirs can
+  lift a hold — so none of it is taken from a file your project commits: an
+  installation whose content is not what its catalog publishes is told so
+  plainly, and settles nothing.
 
 ### Changed
 
@@ -117,10 +114,6 @@ changes carry a **Breaking** call-out with their migration note inline.
   reported as "the safety rules changed since it was reviewed" rather than
   as a different set of problems. Re-accept or re-dismiss from the tokens
   `kendex findings` prints now.
-- The install record (`.kendex-lock.json`) is version 5: it carries what a
-  package's publisher had already reviewed. Older kendex builds refuse to
-  read it rather than quietly dropping that record, so upgrade every kendex
-  on a machine together — the desktop app and the CLI are separate binaries.
 - The app uses the Geist typeface, with titles and navigation in Geist Mono
   to match the website.
 - **Breaking**: the default Homebrew install is now the app —
@@ -167,13 +160,16 @@ changes carry a **Breaking** call-out with their migration note inline.
   reviews file that will not parse all quote content a downloaded
   repository chose, and the escapes in it are now shown rather than acted
   on — the same guard names already had.
-- `kendex check --catalog` and a marketplace package's preview read an item
-  under the same budget an install does, so neither reports findings, or
-  mints tokens for them, in content past the point any install stops
-  reading. A big package's preview and its install verdict could disagree
-  over a finding in the part nobody scores. An item bigger than
-  that says so instead, and the standing "reviewed findings do not appear
-  in what this installs" warnings it caused are gone.
+- A marketplace package's preview scores what installing it would write,
+  not what the catalog holds: the same read budget as an install, and the
+  same body cap for the tools this project installs to. A long package could
+  read held back on the page while its install went through with a warning,
+  because the line past the cap moves into `references/` where it weighs
+  less. `kendex check --catalog` reads under that budget too, so neither
+  reports findings, or mints tokens for them, in content past the point any
+  install stops reading; an item bigger than that says so instead, and the
+  standing "reviewed findings do not appear in what this installs" warnings
+  it caused are gone.
 - Installing a security-adjacent package from a marketplace no longer held
   it back over findings the publisher had already reviewed. A skill that
   must name the flags it guards against — `growth-guards` and

@@ -93,13 +93,14 @@ fn a_review_belongs_to_the_commit_it_was_committed_in() {
 }
 
 /// An audit reads what is on this machine and never fetches, so a record
-/// whose catalog is not here cannot be checked against it — and a record
-/// nothing can check settles nothing.
+/// whose catalog is not here cannot be read at all — and a review nothing
+/// can read settles nothing.
 ///
-/// The record below is the real one, written by the real catalog and
-/// carried by the real apply. Once the checkout it came from is gone from
-/// the cache there is nothing left to answer for it, and the finding it
-/// settled counts again. Fetching the source brings the answer back.
+/// The record below is the real one, published by the real catalog. Once
+/// the catalog is gone from the cache there is nothing left to answer for
+/// it — the audit rebuilds the plan out of the catalogs it can reach, and
+/// an item it cannot rebuild carries no review. Fetching the source brings
+/// the answer back.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_record_whose_catalog_is_not_on_this_machine_settles_nothing() {
@@ -170,7 +171,8 @@ fn a_record_whose_catalog_is_not_on_this_machine_settles_nothing() {
         "the publisher's record installed it and answers for it"
     );
 
-    // The cache loses the checkout the record came from.
+    // The cache loses the catalog the record came from — the checkout and
+    // the mirror it could be rebuilt out of.
     let key = remote::cache_key(&w.env, super::REPO);
     let checkout = kendex_core::remote::store::checkout_dir(&w.env, &key, &reviewed);
     assert!(
@@ -178,6 +180,7 @@ fn a_record_whose_catalog_is_not_on_this_machine_settles_nothing() {
         "the commit was published to {checkout:?}"
     );
     fs::remove_dir_all(&checkout).unwrap();
+    fs::remove_dir_all(kendex_core::remote::store::mirror_dir(&w.env, &key)).unwrap();
 
     let after = kendex_core::engine::observed_safety(&w.env, &w.scope).unwrap();
     assert!(

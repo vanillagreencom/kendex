@@ -10,16 +10,14 @@ use crate::fs::{atomic_write, read_if_exists};
 use crate::manifest::Method;
 use crate::model::{HarnessId, ItemKind, Scope};
 
-/// Current lock version. Versions 1 (v0.1) through 4 still load — the
+/// Current lock version. Versions 1 (v0.1) through 3 still load — the
 /// shapes are compatible and the next lock write records the current
 /// version. A lock newer than this build refuses to load. Version 3 added
 /// `source_commit` and `rendered_hash`; version 4 added `settings-seeds`;
-/// version 5 added `authorReview`, the publisher's settled findings for the
-/// bytes an apply wrote. Each bump is what stops an older build from
-/// reading the lock, dropping the record it does not know about on its next
-/// write, and erasing evidence — of which bytes are whose, of which comment
-/// blocks seeding wrote, or of what a publisher already reviewed.
-pub const LOCK_VERSION: u32 = 5;
+/// each bump is what stops an older build from reading the lock, dropping
+/// the newer record on its next write, and erasing evidence — of which
+/// bytes are whose, or of which comment blocks seeding wrote.
+pub const LOCK_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
 pub struct Lock {
@@ -163,14 +161,6 @@ pub struct LockEntry {
     /// anything looked at it.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub reasons: BTreeSet<Reason>,
-    /// What the catalog publishing this item had already reviewed and
-    /// settled about it when the apply ran, bound to the bytes the apply
-    /// wrote. The audit reads what is on disk and has no catalog to ask, so
-    /// without this an item the gate let through would come back as
-    /// unreviewed the moment anyone looked at it. Bound like any other
-    /// review: edit the install and it stops applying.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub author_review: Option<crate::quality::author::AuthorReview>,
 }
 
 /// One hook entry as a harness's registry keys it: event plus command.

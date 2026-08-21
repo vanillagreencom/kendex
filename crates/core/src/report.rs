@@ -151,7 +151,6 @@ mod tests {
                 emitted: None,
                 registration: None,
                 reasons: std::collections::BTreeSet::from([crate::lock::Reason::Requested]),
-                author_review: None,
             },
         );
         assert!(is_kendex_owned(
@@ -196,7 +195,6 @@ mod tests {
                 emitted: None,
                 registration: None,
                 reasons: std::collections::BTreeSet::from([crate::lock::Reason::Requested]),
-                author_review: None,
             },
         );
         assert!(is_kendex_owned(

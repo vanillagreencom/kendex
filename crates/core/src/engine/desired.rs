@@ -206,6 +206,9 @@ pub(super) fn target_harnesses(
 /// and hashes and renderings must reflect that rewrite — otherwise the very
 /// next audit reads the merged manifest and calls a clean install stale. The
 /// merge is idempotent, so recomputing against it converges in one repeat.
+mod rebuild;
+pub use rebuild::desired_as_installed;
+
 pub fn desired_state(
     env: &Env,
     scope: &Scope,

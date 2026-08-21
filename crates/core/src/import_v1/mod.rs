@@ -340,7 +340,6 @@ fn convert_lock(
                     // them in.
                     source_commit: None,
                     rendered_hash: None,
-                    author_review: None,
                     enabled: true,
                     upstream_skills: None,
                     emitted: None,

@@ -7,9 +7,6 @@ use crate::model::Scope;
 
 use super::gate::{self, ItemSafety};
 
-mod vouching;
-use vouching::{Vouched, Vouching};
-
 /// The other scoring path: the safety of what is on disk in this scope
 /// right now, declared or not. The plan-time path scores content nobody has
 /// installed yet, which is what gates a fresh install; this scores what a
@@ -58,154 +55,240 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
         .filter(|item| item.vendor.is_none())
         .collect();
     let scored = score_each(&items);
-    // One read of each catalog's review file, however many rows come from
-    // it.
-    let mut vouching = Vouching::new(env, &scope, &manifest);
+    // The plan that produced what is on disk, rebuilt from the catalogs at
+    // the revisions the lock names. Everything a publisher's record says is
+    // read out of a catalog here rather than out of the lock, and a
+    // reconstruction that does not equal what is installed answers for
+    // nothing. A pass that cannot be built at all — a source that is not on
+    // this machine, a manifest that will not resolve — leaves no
+    // reconstruction, and then no record settles anything.
+    let planned = super::desired::desired_as_installed(env, &scope, &manifest, &lock)
+        .unwrap_or_default()
+        .items;
+    // Keyed by what a rebuild produced, so finding one *is* the check that
+    // the bytes on disk are that rebuild. Not by harness: one shared tree is
+    // what several tools load, each scanned as its own row, while the plan
+    // built it once. Kind and name stay in the key — a review hash is sealed
+    // by kind but not by name, and `publisher` is a name a person is asked
+    // to weigh, so one catalog must never be named as the reviewer of
+    // another's identical bytes.
+    let rebuilt: std::collections::HashMap<Rebuild<'_>, &super::desired::Desired> = planned
+        .iter()
+        .filter_map(|item| {
+            let (kind, name) = written_as(item);
+            Some(((kind, name, super::review_hash::desired(item)?), item))
+        })
+        .collect();
+    // And the same items by name alone: where the item comes from, and what
+    // says so when a rebuild exists and is not what is installed.
+    let carried: std::collections::HashMap<
+        (crate::model::ItemKind, &str),
+        &super::desired::Desired,
+    > = planned
+        .iter()
+        .map(|item| (written_as(item), item))
+        .collect();
+    let reading = Reading {
+        scope: &scope,
+        manifest: &manifest,
+        lock: &lock,
+        thresholds: settings.safety,
+        rebuilt,
+        carried,
+    };
     Ok(items
         .into_iter()
         .zip(scored)
-        .map(|(item, scored)| {
-            let result = scored.result;
-            // The installation this observation belongs to, which is not
-            // always the one its own kind and name spell: a Codex command
-            // is written and scanned back as a skill tree, and its records
-            // were made under the command it is declared as.
-            let key = installation_key(&lock, item);
-            let root = item.path.display().to_string();
-            // Only the lock's word on where the bytes came from: what kendex
-            // itself declared and resolved. The scanner's guess is a remote
-            // url read out of a `.git/config` sitting inside the very
-            // content being judged, which is not something to trust a
-            // source by.
-            let provenance = lock
-                .entries
-                .get(&key)
-                .map(|entry| entry.source_repo.clone());
-            // What the publisher's record is worth is counted from their
-            // own catalog, never read out of the lock: the lock is a file a
-            // pull request can edit, and this number is the only thing the
-            // record buys.
-            let by_author = author_review(&mut vouching, &lock, item, scored.review.as_deref());
-            let budget = by_author
-                .as_ref()
-                .and_then(|found| match &found.vouched {
-                    Vouched::Carries(carries) => Some(crate::quality::author::Budget::lightest(
-                        carries,
-                        &result.findings,
-                    )),
-                    Vouched::Not(_) => None,
-                })
-                .unwrap_or_default();
-            let scored_findings = crate::quality::author::score(&result.findings, &budget);
-            let (verdict, reasons) = crate::quality::verdict(
-                &scored_findings.counted,
-                &scored_findings.safety,
-                settings.safety,
-            );
-            let override_state = crate::quality::overrides::state(
-                manifest.safety_overrides.get(&key),
-                scored.review.as_deref(),
-                &result.findings,
-            );
-            let decisions = super::decisions::decisions(
-                &super::decisions::Installation {
-                    manifest: &manifest,
-                    scope: &scope,
-                    key: &key,
-                    root: &root,
-                    review_hash: scored.review.as_deref(),
-                    provenance: provenance.as_deref(),
-                    override_state: &override_state,
-                    author_review: by_author.as_ref().map(|found| found.review),
-                    unvouched: by_author.as_ref().and_then(|found| found.vouched.why()),
-                    settled: &scored_findings.settled,
-                    held_back: verdict == crate::quality::Verdict::Block
-                        && !override_state.unblocks(),
-                },
-                &result.findings,
-            );
-            ItemSafety {
-                kind: item.kind,
-                name: item.name.clone(),
-                harness: item.harness,
-                scope: item.scope.clone(),
-                location: root,
-                safety: scored_findings.safety,
-                quality: result.quality,
-                override_state,
-                findings: result.findings,
-                skipped: result.skipped,
-                verdict,
-                reasons,
-                content_hash: scored.content,
-                review_hash: scored.review,
-                provenance,
-                decisions,
-            }
-        })
+        .map(|(item, scored)| reading.row(item, scored))
         .collect())
 }
 
-/// What the item's publisher had settled when the apply ran, for the bytes
-/// in front of us now.
-///
-/// Found by the bytes, not by the installation. A record binds to a review
-/// hash and that hash is sealed by kind, so a record whose hash is this
-/// content's hash is a record about this content — whichever entry happens
-/// to hold it. That is what the lookup needs: one shared skill tree is what
-/// several tools load, each scored as its own row, while only the tool it
-/// was installed for has a lock entry; and a hook is scanned back under a
-/// synthesized `event:matcher:name`, which no lock key spells. Comparing
-/// names would miss both. An edited install moves the hash and every record
-/// for it stops applying, the rule every other review answers to.
-fn author_review<'a>(
-    vouching: &mut Vouching<'_>,
+/// Everything one scope's reading shares across its rows.
+struct Reading<'a> {
+    scope: &'a Scope,
+    manifest: &'a Manifest,
     lock: &'a crate::lock::Lock,
-    item: &crate::model::ObservedItem,
-    review_hash: Option<&str>,
-) -> Option<Published<'a>> {
-    let review_hash = review_hash?;
-    lock.entries
-        .values()
-        .filter(|entry| names(entry, item))
-        // Every check on one record before the next record is looked at.
-        // The lock travels in the project repository and a pull request can
-        // edit it, so what comes back out of it gets the checks the
-        // catalog's own file gets — and a record that fails them settles
-        // nothing, which is the same answer as no record. Asking after the
-        // first match had been picked let one bad entry hide a good one:
-        // several entries carry a record for one shared tree, and only one
-        // of them has to hold up.
-        .filter(|entry| {
-            entry.author_review.as_ref().is_some_and(|review| {
-                review.stale_why(Some(review_hash)).is_none() && review.is_honest()
-            })
-        })
-        .filter_map(|entry| {
-            let review = entry.author_review.as_ref()?;
-            Some(Published {
-                vouched: vouching.vouched(entry, review),
-                review,
-            })
-        })
-        // A record the catalog answers for outranks one it does not, so a
-        // forged entry beside a real one cannot take the real one's place.
-        .min_by_key(|found| usize::from(found.vouched.why().is_some()))
+    thresholds: crate::quality::Thresholds,
+    rebuilt: std::collections::HashMap<Rebuild<'a>, &'a super::desired::Desired>,
+    carried:
+        std::collections::HashMap<(crate::model::ItemKind, &'a str), &'a super::desired::Desired>,
 }
+
+impl Reading<'_> {
+    fn row(
+        &self,
+        item: &crate::model::ObservedItem,
+        scored: crate::quality::observe::Scored,
+    ) -> ItemSafety {
+        let result = scored.result;
+        // The installation this observation belongs to, which is not always
+        // the one its own kind and name spell: a Codex command is written
+        // and scanned back as a skill tree, and its records were made under
+        // the command it is declared as.
+        let key = self.installation_key(item);
+        let root = item.path.display().to_string();
+        // Where the bytes came from, as the rebuild resolved it — never the
+        // scanner's guess, which is a remote url read out of a `.git/config`
+        // sitting inside the very content being judged. The lock answers
+        // only for an installation no rebuild covers, which is one nothing
+        // declares any more.
+        let provenance = self
+            .carried
+            .get(&(item.kind, item.name.as_str()))
+            .map(|planned| planned.provenance.clone())
+            .or_else(|| {
+                self.lock
+                    .entries
+                    .get(&key)
+                    .map(|entry| entry.source_repo.clone())
+            });
+        let by_author = published_by(&self.rebuilt, &self.carried, item, scored.review.as_deref());
+        let budget = by_author
+            .as_ref()
+            .and_then(|found| found.earned.as_ref())
+            .map(|earned| earned.budget.clone())
+            .unwrap_or_default();
+        let scored_findings = crate::quality::author::score(&result.findings, &budget);
+        let (verdict, reasons) = crate::quality::verdict(
+            &scored_findings.counted,
+            &scored_findings.safety,
+            self.thresholds,
+        );
+        let override_state = crate::quality::overrides::state(
+            self.manifest.safety_overrides.get(&key),
+            scored.review.as_deref(),
+            &result.findings,
+        );
+        let decisions = super::decisions::decisions(
+            &super::decisions::Installation {
+                manifest: self.manifest,
+                scope: self.scope,
+                key: &key,
+                root: &root,
+                review_hash: scored.review.as_deref(),
+                provenance: provenance.as_deref(),
+                override_state: &override_state,
+                author_review: by_author.as_ref().map(|found| found.review),
+                unvouched: by_author
+                    .as_ref()
+                    .and_then(|found| found.unbuilt.as_deref()),
+                settled: &scored_findings.settled,
+                held_back: verdict == crate::quality::Verdict::Block && !override_state.unblocks(),
+            },
+            &result.findings,
+        );
+        ItemSafety {
+            kind: item.kind,
+            name: item.name.clone(),
+            harness: item.harness,
+            scope: item.scope.clone(),
+            location: root,
+            safety: scored_findings.safety,
+            quality: result.quality,
+            override_state,
+            findings: result.findings,
+            skipped: result.skipped,
+            verdict,
+            reasons,
+            content_hash: scored.content,
+            review_hash: scored.review,
+            provenance,
+            decisions,
+        }
+    }
+}
+
+/// What this installation is on disk, in the kind and name a scan reads
+/// back: a Codex command is written and scanned as a skill tree, so the
+/// artifact it emitted is what an observation of it matches.
+fn written_as(item: &super::desired::Desired) -> (crate::model::ItemKind, &str) {
+    match &item.emitted {
+        Some(emitted) => (emitted.kind, emitted.name.as_str()),
+        None => (item.kind, item.name.as_str()),
+    }
+}
+
+/// The publisher's record for this installation, and what it earned.
+///
+/// Both come from the rebuilt plan, which read the record out of the
+/// catalog it resolved and measured it against the item rendered from the
+/// publisher's own inputs — the same derivation the gate does, on the same
+/// bytes. Nothing here reads the lock: a record kept there would be a claim
+/// about a catalog, and this has the catalog.
+///
+/// The record is honoured only where a rebuild *is* what is installed, and
+/// that is the lookup rather than a comparison after it. Content no rebuild
+/// produced is content the publisher never saw — replaced, edited, or
+/// simply something else — and a rebuild that exists and does not match
+/// says so, because a record carried onto other content is exactly the
+/// thing a person reading this needs told.
+fn published_by<'a>(
+    rebuilt: &std::collections::HashMap<Rebuild<'_>, &'a super::desired::Desired>,
+    carried: &std::collections::HashMap<
+        (crate::model::ItemKind, &str),
+        &'a super::desired::Desired,
+    >,
+    item: &crate::model::ObservedItem,
+    observed: Option<&str>,
+) -> Option<Published<'a>> {
+    let here = (item.kind, item.name.as_str());
+    if let Some(planned) = observed.and_then(|hash| rebuilt.get(&(here.0, here.1, hash.to_owned())))
+    {
+        let review = planned.author_review.as_ref()?;
+        let authored = crate::quality::audit(super::gate::input::authored_for(planned));
+        return Some(Published {
+            review,
+            earned: Some(crate::quality::author::Budget::earned(
+                review,
+                &authored.findings,
+            )),
+            unbuilt: None,
+        });
+    }
+    let planned = carried.get(&here)?;
+    let review = planned.author_review.as_ref()?;
+    Some(Published {
+        review,
+        earned: None,
+        unbuilt: Some(format!(
+            "what is installed here is not what {} publishes as {} {} — the review recorded in their name is about content this is not, so it settles nothing",
+            review.publisher,
+            planned.kind.name(),
+            planned.name
+        )),
+    })
+}
+
+/// One rebuilt artifact, as the observation that matches it spells itself:
+/// the kind and name it is on disk, and the hash of the bytes.
+type Rebuild<'a> = (crate::model::ItemKind, &'a str, String);
 
 /// The publisher's record for one observation, and its standing here.
 struct Published<'a> {
     review: &'a crate::quality::author::AuthorReview,
-    /// What the catalog that published it says: how many occurrences of
-    /// each finding it names the publisher's own content carries, or why it
-    /// settles nothing.
-    vouched: Vouched,
+    /// What it earned against the item rendered from the publisher's own
+    /// inputs. `None` where the rebuild is not what is installed.
+    earned: Option<crate::quality::author::Earned>,
+    /// Why it settles nothing, when it does. `None` when it stands.
+    unbuilt: Option<String>,
 }
 
-/// The key this observation's records live under. An entry that emitted
-/// this artifact under another kind's name is the installation it belongs
-/// to — every decision about it, the person's own included, was made there.
-fn installation_key(lock: &crate::lock::Lock, item: &crate::model::ObservedItem) -> String {
+/// The key this observation's records live under. An artifact written under
+/// another kind's name belongs to the installation that wrote it — every
+/// decision about it, the person's own included, was made there.
+///
+/// The rebuild says which that is; the lock answers only for an
+/// installation no rebuild covers, which is one nothing declares any more.
+impl Reading<'_> {
+    fn installation_key(&self, item: &crate::model::ObservedItem) -> String {
+        self.carried
+            .get(&(item.kind, item.name.as_str()))
+            .map(|planned| planned.key.clone())
+            .unwrap_or_else(|| emitted_under(self.lock, item))
+    }
+}
+
+fn emitted_under(lock: &crate::lock::Lock, item: &crate::model::ObservedItem) -> String {
     lock.entries
         .iter()
         .find(|(_, entry)| {
@@ -217,28 +300,6 @@ fn installation_key(lock: &crate::lock::Lock, item: &crate::model::ObservedItem)
         })
         .map(|(key, _)| key.clone())
         .unwrap_or_else(|| crate::lock::entry_key(item.kind, &item.name, item.harness))
-}
-
-/// Whether this lock entry is about this observation. The harness is left
-/// out on purpose — one shared skill tree is what several tools load, each
-/// scored as its own row, while only the tool it was installed for has an
-/// entry. The kind and name are not: a review hash is sealed by kind, so
-/// two same-kind items carrying identical bytes hash alike, and `publisher`
-/// is a name a person is asked to weigh — being told one catalog reviewed
-/// another's copy would be a lie about who answered for it. Rendering
-/// writes an installed skill's own name into its frontmatter, so that
-/// collision is hard to reach today; the record still belongs to the item
-/// it was recorded for, and matching on the bytes alone would make that an
-/// accident rather than a rule. An entry that emitted this artifact under
-/// another kind's name is the one that wrote it, so it answers for it.
-fn names(entry: &crate::lock::LockEntry, item: &crate::model::ObservedItem) -> bool {
-    if entry.kind == item.kind && entry.name == item.name {
-        return true;
-    }
-    entry
-        .emitted
-        .as_ref()
-        .is_some_and(|emitted| emitted.kind == item.kind && emitted.name == item.name)
 }
 
 /// Every observation's score, one reading per distinct set of bytes, spread

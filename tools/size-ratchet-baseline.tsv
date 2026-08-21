@@ -1,7 +1,7 @@
 .github/workflows/review-gate-writer.yml	652
 crates/app/gen/schemas/desktop-schema.json	2590
 crates/app/gen/schemas/linux-schema.json	2590
-docs/ARCHITECTURE.md	1199
+docs/ARCHITECTURE.md	1197
 hooks/block-repo-copy.sh	511
 pi-extensions/pi-agents-tmux/extensions/subagent/browser.ts	650
 pi-extensions/pi-agents-tmux/extensions/subagent/dashboard.ts	431

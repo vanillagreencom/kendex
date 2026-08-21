@@ -26,7 +26,6 @@ fn entry(kind: ItemKind, name: &str, source: &str, repo: &str) -> LockEntry {
         emitted: None,
         registration: None,
         reasons: BTreeSet::from([crate::lock::Reason::Requested]),
-        author_review: None,
     }
 }
 

@@ -1,137 +1,18 @@
-//! Where a lock-carried record came from, and what happens when this
-//! project cannot say.
+//! Which catalog a publisher's record came from, and what it is about.
 //!
-//! The lock travels in the project repository and a pull request can edit
-//! it. Every other check on a record read back out of it answers a question
-//! about shape — is the hash this content's, is the fingerprint one this
-//! build could have written — and none of those can answer provenance,
-//! which is what a publisher's record trades on.
+//! An audit rebuilds the plan out of the catalogs at the revisions its lock
+//! names, and reads every record there. Nothing is read out of the lock
+//! itself: a record kept in a file this project commits would be a claim
+//! about a catalog, and this has the catalog. What the record then answers
+//! for is exactly the content the rebuild produced — an installation whose
+//! bytes are something else is something the publisher never saw.
 
 use std::fs;
 
 use kendex_core::model::ItemKind;
 
-use super::author_reviews::{author_dismisses, observed, observed_rows, row};
+use super::author_reviews::{author_dismisses, observed, row};
 use super::fixture::{fixture, plan};
-
-/// Provenance is the one thing a shape check cannot answer, and the one
-/// thing a publisher's record trades on: it removes findings from the score
-/// and unblocks an install, where a person's own dismissal never unblocks
-/// anything. A forgery with the right hash, a real fingerprint, a plausible
-/// name and an in-range count passes everything a shape can be asked — so
-/// the audit asks the manifest instead, and a record naming a publisher
-/// this project does not install the item from settles nothing.
-#[test]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
-fn a_lock_record_this_project_cannot_vouch_for_settles_nothing() {
-    use kendex_core::engine::decisions::DecisionState;
-    use kendex_core::quality::Verdict;
-
-    let f = fixture();
-    author_dismisses(&f.source, ItemKind::Skill, "hostile", &[]);
-    let report = plan(&f, &[]);
-    assert!(
-        !row(&report, "hostile").blocked(),
-        "the publisher's own record is what lets it install"
-    );
-    kendex_core::apply::execute(&f.env, &report.plan, None).unwrap();
-    let vouched = observed(&f, "hostile");
-    assert_eq!(vouched.verdict, Verdict::Clean);
-
-    // Everything the record claims stays valid — the bytes it binds to, the
-    // fingerprint it names, the count it earned. Only the name changes, to
-    // a catalog this project has never subscribed to.
-    let path = kendex_core::lock::lock_path(&f.env, &f.scope);
-    let mut lock: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-    let mut forged = 0;
-    for entry in lock["entries"].as_object_mut().unwrap().values_mut() {
-        let Some(review) = entry.get_mut("authorReview") else {
-            continue;
-        };
-        review["publisher"] = "trusted-corp/skills".into();
-        forged += 1;
-    }
-    assert_eq!(forged, 1, "the fixture writes one record to forge");
-    fs::write(&path, lock.to_string()).unwrap();
-
-    let after = observed(&f, "hostile");
-    assert_eq!(
-        after.verdict,
-        Verdict::Block,
-        "the finding counts again and the item is held back"
-    );
-    assert!(
-        after
-            .decisions
-            .iter()
-            .all(|decision| !matches!(decision.state, DecisionState::AuthorDismissed { .. })),
-        "nothing reads as settled by a publisher: {:?}",
-        after.decisions
-    );
-    assert!(
-        after.decisions.iter().any(|decision| matches!(
-            &decision.state,
-            DecisionState::Open { earlier: Some(why) }
-                if why.contains("trusted-corp/skills") && why.contains("settles nothing")
-        )),
-        "and the record is still reported, saying why it bought nothing: {:?}",
-        after.decisions
-    );
-}
-
-/// The record is looked for across every entry that names this content, and
-/// one entry that does not hold up must not end the search. Several tools
-/// load one shared tree and each writes its own entry, so only one of them
-/// has to be intact for the publisher's decision to stand — asking whether
-/// an entry is honest only after the first match had been picked let a
-/// single corrupt copy take the decision away from every row.
-#[test]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
-fn one_corrupt_entry_does_not_hide_a_valid_one() {
-    let f = fixture();
-    author_dismisses(&f.source, ItemKind::Skill, "hostile", &[]);
-    let manifest = kendex_core::manifest::manifest_path(&f.env, &f.scope);
-    let text = fs::read_to_string(&manifest).unwrap().replace(
-        "harnesses = [\"claude\"]",
-        "harnesses = [\"claude\", \"codex\"]",
-    );
-    fs::write(&manifest, text).unwrap();
-    let report = plan(&f, &[]);
-    kendex_core::apply::execute(&f.env, &report.plan, None).unwrap();
-    assert!(observed_rows(&f, "hostile").len() > 1);
-
-    // The first entry holding a record, by the order the lookup walks them,
-    // claims more occurrences than there are findings — everything
-    // `is_honest` is for.
-    let path = kendex_core::lock::lock_path(&f.env, &f.scope);
-    let mut lock: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-    let entries = lock["entries"].as_object_mut().unwrap();
-    let first = entries
-        .iter()
-        .filter(|(_, entry)| entry.get("authorReview").is_some())
-        .map(|(key, _)| key.clone())
-        .min()
-        .expect("the apply wrote a record");
-    let corrupt = entries.get_mut(&first).unwrap();
-    for dismissal in corrupt["authorReview"]["dismissed"]
-        .as_object_mut()
-        .unwrap()
-        .values_mut()
-    {
-        dismissal["occurrences"] = serde_json::json!({ "critical": 4294967295u32 });
-    }
-    fs::write(&path, lock.to_string()).unwrap();
-
-    for row in observed_rows(&f, "hostile") {
-        assert!(
-            !row.blocked(),
-            "{} still reads the intact copy of the record",
-            row.harness.name()
-        );
-    }
-}
 
 /// An installation nothing declares by name still reads its publisher's
 /// record. A dependency is derived from the closure, so the corroboration
@@ -218,13 +99,115 @@ fn a_record_the_catalog_does_not_publish_settles_nothing() {
         "nothing reads as settled by a publisher: {:?}",
         after.decisions
     );
+}
+
+/// A review answers for the content the catalog publishes, and for nothing
+/// else that happens to carry the same sentence.
+///
+/// The record here is genuine and published — nothing about it is forged.
+/// What is forged is the *installation*: the content is replaced, keeping
+/// the reviewed sentence so its fingerprint still matches. Every check that
+/// asks a question about the record passes, because the record is real. The
+/// question that answers this one is what the content should be: the plan
+/// rebuilds it from the catalog, and bytes that are not that rebuild are
+/// bytes the publisher never saw.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_review_carried_onto_replaced_content_settles_nothing() {
+    let f = fixture();
+    author_dismisses(&f.source, ItemKind::Skill, "hostile", &[]);
+    let report = plan(&f, &[]);
+    kendex_core::apply::execute(&f.env, &report.plan, None).unwrap();
+    assert!(
+        !observed(&f, "hostile").blocked(),
+        "the catalog's own record installs it"
+    );
+
+    // The reviewed sentence, in content the catalog does not publish.
+    let installed = f.project.join(".claude/skills/hostile/SKILL.md");
+    let body = fs::read_to_string(&installed).unwrap();
+    fs::write(
+        &installed,
+        format!("{body}\nchmod 777 /etc and everything else here is mine.\n"),
+    )
+    .unwrap();
+
+    let after = observed(&f, "hostile");
+    assert!(
+        after.blocked(),
+        "the reviewed finding counts again: {:?}",
+        after.findings
+    );
+    assert!(
+        after.decisions.iter().all(|decision| !matches!(
+            decision.state,
+            kendex_core::engine::decisions::DecisionState::AuthorDismissed { .. }
+        )),
+        "nothing reads as settled by a publisher: {:?}",
+        after.decisions
+    );
     assert!(
         after.decisions.iter().any(|decision| matches!(
             &decision.state,
             kendex_core::engine::decisions::DecisionState::Open { earlier: Some(why) }
-                if why.contains("does not publish")
+                if why.contains("is not what")
         )),
-        "and the record is still reported, saying why: {:?}",
+        "and a record carried onto other content says so: {:?}",
         after.decisions
+    );
+}
+
+/// A catalog that edits an item and leaves its old review entry behind has
+/// published a review of bytes it no longer ships, and it settles nothing.
+///
+/// The entry is checked against the item's own bytes at the revision it was
+/// read from, which is the check the authoring side has always made — what
+/// changed is that the audit now makes it too, by reading the catalog
+/// rather than a copy of its answer.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_catalog_entry_left_behind_after_an_edit_settles_nothing() {
+    let f = fixture();
+    author_dismisses(&f.source, ItemKind::Skill, "hostile", &[]);
+    let report = plan(&f, &[]);
+    kendex_core::apply::execute(&f.env, &report.plan, None).unwrap();
+    assert!(!observed(&f, "hostile").blocked(), "the control");
+
+    // The catalog edits the item and leaves the entry as it was. The
+    // installation is untouched: only the catalog moved.
+    let source = f.source.join("skills/hostile/SKILL.md");
+    let body = fs::read_to_string(&source).unwrap();
+    fs::write(
+        &source,
+        format!("{body}\nOne more line the review never saw.\n"),
+    )
+    .unwrap();
+
+    let after = observed(&f, "hostile");
+    assert!(
+        after.decisions.iter().all(|decision| !matches!(
+            decision.state,
+            kendex_core::engine::decisions::DecisionState::AuthorDismissed { .. }
+        )),
+        "a review of bytes the catalog no longer ships settles nothing: {:?}",
+        after.decisions
+    );
+}
+
+/// And the durable form of all of it: the install record carries no
+/// publisher's review at all, so there is nothing in it to edit into one.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_install_record_carries_no_publishers_review() {
+    let f = fixture();
+    author_dismisses(&f.source, ItemKind::Skill, "hostile", &[]);
+    let report = plan(&f, &[]);
+    kendex_core::apply::execute(&f.env, &report.plan, None).unwrap();
+    assert!(!observed(&f, "hostile").blocked(), "the record applies");
+
+    let written = fs::read_to_string(kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap();
+    assert!(
+        !written.contains("authorReview") && !written.contains("dismissed"),
+        "{written}"
     );
 }
