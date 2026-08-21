@@ -91,6 +91,13 @@ pub enum CoreError {
     // is the scope's whole plan — so a name that reaches nothing, or an
     // item with a place the take-over cannot settle, stops the run rather
     // than applying everything else for a question already gone.
+    // Adoption takes what kendex did not write; a position it did write is
+    // already looked after. Keeping it would move an installation into the
+    // local source and rewrite the declaration around it, so a
+    // catalog-tracked item would quietly become a fork of itself.
+    #[error("kendex already looks after {name} at {path} — nothing was changed")]
+    AlreadyManaged { name: String, path: String },
+
     #[error("{name} has no files waiting on that choice any more — nothing was changed")]
     TakeOverMatchesNothing { name: String },
 

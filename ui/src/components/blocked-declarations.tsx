@@ -1,36 +1,21 @@
 import { useState } from "react";
 import type { DriftRow, HarnessId, ItemKind } from "@/bindings";
-import { ConfirmDialog } from "@/components/confirm-dialog";
+import {
+  BlockedDeclarationConfirm,
+  type Pending,
+} from "@/components/blocked-declaration-confirm";
 import { KindHarnessChips } from "@/components/kind-harness-chips";
 import { Button } from "@/components/ui/button";
 import {
   IN_THE_WAY_BODY,
-  KEEP_FILES_CONFIRM_LABEL,
   KEEP_FILES_CONSEQUENCE,
   KEEP_FILES_LABEL,
-  keepFilesConfirmBody,
-  keepFilesConfirmTitle,
-  keepSharedConfirmBody,
   MOVE_FILES_YOURSELF,
-  REPLACE_FILES_CONFIRM_LABEL,
   REPLACE_FILES_CONSEQUENCE,
   REPLACE_FILES_LABEL,
-  replaceFilesConfirmBody,
-  replaceFilesConfirmTitle,
 } from "@/lib/copy-in-the-way";
 import { type MergedDriftRow, summarizePaths } from "@/lib/drift-merge";
 import { canKeep, canReplace } from "@/lib/drift-zones";
-import { harnessName } from "@/lib/labels";
-
-/** Which exit a row is waiting on a confirmation for. */
-type Pending = { group: MergedDriftRow; exit: "keep" | "replace" };
-
-/** A row where every tool reads one folder through a link somebody else
- *  set up. Keeping it is a bigger move than keeping a plain folder — the
- *  folder itself goes to the trash and links kendex cannot see will break
- *  — so it gets the confirmation that names the folder and every tool. */
-const isShared = (group: MergedDriftRow) =>
-  group.installations.some((row) => row.cause === "shared-link");
 
 /**
  * Items kendex.toml asks for whose files were already on disk. Both ways
@@ -53,6 +38,7 @@ const isShared = (group: MergedDriftRow) =>
 export function BlockedDeclarations({
   rows,
   adoptable,
+  keepable,
   alsoApplies,
   busy,
   onKeep,
@@ -61,6 +47,12 @@ export function BlockedDeclarations({
   rows: MergedDriftRow[];
   /** The kinds "keep these files" works for, from core's own list. */
   adoptable: ItemKind[];
+  /** The individual installations it works for, as `kind:name:harness`.
+   *  Adoption works at a tool's own place, so a tool with nothing there —
+   *  one reading a folder through a shortcut somebody made — cannot be the
+   *  one that keeps it, and a button drawn from the cause alone would fail
+   *  on the click. */
+  keepable: string[];
   /** Whether this project has other changes waiting, which the same apply
    *  carries — every apply is the whole scope's. */
   alsoApplies: boolean;
@@ -73,12 +65,22 @@ export function BlockedDeclarations({
   onReplace: (kind: DriftRow["kind"], name: string) => Promise<unknown>;
 }) {
   const [pending, setPending] = useState<Pending | null>(null);
+  const canBeKept = new Set(keepable);
+  const rowKey = (row: DriftRow) => `${row.kind}:${row.name}:${row.harness}`;
   if (rows.length === 0) return null;
 
   const where = (group: MergedDriftRow) =>
     summarizePaths(group.installations.map((row) => row.detail));
+  // Only the tools keeping can be entered through. Adoption works at a
+  // tool's own place, so one reading the item through a shortcut somebody
+  // made has nothing there to take — its share is kept by the tool that
+  // does hold the folder, and naming it would fail on the spot.
   const toolsOf = (group: MergedDriftRow) => [
-    ...new Set(group.installations.map((row) => row.harness)),
+    ...new Set(
+      group.installations
+        .filter((row) => canBeKept.has(rowKey(row)))
+        .map((row) => row.harness),
+    ),
   ];
 
   // One row is one item however many tools it targets, and its tools are
@@ -92,20 +94,6 @@ export function BlockedDeclarations({
     setPending(null);
   };
 
-  // One action keeps its own words whichever shape it takes: only what
-  // happens to the files differs, and the shared folder says the more of it.
-  const keepConfirm = (group: MergedDriftRow) => ({
-    title: keepFilesConfirmTitle(group.name),
-    label: KEEP_FILES_CONFIRM_LABEL,
-    body: isShared(group)
-      ? keepSharedConfirmBody(
-          where(group)?.text ?? "",
-          toolsOf(group).map(harnessName),
-          alsoApplies,
-        )
-      : keepFilesConfirmBody(alsoApplies),
-  });
-
   return (
     <div className="overflow-hidden rounded-lg border">
       <p className="border-b bg-muted/40 px-3 py-2 text-[13px] text-foreground/75">
@@ -114,12 +102,16 @@ export function BlockedDeclarations({
       <div className="divide-y divide-border/60">
         {rows.map((group) => {
           const paths = where(group);
-          // Every installation has to allow an exit for the row to offer
-          // it: one tool's position in a shape kendex cannot keep makes
-          // the whole click fail.
-          const keepable =
+          // Every place has to hold a shape adoption can take, or the
+          // offer would settle the rest and leave that one blocked with
+          // the item no longer its tool's. At least one has to be a place
+          // adoption can be entered through, which is a different question
+          // — a folder several tools share is kept through whichever of
+          // them actually holds it.
+          const keepableHere =
             adoptable.includes(group.kind) &&
-            group.installations.every((row) => canKeep(row.cause));
+            group.installations.every((row) => canKeep(row.cause)) &&
+            group.installations.some((row) => canBeKept.has(rowKey(row)));
           const replaceable = group.installations.every((row) =>
             canReplace(row.cause),
           );
@@ -152,7 +144,7 @@ export function BlockedDeclarations({
                   them: a column that moves from row to row is what makes a
                   list of these hard to read. */}
               <div className="grid shrink-0 grid-cols-[15rem_15rem] gap-4">
-                {keepable ? (
+                {keepableHere ? (
                   <Exit
                     consequence={KEEP_FILES_CONSEQUENCE}
                     control={
@@ -194,39 +186,14 @@ export function BlockedDeclarations({
           );
         })}
       </div>
-      <ConfirmDialog
-        open={pending != null}
-        onOpenChange={(open) => {
-          if (!open) setPending(null);
-        }}
-        title={
-          pending?.exit === "keep"
-            ? keepConfirm(pending.group).title
-            : replaceFilesConfirmTitle(pending?.group.name ?? "")
-        }
-        description={
-          pending?.exit === "keep"
-            ? keepConfirm(pending.group).body
-            : replaceFilesConfirmBody(
-                (pending && where(pending.group)?.text) ?? "",
-                (pending && where(pending.group)?.count) ?? 0,
-                alsoApplies,
-              )
-        }
-        confirmLabel={
-          pending?.exit === "keep"
-            ? keepConfirm(pending.group).label
-            : REPLACE_FILES_CONFIRM_LABEL
-        }
-        destructive={
-          // A shared folder goes to the trash whole and shortcuts kendex
-          // cannot see break with it, which the body says — so keeping it
-          // is weighted like the replacement, and like the Library weighs
-          // the same move.
-          pending?.exit === "replace" || (!!pending && isShared(pending.group))
-        }
+      <BlockedDeclarationConfirm
+        pending={pending}
+        where={where}
+        toolsOf={toolsOf}
+        alsoApplies={alsoApplies}
         busy={busy}
         onConfirm={confirm}
+        onDismiss={() => setPending(null)}
       />
     </div>
   );

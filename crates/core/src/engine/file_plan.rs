@@ -172,9 +172,15 @@ fn plan_absent_file(
 /// The files kendex did not write leave for the trash before the render
 /// takes their place — recoverable, and bound to the exact bytes the plan
 /// read (invariants 6 and 7).
+/// The path is shown, not printed: these bytes were written by something
+/// that is not kendex, and a folder name carrying an escape sequence must
+/// reach a terminal as its own characters.
 pub(super) fn set_aside(path: &std::path::Path, pre: Pre) -> PlannedOp {
     PlannedOp {
-        description: format!("Move the files already at {} to the trash", path.display()),
+        description: format!(
+            "Move the files already at {} to the trash",
+            crate::names::shown(&path.display().to_string())
+        ),
         op: Op::Trash {
             path: path.to_path_buf(),
             pre,

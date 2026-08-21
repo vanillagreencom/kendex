@@ -67,6 +67,7 @@ describe("updates store: bulk update", () => {
       warnings: [],
       safety: [],
       adoptable: ADOPTABLE,
+      keepable: [],
       heldBack: [],
       queued: [],
     };
@@ -130,6 +131,7 @@ describe("updates store: bulk update", () => {
         warnings: [],
         safety: [],
         adoptable: ADOPTABLE,
+        keepable: [],
         heldBack: [],
         queued: [],
       },
@@ -191,6 +193,7 @@ describe("updates store: bulk update", () => {
         warnings: [],
         safety: [],
         adoptable: ADOPTABLE,
+        keepable: [],
         heldBack: [],
         queued: [],
       },

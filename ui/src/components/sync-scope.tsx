@@ -142,6 +142,7 @@ export function SyncScopeCard({
                 <BlockedDeclarations
                   rows={inTheWay}
                   adoptable={view.adoptable}
+                  keepable={view.keepable}
                   alsoApplies={view.plan.length > 0}
                   busy={busy}
                   onKeep={onKeepFiles}

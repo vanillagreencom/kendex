@@ -44,6 +44,7 @@ function view(
     warnings: [],
     safety,
     adoptable: ADOPTABLE,
+    keepable: [],
     heldBack: [],
     queued: [],
   };

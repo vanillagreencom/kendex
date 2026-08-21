@@ -31,6 +31,7 @@ export function view(scope: Scope): AuditView {
     warnings: [],
     safety: [],
     adoptable: ADOPTABLE,
+    keepable: [],
     heldBack: [],
     queued: [],
   };

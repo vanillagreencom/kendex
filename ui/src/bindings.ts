@@ -430,6 +430,14 @@ export type AuditView_Deserialize = {
 	 */
 	adoptable: ItemKind[],
 	/**
+	 *  The blocked installations "keep these files" can be offered for,
+	 *  each as `kind:name:harness`. Adoption works at a tool's own place,
+	 *  so a row whose tool has nothing there — a folder its neighbours
+	 *  reach through a shortcut somebody made — would fail the moment the
+	 *  button was clicked. Answered by core per row, like the kinds above.
+	 */
+	keepable: string[],
+	/**
 	 *  Installations the plan would write but the safety gate holds back.
 	 *  Kept apart from `safety` (which scores what is on disk) because the
 	 *  two describe different bytes: an accept has to name the hash of what
@@ -476,6 +484,14 @@ export type AuditView_Serialize = {
 	 *  that would error, and never keeps its own copy of the list.
 	 */
 	adoptable: ItemKind[],
+	/**
+	 *  The blocked installations "keep these files" can be offered for,
+	 *  each as `kind:name:harness`. Adoption works at a tool's own place,
+	 *  so a row whose tool has nothing there — a folder its neighbours
+	 *  reach through a shortcut somebody made — would fail the moment the
+	 *  button was clicked. Answered by core per row, like the kinds above.
+	 */
+	keepable: string[],
 	/**
 	 *  Installations the plan would write but the safety gate holds back.
 	 *  Kept apart from `safety` (which scores what is on disk) because the

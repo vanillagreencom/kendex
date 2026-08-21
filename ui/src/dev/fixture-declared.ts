@@ -4,6 +4,8 @@ import type {
   Manifest_Serialize,
   SourceRow,
 } from "@/bindings";
+
+import { IN_THE_WAY_KEEPABLE, inTheWayDrift } from "@/dev/fixture-in-the-way";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { personalDrift, personalSafety } from "./fixture-safety";
 import { acmeHeldBack, acmeQueued, acmeSafety } from "./fixture-safety-acme";
@@ -20,6 +22,7 @@ export function views(): AuditView[] {
       warnings: [],
       safety: personalSafety(),
       adoptable: ADOPTABLE,
+      keepable: [],
       heldBack: [],
       queued: [],
     },
@@ -58,69 +61,7 @@ export function views(): AuditView[] {
           state: "orphaned",
           detail: "left over from an earlier setup; nothing needs it anymore",
         },
-        // A repo being moved onto kendex: declared here, and the tool that
-        // came before already left files where it goes. One item, two
-        // tools, one decision — which is what the row folds to.
-        {
-          kind: "skill",
-          name: "release-notes",
-          harness: "claude",
-          scope: acme,
-          state: "conflict",
-          cause: "unmanaged-content",
-          detail: `${ACME}/.claude/skills/release-notes`,
-        },
-        {
-          kind: "skill",
-          name: "release-notes",
-          harness: "codex",
-          scope: acme,
-          state: "conflict",
-          cause: "unmanaged-content",
-          detail: `${ACME}/.agents/skills/release-notes`,
-        },
-        // A kind adoption cannot take: one button, and the other way out
-        // said in words instead of offered as an action that would fail.
-        {
-          kind: "hook",
-          name: "pre-commit",
-          harness: "claude",
-          scope: acme,
-          state: "conflict",
-          cause: "unmanaged-content",
-          detail: `${ACME}/.claude/hooks/pre-commit.sh`,
-        },
-        // A folder sitting where one file goes: replaceable, and the same
-        // words for the other way out.
-        {
-          kind: "agent",
-          name: "scout",
-          harness: "claude",
-          scope: acme,
-          state: "conflict",
-          cause: "unmanaged-wrong-shape",
-          detail: `${ACME}/.claude/agents/scout.md`,
-        },
-        // One folder both tools read through shortcuts somebody set up:
-        // keeping it is the only answer, and the row names the folder.
-        {
-          kind: "skill",
-          name: "browser",
-          harness: "claude",
-          scope: acme,
-          state: "conflict",
-          cause: "shared-link",
-          detail: `${ACME}/shared/browser`,
-        },
-        {
-          kind: "skill",
-          name: "browser",
-          harness: "codex",
-          scope: acme,
-          state: "conflict",
-          cause: "shared-link",
-          detail: `${ACME}/shared/browser`,
-        },
+        ...inTheWayDrift(acme),
       ],
       plan: [
         "Update skill github for Claude Code",
@@ -131,6 +72,10 @@ export function views(): AuditView[] {
       warnings: [],
       safety: acmeSafety(),
       adoptable: ADOPTABLE,
+      // Every place adoption can be entered through. The shared folder sits
+      // at Claude Code's own place and Codex reads it through a shortcut,
+      // so only one of that pair is here — and one Keep covers both.
+      keepable: IN_THE_WAY_KEEPABLE,
       heldBack: acmeHeldBack(),
       queued: acmeQueued(),
     },
@@ -142,6 +87,7 @@ export function views(): AuditView[] {
       warnings: [],
       safety: [],
       adoptable: ADOPTABLE,
+      keepable: [],
       heldBack: [],
       queued: [],
       // Demoes the "scope couldn't be read" path: the review card and

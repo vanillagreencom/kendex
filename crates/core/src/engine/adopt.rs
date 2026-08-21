@@ -65,6 +65,25 @@ pub fn adopt(
             source_name: "no tool was named to keep it for".to_owned(),
         });
     };
+    // Adoption takes what kendex did not write. A position it did write is
+    // already looked after, and capturing it would move an installation
+    // into the local source and rewrite the declaration around it — a
+    // catalog-tracked item quietly becoming a fork of itself. The page a
+    // keep was clicked on can be a minute old, and something else can have
+    // installed the item in between.
+    let owned: std::collections::BTreeSet<PathBuf> =
+        crate::lock::load(&crate::lock::lock_path(env, scope))
+            .unwrap_or_default()
+            .entries
+            .values()
+            .flat_map(|entry| super::owned::installed(env, scope, entry).files)
+            .collect();
+    if let Some((_, held)) = positions.iter().find(|(_, path)| owned.contains(path)) {
+        return Err(CoreError::AlreadyManaged {
+            name: name.to_owned(),
+            path: crate::names::shown(&held.display().to_string()),
+        });
+    }
 
     let Seen {
         shared,

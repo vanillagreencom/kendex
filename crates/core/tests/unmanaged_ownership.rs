@@ -265,3 +265,87 @@ fn a_switched_off_install_is_still_ours_to_update() {
 fn deploy_row_named<'a>(rows: &'a [DriftRow], name: &str) -> &'a DriftRow {
     rows.iter().find(|row| row.name == name).unwrap()
 }
+
+/// Adoption takes what kendex did not write. A position it did write is
+/// already looked after, and capturing it would move an installation into
+/// the local source and rewrite the declaration around it — a
+/// catalog-tracked item quietly becoming a fork of itself. The page a keep
+/// was clicked on can be a minute old, and something else can install the
+/// item in between.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn what_kendex_already_looks_after_is_never_adopted() {
+    let w = with_method("copy");
+    let report = plan_apply(&w.env, &w.scope, &PlanOptions::default()).unwrap();
+    apply::execute(&w.env, &report.plan, None).unwrap();
+    let installed = w.home.join("app/.claude/skills/deploy/SKILL.md");
+    assert!(installed.is_file(), "the fixture never installed anything");
+
+    let refused = kendex_core::engine::adopt::adopt(
+        &w.env,
+        &w.scope,
+        kendex_core::model::ItemKind::Skill,
+        "deploy",
+        &[kendex_core::model::HarnessId::Claude],
+    );
+
+    assert!(refused.is_err(), "an installation was captured as a fork");
+    assert!(
+        fs::read_to_string(w.home.join("app/kendex.toml"))
+            .unwrap()
+            .contains("source = \"cat\""),
+        "the declaration was rewritten around the captured copy"
+    );
+    assert!(installed.is_file(), "and the installation is left alone");
+}
+
+/// A folder name can carry terminal escapes. The refusal shows the path;
+/// so must the operation that moves it, which is what a reader sees on
+/// `apply --plan` once the take-over is on.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_take_over_shows_the_path_it_moves() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().canonicalize().unwrap();
+    let catalog = home.join("catalog/skills/deploy");
+    fs::create_dir_all(&catalog).unwrap();
+    fs::write(
+        catalog.join("SKILL.md"),
+        "---\nname: deploy\ndescription: ship it\n---\nUpstream.\n",
+    )
+    .unwrap();
+    // The project sits under a folder somebody named with an escape.
+    let project = home.join("red\u{1b}[31m/app");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        format!(
+            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+            home.join("catalog").display()
+        ),
+    )
+    .unwrap();
+    let here = project.join(".claude/skills/deploy");
+    fs::create_dir_all(&here).unwrap();
+    fs::write(here.join("SKILL.md"), "the tool that came before").unwrap();
+
+    let env = Env::fake(&home, FakeOs::Linux);
+    let scope = Scope::Project { root: project };
+    let taking_over = PlanOptions {
+        replace_unmanaged: true,
+        ..PlanOptions::default()
+    };
+    let report = plan_apply(&env, &scope, &taking_over).unwrap();
+    let moves: Vec<&str> = report
+        .plan
+        .ops
+        .iter()
+        .map(|op| op.description.as_str())
+        .filter(|line| line.starts_with("Move the files already at"))
+        .collect();
+    assert!(!moves.is_empty(), "nothing was moved out of the way");
+    assert!(
+        moves.iter().all(|line| !line.contains('\u{1b}')),
+        "an escape reached the terminal as itself: {moves:?}"
+    );
+}
