@@ -549,9 +549,11 @@ lives in one capability table read by core and UI.
   config never asked for.
 - **A registration is reconciled, not added to.** What a hook registered
   is recorded (`engine::item_record`), so a catalog moving it to another
-  event is a move: retire what the record names, install what is rendered,
-  record that — in that order, or it fires twice and the next pass cannot
-  tell which entry is kendex's. Removal reads the same record.
+  event is a move: retire what the record names, apply what is rendered,
+  record that — in that order, whichever way round the pass names its
+  entry, since switching a hook off renders the removal of an entry that
+  may not be the one there. Otherwise it fires twice, or keeps firing with
+  nothing naming it. Removal reads the same record.
 - **Pi hooks are enforced through the carrier.** Pi has no per-hook
   artifact: the `pi-hooks` extension package hosts native listeners, and
   hook content rides in the registry kendex renders beside them

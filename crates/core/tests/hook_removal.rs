@@ -116,3 +116,68 @@ fn a_moved_registration_comes_out_with_the_script_it_names() {
         );
     }
 }
+
+/// Switching a hook off is a removal of the entry that is there — which
+/// is not always the entry this pass would write. Change the event in the
+/// same refresh that switches it off and the two part company: the
+/// rendered removal names where the entry would go now, and what is
+/// actually registered keeps running with nothing left naming it, since
+/// the record is overwritten in the same breath.
+///
+/// Neither half shows this on its own, which is why it was invisible: a
+/// disable alone and an event change alone both reconcile.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn switching_off_a_hook_whose_event_changed_leaves_nothing_registered() {
+    let f = fixture();
+    apply_now(&f);
+    let settings = f.project.join(".claude/settings.json");
+    assert!(
+        fs::read_to_string(&settings)
+            .unwrap()
+            .contains("PreToolUse"),
+        "it went in under the event the catalog then asked for"
+    );
+
+    // One refresh carrying both: the catalog moves the hook, and the
+    // person switches it off.
+    let source = f
+        .project
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("catalog");
+    fs::write(
+        source.join("hooks/guard.sh"),
+        GUARD.replace("# event: PreToolUse", "# event: Stop"),
+    )
+    .unwrap();
+    let manifest = f.project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        text.replace(
+            "[hooks.guard]\nsource = \"cat\"\n",
+            "[hooks.guard]\nsource = \"cat\"\nenabled = false\n",
+        ),
+    )
+    .unwrap();
+
+    apply_now(&f);
+
+    let after = fs::read_to_string(&settings).unwrap();
+    assert!(
+        !after.contains("guard.sh"),
+        "a hook switched off runs from nowhere: {after}"
+    );
+    assert!(
+        f.project.join(".claude/hooks/guard.sh.disabled").is_file(),
+        "its bytes are kept under the disabled name"
+    );
+
+    // And what is done is done.
+    let settled = audit(&f.env, &f.scope).unwrap();
+    assert!(settled.plan.ops.is_empty(), "{:?}", settled.plan.ops);
+    assert!(settled.drift.is_empty(), "{:?}", settled.drift);
+}

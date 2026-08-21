@@ -105,6 +105,11 @@ fn a_hook_switched_off_is_deregistered_from_the_old_registry() {
     );
     assert!(!w.dot().join("hooks.json").exists());
     assert!(w.dot().join("kendex/hooks/guard.sh.disabled").is_file());
+    // Switched off and moved in one pass is still a move with nothing
+    // left to do.
+    let settled = audit(&w.env, &w.scope()).unwrap();
+    assert!(settled.plan.ops.is_empty(), "{:?}", settled.plan.ops);
+    assert!(settled.notes.is_empty(), "{:?}", settled.notes);
 }
 
 /// The hold is repair, not abandonment: the move completes the moment the

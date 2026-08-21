@@ -15,17 +15,20 @@ use crate::lock::LockEntry;
 use super::desired::{Artifact, Desired};
 
 /// The entry this installation registered last time, when that is not the
-/// entry it registers now — the removal a move needs before its install.
+/// entry it names now — the removal a change of identity needs before
+/// whatever this pass renders.
 ///
 /// A catalog is free to move a hook to another event or narrow its
 /// matcher, and what comes of that has to be one entry in its new place,
-/// not two. Recording the new identity without taking the old one out
-/// leaves the hook firing under both, and leaves the next pass looking at
-/// a command carried twice, which it cannot tell its own copy of.
+/// not two. It is the same when the hook is switched off in the same
+/// breath: the pass renders the removal of the entry it would write
+/// today, which is not the entry that is actually there, and recording
+/// the new identity over the old one leaves what is there with nothing
+/// naming it — running, and unfindable by every pass after.
 ///
-/// Nothing is retired where the record names what this pass renders
-/// anyway, so a settled installation plans nothing. The edit goes to the
-/// file this pass registers in; one written into a file kendex no longer
+/// Nothing is retired where the record names what this pass names anyway,
+/// so a settled installation plans nothing. The edit goes to the file
+/// this pass registers in; one written into a file kendex no longer
 /// registers in — the old layout of a pi hook, say — is nothing this edit
 /// would find, and belongs to whatever is retiring that file.
 pub(super) fn retire_previous(
@@ -33,59 +36,105 @@ pub(super) fn retire_previous(
     existing: Option<&LockEntry>,
 ) -> Option<(PathBuf, ConfigEdit)> {
     let recorded = existing?.registration.as_ref()?;
-    let (path, edit) = registration_edit(item)?;
-    let (event, matcher, command) = match edit {
-        ConfigEdit::UpsertHook {
-            event,
-            matcher,
-            command,
-            ..
-        }
-        | ConfigEdit::UpsertCopilotHook {
-            event,
-            matcher,
-            command,
-            ..
-        } => (event, matcher, command),
-        _ => return None,
+    let named = named(item)?;
+    // A matcher neither side knows is not a difference. What renders a
+    // removal names no matcher, and a record kept before matchers were
+    // kept holds none either.
+    let matcher = match (&recorded.matcher, named.matcher) {
+        (Some(kept), Some(named)) => kept == named,
+        _ => true,
     };
-    let matcher = matcher
-        .as_deref()
-        .filter(|matcher| !matcher.is_empty())
-        .unwrap_or(crate::scan::hooks::ANY_MATCHER);
-    let same = &recorded.event == event
-        && &recorded.command == command
-        && recorded
-            .matcher
-            .as_deref()
-            .is_none_or(|kept| kept == matcher);
-    if same {
+    if recorded.event == named.event && recorded.command == named.command && matcher {
         return None;
     }
-    let removal = match edit {
-        ConfigEdit::UpsertCopilotHook { .. } => ConfigEdit::RemoveCopilotHook {
-            event: Some(recorded.event.clone()),
-            command: recorded.command.clone(),
-        },
-        _ => ConfigEdit::RemoveHook {
-            event: Some(recorded.event.clone()),
-            command: recorded.command.clone(),
-        },
+    let event = Some(recorded.event.clone());
+    let command = recorded.command.clone();
+    let removal = match named.copilot {
+        true => ConfigEdit::RemoveCopilotHook { event, command },
+        false => ConfigEdit::RemoveHook { event, command },
     };
-    Some((path.clone(), removal))
+    Some((named.path.clone(), removal))
 }
 
-/// The one edit that registers this item, when it has one.
-fn registration_edit(item: &Desired) -> Option<(&PathBuf, &ConfigEdit)> {
+/// The identity one edit names, and where it names it.
+struct Named<'a> {
+    path: &'a PathBuf,
+    copilot: bool,
+    event: &'a str,
+    /// `None` where the edit names no matcher at all — a removal names an
+    /// event and a command and no more. Unknown, never "every operation".
+    matcher: Option<&'a str>,
+    command: &'a str,
+}
+
+/// A matcher as a registry spells it: what the edit names, or the "every
+/// operation" spelling where it names none.
+fn spelled(matcher: &Option<String>) -> Option<&str> {
+    matcher
+        .as_deref()
+        .filter(|matcher| !matcher.is_empty())
+        .or(Some(crate::scan::hooks::ANY_MATCHER))
+}
+
+/// The identity this pass names for one item's registration, whichever
+/// way round it names it.
+///
+/// Four edit shapes carry one: an upsert says where the entry is going, a
+/// removal says where it is being taken from, in each of the two registry
+/// formats. Everything else a registration artifact carries names no
+/// entry — a codex feature flag, an opencode instruction reference, an
+/// mcp server, a plugin toggle — so there is nothing about them for a
+/// record to have named differently.
+fn named(item: &Desired) -> Option<Named<'_>> {
     let Artifact::Registration { edits, .. } = &item.artifact else {
         return None;
     };
-    edits.iter().find_map(|(path, edit)| {
-        matches!(
-            edit,
-            ConfigEdit::UpsertHook { .. } | ConfigEdit::UpsertCopilotHook { .. }
-        )
-        .then_some((path, edit))
+    edits.iter().find_map(|(path, edit)| match edit {
+        ConfigEdit::UpsertHook {
+            event,
+            matcher: named,
+            command,
+            ..
+        } => Some(Named {
+            path,
+            copilot: false,
+            event,
+            matcher: spelled(named),
+            command,
+        }),
+        ConfigEdit::UpsertCopilotHook {
+            event,
+            matcher: named,
+            command,
+            ..
+        } => Some(Named {
+            path,
+            copilot: true,
+            event,
+            matcher: spelled(named),
+            command,
+        }),
+        ConfigEdit::RemoveHook {
+            event: Some(event),
+            command,
+        } => Some(Named {
+            path,
+            copilot: false,
+            event,
+            matcher: None,
+            command,
+        }),
+        ConfigEdit::RemoveCopilotHook {
+            event: Some(event),
+            command,
+        } => Some(Named {
+            path,
+            copilot: true,
+            event,
+            matcher: None,
+            command,
+        }),
+        _ => None,
     })
 }
 
