@@ -166,13 +166,7 @@ fn capture_ops(
             // the declaration's `enabled` keeps the fork off when it
             // renders — a tree copied verbatim would be a skill source
             // discovery cannot see.
-            files: super::adopt::read_tree(edited)?
-                .into_iter()
-                .map(|(rel, bytes)| match rel.to_str() {
-                    Some("SKILL.md.disabled") => (PathBuf::from("SKILL.md"), bytes),
-                    _ => (rel, bytes),
-                })
-                .collect(),
+            files: source_form(super::adopt::read_tree(edited)?),
             pre: Pre::Absent,
         },
         _ => Op::WriteFile {
@@ -373,6 +367,23 @@ fn forkable_agent_harness(harness: HarnessId) -> bool {
         harness,
         HarnessId::Claude | HarnessId::Gemini | HarnessId::Pi
     )
+}
+
+/// A captured skill tree in source form: a disabled rendering's
+/// `SKILL.md.disabled` becomes `SKILL.md` — unless the tree already has
+/// one, in which case both files pass through untouched rather than one
+/// silently overwriting the other on the way into the local source.
+fn source_form(files: Vec<(PathBuf, Vec<u8>)>) -> Vec<(PathBuf, Vec<u8>)> {
+    let has_enabled = files
+        .iter()
+        .any(|(rel, _)| rel.to_str() == Some("SKILL.md"));
+    files
+        .into_iter()
+        .map(|(rel, bytes)| match rel.to_str() {
+            Some("SKILL.md.disabled") if !has_enabled => (PathBuf::from("SKILL.md"), bytes),
+            _ => (rel, bytes),
+        })
+        .collect()
 }
 
 /// A disabled installation keeps its bytes under the `.disabled` name.

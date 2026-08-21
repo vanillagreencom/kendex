@@ -151,3 +151,36 @@ fn a_disabled_skills_edit_forks_in_source_form() {
         "the fork renders disabled, with the edit"
     );
 }
+
+/// A tree carrying both `SKILL.md` and a stray `SKILL.md.disabled` forks
+/// with both files intact: the rename is for a disabled rendering, never
+/// a way for one file to overwrite the other.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_fork_keeps_both_skill_files_when_both_exist() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "Upstream.");
+    commit(&w.upstream, "one");
+    declare(&w, "[skills.gh]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    let tree = w.home.join("app/.agents/skills/gh");
+    fs::write(
+        tree.join("SKILL.md"),
+        "---\nname: gh\ndescription: mine\n---\nMy edit.\n",
+    )
+    .unwrap();
+    fs::write(tree.join("SKILL.md.disabled"), "stray disabled copy").unwrap();
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    let local = w.home.join("app/.kendex-local/skills/gh");
+    assert!(
+        fs::read_to_string(local.join("SKILL.md"))
+            .unwrap()
+            .contains("My edit.")
+    );
+    assert_eq!(
+        fs::read_to_string(local.join("SKILL.md.disabled")).unwrap(),
+        "stray disabled copy"
+    );
+}
