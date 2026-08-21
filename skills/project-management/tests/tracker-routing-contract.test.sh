@@ -92,7 +92,8 @@ require_fixed "$audit_issues" 'Once every create has landed and its relations an
 require_fixed "$audit_issues" 'Process creates in dependency order' 'creates are dependency-ordered and linked immediately'
 dev_implement="$SKILL_DIR/../dev/workflows/dev-implement.md"
 if [[ -f "$dev_implement" ]]; then
-  require_fixed "$dev_implement" 'issues create --state "Backlog" --project "[PARENT_PROJECT]" --parent [PARENT_ID]' 'dev-implement child create carries the parent project and Backlog'
+  require_fixed "$dev_implement" 'issues create --state "Backlog" --project "[PARENT_PROJECT]" --parent [PARENT_ID] --labels "[VALIDATED_LABELS]"' 'dev-implement child create carries the parent project, Backlog, and the full label set'
+  require_fixed "$dev_implement" 'validated against the live inventory' 'dev-implement child labels are preflighted'
 fi
 research_issue="$SKILL_DIR/workflows/research-issue.md"
 merge_pr="$SKILL_DIR/../orch/workflows/merge-pr.md"
@@ -116,6 +117,7 @@ if [[ -f "$plan_issues" ]]; then
   require_fixed "$plan_issues" 'search existing issues (all states) for the same problem' 'plan-issues dedupes before a Backlog create'
   grep -Fq -- '--priority [PRIORITY]' "$plan_create_cmd" || fail 'plan-issues create does not pass a priority'
   grep -Fq -- '--estimate [ESTIMATE]' "$plan_create_cmd" || fail 'plan-issues create does not pass an estimate'
+  require_fixed "$plan_issues" 'attach each item'"'"'s blocking relations immediately after its own create' 'plan-issues links each item before the next create'
 fi
 if [[ -f "$merge_pr" ]]; then
   merge_create_cmd="$(extract "$merge_pr" 'issues create' '^```$' merge-create-cmd)" || fail "could not extract the merge-pr rebundle create command"

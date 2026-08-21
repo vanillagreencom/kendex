@@ -136,7 +136,7 @@ Your return states the blocker, the domain and labels for the new issue, and tha
 
 Implement per your domain expertise and run quality gates before completion.
 
-- **Scope growing?** Linear: `linear.sh issues create --state "Backlog" --project "[PARENT_PROJECT]" --parent [PARENT_ID] --labels "agent:[AGENT_TYPE]"` (the parent's project, so the child stays in its bundle; Backlog, as every pipeline create) — carry your own `agent:*` label or the sub-issue loses routing (repos declaring `LINEAR_AGENT_LABELS` refuse an unlabeled create). GitHub and ad-hoc report the discovered scope in § 9 instead; never create issues without orchestrator approval.
+- **Scope growing?** Linear: `linear.sh issues create --state "Backlog" --project "[PARENT_PROJECT]" --parent [PARENT_ID] --labels "[VALIDATED_LABELS]"` (the parent's project, so the child stays in its bundle; Backlog, as every pipeline create; the complete label set — your own `agent:*` label plus every category the project requires, validated against the live inventory — because a Backlog-born child gets no janitor pass) — carry your own `agent:*` label or the sub-issue loses routing (repos declaring `LINEAR_AGENT_LABELS` refuse an unlabeled create). GitHub and ad-hoc report the discovered scope in § 9 instead; never create issues without orchestrator approval.
 - **Work outside scope?** Note it under Discovered Work in § 9.
 - **Need deeper research?** Add the `needs-research` label, pause, report.
 
