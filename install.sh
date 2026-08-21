@@ -104,7 +104,7 @@ install_cli() {
 # limit. Nothing here can fail the install either: every failure is caught
 # and named, and the function always returns 0.
 install_icon() {
-  local dir=$1 source=$2 size file
+  local dir="$1" source="$2" size file
   size=${dir%/apps}
   size=${size##*/}
   file="$work/$size.png"
@@ -114,6 +114,18 @@ install_icon() {
     echo "install.sh: cannot write $dir; skipped the $size icon." >&2
   fi
   return 0
+}
+
+# A path, ready to sit inside the quotes of an Exec key. That key is Desktop
+# Entry syntax, not shell syntax: its value is a list of arguments, so a data
+# directory with a space in its name becomes several of them unless the path
+# is one quoted argument. And a launcher unescapes the file before it reads
+# that quoting, so a backslash has to survive both passes — one is not
+# enough, and GLib refuses the whole key when a `$`, a backtick or a quote
+# carries a single backslash, leaving a menu entry that launches nothing and
+# says nothing.
+desktop_arg() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\\\\\/g' -e 's/[$`"]/\\\\&/g'
 }
 
 # The desktop app on Linux is the AppImage, kept off PATH so the `kendex`
@@ -146,7 +158,7 @@ install_app_linux() {
 Type=Application
 Name=kendex
 Comment=Manage AI coding agents, skills, and hooks
-Exec=$libdir/kendex.AppImage
+Exec="$(desktop_arg "$libdir/kendex.AppImage")"
 Icon=kendex
 StartupWMClass=kendex-app
 Categories=Development;Utility;

@@ -3,6 +3,7 @@
 //! someone opens their launcher, so it is asserted here instead.
 #![cfg(target_os = "linux")]
 
+mod desktop;
 mod icons;
 
 use std::path::{Path, PathBuf};
@@ -149,7 +150,7 @@ fn run_installer_serving(source_root: &Path) -> tempfile::TempDir {
 /// `prepare` runs against the temp home before the installer does, for the
 /// cases that are about what the installer finds already there.
 fn run_installer_over(source_root: &Path, prepare: impl FnOnce(&Path)) -> tempfile::TempDir {
-    let (tmp, output) = installer_output(source_root, CURL, prepare);
+    let (tmp, output) = installer_output(source_root, CURL, DATA_DIR, prepare);
     assert!(
         output.status.success(),
         "install.sh failed: {}",
@@ -162,10 +163,15 @@ fn run_installer_over(source_root: &Path, prepare: impl FnOnce(&Path)) -> tempfi
     tmp
 }
 
+/// Where the installer is told to put the app and its icons. Named here
+/// because one test hands it a directory with a space in its name.
+const DATA_DIR: &str = "share";
+
 /// The installer run against a stubbed network, and whatever it said.
 fn installer_output(
     source_root: &Path,
     curl: &str,
+    data_dir: &str,
     prepare: impl FnOnce(&Path),
 ) -> (tempfile::TempDir, std::process::Output) {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -194,7 +200,7 @@ fn installer_output(
         .arg(repo_root().join("install.sh"))
         .env("PATH", path)
         .env("HOME", tmp.path())
-        .env("XDG_DATA_HOME", tmp.path().join("share"))
+        .env("XDG_DATA_HOME", tmp.path().join(data_dir))
         .output()
         .expect("install.sh runs");
     (tmp, output)
@@ -206,7 +212,7 @@ fn installer_output(
 /// into every download URL.
 #[test]
 fn a_release_lookup_that_answers_with_nothing_stops_the_install() {
-    let (tmp, output) = installer_output(&repo_root(), CURL_WITHOUT_RELEASES, |_| {});
+    let (tmp, output) = installer_output(&repo_root(), CURL_WITHOUT_RELEASES, DATA_DIR, |_| {});
     assert!(!output.status.success(), "the install carried on");
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("could not resolve the latest release"),
