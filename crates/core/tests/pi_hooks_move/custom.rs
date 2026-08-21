@@ -196,3 +196,45 @@ fn a_command_bodied_hook_is_held_by_a_registry_that_cannot_give_it_up() {
         );
     }
 }
+
+/// A registration somebody moved to another event, command and all, is
+/// not the one the record names. Removing by the recorded event would
+/// take nothing while the moved one kept firing, so the identity has to
+/// resolve before anything is retired.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_registration_moved_to_another_event_holds_rather_than_migrating() {
+    let w = world();
+    let scope = Scope::Project {
+        root: w.project.clone(),
+    };
+    fs::write(
+        w.project.join("kendex.toml"),
+        format!("schema = 5\n\n[install]\nharnesses = [\"pi\"]\n\n{DECLARATION}"),
+    )
+    .unwrap();
+    apply(&w.env, &scope);
+    let dot = w.project.join(".pi");
+    regress(&dot);
+    let registry = dot.join("hooks.json");
+    let text = fs::read_to_string(&registry).unwrap();
+    let moved = text.replace("tool_call", "turn_end");
+    assert_ne!(moved, text, "the fixture has to move the event");
+    fs::write(&registry, &moved).unwrap();
+
+    apply(&w.env, &scope);
+
+    assert_eq!(
+        fs::read_to_string(&registry).unwrap(),
+        moved,
+        "what is there now is not kendex's to take"
+    );
+    let new = dot.join("kendex/hooks.json");
+    assert!(
+        !new.exists()
+            || !fs::read_to_string(&new)
+                .unwrap()
+                .contains("./scripts/mine.sh"),
+        "and nothing was registered alongside it, or the command would fire twice"
+    );
+}

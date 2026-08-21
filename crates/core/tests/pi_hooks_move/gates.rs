@@ -138,3 +138,38 @@ fn discarding_edits_finishes_the_move_in_one_pass() {
         assert!(after.drift.is_empty(), "{:?}", after.drift);
     }
 }
+
+/// A clean copy at the new path is not a finished migration while the
+/// old registration is still the one that runs: the edited copy has to
+/// keep running until the person says otherwise, or their edits would
+/// quietly stop being what executes.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_clean_copy_at_the_new_path_is_not_a_finished_move() {
+    let (w, script, _) = half_migrated();
+    fs::write(w.dot().join("kendex/hooks/guard.sh"), script).unwrap();
+    fs::write(
+        w.dot().join("hooks/guard.sh"),
+        "#!/bin/sh\n# mine\nexit 0\n",
+    )
+    .unwrap();
+
+    let said = notes(&w);
+    assert!(
+        said.iter().any(|note| note.contains("was edited on disk")),
+        "{said:?}"
+    );
+    apply(&w);
+
+    assert!(
+        fs::read_to_string(w.dot().join("hooks.json"))
+            .unwrap()
+            .contains(".pi/hooks/guard.sh"),
+        "the edited copy is still what runs"
+    );
+    let new = w.dot().join("kendex/hooks.json");
+    assert!(
+        !new.exists() || !fs::read_to_string(&new).unwrap().contains("guard.sh"),
+        "and nothing took execution from it"
+    );
+}

@@ -39,10 +39,12 @@ use super::removal::TrashGuard;
 use super::targets::disabled_name;
 
 mod disposal;
+mod identity;
 mod preflight;
 mod retire;
 
 use disposal::{legacy_registration, plan_directory, plan_registry};
+use identity::{Registered, registered};
 pub(super) use preflight::{Preflight, preflight};
 use retire::{Retire, retirable};
 

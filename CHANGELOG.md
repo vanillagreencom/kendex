@@ -238,25 +238,25 @@ changes carry a **Breaking** call-out with their migration note inline.
   keypress before the session opens — and the migration it suggests is one
   kendex's Pi hooks cannot take, since they are shell scripts a carrier
   extension runs, not Pi extensions. They now live under
-  `.pi/kendex/hooks/` and `~/.pi/agent/kendex/hooks/`, and the next
-  `kendex refresh` moves an existing install out of the reserved directory
-  and takes the directory away with it — including for a hook you removed
-  or switched off, which leaves nothing behind to keep firing. Nothing
-  moves that kendex cannot account for: a file it did not write, one you
-  edited after it was installed, a hook registration you added by hand,
-  and a hook whose source is unreachable this run all stay exactly where
-  they are, and that last one completes the move as soon as the source is
-  back. A copy kendex cannot prove it wrote keeps its whole installation,
-  not just the file — the old copy stays the one that runs, and nothing
-  replaces it until you discard the edits — and discarding them, or
-  removing the hook by name, finishes the move in that run, leaving one
-  registration and nothing more to say.
-  A registration kendex cannot take out holds the script it names, so a
-  hook is never left half-retired. Hooks that came in with a bundle move
-  like any other. And a cleanup nobody asked for by name now leaves a
-  hook's files alone when they are not the ones kendex wrote — the rule
-  skills, agents and commands already followed. `refresh` now prints those reasons, which it
-  previously worked out and dropped.
+  `.pi/kendex/hooks/` and `~/.pi/agent/kendex/hooks/`, and the next `kendex
+  refresh` moves an existing install out of the reserved directory and
+  takes the directory away with it — including for a hook you removed or
+  switched off, which leaves nothing behind to keep firing. Nothing moves
+  that kendex cannot account for: a file it did not write, one you edited
+  after it was installed, a hook registration you added, moved or
+  duplicated by hand, and a hook whose source is unreachable this run all
+  stay exactly where they are, and that last one completes the move as soon
+  as the source is back. A copy kendex cannot prove it wrote keeps its
+  whole installation, not just the file — the old copy stays the one that
+  runs, and nothing replaces it until you discard the edits — and
+  discarding them, or removing the hook by name, finishes the move in that
+  run, leaving one registration and nothing more to say. A registration
+  kendex cannot take out holds the script it names, so a hook is never left
+  half-retired. Hooks that came in with a bundle move like any other. And a
+  cleanup nobody asked for by name now leaves a hook's files alone when
+  they are not the ones kendex wrote — the rule skills, agents and commands
+  already followed. `refresh` now prints those reasons, which it previously
+  worked out and dropped.
 - On Linux, a helper command that ran past its time limit could take
   unrelated processes down with it: Ubuntu's `kill` misreads the negative
   process-group argument kendex passed, and for some process ids that

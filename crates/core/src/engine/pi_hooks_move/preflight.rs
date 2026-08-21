@@ -55,6 +55,19 @@ pub(crate) fn preflight(
 ) -> Preflight {
     let root = pi::scope_root(env, scope);
     let dir = root.join(LEGACY_DIR);
+    // Nothing under either reserved name means nothing to hold and
+    // nothing to ask about — the same answer everything below reaches,
+    // reached without reading a registry per hook on every later plan.
+    if matches!(look(&dir), Found::Absent)
+        && matches!(look(&root.join(LEGACY_REGISTRY)), Found::Absent)
+    {
+        return Preflight {
+            held: BTreeSet::new(),
+            discard: BTreeSet::new(),
+            migrated: BTreeSet::new(),
+            registry_block: None,
+        };
+    }
     let ours: Vec<&LockEntry> = lock
         .entries
         .values()
@@ -67,7 +80,7 @@ pub(crate) fn preflight(
         .collect();
     let migrated: BTreeSet<String> = ours
         .iter()
-        .filter(|entry| lives_at_the_new_path(&root, entry))
+        .filter(|entry| moved(env, scope, &root, entry))
         .map(|entry| entry.name.clone())
         .collect();
     let mut this = Preflight {
@@ -146,10 +159,20 @@ fn discardable(path: &std::path::Path) -> bool {
     crate::hash::hash_tree(path).is_ok()
 }
 
-/// Whether this hook's installation has already finished moving: the
-/// bytes apply last wrote are at the new path. Once that is true, a
-/// same-named file under the reserved name is a stranger's, and a
-/// stranger must never freeze a working installation.
+/// Whether this hook's installation has already finished moving. Two
+/// things have to be true, and bytes are only the first: the copy apply
+/// last wrote is at the new path, AND the new registration is the one
+/// that runs it — either the new registry names it, or nothing of
+/// kendex's is registered under the reserved name any more. A clean copy
+/// at the new path while the old registration still runs is a migration
+/// half done, not one finished.
+///
+/// Once both hold, a same-named file under the reserved name is a
+/// stranger's, and a stranger must never freeze a working installation.
+fn moved(env: &Env, scope: &Scope, root: &std::path::Path, entry: &LockEntry) -> bool {
+    lives_at_the_new_path(root, entry) && new_registration_runs_it(env, scope, root, entry)
+}
+
 fn lives_at_the_new_path(root: &std::path::Path, entry: &LockEntry) -> bool {
     let Some(rendered) = entry.rendered_hash.as_ref() else {
         return false;
@@ -159,6 +182,44 @@ fn lives_at_the_new_path(root: &std::path::Path, entry: &LockEntry) -> bool {
         matches!(look(path), Found::Plain(_))
             && crate::hash::hash_tree(path).is_ok_and(|disk| &disk == rendered)
     })
+}
+
+/// Whether execution has moved with the bytes: the new registry carries
+/// this hook's registration, or the legacy one carries nothing of its.
+fn new_registration_runs_it(
+    env: &Env,
+    scope: &Scope,
+    root: &std::path::Path,
+    entry: &LockEntry,
+) -> bool {
+    let (event, command) = super::legacy_registration(entry, scope, root);
+    let live = |path: &std::path::Path, command: &str| {
+        crate::scan::hooks::read(path).is_ok_and(|entries| {
+            matches!(
+                super::registered(&entries, event.as_deref(), command),
+                super::Registered::Ours
+            )
+        })
+    };
+    let new = match crate::engine::targets::hook_target(env, scope, HarnessId::Pi, &entry.name) {
+        Some(crate::engine::targets::HookTarget::Script { command, .. }) => command,
+        _ => command.clone(),
+    };
+    let recorded = entry
+        .registration
+        .as_ref()
+        .map_or(new, |recorded| recorded.command.clone());
+    live(&pi::hook_registry(root), &recorded)
+        || !matches!(
+            look(&root.join(LEGACY_REGISTRY)),
+            Found::Plain(_) | Found::Linked(_)
+        )
+        || crate::scan::hooks::read(&root.join(LEGACY_REGISTRY)).is_ok_and(|entries| {
+            matches!(
+                super::registered(&entries, event.as_deref(), &command),
+                super::Registered::Absent
+            )
+        })
 }
 
 /// Why the legacy registry cannot give up kendex's own entry, when it
@@ -183,23 +244,28 @@ fn registry_block(root: &std::path::Path, scope: &Scope, ours: &[&LockEntry]) ->
         Ok(entries) => entries,
         Err(message) => return say(format!("could not be read ({message})")),
     };
-    // Identity has to be exact before anything is removed: the edit takes
-    // out every handler carrying the command, so a second entry wearing
-    // it — a matcher somebody added by hand — cannot be told from
-    // kendex's own. Ambiguous means held, not guessed at.
+    // Identity has to resolve to exactly one registration before anything
+    // is removed. The edit takes out every handler answering to it, so
+    // one kendex cannot tell from another — a second matcher wearing the
+    // command, or the command moved to an event the record does not name
+    // — is held, not guessed at.
     let mut holds_ours = false;
     for entry in ours {
-        let (_, command) = super::legacy_registration(entry, scope, root);
-        let carrying = registered
-            .iter()
-            .filter(|entry| entry.description.as_deref() == Some(command.as_str()))
-            .count();
-        if carrying > 1 {
-            return say(format!(
-                "registers {command} more than once, so kendex cannot tell its own entry from the others"
-            ));
+        let (event, command) = super::legacy_registration(entry, scope, root);
+        match super::registered(&registered, event.as_deref(), &command) {
+            super::Registered::Ours => holds_ours = true,
+            super::Registered::Absent => {}
+            super::Registered::Elsewhere => {
+                return say(format!(
+                    "no longer registers {command} where kendex recorded it, so what is there now is not kendex's to take"
+                ));
+            }
+            super::Registered::Ambiguous => {
+                return say(format!(
+                    "registers {command} more than once, so kendex cannot tell its own entry from the others"
+                ));
+            }
         }
-        holds_ours |= carrying == 1;
     }
     if !holds_ours {
         return None;
