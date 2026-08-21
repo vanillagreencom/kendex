@@ -9,11 +9,31 @@ use crate::hook::command_stem;
 /// matcher with a read one has to use.
 pub(crate) const ANY_MATCHER: &str = "*";
 
+/// The event and matcher an entry's name carries, read back the way
+/// [`read`] spelled it. The event and the stem are the fixed ends, and
+/// everything between them is the matcher — which holds colons of its own
+/// as often as not, being a regex. Read from both ends, so it does.
+pub(crate) fn named(name: &str) -> Option<(&str, &str)> {
+    let (event, rest) = name.split_once(':')?;
+    let (matcher, _stem) = rest.rsplit_once(':')?;
+    Some((event, matcher))
+}
+
 /// `{"hooks": {"<Event>": [{matcher?, hooks: [{command}]} | {command}]}}` —
 /// claude settings.json and codex/cursor hooks.json share this shape; cursor
 /// omits `matcher` and nests no handler array.
 pub fn read(path: &Path) -> Result<Vec<RawEntry>, String> {
-    let value = read_json(path)?;
+    entries(read_json(path)?)
+}
+
+/// [`read`] for a document the caller already has in hand — one it is
+/// about to write, say, and wants to read back before it does.
+pub(crate) fn read_text(text: &str) -> Result<Vec<RawEntry>, String> {
+    let value = serde_json::from_str(&super::jsonc::to_json(text)).map_err(|e| e.to_string())?;
+    entries(value)
+}
+
+fn entries(value: serde_json::Value) -> Result<Vec<RawEntry>, String> {
     let Some(events) = value.get("hooks").and_then(|h| h.as_object()) else {
         return Ok(Vec::new());
     };

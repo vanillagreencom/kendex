@@ -9,7 +9,7 @@
 //! to do with it.
 
 use super::Found;
-use super::{Registered, legacy_registration, look, registered};
+use super::{Identity, Registered, legacy_registration, look, registered};
 use crate::harness::pi;
 use crate::lock::LockEntry;
 use crate::model::Scope;
@@ -92,7 +92,16 @@ pub(super) fn registration_conflict(
         ))
     };
     match registered(&entries, &legacy) {
-        Registered::Ours | Registered::Absent => None,
+        Registered::Absent => None,
+        // Found, and only once — but found is not gone. What the removal
+        // will really leave behind is read back before a single byte of
+        // this hook's is planned for the trash.
+        Registered::Ours => survives_its_own_removal(&path, &legacy).then(|| {
+            format!(
+                "{} writes {command} in a shape kendex cannot take it out of — a handler standing directly under its event, rather than inside a matcher group — so this hook stays where it is; take that entry out yourself, and the script goes with it on the next refresh",
+                path.display()
+            )
+        }),
         Registered::Elsewhere => say(format!(
             "no longer registers {command} where kendex recorded it"
         )),
@@ -100,4 +109,29 @@ pub(super) fn registration_conflict(
             "registers {command} more than once, so kendex cannot tell its own entry from the others"
         )),
     }
+}
+
+/// Whether the document really gives this entry up — proven by taking it
+/// out and reading the document back, never by the edit reporting that it
+/// ran. A handler written directly under its event is a shape the edit
+/// reaches past: it succeeds, removes nothing, and the script would then
+/// go to the trash while what runs it stayed, pointing at a path with
+/// nothing at it.
+///
+/// Anything this cannot establish reads as surviving. A document that
+/// will not take the edit is one kendex cannot express this removal in,
+/// which is the same answer by a shorter road.
+fn survives_its_own_removal(path: &std::path::Path, identity: &Identity) -> bool {
+    let Ok(Some(text)) = crate::fs::read_if_exists(path) else {
+        return true;
+    };
+    let edit = crate::configedit::ConfigEdit::RemoveHook {
+        event: identity.event.clone(),
+        command: identity.command.clone(),
+    };
+    let Ok(after) = edit.apply(&text) else {
+        return true;
+    };
+    crate::scan::hooks::read_text(&after)
+        .is_ok_and(|entries| !matches!(registered(&entries, identity), Registered::Absent))
 }

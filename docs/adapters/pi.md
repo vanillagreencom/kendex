@@ -62,7 +62,11 @@ never keys, is not mistaken for an install nobody wants. A copy kendex
 cannot prove it wrote holds the whole installation, not just the file:
 its old registration stays live and no fresh rendering takes over. A
 registration kendex cannot take out holds the script it names, so neither
-half is ever left without the other — and what it holds is as wide as the
+half is ever left without the other — and whether it can is answered by
+taking the entry out and reading the document back, never by the edit
+reporting that it ran: a handler standing directly under its event is a
+shape the edit reaches past, and the script would go while what runs it
+stayed — and what it holds is as wide as the
 evidence. A registry that is a link, that cannot be read, or that holds an
 entry kendex has to take out in a shape its editor cannot rewrite is in
 every hook's way; an entry kendex cannot pick out of an otherwise editable

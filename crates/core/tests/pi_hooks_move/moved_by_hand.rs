@@ -334,3 +334,35 @@ fn a_finished_hook_does_not_keep_the_registry_in_anybodys_way() {
         "and their document is left exactly as it was"
     );
 }
+
+/// A matcher is a regex, and regexes have colons in them. Read back with
+/// the event and the stem as the fixed ends, an entry kendex wrote reads
+/// as the one it wrote; read any other way, a hook holds itself for ever
+/// over a registration nobody touched.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_matcher_with_a_colon_in_it_is_read_back_as_itself() {
+    let w = super::world_declaring(
+        "[[custom-hooks]]\nname = \"mine\"\nevent = \"PreToolUse\"\nmatcher = \"Bash:.*\"\ncommand = \"./scripts/mine.sh\"\nagents = \"all\"\n",
+    );
+    apply(&w);
+    let registry = fs::read_to_string(w.dot().join("kendex/hooks.json")).unwrap();
+    assert!(
+        registry.contains("Bash:.*"),
+        "the matcher goes in as it was written: {registry}"
+    );
+
+    let report = audit(&w.env, &w.scope()).unwrap();
+    assert!(
+        report.drift.is_empty(),
+        "nothing was moved, so nothing is held: {:?}",
+        report.drift
+    );
+    assert!(report.notes.is_empty(), "{:?}", report.notes);
+    apply(&w);
+    assert_eq!(
+        fs::read_to_string(w.dot().join("kendex/hooks.json")).unwrap(),
+        registry,
+        "and the refresh goes on leaving it exactly as it is"
+    );
+}

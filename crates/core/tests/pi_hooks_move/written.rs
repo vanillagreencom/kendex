@@ -305,3 +305,58 @@ fn a_moved_new_registration_holds_even_with_the_old_layout_gone() {
         "and a hold is not a finished move: {lock}"
     );
 }
+
+/// An edit that ran is not an entry that went. A handler standing
+/// directly under its event is a shape the removal reaches past — it
+/// succeeds and takes nothing — so the outcome is read back before the
+/// script it names is planned for the trash, or the script would go and
+/// leave what runs it pointing at nothing.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_registration_the_edit_cannot_reach_holds_its_script() {
+    for shape in ["direct", "grouped"] {
+        let w = regressed();
+        let registry = w.dot().join("hooks.json");
+        let mut value: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&registry).unwrap()).unwrap();
+        let command = value["hooks"]["tool_call"][0]["hooks"][0]["command"].clone();
+        if shape == "direct" {
+            // The way a person writes one, and a way kendex never does.
+            value["hooks"]["tool_call"] = serde_json::json!([{ "command": command }]);
+        }
+        let theirs = serde_json::to_string_pretty(&value).unwrap();
+        fs::write(&registry, &theirs).unwrap();
+
+        let said = super::about(&super::notes(&w), "hooks.json");
+        apply(&w);
+
+        if shape == "grouped" {
+            assert!(said.is_empty(), "the shape kendex writes moves: {said:?}");
+            assert!(!w.dot().join("hooks").exists());
+            assert!(!registry.exists());
+            continue;
+        }
+        assert!(
+            said.iter().any(|note| note.contains("cannot take it out")),
+            "the person is told which document is in the way: {said:?}"
+        );
+        assert!(
+            w.dot().join("hooks/guard.sh").is_file(),
+            "the script stays with the registration that names it"
+        );
+        assert_eq!(
+            fs::read_to_string(&registry).unwrap(),
+            theirs,
+            "and their document is untouched"
+        );
+        let lock: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(w.project.join(".kendex-lock.json")).unwrap())
+                .unwrap();
+        assert!(
+            lock["entries"]["hook:guard:pi"]
+                .get("leftPiReservedName")
+                .is_none(),
+            "and a move that did not happen is not written down: {lock}"
+        );
+    }
+}

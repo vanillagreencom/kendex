@@ -100,9 +100,14 @@ pub(super) fn registered(entries: &[crate::scan::RawEntry], identity: &Identity)
     if carrying.len() > 1 {
         return Registered::Ambiguous;
     }
-    let mut named = only.name.splitn(3, ':');
-    let event = named.next();
-    let matcher = named.next();
+    // Read back through the reader that wrote it: the name is that
+    // module's spelling, and re-deriving it here is how a matcher with a
+    // colon in it — an ordinary regex — came to read as somebody moving
+    // the registration.
+    let (event, matcher) = match crate::scan::hooks::named(&only.name) {
+        Some((event, matcher)) => (Some(event), Some(matcher)),
+        None => (None, None),
+    };
     let differs = |kept: &Option<String>, found: Option<&str>| {
         kept.as_deref().is_some_and(|kept| found != Some(kept))
     };
