@@ -203,8 +203,13 @@ export const commands = {
 	 */
 	marketplaceSummary: (catalog: Catalog) => typedError<CatalogSummary, string>(__TAURI_INVOKE("marketplace_summary", { catalog })),
 	/**  One curated set with per-member installed state. */
-	marketplaceBundle: (scope: Scope, source: string, name: string) => typedError<BundleDetail, string>(__TAURI_INVOKE("marketplace_bundle", { scope, source, name })),
-	marketplacePackagePreview: (scope: Scope, source: string, kind: ItemKind, name: string) => typedError<PackageView_Serialize, string>(__TAURI_INVOKE("marketplace_package_preview", { scope, source, kind, name })),
+	marketplaceBundle: (catalog: Catalog, name: string) => typedError<BundleDetail, string>(__TAURI_INVOKE("marketplace_bundle", { catalog, name })),
+	marketplacePackagePreview: (catalog: Catalog, kind: ItemKind, name: string) => typedError<PackageView_Serialize, string>(__TAURI_INVOKE("marketplace_package_preview", { catalog, kind, name })),
+	/**
+	 *  One offered file's content before install — the same read an installed
+	 *  package's file gets, confined to the package inside the catalog.
+	 */
+	marketplacePackageFile: (catalog: Catalog, kind: ItemKind, name: string, path: string) => typedError<ItemSource, string>(__TAURI_INVOKE("marketplace_package_file", { catalog, kind, name, path })),
 	/**
 	 *  Install packages or a curated set from one subscription. `destination`
 	 *  redirects the install from the scope being browsed into a project: the

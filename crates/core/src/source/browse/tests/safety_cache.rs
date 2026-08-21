@@ -85,6 +85,20 @@ fn score(env: &Env, scope: &Scope) -> PackageSafety {
     .unwrap()
 }
 
+/// The same, for the agent the project-contribution test browses.
+fn agent_safety(env: &Env, scope: &Scope) -> PackageSafety {
+    package_safety(
+        env,
+        &Catalog::Subscription {
+            scope: scope.clone(),
+            source: "cat".to_owned(),
+        },
+        ItemKind::Agent,
+        "helper",
+    )
+    .unwrap()
+}
+
 #[test]
 fn a_second_call_reads_the_verified_cache_and_a_moved_hash_rescores() {
     let (_tmp, env, scope) = fixture();
@@ -287,7 +301,7 @@ fn a_preview_says_what_this_projects_own_settings_add() {
     .unwrap();
     commit(&upstream, "an agent");
     crate::remote::sync(&env, REPO, None).unwrap();
-    let quiet = package_safety(&env, &scope, "cat", ItemKind::Agent, "helper").unwrap();
+    let quiet = agent_safety(&env, &scope);
     assert!(
         !quiet
             .reasons
@@ -306,7 +320,7 @@ fn a_preview_says_what_this_projects_own_settings_add() {
         + "\n[agent-frontmatter.claude.helper]\nnickname-candidates = [\"Scout\"]\n";
     fs::write(&manifest, text).unwrap();
 
-    let loud = package_safety(&env, &scope, "cat", ItemKind::Agent, "helper").unwrap();
+    let loud = agent_safety(&env, &scope);
     assert!(
         loud.reasons
             .iter()

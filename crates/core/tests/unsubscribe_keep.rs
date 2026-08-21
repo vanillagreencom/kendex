@@ -11,7 +11,6 @@ use kendex_core::manifest::{self, ManifestFile};
 use kendex_core::model::Scope;
 
 #[allow(clippy::unwrap_used)]
-#[allow(clippy::unwrap_used)]
 fn skill(catalog: &Path, name: &str, body: &str) {
     let dir = catalog.join("skills").join(name);
     fs::create_dir_all(&dir).unwrap();
