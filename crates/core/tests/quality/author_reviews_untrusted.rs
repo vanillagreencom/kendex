@@ -208,8 +208,13 @@ fn an_unreadable_item_with_a_record_is_contained() {
     fs::write(&path, text).unwrap();
     // A record for it, bound to the bytes that are there.
     let sealed = kendex_core::source_read::SealedSource::open(&f.source).unwrap();
-    let hash =
-        kendex_core::quality::author::content_hash(&sealed, &agents.join("rogue.md")).unwrap();
+    let config = kendex_core::source::source_config(&sealed, "cat").unwrap();
+    let hash = kendex_core::quality::author::content_hash(
+        &sealed,
+        &agents.join("rogue.md"),
+        &config.rendering_inputs(ItemKind::Agent, "rogue"),
+    )
+    .unwrap();
     kendex_core::check_catalog::dismissals::record(
         &sealed,
         ItemKind::Agent,

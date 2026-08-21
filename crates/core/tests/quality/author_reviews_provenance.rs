@@ -171,3 +171,60 @@ fn a_dependency_nobody_declared_still_reads_its_publishers_record() {
         installed.decisions
     );
 }
+
+/// A record is checked against the catalog that published it, not against
+/// the name it carries.
+///
+/// Corroborating the name against this project's subscription only proves
+/// that whoever wrote the record named a catalog the project installs from,
+/// and that is a string anyone editing the lock can copy out of
+/// `kendex.toml`. The record below needs no forging at all — it is the real
+/// one, with the real hash, the real fingerprint, the real counts and the
+/// real publisher — and once the catalog stops publishing it, it stops
+/// settling anything. That is the standing of a record read out of a lock:
+/// evidence of what an apply read, never proof of who wrote it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_record_the_catalog_does_not_publish_settles_nothing() {
+    let f = fixture();
+    author_dismisses(&f.source, ItemKind::Skill, "hostile", &[]);
+    let report = plan(&f, &[]);
+    kendex_core::apply::execute(&f.env, &report.plan, None).unwrap();
+    let published = observed(&f, "hostile");
+    assert!(!published.blocked(), "the catalog's own record installs it");
+    assert!(
+        published.decisions.iter().any(|decision| matches!(
+            decision.state,
+            kendex_core::engine::decisions::DecisionState::AuthorDismissed { .. }
+        )),
+        "and it reads as the publisher's"
+    );
+
+    // The catalog stops publishing it. Nothing in the lock changes: the
+    // record still names the source this project installs from, still binds
+    // to the installed bytes, and still claims what it earned.
+    fs::remove_file(f.source.join("kendex-reviews.toml")).unwrap();
+
+    let after = observed(&f, "hostile");
+    assert!(
+        after.blocked(),
+        "the finding counts again and the item is held back"
+    );
+    assert!(
+        after.decisions.iter().all(|decision| !matches!(
+            decision.state,
+            kendex_core::engine::decisions::DecisionState::AuthorDismissed { .. }
+        )),
+        "nothing reads as settled by a publisher: {:?}",
+        after.decisions
+    );
+    assert!(
+        after.decisions.iter().any(|decision| matches!(
+            &decision.state,
+            kendex_core::engine::decisions::DecisionState::Open { earlier: Some(why) }
+                if why.contains("does not publish")
+        )),
+        "and the record is still reported, saying why: {:?}",
+        after.decisions
+    );
+}

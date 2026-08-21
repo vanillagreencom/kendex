@@ -26,7 +26,7 @@ pub mod observe;
 pub mod overrides;
 mod phrase;
 pub mod reviews;
-mod rules;
+pub mod rules;
 mod score;
 mod secret;
 mod text;

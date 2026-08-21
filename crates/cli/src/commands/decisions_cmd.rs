@@ -118,7 +118,8 @@ fn dismiss_catalog(
         let Some(path) = kendex_core::source::find_item(&sealed, &config, kind, name) else {
             return Err(format!("{}: no {} '{name}' in this catalog", token, kind.name()).into());
         };
-        let item = kendex_core::check_catalog::check_item(&sealed, kind, name, &path, None)?;
+        let item =
+            kendex_core::check_catalog::check_item(&sealed, &config, kind, name, &path, None)?;
         let known = item.findings.iter().any(|finding| {
             finding
                 .token
@@ -131,7 +132,11 @@ fn dismiss_catalog(
             )
             .into());
         }
-        let Some(hash) = kendex_core::quality::author::content_hash(&sealed, &path) else {
+        let Some(hash) = kendex_core::quality::author::content_hash(
+            &sealed,
+            &path,
+            &config.rendering_inputs(kind, name),
+        ) else {
             return Err(format!("{token}: the item's content cannot be read").into());
         };
         match batches

@@ -137,6 +137,7 @@ pub(super) fn published_review(
     sealed: &SealedSource,
     source_name: &str,
     provenance: &str,
+    config: &crate::source::SourceConfig,
     kind: crate::model::ItemKind,
     name: &str,
     item_path: &Path,
@@ -165,7 +166,10 @@ pub(super) fn published_review(
                 Default::default()
             }
         });
-    let read = crate::quality::author::for_item(parsed, sealed, kind, name, item_path, provenance);
+    let inputs = config.rendering_inputs(kind, name);
+    let read = crate::quality::author::for_item(
+        parsed, sealed, kind, name, item_path, provenance, &inputs,
+    );
     if let Some(problem) = unreadable {
         state.notes.push(format!(
             "source '{source_name}': {} could not be read, so nothing it reviewed counts as reviewed — {problem}",

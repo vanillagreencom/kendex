@@ -195,12 +195,20 @@ pub fn review_key(kind: ItemKind, name: &str) -> String {
 }
 
 /// The hash a publisher's decision binds to: every authored byte of the
-/// item. A skill is its collected tree (VCS internals and dependency dirs
-/// are not authored content); anything else is one file. `None` where the
-/// bytes cannot be read — a decision with nothing to compare against must
-/// never read as live.
-pub fn content_hash(sealed: &SealedSource, path: &Path) -> Option<String> {
-    content_hash_of(sealed, path, None)
+/// item, plus every publisher input the item's rendering reads from
+/// somewhere other than the item. A skill is its collected tree (VCS
+/// internals and dependency dirs are not authored content); anything else
+/// is one file. `None` where the bytes cannot be read — a decision with
+/// nothing to compare against must never read as live.
+///
+/// `inputs` is [`crate::source::SourceConfig::rendering_inputs`]: the
+/// catalog's own control file has tables an agent renders from, and a
+/// record bound to the item's bytes alone stays live while those change
+/// under it. The contract every other part of this states — edit the item
+/// and the record goes stale — has to mean every input the reviewed
+/// rendering had, or it is a contract about only some of them.
+pub fn content_hash(sealed: &SealedSource, path: &Path, inputs: &str) -> Option<String> {
+    content_hash_of(sealed, path, None, inputs)
 }
 
 /// The same hash from a tree the caller has already read. A skill's bytes
@@ -210,16 +218,24 @@ pub fn content_hash_of(
     sealed: &SealedSource,
     path: &Path,
     tree: Option<&[(std::path::PathBuf, Vec<u8>)]>,
+    inputs: &str,
 ) -> Option<String> {
-    if let Some(tree) = tree {
-        return Some(crate::hash::hash_files(tree));
+    let bytes = match tree {
+        Some(tree) => crate::hash::hash_files(tree),
+        None if sealed.is_dir(path) => {
+            crate::hash::hash_files(&sealed.collect_skill_tree(path).ok()?)
+        }
+        None => crate::hash::hash_bytes(&sealed.read(path).ok()?),
+    };
+    // Nothing folded in where there is nothing to fold: an item whose
+    // rendering reads no catalog configuration hashes exactly as it always
+    // did, so no record for one goes stale over this.
+    match inputs.is_empty() {
+        true => Some(bytes),
+        false => Some(crate::hash::hash_bytes(
+            format!("{bytes}\n{inputs}").as_bytes(),
+        )),
     }
-    if sealed.is_dir(path) {
-        return Some(crate::hash::hash_files(
-            &sealed.collect_skill_tree(path).ok()?,
-        ));
-    }
-    Some(crate::hash::hash_bytes(&sealed.read(path).ok()?))
 }
 
 /// A skill's whole tree; anything else is one file. A repo-root skill's

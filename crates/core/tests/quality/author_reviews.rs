@@ -74,7 +74,7 @@ fn catalog_findings(source: &Path, kind: ItemKind, name: &str) -> Vec<(String, S
     let sealed = SealedSource::open(source).unwrap();
     let config = kendex_core::source::source_config(&sealed, "cat").unwrap();
     let path = kendex_core::source::find_item(&sealed, &config, kind, name).unwrap();
-    let item = check_catalog::check_item(&sealed, kind, name, &path, None).unwrap();
+    let item = check_catalog::check_item(&sealed, &config, kind, name, &path, None).unwrap();
     item.findings
         .iter()
         .filter(|finding| finding.rule.is_some())
@@ -102,7 +102,7 @@ pub fn author_dismisses(source: &Path, kind: ItemKind, name: &str, rules: &[&str
     let sealed = SealedSource::open(source).unwrap();
     let config = kendex_core::source::source_config(&sealed, "cat").unwrap();
     let path = kendex_core::source::find_item(&sealed, &config, kind, name).unwrap();
-    let hash = author::content_hash(&sealed, &path).unwrap();
+    let hash = author::content_hash(&sealed, &path, &config.rendering_inputs(kind, name)).unwrap();
     dismissals::record(&sealed, kind, name, &hash, &settled).unwrap();
 }
 

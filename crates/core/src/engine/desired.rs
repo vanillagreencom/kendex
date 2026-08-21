@@ -266,6 +266,7 @@ fn compute(env: &Env, scope: &Scope, manifest: &Manifest, lock: &Lock) -> Result
                 &sealed,
                 &decl.source,
                 &provenance,
+                &config,
                 kind,
                 name,
                 &item_path,

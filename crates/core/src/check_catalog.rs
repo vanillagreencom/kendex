@@ -232,7 +232,7 @@ pub fn check_with(
                     let review = reviews.get(&review_key(kind, &name));
                     report
                         .items
-                        .push(check_item(sealed, kind, &name, &path, review)?)
+                        .push(check_item(sealed, config, kind, &name, &path, review)?)
                 }
                 // A listed name every lookup refuses (an illegal spelling,
                 // say) is a catalog problem, not content to score.
@@ -260,6 +260,7 @@ pub fn check_with(
 /// this item, if it carries one.
 pub fn check_item(
     sealed: &SealedSource,
+    config: &crate::source::SourceConfig,
     kind: ItemKind,
     name: &str,
     path: &Path,
@@ -271,7 +272,7 @@ pub fn check_item(
         .unwrap_or(path)
         .display()
         .to_string();
-    let hash = quality::author::content_hash(sealed, path);
+    let hash = quality::author::content_hash(sealed, path, &config.rendering_inputs(kind, name));
     let dismissed = dismissals::active(kind, review, hash.as_deref());
     let mut findings = structural(kind, name, &file, &content);
     // An item bigger than any install reads has a tail nobody has judged.

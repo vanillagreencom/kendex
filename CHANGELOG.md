@@ -51,8 +51,12 @@ changes carry a **Breaking** call-out with their migration note inline.
   settles only what the publisher wrote — as many occurrences as their own
   bytes carried, each carrying the weight theirs did, so nothing a project
   adds to the item rides in on a reviewed finding however serious it reads;
-  a record whose own numbers do not add up settles nothing at all — and it
-  can only carry reasons an author can give:
+  a record whose own numbers do not add up settles nothing at all; and the
+  record travelling in your install record is only honoured while the
+  catalog it names still publishes it, checked by re-reading that catalog
+  at the commit you installed from rather than by the name the record
+  carries — a catalog you have not fetched settles nothing until you do.
+  It can only carry reasons an author can give:
   a hand-written `trusted-source` record is refused on the installing
   machine. Any edit to the item, in the catalog or on the installed copy,
   brings the hold back, and a record that settles nothing where it lands —
@@ -99,8 +103,9 @@ changes carry a **Breaking** call-out with their migration note inline.
 - A safety finding's message now says what it fired on: which address a
   line actually runs — the command feeding the shell, however it is
   capitalized, and named by its own arguments when the address is not
-  written out — which characters a file hides, and which unreadable content
-  a file carries. Two different problems reading the same used to be
+  written out — which credential file a command sends away and by which
+  command, which characters a file hides, and which unreadable content a
+  file carries. Two different problems reading the same used to be
   one decision, and only one of them was ever shown.
 - Safety findings are identified by the rule and the sentence it fired with,
   so a decision survives everything kendex does to an item on the way in —

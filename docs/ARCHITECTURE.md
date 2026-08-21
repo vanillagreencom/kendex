@@ -829,7 +829,8 @@ lives in one capability table read by core and UI.
   is reported and does not count" (`author::score`) that the authoring
   check, the gate, the audit and browsing all call. Three bounds, because
   the record arrives from content kendex does not control: it binds to
-  bytes (the reader recomputes the hash from the source in front of it);
+  bytes — the item's own plus the control-file tables an agent renders from
+  (`SourceConfig::rendering_inputs`), so editing either stales it;
   it settles as many occurrences of a finding as the publisher's own bytes
   carried and at the weight each was read at, so nothing a project repeats
   rides in on a reviewed one, however heavy; and it carries only reasons
@@ -841,17 +842,18 @@ lives in one capability table read by core and UI.
   hash rather than by name — one shared skill tree is loaded by several
   tools and only one of them holds a lock entry, so one entry that does not
   hold up never ends the search for one that does. A fourth bound is the
-  audit's alone, since only there does the record arrive out of the lock — a
-  committed file a pull request can edit — and the three above answer only
-  questions of shape, which cannot answer provenance. So it corroborates the
-  name against this project's subscription (`source::declared_provenance`):
-  the declaration names the source and the source names the repository or
-  path, both read from the manifest, never from the lock; an installation
-  nothing declares by name falls back to the source its entry names, which
-  the manifest must still declare. A record naming a publisher this project
-  does not install the item from is reported under the name it carries and
-  buys nothing, so forging one means committing a visible subscription to
-  whoever is being impersonated. A hook records none: the
+  audit's alone, since only there does the record arrive out of the lock, a
+  committed file a pull request can edit. **A lock-carried record is
+  evidence of what an apply read, never proof of who wrote it.** Shape
+  checks answer shape, and the name cannot be authenticated — anyone
+  editing the lock copies a declared source out of `kendex.toml` — so the
+  audit re-reads the catalog: the name has to be one this project
+  subscribes to (`source::declared_provenance`, from the manifest, never
+  the lock), and the catalog at the commit the entry names, or the
+  directory a path source points at, has to publish that record — same
+  rule set, same fingerprints, same reasons, same dates. Anything else, and
+  a catalog not on this machine, buys nothing and is still reported under
+  the name it carries. No signing scheme here. A hook records none: the
   gate reads the script and the audit reads the shared settings file, two
   readings of different bytes by design — so the record is refused where
   it is read, `dismiss --catalog` refuses to write one, and `check
@@ -1094,12 +1096,12 @@ lives in one capability table read by core and UI.
   review is read *before* the verdict, so a finding it settles stops
   counting toward the score and can therefore move an item out of Block;
   that is the whole point of a catalog reviewing its own content, and it is
-  bounded by the three checks in `quality/author.rs` (bound to bytes,
-  capped at the occurrences the publisher's own text carries in what
-  actually installs and at the weight each was read at, and refusing the
-  reasons only the installer's machine could answer for). That cap is
-  measured by the apply that wrote the bytes and recorded beside the
-  review, so the audit reads it rather than deriving a second one. The publisher's record does not live in the
+  bounded by the checks above (bound to bytes, capped at the occurrences
+  the publisher's own text carries in what installs and at the weight each
+  was read at, refusing the reasons only the installer's machine could
+  answer for, and — read out of a lock — re-checked against the catalog
+  that published it). That cap is measured by the apply that wrote the
+  bytes, so the audit reads it rather than deriving a second one. The publisher's record does not live in the
   person's manifest and is not one of their revocable records: it lives in
   the catalog's committed `kendex-reviews.toml` and, once installed, in the
   lock entry — so it never appears in the Recorded decisions registry,

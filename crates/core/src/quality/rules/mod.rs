@@ -60,6 +60,14 @@ pub(super) fn registry() -> Vec<Box<dyn AuditRule>> {
     rules
 }
 
+/// Every rule's id. The one list of what the registry holds, so a test that
+/// has to cover all of them cannot quietly stop covering one: a rule added
+/// without a case in `every_rule_says_what_it_fired_on` fails that test
+/// rather than shipping an identity nothing checked.
+pub fn ids() -> Vec<&'static str> {
+    registry().into_iter().map(|rule| rule.id()).collect()
+}
+
 /// Kinds that carry authored text the content rules read.
 pub(super) const AUTHORED: &[ItemKind] = &[
     ItemKind::Agent,

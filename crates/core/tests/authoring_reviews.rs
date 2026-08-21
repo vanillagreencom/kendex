@@ -32,7 +32,13 @@ fn a_record_an_install_refuses_fails_the_check() {
     )
     .unwrap();
     let sealed = SealedSource::open(&root).unwrap();
-    let hash = kendex_core::quality::author::content_hash(&sealed, &dir).unwrap();
+    let config = kendex_core::source::source_config(&sealed, "repo").unwrap();
+    let hash = kendex_core::quality::author::content_hash(
+        &sealed,
+        &dir,
+        &config.rendering_inputs(kendex_core::model::ItemKind::Skill, "risky"),
+    )
+    .unwrap();
     let fingerprint = check(&sealed, "repo")
         .unwrap()
         .findings()
@@ -88,7 +94,13 @@ fn a_hand_written_hook_record_is_refused_by_the_check_too() {
     assert!(open.token.is_none(), "and no token is offered for it");
 
     // Hand-written, since nothing kendex ships will write one.
-    let hash = kendex_core::quality::author::content_hash(&sealed, &script).unwrap();
+    let config = kendex_core::source::source_config(&sealed, "repo").unwrap();
+    let hash = kendex_core::quality::author::content_hash(
+        &sealed,
+        &script,
+        &config.rendering_inputs(kendex_core::model::ItemKind::Hook, "guard"),
+    )
+    .unwrap();
     fs::write(
         root.join("kendex-reviews.toml"),
         format!(
@@ -142,7 +154,13 @@ fn a_committed_dismissal_unblocks_until_the_content_moves() {
     assert_eq!(kind, ItemKind::Skill);
     assert_eq!(name, "guardy");
 
-    let hash = kendex_core::quality::author::content_hash(&sealed, &dir).unwrap();
+    let config = kendex_core::source::source_config(&sealed, "repo").unwrap();
+    let hash = kendex_core::quality::author::content_hash(
+        &sealed,
+        &dir,
+        &config.rendering_inputs(kendex_core::model::ItemKind::Skill, "risky"),
+    )
+    .unwrap();
     dismissals::record(
         &sealed,
         kind,

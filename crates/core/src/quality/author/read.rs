@@ -18,11 +18,13 @@ use crate::source_read::SealedSource;
 /// against the bytes in front of us.
 ///
 /// `reviews` is the source's parsed reviews file, read once per source root.
-/// `publisher` is the provenance kendex resolved for this source. What the
+/// `publisher` is the provenance kendex resolved for this source, and
+/// `inputs` what its control file contributes to this item's rendering. What the
 /// record is worth against the content that finally installs is decided
 /// later, by [`super::Budget::earned`]; this answers only whether the record
 /// describes these bytes and whether its entries are ones an author can
 /// honestly make.
+#[allow(clippy::too_many_arguments)]
 pub fn for_item(
     reviews: &BTreeMap<String, SafetyReview>,
     sealed: &SealedSource,
@@ -30,6 +32,7 @@ pub fn for_item(
     name: &str,
     item_path: &Path,
     publisher: &str,
+    inputs: &str,
 ) -> Read {
     // The lookup first: hashing a skill reads its whole tree, and most
     // items in most catalogs carry no record for that read to answer.
@@ -40,7 +43,7 @@ pub fn for_item(
         reviews,
         kind,
         name,
-        content_hash(sealed, item_path),
+        content_hash(sealed, item_path, inputs),
         publisher,
     )
 }

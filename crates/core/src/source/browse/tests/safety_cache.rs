@@ -204,7 +204,13 @@ fn a_settled_finding_stops_counting_in_the_preview_too() {
     let upstream = tmp.path().join("base/owner/repo");
     let sealed = crate::source_read::SealedSource::open(&upstream).unwrap();
     let item = upstream.join("skills/gh");
-    let hash = crate::quality::author::content_hash(&sealed, &item).unwrap();
+    let config = crate::source::source_config(&sealed, "cat").unwrap();
+    let hash = crate::quality::author::content_hash(
+        &sealed,
+        &item,
+        &config.rendering_inputs(ItemKind::Skill, "gh"),
+    )
+    .unwrap();
     let fingerprint = before.findings[0].finding.fingerprint();
     crate::check_catalog::dismissals::record(
         &sealed,

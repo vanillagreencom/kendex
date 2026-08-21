@@ -190,7 +190,13 @@ fn a_hook_carries_no_publishers_review() {
     // way such a record exists, and it still has to settle nothing.
     let sealed = kendex_core::source_read::SealedSource::open(&f.source).unwrap();
     let script = f.source.join("hooks/guard.sh");
-    let hash = kendex_core::quality::author::content_hash(&sealed, &script).unwrap();
+    let config = kendex_core::source::source_config(&sealed, "cat").unwrap();
+    let hash = kendex_core::quality::author::content_hash(
+        &sealed,
+        &script,
+        &config.rendering_inputs(ItemKind::Hook, "guard"),
+    )
+    .unwrap();
     let fingerprint = before.findings[0].fingerprint();
     kendex_core::check_catalog::dismissals::record(
         &sealed,

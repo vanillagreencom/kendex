@@ -246,7 +246,12 @@ fn published(
         &browsed.reviews,
         kind,
         name,
-        crate::quality::author::content_hash_of(&browsed.sealed, &item.path, item.tree.as_deref()),
+        crate::quality::author::content_hash_of(
+            &browsed.sealed,
+            &item.path,
+            item.tree.as_deref(),
+            &browsed.config.rendering_inputs(kind, name),
+        ),
         &browsed.source.provenance,
     )
 }

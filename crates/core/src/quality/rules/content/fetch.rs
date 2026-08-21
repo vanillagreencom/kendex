@@ -199,33 +199,51 @@ fn downloads(
 /// second address, and naming the first would give two lines running two
 /// different payloads one sentence, and therefore one decision.
 ///
-/// The whole argument list, because which token is the operand depends on
-/// the arity of every option before it — `curl -o /tmp/payload "$URL"`
-/// hands `-o` a value, and picking the first non-switch token calls the
-/// output path the download. Keeping the list is what makes two fetches
-/// that differ anywhere in it two questions.
+/// The address only when the arguments name exactly one, because which
+/// token is the operand depends on the arity of every option before it.
+/// `curl -o /tmp/payload "$URL"` hands `-o` a value, so the first token
+/// that is not a switch is the output path; `curl --referer https://docs
+/// https://evil/x` hands `--referer` an address, so the first address is
+/// the one that is not downloaded. Neither can be told from the operand
+/// without knowing every option curl and wget take, so where there is more
+/// than one candidate the whole list is kept and none of them is called the
+/// operand — which still makes two fetches that differ anywhere in it two
+/// questions, and still shows the reader every address the line carries.
 ///
 /// The address is located in the flattened line and cut from the original,
 /// so `CURL HTTPS://…` is the match the detector already made — which reads
 /// the flattened text — and still prints the way it was written.
 fn fetched(line: &Line, after: usize) -> (&'static str, String) {
-    const BOUNDARY: &[char] = &['"', '\'', '`', ' ', '\t', ')', '(', '<', '>', ';', ','];
     let args = arguments(line, after);
-    for scheme in ["https://", "http://"] {
-        let Some(at) = line.lower[args.clone()].find(scheme) else {
-            continue;
-        };
-        let rest = &line.text[args.start + at..args.end];
-        let url = rest.split(BOUNDARY).next().unwrap_or(rest);
-        if url.len() > scheme.len() {
-            return ("from", url.to_owned());
-        }
+    let mut addresses = addresses(line, &args);
+    if addresses.len() == 1 {
+        return ("from", addresses.remove(0));
     }
     let spelled = line.text[args]
         .split_whitespace()
         .collect::<Vec<&str>>()
         .join(" ");
     ("with", spelled)
+}
+
+/// Every address written out in `range`, in the order they appear.
+fn addresses(line: &Line, range: &std::ops::Range<usize>) -> Vec<String> {
+    const BOUNDARY: &[char] = &['"', '\'', '`', ' ', '\t', ')', '(', '<', '>', ';', ','];
+    let mut found: Vec<(usize, String)> = Vec::new();
+    for scheme in ["https://", "http://"] {
+        let mut from = range.start;
+        while let Some(at) = line.lower[from..range.end].find(scheme) {
+            let at = from + at;
+            let rest = &line.text[at..range.end];
+            let url = rest.split(BOUNDARY).next().unwrap_or(rest);
+            if url.len() > scheme.len() {
+                found.push((at, url.to_owned()));
+            }
+            from = at + scheme.len();
+        }
+    }
+    found.sort_by_key(|(at, _)| *at);
+    found.into_iter().map(|(_, url)| url).collect()
 }
 
 /// Where this fetch command's own arguments end: at the first `|`, `&&` or
