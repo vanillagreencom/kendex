@@ -9,7 +9,7 @@
 import type { AuditView, DriftRow } from "@/bindings";
 import { heldBack } from "@/lib/derive";
 import { mergeDriftRows } from "@/lib/drift-merge";
-import { deadStop, isInTheWay } from "@/lib/drift-zones";
+import { Exits } from "@/lib/drift-zones";
 import { partitionSafety } from "@/lib/group-findings";
 import { mergeHeldBack } from "@/lib/group-findings-blocked";
 import { evidenceGroups, openOccurrences } from "@/lib/reviewable";
@@ -35,19 +35,19 @@ export interface AuditCounts {
 }
 
 /** Whether this row sits on a decision, which is true of the places with
- *  files in the way and of anything beside them their exits cannot settle.
+ *  a way out and of anything beside them nothing can settle.
  *
  *  Asked within one scope, like the card that draws the row: the same name
  *  in two projects is two items, and a neighbour found in the other one
  *  would move this row onto a decision it has nothing to do with. */
 function blocking(view: AuditView, row: DriftRow): boolean {
-  if (isInTheWay(row.cause)) return true;
-  if (!deadStop(row)) return false;
+  const exits = new Exits(view.exits);
+  if (!exits.blocking(row)) return false;
   return view.drift.some(
     (other) =>
       other.kind === row.kind &&
       other.name === row.name &&
-      isInTheWay(other.cause),
+      exits.offered(other),
   );
 }
 

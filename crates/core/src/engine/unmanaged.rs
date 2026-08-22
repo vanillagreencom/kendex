@@ -135,9 +135,12 @@ fn installation_paths(
                     .unwrap_or_default(),
             }
         }
-        ItemKind::Hook => super::targets::hook_file(env, scope, harness, name)
-            .map(both)
-            .unwrap_or_default(),
+        // Whether a hook writes a file at all is in its source, which this
+        // check does not read: a hook whose body is a command registers
+        // that command and writes nothing, so the script path it would
+        // otherwise have is in nobody's way. Claiming it here tells the
+        // reader they are blocked and sends them to a plan that has no
+        // conflict to show them.
         _ => Vec::new(),
     }
 }

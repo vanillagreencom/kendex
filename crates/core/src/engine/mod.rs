@@ -25,6 +25,7 @@ mod desired_mcp;
 mod desired_skill;
 mod desired_source;
 pub mod detach;
+pub mod exits;
 mod expansion;
 mod file_plan;
 pub mod fork;

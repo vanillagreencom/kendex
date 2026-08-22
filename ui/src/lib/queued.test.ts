@@ -53,7 +53,7 @@ function view(safety: ItemSafety[], queued: ItemSafety[]): AuditView {
     warnings: [],
     safety,
     adoptable: ADOPTABLE,
-    keepable: [],
+    exits: [],
     heldBack: [],
     queued,
   };

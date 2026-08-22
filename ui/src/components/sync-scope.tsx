@@ -16,7 +16,7 @@ import {
   scopeSummaryLabel,
 } from "@/lib/copy";
 import { DECISION_ZONE_TITLE } from "@/lib/copy-safety";
-import { driftZones } from "@/lib/drift-zones";
+import { driftZones, Exits } from "@/lib/drift-zones";
 import { partitionSafety } from "@/lib/group-findings";
 import { scopeName, scopePath } from "@/lib/labels";
 import { evidenceGroups, openOccurrences } from "@/lib/reviewable";
@@ -59,7 +59,11 @@ export function SyncScopeCard({
   onSeeUnmanaged: () => void;
 }) {
   const [applyOpen, setApplyOpen] = useState(false);
-  const { inTheWay, changes, unmanaged, orphans } = driftZones(view.drift);
+  const exits = new Exits(view.exits);
+  const { inTheWay, changes, unmanaged, orphans } = driftZones(
+    view.drift,
+    exits,
+  );
   const {
     blocked,
     open: undecided,
@@ -142,7 +146,7 @@ export function SyncScopeCard({
                 <BlockedDeclarations
                   rows={inTheWay}
                   adoptable={view.adoptable}
-                  keepable={view.keepable}
+                  exits={exits}
                   alsoApplies={view.plan.length > 0}
                   busy={busy}
                   onKeep={onKeepFiles}

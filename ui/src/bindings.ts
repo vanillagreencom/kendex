@@ -430,13 +430,12 @@ export type AuditView_Deserialize = {
 	 */
 	adoptable: ItemKind[],
 	/**
-	 *  The blocked installations "keep these files" can be offered for,
-	 *  each as `kind:name:harness`. Adoption works at a tool's own place,
-	 *  so a row whose tool has nothing there — a folder its neighbours
-	 *  reach through a shortcut somebody made — would fail the moment the
-	 *  button was clicked. Answered by core per row, like the kinds above.
+	 *  Which ways out each blocked installation actually has, answered by
+	 *  core per row like the kinds above. The page groups and draws these;
+	 *  it never works them out from the cause, which is how one surface
+	 *  ends up offering an action the plan rejects.
 	 */
-	keepable: string[],
+	exits: RowExits[],
 	/**
 	 *  Installations the plan would write but the safety gate holds back.
 	 *  Kept apart from `safety` (which scores what is on disk) because the
@@ -485,13 +484,12 @@ export type AuditView_Serialize = {
 	 */
 	adoptable: ItemKind[],
 	/**
-	 *  The blocked installations "keep these files" can be offered for,
-	 *  each as `kind:name:harness`. Adoption works at a tool's own place,
-	 *  so a row whose tool has nothing there — a folder its neighbours
-	 *  reach through a shortcut somebody made — would fail the moment the
-	 *  button was clicked. Answered by core per row, like the kinds above.
+	 *  Which ways out each blocked installation actually has, answered by
+	 *  core per row like the kinds above. The page groups and draws these;
+	 *  it never works them out from the cause, which is how one surface
+	 *  ends up offering an action the plan rejects.
 	 */
-	keepable: string[],
+	exits: RowExits[],
 	/**
 	 *  Installations the plan would write but the safety gate holds back.
 	 *  Kept apart from `safety` (which scores what is on disk) because the
@@ -2155,6 +2153,28 @@ export type ReportRouteView = {
 	label: string | null,
 	/**  Prefilled new-issue page — only when the report belongs upstream. */
 	issueUrl: string | null,
+};
+
+/**
+ *  What one installation of an item is waiting on, and what may be done
+ *  about it.
+ */
+export type RowExits = {
+	/**  `kind:name:harness`, the row this describes. */
+	key: string,
+	/**
+	 *  Whether this row stops every exit its item has. Both exits act on
+	 *  the whole item, so one place nothing can settle takes the offers
+	 *  off every other place too.
+	 */
+	blocking: boolean,
+	/**
+	 *  Whether adoption can keep what is at this position — the shape
+	 *  allows it, and the tool has something here to take.
+	 */
+	keep: boolean,
+	/**  Whether installing what the manifest asks for over it is an answer. */
+	replace: boolean,
 };
 
 /**

@@ -65,7 +65,7 @@ describe("updates store: edited places", () => {
       warnings: [],
       safety: [],
       adoptable: ADOPTABLE,
-      keepable: [],
+      exits: [],
       heldBack: [],
       queued: [],
     };

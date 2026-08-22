@@ -34,7 +34,7 @@ const emptyView: AuditView = {
   warnings: [],
   safety: [],
   adoptable: ADOPTABLE,
-  keepable: [],
+  exits: [],
   heldBack: [],
   queued: [],
 };

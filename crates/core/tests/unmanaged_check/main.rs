@@ -268,12 +268,15 @@ fn the_shared_tree_is_not_in_a_copied_installs_way() {
     assert!(!text.contains("'deploy'"), "{text}");
 }
 
-/// A hook lands at a path as derivable as an agent's — the script the tool
-/// runs, the instruction file it reads. Left out of the walk, an apply
-/// refused while the session check said all clear.
+/// Whether a hook writes a file at all is in its source, which this check
+/// does not read: a hook whose body is a command registers that command
+/// and writes nothing. Claiming the script path it would otherwise have
+/// tells the reader they are blocked and sends them to a plan with no
+/// conflict to show them — so the check says nothing about hooks, and the
+/// plan, which reads the source, says it.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_hook_whose_script_position_is_taken_is_reported() {
+fn a_hook_is_left_to_the_plan_that_can_read_it() {
     let w = world();
     write_at(
         w.home.join("app/.claude/hooks/guard.sh"),
@@ -281,109 +284,17 @@ fn a_hook_whose_script_position_is_taken_is_reported() {
     );
 
     let text = report(&w);
-    assert!(text.contains("kendex.toml asks for hook 'guard'"), "{text}");
-}
-
-/// Codex takes a command as a one-file skill tree, so that tree is where
-/// its copy actually lands — not the command directory the name suggests.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_command_is_read_at_the_position_its_tool_installs_it_to() {
-    let w = world();
-    declare(
-        &w,
-        "copy",
-        "[\"codex\"]",
-        "[commands.ship]\nsource = \"cat\"\n",
-    );
-    write_at(
-        w.home.join("app/.agents/skills/ship/SKILL.md"),
-        "the tool that came before",
-    );
-
-    let text = report(&w);
-    assert!(
-        text.contains("kendex.toml asks for command 'ship'"),
-        "{text}"
-    );
-}
-
-/// One item, two tools, one of them installed. The line is about the tool
-/// that is blocked — said only by name it claimed nothing was installed,
-/// which the tool with its copy makes false, in a report an agent reads as
-/// the project's state.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn the_line_names_the_tool_it_is_about() {
-    let w = world();
-    declare(
-        &w,
-        "copy",
-        "[\"claude\"]",
-        "[skills.deploy]\nsource = \"cat\"\n",
-    );
-    let planned = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &planned.plan, None).unwrap();
-    declare(
-        &w,
-        "copy",
-        "[\"claude\", \"opencode\"]",
-        "[skills.deploy]\nsource = \"cat\"\n",
-    );
-    write_at(
-        w.home.join("app/.opencode/skills/deploy/SKILL.md"),
-        "the tool that came before",
-    );
-
-    let text = report(&w);
-    assert!(
-        text.contains("skill 'deploy' for OpenCode"),
-        "the blocked tool is named: {text}"
-    );
-    assert!(
-        !text.contains("for Claude Code"),
-        "and the one that has it is not: {text}"
-    );
-}
-
-/// The check and the plan have to name the same problem. Skipping an item
-/// because the lock holds a key for it is the ownership error this section
-/// exists to close, one surface further along: a skill that moves from a
-/// copy per tool to one shared tree installs somewhere the old install
-/// never wrote, and whatever already lives there is a stranger's. The plan
-/// says so; the check said the session was clean, so nothing pointed at
-/// the plan that would have said it.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_skill_that_changed_how_it_installs_is_reported_by_the_check_too() {
-    let w = world();
-    let first = plan_apply(&w.env, &w.scope, &PlanOptions::default()).unwrap();
-    apply::execute(&w.env, &first.plan, None).unwrap();
-
-    declare(
-        &w,
-        "symlink",
-        "[\"claude\"]",
-        "[skills.deploy]\nsource = \"cat\"\n",
-    );
-    write_at(
-        w.home.join("app/.agents/skills/deploy/SKILL.md"),
-        "the tool that came before",
-    );
+    assert!(!text.contains("'guard'"), "{text}");
 
     let planned = plan_apply(&w.env, &w.scope, &PlanOptions::default()).unwrap();
     assert!(
-        planned.drift.iter().any(
-            |row| row.name == "deploy" && row.state == DriftState::Unmanaged
-                || row.cause.is_some_and(|cause| cause.in_the_way())
-        ),
-        "the fixture is not the state it is testing: {:?}",
+        planned
+            .drift
+            .iter()
+            .any(|row| row.name == "guard" && row.state == DriftState::Conflict),
+        "the plan that can read the source has to say it: {:?}",
         planned.drift
     );
-
-    let text = report(&w);
-    assert!(
-        text.contains("blocked by files already there"),
-        "the check called the session clean while the plan was blocked: {text}"
-    );
 }
+
+mod kinds;

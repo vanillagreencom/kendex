@@ -5,6 +5,7 @@ import type {
   Finding,
   HarnessId,
   ItemSafety,
+  RowExits,
 } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import {
@@ -35,6 +36,7 @@ function view(
   rows: DriftRow[],
   root?: string,
   safety: ItemSafety[] = [],
+  exits: RowExits[] = [],
 ): AuditView {
   return {
     scope: root ? { scope: "project", root } : { scope: "global" },
@@ -44,7 +46,7 @@ function view(
     warnings: [],
     safety,
     adoptable: ADOPTABLE,
-    keepable: [],
+    exits,
     heldBack: [],
     queued: [],
   };
@@ -187,10 +189,22 @@ describe("a declaration whose files are already there", () => {
   // the footer to promise a button that will not touch them.
   it("is a decision waiting, not a change ready to apply", () => {
     const counts = auditCounts([
-      view([
-        drift("deploy", "claude", "conflict", undefined, "unmanaged-content"),
-        drift("lint", "claude", "stale"),
-      ]),
+      view(
+        [
+          drift("deploy", "claude", "conflict", undefined, "unmanaged-content"),
+          drift("lint", "claude", "stale"),
+        ],
+        undefined,
+        [],
+        [
+          {
+            key: "skill:deploy:claude",
+            blocking: true,
+            keep: true,
+            replace: true,
+          },
+        ],
+      ),
     ]);
 
     expect(counts.changes).toBe(1);

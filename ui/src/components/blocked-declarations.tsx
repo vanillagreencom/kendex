@@ -15,7 +15,7 @@ import {
   REPLACE_FILES_LABEL,
 } from "@/lib/copy-in-the-way";
 import { type MergedDriftRow, summarizePaths } from "@/lib/drift-merge";
-import { canKeep, canReplace } from "@/lib/drift-zones";
+import type { Exits } from "@/lib/drift-zones";
 
 /**
  * Items kendex.toml asks for whose files were already on disk. Both ways
@@ -38,7 +38,7 @@ import { canKeep, canReplace } from "@/lib/drift-zones";
 export function BlockedDeclarations({
   rows,
   adoptable,
-  keepable,
+  exits,
   alsoApplies,
   busy,
   onKeep,
@@ -47,12 +47,10 @@ export function BlockedDeclarations({
   rows: MergedDriftRow[];
   /** The kinds "keep these files" works for, from core's own list. */
   adoptable: ItemKind[];
-  /** The individual installations it works for, as `kind:name:harness`.
-   *  Adoption works at a tool's own place, so a tool with nothing there —
-   *  one reading a folder through a shortcut somebody made — cannot be the
-   *  one that keeps it, and a button drawn from the cause alone would fail
-   *  on the click. */
-  keepable: string[];
+  /** Which ways out each installation has, answered by core. The page
+   *  never works them out from the cause: a button drawn that way fails on
+   *  the click the moment the two disagree. */
+  exits: Exits;
   /** Whether this project has other changes waiting, which the same apply
    *  carries — every apply is the whole scope's. */
   alsoApplies: boolean;
@@ -65,8 +63,7 @@ export function BlockedDeclarations({
   onReplace: (kind: DriftRow["kind"], name: string) => Promise<unknown>;
 }) {
   const [pending, setPending] = useState<Pending | null>(null);
-  const canBeKept = new Set(keepable);
-  const rowKey = (row: DriftRow) => `${row.kind}:${row.name}:${row.harness}`;
+
   if (rows.length === 0) return null;
 
   const where = (group: MergedDriftRow) =>
@@ -84,7 +81,7 @@ export function BlockedDeclarations({
   const toolsOf = (group: MergedDriftRow) => [
     ...new Set(
       group.installations
-        .filter((row) => canBeKept.has(rowKey(row)))
+        .filter((row) => exits.keep(row))
         .map((row) => row.harness),
     ),
   ];
@@ -116,10 +113,9 @@ export function BlockedDeclarations({
           // them actually holds it.
           const keepableHere =
             adoptable.includes(group.kind) &&
-            group.installations.every((row) => canKeep(row.cause)) &&
-            group.installations.some((row) => canBeKept.has(rowKey(row)));
+            group.installations.every((row) => exits.keep(row));
           const replaceable = group.installations.every((row) =>
-            canReplace(row.cause),
+            exits.replace(row),
           );
           return (
             <div

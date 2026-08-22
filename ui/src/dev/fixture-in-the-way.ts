@@ -1,4 +1,4 @@
-import type { DriftRow, Scope } from "@/bindings";
+import type { DriftRow, RowExits, Scope } from "@/bindings";
 
 /** The mid-migration rows a repo moving onto kendex shows: files already
  *  where declarations go, in every shape the decision zone has to answer
@@ -72,13 +72,26 @@ export function inTheWayDrift(acme: Scope): DriftRow[] {
   ];
 }
 
-/** Every place adoption can be entered through. The shared folder sits at
- *  Claude Code's own place and Codex reads it through a shortcut, so only
- *  one of that pair is here — and one Keep covers both. */
-export const IN_THE_WAY_KEEPABLE = [
-  "skill:release-notes:claude",
-  "skill:release-notes:codex",
-  "hook:pre-commit:claude",
-  "agent:scout:claude",
-  "skill:browser:claude",
+/** The ways out core would report for the rows above. The shared folder
+ *  sits at Claude Code's own place and Codex reads it through a shortcut,
+ *  so only one of that pair can be entered — and one Keep covers both. A
+ *  link is never written over, and a folder where a file goes is never
+ *  kept as it stands. */
+export const IN_THE_WAY_EXITS: RowExits[] = [
+  {
+    key: "skill:release-notes:claude",
+    blocking: true,
+    keep: true,
+    replace: true,
+  },
+  {
+    key: "skill:release-notes:codex",
+    blocking: true,
+    keep: true,
+    replace: true,
+  },
+  { key: "hook:pre-commit:claude", blocking: true, keep: true, replace: true },
+  { key: "agent:scout:claude", blocking: true, keep: false, replace: true },
+  { key: "skill:browser:claude", blocking: true, keep: true, replace: false },
+  { key: "skill:browser:codex", blocking: true, keep: false, replace: false },
 ];

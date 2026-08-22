@@ -51,12 +51,11 @@ pub struct AuditView {
     /// kinds have one — read from core so the page never offers an action
     /// that would error, and never keeps its own copy of the list.
     pub adoptable: Vec<ItemKind>,
-    /// The blocked installations "keep these files" can be offered for,
-    /// each as `kind:name:harness`. Adoption works at a tool's own place,
-    /// so a row whose tool has nothing there — a folder its neighbours
-    /// reach through a shortcut somebody made — would fail the moment the
-    /// button was clicked. Answered by core per row, like the kinds above.
-    pub keepable: Vec<String>,
+    /// Which ways out each blocked installation actually has, answered by
+    /// core per row like the kinds above. The page groups and draws these;
+    /// it never works them out from the cause, which is how one surface
+    /// ends up offering an action the plan rejects.
+    pub exits: Vec<engine::exits::RowExits>,
     /// Installations the plan would write but the safety gate holds back.
     /// Kept apart from `safety` (which scores what is on disk) because the
     /// two describe different bytes: an accept has to name the hash of what
@@ -101,26 +100,12 @@ impl AuditView {
             warnings: Vec::new(),
             safety: Vec::new(),
             adoptable: adoptable(),
-            keepable: Vec::new(),
+            exits: Vec::new(),
             held_back: Vec::new(),
             queued: Vec::new(),
             error: Some(ScopeError::from(error)),
         }
     }
-}
-
-/// The row key the page groups installations by.
-pub fn row_key(kind: ItemKind, name: &str, harness: HarnessId) -> String {
-    format!("{}:{}:{}", kind.name(), name, harness.name())
-}
-
-fn keepable(env: &Env, rows: &[DriftRow]) -> Vec<String> {
-    rows.iter()
-        .filter(|row| {
-            engine::adopt::can_keep_for(env, &row.scope, row.kind, &row.name, row.harness)
-        })
-        .map(|row| row_key(row.kind, &row.name, row.harness))
-        .collect()
 }
 
 fn adoptable() -> Vec<ItemKind> {
@@ -144,7 +129,7 @@ pub fn view(env: &Env, scope: &Scope) -> AuditView {
         report.safety.into_iter().partition(ItemSafety::blocked);
     AuditView {
         scope: scope.clone(),
-        keepable: keepable(env, &report.drift),
+        exits: engine::exits::for_rows(env, scope, &report.drift),
         drift: report.drift,
         plan: report
             .plan

@@ -5,7 +5,7 @@ import type {
   SourceRow,
 } from "@/bindings";
 
-import { IN_THE_WAY_KEEPABLE, inTheWayDrift } from "@/dev/fixture-in-the-way";
+import { IN_THE_WAY_EXITS, inTheWayDrift } from "@/dev/fixture-in-the-way";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { personalDrift, personalSafety } from "./fixture-safety";
 import { acmeHeldBack, acmeQueued, acmeSafety } from "./fixture-safety-acme";
@@ -22,7 +22,7 @@ export function views(): AuditView[] {
       warnings: [],
       safety: personalSafety(),
       adoptable: ADOPTABLE,
-      keepable: [],
+      exits: [],
       heldBack: [],
       queued: [],
     },
@@ -75,7 +75,7 @@ export function views(): AuditView[] {
       // Every place adoption can be entered through. The shared folder sits
       // at Claude Code's own place and Codex reads it through a shortcut,
       // so only one of that pair is here — and one Keep covers both.
-      keepable: IN_THE_WAY_KEEPABLE,
+      exits: IN_THE_WAY_EXITS,
       heldBack: acmeHeldBack(),
       queued: acmeQueued(),
     },
@@ -87,7 +87,7 @@ export function views(): AuditView[] {
       warnings: [],
       safety: [],
       adoptable: ADOPTABLE,
-      keepable: [],
+      exits: [],
       heldBack: [],
       queued: [],
       // Demoes the "scope couldn't be read" path: the review card and

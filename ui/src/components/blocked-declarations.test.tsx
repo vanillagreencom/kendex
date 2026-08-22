@@ -1,9 +1,10 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { DriftRow, HarnessId } from "@/bindings";
+import type { DriftRow, HarnessId, RowExits } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { KEEP_FILES_LABEL, MOVE_FILES_YOURSELF } from "@/lib/copy-in-the-way";
 import { mergeDriftRows } from "@/lib/drift-merge";
+import { Exits } from "@/lib/drift-zones";
 import { BlockedDeclarations } from "./blocked-declarations";
 
 function row(harness: HarnessId): DriftRow {
@@ -18,12 +19,12 @@ function row(harness: HarnessId): DriftRow {
   };
 }
 
-const render = (keepable: string[]) =>
+const render = (exits: RowExits[]) =>
   renderToStaticMarkup(
     <BlockedDeclarations
       rows={mergeDriftRows([row("claude"), row("codex")])}
       adoptable={ADOPTABLE}
-      keepable={keepable}
+      exits={new Exits(exits)}
       alsoApplies={false}
       busy={false}
       onKeep={async () => {}}
@@ -36,7 +37,20 @@ describe("a folder shared through a shortcut", () => {
   // be kept; whether this tool is one it can be kept through is core's
   // answer, and a button drawn without it fails on the click.
   it("offers Keep while a tool it can be entered through is blocked", () => {
-    const html = render(["skill:browser:claude"]);
+    const html = render([
+      {
+        key: "skill:browser:claude",
+        blocking: true,
+        keep: true,
+        replace: false,
+      },
+      {
+        key: "skill:browser:codex",
+        blocking: true,
+        keep: true,
+        replace: false,
+      },
+    ]);
 
     expect(html).toContain(KEEP_FILES_LABEL);
   });
