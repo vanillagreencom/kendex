@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use super::desired::{Artifact, Desired};
-use super::item_plan::{Claim, Planned, unmanaged};
+use super::item_plan::{Planned, unmanaged};
 use super::{DriftCause, DriftState};
 use crate::apply::{Op, PlannedOp, Pre};
 use crate::env::Env;
@@ -19,14 +19,14 @@ pub(super) fn plan_file(
     env: &Env,
     scope: &Scope,
     item: &Desired,
-    claim: Claim,
+    replace_unmanaged: bool,
     owned: &BTreeSet<PathBuf>,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<Planned> {
     let Artifact::File { path, bytes } = &item.artifact else {
         return Ok(Planned::Clean);
     };
-    plan_written_file(env, scope, item, path, bytes, claim, owned, ops)
+    plan_written_file(env, scope, item, path, bytes, replace_unmanaged, owned, ops)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -36,7 +36,7 @@ pub(super) fn plan_written_file(
     item: &Desired,
     path: &std::path::Path,
     bytes: &[u8],
-    claim: Claim,
+    replace_unmanaged: bool,
     owned: &BTreeSet<PathBuf>,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<Planned> {
@@ -51,13 +51,13 @@ pub(super) fn plan_written_file(
         // a row that offered to keep it would fail on the click. Anything
         // that is neither a file nor a directory — a socket, a device — is
         // nobody's to move.
-        if !path.is_dir() || claim.owns(path, owned) {
+        if !path.is_dir() || owned.contains(path) {
             return Ok(Planned::Conflict(format!(
                 "a directory sits at {}",
                 crate::names::shown(&path.display().to_string())
             )));
         }
-        if !claim.replace_unmanaged {
+        if !replace_unmanaged {
             return Ok(unmanaged(DriftCause::UnmanagedWrongShape, path));
         }
         let hash = match hash_tree(path) {
@@ -78,8 +78,8 @@ pub(super) fn plan_written_file(
     match disk {
         Some(current) if current == wanted => Ok(Planned::Clean),
         Some(current) => {
-            if !ours(claim, path, owned) {
-                if !claim.replace_unmanaged {
+            if !ours(path, owned) {
+                if !replace_unmanaged {
                     return Ok(unmanaged(DriftCause::UnmanagedContent, path));
                 }
                 ops.push(set_aside(path, Pre::HashIs { hash: current }));
@@ -106,7 +106,14 @@ pub(super) fn plan_written_file(
             ))
         }
         None => Ok(plan_absent_file(
-            env, scope, item, path, bytes, claim, owned, ops,
+            env,
+            scope,
+            item,
+            path,
+            bytes,
+            replace_unmanaged,
+            owned,
+            ops,
         )),
     }
 }
@@ -126,7 +133,7 @@ fn plan_absent_file(
     item: &Desired,
     path: &std::path::Path,
     bytes: &[u8],
-    claim: Claim,
+    replace_unmanaged: bool,
     owned: &BTreeSet<PathBuf>,
     ops: &mut Vec<PlannedOp>,
 ) -> Planned {
@@ -135,8 +142,8 @@ fn plan_absent_file(
         return unmanaged(DriftCause::ForeignLink, &alternate);
     }
     if alternate.is_file() {
-        if !ours(claim, path, owned) {
-            if !claim.replace_unmanaged {
+        if !ours(path, owned) {
+            if !replace_unmanaged {
                 return unmanaged(DriftCause::UnmanagedContent, &alternate);
             }
             let hash = match hash_tree(&alternate) {
@@ -240,8 +247,8 @@ fn uncomparable(path: &std::path::Path, error: &crate::error::CoreError) -> Plan
 /// way. Asking about the spelling alone reads a switched-off install of
 /// ours as somebody else's files, which blocks its next update behind a
 /// take-over.
-pub(super) fn ours(claim: Claim, path: &std::path::Path, owned: &BTreeSet<PathBuf>) -> bool {
-    claim.owns(path, owned) || claim.owns(&toggle_sibling(path), owned)
+pub(super) fn ours(path: &std::path::Path, owned: &BTreeSet<PathBuf>) -> bool {
+    owned.contains(path) || owned.contains(&toggle_sibling(path))
 }
 
 pub(super) fn toggle_sibling(path: &std::path::Path) -> std::path::PathBuf {

@@ -146,30 +146,17 @@ fn keep_exit(env: &Env, item: &[&DriftRow]) -> String {
     };
     let mut tools: Vec<HarnessId> = Vec::new();
     for row in item {
-        // A shape adoption cannot take — a folder where one file goes, or
-        // the reverse — settles nothing, and the offer would keep the rest
-        // of the item and rewrite the declaration around them, leaving this
-        // place blocked with the item no longer its tool's. The whole item
-        // moves out of the way by hand instead.
-        if !row.cause.is_some_and(DriftCause::can_keep) {
+        // Core's answer, not a second reading of the cause. A place it
+        // cannot keep is skipped only where the tool reads the item
+        // through a shortcut somebody made — there the tool holding the
+        // folder keeps it for both. Anywhere else that place is one the
+        // offer would leave behind, and keeping is one move for the whole
+        // item, so the files move out of the way by hand instead.
+        let keep = kendex_core::engine::exits::for_row(env, &row.scope, row).keep;
+        if !keep && row.cause != Some(DriftCause::SharedLink) {
             return away;
         }
-        let entered = kendex_core::engine::adopt::can_keep_for(
-            env,
-            &row.scope,
-            row.kind,
-            &row.name,
-            row.harness,
-        );
-        // A tool with nothing at its own place is only skipped where it
-        // reads the item through a shortcut somebody made — there the tool
-        // holding the folder keeps it for both. Anywhere else a place
-        // adoption cannot enter is a place the offer would leave behind,
-        // and keeping is one move for the whole item.
-        if !entered && row.cause != Some(DriftCause::SharedLink) {
-            return away;
-        }
-        if entered && !tools.contains(&row.harness) {
+        if keep && !tools.contains(&row.harness) {
             tools.push(row.harness);
         }
     }

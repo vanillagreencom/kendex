@@ -26,7 +26,10 @@ pub(crate) fn refuse_unsettled_takeover(
             .collect(),
         false => Vec::new(),
     };
-    let named = options.replace_unmanaged_names.clone().unwrap_or_default();
+    let named = options
+        .replace_unmanaged_names
+        .as_deref()
+        .unwrap_or_default();
     for (kind, name) in named.iter().chain(scope_wide.iter()) {
         let rows: Vec<&DriftRow> = drift
             .iter()

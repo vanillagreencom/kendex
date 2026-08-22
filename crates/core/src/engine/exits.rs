@@ -30,22 +30,22 @@ pub struct RowExits {
     pub replace: bool,
 }
 
-/// The row key a surface groups installations by.
-pub fn row_key(row: &DriftRow) -> String {
-    format!("{}:{}:{}", row.kind.name(), row.name, row.harness.name())
+/// What one row is waiting on. Read by the page through the audit and by
+/// the CLI directly, so the two never answer this differently.
+pub fn for_row(env: &Env, scope: &Scope, row: &DriftRow) -> RowExits {
+    RowExits {
+        key: format!("{}:{}:{}", row.kind.name(), row.name, row.harness.name()),
+        blocking: row.dead_stop(),
+        keep: row.cause.is_some_and(DriftCause::can_keep)
+            && super::adopt::can_keep_for(env, scope, row.kind, &row.name, row.harness),
+        replace: row.cause.is_some_and(DriftCause::can_replace),
+    }
 }
 
-/// Read once per audit, so the page, the plan and the printed commands
-/// never answer this differently.
+/// Every row a surface has to draw a decision for.
 pub fn for_rows(env: &Env, scope: &Scope, rows: &[DriftRow]) -> Vec<RowExits> {
     rows.iter()
         .filter(|row| row.dead_stop())
-        .map(|row| RowExits {
-            key: row_key(row),
-            blocking: true,
-            keep: row.cause.is_some_and(DriftCause::can_keep)
-                && super::adopt::can_keep_for(env, scope, row.kind, &row.name, row.harness),
-            replace: row.cause.is_some_and(DriftCause::can_replace),
-        })
+        .map(|row| for_row(env, scope, row))
         .collect()
 }

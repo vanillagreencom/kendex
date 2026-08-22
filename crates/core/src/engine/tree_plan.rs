@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use super::desired::{Artifact, Desired, artifact_disk_hash};
 use super::file_plan::{TAKEN_OVER, set_aside};
-use super::item_plan::{Claim, Planned, unmanaged};
+use super::item_plan::{Planned, unmanaged};
 use super::{DriftCause, DriftState};
 use crate::apply::{Op, PlannedOp, Pre};
 use crate::env::Env;
@@ -23,7 +23,7 @@ pub(super) fn plan_tree(
     env: &Env,
     scope: &Scope,
     item: &Desired,
-    claim: Claim,
+    replace_unmanaged: bool,
     owned: &BTreeSet<PathBuf>,
     written: &mut Written,
     ops: &mut Vec<PlannedOp>,
@@ -48,7 +48,7 @@ pub(super) fn plan_tree(
     // nobody's to move either way.
     let mut wrong_shape: Option<String> = None;
     if collapsed.is_none() && canonical.exists() && !canonical.is_dir() {
-        if !canonical.is_file() || claim.owns(canonical, owned) {
+        if !canonical.is_file() || owned.contains(canonical) {
             return Ok(Planned::Conflict(format!(
                 "a file sits at {}",
                 crate::names::shown(&canonical.display().to_string())
@@ -69,9 +69,9 @@ pub(super) fn plan_tree(
     if disk.as_deref() != Some(wanted.as_str()) {
         let unowned = wrong_shape.is_some()
             || (disk.is_some()
-                && !claim.owns(canonical, owned)
+                && !owned.contains(canonical)
                 && !written.canonicals.contains(canonical));
-        if unowned && !claim.replace_unmanaged {
+        if unowned && !replace_unmanaged {
             return Ok(in_the_way(canonical));
         }
         result = match (disk.is_some() || collapsed.is_some(), unowned) {
@@ -101,7 +101,15 @@ pub(super) fn plan_tree(
         return Ok(result);
     };
     plan_link(
-        env, item, link, canonical, claim, owned, written, ops, result,
+        env,
+        item,
+        link,
+        canonical,
+        replace_unmanaged,
+        owned,
+        written,
+        ops,
+        result,
     )
 }
 
@@ -263,7 +271,7 @@ fn plan_link(
     item: &Desired,
     link: &Path,
     canonical: &Path,
-    claim: Claim,
+    replace_unmanaged: bool,
     owned: &BTreeSet<PathBuf>,
     written: &mut Written,
     ops: &mut Vec<PlannedOp>,
@@ -320,8 +328,8 @@ fn plan_link(
         ));
     }
     let diverged = link.exists();
-    let unowned = diverged && !claim.owns(link, owned);
-    if unowned && !claim.replace_unmanaged {
+    let unowned = diverged && !owned.contains(link);
+    if unowned && !replace_unmanaged {
         return Ok(in_the_way(link));
     }
     let first = written.claim_link(link);

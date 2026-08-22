@@ -75,7 +75,6 @@ pub(super) fn plan_item(
         return Ok(());
     }
 
-    let claim = Claim { replace_unmanaged };
     // A refusal plans nothing at all. The artifact planners write ops as
     // they go and only learn of a refusal further in — a tree whose harness
     // link turns out to be a stranger's, say — so what they staged for this
@@ -84,32 +83,42 @@ pub(super) fn plan_item(
     let staged = ops.len();
     written.start_item();
     let planned = match &item.artifact {
-        Artifact::File { .. } => plan_file(env, scope, item, claim, owned, ops),
-        Artifact::Tree { .. } => plan_tree(env, scope, item, claim, owned, written, ops),
-        Artifact::Registration { .. } => {
-            plan_registration(env, scope, item, existing, claim, owned, ops, config_edits)
+        Artifact::File { .. } => plan_file(env, scope, item, replace_unmanaged, owned, ops),
+        Artifact::Tree { .. } => {
+            plan_tree(env, scope, item, replace_unmanaged, owned, written, ops)
         }
+        Artifact::Registration { .. } => plan_registration(
+            env,
+            scope,
+            item,
+            existing,
+            replace_unmanaged,
+            owned,
+            ops,
+            config_edits,
+        ),
     }?;
     let dirty = !matches!(planned, Planned::Clean);
-    match planned {
-        Planned::Conflict(_) | Planned::Unmanaged(..) => {
-            let (cause, detail) = match planned {
-                Planned::Unmanaged(cause, detail) => (Some(cause), detail),
-                Planned::Conflict(detail) => (None, detail),
-                _ => unreachable!("only the two refusals reach here"),
-            };
-            ops.truncate(staged);
-            written.undo_item();
-            let mut conflict = row(DriftState::Conflict, detail);
-            conflict.cause = cause;
-            drift.push(conflict);
-            if let Some(entry) = existing {
-                new_lock.entries.insert(item.key.clone(), entry.clone());
-            }
-            return Ok(());
+    // The two refusals differ only in whether the cause is known.
+    let refused = match planned {
+        Planned::Unmanaged(cause, detail) => Some((Some(cause), detail)),
+        Planned::Conflict(detail) => Some((None, detail)),
+        Planned::Drift(state, detail) => {
+            drift.push(row(state, detail));
+            None
         }
-        Planned::Drift(state, detail) => drift.push(row(state, detail)),
-        Planned::Clean => {}
+        Planned::Clean => None,
+    };
+    if let Some((cause, detail)) = refused {
+        ops.truncate(staged);
+        written.undo_item();
+        let mut conflict = row(DriftState::Conflict, detail);
+        conflict.cause = cause;
+        drift.push(conflict);
+        if let Some(entry) = existing {
+            new_lock.entries.insert(item.key.clone(), entry.clone());
+        }
+        return Ok(());
     }
 
     let hash_moved = existing.is_some_and(|entry| entry.source_hash != item.hash);
@@ -123,30 +132,34 @@ pub(super) fn plan_item(
         Some(entry) if !dirty && !hash_moved => entry.installed_at.clone(),
         _ => timestamp(),
     };
-    new_lock.entries.insert(
-        item.key.clone(),
-        LockEntry {
-            name: item.name.clone(),
-            kind: item.kind,
-            harness: item.harness,
-            source: item.source_name.clone(),
-            source_repo: item.provenance.clone(),
-            method: item.method,
-            installed_at,
-            source_hash: item.hash.clone(),
-            source_commit: item.source_commit.clone(),
-            rendered_hash: rendered_hash(&item.artifact),
-            enabled: item.enabled,
-            upstream_skills: item.upstream_skills.clone(),
-            emitted: item.emitted.clone(),
-            registration: registration(item),
-            // Carried, never re-derived: what a pass records about a
-            // finished move outlives every later rendering of the item.
-            left_pi_reserved_name: existing.is_some_and(|entry| entry.left_pi_reserved_name),
-            reasons: item.reasons.clone(),
-        },
-    );
+    new_lock
+        .entries
+        .insert(item.key.clone(), record(item, existing, installed_at));
     Ok(())
+}
+
+/// What this pass records about the installation it just planned.
+fn record(item: &Desired, existing: Option<&LockEntry>, installed_at: String) -> LockEntry {
+    LockEntry {
+        name: item.name.clone(),
+        kind: item.kind,
+        harness: item.harness,
+        source: item.source_name.clone(),
+        source_repo: item.provenance.clone(),
+        method: item.method,
+        installed_at,
+        source_hash: item.hash.clone(),
+        source_commit: item.source_commit.clone(),
+        rendered_hash: rendered_hash(&item.artifact),
+        enabled: item.enabled,
+        upstream_skills: item.upstream_skills.clone(),
+        emitted: item.emitted.clone(),
+        registration: registration(item),
+        // Carried, never re-derived: what a pass records about a finished
+        // move outlives every later rendering of the item.
+        left_pi_reserved_name: existing.is_some_and(|entry| entry.left_pi_reserved_name),
+        reasons: item.reasons.clone(),
+    }
 }
 
 /// What this artifact leaves on disk, for edit detection later. Only file
@@ -162,26 +175,6 @@ pub(super) enum Planned {
     /// like any other, carrying the cause that says which ways out this
     /// position has.
     Unmanaged(DriftCause, String),
-}
-
-/// What a plan may do with the position an item installs at:
-/// `replace_unmanaged` is the user's word that a declaration outranks
-/// whatever else is there.
-#[derive(Debug, Clone, Copy)]
-pub(super) struct Claim {
-    pub(super) replace_unmanaged: bool,
-}
-
-impl Claim {
-    /// Whether the bytes at this position are kendex's own: some install
-    /// recorded writing exactly here. Read from the paths the lock's
-    /// entries actually emitted, never from the entry merely existing — an
-    /// installation that changed method writes somewhere new, and calling
-    /// that new position ours because the old one was recorded hands a
-    /// stranger's files to the writer.
-    pub(super) fn owns(&self, path: &std::path::Path, owned: &BTreeSet<PathBuf>) -> bool {
-        owned.contains(path)
-    }
 }
 
 /// The refusal: where the files in the way are, and nothing else. The
@@ -212,7 +205,7 @@ fn plan_registration(
     scope: &Scope,
     item: &Desired,
     existing: Option<&LockEntry>,
-    claim: Claim,
+    replace_unmanaged: bool,
     owned: &BTreeSet<PathBuf>,
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut ConfigEditPlan,
@@ -257,7 +250,9 @@ fn plan_registration(
         }
     }
     let mut planned = match script {
-        Some((path, bytes)) => plan_written_file(env, scope, item, path, bytes, claim, owned, ops)?,
+        Some((path, bytes)) => {
+            plan_written_file(env, scope, item, path, bytes, replace_unmanaged, owned, ops)?
+        }
         None => Planned::Clean,
     };
     if matches!(planned, Planned::Conflict(_) | Planned::Unmanaged(..)) {
