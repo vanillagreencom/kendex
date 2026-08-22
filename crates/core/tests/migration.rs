@@ -172,3 +172,58 @@ fn a_newer_schema_refuses_to_load() {
         Err(CoreError::SchemaTooNew { .. })
     ));
 }
+
+/// A caller can hand in a manifest carrying edits the file does not have —
+/// a save in flight does exactly that. Upgrading the schema by rewriting
+/// one line of the file would drop those edits, and the file write it
+/// emits is not one `persists_manifest` recognises, so the caller adds its
+/// own whole-file save and the two bind to the same bytes: the second
+/// fails after the first has moved them, taking the save down with it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_upgrade_carrying_a_callers_edits_is_one_write_the_caller_can_see() {
+    let f = fixture();
+    let lock = load_lock(&lock_path(&f.env, &f.scope)).unwrap();
+    let mut edited = kendex_core::manifest::load_for_mutation(&f.manifest_path)
+        .unwrap()
+        .unwrap();
+    // The state a save in flight hands in: the schema the file still
+    // carries, plus an edit the file does not.
+    // The schema the file itself carries, so the surgical rewrite is the
+    // path that would otherwise be taken.
+    edited.schema = 1;
+    edited
+        .install
+        .harnesses
+        .push(kendex_core::model::HarnessId::Codex);
+
+    let report = kendex_core::engine::plan_scope(
+        &f.env,
+        &f.scope,
+        &edited,
+        &lock,
+        &kendex_core::engine::PlanOptions::default(),
+    )
+    .unwrap();
+
+    assert!(
+        kendex_core::engine::persists_manifest(&report.plan.ops),
+        "the caller cannot see this write, so it will add a second one"
+    );
+    apply::execute(&f.env, &report.plan, None).unwrap();
+
+    let written = kendex_core::manifest::load_for_mutation(&f.manifest_path)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        written.schema, MANIFEST_SCHEMA,
+        "the upgrade still happened"
+    );
+    assert!(
+        written
+            .install
+            .harnesses
+            .contains(&kendex_core::model::HarnessId::Codex),
+        "and the caller's edit rode along rather than being dropped"
+    );
+}

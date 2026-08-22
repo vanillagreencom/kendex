@@ -4,13 +4,14 @@ import { ItemSettings } from "@/components/customize/item-settings";
 import { ItemSkills } from "@/components/customize/item-skills";
 import { Pill } from "@/components/pill";
 import { Section } from "@/components/section";
+import { StatusDot } from "@/components/status-dot";
 import { StatusNote } from "@/components/status-note";
 import {
   ADDITIONAL_HELP,
   ADDITIONAL_LABEL,
   LAUNCH_HELP,
   LAUNCH_LABEL,
-  SAVE_FIRST,
+  placeStateLine,
   SETTINGS_SECTION,
   SKILL_INSTRUCTIONS_HELP,
   SKILL_INSTRUCTIONS_LABEL,
@@ -18,8 +19,14 @@ import {
   WRITTEN_INTO,
 } from "@/lib/copy-customize";
 import { itemCustomization, sharedCustomization } from "@/lib/customization";
+import {
+  type PlaceStanding,
+  placeStandings,
+  standingIn,
+} from "@/lib/customized-places";
 import { setInstruction } from "@/lib/editor-draft";
 import { scopeName } from "@/lib/labels";
+import { useEditingPlacesSource } from "@/lib/places-source";
 import { scopeKey } from "@/lib/scope";
 import { useEditorStore } from "@/stores/editor";
 
@@ -38,8 +45,15 @@ export function ItemCustomize({
   scopes: Scope[];
   harnesses: HarnessId[];
 }) {
-  const { scope, draft, inventory, dirty, error, setScope, edit } =
+  const { scope, draft, inventory, saving, error, setScope, edit } =
     useEditorStore();
+  const places = useEditingPlacesSource();
+  // Which places already carry changes, so switching to one is an informed
+  // click rather than something you find out after arriving.
+  const standings = placeStandings(places, kind, name, scopes);
+  const stateLine = (standing: PlaceStanding) =>
+    placeStateLine(scopeName(standing.scope, scopes), standing.state);
+  const here = standingIn(standings, scope);
 
   const mine = itemCustomization(draft, kind, name);
   const shared = sharedCustomization(draft);
@@ -55,18 +69,35 @@ export function ItemCustomize({
         </StatusNote>
       ) : null}
       {scopes.length > 1 ? (
-        <div className="flex flex-wrap items-center gap-1.5">
-          {scopes.map((where) => (
-            <Pill
-              key={scopeKey(where)}
-              selected={scopeKey(where) === scopeKey(scope)}
-              disabled={dirty}
-              title={dirty ? SAVE_FIRST : undefined}
-              onClick={() => void setScope(where)}
-            >
-              {scopeName(where)}
-            </Pill>
-          ))}
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {standings.map((standing) => (
+              <Pill
+                key={scopeKey(standing.scope)}
+                selected={scopeKey(standing.scope) === scopeKey(scope)}
+                // Switching place mid-save would attribute the outcome to
+                // a place it is not about, the same reason the Customize
+                // page's picker is gated. Unsaved typing is not a reason to
+                // shut a chip: it travels to the place it belongs to.
+                disabled={saving}
+                title={stateLine(standing)}
+                onClick={() => void setScope(standing.scope)}
+              >
+                {standing.state === "customized" ? (
+                  <StatusDot tone="customized" />
+                ) : null}
+                {scopeName(standing.scope, scopes)}
+                {/* The dot is the mark; these are its words, for anyone a
+                    colour and a hover never reach. */}
+                <span className="sr-only">{stateLine(standing)}</span>
+              </Pill>
+            ))}
+          </div>
+          {/* What the dot on the open chip means, said out loud — a hover
+              is not a channel a touch reader has. */}
+          {here ? (
+            <p className="text-xs text-muted-foreground">{stateLine(here)}</p>
+          ) : null}
         </div>
       ) : null}
       <Section title="Instructions" description={WRITTEN_INTO}>

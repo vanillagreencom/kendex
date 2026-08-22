@@ -336,3 +336,61 @@ fn a_settings_file_seeded_under_the_old_name_keeps_receiving_seeds() {
     assert!(old.contains("DEPTH = \"2\""), "{old}");
     assert!(!f.project.join("kendex.settings.toml").exists());
 }
+
+/// Every default is shipped by a declared skill, so a plan restricted to
+/// some packages seeds what those ship and nothing else. The settings file
+/// and its ledger belong to the scope, and a command about one package
+/// rewriting both is that command touching another's.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_plan_for_one_package_seeds_only_what_that_package_ships() {
+    let f = fixture(true);
+    let planned = |only: Option<Vec<(kendex_core::model::ItemKind, String)>>| {
+        let manifest = kendex_core::manifest::load_for_mutation(
+            &kendex_core::manifest::manifest_path(&f.env, &f.scope),
+        )
+        .unwrap()
+        .unwrap();
+        let lock =
+            kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap();
+        kendex_core::engine::plan_scope(
+            &f.env,
+            &f.scope,
+            &manifest,
+            &lock,
+            &kendex_core::engine::PlanOptions {
+                only_names: only,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    };
+    let seeding = |report: &kendex_core::engine::EngineReport| {
+        report
+            .plan
+            .ops
+            .iter()
+            .filter(|op| op.description.contains("kendex.settings.toml"))
+            .count()
+    };
+
+    // The control: unrestricted, the scope's seeding is planned.
+    assert_eq!(seeding(&planned(None)), 1);
+    // The skill that ships it is this plan's own work.
+    assert_eq!(
+        seeding(&planned(Some(vec![(
+            kendex_core::model::ItemKind::Skill,
+            "review".to_owned(),
+        )]))),
+        1
+    );
+    // A plan about a package that ships none writes none.
+    assert_eq!(
+        seeding(&planned(Some(vec![(
+            kendex_core::model::ItemKind::Skill,
+            "elsewhere".to_owned(),
+        )]))),
+        0,
+        "a plan for another package rewrote the scope's settings file"
+    );
+}

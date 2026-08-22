@@ -1,15 +1,15 @@
-use kendex_core::apply::{Op, PlannedOp, Pre};
-use kendex_core::engine::{self, ItemSource, PlanOptions, ops};
+use kendex_core::engine::{self, ItemSource};
 use kendex_core::env::Env;
-use kendex_core::lock::{load as load_lock, lock_path};
-use kendex_core::manifest::{self, Finding, Manifest};
+use kendex_core::manifest::{self, LOCAL_SOURCE_NAME};
 use kendex_core::model::{HarnessId, ItemKind, Scope};
 use kendex_core::source::{self, SourceState};
-use kendex_core::{apply, manifest::LOCAL_SOURCE_NAME};
 use serde::Serialize;
 use specta::Type;
 
-use crate::audit::{AuditView, view};
+mod save;
+// Glob, not a named list: `#[tauri::command]` generates hidden items beside
+// each function, and `collect_commands!` reaches for them by name.
+pub use save::*;
 
 fn env() -> Result<Env, String> {
     Env::detect().map_err(|e| e.to_string())
@@ -115,80 +115,6 @@ pub fn custom_hook_deliveries(
 
 #[tauri::command(async)]
 #[specta::specta]
-pub fn get_manifest(scope: Scope) -> Result<Option<Manifest>, String> {
-    let env = env()?;
-    manifest::load_for_mutation(&manifest::manifest_path(&env, &scope)).map_err(|e| e.to_string())
-}
-
-/// Validate an edited manifest the way a hand-written file is validated, so
-/// the editor rejects exactly the same things — fix strings included.
-fn check(manifest: &Manifest) -> Result<(), String> {
-    let text = toml::to_string_pretty(manifest).map_err(|e| e.to_string())?;
-    let table: toml::Table = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
-    let findings = manifest::validate(&table);
-    if findings.is_empty() {
-        return Ok(());
-    }
-    Err(findings
-        .iter()
-        .map(Finding::to_string)
-        .collect::<Vec<_>>()
-        .join("\n"))
-}
-
-/// The editor can create the first manifest for a scope, and first creation
-/// is where the default source is seeded — skipping it here would drop it
-/// for good, since later reconciliation never re-adds it.
-fn on_first_creation(mut manifest: Manifest, seed: Manifest) -> Manifest {
-    if manifest.sources.is_empty() {
-        manifest.sources = seed.sources;
-        if manifest.install.harnesses.is_empty() {
-            manifest.install.harnesses = seed.install.harnesses;
-        }
-    }
-    manifest
-}
-
-/// Write an edited manifest and reconcile the scope to it.
-#[tauri::command(async)]
-#[specta::specta]
-pub fn update_manifest(scope: Scope, manifest: Manifest) -> Result<AuditView, String> {
-    let env = env()?;
-    let path = manifest::manifest_path(&env, &scope);
-    let mut manifest = match manifest::load_for_mutation(&path).map_err(|e| e.to_string())? {
-        Some(_) => manifest,
-        None => on_first_creation(
-            manifest,
-            ops::manifest_for_mutation(&env, &scope).map_err(|e| e.to_string())?,
-        ),
-    };
-    // A custom hook's name is its identity everywhere downstream; saving is
-    // when a derived one stops being derived.
-    kendex_core::hook::name_custom_hooks(&mut manifest);
-    check(&manifest)?;
-    let lock = load_lock(&lock_path(&env, &scope)).map_err(|e| e.to_string())?;
-    let mut report = engine::plan_scope(&env, &scope, &manifest, &lock, &PlanOptions::default())
-        .map_err(|e| e.to_string())?;
-    let persisted = engine::persists_manifest(&report.plan.ops);
-    if !persisted {
-        report.plan.ops.insert(
-            0,
-            PlannedOp {
-                description: "Save kendex.toml".into(),
-                op: Op::WriteManifest {
-                    pre: Pre::observed(&path).map_err(|e| e.to_string())?,
-                    path: path.clone(),
-                    manifest: Box::new(manifest),
-                },
-            },
-        );
-    }
-    apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
-    Ok(view(&env, &scope))
-}
-
-#[tauri::command(async)]
-#[specta::specta]
 pub fn editor_inventory(scope: Scope) -> Result<EditorInventory, String> {
     let env = env()?;
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&env, &scope))
@@ -255,80 +181,4 @@ pub fn item_source(
     harness: HarnessId,
 ) -> Result<ItemSource, String> {
     engine::item_source(&env()?, &scope, kind, &name, harness).map_err(|e| e.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use kendex_core::manifest::{
-        DEFAULT_SOURCE_NAME, DEFAULT_SOURCE_REPO, ItemDecl, MANIFEST_SCHEMA, SourceDecl,
-    };
-    use std::collections::BTreeMap;
-
-    fn manifest() -> Manifest {
-        Manifest {
-            schema: MANIFEST_SCHEMA,
-            sources: BTreeMap::from([(
-                DEFAULT_SOURCE_NAME.to_owned(),
-                SourceDecl {
-                    repo: Some(DEFAULT_SOURCE_REPO.to_owned()),
-                    path: None,
-                    rev: None,
-                    enabled: true,
-                },
-            )]),
-            ..Manifest::default()
-        }
-    }
-
-    #[test]
-    fn customization_tables_pass_the_same_check_a_file_gets() {
-        let mut edited = manifest();
-        edited
-            .agent_skills
-            .insert("orch".to_owned(), vec!["github".to_owned()]);
-        edited
-            .agent_launch_instructions
-            .insert("all".to_owned(), "read the plan".to_owned());
-        edited.custom_hooks.push(kendex_core::manifest::CustomHook {
-            name: None,
-            event: "PreToolUse".to_owned(),
-            matcher: Some("Bash".to_owned()),
-            command: "./guard.sh".to_owned(),
-            description: None,
-            timeout: None,
-            harnesses: None,
-            enabled: true,
-            agents: kendex_core::manifest::HookAgents::One("all".to_owned()),
-        });
-        assert_eq!(check(&edited), Ok(()));
-    }
-
-    #[test]
-    fn creating_a_manifest_here_still_seeds_the_default_source() {
-        let seeded = on_first_creation(
-            Manifest {
-                schema: MANIFEST_SCHEMA,
-                ..Manifest::default()
-            },
-            manifest::seed(&[HarnessId::Claude]),
-        );
-        assert!(seeded.sources.contains_key("kendex"));
-        assert_eq!(seeded.install.harnesses, [HarnessId::Claude]);
-
-        let declared = on_first_creation(manifest(), manifest::seed(&[HarnessId::Pi]));
-        assert_eq!(declared.sources.len(), 1);
-        assert!(declared.install.harnesses.is_empty());
-    }
-
-    #[test]
-    fn rejected_edits_come_back_with_their_fix_string() {
-        let mut edited = manifest();
-        edited
-            .skills
-            .insert("github".to_owned(), ItemDecl::from_source("gone"));
-        let error = check(&edited).expect_err("undeclared source must be rejected");
-        assert!(error.contains("skills.github"), "{error}");
-        assert!(error.contains("fix: declare [sources.gone]"), "{error}");
-    }
 }

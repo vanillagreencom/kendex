@@ -9,6 +9,7 @@ import {
 } from "@/lib/copy";
 import { mergeDriftRows } from "@/lib/drift-merge";
 import { scopeName } from "@/lib/labels";
+import { scopeKey } from "@/lib/scope";
 import { useAuditStore } from "@/stores/audit";
 import { useNavStore } from "@/stores/nav";
 
@@ -48,6 +49,7 @@ export function NotManagedPanel() {
   const total = perScope.reduce((sum, { rows }) => sum + rows.length, 0);
   if (total === 0) return null;
   const several = perScope.length > 1;
+  const among = perScope.map((one) => one.view.scope);
   const foldable = total > INLINE_LIMIT;
   const showLists = !foldable || expanded;
   return (
@@ -72,10 +74,10 @@ export function NotManagedPanel() {
       {showLists
         ? perScope.map(({ view, rows }) => (
             <UnmanagedItems
-              key={scopeName(view.scope)}
+              key={scopeKey(view.scope)}
               rows={rows}
               busy={busy}
-              title={several ? scopeName(view.scope) : null}
+              title={several ? scopeName(view.scope, among) : null}
               onAdopt={(kind, name, harness, opts) =>
                 adopt(view.scope, kind, name, harness, opts)
               }

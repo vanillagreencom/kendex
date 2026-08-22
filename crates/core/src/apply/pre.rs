@@ -2,7 +2,10 @@
 //!
 //! Every op revalidates its precondition immediately before running, so a
 //! plan that went stale between the preview and the apply fails instead of
-//! acting on a world it never looked at (invariant 7).
+//! acting on a world it never looked at (invariant 7). A whole-file write
+//! binds to something stricter still: the file the copy being written came
+//! from, which is a `manifest::Base` and outranks whatever the plan
+//! observed for itself.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -42,9 +45,20 @@ pub enum Pre {
     Any,
 }
 
+impl From<&crate::manifest::Base> for Pre {
+    /// What a whole-file write binds to: the file is exactly the bytes the
+    /// copy came from, or nothing was there and nothing may be there now.
+    fn from(base: &crate::manifest::Base) -> Pre {
+        match base.hash() {
+            Some(hash) => Pre::HashIs {
+                hash: hash.to_owned(),
+            },
+            None => Pre::Absent,
+        }
+    }
+}
+
 impl Pre {
-    /// What a plan that rewrites `path` wholesale binds to: the bytes seen
-    /// at plan time, or the absence seen at plan time.
     /// What a plan that rewrites a document kendex will not write through
     /// a link binds to: the bytes it saw, and that they were in a plain
     /// file. A link arriving where one stood fails this as surely as
@@ -62,6 +76,8 @@ impl Pre {
         }
     }
 
+    /// What a plan that rewrites `path` wholesale binds to: the bytes seen
+    /// at plan time, or the absence seen at plan time.
     pub fn observed(path: &Path) -> Result<Pre> {
         match path.is_file() {
             true => Ok(Pre::HashIs {

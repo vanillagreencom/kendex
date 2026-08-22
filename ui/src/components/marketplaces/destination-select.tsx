@@ -45,14 +45,14 @@ export function DestinationSelect({
         <SelectValue>
           {(current: string) => {
             const scope = options.find((s) => scopeLabel(s) === current);
-            return scope ? scopeName(scope) : current;
+            return scope ? scopeName(scope, options) : current;
           }}
         </SelectValue>
       </SelectTrigger>
       <SelectContent>
         {options.map((scope) => (
           <SelectItem key={scopeLabel(scope)} value={scopeLabel(scope)}>
-            {scopeName(scope)}
+            {scopeName(scope, options)}
           </SelectItem>
         ))}
       </SelectContent>

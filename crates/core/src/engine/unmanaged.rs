@@ -7,7 +7,7 @@ use crate::manifest::{ItemDecl, Manifest};
 use crate::model::{ItemKind, Scope};
 
 use super::desired::{self, Desired};
-use super::{DriftRow, DriftState};
+use super::{DriftRow, DriftState, DriftSubject};
 
 pub(super) fn unmanaged_rows(
     env: &Env,
@@ -52,6 +52,7 @@ pub(super) fn unmanaged_rows(
             harness: item.harness,
             scope: scope.clone(),
             state: DriftState::Unmanaged,
+            subject: DriftSubject::Package,
             detail: item.path.display().to_string(),
             cause: None,
         });

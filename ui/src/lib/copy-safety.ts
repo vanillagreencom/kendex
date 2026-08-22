@@ -8,6 +8,9 @@ import { VERDICT_LABELS } from "@/lib/labels";
 // The zone only a person can clear: held-back installs first, then the
 // findings nobody has ruled on. Its caption counts both halves.
 export const DECISION_ZONE_TITLE = "Needs your decision";
+// A conflict has no ops behind it: Apply cannot clear it, and the exits it
+// does have live on the package's own page.
+export const CONFLICT_ZONE_TITLE = "Waiting on you, on their own pages";
 export const cleanSummaryLead = (total: number): string =>
   `${total} item${total === 1 ? "" : "s"}, nothing to report`;
 export const settledSummaryLead = (count: number, byAuthor = 0): string => {

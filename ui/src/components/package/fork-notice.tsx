@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { HarnessId, ItemKind, Scope, UpdateRow } from "@/bindings";
+import type { HarnessId, UpdateRow } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { StatusDot } from "@/components/status-dot";
 import { Button } from "@/components/ui/button";
@@ -13,15 +13,17 @@ import {
   editedInToolsLabel,
   FORK_NOTICE_DETAIL,
   FORK_NOTICE_TITLE,
+  FORKED_DISCARD_CONFIRM_BODY,
+  FORKED_NOTICE_DETAIL,
+  FORKED_UNREADABLE_DETAIL,
   KEEP_AS_FORK_LABEL,
   MULTI_TOOL_FORK_NOTE,
   unforkableCopyNote,
   VIEW_CHANGES_LABEL,
   viewChangesInLabel,
-} from "@/lib/copy";
+} from "@/lib/copy-forks";
 import { harnessName } from "@/lib/labels";
-import { sameScope } from "@/lib/scope";
-import { useUpdatesStore } from "@/stores/updates";
+import { canApplyUpdates, useUpdatesStore } from "@/stores/updates";
 import { keepAsOwn, takeNewVersion } from "@/stores/updates-edits";
 
 /** The package page's edited-files notice: the app found changes it did
@@ -40,6 +42,13 @@ export function ForkNotice({
   onResolved: () => void;
 }) {
   const busy = useUpdatesStore((s) => s.busy);
+  // The same button does two different things: a place that can move takes
+  // the revision this read reported, so a check still in flight would let
+  // it apply a version that is no longer the newest. A place that can only
+  // drop its edits applies none, and stays reachable — a check that failed
+  // must not strand an edited place. Same rule as the Updates page.
+  const canApply = useUpdatesStore(canApplyUpdates);
+  const holdLatest = row.canTakeLatest && !canApply;
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const several = row.editedHarnesses.length > 1;
   const whyNoFork = row.derived
@@ -59,7 +68,13 @@ export function ForkNotice({
           {several
             ? `${editedInToolsLabel(row.editedHarnesses.map(harnessName))} `
             : null}
-          {row.forkableHarness ? FORK_NOTICE_DETAIL : whyNoFork}
+          {row.forked
+            ? row.canDiscard
+              ? FORKED_NOTICE_DETAIL
+              : FORKED_UNREADABLE_DETAIL
+            : row.forkableHarness
+              ? FORK_NOTICE_DETAIL
+              : whyNoFork}
         </p>
       </div>
       <div className="flex shrink-0 flex-wrap gap-2">
@@ -72,7 +87,10 @@ export function ForkNotice({
             {KEEP_AS_FORK_LABEL}
           </Button>
         ) : null}
-        {several ? (
+        {/* A comparison needs two sides, and a fork's declaration resolves
+            to its own local source: there is no catalog version left to put
+            beside the edit, so the button would open nothing. */}
+        {row.forked ? null : several ? (
           row.editedHarnesses.map((harness) => (
             <Button
               key={harness}
@@ -96,7 +114,7 @@ export function ForkNotice({
           <Button
             size="sm"
             variant="outline"
-            disabled={busy}
+            disabled={busy || holdLatest}
             onClick={() => setConfirmDiscard(true)}
           >
             {several ? DISCARD_ALL_EDITS_LABEL : DISCARD_EDITS_LABEL}
@@ -107,10 +125,13 @@ export function ForkNotice({
         open={confirmDiscard}
         onOpenChange={setConfirmDiscard}
         title={DISCARD_EDITS_CONFIRM_TITLE}
-        description={DISCARD_EDITS_CONFIRM_BODY}
+        description={
+          row.forked ? FORKED_DISCARD_CONFIRM_BODY : DISCARD_EDITS_CONFIRM_BODY
+        }
         confirmLabel={DISCARD_EDITS_CONFIRM_LABEL}
         destructive
         busy={busy}
+        holdConfirm={holdLatest}
         onConfirm={() =>
           void takeNewVersion(row).then(() => {
             setConfirmDiscard(false);
@@ -122,33 +143,23 @@ export function ForkNotice({
   );
 }
 
-/** The page-level wrapper: shows the notice exactly when this package has
- *  edits on disk and is not already a fork. */
+/** The page-level wrapper: shows the notice exactly when this place's files
+ *  were edited by hand. A fork gets it too — the keep-as-your-own half is
+ *  spent, but its own copy is still there to put back, and a held state
+ *  with no way out is not a state to leave someone in. The row arrives from
+ *  the page's own per-place join, so the notice, the header badge and the
+ *  Update button can never disagree about one place. */
 export function EditedNotice({
-  scope,
-  kind,
-  name,
-  alreadyForked,
+  row,
   onViewChanges,
   onResolved,
 }: {
-  scope: Scope;
-  kind: ItemKind;
-  name: string;
-  alreadyForked: boolean;
+  /** This place's update row when its files were edited by hand, else null. */
+  row: UpdateRow | null;
   onViewChanges: (harness?: HarnessId) => void;
   onResolved: () => void;
 }) {
-  const row = useUpdatesStore((s) =>
-    s.rows.find(
-      (row) =>
-        row.kind === kind &&
-        row.name === name &&
-        sameScope(row.scope, scope) &&
-        row.blockedByLocalEdit,
-    ),
-  );
-  if (!row || alreadyForked) return null;
+  if (!row) return null;
   return (
     <div className="mb-6">
       <ForkNotice

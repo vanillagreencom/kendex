@@ -25,7 +25,7 @@ import { packageDisplayName } from "@/lib/labels";
 import { heldByOwner, placeName, switchLockedBy } from "@/lib/update-groups";
 import { versionLabel } from "@/lib/versions";
 import { useNavStore } from "@/stores/nav";
-import { useUpdatesStore } from "@/stores/updates";
+import { canApplyUpdates, useUpdatesStore } from "@/stores/updates";
 
 /** The cells that belong to one place: where it is, its versions, whether
  *  it follows its source, and what can be done about it here. A package
@@ -42,6 +42,9 @@ export function PlaceCells({
   onIgnore?: (row: UpdateRow) => void;
 }) {
   const { busy, updateOne, setAutoUpdate, setIgnored } = useUpdatesStore();
+  // Both writes below record a revision this read produced, so neither may
+  // run off rows the read could not confirm.
+  const canApply = useUpdatesStore(canApplyUpdates);
   const goToPackage = useNavStore((s) => s.goToPackage);
   const name = packageDisplayName(row);
   const place = placeName(row.scope, among);
@@ -83,7 +86,7 @@ export function PlaceCells({
             <Switch
               aria-label={followSourceLabel(name, place)}
               checked={!row.pinned}
-              disabled={busy || locked !== null}
+              disabled={!canApply || locked !== null}
               title={
                 locked?.kind === "source"
                   ? heldBySourceNote(locked.name)
@@ -111,7 +114,9 @@ export function PlaceCells({
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={busy || !row.updateAvailable || heldByOwner(row)}
+                  disabled={
+                    !canApply || !row.updateAvailable || heldByOwner(row)
+                  }
                   title={heldByOwner(row) ? HELD_BY_OWNER_NOTE : undefined}
                   onClick={() => void updateOne(row)}
                 >

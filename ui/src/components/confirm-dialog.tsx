@@ -19,6 +19,7 @@ export function ConfirmDialog({
   confirmLabel,
   destructive,
   busy,
+  holdConfirm,
   onConfirm,
   children,
 }: {
@@ -28,7 +29,12 @@ export function ConfirmDialog({
   description?: string;
   confirmLabel: string;
   destructive?: boolean;
+  /** The action is running: nothing here can be pressed until it lands. */
   busy?: boolean;
+  /** Something the decision rests on is still being read, so the answer
+   *  cannot be given yet — but leaving can. Cancel stays live: a dialog
+   *  with no way out is worse than the answer it is holding back. */
+  holdConfirm?: boolean;
   onConfirm: () => void;
   children?: ReactNode;
 }) {
@@ -52,7 +58,7 @@ export function ConfirmDialog({
           </Button>
           <Button
             variant={destructive ? "destructive" : "default"}
-            disabled={busy}
+            disabled={busy || holdConfirm}
             onClick={onConfirm}
           >
             {confirmLabel}

@@ -1,5 +1,6 @@
 import type { HookDelivery } from "@/bindings";
 import type { ItemCustomization } from "@/lib/customization";
+import type { PlaceState } from "@/lib/customized-places";
 import type { GroupStatus } from "@/lib/derive";
 import { harnessName } from "@/lib/labels";
 
@@ -17,7 +18,6 @@ export const FRONTMATTER_IGNORED = (harness: string): string =>
 // A package's own Customize tab.
 export const CUSTOMIZE_TAB = "Customize";
 export const OVERVIEW_TAB = "Overview";
-export const CUSTOMIZED_BADGE = "Customized";
 export const WRITTEN_INTO =
   "Written into every harness's copy, alongside what the author wrote.";
 export const LAUNCH_LABEL = "Launch instructions";
@@ -41,7 +41,13 @@ export const SKILLS_BACK_TO_AUTOMATIC = "Back to automatic";
 export const SETTINGS_SECTION = "Settings";
 export const SAVE_NOTE =
   "Saving writes these changes into every harness that reads them.";
-export const SAVE_FIRST = "Save your changes before switching location.";
+// Typing parked at a place the editor moved away from. Moving between
+// places keeps it rather than dropping it, and this is how anyone finds it
+// again.
+export const UNSAVED_ELSEWHERE_TITLE = "Unsaved changes at another location";
+export const UNSAVED_ELSEWHERE_BODY =
+  "They are kept exactly as you left them. Open the location to save or discard them.";
+export const openLocationLabel = (place: string): string => `Open ${place}`;
 
 // The Customize page: what belongs to everything rather than to one package.
 export const CUSTOMIZE_SUBTITLE = "Your own edits on top of what you installed";
@@ -101,9 +107,77 @@ export const NOTHING_CUSTOMIZED =
 export const NOT_INSTALLED_HERE = "Not installed here";
 export const REMOVE_CUSTOMIZATION = "Remove";
 
-// What a package's row is marked with, in the Library's legend and on it.
-export const AS_INSTALLED_MARK = "As the author wrote it";
-export const CUSTOMIZED_MARK = "Customized by you";
+// Every mark for a changed package names the place it is about, or counts
+// the places it stands for: "Customized" on its own would say "somewhere",
+// which is never the question being asked.
+export const customizedInLabel = (place: string): string =>
+  `Customized in ${place}`;
+export const customizedPlacesLabel = (
+  places: string[],
+  total: number,
+  unchecked: number,
+): string => {
+  // The first place named is the one clicking the mark opens, so where it
+  // leads is on the label rather than found out on arrival; the count is
+  // what the Where cell would otherwise have said.
+  const said =
+    total === 1 && places.length === 1
+      ? customizedInLabel(places[0])
+      : `${customizedInLabel(places[0])} · ${places.length} of ${total} places`;
+  // A count of places implies the rest are untouched, so a place nothing
+  // could be read for is said out loud rather than folded into the rest.
+  return unchecked > 0 ? `${said} · ${unchecked} not checked` : said;
+};
+export const forkedInLabel = (places: string[]): string =>
+  `Forked in ${places.join(", ")}`;
+/** The fork mark where several places are listed at once, in the shape the
+ *  customized mark beside it uses — the first place named because that is
+ *  the one the mark opens, and a count for the rest so a row does not grow
+ *  a list. */
+export const forkedPlacesLabel = (
+  places: string[],
+  total: number,
+  unchecked: number,
+): string => {
+  const said =
+    total === 1 && places.length === 1
+      ? forkedInLabel(places)
+      : `${forkedInLabel([places[0]])} · ${places.length} of ${total} places`;
+  // "1 of 3" says the other two are not forks, which is a claim about
+  // places nobody could read. A place whose manifest would not load has no
+  // answer either way, and folding it into the count invents one.
+  return unchecked > 0 ? `${said} · ${unchecked} not checked` : said;
+};
+export const NOT_CHECKED_STATE = "not checked for your changes";
+export const CHECKING_STATE = "still being checked";
+
+/** One line of the per-place breakdown behind a mark: what is known about
+ *  this place, including that nothing is. */
+export const placeStateLine = (place: string, state: PlaceState): string => {
+  const said: Record<PlaceState, string> = {
+    customized: "customized by you",
+    "as-installed": "as the author wrote it",
+    checking: CHECKING_STATE,
+    unknown: NOT_CHECKED_STATE,
+  };
+  return `${place} — ${said[state]}`;
+};
+
+// The marks rest on two reads: every place's manifest, and the update
+// standing that carries hand edits. When one fails the table still lists
+// every package, so it says which answer is missing — "no changes found"
+// must never stand in for "we could not look".
+export const MARKS_UNREAD_TITLE = "Your changes could not all be checked";
+export const MARKS_UNREAD_UPDATES =
+  "The update check has not run, so files you edited by hand are not counted yet.";
+export const MARKS_UNREAD_MANIFESTS =
+  "Some projects' settings could not be read, so their changes are not counted.";
+
+// The key to the Library's icon colour. A muted icon means nothing of
+// yours was found, which is not the same as having looked everywhere: a
+// place kendex cannot read carries no mark either.
+export const AS_INSTALLED_LEGEND = "No changes of yours found";
+export const CUSTOMIZED_LEGEND = "Customized — the row names where";
 export const STATUS_LABELS: Record<GroupStatus, string> = {
   active: "Active",
   off: "Switched off",

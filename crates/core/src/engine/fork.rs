@@ -44,6 +44,72 @@ pub fn fork(
             name: name.to_owned(),
         });
     };
+    // Forking again would write a fresh provenance over the recorded one,
+    // and a local declaration has no source or commit to put back — the
+    // origin of what was forked would be lost with nowhere to read it from.
+    if manifest
+        .forks
+        .get(&kind)
+        .is_some_and(|by_name| by_name.contains_key(name))
+    {
+        return Err(CoreError::AlreadyForked {
+            name: name.to_owned(),
+        });
+    }
+    let edited = edited_artifact(env, scope, kind, name, harness)?;
+
+    let mut ops = capture_ops(env, scope, kind, name, &edited)?;
+
+    let provenance = ForkProvenance {
+        repo: manifest
+            .sources
+            .get(&decl.source)
+            .and_then(|s| s.repo.clone()),
+        source: decl.source.clone(),
+        commit: crate::lock::load(&crate::lock::lock_path(env, scope))?
+            .entries
+            .values()
+            .filter(|entry| entry.kind == kind && entry.name == name)
+            .find_map(|entry| entry.source_commit.clone()),
+        forked_at: crate::clock::timestamp(),
+    };
+    let entry = manifest
+        .declared_mut(kind)
+        .get_mut(name)
+        .unwrap_or_else(|| unreachable!("declared above"));
+    entry.source = LOCAL_SOURCE_NAME.to_owned();
+    entry.rev = None;
+    manifest
+        .forks
+        .entry(kind)
+        .or_default()
+        .insert(name.to_owned(), provenance);
+
+    let manifest_path = manifest::manifest_path(env, scope);
+    ops.push(PlannedOp {
+        description: format!("record the fork of {name} in kendex.toml"),
+        op: Op::WriteManifest {
+            pre: Pre::observed(&manifest_path)?,
+            path: manifest_path,
+            manifest: Box::new(manifest),
+        },
+    });
+    Ok(Plan {
+        scope: scope.clone(),
+        ops,
+    })
+}
+
+/// Which file holds the bytes being kept: a skill's managed tree, or the
+/// one agent rendering that reads back as source. The kinds with neither
+/// refuse here rather than capturing something apply cannot re-render.
+fn edited_artifact(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    harness: HarnessId,
+) -> Result<PathBuf> {
     let edited = match kind {
         ItemKind::Skill => {
             let tree = skill_content_path(env, scope, name, harness).ok_or({
@@ -98,47 +164,7 @@ pub fn fork(
             harness,
         });
     }
-
-    let mut ops = capture_ops(env, scope, kind, name, &edited)?;
-
-    let provenance = ForkProvenance {
-        repo: manifest
-            .sources
-            .get(&decl.source)
-            .and_then(|s| s.repo.clone()),
-        source: decl.source.clone(),
-        commit: crate::lock::load(&crate::lock::lock_path(env, scope))?
-            .entries
-            .values()
-            .filter(|entry| entry.kind == kind && entry.name == name)
-            .find_map(|entry| entry.source_commit.clone()),
-        forked_at: crate::clock::timestamp(),
-    };
-    let entry = manifest
-        .declared_mut(kind)
-        .get_mut(name)
-        .unwrap_or_else(|| unreachable!("declared above"));
-    entry.source = LOCAL_SOURCE_NAME.to_owned();
-    entry.rev = None;
-    manifest
-        .forks
-        .entry(kind)
-        .or_default()
-        .insert(name.to_owned(), provenance);
-
-    let manifest_path = manifest::manifest_path(env, scope);
-    ops.push(PlannedOp {
-        description: format!("record the fork of {name} in kendex.toml"),
-        op: Op::WriteManifest {
-            pre: Pre::observed(&manifest_path)?,
-            path: manifest_path,
-            manifest: Box::new(manifest),
-        },
-    });
-    Ok(Plan {
-        scope: scope.clone(),
-        ops,
-    })
+    Ok(edited)
 }
 
 /// The ops that move the edited bytes into the local source: an earlier

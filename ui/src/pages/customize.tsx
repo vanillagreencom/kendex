@@ -3,7 +3,9 @@ import { CustomHooks } from "@/components/customize/custom-hooks";
 import { CustomizedIndex } from "@/components/customize/customized-index";
 import { SaveBar } from "@/components/customize/save-bar";
 import { SharedInstructions } from "@/components/customize/shared-instructions";
+import { UnsavedElsewhere } from "@/components/customize/unsaved-elsewhere";
 import { DotSpinner } from "@/components/loading";
+import { useManifestBusy } from "@/components/package/use-package-data";
 import { PageHeader } from "@/components/page-header";
 import { Section } from "@/components/section";
 import { StatusNote } from "@/components/status-note";
@@ -47,15 +49,23 @@ export function CustomizePage() {
     error,
     setScope,
     load,
+    discard,
     edit,
     save,
   } = useEditorStore();
   const projects = useSettingsStore((s) => s.settings?.projects ?? []);
+  // Every rewrite of this place's kendex.toml holds the Save bar down, not
+  // only this page's own save. An apply or a fork started elsewhere is
+  // still in flight when someone walks in here, and a save landing on top
+  // of it carries a draft the file no longer matches. The package page
+  // gates on the same thing; this page reads the manifest just as much.
+  const mutating = useManifestBusy();
 
-  // Unsaved edits made on a package's own page live in this same draft;
-  // reloading over them here would throw away work with nothing said.
+  // Unsaved edits made on a package's own page live in this same draft.
+  // The read declines to replace typing in hand — only a deliberate
+  // discard does — so this refreshes the place without a guard of its own.
   useEffect(() => {
-    if (!useEditorStore.getState().dirty) void load();
+    void load();
   }, [load]);
 
   return (
@@ -67,6 +77,10 @@ export function CustomizePage() {
           <div className="flex items-center gap-2">
             <span className="text-[13px] text-muted-foreground">Editing</span>
             <Select
+              // Switching place mid-save would attribute the outcome to a
+              // place it is not about, the same reason the package page's
+              // chips are gated.
+              disabled={saving}
               value={scope.scope === "global" ? "global" : scope.root}
               onValueChange={(value) => {
                 if (value === null) return;
@@ -98,6 +112,7 @@ export function CustomizePage() {
       />
       <div className={cn("flex-1", PAGE_BODY)}>
         <div className={cn("flex flex-col gap-10", CONTENT_WIDTH)}>
+          <UnsavedElsewhere />
           {error ? (
             <StatusNote tone="critical" title="That change couldn't be saved">
               <span className="whitespace-pre-wrap">{error}</span>
@@ -146,8 +161,9 @@ export function CustomizePage() {
       {dirty ? (
         <SaveBar
           saving={saving}
+          busy={mutating}
           onSave={() => void save()}
-          onDiscard={() => void load()}
+          onDiscard={() => void discard()}
         />
       ) : null}
     </div>

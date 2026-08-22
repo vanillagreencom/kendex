@@ -113,7 +113,7 @@ export function SubscribeDialog({
                       const scope = scopes.find(
                         (s) => scopeLabel(s) === current,
                       );
-                      return scope ? scopeName(scope) : current;
+                      return scope ? scopeName(scope, scopes) : current;
                     }}
                   </SelectValue>
                 </SelectTrigger>
@@ -123,7 +123,7 @@ export function SubscribeDialog({
                       key={scopeLabel(scope)}
                       value={scopeLabel(scope)}
                     >
-                      {scopeName(scope)}
+                      {scopeName(scope, scopes)}
                     </SelectItem>
                   ))}
                 </SelectContent>

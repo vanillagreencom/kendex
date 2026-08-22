@@ -169,12 +169,13 @@ export function PackagesTab() {
                   scope: "project",
                   root: v,
                 },
+                whereOptions,
               )
             }
           >
             {whereOptions.map((scope) => (
               <SelectItem key={scopeLabel(scope)} value={scopeLabel(scope)}>
-                {scopeName(scope)}
+                {scopeName(scope, whereOptions)}
               </SelectItem>
             ))}
           </Filter>

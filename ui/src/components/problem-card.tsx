@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { commands } from "@/bindings";
+import { commands, type Scope } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,7 +10,15 @@ import type { Problem } from "@/stores/problems";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
 
-export function ProblemCard({ problem }: { problem: Problem }) {
+export function ProblemCard({
+  problem,
+  among = [],
+}: {
+  problem: Problem;
+  /** Every place the list this card sits in speaks about, so two projects
+   *  sharing a folder name are named apart. */
+  among?: Scope[];
+}) {
   const [confirmRemove, setConfirmRemove] = useState(false);
   const refreshScan = useScanStore((s) => s.refresh);
   const refreshAudit = useAuditStore((s) => s.refresh);
@@ -20,7 +28,7 @@ export function ProblemCard({ problem }: { problem: Problem }) {
   // there's no folder to reveal or project to stop tracking.
   const projectRoot =
     problem.scope?.scope === "project" ? problem.scope.root : null;
-  const name = problem.scope ? scopeName(problem.scope) : "This machine";
+  const name = problem.scope ? scopeName(problem.scope, among) : "This machine";
   const path = problem.scope ? scopePath(problem.scope) : null;
 
   return (

@@ -1,11 +1,12 @@
 import type { ReactNode } from "react";
-import type { ItemKind } from "@/bindings";
+import type { ItemKind, Scope } from "@/bindings";
 import { InlineMarkdown } from "@/components/inline-markdown";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
-import { FORKED_BADGE_LABEL } from "@/lib/copy";
-import { CUSTOMIZED_BADGE } from "@/lib/copy-customize";
+import { customizedInLabel, forkedInLabel } from "@/lib/copy-customize";
+import type { PlaceStanding } from "@/lib/customized-places";
 import { kindIcon } from "@/lib/kind-icon";
+import { scopeName } from "@/lib/labels";
 
 /** The package page's title block: what this is, what it says about itself,
  *  and the things you can do to it. */
@@ -13,18 +14,24 @@ export function PackageHeader({
   kind,
   displayName,
   description,
-  forked,
-  customized,
+  place,
+  scopes,
   action,
 }: {
   kind: ItemKind;
   displayName: string;
   description: string | null;
-  forked: boolean;
-  customized: boolean;
+  /** The place both marks are about — the one the Customize tab has open,
+   *  or null while the page is still working out which that is. One value,
+   *  so the badges can never disagree about which place they describe. */
+  place: PlaceStanding | null;
+  /** Every place this package lives in, so two projects sharing a folder
+   *  name are named apart. */
+  scopes: Scope[];
   action: ReactNode;
 }) {
   const Icon = kindIcon(kind);
+  const named = place ? scopeName(place.scope, scopes) : null;
   return (
     <PageHeader
       wide
@@ -35,11 +42,14 @@ export function PackageHeader({
         <span className="flex items-baseline gap-2.5">
           <Icon className="size-5 shrink-0 translate-y-[0.1875rem] text-muted-foreground" />
           <span className="min-w-0 truncate">{displayName}</span>
-          {forked ? (
-            <Badge variant="outline">{FORKED_BADGE_LABEL}</Badge>
+          {place?.forked && named ? (
+            // Named in the badge itself, not only in a tooltip: a mark that
+            // says which place it is about says nothing to anyone reading
+            // by touch or by keyboard if the place is only on hover.
+            <Badge variant="outline">{forkedInLabel([named])}</Badge>
           ) : null}
-          {customized ? (
-            <Badge variant="customized">{CUSTOMIZED_BADGE}</Badge>
+          {place?.state === "customized" && named ? (
+            <Badge variant="customized">{customizedInLabel(named)}</Badge>
           ) : null}
         </span>
       }

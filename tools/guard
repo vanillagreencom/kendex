@@ -125,6 +125,36 @@ hits=$(scan 'Command::new' '^crates/(core|cli)/src/' | grep -v '^crates/core/src
   say "raw Command::new — external processes go through process::Hardened"
 }
 
+# Every write to a place's kendex.toml owes two things: it refuses while
+# customization for that place is unsaved, and it tells the editor
+# afterwards. The second is easy to remember — without it the tables go
+# stale in front of you. The first is not: forgetting it looks like nothing
+# at all until someone loses what they typed. So the two are pinned
+# together, and the list of writers is checked rather than kept by hand.
+#
+# manifest-sync.ts defines the telling. marketplaces-shared.ts and
+# audit-mutate.ts are helpers every guarded entry point already went
+# through.
+for f in $(printf '%s\n' $files | grep -E '^ui/src/.*\.tsx?$' | grep -v '\.test\.'); do
+  [ -f "$f" ] || continue
+  case "$f" in
+    ui/src/stores/manifest-sync.ts | ui/src/stores/marketplaces-shared.ts) continue ;;
+    ui/src/stores/audit-mutate.ts) continue ;;
+  esac
+  grep -q 'manifestRewritten(' "$f" || continue
+  grep -q 'refusesForUnsaved(' "$f" ||
+    say "$f rewrites a manifest without refusing an unsaved draft first — call refusesForUnsaved(scope) before the write"
+done
+
+# A write to a place's kendex.toml belongs in a store. A component that
+# writes one holds its busy flag in component state, and a flag that
+# unmounts with the page cannot be part of the gate that holds the
+# Customize Save bar down — so the bar goes live while the file is moving.
+for f in $(printf '%s\n' $files | grep -E '^ui/src/.*\.tsx$' | grep -v '\.test\.'); do
+  [ -f "$f" ] || continue
+  grep -q 'manifestRewritten(' "$f" &&
+    say "$f rewrites a manifest from a component — move the write to a store, whose busy flag the shared gate can see"
+done
 # A command that hands the binary a fixture home must say on the spot that
 # the home it gave is the one it means: without that, a debug build sandboxes
 # itself and the command drives the dev home instead of the fixture. Checked

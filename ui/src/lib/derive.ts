@@ -6,6 +6,7 @@ import type {
   Scope,
   Tag,
 } from "@/bindings";
+import { sameScope } from "@/lib/scope";
 
 export type ScopeSelection = "all" | "global" | { project: string };
 
@@ -135,6 +136,24 @@ export function groupScopes(group: ItemGroup): Scope[] {
     if (!seen.has(key)) seen.set(key, install.scope);
   }
   return [...seen.values()];
+}
+
+/** The installation a page about one place is about. With no place named,
+ *  the first — that is what "this package" means with nothing narrowing it.
+ *  With one named and nothing installed there, null: substituting another
+ *  place's installation would let the page describe a location the reader
+ *  never asked about, which is reachable whenever nav state outlives a
+ *  scope. A mark names the project it was made in and opens that one, so
+ *  any installation can be the one asked for — not only the first. */
+export function installationIn(
+  group: ItemGroup,
+  scope: Scope | null,
+): ObservedItem | null {
+  if (!scope) return group.installations[0] ?? null;
+  return (
+    group.installations.find((install) => sameScope(install.scope, scope)) ??
+    null
+  );
 }
 
 export function countByKind(items: ObservedItem[]): Map<ItemKind, number> {

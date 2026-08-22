@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import { toast } from "sonner";
 import type { DecisionsView, RecordedDecision } from "@/bindings";
 import { commands } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -12,7 +11,6 @@ import {
   decisionsErrorTitle,
   NO_LONGER_INSTALLED,
   noLongerApplies,
-  TAKEN_BACK_TOAST,
 } from "@/lib/copy-decisions";
 import {
   decisionDetail,
@@ -21,8 +19,8 @@ import {
   sortDecisions,
 } from "@/lib/decisions";
 import { harnessName, kindLabel, scopeName } from "@/lib/labels";
+import { scopeKey } from "@/lib/scope";
 import { useAuditStore } from "@/stores/audit";
-import { useProblemsStore } from "@/stores/problems";
 
 // A hook keeps its full id here — event, matcher, script — because seven
 // hooks in one settings file all shorten to the same word, and a list of
@@ -65,7 +63,9 @@ export function RecordedDecisions() {
     errors: [],
   });
   const [revoking, setRevoking] = useState<RecordedDecision | null>(null);
-  const [busy, setBusy] = useState(false);
+  // The same flag every other writer of these files raises, so this list
+  // waits on their work as they wait on its.
+  const busy = useAuditStore((s) => s.busy);
 
   const load = useCallback(async () => {
     const response = await commands.listDecisions();
@@ -75,40 +75,26 @@ export function RecordedDecisions() {
     void load();
   }, [load]);
 
+  // The write lives in the audit store: it rewrites the same kendex.toml
+  // every other action there does, and a busy flag held in this component
+  // would be one the shared Save-bar gate cannot see.
   const revoke = async (row: RecordedDecision) => {
-    setBusy(true);
     try {
-      const response =
-        row.record.kind === "accepted"
-          ? await commands.revokeSafetyOverride(row.scope, row.key)
-          : await commands.revokeDismissal(
-              row.scope,
-              row.key,
-              row.record.fingerprint,
-              row.record.dismissedAt,
-            );
-      if (response.status === "ok") {
-        toast.success(
-          row.record.kind === "accepted"
-            ? `${row.name} is held back again`
-            : TAKEN_BACK_TOAST,
-        );
-        await load();
-        await useAuditStore.getState().refresh({ force: true });
-      } else {
-        useProblemsStore.getState().showError({
-          title: "Couldn't take this decision back",
-          message: response.error,
-        });
-      }
+      await useAuditStore.getState().revokeDecision(row);
+      await load();
     } finally {
-      setBusy(false);
       setRevoking(null);
     }
   };
 
   const rows = sortDecisions(view.decisions);
   if (rows.length === 0 && view.errors.length === 0) return null;
+  // Every place this list speaks about, so two projects sharing a folder
+  // name are told apart wherever one of them is named.
+  const among = [
+    ...rows.map((row) => row.scope),
+    ...view.errors.map((failed) => failed.scope),
+  ];
   const now = Date.now();
   const confirm = revoking ? confirmCopy(revoking) : null;
   return (
@@ -118,9 +104,9 @@ export function RecordedDecisions() {
     >
       {view.errors.map((failed) => (
         <StatusNote
-          key={scopeName(failed.scope)}
+          key={scopeKey(failed.scope)}
           tone="critical"
-          title={decisionsErrorTitle(scopeName(failed.scope))}
+          title={decisionsErrorTitle(scopeName(failed.scope, among))}
           className="mb-3"
         >
           {failed.error.message}
@@ -128,13 +114,13 @@ export function RecordedDecisions() {
       ))}
       {rows.map((row) => (
         <SettingRow
-          key={`${scopeName(row.scope)}:${row.key}:${
+          key={`${scopeKey(row.scope)}:${row.key}:${
             row.record.kind === "dismissed" ? row.record.fingerprint : ""
           }`}
           label={rowTitle(row)}
           description={
             <span className="flex flex-col gap-1">
-              <span>{describeDecision(row, now)}</span>
+              <span>{describeDecision(row, now, among)}</span>
               {decisionDetail(row) ? (
                 <span className="text-muted-foreground">
                   “{decisionDetail(row)}”

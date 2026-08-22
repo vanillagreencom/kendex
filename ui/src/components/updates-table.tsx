@@ -36,7 +36,7 @@ import {
   type UpdateGroup,
   updatablePlaces,
 } from "@/lib/update-groups";
-import { useUpdatesStore } from "@/stores/updates";
+import { canApplyUpdates, useUpdatesStore } from "@/stores/updates";
 
 /** Pending updates, one row per package. A package out of date in one
  *  place carries that place's controls on its row; one out of date in
@@ -92,7 +92,7 @@ export function PackageRows({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const placesId = useId();
-  const busy = useUpdatesStore((s) => s.busy);
+  const canApply = useUpdatesStore(canApplyUpdates);
   const updateRows = useUpdatesStore((s) => s.updateRows);
   const Icon = kindIcon(group.kind);
   const name = packageDisplayName(group);
@@ -154,7 +154,7 @@ export function PackageRows({
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={busy || updatablePlaces(places).length === 0}
+                  disabled={!canApply || updatablePlaces(places).length === 0}
                   onClick={() => void updateRows(places)}
                 >
                   {UPDATE_PACKAGE_EVERYWHERE_LABEL}

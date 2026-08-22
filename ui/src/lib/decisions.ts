@@ -15,10 +15,10 @@ import { relativeTime } from "@/lib/relative-time";
  *  everyone using the repository; the personal manifest is this machine's.
  *  Inheriting a teammate's decision is fine — inheriting it invisibly is
  *  not, so every row says which. */
-export function decisionHome(scope: Scope): string {
+export function decisionHome(scope: Scope, among: Scope[] = []): string {
   return scope.scope === "global"
     ? "yours, on this machine"
-    : `in ${scopeName(scope)}'s kendex.toml, shared`;
+    : `in ${scopeName(scope, among)}'s kendex.toml, shared`;
 }
 
 export function decisionWhen(
@@ -37,12 +37,19 @@ export function decisionWhen(
 export function describeDecision(
   decision: RecordedDecision,
   now: number,
+  /** Every place the list spans, so two projects sharing a folder name are
+   *  named apart — a decision is about one repository's file. */
+  among: Scope[] = [],
 ): string {
   const what =
     decision.record.kind === "accepted"
       ? acceptedPhrase(decision.record.findings)
       : reasonPhrase(decision.record.reason);
-  return [what, decisionWhen(decision, now), decisionHome(decision.scope)]
+  return [
+    what,
+    decisionWhen(decision, now),
+    decisionHome(decision.scope, among),
+  ]
     .filter(Boolean)
     .join(" · ");
 }

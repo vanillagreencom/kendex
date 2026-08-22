@@ -54,7 +54,7 @@ export const commands = {
 	 *  The tokens are re-read against a fresh audit before anything is written;
 	 *  one that no longer names what is installed stops the whole call.
 	 */
-	dismissFindings: (scope: Scope, tokens: string[], reason: DismissReason) => typedError<Dismissed_Serialize, string>(__TAURI_INVOKE("dismiss_findings", { scope, tokens, reason })),
+	dismissFindings: (scope: Scope, tokens: string[], reason: DismissReason) => typedError<Dismissed_Serialize, DismissFailed>(__TAURI_INVOKE("dismiss_findings", { scope, tokens, reason })),
 	/**
 	 *  Take a dismissal back. `dismissed_at` pins the exact record: a stale undo
 	 *  finding a newer dismissal at the same key refuses rather than deleting
@@ -62,69 +62,18 @@ export const commands = {
 	 */
 	revokeDismissal: (scope: Scope, key: string, fingerprint: string, dismissedAt: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("revoke_dismissal", { scope, key, fingerprint, dismissedAt })),
 	revokeSafetyOverride: (scope: Scope, key: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("revoke_safety_override", { scope, key })),
-	getManifest: (scope: Scope) => typedError<{
-	schema: number,
-	sources?: { [key in string]: SourceDecl_Serialize },
-	install: InstallDefaults,
-	agents?: { [key in string]: ItemDecl_Serialize },
-	skills?: { [key in string]: ItemDecl_Serialize },
-	hooks?: { [key in string]: ItemDecl_Serialize },
-	commands?: { [key in string]: ItemDecl_Serialize },
-	"mcp-servers"?: { [key in string]: ItemDecl_Serialize },
+	getManifest: (scope: Scope) => typedError<ManifestRead_Serialize, string>(__TAURI_INVOKE("get_manifest", { scope })),
 	/**
-	 *  Plugins are observe + enable/disable only; the key is
-	 *  `name@marketplace`, provenance lives in the lock.
+	 *  Write an edited manifest and reconcile the scope to it.
+	 * 
+	 *  `base` is what the file was when this copy was read. A whole manifest
+	 *  goes back with every save, so a copy read before something else wrote
+	 *  the file would put that back — and the caller cannot be relied on to
+	 *  notice: the app tells the editor about every such write, and a caller
+	 *  that forgets to says nothing at all. Refusing here needs no caller to
+	 *  remember anything.
 	 */
-	plugins?: { [key in string]: PluginDecl },
-	/**
-	 *  Installed bundles: a curated set the catalog offers under one name.
-	 *  What the set holds is the catalog's to say and derives on every plan;
-	 *  this records only that the set is installed, and how its members
-	 *  install — the same choices any declaration makes.
-	 */
-	bundles?: { [key in string]: ItemDecl_Serialize },
-	"pi-extensions"?: { [key in string]: ItemDecl_Serialize },
-	/**
-	 *  Items the user removed and wants kept removed, by kind: a dependency
-	 *  another item requires, or a member of an installed bundle. A refresh
-	 *  honors these instead of re-deriving what was taken away, and the item
-	 *  that wanted them says so in the audit.
-	 */
-	suppressed?: Partial<{ [key in ItemKind]: string[] }>,
-	/**
-	 *  Optional dependencies taken at install time, per item that offers
-	 *  them. A choice, so it belongs here and survives refresh, cache loss,
-	 *  and other machines; what those choices pull in does not.
-	 */
-	"optional-dependencies"?: { [key in string]: string[] },
-	/**
-	 *  Reviews of content the safety gate blocked, keyed by installation.
-	 *  Each one binds to the content, the rule set and the findings it was
-	 *  granted against, so it stops applying the moment any of them moves.
-	 */
-	"safety-overrides"?: { [key in string]: SafetyOverride_Serialize },
-	/**
-	 *  Findings judged not to be problems, keyed by installation, one
-	 *  snapshot of the reviewed content per installation with each
-	 *  dismissal beneath it. A dismissal settles a question and never
-	 *  unblocks anything.
-	 */
-	"safety-reviews"?: { [key in string]: SafetyReview_Serialize },
-	"agent-skills"?: { [key in string]: string[] },
-	"agent-launch-instructions"?: { [key in string]: string },
-	"agent-additional-instructions"?: { [key in string]: string },
-	"skill-instructions"?: { [key in string]: string },
-	/**  `[agent-frontmatter.<harness>.<agent>]`. */
-	"agent-frontmatter"?: { [key in string]: { [key in string]: FrontmatterOverrides_Serialize } },
-	"custom-hooks"?: CustomHook_Serialize[],
-	/**
-	 *  Forked items by kind and name — `[forks.skill.<name>]`. The name is
-	 *  the item's installed name, unchanged by forking.
-	 */
-	forks?: Partial<{ [key in ItemKind]: { [key in string]: ForkProvenance_Serialize } }>,
-} | null, string>(__TAURI_INVOKE("get_manifest", { scope })),
-	/**  Write an edited manifest and reconcile the scope to it. */
-	updateManifest: (scope: Scope, manifest: Manifest_Deserialize) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("update_manifest", { scope, manifest })),
+	updateManifest: (scope: Scope, manifest: Manifest_Deserialize, base: string | null) => typedError<ManifestWritten_Serialize, WriteRefused>(__TAURI_INVOKE("update_manifest", { scope, manifest, base })),
 	editorInventory: (scope: Scope) => typedError<EditorInventory, string>(__TAURI_INVOKE("editor_inventory", { scope })),
 	/**
 	 *  Per-hook, per-harness delivery for the hooks as currently drafted in the
@@ -509,6 +458,20 @@ export type AvailablePackage = {
 };
 
 /**
+ *  What a copy of a whole file remembers about the file it came from.
+ * 
+ *  There is one way to derive one — [`Base::of`], over the bytes it
+ *  describes — because the failure this exists to prevent is a base paired
+ *  with content nobody read together. A base taken by a read separate from
+ *  the content it answers for describes a different moment: a writer
+ *  landing between the two hands the caller old content under the new
+ *  file's name, and the write that follows is accepted over that writer.
+ *  Nothing here takes a path and hands back a base, deliberately — a path
+ *  is not the bytes, and reading them apart is how the two come adrift.
+ */
+export type Base = string | null;
+
+/**
  *  A curated set with per-member state. Partly-installed is the derived
  *  pair below, computed from the members on every call and stored nowhere.
  */
@@ -867,6 +830,24 @@ export type DirectoryView = {
 };
 
 /**
+ *  Why a dismissal did not come back with its records — and, since the
+ *  write happens before they are read, whether the file changed anyway.
+ * 
+ *  A string cannot carry that, and the caller cannot infer it: told only
+ *  that this failed, it says nothing was changed and leaves the editor
+ *  holding a copy of a file that moved under it. Both of those are wrong
+ *  in exactly the case the write landed.
+ */
+export type DismissFailed = 
+/**  Nothing was written. The decision is still there to make. */
+{ kind: "untouched"; message: string } | 
+/**
+ *  The decisions were written, and then the file could not be read
+ *  back to say what an undo would need. What is on disk changed.
+ */
+{ kind: "written"; message: string };
+
+/**
  *  Why a finding was dismissed. Every reason is a claim about the content
  *  — a project's dismissals travel with the repository, so a reason must
  *  mean the same thing to whoever reads it next, and none of them may be
@@ -971,6 +952,7 @@ export type DriftRow_Deserialize = {
 	scope: Scope,
 	state: DriftState,
 	detail: string,
+	subject: DriftSubject,
 	cause?: DriftCause | null,
 };
 
@@ -981,6 +963,7 @@ export type DriftRow_Serialize = {
 	scope: Scope,
 	state: DriftState,
 	detail: string,
+	subject: DriftSubject,
 	cause?: DriftCause | null,
 };
 
@@ -995,6 +978,13 @@ export type DriftState =
 "unmanaged" | 
 /**  Needs a human: foreign symlink, occupied target, or provenance clash. */
 "conflict";
+
+/**
+ *  What a drift row is about. A package's remedies live on its own page;
+ *  a file kendex writes beside the packages has no page to open, so a
+ *  surface that links every row would promise one that is not there.
+ */
+export type DriftSubject = "package" | "scope";
 
 /**
  *  What the Customize page needs to offer real choices: the names already
@@ -1595,6 +1585,114 @@ export type LoginStart = {
 };
 
 export type Manifest = Manifest_Serialize | Manifest_Deserialize;
+
+/**
+ *  A place's manifest and what the file it came from was at that moment.
+ *  One value, because a copy without its base cannot be written back
+ *  safely, and the two read apart could describe different files.
+ */
+export type ManifestRead = ManifestRead_Serialize | ManifestRead_Deserialize;
+
+/**
+ *  A place's manifest and what the file it came from was at that moment.
+ *  One value, because a copy without its base cannot be written back
+ *  safely, and the two read apart could describe different files.
+ */
+export type ManifestRead_Deserialize = {
+	/**
+	 *  Absent where the place has no manifest yet — the editor still opens,
+	 *  on an empty one.
+	 */
+	manifest: Manifest_Deserialize | null,
+	/**  The file these bytes came from, read with them and never apart. */
+	base: Base,
+};
+
+/**
+ *  A place's manifest and what the file it came from was at that moment.
+ *  One value, because a copy without its base cannot be written back
+ *  safely, and the two read apart could describe different files.
+ */
+export type ManifestRead_Serialize = {
+	/**
+	 *  Absent where the place has no manifest yet — the editor still opens,
+	 *  on an empty one.
+	 */
+	manifest: Manifest_Serialize | null,
+	/**  The file these bytes came from, read with them and never apart. */
+	base: Base,
+};
+
+/**
+ *  A whole-manifest write that landed, and what the file is now: the base
+ *  for the next write from the same copy, so saving twice in a row does not
+ *  have to wait for a re-read in between.
+ */
+export type ManifestWritten = ManifestWritten_Serialize | ManifestWritten_Deserialize;
+
+/**
+ *  A whole-manifest write that landed, and what the file is now: the base
+ *  for the next write from the same copy, so saving twice in a row does not
+ *  have to wait for a re-read in between.
+ */
+export type ManifestWritten_Deserialize = {
+	view: AuditView_Deserialize,
+	/**
+	 *  What the file is now, as the apply that wrote it saw it before
+	 *  letting the scope go — the base for the next write from this copy.
+	 * 
+	 *  Absent where the write landed and the file could not be read back.
+	 *  The copy on screen has nothing to carry then, so its next save asks
+	 *  for a reload rather than writing against a base nobody vouched for;
+	 *  what it must not do is read the file itself, which is the pairing
+	 *  this whole protection exists to prevent.
+	 */
+	base: Base | null,
+	/**
+	 *  Whether the write put down something the caller did not send: the
+	 *  default source and harnesses a first manifest is seeded with, or a
+	 *  name derived for a custom hook that arrived without one.
+	 * 
+	 *  No copy in hand holds it, so none of them is this file — not even
+	 *  the one that went. Told otherwise, the editor hands the file's base
+	 *  to a copy that never had it, and the next save passes every check
+	 *  and writes it away: the seed back to nothing, or a second hook
+	 *  under a second derived name with the first left running.
+	 */
+	wroteMore: boolean,
+};
+
+/**
+ *  A whole-manifest write that landed, and what the file is now: the base
+ *  for the next write from the same copy, so saving twice in a row does not
+ *  have to wait for a re-read in between.
+ */
+export type ManifestWritten_Serialize = {
+	view: AuditView_Serialize,
+	/**
+	 *  What the file is now, as the apply that wrote it saw it before
+	 *  letting the scope go — the base for the next write from this copy.
+	 * 
+	 *  Absent where the write landed and the file could not be read back.
+	 *  The copy on screen has nothing to carry then, so its next save asks
+	 *  for a reload rather than writing against a base nobody vouched for;
+	 *  what it must not do is read the file itself, which is the pairing
+	 *  this whole protection exists to prevent.
+	 */
+	base: Base | null,
+	/**
+	 *  Whether the write put down something the caller did not send: the
+	 *  default source and harnesses a first manifest is seeded with, or a
+	 *  name derived for a custom hook that arrived without one.
+	 * 
+	 *  No copy in hand holds it, so none of them is this file — not even
+	 *  the one that went. Told otherwise, the editor hands the file's base
+	 *  to a copy that never had it, and the next save passes every check
+	 *  and writes it away: the seed back to nothing, or a second hook
+	 *  under a second derived name with the first left running.
+	 */
+	wroteMore: boolean,
+};
 
 export type Manifest_Deserialize = {
 	schema: number,
@@ -2411,7 +2509,9 @@ export type UpdateRow = {
 	ignored: boolean,
 	/**
 	 *  The installed files were edited by hand; updating is blocked until
-	 *  the edit is kept as a fork or discarded.
+	 *  the edit is settled. A package from a source settles it by being
+	 *  kept as a fork or discarded; a fork, already kept, only by
+	 *  discarding back to the copy it put in the local source.
 	 */
 	blockedByLocalEdit: boolean,
 	/**
@@ -2520,6 +2620,19 @@ export type VersionSel =
 { at: "commit"; commit: string } | 
 /**  What is installed on disk right now. */
 { at: "installed" };
+
+/**
+ *  Why a whole-manifest write did not happen. Refusing is a normal answer
+ *  here, not a failure, so it is a shape the editor can act on rather than
+ *  a message it would have to recognise by its words.
+ */
+export type WriteRefused = 
+/**
+ *  The file is no longer the one this copy was read from. Something
+ *  else wrote it — a fork, a hold, a dismissal, an install — and
+ *  writing this copy would put that back.
+ */
+{ kind: "stale" } | { kind: "failed"; message: string };
 
 export type ZoomState = {
 	/**

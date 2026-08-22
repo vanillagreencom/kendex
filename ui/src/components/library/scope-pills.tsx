@@ -1,3 +1,4 @@
+import type { Scope } from "@/bindings";
 import { Pill } from "@/components/pill";
 import type { ScopeSelection } from "@/lib/derive";
 import { scopeName } from "@/lib/labels";
@@ -16,6 +17,7 @@ export function ScopePills({
    * looked at. */
   projects: string[];
 }) {
+  const among = projects.map((root): Scope => ({ scope: "project", root }));
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
       <div className="flex flex-wrap gap-1.5">
@@ -37,7 +39,7 @@ export function ScopePills({
             }
             onClick={() => onScopeChange({ project: root })}
           >
-            {scopeName({ scope: "project", root })}
+            {scopeName({ scope: "project", root }, among)}
           </Pill>
         ))}
       </div>

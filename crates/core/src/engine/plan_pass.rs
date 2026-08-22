@@ -1,19 +1,19 @@
 //! The per-item planning pass and the refusal pass — the two walks over
 //! the desired state that turn it into drift rows and ops.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use crate::apply::PlannedOp;
 use crate::env::Env;
 use crate::error::Result;
 use crate::lock::Lock;
-use crate::model::Scope;
+use crate::model::{ItemKind, Scope};
 
 use super::item_plan::plan_item;
 use super::{
-    DriftCause, DriftRow, DriftState, PlanOptions, config_edits, desired, holds, item_plan,
-    removal, tree_plan,
+    DriftCause, DriftRow, DriftState, DriftSubject, PlanOptions, config_edits, desired, holds,
+    item_plan, removal, tree_plan,
 };
 
 /// One pass over the desired items, with the two holds that outrank
@@ -33,7 +33,21 @@ pub(super) fn plan_items(
     config_edits: &mut config_edits::ConfigEditPlan,
     new_lock: &mut Lock,
     written: &mut tree_plan::Written,
+    // What this pass planned a rendering for. A caller acting on one
+    // package cannot read that off the op list: a scope brings its own
+    // maintenance along, so ops exist whether or not the package it named
+    // got one, and every reason a package is skipped above leaves the
+    // same silence behind.
+    rendered: &mut BTreeSet<(ItemKind, String)>,
 ) -> Result<()> {
+    // A package can target several tools, and each is its own item here.
+    // The set below is asked per package, so a package counts as rendered
+    // only when every item under it was: one tool refused while another
+    // installs leaves edited files exactly where they are, and a caller
+    // told the package was restored would be reading one tool's success
+    // as all of them.
+    let mut wanted: BTreeMap<(ItemKind, String), usize> = BTreeMap::new();
+    let mut done: BTreeMap<(ItemKind, String), usize> = BTreeMap::new();
     for item in &state.items {
         let mut sink = item_plan::PlanSink {
             drift,
@@ -42,6 +56,18 @@ pub(super) fn plan_items(
             new_lock,
             written,
         };
+        // Not this plan's package: its record carries forward and nothing
+        // is planned for it, the same way a held item's does. Dropping the
+        // record instead would write a lock that forgets what is installed.
+        *wanted.entry((item.kind, item.name.clone())).or_default() += 1;
+        if !state.acts_on(item.kind, &item.name) {
+            if let Some(entry) = lock.entries.get(&item.key) {
+                sink.new_lock
+                    .entries
+                    .insert(item.key.clone(), entry.clone());
+            }
+            continue;
+        }
         if holds::hold_rev_conflict(item, scope, lock, &state.rev_conflicts, &mut sink) {
             continue;
         }
@@ -64,7 +90,27 @@ pub(super) fn plan_items(
         if holds::hold_legacy_copy(item, scope, lock, legacy_pi, &mut sink) {
             continue;
         }
-        plan_item(env, item, scope, lock, emitted_paths, &mut sink)?;
+        // Only when the rendering is actually accounted for: `plan_item`
+        // returns without one when the target conflicts, and recording it
+        // anyway would tell a caller its package was put back.
+        if plan_item(env, item, scope, lock, emitted_paths, &mut sink)? {
+            *done.entry((item.kind, item.name.clone())).or_default() += 1;
+        }
+    }
+    for (key, count) in wanted {
+        if done.get(&key) == Some(&count) {
+            rendered.insert(key);
+        }
+    }
+    // A tool the gate refused never reached the loop above: the refusal
+    // takes it out of `items` and records it in `refused`, so counting
+    // items alone cannot see it and the package's other tools would speak
+    // for it. `plan_refusals` keeps its edited files exactly where they
+    // are, which is the state a caller must not be told is restored.
+    for refusal in &state.refused {
+        if state.acts_on(refusal.kind, &refusal.name) {
+            rendered.remove(&(refusal.kind, refusal.name.clone()));
+        }
     }
     Ok(())
 }
@@ -101,20 +147,24 @@ pub(super) fn plan_refusals(
         let key = crate::lock::entry_key(refusal.kind, &refusal.name, refusal.harness);
         let mut removals = Vec::new();
         if let Some(entry) = lock.entries.get(&key) {
-            // A refused rendering takes its previous installation off disk
-            // — unless the user's edits are in it. Edited bytes are never
-            // an automatic casualty of an upstream change (that is the
-            // exact promise of edit protection), so they hold and the
-            // conflict says why.
-            // The reserved-name move's hold counts here too: what it is
-            // holding is still what runs, and its record is the only
-            // thing a later pass can claim it with.
+            // A refused rendering takes its previous installation off disk,
+            // and three things keep it there. It may not be this plan's
+            // package: taking a sibling's files is not a command about
+            // another package's to do, and the next unrestricted pass —
+            // every audit, every apply — takes them. Or the user's edits
+            // are in it, and edited bytes are never an automatic casualty
+            // (that is the exact promise of edit protection). Or the
+            // reserved-name move holds it, and what it holds is still what
+            // runs. Either way the record stays with the files it
+            // describes.
             let edited = removal::edit_holds(env, scope, entry);
             let legacy_hold = (refusal.kind == crate::model::ItemKind::Hook
                 && refusal.harness == crate::model::HarnessId::Pi)
                 .then(|| legacy_pi.hold(&refusal.name))
                 .flatten();
-            if edited || legacy_hold.is_some() {
+            if !state.acts_on(refusal.kind, &refusal.name) {
+                new_lock.entries.insert(key.clone(), entry.clone());
+            } else if edited || legacy_hold.is_some() {
                 // The refusal says why nothing new was written; the hold
                 // says why the old copy is still running, in the same
                 // words every other path says it in. Edits in the files
@@ -129,6 +179,7 @@ pub(super) fn plan_refusals(
                     harness: refusal.harness,
                     scope: scope.clone(),
                     state: DriftState::Conflict,
+                    subject: DriftSubject::Package,
                     detail: format!("{} — {why}", refusal.reason),
                     cause,
                 });
@@ -138,12 +189,14 @@ pub(super) fn plan_refusals(
                 // a stranger's directory — refusing, forever, to write the
                 // accepted content over it.
                 new_lock.entries.insert(key, entry.clone());
+                // The conflict says why; nothing else is planned for it.
                 continue;
+            } else {
+                guard.extend(
+                    &mut removals,
+                    removal::removal_ops(env, scope, entry, config_edits)?,
+                );
             }
-            guard.extend(
-                &mut removals,
-                removal::removal_ops(env, scope, entry, config_edits)?,
-            );
         }
         drift.push(DriftRow {
             kind: refusal.kind,
@@ -151,6 +204,7 @@ pub(super) fn plan_refusals(
             harness: refusal.harness,
             scope: scope.clone(),
             state: DriftState::Conflict,
+            subject: DriftSubject::Package,
             detail: match removals.is_empty() {
                 false => format!(
                     "{} — the previous installation will be moved to the trash",

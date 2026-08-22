@@ -16,9 +16,13 @@ import {
 import { versionRowLabel } from "@/lib/versions";
 import { useAuditStore } from "@/stores/audit";
 import { useEditorStore } from "@/stores/editor";
-import type { PackageRef } from "@/stores/nav";
+import { manifestRewritten } from "@/stores/manifest-sync";
+import { useMarketplacesStore } from "@/stores/marketplaces";
+import type { PackageView as OpenedAt, PackageRef } from "@/stores/nav";
 import { useProblemsStore } from "@/stores/problems";
 import { useScanStore } from "@/stores/scan";
+import { useSettingsStore } from "@/stores/settings";
+import { refusesForUnsaved } from "@/stores/unsaved-first";
 import { useUpdatesStore } from "@/stores/updates";
 
 export type PackageView =
@@ -34,6 +38,24 @@ export type PackageView =
        *  package's primary installation. */
       harness?: HarnessId;
     };
+
+/** What the page shows on arrival: the comparison a Preview link asked
+ *  for, else the package's files. */
+export const openingView = (opened: OpenedAt | null): PackageView =>
+  opened?.mode === "diff"
+    ? {
+        mode: "diff",
+        from: opened.from,
+        to: opened.to,
+        fromLabel: opened.from.slice(0, 7),
+        toLabel: opened.to.slice(0, 7),
+      }
+    : { mode: "files", file: null };
+
+/** Which tab it opens on: a customized mark points at what was changed in
+ *  a place, which is the Customize tab's business, not the overview's. */
+export const openingTab = (opened: OpenedAt | null): string =>
+  opened?.mode === "customize" ? "customize" : "overview";
 
 /** Which rendering a diff reads: the one the view names, else the
  *  package's primary installation. */
@@ -122,37 +144,61 @@ export function packageVersionActions(
   ref: PackageRef,
   displayName: string,
   held: boolean,
-  setBusy: (busy: boolean) => void,
   reload: () => void,
 ) {
+  // The flag lives in a store, not in the page. These writes outlive the
+  // page: someone can start one and walk to Customize, and a flag that
+  // unmounts with the page takes the Save bar's reason to wait with it.
+  const setBusy = (busy: boolean) => useUpdatesStore.setState({ busy });
   const showError = (message: string) =>
     useProblemsStore
       .getState()
       .showError({ title: VERSION_ERROR_TITLE, message });
-  const afterChange = () => {
+  const afterChange = async () => {
     reload();
+    // Each of these rewrites this place's kendex.toml, and the editor holds
+    // a whole copy of it that a save would write back.
+    await manifestRewritten(ref.scope);
     void useScanStore.getState().refresh();
     void useAuditStore.getState().refresh({ force: true });
   };
   const run = (
-    call: Promise<{ status: "ok" } | { status: "error"; error: string }>,
+    // The call itself, not the promise it returns: a guard that runs after
+    // the command was already invoked refuses nothing.
+    call: () => Promise<{ status: "ok" } | { status: "error"; error: string }>,
     toastMessage: string,
   ) => {
+    // Switching version, holding one, and following a source all rewrite
+    // this place's kendex.toml, so unsaved customization for it refuses
+    // them wherever that typing is waiting.
+    if (refusesForUnsaved(ref.scope)) return;
     setBusy(true);
-    void call.then((response) => {
-      setBusy(false);
-      if (response.status === "error") {
-        showError(response.error);
-        return;
+    void (async () => {
+      try {
+        const response = await call();
+        if (response.status === "error") {
+          showError(response.error);
+          return;
+        }
+        toast.success(toastMessage);
+        // Busy is one of the flags holding the Save bar down, so it stays up
+        // until the editor has been told its copy is stale. Clearing it first
+        // leaves a window where a save passes the outdated check and writes
+        // the pre-change manifest back over what this just recorded.
+        await afterChange();
+      } catch (thrown) {
+        // A transport failure rejects rather than answering; without this the
+        // page would spin and the Save bar stay down for good.
+        showError(String(thrown));
+      } finally {
+        setBusy(false);
       }
-      toast.success(toastMessage);
-      afterChange();
-    });
+    })();
   };
 
   const switchTo = (row: VersionRow) =>
     run(
-      commands.packageSetRev(ref.scope, ref.kind, ref.name, row.id),
+      () => commands.packageSetRev(ref.scope, ref.kind, ref.name, row.id),
       updatedToastLabel(`${displayName} to ${versionRowLabel(row)}`),
     );
 
@@ -162,25 +208,33 @@ export function packageVersionActions(
     held
       ? switchTo(latest)
       : run(
-          commands.applyPlan(ref.scope, false, []),
+          () => commands.applyPlan(ref.scope, false, []),
           updatedToastLabel(displayName),
         );
 
   const follow = () =>
     run(
-      commands.packageSetRev(ref.scope, ref.kind, ref.name, null),
+      () => commands.packageSetRev(ref.scope, ref.kind, ref.name, null),
       FOLLOW_SOURCE_TOAST,
     );
 
   return { switchTo, updateToLatest, follow };
 }
 
-/** One gate for every control that rewrites this package's manifest: the
+/** One gate for every control that rewrites this scope's manifest: the
  *  audit store's apply, a version switch in flight, the updates store's
- *  fork or discard, and the editor's save all touch the same file. */
-export function useManifestBusy(switching: boolean): boolean {
+ *  fork or discard, a marketplace install or subscription change, the
+ *  settings store's drift-report install, and the editor's save all touch
+ *  the same file. Every writer of kendex.toml belongs here — a writer left
+ *  out is a control that stays live while the file moves under it.
+ *
+ *  It takes no argument on purpose. A flag passed in from a page is a flag
+ *  that ends when the page does, and these writes outlive the page. */
+export function useManifestBusy(): boolean {
   const auditBusy = useAuditStore((s) => s.busy);
   const updatesBusy = useUpdatesStore((s) => s.busy);
+  const marketBusy = useMarketplacesStore((s) => s.busy);
+  const settingsBusy = useSettingsStore((s) => s.busy);
   const saving = useEditorStore((s) => s.saving);
-  return auditBusy || switching || updatesBusy || saving;
+  return auditBusy || updatesBusy || marketBusy || settingsBusy || saving;
 }

@@ -6,7 +6,9 @@
 mod disabled;
 mod edited_harness;
 
+mod edited_forks;
 mod forks;
+mod one_package;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,6 +19,7 @@ use kendex_core::env::{Env, FakeOs};
 use kendex_core::lock::{load as load_lock, lock_path};
 use kendex_core::manifest;
 use kendex_core::model::{HarnessId, ItemKind, Scope};
+use kendex_core::package::updates;
 use kendex_core::process::Hardened;
 use kendex_core::remote;
 

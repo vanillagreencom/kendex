@@ -31,6 +31,7 @@ export function views(): AuditView[] {
           harness: "claude",
           scope: acme,
           state: "stale",
+          subject: "package",
           detail: "newer content is available",
         },
         {
@@ -39,6 +40,7 @@ export function views(): AuditView[] {
           harness: "codex",
           scope: acme,
           state: "missing",
+          subject: "package",
           detail: "not installed yet",
         },
         {
@@ -47,6 +49,7 @@ export function views(): AuditView[] {
           harness: "claude",
           scope: acme,
           state: "unmanaged",
+          subject: "package",
           detail: `${ACME}/.claude/skills/scratch`,
         },
         {
@@ -55,6 +58,7 @@ export function views(): AuditView[] {
           harness: "claude",
           scope: acme,
           state: "orphaned",
+          subject: "package",
           detail: "left over from an earlier setup; nothing needs it anymore",
         },
       ],

@@ -66,7 +66,9 @@ pub struct UpdateRow {
     /// The user asked to stop hearing about this package's updates.
     pub ignored: bool,
     /// The installed files were edited by hand; updating is blocked until
-    /// the edit is kept as a fork or discarded.
+    /// the edit is settled. A package from a source settles it by being
+    /// kept as a fork or discarded; a fork, already kept, only by
+    /// discarding back to the copy it put in the local source.
     pub blocked_by_local_edit: bool,
     /// Which renderings carry the edit, one entry per physical rendering:
     /// an agent renders once per tool, while tools sharing a skill's
@@ -180,6 +182,17 @@ fn edited_items(
     lock: &crate::lock::Lock,
 ) -> std::collections::BTreeMap<(ItemKind, String), Vec<HarnessId>> {
     let mut edited = std::collections::BTreeMap::<(ItemKind, String), Vec<HarnessId>>::new();
+    // The conservative per-entry hold: it compares what is on disk against
+    // what the lock recorded, so it needs no source and holds whatever it
+    // cannot prove is clean. Used wherever the plan cannot speak.
+    let held =
+        |only: &dyn Fn(&crate::lock::LockEntry) -> bool| -> Vec<(ItemKind, String, HarnessId)> {
+            lock.entries
+                .values()
+                .filter(|entry| only(entry) && crate::engine::edit_holds(env, scope, entry))
+                .map(|entry| (entry.kind, entry.name.clone(), entry.harness))
+                .collect()
+        };
     let rows: Vec<(ItemKind, String, HarnessId)> = match crate::engine::plan_scope(
         env,
         scope,
@@ -187,28 +200,36 @@ fn edited_items(
         lock,
         &crate::engine::PlanOptions::default(),
     ) {
-        Ok(report) => report
-            .drift
-            .into_iter()
-            .filter(|row| {
-                matches!(
-                    row.cause,
-                    Some(crate::engine::DriftCause::LocalEdit | crate::engine::DriftCause::Both)
-                )
-            })
-            .map(|row| (row.kind, row.name, row.harness))
-            .collect(),
-        // A plan the scope cannot produce (a broken manifest, an
-        // unreadable source) must not fail open — reporting nothing edited
-        // is exactly when edit detection could not run. Fall back to the
-        // conservative per-entry hold, which holds whatever it cannot prove
-        // is clean.
-        Err(_) => lock
-            .entries
-            .values()
-            .filter(|entry| crate::engine::edit_holds(env, scope, entry))
-            .map(|entry| (entry.kind, entry.name.clone(), entry.harness))
-            .collect(),
+        Ok(report) => {
+            let mut rows: Vec<(ItemKind, String, HarnessId)> = report
+                .drift
+                .iter()
+                .filter(|row| {
+                    matches!(
+                        row.cause,
+                        Some(
+                            crate::engine::DriftCause::LocalEdit | crate::engine::DriftCause::Both
+                        )
+                    )
+                })
+                .map(|row| (row.kind, row.name.clone(), row.harness))
+                .collect();
+            // A plan that produced does speak for what it produced; one it
+            // could not render — a fork whose own copy is gone, a source
+            // that would not read — rendered nothing to compare against, so
+            // its absence from the drift above is not cleanliness. Those
+            // items, and only those, fall back to the per-entry hold: the
+            // plan stays authoritative wherever it could actually look.
+            let unmeasured = report.unmeasured;
+            rows.extend(held(&|entry| {
+                unmeasured.contains(&(entry.kind, entry.name.clone()))
+            }));
+            rows
+        }
+        // A plan the scope cannot produce at all (a broken manifest) must
+        // not fail open either — reporting nothing edited is exactly when
+        // edit detection could not run.
+        Err(_) => held(&|_| true),
     };
     for (kind, name, harness) in rows {
         let harnesses = edited.entry((kind, name.clone())).or_default();
@@ -245,12 +266,41 @@ fn same_artifact(
 }
 
 /// A fork's row: no versions, no update — the Library still needs to
-/// know it is a fork.
+/// know it is a fork, and whether its files have been edited since. A fork
+/// is the one local source with a row, so a hardcoded "not edited" here
+/// would be the only place the measured edit is thrown away.
+/// Whether a fork's own copy can still be re-rendered from — asked of the
+/// sealed source, which is what the discard reads through. A path check
+/// answers a different question than the render does: a skill directory
+/// emptied of its `SKILL.md`, an agent file replaced by a directory, a
+/// symlink anywhere in the tree, a tree nested past the catalog depth or
+/// over its file and byte budgets all read as present and all refuse when
+/// the discard runs. Collecting the tree is the refusal, so it is the
+/// question — the fork's own tree, which this row already hashes to know
+/// it was edited.
+fn local_copy_resolves(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> bool {
+    let root = crate::source::local_source_root(env, scope);
+    let Ok(sealed) = crate::source_read::SealedSource::open(&root) else {
+        return false;
+    };
+    match kind {
+        ItemKind::Skill => {
+            let dir = root.join("skills").join(name);
+            sealed.is_file(&dir.join("SKILL.md")) && sealed.collect_skill_tree(&dir).is_ok()
+        }
+        _ => sealed
+            .read(&root.join("agents").join(format!("{name}.md")))
+            .is_ok(),
+    }
+}
+
 fn fork_row(
+    env: &Env,
     scope: &Scope,
     kind: ItemKind,
     name: &str,
     decl: &crate::manifest::ItemDecl,
+    edited_harnesses: Vec<HarnessId>,
 ) -> UpdateRow {
     UpdateRow {
         scope: scope.clone(),
@@ -265,10 +315,14 @@ fn fork_row(
         pinned: false,
         hold_owner: None,
         ignored: false,
-        blocked_by_local_edit: false,
-        edited_harnesses: Vec::new(),
+        blocked_by_local_edit: !edited_harnesses.is_empty(),
+        edited_harnesses,
+        // A fork is already the user's own copy, so there is nothing left to
+        // keep as one — but the copy itself is in the local source, so an
+        // edit to it can be put back from there, as long as it is still
+        // there to put back. Measured like every other row's, never asserted.
         forkable_harness: None,
-        can_discard: false,
+        can_discard: local_copy_resolves(env, scope, kind, name),
         can_take_latest: false,
         derived: false,
         forked: true,

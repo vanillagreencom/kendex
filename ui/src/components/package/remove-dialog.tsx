@@ -2,6 +2,7 @@ import type { ItemKind, Scope } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { useAuditStore } from "@/stores/audit";
 import { useScanStore } from "@/stores/scan";
+import { inEveryPlace } from "@/stores/unsaved-first";
 
 /** Removing a package takes every copy of it with it — it is one thing to
  *  a reader, so it is one action here. The page leaves only once the scan
@@ -33,7 +34,9 @@ export function RemoveDialog({
       busy={busy}
       onConfirm={() => {
         void (async () => {
-          for (const scope of scopes) await removeItem(scope, kind, name);
+          // Every place, or none: the same rule the page's other
+          // package-wide actions follow.
+          await inEveryPlace(scopes, (scope) => removeItem(scope, kind, name));
           onOpenChange(false);
           const stillHere = useScanStore
             .getState()

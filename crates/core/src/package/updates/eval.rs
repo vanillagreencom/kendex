@@ -89,7 +89,14 @@ impl Eval<'_> {
         match error {
             CoreError::ItemRevUnsupported { .. } => {
                 if forked {
-                    report.rows.push(fork_row(self.scope, kind, name, decl));
+                    report.rows.push(fork_row(
+                        self.env,
+                        self.scope,
+                        kind,
+                        name,
+                        decl,
+                        self.edited_harnesses(kind, name),
+                    ));
                 }
             }
             CoreError::SourcePending { .. } => report.warnings.push(warn(

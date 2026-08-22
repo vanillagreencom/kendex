@@ -192,3 +192,57 @@ fn forking_a_skill_whose_native_link_was_repointed_reads_the_managed_tree() {
     );
     assert!(foreign.join("secret.md").is_file());
 }
+
+/// Keeping a package as your own is two steps: the record and the render.
+/// If the second never ran — interrupted, or a failure after the first
+/// committed — the files are gone and `fork` refuses because the record is
+/// already there. The way back has to exist, and the refusal has to name
+/// it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_fork_whose_render_never_ran_is_put_back_by_applying() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "Upstream.");
+    commit(&w.upstream, "one");
+    declare(&w, "[skills.gh]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    fs::write(
+        skill_file(&w),
+        "---\nname: gh\ndescription: mine\n---\nMy fork.\n",
+    )
+    .unwrap();
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+
+    // The capture commits on its own: it records the fork and takes the
+    // installed rendering away. Until the render step runs, this is what a
+    // person is left with, and it is what an interruption leaves behind.
+    assert!(
+        !skill_file(&w).exists(),
+        "the control: the capture leaves nothing rendered"
+    );
+
+    // Forking again refuses — the record is already there — and the
+    // refusal names the exit that works.
+    let refused = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude)
+        .expect_err("a recorded fork refuses a second fork");
+    let said = refused.to_string();
+    assert!(
+        said.contains("apply"),
+        "the refusal names no way back: {said}"
+    );
+
+    // And that exit does put them back, from the copy that was kept.
+    let report = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &report.plan, None).unwrap();
+    assert!(
+        skill_file(&w).exists(),
+        "apply did not render the fork back"
+    );
+    assert!(
+        fs::read_to_string(skill_file(&w))
+            .unwrap()
+            .contains("My fork."),
+        "it rendered something other than the copy that was kept"
+    );
+}

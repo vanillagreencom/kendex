@@ -70,10 +70,10 @@ describe("mock bridge", () => {
       harness: "claude",
     })) as AuditView;
     expect(after.drift.some((r) => r.name === "scratch")).toBe(false);
-    const manifest = (await mockInvoke("get_manifest", { scope: acme })) as {
-      skills?: Record<string, { source: string }>;
+    const read = (await mockInvoke("get_manifest", { scope: acme })) as {
+      manifest: { skills?: Record<string, { source: string }> } | null;
     };
-    expect(manifest.skills?.scratch?.source).toBe("local");
+    expect(read.manifest?.skills?.scratch?.source).toBe("local");
   });
 
   it("blocks removing a source that still provides items", async () => {

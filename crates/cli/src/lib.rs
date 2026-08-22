@@ -44,6 +44,10 @@ enum Command {
     Show(commands::show::ShowArgs),
     /// Keep an edited install as your own local package
     Fork(commands::fork_cmd::ForkArgs),
+    /// Put one package's declared content back over the edits made to its
+    /// installed files — one package, never the whole scope
+    #[command(name = "discard-edits")]
+    DiscardEdits(commands::discard_cmd::DiscardArgs),
     /// Hold an item at a version, or let it follow its source again
     Pin(commands::pin::PinArgs),
     /// The versions a package's source offers
@@ -284,6 +288,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         Command::Diff(args) => commands::diff_cmd::run(&env, args)?,
         Command::Show(args) => commands::show::run(&env, args)?,
         Command::Fork(args) => commands::fork_cmd::run(&env, args)?,
+        Command::DiscardEdits(args) => commands::discard_cmd::run(&env, args)?,
         Command::Pin(args) => commands::pin::run(&env, args)?,
         Command::Versions(args) => commands::versions::run(&env, args)?,
         Command::Updates(args) => commands::updates_cmd::run(&env, args)?,

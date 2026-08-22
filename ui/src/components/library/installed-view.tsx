@@ -1,41 +1,28 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { ItemKind, Tag } from "@/bindings";
-import { InstalledRow } from "@/components/library/installed-row";
-import { InstalledSkeleton } from "@/components/library/installed-skeleton";
+import { InstalledTable } from "@/components/library/installed-table";
 import { LibraryFilters } from "@/components/library/library-filters";
-import { LibraryLegend } from "@/components/library/library-legend";
 import { NotManagedPanel } from "@/components/library/not-managed";
-import { TableEmptyRow } from "@/components/library/table-empty";
 import {
   applyLibraryView,
   useFilterHandoff,
 } from "@/components/library/use-filter-handoff";
 import {
-  Table,
-  TableBody,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { TAGS_ROW_LABEL } from "@/lib/copy";
-import { customizedItems } from "@/lib/customization";
-import {
   filterItems,
   groupItems,
   groupScopes,
-  scopeChoices,
+  projectScopes,
 } from "@/lib/derive";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { isNarrowed, UNFILTERED } from "@/lib/library-handoff";
-import { scopeKey } from "@/lib/scope";
 import { cn } from "@/lib/utils";
-import { useEditorStore } from "@/stores/editor";
 import {
   type FilterSelection,
   useLibraryViewStore,
 } from "@/stores/library-view";
 import { useNavStore } from "@/stores/nav";
 import {
+  indexOrigins,
   originFor,
   originLabel,
   useProvenanceStore,
@@ -50,7 +37,6 @@ export function InstalledView() {
   const scope = useNavStore((s) => s.libraryScope);
   const setScope = useNavStore((s) => s.setLibraryScope);
   const goToMarketplaces = useNavStore((s) => s.goToMarketplaces);
-  const goToPackage = useNavStore((s) => s.goToPackage);
   const {
     kind,
     harness,
@@ -68,15 +54,8 @@ export function InstalledView() {
   // back lands on the same narrowed table.
   const search = useNavStore((s) => s.search);
   const setSearch = useNavStore((s) => s.setSearch);
-  const projects = scopeChoices(result, scope);
+  const projects = result ? projectScopes(result) : [];
   const scroller = useRef<HTMLDivElement | null>(null);
-  // Every scope's manifest, so a row can say whether you have changed the
-  // package wherever it is installed — not only in the scope last edited.
-  const saved = useEditorStore((s) => s.saved);
-  const loadAll = useEditorStore((s) => s.loadAll);
-  useEffect(() => {
-    void loadAll();
-  }, [loadAll]);
   // Re-joined whenever a scan lands, so an install or unsubscribe made
   // elsewhere shows its new origin without a manual refresh. Before the
   // first scan there are no rows to label, so there is nothing to join.
@@ -84,20 +63,6 @@ export function InstalledView() {
     if (!result) return;
     void loadProvenance();
   }, [loadProvenance, result]);
-  const customizedKeys = useMemo(() => {
-    const keys = new Set<string>();
-    for (const [where, draft] of Object.entries(saved)) {
-      for (const item of customizedItems(draft)) {
-        keys.add(`${where}|${item.kind}:${item.name}`);
-      }
-    }
-    return keys;
-  }, [saved]);
-  const isCustomizedHere = (group: ReturnType<typeof groupItems>[number]) =>
-    groupScopes(group).some((scope) =>
-      customizedKeys.has(`${scopeKey(scope)}|${group.kind}:${group.name}`),
-    );
-
   const replaced = useFilterHandoff();
 
   // Pick up where the table was last scrolled to, and record it again on the
@@ -110,6 +75,10 @@ export function InstalledView() {
     return () => setScrollTop(node.scrollTop);
   }, [replaced, setScrollTop]);
 
+  // Keyed once per read, then asked per group: scanning every provenance
+  // row for every group is the whole cost of this join at a few hundred
+  // packages.
+  const origins = useMemo(() => indexOrigins(provenance), [provenance]);
   const groups = useMemo(() => {
     if (!result) return [];
     const filtered = filterItems(result.items, {
@@ -124,10 +93,10 @@ export function InstalledView() {
     return grouped.filter(
       (group) =>
         originLabel(
-          originFor(provenance, group.kind, group.name, groupScopes(group)),
+          originFor(origins, group.kind, group.name, groupScopes(group)),
         ) === from,
     );
-  }, [result, scope, kind, harness, tag, from, search, provenance]);
+  }, [result, scope, kind, harness, tag, from, search, origins]);
 
   // The count the filtered total is measured against: every row the table
   // could show, not the ones left after the current narrowing.
@@ -179,55 +148,14 @@ export function InstalledView() {
             className="min-w-0 flex-1 overflow-y-auto pr-2 [scrollbar-gutter:stable]"
           >
             <NotManagedPanel />
-            {groups.some(isCustomizedHere) ? <LibraryLegend /> : null}
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>{TAGS_ROW_LABEL}</TableHead>
-                  <TableHead>Harnesses</TableHead>
-                  <TableHead>Where</TableHead>
-                  <TableHead>From</TableHead>
-                  <TableHead className="text-right">Updated</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {groups.map((group) => {
-                  const primary = group.installations[0];
-                  return (
-                    <InstalledRow
-                      key={group.key}
-                      group={group}
-                      origin={originFor(
-                        provenance,
-                        group.kind,
-                        group.name,
-                        groupScopes(group),
-                      )}
-                      customized={isCustomizedHere(group)}
-                      onOpen={() => {
-                        if (!primary) return;
-                        goToPackage({
-                          kind: group.kind,
-                          name: group.name,
-                          scope: primary.scope,
-                        });
-                      }}
-                    />
-                  );
-                })}
-                {scanning ? <InstalledSkeleton /> : null}
-                {!scanning && groups.length === 0 ? (
-                  <TableEmptyRow
-                    hasAnyItems={hasAnyItems}
-                    onClearFilters={clearFilters}
-                    onBrowse={() => goToMarketplaces()}
-                  />
-                ) : null}
-              </TableBody>
-            </Table>
+            <InstalledTable
+              groups={groups}
+              origins={origins}
+              scanning={scanning}
+              hasAnyItems={hasAnyItems}
+              onClearFilters={clearFilters}
+              onBrowse={() => goToMarketplaces()}
+            />
           </div>
         </div>
       </div>

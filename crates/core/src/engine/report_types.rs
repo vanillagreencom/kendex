@@ -1,6 +1,8 @@
 //! The types an engine pass hands back — drift rows, warnings, the report
 //! itself — and the options a plan is asked with.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
@@ -36,6 +38,16 @@ pub enum DriftCause {
     Both,
 }
 
+/// What a drift row is about. A package's remedies live on its own page;
+/// a file kendex writes beside the packages has no page to open, so a
+/// surface that links every row would promise one that is not there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum DriftSubject {
+    Package,
+    Scope,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DriftRow {
@@ -45,6 +57,7 @@ pub struct DriftRow {
     pub scope: Scope,
     pub state: DriftState,
     pub detail: String,
+    pub subject: DriftSubject,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cause: Option<DriftCause>,
 }
@@ -81,6 +94,44 @@ pub struct EngineReport {
     /// Blocked rows also appear as conflicts in `drift`; the rest install
     /// and are worth reading first.
     pub safety: Vec<ItemSafety>,
+    /// What this plan writes a rendering for. A caller acting on one
+    /// package asks here rather than reading the op list: a scope carries
+    /// its own maintenance, so ops exist whether or not the package it
+    /// named got one — and every reason a package is skipped, refused or
+    /// held or unmeasured, leaves the same silence in that list.
+    pub rendered: BTreeSet<(ItemKind, String)>,
+    /// Everything a restricted plan is about: the packages named, and what
+    /// those packages require. Empty where the plan is the whole scope's.
+    ///
+    /// A caller checking its own package rendered is asking half the
+    /// question. A dependency the refreshed declaration pulls in can be
+    /// refused on its own account — by the safety gate, or a revision it
+    /// cannot settle — and the plan still runs, leaving the package there
+    /// and the thing it needs absent. Reporting that as done tells someone
+    /// their package is back when it cannot run.
+    pub acting: BTreeSet<(ItemKind, String)>,
+    /// Declarations this pass could not measure: their source did not
+    /// resolve, could not be read, or no longer carries the item, so
+    /// nothing was rendered to compare what is on disk against. They are
+    /// missing from `drift` for that reason and not because they are
+    /// clean — a reader that treats the silence as cleanliness reports an
+    /// edited place as untouched.
+    pub unmeasured: BTreeSet<(ItemKind, String)>,
+}
+
+impl EngineReport {
+    /// What this plan is about that it did not render: the packages named,
+    /// or anything they require, that nothing here could put back.
+    ///
+    /// The question a caller must ask before it executes and reports the
+    /// package restored. Asking only whether the named package rendered
+    /// answers half of it — a dependency the declaration pulls in can be
+    /// refused on its own account, and the package comes back unable to
+    /// run under a line saying it is fine. Empty for a whole-scope plan,
+    /// which is about everything and promises nothing about one package.
+    pub fn unrendered(&self) -> Vec<(ItemKind, String)> {
+        self.acting.difference(&self.rendered).cloned().collect()
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -116,6 +167,41 @@ pub struct PlanOptions {
     /// "discard" the app offers, which must never take a neighbour's
     /// edits with it, even one that shares a name across kinds.
     pub overwrite_edited_names: Option<Vec<(ItemKind, String)>>,
+    /// Plan for these items only — them and everything they need, which
+    /// `DesiredState` resolves against the expansion and every pass then
+    /// asks through `DesiredState::acts_on`. Every other declared item is
+    /// carried forward exactly as the lock records it: nothing written for
+    /// it and nothing of its taken away, by any pass — the item writes, the
+    /// sweep of a path an earlier install left, and the removal a safety
+    /// refusal would make. A plan is always the scope's, so a command naming one
+    /// package would otherwise install, update and re-render whatever else
+    /// the scope had pending, and delete files belonging to packages it
+    /// never mentioned. What runs regardless is what belongs to no item:
+    /// the manifest kendex maintains for the scope.
+    pub only_names: Option<Vec<(ItemKind, String)>>,
+    /// The file a whole-manifest write is being made from — set by a caller
+    /// writing a copy someone has been holding, so every op in this plan
+    /// that writes this scope's manifest binds to it instead of to what the
+    /// file was when the plan ran.
+    ///
+    /// Bound here, where the ops are built, because a plan is not a list of
+    /// paths a caller can search afterwards: a scope still under the old
+    /// product name has its writes retargeted to the new filename after
+    /// planning, and a caller matching the path it knew would find nothing
+    /// and leave the write bound to whatever the plan observed.
+    pub manifest_base: Option<crate::manifest::Base>,
+}
+
+impl PlanOptions {
+    /// What a write of this scope's manifest binds to: the file the copy
+    /// being written came from, where the caller named one, and otherwise
+    /// what the file was when this plan was computed.
+    pub fn manifest_pre(&self, path: &std::path::Path) -> crate::error::Result<crate::apply::Pre> {
+        match &self.manifest_base {
+            Some(base) => Ok(crate::apply::Pre::from(base)),
+            None => crate::apply::Pre::observed(path),
+        }
+    }
 }
 
 impl PlanOptions {

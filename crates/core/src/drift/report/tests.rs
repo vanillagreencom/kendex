@@ -53,6 +53,8 @@ pub(super) fn package(name: &str) -> PackageSnapshot {
         edited: false,
         mixed: false,
         forked: false,
+        derived: false,
+        can_discard: true,
         open_findings: 0,
     }
 }
@@ -126,83 +128,6 @@ fn held_only_and_ignored_only_drift_stays_silent() {
     let report = check(&env, std::slice::from_ref(&scope));
     assert_eq!(report.status, CheckStatus::Clean, "{report:?}");
     assert_eq!(render_plain(&report), "");
-}
-
-#[test]
-fn each_classification_lands_in_its_section_with_its_remedy() {
-    let tmp = tempfile::tempdir().unwrap();
-    let env = env_in(tmp.path());
-    let scope = project_scope(tmp.path());
-    write_manifest(&env, &scope, &manifest_with_remote());
-    snapshot_with(
-        &env,
-        &scope,
-        vec![
-            PackageSnapshot {
-                update_available: true,
-                ..package("stale-one")
-            },
-            PackageSnapshot {
-                edited: true,
-                ..package("edited-one")
-            },
-            PackageSnapshot {
-                removed_upstream: true,
-                ..package("gone-one")
-            },
-            PackageSnapshot {
-                mixed: true,
-                ..package("mixed-one")
-            },
-        ],
-    );
-
-    let report = check(&env, std::slice::from_ref(&scope));
-    assert_eq!(report.status, CheckStatus::Drift);
-    assert_eq!(report.status.exit_code(), 1);
-    let text = render_plain(&report);
-    assert!(text.contains("stale:"), "{text}");
-    assert!(
-        text.contains("'stale-one' has a newer version on its source — fix: kendex refresh"),
-        "{text}"
-    );
-    assert!(
-        text.contains("'edited-one'") && text.contains("fix: kendex fork skill edited-one"),
-        "{text}"
-    );
-    assert!(
-        text.contains("'gone-one'") && text.contains("fix: kendex remove gone-one"),
-        "{text}"
-    );
-    assert!(
-        text.contains("mixed installs:") && text.contains("'mixed-one'"),
-        "{text}"
-    );
-    // Drift before suggestions: stale section renders before the age line.
-    let stale_at = text.find("stale:").unwrap();
-    let age_at = text.find("(checked against sources").unwrap();
-    assert!(stale_at < age_at);
-}
-
-#[test]
-fn edited_outranks_stale_for_one_package() {
-    let tmp = tempfile::tempdir().unwrap();
-    let env = env_in(tmp.path());
-    let scope = project_scope(tmp.path());
-    write_manifest(&env, &scope, &manifest_with_remote());
-    snapshot_with(
-        &env,
-        &scope,
-        vec![PackageSnapshot {
-            update_available: true,
-            edited: true,
-            ..package("both")
-        }],
-    );
-
-    let text = render_plain(&check(&env, std::slice::from_ref(&scope)));
-    assert!(text.contains("edited by hand:"), "{text}");
-    assert!(!text.contains("stale:"), "one package, one line: {text}");
 }
 
 #[test]

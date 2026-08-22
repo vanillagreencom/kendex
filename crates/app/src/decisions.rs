@@ -89,6 +89,31 @@ pub struct Dismissed {
     pub records: Vec<DismissedRecord>,
 }
 
+/// Why a dismissal did not come back with its records — and, since the
+/// write happens before they are read, whether the file changed anyway.
+///
+/// A string cannot carry that, and the caller cannot infer it: told only
+/// that this failed, it says nothing was changed and leaves the editor
+/// holding a copy of a file that moved under it. Both of those are wrong
+/// in exactly the case the write landed.
+#[derive(Serialize, Type)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum DismissFailed {
+    /// Nothing was written. The decision is still there to make.
+    Untouched { message: String },
+    /// The decisions were written, and then the file could not be read
+    /// back to say what an undo would need. What is on disk changed.
+    Written { message: String },
+}
+
+impl DismissFailed {
+    fn untouched(error: impl ToString) -> Self {
+        Self::Untouched {
+            message: error.to_string(),
+        }
+    }
+}
+
 /// Dismiss the findings these tokens name, for one reason, in one scope.
 /// The tokens are re-read against a fresh audit before anything is written;
 /// one that no longer names what is installed stops the whole call.
@@ -98,16 +123,20 @@ pub fn dismiss_findings(
     scope: Scope,
     tokens: Vec<String>,
     reason: DismissReason,
-) -> Result<Dismissed, String> {
-    let env = env()?;
+) -> Result<Dismissed, DismissFailed> {
+    let env = env().map_err(DismissFailed::untouched)?;
     let tokens = tokens
         .iter()
         .map(|token| DecisionToken::parse(token))
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
-    let plan = ops::dismiss(&env, &scope, &tokens, reason).map_err(|e| e.to_string())?;
-    apply::execute(&env, &plan, None).map_err(|e| e.to_string())?;
-    let records = written(&env, &scope, &tokens)?;
+        .map_err(DismissFailed::untouched)?;
+    let plan = ops::dismiss(&env, &scope, &tokens, reason).map_err(DismissFailed::untouched)?;
+    apply::execute(&env, &plan, None).map_err(DismissFailed::untouched)?;
+    // Past here the decisions are on disk. Everything that can still go
+    // wrong is a failure to describe what was written, never a failure to
+    // write it, and it is told apart from the others for that reason.
+    let records =
+        written(&env, &scope, &tokens).map_err(|message| DismissFailed::Written { message })?;
     Ok(Dismissed {
         view: view(&env, &scope),
         records,

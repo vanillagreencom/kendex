@@ -1,6 +1,6 @@
 import type { Scope, UpdateRow } from "@/bindings";
 import { USER_LEVEL_PLACE } from "@/lib/copy-updates";
-import { scopeKey } from "@/lib/scope";
+import { projectTail, scopeKey } from "@/lib/scope";
 
 /** One package with every place it is out of date in. The same skill
  *  installed in three projects is one decision with three places, not
@@ -80,32 +80,13 @@ export const skippedPlaces = (rows: UpdateRow[]): UpdateRow[] =>
   );
 
 /** Where a package lives, as a person names it: the project folder, or
- *  "User level" for the install that applies everywhere. Two projects
- *  with the same folder name among `among` get their parent folder too,
- *  so ~/work/app and ~/clients/app never read as one place twice. */
+ *  "User level" for the install that applies everywhere. The Library says
+ *  "Personal" for the same place, so only the global label differs — the
+ *  rule that tells two projects apart is one rule, in `lib/scope.ts`. */
 export function placeName(scope: Scope, among: Scope[] = []): string {
   if (scope.scope === "global") return USER_LEVEL_PLACE;
-  const parts = pathParts(scope.root);
-  const others = among.flatMap((other) =>
-    other.scope === "project" && other.root !== scope.root
-      ? [pathParts(other.root)]
-      : [],
-  );
-  // The shortest trailing run of folders no other place in the group
-  // ends with — one folder when nothing clashes, the whole root if even
-  // that is shared.
-  for (let take = 1; take <= parts.length; take += 1) {
-    const suffix = parts.slice(-take).join("/");
-    if (!others.some((other) => other.slice(-take).join("/") === suffix))
-      return suffix;
-  }
-  return scope.root;
+  return projectTail(scope.root, among);
 }
-
-// Roots are serialized by the OS that wrote them, so a Windows project
-// arrives with backslashes; either separator ends a folder name.
-const pathParts = (root: string): string[] =>
-  root.split(/[\\/]+/).filter((part) => part !== "");
 
 export const placeKey = (row: UpdateRow): string =>
   `${groupKey(row)}:${scopeKey(row.scope)}`;

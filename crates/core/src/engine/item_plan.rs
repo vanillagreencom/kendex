@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use super::{DriftRow, DriftState};
+use super::{DriftRow, DriftState, DriftSubject};
 use crate::apply::{Op, PlannedOp, Pre};
 use crate::clock::timestamp;
 use crate::env::Env;
@@ -35,7 +35,13 @@ pub(super) fn plan_item(
     lock: &Lock,
     owned: &BTreeSet<PathBuf>,
     sink: &mut PlanSink,
-) -> Result<()> {
+    // Whether this item's rendering is accounted for when it returns:
+    // planned, or already matching what is declared. A conflict is neither
+    // — the record carries forward and nothing is written — and a caller
+    // acting on one package needs to tell those apart, because "we
+    // restored it" over an untouched edit is the one answer it must not
+    // give.
+) -> Result<bool> {
     let PlanSink {
         drift,
         ops,
@@ -50,6 +56,7 @@ pub(super) fn plan_item(
         scope: scope.clone(),
         state,
         detail,
+        subject: DriftSubject::Package,
         cause: None,
     };
     let existing = lock.entries.get(&item.key);
@@ -70,7 +77,7 @@ pub(super) fn plan_item(
             ),
         ));
         new_lock.entries.insert(item.key.clone(), entry.clone());
-        return Ok(());
+        return Ok(false);
     }
 
     let planned = match &item.artifact {
@@ -87,7 +94,7 @@ pub(super) fn plan_item(
             if let Some(entry) = existing {
                 new_lock.entries.insert(item.key.clone(), entry.clone());
             }
-            return Ok(());
+            return Ok(false);
         }
         Planned::Drift(state, detail) => drift.push(row(state, detail)),
         Planned::Clean => {}
@@ -127,7 +134,7 @@ pub(super) fn plan_item(
             reasons: item.reasons.clone(),
         },
     );
-    Ok(())
+    Ok(true)
 }
 
 /// What this artifact leaves on disk, for edit detection later. Only file

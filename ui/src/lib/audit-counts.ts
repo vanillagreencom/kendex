@@ -8,7 +8,7 @@
 // is genuinely two items, and folding those together would undercount.
 import type { AuditView, DriftRow } from "@/bindings";
 import { heldBack } from "@/lib/derive";
-import { mergeDriftRows } from "@/lib/drift-merge";
+import { mergeDriftRows, packageConflicts } from "@/lib/drift-merge";
 import { partitionSafety } from "@/lib/group-findings";
 import { mergeHeldBack } from "@/lib/group-findings-blocked";
 import { evidenceGroups, openOccurrences } from "@/lib/reviewable";
@@ -16,6 +16,11 @@ import { evidenceGroups, openOccurrences } from "@/lib/reviewable";
 export interface AuditCounts {
   /** Writes kendex is ready to make: install, update, remove. */
   changes: number;
+  /** Standoffs with no ops behind them, whose exits are on the package's
+   *  own page. Apart from `changes` because no button applies them, and
+   *  apart from the decisions because nobody is waiting on a ruling — the
+   *  person has to go to the package and choose. */
+  conflicts: number;
   /** On disk, but kendex was never asked to look after it. Not a debt —
    *  adopting is an offer the user takes up, so it is counted apart from
    *  the work that is actually queued. */
@@ -57,7 +62,16 @@ export function openCount(view: AuditView): number {
 
 export function auditCounts(views: AuditView[]): AuditCounts {
   return {
-    changes: countMerged(views, (row) => row.state !== "unmanaged"),
+    changes: countMerged(
+      views,
+      (row) => row.state !== "unmanaged" && row.state !== "conflict",
+    ),
+    conflicts: views.reduce(
+      (sum, view) =>
+        sum +
+        mergeDriftRows(packageConflicts(view.drift, view.heldBack)).length,
+      0,
+    ),
     unmanaged: countMerged(views, (row) => row.state === "unmanaged"),
     blocked: views.reduce((sum, view) => sum + blockedCount(view), 0),
     open: views.reduce((sum, view) => sum + openCount(view), 0),
@@ -67,7 +81,7 @@ export function auditCounts(views: AuditView[]): AuditCounts {
 /** What the Review page has waiting for a person: work to apply, plus
  *  the decisions only they can make — held-back items and open findings. */
 export function needsReviewCount(counts: AuditCounts): number {
-  return counts.changes + counts.blocked + counts.open;
+  return counts.changes + counts.conflicts + counts.blocked + counts.open;
 }
 
 /** The decisions alone: what "Needs your decision" holds across scopes. */

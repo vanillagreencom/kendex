@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use crate::apply::{Op, Plan, PlannedOp};
+use crate::apply::{Plan, PlannedOp};
 use crate::env::Env;
 use crate::error::Result;
 use crate::lock::{Lock, LockFile, lock_path};
@@ -27,18 +27,24 @@ mod desired_skill;
 mod desired_source;
 pub mod detach;
 mod expansion;
+pub use expansion::plans_kind;
+mod edited;
 pub mod fork;
 mod gate;
 mod gemini;
 mod holds;
 mod item_plan;
+pub use edited::{EditedHere, edited_here};
 mod item_record;
+mod manifest_write;
+pub use manifest_write::persists_manifest;
 mod item_source;
 mod observed;
 pub mod ops;
 mod owned;
 pub(crate) mod pi_hooks_move;
 mod plan_pass;
+mod plan_writes;
 mod planned;
 mod removal;
 mod review_hash;
@@ -72,16 +78,15 @@ pub fn installed_paths(
 }
 
 use desired::desired_state;
-use scope_writes::{
-    plan_config_edits, plan_lock_write, plan_repo_move_write, plan_schema_upgrade,
-    plan_settings_seed, source_revisions,
-};
+use scope_writes::{plan_config_edits, plan_lock_write, plan_settings_seed, source_revisions};
 pub use set_change::{KeptInstall, SetChange, SetDirection};
 use set_change::{kept_members, set_changes};
 use unmanaged::unmanaged_rows;
 
 mod report_types;
-pub use report_types::{DriftCause, DriftRow, DriftState, EngineReport, ItemWarning, PlanOptions};
+pub use report_types::{
+    DriftCause, DriftRow, DriftState, DriftSubject, EngineReport, ItemWarning, PlanOptions,
+};
 
 /// Compute drift and the plan that would fix it, in one pass — the Audit
 /// page and `apply` both consume this.
@@ -105,7 +110,7 @@ pub fn plan_scope(
     let disk_lock = lock;
     let manifest = moved_manifest.as_ref().unwrap_or(manifest);
     let lock = moved_lock.as_ref().unwrap_or(lock);
-    let mut state = desired_state(env, scope, manifest, lock)?;
+    let mut state = desired_state(env, scope, manifest, lock, options)?;
     // The gate runs before anything is planned for these items: a blocked
     // rendering must never reach the op list, and an override it grants has
     // to ride out on the manifest write this same plan performs.
@@ -117,22 +122,45 @@ pub fn plan_scope(
     let mut written = tree_plan::Written::default();
     let mut config_edits = config_edits::ConfigEditPlan::default();
 
-    plan_manifest_write(env, scope, repo_moved, manifest, &state, &mut ops)?;
+    // Every pass below that writes or removes, and what each does with a
+    // restricted plan. They ask `DesiredState::acts_on`, never `only_names`
+    // directly: "one package" means that package and everything it needs,
+    // resolved once against the expansion, so no two passes can disagree
+    // about it. Asked, in order:
+    // `plan_items` (writes for the named items, others carried forward),
+    // `plan_settings_seed` (seeds only what the named packages ship),
+    // `stale_emitted` (sweeps only their old paths), `plan_refusals` (takes
+    // only their refused renderings off disk).
+    //
+    // `plan_manifest_write` is asked once removed. Its scope maintenance —
+    // a schema upgrade, a repository move — belongs to no package and
+    // always runs. What it writes *for* packages does not: an agent's
+    // upstream skill additions are merged in `desired_state`, which leaves
+    // out everything a restricted plan will not render, so the file never
+    // records an install that did not happen. That and the closure above
+    // are the same rule from both ends — a restricted plan installs
+    // everything the named package needs, and records exactly what it
+    // installed.
+    //
+    // `orphans` is not asked, deliberately: it removes only under
+    // `remove_orphans` or `sweep_unneeded` — a verb asking for exactly
+    // that, and never a restricted plan, which passes neither.
+    // `plan_lock_write` records what the passes above decided.
+    manifest_write::plan_manifest_write(
+        env, scope, repo_moved, manifest, &state, options, &mut ops,
+    )?;
 
-    let emitted_paths = emitted_paths(lock);
     // Answered before anything is planned, and read again when the move
     // is planned: a pi hook whose copy under the name pi reserved is not
     // this pass's to take holds whole, so the fresh rendering never
     // quietly takes over from bytes the person kept.
     let legacy_pi = pi_hooks_move::preflight(env, scope, lock, options, &state);
-
-    plan_pass::plan_items(
+    let rendered = plan_writes::plan_item_writes(
         env,
-        &state,
         scope,
         lock,
+        &state,
         options,
-        &emitted_paths,
         &legacy_pi,
         &mut drift,
         &mut ops,
@@ -148,24 +176,18 @@ pub fn plan_scope(
     // trash twice.
     let mut guard = removal::TrashGuard::new(&state.items);
 
-    // The reserved-name move reads both records: the lock says what
-    // kendex may take, and the desired state says whether a replacement is
-    // coming — a hook nothing declares any more is retired outright, one
-    // this pass could not render keeps what it has.
     let mut moved_notes = Vec::new();
-    let moved_out = pi_hooks_move::plan_move(
+    let moved_out = plan_writes::plan_reserved_name_move(
         env,
         scope,
         manifest,
         lock,
         &state,
         &legacy_pi,
-        &mut pi_hooks_move::Sink {
-            ops: &mut ops,
-            guard: &mut guard,
-            config_edits: &mut config_edits,
-            notes: &mut moved_notes,
-        },
+        &mut ops,
+        &mut guard,
+        &mut config_edits,
+        &mut moved_notes,
     )?;
     removal::stale_emitted(&state, lock, &mut guard, &mut ops)?;
 
@@ -220,6 +242,9 @@ pub fn plan_scope(
         sweepable,
         kept,
         safety,
+        unmeasured: state.unmeasured,
+        rendered,
+        acting: state.acting.clone().unwrap_or_default(),
     };
     report.notes.extend(moved_notes);
     unmanaged_rows(env, scope, manifest, lock, &state.items, &mut report.drift);
@@ -246,62 +271,6 @@ fn emitted_paths(lock: &Lock) -> BTreeSet<PathBuf> {
         .filter_map(|entry| entry.emitted.as_ref())
         .flat_map(|emitted| emitted.paths.iter().cloned())
         .collect()
-}
-
-/// The plan's one manifest write, when anything needs it: skills an agent
-/// gained upstream or a review of findings this run was asked to record
-/// take the full serialized write — or, with neither, the repository move
-/// or the schema upgrade lands as a surgical text edit that keeps the
-/// user's comments and formatting. One write whatever put it there: a
-/// second manifest write could never run, its precondition binds to the
-/// bytes the first one replaces. The description names the biggest cause;
-/// the rest ride along in the same bytes.
-fn plan_manifest_write(
-    env: &Env,
-    scope: &Scope,
-    repo_moved: bool,
-    manifest: &Manifest,
-    state: &desired::DesiredState,
-    ops: &mut Vec<PlannedOp>,
-) -> Result<()> {
-    let Some(update) = &state.manifest_update else {
-        if repo_moved {
-            return plan_repo_move_write(env, scope, manifest, ops);
-        }
-        if manifest.schema < manifest::MANIFEST_SCHEMA {
-            plan_schema_upgrade(env, scope, manifest, ops)?;
-        }
-        return Ok(());
-    };
-    let path = manifest::manifest_path(env, scope);
-    let mut updated = update.clone();
-    updated.schema = manifest::MANIFEST_SCHEMA;
-    let granted = updated.safety_overrides != manifest.safety_overrides;
-    ops.push(PlannedOp {
-        description: match (repo_moved, granted) {
-            (true, _) => crate::repo_move::MOVE_DESCRIPTION.into(),
-            (false, true) => "Update kendex.toml with the safety findings you accepted".into(),
-            (false, false) => "Add new catalog skills to kendex.toml".into(),
-        },
-        op: Op::WriteManifest {
-            pre: crate::apply::Pre::observed(&path)?,
-            path,
-            manifest: Box::new(updated),
-        },
-    });
-    Ok(())
-}
-
-/// Whether a plan already persists the manifest — the full serialized
-/// write, or the repository move's surgical text edit. A caller about to
-/// insert its own save must count both: a second write to the same file
-/// binds to bytes the first one replaces and could never run.
-pub fn persists_manifest(ops: &[PlannedOp]) -> bool {
-    ops.iter().any(|op| {
-        matches!(op.op, Op::WriteManifest { .. })
-            || (op.description == crate::repo_move::MOVE_DESCRIPTION
-                && matches!(op.op, Op::WriteFile { .. }))
-    })
 }
 
 /// A scope still under the old product name renames first: everything
@@ -378,6 +347,11 @@ pub fn plan_apply(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<Eng
         sweepable: Vec::new(),
         kept: Vec::new(),
         safety: Vec::new(),
+        // Nothing is planned on this path, so nothing is rendered and the
+        // plan is about nothing.
+        rendered: BTreeSet::new(),
+        acting: BTreeSet::new(),
+        unmeasured: BTreeSet::new(),
     };
     // One fact, said once: files this build will read but not write. Which
     // of the two is legacy is kendex's problem, not the reader's.

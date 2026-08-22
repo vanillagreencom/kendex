@@ -11,7 +11,8 @@ mod op;
 mod pre;
 
 pub use common::{common_key, execute_common, recover_common_journals};
-pub use op::{Op, Plan, PlannedOp, Pre, read_git_config};
+pub use op::{Op, Plan, PlannedOp, read_git_config};
+pub use pre::Pre;
 
 /// Filesystem-safe key naming a scope's journal dir and lock file. Keys off
 /// the canonical scope so two spellings of one root can never hold two
@@ -97,6 +98,19 @@ fn recover_key(env: &Env, key: &str) -> Result<bool> {
 pub struct ApplyOutcome {
     pub applied: usize,
     pub recovered_first: bool,
+    /// What this scope's manifest is now, read before the lock this apply
+    /// holds is let go. After that moment the answer can already be
+    /// somebody else's: a caller that writes a whole manifest and then
+    /// reads the file back is pairing its own copy with whatever landed in
+    /// between, and the next write carrying that pair is accepted over
+    /// that writer.
+    ///
+    /// `None` where it could not be read. By then every op has run and the
+    /// journal is clear, so there is nothing left to roll back: an apply
+    /// that reported failure here would be reporting a committed change as
+    /// undone, and someone would run it again. Not knowing what the file
+    /// is now is a smaller thing than that, and it is sayable.
+    pub manifest_base: Option<crate::manifest::Base>,
 }
 
 /// Execute a plan transactionally. If recovery runs first, the plan
@@ -120,7 +134,36 @@ pub fn execute(env: &Env, plan: &Plan, fail_after: Option<usize>) -> Result<Appl
     Ok(ApplyOutcome {
         applied,
         recovered_first,
+        // Still under `_guard`, which is the closest this can get: the lock
+        // serialises kendex's own writers, so no other apply is between
+        // the write and this read. It does not serialise anything else —
+        // an editor saving kendex.toml in that window would be read here
+        // as though this apply had left it, and the base handed back would
+        // describe bytes this apply never wrote. Deriving it from the
+        // bytes the manifest op actually wrote is the way to close that,
+        // and it needs the executor to report them: KEN-513. Its own
+        // failure is not this apply's — the ops are committed either way.
+        manifest_base: manifest_base(env, &plan.scope),
     })
+}
+
+/// The scope's manifest as it stands, for an apply that still holds the
+/// lock. Derived from the bytes read here, like every other base, and
+/// `None` where they could not be read — every caller of this is past the
+/// point of undoing anything, so a read that fails costs the answer and
+/// never the apply.
+///
+/// "As it stands" is the honest phrasing: this reads the file rather than
+/// being told what was written, so it describes whatever is there now.
+/// Under kendex's own lock that is what this apply left; against a writer
+/// that does not take the lock it is not (KEN-513).
+pub(super) fn manifest_base(env: &Env, scope: &Scope) -> Option<crate::manifest::Base> {
+    let path = crate::manifest::manifest_path(env, scope);
+    match crate::fs::read_if_exists(&path) {
+        Ok(Some(text)) => Some(crate::manifest::Base::of(&text)),
+        Ok(None) => Some(crate::manifest::Base::absent()),
+        Err(_) => None,
+    }
 }
 
 /// The one transaction engine, under a lock the caller already holds for
@@ -147,12 +190,14 @@ fn run_journaled(
             journal::rollback(&journal_dir)?;
             return Err(CoreError::RolledBack {
                 reason: format!("injected fault before '{}'", planned.description),
+                cause: Box::new(CoreError::Injected),
             });
         }
         if let Err(error) = planned.op.run(env) {
             journal::rollback(&journal_dir)?;
             return Err(CoreError::RolledBack {
                 reason: format!("'{}' failed: {error}", planned.description),
+                cause: Box::new(error),
             });
         }
     }

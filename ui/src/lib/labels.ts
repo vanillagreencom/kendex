@@ -10,6 +10,7 @@ import type {
   Tag,
   Verdict,
 } from "@/bindings";
+import { projectTail } from "@/lib/scope";
 import type { Page } from "@/stores/nav";
 
 export const HARNESS_NAMES: Record<HarnessId, string> = {
@@ -142,10 +143,13 @@ export const VERDICT_BADGES: Record<Verdict, BadgeVariant> = {
   clean: "good",
 };
 
-// "Personal" (Claude Code convention) lives in the home folder and applies everywhere; project items travel with the repo.
-export function scopeName(scope: Scope): string {
+// "Personal" (Claude Code convention) lives in the home folder and applies
+// everywhere; project items travel with the repo. Pass `among` wherever
+// several places are named together, so two projects sharing a folder name
+// never read as one.
+export function scopeName(scope: Scope, among: Scope[] = []): string {
   if (scope.scope === "global") return "Personal";
-  return scope.root.split("/").pop() ?? scope.root;
+  return projectTail(scope.root, among);
 }
 
 export function scopePath(scope: Scope): string | null {

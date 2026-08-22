@@ -9,6 +9,11 @@ import { useProblems } from "@/stores/problems";
 export function ProblemsPage() {
   const problems = useProblems();
 
+  // Every place this page speaks about, so two projects sharing a folder
+  // name are told apart on the cards that name them.
+  const scopes = problems.flatMap((problem) =>
+    problem.scope ? [problem.scope] : [],
+  );
   return (
     <div>
       <PageHeader title="Problems" subtitle={PROBLEMS_SUBTITLE} />
@@ -21,7 +26,7 @@ export function ProblemsPage() {
             </div>
           ) : (
             problems.map((problem) => (
-              <ProblemCard key={problem.key} problem={problem} />
+              <ProblemCard key={problem.key} problem={problem} among={scopes} />
             ))
           )}
         </div>

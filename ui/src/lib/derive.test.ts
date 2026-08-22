@@ -1,33 +1,14 @@
 import { describe, expect, it } from "vitest";
-import type { ObservedItem } from "@/bindings";
+import { observedItem as item } from "@/lib/observed-test-item";
 import {
   bundleSummary,
   countByKind,
   filterItems,
   groupItems,
-  groupScopes,
   groupVendor,
   recentItems,
   scopeMatches,
 } from "./derive";
-
-function item(overrides: Partial<ObservedItem>): ObservedItem {
-  return {
-    kind: "skill",
-    name: "deploy",
-    harness: "claude",
-    scope: { scope: "global" },
-    path: "/h/.claude/skills/deploy",
-    fileState: { state: "dir" },
-    enabled: true,
-    origin: null,
-    description: null,
-    tags: [],
-    modifiedAt: null,
-    vendor: null,
-    ...overrides,
-  };
-}
 
 describe("scopeMatches", () => {
   it("matches all, global, and specific projects", () => {
@@ -79,69 +60,6 @@ describe("filterItems by where it lives", () => {
     expect(
       filterItems(items, { scope: { project: "/a" }, search: "a" }),
     ).toHaveLength(1);
-  });
-});
-
-describe("groupItems", () => {
-  it("groups installations under the logical item and flags shared artifacts", () => {
-    const shared = "/p/.agents/skills/deploy";
-    const groups = groupItems([
-      item({
-        harness: "codex",
-        path: shared,
-        scope: { scope: "project", root: "/p" },
-      }),
-      item({
-        harness: "pi",
-        path: shared,
-        scope: { scope: "project", root: "/p" },
-      }),
-      item({ name: "solo", harness: "claude" }),
-    ]);
-    expect(groups).toHaveLength(2);
-    const deploy = groups.find((g) => g.name === "deploy");
-    expect(deploy?.installations).toHaveLength(2);
-    expect(deploy?.harnesses.sort()).toEqual(["codex", "pi"]);
-    expect(deploy?.shared).toBe(true);
-    expect(groups.find((g) => g.name === "solo")?.shared).toBe(false);
-  });
-
-  it("takes the most recent modifiedAt across installations, or null when none have one", () => {
-    const withTimes = groupItems([
-      item({ name: "deploy", harness: "claude", modifiedAt: 100 }),
-      item({ name: "deploy", harness: "codex", modifiedAt: 300 }),
-    ]);
-    expect(withTimes.find((g) => g.name === "deploy")?.modifiedAt).toBe(300);
-
-    const withoutTimes = groupItems([item({ name: "solo" })]);
-    expect(withoutTimes.find((g) => g.name === "solo")?.modifiedAt).toBeNull();
-  });
-});
-
-describe("groupScopes", () => {
-  it("lists each distinct scope an item is installed in, once", () => {
-    const groups = groupItems([
-      item({
-        name: "github",
-        harness: "claude",
-        scope: { scope: "project", root: "/acme" },
-      }),
-      item({
-        name: "github",
-        harness: "codex",
-        scope: { scope: "project", root: "/acme" },
-      }),
-      item({
-        name: "github",
-        harness: "claude",
-        scope: { scope: "project", root: "/api" },
-      }),
-    ]);
-    const scopes = groupScopes(groups[0]);
-    expect(scopes).toHaveLength(2);
-    expect(
-      scopes.map((s) => (s.scope === "project" ? s.root : s.scope)),
-    ).toEqual(["/acme", "/api"]);
   });
 });
 

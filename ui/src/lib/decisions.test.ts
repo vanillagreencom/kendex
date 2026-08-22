@@ -64,6 +64,15 @@ describe("describeDecision", () => {
       "shared",
     );
   });
+
+  it("tells two projects sharing a folder name apart", () => {
+    // The list spans every project, and a decision is about one of their
+    // files — "api's kendex.toml" twice over names neither.
+    const work = { scope: "project", root: "/work/api" } as const;
+    const client = { scope: "project", root: "/clients/api" } as const;
+    expect(decisionHome(work, [work, client])).toContain("work/api's");
+    expect(decisionHome(client, [work, client])).toContain("clients/api's");
+  });
 });
 
 describe("sortDecisions", () => {

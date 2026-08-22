@@ -3,6 +3,7 @@ import type {
   PackageDiff,
   PackageFile,
   PackageMeta_Serialize,
+  UpdateRow,
   VersionRow,
 } from "@/bindings";
 import { DiffView } from "@/components/diff/diff-view";
@@ -11,10 +12,12 @@ import { FilePreview } from "@/components/package/file-preview";
 import { EditedNotice } from "@/components/package/fork-notice";
 import { PackageSidebar } from "@/components/package/package-sidebar";
 import type { PackageView } from "@/components/package/use-package-data";
+import { NO_COMPARISON_BODY, NO_COMPARISON_TITLE } from "@/lib/copy";
 import type { ItemGroup } from "@/lib/derive";
 import { harnessName } from "@/lib/labels";
 import { versionRowLabel } from "@/lib/versions";
 import type { PackageRef } from "@/stores/nav";
+import { useProblemsStore } from "@/stores/problems";
 
 /** What a package is, as installed: its provenance and switches on the
  *  left, the file it is made of — or a comparison — on the right. */
@@ -23,6 +26,7 @@ export function PackageBody({
   group,
   primary,
   meta,
+  editedRow,
   versions,
   files,
   installed,
@@ -40,6 +44,10 @@ export function PackageBody({
   group: ItemGroup;
   primary: ObservedItem;
   meta: PackageMeta_Serialize | null;
+  /** This page's own place's update row, when its files were edited by
+   *  hand — from the same join the header's badges read, so the page
+   *  cannot say two things about one place. */
+  editedRow: UpdateRow | null;
   versions: VersionRow[];
   files: PackageFile[];
   installed: VersionRow | undefined;
@@ -56,12 +64,18 @@ export function PackageBody({
   return (
     <>
       <EditedNotice
-        scope={reference.scope}
-        kind={reference.kind}
-        name={reference.name}
-        alreadyForked={meta?.fork != null}
+        row={editedRow}
         onViewChanges={(harness) => {
-          if (!installed) return;
+          // A click that does nothing and says nothing is the failure this
+          // notice exists to prevent, so the one case that cannot open a
+          // comparison explains itself instead.
+          if (!installed) {
+            useProblemsStore.getState().showError({
+              title: NO_COMPARISON_TITLE,
+              message: NO_COMPARISON_BODY,
+            });
+            return;
+          }
           setView({
             mode: "diff",
             from: installed.id,

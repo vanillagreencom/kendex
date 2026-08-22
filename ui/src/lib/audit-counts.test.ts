@@ -24,6 +24,7 @@ function drift(
     harness,
     scope: root ? { scope: "project", root } : { scope: "global" },
     state,
+    subject: "package",
     detail: "",
   };
 }
@@ -32,6 +33,7 @@ function view(
   rows: DriftRow[],
   root?: string,
   safety: ItemSafety[] = [],
+  heldBack: ItemSafety[] = [],
 ): AuditView {
   return {
     scope: root ? { scope: "project", root } : { scope: "global" },
@@ -40,7 +42,7 @@ function view(
     notes: [],
     warnings: [],
     safety,
-    heldBack: [],
+    heldBack,
     queued: [],
   };
 }
@@ -123,6 +125,38 @@ describe("auditCounts", () => {
       changes: 2,
       unmanaged: 1,
     });
+  });
+
+  // A conflict has no ops behind it, so no button applies it — counting it
+  // among the changes tells the person work is queued that nothing will do.
+  it("counts a conflict apart from the work a button can apply", () => {
+    const rows = [
+      drift("a", "claude", "stale"),
+      drift("forked", "claude", "conflict"),
+    ];
+    const counts = auditCounts([view(rows)]);
+    expect(counts.changes).toBe(1);
+    expect(counts.conflicts).toBe(1);
+    // Still something to go and settle, so it stays in the review badge —
+    // but it is not a decision anyone is waiting on here.
+    expect(needsReviewCount(counts)).toBe(2);
+    expect(decisionsPendingCount(counts)).toBe(0);
+  });
+
+  // The gate emits a conflict for what it refused, and the refusal is
+  // already counted as held back. Counting it twice makes the badge say two
+  // where a person sees one thing to settle.
+  it("counts a safety refusal once, where its decision lives", () => {
+    const refused = safety("hostile", "claude", false, "h1", {
+      verdict: "block",
+    });
+    const counts = auditCounts([
+      view([drift("hostile", "claude", "conflict")], undefined, [], [refused]),
+    ]);
+    expect(counts.blocked).toBe(1);
+    expect(counts.conflicts).toBe(0);
+    expect(counts.changes).toBe(0);
+    expect(needsReviewCount(counts)).toBe(1);
   });
 
   it("leaves un-adopted items out of what needs reviewing", () => {

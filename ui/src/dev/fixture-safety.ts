@@ -116,6 +116,7 @@ export function personalDrift(): DriftRow[] {
     harness: skill.harness,
     scope: GLOBAL,
     state: "unmanaged",
+    subject: "package",
     detail: skill.path,
   }));
 }

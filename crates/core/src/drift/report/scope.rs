@@ -217,16 +217,69 @@ impl ScopeCheck<'_> {
         let name = shown(&package.name);
         let kind = package.kind.name();
         if package.edited {
-            sections.edited.push(drift(
-                format!(
-                    "{prefix}{kind} '{name}' was edited on disk — keep it as a fork, or refresh with edits discarded"
-                ),
-                Some(Remedy::Fork {
-                    kind: package.kind,
-                    name: package.name.clone(),
-                    global: self.global,
-                }),
-            ));
+            // A fork has already been kept: the exit left is to put its own
+            // copy back, which the engine holds in the local source. Naming
+            // the fork exit there would name one that now refuses.
+            let (line, remedy) = if package.forked && !package.can_discard {
+                // The copy the discard would re-render from cannot be read
+                // back — emptied, replaced, or past what a catalog tree may
+                // be. Naming an exit that refuses is worse than naming none.
+                (
+                    format!(
+                        "{prefix}{kind} '{name}' was edited on disk since your fork was rendered, and its own copy can no longer be read back — nothing here can re-render it"
+                    ),
+                    None,
+                )
+            } else if package.forked {
+                (
+                    format!(
+                        "{prefix}{kind} '{name}' was edited on disk since your fork was rendered — discard its edits to re-render from your own copy"
+                    ),
+                    Some(Remedy::DiscardEdits {
+                        kind: package.kind,
+                        name: package.name.clone(),
+                        global: self.global,
+                    }),
+                )
+            } else if package.derived && !package.can_discard {
+                // Carried by something else, and its source no longer holds
+                // it — so there is no declaration to fork under and nothing
+                // to render over the edit either. Both exits refuse, and
+                // naming one that refuses is worse than naming none.
+                (
+                    format!(
+                        "{prefix}{kind} '{name}' was edited on disk, and the source it came with no longer offers it — nothing here can put it back"
+                    ),
+                    None,
+                )
+            } else if package.derived {
+                // Installed because something else needs it, so there is no
+                // declaration to write a fork under and `fork` refuses one.
+                // Discarding is the exit it does have, and the command takes
+                // a derived package by name.
+                (
+                    format!(
+                        "{prefix}{kind} '{name}' was edited on disk — it came with something else, so discard its edits to put it back"
+                    ),
+                    Some(Remedy::DiscardEdits {
+                        kind: package.kind,
+                        name: package.name.clone(),
+                        global: self.global,
+                    }),
+                )
+            } else {
+                (
+                    format!(
+                        "{prefix}{kind} '{name}' was edited on disk — keep it as a fork, or discard its edits"
+                    ),
+                    Some(Remedy::Fork {
+                        kind: package.kind,
+                        name: package.name.clone(),
+                        global: self.global,
+                    }),
+                )
+            };
+            sections.edited.push(drift(line, remedy));
         } else if package.removed_upstream {
             sections.removed.push(drift(
                 format!("{prefix}{kind} '{name}' is no longer offered by its source"),

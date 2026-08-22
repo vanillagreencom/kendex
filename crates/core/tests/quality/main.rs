@@ -19,6 +19,7 @@ mod decisions_lifecycle;
 mod decisions_refuse;
 mod fixture;
 mod gate;
+mod gate_rendered;
 mod kinds;
 mod overrides;
 mod reading;

@@ -41,6 +41,7 @@ export const REVIEW_ACTION_LABEL = "Review & apply";
 // alone.
 export function scopeSummaryLabel(counts: {
   changes: number;
+  conflicts: number;
   blocked: number;
   open: number;
   unmanaged: number;
@@ -49,6 +50,10 @@ export function scopeSummaryLabel(counts: {
   if (counts.blocked > 0) {
     parts.push(`${counts.blocked} problem${counts.blocked === 1 ? "" : "s"}`);
   }
+  // A conflict is not "to apply" — no button clears one — but a card that
+  // leaves it out reads as nothing to do while opening onto a section that
+  // says otherwise.
+  if (counts.conflicts > 0) parts.push(`${counts.conflicts} waiting on you`);
   if (counts.changes > 0) parts.push(`${counts.changes} to apply`);
   if (counts.open > 0) {
     parts.push(`${counts.open} finding${counts.open === 1 ? "" : "s"}`);
@@ -168,6 +173,30 @@ export const BACK_TO_FILES_LABEL = "Back to files";
 export const DIFF_TRUNCATED_NOTE =
   "This comparison is long; only the first part is shown.";
 export const VERSION_ERROR_TITLE = "Couldn't switch versions";
+// A comparison needs the version this place was installed from. Without it
+// there is nothing to put beside the edit, and a button that does nothing
+// and says nothing is worse than one that explains itself.
+// Where a package came from is derived from one read. A failure that says
+// nothing renders as a From row that is simply absent, which reads as "it
+// came from nowhere" rather than "kendex could not tell".
+export const ORIGIN_UNREAD = "Couldn't be read";
+
+// A refresh that fails keeps the origin already on screen rather than
+// blanking the row, so there is still something to draw. Drawn plainly it
+// would read as confirmed, which is the one thing it is not.
+export const ORIGIN_UNCONFIRMED = "last known";
+export const originUnconfirmedTitle = (why: string): string =>
+  `kendex could not check where this came from — showing the last answer it had. ${why}`;
+
+// Nav state outlives a scan: a mark clicked before a package was removed
+// from that project opens a page with nothing to say. Going back can land
+// on the row that was clicked, so leaving says why.
+export const packageGoneHere = (place: string): string =>
+  `That package is no longer installed in ${place}.`;
+
+export const NO_COMPARISON_TITLE = "Nothing to compare against";
+export const NO_COMPARISON_BODY =
+  "kendex could not read the version this package was installed from, so there is no other side to show. Refreshing this place may bring it back.";
 
 // Updates page.
 export const UPDATES_EMPTY = "Everything is up to date";
@@ -189,33 +218,15 @@ export const hiddenUpdatesLabel = (count: number): string =>
 export const PINNED_UPDATE_TAG = "Held";
 export const EDITED_UPDATE_TAG = "Edited by you";
 export const UPDATE_ERROR_TITLE = "Couldn't update";
+
+// A read the app starts on its own still has to be able to fail out loud.
+// Dropped, its rejection leaves whatever it feeds looking like an answer:
+// a Library with nothing marked, chips still saying "being checked".
+export const backgroundReadFailed = (detail: string): string =>
+  `kendex couldn't finish reading your setup: ${detail}`;
 export const updatedToastLabel = (name: string): string => `Updated ${name}`;
 export const UPDATED_ALL_TOAST = "Everything is up to date";
 
-// Fork: what happens when the app finds files you edited by hand.
-export const FORKED_BADGE_LABEL = "Forked";
-export const FORK_NOTICE_TITLE = "You've changed this package's files";
-export const FORK_NOTICE_DETAIL =
-  "Updates are paused so your edits stay. Keep it as your own copy, see what changed, or discard the edits and go back to the catalog's version.";
-export const KEEP_AS_FORK_LABEL = "Keep as my own";
-export const VIEW_CHANGES_LABEL = "View changes";
-export const viewChangesInLabel = (tool: string): string =>
-  `View changes in ${tool}`;
-export const DISCARD_EDITS_LABEL = "Discard edits…";
-export const DISCARD_ALL_EDITS_LABEL = "Discard all edits…";
-export const editedInToolsLabel = (tools: string[]): string =>
-  `Edited in ${tools.slice(0, -1).join(", ")} and ${tools.at(-1)}.`;
-export const unforkableCopyNote = (tool: string): string =>
-  `${tool}'s copy can't be kept as your own.`;
-export const MULTI_TOOL_FORK_NOTE =
-  "Keeping one tool's copy would drop the other edits, so the choice here is to discard them all.";
-export const DERIVED_FORK_NOTE =
-  "It came with a bundle or another package, so it can't become your own copy.";
-export const DISCARD_EDITS_CONFIRM_TITLE = "Discard your edits?";
-export const DISCARD_EDITS_CONFIRM_BODY =
-  "The catalog's version replaces your edits to this package, and your changes are gone. Keep them as your own copy instead if you're unsure.";
-export const DISCARD_EDITS_CONFIRM_LABEL = "Discard edits";
-export const FORK_ERROR_TITLE = "Couldn't keep the edits";
 export const forkedToastLabel = (name: string): string =>
   `${name} is yours now — updates are paused`;
 export const forkedAttentionTitle = (count: number): string =>

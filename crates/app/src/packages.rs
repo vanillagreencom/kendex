@@ -207,12 +207,47 @@ pub fn apply_discard_edits(
             Some(&rev),
             &engine::PlanOptions {
                 overwrite_edited_names: Some(vec![(kind, name.clone())]),
+                only_names: Some(vec![(kind, name.clone())]),
                 ..Default::default()
             },
         )
         .map_err(|e| e.to_string())?;
+        // The same question the path below asks: a plan can carry the
+        // revision change and no rendering for the package — the new
+        // version can be held back by the safety gate — and applying that
+        // would move the record while the edited files stayed, under a
+        // line saying the content was replaced.
+        let missing = report.unrendered();
+        if missing.iter().any(|(k, n)| *k == kind && n == &name) {
+            return Err(format!(
+                "{name} was edited, and nothing here rendered the version you chose to put in its place — Review reports what is holding it"
+            ));
+        }
+        // And what that version needs, which can be refused on its own
+        // account: applied anyway, the package comes back unable to run.
+        if let Some((needed, needs)) = missing.first() {
+            return Err(format!(
+                "{name} needs {} '{needs}', and nothing here rendered it — Review reports what is holding it",
+                needed.name()
+            ));
+        }
         apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
         return Ok(view(&env, &scope));
+    }
+    // The plan below is the scope's, and the permission it carries is this
+    // package's alone: with no edit to overwrite, executing it would apply
+    // whatever else the scope had pending under an action about this one.
+    match engine::edited_here(&env, &scope, kind, &name).map_err(|e| e.to_string())? {
+        engine::EditedHere::Yes => {}
+        engine::EditedHere::No => return Ok(view(&env, &scope)),
+        // Nothing was rendered to compare against, so there is nothing to
+        // put the files back to. Returning the view would report the
+        // discard as done with the edited bytes still there.
+        engine::EditedHere::Unmeasured => {
+            return Err(format!(
+                "{name} could not be read from its source, so its files cannot be put back"
+            ));
+        }
     }
     let manifest = manifest::load_for_mutation(&manifest::manifest_path(&env, &scope))
         .map_err(|e| e.to_string())?
@@ -225,11 +260,27 @@ pub fn apply_discard_edits(
         &manifest,
         &lock,
         &engine::PlanOptions {
-            overwrite_edited_names: Some(vec![(kind, name)]),
+            overwrite_edited_names: Some(vec![(kind, name.clone())]),
+            only_names: Some(vec![(kind, name.clone())]),
             ..Default::default()
         },
     )
     .map_err(|e| e.to_string())?;
+    // Whether this package got a rendering, asked of the plan rather than
+    // read off its op list: a scope carries its own maintenance, so ops
+    // exist whether or not the package named got one.
+    let missing = report.unrendered();
+    if missing.iter().any(|(k, n)| *k == kind && n == &name) {
+        return Err(format!(
+            "{name} was edited, and nothing here rendered its declared content to put back — Review reports what is holding it"
+        ));
+    }
+    if let Some((needed, needs)) = missing.first() {
+        return Err(format!(
+            "{name} needs {} '{needs}', and nothing here rendered it — Review reports what is holding it",
+            needed.name()
+        ));
+    }
     apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
     Ok(view(&env, &scope))
 }

@@ -49,12 +49,18 @@ export function UnmanagedItems({
   /** The list's heading — a project's name where several projects' lists
    *  sit under one panel heading, or nothing where the panel says it all. */
   title: string | null;
+  /** Adopting one installation. `adoptAll` below awaits this between
+   *  installations, so a caller that drops the promise turns a queue into a
+   *  burst: every write races for the same scope lock and all but one is
+   *  refused as busy. A promise is required rather than allowed, so a
+   *  caller cannot drop it and still typecheck; what it resolves to is not
+   *  this list's business. */
   onAdopt: (
     kind: DriftRow["kind"],
     name: string,
     harness: DriftRow["harness"],
     opts?: { silent?: boolean },
-  ) => void | Promise<void>;
+  ) => Promise<unknown>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [confirmingShared, setConfirmingShared] = useState<SharedLink | null>(

@@ -10,6 +10,7 @@ import {
 import type { CustomizedItem } from "@/lib/customization";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel } from "@/lib/labels";
+import { customizeNav } from "@/lib/place-marks";
 import { sameScope } from "@/lib/scope";
 import { useNavStore } from "@/stores/nav";
 import { useScanStore } from "@/stores/scan";
@@ -60,7 +61,9 @@ export function CustomizedIndex({
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => goToPackage({ kind, name, scope })}
+                onClick={() =>
+                  goToPackage(...customizeNav({ kind, name, scope }))
+                }
               >
                 Open
                 <ChevronRight className="size-4" />

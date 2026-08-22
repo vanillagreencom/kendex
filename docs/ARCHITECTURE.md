@@ -54,11 +54,20 @@ lives in one capability table read by core and UI.
    regenerates from scratch and re-merges the manifest, but bytes no
    apply ever wrote are the user's: an edited installation becomes a
    conflict naming its exits (keep it as a fork, or discard the edits),
-   and no write, sweep, refusal, or re-shape touches it. Discarding is an
-   explicit option (`overwrite_edited` / `--discard-edits`). The anchor
-   is the lock's rendered hash — what apply last put on disk — and a
+   and no write, sweep, refusal, or re-shape touches it. Discarding is
+   explicit, and per package (`kendex discard-edits`) wherever one line
+   names it. The anchor is the lock's rendered hash — what apply last put
+   on disk — and a
    record that cannot prove which bytes are whose holds too: one
-   conflict, never one silent loss.
+   conflict, never one silent loss. A fork's bytes are held the same way;
+   only its exits differ — keeping it as a fork is done, so the conflict
+   names discarding, back to the copy the fork left in the local source.
+   A pass that could not measure a place says so rather than saying
+   nothing: an item whose source did not resolve rendered nothing to
+   compare disk against, so it is listed in `EngineReport::unmeasured` and
+   falls back to the per-entry hold. Absence from the drift is not
+   cleanliness — reading it that way is how a place gets reported
+   untouched when the thing that would have noticed could not run.
 2. Write-only-if-absent: never clobber a user-set value; never re-add a
    user removal. This protects manifest values and unrelated
    structured-config keys — managed generated content is replaceable
@@ -116,11 +125,15 @@ lives in one capability table read by core and UI.
     runs before its first durable write — not merely before the apply
     it guards — and a rejected operation leaves manifest, lock, and
     install tree byte-identical. No failure path leaves persistent
-    state changed. Output is checked on the same side of the write:
-    every rendering is read back through the target harness's own
-    format rules inside plan preview, and one the harness's loader
-    would reject is refused there, with the fix, for that harness
-    alone.
+    state changed. A plan is always a scope's, so a per-package command
+    measures that its package needs the work (`engine::edited_here`,
+    `refuse_unmatched_grants`) and restricts the plan to it (`only_names`)
+    — a per-package option is otherwise only a permission inside a plan
+    that installs and re-renders the rest under one name. Output is
+    checked on the same side of the write: every rendering is read back
+    through the target harness's own format rules inside plan preview,
+    and one the harness's loader would reject is refused there, with the
+    fix, for that harness alone.
 12. Verification compares content, not provenance. Installed artifacts
     are re-hashed against what they should be; a matching lock entry
     alone never reports OK, and an artifact kendex cannot compare is
@@ -209,11 +222,13 @@ lives in one capability table read by core and UI.
 - Hue carries exactly one meaning: **which harness** an item belongs to
   (`--tool-*`, one per harness). Status keeps the semantic tokens it
   always had, and item kinds are told apart by icon — so no surface ever
-  asks a reader to decode two colour languages at once. The Library's
-  table is the single exception: a row's kind icon takes `--customized`
-  when you have changed that package, and the table prints the key above
-  itself. A colour that means something has to say what, on the same
-  screen as the thing it marks.
+  asks a reader to decode two colour languages at once. `--customized` is
+  the one addition, saying exactly one thing wherever it appears — this is
+  yours — on a Library row's icon and Where cell, a Customize chip's dot,
+  the Customize index's icons, and a package header's badge. A colour has
+  to say what it means beside the thing it marks: the Library prints its
+  key above the table and the rest put the words next to the mark, since
+  no colour can say *which place*.
 - In a table, a harness is its mark, not its name. Every row carries the
   same five or six harnesses, so spelling them out is a column of repeated
   words crowding out the columns that differ; the logo and its hue tell
@@ -291,9 +306,68 @@ lives in one capability table read by core and UI.
   a package's own page is where they already are.
 - Both surfaces edit one draft of one manifest per scope, held in
   `stores/editor.ts`. Two drafts of the same file would let the second
-  save overwrite the first with no warning, so the Customize page reloads
-  only when nothing is unsaved, and `lib/customization.ts` slices that
-  one draft per package rather than fetching a second copy.
+  save overwrite the first with no warning, so a read never replaces
+  typing in hand — only a deliberate discard does — and
+  `lib/customization.ts` slices that one draft per package rather than
+  fetching a second copy. Every mark is a link to another place, so a
+  move between places must not cost anyone their typing:
+  `stores/editor-held.ts` parks the copy in hand at the place it was read
+  from, base included, and gives it back when that place is opened again.
+  Both editing surfaces name what is parked — work that survives a move
+  and that nobody can see is the same loss one step later. Parking only
+  ever keeps a copy nobody has ruled on: every operation that rules on a
+  draft outranks it and must reach the copy parked for the place it is
+  about, not only the one on screen — a discard destroys that copy, a save
+  settles it against the file it just wrote. And what parking holds is the
+  typing and nothing else: a place's inventory, its base, and a draft with
+  nothing typed in it belong to the file, so every read replaces them —
+  a form offering another project's choices, or showing settings a passing
+  rewrite has already changed, is wrong in a way no save can refuse.
+- **Every store that reads asynchronously ranks its overlapping reads, and
+  the rank is its own.** Reads of the same thing overlap constantly — a
+  scan finishes, the window regains focus, a page mounts — and unranked,
+  whichever returns last wins, putting back what a newer read replaced or
+  clearing an error it just set. There is no shared ticket because the rank
+  differs: `stores/provenance.ts` reads one thing one way, so newest by
+  arrival is the whole rule; `stores/updates.ts` ranks two kinds of read,
+  where a fetch outranks a poll however they land and a poll begun during a
+  fetch is stale before it returns; `stores/editor-read.ts` ranks per place
+  through `editor-order.ts` and separately asks which read the surface on
+  screen is waiting for. A helper fitting all three would take the
+  differences as parameters and hide the part each has to get right.
+- **A whole-manifest write carries the file it came from, and every other
+  writer tells the editor.** A draft is a whole manifest, so a save landing
+  after another writer puts the old file back. Two answers, failing
+  differently: `update_manifest` takes the `manifest::Base` its copy was
+  read at — one door in, the bytes, so no base describes content nobody
+  read with it — and refuses a write against a file that became something
+  else, needing nobody to have noticed, which is what holds for a writer
+  nobody wired up. `manifest-sync.ts` marks the place before it awaits, so
+  a save in that window never leaves the app, then measures that mark
+  against the base. One reload either way.
+- **A read that failed keeps its rows and loses its buttons.** Blanking a
+  page because a read did not finish throws away the only thing on screen;
+  leaving its actions live lets someone apply a revision nobody could
+  confirm, which is the mark that called a place untouched when nobody had
+  looked. So the last good rows stay, the page says they are the last it
+  could check and offers the retry, and every control that writes something
+  the read produced is gated on the read having succeeded
+  (`canApplyUpdates`), not merely on nothing being in flight.
+- **Customization is per place, and every mark names its place.** One
+  package can be changed in one project and untouched at user level, so
+  "Customized" unqualified answers a question nobody asks.
+  `lib/customized-places.ts` joins the three facts that make a place yours
+  — that place's overlay, its files edited by hand
+  (`UpdateRow::blocked_by_local_edit`), and a fork read from its own
+  `forks` table, so the fork fact never rests on an update check — into
+  one `PlaceStanding`. Ranked by which has a surface to land on, they
+  decide where the mark leads: a hand edit to the overview and the notice
+  offering its exit, an overlay to the Customize tab that wrote it, a fork
+  to the overview where its own copy is. Neither unmarked state is a
+  default: `checking` while a read is on its way, `unknown` once one came
+  back and could not say — no update row for a path or local source, a
+  failed check, an unparseable manifest — and neither counts as untouched;
+  the Library names the read it is missing.
 - Hook events have one vocabulary — Claude Code's names, in
   `core/hook.rs::EVENTS` — and every other harness's map is keyed by it.
   The picker offers that list, the validator rejects anything outside it,

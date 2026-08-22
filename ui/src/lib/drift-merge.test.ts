@@ -16,6 +16,7 @@ function row(overrides: Partial<DriftRow>): DriftRow {
     harness: "claude",
     scope: GLOBAL,
     state: "unmanaged",
+    subject: "package",
     detail: "/home/method/.claude/skills/agent-browser",
     ...overrides,
   };

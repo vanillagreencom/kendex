@@ -1,45 +1,12 @@
-import { toast } from "sonner";
 import { create } from "zustand";
 import { commands, type ItemWarning, type UpdateRow } from "@/bindings";
-import { UPDATE_ERROR_TITLE, updatedToastLabel } from "@/lib/copy";
-import {
-  nothingToUpdateToastLabel,
-  updatedWithPlaceToastLabel,
-} from "@/lib/copy-updates";
-import { scopeKey } from "@/lib/scope";
-import {
-  packageCount,
-  placeName,
-  skippedPlaces,
-  updatablePlaces,
-} from "@/lib/update-groups";
-import { bulkUpdateToast } from "@/lib/update-toasts";
-import { useAuditStore } from "./audit";
+import { UPDATE_ERROR_TITLE } from "@/lib/copy";
+import { keepIfSame } from "@/lib/same-read";
+import { manifestRewritten } from "./manifest-sync";
 import { useProblemsStore } from "./problems";
-import { useScanStore } from "./scan";
-
-/** A row worth a line on the page: a newer version, a package gone from
- *  its source, or installs disagreeing on their version — each a standing
- *  fact someone can act on. */
-const noteworthy = (row: UpdateRow): boolean =>
-  row.updateAvailable || row.removedUpstream || row.mixed;
-
-/** The sidebar badge's number: packages with news someone would want to
- *  hear, counted once however many places they are installed in. Ignored
- *  ones asked not to be counted; held ones still count — a hold is "not
- *  yet", not "never tell me". */
-export const visibleUpdateCount = (rows: UpdateRow[]): number =>
-  packageCount(visibleUpdates(rows));
-
-/** The Updates page's main list: everything noteworthy that has not been
- *  muted. */
-export const visibleUpdates = (rows: UpdateRow[]): UpdateRow[] =>
-  rows.filter((row) => noteworthy(row) && !row.ignored);
-
-/** The collapsed "hidden updates" section: muted packages whose news is
- *  still real — with the way back out. */
-export const hiddenUpdates = (rows: UpdateRow[]): UpdateRow[] =>
-  rows.filter((row) => noteworthy(row) && row.ignored);
+import { refusesForUnsaved } from "./unsaved-first";
+import { applyMany, applyOne } from "./updates-apply";
+import { updateTickets } from "./updates-order";
 
 interface UpdatesState {
   rows: UpdateRow[];
@@ -49,8 +16,21 @@ interface UpdatesState {
   busy: boolean;
   /** True while a mirror fetch is running — the explicit "check". */
   checking: boolean;
+  /** True while an ordinary read of the standing is running — the one the
+   *  project list starts, and the one every write ends with. Kept apart
+   *  from {@link checking}, which gates the buttons that apply a revision:
+   *  a background read is no reason to take those away. */
+  reading: boolean;
   loaded: boolean;
-  load: () => Promise<void>;
+  /** Why the last read of the standing failed, or null. A load runs on its
+   *  own at startup, so it cannot open the error modal a click may — the
+   *  screens that read the standing say what happened instead. */
+  error: string | null;
+  /** Re-read the standing. `afterWrite` marks a read that follows a write
+   *  this app just made: it lands whatever polls are in flight, and puts
+   *  every older check out of date, because it is reading a file that
+   *  moved rather than guessing whether it did. */
+  load: (opts?: { afterWrite?: boolean }) => Promise<void>;
   check: () => Promise<void>;
   updateOne: (row: UpdateRow) => Promise<void>;
   /** Bring every updatable place among `rows` current — the page-level
@@ -60,43 +40,76 @@ interface UpdatesState {
   setIgnored: (row: UpdateRow, ignored: boolean) => Promise<void>;
 }
 
-export const useUpdatesStore = create<UpdatesState>((set, get) => {
+/** Whether a read of the standing is running at all, of either kind. What
+ *  the per-place marks ask, so a place with no row yet reads as being
+ *  looked at rather than as one nobody asked about. */
+export const updatesReading = (state: {
+  checking: boolean;
+  reading: boolean;
+}): boolean => state.checking || state.reading;
+
+/** Whether the rows on screen may be acted on. A read that failed keeps the
+ *  last good rows rather than blanking the page, which is right for reading
+ *  — but a button that applies a revision off a row nobody could confirm is
+ *  the mark that called a place untouched when nobody had looked. `loaded`
+ *  is the read having succeeded; `busy` is one already running; and
+ *  `checking` is a fetch of newer versions still in flight. Applying
+ *  during that fetch acts on the revision the row had before it — and the
+ *  read that follows the write retires the check, so the answer the person
+ *  asked for is thrown away to apply the one it was replacing. */
+export const canApplyUpdates = (state: {
+  loaded: boolean;
+  busy: boolean;
+  checking: boolean;
+}): boolean => state.loaded && !state.busy && !state.checking;
+
+export const useUpdatesStore = create<UpdatesState>((set) => {
   const showError = (title: string, message: string) =>
     useProblemsStore.getState().showError({ title, message });
 
-  const apply = async (row: UpdateRow): Promise<boolean> => {
-    // Held packages move by moving the hold; following ones come current
-    // by applying the scope — which is what following means, and brings
-    // any other pending changes in that scope along.
-    const response =
-      row.pinned && row.latest
-        ? await commands.packageSetRev(
-            row.scope,
-            row.kind,
-            row.name,
-            row.latest.commit,
-          )
-        : await commands.applyPlan(row.scope, false, []);
-    if (response.status === "error") {
-      showError(UPDATE_ERROR_TITLE, response.error);
-      return false;
-    }
-    return true;
-  };
+  const { ticket, fetchEnded } = updateTickets();
 
-  const reload = async () => {
-    const response = await commands.updatesOverview();
+  const read = async (newest: () => boolean) => {
+    let response: Awaited<ReturnType<typeof commands.updatesOverview>>;
+    try {
+      response = await commands.updatesOverview();
+    } catch (thrown) {
+      // A rejected read is a read that failed. Left to reject it would end
+      // the pass with nothing said, and every place would read as still
+      // being checked with nothing running and no note to say otherwise.
+      if (newest()) set({ loaded: false, error: String(thrown) });
+      return;
+    }
+    if (!newest()) return;
     // A failed reload marks the data stale (loaded = false) rather than
     // leaving the last-good rows trusted — the package page gates the
     // Update button on `loaded`, and acting on rows we could not refresh
     // is exactly the fail-open this closes.
     if (response.status === "ok")
-      set({
-        rows: response.data.rows,
-        warnings: response.data.warnings,
+      set((state) => ({
+        // A re-read that changed nothing hands back what is already on
+        // screen: every screen joining on these rows memoizes on identity.
+        rows: keepIfSame(state.rows, response.data.rows),
+        warnings: keepIfSame(state.warnings, response.data.warnings),
         loaded: true,
-      });
-    else set({ loaded: false });
+        error: null,
+      }));
+    else set({ loaded: false, error: response.error });
+  };
+
+  // How many ordinary reads are running, so the flag comes down when the
+  // last one lands rather than the first.
+  let running = 0;
+  const reload = async (afterWrite = false) => {
+    const newest = ticket(false, afterWrite);
+    running += 1;
+    set({ reading: true });
+    try {
+      await read(newest);
+    } finally {
+      running -= 1;
+      if (running === 0) set({ reading: false });
+    }
   };
 
   return {
@@ -104,98 +117,51 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     warnings: [],
     busy: false,
     checking: false,
+    reading: false,
     loaded: false,
+    error: null,
 
-    load: async () => {
-      await reload();
+    load: async (opts) => {
+      await reload(opts?.afterWrite === true);
     },
 
     check: async () => {
       set({ checking: true });
+      const newest = ticket(true);
       try {
-        const response = await commands.updatesRefresh();
+        let response: Awaited<ReturnType<typeof commands.updatesRefresh>>;
+        try {
+          response = await commands.updatesRefresh();
+        } catch (thrown) {
+          // A rejected read is a read that failed. Left to reject, the
+          // standing keeps its last successful values and the marks go on
+          // presenting stale rows as a check that worked.
+          if (newest()) {
+            set({ loaded: false, error: String(thrown) });
+            showError(UPDATE_ERROR_TITLE, String(thrown));
+          }
+          return;
+        }
+        if (!newest()) return;
         if (response.status === "ok") {
           set({
             rows: response.data.rows,
             warnings: response.data.warnings,
             loaded: true,
+            error: null,
           });
         } else {
-          set({ loaded: false });
+          set({ loaded: false, error: response.error });
           showError(UPDATE_ERROR_TITLE, response.error);
         }
       } finally {
-        set({ checking: false });
+        set({ checking: fetchEnded() });
       }
     },
 
-    updateOne: async (row) => {
-      set({ busy: true });
-      try {
-        if (await apply(row)) {
-          // A follower comes current by applying its scope, which brings
-          // that scope's other followers along — the toast says so rather
-          // than letting the extra changes look like a surprise.
-          toast.success(
-            row.pinned
-              ? updatedToastLabel(row.name)
-              : updatedWithPlaceToastLabel(row.name, placeName(row.scope)),
-          );
-          await reload();
-          await useScanStore.getState().refresh();
-          await useAuditStore.getState().refresh({ force: true });
-        }
-      } finally {
-        set({ busy: false });
-      }
-    },
+    updateOne: applyOne,
 
-    updateRows: async (wanted) => {
-      set({ busy: true });
-      try {
-        // Edited packages are held by the engine and cannot be updated
-        // this way — they need the fork decision first, so they are left
-        // out rather than silently surviving the click. Rows that are news
-        // without an update (gone upstream, mixed installs) have nothing
-        // for this button to do.
-        const rows = updatablePlaces(wanted);
-        const skipped = skippedPlaces(wanted).length;
-        if (rows.length === 0) {
-          toast.info(nothingToUpdateToastLabel(skipped));
-          return;
-        }
-        // Move every hold first — each move applies its whole scope, so
-        // that scope's followers are already current — then one apply per
-        // scope no hold touched. Never two applies for one scope.
-        let ok = true;
-        const applied = new Set<string>();
-        for (const row of rows.filter((row) => row.pinned)) {
-          if (await apply(row)) applied.add(scopeKey(row.scope));
-          else ok = false;
-        }
-        const scopes = new Map(
-          rows
-            .filter((row) => !row.pinned && !applied.has(scopeKey(row.scope)))
-            .map((row) => [scopeKey(row.scope), row] as const),
-        );
-        for (const row of scopes.values()) {
-          const response = await commands.applyPlan(row.scope, false, []);
-          if (response.status === "error") {
-            showError(UPDATE_ERROR_TITLE, response.error);
-            ok = false;
-          }
-        }
-        await reload();
-        if (ok)
-          toast.success(
-            bulkUpdateToast(rows, skipped, visibleUpdates(get().rows)),
-          );
-        await useScanStore.getState().refresh();
-        await useAuditStore.getState().refresh({ force: true });
-      } finally {
-        set({ busy: false });
-      }
-    },
+    updateRows: applyMany,
 
     setAutoUpdate: async (row, auto) => {
       // Switching following OFF holds the package at what is installed now.
@@ -203,6 +169,9 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
       // never fall through to null, which means "follow" (the opposite).
       const hold = row.current?.commit ?? null;
       if (!auto && hold === null) return;
+      // Before the flag goes up: a refusal after it would leave every
+      // control on the page waiting on work that never started.
+      if (refusesForUnsaved(row.scope)) return;
       set({ busy: true });
       try {
         const response = await commands.packageSetRev(
@@ -211,10 +180,17 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
           row.name,
           auto ? null : hold,
         );
-        if (response.status === "error") {
-          showError(UPDATE_ERROR_TITLE, response.error);
-        }
-        await reload();
+        const wrote = response.status !== "error";
+        if (wrote) {
+          // Holding a package at a version, or letting it follow again,
+          // writes that place's kendex.toml — before the tables re-read,
+          // or a save of the copy the Customize tab holds puts the old
+          // file back over what this just recorded.
+          await manifestRewritten(row.scope);
+        } else showError(UPDATE_ERROR_TITLE, response.error);
+        // Only a write earns the rank that retires a check already in
+        // flight; a refusal moved nothing, so this is an ordinary poll.
+        await reload(wrote);
       } finally {
         set({ busy: false });
       }
@@ -233,6 +209,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
           rows: response.data.rows,
           warnings: response.data.warnings,
           loaded: true,
+          error: null,
         });
       else showError(UPDATE_ERROR_TITLE, response.error);
     },

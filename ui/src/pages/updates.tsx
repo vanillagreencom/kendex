@@ -8,7 +8,9 @@ import { useEffect, useState } from "react";
 import type { UpdateRow } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EmptyState } from "@/components/empty-state";
+import { DotSpinner } from "@/components/loading";
 import { PageHeader } from "@/components/page-header";
+import { StatusNote } from "@/components/status-note";
 import { Button } from "@/components/ui/button";
 import { UpdatesTable } from "@/components/updates-table";
 import {
@@ -22,21 +24,27 @@ import {
   UPDATES_EMPTY_BODY,
   UPDATES_UNCHECKED_TITLE,
 } from "@/lib/copy";
-import { FOLLOW_SOURCE_HELP, updatesSubtitle } from "@/lib/copy-updates";
+import {
+  FOLLOW_SOURCE_HELP,
+  UPDATES_CHECKING,
+  UPDATES_UNCONFIRMED_BODY,
+  UPDATES_UNCONFIRMED_TITLE,
+  updatesSubtitle,
+} from "@/lib/copy-updates";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { packageCount, updatablePlaces } from "@/lib/update-groups";
+import { hiddenUpdates, visibleUpdates } from "@/lib/update-rows";
 import { cn } from "@/lib/utils";
-import {
-  hiddenUpdates,
-  useUpdatesStore,
-  visibleUpdates,
-} from "@/stores/updates";
+import { canApplyUpdates, useUpdatesStore } from "@/stores/updates";
 
 /** Which packages have newer versions, what changed, and per-package
  *  control over how loudly to hear about it. */
 export function UpdatesPage() {
-  const { rows, warnings, busy, checking, check, updateRows } =
+  const { rows, warnings, busy, checking, error, check, updateRows } =
     useUpdatesStore();
+  // Nothing has answered yet, so there is nothing to call up to date.
+  const loaded = useUpdatesStore((s) => s.loaded);
+  const canApply = useUpdatesStore(canApplyUpdates);
   const load = useUpdatesStore((s) => s.load);
   const [showHidden, setShowHidden] = useState(false);
   const [confirmIgnore, setConfirmIgnore] = useState<UpdateRow | null>(null);
@@ -52,7 +60,25 @@ export function UpdatesPage() {
   // With nothing to update there is nothing to introduce: a title and a
   // sentence explaining a list that isn't there is furniture around good
   // news. The sidebar already says which page this is.
-  if (visible.length === 0 && hidden.length === 0 && warnings.length === 0) {
+  // "You're up to date" over a read that failed is the same claim as a
+  // place marked untouched when nobody had looked: the note below says what
+  // actually happened, and offers the retry.
+  if (!loaded && !error) {
+    return (
+      <div className="flex min-h-full items-center justify-center">
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+          <DotSpinner />
+          {UPDATES_CHECKING}
+        </p>
+      </div>
+    );
+  }
+  if (
+    visible.length === 0 &&
+    hidden.length === 0 &&
+    warnings.length === 0 &&
+    !error
+  ) {
     return (
       <div className="flex min-h-full items-center justify-center">
         <EmptyState
@@ -109,7 +135,7 @@ export function UpdatesPage() {
             {packageCount(visible) > 1 ? (
               <Button
                 size="sm"
-                disabled={busy || updatablePlaces(visible).length === 0}
+                disabled={!canApply || updatablePlaces(visible).length === 0}
                 onClick={() => void updateRows(visible)}
               >
                 {UPDATE_ALL_LABEL}
@@ -120,13 +146,39 @@ export function UpdatesPage() {
       />
       <div className={cn("min-h-0 flex-1 overflow-y-auto", PAGE_GUTTER)}>
         <div className={cn("pb-8", WIDE_CONTENT_WIDTH)}>
-          {visible.length === 0 ? (
+          {error ? (
+            <StatusNote
+              tone="warning"
+              className="mt-3"
+              title={UPDATES_UNCONFIRMED_TITLE}
+              action={
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={checking}
+                  onClick={() => void check()}
+                >
+                  <RefreshCw
+                    className={cn("size-3.5", checking && "animate-spin")}
+                  />
+                  {CHECK_FOR_UPDATES_LABEL}
+                </Button>
+              }
+            >
+              <span className="flex flex-col gap-1">
+                <span>{UPDATES_UNCONFIRMED_BODY}</span>
+                <span className="whitespace-pre-wrap text-xs">{error}</span>
+              </span>
+            </StatusNote>
+          ) : null}
+          {visible.length === 0 && loaded && !error ? (
             <EmptyState icon={CheckCircle2} title={UPDATES_EMPTY}>
               {UPDATES_EMPTY_BODY}
             </EmptyState>
-          ) : (
+          ) : null}
+          {visible.length > 0 ? (
             <UpdatesTable rows={visible} onIgnore={setConfirmIgnore} />
-          )}
+          ) : null}
           {warnings.length > 0 ? (
             <div className="mt-8">
               <p className="text-sm font-medium">{UPDATES_UNCHECKED_TITLE}</p>

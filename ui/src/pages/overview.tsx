@@ -21,6 +21,7 @@ import {
 import { groupItems, recentItems } from "@/lib/derive";
 import { harnessName } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
+import { awaitingForkDecision } from "@/lib/update-rows";
 import { cn } from "@/lib/utils";
 import { useAuditStore } from "@/stores/audit";
 import { useMarketplacesStore } from "@/stores/marketplaces";
@@ -44,7 +45,7 @@ export function OverviewPage() {
   const setPage = useNavStore((s) => s.setPage);
   const goToPackage = useNavStore((s) => s.goToPackage);
   const updateRows = useUpdatesStore((s) => s.rows);
-  const editedPackages = updateRows.filter((row) => row.blockedByLocalEdit);
+  const editedPackages = awaitingForkDecision(updateRows);
   const goTo = useNavStore((s) => s.goTo);
   const goToLibrary = useNavStore((s) => s.goToLibrary);
   const goToMarketplaces = useNavStore((s) => s.goToMarketplaces);

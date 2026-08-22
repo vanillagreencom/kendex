@@ -58,6 +58,18 @@ pub enum Remedy {
     Refresh {
         global: bool,
     },
+    /// Put this package's declared content back over the edits to its
+    /// installed files. Named only where discarding is the exit that
+    /// resolves the line — a bare refresh holds an edited installation and
+    /// reports "up to date" over it — and named per package: the scope-wide
+    /// spelling is `refresh --discard-edits`, which would take every other
+    /// hand-edited package in the scope with it. A line about one package
+    /// must not carry a fix that costs the others their edits.
+    DiscardEdits {
+        kind: ItemKind,
+        name: String,
+        global: bool,
+    },
     Remove {
         name: String,
         global: bool,
@@ -94,14 +106,23 @@ impl Remedy {
     /// validation — the line then stands without a remedy.
     pub fn render(&self) -> Option<String> {
         let flag = |global: &bool| if *global { " --global" } else { "" };
-        if let Remedy::Remove { name, .. } | Remedy::Add { name, .. } | Remedy::Fork { name, .. } =
-            self
+        if let Remedy::Remove { name, .. }
+        | Remedy::Add { name, .. }
+        | Remedy::Fork { name, .. }
+        | Remedy::DiscardEdits { name, .. } = self
             && !safe_ident(name)
         {
             return None;
         }
         Some(match self {
             Remedy::Refresh { global } => format!("kendex refresh{}", flag(global)),
+            Remedy::DiscardEdits { kind, name, global } => {
+                format!(
+                    "kendex discard-edits {} {name}{}",
+                    kind.name(),
+                    flag(global)
+                )
+            }
             Remedy::Remove { name, global } => format!("kendex remove {name}{}", flag(global)),
             Remedy::Add { kind, name, global } => {
                 format!("kendex add --{} {name}{}", kind.name(), flag(global))
@@ -341,6 +362,8 @@ mod render;
 mod scope;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_exits;
 #[cfg(test)]
 mod tests_render;
 

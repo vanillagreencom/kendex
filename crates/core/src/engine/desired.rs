@@ -2,18 +2,20 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use crate::env::Env;
-use crate::error::Result;
 use crate::harness::{Surface, adapter};
 use crate::lock::Lock;
 use crate::manifest::{ItemDecl, Manifest, Method};
 use crate::model::{HarnessId, ItemKind, Scope};
 use crate::quality::author::AuthorReview;
-use crate::source::{SourceState, find_item};
+use crate::source::SourceState;
 use crate::source_read::SealedSource;
 
-use super::desired_item::{build, no_harness_note};
-use super::desired_kinds;
-use super::desired_source::{published_review, read_catalog, resolve_source};
+mod artifact;
+mod compute;
+mod rebuild;
+pub use artifact::{artifact_disk_hash, artifact_paths};
+pub use compute::desired_state;
+pub use rebuild::desired_as_installed;
 
 /// One installation as declaration says it should exist on disk.
 #[derive(Debug, Clone, PartialEq)]
@@ -94,6 +96,13 @@ pub struct Refused {
 #[derive(Debug, Default)]
 pub struct DesiredState {
     pub items: Vec<Desired>,
+    /// Which items this plan acts on at all, where a caller restricted it
+    /// to some packages (`PlanOptions::only_names`) — `None` when it did
+    /// not. Resolved once against the expansion, so it is the named
+    /// packages *and everything they need*: a command that restores a
+    /// package and leaves the dependency that package requires uninstalled
+    /// has not done what it said, and says it worked.
+    pub(super) acting: Option<BTreeSet<(ItemKind, String)>>,
     /// Sources that could not be read (pending remotes, missing paths) and
     /// declared items the source no longer carries.
     pub notes: Vec<String>,
@@ -103,6 +112,13 @@ pub struct DesiredState {
     /// these produced is the complete truth about them, so a lock entry
     /// they did not produce is stranded, not merely skipped this pass.
     pub processed: BTreeSet<(ItemKind, String)>,
+    /// The other half: declarations this pass looked at and could not
+    /// measure — the source did not resolve, could not be read, or no
+    /// longer carries the item — so nothing was rendered to compare what
+    /// is on disk against. They are absent from the drift for that reason
+    /// and not because they are clean, and a reader that takes the silence
+    /// for cleanliness reports an edited place as untouched.
+    pub unmeasured: BTreeSet<(ItemKind, String)>,
     /// Manifest with upstream skill additions merged in — present only when
     /// the merge changed something and must be written back.
     pub manifest_update: Option<Manifest>,
@@ -127,12 +143,24 @@ pub struct DesiredState {
 }
 
 impl DesiredState {
+    /// Whether this plan writes or removes for this item at all. Every pass
+    /// that touches disk asks here rather than reading `only_names`, so the
+    /// closure is resolved in one place and they cannot disagree about what
+    /// "one package" means.
+    pub(super) fn acts_on(&self, kind: ItemKind, name: &str) -> bool {
+        match &self.acting {
+            Some(acting) => acting.contains(&(kind, name.to_owned())),
+            None => true,
+        }
+    }
+
     /// A declaration whose source item cannot be parsed. Un-marking it keeps
     /// what it already installed out of the orphan sweep: a source file
     /// someone broke this morning must never uninstall a working artifact.
     pub(super) fn unreadable(&mut self, kind: ItemKind, name: &str, note: String) {
         self.notes.push(note);
         self.processed.remove(&(kind, name.to_owned()));
+        self.unmeasured.insert((kind, name.to_owned()));
     }
 }
 
@@ -205,132 +233,6 @@ pub(crate) fn harnesses_for(
         .collect()
 }
 
-/// The desired world, computed against the manifest that will be on disk
-/// once this plan applies. An upstream skill merge rewrites the manifest,
-/// and hashes and renderings must reflect that rewrite — otherwise the very
-/// next audit reads the merged manifest and calls a clean install stale. The
-/// merge is idempotent, so recomputing against it converges in one repeat.
-mod artifact;
-mod rebuild;
-pub use artifact::{artifact_disk_hash, artifact_paths};
-pub use rebuild::desired_as_installed;
-
-pub fn desired_state(
-    env: &Env,
-    scope: &Scope,
-    manifest: &Manifest,
-    lock: &Lock,
-) -> Result<DesiredState> {
-    let first = compute(env, scope, manifest, lock)?;
-    let Some(merged) = first.manifest_update else {
-        return Ok(first);
-    };
-    let mut second = compute(env, scope, &merged, lock)?;
-    second.manifest_update = Some(merged);
-    Ok(second)
-}
-
-fn compute(env: &Env, scope: &Scope, manifest: &Manifest, lock: &Lock) -> Result<DesiredState> {
-    let mut state = DesiredState::default();
-    let mut updated_manifest = manifest.clone();
-    let mut manifest_changed = false;
-    // Everything is planned from the closure — what was declared, what the
-    // installed bundles carry, and what those skills require — while the
-    // manifest keeps holding only what was chosen.
-    let expansion = super::expansion::expand(env, scope, manifest, &mut state);
-    // One parse of each catalog root's reviews file per pass: it is one
-    // file, and every item that root carries would otherwise re-read it.
-    // Keyed by root, since one declared source resolves to several when
-    // its items pin different revisions.
-    let mut reviews: BTreeMap<PathBuf, BTreeMap<String, crate::quality::reviews::SafetyReview>> =
-        BTreeMap::new();
-    let collisions = super::catalog::Collisions::find(&expansion, &mut state);
-
-    for kind in super::expansion::PLANNED_KINDS {
-        for (name, planned) in expansion.of(kind) {
-            let decl = &planned.decl;
-            let Some((root, provenance, source_commit)) =
-                resolve_source(env, scope, name, decl, manifest, &mut state)?
-            else {
-                continue;
-            };
-            let Some((sealed, config)) =
-                read_catalog(&root, &provenance, name, &decl.source, &mut state)?
-            else {
-                continue;
-            };
-            super::catalog::notes(&config, &decl.source, &mut state);
-            let Some(item_path) = find_item(&sealed, &config, kind, name) else {
-                state
-                    .notes
-                    .push(format!("{name}: not found in source '{}'", decl.source));
-                continue;
-            };
-            state.processed.insert((kind, name.clone()));
-            let author_review = published_review(
-                &sealed,
-                &decl.source,
-                &provenance,
-                &config,
-                kind,
-                name,
-                &item_path,
-                &mut reviews,
-                &mut state,
-            )?;
-            let mut harnesses = planned.harnesses.clone();
-            if harnesses.is_empty() {
-                no_harness_note(kind, name, decl, manifest, &mut state);
-            }
-            harnesses.retain(|harness| collisions.allows(kind, name, *harness));
-            let reasons = reasons_for(kind, name, &harnesses, &expansion);
-            let ctx = ItemCtx {
-                env,
-                scope,
-                manifest,
-                lock,
-                config: &config,
-                sealed: &sealed,
-                name,
-                decl,
-                item_path: &item_path,
-                provenance: &provenance,
-                source_commit: source_commit.as_deref(),
-                harnesses,
-                reasons: &reasons,
-                author_review,
-            };
-            build(
-                kind,
-                &ctx,
-                &mut state,
-                &mut updated_manifest,
-                &mut manifest_changed,
-            )?;
-        }
-    }
-    desired_kinds::desired_plugins(env, scope, manifest, &mut state);
-    super::desired_custom_hooks::desired_custom_hooks(env, scope, manifest, &mut state);
-
-    if manifest_changed {
-        state.manifest_update = Some(updated_manifest);
-    }
-    Ok(state)
-}
-
-/// Why each of an item's installations is wanted, as the closure derived it.
-fn reasons_for(
-    kind: ItemKind,
-    name: &str,
-    harnesses: &[HarnessId],
-    expansion: &super::expansion::Expansion,
-) -> BTreeMap<HarnessId, BTreeSet<crate::lock::Reason>> {
-    harnesses
-        .iter()
-        .map(|harness| (*harness, expansion.reasons(kind, name, *harness)))
-        .collect()
-}
-
 pub(super) struct ItemCtx<'a> {
     pub(super) env: &'a Env,
     pub(super) scope: &'a Scope,
@@ -346,6 +248,12 @@ pub(super) struct ItemCtx<'a> {
     pub(super) harnesses: Vec<HarnessId>,
     reasons: &'a BTreeMap<HarnessId, BTreeSet<crate::lock::Reason>>,
     pub(super) author_review: Option<AuthorReview>,
+    /// Whether this plan writes for this item at all — false for everything
+    /// a restricted plan (`only_names`) leaves alone. What such an item
+    /// would have contributed to the manifest is left out with it: a
+    /// manifest recording what nothing installed describes a machine that
+    /// does not exist.
+    pub(super) planned: bool,
 }
 
 impl ItemCtx<'_> {

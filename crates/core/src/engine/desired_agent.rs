@@ -36,7 +36,11 @@ fn assigned_skills(
         &available,
         recorded.as_deref(),
     );
-    if skills.manifest_additions.is_empty() {
+    // Nothing to record, or nothing this plan will render: an agent a
+    // restricted plan leaves alone must not have its upstream additions
+    // written into the manifest, or the file says the agent gained a skill
+    // that was never installed for it.
+    if skills.manifest_additions.is_empty() || !ctx.planned {
         return skills;
     }
     let entry = updated_manifest

@@ -69,13 +69,12 @@ export interface AvailableRef {
 }
 
 /** What the package page should open showing, when not its files — e.g.
- * "Preview" on the Updates page lands straight on the diff. Consumed once
- * by the page on mount, then cleared. */
-export interface PackageView {
-  mode: "diff";
-  from: string;
-  to: string;
-}
+ * "Preview" on the Updates page lands straight on the diff, and a Library
+ * row's customized mark lands on what you changed in that place. Consumed
+ * once by the page on mount, then cleared. */
+export type PackageView =
+  | { mode: "diff"; from: string; to: string }
+  | { mode: "customize" };
 
 /** Where the back button returns to: a page plus its state at push time. */
 export interface HistoryEntry {

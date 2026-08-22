@@ -13,7 +13,7 @@ use crate::model::{HarnessId, ItemKind, Scope};
 use crate::source::SourceState;
 
 use super::desired::DesiredState;
-use super::{DriftRow, DriftState, config_edits};
+use super::{DriftRow, DriftState, DriftSubject, config_edits};
 
 /// One mutation per config file, whatever asked for it — a single
 /// precondition can hold; per-edit preconditions against the same original
@@ -144,9 +144,13 @@ pub(super) fn plan_schema_upgrade(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
+    options: &super::PlanOptions,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<()> {
     let path = manifest::manifest_path(env, scope);
+    // This writes the manifest, so it binds to the file a caller writing a
+    // whole copy of it came from, where there is one.
+    let pre = options.manifest_pre(&path)?;
     let description = format!(
         "Upgrade {} to the current format",
         crate::rename::MANIFEST_FILE
@@ -181,21 +185,29 @@ pub(super) fn plan_schema_upgrade(
     if !upgraded_text.is_empty() && !upgraded_text.ends_with('\n') {
         upgraded_text.push('\n');
     }
-    let op = match rewritten {
+    let mut expected = manifest.clone();
+    expected.schema = manifest::MANIFEST_SCHEMA;
+    // The surgical edit only earns its place when it reproduces the
+    // manifest this was asked to write. The caller's copy can carry edits
+    // of its own — a save in flight hands one in — and a text rewrite that
+    // only moves the schema line drops them; worse, the file write it
+    // emits is not one `persists_manifest` recognises, so the caller adds
+    // its own whole-file save and the two bind to the same bytes, the
+    // second failing after the first has moved them. One write, whichever
+    // shape it takes.
+    let reproduced =
+        rewritten && toml::from_str::<Manifest>(&upgraded_text).is_ok_and(|got| got == expected);
+    let op = match reproduced {
         true => Op::WriteFile {
-            pre: crate::apply::Pre::observed(&path)?,
+            pre,
             path,
             bytes: upgraded_text.into_bytes(),
         },
-        false => {
-            let mut upgraded = manifest.clone();
-            upgraded.schema = manifest::MANIFEST_SCHEMA;
-            Op::WriteManifest {
-                pre: crate::apply::Pre::observed(&path)?,
-                path,
-                manifest: Box::new(upgraded),
-            }
-        }
+        false => Op::WriteManifest {
+            pre,
+            path,
+            manifest: Box::new(expected),
+        },
     };
     ops.push(PlannedOp { description, op });
     Ok(())
@@ -237,9 +249,11 @@ pub(super) fn plan_repo_move_write(
     env: &Env,
     scope: &Scope,
     migrated: &Manifest,
+    options: &super::PlanOptions,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<()> {
     let path = manifest::manifest_path(env, scope);
+    let pre = options.manifest_pre(&path)?;
     let mut expected = migrated.clone();
     expected.schema = manifest::MANIFEST_SCHEMA;
     let current = crate::fs::read_if_exists(&path)?.unwrap_or_default();
@@ -273,12 +287,12 @@ pub(super) fn plan_repo_move_write(
     let reproduced = toml::from_str::<Manifest>(&edited).is_ok_and(|parsed| parsed == expected);
     let op = match reproduced {
         true => Op::WriteFile {
-            pre: crate::apply::Pre::observed(&path)?,
+            pre,
             path,
             bytes: edited.into_bytes(),
         },
         false => Op::WriteManifest {
-            pre: crate::apply::Pre::observed(&path)?,
+            pre,
             path,
             manifest: Box::new(expected),
         },
@@ -305,7 +319,17 @@ pub(super) fn plan_settings_seed(
     let Scope::Project { root } = scope else {
         return Ok(());
     };
-    if state.settings_env.is_empty() {
+    // Each default is shipped by a declared skill, so a plan restricted to
+    // some packages seeds only what those packages ship: the file and its
+    // ledger belong to the scope, and a command about one package rewriting
+    // both is that command touching another's.
+    let seeds: Vec<crate::settings_seed::SeededEnv> = state
+        .settings_env
+        .iter()
+        .filter(|seeded| state.acts_on(ItemKind::Skill, &seeded.owner))
+        .cloned()
+        .collect();
+    if seeds.is_empty() {
         return Ok(());
     }
     let path = crate::settings_seed::settings_file_path(root);
@@ -320,6 +344,7 @@ pub(super) fn plan_settings_seed(
             harness: HarnessId::Claude,
             scope: scope.clone(),
             state: DriftState::Conflict,
+            subject: DriftSubject::Scope,
             detail: format!("{} is not a regular file", path.display()),
             cause: None,
         });
@@ -327,24 +352,24 @@ pub(super) fn plan_settings_seed(
     }
     let current = crate::fs::read_if_exists(&path)?;
     let (text, added, updated) = match current.as_deref() {
-        None => match crate::settings_seed::merge(None, &state.settings_env) {
+        None => match crate::settings_seed::merge(None, &seeds) {
             Some((text, added)) => (text, added, Vec::new()),
             None => return Ok(()),
         },
         Some(original) => {
             let (refreshed, updated) = crate::settings_seed::refresh_comments(
                 original,
-                &state.settings_env,
+                &seeds,
                 &mut new_lock.settings_seeds,
             );
-            match crate::settings_seed::merge(Some(&refreshed), &state.settings_env) {
+            match crate::settings_seed::merge(Some(&refreshed), &seeds) {
                 Some((text, added)) => (text, added, updated),
                 None if !updated.is_empty() => (refreshed, Vec::new(), updated),
                 None => return Ok(()),
             }
         }
     };
-    crate::settings_seed::record_seeds(&mut new_lock.settings_seeds, &state.settings_env, &added);
+    crate::settings_seed::record_seeds(&mut new_lock.settings_seeds, &seeds, &added);
     let mut said = Vec::new();
     if !added.is_empty() {
         said.push(format!("seed {}", added.join(", ")));

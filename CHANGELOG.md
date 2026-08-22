@@ -87,8 +87,61 @@ changes carry a **Breaking** call-out with their migration note inline.
   question, theirs can lift a hold — so none of it is taken from a file your
   project commits: an installation whose content is not what its catalog
   publishes is told so plainly, and settles nothing.
+- `kendex discard-edits <kind> <name>` puts one package's declared content
+  back over the edits made to its installed files — the exit beside
+  `kendex fork`, and the one `kendex check` names for an edited package.
+  It touches that package and what that package needs, and nothing else:
+  with nothing edited there it changes nothing and says so, and where there
+  is, it puts the package back — along with anything the package requires
+  that is not installed yet, since a package restored without what it needs
+  cannot run — and leaves whatever else the project had waiting alone. It
+  works on any installed package, including one installed because something
+  else required it or because a bundle carries it — but not one nothing
+  needs any more, where there is no declared content to put back: that says
+  so and names `kendex remove` instead of reporting a restore that did not
+  happen. `kendex refresh --discard-edits` still does the whole scope, which
+  is what it is for.
+- Catalog authors can settle a reviewed safety finding:
+  `kendex dismiss --catalog <dir> --reason intended '<token>'` records the
+  decision in a committed `kendex-reviews.toml`, and `kendex check --catalog`
+  stops holding the catalog back for that exact finding on that exact
+  content. Any edit to the item brings the hold back, dismissed findings are
+  still reported, and installs on other machines are unaffected — a catalog
+  can never pre-approve its own content for consumers. `check --catalog`
+  prints the token beside each blocking finding.
+
 ### Changed
 
+- Everywhere the app says a package is customized, it now says **where**.
+  A skill installed at your user level and in two projects, changed in one
+  of them, reads "Customized in vg · 1 of 3 places" on its Library row and
+  "Customized in vg" in its own header — and clicking the mark opens the
+  place it names, on the change itself: the package overview beside its
+  edited files when you edited them by hand, the Customize tab when you
+  set something there, and the overview again for a place whose copy is
+  your own fork. The Customize tab's project chips carry a dot on the
+  places that hold changes and say in words what each place holds, and the
+  Forked mark names its place and belongs to the place it was made in,
+  instead of reading "Forked" everywhere and saying which one only on
+  hover. The page you land on is about that place too — its
+  path, its open actions and its file list, not the first project the
+  package happens to be installed in, and it stays that place while you look
+  at another one's settings on the Customize tab — the chips move the tab,
+  not the page. A place counts as customized whether
+  you changed it on the Customize tab, edited its installed files by hand,
+  or forked it, so a package you hand-edited is marked even when it is up
+  to date, and a fork you have since edited says so. Text you are still
+  typing is not a customization yet: the Library marks what is saved. Two
+  projects with the same folder name are told apart by their parent folder
+  wherever they are named together — on the Library, the chips, a package
+  header, the scope pickers, the unmanaged panels, and the problem and
+  decision lists. Where a package comes from a local folder the app has no
+  catalog version to compare it against, so such a place says "not checked"
+  rather than passing as untouched — while a place whose read is still on
+  its way says it is still being checked instead. If the update
+  check or a project's settings will not read at all, the Library says so
+  above the table with a way to try again, rather than showing a page of
+  packages with nothing marked.
 - **Breaking:** the install record's version moves to 5. Older files still
   load and the first apply upgrades them in place, through the normal
   journaled, previewed plan. What moves the version is the new evidence in
@@ -202,6 +255,198 @@ changes carry a **Breaking** call-out with their migration note inline.
 
 ### Fixed
 
+- A package whose own copy has gone missing no longer reports its files as
+  untouched. The check that notices hand edits needs the package's source
+  to compare against, and when that source cannot be read it now says so
+  instead of saying nothing — the place stays marked as changed by you,
+  which is what its buttons and badges have always meant.
+- Two projects whose folders share a name are told apart on Review, the way
+  they already are in the Library and on a package's own page.
+- Removing a package from every project it is in, and turning one on or
+  off across them, now stop if you start typing settings for a project
+  still to come — rather than carrying on and writing over what you typed.
+- Keeping a package as your own tells you how to get its files back if the
+  step that renders them did not run. It named two ways out that both
+  assume the files are there.
+- A project added while the app is open shows its packages' marks straight
+  away, instead of reading as unchecked until the window has been away and
+  come back.
+- Update all stops everywhere when the first package it tries fails. It
+  went on updating the rest, and stopped asking about unsaved settings
+  while it did.
+- Keeping a package as your own, or discarding its edits, no longer has the
+  old state come back a moment later when a check for updates happened to be
+  running at the time.
+- Update all waits for every project it would touch: if any one has unsaved
+  customization, none is updated. It used to update the others and skip
+  that one.
+- A package-wide toggle or removal stops when one project refuses it,
+  rather than carrying on and leaving the package changed in some projects
+  and not others.
+- Moving between projects empties the Customize form until the one you
+  moved to has answered for itself. It briefly offered the last project's
+  skills and hooks, and kept offering them if the new project would not
+  read.
+- Coming back to a project whose skill list will not load offers nothing
+  rather than the last project's, so a save here cannot write choices made
+  about somewhere else.
+- A project whose settings fail to re-read on their own says so straight
+  away, rather than going on showing what kendex last knew as current.
+- A project that could not be read stops reading as unchecked as soon as it
+  can be read again, instead of waiting for a whole pass to succeed.
+- Turning a package on or off across every project it is in now waits for
+  all of them: if any one has unsaved customization, none is changed. It
+  used to change the others and quietly skip that one.
+- `kendex discard-edits` no longer offers Pi extensions. Pi installs them,
+  so kendex never rendered one and cannot put one back — the command said
+  "no edits to discard" and did nothing.
+- Taking back a dismissal or an acceptance now waits for unsaved
+  customization in that project, and holds the Customize Save button while
+  it runs, like every other change to a project's settings.
+- A package that came with a bundle or as a dependency is told to discard
+  its edits rather than to keep it as its own copy. Keeping it was never
+  possible — it has no entry of its own to record a fork under — so the fix
+  the report printed refused when run.
+- Choosing a newer version to replace a package's edits says so when that
+  version is itself held back, instead of moving the record and leaving the
+  edited files where they were.
+- Discarding a package's edits says so plainly when something is holding
+  the package back — a safety finding, say — instead of reporting the
+  content restored while your edited files are still there. The app's
+  discard says the same.
+- `kendex discard-edits` on a package whose source cannot be read says so
+  and stops, instead of reporting "no edits to discard" while your edited
+  files are still there. The app's discard says the same.
+- Walking away from a package page while its version is being switched no
+  longer re-enables the Customize Save button before the change has landed.
+- The Updates page says it is checking instead of "Everything is up to
+  date" before the first check has answered.
+- A package whose own copy can no longer be read says so, instead of
+  offering to put back a copy that is not there.
+- A package is no longer shown as your own copy on the strength of a check
+  that did not finish, when its project's settings could not be read either.
+  With neither read able to speak, the place says it could not be checked.
+- A check that could not reach any project at all now says so for every
+  one of them. The marks it last drew stay on screen so nothing flickers
+  away, but none of them is presented as current.
+- A project whose settings could not be re-read is no longer marked from the
+  copy kendex last had. Its mark says the place could not be checked, which
+  is what the count of unchecked places has always meant.
+- Every action that rewrites a project's settings now waits for unsaved
+  customization in that project, and says which project to go back to —
+  updating, switching a package's version, holding or following one,
+  toggling, removing, applying, settling a finding, taking a decision back,
+  subscribing, unsubscribing, installing from a marketplace, and adding the
+  session drift report. Only keeping and discarding edits did. The same goes
+  for the Customize Save button while any of them is running.
+- The Customize page holds its Save button down while an apply, adopt,
+  toggle or remove you started elsewhere is still running, the way a
+  package's own page already did. Saving into that window wrote a copy of
+  the settings file the action had already changed.
+- `kendex discard-edits --help` lists every kind the command takes — hooks,
+  commands, MCP servers and Pi extensions as well as agents and skills. It
+  named only two, so a fix `kendex check` printed for one of the others read
+  as unsupported.
+- Discarding your unsaved customization no longer takes typing you did
+  after pressing it. The reload that follows leaves anything newer than the
+  instruction alone, instead of replacing it without a word.
+- Keeping a package as your own, or discarding its edits, now waits for
+  unsaved customization in that project even when you have moved to another
+  one — and says which project to go back to. Before, moving away let the
+  action through, and the settings you were typing could no longer be saved.
+- The Library's From column says when it is showing the last answer kendex
+  had, the way a package's own page already did.
+- A package that came with something else and is no longer offered by it is
+  told plainly that nothing can put it back, rather than being given a
+  discard that would refuse.
+- A package's From row says when it is showing the last answer kendex had.
+  If the read of where your packages came from fails, the row keeps what it
+  last knew rather than emptying, and marks it as last known instead of
+  presenting it as current.
+- Update and Follow wait while a check for updates is still running.
+  Pressing them acted on the versions from before the check, and threw the
+  check's answer away to do it.
+- A check for updates that cannot finish no longer looks like one that did.
+  The versions already on screen stay there, and the page now says they are
+  the last ones kendex could check, gives you the retry, and turns off
+  Update, Update all and the Follow switch until a check succeeds — pressing
+  them applied a version nothing had confirmed. A failed check with nothing
+  to show also stops greeting you with "You're up to date".
+- Review no longer counts a standoff as work it can do. A package whose
+  files you edited, or whose copy is your own, has no button behind it —
+  its way out is on the package's own page — so it is no longer added to
+  "changes ready to apply" on Home. An install the safety check held back
+  is listed once, where its accept-or-dismiss decision is, instead of a
+  second time under a link to a page that cannot settle it.
+- Text you were typing is no longer thrown away by moving to another
+  location. Opening a package in a different project, or picking another
+  project on the Customize page, used to clear whatever was in the box
+  with nothing said. What you typed now waits at the location it belongs
+  to and is put back in front of you when you open that location again,
+  and both editing surfaces say where it is waiting with a way straight
+  back to it. Because of that, the Customize tab's location chips no
+  longer shut while you have unsaved changes — switching location keeps
+  them.
+- Editing a package you had kept as your own now offers the way back. It
+  was held like any other edit, but the only exit named was to keep it as
+  your own — which it already was — so `kendex check` and the app's change
+  badge both reported a state nothing could clear. The package now says
+  "discard the edits and go back to the copy you kept", `kendex check`
+  prints `kendex discard-edits skill <name>` as its fix, and that command
+  does exactly what the line says — that package and no other. The check
+  used to print `kendex refresh --discard-edits`, which discards every
+  hand-edited package in the scope: following the advice for one package
+  cost you the edits in all the rest. The offer disappears when the copy you kept can
+  no longer be re-rendered from — removed, replaced by a directory, left as a
+  link where content belongs, or grown past what kendex will read as one
+  package — and `kendex check` stops printing the command there too, saying
+  the copy cannot be read back instead of naming a fix that would refuse. Keeping the same package as your own twice is
+  refused rather than quietly replacing the record of where it came from,
+  which is kept nowhere else.
+- Review no longer files a package it cannot act on under "Ready to apply".
+  Something waiting on you — an edit held on disk — is listed apart and
+  counted in the project's summary line, with a link to the package's own
+  page where its exits are, rather than counted as work the Apply button
+  will do. Rows that are not about a package, like a settings file kendex
+  could not write, are listed without a link, since there is no page to
+  open for them.
+- Saving the Customize tab is refused, with the reason and a way to reload,
+  when something else rewrote that project's settings while you were typing.
+  Before, the save put the older copy back and whatever had just been
+  recorded was lost silently. Every action that writes those settings now
+  tells the editor: keeping a fork, discarding edits, moving or following a
+  version, adopting, enabling and disabling, removing, applying, settling a
+  safety finding or taking that back, and subscribing to or installing from
+  a marketplace — including an install redirected into a project, which is
+  the project that hears about it. The refusal goes up the moment such an
+  action starts and comes off only once the tab has caught up, so a save
+  pressed anywhere in between cannot slip through — and typing you start
+  while the tab is catching up is kept rather than replaced by the file it
+  read, and only where the settings file actually changed — an ordinary
+  update rewrites installed files, not your settings, and no longer
+  interrupts you. Underneath, the save itself now sends the settings file
+  it was opened on, and kendex refuses to write over a file that has
+  changed since: your work is protected even where nothing in the app
+  noticed the change, and the refusal reads the same, with the same
+  Reload.
+- Keeping a fork or discarding edits is refused while you have unsaved
+  changes on the Customize tab for that same project: saving them afterwards
+  would have written the old settings back over the new fork, losing it
+  silently. Where the tab is open and clean, it re-reads after the change so
+  a later save cannot undo it either.
+- Check for updates is no longer thrown away by a window you came back to
+  while it was running: the fetched results are what stay on screen.
+- A failed update check no longer looks like one still running. It does not
+  retry on its own, so the app names it on the package page as well as in
+  the Library, with a way to try again, and a read that ends in an error
+  rather than an answer is reported the same way instead of leaving the
+  screen waiting for it.
+- The Customize page no longer strands on a spinner, and its marks no longer
+  flicker or revert when several reads overlap. A background refresh cannot
+  undo a project you just opened or a customization you just saved, a
+  refresh that fails for one project keeps the others' marks instead of
+  blanking them, and saving one project while switching to another
+  attributes the result — and any error — to the project it was about.
 - A debug build no longer touches your real setup. A debug build is what
   `cargo build` and `tauri dev` produce — what a contributor or an agent
   runs from a branch — and it now keeps its own home under the platform data

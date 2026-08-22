@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
+import { useEditorStore } from "./editor";
+import { useSettingsStore } from "./settings";
 import { useUpdatesStore } from "./updates";
 import { keepAsOwn, takeNewVersion } from "./updates-edits";
 
@@ -13,6 +15,8 @@ vi.mock("@/bindings", () => ({
     applyPlan: vi.fn(),
     applyDiscardEdits: vi.fn(),
     packageFork: vi.fn(),
+    getManifest: vi.fn(),
+    editorInventory: vi.fn(),
     scanMachine: vi.fn(),
     auditAll: vi.fn(),
   },
@@ -52,9 +56,32 @@ function row(overrides: Partial<UpdateRow>): UpdateRow {
 describe("updates store: edited places", () => {
   beforeEach(() => {
     useUpdatesStore.setState({ rows: [], busy: false, loaded: false });
+    useSettingsStore.setState({ settings: { schema: 1, projects: [] } });
+    useEditorStore.setState({
+      scope: { scope: "global" },
+      draft: null,
+      dirty: false,
+      saved: {},
+      manifestsLoaded: false,
+      unreadPlaces: {},
+    });
     vi.clearAllMocks();
+    // Every path here ends by re-reading the place it rewrote.
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: null },
+    });
+    vi.mocked(commands.editorInventory).mockResolvedValue({
+      status: "ok",
+      data: {
+        declaredAgents: [],
+        declaredSkills: [],
+        availableSkills: [],
+        harnesses: [],
+        hookEvents: [],
+      },
+    });
   });
-
   it("use new version on a held place moves the hold to latest in the same apply", async () => {
     const view = {
       scope: { scope: "global" } as const,

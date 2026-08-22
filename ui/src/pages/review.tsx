@@ -36,6 +36,10 @@ export function ReviewPage() {
       openCount(view) > 0,
   );
   const allClean = !auditing && active.length === 0;
+  // Every place the page knows about, so two projects whose folders share a
+  // name are told apart here as they are everywhere else — and by the same
+  // name whichever of them happens to be clean this pass.
+  const scopes = views.map((view) => view.scope);
 
   return (
     <div>
@@ -69,6 +73,7 @@ export function ReviewPage() {
                 <SyncScopeCard
                   key={scopeLabel(view.scope)}
                   view={view}
+                  scopes={scopes}
                   busy={busy}
                   onApply={(removeOrphans, allowUnsafe) =>
                     void applyPlan(view.scope, removeOrphans, allowUnsafe)

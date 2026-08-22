@@ -157,6 +157,21 @@ pub enum CoreError {
     )]
     ForkAmbiguous { name: String },
 
+    /// A second fork of the same package would overwrite the first's
+    /// provenance — which source it came from, and at which commit — and
+    /// that record lives nowhere but the manifest.
+    /// Keeping a package as your own is two steps: the record, and the
+    /// render from the copy just kept. The first commits on its own and
+    /// takes the installed rendering away, so an interruption between them
+    /// leaves the record standing and nothing on disk — and forking again
+    /// refuses, because the record is already there. The line has to name
+    /// the way back out of that, not only the exits that assume the files
+    /// are present.
+    #[error(
+        "'{name}' is already your own copy — apply this scope to render it again if its files are missing, edit them in place, or remove it and install it again to go back to the source"
+    )]
+    AlreadyForked { name: String },
+
     /// Case 4 of naming a catalog: a qualifier that names no subscription
     /// refuses, listing what is subscribed — never a guess, never a
     /// download.
@@ -277,8 +292,21 @@ pub enum CoreError {
     #[error("source '{source_name}' offers no bundle called '{name}'")]
     NoSuchBundle { name: String, source_name: String },
 
+    /// Test-only fault injection stopped the apply. Never reached in a
+    /// real run: `fail_after` is how the rollback boundaries are exercised.
+    #[error("injected fault")]
+    Injected,
+
+    /// Nothing was left behind, and `cause` is the failure that stopped it
+    /// — kept whole rather than flattened into `reason`, because what a
+    /// caller does about a rollback depends on why: a precondition that
+    /// found the file changed is a reload to offer, and a disk that would
+    /// not take the write is not.
     #[error("apply failed and was rolled back: {reason}")]
-    RolledBack { reason: String },
+    RolledBack {
+        reason: String,
+        cause: Box<CoreError>,
+    },
 
     #[error("{path}: structured edit failed: {message}")]
     ConfigEdit { path: PathBuf, message: String },

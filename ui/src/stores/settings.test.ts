@@ -18,6 +18,9 @@ vi.mock("@/bindings", () => ({
     windowSetZoom: vi.fn(),
     windowZoomState: vi.fn(),
     saveZoom: vi.fn(),
+    installDriftHook: vi.fn(),
+    getManifest: vi.fn(),
+    editorInventory: vi.fn(),
   },
   ZOOM: { min: 50, max: 200, step: 10, default: 100 },
 }));

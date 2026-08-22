@@ -35,6 +35,13 @@ const HOOK_EVENTS = [
   { name: "TaskCompleted", fires: "Before a task is marked complete" },
 ];
 
+/** What the place's manifest is right now, as a copy read from it would
+ *  remember: the mock's stand-in for hashing the file. */
+const base = (scope: Scope): string | null => {
+  const held = store.state.manifests[label(scope)];
+  return held ? JSON.stringify(held) : null;
+};
+
 export const auditHandlers: Record<string, Handler> = {
   audit_all: () => store.state.views,
   apply_plan: ({
@@ -129,17 +136,26 @@ export const auditHandlers: Record<string, Handler> = {
     }
     return view(scope);
   },
-  get_manifest: ({ scope }: { scope: Scope }) =>
-    store.state.manifests[label(scope)] ?? null,
+  get_manifest: ({ scope }: { scope: Scope }) => ({
+    manifest: store.state.manifests[label(scope)] ?? null,
+    base: base(scope),
+  }),
+  // The real write refuses a copy read from a file that has since become
+  // something else. The mock has no file, so the stand-in for "what the
+  // file is" is what the store holds — enough for the dev shell to show
+  // the refusal a stale save gets.
   update_manifest: ({
     scope,
     manifest: m,
+    base: held,
   }: {
     scope: Scope;
     manifest: Manifest_Serialize;
+    base: string | null;
   }) => {
+    if (held !== base(scope)) throw { kind: "stale" };
     store.state.manifests[label(scope)] = m;
-    return view(scope);
+    return { view: view(scope), base: base(scope) };
   },
   editor_inventory: ({ scope }: { scope: Scope }) => {
     const m = store.state.manifests[label(scope)];

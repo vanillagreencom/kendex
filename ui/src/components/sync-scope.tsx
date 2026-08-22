@@ -1,10 +1,10 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useState } from "react";
-import type { AuditView, DismissReason } from "@/bindings";
+import type { AuditView, DismissReason, Scope } from "@/bindings";
 import { ApplyDialog } from "@/components/apply-dialog";
 import { SafetyWarnings } from "@/components/safety-findings-affected";
 import { BlockedFindings } from "@/components/safety-findings-blocked";
-import { ScopeChanges } from "@/components/scope-details";
+import { ScopeChanges, ScopeConflicts } from "@/components/scope-details";
 import { ScopeFooter } from "@/components/scope-footer";
 import { Section } from "@/components/section";
 import { Button } from "@/components/ui/button";
@@ -15,10 +15,11 @@ import {
   scopeSummaryLabel,
 } from "@/lib/copy";
 import { DECISION_ZONE_TITLE } from "@/lib/copy-safety";
-import { mergeDriftRows } from "@/lib/drift-merge";
+import { mergeDriftRows, reviewLists } from "@/lib/drift-merge";
 import { partitionSafety } from "@/lib/group-findings";
 import { scopeName, scopePath } from "@/lib/labels";
 import { evidenceGroups, openOccurrences } from "@/lib/reviewable";
+import { useNavStore } from "@/stores/nav";
 
 /**
  * One project (or Personal), as its own panel.
@@ -31,22 +32,27 @@ import { evidenceGroups, openOccurrences } from "@/lib/reviewable";
  */
 export function SyncScopeCard({
   view,
+  scopes,
   busy,
   onApply,
   onDismiss,
   onSeeUnmanaged,
 }: {
   view: AuditView;
+  /** Every place this page is showing. Two projects whose folders share a
+   *  name are told apart by their parent wherever several places are shown,
+   *  and this card is one of those places — the full path beside it is
+   *  hidden below the wide breakpoint. */
+  scopes: Scope[];
   busy: boolean;
   onApply: (removeOrphans: boolean, allowUnsafe?: string[]) => void;
   onDismiss: (tokens: string[], reason: DismissReason) => void;
   /** Opens the Library's Installed tab on this scope, where adopting lives. */
   onSeeUnmanaged: () => void;
 }) {
+  const goToPackage = useNavStore((s) => s.goToPackage);
   const [applyOpen, setApplyOpen] = useState(false);
-  const changes = mergeDriftRows(
-    view.drift.filter((row) => row.state !== "unmanaged"),
-  );
+  const { changes, conflicts } = reviewLists(view.drift, view.heldBack);
   const unmanaged = mergeDriftRows(
     view.drift.filter((row) => row.state === "unmanaged"),
   );
@@ -70,12 +76,13 @@ export function SyncScopeCard({
   const canApply = view.plan.length > 0 || orphans.length > 0;
   const summary = scopeSummaryLabel({
     changes: changes.length,
+    conflicts: conflicts.length,
     blocked: blockedCount,
     open: openCount,
     unmanaged: unmanaged.length,
   });
   const [open, setOpen] = useState(
-    blockedCount > 0 || openCount > 0 || canApply,
+    blockedCount > 0 || openCount > 0 || canApply || conflicts.length > 0,
   );
   const path = scopePath(view.scope);
 
@@ -94,7 +101,7 @@ export function SyncScopeCard({
           )}
           <span className="flex min-w-0 flex-col">
             <span className="truncate text-[15px] font-semibold tracking-tight">
-              {scopeName(view.scope)}
+              {scopeName(view.scope, scopes)}
             </span>
             <span className="truncate text-[13px] text-muted-foreground">
               {summary ?? NOTHING_TO_DO_HERE}
@@ -147,6 +154,16 @@ export function SyncScopeCard({
               </div>
             </Section>
           ) : null}
+          <ScopeConflicts
+            conflicts={conflicts}
+            onOpen={(row) =>
+              goToPackage({
+                kind: row.kind,
+                name: row.name,
+                scope: view.scope,
+              })
+            }
+          />
           <ScopeChanges changes={changes} />
           <ScopeFooter
             clean={clean}

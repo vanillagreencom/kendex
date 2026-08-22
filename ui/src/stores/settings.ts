@@ -1,4 +1,3 @@
-import { toast } from "sonner";
 import { create } from "zustand";
 import {
   type Appearance,
@@ -7,12 +6,17 @@ import {
   commands,
   ZOOM,
 } from "@/bindings";
+import { offerDriftHook } from "./drift-hook-offer";
 import { useProblemsStore } from "./problems";
 import { useScanStore } from "./scan";
 import { type ZoomSlice, zoomActions } from "./settings-zoom";
 
 interface SettingsState extends ZoomSlice {
   settings: AppSettings | null;
+  /** A write to some project's kendex.toml is in flight from here. It is
+   *  one of the flags holding the Customize Save bar down: every writer of
+   *  that file belongs in that gate, and this store is one. */
+  busy: boolean;
   capabilities: CapabilityRow[];
   load: () => Promise<void>;
   setAppearance: (appearance: Appearance) => Promise<void>;
@@ -28,6 +32,7 @@ async function rescan() {
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
+  busy: false,
   settings: null,
   capabilities: [],
   ...zoomActions(set, get),
@@ -158,32 +163,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       // offer, never an auto-install — it injects into agent context.
       const root =
         (response.data.projects ?? []).find((p) => !before.includes(p)) ?? path;
-      toast.success(`Added ${path.split("/").pop()}`, {
-        action: {
-          label: "Add session drift report",
-          onClick: () => {
-            void commands
-              .installDriftHook({ scope: "project", root })
-              .then((result) => {
-                if (result.status === "ok") {
-                  // False: the scope had other pending changes, so only the
-                  // declaration landed — nothing is applied unreviewed.
-                  toast.success(
-                    result.data
-                      ? "Drift report installed"
-                      : "Drift report added — finish by applying changes in Review",
-                  );
-                  void rescan();
-                } else {
-                  useProblemsStore.getState().showError({
-                    title: "Couldn't install the drift report",
-                    message: result.error,
-                  });
-                }
-              });
-          },
-        },
-      });
+      offerDriftHook(root, path.split("/").pop() ?? path, set);
       await rescan();
       return true;
     }

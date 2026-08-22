@@ -15,11 +15,12 @@ import { commands } from "@/bindings";
 import { Button } from "@/components/ui/button";
 import { auditCounts, needsReviewCount } from "@/lib/audit-counts";
 import { isSearchShortcutKey } from "@/lib/search-shortcut";
+import { visibleUpdateCount } from "@/lib/update-rows";
 import { cn } from "@/lib/utils";
 import { useAuditStore } from "@/stores/audit";
 import { type Page, useNavStore } from "@/stores/nav";
 import { useScanStore } from "@/stores/scan";
-import { useUpdatesStore, visibleUpdateCount } from "@/stores/updates";
+import { useUpdatesStore } from "@/stores/updates";
 
 // One row shape for every nav item, so the icon column and the text column
 // line up down the whole sidebar. The transparent border is load-bearing:

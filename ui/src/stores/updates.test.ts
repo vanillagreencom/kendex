@@ -2,11 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
 import {
+  awaitingForkDecision,
   hiddenUpdates,
-  useUpdatesStore,
   visibleUpdateCount,
   visibleUpdates,
-} from "./updates";
+} from "@/lib/update-rows";
+import { useUpdatesStore } from "./updates";
 
 vi.mock("@/bindings", () => ({
   commands: {
@@ -53,10 +54,14 @@ function row(overrides: Partial<UpdateRow>): UpdateRow {
 
 describe("updates store", () => {
   beforeEach(() => {
-    useUpdatesStore.setState({ rows: [], busy: false, loaded: false });
+    useUpdatesStore.setState({
+      rows: [],
+      busy: false,
+      loaded: false,
+      error: null,
+    });
     vi.clearAllMocks();
   });
-
   it("counts only unmuted updates for the badge — held ones still count", () => {
     const rows = [
       row({ name: "a" }),
@@ -83,6 +88,21 @@ describe("updates store", () => {
     expect(visibleUpdates(rows).map((r) => r.name)).toEqual(["gone", "split"]);
     expect(hiddenUpdates(rows).map((r) => r.name)).toEqual(["muted-gone"]);
     expect(visibleUpdateCount(rows)).toBe(2);
+  });
+
+  // Home asks you to decide what to do about an edited package. A fork is
+  // already the decision, so an edit to it is not a question — the drift
+  // report and the package page both say the same.
+  // Home's row is about the keep-as-your-own decision, which a fork has
+  // already made. It is still held and still has an exit — `check` reports
+  // it and the package page offers the discard — so this is Home being the
+  // quieter surface, not the one disagreeing.
+  it("asks about an edited package, never about an edited fork", () => {
+    const mine = row({ blockedByLocalEdit: true, name: "gh" });
+    const fork = row({ blockedByLocalEdit: true, forked: true, name: "rev" });
+    expect(
+      awaitingForkDecision([mine, fork, row({})]).map((r) => r.name),
+    ).toEqual(["gh"]);
   });
 
   it("muting keeps the row, flagged — and unmuting brings it back", async () => {

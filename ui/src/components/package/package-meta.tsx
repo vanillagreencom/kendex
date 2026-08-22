@@ -9,14 +9,20 @@ import { SectionHeading } from "@/components/section";
 import { StatusLine } from "@/components/status-note";
 import { TagBadges } from "@/components/tag-badge";
 import { Badge } from "@/components/ui/badge";
-import { TAGS_ROW_LABEL } from "@/lib/copy";
-import { groupScopes, type ItemGroup } from "@/lib/derive";
+import {
+  ORIGIN_UNCONFIRMED,
+  ORIGIN_UNREAD,
+  originUnconfirmedTitle,
+  TAGS_ROW_LABEL,
+} from "@/lib/copy";
+import type { ItemGroup } from "@/lib/derive";
 import { kindLabel, scopeName } from "@/lib/labels";
 import { relativeTime } from "@/lib/relative-time";
 import { versionLabel } from "@/lib/versions";
 import { subscription } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 import {
+  indexOrigins,
   originFor,
   originTitle,
   useProvenanceStore,
@@ -28,6 +34,20 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
       <dt className="w-20 shrink-0 text-muted-foreground">{label}</dt>
       <dd className="min-w-0 flex-1">{children}</dd>
     </div>
+  );
+}
+
+/** The origin the last successful read gave, when the read after it failed.
+ *  The store keeps its rows so the row is not blanked, and this is what
+ *  separates the answer it kept from one it just confirmed. */
+function LastKnown({ why }: { why: string }) {
+  return (
+    <span
+      className="ml-1.5 text-muted-foreground text-xs"
+      title={originUnconfirmedTitle(why)}
+    >
+      {ORIGIN_UNCONFIRMED}
+    </span>
   );
 }
 
@@ -46,18 +66,19 @@ export function PackageMetaBlock({
   const provenance = useProvenanceStore((s) => s.rows);
   const loadedProvenance = useProvenanceStore((s) => s.loaded);
   const loadProvenance = useProvenanceStore((s) => s.load);
+  const originError = useProvenanceStore((s) => s.error);
   const goToMarketplace = useNavStore((s) => s.goToMarketplace);
   // A package page can be the first thing opened after launch; the join
   // may not have been read yet, and this line is its only reader here.
   useEffect(() => {
     if (!loadedProvenance) void loadProvenance();
   }, [loadedProvenance, loadProvenance]);
-  const origin = originFor(
-    provenance,
-    group.kind,
-    group.name,
-    groupScopes(group),
-  );
+  // This place's origin, not any place's: the same package can come from a
+  // marketplace here and be your own copy in the next project, and the link
+  // below navigates to whichever this line names.
+  const origin = originFor(indexOrigins(provenance), group.kind, group.name, [
+    primary.scope,
+  ]);
   return (
     <div className="space-y-2.5">
       <SectionHeading>Details</SectionHeading>
@@ -91,10 +112,18 @@ export function PackageMetaBlock({
             >
               {origin.source}
             </button>
+            {originError ? <LastKnown why={originError} /> : null}
           </Row>
         ) : origin?.origin === "own" ? (
           <Row label="From">
             <span title={originTitle(origin)}>Your own</span>
+            {originError ? <LastKnown why={originError} /> : null}
+          </Row>
+        ) : originError ? (
+          <Row label="From">
+            <span className="text-muted-foreground" title={originError}>
+              {ORIGIN_UNREAD}
+            </span>
           </Row>
         ) : null}
         {meta?.current ? (

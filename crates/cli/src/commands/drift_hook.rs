@@ -38,6 +38,12 @@ pub fn install(env: &Env, scope: &Scope, yes: bool) -> CliResult {
             sweepable: Vec::new(),
             kept: Vec::new(),
             safety: Vec::new(),
+            unmeasured: Default::default(),
+            rendered: Default::default(),
+            // This plan is written here rather than by the engine, and it
+            // is about the hook declaration alone — no package's content
+            // is being put back, so there is nothing to account for.
+            acting: Default::default(),
         };
         confirm_and_execute(env, &report, yes)?;
     }

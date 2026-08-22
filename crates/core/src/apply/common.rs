@@ -57,6 +57,9 @@ pub fn execute_common<T>(
         ApplyOutcome {
             applied,
             recovered_first,
+            // Common state is machine-wide and writes no scope manifest;
+            // the caller that needs one writes it through `execute`.
+            manifest_base: super::manifest_base(env, scope),
         },
         extra,
     ))
