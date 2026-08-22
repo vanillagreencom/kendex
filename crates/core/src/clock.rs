@@ -26,13 +26,15 @@ pub fn timestamp() -> String {
     iso_from_unix(unix_now())
 }
 
-/// Whether this is an instant, and not merely shaped like one.
+/// Whether this is spelled the way [`timestamp`] spells an instant:
+/// `YYYY-MM-DDTHH:MM:SS` in fixed-width digits, with an optional fractional
+/// second and an optional offset.
 ///
-/// `YYYY-MM-DDTHH:MM:SS` with an optional fractional second and an optional
-/// offset, range-checked against the calendar — the same shape
-/// [`timestamp`] writes. A record arriving from a file somebody else wrote
-/// carries a date only if it is a date; "2026-13-45T99:99:99Z" is a string.
-pub fn is_instant(value: &str) -> bool {
+/// Shape, not calendar. Nothing reads one of these as a date — they are
+/// printed and compared for exact equality — so what has to be bounded is
+/// the bytes a file somebody else wrote can put on a terminal, not which
+/// days a month has.
+pub fn looks_like_instant(value: &str) -> bool {
     let (date, rest) = match value.split_once('T') {
         Some(split) => split,
         None => return false,
@@ -57,22 +59,9 @@ pub fn is_instant(value: &str) -> bool {
     else {
         return false;
     };
-    let Some(year) = fixed(y, 4) else {
-        return false;
-    };
-    let (Some(month), Some(day)) = (fixed(mo, 2), fixed(d, 2)) else {
-        return false;
-    };
-    let (Some(hour), Some(minute), Some(second)) = (fixed(h, 2), fixed(m, 2), fixed(seconds, 2))
-    else {
-        return false;
-    };
-    (1..=12).contains(&month)
-        && (1..=days_in_month(year, month)).contains(&day)
-        && hour <= 23
-        && minute <= 59
-        // 60 is a leap second, which a clock can legitimately write.
-        && second <= 60
+    [(y, 4), (mo, 2), (d, 2), (h, 2), (m, 2), (seconds, 2)]
+        .into_iter()
+        .all(|(part, width)| fixed(part, width).is_some())
 }
 
 /// A fixed-width run of digits, as its value.
@@ -93,21 +82,6 @@ fn split_offset(time: &str) -> Option<(&str, &str)> {
     let hhmm = offset.get(1..)?;
     let (h, m) = hhmm.split_once(':')?;
     (fixed(h, 2)? <= 23 && fixed(m, 2)? <= 59).then_some((head, offset))
-}
-
-fn days_in_month(year: u32, month: u32) -> u32 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 => {
-            match year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
-            {
-                true => 29,
-                false => 28,
-            }
-        }
-        _ => 0,
-    }
 }
 
 /// Howard Hinnant's civil-from-days: days since 1970-01-01 → (y, m, d).

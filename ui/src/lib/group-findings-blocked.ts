@@ -89,8 +89,7 @@ export function groupFindingsByRule(
   // does: one occurrence nobody has ruled on and the reader still has
   // something to do here.
   for (const group of ordered) {
-    const key = `${group.rule}::${group.message}::${group.remediation}`;
-    const states = decided.get(key) ?? [];
+    const states = decided.get(group.key) ?? [];
     group.settledBy =
       states.length > 0 && states.every((state) => state !== null)
         ? states[0]
@@ -98,10 +97,6 @@ export function groupFindingsByRule(
   }
   return ordered;
 }
-
-// Every location in a rule-group's list tends to share a long directory
-// prefix (the skill's own folder) — printing it on each line just makes the
-// list harder to scan. This strips the longest shared prefix once, trimmed
 
 export interface BlockedGroup {
   kind: ItemKind;

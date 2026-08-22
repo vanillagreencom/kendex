@@ -7,7 +7,8 @@
 //! here is read-side. Installed state is a join over the scope's manifest
 //! and lock, never stored — a bundle's partly-installed count is derived
 //! from its members on every call. Every catalog byte comes through
-//! [`SealedSource`], and a catalog's own words are shown, never acted on.
+//! [`crate::source_read::SealedSource`], and a catalog's own words are
+//! shown, never acted on.
 
 use std::collections::BTreeMap;
 

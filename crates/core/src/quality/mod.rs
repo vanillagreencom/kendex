@@ -85,14 +85,6 @@ pub enum Severity {
 }
 
 impl Severity {
-    /// Every weight a finding can be read at, lightest first.
-    pub const ALL: [Severity; 4] = [
-        Severity::Low,
-        Severity::Medium,
-        Severity::High,
-        Severity::Critical,
-    ];
-
     /// What one finding at this severity costs the safety score.
     pub fn deduction(self) -> u32 {
         match self {

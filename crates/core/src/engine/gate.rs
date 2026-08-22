@@ -205,15 +205,13 @@ pub(super) fn run(
         // neither side learns otherwise unless this is said out loud. One
         // item declared for four tools is one thing to say, so it is
         // gathered here and said once, after the loop.
-        if let Some(review) = &item.author_review {
-            let missed: BTreeSet<String> =
-                earned.unearned.union(&scored.unmatched).cloned().collect();
-            if !missed.is_empty() {
-                unapplied
-                    .entry((item.kind, item.name.clone(), review.publisher.clone()))
-                    .or_default()
-                    .extend(missed);
-            }
+        if let Some(review) = &item.author_review
+            && !earned.unearned.is_empty()
+        {
+            unapplied
+                .entry((item.kind, item.name.clone(), review.publisher.clone()))
+                .or_default()
+                .extend(earned.unearned);
         }
         let mut recorded = manifest.safety_overrides.get(&item.key);
         if let Some(review_hash) = &review_hash

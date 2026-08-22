@@ -33,6 +33,16 @@ unicode-normalization = "0.1"
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
+# A doc citation naming something that no longer exists is worse than none:
+# it sends a reader looking for a symbol the rename already took away. A
+# citation of a private item still names a symbol, and these comments are
+# written for whoever is reading the source rather than for a rendered page,
+# so only the unresolvable kind is a defect — and that kind is caught whether
+# what it named was public or not.
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "allow"
+
 [workspace.lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"

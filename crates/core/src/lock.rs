@@ -329,7 +329,7 @@ fn backfill_requested_reason(lock: &mut Lock) {
 }
 
 /// Load for mutation: a v1 lock is a hard error, never a write target — same
-/// posture as [`crate::manifest::file::load_for_mutation`]. Callers that only
+/// posture as [`crate::manifest::load_for_mutation`]. Callers that only
 /// observe (the audit view) use [`load_file`] instead so a v1 lock degrades
 /// to a note rather than blocking the read.
 pub fn load(path: &Path) -> Result<Lock> {
