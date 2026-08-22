@@ -3,11 +3,11 @@
 # both ways the gate goes quiet leave it present and correct-looking.
 #
 # Below `### Fix Delegation` it reads identically and fires once the round
-# it exists to prevent has been launched. Recorded in a key the
-# panel-scoping step overwrites, it is made and lost with nothing to show
-# for it. Neither is visible in review, so order and delivery are checked
-# mechanically and each check carries a planted control.
-
+# it exists to prevent has been launched. Named in caller context but absent
+# from the delegation template, it is decided and never delivered, because
+# the agent reads the delegation, not the workflow. Neither is visible in
+# review, so order and delivery are checked mechanically and each check
+# carries a planted control.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -56,27 +56,18 @@ check_order "$REVIEW_PR_WF" "review-pr.md gates the fix round before delegating 
 # The phrase alone is not the contract: a gate that fires at two or four, or
 # that names no cycle at all, reads the same and bounds nothing.
 GATE_LINE="$(grep -m1 "$GATE_RE" "$REVIEW_PR_WF" || true)"
-if printf '%s' "$GATE_LINE" | grep -q '`cycles` 3'; then
-  pass "the gate names the cycle it starts at"
+if printf '%s' "$GATE_LINE" | grep -q '`cycles` at 2'; then
+  pass "the gate names the counter value the third round enters with"
 else
   fail "the gate does not pin a threshold, so it bounds nothing"
 fi
 
-# Three is the last cycle that delegates: at four the cap reports and exits,
-# so a gate claiming to govern later rounds would license a round the cap
-# forbids.
-if sed -n '/### Fix Delegation/,/Run Workflow.*dev-fix.md/p' "$REVIEW_PR_WF" \
-  | grep -qi 'last cycle that delegates'; then
-  pass "the gate says three is the last cycle that delegates"
+# Every round the cap allows must pass through the gate; a threshold that
+# lets the last one through converges nothing that matters.
+if grep -q 'when `cycles` reaches 4' "$REVIEW_PR_WF"; then
+  pass "the cap the gate has to cover still stops the loop at four rounds"
 else
-  fail "the gate does not say where delegation stops, so the cap and the gate can disagree"
-fi
-
-if grep -q 'when `cycles` reaches 4' "$REVIEW_PR_WF" \
-  && grep -q 'report the outstanding items after that pass and proceed' "$REVIEW_PR_WF"; then
-  pass "the cap still reports and exits at four rather than delegating"
-else
-  fail "the cap no longer exits to the verdict pass at four"
+  fail "the cap moved, so the gate's threshold no longer covers every round it allows"
 fi
 
 # A finding that leaves items is disposed of one way or the other; absent from
@@ -120,9 +111,9 @@ plant() {
   printf '%s' "$scratch"
 }
 
-CTRL_THRESHOLD="$(plant threshold 's/At .cycles. 3, converge/Converge/')"
+CTRL_THRESHOLD="$(plant threshold 's/.cycles. at 2/no particular count/')"
 CTRL_LINE="$(grep -m1 "$GATE_RE" "$CTRL_THRESHOLD" || true)"
-if printf '%s' "$CTRL_LINE" | grep -q '`cycles` 3'; then
+if printf '%s' "$CTRL_LINE" | grep -q '`cycles` at 2'; then
   fail "control: a gate with its threshold removed still reads as pinned"
 else
   pass "control: a gate with no threshold is detectable"
@@ -138,7 +129,7 @@ fi
 # A gate below the delegation fires after the round it exists to prevent.
 CTRL_LATE="$TMP_ROOT/pr-late.md"
 grep -v "$GATE_RE" "$REVIEW_PR_WF" > "$CTRL_LATE"
-printf '\n**From `cycles` 3 on, converge before delegating this round** — moved below.\n' >> "$CTRL_LATE"
+printf '\n**From the third fix round on, converge before delegating it** — moved below.\n' >> "$CTRL_LATE"
 gate_late="$(line_of "$CTRL_LATE" "$GATE_RE" || true)"
 deleg_late="$(line_of "$CTRL_LATE" 'Run Workflow.*dev-fix.md' || true)"
 if [[ -n "$gate_late" && -n "$deleg_late" ]] && (( gate_late > deleg_late )); then

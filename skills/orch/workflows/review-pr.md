@@ -268,10 +268,10 @@ Collect blockers and `category == "fix"` suggestions from the appended JSONs. No
 
 Omit empty categories. Decline any item that cannot affect real usage with one line of rationale here, per [SKILL.md § The Cycle](../SKILL.md#the-cycle) — it is neither fixed nor filed, and it is reported in § 8.
 
-**Disposition is by rule, not by prompt** — never present a selection menu over the findings. Every blocker and `category == "fix"` suggestion that survives declining goes to the fix round below, in EVERY decision mode: which findings to fix is a mechanics question the rule settles, so `ORCH_DECISION_MODE` does not gate it. The always-ask set in [SKILL.md § The Cycle](../SKILL.md#the-cycle) is unaffected and still applies. Nothing left after declines → § 5. **`cycles` already at 4 → § 5 as well**: the cap has been reached, so the blockers a verification pass surfaces there are reported, not answered by another round.
+**Disposition is by rule, not by prompt** — never present a selection menu over the findings. Every blocker and `category == "fix"` suggestion that survives declining goes to the fix round below, in EVERY decision mode: which findings to fix is a mechanics question the rule settles, so `ORCH_DECISION_MODE` does not gate it. The always-ask set in [SKILL.md § The Cycle](../SKILL.md#the-cycle) is unaffected and still applies. Nothing left after declines → § 5.
 
 ### Fix Delegation
-**At `cycles` 3, converge before delegating this round** ([SKILL.md § The Cycle](../SKILL.md#the-cycle)): a diff still yielding new blockers is answered by cutting a surface the issue did not require, by fixing the recurring class structurally, or by splitting — decided BEFORE the delegation below, and carried into it so the round is told what shape its answer takes. Three is the last cycle that delegates; at 4 the cap below reports and exits. Findings that leave `items` are disposed of, never dropped: declined per [finding-disposition](../references/finding-disposition.md) when their surface is gone, recorded in `escalated_items` when it moved.
+**From the third fix round on, converge before delegating it** ([SKILL.md § The Cycle](../SKILL.md#the-cycle)): `cycles` counts rounds already finished, so a third round enters here with `cycles` at 2. A diff still yielding new blockers is answered by cutting a surface the issue did not require, by fixing the recurring class structurally, or by splitting — decided BEFORE the delegation below, and carried into it so the round is told what shape its answer takes. Findings that leave `items` are disposed of, never dropped: declined per [finding-disposition](../references/finding-disposition.md) when their surface is gone, recorded in `escalated_items` when it moved.
 
 Never fix as the main agent.
 
@@ -279,7 +279,7 @@ Never fix as the main agent.
 .agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]
 ```
 
-**Run Workflow**: `⤵ workflows/dev-fix.md § 1-3 → § 4 re-review` with context `worktree`, `lifecycle: "managed"`, `dev_agent`, `issue_id`, `items` (every blocker plus every `category == "fix"` suggestion that survived declining, each formatted `#[N] | [Agent] | [Location]` with Description and Recommendation), `source: pr-review`, and `convergence` (the recorded `choice` and `reason`) whenever `cycles` reached 3.
+**Run Workflow**: `⤵ workflows/dev-fix.md § 1-3 → § 4 re-review` with context `worktree`, `lifecycle: "managed"`, `dev_agent`, `issue_id`, `items` (every blocker plus every `category == "fix"` suggestion that survived declining, each formatted `#[N] | [Agent] | [Location]` with Description and Recommendation), `source: pr-review`, and `convergence` (the round's `choice` and `reason`) whenever `cycles` is 2 or more.
 
 ### Bounded Re-Review
 
