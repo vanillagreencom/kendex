@@ -200,7 +200,9 @@ describe("a declaration whose files are already there", () => {
           {
             key: "skill:deploy:claude",
             blocking: true,
+            files: true,
             keep: true,
+            enter: true,
             replace: true,
           },
         ],

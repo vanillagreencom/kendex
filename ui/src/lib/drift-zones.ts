@@ -21,9 +21,19 @@ export class Exits {
     return !!this.of(row)?.blocking;
   }
 
-  /** Whether adoption can keep what is at this position. */
+  /** Whether this place lets the item be kept. */
   keep(row: DriftRow): boolean {
     return !!this.of(row)?.keep;
+  }
+
+  /** Whether adoption acts through this tool. */
+  enter(row: DriftRow): boolean {
+    return !!this.of(row)?.enter;
+  }
+
+  /** Whether this row is about files sitting where the item installs. */
+  files(row: DriftRow): boolean {
+    return !!this.of(row)?.files;
   }
 
   /** Whether installing what kendex.toml asks for over it is an answer. */
@@ -53,12 +63,19 @@ export interface DriftZones {
   orphans: MergedDriftRow[];
 }
 
+const itemKey = (row: DriftRow) => `${row.kind}:${row.name}`;
+
 export function driftZones(rows: DriftRow[], exits: Exits): DriftZones {
-  // Every place with files at an item's position, whether or not anything
-  // can be done about it there. Apply cannot move any of them, so a row
-  // left out of this sits under a button that will not touch it — and a
+  // Items with files sitting where they install. Every conflict such an
+  // item has belongs on its row — Apply cannot move any of them, and a
   // place nothing can settle takes the buttons off the ones beside it.
-  const inTheWay = rows.filter((row) => exits.blocking(row));
+  // A conflict of another kind, alone, is not a decision about files.
+  const withFiles = new Set(
+    rows.filter((row) => exits.files(row)).map(itemKey),
+  );
+  const inTheWay = rows.filter(
+    (row) => exits.blocking(row) && withFiles.has(itemKey(row)),
+  );
   return {
     inTheWay: mergeDriftRows(inTheWay),
     changes: mergeDriftRows(

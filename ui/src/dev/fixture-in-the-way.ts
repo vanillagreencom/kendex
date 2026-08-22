@@ -78,20 +78,19 @@ export function inTheWayDrift(acme: Scope): DriftRow[] {
  *  link is never written over, and a folder where a file goes is never
  *  kept as it stands. */
 export const IN_THE_WAY_EXITS: RowExits[] = [
-  {
-    key: "skill:release-notes:claude",
-    blocking: true,
-    keep: true,
-    replace: true,
-  },
-  {
-    key: "skill:release-notes:codex",
-    blocking: true,
-    keep: true,
-    replace: true,
-  },
-  { key: "hook:pre-commit:claude", blocking: true, keep: true, replace: true },
-  { key: "agent:scout:claude", blocking: true, keep: false, replace: true },
-  { key: "skill:browser:claude", blocking: true, keep: true, replace: false },
-  { key: "skill:browser:codex", blocking: true, keep: false, replace: false },
+  row("skill:release-notes:claude", { keep: true, enter: true, replace: true }),
+  row("skill:release-notes:codex", { keep: true, enter: true, replace: true }),
+  row("hook:pre-commit:claude", { keep: true, enter: true, replace: true }),
+  row("agent:scout:claude", { keep: false, enter: true, replace: true }),
+  // One real folder at Claude Code's place, read by Codex through a
+  // shortcut: kept through the tool that holds it, and never written over.
+  row("skill:browser:claude", { keep: true, enter: true, replace: false }),
+  row("skill:browser:codex", { keep: true, enter: false, replace: false }),
 ];
+
+function row(
+  key: string,
+  exits: Pick<RowExits, "keep" | "enter" | "replace">,
+): RowExits {
+  return { key, blocking: true, files: true, ...exits };
+}

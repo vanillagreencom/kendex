@@ -38,7 +38,16 @@ export interface AuditCounts {
  *  question `driftZones` groups by, asked of the same answer, so the two
  *  never quote different numbers. */
 function blocking(view: AuditView, row: DriftRow): boolean {
-  return new Exits(view.exits).blocking(row);
+  const exits = new Exits(view.exits);
+  return (
+    exits.blocking(row) &&
+    view.drift.some(
+      (other) =>
+        other.kind === row.kind &&
+        other.name === row.name &&
+        exits.files(other),
+    )
+  );
 }
 
 function countMerged(

@@ -64,7 +64,24 @@ pub(crate) fn read_tree(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>> {
                     )),
                 ));
             }
-            files.push((rel, fs::read(&path).map_err(|e| CoreError::io(&path, e))?));
+            // Read under the same budget the size was checked against: a
+            // file that grows between the two would otherwise be read
+            // whole, and the cap would hold only for files that sat still.
+            let mut body = Vec::new();
+            let room = MAX_CAPTURE_BYTES.saturating_sub(*bytes) + meta.len();
+            fs::File::open(&path)
+                .and_then(|file| {
+                    use std::io::Read;
+                    file.take(room + 1).read_to_end(&mut body)
+                })
+                .map_err(|e| CoreError::io(&path, e))?;
+            if body.len() as u64 > room {
+                return Err(CoreError::io(
+                    &path,
+                    std::io::Error::other("it grew while adopt was reading it"),
+                ));
+            }
+            files.push((rel, body));
         }
         Ok(())
     }

@@ -21,7 +21,9 @@ const exit = (
 ): RowExits => ({
   key: `skill:browser:${harness}`,
   blocking: true,
+  files: true,
   keep,
+  enter: keep,
   replace,
 });
 
@@ -85,5 +87,34 @@ describe("a place with files and no way out at all", () => {
     expect(zones.changes).toHaveLength(0);
     expect(counts.inTheWay).toBe(1);
     expect(counts.changes).toBe(0);
+  });
+});
+
+describe("a conflict of another kind, alone", () => {
+  // A revision clash or a source rebind is a dead stop, so it takes the
+  // exits off the rows beside it — but on its own it is not a decision
+  // about files, and telling the reader to move files settles nothing.
+  it("stays where Apply lists it", () => {
+    const clash: DriftRow = { ...row("claude") };
+    const only = view(
+      "/w/a",
+      [clash],
+      [
+        {
+          key: "skill:browser:claude",
+          blocking: true,
+          files: false,
+          keep: false,
+          enter: false,
+          replace: false,
+        },
+      ],
+    );
+    const zones = driftZones(only.drift, new Exits(only.exits));
+    const counts = auditCounts([only]);
+
+    expect(zones.inTheWay).toHaveLength(0);
+    expect(zones.changes).toHaveLength(1);
+    expect(counts.inTheWay).toBe(0);
   });
 });

@@ -2157,7 +2157,9 @@ export type ReportRouteView = {
 
 /**
  *  What one installation of an item is waiting on, and what may be done
- *  about it.
+ *  about it. Every question a surface asks about a blocked row is answered
+ *  here, because they are not the same question and answering one of them
+ *  from another is how a page ends up drawing a button the plan refuses.
  */
 export type RowExits = {
 	/**  `kind:name:harness`, the row this describes. */
@@ -2169,10 +2171,27 @@ export type RowExits = {
 	 */
 	blocking: boolean,
 	/**
-	 *  Whether adoption can keep what is at this position — the shape
-	 *  allows it, and the tool has something here to take.
+	 *  Whether this row is about files sitting where the item installs —
+	 *  which is what the two exits are for. A revision clash or a source
+	 *  rebind is not: moving files settles nothing there, and it belongs
+	 *  with the changes rather than under a decision about files.
+	 */
+	files: boolean,
+	/**
+	 *  Whether this place lets the item be kept. The shape has to be one
+	 *  adoption can take, and it has to be reachable — either here, or
+	 *  through the tool holding the folder this one reads by a shortcut.
+	 *  A place that fails this stops the whole item, since keeping is one
+	 *  move for all of it.
 	 */
 	keep: boolean,
+	/**
+	 *  Whether adoption acts through this tool. A tool reading the item
+	 *  through a shortcut somebody made has nothing at its own place to
+	 *  take: its share is kept by the tool that holds the folder, so it is
+	 *  not named in the command.
+	 */
+	enter: boolean,
 	/**  Whether installing what the manifest asks for over it is an answer. */
 	replace: boolean,
 };

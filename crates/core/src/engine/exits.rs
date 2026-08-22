@@ -13,7 +13,9 @@ use crate::env::Env;
 use crate::model::Scope;
 
 /// What one installation of an item is waiting on, and what may be done
-/// about it.
+/// about it. Every question a surface asks about a blocked row is answered
+/// here, because they are not the same question and answering one of them
+/// from another is how a page ends up drawing a button the plan refuses.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RowExits {
@@ -23,9 +25,22 @@ pub struct RowExits {
     /// the whole item, so one place nothing can settle takes the offers
     /// off every other place too.
     pub blocking: bool,
-    /// Whether adoption can keep what is at this position — the shape
-    /// allows it, and the tool has something here to take.
+    /// Whether this row is about files sitting where the item installs —
+    /// which is what the two exits are for. A revision clash or a source
+    /// rebind is not: moving files settles nothing there, and it belongs
+    /// with the changes rather than under a decision about files.
+    pub files: bool,
+    /// Whether this place lets the item be kept. The shape has to be one
+    /// adoption can take, and it has to be reachable — either here, or
+    /// through the tool holding the folder this one reads by a shortcut.
+    /// A place that fails this stops the whole item, since keeping is one
+    /// move for all of it.
     pub keep: bool,
+    /// Whether adoption acts through this tool. A tool reading the item
+    /// through a shortcut somebody made has nothing at its own place to
+    /// take: its share is kept by the tool that holds the folder, so it is
+    /// not named in the command.
+    pub enter: bool,
     /// Whether installing what the manifest asks for over it is an answer.
     pub replace: bool,
 }
@@ -33,11 +48,14 @@ pub struct RowExits {
 /// What one row is waiting on. Read by the page through the audit and by
 /// the CLI directly, so the two never answer this differently.
 pub fn for_row(env: &Env, scope: &Scope, row: &DriftRow) -> RowExits {
+    let enter = super::adopt::can_keep_for(env, scope, row.kind, &row.name, row.harness);
     RowExits {
         key: format!("{}:{}:{}", row.kind.name(), row.name, row.harness.name()),
         blocking: row.dead_stop(),
+        files: row.cause.is_some(),
         keep: row.cause.is_some_and(DriftCause::can_keep)
-            && super::adopt::can_keep_for(env, scope, row.kind, &row.name, row.harness),
+            && (enter || row.cause == Some(DriftCause::SharedLink)),
+        enter,
         replace: row.cause.is_some_and(DriftCause::can_replace),
     }
 }

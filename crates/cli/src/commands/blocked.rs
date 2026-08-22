@@ -65,6 +65,15 @@ fn exits_under<'a>(env: &Env, rows: &[&'a DriftRow], row: &&'a DriftRow) -> Vec<
     if !row.dead_stop() {
         return Vec::new();
     }
+    // Only where the item has files at its position. A revision clash or a
+    // source rebind is a dead stop too, and telling the reader to move
+    // files aside settles nothing there.
+    if !rows
+        .iter()
+        .any(|other| other.kind == row.kind && other.name == row.name && other.cause.is_some())
+    {
+        return Vec::new();
+    }
     // Every conflict the item has, not only the ones with files in the
     // way: keeping is one move for the whole item and the engine refuses
     // one it could only half settle, so a hard conflict beside them — a
@@ -91,14 +100,19 @@ fn exits_under<'a>(env: &Env, rows: &[&'a DriftRow], row: &&'a DriftRow) -> Vec<
 /// where every one of them is wholly replaceable. Printed on the strength
 /// of a single item, it is a command guaranteed to fail.
 fn say_scope_exit(rows: &[&DriftRow]) {
-    let mut blocked = rows
+    let files: Vec<&&DriftRow> = rows.iter().filter(|row| row.cause.is_some()).collect();
+    let replaceable = files
         .iter()
-        .filter(|row| row.cause.is_some_and(DriftCause::in_the_way))
-        .peekable();
-    let replaceable = blocked.peek().is_some()
-        && rows
-            .iter()
-            .all(|row| !row.dead_stop() || row.cause.is_some_and(DriftCause::can_replace));
+        .any(|row| row.cause.is_some_and(DriftCause::in_the_way))
+        && rows.iter().all(|row| {
+            // A conflict on an item with no files at its position is not
+            // one this flag ever reaches.
+            !row.dead_stop()
+                || !files
+                    .iter()
+                    .any(|other| other.kind == row.kind && other.name == row.name)
+                || row.cause.is_some_and(DriftCause::can_replace)
+        });
     if let (true, Some(row)) = (replaceable, rows.first()) {
         say(&format!(
             "  to install what kendex.toml asks for instead: kendex apply --replace-unmanaged{}",
@@ -146,17 +160,16 @@ fn keep_exit(env: &Env, item: &[&DriftRow]) -> String {
     };
     let mut tools: Vec<HarnessId> = Vec::new();
     for row in item {
-        // Core's answer, not a second reading of the cause. A place it
-        // cannot keep is skipped only where the tool reads the item
-        // through a shortcut somebody made — there the tool holding the
-        // folder keeps it for both. Anywhere else that place is one the
-        // offer would leave behind, and keeping is one move for the whole
-        // item, so the files move out of the way by hand instead.
-        let keep = kendex_core::engine::exits::for_row(env, &row.scope, row).keep;
-        if !keep && row.cause != Some(DriftCause::SharedLink) {
+        // Core's answers, not a second reading of the cause. A shape it
+        // cannot take stops the whole item, since keeping is one move for
+        // all of it; a tool with nothing at its own place is a different
+        // thing and simply is not named, because the tool holding the
+        // folder keeps it for both.
+        let exits = kendex_core::engine::exits::for_row(env, &row.scope, row);
+        if !exits.keep {
             return away;
         }
-        if keep && !tools.contains(&row.harness) {
+        if exits.enter && !tools.contains(&row.harness) {
             tools.push(row.harness);
         }
     }

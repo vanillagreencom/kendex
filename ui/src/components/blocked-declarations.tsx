@@ -81,7 +81,7 @@ export function BlockedDeclarations({
   const toolsOf = (group: MergedDriftRow) => [
     ...new Set(
       group.installations
-        .filter((row) => exits.keep(row))
+        .filter((row) => exits.enter(row))
         .map((row) => row.harness),
     ),
   ];
@@ -111,9 +111,13 @@ export function BlockedDeclarations({
           // adoption can be entered through, which is a different question
           // — a folder several tools share is kept through whichever of
           // them actually holds it.
+          // Every place has to let the item be kept, and at least one has
+          // to be a place adoption acts through: a folder several tools
+          // share is kept through whichever of them actually holds it.
           const keepableHere =
             adoptable.includes(group.kind) &&
-            group.installations.every((row) => exits.keep(row));
+            group.installations.every((row) => exits.keep(row)) &&
+            group.installations.some((row) => exits.enter(row));
           const replaceable = group.installations.every((row) =>
             exits.replace(row),
           );

@@ -19,6 +19,15 @@ function row(harness: HarnessId): DriftRow {
   };
 }
 
+const exit = (harness: HarnessId, enter: boolean): RowExits => ({
+  key: `skill:browser:${harness}`,
+  blocking: true,
+  files: true,
+  keep: true,
+  enter,
+  replace: false,
+});
+
 const render = (exits: RowExits[]) =>
   renderToStaticMarkup(
     <BlockedDeclarations
@@ -37,20 +46,7 @@ describe("a folder shared through a shortcut", () => {
   // be kept; whether this tool is one it can be kept through is core's
   // answer, and a button drawn without it fails on the click.
   it("offers Keep while a tool it can be entered through is blocked", () => {
-    const html = render([
-      {
-        key: "skill:browser:claude",
-        blocking: true,
-        keep: true,
-        replace: false,
-      },
-      {
-        key: "skill:browser:codex",
-        blocking: true,
-        keep: true,
-        replace: false,
-      },
-    ]);
+    const html = render([exit("claude", true), exit("codex", false)]);
 
     expect(html).toContain(KEEP_FILES_LABEL);
   });
