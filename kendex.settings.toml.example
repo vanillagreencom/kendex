@@ -256,7 +256,7 @@ SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.6-sol -s read-only -c model_reas
 # SECOND_OPINION_PI_DEEPSEEK_MODEL = "deepseek"
 
 # Seconds to wait for the external CLI.
-SECOND_OPINION_TIMEOUT = "300"
+SECOND_OPINION_TIMEOUT = "1080"
 
 # Home for review/audit records written without --output; a directory the
 # script CREATES is seeded with a "*" .gitignore (a pre-existing one is

@@ -169,6 +169,12 @@ pub(super) fn position(
 /// position is never named in an offer: adoption works at that position and
 /// nowhere else, and the folder a link points at is reached through the
 /// tool whose own place is the link.
+///
+/// A skill is a folder holding a `SKILL.md` — that is what the local source
+/// finds again afterwards. Kept without one, the folder goes to the trash,
+/// the declaration is rewritten around a source that has nothing to give,
+/// and the apply that follows installs nothing: the reader is told their
+/// files were kept and they are gone.
 pub fn can_keep_for(
     env: &Env,
     scope: &Scope,
@@ -177,8 +183,10 @@ pub fn can_keep_for(
     harness: HarnessId,
 ) -> bool {
     supports(kind)
-        && position(env, scope, kind, name, harness)
-            .is_some_and(|path| path.exists() || path.is_symlink())
+        && position(env, scope, kind, name, harness).is_some_and(|path| match kind {
+            ItemKind::Skill => path.join("SKILL.md").is_file(),
+            _ => path.exists() || path.is_symlink(),
+        })
 }
 
 /// Where in the scope's local source the kept content lands. Read wherever

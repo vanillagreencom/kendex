@@ -21,6 +21,7 @@ fn hook_upsert_is_idempotent_and_preserves_unrelated_keys() {
 
     let removed = ConfigEdit::RemoveHook {
         event: None,
+        matcher: None,
         command: "bash guard.sh".into(),
     }
     .apply(&once)

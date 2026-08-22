@@ -230,7 +230,6 @@ pub(crate) fn declared_over_existing_files(
                 // writes somewhere new, and a key alone would call that new
                 // position ours while a stranger's files sit on it.
                 let claim = Claim {
-                    locked: true,
                     replace_unmanaged: false,
                 };
                 let occupied = installation_paths(env, scope, manifest, kind, name, decl, harness)

@@ -1,7 +1,7 @@
 .github/workflows/review-gate-writer.yml	652
 crates/app/gen/schemas/desktop-schema.json	2590
 crates/app/gen/schemas/linux-schema.json	2590
-docs/ARCHITECTURE.md	1276
+docs/ARCHITECTURE.md	1301
 hooks/block-repo-copy.sh	511
 hooks/pre-commit-check.sh	423
 pi-extensions/pi-agents-tmux/extensions/subagent/browser.ts	650
@@ -112,7 +112,7 @@ skills/orch/tests/ci_wait.sh	930
 skills/orch/tests/lanes.sh	890
 skills/orch/tests/oversee_watch.sh	814
 skills/orch/tests/queue_wait.sh	943
-skills/orch/workflows/review-pr.md	450
+skills/orch/workflows/review-pr.md	451
 skills/preflight/scripts/preflight	1016
 skills/review-gate/scripts/pr-watch.sh	820
 skills/review-gate/scripts/review-predicate-selftest.sh	2607
@@ -122,7 +122,7 @@ skills/review-gate/tests/e2e-sandbox.sh	898
 skills/review-gate/tests/pr-watch.test.sh	1158
 skills/review-gate/tests/review-predicate-selftest.test.sh	929
 skills/review-gate/tests/review-writer-template.test.sh	920
-skills/second-opinion/scripts/second-opinion	2506
+skills/second-opinion/scripts/second-opinion	2570
 skills/second-opinion/tests/cli-failure-gate.test.sh	1211
 skills/second-opinion/tests/lane-scratch-durability.test.sh	999
 skills/second-opinion/tests/review-dual-model.test.sh	1516

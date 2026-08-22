@@ -121,6 +121,26 @@ describe("nav store", () => {
     expect(useNavStore.getState().libraryFilter).toBeNull();
   });
 
+  it("hands off an empty filter when a link asks for everything", () => {
+    useNavStore.getState().goToLibrary();
+
+    expect(useNavStore.getState().libraryFilter).not.toBeNull();
+  });
+
+  it("hands off where a link asks the Library to look", () => {
+    useNavStore.getState().goToLibrary({ scope: { project: "/x" } });
+
+    expect(useNavStore.getState().libraryFilter?.scope).toEqual({
+      project: "/x",
+    });
+  });
+
+  it("hands off a link asking for the personal setup alone", () => {
+    useNavStore.getState().goToLibrary({ scope: "global" });
+
+    expect(useNavStore.getState().libraryFilter?.scope).toBe("global");
+  });
+
   it("pushes the prior page onto history on a cross-page nav", () => {
     useNavStore.getState().goToLibrary();
 

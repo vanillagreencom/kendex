@@ -1,5 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::collections::BTreeMap;
 
 use crate::apply::{Op, Plan, PlannedOp};
 use crate::env::Env;
@@ -33,10 +32,12 @@ mod gate;
 mod gemini;
 mod holds;
 mod item_plan;
+mod item_record;
 mod item_source;
 mod observed;
 pub mod ops;
 mod owned;
+pub(crate) mod pi_hooks_move;
 mod plan_pass;
 mod planned;
 mod removal;
@@ -114,37 +115,25 @@ pub fn plan_scope(
     let state = state;
     let mut drift = Vec::new();
     let mut ops: Vec<PlannedOp> = Vec::new();
-    let mut new_lock = Lock {
-        version: crate::lock::LOCK_VERSION,
-        entries: BTreeMap::new(),
-        sources: source_revisions(manifest, lock, &state),
-        // Evidence carried forward; only seeding and refresh may move it.
-        settings_seeds: lock.settings_seeds.clone(),
-    };
+    let mut new_lock = fresh_lock(manifest, lock, &state);
     let mut written = tree_plan::Written::default();
     let mut config_edits = config_edits::ConfigEditPlan::default();
 
     plan_manifest_write(env, scope, repo_moved, manifest, &state, &mut ops)?;
 
-    // Every position this scope's installs recorded writing — including the
-    // ones an earlier install wrote under another kind's name, and the ones
-    // several harnesses share. Ownership is a property of the path, not of
-    // the entry asking about it (invariant 6): read per key, one harness
-    // would call another harness's copy of the same tree a stranger's, and
-    // the take-over would then be free to destroy it.
-    let owned_paths: BTreeSet<PathBuf> = lock
-        .entries
-        .values()
-        .flat_map(|entry| owned::installed(env, scope, entry).files)
-        .collect();
-
+    // Answered before anything is planned, and read again when the move is
+    // planned: a pi hook whose copy under the name pi reserved is not this
+    // pass's to take holds whole, so the fresh rendering never quietly
+    // takes over from bytes the person kept.
+    let legacy_pi = pi_hooks_move::preflight(env, scope, lock, options, &state);
     plan_pass::plan_items(
         env,
         &state,
         scope,
         lock,
         options,
-        &owned_paths,
+        &owned::paths(env, scope, lock),
+        &legacy_pi,
         &mut drift,
         &mut ops,
         &mut config_edits,
@@ -158,6 +147,26 @@ pub fn plan_scope(
     // planned, so anything still wanted is known, and no path goes to the
     // trash twice.
     let mut guard = removal::TrashGuard::new(&state.items);
+
+    // The reserved-name move reads both records: the lock says what
+    // kendex may take, and the desired state says whether a replacement is
+    // coming — a hook nothing declares any more is retired outright, one
+    // this pass could not render keeps what it has.
+    let mut moved_notes = Vec::new();
+    let moved_out = pi_hooks_move::plan_move(
+        env,
+        scope,
+        manifest,
+        lock,
+        &state,
+        &legacy_pi,
+        &mut pi_hooks_move::Sink {
+            ops: &mut ops,
+            guard: &mut guard,
+            config_edits: &mut config_edits,
+            notes: &mut moved_notes,
+        },
+    )?;
     removal::stale_emitted(&state, lock, &mut guard, &mut ops)?;
 
     let refused_keys = plan_pass::plan_refusals(
@@ -165,6 +174,7 @@ pub fn plan_scope(
         scope,
         lock,
         &state,
+        &legacy_pi,
         &mut guard,
         &mut drift,
         &mut ops,
@@ -179,6 +189,7 @@ pub fn plan_scope(
         lock,
         &state,
         options,
+        &legacy_pi,
         &refused_keys,
         &mut guard,
         &mut drift,
@@ -187,7 +198,10 @@ pub fn plan_scope(
         &mut new_lock,
     )?;
 
-    plan_config_edits(config_edits, &mut ops)?;
+    // Written here and nowhere else: every entry this pass keeps is in
+    // the record by now, the sweep's carry-forwards included.
+    pi_hooks_move::record_finished(&mut new_lock, &moved_out);
+    plan_config_edits(env, scope, config_edits, &mut ops)?;
     let set_changes = set_changes(scope, lock, &new_lock);
     let kept = kept_members(scope, lock, &new_lock, &options.uninstalled_bundles);
     plan_lock_write(env, scope, disk_lock, new_lock, &mut ops)?;
@@ -207,11 +221,26 @@ pub fn plan_scope(
         kept,
         safety,
     };
+    report.notes.extend(moved_notes);
     unmanaged_rows(env, scope, manifest, lock, &state.items, &mut report.drift);
     takeover::refuse_unsettled_takeover(options, &report.drift)?;
     Ok(report)
 }
 
+/// The record this pass will write, before any of it is filled in: the
+/// per-source resolutions it just made, and the seeding evidence carried
+/// forward — only seeding and refresh may move that.
+fn fresh_lock(manifest: &Manifest, lock: &Lock, state: &desired::DesiredState) -> Lock {
+    Lock {
+        version: crate::lock::LOCK_VERSION,
+        entries: BTreeMap::new(),
+        sources: source_revisions(manifest, lock, state),
+        settings_seeds: lock.settings_seeds.clone(),
+    }
+}
+
+/// What earlier installs put on disk under another kind's name. A path
+/// one of them wrote is ours to replace, whichever entry holds it now.
 /// The plan's one manifest write, when anything needs it: skills an agent
 /// gained upstream or a review of findings this run was asked to record
 /// take the full serialized write — or, with neither, the repository move

@@ -19,21 +19,29 @@ use super::{DriftRow, DriftState, config_edits};
 /// precondition can hold; per-edit preconditions against the same original
 /// bytes cannot.
 pub(super) fn plan_config_edits(
+    env: &Env,
+    scope: &Scope,
     config_edits: config_edits::ConfigEditPlan,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<()> {
     for (path, (labels, edits)) in config_edits.by_file {
+        // A settings file of somebody's own may be a link they made, and
+        // kendex edits it in place, link kept and target updated. The
+        // registries it writes for pi's carrier are not that: a link
+        // there is refused when the plan is made, so the op binds that
+        // proof along with the bytes rather than leaving the window
+        // between the two open.
+        let pre = match crate::harness::pi::is_hook_registry(env, scope, &path) {
+            true => crate::apply::Pre::plain_observed(&path)?,
+            false => crate::apply::Pre::observed(&path)?,
+        };
         let file = path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.display().to_string());
         ops.push(PlannedOp {
             description: format!("Update {file} ({})", labels.join(", ")),
-            op: Op::EditFile {
-                pre: crate::apply::Pre::observed(&path)?,
-                path,
-                edits,
-            },
+            op: Op::EditFile { pre, path, edits },
         });
     }
     Ok(())

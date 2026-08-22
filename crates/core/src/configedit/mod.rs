@@ -2,9 +2,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 mod copilot;
+mod nested;
 mod text;
 
 use copilot::{remove_copilot_hook, upsert_copilot_hook};
+use nested::{remove_hook, upsert_hook};
 use text::codex_enable_hooks;
 pub use text::{remove_marker_block, upsert_marker_block};
 
@@ -22,10 +24,15 @@ pub enum ConfigEdit {
         command: String,
         timeout: Option<u32>,
     },
-    /// Remove our handler (from every event when `event` is None); empty
-    /// groups and events are pruned.
+    /// Remove our handler (from every event when `event` is None, and
+    /// from every matcher within it when `matcher` is None); empty groups
+    /// and events are pruned. A matcher names one group: a command the
+    /// person also registered under a matcher of their own is theirs, and
+    /// removing by the command alone would take it with ours.
     RemoveHook {
         event: Option<String>,
+        #[serde(default)]
+        matcher: Option<String>,
         command: String,
     },
     /// copilot hook file: upsert our entry under `hooks.<event>`, replacing
@@ -41,6 +48,8 @@ pub enum ConfigEdit {
     },
     RemoveCopilotHook {
         event: Option<String>,
+        #[serde(default)]
+        matcher: Option<String>,
         command: String,
     },
     /// `mcpServers.<name>` upsert with a full value.
@@ -118,7 +127,11 @@ impl ConfigEdit {
                 command,
                 timeout,
             } => upsert_hook(object, event, matcher.as_deref(), command, *timeout),
-            ConfigEdit::RemoveHook { event, command } => {
+            ConfigEdit::RemoveHook {
+                event,
+                matcher,
+                command,
+            } => {
                 let events: Vec<String> = match event {
                     Some(event) => vec![event.clone()],
                     None => object
@@ -128,7 +141,7 @@ impl ConfigEdit {
                         .unwrap_or_default(),
                 };
                 for event in events {
-                    remove_hook(object, &event, command);
+                    remove_hook(object, &event, matcher.as_deref(), command);
                 }
                 Ok(())
             }
@@ -138,8 +151,12 @@ impl ConfigEdit {
                 command,
                 timeout,
             } => upsert_copilot_hook(object, event, matcher.as_deref(), command, *timeout),
-            ConfigEdit::RemoveCopilotHook { event, command } => {
-                remove_copilot_hook(object, event.as_deref(), command);
+            ConfigEdit::RemoveCopilotHook {
+                event,
+                matcher,
+                command,
+            } => {
+                remove_copilot_hook(object, event.as_deref(), matcher.as_deref(), command);
                 Ok(())
             }
             ConfigEdit::UpsertMcpServer { name, value } => {
@@ -250,90 +267,42 @@ fn set_gemini_mcp_enabled(
     Ok(())
 }
 
-fn upsert_hook(
-    root: &mut Map<String, Value>,
-    event: &str,
-    matcher: Option<&str>,
-    command: &str,
-    timeout: Option<u32>,
-) -> Result<(), String> {
-    let mut handler = json!({"type": "command", "command": command});
-    if let Some(timeout) = timeout {
-        handler["timeout"] = json!(timeout);
-    }
-    let ours = |h: &Value| h.get("command").and_then(Value::as_str) == Some(command);
-    let groups = ensure_object(root, "hooks")?
-        .entry(event)
-        .or_insert_with(|| json!([]))
-        .as_array_mut()
-        .ok_or("hook event is not an array")?;
-    // Refreshed where it already stands — the file is another tool's too,
-    // and a handler that moves on every apply reads as drift there. Copies
-    // in other groups go.
-    let mut placed = false;
-    for group in groups.iter_mut() {
-        let wanted = group.get("matcher").and_then(Value::as_str) == matcher;
-        let Some(handlers) = group.get_mut("hooks").and_then(Value::as_array_mut) else {
-            continue;
-        };
-        for h in handlers.iter_mut().filter(|h| ours(h)) {
-            *h = match wanted && !placed {
-                true => handler.clone(),
-                false => Value::Null,
-            };
-            placed |= wanted;
-        }
-        handlers.retain(|h| !h.is_null());
-    }
-    if !placed {
-        let group = groups
-            .iter_mut()
-            .find(|g| g.get("matcher").and_then(Value::as_str) == matcher)
-            .and_then(|g| g.get_mut("hooks"))
-            .and_then(Value::as_array_mut);
-        match group {
-            Some(handlers) => handlers.push(handler),
-            None => {
-                let mut group = Map::new();
-                if let Some(matcher) = matcher {
-                    group.insert("matcher".into(), Value::String(matcher.to_owned()));
-                }
-                group.insert("hooks".into(), Value::Array(vec![handler]));
-                groups.push(Value::Object(group));
-            }
-        }
-    }
-    groups.retain(|g| {
-        g.get("hooks")
-            .and_then(Value::as_array)
-            .is_none_or(|handlers| !handlers.is_empty())
-    });
-    Ok(())
+/// How a registry spells a matcher: an entry naming none, or naming an
+/// empty one, is the entry for every operation.
+///
+/// Everything that compares or records a matcher goes through this. Two
+/// spellings of the same thing passing each other by is how a hook came
+/// to be registered again beside itself on every refresh, for ever.
+pub(crate) fn spelled(matcher: Option<&str>) -> &str {
+    matcher
+        .filter(|matcher| !matcher.is_empty())
+        .unwrap_or(crate::scan::hooks::ANY_MATCHER)
 }
 
-fn remove_hook(root: &mut Map<String, Value>, event: &str, command: &str) {
-    let Some(events) = root.get_mut("hooks").and_then(Value::as_object_mut) else {
-        return;
+/// Whether a matcher names this group or entry.
+///
+/// The one place any of these editors decides that something in the file
+/// is the registration it is holding. Identifying by the command alone
+/// claims whatever else happens to run it, which is how a person's own
+/// registration came to be swept up beside kendex's — twice, in two
+/// editors. `None` names every matcher, which is what taking a whole
+/// installation away means and never what putting one in does; an upsert
+/// asks for the one it writes under.
+///
+/// What is stored is whatever the person wrote, so it is spelled here.
+/// What is asked for arrives spelled already — every matcher becomes one
+/// through [`spelled`], where it becomes a thing to look for.
+pub(crate) fn names(entry: &Value, matcher: Option<&str>) -> bool {
+    let Some(matcher) = matcher else {
+        return true;
     };
-    if let Some(groups) = events.get_mut(event).and_then(Value::as_array_mut) {
-        for group in groups.iter_mut() {
-            if let Some(handlers) = group.get_mut("hooks").and_then(Value::as_array_mut) {
-                handlers.retain(|h| h.get("command").and_then(Value::as_str) != Some(command));
-            }
-        }
-        groups.retain(|group| {
-            group
-                .get("hooks")
-                .and_then(Value::as_array)
-                .is_none_or(|handlers| !handlers.is_empty())
-        });
-        if groups.is_empty() {
-            events.shift_remove(event);
-        }
-    }
-    if events.is_empty() {
-        root.shift_remove("hooks");
-    }
+    spelled(entry.get("matcher").and_then(Value::as_str)) == matcher
+}
+
+/// The matcher an upsert writes under, as a registry spells it — never
+/// "every matcher", which is not something a registration can be.
+pub(crate) fn one(matcher: Option<&str>) -> Option<&str> {
+    Some(spelled(matcher))
 }
 
 #[cfg(test)]

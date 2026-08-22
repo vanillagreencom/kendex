@@ -2,11 +2,98 @@ use std::path::{Path, PathBuf};
 
 use super::{HarnessAdapter, ProjectMarker, Reader, Surface};
 use crate::env::Env;
-use crate::model::{HarnessId, ItemKind};
+use crate::model::{HarnessId, ItemKind, Scope};
 
 pub struct Pi;
 
 const EXTENSION_EXTS: &[&str] = &["ts", "js"];
+
+/// The segment kendex parks its Pi hook storage under, at both scopes.
+/// Pi warns about a `hooks/` directory sitting directly beside a root it
+/// loads on the name alone, whatever it holds, and the migration it names
+/// — into `extensions/` — is not one these files can take: they are shell
+/// scripts the `pi-hooks` carrier runs, not Pi extensions. Under a segment
+/// of kendex's own, Pi never looks — the same segment its Pi extensions
+/// already keep per-session state in.
+pub const HOOK_HOME: &str = "kendex";
+
+/// The scope's root — the directory Pi loads its settings, agents and
+/// prompts from, and the one kendex hangs `HOOK_HOME` off.
+pub fn scope_root(env: &Env, scope: &Scope) -> PathBuf {
+    match scope {
+        Scope::Global => Pi.default_global_root(env),
+        Scope::Project { root } => root.join(".pi"),
+    }
+}
+
+/// The registry the carrier reads, for one scope root.
+pub fn hook_registry(root: &Path) -> PathBuf {
+    root.join(HOOK_HOME).join("hooks.json")
+}
+
+/// The registry an older kendex wrote beside the scope root, before the
+/// storage moved under `HOOK_HOME`. What it registers still runs until
+/// `engine::pi_hooks_move` takes it out.
+pub fn legacy_hook_registry(root: &Path) -> PathBuf {
+    root.join("hooks.json")
+}
+
+/// Where this scope's hooks are observed: the registry the carrier reads,
+/// and — while an installation of kendex's is still under the name pi
+/// reserved — the registry beside it. A hook the move is
+/// holding back keeps its old registration on purpose, so that copy is
+/// the one firing, and naming only the new path would leave it out of
+/// every list and scan while it is the one thing needing attention. Once
+/// nothing of kendex's is left there the file is nobody's surface, so it
+/// goes unread rather than standing as a second home for pi hooks.
+fn hook_surfaces(env: &Env, scope: &Scope, root: &Path) -> Vec<Surface> {
+    let registry = |path: PathBuf| Surface::Structured {
+        path,
+        reader: Reader::HooksObject,
+    };
+    let mut surfaces = vec![registry(hook_registry(root))];
+    if crate::engine::pi_hooks_move::legacy_registry_lives(env, scope) {
+        surfaces.push(registry(legacy_hook_registry(root)));
+    }
+    surfaces
+}
+
+/// Whether this path is one of the registries kendex writes for the
+/// carrier — the one it renders now, or the one an older kendex wrote.
+/// Neither is ever written through a link: what a link points at is
+/// outside the directory kendex manages, and the move refuses to read
+/// through one for the same reason.
+pub fn is_hook_registry(env: &Env, scope: &Scope, path: &Path) -> bool {
+    let root = scope_root(env, scope);
+    path == hook_registry(&root) || path == legacy_hook_registry(&root)
+}
+
+/// Where hook scripts live inside a scope root, slash-separated: the one
+/// spelling both a `Path` and a POSIX command line are built from.
+fn hook_rel_dir() -> String {
+    format!("{HOOK_HOME}/hooks")
+}
+
+/// One hook's file name.
+pub fn hook_file(name: &str) -> String {
+    format!("{name}.sh")
+}
+
+/// One hook script's place inside a scope root, as the text a registered
+/// command spells.
+pub fn hook_rel(name: &str) -> String {
+    format!("{}/{}", hook_rel_dir(), hook_file(name))
+}
+
+/// The directory the hook scripts live in, for one scope root.
+pub fn hook_dir(root: &Path) -> PathBuf {
+    root.join(hook_rel_dir())
+}
+
+/// One hook script's path, for one scope root.
+pub fn hook_path(root: &Path, name: &str) -> PathBuf {
+    root.join(hook_rel(name))
+}
 
 impl HarnessAdapter for Pi {
     fn id(&self) -> HarnessId {
@@ -24,7 +111,7 @@ impl HarnessAdapter for Pi {
         &[ProjectMarker::Dir(".pi"), ProjectMarker::Dir(".agents")]
     }
 
-    fn global_surfaces(&self, kind: ItemKind, root: &Path, _env: &Env) -> Vec<Surface> {
+    fn global_surfaces(&self, kind: ItemKind, root: &Path, env: &Env) -> Vec<Surface> {
         match kind {
             ItemKind::Agent => vec![Surface::files(root.join("agents"), &["md"])],
             ItemKind::Skill => vec![Surface::SubdirPerItem {
@@ -33,10 +120,7 @@ impl HarnessAdapter for Pi {
             }],
             // Hooks ride the pi-hooks carrier: the registry kendex renders
             // is what the carrier's listeners execute. pi has no MCP.
-            ItemKind::Hook => vec![Surface::Structured {
-                path: root.join("hooks.json"),
-                reader: Reader::HooksObject,
-            }],
+            ItemKind::Hook => hook_surfaces(env, &Scope::Global, root),
             ItemKind::McpServer | ItemKind::Plugin => vec![],
             ItemKind::Command => vec![Surface::files(root.join("prompts"), &["md"])],
             ItemKind::PiExtension => vec![
@@ -53,7 +137,7 @@ impl HarnessAdapter for Pi {
         }
     }
 
-    fn project_surfaces(&self, kind: ItemKind, project: &Path, _env: &Env) -> Vec<Surface> {
+    fn project_surfaces(&self, kind: ItemKind, project: &Path, env: &Env) -> Vec<Surface> {
         let dot = project.join(".pi");
         match kind {
             ItemKind::Agent => vec![Surface::files(dot.join("agents"), &["md"])],
@@ -62,10 +146,13 @@ impl HarnessAdapter for Pi {
                 dir: project.join(".agents/skills"),
                 marker: "SKILL.md",
             }],
-            ItemKind::Hook => vec![Surface::Structured {
-                path: dot.join("hooks.json"),
-                reader: Reader::HooksObject,
-            }],
+            ItemKind::Hook => hook_surfaces(
+                env,
+                &Scope::Project {
+                    root: project.to_path_buf(),
+                },
+                &dot,
+            ),
             ItemKind::McpServer | ItemKind::Plugin => vec![],
             ItemKind::Command => vec![Surface::files(dot.join("prompts"), &["md"])],
             ItemKind::PiExtension => vec![

@@ -101,42 +101,6 @@ pub(super) fn desired_custom_hooks(
     }
 }
 
-/// The registry entry a script-less hook writes. Recorded in the lock so
-/// removal can name the registered command after the manifest entry that
-/// carried it is gone; hooks with a script re-derive theirs from the target.
-pub(super) fn hook_registration(item: &Desired) -> Option<crate::lock::HookRegistration> {
-    use crate::configedit::ConfigEdit;
-    let super::desired::Artifact::Registration {
-        script: None,
-        edits,
-    } = &item.artifact
-    else {
-        return None;
-    };
-    if item.kind != ItemKind::Hook {
-        return None;
-    }
-    let record = |event: &String, command: &String| {
-        Some(crate::lock::HookRegistration {
-            event: event.clone(),
-            command: command.clone(),
-        })
-    };
-    edits.iter().find_map(|(_, edit)| match edit {
-        ConfigEdit::UpsertHook { event, command, .. }
-        | ConfigEdit::UpsertCopilotHook { event, command, .. } => record(event, command),
-        ConfigEdit::RemoveHook {
-            event: Some(event),
-            command,
-        }
-        | ConfigEdit::RemoveCopilotHook {
-            event: Some(event),
-            command,
-        } => record(event, command),
-        _ => None,
-    })
-}
-
 fn advisory_downgrade(harness: HarnessId, spec: &HookSpec) -> String {
     if crate::hook::delivery::agent_scoping(harness) == crate::hook::AgentScoping::None
         && !spec.every_agent()

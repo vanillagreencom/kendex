@@ -278,3 +278,42 @@ fn a_command_declared_for_copilot_writes_nothing() {
     assert!(!f.project.join(".github/prompts").exists());
     assert!(is_clean(&f));
 }
+
+/// Copilot's entries carry their own matcher, and a person is free to
+/// register the same command under one of their own. Kendex refreshes the
+/// entry its registration belongs to and leaves the rest of the file to
+/// whoever wrote it — identified by the command alone, theirs would be
+/// replaced or dropped the next time the catalog moved kendex's.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_refresh_leaves_an_entry_registered_under_their_own_matcher() {
+    let f = fixture("[hooks.audit]\nsource = \"cat\"\n");
+    apply_now(&f);
+    let registry = f.project.join(".github/hooks/audit.json");
+    let mut value = json(&registry);
+    let command = value["hooks"]["preToolUse"][0]["bash"].clone();
+    assert_eq!(value["hooks"]["preToolUse"][0]["matcher"], "bash");
+    value["hooks"]["preToolUse"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "type": "command",
+            "bash": command,
+            "matcher": "edit"
+        }));
+    fs::write(&registry, serde_json::to_string_pretty(&value).unwrap()).unwrap();
+
+    apply_now(&f);
+
+    let value = json(&registry);
+    let entries = value["hooks"]["preToolUse"].as_array().unwrap();
+    let matchers: Vec<&str> = entries
+        .iter()
+        .map(|entry| entry["matcher"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        matchers,
+        vec!["bash", "edit"],
+        "both stand, each where its own owner put it: {value}"
+    );
+}

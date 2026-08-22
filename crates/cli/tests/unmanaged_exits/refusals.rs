@@ -108,3 +108,65 @@ fn an_exit_read_in_the_global_scope_says_so() {
         "the replacement runs against the current project without it: {planned}"
     );
 }
+
+/// A folder that is not a skill. Kept, it goes to the trash and the
+/// declaration is rewritten around a local source that has nothing to
+/// give, so the apply that follows installs nothing — the reader is told
+/// their files were kept and they are gone.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_folder_that_is_not_a_skill_is_not_offered_the_keep() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let project = project_with(home, "[\"claude\"]", "copy");
+    let here = project.join(".claude/skills/deploy");
+    fs::create_dir_all(&here).unwrap();
+    fs::write(here.join("notes.md"), "somebody else's folder").unwrap();
+
+    let planned = plan(home, &project);
+    assert!(planned.contains("conflict: skill deploy"), "{planned}");
+    assert_eq!(offer(&planned), "move them somewhere else first");
+}
+
+/// The scope-wide flag reaches every blocked item and refuses the whole run
+/// over one it could only half take over. Printed on the strength of a
+/// single replaceable item, it is a command guaranteed to fail.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_scope_wide_exit_is_not_printed_beside_an_item_it_would_refuse() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let project = project_with(home, "[\"claude\", \"codex\"]", "copy");
+    // One item wholly replaceable.
+    folder_at(&project.join(".claude/skills/deploy"), "By hand.");
+    folder_at(&project.join(".agents/skills/deploy"), "By hand.");
+    // A second item with one replaceable copy and one shared folder, which
+    // is never written over.
+    let elsewhere = home.join("shared/lint");
+    folder_at(&elsewhere, "Shared by hand.");
+    fs::write(
+        project.join("kendex.toml"),
+        fs::read_to_string(project.join("kendex.toml"))
+            .unwrap()
+            .replace(
+                "[skills.deploy]\nsource = \"cat\"\n",
+                "[skills.deploy]\nsource = \"cat\"\n\n[skills.lint]\nsource = \"cat\"\n",
+            ),
+    )
+    .unwrap();
+    fs::create_dir_all(home.join("catalog/skills/lint")).unwrap();
+    fs::write(
+        home.join("catalog/skills/lint/SKILL.md"),
+        "---\nname: lint\ndescription: lints it\n---\nUpstream.\n",
+    )
+    .unwrap();
+    folder_at(&project.join(".claude/skills/lint"), "By hand.");
+    link_at(&project.join(".agents/skills/lint"), &elsewhere);
+
+    let planned = plan(home, &project);
+    assert!(planned.contains("conflict: skill lint"), "{planned}");
+    assert!(
+        !planned.contains("--replace-unmanaged"),
+        "a command that would refuse the whole run was printed: {planned}"
+    );
+}

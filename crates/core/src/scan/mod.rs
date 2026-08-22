@@ -8,11 +8,11 @@ use crate::harness::{HarnessAdapter, Surface, all_adapters};
 use crate::model::{DetectedHarness, FileState, ItemKind, ObservedItem, Scope};
 use crate::settings::AppSettings;
 
-mod copilot;
+pub(crate) mod copilot;
 mod entry;
 pub use entry::RawEntry;
 mod files;
-mod hooks;
+pub(crate) mod hooks;
 pub(crate) mod jsonc;
 pub mod metadata;
 mod pi_packages;

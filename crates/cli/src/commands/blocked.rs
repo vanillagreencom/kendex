@@ -85,17 +85,20 @@ fn exits_under<'a>(env: &Env, rows: &[&'a DriftRow], row: &&'a DriftRow) -> Vec<
 /// — at column 0 it reads as a heading over the plan that follows, which is
 /// the plan that runs without it.
 ///
-/// The flag answers for a whole item, and refuses one it can only half take
-/// over, so it is only a way out where some item has every one of its
-/// conflicts replaceable.
+/// The flag reaches every blocked item in the scope and refuses the whole
+/// run over one it could only half take over, so it is only a way out
+/// where every one of them is wholly replaceable. Printed on the strength
+/// of a single item, it is a command guaranteed to fail.
 fn say_scope_exit(rows: &[&DriftRow]) {
-    let replaceable = rows.iter().any(|row| {
-        row.cause.is_some_and(DriftCause::in_the_way)
-            && rows
-                .iter()
-                .filter(|other| other.kind == row.kind && other.name == row.name)
-                .all(|other| other.cause.is_some_and(DriftCause::can_replace))
-    });
+    let mut blocked = rows
+        .iter()
+        .filter(|row| row.cause.is_some_and(DriftCause::in_the_way))
+        .peekable();
+    let replaceable = blocked.peek().is_some()
+        && rows.iter().all(|row| {
+            !row.cause.is_some_and(DriftCause::in_the_way)
+                || row.cause.is_some_and(DriftCause::can_replace)
+        });
     if let (true, Some(row)) = (replaceable, rows.first()) {
         say(&format!(
             "  to install what kendex.toml asks for instead: kendex apply --replace-unmanaged{}",

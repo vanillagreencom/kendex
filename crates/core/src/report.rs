@@ -150,6 +150,7 @@ mod tests {
                 upstream_skills: None,
                 emitted: None,
                 registration: None,
+                left_pi_reserved_name: false,
                 reasons: std::collections::BTreeSet::from([crate::lock::Reason::Requested]),
             },
         );
@@ -194,6 +195,7 @@ mod tests {
                 upstream_skills: None,
                 emitted: None,
                 registration: None,
+                left_pi_reserved_name: false,
                 reasons: std::collections::BTreeSet::from([crate::lock::Reason::Requested]),
             },
         );

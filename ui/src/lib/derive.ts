@@ -1,5 +1,4 @@
 import type {
-  AuditView,
   ItemKind,
   ItemSafety,
   ObservedItem,
@@ -23,23 +22,6 @@ export function scopeMatches(
   return (
     item.scope.scope === "project" && item.scope.root === selection.project
   );
-}
-
-/** The audit views the app-wide scope picker leaves in view. The Review
- *  page, the sidebar badge and the footer all read this, so a picked project
- *  narrows every number on screen to the same set — a badge counting the
- *  whole machine beside a page showing one project would be two answers. */
-export function viewsInScope(
-  views: AuditView[],
-  selection: ScopeSelection,
-): AuditView[] {
-  return views.filter((view) => {
-    if (selection === "all") return true;
-    if (selection === "global") return view.scope.scope === "global";
-    return (
-      view.scope.scope === "project" && view.scope.root === selection.project
-    );
-  });
 }
 
 export interface ItemFilter {
@@ -167,6 +149,22 @@ export function projectScopes(result: ScanResult): string[] {
   const roots = new Set<string>();
   for (const item of result.items) {
     if (item.scope.scope === "project") roots.add(item.scope.root);
+  }
+  return [...roots].sort();
+}
+
+/** The places the Library offers to look: every project with something
+ * installed, plus the one being looked at. A project can be picked before it
+ * holds anything — from its card on Projects, or by emptying it while the
+ * table is open — and a place with no pill would leave an empty table with
+ * nothing on screen saying where it is looking. */
+export function scopeChoices(
+  result: ScanResult | null,
+  selection: ScopeSelection,
+): string[] {
+  const roots = new Set(result ? projectScopes(result) : []);
+  if (selection !== "all" && selection !== "global") {
+    roots.add(selection.project);
   }
   return [...roots].sort();
 }

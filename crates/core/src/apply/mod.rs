@@ -8,6 +8,7 @@ use crate::model::Scope;
 mod common;
 pub mod journal;
 mod op;
+mod pre;
 
 pub use common::{common_key, execute_common, recover_common_journals};
 pub use op::{Op, Plan, PlannedOp, Pre, read_git_config};

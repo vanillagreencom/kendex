@@ -10,14 +10,20 @@ use crate::fs::{atomic_write, read_if_exists};
 use crate::manifest::Method;
 use crate::model::{HarnessId, ItemKind, Scope};
 
-/// Current lock version. Versions 1 (v0.1) through 3 still load — the
+/// Current lock version. Versions 1 (v0.1) through 4 still load — the
 /// shapes are compatible and the next lock write records the current
 /// version. A lock newer than this build refuses to load. Version 3 added
 /// `source_commit` and `rendered_hash`; version 4 added `settings-seeds`;
-/// each bump is what stops an older build from reading the lock, dropping
+/// version 5 added `left_pi_reserved_name`, a registration's matcher, and
+/// a recorded registration for hooks with a script of their own.
+/// Each bump is what stops an older build from reading the lock, dropping
 /// the newer record on its next write, and erasing evidence — of which
-/// bytes are whose, or of which comment blocks seeding wrote.
-pub const LOCK_VERSION: u32 = 4;
+/// bytes are whose, of which comment blocks seeding wrote, or of a move
+/// out of the directory pi reserved being over. That last one is why
+/// this bump is not optional: a build that dropped the record would read
+/// a finished move as unfinished, and reclaim what the person has since
+/// put under the reserved name.
+pub const LOCK_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
 pub struct Lock {
@@ -150,17 +156,36 @@ pub struct LockEntry {
     /// never took.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emitted: Option<EmittedArtifact>,
-    /// The registry entry a script-less hook registered (custom hooks: the
-    /// person's own command, verbatim). Removal must name that command to
-    /// take the entry back out, and it cannot be re-derived once the
-    /// manifest entry that carried it is gone.
+    /// The registry entry this hook registered, as the registry keys it.
+    /// Kept for every hook that registers one: what a later pass has to
+    /// find is what an earlier one wrote, and what the catalog renders
+    /// today is a different question — deriving one from the other read a
+    /// catalog moving a hook to another event as the person moving it by
+    /// hand. A script-less hook is recorded for a second reason: its
+    /// command is the person's own and cannot be re-derived once the
+    /// manifest entry that carried it is gone. `rendered_hash` is what
+    /// tells the two shapes apart — it is set exactly when kendex wrote a
+    /// script.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registration: Option<HookRegistration>,
+    /// Pi hooks only: this installation's move out of the directory pi
+    /// reserved has finished. A finished move is a fact about the past,
+    /// so it is recorded here instead of being re-derived from what is on
+    /// disk now — an edit to the new copy, or a catalog that changes the
+    /// hook's event, would otherwise re-open a move that is over. Once
+    /// this is set, everything under the reserved name is somebody
+    /// else's, whatever its bytes or its command happen to be.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub left_pi_reserved_name: bool,
     /// Every reason this installation exists. Never empty once written: an
     /// installation nothing can account for would be swept the moment
     /// anything looked at it.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub reasons: BTreeSet<Reason>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// One hook entry as a harness's registry keys it: event plus command.
@@ -169,6 +194,13 @@ pub struct LockEntry {
 pub struct HookRegistration {
     pub event: String,
     pub command: String,
+    /// The matcher the entry was written under, spelled the way a
+    /// registry spells it — `*` where the hook names none. `None` is a
+    /// record from before this was kept: unknown, never "none", so a
+    /// matcher somebody changed by hand is not read off a record that
+    /// never held one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matcher: Option<String>,
 }
 
 /// The artifact one installation actually put on disk, in the harness's own
