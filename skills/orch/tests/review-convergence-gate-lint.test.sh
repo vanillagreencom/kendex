@@ -1,20 +1,13 @@
 #!/usr/bin/env bash
-# Regression lint: the round-three convergence gate runs before the fix round
-# it gates, and its decision reaches the round.
+# Why this is pinned by line number rather than by reading the workflow:
+# both ways the gate goes quiet leave it present and correct-looking.
 #
-# A PR that keeps yielding new defects is usually carrying a surface nothing
-# asked for, and answering it comment by comment fixes each finding correctly
-# while the surface stays. The gate exists to force that question one cycle
-# before the cap, when the answer can still change what happens.
-#
-# Two ways it goes quiet without anyone noticing:
-#
-#   1. Placed after `### Fix Delegation`, it fires once the round it exists to
-#      prevent has already been launched — a decision arriving a cycle late.
-#   2. Recorded in `rereview_panel`, which the panel-scoping step overwrites a
-#      few lines later, and read by nothing: the decision is made and lost.
-#
-# So this pins ORDER and DELIVERY, not the wording.
+# Below `### Fix Delegation` it reads identically and fires once the round
+# it exists to prevent has been launched. Recorded in a key the
+# panel-scoping step overwrites, it is made and lost with nothing to show
+# for it. Neither is visible in review, so order and delivery are checked
+# mechanically and each check carries a planted control.
+
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,8 +27,8 @@ echo "=== orch review convergence-gate lint ==="
 
 GATE_RE='converge before delegating'
 
-# Line numbers are the whole point here: the gate is only load-bearing if it
-# sits between the delegation heading and the delegation itself.
+# The gate is only load-bearing where it sits above the delegation, so the
+# comparison is on position rather than presence.
 line_of() { grep -n "$2" "$1" | head -1 | cut -d: -f1; }
 
 check_order() {
@@ -95,10 +88,8 @@ else
   fail "findings can leave items with nothing saying what becomes of them"
 fi
 
-# The decision has to land somewhere the panel-scoping write does not clobber.
-# Recorded and never read is the same as not recorded.
-# Accepting it in caller context and never rendering it is the same as not
-# accepting it: the agent reads the delegation, not the workflow.
+# Accepted in caller context and absent from the template is the same as not
+# accepted: the agent reads the delegation, not the workflow.
 dev_fix_template() { awk '/<delegation_format>/{on=1} on; /<\/delegation_format>/{on=0}' "$1"; }
 
 if dev_fix_template "$DEV_FIX_WF" | grep -qi 'Convergence:'; then
@@ -119,8 +110,8 @@ else
   fail "SKILL.md lost the convergence rule"
 fi
 
-# Planted controls: each must fail the check it targets, or the check is
-# passing for a reason other than the property it claims to pin.
+# Each control must fail the check it targets, or that check is passing for a
+# reason other than the property it claims to pin.
 plant() {
   local name="$1"
   local prog="$2"
