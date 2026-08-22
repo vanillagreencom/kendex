@@ -66,13 +66,15 @@ else
   fail "a carried counter forces a fresh diff's first round to converge"
 fi
 
-# A finding that leaves items is disposed of one way or the other; absent from
-# both records it reads as declined, which is how a live blocker goes quiet.
-if sed -n '/### Fix Delegation/,/Run Workflow.*dev-fix.md/p' "$REVIEW_PR_WF" \
-  | grep -q 'never dropped'; then
-  pass "the gate says findings leaving items are disposed of"
+# Which record a finding lands in follows from why it left: a cut removed its
+# surface, a split moved it. Collapse the two and a split blocker files as
+# declined, which § 8 drops from the audit candidates.
+if printf '%s' "$GATE_LINE" | grep -q 'never dropped' \
+  && printf '%s' "$GATE_LINE" | grep -q 'a cut removed their surface' \
+  && printf '%s' "$GATE_LINE" | grep -q '`escalated_items` when a split moved them'; then
+  pass "the gate maps each disposition to the choice that caused it"
 else
-  fail "findings can leave items with nothing saying what becomes of them"
+  fail "a finding leaving items can be declined when it was only moved"
 fi
 
 # Accepted in caller context and absent from the template is the same as not
