@@ -34,21 +34,11 @@ export interface AuditCounts {
   open: number;
 }
 
-/** Whether this row sits on a decision, which is true of the places with
- *  a way out and of anything beside them nothing can settle.
- *
- *  Asked within one scope, like the card that draws the row: the same name
- *  in two projects is two items, and a neighbour found in the other one
- *  would move this row onto a decision it has nothing to do with. */
+/** Whether this row sits on a decision rather than under Apply — the same
+ *  question `driftZones` groups by, asked of the same answer, so the two
+ *  never quote different numbers. */
 function blocking(view: AuditView, row: DriftRow): boolean {
-  const exits = new Exits(view.exits);
-  if (!exits.blocking(row)) return false;
-  return view.drift.some(
-    (other) =>
-      other.kind === row.kind &&
-      other.name === row.name &&
-      exits.offered(other),
-  );
+  return new Exits(view.exits).blocking(row);
 }
 
 function countMerged(

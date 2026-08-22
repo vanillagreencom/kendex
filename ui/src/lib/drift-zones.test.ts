@@ -72,21 +72,18 @@ describe("a place nothing can settle, beside one with a way out", () => {
   });
 });
 
-describe("the same name in two projects", () => {
-  // Two projects are two items. A neighbour found in the other one would
-  // move this row onto a decision it has nothing to do with, and Home
-  // would stop agreeing with the card that draws it.
-  it("does not lend one project's decision to the other", () => {
-    const at = (root: string, keep: boolean) => {
-      const only = {
-        ...row("claude"),
-        scope: { scope: "project" as const, root },
-      };
-      return view(root, [only], [exit("claude", keep, keep)]);
-    };
-    const counts = auditCounts([at("/w/a", false), at("/w/b", true)]);
+describe("a place with files and no way out at all", () => {
+  // Apply cannot move it, so listing it as a change ready to apply
+  // promises a button that will not touch it. It is a decision like the
+  // rest, and the row says to move the files by hand.
+  it("is a decision, not a change ready to apply", () => {
+    const only = view("/w/a", [row("claude")], [exit("claude", false, false)]);
+    const zones = driftZones(only.drift, new Exits(only.exits));
+    const counts = auditCounts([only]);
 
+    expect(zones.inTheWay).toHaveLength(1);
+    expect(zones.changes).toHaveLength(0);
     expect(counts.inTheWay).toBe(1);
-    expect(counts.changes).toBe(1);
+    expect(counts.changes).toBe(0);
   });
 });

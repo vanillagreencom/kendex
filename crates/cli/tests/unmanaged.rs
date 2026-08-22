@@ -1,7 +1,7 @@
 //! What the CLI says about files kendex did not write: the two exits out of
 //! a declaration blocked by them, and the footnote for content nothing
 //! declares at all — listed by `list`, and until now invisible to every
-//! command that could say whether it had been looked at.
+//! command that says whether it was looked at.
 #![cfg(unix)]
 
 use std::fs;
@@ -63,10 +63,9 @@ fn home_with_project() -> (tempfile::TempDir, PathBuf) {
     (tmp, project)
 }
 
-/// The whole defect in one run: the refusal used to name no command, and
-/// `--discard-edits`, the flag that reads like the override, never reached
-/// it. Both exits are spelled now, and the one that honours the declaration
-/// is a flag apply actually has.
+/// Both exits in one run. The refusal names each of them, and the one
+/// that honours the declaration is a flag apply actually has —
+/// `--discard-edits` reads like the override and is not one.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_blocked_declaration_is_printed_with_both_exits_that_resolve_it() {
@@ -180,9 +179,9 @@ fn a_name_that_could_move_the_cursor_is_printed_as_text() {
 }
 
 /// verify is the CI-facing gate: its exit code answers about drift and
-/// nothing else. Gathering unmanaged rows made it plan scopes it used to
-/// skip, and a scope whose manifest cannot be planned against — malformed
-/// TOML here — turned a clean run into a failed build.
+/// nothing else. Naming unmanaged content means planning every scope,
+/// including one whose manifest cannot be planned against — malformed TOML
+/// here — and that must not turn a clean run into a failed build.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_unplannable_scope_with_nothing_installed_does_not_fail_the_run() {

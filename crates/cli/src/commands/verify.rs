@@ -28,9 +28,8 @@ pub fn run(
         // A scope with nothing installed has nothing to verify, and this
         // run reaches it only to name content nothing manages. That errand
         // never costs the run: a manifest this build cannot plan against
-        // is a line here, where it used to be silence, and the exit code
-        // still answers about drift alone. A scope that does have installs
-        // keeps failing loudly, as it always has.
+        // is worth a line, not a failure, and the exit code answers about
+        // drift alone. A scope that does have installs fails loudly.
         let report = match (audit(env, &scope), lock.entries.is_empty()) {
             (Ok(report), _) => report,
             (Err(error), true) => {

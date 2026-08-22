@@ -126,11 +126,11 @@ fn a_copy_install_never_owns_the_shared_tree() {
 }
 
 /// Switching a skill from a copy per tool to one shared tree writes
-/// somewhere the old install never wrote. Ownership read from the entry
-/// merely existing called that new position this installation's own, so
-/// whatever already lived there came back as a local edit — unreachable by
-/// the replacement, and overwritten outright by discarding edits, with no
-/// copy in the trash.
+/// somewhere the old install never wrote, so whatever already lives there
+/// is a stranger's. Read from the entry merely existing, that new position
+/// would be this installation's own: the files on it would come back as a
+/// local edit, unreachable by the replacement and overwritten outright by
+/// discarding edits, with no copy in the trash.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn changing_how_a_skill_installs_never_claims_the_new_position() {

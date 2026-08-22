@@ -32,10 +32,11 @@ pub fn supports(kind: ItemKind) -> bool {
     matches!(kind, ItemKind::Agent | ItemKind::Skill)
 }
 
-/// Every tool the item is blocked for is answered by one plan. Handed over
-/// one tool at a time, each capture wrote over the last in the local source
-/// and the declaration stayed pinned to the first tool — the last tool left
-/// unmanaged and the earlier copies only in the trash.
+/// One plan for every tool the item is blocked for, because the item has
+/// one copy: the local source holds a single capture and the declaration
+/// names every tool reading it. A plan per tool would put each capture
+/// over the last and pin the declaration to whichever ran first, leaving
+/// the rest with files nothing manages.
 pub fn adopt(
     env: &Env,
     scope: &Scope,

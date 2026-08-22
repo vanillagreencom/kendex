@@ -30,12 +30,6 @@ export class Exits {
   replace(row: DriftRow): boolean {
     return !!this.of(row)?.replace;
   }
-
-  /** Whether either exit is on offer here, which is what makes a row one
-   *  the reader decides about rather than one Apply will handle. */
-  offered(row: DriftRow): boolean {
-    return this.keep(row) || this.replace(row);
-  }
 }
 
 /**
@@ -59,19 +53,12 @@ export interface DriftZones {
   orphans: MergedDriftRow[];
 }
 
-const itemKey = (row: DriftRow) => `${row.kind}:${row.name}`;
-
 export function driftZones(rows: DriftRow[], exits: Exits): DriftZones {
-  // Every place of an item that has an exit somewhere, not only the places
-  // carrying it. Both exits act on the whole item and the engine refuses
-  // one it could only half settle, so a place nothing can settle belongs
-  // on the same row, where it takes both buttons with it.
-  const decided = new Set(
-    rows.filter((row) => exits.offered(row)).map(itemKey),
-  );
-  const inTheWay = rows.filter(
-    (row) => exits.blocking(row) && decided.has(itemKey(row)),
-  );
+  // Every place with files at an item's position, whether or not anything
+  // can be done about it there. Apply cannot move any of them, so a row
+  // left out of this sits under a button that will not touch it — and a
+  // place nothing can settle takes the buttons off the ones beside it.
+  const inTheWay = rows.filter((row) => exits.blocking(row));
   return {
     inTheWay: mergeDriftRows(inTheWay),
     changes: mergeDriftRows(

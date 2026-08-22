@@ -98,10 +98,10 @@ fn take_over() -> PlanOptions {
     }
 }
 
-/// The dead end this fixes: the refusal used to describe a state ("not
-/// managed yet") and name no way out of it. The row now carries where the
-/// files are and the cause that says what that means; the words, and the
-/// ways out, belong to whichever surface is doing the telling.
+/// The dead end is a refusal that describes a state ("not managed yet")
+/// and names no way out of it. The row carries where the files are and
+/// the cause that says what that means; the words, and the ways out,
+/// belong to whichever surface is doing the telling.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_refusal_says_which_files_are_in_the_way() {

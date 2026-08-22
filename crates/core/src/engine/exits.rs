@@ -42,10 +42,13 @@ pub fn for_row(env: &Env, scope: &Scope, row: &DriftRow) -> RowExits {
     }
 }
 
-/// Every row a surface has to draw a decision for.
+/// Every row a surface has to draw a decision for: the ones with files at
+/// the item's position. A conflict of another kind — a revision clash, a
+/// source rebind — is answered by removing the item, not by choosing
+/// between its files and the declaration.
 pub fn for_rows(env: &Env, scope: &Scope, rows: &[DriftRow]) -> Vec<RowExits> {
     rows.iter()
-        .filter(|row| row.dead_stop())
+        .filter(|row| row.dead_stop() && row.cause.is_some())
         .map(|row| for_row(env, scope, row))
         .collect()
 }
