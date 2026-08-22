@@ -59,12 +59,11 @@ pub enum DriftCause {
 }
 
 impl DriftCause {
-    /// Whether the row can be settled at all without the reader moving
-    /// files themselves. A foreign link cannot, which is why it is a cause
-    /// rather than a bare conflict: an item holding one has no exit, and a
-    /// surface that only looked at its neighbours would offer one.
-    pub fn blocks_the_item(self) -> bool {
-        self.in_the_way() || matches!(self, DriftCause::ForeignLink)
+    /// Whether this conflict is a decision of its own. The person's own
+    /// edits are: they are settled by keeping them as a fork or discarding
+    /// them, and they never take the item's other exits away.
+    pub fn is_own_decision(self) -> bool {
+        matches!(self, DriftCause::LocalEdit | DriftCause::Both)
     }
 
     /// Whether files kendex did not write are what this row is about — the
@@ -101,6 +100,17 @@ pub struct DriftRow {
     pub detail: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cause: Option<DriftCause>,
+}
+
+impl DriftRow {
+    /// Whether this row stops every exit the item has. Both exits act on
+    /// the whole item, so one place nothing can settle — a link kendex
+    /// will not follow, a revision clash, a source rebind — takes the
+    /// offers off every other place too. The person's own edits are the
+    /// exception: they are a decision of their own.
+    pub fn dead_stop(&self) -> bool {
+        self.state == DriftState::Conflict && !self.cause.is_some_and(DriftCause::is_own_decision)
+    }
 }
 
 /// A per-item render or parse warning, with the fix when there is one —

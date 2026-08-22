@@ -9,7 +9,7 @@
 import type { AuditView, DriftRow } from "@/bindings";
 import { heldBack } from "@/lib/derive";
 import { mergeDriftRows } from "@/lib/drift-merge";
-import { isInTheWay } from "@/lib/drift-zones";
+import { deadStop, isInTheWay } from "@/lib/drift-zones";
 import { partitionSafety } from "@/lib/group-findings";
 import { mergeHeldBack } from "@/lib/group-findings-blocked";
 import { evidenceGroups, openOccurrences } from "@/lib/reviewable";
@@ -32,6 +32,21 @@ export interface AuditCounts {
    *  distinct piece of evidence, so the same file seen through three tools
    *  is one decision, not three. */
   open: number;
+}
+
+/** Whether this row sits on a decision, which is true of the places with
+ *  files in the way and of anything beside them their exits cannot settle. */
+function blocking(views: AuditView[], row: DriftRow): boolean {
+  if (isInTheWay(row.cause)) return true;
+  if (!deadStop(row)) return false;
+  return views.some((view) =>
+    view.drift.some(
+      (other) =>
+        other.kind === row.kind &&
+        other.name === row.name &&
+        isInTheWay(other.cause),
+    ),
+  );
 }
 
 function countMerged(views: AuditView[], keep: (row: DriftRow) => boolean) {
@@ -62,11 +77,14 @@ export function openCount(view: AuditView): number {
 
 export function auditCounts(views: AuditView[]): AuditCounts {
   return {
+    // Counted the way Review draws them, so the two never quote different
+    // numbers: a place nothing can settle sits on the decision row beside
+    // the files in the way, not under the button that cannot move it.
     changes: countMerged(
       views,
-      (row) => row.state !== "unmanaged" && !isInTheWay(row.cause),
+      (row) => row.state !== "unmanaged" && !blocking(views, row),
     ),
-    inTheWay: countMerged(views, (row) => isInTheWay(row.cause)),
+    inTheWay: countMerged(views, (row) => blocking(views, row)),
     unmanaged: countMerged(views, (row) => row.state === "unmanaged"),
     blocked: views.reduce((sum, view) => sum + blockedCount(view), 0),
     open: views.reduce((sum, view) => sum + openCount(view), 0),

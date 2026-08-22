@@ -335,3 +335,42 @@ fn hand_made_files_beside_an_edited_install_keep_their_offer() {
 /// The exits are what a reader types next, so they carry the scope they
 /// were read in. Printed while looking at the global scope without it,
 mod refusals;
+
+/// The other exit on the same shape. An edit beside the hand-made files is
+/// a decision of its own — it never takes the take-over away, and the
+/// replacement settles the files it is about while the edit keeps waiting.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn hand_made_files_beside_an_edited_install_are_still_replaceable() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let project = project_with(home, "[\"claude\"]", "copy");
+    assert!(kendex(home, &project, &["apply", "-y"]).status.success());
+    folder_at(&project.join(".claude/skills/deploy"), "Edited by hand.");
+    retarget(&project, "[\"claude\", \"codex\"]");
+    folder_at(&project.join(".agents/skills/deploy"), "By hand.");
+
+    let planned = plan(home, &project);
+    assert!(
+        planned.contains("kendex apply --replace-unmanaged"),
+        "the take-over was not offered beside an edit: {planned}"
+    );
+
+    let taken = kendex(home, &project, &["apply", "-y", "--replace-unmanaged"]);
+    assert!(
+        taken.status.success(),
+        "an edit beside the files refused the take-over: {}",
+        said(&taken)
+    );
+    assert!(
+        fs::read_to_string(project.join(".agents/skills/deploy/SKILL.md"))
+            .unwrap()
+            .contains("Upstream."),
+        "the files it was about were not replaced"
+    );
+    let after = plan(home, &project);
+    assert!(
+        after.contains("edited on disk"),
+        "the edit is still its own decision: {after}"
+    );
+}

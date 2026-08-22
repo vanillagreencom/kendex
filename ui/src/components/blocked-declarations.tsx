@@ -138,10 +138,10 @@ export function BlockedDeclarations({
                     {paths.text}
                   </span>
                 ) : null}
-                <KindHarnessChips
-                  kind={group.kind}
-                  harnesses={toolsOf(group)}
-                />
+                {/* Every tool the row is about: one reading the folder
+                    through a shortcut is repointed with the rest, and a
+                    row that named only the entry points would hide it. */}
+                <KindHarnessChips kind={group.kind} harnesses={named(group)} />
               </span>
               {/* Each exit says what it does, under the control that does
                   it — a row with no Keep button then carries only the line

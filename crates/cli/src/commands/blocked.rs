@@ -62,18 +62,15 @@ fn conflict_rows(report: &EngineReport) -> Vec<&DriftRow> {
 /// be edited under another tool, and waiting for a row that will never
 /// print the offer loses it altogether.
 fn exits_under<'a>(env: &Env, rows: &[&'a DriftRow], row: &&'a DriftRow) -> Vec<String> {
-    if row.cause.filter(|cause| cause.blocks_the_item()).is_none() {
+    if !row.dead_stop() {
         return Vec::new();
     }
     // Every conflict the item has, not only the ones with files in the
     // way: keeping is one move for the whole item and the engine refuses
     // one it could only half settle, so a hard conflict beside them — a
     // link adoption will not touch — takes the offer with it.
-    let blocked = |other: &&&DriftRow| {
-        other.kind == row.kind
-            && other.name == row.name
-            && other.cause.is_some_and(DriftCause::blocks_the_item)
-    };
+    let blocked =
+        |other: &&&DriftRow| other.kind == row.kind && other.name == row.name && other.dead_stop();
     let index = rows.iter().position(|other| std::ptr::eq(*other, *row));
     let after = index.map_or(0, |at| at + 1);
     if rows[after..].iter().any(|later| blocked(&later)) {
@@ -99,10 +96,9 @@ fn say_scope_exit(rows: &[&DriftRow]) {
         .filter(|row| row.cause.is_some_and(DriftCause::in_the_way))
         .peekable();
     let replaceable = blocked.peek().is_some()
-        && rows.iter().all(|row| {
-            !row.cause.is_some_and(DriftCause::blocks_the_item)
-                || row.cause.is_some_and(DriftCause::can_replace)
-        });
+        && rows
+            .iter()
+            .all(|row| !row.dead_stop() || row.cause.is_some_and(DriftCause::can_replace));
     if let (true, Some(row)) = (replaceable, rows.first()) {
         say(&format!(
             "  to install what kendex.toml asks for instead: kendex apply --replace-unmanaged{}",

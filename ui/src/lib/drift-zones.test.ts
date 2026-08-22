@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DriftRow, HarnessId } from "@/bindings";
+import { auditCounts } from "./audit-counts";
 import { driftZones } from "./drift-zones";
 
 function row(
@@ -44,5 +45,39 @@ describe("a hard conflict beside files in the way", () => {
 
     expect(zones.inTheWay[0]?.installations).toHaveLength(1);
     expect(zones.changes).toHaveLength(1);
+  });
+});
+
+describe("an edit beside files in the way", () => {
+  // An edit is settled by keeping it as a fork or discarding it, so it
+  // never takes the item's other exits away — unlike a place nothing can
+  // settle, which does.
+  it("is left where it was, and the exits stand", () => {
+    const zones = driftZones([
+      row("claude", "unmanaged-content"),
+      row("codex", "local-edit"),
+    ]);
+
+    expect(zones.inTheWay[0]?.installations).toHaveLength(1);
+    expect(zones.changes).toHaveLength(1);
+  });
+
+  it("counts the same way Review draws it", () => {
+    const view = {
+      scope: { scope: "project" as const, root: "/w/app" },
+      drift: [row("claude", "unmanaged-content"), row("codex", "foreign-link")],
+      plan: [],
+      notes: [],
+      warnings: [],
+      safety: [],
+      adoptable: [],
+      keepable: [],
+      heldBack: [],
+      queued: [],
+    };
+    const counts = auditCounts([view]);
+
+    expect(counts.inTheWay).toBe(1);
+    expect(counts.changes).toBe(0);
   });
 });

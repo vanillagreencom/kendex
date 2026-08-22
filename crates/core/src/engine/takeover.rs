@@ -32,14 +32,11 @@ pub(crate) fn refuse_unsettled_takeover(
             .iter()
             .filter(|row| row.kind == *kind && &row.name == name)
             .collect();
-        // Any conflict left on the item, not only the ones with files in
-        // the way: a foreign link adoption refuses is just as blocking, and
-        // taking over the copy beside it settles half the item and leaves
-        // the other tool where it was.
-        if rows
-            .iter()
-            .any(|row| row.state == super::DriftState::Conflict)
-        {
+        // Any conflict the exits cannot settle, not only the ones with
+        // files in the way: a foreign link adoption refuses is just as
+        // blocking, and taking over the copy beside it settles half the
+        // item. An edit is not one of these — it is a decision of its own.
+        if rows.iter().any(|row| row.dead_stop()) {
             return Err(crate::error::CoreError::TakeOverLeavesSome { name: name.clone() });
         }
         // A name the reader typed has to reach something; an item the
