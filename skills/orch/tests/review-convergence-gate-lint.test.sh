@@ -70,6 +70,15 @@ else
   fail "the cap moved, so the gate's threshold no longer covers every round it allows"
 fi
 
+# The cycle count is per issue, so a review re-entered on a fresh diff can
+# arrive past the threshold on its first round. Without the exception the gate
+# forces that round into a cut it has no grounds for.
+if printf '%s' "$GATE_LINE" | grep -q 'first round on this diff'; then
+  pass "the gate exempts a genuine first round on a fresh diff"
+else
+  fail "a carried counter forces a fresh diff's first round to converge"
+fi
+
 # A finding that leaves items is disposed of one way or the other; absent from
 # both records it reads as declined, which is how a live blocker goes quiet.
 if sed -n '/### Fix Delegation/,/Run Workflow.*dev-fix.md/p' "$REVIEW_PR_WF" \
@@ -117,6 +126,14 @@ if printf '%s' "$CTRL_LINE" | grep -q '`cycles` at 2'; then
   fail "control: a gate with its threshold removed still reads as pinned"
 else
   pass "control: a gate with no threshold is detectable"
+fi
+
+CTRL_EXCEPTION="$(plant exception 's/first round on this diff/some other reason/')"
+CTRL_EXC_LINE="$(grep -m1 "$GATE_RE" "$CTRL_EXCEPTION" || true)"
+if printf '%s' "$CTRL_EXC_LINE" | grep -q 'first round on this diff'; then
+  fail "control: a gate with the exception removed still reads as exempting it"
+else
+  pass "control: a gate with no fresh-diff exception is detectable"
 fi
 
 CTRL_MISSING="$(plant missing "/$GATE_RE/d")"
