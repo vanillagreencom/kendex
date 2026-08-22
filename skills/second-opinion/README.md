@@ -9,6 +9,9 @@ The review prompt reviews through explicit holistic lenses (correctness, securit
 ## Prerequisites
 
 - **jq** installed
+- **`timeout`** (or `gtimeout`) on PATH — the deadline is what stops a review
+  from running unbounded, so every mode but `detect` refuses without it.
+  macOS ships neither: `brew install coreutils`
 - At least one external CLI: `claude` (Claude Code) or `codex` (Codex CLI)
 - CLI must be authenticated (`claude /login` or `codex login`)
 
@@ -46,9 +49,9 @@ By default the skill runs exactly ONE reviewer: the highest-priority entry in `S
 | `SECOND_OPINION_CURRENT_MODEL` | `"claude"` (or `"opus"`, `"gpt-5.6-sol"`, `"openai-codex/gpt-5.6-sol"`, `"none"`) | The model your session runs — export per session, never in a project file. Detected for Claude Code and Codex, where detection wins over a contradicting value and an agreeing one is ignored; required in Pi, OpenCode, Cursor and undetected shells — `none` says there is no session model (CI, plain terminal) |
 | `SECOND_OPINION_ARTIFACT_DIR` | `"tmp/second-opinion"` | Where records land when you pass no `--output` (relative to `--cwd`, or `~/…`/absolute) |
 | `SECOND_OPINION_REVIEW_INSTRUCTIONS` | `"AGENTS.md review-bots.md .github/instructions/*.instructions.md"` | Repo instruction files appended to the review prompt; empty disables |
-| `SECOND_OPINION_TIMEOUT` | `"300"` | Seconds to wait for the external CLI |
+| `SECOND_OPINION_TIMEOUT` | `"1080"` | Seconds to wait for the external CLI. Above the ~600s a harness allows a foreground shell call: background the run, or pass `--timeout` at or below the harness ceiling |
 
-`kendex add`/`refresh` seed these keys from this skill's `kendex.settings.toml.example` when the file is missing and add absent keys to an existing file. Run `scripts/second-opinion detect` to see which target a review would use from your current session.
+`kendex add`/`refresh` seed these keys from this skill's `kendex.settings.toml.example` when the file is missing and add absent keys to an existing file — they never rewrite a value you already have, so an install seeded before the default became 1080 keeps its old `SECOND_OPINION_TIMEOUT = "300"` until you update it by hand. Run `scripts/second-opinion detect` to see which target a review would use from your current session.
 
 ## Configuration
 
@@ -64,7 +67,7 @@ Project installs seed `kendex.settings.toml` from this skill's `kendex.settings.
 | `SECOND_OPINION_<NAME>_MODEL` | `<name>` | The model a roster entry runs, when it differs from its name (a Pi lane fronting Claude: `claude`) |
 | `SECOND_OPINION_<NAME>_CMD` | (none) | Full command for a roster entry — another model CLI is a settings entry, not new code |
 | `SECOND_OPINION_TARGET` | (unset) | Force one target; refused if it is your session's model |
-| `SECOND_OPINION_TIMEOUT` | `300` | Max seconds to wait |
+| `SECOND_OPINION_TIMEOUT` | `1080` | Max seconds to wait — one total per lane, the one retry on a malformed response included (it gets the remainder, floored at 60s), so a lane's longest possible run is the budget plus that 60s floor plus the 30s kill grace, plus the script's own overhead. The deadline binds the CLI this script launches and nothing else: a process that CLI leaves behind, which ignores the deadline's TERM, keeps running after the lane is gone — KEN-480 tracks bounding those. The default exceeds the ~600s ceiling most agent harnesses put on a foreground shell call: run the script in the background, or a foreground call must pass `--timeout` at or below that ceiling |
 | `SECOND_OPINION_ARTIFACT_DIR` | `tmp/second-opinion` | Where records and a multi-lane run's lane artifacts land when you pass no `--output` (relative to `--cwd`, or `~/…`/absolute; git-ignored on creation; falls back to a temp file, loudly, if it cannot be created or is a symlink) |
 | `SECOND_OPINION_REVIEW_INSTRUCTIONS` | (see above) | Instruction-file globs appended to the review prompt; set empty to disable |
 

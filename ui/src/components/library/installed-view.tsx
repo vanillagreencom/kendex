@@ -7,6 +7,10 @@ import { LibraryLegend } from "@/components/library/library-legend";
 import { NotManagedPanel } from "@/components/library/not-managed";
 import { TableEmptyRow } from "@/components/library/table-empty";
 import {
+  applyLibraryView,
+  useFilterHandoff,
+} from "@/components/library/use-filter-handoff";
+import {
   Table,
   TableBody,
   TableHead,
@@ -19,13 +23,17 @@ import {
   filterItems,
   groupItems,
   groupScopes,
-  projectScopes,
+  scopeChoices,
 } from "@/lib/derive";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
+import { isNarrowed, UNFILTERED } from "@/lib/library-handoff";
 import { scopeKey } from "@/lib/scope";
 import { cn } from "@/lib/utils";
 import { useEditorStore } from "@/stores/editor";
-import { useLibraryViewStore } from "@/stores/library-view";
+import {
+  type FilterSelection,
+  useLibraryViewStore,
+} from "@/stores/library-view";
 import { useNavStore } from "@/stores/nav";
 import {
   originFor,
@@ -43,7 +51,6 @@ export function InstalledView() {
   const setScope = useNavStore((s) => s.setLibraryScope);
   const goToMarketplaces = useNavStore((s) => s.goToMarketplaces);
   const goToPackage = useNavStore((s) => s.goToPackage);
-  const clearLibraryFilter = useNavStore((s) => s.clearLibraryFilter);
   const {
     kind,
     harness,
@@ -54,7 +61,6 @@ export function InstalledView() {
     setTag,
     setFrom,
     setScrollTop,
-    clearFilters: clearViewFilters,
   } = useLibraryViewStore();
   const provenance = useProvenanceStore((s) => s.rows);
   const loadProvenance = useProvenanceStore((s) => s.load);
@@ -62,7 +68,7 @@ export function InstalledView() {
   // back lands on the same narrowed table.
   const search = useNavStore((s) => s.search);
   const setSearch = useNavStore((s) => s.setSearch);
-  const projects = result ? projectScopes(result) : [];
+  const projects = scopeChoices(result, scope);
   const scroller = useRef<HTMLDivElement | null>(null);
   // Every scope's manifest, so a row can say whether you have changed the
   // package wherever it is installed — not only in the scope last edited.
@@ -92,26 +98,17 @@ export function InstalledView() {
       customizedKeys.has(`${scopeKey(scope)}|${group.kind}:${group.name}`),
     );
 
-  // The filter is a one-time handoff from wherever the link was clicked
-  // (Harnesses, Projects); once applied, further tab visits start from the
-  // stored view again rather than reapplying a stale filter.
-  useEffect(() => {
-    const handoff = useNavStore.getState().libraryFilter;
-    if (handoff) {
-      setKind(handoff.kind ?? "any");
-      setHarness(handoff.harness ?? "any");
-    }
-    clearLibraryFilter();
-  }, [clearLibraryFilter, setKind, setHarness]);
+  const replaced = useFilterHandoff();
 
-  // Restore where the table was scrolled to when it last unmounted, and
-  // record it again on the way out.
+  // Pick up where the table was last scrolled to, and record it again on the
+  // way out — unless a link replaced the list, in which case that offset
+  // belongs to something no longer on screen.
   useEffect(() => {
     const node = scroller.current;
     if (!node) return;
-    node.scrollTop = useLibraryViewStore.getState().scrollTop;
+    node.scrollTop = replaced ? 0 : useLibraryViewStore.getState().scrollTop;
     return () => setScrollTop(node.scrollTop);
-  }, [setScrollTop]);
+  }, [replaced, setScrollTop]);
 
   const groups = useMemo(() => {
     if (!result) return [];
@@ -147,19 +144,10 @@ export function InstalledView() {
   // Nothing has been counted yet — distinct from "counted, found nothing".
   const scanning = result === null;
   const hasAnyItems = (result?.items.length ?? 0) > 0;
-  const filtered =
-    search !== "" ||
-    kind !== "any" ||
-    harness !== "any" ||
-    tag !== "any" ||
-    from !== "any" ||
-    scope !== "all";
+  const filters: FilterSelection = { kind, harness, tag, from };
+  const filtered = isNarrowed({ filters, search, scope });
 
-  const clearFilters = () => {
-    clearViewFilters();
-    setSearch("");
-    setScope("all");
-  };
+  const clearFilters = () => applyLibraryView(UNFILTERED);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

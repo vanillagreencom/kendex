@@ -15,7 +15,6 @@ import { useSettingsStore } from "@/stores/settings";
 /** "Projects": personal plus every registered project, one card each. */
 export function ProjectList() {
   const result = useScanStore((s) => s.result);
-  const setLibraryScope = useNavStore((s) => s.setLibraryScope);
   const goToLibrary = useNavStore((s) => s.goToLibrary);
   const { settings, registerProject, unregisterProject, discoverProjects } =
     useSettingsStore();
@@ -45,10 +44,8 @@ export function ProjectList() {
           subtitle="Works in every project on this computer"
           counts={[...countByKind(globalItems).entries()]}
           emptyLabel="Nothing from kendex yet."
-          onKindClick={(kind) => {
-            setLibraryScope("global");
-            goToLibrary({ kind });
-          }}
+          onOpen={() => goToLibrary({ scope: "global" })}
+          onKindClick={(kind) => goToLibrary({ kind, scope: "global" })}
         />
 
         {projects.length === 0 ? (
@@ -67,6 +64,7 @@ export function ProjectList() {
                 key={root}
                 name={name}
                 subtitle={root}
+                path={root}
                 counts={[...countByKind(items).entries()]}
                 emptyLabel="Nothing from kendex yet."
                 badge={
@@ -74,10 +72,10 @@ export function ProjectList() {
                     ? "Folder not found"
                     : undefined
                 }
-                onKindClick={(kind) => {
-                  setLibraryScope({ project: root });
-                  goToLibrary({ kind });
-                }}
+                onOpen={() => goToLibrary({ scope: { project: root } })}
+                onKindClick={(kind) =>
+                  goToLibrary({ kind, scope: { project: root } })
+                }
                 action={
                   <Button
                     variant="ghost"

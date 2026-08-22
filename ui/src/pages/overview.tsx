@@ -81,7 +81,7 @@ export function OverviewPage() {
                   scope: first.scope,
                 }),
             }
-          : { label: "Library", onClick: () => setPage("library") },
+          : { label: "Library", onClick: () => goToLibrary() },
     });
   }
   if (blocked > 0) {

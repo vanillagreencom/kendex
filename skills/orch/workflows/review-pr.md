@@ -159,22 +159,23 @@ Fresh session — you have no memory of earlier cycles. Read your prior report [
 
 `[PRIOR_REPORT_PATH]` is that reviewer's most recent `review-[AGENT]-*.json` from state `json_paths`.
 
-**External review** (only when requested; default timeout `SECOND_OPINION_TIMEOUT` or 300s):
+**External review** (only when requested). Launch it **in the background**, never as a foreground shell call: the default timeout (`SECOND_OPINION_TIMEOUT`, 1080s) exceeds the ~600s ceiling a harness puts on a foreground call, which would kill the shell before the script's own timeout fires — no artifact, the exit-5 path unreachable, and the external CLI left running. On Claude Code use `run_in_background`; on Pi run it under `bg_task`; on Codex and OpenCode use scheduled re-entry, or pass `--timeout` at or below the foreground ceiling. The script's inner `timeout` is the deadline for the backgrounded run.
 
 ```bash
 mkdir -p [WORKTREE_PATH]/tmp
 .agents/skills/orch/scripts/git-context timestamp compact
+# backgrounded (run_in_background on Claude Code, bg_task on Pi):
 .agents/skills/second-opinion/scripts/second-opinion review --cwd [WORKTREE_PATH] --output [WORKTREE_PATH]/tmp/review-external-[TIMESTAMP_FROM_PREVIOUS_COMMAND].json
 ```
 
-Validate it like a reviewer JSON, with `review_delegated_at` as the freshness boundary:
+When the backgrounded run completes, validate its artifact like a reviewer JSON, with `review_delegated_at` as the freshness boundary (the § 3.1 sweep covers a silent finisher):
 
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .review_delegated_at
 .agents/skills/orch/scripts/review-artifact-check --file "$EXTERNAL_OUTPUT" [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND]
 ```
 
-`ok == true` → append the path to `json_paths`; `reason == "valid_undermeasured"` means that review's own instrument produced nothing, so report its `measurement_failed` string — and `measurement_suppressed` when present — beside the path instead of presenting the external pass as clean. `ok == false`, or any non-zero exit, → report the `reason` (and `detail` when present) and continue: external review is advisory, never blocking, and never substitutes a pass.
+`ok == true` → append the path to `json_paths`; `reason == "valid_undermeasured"` means that review's own instrument produced nothing, so report its `measurement_failed` string — and `measurement_suppressed` when present — beside the path instead of presenting the external pass as clean. `ok == false`, or any non-zero exit, → report the `reason` (and `detail` when present) and continue: external review is advisory, never blocking, and never substitutes a pass. A backgrounded run that has already exited with a non-zero status or an artifact that does not validate is **resolved** right then as `external: failed — [REASON]` (the script's exit class, or the check's `reason`), and leaves `OUTSTANDING` in § 3.1: a quick auth, quota, or network failure must not hold the cycle open for a deadline that only a still-running lane needs.
 
 ## 3. Collect Results
 
@@ -209,14 +210,14 @@ Still `ok == false` after that, or the § 3.2 deadline reached → mark the agen
 
 ### 3.2 Watchdog
 
-Sweep the filesystem on every event — it catches silent finishers. Per-agent deadline from `review_delegated_at`: 25 minutes for an agent whose name contains `perf`, 15 minutes for everyone else including external.
+Sweep the filesystem on every event — it catches silent finishers. Per-agent deadline from `review_delegated_at`: 25 minutes for an agent whose name contains `perf`, 15 minutes for every other agent. The external lane's deadline is its own budget, not the flat 15: `SECOND_OPINION_TIMEOUT` (or the script's 1080s default) plus a 3-minute margin — the script needs its full window before it can write records and exit. The margin is built from the script's own constants, not a round number: the retry floor (60s — a malformed first answer near the deadline still gets that much) plus 120s of overhead for extraction, record writing, and launch. The external lane is a background shell command, not a messageable agent, so the ping row and its 2-minute early end never apply to it: only its own deadline ends it.
 
 | Event | Action |
 |-------|--------|
 | Return arrives | Run `review-artifact-check` (§ 3.1) |
-| 2 min after the first return, or 10 min from delegation with no returns — once per cycle (wave mode: per wave) | Ping each outstanding agent once: `Status check on [ISSUE_ID] review — return your verdict if complete, or report the blocker.` |
-| 2 min after that ping | Mark each non-perf agent still outstanding `unresponsive` |
-| Per-agent deadline | Mark that agent `unresponsive` |
+| 2 min after the first return, or 10 min from delegation with no returns — once per cycle (wave mode: per wave) | Ping each outstanding agent once (external exempt — nothing receives the message): `Status check on [ISSUE_ID] review — return your verdict if complete, or report the blocker.` |
+| 2 min after that ping | Mark each non-perf **agent** still outstanding `unresponsive` — never the external lane |
+| Per-agent deadline (external: `SECOND_OPINION_TIMEOUT` + 3 min) | Mark that agent or lane `unresponsive` |
 
 Wave mode also shuts an `unresponsive` reviewer down and records it, so the slot frees and the reviewer does not relaunch this cycle:
 

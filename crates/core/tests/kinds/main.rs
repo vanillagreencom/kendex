@@ -177,10 +177,10 @@ fn one_hook_reaches_each_harness_in_its_own_native_form() {
 
     // Pi rides the pi-hooks carrier: the script lands beside a registry
     // spoken in pi's own listener names.
-    assert!(at(".pi/hooks/audit.sh").is_file());
+    assert!(at(".pi/kendex/hooks/audit.sh").is_file());
     assert_eq!(
-        json(&at(".pi/hooks.json"))["hooks"]["tool_call"][0]["hooks"][0]["command"],
-        "bash \"$(git rev-parse --show-toplevel)/.pi/hooks/audit.sh\""
+        json(&at(".pi/kendex/hooks.json"))["hooks"]["tool_call"][0]["hooks"][0]["command"],
+        "bash \"$(git rev-parse --show-toplevel)/.pi/kendex/hooks/audit.sh\""
     );
     assert!(is_clean(&f));
 }

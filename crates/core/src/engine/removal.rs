@@ -21,7 +21,7 @@ use crate::model::{ItemKind, Scope};
 pub fn edit_holds(env: &Env, scope: &Scope, entry: &LockEntry) -> bool {
     if !matches!(
         entry.kind,
-        ItemKind::Skill | ItemKind::Agent | ItemKind::Command
+        ItemKind::Skill | ItemKind::Agent | ItemKind::Command | ItemKind::Hook
     ) {
         return false;
     }
@@ -46,7 +46,7 @@ pub fn edit_holds(env: &Env, scope: &Scope, entry: &LockEntry) -> bool {
 /// link we manage. Anything edited between preview and apply fails the
 /// precondition and the whole apply rolls back, instead of moving work
 /// nobody looked at into the trash.
-fn trash(description: String, path: PathBuf) -> Result<PlannedOp> {
+pub(super) fn trash(description: String, path: PathBuf) -> Result<PlannedOp> {
     let pre = match path.is_symlink() {
         true => Pre::SymlinkTo {
             target: std::fs::read_link(&path).map_err(|e| crate::error::CoreError::io(&path, e))?,
@@ -210,6 +210,7 @@ pub(super) fn orphans(
     lock: &Lock,
     state: &desired::DesiredState,
     options: &PlanOptions,
+    legacy_pi: &super::pi_hooks_move::Preflight,
     refused_keys: &BTreeSet<String>,
     guard: &mut TrashGuard,
     drift: &mut Vec<DriftRow>,
@@ -231,17 +232,7 @@ pub(super) fn orphans(
         // is stranded and must be cleaned up like any other orphan.
         let unreachable_source = manifest.declared(entry.kind).contains_key(&entry.name)
             && !state.processed.contains(&(entry.kind, entry.name.clone()));
-        // The caller named this installation: an instruction about this exact
-        // item, not a judgement about what anything still wants.
-        let named = match &options.removal_filter_typed {
-            Some(pairs) => pairs
-                .iter()
-                .any(|(kind, name)| *kind == entry.kind && name == &entry.name),
-            None => options
-                .removal_filter
-                .as_ref()
-                .is_some_and(|names| names.contains(&entry.name)),
-        };
+        let named = options.named_for_removal(entry.kind, &entry.name);
         // An installation nobody declared was derived from one that was, and
         // the catalog it came from is where its reason is written down. With
         // that catalog offline, "nothing requires it anymore" is not
@@ -278,6 +269,33 @@ pub(super) fn orphans(
             new_lock.entries.insert(key.clone(), entry.clone());
             continue;
         }
+        // An installation the reserved-name move is holding is still
+        // live and still kendex's to account for: its record is the only
+        // thing a later pass can claim those files with, so it outlives
+        // the sweep whatever else this pass was told to remove.
+        if entry.kind == ItemKind::Hook
+            && entry.harness == crate::model::HarnessId::Pi
+            && let Some(hold) = legacy_pi.hold(&entry.name)
+        {
+            // The same causes, said the same way as on the path where the
+            // item is still declared: only the line for an edit differs,
+            // because what finishing the move means here is taking the
+            // copy away rather than replacing it.
+            let (detail, cause) = hold.row(
+                "no longer wanted, but its copy under the directory pi reserved is not the one kendex wrote — that copy still runs; discard the edits to finish moving it, or take it away by hand",
+            );
+            drift.push(DriftRow {
+                kind: entry.kind,
+                name: entry.name.clone(),
+                harness: entry.harness,
+                scope: scope.clone(),
+                state: DriftState::Conflict,
+                detail,
+                cause,
+            });
+            new_lock.entries.insert(key.clone(), entry.clone());
+            continue;
+        }
         // An automatic removal (a sweep, an unfiltered orphan cleanup)
         // never takes edited or unprovable bytes; only naming the item —
         // or asking for edits to be discarded — does.
@@ -301,7 +319,7 @@ pub(super) fn orphans(
 
 /// Whether this installation only ever existed for another item's sake —
 /// nobody asked for it by name, so once nothing needs it, nothing does.
-fn derived_only(entry: &crate::lock::LockEntry) -> bool {
+pub(super) fn derived_only(entry: &crate::lock::LockEntry) -> bool {
     !entry.reasons.contains(&crate::lock::Reason::Requested)
 }
 
@@ -309,7 +327,7 @@ fn derived_only(entry: &crate::lock::LockEntry) -> bool {
 /// pass has usually resolved it already; a source no declaration named this
 /// time is resolved here, because the last item that needed it going away is
 /// exactly when this question gets asked.
-fn origin_readable(
+pub(super) fn origin_readable(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,

@@ -27,6 +27,7 @@ pub(super) fn plan_items(
     lock: &Lock,
     options: &PlanOptions,
     emitted_paths: &BTreeSet<PathBuf>,
+    legacy_pi: &super::pi_hooks_move::Preflight,
     drift: &mut Vec<DriftRow>,
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut config_edits::ConfigEditPlan,
@@ -56,10 +57,22 @@ pub(super) fn plan_items(
         if !discard && holds::hold_local_edit(env, item, scope, lock, &mut sink) {
             continue;
         }
+        // Not gated on `discard`: the preflight already took the discard
+        // into account, so a hold that survives it is one discarding
+        // cannot settle — a copy kendex cannot read, or a registration it
+        // cannot take out.
+        if holds::hold_legacy_copy(item, scope, lock, legacy_pi, &mut sink) {
+            continue;
+        }
         plan_item(env, item, scope, lock, emitted_paths, &mut sink)?;
     }
     Ok(())
 }
+
+/// What a refused rendering leaves behind when the person's own edits are
+/// in the installation it would have replaced.
+const EDITS_KEPT: &str =
+    "its files were edited on disk and were kept; keep them as a fork or remove the item by name";
 
 /// A refusal is a conflict the user must resolve, and any previous, wider
 /// rendering comes off disk on the default path — leaving it live would
@@ -72,6 +85,7 @@ pub(super) fn plan_refusals(
     scope: &Scope,
     lock: &Lock,
     state: &desired::DesiredState,
+    legacy_pi: &super::pi_hooks_move::Preflight,
     guard: &mut removal::TrashGuard,
     drift: &mut Vec<DriftRow>,
     ops: &mut Vec<PlannedOp>,
@@ -92,18 +106,31 @@ pub(super) fn plan_refusals(
             // an automatic casualty of an upstream change (that is the
             // exact promise of edit protection), so they hold and the
             // conflict says why.
-            if removal::edit_holds(env, scope, entry) {
+            // The reserved-name move's hold counts here too: what it is
+            // holding is still what runs, and its record is the only
+            // thing a later pass can claim it with.
+            let edited = removal::edit_holds(env, scope, entry);
+            let legacy_hold = (refusal.kind == crate::model::ItemKind::Hook
+                && refusal.harness == crate::model::HarnessId::Pi)
+                .then(|| legacy_pi.hold(&refusal.name))
+                .flatten();
+            if edited || legacy_hold.is_some() {
+                // The refusal says why nothing new was written; the hold
+                // says why the old copy is still running, in the same
+                // words every other path says it in. Edits in the files
+                // outrank it — that is the half a discard can settle.
+                let (why, cause) = match legacy_hold.filter(|_| !edited) {
+                    Some(hold) => hold.row(EDITS_KEPT),
+                    None => (EDITS_KEPT.to_owned(), Some(DriftCause::LocalEdit)),
+                };
                 drift.push(DriftRow {
                     kind: refusal.kind,
                     name: refusal.name.clone(),
                     harness: refusal.harness,
                     scope: scope.clone(),
                     state: DriftState::Conflict,
-                    detail: format!(
-                        "{} — its files were edited on disk and were kept; keep them as a fork or remove the item by name",
-                        refusal.reason
-                    ),
-                    cause: Some(DriftCause::LocalEdit),
+                    detail: format!("{} — {why}", refusal.reason),
+                    cause,
                 });
                 // The files stay, so the record of them stays. Dropping it
                 // would leave kendex's own rendering on disk with nothing

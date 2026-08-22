@@ -186,7 +186,9 @@ fn registration(
 /// One hook registration as the four values a harness loads it by. An empty
 /// matcher is spelled `*`, the way the scanner names it.
 fn hook_entry(event: &str, matcher: Option<&str>, command: &str, timeout: Option<u32>) -> String {
-    let matcher = matcher.filter(|m| !m.is_empty()).unwrap_or("*");
+    let matcher = matcher
+        .filter(|matcher| !matcher.is_empty())
+        .unwrap_or(crate::scan::hooks::ANY_MATCHER);
     let timeout = timeout.map(|t| t.to_string()).unwrap_or_default();
     format!("{event}|{matcher}|{command}|{timeout}")
 }

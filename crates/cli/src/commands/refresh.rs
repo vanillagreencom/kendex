@@ -3,7 +3,7 @@ use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
 
 use super::engine_common::{
-    confirm_and_execute, print_conflicts, print_held_back, refresh_failures,
+    confirm_and_execute, print_conflicts, print_held_back, print_notes, refresh_failures,
 };
 use super::{CliResult, resolve_scopes, say};
 use crate::scope::ScopeFilter;
@@ -114,6 +114,7 @@ pub fn run(
         // do is not worth a line, but a scope whose only reason for having
         // nothing to do is that the gate refused its content is.
         print_held_back(&report);
+        print_notes(&report);
         match verbose {
             true => print_drift(&report),
             false => print_conflicts(&report),

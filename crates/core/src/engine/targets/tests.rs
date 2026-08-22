@@ -96,9 +96,9 @@ fn instruction_references_are_scope_relative_and_cursor_is_project_only() {
     assert_eq!(
         hook_target(&env, &scope, HarnessId::Pi, "guard"),
         Some(HookTarget::Script {
-            path: PathBuf::from("/p/.pi/hooks/guard.sh"),
-            command: "bash \"$(git rev-parse --show-toplevel)/.pi/hooks/guard.sh\"".into(),
-            registry: PathBuf::from("/p/.pi/hooks.json"),
+            path: PathBuf::from("/p/.pi/kendex/hooks/guard.sh"),
+            command: "bash \"$(git rev-parse --show-toplevel)/.pi/kendex/hooks/guard.sh\"".into(),
+            registry: PathBuf::from("/p/.pi/kendex/hooks.json"),
             format: HookFormat::Nested,
             feature: None,
         })
@@ -172,4 +172,23 @@ fn a_copilot_hook_gets_a_document_of_its_own_beside_its_script() {
     };
     assert_eq!(command, "bash \"/h/.copilot/hooks/audit.sh\"");
     assert_eq!(registry, PathBuf::from("/h/.copilot/hooks/audit.json"));
+}
+
+/// The reserved name is one kendex never writes at either scope: pi warns
+/// about a `hooks/` beside a root it loads whatever the directory holds.
+#[test]
+fn pi_hooks_live_under_the_kendex_segment_at_both_scopes() {
+    let env = Env::fake("/h", FakeOs::Linux);
+    let Some(HookTarget::Script {
+        path,
+        command,
+        registry,
+        ..
+    }) = hook_target(&env, &Scope::Global, HarnessId::Pi, "guard")
+    else {
+        panic!("pi hooks are script targets");
+    };
+    assert_eq!(path, PathBuf::from("/h/.pi/agent/kendex/hooks/guard.sh"));
+    assert_eq!(command, "bash \"/h/.pi/agent/kendex/hooks/guard.sh\"");
+    assert_eq!(registry, PathBuf::from("/h/.pi/agent/kendex/hooks.json"));
 }

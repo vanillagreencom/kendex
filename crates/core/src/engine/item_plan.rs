@@ -12,7 +12,9 @@ use crate::model::Scope;
 
 use super::config_edits::ConfigEditPlan;
 use super::desired::{Artifact, Desired};
+use super::item_record::{registration, rendered_hash};
 use super::tree_plan::{Written, plan_tree};
+use crate::configedit::ConfigEdit;
 
 /// Everything one pass over the desired items accumulates.
 pub(super) struct PlanSink<'a> {
@@ -75,7 +77,7 @@ pub(super) fn plan_item(
         Artifact::File { .. } => plan_file(env, scope, item, existing.is_some(), ops),
         Artifact::Tree { .. } => plan_tree(env, item, existing.is_some(), owned, written, ops),
         Artifact::Registration { .. } => {
-            plan_registration(env, scope, item, existing.is_some(), ops, config_edits)
+            plan_registration(env, scope, item, existing, ops, config_edits)
         }
     }?;
     let dirty = !matches!(planned, Planned::Clean);
@@ -118,7 +120,10 @@ pub(super) fn plan_item(
             enabled: item.enabled,
             upstream_skills: item.upstream_skills.clone(),
             emitted: item.emitted.clone(),
-            registration: super::desired_custom_hooks::hook_registration(item),
+            registration: registration(item),
+            // Carried, never re-derived: what a pass records about a
+            // finished move outlives every later rendering of the item.
+            left_pi_reserved_name: existing.is_some_and(|entry| entry.left_pi_reserved_name),
             reasons: item.reasons.clone(),
         },
     );
@@ -129,22 +134,6 @@ pub(super) fn plan_item(
 /// and tree artifacts have a meaningful disk identity; a registration's
 /// shared config file holds other people's keys, so hashing it would read
 /// every unrelated settings change as an edit of ours.
-fn rendered_hash(artifact: &Artifact) -> Option<String> {
-    match artifact {
-        Artifact::File { .. } | Artifact::Tree { .. } => {
-            Some(super::desired::artifact_disk_hash(artifact))
-        }
-        // A hook's backing script is a file kendex alone writes, so it can
-        // be anchored like any other. A registration with no script edits
-        // only shared config, which holds other people's keys — nothing to
-        // anchor there.
-        Artifact::Registration {
-            script: Some(_), ..
-        } => Some(super::desired::artifact_disk_hash(artifact)),
-        Artifact::Registration { script: None, .. } => None,
-    }
-}
-
 /// A hook the tool only reads is named as such wherever the plan is shown.
 /// An op that reads like protection must not hide that this tool is free to
 /// ignore what it installs. Read through `hook_enforcement`, so a Pi hook
@@ -324,13 +313,32 @@ fn plan_registration(
     env: &Env,
     scope: &Scope,
     item: &Desired,
-    locked: bool,
+    existing: Option<&LockEntry>,
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut ConfigEditPlan,
 ) -> Result<Planned> {
     let Artifact::Registration { script, edits } = &item.artifact else {
         return Ok(Planned::Clean);
     };
+    let locked = existing.is_some();
+    // What the record says this installation registered, where that is no
+    // longer what it registers: a changed event or matcher is a move, and
+    // a move takes the old entry out before it puts the new one in. Added
+    // in front of this item's own edits, since the file is edited in the
+    // order they are collected — the other way round, an upsert under the
+    // new event would leave the old one live and the hook would fire
+    // twice.
+    let retire = match super::item_record::retire_previous(item, existing) {
+        super::item_record::Previous::Settled => None,
+        super::item_record::Previous::Retire(path, edit) => Some((path, edit)),
+        // Nothing is written beside entries kendex cannot tell its own
+        // from: this one registration holds, and says which document to
+        // look at.
+        super::item_record::Previous::Ambiguous(why) => return Ok(Planned::Conflict(why)),
+    };
+    let edits: Vec<(PathBuf, ConfigEdit)> =
+        retire.into_iter().chain(edits.iter().cloned()).collect();
+    let edits = &edits;
     // Every edit is checked before anything is planned: a settings file
     // kendex cannot read back — comments in a JSON, a torn edit — blocks
     // this one registration whole, script included, not the whole scope.

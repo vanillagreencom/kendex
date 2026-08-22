@@ -184,6 +184,24 @@
   ) {
     cursor: pointer;
   }
+  /* The desktop's own scrollbar ends a long list in a pale stripe of someone
+     else's chrome, so the thumb is drawn from the app's foreground and the
+     track is taken away. Inherited and unscoped, so every scroller in the app
+     is covered without naming any of them.
+
+     This property and nothing else. The ::-webkit-scrollbar pseudo-element
+     recolours the same bars, but measured on WebKitGTK 2.52.5 as offsetWidth
+     minus clientWidth, in both overflow states and both themes, it takes 10px
+     of content width the moment a list overflows and hands it back when it
+     stops — every list jumping sideways as it crosses that line — where
+     scrollbar-color takes nothing in either state. A runtime that does not
+     honour scrollbar-color keeps the scrollbar it already draws, at the width
+     and shape that runtime chose, and picks the colour up if it gains
+     support. */
+  html {
+    scrollbar-color: color-mix(in oklab, var(--foreground) 30%, transparent)
+      transparent;
+  }
 }
 
 /* Rendered-markdown preview (SKILL.md etc.) — no typography plugin in this

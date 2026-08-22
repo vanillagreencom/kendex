@@ -3,6 +3,7 @@ use std::path::Path;
 use serde_json::Value;
 
 use super::RawEntry;
+use super::hooks::Registration;
 use super::readers::read_json;
 use crate::hook::command_stem;
 
@@ -35,11 +36,7 @@ pub fn read(path: &Path) -> Result<Vec<RawEntry>, String> {
             let Some(action) = action(entry) else {
                 continue;
             };
-            let matcher = entry
-                .get("matcher")
-                .and_then(Value::as_str)
-                .filter(|matcher| !matcher.is_empty())
-                .unwrap_or("*");
+            let matcher = crate::configedit::spelled(entry.get("matcher").and_then(Value::as_str));
             entries.push(RawEntry {
                 name: format!("{event}:{matcher}:{}", command_stem(&action)),
                 enabled: Some(enabled),
@@ -49,6 +46,35 @@ pub fn read(path: &Path) -> Result<Vec<RawEntry>, String> {
         }
     }
     Ok(entries)
+}
+
+/// Every registration in one of these documents, in its parts — the
+/// structured view of the same reading, for anything asking which entry
+/// is which rather than what to display.
+pub(crate) fn registrations_text(text: &str) -> Result<Vec<Registration>, String> {
+    let value: Value =
+        serde_json::from_str(&super::jsonc::to_json(text)).map_err(|e| e.to_string())?;
+    let Some(events) = value.get("hooks").and_then(Value::as_object) else {
+        return Ok(Vec::new());
+    };
+    let mut found = Vec::new();
+    for (event, list) in events {
+        let Some(list) = list.as_array() else {
+            continue;
+        };
+        for entry in list {
+            let Some(command) = action(entry) else {
+                continue;
+            };
+            found.push(Registration {
+                event: event.clone(),
+                matcher: crate::configedit::spelled(entry.get("matcher").and_then(Value::as_str))
+                    .to_owned(),
+                command,
+            });
+        }
+    }
+    Ok(found)
 }
 
 /// What one entry does, in the words of whichever key it used. A `command`

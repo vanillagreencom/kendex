@@ -89,14 +89,25 @@ changes carry a **Breaking** call-out with their migration note inline.
   publishes is told so plainly, and settles nothing.
 ### Changed
 
+- **Breaking:** the install record's version moves to 5. Older files still
+  load and the first apply upgrades them in place, through the normal
+  journaled, previewed plan. What moves the version is the new evidence in
+  it: which Pi hooks have finished moving out of the directory pi
+  reserved, and the matcher a hook registration went in under. An earlier
+  kendex would load the file, ignore both, and drop them the next time it
+  wrote — and then read a finished move as unfinished and take back files
+  you had put there yourself. It refuses the file instead. Migration:
+  automatic on first apply; if you run two versions of kendex against one
+  project, update both.
 - The safety check says what it found and nothing more. A package's page
   now states, beside its verdict, that the check is automated and not a
   review, that it can miss things, and that a large skill is read only in
-  part; Settings › Safety check says the same about the check itself. A marketplace's About tab said
-  "Nothing wrong with this catalog" and now says "Nothing wrong with how
-  this catalog is put together" — that report reads the catalog's layout
-  and has not looked inside a single package. A clean check has never
-  been an approval, and the wording no longer suggests otherwise.
+  part; Settings › Safety check says the same about the check itself. A
+  marketplace's About tab said "Nothing wrong with this catalog" and now
+  says "Nothing wrong with how this catalog is put together" — that report
+  reads the catalog's layout and has not looked inside a single package. A
+  clean check has never been an approval, and the wording no longer
+  suggests otherwise.
 - The Updates page is a table with one row per package. A package out of
   date in several projects shows how many places, expands into a row per
   place — User level and each project by name — and each place has its
@@ -112,6 +123,19 @@ changes carry a **Breaking** call-out with their migration note inline.
   choose. The package page's version menu and toasts say the same.
 - `kendex updates` names the place — global or the project path — at the
   start of every line.
+- The `second-opinion` skill now budgets 18 minutes (1080 seconds) for an
+  external review by default, up from 5. It is a budget, not a ceiling: a
+  retry started near the deadline and the grace before the kill can carry a
+  run about 90 seconds past it, plus the script's own work, so size a
+  caller-side watchdog above 1170 seconds. Deep-reasoning reviewers were
+  timing out on every cycle at the old limit; set `SECOND_OPINION_TIMEOUT`
+  to override. Existing installs keep their seeded value — `kendex refresh`
+  never rewrites settings you already have — so a project whose
+  `kendex.settings.toml` carries `SECOND_OPINION_TIMEOUT = "300"` from an
+  earlier install must update it to `"1080"` by hand to get the new wait.
+  **Breaking**: an external review now requires a `timeout` binary and
+  refuses to run without one rather than running with no limit at all.
+  Stock macOS ships none: `brew install coreutils`.
 - The `dangerous-commands` check no longer reads a shell `case` arm's
   pattern list as a command: naming `sudo` among the words a parser should
   skip is not running it. Skills and hooks that parse command lines stop
@@ -138,6 +162,25 @@ changes carry a **Breaking** call-out with their migration note inline.
   reported as "the safety rules changed since it was reviewed" rather than
   as a different set of problems. Re-accept or re-dismiss from the tokens
   `kendex findings` prints now.
+- A project card on Projects opens that project's library. Clicking the
+  card — Personal included — shows everything installed there, unfiltered.
+  Seeing a whole project used to mean picking a kind you did not want and
+  then clearing the filter. A screen reader names the folder each card
+  opens, so two projects whose folders share a name — `/work/client` and
+  `/personal/client` — are told apart by ear as well as on screen.
+- Following a link into My Library starts from a clean filter strip. The
+  whole strip — every picker, the search box and where the table is looking —
+  is set to exactly what the link asked for, and nothing an earlier visit
+  left narrowed carries over, so a count badge, Home's "Installed" tile and a
+  recently-changed row each land on the list they name rather than on that
+  list narrowed again by whatever was on screen last time.
+- Scrolling surfaces are the app's own colour rather than the desktop's: a
+  long list used to end in a stripe of system chrome, and the thumb is now
+  drawn from the app's foreground with the track taken away, in light and
+  dark. Nothing gives up any width for it, so nothing moves that did not
+  move before. A system that does not let the app recolour its scrollbar
+  keeps exactly the bar it draws today, and will pick the app's colour up on
+  its own once it supports the setting.
 - The app uses the Geist typeface, with titles and navigation in Geist Mono
   to match the website.
 - **Breaking**: the default Homebrew install is now the app —
@@ -169,6 +212,10 @@ changes carry a **Breaking** call-out with their migration note inline.
   `KENDEX_REAL_HOME=1` — only that exact value opts out. Release builds are
   unaffected, whether you installed one or built it with `--release`.
 
+- "How a marketplace repo works" can be read from the keyboard. The document
+  is longer than the box it opens in and had no tab stop of its own, so the
+  only way in from the keyboard was a link near its end; `Tab` now reaches
+  the document itself and the keyboard scrolls it.
 - The project-management skill's issue pipeline creates Linear issues
   directly in Backlog instead of the team's Triage default. Pipeline output
   is already fully triaged — project, labels, priority, relations — and a
@@ -217,6 +264,25 @@ changes carry a **Breaking** call-out with their migration note inline.
   session, in a fresh install of kendex's own default catalog. The
   publisher's recorded review now travels with the package, and the default
   catalog ships nothing its own check has not settled.
+- Pi no longer halts every interactive start in a kendex-managed project.
+  Pi reserves the `hooks/` directory name beside every root it loads: it
+  warns whenever one exists, whatever is in it, and waits for a keypress
+  before the session opens. kendex's Pi hooks now live under
+  `.pi/kendex/hooks/` and `~/.pi/agent/kendex/hooks/`, and the next
+  `kendex refresh` moves an existing install there and takes the old
+  directory away with it — including for a hook you removed or switched
+  off, so nothing is left behind still firing. Nothing moves that kendex
+  cannot prove it wrote: a file you edited, one it never wrote, something
+  that is not a plain file where the script was, a registration you added
+  or moved by hand, a link, and a hook whose source is unreachable this
+  run all stay exactly where they are, and `refresh` says which and why.
+  Discarding the edits, or removing the hook by name, finishes the move.
+  A hook left behind still shows up in `kendex list`, in the app and in
+  the safety scan, read from where it is really firing, so the copy that
+  needs your attention is not the one you cannot see. Once a hook has
+  moved, the reserved name is yours again: a script, a registration or a
+  directory you put back there is left alone, however exactly it matches
+  what kendex used to write.
 - On Linux, a helper command that ran past its time limit could take
   unrelated processes down with it: Ubuntu's `kill` misreads the negative
   process-group argument kendex passed, and for some process ids that

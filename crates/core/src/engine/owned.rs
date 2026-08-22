@@ -92,11 +92,18 @@ pub(super) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
     Owned { files, edits }
 }
 
-/// A hook's remains. A script-less hook (custom) registered the person's own
-/// command and the lock recorded it, so removal names exactly that entry; a
-/// hook with a script re-derives its command from the target it was placed
-/// at. Codex's feature flag stays on either way: other hooks may still rely
-/// on it, and it enables nothing by itself.
+/// A hook's remains: the entry it registered, and the script it wrote if
+/// it wrote one.
+///
+/// Which of those two shapes it is reads off the record, not off the
+/// registration alone — every hook that registers something records what
+/// it registered, and only a hook with no script of its own leaves no
+/// `rendered_hash` behind. The registration is named by the record where
+/// there is one, so an entry whose event has changed since it went in
+/// still comes out; an entry from before the record was kept is named by
+/// the command this path spells, as it always was. Codex's feature flag
+/// stays on either way: other hooks may still rely on it, and it enables
+/// nothing by itself.
 fn hook_owned(
     env: &Env,
     scope: &Scope,
@@ -104,9 +111,20 @@ fn hook_owned(
     files: &mut Vec<PathBuf>,
     edits: &mut Vec<(PathBuf, ConfigEdit)>,
 ) {
-    let removal = |event: Option<String>, command: String, format: &HookFormat| match format {
-        HookFormat::Nested => ConfigEdit::RemoveHook { event, command },
-        HookFormat::Copilot => ConfigEdit::RemoveCopilotHook { event, command },
+    let removal = |event: Option<String>,
+                   matcher: Option<String>,
+                   command: String,
+                   format: &HookFormat| match format {
+        HookFormat::Nested => ConfigEdit::RemoveHook {
+            event,
+            matcher,
+            command,
+        },
+        HookFormat::Copilot => ConfigEdit::RemoveCopilotHook {
+            event,
+            matcher,
+            command,
+        },
     };
     match hook_target(env, scope, entry.harness, &entry.name) {
         Some(HookTarget::Script {
@@ -115,20 +133,33 @@ fn hook_owned(
             registry,
             format,
             ..
-        }) => match &entry.registration {
-            Some(recorded) => edits.push((
-                registry,
-                removal(
-                    Some(recorded.event.clone()),
-                    recorded.command.clone(),
-                    &format,
-                ),
-            )),
-            None => {
+        }) => {
+            // A hook with no script of its own is that registration and
+            // nothing else; everything else wrote a file, and the entry
+            // that runs it comes out with it.
+            if entry.rendered_hash.is_some() || entry.registration.is_none() {
                 files.push(path);
-                edits.push((registry, removal(None, command, &format)));
             }
-        },
+            let (event, matcher, command) = match &entry.registration {
+                // A hook with no script of its own is that entry and
+                // nothing else, so it comes out by the identity the
+                // record kept, exactly.
+                Some(recorded) if entry.rendered_hash.is_none() => (
+                    Some(recorded.event.clone()),
+                    recorded.matcher.clone(),
+                    recorded.command.clone(),
+                ),
+                // A hook whose script goes with it takes its registration
+                // wherever that has got to. An entry taken from an event
+                // somebody moved it to is a smaller wrong than a command
+                // left pointing at a script that is no longer there — and
+                // the command is the record's, which is what kendex
+                // registered, not what it would render today.
+                Some(recorded) => (None, None, recorded.command.clone()),
+                None => (None, None, command),
+            };
+            edits.push((registry, removal(event, matcher, command, &format)));
+        }
         Some(HookTarget::Instruction {
             path,
             config,

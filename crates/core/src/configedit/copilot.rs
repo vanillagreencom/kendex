@@ -6,7 +6,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::ensure_object;
+use super::{ensure_object, names, one};
 
 /// The schema version Copilot's hook loader expects a file to declare.
 const COPILOT_HOOK_VERSION: u64 = 1;
@@ -33,8 +33,13 @@ pub(super) fn upsert_copilot_hook(
     if let Some(timeout) = timeout {
         entry["timeoutSec"] = json!(timeout);
     }
-    // Refreshed where it already stands, so a re-apply moves nothing.
-    let ours = |candidate: &Value| candidate.get("bash").and_then(Value::as_str) == Some(command);
+    // Refreshed where it already stands, so a re-apply moves nothing —
+    // and only where this registration stands: an entry running the same
+    // command under a matcher somebody else chose is theirs.
+    let ours = |candidate: &Value| {
+        candidate.get("bash").and_then(Value::as_str) == Some(command)
+            && names(candidate, one(matcher))
+    };
     let first = entries.iter().position(ours);
     let mut kept = false;
     entries.retain(|candidate| !ours(candidate) || !std::mem::replace(&mut kept, true));
@@ -51,8 +56,12 @@ pub(super) fn upsert_copilot_hook(
 pub(super) fn remove_copilot_hook(
     root: &mut Map<String, Value>,
     event: Option<&str>,
+    matcher: Option<&str>,
     command: &str,
 ) {
+    // A matcher names one entry; without one the command goes wherever it
+    // is registered, which is what removing the whole installation means.
+    let named = |entry: &Value| names(entry, matcher);
     let Some(events) = root.get_mut("hooks").and_then(Value::as_object_mut) else {
         return;
     };
@@ -62,7 +71,9 @@ pub(super) fn remove_copilot_hook(
     };
     for name in names {
         if let Some(entries) = events.get_mut(&name).and_then(Value::as_array_mut) {
-            entries.retain(|entry| entry.get("bash").and_then(Value::as_str) != Some(command));
+            entries.retain(|entry| {
+                !named(entry) || entry.get("bash").and_then(Value::as_str) != Some(command)
+            });
             if entries.is_empty() {
                 events.shift_remove(&name);
             }
@@ -112,6 +123,7 @@ mod tests {
         let registered = upsert().apply(existing).unwrap();
         let removed = ConfigEdit::RemoveCopilotHook {
             event: None,
+            matcher: None,
             command: "bash /h/.copilot/hooks/audit.sh".to_owned(),
         }
         .apply(&registered)
@@ -129,6 +141,7 @@ mod tests {
         let registered = upsert().apply("").unwrap();
         let removed = ConfigEdit::RemoveCopilotHook {
             event: Some("preToolUse".to_owned()),
+            matcher: None,
             command: "bash /h/.copilot/hooks/audit.sh".to_owned(),
         }
         .apply(&registered)

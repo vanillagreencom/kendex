@@ -139,12 +139,12 @@ fn a_mappable_event_renders_the_registry_in_pi_listener_names() {
     let report = audit(&w.env, &scope(&w)).unwrap();
     kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
 
-    let script = w.project.join(".pi/hooks/guard.sh");
+    let script = w.project.join(".pi/kendex/hooks/guard.sh");
     assert!(
         script.is_file(),
         "the hook script lands beside the registry"
     );
-    let registry = fs::read_to_string(w.project.join(".pi/hooks.json")).unwrap();
+    let registry = fs::read_to_string(w.project.join(".pi/kendex/hooks.json")).unwrap();
     assert!(
         registry.contains("tool_call"),
         "the registry speaks pi's listener names: {registry}"
@@ -185,10 +185,10 @@ fn an_unmappable_event_installs_nothing_on_pi() {
     );
     kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
     assert!(
-        !w.project.join(".pi/hooks/guard.sh").exists(),
+        !w.project.join(".pi/kendex/hooks/guard.sh").exists(),
         "no stale advisory artifact for an event pi cannot fire"
     );
-    assert!(!w.project.join(".pi/hooks.json").exists());
+    assert!(!w.project.join(".pi/kendex/hooks.json").exists());
 }
 
 #[test]
@@ -209,5 +209,23 @@ fn labels_downgrade_per_item_when_the_carrier_is_missing() {
             .as_deref()
             .is_some_and(|fix| fix.contains("pi-hooks")),
         "{warning:?}"
+    );
+}
+
+/// Pi warns about a `hooks/` beside a root it loads on the name alone —
+/// so the name is one kendex never writes.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn nothing_lands_in_the_directory_names_pi_reserved() {
+    let w = world();
+    register_carrier(&w.project.join(".pi"));
+    declare_hook(&w, "PreToolUse");
+
+    let report = audit(&w.env, &scope(&w)).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+
+    assert!(
+        !w.project.join(".pi/hooks").exists(),
+        "the reserved directory name makes pi warn at every start"
     );
 }

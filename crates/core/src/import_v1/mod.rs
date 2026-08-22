@@ -343,6 +343,7 @@ fn convert_lock(
                     enabled: true,
                     upstream_skills: None,
                     emitted: None,
+                    left_pi_reserved_name: false,
                     // v1 recorded no reason an installation existed, and
                     // every one of them came from a declaration.
                     reasons: std::collections::BTreeSet::from([crate::lock::Reason::Requested]),

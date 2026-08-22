@@ -117,3 +117,21 @@ pub struct PlanOptions {
     /// edits with it, even one that shares a name across kinds.
     pub overwrite_edited_names: Option<Vec<(ItemKind, String)>>,
 }
+
+impl PlanOptions {
+    /// Whether the caller named this exact installation for removal: an
+    /// instruction about this item, never a judgement about what anything
+    /// still wants. Every hold that a typed removal releases asks it here,
+    /// so no two of them can disagree about what the person asked for.
+    /// The typed pairs win where they are set, so a same-named item of
+    /// another kind is never taken along.
+    pub(crate) fn named_for_removal(&self, kind: ItemKind, name: &str) -> bool {
+        match &self.removal_filter_typed {
+            Some(pairs) => pairs.iter().any(|(k, n)| *k == kind && n == name),
+            None => self
+                .removal_filter
+                .as_ref()
+                .is_some_and(|names| names.iter().any(|n| n == name)),
+        }
+    }
+}

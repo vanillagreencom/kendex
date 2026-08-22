@@ -3,6 +3,7 @@ import type { ItemKind } from "@/bindings";
 import { KindCountBadges } from "@/components/kind-count-badges";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { showEverythingLabel } from "@/lib/project-card-label";
 
 /**
  * One place a setup applies — Personal, or a project folder. Personal and a
@@ -14,7 +15,9 @@ import { Card } from "@/components/ui/card";
 export function ProjectCard({
   name,
   subtitle,
+  path,
   counts,
+  onOpen,
   onKindClick,
   emptyLabel,
   badge,
@@ -22,7 +25,15 @@ export function ProjectCard({
 }: {
   name: string;
   subtitle: string;
+  /** The folder this card is for, where it has one. The name is only that
+   * folder's last segment, which two projects can share, so it is what a
+   * label says to name one card apart from another. */
+  path?: string;
   counts: [ItemKind, number][];
+  /** Show everything installed here — what the project's name is a button
+   * for. A count badge narrows to one kind, and there was no way to ask for
+   * everything without picking a kind first. */
+  onOpen: () => void;
   onKindClick: (kind: ItemKind) => void;
   emptyLabel: string;
   /** A state worth flagging beside the name, e.g. a missing folder. */
@@ -30,11 +41,30 @@ export function ProjectCard({
   action?: ReactNode;
 }) {
   return (
-    <Card className="gap-3 py-4">
+    <Card
+      // A shortcut for the mouse, on top of the name's own button: the card
+      // reads as one target, so clicking its empty space should do what the
+      // card is for. Every control inside it means something else and has
+      // already answered the click; a drag that ends here was someone
+      // keeping the path, not asking to leave the page.
+      onClick={(event) => {
+        if ((event.target as HTMLElement).closest("button")) return;
+        if (window.getSelection()?.isCollapsed === false) return;
+        onOpen();
+      }}
+      className="cursor-pointer gap-3 py-4 hover:bg-accent/40"
+    >
       <div className="flex items-start justify-between gap-3 px-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="truncate text-sm font-medium">{name}</span>
+            <button
+              type="button"
+              onClick={onOpen}
+              aria-label={showEverythingLabel(name, path)}
+              className="truncate text-sm font-medium hover:underline"
+            >
+              {name}
+            </button>
             {badge ? <Badge variant="destructive">{badge}</Badge> : null}
           </div>
           <p className="truncate text-[13px] text-muted-foreground">
