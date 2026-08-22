@@ -178,7 +178,9 @@ function PackageRow({
  *  A row installs from the list without the package's page ever opening, so
  *  the words have to be reachable from the row itself — the trigger takes
  *  focus, putting them a tab before Install, and they sit in the row's text
- *  for anyone who never hovers. */
+ *  for anyone who never hovers. Reading the caveat is not asking for the
+ *  package, so the trigger keeps its activation to itself rather than
+ *  letting the row navigate out from under it. */
 function SafetyDot({
   tone,
   words,
@@ -188,7 +190,10 @@ function SafetyDot({
 }) {
   return (
     <Tooltip>
-      <TooltipTrigger className="inline-flex items-center rounded-full outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
+      <TooltipTrigger
+        className="inline-flex items-center rounded-full outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        onClick={(e) => e.stopPropagation()}
+      >
         <StatusDot tone={tone} />
         <span className="sr-only">{words}</span>
       </TooltipTrigger>

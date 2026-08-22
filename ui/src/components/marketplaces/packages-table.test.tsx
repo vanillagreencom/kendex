@@ -1,8 +1,13 @@
+// @vitest-environment jsdom
+import userEvent from "@testing-library/user-event";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AvailablePackage, PackageSafety, Verdict } from "@/bindings";
 import { PREINSTALL_SAFETY_CAVEAT, safetyDotWords } from "@/lib/copy-safety";
 import { subscription } from "@/stores/marketplaces-shared";
+import { useNavStore } from "@/stores/nav";
 import { safetyKey } from "@/stores/preinstall-safety";
 import { PackagesTable } from "./packages-table";
 
@@ -16,6 +21,9 @@ vi.mock("@/stores/preinstall-safety", async (importOriginal) => {
     const state = {
       ...mod.usePreinstallSafety.getState(),
       scores: stub.scores,
+      // A mounted row runs the effect that queues a score, and there is no
+      // backend behind these tests to answer it.
+      want: () => {},
     };
     return selector ? selector(state) : state;
   };
@@ -98,5 +106,85 @@ describe("the safety dot in the packages list", () => {
     const html = render(null);
     expect(trigger(html)).toContain("Checking…");
     expect(html).not.toContain(PREINSTALL_SAFETY_CAVEAT);
+  });
+});
+
+// The activation tests need a live DOM: whether a click reaches the row is a
+// question about event propagation, which static markup cannot answer.
+const mounted: Root[] = [];
+// A tooltip left open by one test is in the document the next one reads.
+afterEach(() => {
+  act(() => {
+    for (const root of mounted) root.unmount();
+  });
+  mounted.length = 0;
+  document.body.replaceChildren();
+});
+
+const mount = (safety: PackageSafety | null) => {
+  stub.scores = safety ? { [safetyKey(catalog, "skill", "gh")]: safety } : {};
+  const goToAvailablePackage = vi.fn();
+  useNavStore.setState({ goToAvailablePackage });
+  const host = document.body.appendChild(document.createElement("div"));
+  const root = createRoot(host);
+  mounted.push(root);
+  act(() =>
+    root.render(
+      <PackagesTable entries={[{ catalog, row }]} showMarketplace={false} />,
+    ),
+  );
+  const dot = host.querySelector<HTMLButtonElement>(
+    '[data-slot="tooltip-trigger"]',
+  );
+  if (!dot) throw new Error("no safety trigger rendered");
+  return { host, dot, goToAvailablePackage };
+};
+
+describe("reading the safety dot", () => {
+  it("does not open the package page on a click", async () => {
+    const { dot, goToAvailablePackage } = mount(scored("warn", 60));
+    await userEvent.click(dot);
+    expect(goToAvailablePackage).not.toHaveBeenCalled();
+  });
+
+  it("does not open the package page on Enter or Space", async () => {
+    // The browser turns both into a click on the button, which is the path
+    // the row would otherwise navigate on.
+    const { dot, goToAvailablePackage } = mount(scored("warn", 60));
+    dot.focus();
+    await userEvent.keyboard("{Enter}");
+    await userEvent.keyboard(" ");
+    expect(goToAvailablePackage).not.toHaveBeenCalled();
+  });
+
+  it("does not open it while the score is still being read", async () => {
+    const { dot, goToAvailablePackage } = mount(null);
+    dot.focus();
+    await userEvent.click(dot);
+    await userEvent.keyboard("{Enter}");
+    expect(goToAvailablePackage).not.toHaveBeenCalled();
+  });
+
+  it("still shows the words when the trigger takes focus", () => {
+    // The popup is portalled out of the row, so it is the document's to find
+    // — and the trigger's own sr-only copy must not stand in for it.
+    const { dot } = mount(scored("warn", 60));
+    expect(document.querySelector('[data-slot="tooltip-content"]')).toBeNull();
+    act(() => dot.focus());
+    expect(
+      document.querySelector('[data-slot="tooltip-content"]')?.textContent,
+    ).toContain(PREINSTALL_SAFETY_CAVEAT);
+  });
+
+  it("still opens the package page from the rest of the row", async () => {
+    const { host, goToAvailablePackage } = mount(scored("warn", 60));
+    const name = host.querySelector("td");
+    if (!name) throw new Error("no row cell rendered");
+    await userEvent.click(name);
+    expect(goToAvailablePackage).toHaveBeenCalledWith({
+      catalog,
+      kind: "skill",
+      name: "gh",
+    });
   });
 });
