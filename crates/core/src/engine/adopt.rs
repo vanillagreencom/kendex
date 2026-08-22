@@ -83,11 +83,15 @@ pub fn adopt(
     // Where a position leads, not only where it sits: a link somebody made
     // can point at another item's installation, and the capture moves what
     // it points at.
+    // Anywhere an installation lives, not only its exact root: a link into
+    // a folder inside a managed skill, or at a folder holding managed
+    // installs, moves them just the same.
     let managed = |path: &Path| {
         let at = path.canonicalize();
+        let touches = |ours: &PathBuf, at: &Path| ours.starts_with(at) || at.starts_with(ours);
         owned
             .iter()
-            .any(|ours| ours == path || at.as_ref().is_ok_and(|at| ours == at))
+            .any(|ours| touches(ours, path) || at.as_ref().is_ok_and(|at| touches(ours, at)))
     };
     if let Some((_, held)) = positions.iter().find(|(_, path)| managed(path)) {
         return Err(already_managed(name, held));

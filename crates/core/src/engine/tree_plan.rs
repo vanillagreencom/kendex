@@ -194,10 +194,7 @@ fn collapsed_link(
         return Err(
             match super::adopt_shared::link_target(env, scope, item.kind, &item.name, canonical) {
                 Some(target) => unmanaged(DriftCause::SharedLink, &target),
-                None => Planned::Conflict(format!(
-                    "{} is a link kendex did not create",
-                    canonical.display()
-                )),
+                None => unmanaged(DriftCause::ForeignLink, canonical),
             },
         );
     }

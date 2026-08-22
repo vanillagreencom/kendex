@@ -41,10 +41,7 @@ pub(super) fn plan_written_file(
     ops: &mut Vec<PlannedOp>,
 ) -> Result<Planned> {
     if path.is_symlink() {
-        return Ok(Planned::Conflict(format!(
-            "{} is a link kendex did not create",
-            path.display()
-        )));
+        return Ok(unmanaged(DriftCause::ForeignLink, path));
     }
     if path.exists() && !path.is_file() {
         // A directory where a file goes is unmanaged content in an awkward
@@ -135,10 +132,7 @@ fn plan_absent_file(
 ) -> Planned {
     let alternate = toggle_sibling(path);
     if alternate.is_symlink() {
-        return Planned::Conflict(format!(
-            "{} is a link kendex did not create",
-            alternate.display()
-        ));
+        return unmanaged(DriftCause::ForeignLink, &alternate);
     }
     if alternate.is_file() {
         if !ours(claim, path, owned) {

@@ -1014,7 +1014,14 @@ export type DriftCause = "upstream-changed" | "local-edit" | "both" |
  *  The detail is the folder the link points at, which is the one a
  *  reader needs to see.
  */
-"shared-link";
+"shared-link" | 
+/**
+ *  A link somebody set up that adoption cannot follow and the
+ *  replacement must not write over. Neither exit settles it, so an
+ *  item with one of these anywhere has no exit at all — the files move
+ *  out of the way by hand or nothing does.
+ */
+"foreign-link";
 
 export type DriftRow = DriftRow_Serialize | DriftRow_Deserialize;
 

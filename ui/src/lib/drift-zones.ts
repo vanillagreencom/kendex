@@ -14,6 +14,13 @@ export function isInTheWay(cause: DriftCause | null | undefined): boolean {
   return !!cause && IN_THE_WAY.includes(cause);
 }
 
+/** Whether the row can be settled at all without the reader moving files
+ *  themselves. A foreign link cannot, and an item holding one has no exit
+ *  — so it belongs on the same row, where it takes both buttons with it. */
+export function blocksTheItem(cause: DriftCause | null | undefined): boolean {
+  return isInTheWay(cause) || cause === "foreign-link";
+}
+
 /** Adoption can take what is at this position. */
 export function canKeep(cause: DriftCause | null | undefined): boolean {
   return cause === "unmanaged-content" || cause === "shared-link";
@@ -45,8 +52,20 @@ export interface DriftZones {
   orphans: MergedDriftRow[];
 }
 
+const itemKey = (row: DriftRow) => `${row.kind}:${row.name}`;
+
 export function driftZones(rows: DriftRow[]): DriftZones {
-  const inTheWay = rows.filter((row) => isInTheWay(row.cause));
+  // Every conflict an item with files in the way has, not only the rows
+  // that carry them. Both exits act on the whole item and the engine
+  // refuses one it could only half settle, so a hard conflict beside them
+  // — a link kendex will not touch — belongs on the same row, where it
+  // takes both buttons with it.
+  const blocked = new Set(
+    rows.filter((row) => isInTheWay(row.cause)).map(itemKey),
+  );
+  const inTheWay = rows.filter(
+    (row) => blocksTheItem(row.cause) && blocked.has(itemKey(row)),
+  );
   return {
     inTheWay: mergeDriftRows(inTheWay),
     changes: mergeDriftRows(

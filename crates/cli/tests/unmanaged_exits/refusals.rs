@@ -170,3 +170,29 @@ fn the_scope_wide_exit_is_not_printed_beside_an_item_it_would_refuse() {
         "a command that would refuse the whole run was printed: {planned}"
     );
 }
+
+/// A hard conflict beside files in the way. Both exits act on the whole
+/// item and the engine refuses one it could only half settle, so the row
+/// carries neither — a link kendex will not touch takes the offer with it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_hard_conflict_beside_the_files_takes_both_exits_with_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let project = project_with(home, "[\"claude\", \"codex\"]", "copy");
+    folder_at(&project.join(".claude/skills/deploy"), "By hand.");
+    // Codex's place is a link into somewhere that is not a skill at all,
+    // which adoption refuses and replacement never writes over.
+    let elsewhere = home.join("notes");
+    fs::create_dir_all(&elsewhere).unwrap();
+    fs::write(elsewhere.join("read-me.txt"), "not a skill").unwrap();
+    link_at(&project.join(".agents/skills/deploy"), &elsewhere);
+
+    let planned = plan(home, &project);
+    assert!(planned.contains("conflict: skill deploy"), "{planned}");
+    assert_eq!(offer(&planned), "move them somewhere else first");
+    assert!(
+        !planned.contains("--replace-unmanaged"),
+        "half the item was offered a take-over: {planned}"
+    );
+}

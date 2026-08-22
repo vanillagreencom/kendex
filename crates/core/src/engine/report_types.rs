@@ -51,9 +51,22 @@ pub enum DriftCause {
     /// The detail is the folder the link points at, which is the one a
     /// reader needs to see.
     SharedLink,
+    /// A link somebody set up that adoption cannot follow and the
+    /// replacement must not write over. Neither exit settles it, so an
+    /// item with one of these anywhere has no exit at all — the files move
+    /// out of the way by hand or nothing does.
+    ForeignLink,
 }
 
 impl DriftCause {
+    /// Whether the row can be settled at all without the reader moving
+    /// files themselves. A foreign link cannot, which is why it is a cause
+    /// rather than a bare conflict: an item holding one has no exit, and a
+    /// surface that only looked at its neighbours would offer one.
+    pub fn blocks_the_item(self) -> bool {
+        self.in_the_way() || matches!(self, DriftCause::ForeignLink)
+    }
+
     /// Whether files kendex did not write are what this row is about — the
     /// causes every surface offers a way out of.
     pub fn in_the_way(self) -> bool {

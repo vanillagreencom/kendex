@@ -242,9 +242,13 @@ fn a_link_at_a_folder_adoption_would_refuse_is_still_a_dead_stop() {
 
     let report = plan_apply(&w.env, &w.scope, &take_over()).unwrap();
     let row = deploy_row(&report.drift);
-    assert_eq!(row.cause, None, "{row:?}");
+    let cause = row.cause.unwrap_or_else(|| panic!("{row:?}"));
+    assert_eq!(cause, DriftCause::ForeignLink, "{row:?}");
+    // Named so a surface can see it beside the item's other rows and take
+    // their offers away too — never so one is made for it.
+    assert!(!cause.can_keep() && !cause.can_replace(), "{row:?}");
     assert!(
-        row.detail.contains("link kendex did not create"),
+        row.detail.contains(".claude/skills/deploy"),
         "{}",
         row.detail
     );
