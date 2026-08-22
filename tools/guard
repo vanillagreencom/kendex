@@ -160,7 +160,7 @@ if [ -f Cargo.toml ]; then
   done
   cargo fmt --check || say "cargo fmt --check failed"
   cargo clippy --workspace --quiet -- -D warnings || say "clippy failed"
-  cargo doc --no-deps --workspace --quiet || say "cargo doc failed"
+  cargo doc --no-deps --document-private-items --workspace --quiet || say "cargo doc failed"
   cargo test --workspace --quiet || say "tests failed"
 fi
 if [ -f ui/package.json ]; then

@@ -18,7 +18,7 @@ pub enum MarketplaceCommand {
         #[arg(long)]
         scope: Option<String>,
     },
-    /// Subscribe to a marketplace: owner/repo[@rev], a git URL, a GitHub
+    /// Subscribe to a marketplace: `owner/repo[@rev]`, a git URL, a GitHub
     /// tree URL, a skills.sh package URL, or a local folder
     Subscribe {
         reference: String,
@@ -85,7 +85,7 @@ pub enum MarketplaceCommand {
         /// submission until chosen)
         #[arg(long)]
         license: Option<String>,
-        /// Where to create it (default: ./<name>)
+        /// Where to create it (default: `./<name>`)
         #[arg(long)]
         dir: Option<std::path::PathBuf>,
     },

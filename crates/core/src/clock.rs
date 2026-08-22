@@ -27,13 +27,17 @@ pub fn timestamp() -> String {
 }
 
 /// Whether this is spelled the way [`timestamp`] spells an instant:
-/// `YYYY-MM-DDTHH:MM:SS` in fixed-width digits, with an optional fractional
-/// second and an optional offset.
+/// `YYYY-MM-DDTHH:MM:SS` in fixed-width digits, an optional fractional
+/// second, and then `Z` or a `+HH:MM`/`-HH:MM` offset.
 ///
 /// Shape, not calendar. Nothing reads one of these as a date — they are
 /// printed and compared for exact equality — so what has to be bounded is
 /// the bytes a file somebody else wrote can put on a terminal, not which
 /// days a month has.
+///
+/// The offset is where that stops: a bare local time names no instant a
+/// reader can resolve, and it can never equal what [`timestamp`] wrote, so
+/// accepting one would only widen what reaches a terminal.
 pub fn looks_like_instant(value: &str) -> bool {
     let (date, rest) = match value.split_once('T') {
         Some(split) => split,
@@ -71,8 +75,8 @@ fn fixed(value: &str, width: usize) -> Option<u32> {
         .flatten()
 }
 
-/// The time half with its trailing offset removed, and the offset. `Z`, or
-/// `+HH:MM`/`-HH:MM`, or nothing.
+/// The time half with its trailing offset removed, and the offset itself:
+/// `Z`, or `+HH:MM`/`-HH:MM`. `None` where the value carries neither.
 fn split_offset(time: &str) -> Option<(&str, &str)> {
     if let Some(stripped) = time.strip_suffix('Z') {
         return Some((stripped, "Z"));
@@ -96,4 +100,29 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
     let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
     (if month <= 2 { year + 1 } else { year }, month, day)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A date no calendar has is a lie in a display field, not a way into
+    /// one: the value is printed and compared for exact equality, never
+    /// parsed, so a shape a terminal cannot act on is the whole bar.
+    #[test]
+    fn a_day_no_calendar_has_is_still_spelled_like_an_instant() {
+        assert!(looks_like_instant("2026-02-30T00:00:00Z"));
+        assert!(looks_like_instant("2026-13-45T99:99:99Z"));
+        assert!(looks_like_instant(&timestamp()));
+        assert!(looks_like_instant("2026-08-20T06:52:15.123+02:00"));
+    }
+
+    /// The offset is what pins which instant is meant, so a value without
+    /// one is not spelled the way this module spells an instant.
+    #[test]
+    fn an_instant_carries_the_offset_it_is_read_in() {
+        assert!(!looks_like_instant("2026-08-20T06:52:15"));
+        assert!(!looks_like_instant("2026-08-20T06:52:15+2:00"));
+        assert!(!looks_like_instant("2026-08-20T06:52:15+24:00"));
+    }
 }

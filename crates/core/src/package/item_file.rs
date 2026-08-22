@@ -7,7 +7,8 @@ use crate::engine::ItemSource;
 use crate::error::{CoreError, Result};
 use crate::source_read::SealedSource;
 
-/// The validated read behind [`package_file`], for any sealed item — an
+/// The validated read behind [`super::detail::package_file`] and
+/// [`crate::source::browse::package_file`], for any sealed item — an
 /// installed package's or a catalog's offered one.
 pub(crate) fn item_file(sealed: &SealedSource, item_path: &Path, rel: &str) -> Result<ItemSource> {
     let clean = Path::new(rel);

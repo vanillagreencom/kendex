@@ -50,7 +50,7 @@ pub enum GuardCommand {
     Repair,
     /// Release this worktree's lease; disarm when the last one goes
     Uninstall,
-    /// Convert v1 guard settings into [guards] tables — one explicit pass
+    /// Convert v1 guard settings into `[guards]` tables — one explicit pass
     #[command(name = "import-v1")]
     ImportV1,
 }
