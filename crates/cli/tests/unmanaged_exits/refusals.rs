@@ -196,3 +196,28 @@ fn a_hard_conflict_beside_the_files_takes_both_exits_with_it() {
         "half the item was offered a take-over: {planned}"
     );
 }
+
+/// A place adoption cannot enter, beside one it can. Keeping is one move
+/// for the whole item, so an offer naming only the tool that works would
+/// settle its copy and leave the other blocked with the item no longer
+/// its tool's.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_place_adoption_cannot_enter_takes_the_offer_with_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let project = project_with(home, "[\"claude\", \"codex\"]", "copy");
+    folder_at(&project.join(".claude/skills/deploy"), "By hand.");
+    // Codex's copy is a folder that is not a skill: adoption has nothing
+    // to take there, and the local source would not find it again.
+    let here = project.join(".agents/skills/deploy");
+    fs::create_dir_all(&here).unwrap();
+    fs::write(here.join("notes.md"), "somebody else's folder").unwrap();
+
+    let planned = plan(home, &project);
+    assert_eq!(
+        offer(&planned),
+        "move them somewhere else first",
+        "half the item was offered a keep: {planned}"
+    );
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { DriftRow, HarnessId } from "@/bindings";
+import type { AuditView, DriftRow, HarnessId } from "@/bindings";
 import { auditCounts } from "./audit-counts";
 import { driftZones } from "./drift-zones";
 
@@ -79,5 +79,32 @@ describe("an edit beside files in the way", () => {
 
     expect(counts.inTheWay).toBe(1);
     expect(counts.changes).toBe(0);
+  });
+});
+
+describe("the same name in two projects", () => {
+  // Two projects are two items. A neighbour found in the other one would
+  // move this row onto a decision it has nothing to do with, and Home
+  // would stop agreeing with the card that draws it.
+  it("does not lend one project's decision to the other", () => {
+    const at = (root: string, cause: DriftRow["cause"]): AuditView => ({
+      scope: { scope: "project", root },
+      drift: [{ ...row("claude", cause), scope: { scope: "project", root } }],
+      plan: [],
+      notes: [],
+      warnings: [],
+      safety: [],
+      adoptable: [],
+      keepable: [],
+      heldBack: [],
+      queued: [],
+    });
+    const counts = auditCounts([
+      at("/w/a", "foreign-link"),
+      at("/w/b", "unmanaged-content"),
+    ]);
+
+    expect(counts.inTheWay).toBe(1);
+    expect(counts.changes).toBe(1);
   });
 });

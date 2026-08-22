@@ -154,19 +154,37 @@ fn keep_exit(env: &Env, item: &[&DriftRow]) -> String {
         if !row.cause.is_some_and(DriftCause::can_keep) {
             return away;
         }
-        // A tool with nothing at its own place is a different thing: it
-        // reads the item through a folder shared by hand, and the tool that
-        // links at that folder keeps it for both.
-        if kendex_core::engine::adopt::can_keep_for(
+        let entered = kendex_core::engine::adopt::can_keep_for(
             env,
             &row.scope,
             row.kind,
             &row.name,
             row.harness,
-        ) && !tools.contains(&row.harness)
-        {
+        );
+        // A tool with nothing at its own place is only skipped where it
+        // reads the item through a shortcut somebody made — there the tool
+        // holding the folder keeps it for both. Anywhere else a place
+        // adoption cannot enter is a place the offer would leave behind,
+        // and keeping is one move for the whole item.
+        if !entered && row.cause != Some(DriftCause::SharedLink) {
+            return away;
+        }
+        if entered && !tools.contains(&row.harness) {
             tools.push(row.harness);
         }
+    }
+    // One copy goes into the local source, so a shared folder beside a
+    // separate plain copy is two answers to one question — core refuses it,
+    // and an offer that ran into that refusal would be one nobody could
+    // follow.
+    if item
+        .iter()
+        .any(|row| row.cause == Some(DriftCause::SharedLink))
+        && item
+            .iter()
+            .any(|row| row.cause == Some(DriftCause::UnmanagedContent))
+    {
+        return away;
     }
     if tools.is_empty() || !kendex_core::names::plain_argument(&row.name) {
         return away;

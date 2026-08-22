@@ -35,23 +35,29 @@ export interface AuditCounts {
 }
 
 /** Whether this row sits on a decision, which is true of the places with
- *  files in the way and of anything beside them their exits cannot settle. */
-function blocking(views: AuditView[], row: DriftRow): boolean {
+ *  files in the way and of anything beside them their exits cannot settle.
+ *
+ *  Asked within one scope, like the card that draws the row: the same name
+ *  in two projects is two items, and a neighbour found in the other one
+ *  would move this row onto a decision it has nothing to do with. */
+function blocking(view: AuditView, row: DriftRow): boolean {
   if (isInTheWay(row.cause)) return true;
   if (!deadStop(row)) return false;
-  return views.some((view) =>
-    view.drift.some(
-      (other) =>
-        other.kind === row.kind &&
-        other.name === row.name &&
-        isInTheWay(other.cause),
-    ),
+  return view.drift.some(
+    (other) =>
+      other.kind === row.kind &&
+      other.name === row.name &&
+      isInTheWay(other.cause),
   );
 }
 
-function countMerged(views: AuditView[], keep: (row: DriftRow) => boolean) {
+function countMerged(
+  views: AuditView[],
+  keep: (view: AuditView, row: DriftRow) => boolean,
+) {
   return views.reduce(
-    (sum, view) => sum + mergeDriftRows(view.drift.filter(keep)).length,
+    (sum, view) =>
+      sum + mergeDriftRows(view.drift.filter((row) => keep(view, row))).length,
     0,
   );
 }
@@ -82,10 +88,10 @@ export function auditCounts(views: AuditView[]): AuditCounts {
     // the files in the way, not under the button that cannot move it.
     changes: countMerged(
       views,
-      (row) => row.state !== "unmanaged" && !blocking(views, row),
+      (view, row) => row.state !== "unmanaged" && !blocking(view, row),
     ),
-    inTheWay: countMerged(views, (row) => blocking(views, row)),
-    unmanaged: countMerged(views, (row) => row.state === "unmanaged"),
+    inTheWay: countMerged(views, blocking),
+    unmanaged: countMerged(views, (_view, row) => row.state === "unmanaged"),
     blocked: views.reduce((sum, view) => sum + blockedCount(view), 0),
     open: views.reduce((sum, view) => sum + openCount(view), 0),
   };
