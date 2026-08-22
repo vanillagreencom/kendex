@@ -53,6 +53,11 @@ export const PREINSTALL_SAFETY_CAVEAT =
 // score would be the assurance the check cannot give.
 export const safetyDotWords = (verdict: Verdict, score: number): string =>
   `${VERDICT_LABELS[verdict]} · ${score}/100. ${PREINSTALL_SAFETY_CAVEAT}`;
+// The same row installs before its score arrives, so the dot's words say
+// there is no result rather than falling silent. A queued read and a failed
+// one look alike from here, so this claims no check is under way — only that
+// none has answered, which is the one thing true of both.
+export const SAFETY_DOT_UNCHECKED = `Not checked yet. ${PREINSTALL_SAFETY_CAVEAT}`;
 // The About tab's findings are about the catalog's own layout and
 // configuration. Nothing here has read a single package.
 export const CATALOG_LAYOUT_CLEAN =

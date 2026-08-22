@@ -5,7 +5,11 @@ import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AvailablePackage, PackageSafety, Verdict } from "@/bindings";
-import { PREINSTALL_SAFETY_CAVEAT, safetyDotWords } from "@/lib/copy-safety";
+import {
+  PREINSTALL_SAFETY_CAVEAT,
+  SAFETY_DOT_UNCHECKED,
+  safetyDotWords,
+} from "@/lib/copy-safety";
 import { subscription } from "@/stores/marketplaces-shared";
 import { useNavStore } from "@/stores/nav";
 import { safetyKey } from "@/stores/preinstall-safety";
@@ -102,10 +106,19 @@ describe("the safety dot in the packages list", () => {
     expect(html).not.toContain(`title="${safetyDotWords("clean", 100)}`);
   });
 
-  it("claims nothing while the score is still being read", () => {
+  it("says no result has landed, and still claims nothing either way", () => {
+    // Scores queue one at a time and a failed read leaves a row without
+    // one, so this state is what an installable row often looks like. The
+    // caveat has to reach the reader here too, and no verdict may.
     const html = render(null);
-    expect(trigger(html)).toContain("Checking…");
-    expect(html).not.toContain(PREINSTALL_SAFETY_CAVEAT);
+    expect(html).toContain(">Install<");
+    expect(trigger(html)).toContain("Not checked yet.");
+    expect(trigger(html)).toContain(PREINSTALL_SAFETY_CAVEAT);
+    expect(trigger(html)).toContain(SAFETY_DOT_UNCHECKED);
+    expect(trigger(html)).not.toMatch(/\d+\/100/);
+    expect(html.indexOf(SAFETY_DOT_UNCHECKED)).toBeLessThan(
+      html.indexOf(">Install<"),
+    );
   });
 });
 

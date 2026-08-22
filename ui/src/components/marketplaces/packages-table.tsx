@@ -16,7 +16,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { safetyDotWords } from "@/lib/copy-safety";
+import { SAFETY_DOT_UNCHECKED, safetyDotWords } from "@/lib/copy-safety";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName } from "@/lib/labels";
 import {
@@ -136,7 +136,7 @@ function PackageRow({
             words={safetyDotWords(safety.verdict, safety.safety.score)}
           />
         ) : (
-          <SafetyDot tone="muted" words="Checking…" />
+          <SafetyDot tone="muted" words={SAFETY_DOT_UNCHECKED} />
         )}
       </TableCell>
       <TableCell className="text-right">
@@ -153,6 +153,11 @@ function PackageRow({
           // is the one action, so the row only says the package is here.
           <span className="text-xs text-muted-foreground">Available</span>
         ) : (
+          // Scores arrive one at a time, and a read that fails leaves a
+          // row without one until it mounts again, so a row is offered
+          // before its dot resolves. The plan's gate is what holds a risky
+          // package back, never this button — so the dot's words say a
+          // result is missing instead of the row going quiet.
           <Button
             size="sm"
             variant="outline"
