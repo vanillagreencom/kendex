@@ -112,7 +112,7 @@ skills/orch/tests/ci_wait.sh	930
 skills/orch/tests/lanes.sh	890
 skills/orch/tests/oversee_watch.sh	814
 skills/orch/tests/queue_wait.sh	943
-skills/orch/workflows/review-pr.md	451
+skills/orch/workflows/review-pr.md	452
 skills/preflight/scripts/preflight	1016
 skills/review-gate/scripts/pr-watch.sh	820
 skills/review-gate/scripts/review-predicate-selftest.sh	2607
