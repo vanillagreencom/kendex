@@ -72,7 +72,7 @@ export function BlockedDeclarations({
   // before a folder moves, and a tool left out of that sentence is one
   // whose shortcut breaks without warning.
   const named = (group: MergedDriftRow) => [
-    ...new Set(group.installations.map((row) => row.harness)),
+    ...new Set(group.installations.flatMap((row) => exits.tools(row))),
   ];
   // Only the tools keeping can be entered through. Adoption works at a
   // tool's own place, so one reading the item through a shortcut somebody
@@ -82,7 +82,7 @@ export function BlockedDeclarations({
     ...new Set(
       group.installations
         .filter((row) => exits.enter(row))
-        .map((row) => row.harness),
+        .flatMap((row) => exits.tools(row)),
     ),
   ];
 

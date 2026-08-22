@@ -2194,6 +2194,13 @@ export type RowExits = {
 	enter: boolean,
 	/**  Whether installing what the manifest asks for over it is an answer. */
 	replace: boolean,
+	/**
+	 *  Every tool keeping this row acts on. A folder shared by hand is
+	 *  read by whoever links at it, declared or not, and taking it over
+	 *  clears each of those links — so an offer that named only the rows
+	 *  on screen would act on a tool it never mentioned.
+	 */
+	tools: HarnessId[],
 };
 
 /**

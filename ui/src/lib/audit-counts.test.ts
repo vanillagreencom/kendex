@@ -204,6 +204,7 @@ describe("a declaration whose files are already there", () => {
             keep: true,
             enter: true,
             replace: true,
+            tools: ["claude"],
           },
         ],
       ),

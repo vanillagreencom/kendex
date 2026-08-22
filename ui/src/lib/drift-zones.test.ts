@@ -25,6 +25,7 @@ const exit = (
   keep,
   enter: keep,
   replace,
+  tools: [harness],
 });
 
 const view = (
@@ -107,6 +108,7 @@ describe("a conflict of another kind, alone", () => {
           keep: false,
           enter: false,
           replace: false,
+          tools: ["claude"],
         },
       ],
     );

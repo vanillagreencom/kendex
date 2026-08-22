@@ -115,6 +115,23 @@ pub(super) fn shared_target(
 /// through links — is offered the exit that works instead of being called
 /// a dead end, and asks it through the same boundary the adoption itself
 /// applies, so the offer and the action can never drift apart.
+/// Every tool adoption will act on for this position. A folder shared by
+/// hand is read by whoever links at it, declared or not, and taking it
+/// over clears each of those links — so a surface offering the move has to
+/// name them all, or it acts on a tool it never mentioned.
+pub(super) fn shared_tools(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    link: &Path,
+) -> Option<Vec<HarnessId>> {
+    let points_to = fs::read_link(link).ok()?;
+    let local_item = super::adopt::local_item_path(env, scope, kind, name).ok()?;
+    let shared = shared_target(env, scope, kind, name, link, points_to, &local_item).ok()?;
+    Some(shared.harnesses)
+}
+
 pub(super) fn link_target(
     env: &Env,
     scope: &Scope,

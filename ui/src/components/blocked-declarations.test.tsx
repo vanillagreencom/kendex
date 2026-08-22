@@ -26,6 +26,7 @@ const exit = (harness: HarnessId, enter: boolean): RowExits => ({
   keep: true,
   enter,
   replace: false,
+  tools: [harness],
 });
 
 const render = (exits: RowExits[]) =>

@@ -175,8 +175,16 @@ fn keep_exit(env: &Env, item: &[&DriftRow]) -> String {
         if !exits.keep {
             return away;
         }
-        if exits.enter && !tools.contains(&row.harness) {
-            tools.push(row.harness);
+        // Every tool the move acts on, which is not always the tool the
+        // row is about: a folder shared by hand is read by whoever links
+        // at it, and each of those links is cleared. Named here, so the
+        // command says what it will touch.
+        if exits.enter {
+            for harness in exits.tools {
+                if !tools.contains(&harness) {
+                    tools.push(harness);
+                }
+            }
         }
     }
     if tools.is_empty() || !kendex_core::names::plain_argument(&row.name) {

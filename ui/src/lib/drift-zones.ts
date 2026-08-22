@@ -1,4 +1,4 @@
-import type { DriftRow, RowExits } from "@/bindings";
+import type { DriftRow, HarnessId, RowExits } from "@/bindings";
 import { type MergedDriftRow, mergeDriftRows } from "@/lib/drift-merge";
 
 /** The ways out of each blocked installation, looked up by row. Core works
@@ -29,6 +29,12 @@ export class Exits {
   /** Whether adoption acts through this tool. */
   enter(row: DriftRow): boolean {
     return !!this.of(row)?.enter;
+  }
+
+  /** Every tool keeping this row acts on, which is not always the tool
+   *  the row is about. */
+  tools(row: DriftRow): HarnessId[] {
+    return this.of(row)?.tools ?? [row.harness];
   }
 
   /** Whether this row is about files sitting where the item installs. */

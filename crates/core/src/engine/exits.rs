@@ -10,7 +10,7 @@ use specta::Type;
 
 use super::{DriftCause, DriftRow};
 use crate::env::Env;
-use crate::model::Scope;
+use crate::model::{HarnessId, Scope};
 
 /// What one installation of an item is waiting on, and what may be done
 /// about it. Every question a surface asks about a blocked row is answered
@@ -43,6 +43,11 @@ pub struct RowExits {
     pub enter: bool,
     /// Whether installing what the manifest asks for over it is an answer.
     pub replace: bool,
+    /// Every tool keeping this row acts on. A folder shared by hand is
+    /// read by whoever links at it, declared or not, and taking it over
+    /// clears each of those links — so an offer that named only the rows
+    /// on screen would act on a tool it never mentioned.
+    pub tools: Vec<HarnessId>,
 }
 
 /// What one row is waiting on. Read by the page through the audit and by
@@ -57,7 +62,16 @@ pub fn for_row(env: &Env, scope: &Scope, row: &DriftRow) -> RowExits {
             && (enter || row.cause == Some(DriftCause::SharedLink)),
         enter,
         replace: row.cause.is_some_and(DriftCause::can_replace),
+        tools: tools_touched(env, scope, row),
     }
+}
+
+fn tools_touched(env: &Env, scope: &Scope, row: &DriftRow) -> Vec<HarnessId> {
+    let shared = (row.cause == Some(DriftCause::SharedLink))
+        .then(|| super::adopt::position(env, scope, row.kind, &row.name, row.harness))
+        .flatten()
+        .and_then(|at| super::adopt_shared::shared_tools(env, scope, row.kind, &row.name, &at));
+    shared.unwrap_or_else(|| vec![row.harness])
 }
 
 /// Every row a surface has to draw a decision for. A conflict of another

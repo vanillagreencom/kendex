@@ -92,5 +92,6 @@ function row(
   key: string,
   exits: Pick<RowExits, "keep" | "enter" | "replace">,
 ): RowExits {
-  return { key, blocking: true, files: true, ...exits };
+  const harness = key.split(":")[2] as RowExits["tools"][number];
+  return { key, blocking: true, files: true, tools: [harness], ...exits };
 }
