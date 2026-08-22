@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { type ComponentProps, useEffect } from "react";
 import type { AvailablePackage, Catalog, Verdict } from "@/bindings";
 import { StatusDot } from "@/components/status-dot";
 import { TagBadges } from "@/components/tag-badge";
@@ -11,7 +11,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { safetyDotTitle } from "@/lib/copy-safety";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { safetyDotWords } from "@/lib/copy-safety";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName } from "@/lib/labels";
 import {
@@ -126,13 +131,12 @@ function PackageRow({
       ) : null}
       <TableCell>
         {safety ? (
-          <StatusDot
-            className="inline-block"
+          <SafetyDot
             tone={VERDICT_TONES[safety.verdict]}
-            title={safetyDotTitle(safety.verdict, safety.safety.score)}
+            words={safetyDotWords(safety.verdict, safety.safety.score)}
           />
         ) : (
-          <StatusDot className="inline-block" tone="muted" title="Checking…" />
+          <SafetyDot tone="muted" words="Checking…" />
         )}
       </TableCell>
       <TableCell className="text-right">
@@ -167,5 +171,28 @@ function PackageRow({
         )}
       </TableCell>
     </TableRow>
+  );
+}
+
+/** A row's safety reading: the colour, and the words the colour stands for.
+ *  A row installs from the list without the package's page ever opening, so
+ *  the words have to be reachable from the row itself — the trigger takes
+ *  focus, putting them a tab before Install, and they sit in the row's text
+ *  for anyone who never hovers. */
+function SafetyDot({
+  tone,
+  words,
+}: {
+  tone: ComponentProps<typeof StatusDot>["tone"];
+  words: string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger className="inline-flex items-center rounded-full outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
+        <StatusDot tone={tone} />
+        <span className="sr-only">{words}</span>
+      </TooltipTrigger>
+      <TooltipContent side="left">{words}</TooltipContent>
+    </Tooltip>
   );
 }

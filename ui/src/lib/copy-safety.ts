@@ -51,7 +51,7 @@ export const PREINSTALL_SAFETY_CAVEAT =
 // carry the caveat along with the number — worded as the package's own page
 // words it. A row here installs without ever opening that page, and a bare
 // score would be the assurance the check cannot give.
-export const safetyDotTitle = (verdict: Verdict, score: number): string =>
+export const safetyDotWords = (verdict: Verdict, score: number): string =>
   `${VERDICT_LABELS[verdict]} · ${score}/100. ${PREINSTALL_SAFETY_CAVEAT}`;
 // The About tab's findings are about the catalog's own layout and
 // configuration. Nothing here has read a single package.

@@ -5,7 +5,7 @@ import {
   publisherSettledLabel,
   publisherSettledNote,
   SAFETY_SECTION_EXPLAINER,
-  safetyDotTitle,
+  safetyDotWords,
   settledSummaryLead,
 } from "./copy-safety";
 import { VERDICT_LABELS } from "./labels";
@@ -55,7 +55,7 @@ describe("what a verdict is allowed to claim", () => {
     PREINSTALL_SAFETY_CAVEAT,
     SAFETY_SECTION_EXPLAINER,
     CATALOG_LAYOUT_CLEAN,
-    safetyDotTitle("clean", 100),
+    safetyDotWords("clean", 100),
   ];
 
   it("never claims more than the check established", () => {
@@ -77,7 +77,7 @@ describe("what a verdict is allowed to claim", () => {
   it("discloses that the read is partial wherever it shows a verdict", () => {
     // The list's dot is the whole verdict on a row that installs from
     // there, so its words carry the caveat the number cannot.
-    expect(safetyDotTitle("warn", 60)).toBe(
+    expect(safetyDotWords("warn", 60)).toBe(
       "Installs, with a warning · 60/100. An automated check for risky patterns, not a review. It can miss things, and a large skill is read only in part.",
     );
     expect(PREINSTALL_SAFETY_CAVEAT).toBe(

@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { AvailablePackage, PackageSafety, Verdict } from "@/bindings";
-import { PREINSTALL_SAFETY_CAVEAT } from "@/lib/copy-safety";
+import { PREINSTALL_SAFETY_CAVEAT, safetyDotWords } from "@/lib/copy-safety";
 import { subscription } from "@/stores/marketplaces-shared";
 import { safetyKey } from "@/stores/preinstall-safety";
 import { PackagesTable } from "./packages-table";
@@ -59,23 +59,44 @@ const render = (safety: PackageSafety | null) => {
   );
 };
 
+// What the dot's words are attached to. A tooltip popup is portalled and
+// only mounts once open, so the trigger's own contents are the whole of
+// what a reader gets without a pointer.
+const trigger = (html: string): string =>
+  html.match(
+    /<button[^>]*data-slot="tooltip-trigger"[^>]*>(.*?)<\/button>/,
+  )?.[1] ?? "";
+
 describe("the safety dot in the packages list", () => {
   it("carries the caveat beside the number, since this row installs here", () => {
     const html = render(scored("clean", 100));
     expect(html).toContain(">Install<");
-    expect(html).toContain("Nothing found · 100/100.");
-    expect(html).toContain(PREINSTALL_SAFETY_CAVEAT);
+    expect(trigger(html)).toContain("Nothing found · 100/100.");
+    expect(trigger(html)).toContain(PREINSTALL_SAFETY_CAVEAT);
   });
 
   it("says the same for a verdict that is not clean", () => {
     const html = render(scored("warn", 60));
-    expect(html).toContain("Installs, with a warning");
-    expect(html).toContain(PREINSTALL_SAFETY_CAVEAT);
+    expect(trigger(html)).toContain("Installs, with a warning");
+    expect(trigger(html)).toContain(PREINSTALL_SAFETY_CAVEAT);
+  });
+
+  it("puts the words where a keyboard reaches them, not on hover alone", () => {
+    // A tab stop before Install, and text in the row rather than a native
+    // `title` — which a screen reader may skip and a keyboard never lands on.
+    const html = render(scored("clean", 100));
+    expect(trigger(html)).toContain(
+      `<span class="sr-only">${safetyDotWords("clean", 100)}</span>`,
+    );
+    expect(html.indexOf(PREINSTALL_SAFETY_CAVEAT)).toBeLessThan(
+      html.indexOf(">Install<"),
+    );
+    expect(html).not.toContain(`title="${safetyDotWords("clean", 100)}`);
   });
 
   it("claims nothing while the score is still being read", () => {
     const html = render(null);
-    expect(html).toContain('title="Checking…"');
+    expect(trigger(html)).toContain("Checking…");
     expect(html).not.toContain(PREINSTALL_SAFETY_CAVEAT);
   });
 });
