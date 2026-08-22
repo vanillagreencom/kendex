@@ -8,6 +8,7 @@
 # the agent reads the delegation, not the workflow. Neither is visible in
 # review, so order and delivery are checked mechanically and each check
 # carries a planted control.
+
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,27 +32,13 @@ GATE_RE='converge before delegating'
 # comparison is on position rather than presence.
 line_of() { grep -n "$2" "$1" | head -1 | cut -d: -f1; }
 
-check_order() {
-  local doc="$1" label="$2"
-  local gate deleg
-  gate="$(line_of "$doc" "$GATE_RE" || true)"
-  deleg="$(line_of "$doc" 'Run Workflow.*dev-fix.md' || true)"
-  if [[ -z "$gate" ]]; then
-    fail "$label (gate absent)"
-    return
-  fi
-  if [[ -z "$deleg" ]]; then
-    fail "$label (delegation absent)"
-    return
-  fi
-  if (( gate < deleg )); then
-    pass "$label"
-  else
-    fail "$label (gate at $gate, delegation at $deleg)"
-  fi
-}
-
-check_order "$REVIEW_PR_WF" "review-pr.md gates the fix round before delegating it"
+GATE_AT="$(line_of "$REVIEW_PR_WF" "$GATE_RE" || true)"
+DELEG_AT="$(line_of "$REVIEW_PR_WF" 'Run Workflow.*dev-fix.md' || true)"
+if [[ -n "$GATE_AT" && -n "$DELEG_AT" ]] && (( GATE_AT < DELEG_AT )); then
+  pass "review-pr.md gates the fix round before delegating it"
+else
+  fail "the gate does not sit above the delegation (gate ${GATE_AT:-absent}, delegation ${DELEG_AT:-absent})"
+fi
 
 # The phrase alone is not the contract: a gate that fires at two or four, or
 # that names no cycle at all, reads the same and bounds nothing.
