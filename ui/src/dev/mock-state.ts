@@ -4,6 +4,7 @@ import type {
   Manifest_Serialize,
   Scope,
 } from "@/bindings";
+import { ADOPTABLE } from "@/lib/adoptable";
 import { initialState } from "./fixtures";
 
 export type Handler = (args: never) => unknown;
@@ -29,6 +30,8 @@ export function view(scope: Scope): AuditView {
     notes: [],
     warnings: [],
     safety: [],
+    adoptable: ADOPTABLE,
+    exits: [],
     heldBack: [],
     queued: [],
   };

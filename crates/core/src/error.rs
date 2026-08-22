@@ -82,6 +82,37 @@ pub enum CoreError {
     )]
     ForeignSymlink { target: PathBuf, points_to: PathBuf },
 
+    // Keeping the files hands one copy to kendex, and there is one place
+    // to put it. Two tools holding different files under one name is a
+    // choice, not a merge: saying which to keep is the reader's, and
+    // picking one for them would put the other in the trash unasked.
+    // A take-over named per item answers for that item whole. The page it
+    // was clicked on can be a minute old, and the apply that carries it out
+    // is the scope's whole plan — so a name that reaches nothing, or an
+    // item with a place the take-over cannot settle, stops the run rather
+    // than applying everything else for a question already gone.
+    // Adoption takes what kendex did not write; a position it did write is
+    // already looked after. Keeping it would move an installation into the
+    // local source and rewrite the declaration around it, so a
+    // catalog-tracked item would quietly become a fork of itself.
+    #[error("kendex already looks after {name} at {path} — nothing was changed")]
+    AlreadyManaged { name: String, path: String },
+
+    #[error("{name} has no files waiting on that choice any more — nothing was changed")]
+    TakeOverMatchesNothing { name: String },
+
+    #[error("{name} changed while you were deciding — nothing was changed")]
+    TakeOverLeavesSome { name: String },
+
+    #[error(
+        "{name}'s files are different for {first} and {second}. kendex keeps one copy of an item, so move the copy you don't want somewhere else first."
+    )]
+    AdoptedCopiesDiffer {
+        name: String,
+        first: String,
+        second: String,
+    },
+
     #[error("scope is busy: another apply holds {lock}")]
     ScopeBusy { lock: PathBuf },
 

@@ -8,6 +8,26 @@ changes carry a **Breaking** call-out with their migration note inline.
 
 ### Added
 
+- Asking for an item whose files are already on disk — the normal shape of
+  moving an existing repo onto kendex — now has a way forward. In the app,
+  the item gets a row of its own on Review & apply: **Replace them**, and
+  kendex installs what kendex.toml asks for while the old files move to the
+  trash, or, for an agent or a skill, **Keep these files**, and kendex
+  looks after them as they are. A folder several tools already read through
+  shortcuts they set up themselves is offered only **Keep these files** —
+  writing over a shortcut would break that sharing. Where keeping is not
+  something kendex can do — another kind, or a folder sitting where one
+  file goes — the row says to move the files somewhere else yourself rather
+  than offering a button that would fail. In the CLI the two are
+  `kendex adopt <kind> <name> --harness <harness>` — adoption reads one
+  tool's position, so the blocked tool is the one to name, and `--harness`
+  repeats where several tools are blocked, which is what a folder they
+  share needs — and `kendex apply --replace-unmanaged`. `kendex apply
+  --plan` prints the whole command, tools and all.
+  Before this, the refusal named no way out and `--discard-edits` did not
+  clear it. Nothing is deleted outright, and neither a link kendex did not
+  create nor files an existing install owns is ever replaced — those keep
+  the protections they always had.
 - The app has its own icon. Every channel that installs the app shipped the
   old vstack chevron; the icon is now the `x` from the kendex wordmark, in
   the wordmark's green, at every size the desktop, dock, and installer use
@@ -89,6 +109,11 @@ changes carry a **Breaking** call-out with their migration note inline.
   publishes is told so plainly, and settles nothing.
 ### Changed
 
+- Keeping a folder several tools read through shortcuts now asks in the
+  same words as the button that opened it, rather than renaming the action
+  halfway through. It still names the folder, the tools reading it, and
+  what stops working, and its confirm button now looks like the other ones
+  that send files to the trash.
 - **Breaking:** the install record's version moves to 5. Older files still
   load and the first apply upgrades them in place, through the normal
   journaled, previewed plan. What moves the version is the new evidence in
@@ -217,6 +242,23 @@ changes carry a **Breaking** call-out with their migration note inline.
   `KENDEX_REAL_HOME=1` — only that exact value opts out. Release builds are
   unaffected, whether you installed one or built it with `--release`.
 
+- An item whose files were already on disk no longer deadlocks.
+  `kendex apply` names the files in the way and both ways out instead of
+  saying "not managed yet", and `kendex check` reports it under "blocked by
+  files already there" instead of folding it into the count of installs
+  waiting on a safety review — which now says what it is waiting for.
+- A declaration blocked by files kendex did not write no longer leaves a
+  half-installed item behind. Where a skill is shared between tools, the
+  shared copy was written before the tool-specific part was checked, so a
+  blocked declaration still left a folder in your project that nothing
+  recorded and no command would ever clean up.
+- A skill you edited and then pointed at a second tool is reported as
+  edited, not as files kendex did not write. Your edit was already safe,
+  but the message named the wrong problem and offered the wrong ways out.
+- `kendex apply --plan` and `kendex verify` name content sitting in your
+  tree that nothing declares, which `kendex list` showed and neither of
+  them mentioned. Nothing about it changes — kendex still never touches it
+  — but a count of what was checked now says what was not.
 - "How a marketplace repo works" can be read from the keyboard. The document
   is longer than the box it opens in and had no tab stop of its own, so the
   only way in from the keyboard was a link near its end; `Tab` now reaches

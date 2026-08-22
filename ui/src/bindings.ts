@@ -41,7 +41,8 @@ export const commands = {
 	reportRoute: (scope: Scope, name: string, kind: "agent" | "skill" | "hook" | "command" | "mcp-server" | "plugin" | "pi-extension" | null) => typedError<ReportRouteView, string>(__TAURI_INVOKE("report_route", { scope, name, kind })),
 	auditAll: () => typedError<AuditView_Serialize[], string>(__TAURI_INVOKE("audit_all")),
 	applyPlan: (scope: Scope, removeOrphans: boolean, allowUnsafe: string[]) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("apply_plan", { scope, removeOrphans, allowUnsafe })),
-	adoptItem: (scope: Scope, kind: ItemKind, name: string, harness: HarnessId) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("adopt_item", { scope, kind, name, harness })),
+	adoptItem: (scope: Scope, kind: ItemKind, name: string, harnesses: HarnessId[]) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("adopt_item", { scope, kind, name, harnesses })),
+	replaceUnmanagedItem: (scope: Scope, kind: ItemKind, name: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("replace_unmanaged_item", { scope, kind, name })),
 	toggleItem: (scope: Scope, kind: ItemKind, name: string, enabled: boolean) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("toggle_item", { scope, kind, name, enabled })),
 	removeItem: (scope: Scope, kind: ItemKind, name: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("remove_item", { scope, kind, name })),
 	/**
@@ -422,6 +423,20 @@ export type AuditView_Deserialize = {
 	 */
 	safety: ItemSafety_Deserialize[],
 	/**
+	 *  The kinds "keep these files" can be offered for. Adoption needs
+	 *  somewhere in the local source to put the content, and only these
+	 *  kinds have one — read from core so the page never offers an action
+	 *  that would error, and never keeps its own copy of the list.
+	 */
+	adoptable: ItemKind[],
+	/**
+	 *  Which ways out each blocked installation actually has, answered by
+	 *  core per row like the kinds above. The page groups and draws these;
+	 *  it never works them out from the cause, which is how one surface
+	 *  ends up offering an action the plan rejects.
+	 */
+	exits: RowExits[],
+	/**
 	 *  Installations the plan would write but the safety gate holds back.
 	 *  Kept apart from `safety` (which scores what is on disk) because the
 	 *  two describe different bytes: an accept has to name the hash of what
@@ -461,6 +476,20 @@ export type AuditView_Serialize = {
 	 *  install back, and quality, which only ever informs.
 	 */
 	safety: ItemSafety_Serialize[],
+	/**
+	 *  The kinds "keep these files" can be offered for. Adoption needs
+	 *  somewhere in the local source to put the content, and only these
+	 *  kinds have one — read from core so the page never offers an action
+	 *  that would error, and never keeps its own copy of the list.
+	 */
+	adoptable: ItemKind[],
+	/**
+	 *  Which ways out each blocked installation actually has, answered by
+	 *  core per row like the kinds above. The page groups and draws these;
+	 *  it never works them out from the cause, which is how one surface
+	 *  ends up offering an action the plan rejects.
+	 */
+	exits: RowExits[],
 	/**
 	 *  Installations the plan would write but the safety gate holds back.
 	 *  Kept apart from `safety` (which scores what is on disk) because the
@@ -957,10 +986,40 @@ export type Dismissed_Serialize = {
 
 /**
  *  Why an installation diverged, when the plan can tell. `LocalEdit` and
- *  `Both` are the causes that block writes: the user's bytes are on disk
- *  and only an explicit choice may take them.
+ *  `Both`, and the three that say files kendex did not write are on disk,
+ *  block writes: only an explicit choice may take them. Which choices are
+ *  on offer differs by cause, which is what `can_keep` and `can_replace`
+ *  answer — a surface that guesses ends up offering a way out that errors.
  */
-export type DriftCause = "upstream-changed" | "local-edit" | "both";
+export type DriftCause = "upstream-changed" | "local-edit" | "both" | 
+/**
+ *  Files are already where a declaration installs, and no lock entry
+ *  says kendex put them there. The two ways out are opposite
+ *  directions: adopt keeps the files, `replace_unmanaged` keeps the
+ *  declaration.
+ */
+"unmanaged-content" | 
+/**
+ *  The same, in a shape adoption cannot take as it stands: a folder
+ *  where one file goes, or a file where a folder goes. Only the
+ *  replacement is on offer — keeping these means moving them.
+ */
+"unmanaged-wrong-shape" | 
+/**
+ *  A link somebody set up, pointing at a real folder that several
+ *  tools read. Only keeping is on offer: the files are not at this
+ *  position to replace, and writing over the link breaks the sharing.
+ *  The detail is the folder the link points at, which is the one a
+ *  reader needs to see.
+ */
+"shared-link" | 
+/**
+ *  A link somebody set up that adoption cannot follow and the
+ *  replacement must not write over. Neither exit settles it, so an
+ *  item with one of these anywhere has no exit at all — the files move
+ *  out of the way by hand or nothing does.
+ */
+"foreign-link";
 
 export type DriftRow = DriftRow_Serialize | DriftRow_Deserialize;
 
@@ -2094,6 +2153,47 @@ export type ReportRouteView = {
 	label: string | null,
 	/**  Prefilled new-issue page — only when the report belongs upstream. */
 	issueUrl: string | null,
+};
+
+/**
+ *  What one installation of an item is waiting on, and what may be done
+ *  about it. Every question a surface asks about a blocked row is answered
+ *  here, because they are not the same question and answering one of them
+ *  from another is how a page ends up drawing a button the plan refuses.
+ */
+export type RowExits = {
+	/**  `kind:name:harness`, the row this describes. */
+	key: string,
+	/**
+	 *  Whether this row stops every exit its item has. Both exits act on
+	 *  the whole item, so one place nothing can settle takes the offers
+	 *  off every other place too.
+	 */
+	blocking: boolean,
+	/**
+	 *  Whether this row is about files sitting where the item installs —
+	 *  which is what the two exits are for. A revision clash or a source
+	 *  rebind is not: moving files settles nothing there, and it belongs
+	 *  with the changes rather than under a decision about files.
+	 */
+	files: boolean,
+	/**
+	 *  Whether this place lets the item be kept. The shape has to be one
+	 *  adoption can take, and it has to be reachable — either here, or
+	 *  through the tool holding the folder this one reads by a shortcut.
+	 *  A place that fails this stops the whole item, since keeping is one
+	 *  move for all of it.
+	 */
+	keep: boolean,
+	/**
+	 *  Whether adoption acts through this tool. A tool reading the item
+	 *  through a shortcut somebody made has nothing at its own place to
+	 *  take: its share is kept by the tool that holds the folder, so it is
+	 *  not named in the command.
+	 */
+	enter: boolean,
+	/**  Whether installing what the manifest asks for over it is an answer. */
+	replace: boolean,
 };
 
 /**

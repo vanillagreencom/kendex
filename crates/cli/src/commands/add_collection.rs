@@ -133,7 +133,7 @@ fn install_step(
             hold: false,
         },
     )?;
-    print_report(&report);
+    print_report(env, &report);
     kendex_core::apply::execute(env, &report.plan, None)?;
     if reused && let Some(commit) = &step.commit {
         for (kind, name) in &members {

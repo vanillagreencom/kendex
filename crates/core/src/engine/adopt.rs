@@ -7,7 +7,7 @@ use super::ops::manifest_for_mutation;
 use crate::apply::{Op, Plan, PlannedOp, Pre};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-use crate::manifest::{self, ItemDecl, LOCAL_SOURCE_NAME};
+use crate::manifest;
 use crate::model::{HarnessId, ItemKind, Scope};
 use crate::source::local_source_root;
 
@@ -23,91 +23,118 @@ use crate::source::local_source_root;
 /// sharing with kendex's copy as canonical; anything else a link points at
 /// stays a conflict, never a clobber target; broken symlink → nothing to
 /// adopt, the follow-up apply recreates from declaration.
+/// The kinds adoption can take. A declaration built around content already
+/// on disk needs somewhere in the local source to put that content, and
+/// only these two have one — the same two the local-source match below
+/// takes. Read wherever a refusal offers adoption as a way out, so no
+/// message ever names an action that would error.
+pub fn supports(kind: ItemKind) -> bool {
+    matches!(kind, ItemKind::Agent | ItemKind::Skill)
+}
+
+/// One plan for every tool the item is blocked for, because the item has
+/// one copy: the local source holds a single capture and the declaration
+/// names every tool reading it. A plan per tool would put each capture
+/// over the last and pin the declaration to whichever ran first, leaving
+/// the rest with files nothing manages.
 pub fn adopt(
     env: &Env,
     scope: &Scope,
     kind: ItemKind,
     name: &str,
-    harness: HarnessId,
+    harnesses: &[HarnessId],
 ) -> Result<Plan> {
     let mut manifest = manifest_for_mutation(env, scope)?;
-    let Some(dir) = native_dir(env, scope, harness, kind) else {
-        return Err(CoreError::ItemNotInSource {
-            name: name.to_owned(),
-            source_name: format!("{} {}", harness.name(), kind.name()),
-        });
-    };
-    let original = match kind {
-        ItemKind::Agent => dir.join(crate::render::agent::file_name(harness, name)),
-        _ => dir.join(name),
-    };
+    let local_item = local_item_path(env, scope, kind, name)?;
 
-    let local_root = local_source_root(env, scope);
-    let local_item = match kind {
-        ItemKind::Skill => local_root.join("skills").join(name),
-        ItemKind::Agent => local_root.join("agents").join(format!("{name}.md")),
-        other => {
+    let mut positions: Vec<(HarnessId, PathBuf)> = Vec::new();
+    for &harness in harnesses {
+        let Some(original) = position(env, scope, kind, name, harness) else {
             return Err(CoreError::ItemNotInSource {
                 name: name.to_owned(),
-                source_name: format!("adopt does not support {} yet", other.name()),
+                source_name: format!("{} {}", harness.name(), kind.name()),
             });
-        }
-    };
-
-    // Broken link: content is gone; declaring is all adoption can do. The
-    // link itself is cleared by a planned op — planning never touches disk,
-    // so a plan that is never applied (or fails) leaves the world as it was.
-    let mut broken_link: Option<Pre> = None;
-    let mut shared: Option<SharedTarget> = None;
-    if original.is_symlink() {
-        let points_to = fs::read_link(&original).map_err(|e| CoreError::io(&original, e))?;
-        if original.exists() {
-            shared = Some(shared_target(
-                env,
-                scope,
-                kind,
-                name,
-                &original,
-                points_to,
-                &local_item,
-            )?);
-        } else {
-            broken_link = Some(Pre::SymlinkTo { target: points_to });
+        };
+        // Two tools reading one directory sit at one position, captured once.
+        if !positions.iter().any(|(_, path)| path == &original) {
+            positions.push((harness, original));
         }
     }
-
-    let mut ops = match &shared {
-        Some(shared) => shared_capture_ops(name, shared, &local_item)?,
-        None => capture_ops(kind, name, original, &local_item, broken_link)?,
+    let Some((_, first_position)) = positions.first() else {
+        return Err(CoreError::ItemNotInSource {
+            name: name.to_owned(),
+            source_name: "no tool was named to keep it for".to_owned(),
+        });
     };
+    // Adoption takes what kendex did not write. A position it did write is
+    // already looked after, and capturing it would move an installation
+    // into the local source and rewrite the declaration around it — a
+    // catalog-tracked item quietly becoming a fork of itself. The page a
+    // keep was clicked on can be a minute old, and something else can have
+    // installed the item in between.
+    //
+    // A lock that cannot be read is not an empty one: read as empty, every
+    // installation on this machine would look like a stranger's files.
+    let owned: std::collections::BTreeSet<PathBuf> =
+        crate::lock::load(&crate::lock::lock_path(env, scope))?
+            .entries
+            .values()
+            .flat_map(|entry| super::owned::installed(env, scope, entry).files)
+            .collect();
+    // Where a position leads, not only where it sits: a link somebody made
+    // can point at another item's installation, and the capture moves what
+    // it points at.
+    // Anywhere an installation lives, not only its exact root: a link into
+    // a folder inside a managed skill, or at a folder holding managed
+    // installs, moves them just the same.
+    let managed = |path: &Path| {
+        let at = path.canonicalize();
+        let touches = |ours: &PathBuf, at: &Path| ours.starts_with(at) || at.starts_with(ours);
+        owned
+            .iter()
+            .any(|ours| touches(ours, path) || at.as_ref().is_ok_and(|at| touches(ours, at)))
+    };
+    if let Some((_, held)) = positions.iter().find(|(_, path)| managed(path)) {
+        return Err(already_managed(name, held));
+    }
+
+    let Seen {
+        shared,
+        content,
+        broken,
+    } = look(env, scope, kind, name, &positions, &local_item)?;
+    if shared.is_none() && content.is_empty() && !local_item.exists() {
+        return Err(CoreError::ItemNotInSource {
+            name: name.to_owned(),
+            source_name: format!("nothing at {} to adopt", first_position.display()),
+        });
+    }
+
+    let mut ops: Vec<PlannedOp> = broken
+        .into_iter()
+        .map(|(path, pre)| PlannedOp {
+            description: format!("clear the broken link at {}", path.display()),
+            op: Op::Trash { path, pre },
+        })
+        .collect();
+    match &shared {
+        Some((_, shared)) => ops.extend(shared_capture_ops(name, shared, &local_item)?),
+        None => ops.extend(capture_ops(kind, name, &content, &local_item)?),
+    }
 
     // A shared folder is declared for every tool that was reading it, not
-    // only the one the user clicked — dropping the others is exactly the
-    // broken sharing this path exists to avoid.
-    let wanted: Vec<HarnessId> = match &shared {
-        Some(shared) => shared.harnesses.clone(),
-        None => vec![harness],
-    };
-    // Adoption binds to the harnesses that were actually reading the item.
-    // Only when the [install] defaults name exactly that set may the list be
-    // left off: a wider default would install the item for tools the user
-    // never gave it to.
-    let defaults_match = {
-        let defaults: std::collections::BTreeSet<&HarnessId> =
-            manifest.install.harnesses.iter().collect();
-        wanted
-            .iter()
-            .collect::<std::collections::BTreeSet<&HarnessId>>()
-            == defaults
-    };
-    let decl = manifest
-        .declared_mut(kind)
-        .entry(name.to_owned())
-        .or_insert_with(|| ItemDecl::from_source(LOCAL_SOURCE_NAME));
-    decl.source = LOCAL_SOURCE_NAME.to_owned();
-    if decl.harnesses.is_none() && !defaults_match {
-        decl.harnesses = Some(wanted);
+    // only the ones named — dropping the others is exactly the broken
+    // sharing this path exists to avoid.
+    let mut wanted: Vec<HarnessId> = harnesses.to_vec();
+    if let Some((_, shared)) = &shared {
+        for harness in &shared.harnesses {
+            if !wanted.contains(harness) {
+                wanted.push(*harness);
+            }
+        }
     }
+    let already_declared = manifest.declared(kind).contains_key(name);
+    declare(&mut manifest, kind, name, wanted, already_declared);
 
     let manifest_path = manifest::manifest_path(env, scope);
     ops.push(PlannedOp {
@@ -124,34 +151,156 @@ pub fn adopt(
     })
 }
 
-/// Move the observed artifact into the local source and clear what it left
-/// behind. Nothing here runs at plan time: every byte read becomes an op.
+/// The place one tool reads this item from — the only place adoption looks
+/// for it. Read wherever a surface asks whether adoption could keep a
+/// tool's copy, so the question and the action are one rule: an offer
+/// naming a tool that has nothing here would error the moment it was
+/// followed.
+pub(super) fn position(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    harness: HarnessId,
+) -> Option<PathBuf> {
+    let dir = native_dir(env, scope, harness, kind)?;
+    Some(match kind {
+        ItemKind::Agent => dir.join(crate::render::agent::file_name(harness, name)),
+        _ => dir.join(name),
+    })
+}
+
+/// Whether this tool has something adoption can keep. A tool with an empty
+/// position is never named in an offer: adoption works at that position and
+/// nowhere else, and the folder a link points at is reached through the
+/// tool whose own place is the link.
+///
+/// A skill is a folder holding a `SKILL.md` — that is what the local source
+/// finds again afterwards. Kept without one, the folder goes to the trash,
+/// the declaration is rewritten around a source that has nothing to give,
+/// and the apply that follows installs nothing: the reader is told their
+/// files were kept and they are gone.
+pub fn can_keep_for(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    harness: HarnessId,
+) -> bool {
+    supports(kind)
+        && position(env, scope, kind, name, harness).is_some_and(|path| match kind {
+            ItemKind::Skill => path.join("SKILL.md").is_file(),
+            _ => path.exists() || path.is_symlink(),
+        })
+}
+
+/// Where in the scope's local source the kept content lands. Read wherever
+/// a surface asks whether adoption could take a position, so the question
+/// and the answer are never two different rules.
+pub(super) fn local_item_path(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+) -> Result<PathBuf> {
+    let local_root = local_source_root(env, scope);
+    match kind {
+        ItemKind::Skill => Ok(local_root.join("skills").join(name)),
+        ItemKind::Agent => Ok(local_root.join("agents").join(format!("{name}.md"))),
+        other => Err(CoreError::ItemNotInSource {
+            name: name.to_owned(),
+            source_name: format!("adopt does not support {} yet", other.name()),
+        }),
+    }
+}
+
+/// What the named tools have where the item goes: a shared folder several
+/// of them link at, the plain copies they hold, and the links whose target
+/// is gone.
+struct Seen {
+    shared: Option<(HarnessId, SharedTarget)>,
+    content: Vec<(HarnessId, PathBuf)>,
+    broken: Vec<(PathBuf, Pre)>,
+}
+
+/// One copy goes into the local source, so every tool's copy has to be that
+/// copy. Picking one and writing it over the rest is how content gets lost,
+/// and only the reader can say which to keep — so tools that disagree
+/// refuse here rather than being merged.
+fn look(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    positions: &[(HarnessId, PathBuf)],
+    local_item: &Path,
+) -> Result<Seen> {
+    let mut seen = Seen {
+        shared: None,
+        content: Vec::new(),
+        broken: Vec::new(),
+    };
+    for (harness, original) in positions {
+        if original.is_symlink() {
+            let points_to = fs::read_link(original).map_err(|e| CoreError::io(original, e))?;
+            // Broken link: content is gone; declaring is all adoption can
+            // do. The link itself is cleared by a planned op — planning
+            // never touches disk, so a plan that is never applied (or
+            // fails) leaves the world as it was.
+            if !original.exists() {
+                seen.broken
+                    .push((original.clone(), Pre::SymlinkTo { target: points_to }));
+                continue;
+            }
+            let target = shared_target(env, scope, kind, name, original, points_to, local_item)?;
+            match &seen.shared {
+                Some((_, first)) if first.target == target.target => {}
+                Some((first, _)) => return Err(copies_differ(name, *first, *harness)),
+                None => seen.shared = Some((*harness, target)),
+            }
+            continue;
+        }
+        if original.exists() {
+            seen.content.push((*harness, original.clone()));
+        }
+    }
+    // A tool whose own position IS the folder the others link at holds the
+    // same files, not a second copy — the hand-made sharing layout, where
+    // one real folder sits at one tool's place and the rest read it through
+    // links. Folded into the shared capture rather than called a
+    // disagreement; only a position that resolves somewhere else is one.
+    if let Some((_, shared)) = &seen.shared {
+        let target = shared.target.clone();
+        seen.content
+            .retain(|(_, path)| path.canonicalize().is_ok_and(|at| at != target));
+    }
+    if let (Some((linked, _)), Some((held, _))) = (seen.shared.as_ref(), seen.content.first()) {
+        return Err(copies_differ(name, *linked, *held));
+    }
+    if let Some((first, first_path)) = seen.content.first() {
+        let hash = crate::hash::hash_tree(first_path)?;
+        for (harness, path) in &seen.content[1..] {
+            if crate::hash::hash_tree(path)? != hash {
+                return Err(copies_differ(name, *first, *harness));
+            }
+        }
+    }
+    Ok(seen)
+}
+
+/// The one copy every tool had goes into the local source, and every
+/// position it sat at is cleared. Nothing here runs at plan time: every
+/// byte read becomes an op.
 fn capture_ops(
     kind: ItemKind,
     name: &str,
-    original: PathBuf,
+    content: &[(HarnessId, PathBuf)],
     local_item: &Path,
-    broken_link: Option<Pre>,
 ) -> Result<Vec<PlannedOp>> {
     let mut ops = Vec::new();
-    if let Some(pre) = broken_link {
-        ops.push(PlannedOp {
-            description: format!("clear the broken link at {}", original.display()),
-            op: Op::Trash {
-                path: original.clone(),
-                pre,
-            },
-        });
-    }
-    if !original.exists() {
-        if !local_item.exists() {
-            return Err(CoreError::ItemNotInSource {
-                name: name.to_owned(),
-                source_name: format!("nothing at {} to adopt", original.display()),
-            });
-        }
+    let Some((_, source)) = content.first() else {
         return Ok(ops);
-    }
+    };
     // A copy the local source already holds is not overwritten in place:
     // it goes to the trash first, where it can be got back.
     if local_item.exists() {
@@ -168,12 +317,12 @@ fn capture_ops(
     let capture = match kind {
         ItemKind::Skill => Op::WriteTree {
             root: local_item.to_path_buf(),
-            files: read_tree(&original)?,
+            files: read_tree(source)?,
             pre: Pre::Absent,
         },
         _ => Op::WriteFile {
             path: local_item.to_path_buf(),
-            bytes: fs::read(&original).map_err(|e| CoreError::io(&original, e))?,
+            bytes: fs::read(source).map_err(|e| CoreError::io(source, e))?,
             pre: Pre::Absent,
         },
     };
@@ -181,211 +330,43 @@ fn capture_ops(
         description: format!("move {name} into the local source"),
         op: capture,
     });
-    ops.push(PlannedOp {
-        description: format!("trash the unmanaged original at {}", original.display()),
-        op: Op::Trash {
-            path: original,
-            pre: Pre::Any,
-        },
-    });
+    for (_, original) in content {
+        ops.push(PlannedOp {
+            description: format!("trash the unmanaged original at {}", original.display()),
+            op: Op::Trash {
+                path: original.clone(),
+                pre: Pre::Any,
+            },
+        });
+    }
     Ok(ops)
 }
 
-/// Far beyond any real skill, but a hard stop before a link at a huge
-/// folder turns a capture into a memory problem. Fail-loud: the error
-/// names the file that broke the budget.
-pub(super) const MAX_CAPTURE_FILES: usize = 2000;
-pub(super) const MAX_CAPTURE_BYTES: u64 = 100 * 1024 * 1024;
-
-pub(crate) fn read_tree(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>> {
-    fn walk(
-        dir: &Path,
-        rel: &Path,
-        files: &mut Vec<(PathBuf, Vec<u8>)>,
-        bytes: &mut u64,
-    ) -> Result<()> {
-        for entry in fs::read_dir(dir).map_err(|e| CoreError::io(dir, e))? {
-            // A per-entry read error is not silently skipped: dropping it
-            // would capture an incomplete tree and then trash the
-            // original, losing content the caller asked to keep.
-            let entry = entry.map_err(|e| CoreError::io(dir, e))?;
-            let path = entry.path();
-            let Some(name) = path.file_name() else {
-                continue;
-            };
-            let rel = rel.join(name);
-            // A link is not plain content: following it would read whatever
-            // it points at into the capture under this tree's name. Rather
-            // than silently drop it (and then trash the original), refuse —
-            // nothing the user asked to keep is lost without a word.
-            if path.is_symlink() {
-                return Err(CoreError::ForeignSymlink {
-                    points_to: fs::read_link(&path).unwrap_or_default(),
-                    target: path,
-                });
-            }
-            if path.is_dir() {
-                walk(&path, &rel, files, bytes)?;
-                continue;
-            }
-            // A FIFO would block the read forever and a device is not
-            // content; capturing arbitrary user folders means saying so
-            // instead of hanging.
-            let meta = fs::symlink_metadata(&path).map_err(|e| CoreError::io(&path, e))?;
-            if !meta.is_file() {
-                return Err(CoreError::io(
-                    &path,
-                    std::io::Error::other("not a regular file — adopt captures plain files only"),
-                ));
-            }
-            *bytes += meta.len();
-            if files.len() >= MAX_CAPTURE_FILES || *bytes > MAX_CAPTURE_BYTES {
-                return Err(CoreError::io(
-                    &path,
-                    std::io::Error::other(format!(
-                        "this folder is bigger than adopt will capture (over {MAX_CAPTURE_FILES} files or {} MB)",
-                        MAX_CAPTURE_BYTES / (1024 * 1024)
-                    )),
-                ));
-            }
-            files.push((rel, fs::read(&path).map_err(|e| CoreError::io(&path, e))?));
-        }
-        Ok(())
+fn already_managed(name: &str, path: &Path) -> CoreError {
+    CoreError::AlreadyManaged {
+        name: name.to_owned(),
+        path: crate::names::shown(&path.display().to_string()),
     }
-    let mut files = Vec::new();
-    let mut bytes = 0;
-    walk(root, Path::new(""), &mut files, &mut bytes)?;
-    Ok(files)
 }
+
+/// Two tools hold different files under one name, and adoption has one
+/// place to put them. Said as a choice only the reader can make, never
+/// settled by picking one.
+fn copies_differ(name: &str, first: HarnessId, second: HarnessId) -> CoreError {
+    CoreError::AdoptedCopiesDiffer {
+        name: name.to_owned(),
+        first: first.display_name().to_owned(),
+        second: second.display_name().to_owned(),
+    }
+}
+
+pub(super) mod capture;
+
+pub(crate) use capture::read_tree;
+
+mod declare;
+
+use declare::declare;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::engine::audit;
-    use crate::env::FakeOs;
-
-    #[test]
-    fn adopting_a_handmade_skill_moves_merges_and_round_trips() {
-        let tmp = tempfile::tempdir().unwrap();
-        let env = Env::fake(tmp.path(), FakeOs::Linux);
-        let project = tmp.path().join("app");
-        let scope = Scope::Project {
-            root: project.clone(),
-        };
-        fs::create_dir_all(project.join(".claude/skills/handmade")).unwrap();
-        fs::write(
-            project.join(".claude/skills/handmade/SKILL.md"),
-            "---\nname: handmade\ndescription: mine\n---\nMy content.\n",
-        )
-        .unwrap();
-
-        let plan = adopt(&env, &scope, ItemKind::Skill, "handmade", HarnessId::Claude).unwrap();
-        crate::apply::execute(&env, &plan, None).unwrap();
-
-        // Content lives in the local source; the original is trashed.
-        assert!(
-            project
-                .join(".kendex-local/skills/handmade/SKILL.md")
-                .is_file()
-        );
-        assert!(!project.join(".claude/skills/handmade").exists());
-
-        // Follow-up apply renders the managed replacement, drift-clean.
-        let report = audit(&env, &scope).unwrap();
-        crate::apply::execute(&env, &report.plan, None).unwrap();
-        let link = project.join(".claude/skills/handmade");
-        assert!(link.is_symlink());
-        let rendered =
-            fs::read_to_string(project.join(".agents/skills/handmade/SKILL.md")).unwrap();
-        assert!(rendered.contains("My content."));
-        let after = audit(&env, &scope).unwrap();
-        assert_eq!(after.drift, vec![]);
-    }
-
-    /// The local source already had a copy: it is trashed, never overwritten
-    /// in place, so nothing adoption replaces is gone for good.
-    #[test]
-    fn an_earlier_local_copy_goes_to_the_trash_not_under_the_new_one() {
-        let tmp = tempfile::tempdir().unwrap();
-        let env = Env::fake(tmp.path(), FakeOs::Linux);
-        let project = tmp.path().join("app");
-        let scope = Scope::Project {
-            root: project.clone(),
-        };
-        let earlier = project.join(".kendex-local/skills/handmade");
-        fs::create_dir_all(&earlier).unwrap();
-        fs::write(earlier.join("SKILL.md"), "earlier").unwrap();
-        fs::write(earlier.join("notes.md"), "kept only here").unwrap();
-        fs::create_dir_all(project.join(".claude/skills/handmade")).unwrap();
-        fs::write(project.join(".claude/skills/handmade/SKILL.md"), "observed").unwrap();
-
-        let plan = adopt(&env, &scope, ItemKind::Skill, "handmade", HarnessId::Claude).unwrap();
-        crate::apply::execute(&env, &plan, None).unwrap();
-
-        assert_eq!(
-            fs::read_to_string(earlier.join("SKILL.md")).unwrap(),
-            "observed"
-        );
-        assert!(!earlier.join("notes.md").exists());
-        let trashed: Vec<_> = fs::read_dir(env.trash_dir()).unwrap().flatten().collect();
-        assert!(trashed.iter().any(|e| e.path().join("notes.md").is_file()));
-    }
-
-    /// The [install] defaults name more tools than the one the item was
-    /// adopted from: the declaration pins to what was actually observed, so
-    /// the follow-up apply never installs it somewhere the user never put it.
-    #[test]
-    fn adoption_binds_only_the_harnesses_that_had_the_item() {
-        let tmp = tempfile::tempdir().unwrap();
-        let env = Env::fake(tmp.path(), FakeOs::Linux);
-        let project = tmp.path().join("app");
-        let scope = Scope::Project {
-            root: project.clone(),
-        };
-        fs::create_dir_all(&project).unwrap();
-        fs::write(
-            project.join("kendex.toml"),
-            "schema = 5\n\n[install]\nharnesses = [\"claude\", \"opencode\"]\nmethod = \"symlink\"\n",
-        )
-        .unwrap();
-        fs::create_dir_all(project.join(".claude/skills/handmade")).unwrap();
-        fs::write(
-            project.join(".claude/skills/handmade/SKILL.md"),
-            "---\nname: handmade\ndescription: mine\n---\nMy content.\n",
-        )
-        .unwrap();
-
-        let plan = adopt(&env, &scope, ItemKind::Skill, "handmade", HarnessId::Claude).unwrap();
-        crate::apply::execute(&env, &plan, None).unwrap();
-
-        let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
-        assert!(manifest.contains("[skills.handmade]"));
-        assert!(
-            manifest.contains("harnesses = [\"claude\"]"),
-            "the declaration must pin to the adopted harness alone:\n{manifest}"
-        );
-
-        let report = audit(&env, &scope).unwrap();
-        crate::apply::execute(&env, &report.plan, None).unwrap();
-        assert!(project.join(".claude/skills/handmade").is_symlink());
-        assert!(!project.join(".opencode/skills/handmade").exists());
-    }
-
-    #[test]
-    fn foreign_symlinks_are_conflicts_never_clobbered() {
-        let tmp = tempfile::tempdir().unwrap();
-        let env = Env::fake(tmp.path(), FakeOs::Linux);
-        let project = tmp.path().join("app");
-        let scope = Scope::Project {
-            root: project.clone(),
-        };
-        let elsewhere = tmp.path().join("elsewhere");
-        fs::create_dir_all(&elsewhere).unwrap();
-        fs::create_dir_all(project.join(".claude/skills")).unwrap();
-        std::os::unix::fs::symlink(&elsewhere, project.join(".claude/skills/linked")).unwrap();
-
-        let error = adopt(&env, &scope, ItemKind::Skill, "linked", HarnessId::Claude).unwrap_err();
-        assert!(matches!(error, CoreError::ForeignSymlink { .. }));
-        assert!(project.join(".claude/skills/linked").is_symlink());
-    }
-}
+mod tests;

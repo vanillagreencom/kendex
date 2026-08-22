@@ -5,9 +5,12 @@
 //! This report is the one deliberate exception to the no-command-lines
 //! rule: it is written for an agent that can act, so each line may carry a
 //! remedy built from a fixed template set — refresh, remove, add, fork,
-//! findings — with only validated identifiers in argument positions. Free
-//! text from sources or errors renders in quoted informational positions,
-//! never in a command position.
+//! findings, plan — with only validated identifiers in argument positions.
+//! Free text from sources or errors renders in quoted informational
+//! positions, never in a command position. A remedy that changes something
+//! is offered as the fix; the one that only prints is offered as what to
+//! see next, because a line an agent runs and meets again next session is
+//! worse than no remedy at all.
 
 use serde::Serialize;
 use specta::Type;
@@ -75,28 +78,31 @@ pub enum Remedy {
     Findings {
         global: bool,
     },
-}
-
-/// Only characters every declared name already passed validation for. A
-/// name is data; this is the belt-and-braces check at the one place data
-/// enters a command position.
-fn safe_ident(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 200
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | '@'))
-        && !name.starts_with('-')
+    /// Show what an apply would do here and why. Where a line names a
+    /// state whose right resolution depends on which of two directions the
+    /// reader wants, the preview that names both is the remedy: a report
+    /// built from stats alone must not prescribe the destructive one.
+    Plan {
+        global: bool,
+    },
 }
 
 impl Remedy {
+    /// Whether running this changes anything. Every other remedy settles
+    /// the line it sits on; the plan and the findings list print and
+    /// return, so calling either a fix would promise a person, and an agent
+    /// acting on this report, a resolution they will not get.
+    pub fn mutates(&self) -> bool {
+        !matches!(self, Remedy::Plan { .. } | Remedy::Findings { .. })
+    }
+
     /// The pasteable spelling, or `None` when an identifier fails
     /// validation — the line then stands without a remedy.
     pub fn render(&self) -> Option<String> {
         let flag = |global: &bool| if *global { " --global" } else { "" };
         if let Remedy::Remove { name, .. } | Remedy::Add { name, .. } | Remedy::Fork { name, .. } =
             self
-            && !safe_ident(name)
+            && !crate::names::plain_argument(name)
         {
             return None;
         }
@@ -110,6 +116,7 @@ impl Remedy {
                 format!("kendex fork {} {name}{}", kind.name(), flag(global))
             }
             Remedy::Findings { global } => format!("kendex findings{}", flag(global)),
+            Remedy::Plan { global } => format!("kendex apply --plan{}", flag(global)),
         })
     }
 }
@@ -159,6 +166,7 @@ struct Sections {
     removed: Vec<Line>,
     mixed: Vec<Line>,
     missing: Vec<Line>,
+    blocked: Vec<Line>,
     references: Vec<Line>,
     findings: Vec<Line>,
     unevaluated: Vec<Line>,
@@ -173,6 +181,7 @@ impl Sections {
             removed: Vec::new(),
             mixed: Vec::new(),
             missing: Vec::new(),
+            blocked: Vec::new(),
             references: Vec::new(),
             findings: Vec::new(),
             unevaluated: Vec::new(),
@@ -189,6 +198,7 @@ impl Sections {
             ("gone from their source", self.removed),
             ("mixed installs", self.mixed),
             ("missing on disk", self.missing),
+            ("blocked by files already there", self.blocked),
             ("broken references", self.references),
             ("safety findings", self.findings),
             ("not yet evaluated", self.unevaluated),
@@ -341,6 +351,8 @@ mod render;
 mod scope;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_evidence;
 #[cfg(test)]
 mod tests_render;
 

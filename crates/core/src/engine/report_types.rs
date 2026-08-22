@@ -26,14 +26,67 @@ pub enum DriftState {
 }
 
 /// Why an installation diverged, when the plan can tell. `LocalEdit` and
-/// `Both` are the causes that block writes: the user's bytes are on disk
-/// and only an explicit choice may take them.
+/// `Both`, and the three that say files kendex did not write are on disk,
+/// block writes: only an explicit choice may take them. Which choices are
+/// on offer differs by cause, which is what `can_keep` and `can_replace`
+/// answer — a surface that guesses ends up offering a way out that errors.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum DriftCause {
     UpstreamChanged,
     LocalEdit,
     Both,
+    /// Files are already where a declaration installs, and no lock entry
+    /// says kendex put them there. The two ways out are opposite
+    /// directions: adopt keeps the files, `replace_unmanaged` keeps the
+    /// declaration.
+    UnmanagedContent,
+    /// The same, in a shape adoption cannot take as it stands: a folder
+    /// where one file goes, or a file where a folder goes. Only the
+    /// replacement is on offer — keeping these means moving them.
+    UnmanagedWrongShape,
+    /// A link somebody set up, pointing at a real folder that several
+    /// tools read. Only keeping is on offer: the files are not at this
+    /// position to replace, and writing over the link breaks the sharing.
+    /// The detail is the folder the link points at, which is the one a
+    /// reader needs to see.
+    SharedLink,
+    /// A link somebody set up that adoption cannot follow and the
+    /// replacement must not write over. Neither exit settles it, so an
+    /// item with one of these anywhere has no exit at all — the files move
+    /// out of the way by hand or nothing does.
+    ForeignLink,
+}
+
+impl DriftCause {
+    /// Whether this conflict is a decision of its own. The person's own
+    /// edits are: they are settled by keeping them as a fork or discarding
+    /// them, and they never take the item's other exits away.
+    pub fn is_own_decision(self) -> bool {
+        matches!(self, DriftCause::LocalEdit | DriftCause::Both)
+    }
+
+    /// Whether files kendex did not write are what this row is about — the
+    /// causes every surface offers a way out of.
+    pub fn in_the_way(self) -> bool {
+        matches!(
+            self,
+            DriftCause::UnmanagedContent | DriftCause::UnmanagedWrongShape | DriftCause::SharedLink
+        )
+    }
+
+    /// Whether adoption can take what is at this position.
+    pub fn can_keep(self) -> bool {
+        matches!(self, DriftCause::UnmanagedContent | DriftCause::SharedLink)
+    }
+
+    /// Whether installing what kendex.toml asks for over it is an answer.
+    pub fn can_replace(self) -> bool {
+        matches!(
+            self,
+            DriftCause::UnmanagedContent | DriftCause::UnmanagedWrongShape
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -47,6 +100,17 @@ pub struct DriftRow {
     pub detail: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cause: Option<DriftCause>,
+}
+
+impl DriftRow {
+    /// Whether this row stops every exit the item has. Both exits act on
+    /// the whole item, so one place nothing can settle — a link kendex
+    /// will not follow, a revision clash, a source rebind — takes the
+    /// offers off every other place too. The person's own edits are the
+    /// exception: they are a decision of their own.
+    pub fn dead_stop(&self) -> bool {
+        self.state == DriftState::Conflict && !self.cause.is_some_and(DriftCause::is_own_decision)
+    }
 }
 
 /// A per-item render or parse warning, with the fix when there is one —
@@ -111,6 +175,17 @@ pub struct PlanOptions {
     /// explicit "discard my edits" everything destructive has to go
     /// through.
     pub overwrite_edited: bool,
+    /// Replace files kendex never wrote that sit where a declaration
+    /// installs. Off, they are a conflict and no write touches them; on,
+    /// each one moves to the trash and the declared render takes its
+    /// place. The opposite direction from adopt, which keeps the files and
+    /// rewrites the declaration around them.
+    pub replace_unmanaged: bool,
+    /// Replace them for these items only, by kind and name — leaving every
+    /// other blocked declaration in the scope exactly as it is. The
+    /// per-item choice the app offers on the row a person is reading,
+    /// which must never reach past the item it names.
+    pub replace_unmanaged_names: Option<Vec<(ItemKind, String)>>,
     /// Discard edits for these items only, by kind and name — leaving
     /// every other edited item in the scope held. The per-package
     /// "discard" the app offers, which must never take a neighbour's

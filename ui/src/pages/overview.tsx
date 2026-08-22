@@ -56,6 +56,7 @@ export function OverviewPage() {
 
   const {
     changes: actionableCount,
+    inTheWay,
     unmanaged: unmanagedCount,
     blocked,
     open,
@@ -99,6 +100,18 @@ export function OverviewPage() {
       tone: "warning",
       title: open === 1 ? "1 finding to review" : `${open} findings to review`,
       detail: "In content already installed.",
+      action: { label: REVIEW_ACTION_LABEL, onClick: () => setPage("review") },
+    });
+  }
+  if (inTheWay > 0) {
+    rows.push({
+      key: "in-the-way",
+      tone: "warning",
+      title:
+        inTheWay === 1
+          ? "1 item needs your decision"
+          : `${inTheWay} items need your decision`,
+      detail: "Files are already where they go.",
       action: { label: REVIEW_ACTION_LABEL, onClick: () => setPage("review") },
     });
   }

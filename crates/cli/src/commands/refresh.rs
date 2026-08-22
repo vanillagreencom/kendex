@@ -3,7 +3,8 @@ use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
 
 use super::engine_common::{
-    confirm_and_execute, print_conflicts, print_held_back, print_notes, refresh_failures,
+    confirm_and_execute, conflict_detail, print_conflicts, print_exits, print_held_back,
+    print_notes, refresh_failures,
 };
 use super::{CliResult, resolve_scopes, say};
 use crate::scope::ScopeFilter;
@@ -39,7 +40,7 @@ fn print_drift(report: &kendex_core::engine::EngineReport) {
             row.name,
             row.harness.name(),
             row.state,
-            row.detail
+            conflict_detail(row)
         ));
     }
 }
@@ -116,8 +117,15 @@ pub fn run(
         print_held_back(&report);
         print_notes(&report);
         match verbose {
-            true => print_drift(&report),
-            false => print_conflicts(&report),
+            // Every row, and the ways out under the ones that have them:
+            // asking for more detail must not cost the reader the way out.
+            true => {
+                print_drift(&report);
+                print_exits(env, &report);
+            }
+            false => {
+                print_conflicts(env, &report);
+            }
         }
         let lock = load_lock(&lock_path(env, &scope))?;
         if lock.entries.is_empty() && report.plan.is_empty() {

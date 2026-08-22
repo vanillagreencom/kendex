@@ -66,7 +66,7 @@ export const auditHandlers: Record<string, Handler> = {
     scope: Scope;
     kind: ItemKind;
     name: string;
-    harness: HarnessId;
+    harnesses: HarnessId[];
   }) => {
     const v = view(args.scope);
     v.drift = v.drift.filter(
@@ -74,7 +74,7 @@ export const auditHandlers: Record<string, Handler> = {
         !(
           row.kind === args.kind &&
           row.name === args.name &&
-          row.harness === args.harness
+          args.harnesses.includes(row.harness)
         ),
     );
     const table = declTable(manifest(args.scope), args.kind);
@@ -88,6 +88,20 @@ export const auditHandlers: Record<string, Handler> = {
         it.origin = "local";
       }
     }
+    return v;
+  },
+  // Taking over one item's position: its rows go, and the files that were
+  // there are gone from the mock world the same way a real apply moves them
+  // to the trash.
+  replace_unmanaged_item: (args: {
+    scope: Scope;
+    kind: ItemKind;
+    name: string;
+  }) => {
+    const v = view(args.scope);
+    v.drift = v.drift.filter(
+      (row) => !(row.kind === args.kind && row.name === args.name),
+    );
     return v;
   },
   toggle_item: ({

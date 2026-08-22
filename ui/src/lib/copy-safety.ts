@@ -91,12 +91,3 @@ export const ACCEPT_BLOCKED_CONFIRM = "Accept and install";
 
 // Withdrawing an acceptance, from the recorded-decisions list.
 export const WITHDRAW_LABEL = "Withdraw";
-
-// Taking over a folder that several harnesses read through links. The dialog
-// names the real folder and every harness kendex knows is reading it; the
-// last sentence is the one honest warning — links kendex cannot see will
-// break, and there is no way to list them.
-export const ADOPT_SHARED_TITLE = "Take over this shared folder?";
-export const adoptSharedBody = (target: string, harnesses: string[]): string =>
-  `${harnesses.join(" and ")} read this skill from ${target}. kendex moves the folder's content into its own keeping (the folder goes to the trash, recoverable) and gives each harness listed a link to kendex's copy, so they stay in sync. Anything else that points at the old folder will stop working.`;
-export const ADOPT_SHARED_CONFIRM = "Take it over";

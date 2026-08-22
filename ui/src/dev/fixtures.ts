@@ -11,7 +11,8 @@ import type {
   ProvenanceRow,
   SourceRow,
 } from "@/bindings";
-import { bundles, manifests, sources, views } from "./fixture-declared";
+import { bundles } from "./fixture-bundles";
+import { manifests, sources, views } from "./fixture-declared";
 import {
   marketplacePackages,
   marketplaces,

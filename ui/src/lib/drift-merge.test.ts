@@ -113,6 +113,13 @@ describe("summarizePaths", () => {
     expect(summary?.text).toBe("~/.claude/skills/x +2 more");
   });
 
+  it("counts one place once however many tools read it", () => {
+    const shared = "/home/method/hand-made/skills/browser";
+    const summary = summarizePaths([shared, shared]);
+    expect(summary?.text).toBe("~/hand-made/skills/browser");
+    expect(summary?.count).toBe(1);
+  });
+
   it("returns null with no paths", () => {
     expect(summarizePaths([null])).toBeNull();
   });

@@ -77,10 +77,79 @@ fn declared_installation_keys(manifest: &Manifest, scope: &Scope) -> BTreeSet<St
     keys
 }
 
-/// Every path a declaration's artifacts occupy, derived from the
-/// declaration alone. A source that cannot be read this pass still leaves
-/// its installed artifacts on disk — they are ours, and calling them
-/// someone else's would invite the user to adopt our own output.
+/// Where one installation of one declaration lands, derived from the
+/// declaration alone — no source read, no hashing, because the session
+/// check does no deep work.
+///
+/// Every kind here puts its artifact at a position that is a pure function
+/// of kind, harness, name and the install method. The kinds left out are
+/// left out for their own reason: an mcp-server and a plugin are entries
+/// inside a shared config file, with no path of their own to stat, and a
+/// pi-extension is never planned as an item at all.
+///
+/// One thing a stat cannot settle: whether a hook carries a script or a
+/// command. A command-bodied hook writes nothing at the script position, so
+/// a file there is somebody else's — reported as in the way when strictly
+/// it is only in the way of a hook with a script in it.
+fn installation_paths(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    kind: ItemKind,
+    name: &str,
+    decl: &ItemDecl,
+    harness: crate::model::HarnessId,
+) -> Vec<PathBuf> {
+    let both = |path: PathBuf| {
+        let off = super::targets::disabled_name(&path);
+        vec![path, off]
+    };
+    let native = |kind| desired::native_dir(env, scope, harness, kind);
+    match kind {
+        ItemKind::Agent => native(kind)
+            .map(|dir| both(dir.join(crate::render::agent::file_name(harness, name))))
+            .unwrap_or_default(),
+        // Copy keeps every tool's own directory; only the shared method
+        // puts a tree where several tools read one copy, and the plan binds
+        // to both that tree and the position pointing at it.
+        ItemKind::Skill => {
+            let mut paths = Vec::new();
+            if decl.method.unwrap_or(manifest.install.method) != crate::manifest::Method::Copy {
+                paths.push(desired::skill_canonical(env, scope, name));
+            }
+            paths.extend(
+                native(kind).map(|dir| dir.join(crate::harness::rendered_name(harness, name))),
+            );
+            paths
+        }
+        // A tool with no command surface of its own takes commands as
+        // one-file skill trees, which is where its copy actually lands.
+        ItemKind::Command => {
+            match crate::harness::capabilities(harness, ItemKind::Command).installs_as {
+                Some(ItemKind::Skill) => native(ItemKind::Skill)
+                    .map(|dir| vec![dir.join(crate::harness::rendered_name(harness, name))])
+                    .unwrap_or_default(),
+                _ => native(kind)
+                    .map(|dir| both(dir.join(super::desired_command::command_file(harness, name))))
+                    .unwrap_or_default(),
+            }
+        }
+        // Whether a hook writes a file at all is in its source, which this
+        // check does not read: a hook whose body is a command registers
+        // that command and writes nothing, so the script path it would
+        // otherwise have is in nobody's way. Claiming it here tells the
+        // reader they are blocked and sends them to a plan that has no
+        // conflict to show them.
+        _ => Vec::new(),
+    }
+}
+
+/// Every path a declaration's artifacts could occupy. Generous on purpose,
+/// unlike the per-installation read above: a source that cannot be read
+/// this pass still leaves its installed artifacts on disk — they are ours,
+/// and calling them someone else's would invite the user to adopt kendex's
+/// own output. The shared tree is in here whatever the method says, for the
+/// same reason.
 fn declared_paths(
     env: &Env,
     scope: &Scope,
@@ -90,21 +159,18 @@ fn declared_paths(
     decl: &ItemDecl,
 ) -> Vec<PathBuf> {
     let mut paths = Vec::new();
-    if kind == ItemKind::Skill {
+    // Only a shared install has a shared tree. Reading it for a copy
+    // declaration hides whatever else lives there from the inventory of
+    // content nothing manages — the same mistake as claiming to own it.
+    if kind == ItemKind::Skill
+        && decl.method.unwrap_or(manifest.install.method) != crate::manifest::Method::Copy
+    {
         paths.push(desired::skill_canonical(env, scope, name));
     }
     for harness in desired::target_harnesses(decl, manifest, kind, scope) {
-        let Some(native) = desired::native_dir(env, scope, harness, kind) else {
-            continue;
-        };
-        match kind {
-            ItemKind::Agent => {
-                let base = crate::render::agent::file_name(harness, name);
-                paths.push(native.join(format!("{base}.disabled")));
-                paths.push(native.join(base));
-            }
-            _ => paths.push(native.join(crate::harness::rendered_name(harness, name))),
-        }
+        paths.extend(installation_paths(
+            env, scope, manifest, kind, name, decl, harness,
+        ));
     }
     paths
 }
@@ -123,4 +189,59 @@ fn declared_artifact_paths(env: &Env, scope: &Scope, manifest: &Manifest) -> BTr
         }
     }
     paths
+}
+
+/// Declarations kendex has no record of installing, with files already
+/// sitting where they would go — what an apply either takes over or
+/// refuses, and what nothing else reports. Manifest, lock and a stat: no
+/// source reads and no hashing, because the session check does no deep
+/// work. That is also the limit of what it may claim: whether the apply is
+/// blocked, and which way out fits, needs the render this cannot build, so
+/// the line states the two facts a stat proves and sends the reader to the
+/// plan.
+///
+/// Read per installation, not per declaration, and answered the same way:
+/// an item installed for one tool and asked for by another is blocked at
+/// exactly the position the second tool has no record at, and a line that
+/// said only its name would be false about the tool that has it. What any installation recorded writing is
+/// kendex's own, whichever entry holds it now (invariant 6) — the shared
+/// tree two tools read one skill from is the case that matters, and calling
+/// it a stranger's would report kendex's own output back at the user.
+pub(crate) fn declared_over_existing_files(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    lock: &Lock,
+) -> Vec<(ItemKind, String, crate::model::HarnessId)> {
+    let owned: BTreeSet<PathBuf> = lock
+        .entries
+        .values()
+        .flat_map(|entry| super::owned::installed(env, scope, entry).files)
+        .collect();
+    let mut blocked = Vec::new();
+    for (kind, table) in [
+        (ItemKind::Agent, &manifest.agents),
+        (ItemKind::Skill, &manifest.skills),
+        (ItemKind::Command, &manifest.commands),
+        (ItemKind::Hook, &manifest.hooks),
+    ] {
+        for (name, decl) in table {
+            for harness in desired::target_harnesses(decl, manifest, kind, scope) {
+                // What the lock recorded writing, not merely that it holds
+                // a key for this item: an installation that changed method
+                // writes somewhere new, and a key alone would call that new
+                // position ours while a stranger's files sit on it.
+                let occupied = installation_paths(env, scope, manifest, kind, name, decl, harness)
+                    .into_iter()
+                    .any(|path| {
+                        !super::file_plan::ours(&path, &owned)
+                            && (path.exists() || path.is_symlink())
+                    });
+                if occupied {
+                    blocked.push((kind, name.clone(), harness));
+                }
+            }
+        }
+    }
+    blocked
 }

@@ -85,17 +85,19 @@ pub(super) fn shared_target(
             continue;
         };
         let candidate = dir.join(crate::harness::rendered_name(h, name));
-        if !candidate.is_symlink() {
-            continue;
-        }
         let Ok(resolved) = fs::canonicalize(&candidate) else {
             continue;
         };
         if resolved != target {
             continue;
         }
+        // The tool whose own place IS the folder reads it too — in the
+        // hand-made layout it is the one holding it, and the rest link at
+        // it. Left out, adoption would settle the others and quietly drop
+        // this one from the declaration, taking the skill away from the
+        // tool that had it all along. It has no link to clear.
         harnesses.push(h);
-        if !links.iter().any(|(path, _)| path == &candidate) {
+        if candidate.is_symlink() && !links.iter().any(|(path, _)| path == &candidate) {
             let raw = fs::read_link(&candidate).map_err(|e| CoreError::io(&candidate, e))?;
             links.push((candidate, raw));
         }
@@ -105,6 +107,25 @@ pub(super) fn shared_target(
         links,
         harnesses,
     })
+}
+
+/// The folder a link at this position could be adopted through, or nothing
+/// where the link is one adoption would refuse. The planner asks this so a
+/// hand-made sharing layout — one real folder, several tools reading it
+/// through links — is offered the exit that works instead of being called
+/// a dead end, and asks it through the same boundary the adoption itself
+/// applies, so the offer and the action can never drift apart.
+pub(super) fn link_target(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    link: &Path,
+) -> Option<PathBuf> {
+    let points_to = fs::read_link(link).ok()?;
+    let local_item = super::adopt::local_item_path(env, scope, kind, name).ok()?;
+    let shared = shared_target(env, scope, kind, name, link, points_to, &local_item).ok()?;
+    Some(shared.target)
 }
 
 /// The ops that take over a shared folder: capture its bytes into the
@@ -194,7 +215,14 @@ mod tests {
         std::os::unix::fs::symlink(&shared, project.join(".claude/skills/browser")).unwrap();
         std::os::unix::fs::symlink(&shared, project.join(".agents/skills/browser")).unwrap();
 
-        let plan = adopt(&env, &scope, ItemKind::Skill, "browser", HarnessId::Claude).unwrap();
+        let plan = adopt(
+            &env,
+            &scope,
+            ItemKind::Skill,
+            "browser",
+            &[HarnessId::Claude],
+        )
+        .unwrap();
         crate::apply::execute(&env, &plan, None).unwrap();
 
         // Content captured; the folder and every link that read it cleared.
@@ -241,7 +269,7 @@ mod tests {
             &scope,
             ItemKind::Skill,
             "documents",
-            HarnessId::Claude,
+            &[HarnessId::Claude],
         )
         .unwrap_err();
         assert!(matches!(error, CoreError::ForeignSymlink { .. }));
@@ -269,7 +297,14 @@ mod tests {
         fs::create_dir_all(project.join(".claude/skills")).unwrap();
         std::os::unix::fs::symlink(&managed, project.join(".claude/skills/stolen")).unwrap();
 
-        let error = adopt(&env, &scope, ItemKind::Skill, "stolen", HarnessId::Claude).unwrap_err();
+        let error = adopt(
+            &env,
+            &scope,
+            ItemKind::Skill,
+            "stolen",
+            &[HarnessId::Claude],
+        )
+        .unwrap_err();
         assert!(matches!(error, CoreError::ForeignSymlink { .. }));
         assert!(managed.join("SKILL.md").is_file());
     }
@@ -295,7 +330,14 @@ mod tests {
         fs::create_dir_all(project.join(".claude/skills")).unwrap();
         std::os::unix::fs::symlink(&shared, project.join(".claude/skills/browser")).unwrap();
 
-        let plan = adopt(&env, &scope, ItemKind::Skill, "browser", HarnessId::Claude).unwrap();
+        let plan = adopt(
+            &env,
+            &scope,
+            ItemKind::Skill,
+            "browser",
+            &[HarnessId::Claude],
+        )
+        .unwrap();
         fs::write(shared.join("SKILL.md"), "changed under the plan").unwrap();
 
         assert!(crate::apply::execute(&env, &plan, None).is_err());
@@ -313,7 +355,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("huge");
         fs::create_dir_all(&dir).unwrap();
-        for i in 0..(super::super::adopt::MAX_CAPTURE_FILES + 1) {
+        for i in 0..(super::super::adopt::capture::MAX_CAPTURE_FILES + 1) {
             fs::write(dir.join(format!("f{i}")), "x").unwrap();
         }
         let error = read_tree(&dir).unwrap_err();

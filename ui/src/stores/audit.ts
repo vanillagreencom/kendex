@@ -14,8 +14,9 @@ import {
   TAKEN_BACK_TOAST,
   UNDO_LABEL,
 } from "@/lib/copy-decisions";
-import { type ErrorAction, useProblemsStore } from "./problems";
-import { useScanStore } from "./scan";
+import { replacedToastLabel } from "@/lib/copy-in-the-way";
+import { auditRunner, replaceView } from "./audit-run";
+import { useProblemsStore } from "./problems";
 
 interface AuditState {
   views: AuditView[];
@@ -28,25 +29,38 @@ interface AuditState {
   /** Unix ms of the last audit that came back clean; null until one has. */
   auditedAt: number | null;
   refresh: (opts?: { force?: boolean }) => Promise<void>;
+  /** Every action here answers whether it worked. Most callers only need
+   *  the state update that comes with it; the ones running several in a
+   *  row need to stop at the first failure. */
   applyPlan: (
     scope: Scope,
     removeOrphans: boolean,
     allowUnsafe?: string[],
-  ) => Promise<void>;
+  ) => Promise<boolean>;
+  /** Hand the files already at an item's place to kendex as they are, for
+   *  every tool the item is blocked for — one call, so no tool's copy is
+   *  captured over another's. */
   adopt: (
     scope: Scope,
     kind: ItemKind,
     name: string,
-    harness: HarnessId,
-    opts?: { silent?: boolean },
-  ) => Promise<void>;
+    harnesses: HarnessId[],
+  ) => Promise<boolean>;
+  /** Install what kendex.toml asks for over the files already at one
+   *  item's place. Named item only, so a neighbour blocked the same way
+   *  keeps its files until that one is decided too. */
+  replaceUnmanaged: (
+    scope: Scope,
+    kind: ItemKind,
+    name: string,
+  ) => Promise<boolean>;
   toggle: (
     scope: Scope,
     kind: ItemKind,
     name: string,
     enabled: boolean,
-  ) => Promise<void>;
-  removeItem: (scope: Scope, kind: ItemKind, name: string) => Promise<void>;
+  ) => Promise<boolean>;
+  removeItem: (scope: Scope, kind: ItemKind, name: string) => Promise<boolean>;
   /** Rule that these findings are not problems. The toast offers Undo,
    *  which takes back exactly the records this call wrote. */
   dismiss: (
@@ -59,54 +73,8 @@ interface AuditState {
 /** How long an audit answers for before a visit pays for a fresh one. */
 const AUDIT_FRESH_FOR_MS = 60_000;
 
-function replaceView(views: AuditView[], fresh: AuditView): AuditView[] {
-  return views.map((view) =>
-    sameScope(view.scope, fresh.scope) ? fresh : view,
-  );
-}
-
-export function sameScope(a: Scope, b: Scope): boolean {
-  if (a.scope === "global" && b.scope === "global") return true;
-  return a.scope === "project" && b.scope === "project" && a.root === b.root;
-}
-
 export const useAuditStore = create<AuditState>((set, get) => {
-  // A row that vanishes with no word said is indistinguishable from a
-  // button that did nothing — every outcome here speaks up, success or
-  // failure, on top of the state update the page renders from. Failure is a
-  // modal, not a toast: these are all user-initiated, so the user is looking
-  // right at the button that just broke.
-  const run = async (
-    action: () => Promise<
-      { status: "ok"; data: AuditView } | { status: "error"; error: string }
-    >,
-    opts: { title: string; successMessage?: string; steps?: string[] },
-  ) => {
-    set({ busy: true });
-    let response: Awaited<ReturnType<typeof action>>;
-    try {
-      response = await action();
-    } finally {
-      set({ busy: false });
-    }
-    if (response.status === "ok") {
-      set({ views: replaceView(get().views, response.data), error: null });
-      if (opts.successMessage) toast.success(opts.successMessage);
-      await useScanStore.getState().refresh();
-    } else {
-      set({ error: response.error });
-      const retry: ErrorAction = {
-        label: "Retry",
-        onClick: () => void run(action, opts),
-      };
-      useProblemsStore.getState().showError({
-        title: opts.title,
-        message: response.error,
-        steps: opts.steps,
-        actions: [retry],
-      });
-    }
-  };
+  const run = auditRunner(set, get);
 
   return {
     views: [],
@@ -156,14 +124,20 @@ export const useAuditStore = create<AuditState>((set, get) => {
           "If it keeps failing, check the project folder is writable",
         ],
       }),
-    // A merged row adopts every one of its installations in one click —
-    // each is its own backend call, but they're one thing to the user, so
-    // only the first speaks up with a toast.
-    adopt: (scope, kind, name, harness, opts) =>
-      run(() => commands.adoptItem(scope, kind, name, harness), {
+    adopt: (scope, kind, name, harnesses) =>
+      run(() => commands.adoptItem(scope, kind, name, harnesses), {
         title: `Couldn't start managing ${name}`,
-        successMessage: opts?.silent ? undefined : adoptedToastLabel(name),
+        successMessage: adoptedToastLabel(name),
         steps: ["Try again"],
+      }),
+    replaceUnmanaged: (scope, kind, name) =>
+      run(() => commands.replaceUnmanagedItem(scope, kind, name), {
+        title: `Couldn't replace ${name}'s files`,
+        successMessage: replacedToastLabel(name),
+        steps: [
+          "Nothing was changed — try again",
+          "If it keeps failing, check the project folder is writable",
+        ],
       }),
     toggle: (scope, kind, name, enabled) =>
       run(() => commands.toggleItem(scope, kind, name, enabled), {

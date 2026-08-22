@@ -41,6 +41,7 @@ export const REVIEW_ACTION_LABEL = "Review & apply";
 // alone.
 export function scopeSummaryLabel(counts: {
   changes: number;
+  decide: number;
   blocked: number;
   open: number;
   unmanaged: number;
@@ -49,6 +50,9 @@ export function scopeSummaryLabel(counts: {
   if (counts.blocked > 0) {
     parts.push(`${counts.blocked} problem${counts.blocked === 1 ? "" : "s"}`);
   }
+  // Counted apart from the changes: Apply cannot move these, and a summary
+  // that folded them in said "2 to apply" on a card with no Apply button.
+  if (counts.decide > 0) parts.push(`${counts.decide} to decide`);
   if (counts.changes > 0) parts.push(`${counts.changes} to apply`);
   if (counts.open > 0) {
     parts.push(`${counts.open} finding${counts.open === 1 ? "" : "s"}`);
