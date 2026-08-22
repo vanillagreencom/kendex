@@ -299,3 +299,65 @@ fn a_choice_settled_between_the_look_and_the_plan_changes_nothing() {
         "and the rest of the scope was applied on the way past"
     );
 }
+
+/// A conflict of another kind beside the files. It carries no exit of its
+/// own, and the page has to see it anyway: left out, the row it sits on
+/// would offer a replacement the plan then refuses for the whole item.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_conflict_with_no_exit_of_its_own_still_reaches_the_page() {
+    let f = fixture();
+    let installed = view(&f.env, &f.scope);
+    assert!(!installed.drift.is_empty());
+
+    // deploy installed from the catalog, then pointed at somewhere else:
+    // a clash the exits cannot settle, on an item whose other place holds
+    // files kendex did not write.
+    fs::remove_dir_all(f.project.join(".claude/skills/deploy")).unwrap();
+    let report = kendex_core::engine::plan_apply(
+        &f.env,
+        &f.scope,
+        &kendex_core::engine::PlanOptions::default(),
+    )
+    .unwrap();
+    kendex_core::apply::execute(&f.env, &report.plan, None).unwrap();
+    let elsewhere = f.project.parent().unwrap().join("second");
+    fs::create_dir_all(elsewhere.join("skills/deploy")).unwrap();
+    fs::write(
+        elsewhere.join("skills/deploy/SKILL.md"),
+        "---\nname: deploy\ndescription: does deploy\n---\nSomewhere else.\n",
+    )
+    .unwrap();
+    let manifest = f.project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    let (head, tail) = text.split_once("[install]").unwrap();
+    fs::write(
+        &manifest,
+        format!(
+            "{head}[sources.other]\npath = \"{}\"\n\n[install]{}",
+            elsewhere.display(),
+            tail.replace(
+                "[skills.deploy]\nsource = \"cat\"",
+                "[skills.deploy]\nsource = \"other\""
+            )
+        ),
+    )
+    .unwrap();
+
+    let after = view(&f.env, &f.scope);
+    let clash = after
+        .drift
+        .iter()
+        .find(|row| row.name == "deploy" && row.cause.is_none())
+        .unwrap_or_else(|| panic!("no clash in {:?}", after.drift));
+    assert!(
+        after.exits.iter().any(
+            |exit| exit.key == format!("skill:deploy:{}", clash.harness.name())
+                && exit.blocking
+                && !exit.keep
+                && !exit.replace
+        ),
+        "the page cannot see it: {:?}",
+        after.exits
+    );
+}

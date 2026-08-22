@@ -153,75 +153,6 @@ fn link_at(path: &Path, target: &Path) {
     std::os::unix::fs::symlink(target, path).unwrap();
 }
 
-/// The layout the whole issue started from: one real folder at one tool's
-/// place, the other tool reading it through a link somebody made. Both
-/// tools are blocked, and keeping it is one move covering both — named for
-/// the tools adoption can act through, not the tool a row happens to be
-/// about.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_folder_shared_by_hand_is_kept_by_the_offer_it_prints() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
-    let project = project_with(home, "[\"claude\", \"codex\"]", "symlink");
-    let folder = project.join(".claude/skills/deploy");
-    folder_at(&folder, "Shared by hand.");
-    link_at(&project.join(".agents/skills/deploy"), &folder);
-
-    let planned = plan(home, &project);
-    assert!(
-        planned.contains(".claude/skills/deploy"),
-        "the folder the link points at is what the reader decides about: {planned}"
-    );
-    // Replacing a link is never right: the files are not at that position,
-    // and writing over it breaks the sharing somebody set up.
-    assert!(!planned.contains("--replace-unmanaged"), "{planned}");
-    assert_eq!(
-        offer(&planned),
-        "kendex adopt skill deploy --harness claude --harness codex"
-    );
-
-    follow(home, &project, &planned);
-    settled(
-        home,
-        &project,
-        &[".claude/skills/deploy", ".agents/skills/deploy"],
-        "Shared by hand.",
-        &[],
-    );
-    let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
-    assert!(
-        !manifest.contains("[skills.deploy]\nsource = \"local\"\nharnesses"),
-        "a tool that was blocked a moment ago lost the skill:\n{manifest}"
-    );
-}
-
-/// The same sharing, with the folder somewhere neither tool would look. It
-/// is reached through the one tool whose own place is the link, and naming
-/// the other — which has nothing there — would error on the spot.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_folder_outside_every_tool_is_kept_through_the_tool_that_links_at_it() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
-    let project = project_with(home, "[\"claude\", \"codex\"]", "symlink");
-    let elsewhere = home.join("shared/deploy");
-    folder_at(&elsewhere, "Kept somewhere else.");
-    link_at(&project.join(".agents/skills/deploy"), &elsewhere);
-
-    let planned = plan(home, &project);
-    assert_eq!(offer(&planned), "kendex adopt skill deploy --harness codex");
-
-    follow(home, &project, &planned);
-    settled(
-        home,
-        &project,
-        &[".claude/skills/deploy", ".agents/skills/deploy"],
-        "Kept somewhere else.",
-        &[],
-    );
-}
-
 /// One item blocked for two tools, each holding its own copy. One offer
 /// naming both, because keeping them one command at a time lands each
 /// tool's copy in the local source on top of the last and leaves the
@@ -335,6 +266,7 @@ fn hand_made_files_beside_an_edited_install_keep_their_offer() {
 /// The exits are what a reader types next, so they carry the scope they
 /// were read in. Printed while looking at the global scope without it,
 mod refusals;
+mod shared;
 
 /// The other exit on the same shape. An edit beside the hand-made files is
 /// a decision of its own — it never takes the take-over away, and the
@@ -372,5 +304,36 @@ fn hand_made_files_beside_an_edited_install_are_still_replaceable() {
     assert!(
         after.contains("edited on disk"),
         "the edit is still its own decision: {after}"
+    );
+}
+
+/// The hand-made sharing layout again, with the copy method: one real
+/// folder at one tool's place and the other reading it through a link.
+/// It is one folder, so the two rows are one answer — not two copies to
+/// choose between.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_folder_shared_by_hand_is_kept_whichever_method_is_declared() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let project = project_with(home, "[\"claude\", \"codex\"]", "copy");
+    let folder = project.join(".claude/skills/deploy");
+    folder_at(&folder, "Shared by hand.");
+    link_at(&project.join(".agents/skills/deploy"), &folder);
+
+    let planned = plan(home, &project);
+    assert_eq!(
+        offer(&planned),
+        "kendex adopt skill deploy --harness claude --harness codex",
+        "{planned}"
+    );
+
+    follow(home, &project, &planned);
+    settled(
+        home,
+        &project,
+        &[".claude/skills/deploy", ".agents/skills/deploy"],
+        "Shared by hand.",
+        &[],
     );
 }

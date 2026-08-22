@@ -42,13 +42,13 @@ pub fn for_row(env: &Env, scope: &Scope, row: &DriftRow) -> RowExits {
     }
 }
 
-/// Every row a surface has to draw a decision for: the ones with files at
-/// the item's position. A conflict of another kind — a revision clash, a
-/// source rebind — is answered by removing the item, not by choosing
-/// between its files and the declaration.
+/// Every row a surface has to draw a decision for. A conflict of another
+/// kind — a revision clash, a source rebind — carries no exit of its own,
+/// and is here because it takes the exits off the rows beside it: left
+/// out, the page would offer an action the plan then refuses.
 pub fn for_rows(env: &Env, scope: &Scope, rows: &[DriftRow]) -> Vec<RowExits> {
     rows.iter()
-        .filter(|row| row.dead_stop() && row.cause.is_some())
+        .filter(|row| row.dead_stop())
         .map(|row| for_row(env, scope, row))
         .collect()
 }

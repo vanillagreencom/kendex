@@ -160,19 +160,6 @@ fn keep_exit(env: &Env, item: &[&DriftRow]) -> String {
             tools.push(row.harness);
         }
     }
-    // One copy goes into the local source, so a shared folder beside a
-    // separate plain copy is two answers to one question — core refuses it,
-    // and an offer that ran into that refusal would be one nobody could
-    // follow.
-    if item
-        .iter()
-        .any(|row| row.cause == Some(DriftCause::SharedLink))
-        && item
-            .iter()
-            .any(|row| row.cause == Some(DriftCause::UnmanagedContent))
-    {
-        return away;
-    }
     if tools.is_empty() || !kendex_core::names::plain_argument(&row.name) {
         return away;
     }
