@@ -221,3 +221,40 @@ fn a_place_adoption_cannot_enter_takes_the_offer_with_it() {
         "half the item was offered a keep: {planned}"
     );
 }
+
+/// An edit is not files anybody has to move — it is settled by keeping it
+/// as a fork or discarding it — so the line about moving files aside does
+/// not belong under it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_edit_is_never_told_to_move_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let project = project_with(home, "[\"claude\"]", "copy");
+    assert!(kendex(home, &project, &["apply", "-y"]).status.success());
+    folder_at(&project.join(".claude/skills/deploy"), "Edited by hand.");
+
+    // The same item, pointed at a second catalog: a clash its files have
+    // nothing to do with.
+    let elsewhere = home.join("second");
+    folder_at(&elsewhere.join("skills/deploy"), "Somewhere else.");
+    let manifest = project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    let (head, tail) = text.split_once("[install]").unwrap();
+    fs::write(
+        &manifest,
+        format!(
+            "{head}[sources.other]\npath = \"{}\"\n\n[install]{}",
+            elsewhere.display(),
+            tail.replace("source = \"cat\"", "source = \"other\"")
+        ),
+    )
+    .unwrap();
+
+    let planned = plan(home, &project);
+    assert!(planned.contains("conflict: skill deploy"), "{planned}");
+    assert!(
+        !planned.contains("to keep those files:"),
+        "moving files settles neither of these: {planned}"
+    );
+}

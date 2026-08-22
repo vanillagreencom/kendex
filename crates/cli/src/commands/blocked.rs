@@ -67,11 +67,14 @@ fn exits_under<'a>(env: &Env, rows: &[&'a DriftRow], row: &&'a DriftRow) -> Vec<
     }
     // Only where the item has files at its position. A revision clash or a
     // source rebind is a dead stop too, and telling the reader to move
-    // files aside settles nothing there.
-    if !rows
-        .iter()
-        .any(|other| other.kind == row.kind && other.name == row.name && other.cause.is_some())
-    {
+    // files aside settles nothing there — nor does an edit beside it, which
+    // is a decision of its own and not files anybody has to move.
+    if !rows.iter().any(|other| {
+        other.kind == row.kind
+            && other.name == row.name
+            && other.dead_stop()
+            && other.cause.is_some()
+    }) {
         return Vec::new();
     }
     // Every conflict the item has, not only the ones with files in the
@@ -100,7 +103,10 @@ fn exits_under<'a>(env: &Env, rows: &[&'a DriftRow], row: &&'a DriftRow) -> Vec<
 /// where every one of them is wholly replaceable. Printed on the strength
 /// of a single item, it is a command guaranteed to fail.
 fn say_scope_exit(rows: &[&DriftRow]) {
-    let files: Vec<&&DriftRow> = rows.iter().filter(|row| row.cause.is_some()).collect();
+    let files: Vec<&&DriftRow> = rows
+        .iter()
+        .filter(|row| row.dead_stop() && row.cause.is_some())
+        .collect();
     let replaceable = files
         .iter()
         .any(|row| row.cause.is_some_and(DriftCause::in_the_way))

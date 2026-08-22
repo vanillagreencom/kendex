@@ -47,38 +47,34 @@ pub(crate) fn read_tree(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>> {
             // A FIFO would block the read forever and a device is not
             // content; capturing arbitrary user folders means saying so
             // instead of hanging.
-            let meta = fs::symlink_metadata(&path).map_err(|e| CoreError::io(&path, e))?;
-            if !meta.is_file() {
+            let shape = fs::symlink_metadata(&path).map_err(|e| CoreError::io(&path, e))?;
+            if !shape.is_file() {
                 return Err(CoreError::io(
                     &path,
                     std::io::Error::other("not a regular file — adopt captures plain files only"),
                 ));
             }
-            *bytes += meta.len();
-            if files.len() >= MAX_CAPTURE_FILES || *bytes > MAX_CAPTURE_BYTES {
-                return Err(CoreError::io(
-                    &path,
-                    std::io::Error::other(format!(
-                        "this folder is bigger than adopt will capture (over {MAX_CAPTURE_FILES} files or {} MB)",
-                        MAX_CAPTURE_BYTES / (1024 * 1024)
-                    )),
-                ));
-            }
-            // Read under the same budget the size was checked against: a
-            // file that grows between the two would otherwise be read
-            // whole, and the cap would hold only for files that sat still.
+            // The budget is spent on what was read, never on what the
+            // metadata said: a file that grows between the two would leave
+            // every file after it a budget that no longer exists, and the
+            // bound would hold only for a tree that sat still. So the
+            // reader is capped and the total counts the bytes it returned.
+            let room = MAX_CAPTURE_BYTES.saturating_sub(*bytes);
             let mut body = Vec::new();
-            let room = MAX_CAPTURE_BYTES.saturating_sub(*bytes) + meta.len();
             fs::File::open(&path)
                 .and_then(|file| {
                     use std::io::Read;
                     file.take(room + 1).read_to_end(&mut body)
                 })
                 .map_err(|e| CoreError::io(&path, e))?;
-            if body.len() as u64 > room {
+            *bytes += body.len() as u64;
+            if files.len() >= MAX_CAPTURE_FILES || body.len() as u64 > room {
                 return Err(CoreError::io(
                     &path,
-                    std::io::Error::other("it grew while adopt was reading it"),
+                    std::io::Error::other(format!(
+                        "this folder is bigger than adopt will capture (over {MAX_CAPTURE_FILES} files or {} MB)",
+                        MAX_CAPTURE_BYTES / (1024 * 1024)
+                    )),
                 ));
             }
             files.push((rel, body));
