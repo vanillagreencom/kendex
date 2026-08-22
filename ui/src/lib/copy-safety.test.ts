@@ -75,10 +75,10 @@ describe("what a verdict is allowed to claim", () => {
 
   it("discloses that the read is partial wherever it shows a verdict", () => {
     expect(PREINSTALL_SAFETY_CAVEAT).toBe(
-      "kendex didn't write or review this package — it looked for risky patterns in what it read, and it reads only the first part of a large package.",
+      "An automated check for risky patterns, not a review. It can miss things, and a large skill is read only in part.",
     );
     expect(SAFETY_SECTION_EXPLAINER).toBe(
-      "kendex looks for risky patterns in each package before it installs. It doesn't write or review what a catalog offers, and it reads only the first part of a large package.",
+      "kendex looks for risky patterns in each package before it installs. It is an automated check rather than a review, it can miss things, and a large skill is read only in part.",
     );
   });
 

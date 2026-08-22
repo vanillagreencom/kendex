@@ -90,10 +90,9 @@ changes carry a **Breaking** call-out with their migration note inline.
 ### Changed
 
 - The safety check says what it found and nothing more. A package's page
-  now states, beside its verdict, that kendex neither wrote nor reviewed
-  the package, that the check looks for risky patterns in what it read,
-  and that a large package is read only in part; Settings › Safety check
-  says the same about the check itself. A marketplace's About tab said
+  now states, beside its verdict, that the check is automated and not a
+  review, that it can miss things, and that a large skill is read only in
+  part; Settings › Safety check says the same about the check itself. A marketplace's About tab said
   "Nothing wrong with this catalog" and now says "Nothing wrong with how
   this catalog is put together" — that report reads the catalog's layout
   and has not looked inside a single package. A clean check has never

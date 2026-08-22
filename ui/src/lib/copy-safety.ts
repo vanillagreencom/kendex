@@ -33,15 +33,19 @@ export const publisherSettledNote = (
 export const SAFETY_HELP =
   "Strict catches more, and flags more things that turn out fine. Lenient stops only the riskiest.";
 
-// The check matches patterns over as much of a package as it reads, and
-// kendex has no hand in what a catalog offers. So every place a verdict is
-// shown says what was determined and nothing more: a verdict with nothing
-// in it means nothing was matched, never that the package is safe to run.
+// The check matches patterns over as much of a package as it reads. So every
+// place a verdict is shown says what was determined and nothing more: a
+// verdict with nothing in it means nothing was matched, never that the
+// package is safe to run.
 export const SAFETY_SECTION_EXPLAINER =
-  "kendex looks for risky patterns in each package before it installs. It doesn't write or review what a catalog offers, and it reads only the first part of a large package.";
+  "kendex looks for risky patterns in each package before it installs. It is an automated check rather than a review, it can miss things, and a large skill is read only in part.";
 // Sits under the verdict on the page where somebody decides to install.
+// It describes what the check did, never who wrote the package: this repo
+// publishes a catalog of its own, so a claim about provenance is false for
+// the items in it. Only a skill tree is read to a budget — every other kind
+// reads whole — so the partial read is named as a skill's.
 export const PREINSTALL_SAFETY_CAVEAT =
-  "kendex didn't write or review this package — it looked for risky patterns in what it read, and it reads only the first part of a large package.";
+  "An automated check for risky patterns, not a review. It can miss things, and a large skill is read only in part.";
 // The About tab's findings are about the catalog's own layout and
 // configuration. Nothing here has read a single package.
 export const CATALOG_LAYOUT_CLEAN =
