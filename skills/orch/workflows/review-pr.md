@@ -279,7 +279,7 @@ Never fix as the main agent.
 .agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]
 ```
 
-**Run Workflow**: `⤵ workflows/dev-fix.md § 1-3 → § 4 re-review` with context `worktree`, `lifecycle: "managed"`, `dev_agent`, `issue_id`, `items` (every blocker plus every `category == "fix"` suggestion that survived declining, each formatted `#[N] | [Agent] | [Location]` with Description and Recommendation), `source: pr-review`, and `convergence` (the round's `choice` and `reason`) whenever `cycles` is 2 or more.
+**Run Workflow**: `⤵ workflows/dev-fix.md § 1-3 → § 4 re-review` with context `worktree`, `lifecycle: "managed"`, `dev_agent`, `issue_id`, `items` (every blocker plus every `category == "fix"` suggestion that survived declining, each formatted `#[N] | [Agent] | [Location]` with Description and Recommendation), `source: pr-review`, and `convergence` (the round's `choice` and `reason`) whenever the gate above produced a decision.
 
 ### Bounded Re-Review
 
