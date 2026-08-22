@@ -1,4 +1,4 @@
-import { type ComponentProps, useEffect } from "react";
+import { type ComponentProps, type MouseEvent, useEffect } from "react";
 import type { AvailablePackage, Catalog, Verdict } from "@/bindings";
 import { StatusDot } from "@/components/status-dot";
 import { TagBadges } from "@/components/tag-badge";
@@ -38,6 +38,13 @@ const VERDICT_TONES: Record<Verdict, "good" | "warning" | "critical"> = {
   warn: "warning",
   block: "critical",
 };
+
+/** What a row click means something other than "open this package". A row is
+ *  a shortcut to the page, so it carries only what the row itself says; every
+ *  control in it has already answered the click with its own meaning. A
+ *  tooltip popup counts as one of them wherever the browser draws it, because
+ *  React sends its clicks back through the row that owns it. */
+const ROW_CONTROLS = 'a, button, input, [data-slot="tooltip-content"]';
 
 /** The one table of offered packages — the Packages tab across every
  * subscription and a marketplace detail's own list are both this. */
@@ -98,8 +105,10 @@ function PackageRow({
     want(catalog, row.kind, row.name);
   }, [want, catalog, row.kind, row.name]);
 
-  const open = () =>
+  const open = (event: MouseEvent<HTMLTableRowElement>) => {
+    if ((event.target as HTMLElement).closest(ROW_CONTROLS)) return;
     goToAvailablePackage({ catalog, kind: row.kind, name: row.name });
+  };
 
   return (
     <TableRow className="cursor-pointer" onClick={open}>
@@ -162,8 +171,7 @@ function PackageRow({
             size="sm"
             variant="outline"
             disabled={busy}
-            onClick={(e) => {
-              e.stopPropagation();
+            onClick={() => {
               void install({
                 scope: catalog.scope,
                 source: catalog.source,
@@ -183,9 +191,7 @@ function PackageRow({
  *  A row installs from the list without the package's page ever opening, so
  *  the words have to be reachable from the row itself — the trigger takes
  *  focus, putting them a tab before Install, and they sit in the row's text
- *  for anyone who never hovers. Reading the caveat is not asking for the
- *  package, so the trigger keeps its activation to itself rather than
- *  letting the row navigate out from under it. */
+ *  for anyone who never hovers. */
 function SafetyDot({
   tone,
   words,
@@ -195,10 +201,7 @@ function SafetyDot({
 }) {
   return (
     <Tooltip>
-      <TooltipTrigger
-        className="inline-flex items-center rounded-full outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-        onClick={(e) => e.stopPropagation()}
-      >
+      <TooltipTrigger className="inline-flex items-center rounded-full outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
         <StatusDot tone={tone} />
         <span className="sr-only">{words}</span>
       </TooltipTrigger>

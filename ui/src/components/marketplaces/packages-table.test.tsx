@@ -189,6 +189,19 @@ describe("reading the safety dot", () => {
     ).toContain(PREINSTALL_SAFETY_CAVEAT);
   });
 
+  it("does not open the package page from the popup's own words", async () => {
+    // The popup is drawn outside the row, but React still routes its clicks
+    // through the row, so reading the caveat there must stay a read.
+    const { dot, goToAvailablePackage } = mount(scored("warn", 60));
+    act(() => dot.focus());
+    const popup = document.querySelector<HTMLElement>(
+      '[data-slot="tooltip-content"]',
+    );
+    if (!popup) throw new Error("no tooltip popup rendered");
+    await userEvent.click(popup);
+    expect(goToAvailablePackage).not.toHaveBeenCalled();
+  });
+
   it("still opens the package page from the rest of the row", async () => {
     const { host, goToAvailablePackage } = mount(scored("warn", 60));
     const name = host.querySelector("td");
