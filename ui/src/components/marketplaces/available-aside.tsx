@@ -45,9 +45,9 @@ export function AvailableAside({
             {VERDICT_LABELS[view.safety.verdict]} · {view.safety.safety.score}
             /100
           </p>
-          {/* What the number is a reading of. Without it, a verdict under a
-              heading called Safety reads as kendex vouching for a package
-              it neither wrote nor reviewed. */}
+          {/* What the number is a reading of. Under a heading called
+              Safety, a verdict alone reads as an assurance; the check can
+              establish only that nothing matched in what it read. */}
           <p className="mt-1 text-xs text-foreground/70">
             {PREINSTALL_SAFETY_CAVEAT}
           </p>

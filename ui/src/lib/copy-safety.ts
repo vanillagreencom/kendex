@@ -1,8 +1,9 @@
 // Product prose for the safety surfaces: the decision zone, the held-back
 // panel, accepting findings, and taking over a shared folder. Split from copy.ts for the file line cap — same house style,
 // same rules (see the top of copy.ts).
-import type { DismissReason } from "@/bindings";
+import type { DismissReason, Verdict } from "@/bindings";
 import { REASON_LABELS } from "@/lib/copy-decisions";
+import { VERDICT_LABELS } from "@/lib/labels";
 
 // The zone only a person can clear: held-back installs first, then the
 // findings nobody has ruled on. Its caption counts both halves.
@@ -38,7 +39,7 @@ export const SAFETY_HELP =
 // verdict with nothing in it means nothing was matched, never that the
 // package is safe to run.
 export const SAFETY_SECTION_EXPLAINER =
-  "kendex looks for risky patterns in each package before it installs. It is an automated check rather than a review, it can miss things, and a large skill is read only in part.";
+  "kendex looks for risky patterns in each package before it installs. It is an automated check rather than a review. It can miss things, and a large skill is read only in part.";
 // Sits under the verdict on the page where somebody decides to install.
 // It describes what the check did, never who wrote the package: this repo
 // publishes a catalog of its own, so a claim about provenance is false for
@@ -46,6 +47,12 @@ export const SAFETY_SECTION_EXPLAINER =
 // reads whole — so the partial read is named as a skill's.
 export const PREINSTALL_SAFETY_CAVEAT =
   "An automated check for risky patterns, not a review. It can miss things, and a large skill is read only in part.";
+// A list gives a package one dot and no line of its own, so the dot's words
+// carry the caveat along with the number — worded as the package's own page
+// words it. A row here installs without ever opening that page, and a bare
+// score would be the assurance the check cannot give.
+export const safetyDotTitle = (verdict: Verdict, score: number): string =>
+  `${VERDICT_LABELS[verdict]} · ${score}/100. ${PREINSTALL_SAFETY_CAVEAT}`;
 // The About tab's findings are about the catalog's own layout and
 // configuration. Nothing here has read a single package.
 export const CATALOG_LAYOUT_CLEAN =

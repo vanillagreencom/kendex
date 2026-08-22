@@ -102,12 +102,14 @@ changes carry a **Breaking** call-out with their migration note inline.
 - The safety check says what it found and nothing more. A package's page
   now states, beside its verdict, that the check is automated and not a
   review, that it can miss things, and that a large skill is read only in
-  part; Settings › Safety check says the same about the check itself. A
-  marketplace's About tab said "Nothing wrong with this catalog" and now
-  says "Nothing wrong with how this catalog is put together" — that report
-  reads the catalog's layout and has not looked inside a single package. A
-  clean check has never been an approval, and the wording no longer
-  suggests otherwise.
+  part; the safety dot in a marketplace's Packages list carries the same
+  words with its score, so a row you install straight from the list is not
+  left with a bare number; and Settings › Safety check says it about the
+  check itself. A marketplace's About tab said "Nothing wrong with this
+  catalog" and now says "Nothing wrong with how this catalog is put
+  together" — that report reads the catalog's layout and has not looked
+  inside a single package. A clean check has never been an approval, and
+  the wording no longer suggests otherwise.
 - The Updates page is a table with one row per package. A package out of
   date in several projects shows how many places, expands into a row per
   place — User level and each project by name — and each place has its

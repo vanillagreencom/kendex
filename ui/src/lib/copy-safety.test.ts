@@ -5,6 +5,7 @@ import {
   publisherSettledLabel,
   publisherSettledNote,
   SAFETY_SECTION_EXPLAINER,
+  safetyDotTitle,
   settledSummaryLead,
 } from "./copy-safety";
 import { VERDICT_LABELS } from "./labels";
@@ -46,18 +47,18 @@ describe("the publisher's own decisions", () => {
 
 describe("what a verdict is allowed to claim", () => {
   // Everything a person reads beside a scan result. A pass means "nothing
-  // was matched in what we read", so none of these may promise more: kendex
-  // does not write, review or vouch for a catalog's packages. The
-  // disclaimers below say "write or review" rather than "verify" precisely
-  // so this list needs no exception for a negated form.
+  // was matched in what we read", so none of these may promise more. The
+  // banned words are matched as plain substrings, which the copy affords by
+  // never reaching for them — not even in a negated form.
   const besideAVerdict = [
     ...Object.values(VERDICT_LABELS),
     PREINSTALL_SAFETY_CAVEAT,
     SAFETY_SECTION_EXPLAINER,
     CATALOG_LAYOUT_CLEAN,
+    safetyDotTitle("clean", 100),
   ];
 
-  it("never vouches for a package kendex neither wrote nor reviewed", () => {
+  it("never claims more than the check established", () => {
     const copy = besideAVerdict.join(" ").toLowerCase();
     for (const banned of [
       "safe",
@@ -74,11 +75,16 @@ describe("what a verdict is allowed to claim", () => {
   });
 
   it("discloses that the read is partial wherever it shows a verdict", () => {
+    // The list's dot is the whole verdict on a row that installs from
+    // there, so its words carry the caveat the number cannot.
+    expect(safetyDotTitle("warn", 60)).toBe(
+      "Installs, with a warning · 60/100. An automated check for risky patterns, not a review. It can miss things, and a large skill is read only in part.",
+    );
     expect(PREINSTALL_SAFETY_CAVEAT).toBe(
       "An automated check for risky patterns, not a review. It can miss things, and a large skill is read only in part.",
     );
     expect(SAFETY_SECTION_EXPLAINER).toBe(
-      "kendex looks for risky patterns in each package before it installs. It is an automated check rather than a review, it can miss things, and a large skill is read only in part.",
+      "kendex looks for risky patterns in each package before it installs. It is an automated check rather than a review. It can miss things, and a large skill is read only in part.",
     );
   });
 

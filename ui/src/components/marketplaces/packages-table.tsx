@@ -11,8 +11,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { safetyDotTitle } from "@/lib/copy-safety";
 import { kindIcon } from "@/lib/kind-icon";
-import { kindLabel, packageDisplayName, VERDICT_LABELS } from "@/lib/labels";
+import { kindLabel, packageDisplayName } from "@/lib/labels";
 import {
   catalogKey,
   catalogLabel,
@@ -128,7 +129,7 @@ function PackageRow({
           <StatusDot
             className="inline-block"
             tone={VERDICT_TONES[safety.verdict]}
-            title={`${VERDICT_LABELS[safety.verdict]} — safety ${safety.safety.score}/100`}
+            title={safetyDotTitle(safety.verdict, safety.safety.score)}
           />
         ) : (
           <StatusDot className="inline-block" tone="muted" title="Checking…" />
