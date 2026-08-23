@@ -115,7 +115,7 @@ export function InstalledRow({
                 of the mark is saying which place is the reader's, and a
                 fact only a hover reveals is a fact most readers never get.
                 It opens the place it names. */}
-            {mark ? (
+            {mark?.goTo ? (
               <button
                 type="button"
                 onClick={(event) => {
@@ -126,6 +126,14 @@ export function InstalledRow({
               >
                 {mark.label}
               </button>
+            ) : mark ? (
+              // Several places, so the mark names no one destination. Sending
+              // it to the row's primary place would open somewhere the label
+              // never mentioned, and possibly one holding nothing of the
+              // reader's — the same wrong-place fault this change is about.
+              <span className="mt-0.5 block text-xs text-customized">
+                {mark.label}
+              </span>
             ) : null}
             {group.description ? (
               <span
