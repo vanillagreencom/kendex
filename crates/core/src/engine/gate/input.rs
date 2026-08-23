@@ -15,8 +15,8 @@ pub(in crate::engine) fn input_for(item: &Desired) -> AuditInput {
                 text: String::from_utf8_lossy(bytes).into_owned(),
             },
         ),
-        // Read through the same budgeted constructor the observed audit
-        // uses, so the two paths score and hash one construction.
+        // Read through the same constructor the observed audit uses, so the
+        // two paths score and hash one construction.
         Artifact::Tree {
             canonical, files, ..
         } => (

@@ -276,26 +276,6 @@ pub fn check_item(
         quality::author::content_hash(sealed, path, &config.rendering_inputs(sealed, kind, name));
     let dismissed = dismissals::active(kind, review, hash.as_deref());
     let mut findings = structural(kind, name, &file, &content);
-    // An item bigger than any install reads has a tail nobody has judged.
-    // Saying so is the whole answer: scoring it would report findings no
-    // gate or audit can see, and mint tokens for them.
-    if let Some((scanned, whole)) = quality::author::past_budget(sealed, kind, path) {
-        findings.push(CheckFinding {
-            file: file.clone(),
-            kind: kind.name(),
-            name: name.to_owned(),
-            pass: CATALOG_PASS.to_owned(),
-            severity: "note",
-            rule: None,
-            message: format!(
-                "{scanned} of {whole} bytes were read: an install stops at the same point, so nothing past it is scored here or there"
-            ),
-            fix: "split what matters into a smaller tree, or accept that the tail is not checked"
-                .to_owned(),
-            token: None,
-            dismissed: false,
-        });
-    }
     // A record an install would refuse is one this check refuses too, said
     // where the maintainer is reading rather than discovered by their
     // consumers being held back over it.

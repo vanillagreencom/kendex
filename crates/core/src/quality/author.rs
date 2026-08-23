@@ -172,29 +172,12 @@ pub fn content(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Result<Con
             why: "a skill is a directory holding SKILL.md",
         });
     }
-    // Through the same budgeted constructor every install-side reading
-    // uses. A check that read further would report findings — and mint
-    // tokens for them — in content no gate or audit can ever see, leaving
-    // the record permanently unearned and the warning about it
-    // unfollowable.
+    // Through the same constructor every install-side reading uses, over
+    // the same whole tree, so a token this check mints names content the
+    // gate and the audit will read back.
     Ok(Content::SkillTree {
         files: super::observe::tree_files_from_bytes(&sealed.collect_skill_tree(path)?),
     })
-}
-
-/// Whether this item carries more than any install will read of it. The
-/// budget bounds what is scored, never what a decision covers, so an item
-/// past it is one whose tail nobody has judged — which is a thing to say,
-/// not a thing to score.
-pub fn past_budget(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Option<(usize, usize)> {
-    if kind != ItemKind::Skill || !sealed.is_dir(path) {
-        return None;
-    }
-    let files = sealed.collect_skill_tree(path).ok()?;
-    let read = super::observe::tree_files_from_bytes(&files);
-    let whole: usize = files.iter().map(|(_, bytes)| bytes.len()).sum();
-    let scanned: usize = read.iter().map(|file| file.bytes).sum();
-    (read.len() < files.len() || scanned < whole).then_some((scanned, whole))
 }
 
 mod budget;

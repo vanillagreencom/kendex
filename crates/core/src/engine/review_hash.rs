@@ -1,19 +1,18 @@
 //! The bytes a decision is about.
 //!
 //! `content_hash` names what the rules read, and the rules read a *reduced*
-//! representation: a skill tree stops after 512 KiB or 200 files, symlinks
-//! are stepped over, a binary asset contributes its path and its byte count
-//! and nothing else, and text is decoded lossily so two different invalid
-//! bytes collapse into one replacement character. That is the right input
-//! for scoring and the wrong one for a decision. A plugin whose only file is
-//! `payload.wasm` reduces to nothing at all: swap the payload for different
-//! bytes of the same length and the representation, the findings and the
-//! hash are all unchanged, so a recorded decision goes on speaking for
-//! content nobody reviewed.
+//! representation: symlinks are stepped over, a binary asset contributes its
+//! path and its byte count and nothing else, and text is decoded lossily so
+//! two different invalid bytes collapse into one replacement character. That
+//! is the right input for scoring and the wrong one for a decision. A plugin
+//! whose only file is `payload.wasm` reduces to nothing at all: swap the
+//! payload for different bytes of the same length and the representation,
+//! the findings and the hash are all unchanged, so a recorded decision goes
+//! on speaking for content nobody reviewed.
 //!
 //! This is the other hash. Every owned byte, or the exact config entry, with
-//! no budget and no decoding. A decision binds to it, and the flag that
-//! grants one carries it. Where the bytes cannot be reached at all the
+//! no decoding at all. A decision binds to it, and the flag that grants one
+//! carries it. Where the bytes cannot be reached at all the
 //! answer is `None`: a decision with nothing to compare against must never
 //! read as live, which is the same rule that reports an artifact kendex
 //! cannot compare as uncompared rather than as passing.

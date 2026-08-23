@@ -872,9 +872,9 @@ lives in one capability table read by core and UI.
   tokens `check --catalog` prints — for every kind whose review can travel,
   which is every kind but a hook. The check refuses what an install
   refuses, so a record a consumer would drop fails the maintainer's own run
-  rather than their consumers' installs, and it reads an item under the
-  same budget an install does, so it never mints a token for content no
-  install can see. A dismissed finding stops counting and
+  rather than their consumers' installs, and it reads an item's whole tree
+  the way an install does, so a token it mints names content the gate and
+  the audit read back. A dismissed finding stops counting and
   stays reported, marked — in the catalog's own passes and on the machines
   that install from it. What that record is worth on somebody else's machine
   is `quality/author.rs`, the neutral home for the travelling shape
@@ -1108,10 +1108,10 @@ lives in one capability table read by core and UI.
   against is not being measured.
 - **Rules read typed per-kind inputs, and say when they cannot read.**
   There is no "content" field meaning a different thing per kind: a skill
-  carries its tree and byte budgets, a hook its registration and script,
-  an MCP server its command, args, env and headers, a plugin its manifest
-  and lifecycle scripts. A rule whose bytes are not in this path's input
-  reports itself not applicable, because silence would read as a pass.
+  carries its whole tree, a hook its registration and script, an MCP server
+  its command, args, env and headers, a plugin its manifest and lifecycle
+  scripts. A rule whose bytes are not in this path's input reports itself
+  not applicable, because silence would read as a pass.
   Bytes that will not decode as text are read lossily and what had to be
   replaced is reported, so one stray byte cannot hide a file from every
   rule. A matched token never appears in any message, log or record, only
@@ -1136,23 +1136,23 @@ lives in one capability table read by core and UI.
   so a bare name in a shell history, a Makefile or a CI job grants nothing.
   A one-time review must never become a standing bypass, and the audit
   reports an accepted item as accepted rather than as held back.
-- **A decision binds to the bytes, not to the reading of them.** Two
-  hashes, and they answer different questions. The *content hash* names
-  what the rules read — a reduced representation, with the scan's byte and
-  file budgets, symlinks stepped over, binary assets counted rather than
-  kept, and text decoded lossily — and it is the right input for scoring
-  and the wrong one for a decision: a plugin whose only file is a payload
-  no rule reads reduces to nothing at all, so swapping that payload for
-  different bytes of the same length would leave a decision speaking for
-  content nobody reviewed. The *review hash* names every owned byte, or
-  the exact config entry, with no budget and no decoding, and that is what
-  a decision binds to. Where the bytes cannot be reached from here at all
-  there is no review hash, and a decision with nothing to compare against
-  never reads as live — the same rule that reports an artifact kendex
-  cannot compare as uncompared rather than as passing. Budgets stay where
-  they belong: they bound what is read for scoring, never what a decision
-  covers, so content past a budget going unreviewable is said out loud
-  instead of waved through.
+- **A decision binds to the bytes, not to the reading of them.** Two hashes,
+  and they answer different questions. The *content hash* names what the rules
+  read — a reduced representation, with symlinks stepped over, binary assets
+  counted rather than kept, and text decoded lossily — and it is the right
+  input for scoring and the wrong one for a decision: a plugin whose only file
+  is a payload no rule reads reduces to nothing at all, so swapping that
+  payload for different bytes of the same length would leave a decision
+  speaking for content nobody reviewed. The *review hash* names every owned
+  byte, or the exact config entry, with no decoding at all, and that is what a
+  decision binds to. Where the bytes cannot be reached from here at all there
+  is no review hash, and a decision with nothing to compare against never
+  reads as live — the same rule that reports an artifact kendex cannot compare
+  as uncompared rather than as passing. Both cover every file to its last
+  byte; a prefix would score a package on the part a reader reached first and
+  leave the rest as content nobody objected to. Past what any reader holds in
+  memory a tree has no reading rather than a partial one, so every rule says
+  it could not read instead of finding nothing.
 - - - - - - **A dismissal settles one finding; whose it is decides what it
   buys.** Beside the item-level acceptance sits the smaller decision: this one
   finding, on this one installation, is not the problem the rule says it is.

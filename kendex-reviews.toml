@@ -6,6 +6,22 @@ ruleset = 3
 reason = "intended"
 dismissed-at = "2026-08-21T03:09:54Z"
 
+[reviews."skill:iced-rs"]
+review-hash = "6eb9ae673706e84345af1f8ef947599729dd492961b2449fc60accb96332f92f"
+ruleset = 3
+
+[reviews."skill:iced-rs".dismissed.889efd19e3930ae6]
+reason = "intended"
+dismissed-at = "2026-08-23T04:34:45Z"
+
+[reviews."skill:orch"]
+review-hash = "ee3be177fece8c0a5853888f78016840ed24e379867ee4bd9b507ec18f8dc2a7"
+ruleset = 3
+
+[reviews."skill:orch".dismissed.c8e66ac505c95a7a]
+reason = "wrong-call"
+dismissed-at = "2026-08-23T04:34:45Z"
+
 [reviews."skill:review-gate"]
 review-hash = "ac82a7162f42b42abb6bd05b6082cd90214f926121c94a4ee5c801d55d5c0475"
 ruleset = 3

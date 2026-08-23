@@ -89,6 +89,16 @@ changes carry a **Breaking** call-out with their migration note inline.
   publishes is told so plainly, and settles nothing.
 ### Changed
 
+- The safety check reads a whole package. It used to stop after the first
+  512 KB or 200 files of a skill, so a large package was judged on its
+  opening and everything after that went unread — by the preview, by the
+  install gate, and by the check on installed content alike. All three now
+  read every file to its last byte, and the note that used to say how much
+  of a package went unread is gone with the gap it described. Expect
+  findings on large packages that scored clean before, your own catalog
+  included: they were always there, nothing had looked. Scanning the largest
+  package in kendex's own catalog — 5.5 MB across 337 files — takes about
+  50 ms.
 - **Breaking:** the install record's version moves to 5. Older files still
   load and the first apply upgrades them in place, through the normal
   journaled, previewed plan. What moves the version is the new evidence in
@@ -238,14 +248,11 @@ changes carry a **Breaking** call-out with their migration note inline.
   repository chose, and the escapes in it are now shown rather than acted
   on — the same guard names already had.
 - A marketplace package's preview scores what installing it would write,
-  not what the catalog holds: the same read budget as an install, and the
-  body cap of whichever tool this package installs to reads it hardest. A
-  long package could read held back on the page while its install went
-  through with a warning, or warn while the install was held back, because
-  a line past a tool's cap moves into `references/` where it weighs less and
-  not every tool has a cap. `kendex check --catalog` reads under that budget too, so neither
-  reports findings, or mints tokens for them, in content past the point any
-  install stops reading; an item bigger than that says so instead, and the
+  not what the catalog holds: the body cap of whichever tool this package
+  installs to reads it hardest. A long package could read held back on the
+  page while its install went through with a warning, or warn while the
+  install was held back, because a line past a tool's cap moves into
+  `references/` where it weighs less and not every tool has a cap. The
   standing "reviewed findings do not appear in what this installs" warnings
   it caused are gone.
 - Installing a security-adjacent package from a marketplace no longer held

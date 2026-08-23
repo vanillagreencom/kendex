@@ -244,12 +244,12 @@ pub(super) fn input_for(
         .display()
         .to_string();
     let content = match kind {
-        // Through the same budgeted constructor the install gate reads a
-        // tree with, over the tree this project would install rather than
-        // the one the catalog holds. A preview that read further, or that
-        // read the source unsplit, would score findings the gate never sees
-        // at weights it never gives them — the two disagreeing about one
-        // package, which is the whole thing a preview is for.
+        // Through the same constructor the install gate reads a tree with,
+        // over the tree this project would install rather than the one the
+        // catalog holds. A preview that read the source unsplit would score
+        // findings at weights the gate never gives them — the two
+        // disagreeing about one package, which is the whole thing a preview
+        // is for.
         ItemKind::Skill => Content::SkillTree {
             files: crate::quality::observe::tree_files_from_bytes(&installs_as(
                 browsed, kind, name, path,

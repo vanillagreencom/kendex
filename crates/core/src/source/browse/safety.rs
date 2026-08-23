@@ -35,7 +35,7 @@ use input::input_for;
 /// The shape of one cached record — the scanner/parser half of the cache
 /// key, beside the rule-set and discovery-table versions. Bump it when what
 /// the record holds, or how the input is read into it, changes.
-const CACHE_FORMAT: u32 = 1;
+const CACHE_FORMAT: u32 = 2;
 
 /// What one scoring pass produced, exactly as it is cached: everything but
 /// the verdict, which is a judgment the thresholds pass at read time.

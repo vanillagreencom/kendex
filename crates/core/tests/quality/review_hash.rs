@@ -2,11 +2,10 @@
 //! of them.
 //!
 //! Every case here is content the safety rules cannot see — a binary asset,
-//! bytes past the scan budget, a file past the file budget, invalid bytes
-//! that decode to the same replacement character, a plugin whose payload no
-//! rule reads. Each one leaves the findings, the reduced representation and
-//! the content hash exactly as they were, so a decision bound to any of
-//! those would go on speaking for content nobody reviewed.
+//! invalid bytes that decode to the same replacement character, a plugin
+//! whose payload no rule reads. Each one leaves the findings, the reduced
+//! representation and the content hash exactly as they were, so a decision
+//! bound to any of those would go on speaking for content nobody reviewed.
 
 use std::fs;
 use std::path::PathBuf;
@@ -89,38 +88,6 @@ fn a_same_size_binary_swap_ends_the_acceptance() {
     accept(&f.env, &f.scope, "payload");
 
     fs::write(dir.join("payload.wasm"), b"BBBBBBBB").unwrap();
-    assert_stale(&f.env, &f.scope, "payload");
-}
-
-/// The scan stops reading a tree after 512 KiB. Everything after that is
-/// content a decision would otherwise cover without ever having seen it.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn bytes_past_the_scan_budget_end_the_acceptance() {
-    let f = fixture();
-    let dir = install_skill(&f, "payload");
-    let mut big = vec![b'a'; 600 * 1024];
-    fs::write(dir.join("big.txt"), &big).unwrap();
-    accept(&f.env, &f.scope, "payload");
-
-    big[550 * 1024] = b'z';
-    fs::write(dir.join("big.txt"), &big).unwrap();
-    assert_stale(&f.env, &f.scope, "payload");
-}
-
-/// And it stops after 200 files, so the 201st onwards is the same blind
-/// spot by a different budget.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_file_past_the_scan_budget_ends_the_acceptance() {
-    let f = fixture();
-    let dir = install_skill(&f, "payload");
-    for index in 0..205 {
-        fs::write(dir.join(format!("f{index:03}.txt")), "same").unwrap();
-    }
-    accept(&f.env, &f.scope, "payload");
-
-    fs::write(dir.join("f204.txt"), "different").unwrap();
     assert_stale(&f.env, &f.scope, "payload");
 }
 

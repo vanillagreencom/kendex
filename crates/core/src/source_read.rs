@@ -11,8 +11,12 @@ use std::path::{Path, PathBuf};
 use crate::error::{CoreError, Result};
 
 const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
-const MAX_TREE_FILES: usize = 2048;
-const MAX_TREE_BYTES: u64 = 64 * 1024 * 1024;
+/// The largest tree kendex will hold in memory at once. Every reader of a
+/// skill's bytes stops here — the sealed catalog walk below and the audit's
+/// walk over installed content alike — so no tree is scored, hashed or
+/// rendered from a reading one of them refused.
+pub(crate) const MAX_TREE_FILES: usize = 2048;
+pub(crate) const MAX_TREE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_TREE_DEPTH: usize = 16;
 const MAX_DIR_ENTRIES: usize = 4096;
 
