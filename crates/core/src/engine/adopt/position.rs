@@ -48,6 +48,15 @@ pub(in crate::engine) fn position(
 /// the declaration is rewritten around a source that has nothing to give,
 /// and the apply that follows installs nothing: the reader is told their
 /// files were kept and they are gone.
+/// Whether both spellings of the toggled pair hold content. One item is
+/// on or off, not both, so this is a choice only the reader can make.
+pub(in crate::engine) fn both_spellings(kind: ItemKind, at: &Path) -> bool {
+    match kind {
+        ItemKind::Skill => there(&at.join("SKILL.md")) && there(&at.join("SKILL.md.disabled")),
+        _ => there(at) && there(&crate::engine::file_plan::toggle_sibling(at)),
+    }
+}
+
 pub fn can_keep_for(
     env: &Env,
     scope: &Scope,
@@ -56,6 +65,11 @@ pub fn can_keep_for(
     harness: HarnessId,
 ) -> bool {
     super::supports(kind)
+        && position(env, scope, kind, name, harness).is_some_and(|path| {
+            // Both spellings holding content is a choice only the reader
+            // can make, so it is never offered as one kendex will settle.
+            !both_spellings(kind, &path)
+        })
         && position(env, scope, kind, name, harness).is_some_and(|path| match kind {
             // A skill folder keeps its name in either state — the marker
             // inside it is what carries the toggle.

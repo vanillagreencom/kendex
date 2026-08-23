@@ -277,3 +277,45 @@ fn the_tool_holding_a_shared_folder_stays_declared() {
         "the tool holding the folder lost the skill:\n{manifest}"
     );
 }
+
+/// One tool has it switched on and another has it off. One declaration
+/// cannot say both, so writing one would switch the other tool's copy
+/// behind the reader — said rather than settled.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_mixed_switch_across_tools_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let project = tmp.path().join("app");
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    fs::create_dir_all(&project).unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        "schema = 5\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n",
+    )
+    .unwrap();
+    let body = "---\nname: handmade\ndescription: mine\n---\nBy hand.\n";
+    let on = project.join(".claude/skills/handmade/SKILL.md");
+    fs::create_dir_all(on.parent().unwrap()).unwrap();
+    fs::write(&on, body).unwrap();
+    // The same bytes, parked: one tool has it switched on and the other off.
+    let off = project.join(".agents/skills/handmade/SKILL.md.disabled");
+    fs::create_dir_all(off.parent().unwrap()).unwrap();
+    fs::write(&off, body).unwrap();
+
+    let refused = adopt(
+        &env,
+        &scope,
+        ItemKind::Skill,
+        "handmade",
+        &[HarnessId::Claude, HarnessId::Codex],
+    );
+
+    assert!(
+        matches!(refused, Err(CoreError::TogglesDiffer { .. })),
+        "one tool's copy was switched behind the reader: {refused:?}"
+    );
+    assert!(on.is_file() && off.is_file(), "and both are left alone");
+}

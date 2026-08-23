@@ -267,6 +267,7 @@ fn hand_made_files_beside_an_edited_install_keep_their_offer() {
 /// were read in. Printed while looking at the global scope without it,
 mod refusals;
 mod shared;
+mod toggled;
 
 /// The other exit on the same shape. An edit beside the hand-made files is
 /// a decision of its own — it never takes the take-over away, and the

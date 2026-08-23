@@ -97,6 +97,9 @@ pub fn adopt(
         return Err(already_managed(name, held));
     }
 
+    refuse_mixed_switch(kind, name, &positions)?;
+    let switched_off = positions.iter().all(|(_, at)| parked(kind, at));
+
     let Seen {
         shared,
         content,
@@ -136,7 +139,6 @@ pub fn adopt(
     // What was kept was switched off, and declaring it on would turn it on
     // behind the reader — the apply that follows this one writes what the
     // declaration says.
-    let switched_off = positions.iter().any(|(_, at)| parked(kind, at));
     declare(
         &mut manifest,
         kind,
@@ -309,6 +311,30 @@ fn capture_ops(
     Ok(ops)
 }
 
+/// One item is on or off, not both. Picking for the reader either trashes
+/// the copy it did not pick or writes a declaration that switches the
+/// other one, so a mix is said rather than settled.
+fn refuse_mixed_switch(
+    kind: ItemKind,
+    name: &str,
+    positions: &[(HarnessId, PathBuf)],
+) -> Result<()> {
+    let differ = |detail: String| CoreError::TogglesDiffer {
+        name: name.to_owned(),
+        detail,
+    };
+    if let Some((_, at)) = positions.iter().find(|(_, at)| both_spellings(kind, at)) {
+        return Err(differ(crate::names::shown(&at.display().to_string())));
+    }
+    let off = positions.iter().filter(|(_, at)| parked(kind, at)).count();
+    match off == 0 || off == positions.len() {
+        true => Ok(()),
+        false => Err(differ(
+            "one tool has it switched on and another has it off".to_owned(),
+        )),
+    }
+}
+
 fn already_managed(name: &str, path: &Path) -> CoreError {
     CoreError::AlreadyManaged {
         name: name.to_owned(),
@@ -336,7 +362,7 @@ mod position;
 
 use declare::declare;
 pub use position::can_keep_for;
-pub(super) use position::{parked, position};
+pub(super) use position::{both_spellings, parked, position};
 
 #[cfg(test)]
 mod tests;
