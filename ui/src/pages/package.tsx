@@ -111,7 +111,7 @@ export function PackagePage() {
   // several places and the page names one of them, so the actions that
   // open files reach that place's copy. Falling back to another place's
   // would have the page describe one place while its buttons work on
-  // another, which is the fault the marks exist to remove.
+  // another.
   const primary = group.installations.find((install) =>
     sameScope(install.scope, ref.scope),
   );

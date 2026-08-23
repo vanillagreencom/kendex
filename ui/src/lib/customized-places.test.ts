@@ -95,8 +95,8 @@ describe("placeStandings", () => {
     expect(only.why).toBe("forked");
   });
 
-  // The reported bug in one line: a place the app never read must not be
-  // reported as the author wrote it.
+  // A place the app never read must not be reported as the author wrote
+  // it: not knowing and knowing it is clean are different answers.
   it("leaves a place whose manifest was never read unknown", () => {
     const s = source({ manifests: {}, rows: indexRows([row(VG)]) });
     const [only] = placeStandings(s, "skill", "gh", [VG]);

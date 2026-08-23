@@ -205,14 +205,15 @@ changes carry a **Breaking** call-out with their migration note inline.
   skill installed at your user level and in two projects, changed in one of
   them, reads "Customized in vg · 1 of 3 places" on its Library row and
   "Customized in vg" in its own header, instead of reading as changed
-  everywhere — and clicking the mark opens the place it names. A place
-  counts as customized whether you changed it on the Customize tab, edited
-  its installed files by hand, or forked it, so a package you hand-edited
-  is marked even when it is up to date. The Forked mark names its place
-  too. Where the app has not read a place — its copy comes from a local
-  folder the engine has no version to compare against, or the update check
-  has not landed — that place is left out of the count rather than passing
-  as untouched.
+  everywhere. On the Library the mark is a way in: clicking it opens the
+  place it names. The header's names the place you are already looking at,
+  so it says so and offers nothing to press. A place counts as customized
+  whether you changed it on the Customize tab, edited its installed files
+  by hand, or forked it, so a package you hand-edited is marked even when
+  it is up to date, and each fork names the place it was made in. Where the
+  app has not read a place — its copy comes from a local folder the engine
+  has no version to compare against, or the update check has not landed —
+  that place is left out of the count rather than passing as untouched.
 
 - A debug build no longer touches your real setup. A debug build is what
   `cargo build` and `tauri dev` produce — what a contributor or an agent

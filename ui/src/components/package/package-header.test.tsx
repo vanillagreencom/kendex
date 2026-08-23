@@ -3,9 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { PlaceMark } from "@/lib/place-marks";
 import { PackageHeader } from "./package-header";
 
-// The mark has to reach the screen as words. Pinning the helper alone lets
-// the header quietly go back to a badge that never names its place, which
-// is the bug this is about.
+// The mark has to reach the screen as words: a helper that returns the
+// right label proves nothing if the header renders something else.
 describe("PackageHeader", () => {
   const render = (mark: PlaceMark | null) =>
     renderToStaticMarkup(
