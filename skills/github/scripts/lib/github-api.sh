@@ -196,6 +196,17 @@ gh_graphql() {
     done
 }
 
+# Every page of a list endpoint as one array: GitHub returns 30 rows a page
+# by default, so a PR with 300 reviews answered with 30 until this existed.
+# Usage: gh_rest_all "repos/{owner}/{repo}/pulls/123/reviews"
+gh_rest_all() {
+    local endpoint="$1"
+    shift
+    local sep='?'
+    case "$endpoint" in *\?*) sep='&' ;; esac
+    gh_rest "${endpoint}${sep}per_page=100" --paginate --slurp "$@" | jq -c 'add // []'
+}
+
 # Execute REST API call with error handling
 # Usage: gh_rest "repos/{owner}/{repo}/pulls/123"
 gh_rest() {
@@ -705,8 +716,8 @@ bot_review_status() {
 
     local reviews comments body_reactions own_reactions threads first_comment_id
 
-    reviews=$(gh_rest "repos/{owner}/{repo}/pulls/$pr/reviews") || return 1
-    comments=$(gh_rest "repos/{owner}/{repo}/issues/$pr/comments") || return 1
+    reviews=$(gh_rest_all "repos/{owner}/{repo}/pulls/$pr/reviews") || return 1
+    comments=$(gh_rest_all "repos/{owner}/{repo}/issues/$pr/comments") || return 1
     body_reactions=$(gh_rest "repos/{owner}/{repo}/issues/$pr/reactions") || return 1
 
     first_comment_id=$(jq -r --arg u "$reviewer" \
@@ -724,10 +735,11 @@ bot_review_status() {
     owner=$(get_owner "$repo_info")
     repo=$(get_repo "$repo_info")
     local query='
-query($owner: String!, $repo: String!, $pr: Int!) {
+query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $pr) {
-      reviewThreads(first: 100) {
+      reviewThreads(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
         nodes {
           isResolved
           isOutdated
@@ -737,8 +749,22 @@ query($owner: String!, $repo: String!, $pr: Int!) {
     }
   }
 }'
-    threads=$(gh_graphql "$query" -F owner="$owner" -F repo="$repo" -F pr="$pr" \
-        | jq -c '.repository.pullRequest.reviewThreads.nodes // []') || return 1
+    # One page holds 100 threads; the unresolved ones may sit on the next.
+    threads='[]'
+    local cursor="" page has_next
+    while :; do
+        if [ -z "$cursor" ]; then
+            page=$(gh_graphql "$query" -F owner="$owner" -F repo="$repo" -F pr="$pr") || return 1
+        else
+            page=$(gh_graphql "$query" -F owner="$owner" -F repo="$repo" -F pr="$pr" -F cursor="$cursor") || return 1
+        fi
+        threads=$(printf '%s\n%s\n' "$threads" "$page" \
+            | jq -sc '.[0] + (.[1].repository.pullRequest.reviewThreads.nodes // [])') || return 1
+        has_next=$(jq -r '.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false' <<<"$page")
+        [ "$has_next" = "true" ] || break
+        cursor=$(jq -r '.repository.pullRequest.reviewThreads.pageInfo.endCursor // ""' <<<"$page")
+        [ -n "$cursor" ] || break
+    done
 
     bot_review_status_compute "$reviewer" "$reviews" "$comments" "$body_reactions" "$own_reactions" "$threads"
 }
@@ -776,8 +802,8 @@ detect_bot_reviewers_from_inputs() {
 detect_bot_reviewers() {
     local pr="$1"
     local reviews comments reactions
-    reviews=$(gh_rest "repos/{owner}/{repo}/pulls/$pr/reviews") || return 1
-    comments=$(gh_rest "repos/{owner}/{repo}/issues/$pr/comments") || return 1
+    reviews=$(gh_rest_all "repos/{owner}/{repo}/pulls/$pr/reviews") || return 1
+    comments=$(gh_rest_all "repos/{owner}/{repo}/issues/$pr/comments") || return 1
     reactions=$(gh_rest "repos/{owner}/{repo}/issues/$pr/reactions") || return 1
 
     local reviewers
