@@ -33,6 +33,13 @@ use super::desired::{Artifact, Desired};
 /// entry is looked up by, and one carried more than once is one nothing
 /// here can tell apart.
 ///
+/// An answer short of certainty retires nothing, and outside pi it holds
+/// nothing either: the pass registers under the identity it renders and
+/// leaves the person's entries to them, because all a refresh writes is
+/// its own registration. Pi's reserved-name move is the one consumer
+/// that deletes what it identifies, so for pi an entry the document
+/// cannot settle holds the installation instead.
+///
 /// Nothing is retired where the record names what this pass names anyway,
 /// so a settled installation plans nothing. The edit goes to the file
 /// this pass registers in; one written into a file kendex no longer
@@ -62,6 +69,7 @@ pub(super) fn retire_previous(item: &Desired, existing: Option<&LockEntry>) -> P
     let Some(entry) = existing else {
         return Previous::Settled;
     };
+    let migration = item.harness == crate::model::HarnessId::Pi;
     let previous = match &entry.registration {
         // The record names an entry. Whether it is still there is the
         // document's to say, not the record's: trusting the record here
@@ -73,14 +81,24 @@ pub(super) fn retire_previous(item: &Desired, existing: Option<&LockEntry>) -> P
             recorded.matcher.as_deref(),
             &recorded.command,
         ),
-        // A record too old to name what it registered, over an
-        // installation kendex did make: the command is what there is to
-        // look one up by, and the document says the rest.
+        // A record too old to name what it registered has only the
+        // command to look one up by — a search that reads the person's
+        // own registration of the same command as kendex's leftovers.
+        // Only pi's move, which deletes what it finds, needs it; every
+        // other harness settles and earns the record this pass.
+        None if !migration => return Previous::Settled,
         None => found(&named, None, None, named.command),
     };
     let previous = match previous {
         Found::One(entry) => entry,
         Found::None => return Previous::Settled,
+        // An entry the document cannot settle as kendex's is the
+        // person's to keep. All this pass writes is its own
+        // registration, so it registers under the identity it renders
+        // and leaves theirs where they put it — held instead, the hook
+        // sat in conflict on every refresh with nothing to settle it.
+        // Pi holds: its move deletes bytes, and must not guess whose.
+        Found::Several(_) | Found::Moved(_) if !migration => return Previous::Settled,
         Found::Several(why) | Found::Moved(why) => return Previous::Ambiguous(why),
     };
     if previous.event == named.event

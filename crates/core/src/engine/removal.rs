@@ -19,10 +19,18 @@ use crate::model::{ItemKind, Scope};
 /// prove anything, so any content present holds. Explicitly asked-for
 /// removals are not gated here: the trash keeps what they take.
 pub fn edit_holds(env: &Env, scope: &Scope, entry: &LockEntry) -> bool {
-    if !matches!(
-        entry.kind,
-        ItemKind::Skill | ItemKind::Agent | ItemKind::Command | ItemKind::Hook
-    ) {
+    // A hook holds only for pi: its reserved-name move derives a new path
+    // the record never wrote, so a file already sitting there has to be
+    // proven before anything of this entry's is taken. Other harnesses'
+    // hook records can carry no anchor at all, and reading "no anchor" as
+    // "hands off" would quietly exempt every older hook install from
+    // every sweep.
+    let anchored = match entry.kind {
+        ItemKind::Skill | ItemKind::Agent | ItemKind::Command => true,
+        ItemKind::Hook => entry.harness == crate::model::HarnessId::Pi,
+        _ => false,
+    };
+    if !anchored {
         return false;
     }
     let Owned { files, .. } = installed(env, scope, entry);
