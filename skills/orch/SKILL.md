@@ -29,7 +29,7 @@ Get the issue → dev implements → review → dev fixes blockers → re-review
 
 - **Bounded loops.** A fix round addresses blockers only; re-review narrows to the fix diff and the domains it touched; two consecutive rounds with no new blocker end the review.
 - **No edge-case churn.** A finding that cannot affect real usage is declined with a one-line reason — not fixed, not filed. File issues for critical follow-ups only.
-- **Review must converge.** New defects at round 3 stop per-comment patching: cut unrequired surface, fix the recurring class structurally, or split.
+- **Review must converge.** New defects at round 3 stop per-comment patching: cut unrequired surface, fix the recurring class structurally, or split. A round whose only findings are scope, test-coverage, or wording asks ends the review: reply, resolve, push nothing, merge through the gate. Never `--admin`.
 - **Ask the user only about product or experience.** Scope expansion beyond the issue and revisiting a recorded decision always ask, whatever `ORCH_DECISION_MODE` says. Merge asks unless `ORCH_MERGE_AUTONOMY=auto`, which merges without asking only when every merge gate is green.
 - **Acceptance is artifact-based.** A round closes on a validated on-disk artifact plus git/tracker state, never on a return message.
 
