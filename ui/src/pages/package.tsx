@@ -100,7 +100,14 @@ export function PackagePage() {
   }, [ref, result, group, back]);
 
   if (!ref || !group) return null;
-  const primary = group.installations[0];
+  // The installation this page is about. A package can be installed in
+  // several places and the page names one of them, so the actions that
+  // open files have to reach that place's copy — otherwise the page
+  // describes one place while its buttons work on another.
+  const primary =
+    group.installations.find((install) =>
+      sameScope(install.scope, ref.scope),
+    ) ?? group.installations[0];
   if (!primary) return null;
 
   const displayName = packageDisplayName(ref);
