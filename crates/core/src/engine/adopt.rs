@@ -189,9 +189,18 @@ pub fn can_keep_for(
 ) -> bool {
     supports(kind)
         && position(env, scope, kind, name, harness).is_some_and(|path| match kind {
-            ItemKind::Skill => path.join("SKILL.md").is_file(),
-            _ => path.exists() || path.is_symlink(),
+            ItemKind::Skill => there(&path.join("SKILL.md")),
+            _ => there(&path),
         })
+}
+
+/// Under either spelling of the toggled pair: an item switched off parks
+/// its content under the suffixed name, and a hand-made file can sit there
+/// just as easily. Asking about one spelling withholds the offer from a
+/// position adoption would take.
+fn there(path: &Path) -> bool {
+    let here = |at: &Path| at.exists() || at.is_symlink();
+    here(path) || here(&super::file_plan::toggle_sibling(path))
 }
 
 /// Where in the scope's local source the kept content lands. Read wherever

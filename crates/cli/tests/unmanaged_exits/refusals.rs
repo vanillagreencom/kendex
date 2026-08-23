@@ -258,3 +258,37 @@ fn an_edit_is_never_told_to_move_files() {
         "moving files settles neither of these: {planned}"
     );
 }
+
+/// A hand-made file parked under the switched-off spelling. The plan reads
+/// the pair as one position, so the offer has to as well — asking about
+/// one spelling tells the reader to move files adoption would have taken.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_file_under_the_switched_off_name_is_still_offered_the_keep() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let project = project_with(home, "[\"claude\"]", "copy");
+    fs::create_dir_all(home.join("catalog/agents")).unwrap();
+    fs::write(
+        home.join("catalog/agents/scout.md"),
+        "---\nname: scout\ndescription: looks around\n---\nUpstream.\n",
+    )
+    .unwrap();
+    let manifest = project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        format!("{text}\n[agents.scout]\nsource = \"cat\"\n"),
+    )
+    .unwrap();
+    let parked = project.join(".claude/agents/scout.md.disabled");
+    fs::create_dir_all(parked.parent().unwrap()).unwrap();
+    fs::write(&parked, "the tool that came before").unwrap();
+
+    let planned = plan(home, &project);
+    assert!(planned.contains("conflict: agent scout"), "{planned}");
+    assert!(
+        planned.contains("to keep those files: kendex adopt agent scout --harness claude"),
+        "the offer was withheld from a position adoption can take: {planned}"
+    );
+}
