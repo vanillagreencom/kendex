@@ -8,7 +8,7 @@ Delegate fix items to a specialist dev agent. Standalone (user-initiated) or man
 | `dev-fix [ISSUE_ID]` | Fix items for a specific issue |
 | (from a review workflow) | Managed lifecycle with caller context |
 
-**Caller context** (via `⤵`): `worktree`; `lifecycle` — `"managed"` (return at § 3) or `"self"` (default); `dev_agent` — a live dev agent; `issue_id` — the workflow-state key, the normalized issue ID (`issue-N` for GitHub, `PROJ-123` for Linear), never the bare GitHub issue number; `items` — formatted review items; `source` — `pr-review` | `qa-review` | `review` | `local-review` (default `conversation`); `qa_agent`; `convergence` — the caller's convergence decision (`cut`, `structural`, or `split`) and its reason, when it made one; it tells the round the shape of the fix, not which items to skip.
+**Caller context** (via `⤵`): `worktree`; `lifecycle` — `"managed"` (return at § 3) or `"self"` (default); `dev_agent` — a live dev agent; `issue_id` — the workflow-state key, the normalized issue ID (`issue-N` for GitHub, `PROJ-123` for Linear), never the bare GitHub issue number; `items` — formatted review items; `source` — `pr-review` | `qa-review` | `review` | `local-review` (default `conversation`); `qa_agent`.
 
 **Standalone init** (`lifecycle: "self"`). Use the argument as `ISSUE_ID`, else `git-context issue-from-branch .`. Apply [Worktree Scope](../SKILL.md#workflow-execution) and resolve `WT_PATH` (inside a worktree, the current directory; from the main repo, `worktree path [ISSUE_ID]`, asking before creating).
 
@@ -110,7 +110,6 @@ Cancel ends the workflow; a selection goes to § 2.
    Round ID: [DEV_ROUND_ID]
    Artifact Key: [ISSUE_ID]
    QA: [QA_AGENT]
-   Convergence: [CHOICE] — [REASON]
 
    Decisions:
    [For each verified decision: "- [DECISION_ID]: [ONE_LINE_SUMMARY] — [DECISION_FILE_PATH]"]

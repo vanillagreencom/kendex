@@ -272,7 +272,7 @@ Omit empty categories. Decline any item that cannot affect real usage with a one
 
 ### Fix Delegation
 
-At `cycles` >= 2, apply SKILL.md § Review must converge before delegating. Findings that leave `items` are never dropped: declined per [finding-disposition](../references/finding-disposition.md) when a cut removed their surface, recorded in `escalated_items` when a split moved them.
+At `cycles` >= 2 on the same diff (a new head resets the count), apply SKILL.md § Review must converge before delegating. Findings that leave `items` are never dropped: declined per [finding-disposition](../references/finding-disposition.md) when a cut removed their surface, recorded in `escalated_items` when a split moved them.
 Never fix as the main agent.
 
 ```bash
