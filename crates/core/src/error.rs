@@ -95,6 +95,14 @@ pub enum CoreError {
     // already looked after. Keeping it would move an installation into the
     // local source and rewrite the declaration around it, so a
     // catalog-tracked item would quietly become a fork of itself.
+    // One item is on or off, not both. Taking one spelling while the other
+    // stays leaves a file a later switch reads as kendex's own and writes
+    // over, so the reader settles it first.
+    #[error(
+        "{name} has files under both its on and off names ({detail}). Move the one you don't want somewhere else first."
+    )]
+    TogglesDiffer { name: String, detail: String },
+
     #[error("kendex already looks after {name} at {path} — nothing was changed")]
     AlreadyManaged { name: String, path: String },
 

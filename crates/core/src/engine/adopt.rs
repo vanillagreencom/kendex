@@ -97,6 +97,16 @@ pub fn adopt(
         return Err(already_managed(name, held));
     }
 
+    // The offer withholds this shape, and so does the verb: a reader can
+    // name the item directly, and taking one spelling while the other
+    // stays leaves a file a later switch reads as kendex's own.
+    if let Some((_, at)) = positions.iter().find(|(_, at)| both_spellings(kind, at)) {
+        return Err(CoreError::TogglesDiffer {
+            name: name.to_owned(),
+            detail: crate::names::shown(&at.display().to_string()),
+        });
+    }
+
     let Seen {
         shared,
         content,
@@ -325,7 +335,7 @@ mod position;
 
 use declare::declare;
 pub use position::can_keep_for;
-pub(super) use position::position;
+pub(super) use position::{both_spellings, position};
 
 #[cfg(test)]
 mod tests;

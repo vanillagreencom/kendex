@@ -28,6 +28,17 @@ pub(in crate::engine) fn position(
     })
 }
 
+/// Whether both spellings of the toggled pair hold content. Keeping would
+/// take one and leave the other, and a later switch reads what is left as
+/// kendex's own — so the reader is asked to settle it first rather than
+/// offered a move that takes half of it.
+pub(in crate::engine) fn both_spellings(kind: ItemKind, at: &Path) -> bool {
+    match kind {
+        ItemKind::Skill => there(&at.join("SKILL.md")) && there(&at.join("SKILL.md.disabled")),
+        _ => there(at) && there(&crate::engine::file_plan::toggle_sibling(at)),
+    }
+}
+
 /// Whether this tool has something adoption can keep. A tool with an empty
 /// position is never named in an offer: adoption works at that position and
 /// nowhere else, and the folder a link points at is reached through the
@@ -38,17 +49,6 @@ pub(in crate::engine) fn position(
 /// the declaration is rewritten around a source that has nothing to give,
 /// and the apply that follows installs nothing: the reader is told their
 /// files were kept and they are gone.
-/// Whether both spellings of the toggled pair hold content. Keeping would
-/// take one and leave the other, and a later switch reads what is left as
-/// kendex's own — so the reader is asked to settle it first rather than
-/// offered a move that takes half of it.
-fn both_spellings(kind: ItemKind, at: &Path) -> bool {
-    match kind {
-        ItemKind::Skill => there(&at.join("SKILL.md")) && there(&at.join("SKILL.md.disabled")),
-        _ => there(at) && there(&crate::engine::file_plan::toggle_sibling(at)),
-    }
-}
-
 pub fn can_keep_for(
     env: &Env,
     scope: &Scope,

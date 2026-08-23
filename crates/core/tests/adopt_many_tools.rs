@@ -277,3 +277,38 @@ fn the_tool_holding_a_shared_folder_stays_declared() {
         "the tool holding the folder lost the skill:\n{manifest}"
     );
 }
+
+/// The verb refuses what the offer withholds. A reader can name the item
+/// directly, and taking one spelling while the other stays leaves a file a
+/// later switch reads as kendex's own and writes over.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn both_spellings_are_refused_by_the_verb_too() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let project = tmp.path().join("app");
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    fs::create_dir_all(&project).unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        "schema = 5\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n",
+    )
+    .unwrap();
+    let dir = project.join(".claude/agents");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("scout.md"), "on by hand").unwrap();
+    fs::write(dir.join("scout.md.disabled"), "off by hand").unwrap();
+
+    let refused = adopt(&env, &scope, ItemKind::Agent, "scout", &[HarnessId::Claude]);
+
+    assert!(
+        matches!(refused, Err(CoreError::TogglesDiffer { .. })),
+        "half the pair was taken: {refused:?}"
+    );
+    assert!(
+        dir.join("scout.md").is_file() && dir.join("scout.md.disabled").is_file(),
+        "and both are left where they are"
+    );
+}
