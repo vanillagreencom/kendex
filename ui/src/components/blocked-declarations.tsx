@@ -105,15 +105,11 @@ export function BlockedDeclarations({
       <div className="divide-y divide-border/60">
         {rows.map((group) => {
           const paths = where(group);
-          // Every place has to hold a shape adoption can take, or the
-          // offer would settle the rest and leave that one blocked with
-          // the item no longer its tool's. At least one has to be a place
-          // adoption can be entered through, which is a different question
-          // — a folder several tools share is kept through whichever of
-          // them actually holds it.
-          // Every place has to let the item be kept, and at least one has
-          // to be a place adoption acts through: a folder several tools
-          // share is kept through whichever of them actually holds it.
+          // Every place has to let the item be kept, or the offer would
+          // settle the rest and leave that one blocked with the item no
+          // longer its tool's. At least one has to be a place adoption
+          // acts through, which is a different question — a folder several
+          // tools share is kept through whichever of them holds it.
           const keepableHere =
             adoptable.includes(group.kind) &&
             group.installations.every((row) => exits.keep(row)) &&
