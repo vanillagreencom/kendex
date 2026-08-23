@@ -123,7 +123,7 @@ for a fail-open defect in a consumer gate or an owner ask.
 ### This skill's home
 
 Source: `~/dev/kendex/.kendex-local/skills/kendex-issues/SKILL.md`
-(project-scoped, gitignored). Edit it, then `kendex apply` in `~/dev/kendex`.
+(tracked; installed project-scoped only). Edit it, then `kendex apply` in `~/dev/kendex`.
 A `~/.agents/skills/kendex-issues` link is a collision — delete it.
 
 ## Guardrails

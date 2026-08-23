@@ -9,22 +9,20 @@ Pi ships all its packages in lockstep under one monorepo version (e.g. `0.82.0`)
 Do not invent work that isn't supported by a changelog entry; do not skip an entry that touches a surface we own. Earlier releases (at or below the marker version) are assumed already absorbed.
 
 ## Sources (fetch all — do not wait for a paste)
-Authoritative per-package changelogs in `earendil-works/pi` on `main` (older links in the entries may say `pi-mono`; the live repo is `earendil-works/pi`):
+Every per-package changelog in `earendil-works/pi` on `main`. Enumerate them
+each run instead of trusting a list:
 
-| Key | Path |
-|-----|------|
-| `agent` | `packages/agent/CHANGELOG.md` |
-| `ai` | `packages/ai/CHANGELOG.md` |
-| `coding-agent` | `packages/coding-agent/CHANGELOG.md` |
-| `server` | `packages/server/CHANGELOG.md` |
-| `storage` | `packages/storage/sqlite-node/CHANGELOG.md` |
-| `tui` | `packages/tui/CHANGELOG.md` |
+```bash
+gh api repos/earendil-works/pi/git/trees/main?recursive=1 --jq '.tree[].path | select(endswith("/CHANGELOG.md"))'
+```
 
-Curated cross-package release notes (secondary cross-check, not authoritative for per-package detail): <https://pi.dev/news/releases>.
-
-Fetch each changelog with `web_fetch` on its raw URL, e.g.
-`https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/CHANGELOG.md`
-(fallback: `gh api repos/earendil-works/pi/contents/<path> -H "Accept: application/vnd.github.raw"`). All six share one version line — fetch all six; they will normally list the same new version headers.
+The key for a source is its path with `packages/` and `/CHANGELOG.md`
+stripped. Fetch each with
+`gh api repos/earendil-works/pi/contents/<path> -H "Accept: application/vnd.github.raw"`.
+Record every key fetched in the marker's `sourcesCovered`; a key present
+last run and absent now is reported, never silently dropped. Curated
+cross-package notes (<https://pi.dev/news/releases>) are a secondary
+cross-check only.
 
 Each changelog uses `## [x.y.z] - YYYY-MM-DD` headers with `### New Features / Added / Changed / Fixed / Removed` sub-sections. A leading `## [Unreleased]` block is not a release: scan it for a heads-up only, and never advance the marker to it.
 
@@ -36,13 +34,13 @@ State lives in `pi-extensions/pi-update.state.json` (committed source; not a dis
   "lastDate": "2026-07-24",
   "lastRun": "2026-07-24T18:00:00Z",
   "lastRunHead": "<git sha at run start>",
-  "sourcesCovered": ["agent", "ai", "coding-agent", "server", "storage", "tui", "releases"]
+  "sourcesCovered": ["<every key fetched>", "releases"]
 }
 ```
 
 1. Read the marker. **In scope = every released version header `> lastVersion`** (semver) across all sources, newest processed last. If the top released version equals `lastVersion`, there is nothing to do — say so, still refresh the `lastRun`/`lastRunHead` timestamp, commit the marker, and stop.
 2. **First run (marker absent):** do not silently process the entire history. Detect a candidate baseline (most recent Pi version referenced in `git log`, else the version bundled at `pi-extensions/pi-claude-bridge/node_modules/@earendil-works/pi-coding-agent/CHANGELOG.md`), then use the `question` tool to confirm the baseline version with the user before doing any work. Seed the marker at the confirmed baseline; only versions strictly greater are processed.
-3. **Override:** if the user pastes a changelog or names an explicit version/range after the command, treat that as the authoritative item list, skip fetching, and still update the marker to the highest version covered.
+3. **Override:** a pasted changelog is the authoritative item list and skips fetching. An explicit version or range after the command only constrains which version headers are in scope; every source is still fetched. Either way the marker advances to the highest version covered.
 4. **Update on success (even a no-op):** after the audit — whether or not any fix shipped — rewrite the marker with the newest processed version/date, a fresh `lastRun`, and the run-start `lastRunHead`, and commit it. The marker commit records "audited through vX.Y.Z" so the next run does not re-audit.
 
 ## Hard rules
@@ -95,7 +93,7 @@ Produce a structured summary:
 - **Working tree:** confirm `git status --short` is clean.
 
 ## Notes
-- All six package changelogs currently release in lockstep under one monorepo version, so `lastVersion` tracks the whole release. If a package ever diverges, split the marker to a per-source `{ key: version }` map and gate each source independently.
+- The package changelogs release in lockstep under one monorepo version, so `lastVersion` tracks the whole release. If a package ever diverges, split the marker to a per-source `{ key: version }` map and gate each source independently.
 - Pi `pi update` only reconciles `git:` and `npm:` scheme entries in Pi's `settings.json`. Vstack-installed extensions live as path packages (`./packages/<name>`) so they are out of scope for Pi-side `pi update` git-ref reconcile changes; flag this explicitly when a changelog entry mentions `pi update`.
 - Changes to model/provider config (Bedrock, Copilot, OpenCode Zen routing, `compat.*` flags) do not touch our extension surface unless we override a provider — confirm by grepping for the affected provider id before classifying as Non-impact.
 - Read tool, bash tool, edit tool, write tool, and search/list tool renderers are owned by `pi-tool-renderer` and override Pi defaults. Pi core UX changes to these tools are a UX choice for us, not an automatic must-mirror; ask the user when default behavior diverges.
