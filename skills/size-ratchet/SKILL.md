@@ -44,8 +44,13 @@ and fails (exit 1) on any of:
 | **baseline looser than reality** | A row higher than the file's actual count, for a file now at/under its threshold, or for a file that is untracked or excluded. |
 
 Every diagnostic names the file, its count, the baseline row it violated,
-the deciding threshold (class pattern or default), and the remedies: *split
-at a concept seam, or raise the baseline row in this diff with justification*.
+the deciding threshold (class pattern or default), and the remedy: *split
+at a concept seam*.
+
+**Raising a row** is allowed only when the added lines are the fix for the
+reported symptom and the file has no concept seam to split at. Never for
+tests, docs, comments, or lines a review round asked for. Commit with
+`RATCHET_RAISE=1` and name the reason in the commit body.
 
 Exit codes: `0` clean, `1` violations, `2` usage/config/collection error
 (malformed baseline or excludes, bad threshold, a tracked path containing

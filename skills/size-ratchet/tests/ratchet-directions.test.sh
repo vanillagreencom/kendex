@@ -19,7 +19,7 @@ FAIL=0
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
-REMEDY="split at a concept seam, or raise the baseline row in this diff with justification"
+REMEDY="split at a concept seam (raise the row only when the added lines are the fix itself and no seam exists: RATCHET_RAISE=1)"
 
 new_repo() { # NAME — fresh fixture repo in $R
   R="$TMP/$1"
@@ -58,7 +58,7 @@ run_sr
 [ "$RC" -eq 1 ] && case "$OUT" in *"new offender: big.txt — 11 lines > threshold 10"*) true ;; *) false ;; esac \
   && ok "one line over the threshold fails as a new offender, naming file/count/threshold" \
   || bad "one line over the threshold fails as a new offender" "rc=$RC out=$OUT"
-case "$OUT" in *"$REMEDY"*) ok "new-offender diagnostic carries the two remedies verbatim" ;; *) bad "new-offender diagnostic carries the two remedies verbatim" "$OUT" ;; esac
+case "$OUT" in *"$REMEDY"*) ok "new-offender diagnostic carries the remedy verbatim" ;; *) bad "new-offender diagnostic carries the remedy verbatim" "$OUT" ;; esac
 
 echo "=== a baseline row at the current count freezes the offender ==="
 new_repo frozen
@@ -76,7 +76,7 @@ run_sr
 [ "$RC" -eq 1 ] && case "$OUT" in *"baselined file grew: big.txt — 20 lines > baseline 15"*) true ;; *) false ;; esac \
   && ok "growth past the row fails, naming file/count/baseline" \
   || bad "growth past the row fails" "rc=$RC out=$OUT"
-case "$OUT" in *"$REMEDY"*) ok "growth diagnostic carries the two remedies verbatim" ;; *) bad "growth diagnostic carries the two remedies verbatim" "$OUT" ;; esac
+case "$OUT" in *"$REMEDY"*) ok "growth diagnostic carries the remedy verbatim" ;; *) bad "growth diagnostic carries the remedy verbatim" "$OUT" ;; esac
 
 echo "=== failure direction 3: baseline looser than reality ==="
 printf 'big.txt\t30\n' >"$R/tools/size-ratchet-baseline.tsv"

@@ -85,7 +85,7 @@ done <<<"$prose_files"
 if [ "${RATCHET_RAISE:-}" != "1" ] && git cat-file -e HEAD:tools/size-ratchet-baseline.tsv 2>/dev/null; then
   raised=$(join -t "$(printf '\t')" <(git show HEAD:tools/size-ratchet-baseline.tsv | sort) <(sort tools/size-ratchet-baseline.tsv) |
     awk -F'\t' '$3 > $2 { print "  " $1 ": " $2 " -> " $3 }')
-  [ -n "$raised" ] && say "size-ratchet baseline rows went up — cut the file, or commit with RATCHET_RAISE=1:
+  [ -n "$raised" ] && say "size-ratchet baseline rows went up — split at a seam; RATCHET_RAISE=1 only when the new lines are the fix itself:
 $raised"
 fi
 
