@@ -60,7 +60,11 @@ pub fn can_keep_for(
         && position(env, scope, kind, name, harness).is_some_and(|path| {
             !both_spellings(kind, &path)
                 && match kind {
-                    ItemKind::Skill => there(&path.join("SKILL.md")),
+                    // The marker is a file the capture reads. A directory
+                    // wearing its name is not one, and taking the tree
+                    // would trash the original for a source that has
+                    // nothing to give back.
+                    ItemKind::Skill => path.join("SKILL.md").is_file(),
                     _ => there(&path),
                 }
         })

@@ -297,3 +297,63 @@ fn content_under_both_spellings_is_never_offered_the_keep() {
         "both are left where they are"
     );
 }
+
+/// An item the flag never reaches is no reason to withhold it. A link
+/// kendex will not write over has nothing to take over, so it is never
+/// swept up — and the item beside it that does can still say so.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_item_the_flag_never_reaches_does_not_withhold_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let project = project_with(home, "[\"claude\"]", "copy");
+    folder_at(&project.join(".claude/skills/deploy"), "By hand.");
+    // A second item that is only a link somebody made: nothing to replace,
+    // so the flag would never touch it.
+    fs::create_dir_all(home.join("catalog/skills/lint")).unwrap();
+    fs::write(
+        home.join("catalog/skills/lint/SKILL.md"),
+        "---\nname: lint\ndescription: lints it\n---\nUpstream.\n",
+    )
+    .unwrap();
+    let manifest = project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        text.replace(
+            "[skills.deploy]\nsource = \"cat\"\n",
+            "[skills.deploy]\nsource = \"cat\"\n\n[skills.lint]\nsource = \"cat\"\n",
+        ),
+    )
+    .unwrap();
+    let elsewhere = home.join("notes");
+    fs::create_dir_all(&elsewhere).unwrap();
+    link_at(&project.join(".claude/skills/lint"), &elsewhere);
+
+    let planned = plan(home, &project);
+    assert!(
+        planned.contains("kendex apply --replace-unmanaged"),
+        "an item the flag never reaches withheld it: {planned}"
+    );
+}
+
+/// A directory wearing the marker's name. The capture reads the marker as
+/// a file, so taking the tree would trash the original for a source with
+/// nothing to give back.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_directory_named_like_the_marker_is_not_offered_the_keep() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let project = project_with(home, "[\"claude\"]", "copy");
+    let here = project.join(".claude/skills/deploy");
+    fs::create_dir_all(here.join("SKILL.md")).unwrap();
+    fs::write(here.join("SKILL.md/notes.txt"), "not a marker").unwrap();
+
+    let planned = plan(home, &project);
+    assert_eq!(
+        offer(&planned),
+        "move them somewhere else first",
+        "{planned}"
+    );
+}

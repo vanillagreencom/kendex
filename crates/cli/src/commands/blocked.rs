@@ -103,21 +103,24 @@ fn exits_under<'a>(env: &Env, rows: &[&'a DriftRow], row: &&'a DriftRow) -> Vec<
 /// where every one of them is wholly replaceable. Printed on the strength
 /// of a single item, it is a command guaranteed to fail.
 fn say_scope_exit(rows: &[&DriftRow]) {
-    let files: Vec<&&DriftRow> = rows
+    // The flag sweeps up the items it can take over, and refuses one it
+    // could only half settle. So it is a way out where some item has a
+    // place to replace and nothing on that item it cannot — an unrelated
+    // item with no take-over of its own is never reached by it.
+    let item_of =
+        |row: &DriftRow, other: &DriftRow| other.kind == row.kind && other.name == row.name;
+    // Every item it would sweep up has to be one it can settle whole, and
+    // there has to be one — an unrelated item with nothing to replace is
+    // never reached by it, and never a reason to withhold it.
+    let swept: Vec<&&DriftRow> = rows
         .iter()
-        .filter(|row| row.dead_stop() && row.cause.is_some())
+        .filter(|row| row.cause.is_some_and(DriftCause::can_replace))
         .collect();
-    let replaceable = files
-        .iter()
-        .any(|row| row.cause.is_some_and(DriftCause::in_the_way))
-        && rows.iter().all(|row| {
-            // A conflict on an item with no files at its position is not
-            // one this flag ever reaches.
-            !row.dead_stop()
-                || !files
-                    .iter()
-                    .any(|other| other.kind == row.kind && other.name == row.name)
-                || row.cause.is_some_and(DriftCause::can_replace)
+    let replaceable = !swept.is_empty()
+        && swept.iter().all(|row| {
+            rows.iter()
+                .filter(|other| item_of(row, other) && other.dead_stop())
+                .all(|other| other.cause.is_some_and(DriftCause::can_replace))
         });
     if let (true, Some(row)) = (replaceable, rows.first()) {
         say(&format!(
