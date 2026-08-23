@@ -4,6 +4,7 @@ import type { DriftRow, ItemKind } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { KindHarnessChips } from "@/components/kind-harness-chips";
 import { Button } from "@/components/ui/button";
+import { adoptAll } from "@/lib/adopt-all";
 import { type SharedLink, sharedLinkOf } from "@/lib/adopt-shared";
 import {
   HIDE_ITEMS_LABEL,
@@ -66,32 +67,8 @@ export function UnmanagedItems({
   const foldable = canFold && rows.length > INLINE_LIMIT;
   const showList = !foldable || expanded;
 
-  // One item at a time: every apply takes the scope's writer lock, so
-  // firing them together turns all but the first into "scope is busy". The
-  // first failure stops the rest — after one has failed, the others are
-  // answering against a page that is now wrong, and the run would still
-  // finish looking like it worked. An item's tools go in one call: taken
-  // one at a time, each tool's copy landed in the local source on top of
-  // the last and the declaration kept only the first.
-  const adoptAll = async (groups: MergedDriftRow[]) => {
-    let shared: SharedLink | null = null;
-    let said = false;
-    for (const group of groups) {
-      const link = sharedLinkOf(group);
-      if (link) {
-        // A shared folder needs its own confirmation; the first one found
-        // opens it after the plain adoptions finish.
-        shared ??= link;
-        continue;
-      }
-      const harnesses = [
-        ...new Set(group.installations.map((row) => row.harness)),
-      ];
-      // One line for the run, not one per item: a page of them is one
-      // action to the person who clicked it.
-      if (!(await onAdopt(group.kind, group.name, harnesses, said))) return;
-      said = true;
-    }
+  const startAll = async (groups: MergedDriftRow[]) => {
+    const shared = await adoptAll(groups, sharedLinkOf, onAdopt);
     if (shared) setConfirmingShared(shared);
   };
 
@@ -140,7 +117,7 @@ export function UnmanagedItems({
               variant="outline"
               className="shrink-0"
               disabled={busy}
-              onClick={() => void adoptAll(rows)}
+              onClick={() => void startAll(rows)}
             >
               {startManagingAllLabel(rows.length)}
             </Button>
@@ -182,7 +159,7 @@ export function UnmanagedItems({
                     variant="outline"
                     className="shrink-0"
                     disabled={busy}
-                    onClick={() => void adoptAll([group])}
+                    onClick={() => void startAll([group])}
                   >
                     {START_MANAGING_LABEL}
                   </Button>

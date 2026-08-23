@@ -1,7 +1,8 @@
 //! What the CLI says about files kendex did not write: the two exits out of
 //! a declaration blocked by them, and the footnote for content nothing
-//! declares at all — listed by `list`, and until now invisible to every
-//! command that says whether it was looked at.
+//! declares at all. A command that reports what it checked names that
+//! content too — `list` alone seeing it is how a tree reads as checked and
+//! passing when it was never looked at.
 #![cfg(unix)]
 
 use std::fs;

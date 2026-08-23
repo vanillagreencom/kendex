@@ -87,10 +87,10 @@ fn declared_installation_keys(manifest: &Manifest, scope: &Scope) -> BTreeSet<St
 /// inside a shared config file, with no path of their own to stat, and a
 /// pi-extension is never planned as an item at all.
 ///
-/// One thing a stat cannot settle: whether a hook carries a script or a
-/// command. A command-bodied hook writes nothing at the script position, so
-/// a file there is somebody else's — reported as in the way when strictly
-/// it is only in the way of a hook with a script in it.
+/// Hooks are left out for the same reason from the other direction:
+/// whether one carries a script or a command is in its source, which this
+/// pass does not read, and a command-bodied hook writes nothing at the
+/// script position. The plan, which reads the source, says it instead.
 fn installation_paths(
     env: &Env,
     scope: &Scope,
