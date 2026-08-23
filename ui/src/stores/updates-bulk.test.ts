@@ -2,6 +2,7 @@ import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
+import { ADOPTABLE } from "@/lib/adoptable";
 import { useUpdatesStore } from "./updates";
 
 vi.mock("@/bindings", () => ({
@@ -65,6 +66,8 @@ describe("updates store: bulk update", () => {
       notes: [],
       warnings: [],
       safety: [],
+      adoptable: ADOPTABLE,
+      exits: [],
       heldBack: [],
       queued: [],
     };
@@ -127,6 +130,8 @@ describe("updates store: bulk update", () => {
         notes: [],
         warnings: [],
         safety: [],
+        adoptable: ADOPTABLE,
+        exits: [],
         heldBack: [],
         queued: [],
       },
@@ -187,6 +192,8 @@ describe("updates store: bulk update", () => {
         notes: [],
         warnings: [],
         safety: [],
+        adoptable: ADOPTABLE,
+        exits: [],
         heldBack: [],
         queued: [],
       },

@@ -81,6 +81,22 @@ pub fn segment_problem(segment: &str) -> Option<String> {
     None
 }
 
+/// Whether a name can stand as a bare argument in guidance that spells a
+/// verb and its parameters. A legal item name may hold spaces, semicolons
+/// and ampersands — legal on every filesystem kendex writes to, and a shell
+/// would read them as its own — and this product does not carry the cost of
+/// quoting for every shell. So a name that is not plain is never printed in
+/// an argument position; the guidance says the verb and leaves the name to
+/// the row above it.
+pub fn plain_argument(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 200
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | '@'))
+        && !name.starts_with('-')
+}
+
 /// A catalog's own text, safe to print. Names travel from a downloaded
 /// repository into terminal output and the app, where a control character
 /// would move the cursor or colour the line, and an invisible or

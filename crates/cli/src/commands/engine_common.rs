@@ -1,7 +1,8 @@
+pub use super::blocked::{conflict_detail, print_conflicts, print_exits};
 use std::io::{IsTerminal, Write};
 
-use kendex_core::engine::EngineReport;
 use kendex_core::engine::decisions::DecisionState;
+use kendex_core::engine::{DriftRow, DriftState, EngineReport};
 use kendex_core::env::Env;
 use kendex_core::error::CoreError;
 use kendex_core::model::HarnessId;
@@ -28,7 +29,7 @@ pub fn print_notes(report: &EngineReport) {
     }
 }
 
-pub fn print_report(report: &EngineReport) {
+pub fn print_report(env: &Env, report: &EngineReport) {
     print_notes(report);
     for warning in &report.warnings {
         let target = match warning.harness {
@@ -41,9 +42,14 @@ pub fn print_report(report: &EngineReport) {
         }
     }
     print_safety(report);
-    print_conflicts(report);
+    let blocked = print_conflicts(env, report);
     if report.plan.is_empty() {
-        say("nothing to do");
+        // "nothing to do" directly under a conflict reads as "and nothing
+        // you can do" — the run has plenty to do, once the reader picks.
+        say(match blocked {
+            true => "nothing to do until you settle the conflicts above",
+            false => "nothing to do",
+        });
         return;
     }
     say("plan:");
@@ -52,28 +58,42 @@ pub fn print_report(report: &EngineReport) {
     }
 }
 
-/// What this apply cannot write and why. A conflict plans no op, so
-/// without this the run ends on "nothing to do" while the thing the user
-/// asked for sits blocked with the reason never printed.
-///
-/// Every conflict is printed, held-back items included. Their rows are not
-/// the safety section said twice: they carry what happens to the copy
-/// already installed — moved to the trash, or kept because the user's
-/// edits are in it and still standing in the way of the accepted content.
-pub fn print_conflicts(report: &EngineReport) {
-    for row in &report.drift {
-        if row.state != kendex_core::engine::DriftState::Conflict {
-            continue;
-        }
+/// Content in a managed folder that no declaration and no lock claims.
+/// apply leaves it exactly where it is (invariant 6) — which is why it has
+/// to be said here: seen in `list` and nowhere else, it reads as checked
+/// and passing rather than as never looked at.
+pub fn print_unmanaged(drift: &[DriftRow]) {
+    use kendex_core::names::shown;
+    let rows: Vec<&DriftRow> = drift
+        .iter()
+        .filter(|row| row.state == DriftState::Unmanaged)
+        .collect();
+    if rows.is_empty() {
+        return;
+    }
+    say(&format!(
+        "not managed: {} item{} kendex did not install and does not touch",
+        rows.len(),
+        if rows.len() == 1 { "" } else { "s" }
+    ));
+    for row in rows.iter().take(UNMANAGED_SHOWN) {
+        // Names and paths read off a tree kendex did not write: printed as
+        // what they are, never as the escape sequences they might hold.
         say(&format!(
-            "conflict: {} {} for {}: {}",
+            "  - {} {} [{}] {}",
             row.kind.name(),
-            row.name,
+            shown(&row.name),
             row.harness.display_name(),
-            row.detail
+            shown(&row.detail)
         ));
     }
+    if rows.len() > UNMANAGED_SHOWN {
+        say(&format!("  … and {} more", rows.len() - UNMANAGED_SHOWN));
+    }
 }
+
+/// Enough to recognise what is there without burying the plan above it.
+const UNMANAGED_SHOWN: usize = 10;
 
 /// What the safety rules found in the content this plan would write. Held
 /// back items come first: they are the ones nothing will install.

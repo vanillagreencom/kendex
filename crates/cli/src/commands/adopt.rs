@@ -9,7 +9,7 @@ pub fn run(
     env: &Env,
     kind: String,
     name: String,
-    harness: Option<String>,
+    harness: Vec<String>,
     filter: ScopeFilter,
 ) -> CliResult {
     let kind = match kind.as_str() {
@@ -17,15 +17,22 @@ pub fn run(
         "skill" | "skills" | "s" => ItemKind::Skill,
         other => return Err(format!("cannot adopt kind '{other}' yet (agent | skill)").into()),
     };
-    let harness = match harness {
-        Some(value) => {
-            HarnessId::parse(&value).ok_or_else(|| format!("unknown harness '{value}'"))?
+    // Several tools at once, because one folder can be all of theirs: taken
+    // one command at a time, each tool's copy lands in the local source on
+    // top of the last and the declaration keeps only the first.
+    let mut harnesses = Vec::new();
+    for value in &harness {
+        let parsed = HarnessId::parse(value).ok_or_else(|| format!("unknown harness '{value}'"))?;
+        if !harnesses.contains(&parsed) {
+            harnesses.push(parsed);
         }
-        None => HarnessId::Claude,
-    };
+    }
+    if harnesses.is_empty() {
+        harnesses.push(HarnessId::Claude);
+    }
     let scope = resolve_scopes(env, filter)?.remove(0);
 
-    let move_plan = adopt::adopt(env, &scope, kind, &name, harness)?;
+    let move_plan = adopt::adopt(env, &scope, kind, &name, &harnesses)?;
     for op in &move_plan.ops {
         say(&format!("  - {}", op.description));
     }

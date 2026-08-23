@@ -46,6 +46,16 @@ pub struct AuditView {
     /// carries two scores that are never combined: safety, which can hold an
     /// install back, and quality, which only ever informs.
     pub safety: Vec<ItemSafety>,
+    /// The kinds "keep these files" can be offered for. Adoption needs
+    /// somewhere in the local source to put the content, and only these
+    /// kinds have one — read from core so the page never offers an action
+    /// that would error, and never keeps its own copy of the list.
+    pub adoptable: Vec<ItemKind>,
+    /// Which ways out each blocked installation actually has, answered by
+    /// core per row like the kinds above. The page groups and draws these;
+    /// it never works them out from the cause, which is how one surface
+    /// ends up offering an action the plan rejects.
+    pub exits: Vec<engine::exits::RowExits>,
     /// Installations the plan would write but the safety gate holds back.
     /// Kept apart from `safety` (which scores what is on disk) because the
     /// two describe different bytes: an accept has to name the hash of what
@@ -89,11 +99,21 @@ impl AuditView {
             notes: Vec::new(),
             warnings: Vec::new(),
             safety: Vec::new(),
+            adoptable: adoptable(),
+            exits: Vec::new(),
             held_back: Vec::new(),
             queued: Vec::new(),
             error: Some(ScopeError::from(error)),
         }
     }
+}
+
+fn adoptable() -> Vec<ItemKind> {
+    ItemKind::ALL
+        .iter()
+        .copied()
+        .filter(|kind| engine::adopt::supports(*kind))
+        .collect()
 }
 
 pub fn view(env: &Env, scope: &Scope) -> AuditView {
@@ -109,6 +129,7 @@ pub fn view(env: &Env, scope: &Scope) -> AuditView {
         report.safety.into_iter().partition(ItemSafety::blocked);
     AuditView {
         scope: scope.clone(),
+        exits: engine::exits::for_rows(env, scope, &report.drift),
         drift: report.drift,
         plan: report
             .plan
@@ -119,6 +140,7 @@ pub fn view(env: &Env, scope: &Scope) -> AuditView {
         notes: report.notes,
         warnings: report.warnings,
         safety,
+        adoptable: adoptable(),
         held_back,
         queued: queued
             .into_iter()
@@ -212,15 +234,60 @@ pub fn adopt_item(
     scope: Scope,
     kind: ItemKind,
     name: String,
-    harness: HarnessId,
+    harnesses: Vec<HarnessId>,
 ) -> Result<AuditView, String> {
     let env = env()?;
+    // Every tool the item is blocked for, in one plan: handed over one at a
+    // time, each tool's copy landed on top of the last and the declaration
+    // kept only the first tool, leaving the rest with files nothing manages.
     let move_plan =
-        engine::adopt::adopt(&env, &scope, kind, &name, harness).map_err(|e| e.to_string())?;
+        engine::adopt::adopt(&env, &scope, kind, &name, &harnesses).map_err(|e| e.to_string())?;
     apply::execute(&env, &move_plan, None).map_err(|e| e.to_string())?;
     let report = engine::audit(&env, &scope).map_err(|e| e.to_string())?;
     apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
     Ok(view(&env, &scope))
+}
+
+/// Install what the manifest declares over the files already sitting where
+/// one item goes — the other direction from adopting them. Scoped to the
+/// item the person clicked, so a neighbour blocked the same way keeps its
+/// files until they decide about it too.
+pub fn replace_unmanaged(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: String,
+) -> Result<AuditView, String> {
+    // The page this was clicked on may be a minute old, and the apply that
+    // follows is the scope's whole plan. Planning refuses a take-over that
+    // reaches nothing, or one that would settle some of an item's places
+    // and leave the rest blocked — read off this same plan, so nothing can
+    // change between the check and what it guards.
+    //
+    // Planned from the manifest as it sits on disk, like every apply: a
+    // normalized copy already looks current, so a scope still on an older
+    // schema would be written without the migration its own plan owes it.
+    let report = engine::plan_apply(
+        env,
+        scope,
+        &engine::PlanOptions {
+            replace_unmanaged_names: Some(vec![(kind, name)]),
+            ..Default::default()
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    apply::execute(env, &report.plan, None).map_err(|e| e.to_string())?;
+    Ok(view(env, scope))
+}
+
+#[tauri::command(async)]
+#[specta::specta]
+pub fn replace_unmanaged_item(
+    scope: Scope,
+    kind: ItemKind,
+    name: String,
+) -> Result<AuditView, String> {
+    replace_unmanaged(&env()?, &scope, kind, name)
 }
 
 #[tauri::command(async)]

@@ -1,10 +1,12 @@
 import type {
   AuditView,
-  BundleRow,
   ItemDecl_Serialize,
   Manifest_Serialize,
   SourceRow,
 } from "@/bindings";
+
+import { IN_THE_WAY_EXITS, inTheWayDrift } from "@/dev/fixture-in-the-way";
+import { ADOPTABLE } from "@/lib/adoptable";
 import { personalDrift, personalSafety } from "./fixture-safety";
 import { acmeHeldBack, acmeQueued, acmeSafety } from "./fixture-safety-acme";
 import { ACME, API, GLOBAL, proj } from "./fixture-scopes";
@@ -19,6 +21,8 @@ export function views(): AuditView[] {
       notes: [],
       warnings: [],
       safety: personalSafety(),
+      adoptable: ADOPTABLE,
+      exits: [],
       heldBack: [],
       queued: [],
     },
@@ -57,6 +61,7 @@ export function views(): AuditView[] {
           state: "orphaned",
           detail: "left over from an earlier setup; nothing needs it anymore",
         },
+        ...inTheWayDrift(acme),
       ],
       plan: [
         "Update skill github for Claude Code",
@@ -66,6 +71,11 @@ export function views(): AuditView[] {
       notes: [],
       warnings: [],
       safety: acmeSafety(),
+      adoptable: ADOPTABLE,
+      // Every place adoption can be entered through. The shared folder sits
+      // at Claude Code's own place and Codex reads it through a shortcut,
+      // so only one of that pair is here — and one Keep covers both.
+      exits: IN_THE_WAY_EXITS,
       heldBack: acmeHeldBack(),
       queued: acmeQueued(),
     },
@@ -76,6 +86,8 @@ export function views(): AuditView[] {
       notes: [],
       warnings: [],
       safety: [],
+      adoptable: ADOPTABLE,
+      exits: [],
       heldBack: [],
       queued: [],
       // Demoes the "scope couldn't be read" path: the review card and
@@ -172,75 +184,5 @@ export function sources(): SourceRow[] {
       declaredItems: [],
     },
     { scope: proj(API), ...kendex, declaredItems: ["orch", "github"] },
-  ];
-}
-
-export function bundles(): BundleRow[] {
-  const starter = {
-    source: "kendex",
-    name: "starter",
-    description: "Everything a new repo needs",
-    version: null,
-    category: null,
-    members: ["agent orch", "skill github", "skill deploy", "command ship-it"],
-  };
-  const review = {
-    source: "kendex",
-    name: "review",
-    description: "Code review, end to end",
-    version: "1.2.0",
-    category: "quality",
-    members: ["agent reviewer", "skill code-review"],
-  };
-  const platform = {
-    source: "kendex",
-    name: "platform",
-    description: "The full platform workflow, docs to deploy",
-    version: "0.9.0",
-    category: "workflow",
-    members: [
-      "skill github",
-      "skill docs",
-      "skill tests",
-      "skill release-notes",
-      "command ship-it",
-      "mcp-server postgres",
-    ],
-  };
-  return [
-    { scope: GLOBAL, ...starter, installed: false },
-    { scope: GLOBAL, ...review, installed: true },
-    { scope: GLOBAL, ...platform, installed: false },
-    // A plugin registry's plugins are its curated sets.
-    {
-      scope: GLOBAL,
-      source: "claude-plugins",
-      name: "deploy-kit",
-      description: "Release and rollback, as one set",
-      version: "2.1.0",
-      category: null,
-      members: [
-        "agent deploy-kit/release-manager",
-        "command deploy-kit/rollback",
-      ],
-      installed: false,
-    },
-    {
-      scope: GLOBAL,
-      source: "claude-plugins",
-      name: "docs-kit",
-      description: "Documentation, outlined and styled",
-      version: "1.0.3",
-      category: null,
-      members: [
-        "agent docs-kit/writer",
-        "command docs-kit/outline",
-        "skill docs-kit/style-guide",
-      ],
-      installed: false,
-    },
-    { scope: proj(ACME), ...starter, installed: true },
-    { scope: proj(ACME), ...review, installed: false },
-    { scope: proj(ACME), ...platform, installed: false },
   ];
 }

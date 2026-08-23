@@ -1,15 +1,29 @@
 //! What one installation put on this machine: the files it wrote, and the
 //! structured edits that take its registrations back out.
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use super::desired::native_dir;
 use super::targets::{HookFormat, HookTarget, hook_target, mcp_registry, plugin_settings};
 use crate::configedit::ConfigEdit;
 use crate::env::Env;
-use crate::lock::LockEntry;
+use crate::lock::{Lock, LockEntry};
 use crate::model::{ItemKind, Scope};
 use crate::render::agent::file_name;
+
+/// Every position this scope's installs recorded writing — including the
+/// ones an earlier install wrote under another kind's name, and the ones
+/// several harnesses share. Ownership is a property of the path, not of the
+/// entry asking about it (invariant 6): read per key, one harness would
+/// call another harness's copy of the same tree a stranger's, and the
+/// take-over would then be free to destroy it.
+pub(super) fn paths(env: &Env, scope: &Scope, lock: &Lock) -> BTreeSet<PathBuf> {
+    lock.entries
+        .values()
+        .flat_map(|entry| installed(env, scope, entry).files)
+        .collect()
+}
 
 pub(super) struct Owned {
     pub(super) files: Vec<PathBuf>,
@@ -31,9 +45,16 @@ pub(super) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
             if let Some(dir) = native_dir(env, scope, entry.harness, ItemKind::Skill) {
                 files.push(dir.join(crate::harness::rendered_name(entry.harness, &entry.name)));
             }
-            let canonical = super::desired::skill_canonical(env, scope, &entry.name);
-            if !files.contains(&canonical) {
-                files.push(canonical);
+            // Only a shared install has a shared tree. A copy install put
+            // its bytes in the tool's own directory and never wrote that
+            // tree, so claiming it here would call somebody else's content
+            // ours — and what protects unmanaged bytes is exactly not being
+            // called ours.
+            if entry.method != crate::manifest::Method::Copy {
+                let canonical = super::desired::skill_canonical(env, scope, &entry.name);
+                if !files.contains(&canonical) {
+                    files.push(canonical);
+                }
             }
         }
         // A codex command was written as a skill tree, under a name the

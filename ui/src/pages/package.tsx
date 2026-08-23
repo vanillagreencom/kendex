@@ -126,8 +126,12 @@ export function PackagePage() {
     !edited;
   const customizable = canCustomize(group.kind);
 
-  const inEveryScope = async (act: (scope: Scope) => Promise<void>) => {
-    for (const scope of groupScopes(group)) await act(scope);
+  // Every scope this package sits in, one at a time — each apply takes
+  // that scope's writer lock — and stopping at the first that fails.
+  const inEveryScope = async (act: (scope: Scope) => Promise<boolean>) => {
+    for (const scope of groupScopes(group)) {
+      if (!(await act(scope))) return;
+    }
   };
 
   const { switchTo, updateToLatest, follow } = packageVersionActions(

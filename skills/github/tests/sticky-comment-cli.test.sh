@@ -111,6 +111,8 @@ echo
 echo "=== detect_bot_reviewers own-comment reactions ==="
 # shellcheck source=/dev/null
 source "$LIB"
+# The mocks below answer by bare endpoint; the paginating wrapper is one page here.
+gh_rest_all() { gh_rest "$1"; }
 
 gh_rest() {
     case "$1" in

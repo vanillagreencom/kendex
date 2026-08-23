@@ -22,7 +22,14 @@ Four verbs over one model: **scan → declare → diff → apply**.
   the Library's Installed tab, beside the item, because it is an offer a
   person takes up rather than work the diff owes; the Review page is for
   what needs deciding and what needs applying, and counts what it does
-  not manage as a footnote pointing there.
+  not manage as a footnote pointing there. The one place adopt also
+  appears on Review is where the two arrows meet: a declared item whose
+  files were already on disk, where both directions are choices about the
+  same row and neither is a change Apply could make. Taking one over is
+  scoped to the item the row names, revalidated against a fresh read before
+  anything is written — a page a minute old must not answer a question that
+  has gone away — and the apply it runs is the scope's whole plan, as every
+  apply is, which is why the confirm says so.
 
 Every page and every CLI verb is a projection of these four; none owns
 logic.
@@ -80,22 +87,54 @@ lives in one capability table read by core and UI.
    app changes nothing.
 6. Never touch the unowned: unmanaged files are reported, never deleted;
    foreign symlinks are conflicts, not clobber targets; adoption merges
-   content, never loses it. The one sanctioned exception is a link the
-   user explicitly adopts: when it resolves to a real skill folder outside
+   content, never loses it. A declaration landing on files kendex never
+   wrote is a conflict with two exits, never a dead end: adopt keeps the
+   files and rewrites the declaration around them — every tool the item is
+   blocked for in one plan, since capturing them one at a time would write
+   each tool's copy over the last, and tools holding different copies under
+   one name refuse rather than have one picked for them — and the take-over
+   (`replace_unmanaged` / `--replace-unmanaged`, or the per-item
+   `replace_unmanaged_names` a row's own button carries) keeps the
+   declaration and moves the files to the trash first, bound to the bytes
+   the plan read. The row states which files are in the way; naming what
+   can be done about them belongs to the surface that can do it — the app
+   offers the two as buttons on that row, the CLI names the verb, the flag
+   and every tool the one keep covers — adoption works at a tool's own
+   place and nowhere else, so an offer may only name tools that have
+   something there. Which exits a state has travels with the row as its
+   cause, so no surface decides that for itself: only the kinds adopt can
+   take are
+   offered keeping, and not a folder where one file goes or one file where
+   a folder goes — the replacement handles those and adoption cannot. A
+   link somebody else made, pointing at a real skill folder several tools
+   read, is the mirror: only keeping is offered, since the bytes are not at
+   that position to replace and writing over the link would break the
+   sharing. A link is never the replacement's target, and neither is a
+   position any install recorded writing — those bytes are kendex's own,
+   and what protects them is the edit gate, whichever entry's key the
+   declaration arrives under. Ownership is read from the positions lock
+   entries actually wrote, never from an entry merely being on the books: a
+   copy install wrote the tool's own directory and never the shared tree,
+   and an install that changes how it installs is a stranger at its new
+   position until it writes there. Keeping files declares the tools that
+   had them, the one holding a shared folder along with the ones linking
+   at it, and never narrows a declaration that was already there.
+   The sanctioned exceptions are that take-over and a link the user
+   explicitly adopts: when it resolves to a real skill folder outside
    kendex's own trees, adopt captures that folder's content, trashes the
    folder (bound to the exact bytes captured) and every sibling link that
    read it, and the follow-up apply restores the sharing from kendex's
    copy — a link at anything else stays a conflict, and the confirm names
    the folder and every tool reading it, because links kendex cannot see
-   will break. Ownership is what kendex wrote, read from the
-   lock — including the paths an installation recorded writing under
-   another kind's name. A position we put something at is ours to replace
-   or clear, whichever entry holds it now; deriving ownership from the
-   lock key alone calls our own output a stranger's. A link the user put
-   at a shared config file or a manifest (dotfiles) is not foreign: the
-   edit goes through it, link kept, and a precondition binds to the bytes
-   reachable there — whether a link may sit at a position is decided at
-   plan time, never by the write.
+   will break. Ownership is what kendex
+   wrote, read from the lock — including the paths an installation
+   recorded writing under another kind's name. A position we put something
+   at is ours to replace or clear, whichever entry holds it now; deriving
+   ownership from the lock key alone calls our own output a stranger's. A
+   link the user put at a shared config file or a manifest (dotfiles) is
+   not foreign: the edit goes through it, link kept, and a precondition
+   binds to the bytes reachable there — whether a link may sit at a
+   position is decided at plan time, never by the write.
 7. Applies are transactional: preconditions revalidate against observed
    hashes immediately before mutation; pre-images are journaled first; any
    failure rolls back and interrupted applies recover on next launch.
@@ -1063,8 +1102,16 @@ lives in one capability table read by core and UI.
   for machines. The check reads the manifest, the lock, the per-scope
   drift snapshot (`core/drift/snapshot.rs`), and per-mirror fetch stamps —
   it materializes no source trees, hashes no catalogs, and fans out no
-  per-package subprocesses. The deep work runs where time is free:
-  `updates`, `refresh`, `apply`, and the detached
+  per-package subprocesses. A declaration with no lock entry and files
+  already where it installs is one stat away, so it gets a section of its
+  own — declared but not installed is a different problem from a safety
+  hold, and folding both into one held-back count sent readers to the
+  `findings` verb for something no review could clear. That section states
+  only what a stat proves and carries the plan as its remedy: which way out
+  fits depends on bytes the check may not read, and a report that guessed
+  would prescribe a destructive fix for a state that needs none. The deep
+  work runs where time is free: `updates`, `refresh`, `apply`, and the
+  detached
   `kendex source refresh --stale` the check spawns (TTL 6h, per-mirror
   lock, no stdio, never waited on) all re-derive the snapshot. A mirror
   that moved since its last evaluation reads as unevaluated — the honest
@@ -1248,7 +1295,7 @@ lives in one capability table read by core and UI.
   and a hint built by concatenation is an injection surface. The one
   deliberate exception is the session-start drift report: it is written
   for an agent that can act, so each line may carry a remedy — built only
-  from a fixed template set (refresh, remove, add, fork, findings) with
-  validated identifiers in argument positions, while free text from
-  sources or errors renders in quoted informational positions, never in
-  a command position.
+  from a fixed template set (refresh, remove, add, fork, findings, apply
+  --plan) with validated identifiers in argument positions,
+  while free text from sources or errors renders in quoted informational
+  positions, never in a command position.

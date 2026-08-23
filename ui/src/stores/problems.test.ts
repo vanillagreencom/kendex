@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AuditView } from "@/bindings";
+import { ADOPTABLE } from "@/lib/adoptable";
 import { deriveProblems } from "./problems";
 
 const globalScope = { scope: "global" as const };
@@ -13,6 +14,8 @@ function view(overrides: Partial<AuditView>): AuditView {
     notes: [],
     warnings: [],
     safety: [],
+    adoptable: ADOPTABLE,
+    exits: [],
     heldBack: [],
     queued: [],
     error: null,

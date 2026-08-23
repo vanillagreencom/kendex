@@ -52,7 +52,7 @@ pub fn run(env: &Env, args: PinArgs) -> CliResult {
     let scope = resolve_scopes(env, filter)?.remove(0);
     let report =
         kendex_core::package::set_rev(env, &scope, kind, &args.name, args.version.as_deref())?;
-    print_report(&report);
+    print_report(env, &report);
     confirm_and_execute(env, &report, args.yes)?;
     match args.version {
         Some(version) => say(&format!(
