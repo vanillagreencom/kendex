@@ -98,12 +98,12 @@ describe("the safety dot in the packages list", () => {
     // `title` — which a screen reader may skip and a keyboard never lands on.
     const html = render(scored("clean", 100));
     expect(trigger(html)).toContain(
-      `<span class="sr-only">${safetyDotWords("clean", 100)}</span>`,
+      `<span class="sr-only">${safetyDotWords("clean", 100, 0)}</span>`,
     );
     expect(html.indexOf(PREINSTALL_SAFETY_CAVEAT)).toBeLessThan(
       html.indexOf(">Install<"),
     );
-    expect(html).not.toContain(`title="${safetyDotWords("clean", 100)}`);
+    expect(html).not.toContain(`title="${safetyDotWords("clean", 100, 0)}`);
   });
 
   it("says no result has landed, and still claims nothing either way", () => {

@@ -8,6 +8,7 @@ import {
   SAFETY_SECTION_EXPLAINER,
   safetyDotWords,
   settledSummaryLead,
+  verdictRead,
 } from "./copy-safety";
 import { VERDICT_LABELS } from "./labels";
 
@@ -57,7 +58,7 @@ describe("what a verdict is allowed to claim", () => {
     PREINSTALL_SAFETY_CAVEAT,
     SAFETY_SECTION_EXPLAINER,
     CATALOG_LAYOUT_CLEAN,
-    safetyDotWords("clean", 100),
+    safetyDotWords("clean", 100, 0),
     SAFETY_DOT_UNCHECKED,
   ];
 
@@ -80,14 +81,14 @@ describe("what a verdict is allowed to claim", () => {
   it("discloses that the read is partial wherever it shows a verdict", () => {
     // The list's dot is the whole verdict on a row that installs from
     // there, so its words carry the caveat the number cannot.
-    expect(safetyDotWords("warn", 60)).toBe(
-      "Installs, with a warning · 60/100. An automated check for risky patterns, not a review. It can miss things, and a large skill is read only in part.",
+    expect(safetyDotWords("warn", 60, 0)).toBe(
+      "Installs, with a warning · 60/100. An automated check for risky patterns, not a review. It can miss things, and a package too large to read is not checked at all.",
     );
     expect(PREINSTALL_SAFETY_CAVEAT).toBe(
-      "An automated check for risky patterns, not a review. It can miss things, and a large skill is read only in part.",
+      "An automated check for risky patterns, not a review. It can miss things, and a package too large to read is not checked at all.",
     );
     expect(SAFETY_SECTION_EXPLAINER).toBe(
-      "kendex looks for risky patterns in each package before it installs. It is an automated check rather than a review. It can miss things, and a large skill is read only in part.",
+      "kendex looks for risky patterns in each package before it installs. It is an automated check rather than a review. It can miss things, and a package too large to read is not checked at all.",
     );
   });
 
@@ -96,7 +97,7 @@ describe("what a verdict is allowed to claim", () => {
     // that stand in for one say the check has not answered and repeat what
     // the check is worth — without borrowing a verdict's language.
     expect(SAFETY_DOT_UNCHECKED).toBe(
-      "Not checked yet. An automated check for risky patterns, not a review. It can miss things, and a large skill is read only in part.",
+      "Not checked yet. An automated check for risky patterns, not a review. It can miss things, and a package too large to read is not checked at all.",
     );
     for (const label of Object.values(VERDICT_LABELS)) {
       expect(SAFETY_DOT_UNCHECKED).not.toContain(label);
@@ -108,5 +109,26 @@ describe("what a verdict is allowed to claim", () => {
     expect(CATALOG_LAYOUT_CLEAN).toBe(
       "Nothing wrong with how this catalog is put together.",
     );
+  });
+});
+
+describe("what a verdict is entitled to claim", () => {
+  it("does not say nothing was found when a rule was given nothing to read", () => {
+    expect(verdictRead("clean", 1)).toBe("Not fully checked");
+    expect(verdictRead("clean", 12)).toBe("Not fully checked");
+  });
+
+  it("says nothing was found only when every rule read something", () => {
+    expect(verdictRead("clean", 0)).toBe("Nothing found");
+  });
+
+  it("leaves a verdict that already carries findings alone", () => {
+    expect(verdictRead("block", 3)).toBe(VERDICT_LABELS.block);
+    expect(verdictRead("warn", 3)).toBe(VERDICT_LABELS.warn);
+  });
+
+  it("carries the same reading into a list row's dot", () => {
+    expect(safetyDotWords("clean", 100, 7)).toContain("Not fully checked");
+    expect(safetyDotWords("clean", 100, 0)).toContain("Nothing found");
   });
 });

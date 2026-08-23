@@ -6,7 +6,7 @@ use crate::manifest::{self, ItemDecl, LOCAL_SOURCE_NAME};
 use crate::model::{HarnessId, ItemKind};
 
 /// Write the item into the manifest, bound to the tools that had it. Only
-/// when the `install` defaults name exactly that set may the list be left
+/// when the `[install]` defaults name exactly that set may the list be left
 /// off: a wider default would install the item for tools the user never
 /// gave it to.
 pub(super) fn declare(

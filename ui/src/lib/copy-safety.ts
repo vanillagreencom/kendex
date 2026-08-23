@@ -39,20 +39,35 @@ export const SAFETY_HELP =
 // verdict with nothing in it means nothing was matched, never that the
 // package is safe to run.
 export const SAFETY_SECTION_EXPLAINER =
-  "kendex looks for risky patterns in each package before it installs. It is an automated check rather than a review. It can miss things, and a large skill is read only in part.";
+  "kendex looks for risky patterns in each package before it installs. It is an automated check rather than a review. It can miss things, and a package too large to read is not checked at all.";
 // Sits under the verdict on the page where somebody decides to install.
 // It describes what the check did, never who wrote the package: this repo
 // publishes a catalog of its own, so a claim about provenance is false for
 // the items in it. Only a skill tree is read to a budget — every other kind
 // reads whole — so the partial read is named as a skill's.
 export const PREINSTALL_SAFETY_CAVEAT =
-  "An automated check for risky patterns, not a review. It can miss things, and a large skill is read only in part.";
+  "An automated check for risky patterns, not a review. It can miss things, and a package too large to read is not checked at all.";
 // A list gives a package one dot and no line of its own, so the dot's words
 // carry the caveat along with the number — worded as the package's own page
 // words it. A row here installs without ever opening that page, and a bare
 // score would be the assurance the check cannot give.
-export const safetyDotWords = (verdict: Verdict, score: number): string =>
-  `${VERDICT_LABELS[verdict]} · ${score}/100. ${PREINSTALL_SAFETY_CAVEAT}`;
+export const safetyDotWords = (
+  verdict: Verdict,
+  score: number,
+  skipped: number,
+): string =>
+  `${verdictRead(verdict, skipped)} · ${score}/100. ${PREINSTALL_SAFETY_CAVEAT}`;
+
+// What the check is entitled to say it found. A rule that was given nothing
+// to read found nothing because it looked at nothing, so a clean verdict
+// standing beside one is not the same claim as a clean verdict standing
+// alone — and a package kendex could not read at all reaches here with every
+// rule skipped and no finding, which is the case that must never read as
+// "Nothing found".
+export const verdictRead = (verdict: Verdict, skipped: number): string =>
+  verdict === "clean" && skipped > 0
+    ? "Not fully checked"
+    : VERDICT_LABELS[verdict];
 // The same row installs before its score arrives, so the dot's words say
 // there is no result rather than falling silent. A queued read and a failed
 // one look alike from here, so this claims no check is under way — only that

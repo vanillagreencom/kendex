@@ -129,7 +129,10 @@ changes carry a **Breaking** call-out with their migration note inline.
   package is larger than kendex holds in memory, or part of it would not
   open, which a permission on a file or a folder usually explains. Both
   answers are the same on the package's page, at the install gate, and in
-  the check over what is installed.
+  the check over what is installed. A package whose rules were given
+  nothing to read says "Not fully checked" rather than "Nothing found", on
+  its own page and on its row's dot alike, and the note beside it says a
+  package too large to read is not checked at all rather than read in part.
 - **Breaking:** the install record's version moves to 5. Older files still
   load and the first apply upgrades them in place, through the normal
   journaled, previewed plan. What moves the version is the new evidence in

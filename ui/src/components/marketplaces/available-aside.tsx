@@ -1,7 +1,6 @@
 import type { Catalog, PackageView } from "@/bindings";
 import { FileList } from "@/components/package/file-list";
-import { PREINSTALL_SAFETY_CAVEAT } from "@/lib/copy-safety";
-import { VERDICT_LABELS } from "@/lib/labels";
+import { PREINSTALL_SAFETY_CAVEAT, verdictRead } from "@/lib/copy-safety";
 import { catalogLabel } from "@/stores/marketplaces";
 
 /** The available-package page's facts column: where it comes from, its
@@ -42,8 +41,8 @@ export function AvailableAside({
             Safety
           </h3>
           <p>
-            {VERDICT_LABELS[view.safety.verdict]} · {view.safety.safety.score}
-            /100
+            {verdictRead(view.safety.verdict, view.safety.skipped.length)} ·{" "}
+            {view.safety.safety.score}/100
           </p>
           {/* What the number is a reading of. Under a heading called
               Safety, a verdict alone reads as an assurance; the check can

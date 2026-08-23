@@ -142,7 +142,11 @@ function PackageRow({
         {safety ? (
           <SafetyDot
             tone={VERDICT_TONES[safety.verdict]}
-            words={safetyDotWords(safety.verdict, safety.safety.score)}
+            words={safetyDotWords(
+              safety.verdict,
+              safety.safety.score,
+              safety.skipped.length,
+            )}
           />
         ) : (
           <SafetyDot tone="muted" words={SAFETY_DOT_UNCHECKED} />
