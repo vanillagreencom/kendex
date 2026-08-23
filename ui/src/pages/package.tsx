@@ -17,7 +17,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CUSTOMIZE_TAB, OVERVIEW_TAB } from "@/lib/copy-customize";
 import { canCustomize } from "@/lib/customization";
-import { groupItems, groupScopes } from "@/lib/derive";
+import { groupItems, groupScopes, installationAt } from "@/lib/derive";
 import { packageDisplayName } from "@/lib/labels";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { usePackageMark } from "@/lib/package-mark";
@@ -77,7 +77,7 @@ export function PackagePage() {
   const diff = usePackageDiff(
     ref,
     view,
-    diffHarness(view, group?.installations[0]?.harness ?? null),
+    diffHarness(view, installationAt(group, ref?.scope)?.harness ?? null),
   );
   const updatesLoaded = useUpdatesStore((s) => s.loaded);
   const edited = useUpdatesStore((s) =>
@@ -95,10 +95,7 @@ export function PackagePage() {
   // The package can still be installed elsewhere while this place has no
   // copy of it — a page about a place that does not have it has nothing
   // to show and no actions that would land anywhere.
-  const installedHere =
-    group?.installations.some(
-      (install) => ref != null && sameScope(install.scope, ref.scope),
-    ) ?? false;
+  const installedHere = installationAt(group, ref?.scope) !== undefined;
 
   // The scan no longer knows this package (removed, renamed): leave the
   // way the user came.
@@ -112,9 +109,7 @@ export function PackagePage() {
   // open files reach that place's copy. Falling back to another place's
   // would have the page describe one place while its buttons work on
   // another.
-  const primary = group.installations.find((install) =>
-    sameScope(install.scope, ref.scope),
-  );
+  const primary = installationAt(group, ref.scope);
   if (!primary) return null;
 
   const displayName = packageDisplayName(ref);

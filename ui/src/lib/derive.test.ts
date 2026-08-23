@@ -7,6 +7,7 @@ import {
   groupItems,
   groupScopes,
   groupVendor,
+  installationAt,
   recentItems,
   scopeMatches,
 } from "./derive";
@@ -217,5 +218,31 @@ describe("groupVendor", () => {
       item({ kind: "plugin", name: "gh", harness: "codex", vendor: null }),
     ]);
     expect(groupVendor(mixed[0])).toBeNull();
+  });
+});
+
+describe("installationAt", () => {
+  const vg = { scope: "project" as const, root: "/work/vg" };
+  const hypr = { scope: "project" as const, root: "/work/hyprtrade" };
+  const group = groupItems([
+    item({ name: "gh", scope: vg, harness: "claude" }),
+    item({ name: "gh", scope: hypr, harness: "codex" }),
+  ])[0];
+
+  // Everything a page reads about a file — its path, its harness, the
+  // rendering a comparison is against — belongs to one place. Another
+  // place's is a different tool's path and a different rendering.
+  it("answers with the copy belonging to the place asked about", () => {
+    expect(installationAt(group, hypr)?.harness).toBe("codex");
+    expect(installationAt(group, vg)?.harness).toBe("claude");
+  });
+
+  it("has nothing for a place the package is not installed in", () => {
+    expect(installationAt(group, { scope: "global" })).toBeUndefined();
+  });
+
+  it("has nothing to answer with when there is no group or no place", () => {
+    expect(installationAt(null, vg)).toBeUndefined();
+    expect(installationAt(group, null)).toBeUndefined();
   });
 });
