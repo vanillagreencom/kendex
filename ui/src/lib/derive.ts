@@ -118,8 +118,6 @@ export function groupItems(items: ObservedItem[]): ItemGroup[] {
   return [...groups.values()].sort((a, b) => a.key.localeCompare(b.key));
 }
 
-/** Who ships this item, when a tool ships it itself — the vendor named by
- *  every installation, or null the moment they disagree or none says. */
 /** The installation belonging to one place, where the group has one.
  *
  *  A package can be installed in several places and a page names one of
@@ -134,6 +132,8 @@ export function installationAt(
   return group.installations.find((install) => sameScope(install.scope, scope));
 }
 
+/** Who ships this item, when a tool ships it itself — the vendor named by
+ *  every installation, or null the moment they disagree or none says. */
 export function groupVendor(group: ItemGroup): string | null {
   const vendor = group.installations[0]?.vendor ?? null;
   if (!vendor) return null;
