@@ -1,8 +1,8 @@
 # Workflow Actions
 
-Multi-step issue/project transitions built from the `linear` skill's commands. Use the command reference in `SKILL.md` for syntax; this file carries only the rules that the commands themselves do not enforce.
+Multi-step issue/project transitions built from the `linear` skill's commands. Command syntax is in `SKILL.md`.
 
-Every state change that reflects a decision (cancel, absorb, rescope, reparent, reprioritize) gets a comment recording the reason in the same step. The comment is the audit trail; the state change alone loses why.
+Every state change that reflects a decision (cancel, absorb, rescope, reparent, reprioritize) gets a comment recording why in the same step.
 
 ## State Transitions
 
@@ -17,7 +17,7 @@ Cancel, duplicate, and absorb are all `comments create` + `issues update --state
 
 ## Descriptions
 
-Write multiline or markdown bodies to a file and pass `--description-file` / `--body-file`. Inline `--description`/`--body` is for short plain strings, and heredocs are blocked under `never` approval.
+Write multiline or markdown bodies to a file and pass `--description-file` / `--body-file`. Inline `--description`/`--body` is for short plain strings only; never use heredocs.
 
 After adding, removing, or reordering children, rebuild the parent's description from its actual `children[]` (read it with `cache issues get [PARENT_ID] --with-bundle`), preserving sections that are still valid.
 
@@ -30,15 +30,15 @@ scripts/linear.sh issues add-relation [ISSUE_ID] --blocks|--blocked-by|--related
 scripts/linear.sh issues remove-relation [ISSUE_ID] --blocks|--blocked-by [OTHER_ID]
 ```
 
-A `make_parent` action carrying `retitle` applies the retitle alongside the reparenting; skipping it leaves the promoted parent reading as a container and splits a bundle the audit decided to keep whole.
+A `make_parent` action carrying `retitle` applies the retitle alongside the reparenting.
 
-Blocking relations are guarded at mutation time — SKILL.md § Blocked Label vs Issue Relations states the shape, and a rejection names the valid replacement pair. Design to that rule rather than re-deriving it.
+Blocking-relation shape: SKILL.md § Blocked Label vs Issue Relations; a rejection names the valid replacement pair.
 
-Never drop a valid dependency because the current structure cannot express it cleanly. Lift child-level dependencies to the parent level when bundles are involved, and use `--related` when the dependency is informational rather than blocking.
+Never drop a valid dependency. Lift child-level dependencies to the parent level when bundles are involved, and use `--related` when the dependency is informational rather than blocking.
 
 ## Labels
 
-`--labels` replaces the entire issue-label set, so every update passes the full intended final set — never just the changed label.
+`--labels` replaces the entire issue-label set: every update passes the full intended final set, never just the changed label.
 
 Before any create or label update from a workflow:
 

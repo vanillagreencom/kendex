@@ -29,7 +29,7 @@ forbid() {
 deps="$SKILL_DIR/references/dependencies.md"
 require "$deps" 'auto-satisfied' 'auto-satisfied semantics'
 require "$deps" 'satisfied history' 'satisfied-history framing'
-require "$deps" 'never remove.*because its blocker is done' 'removal prohibition'
+require "$deps" 'never remove.*whose blocker is done' 'removal prohibition'
 require "$deps" 'never list one under a stale-metadata heading' 'stale-heading prohibition'
 require "$deps" 'ready.to.schedule' 'scheduling signal as the only legitimate output'
 

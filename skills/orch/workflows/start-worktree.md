@@ -24,15 +24,15 @@ The full session from inside a worktree: implement → review → submit → fin
    .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --with-bundle
    ```
 
-   A container, a blocked child, or a `(one PR)` promotion all STOP here without leasing or initializing anything. A promotion is terminal for this worktree: this tree is named for the child and the bundle belongs in the parent's own worktree — point the operator at `/orch start [PARENT_ID]`. For a container, list its unblocked children and say this worktree should not exist for it. For a blocked child, name the live blockers.
+   A container, a blocked child, or a `(one PR)` promotion all STOP here without leasing or initializing anything. A promotion: point the operator at `/orch start [PARENT_ID]`. A container: list its unblocked children and say this worktree should not exist for it. A blocked child: name the live blockers.
 
-3. **Claim the worktree.** A lease means "a live session is working here", and this session is it. **Skip if** `WORKTREE_PATH` is the main checkout — the guard refuses it.
+3. **Claim the worktree.** **Skip if** `WORKTREE_PATH` is the main checkout — the guard refuses it.
 
    ```bash
    .agents/skills/worktree/scripts/worktree-session-guard claim [WORKTREE_PATH] --owner [ISSUE_ID]
    ```
 
-   Do **not** pass `--repo`: `claim` and `refresh` reject it, and a swallowed failure leaves the guard looking installed while it silently never claims. Exit 75 means another session holds the lease — coordinate with that owner instead of proceeding. Exit 1 with a `flock` message means the host has no `flock`, so the session runs unguarded; continue, but do not assume the tree is protected.
+   Do **not** pass `--repo` (`claim` and `refresh` reject it). Exit 75 means another session holds the lease — coordinate with that owner instead of proceeding. Exit 1 with a `flock` message means the host has no `flock`: continue unguarded, but do not assume the tree is protected.
 
 4. **Initialize state**:
 
@@ -41,7 +41,7 @@ The full session from inside a worktree: implement → review → submit → fin
    .agents/skills/orch/scripts/workflow-state init [ISSUE_ID] --worktree [WORKTREE_PATH] --branch "[BRANCH_FROM_PREVIOUS_COMMAND]"
    ```
 
-5. **Gate on base freshness.** Every route into a worktree lands here — fresh or reused. Prove the base is current before any agent spends budget on it:
+5. **Gate on base freshness.** Every route into a worktree lands here — fresh or reused:
 
    ```bash
    .agents/skills/orch/scripts/base-freshness [WORKTREE_PATH]
@@ -79,7 +79,7 @@ The full session from inside a worktree: implement → review → submit → fin
 
 ### 5.2 Move The Issue To In Review
 
-Issues stay In Review until merge marks them Done. **Skip if** `TRACKER=github` — those close via PR merge keywords.
+**Skip if** `TRACKER=github`.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --state "In Review"
@@ -127,7 +127,7 @@ Omit sections with no data; include the sub-issue tree only for a bundle.
 
 ### 5.4 Retire Agents
 
-Terminate every still-active agent in `child_sessions`, then retire the records so reviewer slot accounting stops counting them:
+Terminate every still-active agent in `child_sessions`, then retire the records:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.child_sessions = ((.child_sessions // {}) | with_entries(.value.status = "closed"))'
@@ -141,4 +141,4 @@ Terminate every still-active agent in `child_sessions`, then retire the records 
 .agents/skills/orch/scripts/orch-env ORCH_MERGE_AUTONOMY ask
 ```
 
-`auto` → merge without asking: `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7 → end`. Anything else → ask: `orch merge-pr [PR_NUMBER]` | `Skip`, and on merge run the same workflow. Autonomy applies only on this fully-gated path — a `MERGE_READY = false` state never auto-merges.
+`auto` → merge without asking: `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7 → end`. Anything else → ask: `orch merge-pr [PR_NUMBER]` | `Skip`, and on merge run the same workflow. A `MERGE_READY = false` state never auto-merges.

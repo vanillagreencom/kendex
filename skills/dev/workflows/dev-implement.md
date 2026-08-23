@@ -7,7 +7,7 @@ The workflow for a dev or QA agent receiving a work-item delegation. Skip every 
 | Single | `Issue: [ISSUE_ID]`, `GitHub Issue: OWNER/REPO#N`, or ad-hoc | § 1 → § 2 → § 4-10 → return |
 | Bundled | `Parent: [ISSUE_ID]` + `Sub-Issues: [...]` | § 1 → § 2 → [§ 4-10]×N → § 11 |
 
-**A bundle needs an explicit single-PR marker.** By default a parent with children is a CONTAINER: the orchestrator delegates each child separately with its own PR, and the container closes last. Exactly three things opt a parent into one bundled delegation — `(one PR)` in its title, `Audit Bundle: yes` in the delegation (review-pr's post-audit children, created by the delegating session to be worked inside this PR's session), or a leaf issue carrying an internal checklist. The title marker outranks an `agent:multi` label. With none of them present, stop and report the mis-delegation instead of working the bundle. Check the marker against the delegation's `Parent Title:` line, which dev-start passes verbatim; when a bundled delegation omits that line, read the title first — never classify from labels and children alone, and never reject a bundle without having seen the title:
+**A bundle needs an explicit single-PR marker.** A parent with children is a CONTAINER unless one of exactly three markers is present: `(one PR)` in its title, `Audit Bundle: yes` in the delegation, or a leaf issue carrying an internal checklist. The title marker outranks an `agent:multi` label. With none present, stop and report the mis-delegation. Check the marker against the delegation's `Parent Title:` line; when a bundled delegation omits that line, read the title first — never classify from labels and children alone:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh sync --reconcile
@@ -41,7 +41,7 @@ git -C [WORKTREE_PATH] fetch origin [BASE_BRANCH_FROM_PREVIOUS_COMMAND]
 
 ### 2.1 Claim And Read Context
 
-Determine the tracker: `Issue:`/`Parent: ABC-123` → Linear; `GitHub Issue: OWNER/REPO#N` → GitHub; no reference → ad-hoc, where the delegation text is the source of truth and every tracker write is skipped.
+Determine the tracker: `Issue:`/`Parent: ABC-123` → Linear; `GitHub Issue: OWNER/REPO#N` → GitHub; no reference → ad-hoc (delegation text is the source of truth; skip every tracker write).
 
 Linear only — activate the issue, or the parent alone if bundled (sub-issues activate individually in § 4):
 
@@ -52,7 +52,7 @@ Linear only — activate the issue, or the parent alone if bundled (sub-issues a
 .agents/skills/linear/scripts/linear.sh cache comments list [ISSUE_ID]
 ```
 
-The sync establishes the worktree-local cache — a full sync in a fresh worktree, an incremental reconcile otherwise — and must succeed before activation or any cache read. A missing cache before that command is expected in a fresh worktree. If the sync fails, stop and preserve its exact diagnostic: that is a sync/auth/API/config failure, not a missing-cache result. If a mandatory cache read reports `No cache found` after sync succeeded, stop and report a cache-initialization defect. Never run this Linear preflight for GitHub-tracked or ad-hoc work.
+The sync must succeed before activation or any cache read. A missing cache before that command is expected in a fresh worktree. If the sync fails, stop and preserve its exact diagnostic: that is a sync/auth/API/config failure, not a missing-cache result. If a mandatory cache read reports `No cache found` after sync succeeded, stop and report a cache-initialization defect. Never run this Linear preflight for GitHub-tracked or ad-hoc work.
 
 GitHub only:
 
@@ -66,9 +66,9 @@ Ad-hoc: no tracker reads.
 
 ### 2.2 Research Context
 
-Read the issue description — `.description` from the cache read above, or `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body`. A sub-issue inherits its parent's research context, so read the parent's too; a bundle aggregates the unique paths across its sub-issues.
+Read the issue description — `.description` from the cache read above, or `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body`. For a sub-issue, read the parent's description too; for a bundle, read the unique paths across its sub-issues.
 
-Cited research, decision, and context files are mandatory reading, and how the research applies is yours to decide — you have domain context the orchestrator lacks. Evaluate it against existing patterns and architecture docs, updating those docs when it changes documented patterns, and add anything project-specific worth persisting to `kendex.toml`. Reference the decision a prior research-complete already recorded (`.agents/skills/decider/scripts/decisions search --issue [RESEARCH_ISSUE_ID]`) rather than duplicating it; record a new one only for a decision your evaluation newly reveals.
+Cited research, decision, and context files are mandatory reading; how the research applies is yours to decide. Evaluate it against existing patterns and architecture docs, updating those docs when it changes documented patterns, and add anything project-specific worth persisting to `kendex.toml`. Reference an already-recorded decision (`.agents/skills/decider/scripts/decisions search --issue [RESEARCH_ISSUE_ID]`) rather than duplicating it; record a new one only for a decision your evaluation newly reveals.
 
 ### 2.3 Evaluate Feasibility
 
@@ -80,7 +80,7 @@ Blocked → **§ 3**, then STOP. Clear → § 2.4.
 
 - Linear only, when scope differs from the estimate: `.agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --estimate N` (1=hours, 2=half-day, 3=day, 4=2-3 days, 5=week+).
 - **If bundled**: order sub-issues by dependency and overlap.
-- A required command the issue spec or delegation writes as `VAR=value cmd args` is accepted as an ambient-environment precondition plus the bare `cmd args`, normalized here rather than at run time (orch SKILL.md § Harness-Safe Shell). An unsatisfiable precondition is a blocker to report, never a license to run under the wrong environment.
+- A required command written as `VAR=value cmd args` is normalized here into an ambient-environment precondition plus the bare `cmd args` (orch SKILL.md § Harness-Safe Shell). An unsatisfiable precondition is a blocker to report, never a license to run under the wrong environment.
 
 ### 2.5 Domain Setup
 
@@ -88,7 +88,7 @@ Follow your agent definition for architecture docs, code paths, and skills to lo
 
 ### 2.6 Capture Baseline
 
-**Skip if** the issue has no `baseline` label. Otherwise identify the affected component and, when a benchmarking skill is installed, follow its baseline workflow — the performance QA agent reads that file during QA review.
+**Skip if** the issue has no `baseline` label. Otherwise identify the affected component and, when a benchmarking skill is installed, follow its baseline workflow.
 
 ---
 
@@ -120,7 +120,7 @@ BLOCKED: Cross-domain prerequisite needed.
 Requesting orchestrator create prerequisite issue.
 ```
 
-Your return states the blocker, the domain and labels for the new issue, and that the description is ready for creation; the orchestrator creates it, sets the relation, and delegates. When a blocker later resolves: `linear.sh issues unblock [ISSUE_ID]`.
+Your return states the blocker, the domain and labels for the new issue, and that the description is ready for creation. When a blocker later resolves: `linear.sh issues unblock [ISSUE_ID]`.
 
 ---
 
@@ -130,13 +130,13 @@ Your return states the blocker, the domain and labels for the new issue, and tha
 
 ### 4.1 Verify Branch
 
-`git branch --show-current` must report `[BRANCH_NAME]` — the parent's branch when bundled. The name is what auto-links the PR to the tracker.
+`git branch --show-current` must report `[BRANCH_NAME]` — the parent's branch when bundled.
 
 ### 4.2 Implement
 
 Implement per your domain expertise and run quality gates before completion.
 
-- **Scope growing?** Linear: `linear.sh issues create --state "Backlog" --project "[PARENT_PROJECT]" --parent [PARENT_ID] --labels "[VALIDATED_LABELS]"` (the parent's project, so the child stays in its bundle; Backlog, as every pipeline create; the complete label set — your own `agent:*` label plus every category the project requires, validated against the live inventory — because a Backlog-born child gets no janitor pass) — carry your own `agent:*` label or the sub-issue loses routing (repos declaring `LINEAR_AGENT_LABELS` refuse an unlabeled create). GitHub and ad-hoc report the discovered scope in § 9 instead; never create issues without orchestrator approval.
+- **Scope growing?** Linear: `linear.sh issues create --state "Backlog" --project "[PARENT_PROJECT]" --parent [PARENT_ID] --labels "[VALIDATED_LABELS]"` — the parent's project, `Backlog`, and the complete label set (your own `agent:*` label plus every category the project requires) validated against the live inventory. GitHub and ad-hoc report the discovered scope in § 9 instead; never create issues without orchestrator approval.
 - **Work outside scope?** Note it under Discovered Work in § 9.
 - **Need deeper research?** Add the `needs-research` label, pause, report.
 
@@ -150,7 +150,7 @@ Update docs when the implementation changes a documented API or architecture.
 
 ## 5. Validate
 
-Deterministic gates first — every finding is fixed here, never carried into review. Preflight runs when installed (`test -x .agents/skills/preflight/scripts/preflight`); the size-ratchet gate runs before the PR is opened in a ratcheted repo, one where a baseline exists:
+Deterministic gates first — every finding is fixed here, never carried into review. Preflight runs when installed (`test -x .agents/skills/preflight/scripts/preflight`); the size-ratchet gate runs in a repo where a baseline exists:
 
 ```bash
 .agents/skills/preflight/scripts/preflight --repo [WORKTREE_PATH]
@@ -159,11 +159,11 @@ Deterministic gates first — every finding is fixed here, never carried into re
 .agents/skills/size-ratchet/scripts/size-ratchet
 ```
 
-Then the project's validation command — the one `.agents/skills/orch/scripts/orch-env DEV_VALIDATE_CMD ""` prints (empty → the project's documented build/test/lint command), run from the worktree root — plus the delegation's required verification commands in their § 2.4 normalized form. Failure handling, and the invariant for a run that outlasts your turn, are in [dev SKILL.md § Validation](../SKILL.md#validation).
+Then the project's validation command — the one `.agents/skills/orch/scripts/orch-env DEV_VALIDATE_CMD ""` prints (empty → the project's documented build/test/lint command), run from the worktree root — plus the delegation's required verification commands in their § 2.4 normalized form. Failure handling and long-running runs: [dev SKILL.md § Validation](../SKILL.md#validation).
 
-Every check, guard, assertion, or test this change adds or modifies must have a must-fail control that runs red once ([code-quality § Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards)); a guard without one is not validated.
+Every check, guard, assertion, or test this change adds or modifies must have a must-fail control that runs red once ([code-quality § Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards)).
 
-**Visual QA** — **skip if** the issue has no `design` label. Otherwise use the project's visual QA skills to confirm what your change affects renders correctly, not the full checklist. Do NOT capture golden baselines; that happens at submit-pr time.
+**Visual QA** — **skip if** the issue has no `design` label. Otherwise use the project's visual QA skills to confirm what your change affects renders correctly, not the full checklist. Do NOT capture golden baselines.
 
 ---
 
@@ -181,13 +181,13 @@ git -C [WORKTREE_PATH] commit -m "[PREFIX]([ISSUE_ID]): [DESCRIPTION]"
 git -C [WORKTREE_PATH] log -1 --oneline
 ```
 
-The log read verifies the commit exists before you proceed. Use the CURRENT sub-issue ID when bundled, not the parent's. Never stage lock files the project gitignores — stage specific files by name. Append `[validate: FAILING_CHECK]` when validation failures remain.
+Use the CURRENT sub-issue ID when bundled, not the parent's. Never stage lock files the project gitignores — stage specific files by name. Append `[validate: FAILING_CHECK]` when validation failures remain.
 
 ---
 
 ## 8. Record QA Signals
 
-Based on the FINAL validated code, decide which extra QA passes the change genuinely needs. You wrote the code — this is your call, recorded in the completion artifact (§ 10 `--qa-label`, one per signal), not a tracker mutation. No repository label configuration is involved.
+Based on the FINAL validated code, decide which extra QA passes the change needs. Record them in the completion artifact (§ 10 `--qa-label`, one per signal), not a tracker mutation.
 
 | Trigger | Signal |
 |---------|--------|
@@ -197,7 +197,7 @@ Based on the FINAL validated code, decide which extra QA passes the change genui
 
 Work isolated behind a development-only feature gate does not take `needs-perf-test`: run the feature-gated checks locally and signal only if shared or feature-off paths are affected.
 
-A signal is never silently dropped: every triggered row appears in the artifact and in the return's `QA:` line, and `none` is an explicit answer meaning you evaluated the table and nothing triggered — not a default.
+A signal is never silently dropped: every triggered row appears in the artifact and in the return's `QA:` line, and `none` is an explicit answer, not a default.
 
 ---
 
@@ -205,7 +205,7 @@ A signal is never silently dropped: every triggered row appears in the artifact 
 
 ### 9.1 Completion Comment
 
-Always required — it documents the FINAL state after validation passes. Linear posts it to the issue you implemented: write `tmp/completion-summary-[ISSUE_ID].md`, then `linear.sh comments create [ISSUE_ID] --body-file tmp/completion-summary-[ISSUE_ID].md`. GitHub and ad-hoc rounds return the same content to the orchestrator instead and ALSO carry it in the artifact via `--summary-file` (§ 10), so a lost return cannot lose it while `summary_posted` stays honest.
+Always required. Linear posts it to the issue you implemented: write `tmp/completion-summary-[ISSUE_ID].md`, then `linear.sh comments create [ISSUE_ID] --body-file tmp/completion-summary-[ISSUE_ID].md`. GitHub and ad-hoc rounds return the same content to the orchestrator instead and ALSO carry it in the artifact via `--summary-file` (§ 10).
 
 ```markdown
 ## Completion Summary
@@ -217,7 +217,7 @@ Always required — it documents the FINAL state after validation passes. Linear
 - `path/to/file` - Description
 
 ### Key Decisions
-1. Decision and rationale (DXXX if recorded)
+1. Decision and reasoning (DXXX if recorded)
 
 ### Skills/Docs/Rules Updated
 - `skill-name`: Updated X
@@ -232,9 +232,9 @@ Always required — it documents the FINAL state after validation passes. Linear
 [What the next agent in this bundle needs for its current-scope work: struct changes, API contracts, file locations]
 ```
 
-Omit any section that has nothing in it. Discovered Work is future work beyond this scope, for the backlog rather than the next agent; Handoff Notes are the opposite, and hold no aspirational suggestions.
+Omit any section that has nothing in it. Discovered Work is backlog work beyond this scope; Handoff Notes are for the next agent only, with no aspirational suggestions.
 
-**Discovered Work marker prefixes.** A bullet belonging to a later stage of THIS PR rather than to the backlog carries a marker as the first token of the bullet text, before `[Type]` — the orchestrator's review-pr audit matches it only there, and drops marked bullets instead of converting them into tracked issues. Unmarked bullets are genuine backlog work and go through the TPM audit.
+**Discovered Work marker prefixes.** A bullet belonging to a later stage of THIS PR rather than to the backlog carries a marker as the first token of the bullet text, before `[Type]`. Unmarked bullets go through the TPM audit as backlog work.
 
 - `handoff_to_submit_pr:` — content the upcoming submit-pr step produces, e.g. PR-body material.
 - `handoff_to_merge_pr:` — something the eventual merge-pr step handles.
@@ -244,7 +244,7 @@ Omit any section that has nothing in it. Discovered Work is future work beyond t
 
 **Skip if** the tracker is not Linear, this issue blocks nothing, or completion alone unblocks the downstream work.
 
-Read `.blocks` from `linear.sh cache issues get [ISSUE_ID]`. Post to a downstream issue **only if** this work changed an API, interface, file, or contract it depends on: write `tmp/downstream-handoff-[ISSUE_ID]-to-[DOWNSTREAM_ISSUE_ID].md` naming what changed and what downstream needs to know, then post it with `linear.sh comments create [DOWNSTREAM_ISSUE_ID] --body-file [THAT_FILE]`. Never post it to the completed issue — that conflates audiences: § 9.1 Handoff Notes address the next agent in this bundle, this addresses agents working the issues this one unblocks.
+Read `.blocks` from `linear.sh cache issues get [ISSUE_ID]`. Post to a downstream issue **only if** this work changed an API, interface, file, or contract it depends on: write `tmp/downstream-handoff-[ISSUE_ID]-to-[DOWNSTREAM_ISSUE_ID].md` naming what changed and what downstream needs to know, then post it with `linear.sh comments create [DOWNSTREAM_ISSUE_ID] --body-file [THAT_FILE]`. Never post it to the completed issue.
 
 ---
 
@@ -258,7 +258,7 @@ With every applicable section above complete, write the artifact per [dev SKILL.
 
 One `--qa-label` per § 8 signal, none if nothing triggered. GitHub and ad-hoc rounds append `--no-summary --summary-file tmp/completion-summary-[ISSUE_ID].md`. Bundled rounds add `--bundled` and one `--item` per sub-issue — § 11.
 
-**A read-only analysis round** has no commit and ran no validation, so § 5, § 7, and § 8 do not apply. Pass the recommendation inline, or a file for longer evidence — exactly one of the two, the inline form being the sanctioned route when the harness refuses a file write:
+**A read-only analysis round**: § 5, § 7, and § 8 do not apply. Pass the recommendation inline or as a file — exactly one of the two:
 
 ```bash
 # Single-quote inline text so dollars and double quotes pass literally; keep it
@@ -271,7 +271,7 @@ One `--qa-label` per § 8 signal, none if nothing triggered. GitHub and ad-hoc r
 
 Then return the recommendation in place of the block below.
 
-**Issue state.** A bundled Linear sub-issue is marked Done (`linear.sh issues update [ISSUE_ID] --state "Done"`) and aggregated by the parent session in § 11. The worktree's top-level managed issue is NOT — parent or not, it stays In Progress or In Review until the PR merges, handled by the merge workflow and tracker sync. GitHub and ad-hoc issues close through the PR body or merge, never here.
+**Issue state.** A bundled Linear sub-issue is marked Done (`linear.sh issues update [ISSUE_ID] --state "Done"`) and aggregated by the parent session in § 11. The worktree's top-level managed issue is NOT — it stays In Progress or In Review until the PR merges. GitHub and ad-hoc issues close through the PR body or merge, never here.
 
 **If single**, return now:
 
@@ -312,7 +312,7 @@ Summary: [ISSUE_ID] ✓
    .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [LAST_SUBISSUE_HEAD_SHA] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] --bundled --item [N] [DECISION] [REASONING] [--item ...] [--qa-label [LABEL]]...
    ```
 
-   `--bundled` requires one `--item` per sub-issue result — `DECISION` is Applied, Skipped, or Blocked and `REASONING` non-empty plain text with no backticks — and the writer rejects a bundled artifact with none, so populate them from the sub-issue tree. `--commit` is the last sub-issue's HEAD.
+   `--bundled` requires one `--item` per sub-issue result — `DECISION` is Applied, Skipped, or Blocked and `REASONING` non-empty plain text with no backticks — populated from the sub-issue tree. `--commit` is the last sub-issue's HEAD.
 
 4. **Return.** Posting the parent summary is not a return.
 

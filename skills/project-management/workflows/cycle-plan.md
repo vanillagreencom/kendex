@@ -18,13 +18,13 @@ Generate a cycle plan, get the user's approval on what ships, and apply it.
 
 The JSON carries `completed_project`, `next_projects` (by `sort_order`), `recommended`, and `actions.mark_complete`.
 
-Mark the finished project complete — mechanical, no question:
+Mark the finished project complete without asking:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh projects update [mark_complete.project_id] --state completed
 ```
 
-Then present the candidates and ask which to start. What the team works on next is the user's call.
+Then present the candidates and ask which to start.
 
 <output_format>
 
@@ -45,7 +45,7 @@ Ask: `Activate [recommended.name]` | other projects with `ready: true` | `Skip`.
 
 ## 3. Approve the Plan
 
-The JSON carries `velocity`, `capacity`, `planned_work`, `not_included`, `health`, and `actions`. A velocity baseline adjustment is measured, not chosen — take `velocity.adjustment` as computed and report it in the plan rather than asking.
+The JSON carries `velocity`, `capacity`, `planned_work`, `not_included`, `health`, and `actions`. Take `velocity.adjustment` as computed and report it in the plan; never ask.
 
 <output_format>
 
@@ -99,7 +99,7 @@ Keep the returned cycle ID for assignment.
 
 ### 4.3 Apply Actions
 
-In this order — `sortOrder` is per-state-column, so setting it before the state change gets overwritten:
+In this order:
 
 1. `actions.add_relations[]` — `issues add-relation [FROM_ID] --blocks [TO_ID]`
 2. `actions.set_priorities[]`, `actions.set_estimates[]`, `actions.set_labels[]` — per the Linear CLI's workflow-actions patterns
@@ -107,9 +107,9 @@ In this order — `sortOrder` is per-state-column, so setting it before the stat
 4. `actions.set_sort_order[]` — `issues update [ID] --sort-order [VALUE]`, parents and standalone issues only
 5. `actions.update_initiative` / `actions.update_project` — per workflow-actions § Projects and Initiatives
 
-Then sync bundle state, which is bookkeeping only: an assigned parent pulls its pending children into the same cycle and state; an assigned child whose parent sits in Backlog moves that parent to Todo in the same cycle. A parent with children stays a container — never orchestrated directly, never its own PR, closed last — unless its title carries `(one PR)`.
+Then sync bundle state: an assigned parent pulls its pending children into the same cycle and state; an assigned child whose parent sits in Backlog moves that parent to Todo in the same cycle. A parent with children stays a container unless its title carries `(one PR)`.
 
-No comments on priority updates; the rationale was already shown in the plan.
+No comments on priority updates.
 
 ## 5. Report
 

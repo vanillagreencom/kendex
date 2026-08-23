@@ -186,10 +186,10 @@ done
 # while losing the contract, so the accurate condition must be present in both
 # places that state it.
 assert_file_contains "$SKILL_DIR/SKILL.md" \
-  'or when the token it is bound to no longer matches the lease' \
+  'or when the token it is bound to differs from the lease' \
   "SKILL.md's scripts table states what actually exits 75"
 assert_file_contains "$SKILL_DIR/SKILL.md" \
-  "the round's recorded lease generation no longer matches" \
+  "the round's recorded lease generation differs from the lease" \
   "SKILL.md's Round Closure step states what actually exits 75"
 
 # The delegated agent re-verifies the same lease, so a delegation that lands in

@@ -22,7 +22,7 @@ Fail-open paths, silent failures, error propagation, fallback behavior, wrong-ca
 
 ## Fail-Open Catalogue
 
-The recurring shapes that shipped, in rough frequency order:
+Recurring shapes:
 
 - A validator/verifier that degrades to "no findings" or "not applicable" when its input, probe, or dependency fails — instead of failing loudly.
 - Unchecked effectful calls: `$(mktemp)`/`readlink`/`git` substitutions whose failure leaves an empty variable and a running script; pipelines whose failure is masked (no `pipefail`); discarded error returns.

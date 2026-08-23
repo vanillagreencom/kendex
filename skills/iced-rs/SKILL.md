@@ -19,7 +19,7 @@ tags: [ui]
 ## Workflow
 
 1. Classify the surface against `references/guide-surface-selection.md`. Do not skip.
-2. Read the canonical example in `examples/` — 0.14 signatures differ from 0.13, and generating from memory produces 0.13 code.
+2. Read the canonical example in `examples/` — never generate 0.14 code from memory.
 3. Read the guide for that surface; for animated layered UI, `references/guide-animated-layout.md` comes first.
 4. Stuck: the guide's "Common failure modes" / "Gotchas", then `references/guide-animation-debugging.md` for animation and render bugs. The three most common: missing `capture_event`, missing `invalidate_layout`, 0.13 event signatures.
 
@@ -90,7 +90,7 @@ Local references are pinned to 0.14.0 — prefer them. For newer API surface: `c
 
 ### Widget tree consistency
 
-Iced tracks widgets by tree position, so conditional wrapping changes tree shape and breaks event tracking. Always wrap; conditionally attach the handler.
+Conditional wrapping changes tree shape and breaks event tracking. Always wrap; conditionally attach the handler.
 
 ```rust
 // WRONG: conditional wrapping changes tree shape
@@ -104,7 +104,7 @@ if enable {
 area
 ```
 
-`MouseArea` has no `on_press_maybe` — its `on_press` takes a plain `Message`, so gate the call, not the wrapper. (`on_press_maybe(Option<Message>)` is `button`-only.)
+`MouseArea` has no `on_press_maybe` (`button`-only); gate the `on_press` call, not the wrapper.
 
 ### view() is pure
 
@@ -124,7 +124,7 @@ In custom widget `draw()`, child iteration order determines z-order; last drawn 
 
 ### Overlay visibility requires layout invalidation
 
-A widget that conditionally returns an overlay must call `shell.invalidate_layout()` when visibility changes, or stale layout panics.
+A widget that conditionally returns an overlay must call `shell.invalidate_layout()` when visibility changes.
 
 ```rust
 Event::Mouse(mouse::Event::CursorEntered) => {
@@ -137,11 +137,11 @@ Event::Mouse(mouse::Event::CursorEntered) => {
 
 ### Custom overlays are the #1 panic source
 
-Prefer built-ins (`tooltip`, `float`, `stack`+`opaque`). A violated contract shows up as `container.rs unwrap() on None`. The contract: `children()` returns a fixed count; `diff()` reconciles all children regardless of visibility; `layout()` returns nodes matching children; `draw()` walks the same tree layout produced. Full spec: `references/guide-custom-overlays.md`.
+Prefer built-ins (`tooltip`, `float`, `stack`+`opaque`). A violated contract panics as `container.rs unwrap() on None`. The contract: `children()` returns a fixed count; `diff()` reconciles all children regardless of visibility; `layout()` returns nodes matching children; `draw()` walks the same tree layout produced. Full spec: `references/guide-custom-overlays.md`.
 
 ### Overlay viewport contract
 
-When calling descendant `Widget` methods from inside an `Overlay` impl, pass `Rectangle::INFINITE` as the viewport, **never** the stored viewport from the parent's `overlay()`. `scrollable::overlay` forwards `bounds.intersection(viewport)`, and `iced_wgpu`'s text scissor turns inherited clips into invisible text. `Overlay::layout()` may still use `bounds: Size` for its own coordinate space.
+When calling descendant `Widget` methods from inside an `Overlay` impl, pass `Rectangle::INFINITE` as the viewport, **never** the stored viewport from the parent's `overlay()`. `Overlay::layout()` may still use `bounds: Size` for its own coordinate space.
 
 ### Overlay state isolation
 
@@ -153,7 +153,7 @@ Stacked `mouse_area(...).interaction(...)` layers can block underlying hover/mov
 
 ### Hover stability
 
-Hover sensors must not wrap content whose size changes during the animation they trigger — animated bounds cause enter/exit thrashing. Use a stable outer hitbox. See `references/guide-custom-widgets.md` § "Stable hover hit regions."
+Hover sensors must not wrap content whose size changes during the animation they trigger. Use a stable outer hitbox. See `references/guide-custom-widgets.md` § "Stable hover hit regions."
 
 ### Scroll state initialization
 
@@ -171,7 +171,7 @@ mouse_area(button(content)).on_press(Message::Activate)
 mouse_area(button(content).on_press(Message::Activate)).on_press(Message::Activate)
 ```
 
-`button.on_press` fires on mouse-up; `mouse_area.on_press` fires on mouse-down, which is what makes it the drag-initiation primitive.
+`button.on_press` fires on mouse-up; `mouse_area.on_press` fires on mouse-down — use it for drag initiation.
 
 ### pane_grid
 
@@ -183,19 +183,19 @@ mouse_area(button(content).on_press(Message::Activate)).on_press(Message::Activa
 
 ### Subscriptions
 
-Each data source needs stable identity — `Subscription::run_with(id, stream)` or `.with(id)`, batched with `Subscription::batch`. Without it the subscription is torn down and recreated every view cycle. See `references/subscription.md`.
+Each data source needs stable identity — `Subscription::run_with(id, stream)` or `.with(id)`, batched with `Subscription::batch`. See `references/subscription.md`.
 
 Pre-aggregate high-frequency data in the subscription worker: emit one batch per non-empty ~16ms window, over bounded channels with producer-side `try_send()`.
 
 ### Theming — no custom Theme type for tokens
 
-`Theme::Custom` cannot attach custom data, and a custom `Theme` type requires 15-20 `Catalog` impls. Build the palette with `Theme::custom_with_fn("My Dark", palette, |p| theme::palette::Extended::generate(p))`, keep app tokens in a `LazyLock<AppTokens>` sidecar, and route every visual value through it from style closures that ignore the passed `&Theme`. Introduce a custom `Theme` type only when runtime theme switching demands it.
+Build the palette with `Theme::custom_with_fn("My Dark", palette, |p| theme::palette::Extended::generate(p))`, keep app tokens in a `LazyLock<AppTokens>` sidecar, and route every visual value through it from style closures that ignore the passed `&Theme`. Introduce a custom `Theme` type only when runtime theme switching demands it.
 
 Built-in palette roles are `primary`, `success`, `danger`, `warning`. Fonts load on the entry point (`.font(include_bytes!(...))`); `Font::MONOSPACE` resolves to the first loaded monospace font and `Font::with_name("...")` to a system font. See `references/theme.md`, `references/theme-palette.md`, `references/catalog.md`.
 
 ### Cache staleness
 
-Before writing cached or mirrored UI state, enumerate every mutation path that can stale it. Extend the existing global event path rather than adding a parallel subscription for the same event family, and add at least one regression test per non-obvious invalidation or source-window gate.
+Before writing cached or mirrored UI state, enumerate every mutation path that can stale it. Extend the existing global event path rather than adding a parallel subscription for the same event family; add at least one regression test per non-obvious invalidation or source-window gate.
 
 ## Architecture
 

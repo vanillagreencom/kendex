@@ -1,6 +1,6 @@
 # Update Decision
 
-Change an existing decision's standing when a newer one displaces it or conditions force a re-assessment.
+Change an existing decision's status when a newer one displaces it or conditions force a re-assessment.
 
 | Update | When | Status becomes |
 |--------|------|----------------|
@@ -20,7 +20,7 @@ Set `**Status**:` to the value above. For a revisit, append the outcome:
 
 ## 2. INDEX row
 
-Set the Status column of that decision's row to the same value — the file and the index must not disagree.
+Set the Status column of that decision's row to the same value.
 
 ## 3. Code markers
 

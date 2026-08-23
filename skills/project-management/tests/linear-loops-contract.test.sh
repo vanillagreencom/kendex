@@ -24,37 +24,40 @@ require_fixed() {
 
 [[ -f "$loops" ]] || { echo "skip: docs/linear-loops.md not shipped here"; exit 0; }
 
-require_fixed 'in the Backlog state (never Triage' 'bundle parent is created outside Triage'
+require_fixed 'in the Backlog state (never
+Triage)' 'bundle parent is created outside Triage'
 require_fixed 'with `(one PR)` at the' 'bundle parent carries the single-PR title marker'
-require_fixed 'the parent carries the complete label set its project requires' 'bundle parent carries the full required label set'
-require_fixed 'the parent takes the highest priority' 'bundle parent takes the highest child priority'
+require_fixed 'Labels: the complete set its project requires' 'bundle parent carries the full required label set'
+require_fixed 'Priority: the highest among its children' 'bundle parent takes the highest child priority'
 require_fixed 'the UNION of the children'"'"'s labels for a non-exclusive one' 'required non-exclusive categories take the union'
-require_fixed 'no common
-value means no bundle' 'no common exclusive value means no bundle'
-require_fixed 'combined estimate of its children'"'"'s PR scope' 'single-PR parent carries a combined estimate'
-require_fixed 'on the 1–5 scale — estimate
-the whole PR, never a sum past 5' 'combined estimate stays on the 1-5 scale'
+require_fixed 'no common value
+  means no bundle' 'no common exclusive value means no bundle'
+require_fixed 'Estimate: the children'"'"'s combined PR scope' 'single-PR parent carries a combined estimate'
+require_fixed 'on the 1–5 scale — estimate the
+  whole PR, never a sum past 5' 'combined estimate stays on the 1-5 scale'
 require_fixed '| Filter: Status | **Triage only** |' 'Loop 1 trigger is Triage-only'
-require_fixed 'A trigger that has a parent inherits the parent'"'"'s project' 'a parented trigger inherits its parent project'
+require_fixed 'If the triggering issue has a parent, set the parent'"'"'s project' 'a parented trigger inherits its parent project'
 require_fixed '## First action — disarm the trigger' 'Loop 2 self-disarm section exists'
 require_fixed 'Before anything else, remove the "re-triage" label from the triggering' 'Loop 2 removes its trigger label before any other mutation'
-require_fixed 'stop
-only this task — Tasks 2–6 still run' 'a wrong-team flag stops only Task 1'
+require_fixed 'stop only this task — Tasks 2–6 still
+run' 'a wrong-team flag stops only Task 1'
 
 # --- Task 6 concurrency and boundary guards ---------------------------------
-require_fixed 'Duplicate-bundle guard (concurrent runs have no lock)' 'duplicate-bundle guard exists'
-require_fixed 'simply its oldest member' 'the oldest member leads the bundle'
+require_fixed 'Duplicate-bundle guard:' 'duplicate-bundle guard exists'
+require_fixed 'the LEADER of the final bundle is its oldest member' 'the oldest member leads the bundle'
 require_fixed 'issue is NOT the leader, do not create anything' 'only the leader creates the parent'
-require_fixed '(a) re-check that every selected child still has no parent' 'pre-create recheck: children still unparented'
-require_fixed '(b) search for an existing coordination parent already covering any of' 'pre-create recheck: no covering parent exists'
+require_fixed '(a) re-check that every
+selected child still has no parent' 'pre-create recheck: children still unparented'
+require_fixed '(b) search for an existing
+coordination parent already covering any of them' 'pre-create recheck: no covering parent exists'
 require_fixed 'repeatedly drop any member (including the trigger)' 'cross-boundary pruning is iterative'
 require_fixed 'pass drops nobody' 'pruning runs to a fixed point'
-require_fixed 'If the trigger itself drops, skip this task' 'a dropped trigger skips bundling'
+require_fixed 'If the
+trigger itself drops, skip this task' 'a dropped trigger skips bundling'
 require_fixed 'excluding issues under 10 minutes old that are not in' 'fresh non-Triage (pipeline) issues are never bundle candidates'
-require_fixed 'human-filed issues are born in Triage and stay eligible at any age' 'human creation-time pairs still bundle'
-require_fixed 'on the leader FIRST, then apply the "re-triage"' 'the handoff comment precedes the trigger label'
-require_fixed 'the comment must exist before the label can fire Loop 2' 'handoff ordering rationale is stated'
-require_fixed 'any issue named in a `bundle-handoff from <ID>` comment on' 'handoff-named issues are exempt from the age rule'
-# from <ID>` comment on the trigger' 'handoff-named issues are exempt from the age rule'
+require_fixed 'on the leader FIRST, then apply the
+"re-triage" label' 'the handoff comment precedes the trigger label'
+require_fixed 'any issue named in a `bundle-handoff from <ID>`
+comment on it, are exempt' 'handoff-named issues are exempt from the age rule'
 
 echo "all pass"

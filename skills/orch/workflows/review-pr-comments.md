@@ -17,7 +17,7 @@ On any `gh` or `github.sh` failure: halt, report the error, and ask `Retry` | `S
 
 ## 1. Fetch And Parse
 
-Bot reviews are asynchronous. Triage what exists on the PR **right now** — never block on a bot reaching a terminal state. Bot prose is never a gate: emoji reactions, sticky comments, and checklist text carry no gating weight. Comments arriving later are caught by a later pass, by the caller's review gate, or by its merge gates.
+Triage what exists on the PR **right now** — never block on a bot reaching a terminal state. Bot prose is never a gate: emoji reactions, sticky comments, and checklist text carry no gating weight.
 
 ```bash
 .agents/skills/github/scripts/github.sh pr-data "[PR_NUMBER]" --actionable
@@ -40,7 +40,7 @@ gh api user -q .login
 .agents/skills/github/scripts/github.sh find-comment [PR_NUMBER] --author "[BOT_LOGIN]" --review-summary
 ```
 
-`--review-summary` picks, in order: the "View job" sticky, the review-section comment, then that bot's earliest comment. No bot having posted yet is normal — continue with the human and inline comments that exist.
+`--review-summary` picks, in order: the "View job" sticky, the review-section comment, then that bot's earliest comment. No bot having posted yet → continue with the human and inline comments that exist.
 
 **Extract** per item: `thread_id`/`comment_id`, `author`, `body`, `path`, `line`, `url`, and `source` (`inline` or `pr-level`). Bot review summaries additionally get a `section` and a keyword-derived source type — architectural, documentation, security, testing, performance, or plain suggestion — plus `blocking: true` for security items and `false` when the text says non-blocking or optional. Skip anything the bot labels an inline comment: those are already captured as review threads, with the bot username as `author`. Never filter bot inline threads out.
 
@@ -186,8 +186,6 @@ Persist this group's item set: write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_R
 .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json
 ```
 
-The file route keeps backticks and quotes in review text off the command line; the fresh round id per group keeps a prior group's set from ever satisfying this group's receipt.
-
 ⚠ Fill placeholders only ([Format Tags Are Literal](../SKILL.md#format-tags-are-literal)). `Recommendation:` is the technical fix; the agent owns its own process.
 
 <delegation_format>
@@ -226,7 +224,7 @@ git -C "[WORKTREE_PATH]" log -1 --oneline
 
 Apply the fix-round A×B table in [`dev-fix.md` § 2](dev-fix.md), which is canonical — including exact-commit binding on accept, the bounded git re-read on `accept` with B failing, the report-only tail-reconciliation nudge on `wait` with B passing, and the never-accept `retry` row, which never re-runs the fix. On accept: applied items are marked for reply, items the agent skipped go to the skipped list with their reason, and blocked items become issue candidates in § 6.2.
 
-**Batch per fully-reviewed head.** Push a fix round only after every configured reviewer has reported on the current head — each push restarts every reviewer; triage itself never waits (§ 1), the push does.
+**Batch per fully-reviewed head.** Push a fix round only after every configured reviewer has reported on the current head.
 
 Push, then reply to and resolve every inline thread handled in this pass — do not defer them to § 7:
 
@@ -237,7 +235,7 @@ git -C "[WORKTREE_PATH]" push origin HEAD
 | Outcome | Reply body |
 |---------|------------|
 | Applied | `Applied in [COMMIT_SHA]: [SHORT_FIX_SUMMARY]` |
-| Skipped | `Acknowledged — [RATIONALE]` |
+| Skipped | `Acknowledged — [REASON]` |
 | Blocked → issue | `Tracking in [CREATED_ISSUE_ID]` |
 | Already fixed | The finding's `draft_response` |
 
@@ -247,7 +245,7 @@ git -C "[WORKTREE_PATH]" push origin HEAD
 .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.replied '{"source_id":"[THREAD_ID]","commit":"[COMMIT_SHA]","outcome":"[applied|skipped|blocked|already_fixed]"}'
 ```
 
-Inline `--body` is safe only for plain strings; a rationale or draft response containing backticks or fences goes to a file and `--body-file` instead. PR-level comments and human-only threads stay deferred to § 7.
+Inline `--body` only for plain strings; a reply containing backticks or fences goes to a file and `--body-file` instead. PR-level comments and human-only threads stay deferred to § 7.
 
 ### 6.2 Create Issues
 
@@ -255,7 +253,7 @@ Inline `--body` is safe only for plain strings; a rationale or draft response co
 
 ### 6.3 Re-Triage Or Exit
 
-After pushing, do **not** wait for bots to re-review — late findings are caught by the merge gates. Check once for comments that arrived while fixes were being applied, then loop or exit.
+After pushing, do **not** wait for bots to re-review. Check once for comments that arrived while fixes were being applied, then loop or exit.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] pr_comment_review.iterations
@@ -292,9 +290,9 @@ A thread is new when its `threads[].id` is not in `known`. No new threads → §
 | Blocked or issue created | `Tracking in [ISSUE_ID]` |
 | Question | The finding's `draft_response` |
 
-Use inline `--body` only for plain strings; Markdown with backticks or fences goes to a file and `--body-file` (`post-reply` for threads, `post-comment` for PR-level). Number lists `1.` `2.` `3.`, never `#N` — GitHub auto-links `#N` to issues.
+Use inline `--body` only for plain strings; Markdown with backticks or fences goes to a file and `--body-file` (`post-reply` for threads, `post-comment` for PR-level). Number lists `1.` `2.` `3.`, never `#N`.
 
-**Contested bot reviews.** When a domain agent classifies a bot's blocking comment as noise: tag the bot with the rationale and a re-review request, dismiss its `CHANGES_REQUESTED` with `github.sh dismiss-review [PR_NUMBER] --bot --message "[RATIONALE]"`, and resolve the thread. Tag a human reviewer the same way, but never dismiss their review.
+**Contested bot reviews.** When a domain agent classifies a bot's blocking comment as noise: tag the bot with the reason and a re-review request, dismiss its `CHANGES_REQUESTED` with `github.sh dismiss-review [PR_NUMBER] --bot --message "[REASON]"`, and resolve the thread. Tag a human reviewer the same way, but never dismiss their review.
 
 Auto-resolve every thread where a reply was posted; keep open only threads awaiting a human response.
 
@@ -326,7 +324,7 @@ Awaiting your response — ask questions, override skipped items, or confirm don
 
 **Stop and wait for the user.** A request to fix a skipped item delegates that single item via § 6.1, pushes, and returns here. Confirmation goes to § 8.
 
-**Standalone only**: post the cumulative summary as a PR comment when there were fixes or created issues, written to a file first so the Markdown is shell-safe, and on the Linear issue too when `TRACKER` is `linear`.
+**Standalone only**: post the cumulative summary as a PR comment when there were fixes or created issues, written to a file first, and on the Linear issue too when `TRACKER` is `linear`.
 
 ```markdown
 ## Recommendations Processed

@@ -15,11 +15,11 @@ Returned inline by `tpm-audit.md` and written by the caller to `tmp/audit-projec
 }
 ```
 
-`tracker` echoes the resolved execution tracker so analyzed-mode consumers route mutations without re-inference; `repository` is github-only. In github mode `projects_analyzed` is empty and every project-placement field is null or omitted.
+`tracker` echoes the resolved execution tracker; `repository` is github-only. In github mode `projects_analyzed` is empty and every project-placement field is null or omitted.
 
 ## Label Contract
 
-Any output that can create an issue or change labels carries full label intent. `create_fields.labels[]` is the complete set to pass to create after preflight; a label finding on an existing issue names its operation (`add`, `replace_category`, or explicit full replacement) so the caller preserves unrelated labels. `agent` and `agent_label` are derived fields, never sufficient for mutation. All labels are issue labels.
+`create_fields.labels[]` is the complete set to pass to create after preflight; a label finding on an existing issue names its operation (`add`, `replace_category`, or explicit full replacement). `agent` and `agent_label` are derived fields, never sufficient for mutation. All labels are issue labels.
 
 ## PROJECT Mode
 
@@ -59,7 +59,7 @@ Any output that can create an issue or change labels carries full label intent. 
 
 **`ready_to_schedule[]`** is a scheduling signal only — an active issue whose blockers are all Done or Cancelled. Completed-blocker relations are satisfied history, never stale metadata: they never appear in `remove_relations[]` or under any stale-metadata framing.
 
-**`analysis[]`** holds non-actionable observations only. Anything actionable must use a structured field; recommendations left in `analysis[]` are not processed.
+**`analysis[]`** holds non-actionable observations only; anything actionable must use a structured field.
 
 **`architecture_gaps[]`**:
 
@@ -136,7 +136,7 @@ Any output that can create an issue or change labels carries full label intent. 
 | `combine` | Absorb into an existing issue |
 | `cancel` | Cancel — obsolete |
 
-`approved_at_plan_gate` and `reapprove` travel together (roadmap-create § 4.2, audit-issues § 6): the top-level flag binds the file to a same-session plan-gate approval of this plan, and `reapprove: true` marks an entry changed since — a normalizer that drops one must drop both, or an edited entry reads as approved. Both default false/absent outside roadmap-create. Every `skip` carries a one-line `reason` naming the duplicate, the covering issue, or the creation-bar test it failed. `create_fields.labels[]` is required for `create`; `label_updates[].final_labels[]` is required when `mode` is `replace_all`. A `label_cooccurrence.missing` with no `label_updates[]` entry is treated as `mode: add` for that label's category.
+`approved_at_plan_gate` and `reapprove` travel together (roadmap-create § 4.2, audit-issues § 6): the top-level flag binds the file to a same-session plan-gate approval, and `reapprove: true` marks an entry changed since; a normalizer that drops one must drop both. Both default false/absent outside roadmap-create. Every `skip` carries a one-line `reason` naming the duplicate, the covering issue, or the creation-bar test it failed. `create_fields.labels[]` is required for `create`; `label_updates[].final_labels[]` is required when `mode` is `replace_all`. A `label_cooccurrence.missing` with no `label_updates[]` entry is treated as `mode: add` for that label's category.
 
 ### Hierarchy Field
 
@@ -147,7 +147,7 @@ Any output that can create an issue or change labels carries full label intent. 
 | `make_child` | `#N` | Sub-issue of issue #N in this batch |
 | `make_child` | null | Sub-issue of the input's `parent_issue` |
 
-A parent created or promoted this way is a container by default: each child ships as its own PR and the parent closes last. `(one PR)` marks the opt-in single-PR exception — carried in the title at creation for a new parent, and in `hierarchy.retitle: "[current title] (one PR)"` for an existing issue promoted via `make_parent`, applied alongside the reparenting. Without the retitle, a promoted parent reads as a container and splits work the audit decided to keep whole.
+A parent created or promoted this way is a container by default. `(one PR)` marks the opt-in single-PR exception — in the title at creation for a new parent, and in `hierarchy.retitle: "[current title] (one PR)"` for an existing issue promoted via `make_parent`, applied alongside the reparenting.
 
 ## PROJECT-ORDER Mode
 
@@ -179,4 +179,4 @@ A parent created or promoted this way is a container by default: each child ship
 }
 ```
 
-`layer` is the architectural position: 0 foundation (no dependencies), 1 core infrastructure, 2 features, 3 integration and testing, 4 polish and release. `sort_order` is relative **within one state column only** — positions and spacing are computed per column, never across the whole project list.
+`layer` is the architectural position: 0 foundation (no dependencies), 1 core infrastructure, 2 features, 3 integration and testing, 4 polish and release. `sort_order` is relative **within one state column only**; compute positions and spacing per column.

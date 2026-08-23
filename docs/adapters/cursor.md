@@ -1,8 +1,7 @@
 # Cursor
 
-The narrowest adapter. Cursor has no agents and no skills — it has rules —
-so an agent installs as a rule file, skills are unsupported rather than
-misreported, and nothing about a rule is enforced.
+The narrowest adapter. Cursor has rules only: an agent installs as a rule
+file, skills are unsupported, and nothing about a rule is enforced.
 
 ## Roots
 
@@ -26,37 +25,33 @@ Project marker: a `.cursor/` directory. Owner:
 | plugin | `~/.cursor/plugins/{local,cache}` with `.cursor-plugin/plugin.json` | — | observe only, global |
 | pi-extension | — | — | unsupported |
 
-**Skills are unsupported on purpose.** They share the rules directory with
-agents and cannot be told apart from them, so kendex declines to guess rather
-than reporting one as the other.
+**Skills are unsupported.** They share the rules directory with agents and
+cannot be told apart; kendex does not guess.
 
-**Cursor is managed project-only.** There is no global rules directory, so
-the global agent surface is empty; the global command, MCP and plugin
-surfaces do exist and are scanned.
+**Cursor is managed project-only.** The global agent surface is empty; the
+global command, MCP and plugin surfaces are scanned.
 
 ## Format facts
 
-- **Byte cap:** none.
 - **Name rule:** `Any`. Namespace separator `__`.
 - **MCP transports:** stdio, streamable HTTP, SSE — a command, an SSE url or
   a streamable-HTTP url ([cursor.com/docs/context/mcp](https://cursor.com/docs/context/mcp)).
 - **Rule file:** `<name>.mdc`, YAML frontmatter + markdown. kendex writes
   exactly `description` (the agent's name and description joined) and
-  `alwaysApply: false`. Rules carry no model, tool, skill or hook fields, so
+  `alwaysApply: false`. Rules carry no model, tool, skill or hook fields;
   only the prompt survives (`crates/core/src/render/agent/cursor.rs`).
 - **Model dialect:** every tier resolves to nothing — the renderer drops the
-  field, because rules have none.
+  field.
 - **Frontmatter keys Cursor honors:** `description`, `globs`, `alwaysApply`.
-  Anything else is advisory folklore, and the validator says so with that
-  word (`CURSOR_KEYS`, `crates/core/src/render/validate/agent.rs`).
+  Anything else the validator reports as advisory
+  (`CURSOR_KEYS`, `crates/core/src/render/validate/agent.rs`).
 - **Agent scoping:** not applicable — hooks are advisory here, whoever
   they are scoped to.
 
 ## Permissions
 
-A rule grants no tools, so a permission intent cannot be widened here — but
-it cannot be enforced either. Any intent other than `Unspecified` produces a
-warning saying the restriction is advisory text only, with the fix being to
+A rule grants no tools and enforces none. Any intent other than
+`Unspecified` produces a warning that the restriction is advisory text only;
 drop Cursor from that agent's harnesses if the restriction must hold.
 
 ## Hooks
@@ -67,9 +62,8 @@ description and its safety prose with `alwaysApply: true`, and there is no
 registration behind it (`HookTarget::Rule`,
 `crates/core/src/engine/targets.rs`).
 
-Note the asymmetry: `hooks.json` is the surface kendex *observes* at both
-scopes, while what it *writes* is a rule in the rules directory. Cursor's
-own `hooks.json` is read and never written, and the global scope has no hook
-target at all — a hook declared for Cursor at global scope installs nothing.
+`hooks.json` is observed at both scopes and never written; what kendex
+writes is a rule in the rules directory. The global scope has no hook
+target — a hook declared for Cursor at global scope installs nothing.
 
 Disabling renames the rule file to `.disabled`.

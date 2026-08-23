@@ -1,6 +1,6 @@
 # Label Management Reference
 
-Issue labels are a validated contract, not free-form strings. Every create/update path uses two inputs: the **live issue-label inventory** from the tracker, and the **project taxonomy** the project supplies (`kendex.toml` `[skill-instructions]`, a project doc, or a project reference file). This file defines the mechanism; the project defines the names, colors, and required categories.
+Every create/update path uses two inputs: the **live issue-label inventory** from the tracker, and the **project taxonomy** the project supplies (`kendex.toml` `[skill-instructions]`, a project doc, or a project reference file). The project defines the names, colors, and required categories.
 
 ## Issue Labels vs Project Labels
 
@@ -22,7 +22,7 @@ Run before any workflow creates an issue or updates issue labels:
 
 GitHub-tracked runs read live instead — `gh label list --repo [OWNER/REPO] --limit 200 --json name,description` — with no cache or sync step.
 
-Safe inventory rows carry enough metadata to reject parent/group labels:
+Safe inventory row shape:
 
 ```json
 {"id": "uuid", "name": "agent:example", "color": "#9C27B0", "description": "...", "team": "Team name or empty", "parent": "Agent", "is_group": false}
@@ -32,7 +32,7 @@ If `is_group` is absent, refresh the cache. If it stays absent, treat any label 
 
 ## Project Taxonomy Contract
 
-Storage may be TOML, JSON, or prose, as long as it maps unambiguously to this shape:
+Storage may be TOML, JSON, or prose mapping unambiguously to this shape:
 
 ```json
 {
@@ -62,7 +62,7 @@ Any failure halts before mutation and reports: the requested set, the missing la
 
 ## Creates Carry the Full Set
 
-A new issue needs a complete validated `labels[]`. `agent` / `agent_label` are derived, backward-compatible fields and are never sufficient on their own:
+A new issue needs a complete validated `labels[]`; `agent` / `agent_label` alone are never sufficient:
 
 ```json
 {"title": "Implement: example scope", "labels": ["agent:example", "domain-example", "workflow-label"]}
@@ -78,7 +78,7 @@ A new issue needs a complete validated `labels[]`. `agent` / `agent_label` are d
 | Add domain / workflow / classification | Fetch current labels, union with the new ones |
 | Full replacement | Only when the workflow output says `replace_all_labels: true` |
 
-A bare `issues update [ID] --labels "agent:new"` strips every other label. It is correct only when the validated final set really is that one label.
+A bare `issues update [ID] --labels "agent:new"` strips every other label; use it only when the validated final set is that one label.
 
 ## Creating Labels
 

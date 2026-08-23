@@ -18,14 +18,14 @@ Delegate implementation to specialist agent(s). Handles a single issue and a bun
 
 Resolve `TRACKER` first — `github` skips the Linear-only container preflight.
 
-**Container preflight** (Linear only, before any workflow state exists). Fetch the bundle with `--with-bundle` — it carries the `blocked_by` and `depth` fields the gate needs:
+**Container preflight** (Linear only, before any workflow state exists). Fetch the bundle with `--with-bundle`:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh sync --reconcile
 .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --with-bundle
 ```
 
-Apply the Ancestor gate ([SKILL.md § Coordination](../SKILL.md#coordination)). A container is refused before anything is initialized, with its unblocked children surfaced as the startable items. A `(one PR)` ancestor promotion is TERMINAL for this invocation: stop and route to `/orch start [PARENT_ID]` rather than continuing with the child's id. A blocked child stops with its live blockers named. Caller context `audit_bundle: true` is a mechanical single-PR opt-in equivalent to the `(one PR)` marker — the children were created by the calling session's audit to be worked inside this PR's session — so skip the refusal for that parent and carry `Audit Bundle: yes` in the delegation. Managed callers already ran this gate.
+Apply the Ancestor gate ([SKILL.md § Coordination](../SKILL.md#coordination)). A container is refused before anything is initialized, with its unblocked children surfaced as the startable items. A `(one PR)` ancestor promotion is TERMINAL for this invocation: stop and route to `/orch start [PARENT_ID]` rather than continuing with the child's id. A blocked child stops with its live blockers named. Caller context `audit_bundle: true` is equivalent to the `(one PR)` marker: skip the refusal for that parent and carry `Audit Bundle: yes` in the delegation. Managed callers already ran this gate.
 
 Apply [Worktree Scope](../SKILL.md#workflow-execution) and resolve `WT_PATH`: inside a worktree use the current directory; from the main repo use `worktree path [ISSUE_ID]` when it exists, and ask the user before creating one when it does not.
 
@@ -71,9 +71,9 @@ Before EVERY implementation delegation, including each group's delegation in bun
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
 ```
 
-`worktree-claim` exit 75 aborts the delegation: another session holds this worktree, and its stderr names the holder — coordinate with that owner, never re-run to take the tree. Exit 1 is an unverifiable guard; stop and report it. Embed its printed token as `[WORKTREE_LEASE]` in the delegation's `Worktree Lease:` line, the round token as `[DEV_ROUND_ID]` in the `Round ID:` line, and arm the watchdog (backgrounded `dev-artifact-check --wait 600 …`) per [SKILL.md § Round Closure](../SKILL.md#round-closure). On Codex, resolve spawn parameters with `scripts/spawn-adapter spawn [AGENT_TYPE]`.
+`worktree-claim` exit 75 aborts the delegation: another session holds this worktree (stderr names the holder) — coordinate with that owner, never re-run to take the tree. Exit 1: stop and report it. Embed its printed token as `[WORKTREE_LEASE]` in the delegation's `Worktree Lease:` line, the round token as `[DEV_ROUND_ID]` in the `Round ID:` line, and arm the watchdog (backgrounded `dev-artifact-check --wait 600 …`) per [SKILL.md § Round Closure](../SKILL.md#round-closure). On Codex, resolve spawn parameters with `scripts/spawn-adapter spawn [AGENT_TYPE]`.
 
-After each spawn, persist the session — `"status": "active"` is what reviewer slot accounting counts:
+After each spawn, persist the session:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.child_sessions["[AGENT_TYPE]"] = {"status": "active", "agent_id": "[AGENT_OR_TASK_ID]", "runtime_agent_type": "[RUNTIME_AGENT_TYPE]", "agent_type_fallback": [FALLBACK_REASON_JSON_OR_NULL]}'
@@ -92,13 +92,13 @@ Artifact Key: [ISSUE_ID]
 Labels: [LABELS]
 </delegation_format>
 
-**GitHub items** replace the `Issue:` line with `GitHub Issue: [OWNER/REPO]#[N]`. `Artifact Key:` stays `[ISSUE_ID]` — the normalized workflow-state key is what `dev-artifact-check --issue` resolves, never `OWNER/REPO#N`.
+**GitHub items** replace the `Issue:` line with `GitHub Issue: [OWNER/REPO]#[N]`. `Artifact Key:` stays `[ISSUE_ID]`, never `OWNER/REPO#N`.
 
 ### Bundled issue
 
 Group pending sub-issues by `agent:[TYPE]` label and order them per [SKILL.md § Coordination](../SKILL.md#coordination) sequencing. Process groups sequentially: delegate → wait → validate (§ 3) → collect handoff notes → next group.
 
-Between groups, read each completed sub-issue's comments for a `Handoff Notes` section and combine them into the next delegation. Re-run all four § 2 stamps immediately before each group's delegation, so every group's round id scopes its own artifact path and a prior group's receipt can never satisfy this group's check, and no group is delegated into a worktree another session has taken.
+Between groups, read each completed sub-issue's comments for a `Handoff Notes` section and combine them into the next delegation. Re-run all four § 2 stamps immediately before each group's delegation.
 
 <delegation_format>
 Follow workflow: .agents/skills/dev/workflows/dev-implement.md
@@ -115,7 +115,7 @@ Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
 Labels: [parent labels]
 Audit Bundle: [yes — only when caller context `audit_bundle: true`; omit otherwise]
-Parent Title: [PARENT_TITLE — the `.title` from the preflight bundle read, verbatim, so the dev agent can apply the container guard itself]
+Parent Title: [PARENT_TITLE — the `.title` from the preflight bundle read, verbatim]
 
 **Work pending issues only** (completed ones are listed for context). Complete blockers before blocked issues.
 
@@ -131,7 +131,7 @@ Handoff from prior agents:
 
 ## 3. Accept The Round
 
-Acceptance is a pure function of **A** (the on-disk artifact) and **B** (git and tracker completion). The return message is display-only and routinely absent — run A/B on the § 2 watchdog deadline rather than waiting for one.
+Acceptance is a pure function of **A** (the on-disk artifact) and **B** (git and tracker completion). The return message is display-only — run A/B on the § 2 watchdog deadline rather than waiting for one.
 
 **Check A** — two tool calls:
 
@@ -142,7 +142,7 @@ Acceptance is a pure function of **A** (the on-disk artifact) and **B** (git and
 .agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND]
 ```
 
-`A` is the `verdict` field — `accept`, `wait`, or `retry`, as the table below reads them. The check resolves `[WORKTREE_PATH]/tmp/dev-return-[ISSUE_ID]-[DEV_ROUND_ID].json` and matches its internal `round_id`, so only this delegation's receipt can satisfy A.
+`A` is the `verdict` field — `accept`, `wait`, or `retry`. The check resolves `[WORKTREE_PATH]/tmp/dev-return-[ISSUE_ID]-[DEV_ROUND_ID].json` and matches its internal `round_id`.
 
 **Check B** — `B = pass` only when every check passes:
 
@@ -157,15 +157,15 @@ git -C "[WORKTREE_PATH]" status --porcelain
 
 | A (verdict) | B (git/tracker) | Action |
 |---|---|---|
-| `accept` | pass | **Accept** even with no return message. First confirm exact-commit binding — the artifact's `.commit` must equal `git -C [WORKTREE_PATH] rev-parse HEAD` — so a later unrelated commit is never attributed to this round. → Store QA state. |
-| `accept` | fail | The artifact claims done, git or the tracker disagree. Re-read ONCE after a brief pause (a transient tracker lag must not trigger a duplicate-summary re-delegation); if still failing, re-delegate only the specific missing step: commit the work, or commit/revert leftover files, or post the summary. Do not proceed. |
-| `wait` | pass | Code landed but the round did not finish — B proves a commit exists, not that the tail ran. Do NOT re-run the implementation. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write … --round-id [DEV_ROUND_ID]`) and re-report validate status, QA labels, and summary; do NOT re-run the implementation."* Accept only when a valid artifact for THIS round appears. |
+| `accept` | pass | **Accept** even with no return message. First confirm exact-commit binding — the artifact's `.commit` must equal `git -C [WORKTREE_PATH] rev-parse HEAD`. → Store QA state. |
+| `accept` | fail | Re-read ONCE after a brief pause; if still failing, re-delegate only the specific missing step: commit the work, or commit/revert leftover files, or post the summary. Do not proceed. |
+| `wait` | pass | Do NOT re-run the implementation. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write … --round-id [DEV_ROUND_ID]`) and re-report validate status, QA labels, and summary; do NOT re-run the implementation."* Accept only when a valid artifact for THIS round appears. |
 | `wait` | fail | **Not done.** Wait to the deadline, then escalate per [SKILL.md § Round Closure](../SKILL.md#round-closure). |
 | `retry` | any | An artifact for THIS round exists but fails a gate — the check's `reason` names it. A failing `validate` re-delegates fixing the validation; an identity/schema failure gets the report-only tail-rewrite nudge. Never accept, and never treat it as absent. |
 
-**Analysis rounds.** When THIS round was delegated as investigate-and-recommend, the honest receipt is `kind: analysis`: no `commit`, no `validate`, the recommendation in `summary`. B is redefined: expect NO new commit and a clean worktree, with no exact-commit binding and no validate gate. On A `accept` + B pass, read the recommendation and decide the next step yourself: delegate implementation as a fresh round, close with reasoning, or re-scope. A `kind` that does not match what was delegated is a mis-filed round — treat it as the `retry` row.
+**Analysis rounds.** When THIS round was delegated as investigate-and-recommend, the receipt is `kind: analysis`: no `commit`, no `validate`, the recommendation in `summary`. B expects NO new commit and a clean worktree, with no exact-commit binding and no validate gate. On A `accept` + B pass, read the recommendation and decide the next step: delegate implementation as a fresh round, close with reasoning, or re-scope. A `kind` that does not match what was delegated → the `retry` row.
 
-Do not import the reviewer's re-delegate-on-invalid rule; the asymmetry is intentional ([references/artifact-checks.md](../references/artifact-checks.md)).
+Do not import the reviewer's re-delegate-on-invalid rule ([references/artifact-checks.md](../references/artifact-checks.md)).
 
 **Store QA state** on accept:
 

@@ -1,6 +1,6 @@
 # Code Review Lifecycle
 
-Review agents run in parallel, each reviewing the same changes from their own domain (defined in their agent file). You review and return a verdict; the orchestrator owns tracker state, fix routing, and presentation.
+Review agents run in parallel, each reviewing the same changes from their own domain. You review and return a verdict; the orchestrator owns tracker state, fix routing, and presentation.
 
 ## 1. Diff
 
@@ -21,7 +21,7 @@ git -C [WORKTREE_PATH] diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEAD
 
 ## 2. Review
 
-Review the changed code and directly affected call paths per your agent file and the reviewer skill's Ethos, reading from the worktree as needed (a deleted path is inspected via the diff or git history, not a working-tree read; research documents are excluded). Findings must respect the delegation's listed decisions. If a listed decision file does not exist, the delegation broke the orchestrator's decision-path provenance rule — do not hunt for the intended file; note the broken reference in your report and review without it.
+Review the changed code and directly affected call paths per your agent file and the reviewer skill's Ethos, reading from the worktree as needed (a deleted path is inspected via the diff or git history; research documents are excluded). Findings must respect the delegation's listed decisions. If a listed decision file does not exist, do not hunt for it; note the broken reference in your report and review without it.
 
 Mutation-validating a test as evidence commits you to the skill's Mutation-Stability Pairing.
 

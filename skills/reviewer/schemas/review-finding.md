@@ -2,7 +2,7 @@
 
 Canonical JSON output shape for every review/QA verdict. Artifact path: `[worktree-path]/tmp/review-{agent}-YYYYMMDD-HHMMSS.json`, where `{agent}` is the FULL agent name including its `reviewer-` prefix (`reviewer-security` → `review-reviewer-security-20260720-141530.json`). Codebase reviews insert `-codebase` before the timestamp.
 
-Write the artifact with the harness file-write/edit tool (Codex: `apply_patch`) — never shell redirection, heredocs, `tee`, or command substitution. The validating authority is orch's `review-artifact-check`; self-validate with it before returning (reviewer SKILL.md § Output Contract).
+Write the artifact with the harness file-write/edit tool (Codex: `apply_patch`) — never shell redirection, heredocs, `tee`, or command substitution. Self-validate with orch's `review-artifact-check` before returning (reviewer SKILL.md § Output Contract).
 
 ## Schema
 
@@ -69,14 +69,14 @@ Every item requires all of these; one missing field rejects the whole artifact.
 |-------|----------|-------------|
 | `id` | Yes | Sequential number within its array |
 | `title` | Yes | Concise title (5-10 words) — used if the item becomes a tracked issue |
-| `location` | Yes | One string: stable path plus symbol, no line numbers (they go stale) — line/hunk evidence belongs in `description` |
+| `location` | Yes | One string: stable path plus symbol, no line numbers — line/hunk evidence belongs in `description` |
 | `description` | Yes | Problem statement |
 | `recommendation` | Yes | Actionable fix/improvement steps |
 | `priority` | Yes | Integer 1-4 (P1 Urgent, P2 High, P3 Normal, P4 Low). There is no P5 — a finding below P4 is not worth reporting |
 | `estimate` | Yes | 1-5 points (1=hours, 2=half-day, 3=day, 4=2-3 days, 5=week+) |
 | `category` | Suggestions only | `fix` (apply in this PR) or `issue` (track separately) — the orchestrator routes on this field |
 
-`category: "issue"` items become tracked issue candidates — write at issue quality: `description` 2-3 sentences; `recommendation` as bullet-list requirements; `impact` (required) one line naming who hits this on what real path. An impact that needs "could", "might", or "in theory" is a decline, not an issue — say so in the review summary instead.
+`category: "issue"` items become tracked issue candidates: `description` 2-3 sentences; `recommendation` as bullet-list requirements; `impact` (required) one line naming who hits this on what real path. An impact that needs "could", "might", or "in theory" is not an issue — note it in the review summary instead.
 
 ## Question Fields (PR comment triage only)
 
@@ -96,22 +96,19 @@ Per-agent QA payload (`workflows/qa-review.md`); `{}` when there is none. A revi
 
 ## Measurement Claims
 
-`.summary` and `.qa_metadata` are where you state your OWN measurements, and only those two are
-scanned. Your mutation-stability pairing citation (reviewer SKILL.md § Mutation-Stability Pairing)
-therefore belongs in `.summary`: the same numbers written only into a blocker or suggestion are read
-as evidence you are quoting, are not checked, and so hide your own measurement from the gate. A measurement cited there must carry samples: `review-artifact-check` rejects the
-artifact (`zero_sample`) when a mutation/stability citation's SAMPLE COUNT — the denominator, or
-the thread count — is zero, or when `qa_metadata.perf_qa` carries no `percentiles` value above
-zero. A zero RESULT is not a zero sample: `stability: 0/10` is ten measured runs that all failed,
-and stays valid because it is the finding.
+`.summary` and `.qa_metadata` state your OWN measurements; only those two are scanned. Your
+mutation-stability pairing citation (reviewer SKILL.md § Mutation-Stability Pairing) belongs in `.summary`;
+the same numbers written only into a blocker or suggestion are not checked. `review-artifact-check`
+rejects the artifact (`zero_sample`) when a mutation/stability citation's SAMPLE COUNT — the
+denominator, or the thread count — is zero, or when `qa_metadata.perf_qa` carries no `percentiles`
+value above zero. A zero RESULT is not a zero sample: `stability: 0/10` is ten measured runs and
+stays valid.
 
 Numbers you are QUOTING — a fixture, a log line, another tool's zeroed run — belong in the
-`blockers[]`/`suggestions[]` item they are evidence for. Those arrays describe the code under
-review, are never scanned, and are the honest route for reporting somebody else's dead
-instrument.
+`blockers[]`/`suggestions[]` item they are evidence for; those arrays are never scanned.
 
-When YOUR OWN instrument produced nothing, keep the evidence and declare it — set the
-**top-level** `measurement_failed` to a string naming the instrument and what it did:
+When YOUR OWN instrument produced nothing, keep the evidence and set the **top-level**
+`measurement_failed` to a string naming the instrument and what it did:
 
 ```json
 {"agent": "reviewer-test", "verdict": "action_required",
@@ -121,9 +118,7 @@ When YOUR OWN instrument produced nothing, keep the evidence and declare it — 
 It must be substantive: at least 20 characters and 3 words, and never a null token (`n/a`,
 `none`, `unknown`, ...) or bare punctuation — those are rejected as `invalid_declaration`. The
 declaration replaces the gate for that artifact, turns the check's reason into
-`valid_undermeasured`, and is echoed back on the result, so the instrument failure reaches the
-orchestrator as a machine-readable state instead of being deleted to get past a rejection.
-Omitting the numbers is never the way past this gate.
+`valid_undermeasured`, and is echoed back on the result. Omitting the numbers is never the way past this gate.
 
 Declaring a `qa_metadata` object also commits the artifact to usable findings: `review-artifact-check` rejects it (`incomplete`) when `blockers[]`/`suggestions[]` are missing or not arrays, or when a present item omits a required field above (`questions[]` is exempt). Artifacts without `qa_metadata` keep the tolerant existence + `verdict` validation. Full rejection semantics: `review-artifact-check --help`.
 

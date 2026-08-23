@@ -38,4 +38,4 @@
 
 {{research_metadata}}
 
-<!-- Keep this file human-readable. Do not embed raw Exa JSON here; write provider payloads to the sidecar JSON file (findings.raw.json by default, or the explicit raw output path). -->
+<!-- No raw Exa JSON here; provider payloads go to the sidecar JSON (findings.raw.json by default, or the explicit raw output path). -->

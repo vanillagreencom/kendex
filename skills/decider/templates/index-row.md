@@ -15,9 +15,9 @@
 | `STATUS` | See `../schemas/decision-format.md` | `Active (ThreadBound → D017)` |
 | `LINK` | `[Full](DECISION_ID-descriptor.md)` | `[Full](D034-async-runtime.md)` |
 
-The Link cell is how the CLI reaches the decision document for body search and `get`; a cell naming no file leaves those blind to the decision.
+The Link cell must name the decision file; the CLI resolves body search and `get` through it.
 
-New rows go at the end of the table, before the `---` separator — append-only, never re-sorted (the Date cell carries chronology; a decision written up late still appends).
+Append new rows at the end of the table, before the `---` separator; never re-sort, even for a decision written up late.
 
 ```markdown
 | 2026-03-24 | D034 | [PROJ-200](../research/PROJ-200/findings.md) | Use tokio for async runtime | Battle-tested, ecosystem support | Alternative runtime outperforms tokio 2x | Active | [Full](D034-async-runtime.md) |

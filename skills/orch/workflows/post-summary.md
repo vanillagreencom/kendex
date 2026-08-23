@@ -20,13 +20,13 @@ Post the session summary to the git host and issue tracker, plus selective hando
 
 **Skip if** every count is zero → § 2.
 
-Write the summary to a file first — inline bodies with backticks or fenced blocks corrupt under shell command substitution — using the harness file-write tool at `[WORKTREE_PATH]/tmp/post-summary-[ISSUE_ID]-[TIMESTAMP].md` (`git-context timestamp compact`), then post it:
+Write the summary to a file first with the harness file-write tool at `[WORKTREE_PATH]/tmp/post-summary-[ISSUE_ID]-[TIMESTAMP].md` (`git-context timestamp compact`), then post it:
 
 ```bash
 .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file "$SUMMARY_FILE"
 ```
 
-**Linear only** — GitHub items get their linkage from `Closes #N` in the PR body:
+**Linear only**:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body-file "$SUMMARY_FILE"
@@ -56,17 +56,17 @@ Write the summary to a file first — inline bodies with backticks or fenced blo
 
 Omit empty sections. Created Issues comes from `audit_issues_created` plus `pr_comment_review.issues_created`, with project names. Deduplicate Recommendations Processed by description across cycles.
 
-**Commit SHAs.** When workflow state carries a `.rebase_map`, resolve every published SHA through it before posting — follow the chain until no key matches; publishing an unreconciled pre-rebase SHA is forbidden. State-stored fix SHAs were already rewritten at push time; the map matters for artifact-sourced references such as a perf QA `benchmark_commit` (`submit-pr.md` § 2).
+**Commit SHAs.** When workflow state carries a `.rebase_map`, resolve every published SHA through it before posting — follow the chain until no key matches; publishing an unreconciled pre-rebase SHA is forbidden. Artifact-sourced references such as a perf QA `benchmark_commit` are the ones still unreconciled (`submit-pr.md` § 2).
 
 ## 2. Post Handoff Comments
 
-**Skip if** `TRACKER=github` — dependencies there live in issue bodies, not tracked relations. → § 3
+**Skip if** `TRACKER=github` → § 3
 
 ```bash
 .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
 ```
 
-Read `.blocks`. Post a handoff comment to a downstream issue only when it earns one: its description references files this PR touched, a decision it should know about was created, or an API or interface it depends on changed. Simply being unblocked — the common case — earns nothing.
+Read `.blocks`. Post a handoff comment to a downstream issue only when its description references files this PR touched, a decision it should know about was created, or an API or interface it depends on changed. Simply being unblocked earns nothing.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh comments create [DOWNSTREAM_ISSUE_ID] --body "Handoff from [ISSUE_ID]:

@@ -37,5 +37,5 @@ Write a file only when asked. Given no path, a technical plan goes to `docs/plan
 - **Framing** — goal in one sentence, the perspective applied, constraints read, assumptions (or `None`).
 - **Approach** — the chosen path, the alternatives rejected and why, the trade-offs accepted.
 - **Plan** — numbered steps, each naming its files or symbols, the change intent, why it is needed, and the validation that proves it; then files to modify, new files, and the three to five files most critical to executing it.
-- **Consequences** — risks paired with mitigations, the rollback path, and whether a TPM handoff is needed (with the reason and the prompt when it is).
+- **Consequences** — risks paired with mitigations, the rollback path, and whether a TPM handoff is needed (with the justification and the prompt when it is).
 - **Handoff prompt** — what the calling agent hands the implementer to execute the plan.

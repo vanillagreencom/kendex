@@ -108,10 +108,10 @@ Present only when `origin_issue` was supplied; absent or `type: "none"` means `p
 }
 ```
 
-Sorted by ascending `position`. `layer` and `priority` are assigned, and `position` computed, per [tpm-roadmap-plan](../workflows/tpm-roadmap-plan.md) § 4 — consumers read these fields, never recompute them. `critical_path: true` when the issue blocks 2+ others.
+Sorted by ascending `position`. `layer` and `priority` are assigned, and `position` computed, per [tpm-roadmap-plan](../workflows/tpm-roadmap-plan.md) § 4; consumers never recompute them. `critical_path: true` when the issue blocks 2+ others.
 
 `action` is `create`, `skip`, `expand`, `supersede`, or `cancel`, with `target` naming the existing issue for `expand`/`supersede` and `reason` explaining the choice. `obsolete` carries `{evidence: {completed_by[], files_verified[]}, confidence}` or null.
 
 A bundle parent sets `is_bundle_parent: true` with `estimate: null`; its children set `parent_title` to the parent's title. Blocking relations between bundles sit on the parents — children carry no external blocking relations. A parent takes the shared agent label, or the project's multi-agent label when children span 2+ agents.
 
-`labels[]` is the full issue-label set required before `roadmap-create` mutates the tracker: issue labels only, all project-required categories present, no parent/group labels. `agent`/`agent_label` are derived fields and never sufficient. When a required category cannot be determined, flag it in `reason` rather than inventing a label.
+`labels[]` is the full issue-label set: issue labels only, all project-required categories present, no parent/group labels. `agent`/`agent_label` are derived fields and never sufficient. When a required category cannot be determined, flag it in `reason` rather than inventing a label.

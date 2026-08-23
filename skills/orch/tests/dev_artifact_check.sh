@@ -486,7 +486,7 @@ assert_file_contains "$ci_fix" "$ROUND_STAMP" "ci-fix § 3.2 mints a fresh dev_r
 # token alone is the fail-closed guarantee: a prior round's leftover receipt
 # carries the previous token and can never be mistaken for this round's.
 assert_file_contains "$ci_fix" "writes **no** dev-return artifact" "ci-fix states its agent writes no completion artifact"
-assert_file_contains "$ci_fix" "can never be mis-accepted here" "ci-fix states the fresh token is what makes a stale receipt unmatchable"
+assert_file_contains "$ci_fix" "Accept this round on the agent's return message plus the pushed fix commit" "ci-fix accepts on the return message plus the pushed fix commit, never a stale artifact"
 assert_file_not_contains "$ci_fix" "$LEGACY_CHECK" "ci-fix § 3.2 no longer uses the legacy positional dev-artifact-check call"
 
 # The removed legacy positional call must not survive in any orch workflow.

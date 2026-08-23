@@ -1,6 +1,6 @@
 # Review
 
-Code review of pending changes via external model. The script auto-generates the review prompt — embedded schema, the review lenses, and the repo's own instruction files (both listed in SKILL.md) — so no custom prompt is needed.
+Code review of pending changes via external model. The script auto-generates the review prompt (embedded schema, review lenses, the repo's own instruction files); no custom prompt is needed.
 
 With no `--target` and no `SECOND_OPINION_TARGET`, the script takes the first eligible entry of `SECOND_OPINION_MODELS` that is not this session's model (`SECOND_OPINION_COUNT` of 2 or more runs that many distinct models in parallel and writes one union artifact) — do not pass `--target` unless the user asked for a specific model. A refusal (exit 1, "no eligible cross-model target") is reported as-is, never worked around by forcing the same model.
 
@@ -22,7 +22,7 @@ If user specifies a PR number → resolve the worktree path first, then pass `--
 
 ## 2. Run Script
 
-Run it **in the background**, never as a foreground shell call: the default timeout (`SECOND_OPINION_TIMEOUT`, 1080s) exceeds the ~600s ceiling a harness puts on a foreground call, which would kill the shell before the script's own timeout fires — no artifact, and the external CLI left running. On Claude Code use `run_in_background`; on Pi run it under `bg_task`; on Codex and OpenCode use scheduled re-entry, or pass `--timeout` at or below the foreground ceiling.
+Run it **in the background**, never as a foreground shell call: the default timeout (`SECOND_OPINION_TIMEOUT`, 1080s) exceeds the ~600s ceiling a harness puts on a foreground call. On Claude Code use `run_in_background`; on Pi run it under `bg_task`; on Codex and OpenCode use scheduled re-entry, or pass `--timeout` at or below the foreground ceiling.
 
 ```bash
 .agents/skills/second-opinion/scripts/second-opinion review \
@@ -47,11 +47,11 @@ Standard review-finding JSON — same schema used by all internal review agents:
 }
 ```
 
-When multiple lanes ran, the artifact is a union: `agent` is `external-union(<lane>+<lane>)`, each finding carries `sources` (the lanes that reported it, deduplicated by location), `qa_metadata.lanes` records every lane's outcome, and `qa_metadata.coverage` is `"full"` or `"degraded"` (a lane failed — say so when presenting). Lane artifacts sit beside the union as `<output>.<target>.json`. `qa_metadata.reviewed_head` records the head commit the review covered — callers budgeting review passes should count per head (a new push resets the round), not per submission.
+When multiple lanes ran, the artifact is a union: `agent` is `external-union(<lane>+<lane>)`, each finding carries `sources` (the lanes that reported it, deduplicated by location), `qa_metadata.lanes` records every lane's outcome, and `qa_metadata.coverage` is `"full"` or `"degraded"` (a lane failed — say so when presenting). Lane artifacts sit beside the union as `<output>.<target>.json`. `qa_metadata.reviewed_head` records the head commit the review covered — budget review passes per head, not per submission.
 
 `questions` is always empty (no PR comment context).
 
-The script derives the review scope itself (branch, diff range, diffstat, changed files) and embeds it in the prompt, and it never writes an artifact for a review that did not happen — an empty diff, a response that stayed unusable after its one retry, and a CLI that never answered each exit non-zero with the response preserved beside the artifact. **On any non-zero exit, report what failed instead of presenting a verdict**; the codes and their sidecar files are in SKILL.md § Error Handling.
+The script never writes an artifact for a review that did not happen (empty diff, response unusable after its one retry, CLI never answered — each exits non-zero). **On any non-zero exit, report what failed instead of presenting a verdict**; the codes and their sidecar files are in SKILL.md § Error Handling.
 
 <output_format>
 

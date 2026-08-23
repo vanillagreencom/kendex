@@ -35,7 +35,7 @@ Present the unblocked candidates from the tracker and pick one. If several are w
 
 ## 3. Resolve Work Item
 
-**Linear** — sync before read, so a stale cache cannot slip a container through:
+**Linear** — sync before read:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh sync --reconcile
@@ -44,7 +44,7 @@ Present the unblocked candidates from the tracker and pick one. If several are w
 
 Apply the Ancestor gate ([SKILL.md § Coordination](../SKILL.md#coordination)) to the `--with-bundle` output.
 
-- **Container** → it is not the work item. List its unblocked DIRECT children (`depth == 0` in the flattened children array; deeper descendants are reached by re-running this section, never selected past their own parent's blockers), pick one, and re-run this section for it.
+- **Container** → it is not the work item. List its unblocked DIRECT children (`depth == 0` in the flattened children array; never select a deeper descendant directly), pick one, and re-run this section for it.
 - **Explicit single-PR bundle** (`(one PR)` in the title, or a leaf whose description carries an internal checklist) → the parent IS the work item.
 - **Child of a container** → the child is the PR unit, gated on its own non-terminal `state_type` and the union of its own and every container ancestor's blockers. Blocked or terminal → stop and name the live blockers.
 
@@ -77,11 +77,11 @@ Otherwise create it, checking the exit status directly (`issue-[N]` for GitHub i
 .agents/skills/worktree/scripts/worktree create [ISSUE_ID]
 ```
 
-Exit 75 means a branch or open PR already owns the issue even though the configured path was absent — inspect it instead of delegating. Use the create output as `WT_PATH`.
+Exit 75 means a branch or open PR already owns the issue — inspect it instead of delegating. Use the create output as `WT_PATH`.
 
 ## 5. Continue In Worktree
 
-The invocation already answered where the work runs: `start` runs it here; a separate session is the `handoff` command. Execute `workflows/start-worktree.md` with `[WT_PATH]` as the worktree context — no question.
+Execute `workflows/start-worktree.md` with `[WT_PATH]` as the worktree context — no question.
 
 <output_format>
 

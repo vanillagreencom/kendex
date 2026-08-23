@@ -1,76 +1,76 @@
 # Animation and Rendering Debugging Checklist
 
-Quick-reference checklist for diagnosing animation and rendering bugs in custom Iced widgets.
+Checklist for animation and rendering bugs in custom Iced widgets.
 
-**When to read**: any time an animation or rendering issue doesn't resolve after checking the obvious (`invalidate_layout`, `request_redraw`, event capture).
+**When to read**: after checking the obvious (`invalidate_layout`, `request_redraw`, event capture).
 
 ## Master checklist
 
 ### 1. Is motion state in Tree state or stale widget fields?
 
-`request_redraw()` repaints the existing widget tree — it does **not** call `view()` to rebuild widgets. If animation state is stored in widget struct fields computed in `view()`, redraws repaint stale values.
+`request_redraw()` repaints the existing tree; it does **not** call `view()`. Widget struct fields computed in `view()` stay stale across redraws.
 
-**Check**: is the animated value in `tree.state.downcast_mut::<State>()`? If it's a field on the widget struct, it won't update between `view()` calls.
+**Check**: is the animated value in `tree.state.downcast_mut::<State>()`, not a widget struct field?
 
 ### 2. Is redraw happening without rebuild?
 
-If animation depends on recomputing values in `view()` or app-level `update()`, a `request_redraw()` loop won't help — you need messages or tasks that trigger `update()` → `view()`.
+Animation that depends on `view()` or `App::update()` recomputing values needs messages or tasks that trigger `update()` → `view()`; a `request_redraw()` loop does not run them.
 
-**Check**: does the animation advance through `RedrawRequested` events handled in `Widget::update()`, or does it depend on `App::update()` recomputing state?
+**Check**: does the animation advance via `RedrawRequested` in `Widget::update()`, or depend on `App::update()`?
 
 ### 3. Is draw order correct?
 
-In custom widget `draw()`, child iteration order is the z-order. The last child drawn appears on top. `stack` semantics do not apply automatically inside manual draw loops.
+In custom `draw()`, iteration order is z-order: last drawn is on top. `stack` semantics do not apply inside manual draw loops.
 
-**Check**: are layered children drawn in the intended order? Background first, foreground last?
+**Check**: background drawn first, foreground last?
 
 ### 4. Is hover attached to animated bounds?
 
-If `mouse_area` or a hover sensor wraps content whose size changes during a hover-triggered animation, the sensor boundary changes during animation, causing enter/exit event thrashing and flicker.
+A hover sensor wrapping content that resizes during the hover-triggered animation thrashes enter/exit events.
 
-**Check**: is the hover hitbox stable, or does it grow/shrink during the animation it triggers?
+**Check**: does the hover hitbox grow/shrink during the animation it triggers?
 
 ### 5. Are there duplicated animated branches?
 
-Overlaying two full animated widget trees (collapsed + expanded) in a `stack` and crossfading creates double event handling, identity duplication, and overlap artifacts.
+Crossfading two full trees (collapsed + expanded) in a `stack` doubles events and duplicates identity.
 
-**Check**: does the widget tree contain two copies of the same logical content?
+**Check**: does the tree contain two copies of the same logical content?
 
 ### 6. Is final spacing measured or guessed?
 
-If expanded item heights are estimated rather than measured from child layout, mixed content (icons, buttons, descriptions, variable text) will have incorrect spacing.
+Estimated expanded heights give wrong spacing with mixed content.
 
-**Check**: does the layout use `child_node.bounds().height` from actual `layout()` calls, or a constant/estimate?
+**Check**: does layout use `child_node.bounds().height` from real `layout()` calls, or a constant?
 
 ### 7. Is current visible height/clipping correct during transitions?
 
-If a widget always reports expanded height even while animating toward collapsed, content below the collapsed footprint remains visible.
+A widget that reports expanded height while collapsing leaves content visible below the collapsed footprint.
 
 **Check**: does `layout()` return the current animated height? Does `draw()` clip with `renderer.with_layer()`?
 
 ### 8. Are all child rendering paths participating in opacity?
 
-If a component fades as one unit, every child must fade: text, backgrounds, buttons, icons, canvas content, SVGs, images, custom shader output.
+A component that fades as one unit must fade every child: text, backgrounds, buttons, icons, canvas, SVGs, images, shader output.
 
-**Check**: set opacity to near-zero — are there any visible remnants? Those come from rendering paths outside the fade contract.
+**Check**: set opacity near zero — any visible remnant is a rendering path outside the fade contract.
 
 ### 9. Are keyed identities stable across reorder/removal?
 
-Reordering visual presentation by sorting child indices without updating Tree associations causes stale subtrees to appear on the wrong items.
+Sorting child indices for display without updating Tree associations puts stale subtrees on the wrong items.
 
-**Check**: after reordering, does each item still show its own content (icon, text, state)?
+**Check**: after reorder, does each item show its own icon, text, state?
 
 ### 10. Are SVG/canvas/image paths obeying the same fade semantics?
 
-SVG tint alpha, canvas program colors, and image opacity may not behave identically to text/container color alpha in all renderers.
+SVG tint alpha, canvas colors, and image opacity may differ from text/container alpha across renderers.
 
-**Check**: when fading SVG icons or canvas content, does the actual rendered alpha match the expected value? Test at near-zero opacity.
+**Check**: at near-zero opacity, does rendered alpha of SVG/canvas content match the expected value?
 
 ### 11. Is entry/exit travel derived from actual geometry?
 
-Fixed-pixel travel distances cause clipping or visible remnants with variable-height content.
+Fixed-pixel travel clips or leaves remnants with variable-height content.
 
-**Check**: is slide/travel distance derived from the item's measured height, or a constant?
+**Check**: is travel derived from the item's measured height, or a constant?
 
 ## Symptom quick lookup
 

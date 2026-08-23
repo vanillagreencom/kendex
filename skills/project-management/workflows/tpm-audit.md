@@ -4,7 +4,7 @@ Analyze issues and projects for relations, labels, hierarchy, placement, duplica
 
 **Do NOT modify the tracker.** Return recommendations only.
 
-**Hold the creation bar** ([SKILL.md](../SKILL.md) § Disposition). An observation becomes a `create` only when it changes what a user or operator experiences (or blocks work that does), nothing open already covers it, and someone could finish it without a new investigation. Everything else is `skip` with a one-line reason. Any run that proposes creations also completes the § 6 cancellation sweep — an audit that only adds has not finished.
+**Hold the creation bar** ([SKILL.md](../SKILL.md) § Disposition). An observation becomes a `create` only when it changes what a user or operator experiences (or blocks work that does), nothing open already covers it, and someone could finish it without a new investigation. Everything else is `skip` with a one-line reason. Any run that proposes creations also completes the § 6 cancellation sweep.
 
 ## Inputs
 
@@ -26,7 +26,7 @@ Analyze issues and projects for relations, labels, hierarchy, placement, duplica
 
 **issues**: read the JSON file and extract `TRACKER` (plus `REPOSITORY` for github) from the delegation's `Tracker:` line or the file's `tracker` field — absent both, infer `github` from a `parent_issue` starting with `issue-`, else `linear` — along with `WORKTREE`, `PARENT_ISSUE`, `SOURCE`, `INPUT_ITEMS` from `items[]`, and the optional research-complete fields `blocked_issues`, `research_issue`, `research_ref`, `decision_ref`, and `hierarchy_contract` (binding — § 7.0).
 
-**Done and Cancelled issues are historical records.** Never recommend a change to their labels, agent, priority, or state. They still participate in relation analysis as valid endpoints and in comparison for duplicate detection; only Backlog, Todo, In Progress, and In Review issues are candidates for fixes.
+**Done and Cancelled issues are historical records.** Never recommend a change to their labels, agent, priority, or state. They still participate in relation analysis and duplicate detection; only Backlog, Todo, In Progress, and In Review issues are candidates for fixes.
 
 ### 1.2 Load Label Policy
 
@@ -35,7 +35,7 @@ Analyze issues and projects for relations, labels, hierarchy, placement, duplica
 gh label list --repo [REPOSITORY] --limit 200 --json name,description     # TRACKER=github
 ```
 
-Load the project taxonomy alongside it. If the Linear label cache is missing or stale, report that the caller must run `sync --reconcile` before mutation. Every `agent_mismatch`, `label_cooccurrence`, `recommended_issue.labels[]`, and `create_fields.labels[]` recommendation must be expressible against this live inventory. Issue labels only — project labels are a separate resource.
+Load the project taxonomy alongside it. If the Linear label cache is missing or stale, report that the caller must run `sync --reconcile` before mutation. Every `agent_mismatch`, `label_cooccurrence`, `recommended_issue.labels[]`, and `create_fields.labels[]` recommendation must be expressible against this live inventory. Issue labels only.
 
 ### 1.3 Fetch Projects
 
@@ -47,7 +47,7 @@ Load the project taxonomy alongside it. If the Linear label cache is missing or 
 .agents/skills/linear/scripts/linear.sh cache projects list --state paused
 ```
 
-**GitHub — explicit degradation**: no project inventory exists here. Record an empty project set and leave every project-placement field (`recommended_project`, `wrong_project`, project moves) null or omitted with reason `github: no project inventory`. Never invent a placement; scope fit checks to the repository backlog from § 1.5.
+**GitHub — explicit degradation**: record an empty project set and leave every project-placement field (`recommended_project`, `wrong_project`, project moves) null or omitted with reason `github: no project inventory`. Never invent a placement; scope fit checks to the repository backlog from § 1.5.
 
 ### 1.4 Fetch Input Issues
 
@@ -57,17 +57,17 @@ Load the project taxonomy alongside it. If the Linear label cache is missing or 
 gh issue view [N] --repo [REPOSITORY] --json number,title,body,labels,state,url                                                        # issues mode, github
 ```
 
-The cached Linear issue payload already carries `blocks`, `blocked_by`, and `related` — there is no separate relation subcommand. GitHub has no relation payload: read relations from body links (`Blocks: #N`, `Blocked by: #N`, `Related: #N`, `Parent: #N`). Proposed items use their provided fields directly.
+The cached Linear issue payload carries `blocks`, `blocked_by`, and `related`. GitHub: read relations from body links (`Blocks: #N`, `Blocked by: #N`, `Related: #N`, `Parent: #N`). Proposed items use their provided fields directly.
 
 ### 1.5 Fetch Comparison Set
 
-Cross-project duplicate detection, obsolete checks against completed work, and fit evaluation all need the full backlog. Fetch it in ONE command:
+Fetch the full backlog in ONE command:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh cache issues list --all-projects --state "Backlog,Todo,In Progress,In Review,Done" --max
 ```
 
-Each row carries its own `project` name. Never loop `--project` over the projects from § 1.3 — restricted harness approval policies reject loop-shaped commands, and the single `--all-projects` call returns the same rows.
+Each row carries its own `project` name. Never loop `--project` over the projects from § 1.3.
 
 **GitHub**:
 
@@ -83,7 +83,7 @@ For each project from § 1.3, extract from name, description, and content: its *
 
 ### 1.7 Collect Verification Evidence
 
-Per input issue, record its own linked PR and changed files, known implementation branch and base ref, concrete paths, and documentation-only signals, keyed by issue identifier (or stable input index for a proposed item). A PR or branch belongs only to the issue that identifies it or is documented as implementing it — never inferred from a sibling input issue. There is no global verification context.
+Per input issue, record its own linked PR and changed files, known implementation branch and base ref, concrete paths, and documentation-only signals, keyed by issue identifier (or stable input index for a proposed item). A PR or branch belongs only to the issue that identifies it or is documented as implementing it — never inferred from a sibling input issue.
 
 ---
 
@@ -109,13 +109,13 @@ For each contract row, set `ISSUE_KEY` to its identifier or index and resolve on
 .agents/skills/project-management/scripts/verification-scope --worktree "[WORKTREE]" --docs-only --changed-file "[DOC_PATH]"
 ```
 
-Store each result as `VERIFICATION_CONTEXTS[ISSUE_KEY]` and read `mode`, `changed_files[]`, `source_roots[]`, `verification_paths[]`, `code_verification_required`. Never reuse another issue's linked PR, branch diff, or resolved context; `ISSUE_VERIFICATION_CONTEXT` always means the entry for the issue currently being checked. Returned paths are repository-relative — resolve them against the returned absolute `worktree` before any `rg`, `ls`, or read.
+Store each result as `VERIFICATION_CONTEXTS[ISSUE_KEY]` and read `mode`, `changed_files[]`, `source_roots[]`, `verification_paths[]`, `code_verification_required`. Never reuse another issue's linked PR, branch diff, or resolved context; `ISSUE_VERIFICATION_CONTEXT` always means the entry for the issue currently being checked. Returned paths are repository-relative; resolve them against the returned absolute `worktree` before any `rg`, `ls`, or read.
 
 - `changed` mode: search this issue's exact changed or contract target first. Expand only when its creates-consumes contract or an architecture reference proves another path is relevant.
 - `repository` mode: search the returned source roots. Never substitute `[WORKTREE]/src`.
 - `docs-only` mode: skip code-path checks; verify documentation deliverables against the resolved documentation paths. Absent code evidence is not a mismatch or an obsolete signal.
 - Code verification required but `verification_paths[]` empty: halt with a scope-resolution error rather than guessing a path.
-- A creates-consumes pair loads both contexts independently. A shared seam may be inspected for both; neither context replaces the other.
+- A creates-consumes pair loads both contexts independently; neither context replaces the other.
 
 ---
 
@@ -131,19 +131,19 @@ Then trace what depends on this project's output: list what it modifies, find wh
 
 ## 4. Identify Candidate Pairs
 
-Do not compare every pair. Build candidates from signals: same target component, same parent, one issue naming another's ID, creates-consumes overlap, same file path in the location field, and any existing tracker relation (which must be verified). When two issues share a file path, grep for the shared structs or functions — implicit dependencies are invisible from titles alone.
+Do not compare every pair. Build candidates from signals: same target component, same parent, one issue naming another's ID, creates-consumes overlap, same file path in the location field, and any existing tracker relation (which must be verified). When two issues share a file path, grep for the shared structs or functions.
 
 ### 4.1 Verify Existing Relations
 
-A relation on a Done issue is a valid historical record. Flag it for removal only when the dependency itself is wrong (no creates-consumes), never because the source is Done.
+A relation on a Done issue is a valid historical record. Flag it for removal only when the dependency itself is wrong (no creates-consumes), not for the source being Done.
 
-**Completed-blocker relations are auto-satisfied, never stale.** A `blocked_by` whose blocker is Done or Cancelled is satisfied history: the tracker already treats the issue as unblocked and the relation stays for provenance. Do NOT add such relations to `remove_relations[]`, and do NOT report them under any stale-metadata heading — that framing invites destructive cleanup of valid history. The one legitimate finding for an active issue whose blockers have all completed is a scheduling signal: `ready_to_schedule[]` in project mode, or "gates cleared, ready to schedule" in the issue's `reason` in issues mode.
+**Completed-blocker relations are auto-satisfied, never stale.** A `blocked_by` whose blocker is Done or Cancelled is satisfied history; the relation stays for provenance. Do NOT add such relations to `remove_relations[]`, and do NOT report them under any stale-metadata heading. The one legitimate finding for an active issue whose blockers have all completed is a scheduling signal: `ready_to_schedule[]` in project mode, or "gates cleared, ready to schedule" in the issue's `reason` in issues mode.
 
 ### 4.2 Scan Relation Violations
 
 Iterate every `blocks`/`blocked_by` on the input issues and their children. A relation is misplaced when it crosses bundles (`A.parent != B.parent`, both parented) or joins a child to a standalone issue.
 
-Blocking relations are evidence — **preserve them by fixing the structure**, never by deleting them. For each violation: add the child relation to `remove_relations[]` with reason `"Violation: [TYPE] — [FROM] [REL] [TO]"`, add the lifted parent-level relation to `add_relations[]`, and add `related` between the original children. See [dependencies.md](../references/dependencies.md) for the level rule; the Linear CLI rejects malformed shapes at mutation time, so recommend the design and let the CLI enforce it.
+**Preserve blocking relations by fixing the structure**, never by deleting them. For each violation: add the child relation to `remove_relations[]` with reason `"Violation: [TYPE] — [FROM] [REL] [TO]"`, add the lifted parent-level relation to `add_relations[]`, and add `related` between the original children. See [dependencies.md](../references/dependencies.md) for the level rule.
 
 ---
 
@@ -164,7 +164,7 @@ rg -n "consumedThing" "[WORKTREE]/[TARGET_PATH]"
 rg -n "consumedThing" "[WORKTREE]/[VERIFICATION_PATH_1]" "[WORKTREE]/[VERIFICATION_PATH_2]"
 ```
 
-A contract that does not match the code means the understanding is wrong — re-evaluate the relation rather than recording it.
+A contract that does not match the code: re-evaluate the relation rather than recording it.
 
 ### 5.3 Metadata Checks
 
@@ -173,7 +173,7 @@ Skip Done and Cancelled issues throughout; their metadata is historical.
 | Check | Rule | Output |
 |-------|------|--------|
 | Priority | In `A blocks B` with both active, A's priority must not be lower-urgency than B's; a `critical-path` label demands P1. Proposed issues with no priority are skipped | `priority_misalignment[]`: `{id, current, should_be, reason}` |
-| Agent label | Compare the issue's `agent` category label against its content and resolved target path (`ls`, `rg -n "pub fn\|export function\|def "`). In `docs-only` mode infer ownership from the contract, project definition, and documented paths — never manufacture a code path to justify a label | `agent_mismatch[]`: `{id, current, should_be, reason, signals[]}` |
+| Agent label | Compare the issue's `agent` category label against its content and resolved target path (`ls`, `rg -n "pub fn\|export function\|def "`). In `docs-only` mode infer ownership from the contract, project definition, and documented paths | `agent_mismatch[]`: `{id, current, should_be, reason, signals[]}` |
 | Label co-occurrence | An issue missing a required taxonomy category whose title or description matches 2+ detection signals for it | `label_cooccurrence[]`: `{id, title, present, missing, reason}` |
 
 Validate every recommended replacement against the § 1.2 inventory first. If the desired label does not exist or is a parent/group label, state the failure in `reason` and recommend no mutation.
@@ -186,7 +186,7 @@ This is the cancellation sweep. Run it on every audit that proposes a create.
 
 ### 6.1 Duplicates and Supersession
 
-Compare input issues against the whole § 1.5 comparison set. Same problem plus same approach is a duplicate (`duplicates[]`) whatever project it lives in; same problem with a genuinely different approach keeps both with a `related` link. When title and keyword matching finds nothing, extract the module or component name from the location field and search on that — different terminology for one component matches on the module name alone.
+Compare input issues against the whole § 1.5 comparison set. Same problem plus same approach is a duplicate (`duplicates[]`) whatever project it lives in; same problem with a genuinely different approach keeps both with a `related` link. When title and keyword matching finds nothing, extract the module or component name from the location field and search on that.
 
 When an input item's scope **fully covers** an existing issue, that is `supersedes[]` on the input item, not `duplicates[]`. Signals: the item's `decision_ref` supersedes the existing issue's governing decision, the item's `creates[]` is a superset of the existing deliverables, or the existing issue references a superseded decision.
 
@@ -208,7 +208,7 @@ With `DECISION_REF` present, also detect issues the decision made unnecessary by
 
 ### 6.3 Project Fit
 
-Compare each input issue against every project definition. A scope matching another project better, or a child sitting in a different project from its parent, goes to `wrong_project[]`. A dependency on work in another project is recorded as a relation, not a move — dependencies cross projects freely. Evaluate objectively; the current assignment is not evidence.
+Compare each input issue against every project definition. A scope matching another project better, or a child sitting in a different project from its parent, goes to `wrong_project[]`. A dependency on work in another project is recorded as a relation, not a move. The current assignment is not evidence.
 
 ---
 
@@ -232,15 +232,15 @@ Items outside `child_indexes` — `origin: "discovered"` refactors, for instance
 
 `parent_issue` and `blocked_issues` are hints the analysis may override; `hierarchy_contract` is binding per § 7.0. A research issue never appears in `parent_issue`.
 
-Look for: an input item whose scope is a strict subset of a tracked effort (child candidate); two or more input issues on the same target, or a large issue with implicit sub-tasks (parent candidate); and two or more issues sharing an agent label, project, and work type, or applying one refactor pattern across sibling components (bundle candidate). Bundle on pattern, not size — two estimate-3 issues with identical shape bundle better than two unrelated estimate-1s.
+Look for: an input item whose scope is a strict subset of a tracked effort (child candidate); two or more input issues on the same target, or a large issue with implicit sub-tasks (parent candidate); and two or more issues sharing an agent label, project, and work type, or applying one refactor pattern across sibling components (bundle candidate). Bundle on pattern, not size.
 
 Parent and child must share a project. If they cannot, record `wrong_project[]` or keep the issue standalone with a relation.
 
 ### 7.2 Evaluate Coherence
 
-Ask: **would these ship together in one PR?** Yes means an explicit single-PR bundle — the parent's title takes the `(one PR)` marker, since an unmarked parent with children reads as a container. No means a container: no marker, sibling child-blocks-child relations for ordering.
+Ask: **would these ship together in one PR?** Yes means an explicit single-PR bundle — the parent's title takes the `(one PR)` marker. No means a container: no marker, sibling child-blocks-child relations for ordering.
 
-Lean sub-issue for tests of the feature being implemented, hardening for the component being built, and platform work under a same-platform parent. Lean independent for platform-specific work under a cross-platform parent, tooling or methodology under a feature parent, and anything that could ship before or after the parent. When uncertain, prefer independent with a blocking relation — merging later is easier than splitting.
+Lean sub-issue for tests of the feature being implemented, hardening for the component being built, and platform work under a same-platform parent. Lean independent for platform-specific work under a cross-platform parent, tooling or methodology under a feature parent, and anything that could ship before or after the parent. When uncertain, prefer independent with a blocking relation.
 
 ### 7.3 Parent Scope Coverage
 
@@ -306,9 +306,9 @@ Hierarchy-contract items (§ 7.0) are never `skip`: keep `action: "create"` and 
 
 Otherwise, first match wins: creation bar failed → `skip`; in `obsolete[]` → `cancel`; the `remove` side of a `duplicates[]` pair → `skip` with the kept issue as target; in a `combine[]` `absorb[]` → `combine`; overlaps an existing issue → `expand` or `update` by scope delta; else `create` (proposed) or `valid` (existing).
 
-**Completed-issue guard**: `combine`, `expand`, and `update` never target a Done or Cancelled issue. Completed work is a historical record — new scope belongs in a new issue, with a `related` relation to the completed one for traceability.
+**Completed-issue guard**: `combine`, `expand`, and `update` never target a Done or Cancelled issue; new scope goes in a new issue with a `related` relation to the completed one.
 
-For every `create`: populate `create_fields` per [audit-output.md](../schemas/audit-output.md) with the full `labels[]` from the input item or completed from § 1.2 taxonomy — an action that can only supply `agent`/`agent_label` is left blocked with a clear `reason`. Verify `supersedes[]` entries carry `identifier`, `title`, and `reason`, and set `summary.superseded` to the total. When `SOURCE == "research-complete"` and `RESEARCH_ISSUE` is set, add it to `add_relations.related[]` on every `create` so new issues link back to the research.
+For every `create`: populate `create_fields` per [audit-output.md](../schemas/audit-output.md) with the full `labels[]` from the input item or completed from § 1.2 taxonomy — an action that can only supply `agent`/`agent_label` is left blocked with a clear `reason`. Verify `supersedes[]` entries carry `identifier`, `title`, and `reason`, and set `summary.superseded` to the total. When `SOURCE == "research-complete"` and `RESEARCH_ISSUE` is set, add it to `add_relations.related[]` on every `create`.
 
 ---
 
@@ -316,15 +316,15 @@ For every `create`: populate `create_fields` per [audit-output.md](../schemas/au
 
 Entered directly from § 1.1; §§ 2-10 do not apply.
 
-1. **Fetch** initiatives (`cache initiatives list`) and projects in every state (§ 1.3), recording `id`, `name`, `state`, `progress`, `sort_order`, `blocked_by[]`, `blocks[]`, `description`, `content`, plus each initiative's project names. Initiatives list their projects by name — build the name→initiative map that fills each project's `initiative` field.
+1. **Fetch** initiatives (`cache initiatives list`) and projects in every state (§ 1.3), recording `id`, `name`, `state`, `progress`, `sort_order`, `blocked_by[]`, `blocks[]`, `description`, `content`, plus each initiative's project names. Build the name→initiative map that fills each project's `initiative` field.
 
 2. **Assign a layer** to each `planned` and `backlog` project (never `started` or `completed`) from its scope: what it delivers, what it consumes, and what its issues touch (`cache issues list --project "[PROJECT_NAME]" --state "Backlog,Todo,In Progress" --max`). Verify against the architecture docs that deliverables do not depend on unbuilt code. L0 foundation (no project dependencies) → L1 core infrastructure → L2 features → L3 integration and testing → L4 polish and release.
 
 3. **Order** by topological sort on layer, then dependency edges (A's deliverables consumed by B means A precedes B), then priority.
 
-4. **Compare to current, per state column.** `sortOrder` is relative **within one column only** — a `planned` project at 937 is not "after" a `backlog` project at -11000; they are different queues. Execution order is started → planned top-to-bottom → backlog top-to-bottom. Current position: started = 0, then planned by `sortOrder`, then backlog by `sortOrder`. For each mismatch, decide whether the project is in the wrong state (recommend a state change) or the wrong position within its state (recommend a reorder), and compute `new_sort_order` with spacing per state column.
+4. **Compare to current, per state column.** `sortOrder` is relative **within one column only**. Execution order is started → planned top-to-bottom → backlog top-to-bottom. Current position: started = 0, then planned by `sortOrder`, then backlog by `sortOrder`. For each mismatch, decide whether the project is in the wrong state (recommend a state change) or the wrong position within its state (recommend a reorder), and compute `new_sort_order` with spacing per state column.
 
-5. **Detect transitions**: a `started` project at `progress == 1.0` is a `complete_candidates[]` entry noting what it unblocks; assuming reorders applied, the first `planned`/`backlog` project with no incomplete blockers is `recommended_next` — null with a rationale listing each candidate's blockers when nothing is ready.
+5. **Detect transitions**: a `started` project at `progress == 1.0` is a `complete_candidates[]` entry noting what it unblocks; assuming reorders applied, the first `planned`/`backlog` project with no incomplete blockers is `recommended_next` — null with a `rationale` listing each candidate's blockers when nothing is ready.
 
 Return per § 13 with the `tmp/audit-project-order-YYYYMMDD-HHMMSS.json` hint and the project-order schema in [audit-output.md](../schemas/audit-output.md).
 
@@ -332,11 +332,11 @@ Return per § 13 with the `tmp/audit-project-order-YYYYMMDD-HHMMSS.json` hint an
 
 ## 12. Pre-Output Verification
 
-Five invariants that hold across the whole report, not per section. Any one failing sends you back before the JSON is built.
+Any invariant failing sends you back before the JSON is built.
 
 - [ ] Every input issue has its own `VERIFICATION_CONTEXTS[ISSUE_KEY]` — no PR, branch, or resolved path set reused across issues, docs-only handled explicitly (§ 1.7, § 2.1)
 - [ ] No completed-blocker relation appears in `remove_relations[]` or under any stale-metadata framing (§ 4.1)
-- [ ] The § 6 cancellation sweep ran against the full comparison set — cancellations proposed alongside creations, not creations alone
+- [ ] The § 6 cancellation sweep ran against the full comparison set
 - [ ] Every proposed item carries an assigned action, with a one-line reason naming the failed creation-bar test on each `skip` and a complete `create_fields.labels[]` on each `create` (§ 10)
 - [ ] Every `hierarchy_contract.child_indexes` item is `action: create` + `hierarchy.action: make_child` + `hierarchy.parent` = the contract parent, none downgraded (§ 7.0, § 10.2)
 
@@ -346,7 +346,7 @@ Five invariants that hold across the whole report, not per section. Any one fail
 
 Build the JSON per [audit-output.md](../schemas/audit-output.md) and set the destination hint to `tmp/audit-project-YYYYMMDD-HHMMSS.json`, `tmp/audit-issues-YYYYMMDD-HHMMSS.json`, or `tmp/audit-project-order-YYYYMMDD-HHMMSS.json` for the mode.
 
-Return the JSON inline. Do not write the artifact yourself — the calling agent writes it in its worktree using the returned hint.
+Return the JSON inline. Do not write the artifact yourself.
 
 <output_format>
 File: tmp/audit-[MODE]-YYYYMMDD-HHMMSS.json

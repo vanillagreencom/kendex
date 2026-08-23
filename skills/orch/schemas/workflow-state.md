@@ -4,7 +4,7 @@ Persistent state file for orch workflows. Survives context compaction.
 
 **Location**: `<state-dir>/workflow-state-[ISSUE_ID].json` — `<state-dir>` resolves to the global `--state-dir <path>` flag, then `$ORCH_STATE_DIR`, then `tmp/`.
 
-**Key**: `[ISSUE_ID]` is the normalized workflow-state key — `issue-N` for GitHub issues, `PROJ-123` for Linear — never the bare GitHub issue number. As a safety net, every `workflow-state` action except `init` aliases a bare numeric key to the `issue-N` file when only that file exists; the exact-key file wins when present, and the command errors instead of guessing when files exist under both keys.
+**Key**: `[ISSUE_ID]` is the normalized workflow-state key — `issue-N` for GitHub issues, `PROJ-123` for Linear — never the bare GitHub issue number. Every `workflow-state` action except `init` aliases a bare numeric key to the `issue-N` file when only that file exists; the exact-key file wins when present, and the command errors instead of guessing when files exist under both keys.
 
 ## Schema
 
@@ -18,8 +18,8 @@ Persistent state file for orch workflows. Survives context compaction.
   "team_name": "proj-123",
   "qa_labels": ["needs-perf-test", "needs-safety-audit"],
   "child_sessions": {
-    "backend": { "status": "active", "agent_id": "agent_abc123", "runtime_agent_type": "backend", "agent_type_fallback": null, "spawned_at": "2026-03-19T10:00:00Z" },
-    "frontend": { "status": "closed", "agent_id": "agent_def456", "runtime_agent_type": "worker", "agent_type_fallback": "spawn_rejected_or_unavailable", "spawned_at": "2026-03-19T09:00:00Z" }
+    "backend": { "status": "active", "agent_id": "agent_abc123", "runtime_agent_type": "backend", "agent_type_fallback": null, "spawned_at": "[ISO_8601_UTC]" },
+    "frontend": { "status": "closed", "agent_id": "agent_def456", "runtime_agent_type": "worker", "agent_type_fallback": "spawn_rejected_or_unavailable", "spawned_at": "[ISO_8601_UTC]" }
   },
   "review_agents": ["security-review", "test-review", "doc-review"],  // project-configured
   "review_agent_ids": {
@@ -103,31 +103,31 @@ Persistent state file for orch workflows. Survives context compaction.
 | `skip_qa` | boolean | Skip QA for re-cycle (cleared after routing) |
 | `cycles` | number | Review/fix cycle count |
 | `submit_cycles` | number | Submit-PR iteration count (created-issue re-submit loops) |
-| `review_delegated_at` | number | Epoch seconds of last review delegation — the freshness boundary `review-pr.md` § 3 passes to `review-artifact-check`, so an artifact from an earlier cycle cannot be accepted |
+| `review_delegated_at` | number | Epoch seconds of last review delegation — the freshness boundary `review-pr.md` § 3 passes to `review-artifact-check` |
 | `dev_delegated_at` | number | Epoch seconds of last dev/QA delegation (implement, fix, or analysis) — the watchdog deadline for stall escalation. It does not gate artifact acceptance; the round id does |
-| `worktree_gen` | string | The session-guard lease generation this session took possession of the worktree under, recorded by `worktree-claim` at the first round stamp and re-verified at every later one. A lease re-claimed since then no longer records it, and the next stamp refuses instead of delegating a second writer |
+| `worktree_gen` | string | The session-guard lease generation this session took possession of the worktree under, recorded by `worktree-claim` at the first round stamp and re-verified at every later one; a stamp whose generation differs from the lease refuses |
 | `dev_round_id` | string | Unique per-delegation round token, minted by `workflow-state new-round-id [ISSUE] dev_round_id` immediately before each dev/QA delegation (implement, fix, or analysis) and embedded in it. It is the completion artifact's identity ([`dev-return.md`](dev-return.md)) and, on a fix round, the delegated-item record's ([`dev-round.md`](dev-round.md)) |
 | `review_skipped` | string | Set to `tiny-docs` when a trivial diff skipped review by rule |
-| `rereview_skipped` | string | Why a fix round routed to submit WITHOUT re-review. Present only when the skip happened, so a by-policy skip is visible after the fact instead of silent |
-| `rereview_panel` | object | `{agents: string[], reason}` for a fix round re-reviewed by a scoped panel instead of the full set, so the scoping is visible after the fact |
+| `rereview_skipped` | string | Why a fix round routed to submit WITHOUT re-review. Present only when the skip happened |
+| `rereview_panel` | object | `{agents: string[], reason}` for a fix round re-reviewed by a scoped panel instead of the full set |
 | `auto_decisions` | string[] | Audit trail of decisions taken without a user prompt under `ORCH_DECISION_MODE=auto-recommended`: one `auto-selected: [option] — [reason]` line per auto-executed ask-user step. Absent under the default `ask` mode |
 | `json_paths` | string[] | Accumulated review JSON file paths |
 | `fixed_items` | object[] | Blockers successfully fixed |
 | `escalated_items` | object[] | Items dev did not apply. `outcome` records the dev round's per-item decision — `"blocked"` (could not fix) or `"skipped"` (deliberately skipped); an entry without `outcome` is treated as blocked. The audit builder maps it to a distinct `origin` |
 | `audit_issues_created` | string[] | Issue IDs created by audit |
-| `rebase_map` | object | Old→new commit SHA map accumulated from `worktree push` auto-rebase output (`rebase-map:` lines). Keys are pre-rebase SHAs; values are post-rebase SHAs, or the literal `"dropped"` when the replayed commit vanished. SHAs stored elsewhere in state are rewritten at push time; the map remains for artifact-sourced references (e.g. perf QA `benchmark_commit`) — resolve through it repeatedly until no key matches, since a later rebase maps new → newer |
-| `pr_review_baseline` | object | `last_threads[]` — the unresolved review-thread IDs present at the end of the last triage pass. `review-pr-comments.md` § 6.3 calls a thread new when its id is absent from this array, so storing a count here would read every thread as new and loop to the iteration cap |
+| `rebase_map` | object | Old→new commit SHA map accumulated from `worktree push` auto-rebase output (`rebase-map:` lines). Keys are pre-rebase SHAs; values are post-rebase SHAs, or the literal `"dropped"` when the replayed commit vanished. SHAs stored elsewhere in state are rewritten at push time; the map remains for artifact-sourced references (e.g. perf QA `benchmark_commit`) — resolve through it repeatedly until no key matches |
+| `pr_review_baseline` | object | `last_threads[]` — the unresolved review-thread IDs present at the end of the last triage pass. `review-pr-comments.md` § 6.3 calls a thread new when its id is absent from this array; never store a count here |
 | `pr_comment_review` | object | PR comment review tracking: `iterations`, `fixes[]`, `issues_created[]`, `skipped[]`, `replied[]` (thread IDs answered) |
-| `pr_approval` | object | Reviewer-gate override tracking: `forced` (the user chose Force merge past a missing verdict), `reviewer_down` (`PR_REVIEW_ON_TIMEOUT=proceed` auto-proceeded past the deadline with every reviewer silent — kept distinct from `forced` so the two provenances never merge), `gate` (legacy: `off` for a reviewer-less repo, still written and still read as the gate-4 fallback) |
+| `pr_approval` | object | Reviewer-gate override tracking: `forced` (the user chose Force merge past a missing verdict), `reviewer_down` (`PR_REVIEW_ON_TIMEOUT=proceed` auto-proceeded past the deadline with every reviewer silent), `gate` (legacy: `off` for a reviewer-less repo, still written and still read as the gate-4 fallback) |
 | `pr_review` | object | Reviewer-gate mode tracking: `mode` ("approval"/"review"/"off" as printed by `approval-wait --resolve-mode` from `PR_REVIEW_GATE`, or derived from legacy `PR_APPROVAL_GATE`) |
 
 ## CLI
 
 All operations use `.agents/skills/orch/scripts/workflow-state` (run with `help` for full usage).
 
-To target a state directory from a worktree, pass the global `--state-dir <path>` flag before the subcommand — it takes precedence over `ORCH_STATE_DIR`. Prefer it over an `ORCH_STATE_DIR=… workflow-state …` env prefix, which is rejected under Codex `approval=never` as a flagged command shape; a plain flag is classifier-safe. `ORCH_STATE_DIR` stays supported as an environment fallback.
+To target a state directory from a worktree, pass the global `--state-dir <path>` flag before the subcommand — it takes precedence over `ORCH_STATE_DIR`. Prefer it over an `ORCH_STATE_DIR=… workflow-state …` env prefix (rejected under Codex `approval=never`). `ORCH_STATE_DIR` stays supported as an environment fallback.
 
-`set` values are JSON only when they look like it — a `{`/`[` prefix, exactly `null`/`true`/`false`, or all digits. `append` is narrower: only a `{`/`[` prefix is spliced as JSON (a bare `null`/`true`/`123` appends as a string). Every other value is stored as a raw string, so pass plain strings bare: `set PROJ-123 pr_review.mode review`, never `'"review"'` (the quotes would be stored literally). `update` always takes a jq expression.
+`set` values are JSON only when they look like it — a `{`/`[` prefix, exactly `null`/`true`/`false`, or all digits. `append` is narrower: only a `{`/`[` prefix is spliced as JSON (a bare `null`/`true`/`123` appends as a string). Every other value is stored as a raw string: pass plain strings bare — `set PROJ-123 pr_review.mode review`, never `'"review"'`. `update` always takes a jq expression.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state init PROJ-123 --agent backend --worktree /tmp/wt

@@ -7,83 +7,61 @@ Commented defaults ship in this skill's `kendex.settings.toml.example`;
 per-repo wiring and values: [adoption.md](adoption.md).
 
 Script-consumed keys are matched file-wide by exact name, regardless of the
-enclosing TOML table — that is how assignments under an adopter's `[env]`
-table resolve at all. Every such key name is therefore reserved across the
-whole file: a same-named key under an unrelated table would be read as the
-gate setting, so keeping these names out of unrelated tables is the
-adopter's responsibility. The parser fails loud on the one detectable
-ambiguity — the same name assigned more than once anywhere in the file.
+enclosing TOML table. Every such key name is reserved across the whole file:
+keep these names out of unrelated tables. The parser fails loud when the same
+name is assigned more than once anywhere in the file.
 
 | Key | Default | Meaning |
 |---|---|---|
 | `REVIEW_GATE_CONTEXT` | `Review gate` | Gate commit-status context (the required check name). |
-| `REVIEW_GATE_TRUSTED_STATUS_CONTEXTS` | (empty) | Clean-analysis check-run/status names; either API counts, and on both the NEWEST row/run per name decides (a newer pending/failed/skip-marked round withdraws the older success). Empty disables the source — trust is opt-in per repo, never a shipped vendor default. |
+| `REVIEW_GATE_TRUSTED_STATUS_CONTEXTS` | (empty) | Clean-analysis check-run/status names; either API counts, and on both the NEWEST row/run per name decides. Empty disables the source. |
 | `REVIEW_GATE_CHECKRUN_SKIP_PATTERNS` | `rate limited;skipped;queued` | Case-insensitive substrings marking a trusted "pass" as analysis-not-run → not evidence. Empty disables. |
 | `REVIEW_GATE_COMMENT_REVIEWERS` | (empty) | `login:binding-pattern` pairs; first `:` splits; pattern is a literal prefix. Empty disables the source. |
 | `REVIEW_GATE_SHA_PREFIX_FLOOR` | `7` | Shortest sha prefix a comment may bind (4–40). |
-| `REVIEW_GATE_OUTAGE_CONTEXT` | `kendex-reviewer-outage` | LEGACY name for the operator override status context (below) — still read by the predicate so existing installs keep working, but new installs and the shipped examples set only `REVIEW_GATE_OVERRIDE_CONTEXT`. Empty disables. |
-| `REVIEW_GATE_OVERRIDE_CONTEXT` | (absent = fall back to `REVIEW_GATE_OUTAGE_CONTEXT`) | v2 name for the operator override status context (the outage attestation generalized), resolved by `.agents/skills/review-gate/scripts/review-predicate.sh` itself so EVERY live gate read honors it (the writer, consumers' heavy-job gate jobs, the selftest). When the key is present anywhere (env or settings file) it wins over the legacy `REVIEW_GATE_OUTAGE_CONTEXT`; when absent, the legacy resolution applies unchanged — existing repos need no edit. The override's status description must carry a non-empty REASON (enforced; it appears in the gate detail). Empty disables the override source. |
-| `REVIEW_GATE_STATUS_PUBLISHER_REJECT` | (empty) | Commit-status creator logins that are never evidence, on both the trusted-context and override reads (typically `github-actions[bot]` — the publisher PR content can wield where PR workflows hold `statuses:write`). Statuses are read from the per-commit statuses LIST endpoint, where every real publisher — GitHub Apps included — carries a creator login; while this list is configured, a status with NO creator login is an anomaly and is not evidence. Empty disables (the shipped default) — configuring it requires the override to be posted by a non-Actions identity (operator PAT). |
-| `REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` | (empty) | Review-object trust list. Empty = any non-author (compatible default). |
+| `REVIEW_GATE_OUTAGE_CONTEXT` | `kendex-reviewer-outage` | LEGACY name for the operator override status context (below). Still read by the predicate; new installs and the shipped examples set only `REVIEW_GATE_OVERRIDE_CONTEXT`. Empty disables. |
+| `REVIEW_GATE_OVERRIDE_CONTEXT` | (absent = fall back to `REVIEW_GATE_OUTAGE_CONTEXT`) | v2 name for the operator override status context, resolved by `.agents/skills/review-gate/scripts/review-predicate.sh` itself. When present anywhere (env or settings file) it wins over `REVIEW_GATE_OUTAGE_CONTEXT`. The override's status description must carry a non-empty REASON (enforced; shown in the gate detail). Empty disables the override source. |
+| `REVIEW_GATE_STATUS_PUBLISHER_REJECT` | (empty) | Commit-status creator logins that are never evidence, on both the trusted-context and override reads (typically `github-actions[bot]`). While this list is configured, a status with NO creator login is not evidence. Empty disables (the shipped default). Configuring it requires the override to be posted by a non-Actions identity (operator PAT). |
+| `REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` | (empty) | Review-object trust list. Empty = any non-author. |
 | `REVIEW_GATE_REVIEW_OBJECT_MIN_STATE` | `any` | `any` counts any accepted review row; `approved` requires an APPROVED not withdrawn by a later CHANGES_REQUESTED from the same login. |
-| `REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS` | `encountered an error and was unable to review` | Case-insensitive substrings marking a review row's BODY as the reviewer's own errored-run attestation — the reviews API has no errored state, so an errored bot review lands as a normal COMMENTED row whose body says the review never ran → not evidence and never a carry candidate, the review-object mirror of the skip patterns. Never a blocker: the standing changes-requested reduction deliberately ignores this list. A configured value replaces the default list. Empty disables. |
-| `REVIEW_GATE_THREADS` | `enforce` | `enforce` fails closed on unresolved review threads; `off` skips the reviewThreads GraphQL read entirely and never emits `threads-open` — for repos whose thread hygiene is a server-side zero-bypass ruleset (`required_review_thread_resolution`), where the CI-side term is a latency optimization, not the enforcement point of record. Only the thread term is disabled; evidence and changes-requested still fail closed. |
-| `REVIEW_GATE_API_ATTEMPTS` | `1` | Bounded retries per evidence read in the predicate. Default = single attempt; failing through every attempt is still exit 2 (no verdict). |
-| `REVIEW_GATE_API_RETRY_DELAY_SECONDS` | `2` | Pause between retry attempts. The selftest drives the committed value through the predicate, so a value the predicate refuses fails the suite pre-merge (the live predicate would otherwise exit 2 on every evaluation); the battery itself replays with the delay pinned to 0 — the pause paces production reads and decides no verdict. |
-| `REVIEW_GATE_CARRY_FORWARD` | (empty) | Carry-safe delta classes (`docs`, `comments`; `;` or `\|` separated; empty = off, exact-head evidence only). With NO evidence at head, a qualifying review object at an ancestor commit N satisfies the evidence term when the N→head diff classifies entirely into the enabled classes — docs-only files (`*.md`/`*.markdown` by extension — a directory rule would carry executable files, e.g. a Sphinx `conf.py` inside the docs tree), or comment-only changes to code files (conservative per-extension comment-token table; added/removed/renamed files, patch-less files, and unknown extensions refuse) — or the trees are identical (rebase residue). Only the NEWEST ancestor candidate decides. Never a waiver: real evidence must exist and only extends across a delta review would not re-examine; code changes always require fresh evidence, and changes-requested / unresolved threads still fail closed with carried evidence. The compare API caps its file list at 300 entries, so a delta at the cap refuses carry (completeness unprovable), and the `comments` classifier is line-lexical — blind to an enclosing heredoc or multiline string where a full-line `#`/`//`-prefixed change is data — so enable `comments` only where that residual risk is acceptable. |
-| `REVIEW_GATE_CARRY_FORWARD_EXCLUDE` | (empty) | Path globs (`;`-separated, shell-style; `*` matches `/` too — fnmatch without FNM_PATHNAME) that disqualify a carry: any file in the N→head delta matching an exclusion refuses carry-forward even when the delta classifies entirely carry-safe, forcing fresh evidence. Built for policy-bearing markdown the `docs` class would otherwise carry — `AGENTS.md`, reviewer/agent instruction files under `.github/` — which is "docs" by extension yet obeyed mechanically by agents. Surgical: non-matching deltas still carry. Identical-tree carries are unaffected (no delta, nothing to exclude). Inert while `REVIEW_GATE_CARRY_FORWARD` is empty. A structurally universal exclusion (an all-wildcard entry such as `*`) fails the selftest by design: it disables every delta carry, which is overwhelmingly a misconfiguration — an identical-tree-only carry posture is not expressed this way; narrow the exclusions to the real policy surfaces or disable the carry class. |
-| `REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC` | (empty) | Exclusion globs (`;`-separated, exact glob text) DECLARED to match no tracked path today. The selftest's per-glob battery fails an exclusion glob that matches nothing in the repository — a typo'd or wrongly anchored glob is dead config exactly like a leading-`/` one — unless the glob is declared here as deliberately guarding paths that do not exist yet. A glob matching tracked paths only OUTSIDE the enabled carry classes is not dead and must NOT be declared here (the declaration asserts no tracked match at all) — the selftest notes it as inert for today's classes and passes. The ledger is validated in BOTH directions whenever declarations exist: membership — an entry that is not an exact member of the active exclusion list FAILs — in every mode, and the still-matches-nothing half — an entry whose glob now matches tracked paths FAILs — in tracked mode; declarations cannot outlive their subject. An EMPTY `REVIEW_GATE_CARRY_FORWARD_EXCLUDE` therefore FAILs on the membership rule rather than sitting inert: with no exclusion list, every declaration is an orphan. Read by the selftest only; the live predicate's matching is unchanged. Inert while `REVIEW_GATE_CARRY_FORWARD` is empty. |
-| `REVIEW_GATE_MODE` | `enforce` | The one-switch per-repo gate disable (owner decision 2026-08-08). `enforce` is today's full behavior. `off` makes the predicate answer `approved` with the attestation detail `review gate disabled by settings (REVIEW_GATE_MODE=off)` before ANY evidence read — zero API traffic, no evidence model, no thread term — so the writer converges the required status to success and THIS status context stops blocking the queue — admission then rests on the repo's other required checks and rulesets (a server-side `required_review_thread_resolution` rule, where configured, still blocks on open threads; `off` here disables only the review-gate context). Every evaluated PR-head status says the gate is disabled, never that a review happened; merge-group statuses are outside this attestation — the writer's `merge_group` path never reads the mode and always posts success as `merge-queue entry: post-approval by construction`. Unknown values are a config error (exit 2): a typo cannot disable a merge gate. Orch's submit flow reads the same key and skips its reviewer wait entirely when `off`. RESOLUTION BOUNDARY (same as `PR_REVIEW_WAIT_SECS`): set it in `kendex.settings.toml` or export it — orch additionally reads `.env`/`.env.local`, the engine does not, so an env-file-only `off` would skip orch's wait while the writer keeps enforcing (fail-closed, but the PR then waits on a gate the operator thinks is off). |
-| `PR_REVIEW_WAIT_SECS` | `900` | Review-wait quiet period in seconds — must be a non-negative integer of at most 9 digits after leading zeros (~31 years); `.agents/skills/review-gate/scripts/pr-watch.sh` treats any other value (empty, `90s`, negative, out of range) as a loud configuration error (exit 2), never a silent fallback to the default. SHARED with the orch skill (approval-wait's absent-positional budget). Read by `pr-watch.sh` as the `awaiting-stale` threshold — an un-reviewed head older than this is attention. One key so the watcher and the waiter agree on what "silence too long" means. RESOLUTION BOUNDARY: review-gate scripts resolve env > `kendex.settings.toml` > default; orch additionally reads `.env`/`.env.local`. Set this key in `kendex.settings.toml` (it is public project config, not a secret) or export it — a `.env`-only value reaches orch but not the watcher. |
+| `REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS` | `encountered an error and was unable to review` | Case-insensitive substrings marking a review row's BODY as an errored-run attestation → not evidence and never a carry candidate. Never a blocker: the changes-requested reduction ignores this list. A configured value replaces the default list. Empty disables. |
+| `REVIEW_GATE_THREADS` | `enforce` | `enforce` fails closed on unresolved review threads; `off` skips the reviewThreads GraphQL read and never emits `threads-open` — only for repos with a server-side zero-bypass `required_review_thread_resolution` ruleset. Only the thread term is disabled; evidence and changes-requested still fail closed. |
+| `REVIEW_GATE_API_ATTEMPTS` | `1` | Bounded retries per evidence read in the predicate. Failing through every attempt is exit 2 (no verdict). |
+| `REVIEW_GATE_API_RETRY_DELAY_SECONDS` | `2` | Pause between retry attempts. The selftest validates the committed value through the predicate; the battery itself replays with the delay pinned to 0. |
+| `REVIEW_GATE_CARRY_FORWARD` | (empty) | Carry-safe delta classes (`docs`, `comments`; `;` or `\|` separated; empty = off, exact-head evidence only). With NO evidence at head, a qualifying review object at an ancestor commit N satisfies the evidence term when the N→head diff classifies entirely into the enabled classes — docs-only files (`*.md`/`*.markdown` by extension), or comment-only changes to code files (per-extension comment-token table; added/removed/renamed files, patch-less files, and unknown extensions refuse) — or the trees are identical. Only the NEWEST ancestor candidate decides. Code changes always require fresh evidence; changes-requested / unresolved threads still fail closed with carried evidence. A delta at the compare API's 300-file cap refuses carry. The `comments` classifier is line-lexical (blind to heredocs and multiline strings) — enable `comments` only where that residual risk is acceptable. |
+| `REVIEW_GATE_CARRY_FORWARD_EXCLUDE` | (empty) | Path globs (`;`-separated, shell-style; `*` matches `/` too — fnmatch without FNM_PATHNAME) that disqualify a carry: any file in the N→head delta matching an exclusion refuses carry-forward, forcing fresh evidence. Use for policy-bearing markdown (`AGENTS.md`, instruction files under `.github/`). Non-matching deltas still carry; identical-tree carries are unaffected. Inert while `REVIEW_GATE_CARRY_FORWARD` is empty. An all-wildcard entry such as `*` fails the selftest — narrow the exclusions or disable the carry class. |
+| `REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC` | (empty) | Exclusion globs (`;`-separated, exact glob text) DECLARED to match no tracked path today. The selftest fails an exclusion glob that matches nothing in the repository unless declared here. A glob matching tracked paths only OUTSIDE the enabled carry classes must NOT be declared here. Whenever declarations exist: an entry that is not an exact member of the active exclusion list FAILs (every mode); an entry whose glob now matches tracked paths FAILs (tracked mode). An EMPTY `REVIEW_GATE_CARRY_FORWARD_EXCLUDE` with declarations FAILs on the membership rule. Read by the selftest only. Inert while `REVIEW_GATE_CARRY_FORWARD` is empty. |
+| `REVIEW_GATE_MODE` | `enforce` | The one-switch per-repo gate disable. `enforce` is full behavior. `off` makes the predicate answer `approved` with the attestation detail `review gate disabled by settings (REVIEW_GATE_MODE=off)` before ANY evidence read — zero API traffic, no evidence model, no thread term; the writer converges the required status to success and this context stops blocking the queue (a server-side `required_review_thread_resolution` rule still blocks on open threads). Merge-group statuses never read the mode and always post success as `merge-queue entry: post-approval by construction`. Unknown values are a config error (exit 2). Orch's submit flow reads the same key and skips its reviewer wait when `off`. RESOLUTION BOUNDARY (same as `PR_REVIEW_WAIT_SECS`): set it in `kendex.settings.toml` or export it — orch additionally reads `.env`/`.env.local`, the engine does not. |
+| `PR_REVIEW_WAIT_SECS` | `900` | Review-wait quiet period in seconds — a non-negative integer of at most 9 digits after leading zeros; `.agents/skills/review-gate/scripts/pr-watch.sh` treats any other value (empty, `90s`, negative, out of range) as a configuration error (exit 2). SHARED with the orch skill (approval-wait's absent-positional budget). Read by `pr-watch.sh` as the `awaiting-stale` threshold. RESOLUTION BOUNDARY: review-gate scripts resolve env > `kendex.settings.toml` > default; orch additionally reads `.env`/`.env.local`. Set this key in `kendex.settings.toml` or export it — a `.env`-only value reaches orch but not the watcher. |
 
-Two env-only PER-INVOCATION seams are deliberately NOT settings keys:
+Two env-only PER-INVOCATION seams are NOT settings keys:
 
 - `REVIEW_GATE_SETTINGS_FILE` — overrides the settings-file path (e.g. in
-  tests, or a caller resolving settings for a different checkout). Which
-  file to resolve from is a property of one invocation, never of the repo
-  the file itself describes — a settings key naming its own settings file
-  would be circular. Falling back to built-in defaults covers an ABSENT
-  PLAIN FILE only: a path that exists as a directory, FIFO, socket or
-  device, or a symlink that does not resolve (dangling target, cycle,
-  over-long chain), is a configuration error every reader fails loud on —
-  as is a file that exists but cannot be READ, which `-f` and `-e` both
-  accept and only the read itself catches. A symlink that DOES resolve to a
-  readable regular file reads normally. `/dev/null` is the one exempt path
-  — the documented handle for forcing defaults.
+  tests, or a caller resolving settings for a different checkout). Falling
+  back to built-in defaults covers an ABSENT PLAIN FILE only: a path that
+  exists as a directory, FIFO, socket or device, a symlink that does not
+  resolve, or a file that exists but cannot be READ is a configuration
+  error every reader fails loud on. A symlink that resolves to a readable
+  regular file reads normally. `/dev/null` is the one exempt path — the
+  handle for forcing defaults.
 - `REVIEW_GATE_STATUS_SNAPSHOT_FILE` — path to a status snapshot (JSON
   object with a `statuses` array and a top-level `sha` equal to the
   invocation's `HEAD_SHA`) the CALLER already holds. The rows must come
-  from the per-commit statuses LIST endpoint (`/commits/<sha>/statuses`) —
-  the same endpoint the predicate's own fetch path uses: full per-context
-  history, real `creator.login` on every row. The combined endpoint
-  (`/commits/<sha>/status`) is NOT a valid source — it projects
-  latest-per-context and serializes `creator` as null for App-posted rows,
-  which `REVIEW_GATE_STATUS_PUBLISHER_REJECT`'s anomaly rule treats as
-  not-evidence; while that reject list is configured, the seam refuses a
-  snapshot containing login-less rows (exit 2) rather than silently
-  dropping real evidence. The caller wraps the rows itself: merge every
-  page's rows into one `statuses` array under a top-level `sha` (a
-  first-page-only snapshot silently drops later-page evidence). When set,
+  from the per-commit statuses LIST endpoint (`/commits/<sha>/statuses`).
+  The combined endpoint (`/commits/<sha>/status`) is NOT a valid source;
+  while `REVIEW_GATE_STATUS_PUBLISHER_REJECT` is configured, the seam
+  refuses a snapshot containing login-less rows (exit 2). Merge every
+  page's rows into one `statuses` array under a top-level `sha`. When set,
   the predicate evaluates trusted-context and outage evidence against it
-  instead of fetching the statuses itself — a converge-style sweep that
-  reads the status list for its own required-status projection stops
-  paying that read twice per head. The snapshot is bound to one head at
-  one moment, which is why it can never be a repo setting — and the `sha`
-  requirement enforces that binding: a snapshot for another head is
+  instead of fetching the statuses itself. A snapshot for another head is
   refused. An unreadable, malformed, or wrong-head snapshot gets the read
   contract: exit 2, no verdict.
 
 # Security posture
 
-Workflows that execute repository-controlled code with a write-capable token
-are the gate's own attack surface: a malicious PR could edit the predicate,
-read the token, or post an `approved` status. The v2 writer closes this by
-construction — the one workflow that writes the gate status runs the
-DEFAULT-branch engine on every leg that runs it, with credentials-dropped
-checkouts, and reads PR data only through the API, so no PR-controlled code
-ever executes with the write-capable token and no trust-posture knob
-exists. The PR-attached legs reach a relay that checks out nothing and
-executes no engine, which does not weaken the conclusion — it removes the
-only code path those legs had. The
-corollary: a PR that repairs a broken engine cannot open its own gate — it
-merges via the ruleset's bypass actor. Wiring: [adoption.md](adoption.md).
+The one workflow that writes the gate status runs the DEFAULT-branch engine
+on every leg that runs it, with credentials-dropped checkouts, and reads PR
+data only through the API; no PR-controlled code ever executes with the
+write-capable token and no trust-posture knob exists. The PR-attached legs
+reach a relay that checks out nothing and executes no engine. A PR that
+repairs a broken engine cannot open its own gate — it merges via the
+ruleset's bypass actor. Wiring: [adoption.md](adoption.md).

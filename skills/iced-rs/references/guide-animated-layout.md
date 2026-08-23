@@ -1,26 +1,22 @@
 # Animated Layout Transitions
 
-Patterns for animating between collapsed and expanded states in custom widgets. Covers measured positions, keyed identity, geometry-driven travel, and transition clipping.
+Patterns for animating custom widgets between collapsed and expanded states: measured positions, keyed identity, geometry-driven travel, transition clipping.
 
 **Read order**: `animation.md` → this guide → `guide-custom-widgets.md` → `advanced-tree.md` → `advanced-layout.md`.
 
-**When to read**: before building any UI with animated expand/collapse, reorderable layered views, floating panels, toasts, or variable-height animated lists.
+**When to read**: before any animated expand/collapse, reorderable layered view, floating panel, toast, or variable-height animated list.
 
 ## Measured positions over estimated heights
 
-Synthetic per-item height estimates (e.g. "each item is ~48px") are a fragile source of truth for final animated layout spacing.
+Per-item height estimates (e.g. "each item is ~48px") are not a source of truth for final animated spacing.
 
-**Acceptable**: height hints for rough travel budgets, fallback heuristics, or initial layout before measurement.
+**Acceptable**: rough travel budgets, fallback heuristics, initial layout before measurement.
 
-**Not acceptable**: authoritative source for expanded layout spacing when child heights vary.
+**Not acceptable**: expanded layout spacing when child heights vary.
 
-Mixed content — items with icons, items without, description rows, button rows, close buttons, custom embedded content — will drift from any single estimate. Repeated one-off fixes for specific item variants is a signal the architecture needs measured child layout, not more estimates.
-
-### What to do instead
-
-1. **Measure child layout.** Use `layout()` to obtain the real `layout::Node` for each child. The node's `bounds().height` is the authoritative expanded height.
-2. **Use a real list-layout source of truth.** Store measured expanded geometry alongside collapsed geometry in Tree state. Interpolate between the two.
-3. **Interpolate from collapsed geometry to measured expanded geometry** — not from collapsed to an estimate.
+1. **Measure child layout.** Call `layout()` for each child; the node's `bounds().height` is the expanded height.
+2. **Store measured expanded geometry alongside collapsed geometry in Tree state.**
+3. **Interpolate from collapsed geometry to measured expanded geometry** — never to an estimate.
 
 ```rust
 // In Tree state
@@ -47,19 +43,17 @@ fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, limits: &Limits) -> N
 }
 ```
 
-> **Warning**: if you find yourself adding special-case height adjustments for specific content variants ("add 24px when the item has an icon," "add 32px for the close button row"), the architecture needs measured child layout, not more estimates.
+> **Warning**: special-case height adjustments ("add 24px when the item has an icon") mean the widget needs measured child layout, not more estimates.
 
 ## Collapsed-to-expanded transition pattern
 
-Animating between two real layouts (e.g. a stacked collapsed view and a fully expanded list) requires a disciplined pattern.
-
 ### The pattern
 
-1. **One stable source of item identity.** Each item has a unique key that survives reordering, insertion, and removal.
-2. **One stable hover sensor.** The hitbox that triggers expand/collapse does not change size during the animation. See `guide-custom-widgets.md` § "Stable hover hit regions."
-3. **Measured expanded positions.** Run child `layout()` to get real sizes, store in Tree state.
-4. **Collapsed positions derived from stack geometry.** Compute where each item sits in the collapsed presentation from the stack's geometry rules (overlap offset, stacking direction).
-5. **Interpolate between the two.** Use a single `Animation<f32>` or `Animation<bool>` (0.0 = collapsed, 1.0 = expanded) to lerp positions and sizes.
+1. **One stable item identity.** Each item has a unique key that survives reordering, insertion, and removal.
+2. **One stable hover sensor.** The expand/collapse hitbox does not change size during the animation. See `guide-custom-widgets.md` § "Stable hover hit regions."
+3. **Measured expanded positions.** Run child `layout()`, store sizes in Tree state.
+4. **Collapsed positions from stack geometry** (overlap offset, stacking direction).
+5. **Interpolate with a single `Animation<f32>` or `Animation<bool>`** (0.0 = collapsed, 1.0 = expanded).
 
 ```rust
 // Tree state for the transition
@@ -103,13 +97,7 @@ fn draw(&self, tree: &Tree, renderer: &mut Renderer, /* ... */) {
 
 ### What to avoid
 
-**Duplicated animated trees in a `stack`.** Do not overlay a full collapsed tree and a full expanded tree in a `stack` and crossfade between them.
-
-Problems:
-- Both trees process events — hover, click, and drag fire on both layers simultaneously
-- Identity is duplicated — each item exists twice in the widget tree, causing state confusion during `diff()`
-- Opacity crossfade creates visible overlap artifacts during the transition
-- Layout invalidation affects both trees, compounding performance cost
+**Duplicated animated trees in a `stack`.** Do not crossfade a full collapsed tree and a full expanded tree. Both trees receive events, identity is duplicated in `diff()`, and the crossfade shows overlap artifacts.
 
 ```rust
 // BAD: two full trees crossfading
@@ -123,12 +111,7 @@ my_animated_list(items)
     .expanded(self.is_expanded)  // single source of truth
 ```
 
-**Branch-swap with no real transition.** Do not use `if expanded { expanded_view() } else { collapsed_view() }` without intermediate states.
-
-Problems:
-- No animation — the view pops between states
-- Widget tree shape changes, resetting all persistent state (scroll positions, hover, animation progress)
-- Violates the widget tree consistency rule (see `../SKILL.md` § "Widget tree consistency")
+**Branch-swap.** Do not use `if expanded { expanded_view() } else { collapsed_view() }`: the view pops, the tree shape change resets persistent state, and it violates `../SKILL.md` § "Widget tree consistency".
 
 ```rust
 // BAD: branch swap — pops, loses state
@@ -142,26 +125,17 @@ if self.expanded {
 animated_list(items).expanded(self.expanded)
 ```
 
-**Fixed expanded-height hitbox as hover source.** Do not use a `mouse_area` the size of the expanded content to detect hover for collapse/expand.
-
-Problems:
-- When collapsed, the hitbox extends beyond visible content — adjacent UI competes for hover
-- Users trigger expansion by mousing over empty space below the collapsed view
+**Expanded-height hitbox as hover source.** Do not use a `mouse_area` the size of the expanded content for collapse/expand hover: when collapsed it extends past visible content and empty space triggers expansion.
 
 ## Keyed identity in reordered and layered views
 
-When items can be reordered, removed, or presented in different visual modes (list view, grid, stacked layers), their identity must remain stable across all presentations.
-
 ### The problem
 
-If you build a collapsed layered view by sorting children by Z-position and iterating `self.children[sorted_indices[i]]`, but the Tree children are stored in insertion order, Tree child `i` no longer corresponds to visual child `i`. Symptoms:
-- Wrong icons or content appear on items after reorder
-- Stale subtree state (old hover, old animation phase) appears on the wrong item
-- Removing an item causes a different item to reset or display stale content
+Iterating `self.children[sorted_indices[i]]` against Tree children stored in insertion order mismatches Tree child `i` and visual child `i`. Symptoms: wrong content after reorder, stale subtree state (hover, animation phase) on the wrong item, a removed item resetting its neighbor.
 
 ### The rule
 
-**Keyed identity must remain stable in all presentation modes.** The association between an item's unique key and its Tree child index must not change based on visual ordering.
+**The key→Tree-child-index association must not change with visual ordering, in any presentation mode.**
 
 Options:
 1. **Use `keyed::Column`** for list presentations — it diffs by key, not position. See `widget-lazy-keyed.md`.
@@ -184,25 +158,16 @@ fn draw(&self, tree: &Tree, renderer: &mut Renderer, /* ... */) {
 
 ### Testing guidance
 
-- **Reorder with distinct content.** Give each item visibly different icons, text, and colors. After reorder, verify each item displays its own content — not the content of the item previously at that position.
-- **Remove and verify neighbors.** Remove item N, confirm item N+1 doesn't inherit N's stale state (hover highlight, animation phase, expanded/collapsed state).
-- **Switch presentation modes.** Toggle between list and layered view. Confirm each item retains its identity, animation state, and correct content.
-- **Inspect Tree children count.** After removal, `tree.children.len()` must match the current item count. Orphaned Tree children cause stale rendering.
+- **Reorder with distinct content.** Give each item distinct icons, text, colors; after reorder each item must show its own content.
+- **Remove and verify neighbors.** Remove item N; item N+1 must not inherit N's hover, animation phase, or expanded state.
+- **Switch presentation modes.** Toggle list/layered; each item keeps identity, animation state, content.
+- **Inspect Tree children count.** After removal, `tree.children.len()` must equal the item count.
 
 ## Geometry-driven entry and exit travel
 
-Entry/exit travel distance for floating or sliding UI (toasts, banners, popovers, floating panels) must be derived from measured geometry, not a fixed pixel constant.
-
-### Why
-
-A fixed travel distance (e.g. `const SLIDE_DISTANCE: f32 = 60.0`) works only when all items are the same height. Variable-height content will:
-- **Clip** if the travel is shorter than the item
-- **Leave visible remnants** if the travel doesn't fully clear the visible area
-- **Look inconsistent** across different-sized items in the same list
+Entry/exit travel distance for floating or sliding UI must derive from measured geometry, not a fixed pixel constant. A fixed distance clips tall items and leaves remnants of short ones.
 
 ### The rule
-
-Derive travel from the item's measured size or a conservative geometry contract:
 
 ```rust
 // GOOD: travel derived from measured height
@@ -214,7 +179,7 @@ const SLIDE_DISTANCE: f32 = 60.0;
 let offset_y = SLIDE_DISTANCE * (1.0 - t);  // clips tall items, wastes space on short ones
 ```
 
-For items whose size isn't known until layout, use the measured `layout::Node` bounds stored in Tree state as the travel source.
+When size is unknown until layout, use the measured `layout::Node` bounds stored in Tree state.
 
 ### Applies to
 
@@ -222,17 +187,11 @@ Toasts, notification banners, popovers, sliding panels, bottom sheets, dropdown 
 
 ## Transition height and clipping
 
-Animating between collapsed and expanded states requires both interpolated positions **and** correct current visible bounds / clipping.
-
-### The problem
-
-Position interpolation alone is insufficient:
-- If a widget always reports its expanded height to the parent layout, trailing content remains visible even when the widget is visually collapsed
-- If collapsed content should show only stacked slivers, but the widget's reported bounds include the full expanded height, children outside the collapsed footprint are not clipped
+Interpolated positions are not enough: a widget that always reports its expanded height leaves trailing content visible and unclipped when collapsed.
 
 ### The rule
 
-During a transition, the widget's reported layout size and any clipping region must match its current animated state:
+During a transition, the reported layout size and clipping region must match the current animated state:
 
 ```rust
 fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, limits: &Limits) -> Node {

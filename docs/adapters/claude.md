@@ -33,7 +33,6 @@ scope and to the repository's `.mcp.json` at project scope
 
 ## Format facts
 
-- **Byte cap:** none. `format_caps` returns the defaults.
 - **Name rule:** `Any` — any single path segment. Namespace separator `__`.
 - **MCP transports:** stdio, streamable HTTP, SSE.
 - **Agent file:** YAML frontmatter + markdown body, `<name>.md`. kendex
@@ -41,17 +40,15 @@ scope and to the repository's `.mcp.json` at project scope
   `isolation?`, `memory?`, `tools` (allowlist, comma-joined), always
   `disallowedTools`, `color?`, `skills`, and a nested `hooks:` block for
   per-agent custom hooks (`crates/core/src/render/agent/claude.rs`).
-- **Model dialect:** `fable` and `opus` resolve to the literal `inherit` —
-  heavy tiers take the session model rather than pinning a possibly-smaller
-  default. `sonnet` and `haiku` pin their own alias. Explicit vendor ids pass
+- **Model dialect:** `fable` and `opus` resolve to the literal `inherit`;
+  `sonnet` and `haiku` pin their own alias. Explicit vendor ids pass
   through (`crates/core/src/harness/models.rs`).
-- **Tool vocabulary:** Claude's PascalCase names *are* the fleet's authoring
-  vocabulary, so bodies pass through unrewritten and manifest tool names are
-  only case-normalized — an unmapped lowercase name would silently fail to
-  deny (`claude_tool_name`, `crates/core/src/render/vocab/mod.rs`).
-- **Agent scoping:** per-agent file — hooks live in the agent's own
-  `hooks:` block, so a scoped custom hook is enforced; every-agent custom
-  hooks register in `settings.json`, covering the main session too.
+- **Tool vocabulary:** Claude's PascalCase names are the fleet's authoring
+  vocabulary: bodies pass through unrewritten; manifest tool names are
+  case-normalized (`claude_tool_name`, `crates/core/src/render/vocab/mod.rs`).
+- **Agent scoping:** per-agent file — scoped custom hooks live in the
+  agent's own `hooks:` block (enforced); every-agent custom hooks register
+  in `settings.json`, covering the main session too.
 
 ## Hooks
 
@@ -61,14 +58,13 @@ exit status.
 The script lands at `~/.claude/hooks/<name>.sh` or
 `.claude/hooks/<name>.sh`, and the registration goes into that scope's
 `settings.json` under `hooks.<event>` in the nested matcher-plus-handlers
-shape. `settings.local.json` is observed and never written — it is the
-user's own file. The registered command uses
+shape. `settings.local.json` is observed and never written. The registered command uses
 `$CLAUDE_PROJECT_DIR` at project scope and an absolute path at global scope.
 Timeouts travel in the seconds the source declares. Event names pass through
-unmapped — the fleet's event vocabulary is Claude's.
+unmapped.
 
 Disabling renames the script to `<name>.sh.disabled` and reverses the
-registration; nothing is lost either way
+registration
 (`crates/core/src/engine/targets.rs`, `crates/core/src/engine/desired_kinds.rs`).
 
 ## Cross-reads — other tools read these files
@@ -78,14 +74,10 @@ GitHub Copilot CLI reads `.claude/settings.json` and
 `companyAnnouncements`, `disableAllHooks`, `enabledPlugins`,
 `extraKnownMarketplaces`, `hooks` — and discovers skills from
 `.claude/skills`; VS Code discovers agents from `.claude/agents`
-([CLI configuration directory](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference),
-accessed 2026-08-10).
+([CLI configuration directory](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)).
 
-Two consequences. A write kendex makes here changes Copilot's behavior, so
-the blast radius of a Claude settings edit is wider than the file suggests —
-invariant 2 covers the mechanics, not the reach. And the Copilot adapter
-deliberately does not claim these paths: one file on disk would otherwise
-count as two installations. The reach is reported as a note on the plan
+A write kendex makes here changes Copilot's behavior. The Copilot adapter
+does not claim these paths; the reach is reported as a note on the plan
 (`cross_read_note`, `crates/core/src/engine/desired_skill.rs`).
 
 ## Skill placement

@@ -26,7 +26,7 @@ The active project has no backlog, actionable, or in-progress issues left.
 {
   "status": "plan_ready",
   "project": {"id": "uuid", "name": "Phase 1: Foundation", "progress": 45},
-  "cycle": {"id": "uuid", "name": "Cycle 5", "start": "2026-01-13", "end": "2026-01-20", "days_remaining": 7},
+  "cycle": {"id": "uuid", "name": "Cycle 5", "start": "YYYY-MM-DD", "end": "YYYY-MM-DD", "days_remaining": 7},
   "velocity": {"current": 95, "previous": 138, "baseline": 138, "adjustment": null},
   "capacity": {"total": 110, "planned": 85, "available": 25},
   "health": {
@@ -70,7 +70,7 @@ Ordered by architecture analysis: unblocked before blocked, then layer (L0 found
 
 ### set_labels
 
-Each entry describes intent, not a partial replacement. The caller fetches the issue's current labels, computes the full final set, preserves unrelated labels unless `mode` is `replace_all`, preflights, and only then calls `issues update --labels`.
+The caller fetches the issue's current labels, computes the full final set, preserves unrelated labels unless `mode` is `replace_all`, preflights, and only then calls `issues update --labels`.
 
 | Field | Required | Description |
 |-------|----------|-------------|
@@ -83,7 +83,7 @@ Each entry describes intent, not a partial replacement. The caller fetches the i
 
 ### create_cycle
 
-Non-null only when no cycles exist: `{"team": "TeamName", "start": "2026-01-27", "end": "2026-02-03"}`.
+Non-null only when no cycles exist: `{"team": "TeamName", "start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}`.
 
 ### velocity
 

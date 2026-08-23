@@ -10,7 +10,7 @@ If the scope is too large to review honestly within context/tool limits, return 
 
 ## 2. Review
 
-Review per your agent file and the reviewer skill's Ethos, reading the relevant code before writing any finding — never from filenames or search hits alone. Findings may be pre-existing; report only what is actionable and material for an early-stage quality pass.
+Review per your agent file and the reviewer skill's Ethos; read the relevant code before writing any finding — never from filenames or search hits alone. Report only what is actionable and material.
 
 ## 3. Artifact, Validate, Return
 

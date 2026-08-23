@@ -18,13 +18,11 @@ tags: [data]
 
 ## The price type is `f64`
 
-IEEE 754 double precision. No fixed-point, no decimal types — it is what the platforms interoperate on (MT5, NinjaTrader, MultiCharts), carries 15-17 significant digits, is SIMD-friendly, and allows zero-overhead newtypes.
+IEEE 754 double precision. No fixed-point, no decimal types.
 
-Migrate to `i64` fixed-point **only** for a matching engine (bit-exact required), a regulatory audit trail mandating reproducibility, or a settlement system with legal precision requirements. The hybrid is `i64` on the execution hot path, `f64` for display and analytics.
+Use `i64` fixed-point **only** for a matching engine (bit-exact required), a regulatory audit trail mandating reproducibility, or a settlement system with legal precision requirements. Hybrid: `i64` on the execution hot path, `f64` for display and analytics.
 
 ## Never `==` on prices
-
-Direct equality is the largest single source of price bugs.
 
 ```rust
 use float_cmp::{approx_eq, F64Margin};
@@ -40,8 +38,6 @@ pub fn price_lte(a: f64, b: f64) -> bool { a < b || prices_equal(a, b) }
 ```
 
 ## Round only at the boundaries
-
-Rounding at the wrong boundary silently destroys feed precision or submits invalid orders.
 
 | Boundary | Rounding |
 |---|---|
@@ -60,9 +56,9 @@ pub fn validate_tick_alignment(price: f64, tick_size: f64) -> bool {
 }
 ```
 
-Order submission runs in this order: round to tick, validate alignment (a no-op after rounding — a failure here means the tick size is wrong, so return an error rather than re-rounding), then format for the broker API if it takes a string.
+Order submission order: round to tick, validate alignment (on failure return an error — never re-round), then format for the broker API if it takes a string.
 
-Format with the symbol's precision, never hardcoded decimals — EURUSD is 5, AAPL is 2, BTC is 8:
+Format with the symbol's precision, never hardcoded decimals (EURUSD 5, AAPL 2, BTC 8):
 
 ```rust
 format!("{:.1$}", price, symbol.display_decimals as usize)
@@ -92,15 +88,15 @@ impl SymbolSpec {
 }
 ```
 
-The symbol table loads at subscription setup (cold path), is keyed by symbol ID for O(1) lookup, and re-syncs on reconnect or symbol list change.
+The symbol table loads at subscription setup (cold path), is keyed by symbol ID, and re-syncs on reconnect or symbol list change.
 
 ## Price newtype
 
-Optional extra type safety: wrap `f64` in a `#[repr(transparent)]` newtype with `PartialOrd` but **no `PartialEq`**, so equality cannot be written without going through `prices_equal`. Constructor `debug_assert!`s `is_finite()`. Worth the friction for order types; skip it on the market-data hot path, where wrapping and unwrapping is noise.
+Optional: wrap `f64` in a `#[repr(transparent)]` newtype with `PartialOrd` but **no `PartialEq`**; equality goes through `prices_equal`. Constructor `debug_assert!`s `is_finite()`. Use for order types; skip on the market-data hot path.
 
 ## Normalize feeds to `f64` at ingest
 
-Convert at the entry boundary so all downstream code sees plain `f64` regardless of feed source.
+Convert at the entry boundary; downstream code sees plain `f64` regardless of feed source.
 
 ```rust
 // doubles (IB, dxFeed, Rithmic): pass through

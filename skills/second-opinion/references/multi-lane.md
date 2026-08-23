@@ -1,34 +1,32 @@
 # Multi-lane review
 
 How `review` fans out across lanes, merges their findings, places their
-artifacts, and classifies their failures. The caller-visible contract is in
-SKILL.md; this file is the mechanism behind it.
+artifacts, and classifies their failures.
 
 ## Lane resolution
 
-Selection is the same walk every mode takes, carried further. The roster
+The roster
 `SECOND_OPINION_MODELS` (default `claude codex`, space- or comma-separated) is
 walked in order and a target is taken when all of these hold:
 
 | Check | Skipped when |
 |---|---|
-| Name shape | Not `^[A-Za-z][A-Za-z0-9_-]*$` — an arbitrary token would otherwise reach indirect variable expansion and per-lane file paths |
-| One configuration | Its `SECOND_OPINION_<NAME>_*` namespace was already considered — `my-model` and `my_model` are one configuration |
-| Cross-model | Its declared identity (`SECOND_OPINION_<NAME>_MODEL`, default the name, model ids normalized) equals the session's (the detected harness's model where there is one — nearest harness ancestor in the process tree, then environment markers — else `SECOND_OPINION_CURRENT_MODEL`; a declaration contradicting a detected harness is refused, not preferred). A session with no identity (Pi/OpenCode/Cursor/undetected, undeclared), or one whose `SECOND_OPINION_CURRENT_MODEL` the roster does not spell, refuses every target; `none` declares no session model. A *detected* identity the roster does not name simply excludes nothing — the roster is the target list, so naming only the cross-model target is a valid configuration |
-| Distinct model | Its identity is already covered by a taken lane — two names fronting one model are one opinion |
-| Available | Its configured command's first word does not resolve — the first word is what gets executed, and an override may point it away from the target's own name |
+| Name shape | Not `^[A-Za-z][A-Za-z0-9_-]*$` |
+| One configuration | Its `SECOND_OPINION_<NAME>_*` namespace was already considered (`my-model` and `my_model` are one configuration) |
+| Cross-model | Its declared identity (`SECOND_OPINION_<NAME>_MODEL`, default the name, model ids normalized) equals the session's (the detected harness's model where there is one, else `SECOND_OPINION_CURRENT_MODEL`; a declaration contradicting a detected harness is refused). A session with no identity, or one whose `SECOND_OPINION_CURRENT_MODEL` the roster does not spell, refuses every target; `none` declares no session model. A *detected* identity the roster does not name excludes nothing |
+| Distinct model | Its identity is already covered by a taken lane |
+| Available | Its configured command's first word does not resolve |
 
-Every skip is one line on stderr naming the target and the reason. Review mode
+Every skip is one line on stderr naming the target and the cause. Review mode
 stops after `SECOND_OPINION_COUNT` lanes (default 1); every other mode after
 one. Fewer lanes than requested is stated on stderr and stamped into the
 artifact — `qa_metadata.requested_count`, `qa_metadata.selected_count`, and
-`coverage: "degraded"` — so a review that asked for breadth it did not get is
-distinguishable from one that never asked. Two or more lanes make the run multi-lane; one runs as a single-lane
-review; none is a refusal — exit 1, a JSON error on stderr listing every
-candidate with its reason, no artifact, no CLI invoked. `--target` and
-`SECOND_OPINION_TARGET` replace the walk with the one named target, which
-passes the same checks: forcing the session's own model is refused, not
-honoured.
+`coverage: "degraded"`. Two or more lanes make the run multi-lane; one runs
+as a single-lane review; none is a refusal — exit 1, a JSON error on stderr
+listing every candidate with its reason, no artifact, no CLI invoked.
+`--target` and `SECOND_OPINION_TARGET` replace the walk with the one named
+target, which passes the same checks: forcing the session's own model is
+refused.
 
 Adding a lane is a settings entry, not new code: add its name to
 `SECOND_OPINION_MODELS`, define `SECOND_OPINION_<NAME>_CMD` (name uppercased,
@@ -39,8 +37,8 @@ name — `SECOND_OPINION_<NAME>_MODEL`.
 
 The scope is derived once, up front, before any lane spawns: an empty diff
 exits 3 without spawning anything, and every lane receives the same range
-resolved to concrete commits. A commit landing mid-review cannot shift what a
-lane sees, and the endpoint is stamped as `qa_metadata.reviewed_head`.
+resolved to concrete commits. The endpoint is stamped as
+`qa_metadata.reviewed_head`.
 
 Each lane is a recursive single-target invocation of the script, so every lane
 keeps the full single-lane contract: scope embedding, one-shot retry, the
@@ -81,65 +79,46 @@ under `--cwd`), with the same sidecar family beside it; the parent removes both
 at exit.
 
 Stale files under a caller's `--output` are removed before lanes spawn — the
-union artifact, and each lane's artifact and those exact sidecar suffixes. A
-stdout run's lane artifact is created rather than named, so nothing can be
-stale at it. A previous run's
-union would otherwise read as a fresh pass to a caller that continued past an
-advisory failure, and a previous run's lane artifact is misleading whether or
-not the current run overwrites it. The suffixes are enumerated, never globbed:
-the output path belongs to the caller, and anything else of theirs sitting
-under the same prefix is not this tool's to delete.
+union artifact, and each lane's artifact and those exact sidecar suffixes. The
+suffixes are enumerated, never globbed.
 
 A lane artifact and the sidecars beside it are written owner-only by the child
 that writes them, whatever the caller's umask, and each is created rather than
-written through whatever is found at the name. The restriction rides on those
-writes rather than on a umask around the lane, so nothing else the lane creates
-inherits it — the session and cache state the external model CLI keeps for
-itself comes out exactly as it does on a single-lane run. The union artifact
-follows the caller's umask.
+written through whatever is found at the name. Nothing else the lane creates
+inherits that restriction. The union artifact follows the caller's umask.
 
 ## Scratch and durability
 
 The run creates exactly one directory under `TMPDIR` and it holds nothing but
-the per-lane stderr captures. Losing it — an agent CLI, a sandbox, or a tmp
-reaper clearing scratch mid-run — costs the log replay, which is reported as
-such, and never a verdict.
+the per-lane stderr captures. Losing it mid-run costs the log replay, which is
+reported as such, and never a verdict.
 
-Each lane's review is held in memory from the moment that lane is reaped, so
-the merge never reads it back from disk. Where it sits until then depends on
-the mode:
+Each lane's review is held in memory from the moment that lane is reaped.
+Where it sits until then depends on the mode:
 
 | Mode | Lane review lives in | Effect of a temp-space actor |
 |---|---|---|
 | `--output` | The durable sibling beside the union | None — it is not in temp space |
 | stdout | A per-run file in the artifact home | None — it is not in temp space |
 
-An actor clearing temp space — files as well as directories — therefore costs
-the log replay and never a lane's findings. The one exception is a home that
-cannot be created or vetted: the lane falls back to a temp file, with the
-reason on stderr, and losing it degrades coverage, records that lane at exit 5
-and names the loss — never a silent pass.
+The one exception is a home that cannot be created or vetted: the lane falls
+back to a temp file, with the cause on stderr, and losing it degrades
+coverage, records that lane at exit 5 and names the loss.
 
 ## Failure classes
 
-One failed lane does not fail the run: a quota-capped lane would otherwise
-block every review. It is recorded in `qa_metadata.lanes`, coverage becomes
-`degraded`, and the run still exits 0 with the surviving lanes' findings.
+One failed lane does not fail the run. It is recorded in `qa_metadata.lanes`,
+coverage becomes `degraded`, and the run still exits 0 with the surviving
+lanes' findings.
 
 A lane's artifact is usable only if it holds exactly one JSON object shaped the
-way the merge consumes it. Each rejection names itself on stderr:
-
-| Rejected shape | Why the merge needs it |
-|---|---|
-| Not exactly one JSON value | Several values would smuggle extra lanes into the merge; none is nothing to merge |
-| Top level not an object | The lane's review is the object being wrapped |
-| `blockers` / `suggestions` not an array of objects | Each finding gets `{source: <lane>}` added |
-| A finding's `location` not a string | Locations are lowercased for the dedupe key |
-| `questions` not an array | Questions are iterated and uniqued |
-| `summary` not a string | Summaries are concatenated into the union summary |
+way the merge consumes it. Each rejection names itself on stderr. Rejected
+shapes: not exactly one JSON value; top level not an object; `blockers` /
+`suggestions` not an array of objects; a finding's `location` not a string;
+`questions` not an array; `summary` not a string.
 
 Rejecting an artifact keeps that lane's failure local — exit 4, coverage
-degraded — instead of aborting the merge and losing every other lane's review.
+degraded.
 
 The line between the two failure classes is whether the lane produced any bytes
 at all. An artifact with content the merge cannot consume, including one

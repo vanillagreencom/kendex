@@ -38,11 +38,9 @@ the gate; and merge-group statuses never read the mode, posting green as
 
 ## ADOPTION PRECONDITION — check this first
 
-Whether untested code can reach the default branch is branch protection's
-job, so a repo must satisfy one of these or a reviewed PR merges untested:
-**a merge queue** whose required contexts include the test aggregate
-(recommended), or **no held-back jobs**. Held-back jobs report `skipped`,
-and GitHub counts skipped as satisfied. Wiring and the sandbox proof:
+A repo must satisfy one of these: **a merge queue** whose required contexts
+include the test aggregate (recommended), or **no held-back jobs** (held-back
+jobs report `skipped`, which GitHub counts as satisfied). Wiring:
 [references/adoption.md](references/adoption.md) § The precondition.
 
 ## Evidence sources (`.agents/skills/review-gate/scripts/review-predicate.sh`)
@@ -54,15 +52,13 @@ Evidence for the CURRENT head is any of:
    and to APPROVED reviews when `REVIEW_GATE_REVIEW_OBJECT_MIN_STATE =
    "approved"`. An approval is never superseded by a later COMMENTED from the
    same reviewer; only a later CHANGES_REQUESTED withdraws it. A row whose
-   body matches `REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS` (an errored
-   auto-review's own "unable to review" attestation — the reviews API has no
-   errored state) is NOT-EVIDENCE, never a failure: the review-object mirror
-   of the skip-pattern rule below.
+   body matches `REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS` is NOT-EVIDENCE,
+   never a failure.
 2. **Trusted clean-analysis check-run or commit status**
    (`REVIEW_GATE_TRUSTED_STATUS_CONTEXTS`) succeeding on this head — but a
    pass must prove analysis RAN: a success matching
    `REVIEW_GATE_CHECKRUN_SKIP_PATTERNS` (e.g. "rate limited") is
-   NOT-EVIDENCE, never a failure. It is silence, which `awaiting` handles.
+   NOT-EVIDENCE, never a failure.
    On BOTH surfaces the NEWEST row/run per name decides (statuses by list
    order, check-runs by run id): an older clean success never outlives its
    reviewer's newer pending/failed/skip-marked round.
@@ -73,9 +69,9 @@ Evidence for the CURRENT head is any of:
 4. **Operator override** (`REVIEW_GATE_OVERRIDE_CONTEXT`, legacy name
    `REVIEW_GATE_OUTAGE_CONTEXT`): a trusted operator's status carrying a
    NON-EMPTY reason, which is enforced and surfaced in the gate detail.
-   Substitutes for MISSING evidence ONLY — it can never override a
-   changes-requested or an unresolved thread, so the internal review must fix
-   findings and resolve threads first, then attest.
+   Substitutes for MISSING evidence ONLY — it never overrides a
+   changes-requested or an unresolved thread; fix findings and resolve
+   threads first, then attest.
 
 With `REVIEW_GATE_CARRY_FORWARD` (off by default), evidence at an ancestor
 carries to head when the delta is provably in a class review would not
@@ -84,8 +80,7 @@ evidence must exist, code changes always require fresh evidence, and the
 fail-closed terms still apply.
 
 Changes-requested and unresolved threads always fail closed. Every evidence
-read fails LOUD (exit 2, no verdict) — a transient API error must never flip
-a healthy PR's state; reads retry in-process up to `REVIEW_GATE_API_ATTEMPTS`
+read fails LOUD (exit 2, no verdict); reads retry in-process up to `REVIEW_GATE_API_ATTEMPTS`
 (default 1), and a zero-byte producer is a failed read, not an empty page
 set. Review threads are counted across pages (100 per page, bound 20
 pages / 2000 threads); past the bound — or when pagination metadata
@@ -95,8 +90,7 @@ cannot advance — the count reports overflow and fails closed to
 **Trust model.** Trust keys on names only GitHub controls: the author login
 of a review or comment, or the exact check/status context on repos where
 every publisher is trusted. A comment body never establishes trust — it is
-read only to BIND evidence to a commit, so a stale comment cannot vouch for a
-later push. Where PR workflows hold `statuses:write`, the opt-in
+read only to BIND evidence to a commit. Where PR workflows hold `statuses:write`, the opt-in
 `REVIEW_GATE_STATUS_PUBLISHER_REJECT` list rejects statuses minted by a
 forgeable creator (typically `github-actions[bot]`) on both the
 trusted-context and override reads. Statuses are read from the per-commit
@@ -111,40 +105,30 @@ One workflow, defined on the default branch, is the only thing that writes
 the gate status. It evaluates the predicate and converges the status —
 nothing else.
 
-- **Converge-all on every leg.** Every invocation converges EVERY open PR,
-  so a run evicted from the concurrency group strands nothing (8 evictions
-  observed in one sandbox replay, zero stranded).
+- **Converge-all on every leg.** Every invocation converges EVERY open PR.
 - **Relay / converge split.** PR-attached legs (`pull_request_target`,
   `pull_request_review`, `status`, an opted-in `check_run`) do NOT run the
   engine: they run a group-less relay job that dispatches a converge pass and
   exits. Only `workflow_dispatch` and `schedule` hold the single-writer group.
-  Convergence is unchanged — what changes is WHERE an eviction's `CANCELLED`
-  check lands: attached to a PR head it pinned that PR at `mergeStateStatus
-  UNSTABLE` until a manual rerun, while nothing gates on the default-branch
-  runs the relay dispatches into. It costs one non-evictable run per
-  PR-attached event, coalescing nothing — size that before adopting on a
-  capacity-limited runner pool ([references/adoption.md](references/adoption.md)
-  § Updating an already-adopted copy).
-- **The relay never exits non-zero — a pinned invariant, not a per-branch
-  choice.** It holds no `statuses` scope, so a failed dispatch cannot make the
-  gate look converged — only leave it stale, which the cron floor and
-  `pr-watch --heal` already own. Reddening would re-create the exact
-  `UNSTABLE` pin the split removes. Every fault warns and exits 0, and every
-  wait is bounded, so a sustained dispatch outage surfaces as **gate
-  staleness** across every open PR rather than as N red PRs. The retry
-  taxonomy and the bounds are pinned in adoption.md § Updating an
-  already-adopted copy — read it before editing a consumer's copy.
+  The relay costs one non-evictable run per PR-attached event — size that
+  before adopting on a capacity-limited runner pool
+  ([references/adoption.md](references/adoption.md) § Updating an
+  already-adopted copy).
+- **The relay never exits non-zero — a pinned invariant.** It holds no
+  `statuses` scope. Every fault warns and exits 0, and every wait is bounded;
+  a sustained dispatch outage surfaces as **gate staleness**, healed by the
+  cron floor and `pr-watch --heal`. Retry taxonomy and bounds: adoption.md
+  § Updating an already-adopted copy — read it before editing a consumer's copy.
 - **Write ordering.** Before any `success` post it re-reads the status and
   defers when any gate entry was created at/after this run's evaluation
   instant — a newer run's state AND description (which carries the audit
   detail) both stand; a failed re-read defers too. Downward posts never
   defer.
 - **Idempotent.** When the current entry already matches state + description
-  it no-ops, so idle cron ticks append nothing.
+  it no-ops.
 - **Forks need no special case** — every leg holds a write-capable
-  default-branch token. The one exception is `pull_request_review` on a fork
-  PR, whose token GitHub downgrades to read-only: it cannot dispatch, so
-  that run exits green as a no-op and the cron floor converges it.
+  default-branch token. Exception: `pull_request_review` on a fork PR holds a
+  read-only token, exits green as a no-op, and the cron floor converges it.
 - **`pull_request_target` safety**: the job never executes PR-controlled
   code. Every checkout pins the default branch with credentials dropped.
 
@@ -176,21 +160,18 @@ E2E_REPO=<owner>/<repo> .agents/skills/review-gate/tests/e2e-sandbox.sh
 ## Operations
 
 **Watching one or many PRs without stalling.** Never key a hand-rolled
-monitor on gate-state transitions — a PR sitting steadily at "pending with
-open threads" transitions nothing and you sleep through it. Run
+monitor on gate-state transitions. Run
 `.agents/skills/review-gate/scripts/pr-watch.sh` (optionally `--heal`) on
-the harness's wake-up mechanism instead: silence + exit 0 means nothing
-needs you; attention
-lines name exactly what does. See adoption.md § Watching PRs as an agent.
+the harness's wake-up mechanism: silence + exit 0 means nothing needs you;
+attention lines name exactly what does. See adoption.md § Watching PRs as an agent.
 
 **Reviewers are down / nothing is reviewing.** Run the internal review loop:
 fix findings, resolve every thread, then post the override status with a real
-reason. It cannot bypass an objection or an open thread — that is the point.
+reason. It cannot bypass an objection or an open thread.
 
 **A PR that repairs the gate itself.** The writer always runs the merged
-engine, so a broken predicate cannot open its own repair PR's gate. Merge it
-with the ruleset's bypass actor (every fleet repo has one configured) and say
-so in the commit message.
+engine. Merge the repair PR with the ruleset's bypass actor and say so in the
+commit message.
 
 **A settings-change PR** is judged by the OLD config — a PR adding a trusted
 login cannot have its own gate honor it. Merge via normal review or the
@@ -199,20 +180,18 @@ bypass actor.
 ## Settings
 
 Every per-repo value is a `REVIEW_GATE_*` key (env > `kendex.settings.toml` >
-default). Full table and the security reasoning:
+default). Full table:
 [references/settings.md](references/settings.md).
 
 ## Selftest — the engine's portable proof
 
 `.agents/skills/review-gate/scripts/review-predicate-selftest.sh` pins the
 decision table offline, running the real predicate against the invoking
-repo's own resolved settings — so a repo trusting a different bot tests its
-own trust list. How it does that: [DEVELOPMENT.md](DEVELOPMENT.md) § How the
-selftest pins the decision table.
+repo's own resolved settings. Details: [DEVELOPMENT.md](DEVELOPMENT.md) § How
+the selftest pins the decision table.
 
 Every consumer's CI must run it as a deliberately **ungated** job (own job,
-no `needs`): a broken predicate approves nothing, so a selftest behind the
-gate could never run when it matters.
+no `needs`).
 
 ## Adoption
 
@@ -222,12 +201,8 @@ sync workflow YAML), set the repo's
 `REVIEW_GATE_*` values, add the ungated selftest job, and require the gate
 context in the ruleset alongside the test aggregate. Full wiring:
 [references/adoption.md](references/adoption.md). An adoption PR deletes the
-local machinery it supersedes in the same PR — a redesign removes what it
-replaces, never leaves it dormant.
+local machinery it supersedes in the same PR.
 
-A consumer also merges re-vendor PRs whose entire delta is bytes already
-reviewed upstream. Suppress the duplicate findings with the remedy-locus
-reviewer instruction, never a reviewer path exclusion — excluding the vendored
-tree leaves a pure re-vendor PR with nothing to review, no review object, and a
-gate that starves:
+For re-vendor PRs, suppress duplicate findings with the remedy-locus reviewer
+instruction, never a reviewer path exclusion:
 [references/vendored-paths.md](references/vendored-paths.md).

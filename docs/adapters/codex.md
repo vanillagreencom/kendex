@@ -1,8 +1,7 @@
 # Codex
 
-TOML agents, an 8 KB skill body cap that truncates silently, and no command
-directory at all — the vendor retired prompts in favor of skills, so a
-command installs as a skill and the lock records what was written.
+TOML agents, a 1024-character bound on a skill's description, and no command
+directory: a command installs as a skill and the lock records what was written.
 
 ## Roots
 
@@ -26,16 +25,13 @@ Project markers: a `.codex/` or `.agents/` directory. Owner:
 | plugin | `~/.codex/plugins/` cache tree with `.codex-plugin/plugin.json`, toggles in `config.toml` `[plugins]` | — | observe only, global |
 | pi-extension | — | — | unsupported |
 
-Adopt stays off for commands: the prompts directory still loads, so it is
-still scanned, but nothing is ever written there.
+Adopt stays off for commands: the prompts directory is scanned, never written.
 
 ## Format facts
 
-- **Byte cap:** 8192 bytes on SKILL.md. Codex truncates past it without a
-  word, so an oversized body is split — head plus a pointer into
-  `references/details.md` — rather than shipped whole
-  (`crates/core/src/render/split/mod.rs`). A single fenced block larger than
-  the cap is refused for this harness instead of cut mid-fence.
+- **Body cap:** none. Codex loads the whole SKILL.md; its documented limit
+  is the frontmatter `description`, at most 1024 characters. A longer one is
+  refused for this harness (`render/validate/skill.rs`), naming the skill.
 - **Name rule:** `Any`. Namespace separator `__`.
 - **MCP transports:** stdio and streamable HTTP. Codex never speaks SSE.
 - **Agent file:** TOML, `<name>.toml`. kendex writes `name`,
@@ -44,17 +40,16 @@ still scanned, but nothing is ever written there.
   carrying the whole prompt (`crates/core/src/render/agent/codex.rs`).
 - **Model dialect:** every tier resolves to `gpt-5.6-sol`; omitting the key
   is Codex's dialect for inherit.
-- **Permissions:** Codex has no tool allowlist. The sandbox is the closest
-  enforceable restriction — a read-only allowlist caps `sandbox_mode` at
-  `read-only`, any other allowlist at `workspace-write`, and only an explicit
-  Engineer role with no allowlist earns `danger-full-access`. An allowlist
-  always warns that the list itself is not enforced.
-- **Tool vocabulary:** Codex's docs name actions rather than tools, so prose
-  is rewritten to phrases — `Read` becomes "open the file", `Bash` becomes
-  "run a shell command" (`crates/core/src/render/vocab/mod.rs`).
-- **Agent scoping:** none — a registered hook cannot tell which agent
-  triggered it, so only `agents = "all"` custom hooks are enforced here;
-  scoped ones stay advisory prose in the agent files.
+- **Permissions:** Codex has no tool allowlist. A read-only allowlist caps
+  `sandbox_mode` at `read-only`, any other allowlist at `workspace-write`,
+  and only an explicit Engineer role with no allowlist earns
+  `danger-full-access`. An allowlist always warns that the list itself is
+  not enforced.
+- **Tool vocabulary:** prose is rewritten to phrases — `Read` becomes "open
+  the file", `Bash` becomes "run a shell command"
+  (`crates/core/src/render/vocab/mod.rs`).
+- **Agent scoping:** none — only `agents = "all"` custom hooks are enforced;
+  scoped ones render as advisory prose in the agent files.
 
 ## Hooks
 
@@ -73,23 +68,20 @@ preserves comments and ordering.
 
 ## Commands stored as skills
 
-Codex deprecated `~/.codex/prompts`, so a declared command becomes a
-one-file skill tree: a generated `SKILL.md` carrying the command's prose,
+A declared command becomes a one-file skill tree: a generated `SKILL.md` carrying the command's prose,
 the loader frontmatter and the generated-file banner, written into the skill
 directory and recorded in the lock as an emitted skill artifact
 (`crates/core/src/engine/desired_command.rs`,
 `crates/core/src/render/command.rs`).
 
-Names are resolved in one pass over every declared command, in name order, so
-the answer never depends on render order. A real skill always keeps its name;
+Names are resolved in one pass over every declared command, in name order.
+A real skill always keeps its name;
 a command that clashes takes `<name>__command`, then `<name>__cmd`, each with
 a warning naming what to type. When all three are taken, nothing is written.
 
-At project scope this tree lands in `.agents/skills`, which Pi also reads, so
-the command shows up in Pi's skill list too — said out loud as a warning
-rather than left for the user to find.
+At project scope this tree lands in `.agents/skills`, which Pi also reads;
+the command appears in Pi's skill list too — emitted as a warning.
 
 ## Migration and old-shape tolerance
 
-`~/.codex/prompts` is the pre-skills command surface. It still loads, so it
-is still scanned; it is never written and never adopted.
+`~/.codex/prompts` is scanned; it is never written and never adopted.

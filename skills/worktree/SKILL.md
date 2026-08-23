@@ -21,9 +21,9 @@ tags: [git]
 .agents/skills/worktree/scripts/worktree <command> [options]
 ```
 
-Worktrees live at `<parent-of-checkout>/.worktrees/<checkout-name>/{id}` — outside the repo root, so recursive file watchers never ingest worktree build outputs and sibling repos cannot collide. `WORKTREE_BASE_DIR` overrides the parent directory.
+Worktrees live at `<parent-of-checkout>/.worktrees/<checkout-name>/{id}`, outside the repo root. `WORKTREE_BASE_DIR` overrides the parent directory.
 
-Issue IDs that derive paths must match `[A-Za-z0-9][A-Za-z0-9._-]*` and must not contain `..`. Issue-ID resolution prefers the configured base dir and falls back to the worktree registered for the issue branch, so trees created under an older base-dir convention keep working unmoved; there is no auto-migration. Path-argument rules and canonicalization: [references/config.md](references/config.md).
+Issue IDs that derive paths must match `[A-Za-z0-9][A-Za-z0-9._-]*` and must not contain `..`. Issue-ID resolution prefers the configured base dir and falls back to the worktree registered for the issue branch; there is no auto-migration. Path-argument rules and canonicalization: [references/config.md](references/config.md).
 
 ## Commands
 
@@ -51,9 +51,9 @@ Issue IDs that derive paths must match `[A-Za-z0-9][A-Za-z0-9._-]*` and must not
 Bare `create <ID>` is a new-work claim, not a discovery command. Every new-branch mode, including `--from`, checks the normalized issue branch, an explicit requested branch, and `BOT_NAME/<issue>` across worktrees, local/remote refs, and open PRs. Existing ownership exits 75 and leaves local branches unchanged — inspect or monitor owned work instead of spawning a second implementer.
 
 - Origin remote-head or GitHub PR discovery failure exits 1 before any worktree config, branch, or target-path mutation; never interpret an outage as absence.
-- Unreachable secondary remotes are skipped with a warning — they cannot hold other sessions' pushes, so only origin is required for the gate; reachable ones still count as ownership signals.
-- A repository-local claim lock holds the final repeated discovery through `git worktree add`, so concurrent claims cannot both mutate.
-- Run issue creates as separate commands and check each result; a shell loop's final success can hide an earlier active-work exit.
+- Unreachable secondary remotes are skipped with a warning; reachable ones still count as ownership signals.
+- A repository-local claim lock holds the final repeated discovery through `git worktree add`.
+- Run issue creates as separate commands and check each result.
 
 | Flag | Effect |
 |------|--------|
@@ -71,7 +71,7 @@ When a worktree is removed outside this tool after commits but before a push, it
 
 ### Reuse rebase conflicts
 
-Bare `create` never rebases an existing worktree. When the `--reuse` rebase conflicts, the run aborts it and exits 1 listing the conflicting files; the worktree is left clean on its pre-rebase state, so there is no conflict to resolve in place. Two recovery paths:
+Bare `create` never rebases an existing worktree. When the `--reuse` rebase conflicts, the run aborts it and exits 1 listing the conflicting files; the worktree is left clean on its pre-rebase state. Two recovery paths:
 
 1. **Resolve in place:** re-run `create <ID> --restack`. The rebase re-runs and pauses in the conflict state. Resolve the listed files, stage each with `git -C <path> add <file>`, then `worktree restack continue <ID>`; repeat if it stops again. `restack skip <ID>` drops a commit already represented by the new base; `restack abort <ID>` restores the pre-restack branch.
 2. **Discard divergence:** `remove <ID>` then `create <ID>` recreates the worktree fresh from `origin/<default>`, losing the local commits that conflicted.
@@ -80,7 +80,7 @@ With no conflict, `--restack` completes the same rebase as `--reuse`. The guarde
 
 ### Policy-blocked rebase (cherry-pick replay fallback)
 
-An execution policy that rejects top-level `git rebase` porcelain (Codex `approval_policy = never`) rejects the command, not the goal — never retry the porcelain and never substitute a raw `--force` push. Add `--replay` to the guarded restack instead; the controls stay `restack continue|skip|abort <ID>`, and the tool refuses a dirty tree or a range containing a merge commit.
+When an execution policy rejects top-level `git rebase` porcelain (Codex `approval_policy = never`), never retry the porcelain and never substitute a raw `--force` push. Add `--replay` to the guarded restack instead; the controls stay `restack continue|skip|abort <ID>`, and the tool refuses a dirty tree or a range containing a merge commit.
 
 ## Recovering a broken `.agents` link
 
@@ -92,11 +92,11 @@ An execution policy that rejects top-level `git rebase` porcelain (Codex `approv
 | Tracked-content entry present, but an untracked child underneath is missing its link or is itself a real path | `worktree fix-links <ID\|PATH>` — **from the main checkout** (heals per child; never overwrites a child holding data git does not track — reported instead) |
 | A genuinely modified or corrupt **tracked** file | `git checkout -- <path>` — run in the checkout the file really lives in |
 
-**`git checkout -- .agents` is never the recovery for an untracked-only entry**: the path holds no tracked content, so the command succeeds and changes nothing while the link stays broken. **Run `fix-links` from the main checkout**, since the worktree's own copy of the script is reached *through* the broken link. Until it is fixed, that tree cannot be trusted for local verification — tooling resolving paths through it reads nothing or the wrong checkout's copy.
+**`git checkout -- .agents` is never the recovery for an untracked-only entry** (the path holds no tracked content; the command changes nothing). **Run `fix-links` from the main checkout** — the worktree's own copy of the script is reached *through* the broken link. Until it is fixed, do not trust that tree for local verification.
 
-Most clobbers heal themselves: `create` and `fix-links` install shared `post-checkout`/`post-merge`/`post-rewrite` hooks in the main checkout's hooks dir, which covers every worktree and harness ([references/hooks.md](references/hooks.md)). Auto-repair never touches a materialized path holding data git does not track, and is skipped when `core.hooksPath` is set. `fix-links` is also the repair after a manual rebase or a partially-completed `remove`, and heals a legacy parent link over tracked content ([references/config.md](references/config.md)).
+`create` and `fix-links` install shared `post-checkout`/`post-merge`/`post-rewrite` hooks in the main checkout's hooks dir, which covers every worktree and harness ([references/hooks.md](references/hooks.md)). Auto-repair never touches a materialized path holding data git does not track, and is skipped when `core.hooksPath` is set. `fix-links` is also the repair after a manual rebase or a partially-completed `remove`, and heals a legacy parent link over tracked content ([references/config.md](references/config.md)).
 
-**Consumers: carry this inline; do not point here.** In a consumer install this section is read *through* `.agents`, so it is unreachable exactly when it is needed, while the consumer's own tracked `AGENTS.md` / `CLAUDE.md` stays readable. Copy it verbatim:
+**Consumers: carry this inline in the tracked `AGENTS.md` / `CLAUDE.md`; do not point here** (this section is read *through* `.agents`). Copy it verbatim:
 
 ```text
 Broken `.agents` in a worktree (missing, or a real directory): from the MAIN checkout run
@@ -109,7 +109,7 @@ checkout when the path sits under a configured symlink).
 
 ## Session guard (ownership leases)
 
-`scripts/worktree-session-guard` stops cleanup from destroying a worktree a session is still working in. The lease is a **native Git worktree lock** whose reason line carries the owner and heartbeat, so `git worktree remove [--force]` refuses it and `git worktree prune` never prunes the registration — even after the directory itself is gone. Owner defaults to `$KENDEX_SESSION_OWNER`, else `$USER`; the calling workflow sets it to the issue ID.
+`scripts/worktree-session-guard` stops cleanup from destroying a worktree a session is still working in. The lease is a **native Git worktree lock** whose reason line carries the owner and heartbeat; `git worktree remove [--force]` refuses it and `git worktree prune` never prunes the registration. Owner defaults to `$KENDEX_SESSION_OWNER`, else `$USER`; the calling workflow sets it to the issue ID.
 
 ```bash
 scripts/worktree-session-guard claim   <PATH> --owner <ID>
@@ -120,14 +120,14 @@ scripts/worktree-session-guard sweep --dry-run               # every lease past 
 
 **Exit codes** — `status` answers "may I work here?" by exit code alone: 0 lease for this owner, 1 path not registered, 3 unclaimed, 4 locked outside the guard, 75 claimed by a different owner. Use `status`, not `claim`, to probe: `claim` takes or rewrites the lease.
 
-**`--repo` applies only to `release`/`status`/`list`/`sweep`.** `claim` and `refresh` reject it, because the target worktree is itself a checkout of the repository. Passing it makes every claim fail; a best-effort wrapper swallows that error, so the guard looks installed while silently never claiming, with `status` returning 3 as the only symptom.
+**`--repo` applies only to `release`/`status`/`list`/`sweep`.** `claim` and `refresh` reject it. Passing it makes every claim fail; a best-effort wrapper swallows that error and `status` returns 3 as the only symptom.
 
 | Command | Behaviour |
 |---|---|
 | `worktree create` | **Never claims.** A fresh worktree is unclaimed. |
-| `worktree create --reuse\|--restack` | Refuses a foreign lease by name (exit 75); **refreshes** its own in place, so a long reuse cycle cannot age past the TTL and be swept. |
-| `worktree remove` | Releases **its own** lease before removing, so a claiming session can tear down its own tree. A foreign lease is left alone and refuses the removal, naming the owner. An issue-keyed lease whose recorded claiming session (its session-leader pid, recorded at claim and refresh) is still alive on this host and is not the removing session or an ancestor of it is also refused; `remove <ID> --force` skips only that refusal, leaving every other safeguard intact. |
-| `worktree cleanup` | **Never collects a claimed worktree** — not even one this session claimed, since our own lease still means work is in progress. Every skip is reported; a quiet cleanup means nothing was held back. |
+| `worktree create --reuse\|--restack` | Refuses a foreign lease by name (exit 75); **refreshes** its own in place. |
+| `worktree remove` | Releases **its own** lease before removing. A foreign lease is left alone and refuses the removal, naming the owner. An issue-keyed lease whose recorded claiming session (its session-leader pid, recorded at claim and refresh) is still alive on this host and is not the removing session or an ancestor of it is also refused; `remove <ID> --force` skips only that refusal, leaving every other safeguard intact. |
+| `worktree cleanup` | **Never collects a claimed worktree** — not even one this session claimed. Every skip is reported. |
 | `worktree cleanup --stale [--ttl-minutes N]` | Additionally releases and collects leases past the TTL (default 720) — the abandoned-session recovery path. |
 
 Claiming is the caller's job: the orchestrating workflow claims once the worktree is the session's, and `remove` releases at teardown. The guard's limits — shared same-issue leases, staleness without liveness, flock availability, what the lock does not block, and the `$USER` owner fallback: [references/session-guard.md](references/session-guard.md).

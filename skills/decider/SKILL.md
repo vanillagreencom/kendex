@@ -16,7 +16,7 @@ tags: [planning]
 
 > **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
 
-Architectural decision records: numbered decision documents indexed in one `INDEX.md` (by default under `docs/decisions/`), with a search CLI, a canonical format, and creation/supersession workflows.
+Numbered decision documents indexed in one `INDEX.md` (default `docs/decisions/`), with a search CLI, canonical format, and creation/supersession workflows.
 
 ```bash
 .agents/skills/decider/scripts/decisions <command> [options]
@@ -31,11 +31,11 @@ Architectural decision records: numbered decision documents indexed in one `INDE
 | `next-id` | Next ID, scheme inferred from the INDEX ID column | One ID line |
 | `get [DECISION_ID]` | Decision details | JSON `{id, decision, status, date, path}` |
 
-`--limit N` (default 5) caps search results. Issue lookup is exactly `search --issue` — there is no bare `issue` action.
+`--limit N` (default 5) caps search results. There is no bare `issue` action; use `search --issue`.
 
-Keyword and regex search cover the `INDEX.md` summary columns (decision, rationale, id) **and** the prose of each linked decision document, so a keyword that never reached a one-line summary still finds the decision governing it. Summary matches outrank body-only matches. `search --issue` is an explicit linkage lookup and does not scan bodies.
+Keyword and regex search cover the `INDEX.md` summary columns (decision, reason, id) **and** the body of each linked decision document. Summary matches outrank body-only matches. `search --issue` does not scan bodies.
 
-Read the full decision file before acting on a hit — index summaries omit scope and rejected alternatives. A suggestion contradicting an active decision is invalid unless the decision itself is flawed.
+Read the full decision file before acting on a hit. A suggestion contradicting an active decision is invalid unless the decision itself is flawed.
 
 ## Configuration
 
@@ -45,9 +45,9 @@ Read the full decision file before acting on a hit — index summaries omit scop
 | `DECISION_ID_PREFIX` | ID prefix for `next-id` | Inferred from the last populated ID-column value, else `D` |
 | `DECISION_ID_WIDTH` | Zero-padding width for `next-id` | Inferred from that same value, else `3` |
 
-Set these in committed `kendex.settings.toml` under `[env]` when they are shared project policy; `.env.local` overrides locally.
+Set shared values in `kendex.settings.toml` under `[env]`; `.env.local` overrides locally.
 
-Where no decisions directory exists, `search` and `list` emit `[]` with a stderr note and exit 0 — nothing recorded is not an error. `next-id` and `get` require an initialized directory. A configured path that exists but is not a directory is always a hard error.
+With no decisions directory, `search` and `list` emit `[]` with a stderr note and exit 0. `next-id` and `get` require an initialized directory. A configured path that exists but is not a directory is a hard error.
 
 ## Workflows
 
@@ -60,6 +60,6 @@ Format: `schemas/decision-format.md` (constraints), `templates/decision-entry.md
 
 ## Approval
 
-Never create a decision document without explicit user approval. When work settles an architectural choice, technology selection, or trade-off worth recording, say so on completion — "this introduced a decision worth recording: [summary]. Want me to create a decision entry?" — and let the user confirm.
+Never create a decision document without explicit user approval. When work settles a choice worth recording, say on completion: "this introduced a decision worth recording: [summary]. Want me to create a decision entry?"
 
-Record technology selections with alternatives considered, performance trade-offs, and path choices whose conditions may change. Do not record variable names, small refactors, bug fixes, obvious choices with no realistic alternative, or standard pattern applications.
+Record: technology selections with alternatives, performance trade-offs, path choices whose conditions may change. Do not record: variable names, small refactors, bug fixes, choices with no realistic alternative, standard pattern applications.

@@ -4,15 +4,15 @@ Analyze proposed issues for cross-project conflicts, architecture coverage, and 
 
 **Do NOT modify the tracker.** Return recommendations only.
 
-**Hold the creation bar** ([SKILL.md](../SKILL.md) § Disposition). A proposed issue survives only when it changes what a user or operator experiences (or blocks work that does), nothing open already covers it, and it is finishable as written. Everything else gets `action: "skip"` with a one-line reason. A roadmap that only adds work has not checked what it makes obsolete.
+**Hold the creation bar** ([SKILL.md](../SKILL.md) § Disposition). A proposed issue survives only when it changes what a user or operator experiences (or blocks work that does), nothing open already covers it, and it is finishable as written. Everything else gets `action: "skip"` with a one-line reason.
 
 ## Input
 
 `--input [file_path]` per [roadmap-plan-input.md](../schemas/roadmap-plan-input.md). Extract `FEATURE`, `RESEARCH_PATH`, `SPEC_PATH`, `ORIGIN_ISSUE`, `PLANNER_HANDOFF`, `PROPOSED_ISSUES[]`.
 
-**Spec mode** (`SPEC_PATH` set): the plan's decisions are binding. Organize, dedupe, order, and bundle its work and check it against the tracker, but never change its approach, drop a workstream it names, or add scope beyond its phases — an architecture gap is `include` only when the spec's own deliverables need it; anything outside the spec's phases is `out_of_scope` — never `defer`, which would place it in `organized_issues[]` and reach creation — with the spec named in `reason`. Disagreement with the spec is a `declined`/`reason` note for the caller, never a silent reorganization.
+**Spec mode** (`SPEC_PATH` set): the plan's decisions are binding. Organize, dedupe, order, and bundle its work and check it against the tracker, but never change its approach, drop a workstream it names, or add scope beyond its phases — an architecture gap is `include` only when the spec's own deliverables need it; anything outside the spec's phases is `out_of_scope` — never `defer` — with the spec named in `reason`. Disagreement with the spec is a `declined`/`reason` note for the caller, never a silent reorganization.
 
-A `PLANNER_HANDOFF` is high-signal technical context from the scout → planner chain, not a project-management decision. Preserve its plan path, proposed phases, and explicit TPM questions through the analysis; let it inform placement, grouping, dependency order, and the roadmap-vs-child-issue call — but verify every claim against current issue and project state.
+A `PLANNER_HANDOFF` is technical context, not a project-management decision. Preserve its plan path, proposed phases, and explicit TPM questions; let it inform placement, grouping, dependency order, and the roadmap-vs-child-issue call, and verify every claim against current issue and project state.
 
 ---
 
@@ -24,7 +24,7 @@ A `PLANNER_HANDOFF` is high-signal technical context from the scout → planner 
 .agents/skills/linear/scripts/linear.sh cache labels list --format=safe
 ```
 
-Load the project taxonomy alongside it; ask the caller to run `sync --reconcile` if the cache is missing or stale. This workflow does not mutate labels, but every issue it emits must carry a `labels[]` set valid against that inventory. Preserve input `labels[]` when present; derive the agent label and complete required categories from the taxonomy when only `agent` was supplied; flag the gap in `reason` rather than inventing a label when a required category cannot be determined. Never emit a parent/group label.
+Load the project taxonomy alongside it; ask the caller to run `sync --reconcile` if the cache is missing or stale. Every issue emitted must carry a `labels[]` set valid against that inventory. Preserve input `labels[]` when present; derive the agent label and complete required categories from the taxonomy when only `agent` was supplied; flag the gap in `reason` rather than inventing a label when a required category cannot be determined. Never emit a parent/group label.
 
 ### 1.3 Origin Issue
 
@@ -50,7 +50,7 @@ Store `id`, `name`, `state`, `description`, `content` per project.
 
 ### 1.5 Issues
 
-Fetch every project's issues in ONE command — never loop `--project` per project, since restricted harness approval policies reject loop-shaped commands and each row already carries its `project` name:
+Fetch every project's issues in ONE command — never loop `--project` per project:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh cache issues list --all-projects --state "Backlog,Todo,In Progress,In Review,Done" --max
@@ -98,7 +98,7 @@ Record uncovered components in `architecture_gaps[]`: `include` when the gap blo
 
 1. **Dependencies.** Map `depends_on_proposed` title references to concrete issues, identify chains, and error on a cycle.
 
-2. **Bundles.** Group 2+ issues that share an agent with small estimates, share a work type (all tests, all config, all docs), or form one deliverable. Give each bundle a parent titled for the deliverable; append `(one PR)` only when the grouping reason was "would naturally be one PR/CI run" — an unmarked parent is a container whose children each ship separately. The parent takes the shared agent label, or the project's multi-agent label when children span 2+ agents, plus a full `labels[]` set that passes the label policy.
+2. **Bundles.** Group 2+ issues that share an agent with small estimates, share a work type (all tests, all config, all docs), or form one deliverable. Give each bundle a parent titled for the deliverable; append `(one PR)` only when the grouping reason was "would naturally be one PR/CI run". The parent takes the shared agent label, or the project's multi-agent label when children span 2+ agents, plus a full `labels[]` set that passes the label policy.
 
 3. **Relation level.** Move `blocks`/`blocked_by` between bundled issues up to their bundle parents. Children carry no external blocking relations; only parents carry cross-bundle dependencies.
 
@@ -120,7 +120,7 @@ Assign the action: obsolete → `cancel`; exact duplicate → `skip`; partial ov
 
 ## 6. Return Output
 
-Build the JSON per [roadmap-plan-output.md](../schemas/roadmap-plan-output.md) and return it inline — the calling agent writes the file.
+Build the JSON per [roadmap-plan-output.md](../schemas/roadmap-plan-output.md) and return it inline; do not write the file.
 
 <output_format>
 File: tmp/roadmap-plan-YYYYMMDD-HHMMSS.json

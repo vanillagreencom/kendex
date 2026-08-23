@@ -74,7 +74,7 @@ Input file for `audit-issues --issues`, written by the caller at `[worktree-path
 
 ## Tracker
 
-`tracker` fixes the execution tracker for the whole audit: every inventory preflight, TPM fetch, and approved mutation routes through it. A caller that already resolved one must set it.
+`tracker` fixes the execution tracker for the whole audit. A caller that already resolved one must set it.
 
 | Field | Required | Description |
 |-------|----------|-------------|
@@ -85,7 +85,7 @@ Without the block, audit-issues infers the tracker from `parent_issue`: an `issu
 
 ## Hierarchy Contract
 
-`hierarchy_contract` is a **binding directive, not a hint**. `parent_issue` and `blocked_issues` alone are hints the TPM may override with per-item analysis; when this block is present, placement for the covered items is fixed by the producer and the TPM's duplicate and hierarchy inference is bypassed for them.
+`hierarchy_contract` is a **binding directive, not a hint**: placement for the covered items is fixed by the producer and the TPM's duplicate and hierarchy inference is bypassed for them. `parent_issue` and `blocked_issues` alone are hints.
 
 | Field | Required | Description |
 |-------|----------|-------------|
@@ -94,7 +94,7 @@ Without the block, audit-issues infers the tracker from `parent_issue`: an `issu
 | `child_indexes` | Yes | The `items[].index` values covered — one per domain sub-issue. Unlisted items (`origin: "discovered"` refactors) are audited normally |
 | `sequencing` | No | `{blocker, blocked, reason}` between covered items, by index. Emitted as `blocks` relations between the created children |
 
-In `decompose-under-parent` mode, `parent_issue` is normally the blocked implementation issue itself — the same identifier appears in `blocked_issues` — because the producer converts it into the coordination-only parent of the new domain children. For every item in `child_indexes`:
+In `decompose-under-parent` mode, `parent_issue` is the blocked implementation issue (also listed in `blocked_issues`), converted into the coordination-only parent of the new domain children. For every item in `child_indexes`:
 
 - MUST be created as a sub-issue of `hierarchy_contract.parent_issue`, in the parent's project: `action: "create"` with `hierarchy: {"action": "make_child", "parent": [hierarchy_contract.parent_issue]}`.
 - MUST NOT be resolved to `skip`, `update`, `expand`, or `combine` by duplicate or overlap analysis. When an existing issue — including `parent_issue` — already carries scope belonging to a covered item, that scope moves into the new domain child via the child's `supersedes[]` (full coverage) or a `related` relation (partial overlap), never by updating the existing issue in place of the child create.
@@ -102,14 +102,14 @@ In `decompose-under-parent` mode, `parent_issue` is normally the blocked impleme
 
 ## Building from Review Findings
 
-Set top-level `tracker` from the caller's resolved tracker (plus `repository` for GitHub) so the audit executes through the right one.
+Set top-level `tracker` from the caller's resolved tracker (plus `repository` for GitHub).
 
 **Suggestions** (`category=issue`) map field for field: `title`, `location`, `description`, `recommendation`, `priority`, `estimate`, and `labels` when provided (otherwise completed through the taxonomy before create). `found_by` is the reporting agent; `origin` is `"suggestion"`.
 
-**Escalated and skipped items** from the orchestrator's workflow state use the same mapping, with the entry's `outcome` field deciding the origin: outcome "blocked" (or no outcome field — legacy state) → origin: "escalated"; outcome "skipped" → origin: "skipped".
+**Escalated and skipped items** from the orchestrator's workflow state use the same mapping, with the entry's `outcome` field deciding the origin: outcome "blocked" (or no outcome field) → origin: "escalated"; outcome "skipped" → origin: "skipped".
 
 **Discovered work** from dev completion summaries maps the bullet text to `title` and `description`, `estimate: N` to `estimate` (default 2), and infers `priority` from the type (bug 2, tech-debt 3, enhancement 4) and `labels` from the taxonomy and source context. Set `origin: "discovered"`.
 
-**Drop handoff markers first.** A Discovered Work bullet matching `^-\s+(handoff_to_submit_pr|handoff_to_merge_pr|current_workflow_action):\s` belongs to a later step of the current PR workflow, not to the backlog. The orchestrator filters these before building the audit input; never map one into an item.
+**Drop handoff markers first.** A Discovered Work bullet matching `^-\s+(handoff_to_submit_pr|handoff_to_merge_pr|current_workflow_action):\s` belongs to a later step of the current PR workflow; never map one into an item.
 
-Every item still faces the creation bar in `tpm-audit.md` § 10.1 — an entry in this file is a candidate, not a decision to file.
+Every item still faces the creation bar in `tpm-audit.md` § 10.1.

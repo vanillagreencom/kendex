@@ -19,7 +19,7 @@ tags: [automation]
 
 > **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
 
-The implementer's side of an orchestrated round: what a specialist agent does between receiving a delegation and returning. orch is both the caller and the runtime — it owns delegation format, round acceptance, and every shell-shape rule.
+orch is the caller and runtime: it owns delegation format, round acceptance, and every shell-shape rule.
 
 | Workflow | Purpose |
 |----------|---------|
@@ -32,13 +32,13 @@ Review and QA-review belong to the reviewer skill: [`../reviewer/workflows/revie
 
 Execute workflow sections in order; a "**Skip if**" condition is the workflow's decision, never your own scope assessment. Never push and never open a PR — the orchestrator does that after review passes.
 
-**The completion artifact is the round.** `dev-return-write` writes it after the commit, so every field is final; never hand-author the JSON (schema: orch [`schemas/dev-return.md`](../orch/schemas/dev-return.md)).
+**The completion artifact is the round.** `dev-return-write` writes it after the commit; never hand-author the JSON (schema: orch [`schemas/dev-return.md`](../orch/schemas/dev-return.md)).
 
-- `--issue` is the delegation's `Artifact Key:` line — the normalized workflow-state key (`issue-N` for GitHub, `PROJ-123` for Linear), never the tracker-native `OWNER/REPO#N` or a bare number — and `--round-id` its `Round ID:` line. The orchestrator resolves the receipt by exactly those two values; any substitute strands it.
-- `--validate` is strictly `pass` or `FAILING: check1,check2`, matching your commit message and return. A pass that needed a re-run is still `pass`: put the caveat in `--validate-note` so it lands in the durable record instead of only in a message.
-- `--kind` always matches what was delegated. An investigate-and-recommend round is `--kind analysis` — it rejects `--commit`, `--validate`, and `--item`, and carries the recommendation in `--summary` or `--summary-file`. Forcing `implement` or `fix` onto such a round asserts a validation that never ran; skipping the artifact reads as an unfinished round.
+- `--issue` is the delegation's `Artifact Key:` line — the normalized workflow-state key (`issue-N` for GitHub, `PROJ-123` for Linear), never the tracker-native `OWNER/REPO#N` or a bare number — and `--round-id` its `Round ID:` line.
+- `--validate` is strictly `pass` or `FAILING: check1,check2`, matching your commit message and return. A pass that needed a re-run is still `pass`; put the caveat in `--validate-note`.
+- `--kind` always matches what was delegated. An investigate-and-recommend round is `--kind analysis` — it rejects `--commit`, `--validate`, and `--item`, and carries the recommendation in `--summary` or `--summary-file`.
 
-**Acceptance is that artifact plus git state, never your message.** The orchestrator polls neither disk nor tracker, so both are required: write the artifact, then return exactly once over the harness's agent-to-agent channel — Claude Code `SendMessage`, Codex `send_input`, OpenCode a resume on the stored `task_id`, Pi background the final assistant message. A disk write is not a return. Send the `**Return exactly**` body once and go idle: in a Pi persistent pane follow it with `complete_subagent` (background agents must not call it); on Codex the `send_input` MESSAGE is the durable return and the runtime's `FINAL_ANSWER` echo of it is expected, not a separate return to author or expand.
+**Acceptance is that artifact plus git state, never your message.** Write the artifact, then return exactly once over the harness's agent-to-agent channel — Claude Code `SendMessage`, Codex `send_input`, OpenCode a resume on the stored `task_id`, Pi background the final assistant message. A disk write is not a return. Send the `**Return exactly**` body once and go idle: in a Pi persistent pane follow it with `complete_subagent` (background agents must not call it); on Codex the `send_input` MESSAGE is the durable return and the runtime's `FINAL_ANSWER` echo of it is expected, not a separate return to author or expand.
 
 ## Validation
 
@@ -46,11 +46,11 @@ Deterministic gate findings are fixed here, never carried into review. Fix what 
 
 ### Long-Running Validation
 
-A full suite can outlast a turn. **Invariant, every harness:** the completion tail (commit → QA labels → summary → artifact → return) is never dropped, and an interrupted run is never success — re-check its real outcome and resume the tail. How you wait is your harness's:
+**Invariant, every harness:** the completion tail (commit → QA labels → summary → artifact → return) is never dropped, and an interrupted run is never success — re-check its real outcome and resume the tail. How you wait is your harness's:
 
-- **Claude Code** — the Bash tool caps at ~10 min and a turn has no wall-clock primitive, so background the BARE command with output redirected to a log via `run_in_background`, never piped or chained: unpiped, the completion wake's exit code IS the command's, and the log's `END OF OUTPUT — exit status: N` block is the authoritative verdict. Then end your turn. That wake is not reliably delivered to in-process teammate sub-agents, so **idling after backgrounding is normal, not a stall** — the orchestrator's watchdog closes the round. Never poll: a poll is an instant no-op turn that advances no wall clock.
-- **Codex** — foreground and block. There is no ~10-min tool cap, and under `approval_policy = never` the classifier rejects poll-loop shapes anyway.
-- **Pi** — pane agents block naturally in their tmux shell; run it in the foreground.
+- **Claude Code** — background the BARE command with output redirected to a log via `run_in_background`, never piped or chained; the log's `END OF OUTPUT — exit status: N` block is the authoritative verdict. Then end your turn. **Idling after backgrounding is normal, not a stall** — the orchestrator's watchdog closes the round. Never poll.
+- **Codex** — foreground and block.
+- **Pi** — run it in the foreground.
 
 ## Reflect
 

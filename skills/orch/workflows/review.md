@@ -71,7 +71,7 @@ Decisions:
 
 ## 3. Collect Results
 
-Wait for every reviewer. Under an unlimited budget do NOT shut them down — they are needed for fix delegation in § 4; in wave mode they are already retired and their findings live in the report JSONs.
+Wait for every reviewer. Under an unlimited budget do NOT shut them down before § 4; in wave mode they are already retired.
 
 Extract the report path and verdict from each return; halt and report if any return does not carry them. Overall verdict is `action_required` when any reviewer has blockers, else `pass`. With an `ISSUE_ID`, append each path:
 
@@ -94,7 +94,7 @@ Blockers or any `fix`/`issue` suggestion → § 4. Otherwise → § 5.
 
 ## 4. Present And Fix
 
-Collect the blockers, the `category == "fix"` suggestions, and the `category == "issue"` suggestions. Decline anything that cannot affect real usage with one line of rationale, per [SKILL.md § The Cycle](../SKILL.md#the-cycle). Nothing left → § 5.
+Collect the blockers, the `category == "fix"` suggestions, and the `category == "issue"` suggestions. Decline anything that cannot affect real usage with a one-line reason, per [SKILL.md § The Cycle](../SKILL.md#the-cycle). Nothing left → § 5.
 
 <output_format>
 
@@ -123,7 +123,7 @@ Est: 1 (hours) | 2 (half-day) | 3 (day) | 4 (2-3d) | 5 (week+)
 
 </output_format>
 
-Omit empty categories. **Disposition is by rule, not by prompt** — never present a selection menu over the findings. Every surviving blocker and `category == "fix"` suggestion is fixed; the declines are already dropped with their one-line rationale and are reported in § 5. Which findings to fix is a mechanics question the rule settles, so `ORCH_DECISION_MODE` does not reintroduce the menu; the always-ask set in [SKILL.md § The Cycle](../SKILL.md#the-cycle) is unaffected and still applies.
+Omit empty categories. **Disposition is by rule, not by prompt** — never present a selection menu over the findings. Every surviving blocker and `category == "fix"` suggestion is fixed; declines are reported in § 5. `ORCH_DECISION_MODE` does not reintroduce the menu; the always-ask set in [SKILL.md § The Cycle](../SKILL.md#the-cycle) still applies.
 
 **Never fix as the main agent.**
 
@@ -145,7 +145,7 @@ Omit empty categories. **Disposition is by rule, not by prompt** — never prese
 
 `category == "issue"` suggestions that clear the filing bar in [references/finding-disposition.md](../references/finding-disposition.md), plus any escalated items from the fix round, build an audit-input file at `tmp/audit-review-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md` with `source: "review"`, `parent_issue: [ISSUE_ID]` (or null), and `worktree: [WT_PATH]`. Each escalated item's `origin` comes from its `outcome`: `"skipped"` → `origin: "skipped"`; `"blocked"` or no `outcome` field → `origin: "escalated"`. Then `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 5`.
 
-audit-issues is a primary-session wrapper — run it in this session, because it holds the interactive approval gate. Do not delegate the wrapper to a subagent; the only delegable part is the `tpm-audit.md` analysis, which audit-issues spawns itself.
+audit-issues is a primary-session wrapper holding the interactive approval gate: run it in this session, never delegated to a subagent; the only delegable part is the `tpm-audit.md` analysis, which audit-issues spawns itself.
 
 ## 5. Summary
 
@@ -167,8 +167,8 @@ Shut the review agents down (wave runs already did).
 
 ### Declined
 
-| # | Agent | Location | Description | Rationale |
-|---|-------|----------|-------------|-----------|
+| # | Agent | Location | Description | Reason |
+|---|-------|----------|-------------|--------|
 | 1 | [agent] | [location] | [description] | [one line] |
 
 </output_format>

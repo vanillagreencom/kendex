@@ -16,10 +16,9 @@ tags: [review, testing]
 
 > **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
 
-Every lane is diff-scoped and fail-only: findings land on lines this
-change ADDED, so a pre-existing violation on an untouched line is never
-your problem, and a lane that cannot decide says nothing at all. There is
-no warnings tier.
+Every lane is diff-scoped and fail-only: findings land only on lines this
+change ADDED; a lane that cannot decide reports nothing. There is no
+warnings tier.
 
 ```bash
 .agents/skills/preflight/scripts/preflight              # vs the default branch's merge base
@@ -29,8 +28,7 @@ no warnings tier.
 
 `--base REF` sets the comparison point; `--repo PATH` runs against another
 checkout. The default base is `origin/HEAD`, then `origin/main`, then
-`main` — if none resolve, the run fails closed rather than reporting a
-clean empty diff.
+`main`; if none resolve, the run fails closed.
 
 ## Lanes
 
@@ -39,35 +37,28 @@ clean empty diff.
 | `shell-syntax` | A changed shell file bash cannot parse. | `bash -n` |
 | `shellcheck-errors` | Any error-severity finding, anywhere in a changed shell file. | shellcheck |
 | `masked-returns` | SC2155/SC2311 on an added line — a declaration whose exit status hides the command's. | shellcheck |
-| `fail-open` | An `=$(mktemp …)` assignment added to a file without errexit; a new script that never sets `-e`, `-u` and `pipefail`; an added `grep`/`find`/`git`/`jq`/`diff`/`cmp`, at a command position, whose status is discarded by `\|\| true` (or `\|\| :`), erasing the exit 2 that means unreadable input or a broken invocation — the same text quoted inside a message runs nothing and is not a finding. | built in |
-| `unwired-suite` | A new suite file — `tests/*.test.sh`, `tests/test-*.sh`, `*.test.ts`, `*.test.js`, `*.test.mjs`; fixtures excluded — that no tracked runner invokes. Runners are `.github/workflows/*.yml`, `tools/validate*`, `scripts/validate*`, `package.json`, `Makefile`, `justfile`, and any `run-all.sh`; wiring is the suite named outright, a path-shaped glob its path satisfies, a directory it lives under, a manifest below the repo root whose subtree holds it, or a runner beside it globbing its own directory. A runner set that is empty or unreadable proves nothing, and the lane stays quiet. | built in |
+| `fail-open` | An `=$(mktemp …)` assignment added to a file without errexit; a new script that never sets `-e`, `-u` and `pipefail`; an added `grep`/`find`/`git`/`jq`/`diff`/`cmp`, at a command position, whose status is discarded by `\|\| true` (or `\|\| :`). The same text quoted inside a message is not a finding. | built in |
+| `unwired-suite` | A new suite file — `tests/*.test.sh`, `tests/test-*.sh`, `*.test.ts`, `*.test.js`, `*.test.mjs`; fixtures excluded — that no tracked runner invokes. Runners are `.github/workflows/*.yml`, `tools/validate*`, `scripts/validate*`, `package.json`, `Makefile`, `justfile`, and any `run-all.sh`; wiring is the suite named outright, a path-shaped glob its path satisfies, a directory it lives under, a manifest below the repo root whose subtree holds it, or a runner beside it globbing its own directory. An empty or unreadable runner set: lane stays quiet. | built in |
 | `mktemp-trap` | A new shell file with an added `mktemp` invocation — the word at a command position, not named in a comment or a string — and no `trap … EXIT` anywhere in it. | built in |
-| `hardcoded-temp-path` | An added directory-creating call taking a literal absolute temp path (`/tmp/…`, `/var/tmp/…`) as (part of) its first argument — `mkdtemp`/`mkdir` and their `Sync` variants (JS/TS), `mkdtemp`/`makedirs`/`mkdir` (Python), `create_dir_all` (Rust), and a shell `mkdir -p` at a command position. Such a path escapes `TMPDIR` redirection and leaks past the run. The literal as a value — a config field, a fixture string, a path nothing creates — is not the shape, nor is a `$TMPDIR`-derived path or a commented-out call. Complementary to `mktemp-trap`: that lane asks whether a correctly-created scratch dir is removed; this one, whether it was created where cleanup can reach. | built in |
-| `docs-cited-paths` | An added backticked path in a `.md` file, inside a directory the repo really has and the doc's own subtree, that names nothing tracked or on disk. Also the reverse pointer: an added source line citing a `.md` path that names nothing tracked or on disk — URL spans and double-quoted strings are stripped first, data files (JSON/TOML/YAML/lock), test-named files, and installed-artifact subtrees (`.agents/` and the harness dirs' skills/agents/hooks/rules/instructions/packages trees — vendored tooling, not this repo's prose) are out of scope, and the same directory guards apply. | built in |
-| `todo-links` | An added `TODO:`/`FIXME(` marker — the word immediately followed by `:` or `(` — with no `#123`, `ABC-123`, or URL on the line. Prose that merely uses the word is not a marker. | built in |
-| `reviewer-attribution` | An added line crediting a transient reviewer-bot pass: a fleet bot name (qodo, copilot, coderabbit, codex, devin; `PREFLIGHT_BOT_NAMES` replaces the set) coupled to a PR/review reference — a parenthetical credit, `per <bot> review`, or `<bot> review of #N`. Naming a bot is not the shape: prose describing reviewer behavior stays clean. `CHANGELOG.md` is exempt — rationale lives there. | built in |
+| `hardcoded-temp-path` | An added directory-creating call taking a literal absolute temp path (`/tmp/…`, `/var/tmp/…`) as (part of) its first argument — `mkdtemp`/`mkdir` and their `Sync` variants (JS/TS), `mkdtemp`/`makedirs`/`mkdir` (Python), `create_dir_all` (Rust), and a shell `mkdir -p` at a command position. Not the shape: the literal as a value (config field, fixture string, path nothing creates), a `$TMPDIR`-derived path, or a commented-out call. | built in |
+| `docs-cited-paths` | An added backticked path in a `.md` file, inside a directory the repo really has and the doc's own subtree, that names nothing tracked or on disk. Also the reverse: an added source line citing a `.md` path that names nothing tracked or on disk — URL spans and double-quoted strings are stripped first; data files (JSON/TOML/YAML/lock), test-named files, and installed-artifact subtrees (`.agents/` and the harness dirs' skills/agents/hooks/rules/instructions/packages trees) are out of scope; the same directory guards apply. | built in |
+| `todo-links` | An added `TODO:`/`FIXME(` marker — the word immediately followed by `:` or `(` — with no `#N`, `ABC-123`, or URL on the line. Prose that merely uses the word is not a marker. | built in |
+| `reviewer-attribution` | An added line crediting a transient reviewer-bot pass: a fleet bot name (qodo, copilot, coderabbit, codex, devin; `PREFLIGHT_BOT_NAMES` replaces the set) coupled to a PR/review reference — a parenthetical credit, `per <bot> review`, or `<bot> review of #N`. Prose that merely names a bot is not the shape. `CHANGELOG.md` is exempt. | built in |
 | `data-syntax` | A changed `.json` or `.toml` file no parser accepts. | jq, taplo or python3 |
 | `workflow-run-syntax` | A `run:` block in a changed `.github/workflows/*.yml` that its shell cannot parse — `bash -n` for bash, `sh -n` for sh, by name or executable path; `${{ … }}` replaced by a placeholder; other shells skipped, and an undeclared shell counts as bash only on plain `ubuntu-*`/`macos-*` runners. Reported at the offending file line — a folded (`>`) block at its first line; a workflow file that is not valid YAML, at the parser's line; an unterminated `${{`, at its line. | python3 with PyYAML |
 
 Shell files are `*.sh`, `*.bash`, or anything with a `sh`/`bash` shebang.
 Deleted files, and files under `tests/` or `fixtures/`, are out of scope
-for the lanes that judge whole files — `unwired-suite`, whose subject is
-the suite itself, is the exception.
+for the lanes that judge whole files; `unwired-suite` is the exception.
 
 Installed-artifact subtrees (`.agents/` and the harness dirs'
-skills/agents/hooks/rules/instructions/packages trees) hold vendored
-tooling a refresh rewrites wholesale, so the lanes judging how a file is
-AUTHORED — `masked-returns`, `fail-open`, `unwired-suite`, `mktemp-trap`,
-`docs-cited-paths` — are out of scope there: the finding names an upstream
-authoring choice this repo cannot fix, and an edit is reverted by the next
-refresh. The lanes judging what those bytes DO to this repo stay on —
-`shell-syntax`, `shellcheck-errors`, `hardcoded-temp-path`, `todo-links`,
-`reviewer-attribution`, `data-syntax`, `workflow-run-syntax`. A file
-authored elsewhere under a harness dir (a `prompts/` or `commands/` tree)
-keeps every lane, and markdown inside a mirror needs no exemption of its
-own: a mirror-internal token is dot-leading and a foreign one fails the
-subtree guard. A lane whose tool is missing skips
-silently — an absent shellcheck never fails a run and never passes one.
+skills/agents/hooks/rules/instructions/packages trees) are out of scope
+for `masked-returns`, `fail-open`, `unwired-suite`, `mktemp-trap`,
+`docs-cited-paths`. `shell-syntax`, `shellcheck-errors`,
+`hardcoded-temp-path`, `todo-links`, `reviewer-attribution`,
+`data-syntax`, `workflow-run-syntax` stay on there. A `prompts/` or
+`commands/` tree under a harness dir keeps every lane. A lane whose tool
+is missing skips silently — it neither fails nor passes the run.
 
 Exit codes: `0` clean, `1` findings, `2` usage/environment error (bad flag,
 not a git repository, unresolvable base). Findings print as
@@ -79,13 +70,11 @@ Dev agents run `preflight` in the validate step, **before** the project's
 own validation command. The default and `--base` scopes include every
 non-ignored untracked file as a new file; `--staged` sees only the index.
 
-The commit-time surface is kendex's managed `pre-commit-check` harness
-hook (PreToolUse on `git commit`), which runs `preflight --staged` when
-this skill is installed — it arrives and updates with `kendex refresh`,
-and it is not a git-native hook: it intercepts agent commits, not
-terminal commits.
+Commit-time: kendex's managed `pre-commit-check` harness hook (PreToolUse
+on `git commit`) runs `preflight --staged` when this skill is installed.
+It installs and updates with `kendex refresh`; it intercepts agent
+commits, not terminal commits.
 
-CI is an optional backstop: `preflight --base origin/<default>` on the PR
-head. Like any CI-consumed skill, that requires the installed skill to be
-COMMITTED to the repo — CI checkouts see only tracked files, never a
-machine-local `.agents` symlink.
+CI (optional): `preflight --base origin/<default>` on the PR head. The
+installed skill must be COMMITTED to the repo — CI checkouts see only
+tracked files, never a machine-local `.agents` symlink.

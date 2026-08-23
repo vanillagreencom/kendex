@@ -53,17 +53,17 @@ linear.sh cache issues get ABC-100 --with-bundle
 linear.sh sync --reconcile
 ```
 
-`cache issues list --all-projects` enumerates every project in one command (each row carries its `project` name); `--no-project` returns only unassigned issues. Both are mutually exclusive with `--project`. Use `--all-projects` rather than looping per project — restricted harness policies reject loop-shaped commands. An unrecognized filter flag is rejected rather than ignored. Repeated `--label` flags (and `--labels a,b`) require ALL named labels.
+`cache issues list --all-projects` enumerates every project in one command (each row carries its `project` name); `--no-project` returns only unassigned issues. Both are mutually exclusive with `--project`. Use `--all-projects`; never loop per project. An unrecognized filter flag is rejected. Repeated `--label` flags (and `--labels a,b`) require ALL named labels.
 
-Both `issues list` and `cache issues list` return the first 75 rows by default and warn on stderr when that truncated the result; `--max` fetches everything. `--limit N` caps a CACHE listing's total; on the live path it is the per-page size (so `--max --limit N` pages at N, and the 200-page safety cap scales with it — the cap warns the same way when it truncates). An audit that must see the whole backlog passes `--max`.
+Both `issues list` and `cache issues list` return the first 75 rows by default and warn on stderr when that truncated the result; `--max` fetches everything. `--limit N` caps a CACHE listing's total; on the live path it is the per-page size (`--max --limit N` pages at N under a 200-page cap that warns when it truncates). An audit that must see the whole backlog passes `--max`.
 
-The cache lives at `.cache/linear` under the physical worktree root from `git rev-parse --show-toplevel`, so symlinked checkout spellings resolve to one cache. A missing-cache error names the `cache_dir` and `meta_path` it checked. A cache file that exists but does not parse is reported as corrupt — never as an empty result.
+The cache lives at `.cache/linear` under the physical worktree root from `git rev-parse --show-toplevel`. A missing-cache error names the `cache_dir` and `meta_path` it checked. A cache file that exists but does not parse is reported as corrupt, never as an empty result.
 
 In a linked worktree whose `.cache` should be a `WORKTREE_SYMLINKS`-managed symlink but is a real directory, `sync` refuses before touching the API and names the repair (`worktree fix-links <PATH>` from the main checkout). Repos whose `WORKTREE_SYMLINKS` deliberately excludes `.cache` are exempt.
 
 ## Team Target
 
-`LINEAR_TEAM` has no default: a team name resolves inside whatever workspace the API key reaches, so an unset team means no target. Every write refuses before any API call; reads drop the team filter. `--team <name>` overrides per call only on `issues create`, `projects create`, `cycles create`, and `labels create`. Run `auth-check --strict` before the first mutation in a project.
+`LINEAR_TEAM` has no default. With it unset every write refuses before any API call; reads drop the team filter. `--team <name>` overrides per call only on `issues create`, `projects create`, `cycles create`, and `labels create`. Run `auth-check --strict` before the first mutation in a project.
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
@@ -78,7 +78,7 @@ In a linked worktree whose `.cache` should be a `WORKTREE_SYMLINKS`-managed syml
 
 ## Issue Creation Routing
 
-Never create a tracked issue directly from an orchestration or review session — route it through the TPM pipeline (project-management skill), which owns labels, project, priority, estimate, and relations. A direct `issues create` prints a URL and looks like success even when the issue landed with none of those, invisible to agent routing.
+Never create a tracked issue directly from an orchestration or review session — route it through the TPM pipeline (project-management skill), which owns labels, project, priority, estimate, and relations.
 
 Where `LINEAR_AGENT_LABELS` declares a taxonomy, `issues create` refuses — before any API call — a create carrying no agent label from that set, including a typoed `agent:*` name. `--no-agent-label` permits a deliberate bare create.
 
@@ -105,7 +105,7 @@ Where `LINEAR_AGENT_LABELS` declares a taxonomy, `issues create` refuses — bef
 | Issue A blocked by Issue B (both in Linear) | Relation: `--blocked-by` |
 | Issue blocked by an external factor (vendor, license) | `blocked` label + comment |
 
-Blocking relations must connect peers of one bundle: same direct parent, or both top-level. The two issues need not share a project — a dependency is a property of the work, not of how it is filed. An issue cannot block its own ancestor or descendant; the hierarchy already encodes that dependency, so use `--related` for traceability. Rejections for cross-subtree pairs prescribe the valid pair at the level where the subtrees separate. Before acceptance or remediation, the guard proves each parent chain reaches an explicit null root through well-formed unique-ID edges; incomplete, cyclic, or malformed hierarchy data is rejected before mutation.
+Blocking relations must connect peers of one bundle: same direct parent, or both top-level. The two issues need not share a project. An issue cannot block its own ancestor or descendant; use `--related` for traceability. Rejections for cross-subtree pairs prescribe the valid pair at the level where the subtrees separate. Incomplete, cyclic, or malformed hierarchy data is rejected before mutation.
 
 A blocking relation pointing at a Done or Canceled issue is **satisfied history, not stale metadata** — Linear itself already treats the dependent issue as unblocked. The relation stays for provenance; never remove or "fix" it, and audits must never classify it as stale. The only legitimate audit output for a completed-blocker relation is a scheduling signal ("gates cleared, ready to schedule").
 
@@ -123,17 +123,17 @@ A blocking relation pointing at a Done or Canceled issue is **satisfied history,
 
 Available states: Backlog, Todo, In Progress, In Review, Done, Canceled (not "Cancelled"). Verify with `statuses list`.
 
-`--labels` REPLACES the whole issue-label set. Fetch current labels, compute the final set, validate it against `cache labels list --format=safe` (which reports `is_group` so parent/group labels can be rejected), then pass the complete set. A name that does not resolve fails the update rather than silently dropping that label; `--clear-labels` is the only way to empty the set.
+`--labels` REPLACES the whole issue-label set. Fetch current labels, compute the final set, validate it against `cache labels list --format=safe` (which reports `is_group` so parent/group labels can be rejected), then pass the complete set. A name that does not resolve fails the update; `--clear-labels` is the only way to empty the set.
 
 - `agent:*` labels are mutually exclusive, one per issue. `issues activate ISSUE --agent NAME` applies `agent:NAME` in the same update as the "In Progress" transition and fails without changing state when the label does not exist.
 - `issues complete ISSUE --summary-file PATH` posts the completion comment first, then transitions to Done; a failed post leaves the state unchanged.
 - `issues bulk-update` is non-atomic: on partial failure it emits `partial: true` with per-issue results and exits non-zero.
-- `issues block` applies the `blocked` label, creates the blocking relation, and comments. A rejected relation fails the command — the label alone never reports a blocked issue.
+- `issues block` applies the `blocked` label, creates the blocking relation, and comments. A rejected relation fails the command.
 
 ## validate-completion
 
-A pre-merge check. Session-root targets are expected in "In Progress"/"In Review" (Done fails `state_ok`: managed roots stay pre-merge until PR merge). `--include-children-of` expands a bundle and validates each child as Done — completed children pass, a pending child fails, canceled children are excluded from the expansion.
+A pre-merge check. Session-root targets are expected in "In Progress"/"In Review" (Done fails `state_ok`). `--include-children-of` expands a bundle and validates each child as Done — completed children pass, a pending child fails, canceled children are excluded from the expansion.
 
-`--container` marks the target a container parent whose children each ship as their own PR and which closes LAST. The container's own state passes for any live state (canceled fails closed) and needs no pre-posted summary; the expanded children still gate on Done, so `all_ok` answers "may this container complete now?". It fails closed: exactly one target, a paired `--include-children-of` naming that same issue, and at least one non-canceled child. A child of a container validates alone as its own session root. Without `--container`, the children-Done-before-root default is the explicit single-PR bundle contract (the "(one PR)" title marker).
+`--container` marks the target a container parent whose children each ship as their own PR and which closes LAST. The container's own state passes for any live state (canceled fails) and needs no pre-posted summary; the expanded children still gate on Done. Requires exactly one target, a paired `--include-children-of` naming that same issue, and at least one non-canceled child. A child of a container validates alone as its own session root. Without `--container`, children must be Done before the root (the "(one PR)" single-PR bundle).
 
 A "labelIds not exclusive child labels" error means two labels from one exclusive group. Requires Bash 4.0+ (macOS system Bash 3.2 is unsupported), `curl`, and `jq`.

@@ -6,7 +6,7 @@ Overlays render on top of the normal widget tree — tooltips, popovers, context
 
 ## First rule: prefer built-in widgets
 
-**Custom overlays are dangerous.** They're the #1 source of `container.rs: unwrap on None` panics in iced apps. Before implementing `Overlay` directly, check whether a built-in widget already solves your problem:
+Custom overlays are the #1 source of `container.rs: unwrap on None` panics. Before implementing `Overlay`, check the built-ins:
 
 | You want | Use |
 |---|---|
@@ -16,11 +16,11 @@ Overlays render on top of the normal widget tree — tooltips, popovers, context
 | Drag ghost during DnD | `pin` widget + absolute positioning |
 | Context menu | `mouse_area` that opens a `float` or `stack` layer |
 
-See `examples/modal/src/main.rs` for the canonical modal pattern using `stack` + `opaque` (no custom overlay needed).
+Canonical modal: `examples/modal/src/main.rs` (`stack` + `opaque`, no custom overlay).
 
 ### Modal nesting order (exact — do not rearrange)
 
-The double-opaque modal pattern has a specific nesting that agents commonly get wrong. Copy this exactly:
+Copy this exactly:
 
 ```
 stack![
@@ -38,28 +38,11 @@ stack![
 ]
 ```
 
-**Why two `opaque` wrappers:**
-
-```
-Click on scrim (outside dialog):
-  → outer opaque blocks base_content ✓
-  → click passes through center (transparent)
-  → reaches mouse_area.on_press → CloseModal ✓
-
-Click inside dialog:
-  → outer opaque blocks base_content ✓
-  → inner opaque captures the event ✓
-  → mouse_area.on_press NEVER fires → dialog stays open ✓
-
-Click on base content (no modal):
-  → stack has no overlay layer → event reaches base normally ✓
-```
-
 **Common mistakes:**
 - Missing outer `opaque` → base content receives clicks through the scrim
-- Missing inner `opaque` → clicking inside the dialog dismisses it (mouse_area fires)
-- `opaque` wrapping the entire stack layer instead of just the scrim → keyboard events blocked even when modal is closed
-- Putting `mouse_area` outside `opaque` → event ordering breaks
+- Missing inner `opaque` → clicking inside the dialog dismisses it
+- `opaque` wrapping the entire stack layer instead of just the scrim → keyboard events blocked while modal is closed
+- `mouse_area` outside `opaque` → event ordering breaks
 
 **All close paths must call the same handler.** Extract one helper:
 
@@ -75,11 +58,11 @@ Message::SubmitPressed => { self.save(); self.close_modal(); }
 Message::EscapePressed => self.close_modal(),
 ```
 
-If none of those fit — e.g., you need precise viewport-aware positioning, non-rectangular shapes, or complex animation — keep reading.
+If none of those fit (viewport-aware positioning, non-rectangular shapes, complex animation), keep reading.
 
 ## The Overlay trait
 
-An overlay is produced by `Widget::overlay()`. If it returns `Some(Element)`, the runtime gives the overlay its own layout and draw pass after the normal tree.
+`Widget::overlay()` returning `Some(Element)` gives the overlay its own layout and draw pass after the normal tree.
 
 ```rust
 pub trait Overlay<Message, Theme, Renderer>
@@ -115,11 +98,11 @@ Full API: `advanced-overlay.md`.
 
 ## The custom overlay contract — MUST follow
 
-Violating the contract causes panics in `container.rs` (`unwrap() on None` because a child layout node is missing).
+Violating the contract panics in `container.rs` (`unwrap() on None`, missing child layout node).
 
 ### 1. `children()` returns a **fixed count**
 
-The number of child trees must not depend on overlay visibility. If your overlay sometimes has 1 child and sometimes 2, the tree walker will desync.
+The child tree count must not depend on overlay visibility.
 
 ```rust
 // WRONG
@@ -139,7 +122,7 @@ fn children(&self) -> Vec<Tree> {
 
 ### 2. `diff()` reconciles **all children** regardless of visibility
 
-Do not skip `diff()` calls for hidden children. The tree must be kept in sync even when the overlay isn't shown.
+Do not skip `diff()` for hidden children.
 
 ```rust
 // WRONG
@@ -176,15 +159,11 @@ Event::Mouse(mouse::Event::CursorEntered) => {
 }
 ```
 
-Without this, popup layout nodes go stale, causing panics.
-
 ## The viewport rule — the most important thing
 
-**Pass `Rectangle::INFINITE` as viewport to all descendant `Widget` calls from inside an overlay, never the stored viewport from parent's `overlay()`.**
+**Pass `Rectangle::INFINITE` as viewport to all descendant `Widget` calls from inside an overlay, never the stored viewport from the parent's `overlay()`.** Inherited clips make text invisible under `iced_wgpu`'s scissor.
 
-Why: `scrollable::overlay` forwards `bounds.intersection(viewport)`, and `iced_wgpu`'s text scissor turns inherited clips into invisible text.
-
-Exception: `Overlay::layout()` may still use `bounds: Size` for its own coordinate space.
+Exception: `Overlay::layout()` may use `bounds: Size` for its own coordinate space.
 
 ### Example
 
@@ -248,7 +227,7 @@ fn layout(&mut self, _renderer: &Renderer, bounds: Size) -> Node {
 
 ### Follow through scrollables
 
-The `translation` parameter in `Widget::overlay()` is the accumulated parent translation (from scrollables). When you construct an overlay that remembers the anchor position, offset the anchor by `translation`:
+`translation` in `Widget::overlay()` is the accumulated parent translation (from scrollables). Offset the remembered anchor by it:
 
 ```rust
 fn overlay<'a>(
@@ -264,7 +243,7 @@ fn overlay<'a>(
 }
 ```
 
-Without this, overlays won't follow the anchor widget as it scrolls.
+Without this, overlays do not follow the anchor as it scrolls.
 
 ## Sibling overlays and z-index
 
@@ -294,11 +273,11 @@ fn overlay<'a>(
 }
 ```
 
-Failing to forward overlays from children is a common reason tooltips/popovers inside composite widgets never appear.
+Unforwarded child overlays are the usual cause of tooltips/popovers inside composite widgets never appearing.
 
 ## Copy-paste overlay template
 
-If you must build a custom overlay, copy this skeleton verbatim. Do NOT restructure the tree shape — this exact shape avoids the `container.rs` panic.
+Copy this skeleton verbatim. Do NOT restructure the tree shape.
 
 ```rust
 use iced::advanced::layout::{self, Layout, Limits, Node};
@@ -489,7 +468,7 @@ where
 
 ## Still unsure?
 
-80% of the time, the right answer is `stack![base, opaque(modal)]` or the built-in `tooltip`/`float`/`pick_list` widgets.
+Default to `stack![base, opaque(modal)]` or the built-in `tooltip`/`float`/`pick_list` widgets.
 
 ## See also
 

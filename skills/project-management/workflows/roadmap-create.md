@@ -6,7 +6,7 @@ Execute an approved roadmap plan: resolve existing work, create the project, cre
 
 `roadmap create @[plan-file]`. Without a plan file, error: "Requires a plan file from `workflows/roadmap-plan.md`."
 
-Read the markdown for `FEATURE` and its `**Plan data**` path, then read that JSON as `TPM_OUTPUT` — the JSON is the contract, the markdown is the human copy. A plan whose JSON is missing or unreadable halts: re-run `roadmap plan`.
+Read the markdown for `FEATURE` and its `**Plan data**` path, then read that JSON as `TPM_OUTPUT`. A plan whose JSON is missing or unreadable halts: re-run `roadmap plan`.
 
 From `TPM_OUTPUT` take `project_placement`, `organized_issues[]`, `cross_project_findings`, `hierarchy_recommendation`, `architecture_gaps[]`, and `context`.
 
@@ -16,7 +16,7 @@ From `TPM_OUTPUT` take `project_placement`, `organized_issues[]`, `cross_project
 
 **Skip if** `cross_project_findings` has no `cancel`, `expand`, `descope`, or conflict entries.
 
-Cancelling and rescoping existing issues is a work decision the plan gate already took for the rows it presented: actions and conflict resolutions unchanged since roadmap-plan § 5 `Approve` execute as presented without re-asking — only under the same provenance as `approved_at_plan_gate`: this wrapper collected that answer in this session on this identical presented set. A plan loaded in a later session, or edited since, presents every action. Otherwise present only what changed since that gate or was not shown there, then ask once: `Execute all` | `Review each` | `Skip`.
+Actions and conflict resolutions unchanged since roadmap-plan § 5 `Approve` execute as presented without re-asking — only under the same provenance as `approved_at_plan_gate` (this wrapper collected that answer in this session on this identical presented set). A plan loaded in a later session, or edited since, presents every action. Otherwise present only what changed since that gate or was not shown there, then ask once: `Execute all` | `Review each` | `Skip`.
 
 <output_format>
 
@@ -42,7 +42,7 @@ For each conflict whose resolution changed since the plan gate or was not presen
 
 ### 3.1 Initiative
 
-Where a project sits in the portfolio is the user's call. List the active initiatives and ask: `Link to [INITIATIVE]` (one option each) | `Create new initiative` | `No initiative`.
+List the active initiatives and ask: `Link to [INITIATIVE]` (one option each) | `Create new initiative` | `No initiative`.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh cache initiatives list --status Active
@@ -74,7 +74,7 @@ Skip the second command when no initiative was chosen. Keep `PROJECT_ID`.
 .agents/skills/linear/scripts/linear.sh projects add-dependency [OTHER_PROJECT_ID] --blocked-by [PROJECT_ID]     # blocks
 ```
 
-Position within the backlog is not set here — `audit-issues project-order` owns project ordering and derives it from scope and dependencies.
+Position within the backlog is not set here; `audit-issues project-order` owns project ordering.
 
 ---
 
@@ -87,11 +87,11 @@ Position within the backlog is not set here — `audit-issues project-order` own
 .agents/skills/linear/scripts/linear.sh cache labels list --format=safe
 ```
 
-Load the project taxonomy and validate every issue's `labels[]` per [labels.md](../references/labels.md) before writing the audit file. Complete a set from the taxonomy when only `agent`/`agent_label` is present. Unknown labels, parent/group labels, missing required categories, or exclusivity violations halt before mutation — never let the CLI warn and skip an invalid label.
+Load the project taxonomy and validate every issue's `labels[]` per [labels.md](../references/labels.md) before writing the audit file. Complete a set from the taxonomy when only `agent`/`agent_label` is present. Unknown labels, parent/group labels, missing required categories, or exclusivity violations halt before mutation.
 
 ### 4.2 Convert to Audit Input
 
-Deterministic mapping only — do NOT re-analyze, and do NOT re-type: generate the file with a script (`jq` over `TPM_OUTPUT`) for every conversion, so field values transfer byte-exact. Convert `TPM_OUTPUT` to the issue-mode format of [audit-output.md](../schemas/audit-output.md), one `issues[]` entry per `organized_issues[i]` — skipping entries whose `project` is `Deferred` (deferred architecture gaps), which the § 5 report lists as deferred and which are never created in the roadmap project:
+Deterministic mapping only — do NOT re-analyze, and do NOT re-type: generate the file with a script (`jq` over `TPM_OUTPUT`) for every conversion. Convert `TPM_OUTPUT` to the issue-mode format of [audit-output.md](../schemas/audit-output.md), one `issues[]` entry per `organized_issues[i]` — skipping entries whose `project` is `Deferred`, which the § 5 report lists as deferred:
 
 | Field | Source |
 |-------|--------|
@@ -99,19 +99,19 @@ Deterministic mapping only — do NOT re-analyze, and do NOT re-type: generate t
 | `identifier` | null — all proposed |
 | `title`, `action`, `target`, `reason` | Same fields on `organized_issues[i]` |
 | `project.recommended` | `project_placement.project_name`; `recommended_id` = `PROJECT_ID` from § 3.2 |
-| `add_relations` | `depends_on_proposed` titles → `blocked_by: ["#N"]` by index; `depends_on_existing` → `blocked_by: ["[ISSUE_ID]"]`. A reference to any entry § 2 omitted — a relation or a `hierarchy.parent` — retargets to that entry's existing `target` issue id when the action executed (the work lives there now); when the action was skipped, the reference is removed and the dependent re-enters § 5 marked `"reapprove": true` — never a dangling `#N`. Relations are already lifted to parent level — preserve them |
+| `add_relations` | `depends_on_proposed` titles → `blocked_by: ["#N"]` by index; `depends_on_existing` → `blocked_by: ["[ISSUE_ID]"]`. A reference to any entry § 2 omitted — a relation or a `hierarchy.parent` — retargets to that entry's existing `target` issue id when the action executed; when the action was skipped, the reference is removed and the dependent re-enters § 5 marked `"reapprove": true` — never a dangling `#N`. Relations are already lifted to parent level — preserve them |
 | `hierarchy` | Bundle children are always `make_child` of `#[parent_index]` — or, when that parent was omitted at § 2, of its existing `target` id per the retargeting rule above. Parents and standalone issues follow `hierarchy_recommendation`: `children_of_origin` → `make_child` of the origin ID, anything else → `none`, `mixed` → per the TPM grouping |
 | `supersedes` | Supersession entries in `cross_project_findings` — only those § 2 neither executed nor skipped |
-| `cross_project_findings.conflicts[]` | Each resolution is applied before conversion: a wait/sequence resolution becomes `blocked_by: ["[ISSUE_ID]"]` on the affected entry; a `Modify approach` text lands in that entry's `create_fields` and marks it `"reapprove": true`; `Skip this issue` omits it. A resolution with no representable effect halts naming the conflict — never carried as prose |
-| existing-work actions decided at § 2 | An action § 2 executed (cancel/expand/descope) is OMITTED from `issues[]` (never `skip` — audit-issues presents `skip` as declined and re-asks); a `supersede` whose cancellation § 2 executed enters as a plain `create` with `supersedes` cleared, so the approved replacement is still filed; an action § 2 skipped — globally or per action — is omitted as well, a skipped supersession dropping its replacement too; the § 5 report lists every omission with its § 2 outcome. Nothing § 6 or § 7 sees can override a § 2 answer |
+| `cross_project_findings.conflicts[]` | Each resolution is applied before conversion: a wait/sequence resolution becomes `blocked_by: ["[ISSUE_ID]"]` on the affected entry; a `Modify approach` text lands in that entry's `create_fields` and marks it `"reapprove": true`; `Skip this issue` omits it. A resolution with no representable effect halts naming the conflict |
+| existing-work actions decided at § 2 | An action § 2 executed (cancel/expand/descope) is OMITTED from `issues[]` (never `skip`); a `supersede` whose cancellation § 2 executed enters as a plain `create` with `supersedes` cleared; an action § 2 skipped — globally or per action — is omitted as well, a skipped supersession dropping its replacement too; the § 5 report lists every omission with its § 2 outcome. Nothing § 6 or § 7 sees can override a § 2 answer |
 | `obsolete` | `organized_issues[i].obsolete` |
 | `priority_misalignment`, `agent_mismatch` | null — already correct |
 
-Each entry's `create_fields` carries `description` (synthesized from title, feature context, and breaking changes), `recommendation` (requirement bullets, plus doc updates and migration steps), `location`, `estimate`, `priority`, `labels[]` (authoritative, validated in § 4.1), `agent_label`, `is_bundle_parent`, and `source_path` = the plan markdown path. A bundle parent sets `is_bundle_parent: true` with no description or recommendation — [parent-issue-template.md](../templates/parent-issue-template.md) content is generated after the children exist, via workflow-actions § Descriptions (parent rebuild).
+Each entry's `create_fields` carries `description` (synthesized from title, feature context, and breaking changes), `recommendation` (requirement bullets, plus doc updates and migration steps), `location`, `estimate`, `priority`, `labels[]` (authoritative, validated in § 4.1), `agent_label`, `is_bundle_parent`, and `source_path` = the plan markdown path. A bundle parent sets `is_bundle_parent: true` with no description or recommendation; generate [parent-issue-template.md](../templates/parent-issue-template.md) content after the children exist, via workflow-actions § Descriptions (parent rebuild).
 
 Top-level: `{"mode": "issue", "source": "roadmap-create", "parent_issue": [from hierarchy_recommendation.origin_issue or null], "research_ref": [context.research_path], "plan_path": [context.plan_path], "approved_at_plan_gate": [true|false]}`.
 
-`approved_at_plan_gate` is true exactly when this wrapper, in this session, collected `Approve` at roadmap-plan § 5 for this plan — provenance, not set equality. `reapprove` then partitions the entries: `true` on each one changed since that answer, absent on the unchanged survivors the approval still covers. The presented creation set was the ISSUES table — `Deferred`-project entries were never part of it, so skipping them changes nothing. An item modified since — a § 2 conflict resolution, any post-approval edit, a reference removed by a § 2 skip — is marked `"reapprove": true` on its entry; entries § 2 omitted were decided at that gate, so their absence never voids the flag for the unchanged survivors; the flag is false only when provenance fails (a later session, or a plan edited since approval). audit-issues § 6 reads this to skip re-asking what the user already answered. `research_ref` — the SPEC path when planning from one — renders as the template's `**Research**` line on every created issue, unconditionally; the § 6 research question is a separate offer to pre-existing issues.
+`approved_at_plan_gate` is true exactly when this wrapper, in this session, collected `Approve` at roadmap-plan § 5 for this plan — provenance, not set equality. `reapprove` is `true` on each entry changed since that answer (a § 2 conflict resolution, any post-approval edit, a reference removed by a § 2 skip), absent on the unchanged survivors. `Deferred`-project entries were never part of it; entries § 2 omitted were decided at that gate, so their absence never voids the flag for the unchanged survivors; the flag is false only when provenance fails (a later session, or a plan edited since approval). `research_ref` — the SPEC path when planning from one — renders as the template's `**Research**` line on every created issue, unconditionally; the § 6 research question is a separate offer to pre-existing issues.
 
 Write it to `tmp/audit-roadmap-YYYYMMDD-HHMMSS.json`, then run:
 
@@ -126,7 +126,7 @@ Write it to `tmp/audit-roadmap-YYYYMMDD-HHMMSS.json`, then run:
 .agents/skills/linear/scripts/linear.sh issues add-relation [ISSUE_ID] --related [EXTERNAL_ISSUE_ID]
 ```
 
-Use `blocked_by` for a real dependency and `related` for an informational link. Dependencies cross projects freely — never relocate an issue to record one.
+Use `blocked_by` for a real dependency and `related` for an informational link. Never relocate an issue to record a dependency.
 
 ---
 

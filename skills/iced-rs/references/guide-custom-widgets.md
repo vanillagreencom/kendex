@@ -1,6 +1,6 @@
 # Building Custom Widgets with `iced::advanced`
 
-When you need layout, event handling, hit-testing, persistent state, or overlays that the built-in widgets don't provide, implement `iced::advanced::widget::Widget` directly.
+Implement `iced::advanced::widget::Widget` directly for layout, event handling, hit-testing, persistent state, or overlays the built-in widgets don't provide.
 
 **Read order**: this guide → `advanced-widget.md` → `advanced-tree.md` → `advanced-shell.md` → `advanced-layout.md` → the canonical examples (see below).
 
@@ -13,7 +13,7 @@ When you need layout, event handling, hit-testing, persistent state, or overlays
 - **`examples/custom_shader/`** — Custom GPU widget.
 - **`examples/geometry/src/main.rs`** — Mesh drawing with `Mesh2D` primitive.
 
-Always read at least `custom_widget` before writing your own — 0.14 signatures changed from 0.13.
+Always read at least `custom_widget` before writing your own.
 
 ## The Widget trait at a glance
 
@@ -115,7 +115,7 @@ No if: visual styling only → `style` closures. 2D drawing only → `Canvas`. S
 
 ### 2. Design the state
 
-All persistent state lives in `widget::Tree`, **not** the widget struct (recreated every frame from `view()`).
+All persistent state lives in `widget::Tree`, **not** the widget struct.
 
 ```rust
 #[derive(Default)]
@@ -136,11 +136,11 @@ let state = tree.state.downcast_mut::<MyState>();
 state.hovered = cursor.is_over(layout.bounds());
 ```
 
-**Gotcha:** `tag()` and `state()` must agree. If you return `Tag::of::<MyState>()` but `state()` returns `State::None`, any `downcast_*` call will panic.
+**Gotcha:** `tag()` and `state()` must use the same concrete type, or `downcast_*` panics.
 
 ### 3. Implement `layout`
 
-`layout` returns a `layout::Node` describing your widget's size. `limits` tells you the available space.
+`layout` returns a `layout::Node` for your widget's size; `limits` is the available space.
 
 ```rust
 fn layout(
@@ -158,7 +158,7 @@ For composite widgets wrapping children, use `layout::Node::with_children`. See 
 
 ### 4. Implement `draw`
 
-`draw` uses the `renderer` to paint quads, text, and custom primitives. The simplest primitive is `renderer::Quad`:
+`draw` paints quads, text, and custom primitives via `renderer`. Simplest primitive: `renderer::Quad`:
 
 ```rust
 fn draw(
@@ -186,7 +186,7 @@ Drawing text requires `Renderer: iced::advanced::text::Renderer`. See `advanced-
 
 #### Draw order is z-order
 
-In composite custom widgets, the child draw order in your `draw()` implementation determines z-order. The **last child drawn appears on top**. Do not assume `stack` semantics apply automatically inside manual draw loops.
+In composite widgets, child draw order in `draw()` is z-order: **last drawn is on top**. `stack` semantics do not apply inside manual draw loops.
 
 ```rust
 fn draw(&self, tree: &Tree, renderer: &mut Renderer, /* ... */) {
@@ -201,13 +201,13 @@ fn draw(&self, tree: &Tree, renderer: &mut Renderer, /* ... */) {
 }
 ```
 
-If you iterate children in insertion order but need a different visual stacking, reorder the draw calls — not the children themselves (that would break Tree associations). See `guide-animated-layout.md` § "Keyed identity" for reorder-safe patterns.
+For a different visual stacking, reorder the draw calls — never the children (breaks Tree associations). See `guide-animated-layout.md` § "Keyed identity" for reorder-safe patterns.
 
-**Diagnostic**: if background items appear above foreground items, or opacity/layering looks inverted, check the draw iteration order.
+**Diagnostic**: inverted layering → check draw iteration order.
 
 #### Opacity and fade completeness
 
-When a component fades as one visual unit (dismiss animation, opacity transition), every rendering path must participate in the opacity:
+When a component fades as one unit, every rendering path must apply the opacity:
 
 - Container backgrounds and borders
 - Text colors
@@ -217,23 +217,19 @@ When a component fades as one visual unit (dismiss animation, opacity transition
 - Custom shader primitives
 - Any embedded child widget content
 
-Partial fade contracts — where some children fade but others don't — produce "nearly transparent remnants." The cause is rendering paths that don't read the current opacity.
-
-**Rule**: audit every rendering path in the component.
+**Rule**: audit every rendering path in the component; any path that ignores opacity leaves "nearly transparent remnants."
 
 #### SVG alpha caveat
 
-SVG tint alpha may not behave identically to text/container/canvas color alpha in all renderers. Before relying on SVG color tint for fade animations:
+SVG tint alpha may diverge from text/container/canvas alpha. Before relying on SVG tint for fades:
 
 1. Verify actual rendered alpha at near-zero opacity values
 2. Compare SVG fade appearance with text fade at the same alpha
-3. If they diverge, use `renderer.with_layer()` with an opacity-controlled clipping region, or render through a composition path that guarantees uniform opacity
-
-Behavior may vary between backends. Verify empirically when fade correctness matters.
+3. If they diverge, use `renderer.with_layer()` with an opacity-controlled clipping region, or a composition path that guarantees uniform opacity
 
 ### 5. Handle events in `update`
 
-`event: &Event` is passed **by reference** in iced 0.14 (this changed from 0.13 — a common failure mode in generated code).
+`event: &Event` is passed **by reference** in iced 0.14.
 
 ```rust
 fn update(
@@ -269,13 +265,13 @@ fn update(
 }
 ```
 
-**Capture when you consume.** If your widget handles a click, call `shell.capture_event()` so parent containers don't also react. This is the #1 source of "the drag is also firing a click" bugs.
+**Capture when you consume.** After handling a click, call `shell.capture_event()`; otherwise parent containers also react ("the drag is also firing a click").
 
 See `advanced-shell.md` for all Shell methods.
 
 ### 6. Animation
 
-Animations need two pieces: (a) stored progress in `Tree` state, (b) a redraw request each frame.
+Animation = progress stored in `Tree` state + a redraw request each frame.
 
 **Paint-only animation** (color, opacity, transform, fixed bounds):
 ```rust
@@ -292,17 +288,13 @@ if state.animation_active {
 }
 ```
 
-**Diagnostic**: if a widget "only updates on the second click," suspect stale layout. Add `invalidate_layout()`.
+**Diagnostic**: "only updates on the second click" → stale layout; add `invalidate_layout()`.
 
 #### Redraw vs rebuild invariant
 
-`request_redraw()` repaints the existing widget tree — it does **not** call `view()` or rebuild widget structs.
+`request_redraw()` repaints the existing tree — it does **not** call `view()` or rebuild widget structs.
 
-- If animation state lives in widget struct fields (computed in `view()`), redraws repaint **stale values** — the widget struct hasn't changed.
-- If animation state lives in `widget::Tree` state, redraws correctly read the updated values from Tree.
-- If animation depends on app state recomputation (values set in `App::update()`), it must be driven by messages/tasks that trigger `update()` → `view()`, not bare `request_redraw()`.
-
-**Rule**: redraw-driven animation loops must keep all motion state in `widget::Tree` state. Values computed in `view()` and stored on the widget struct are frozen until the next `view()` call.
+**Rule**: redraw-driven animation loops keep all motion state in `widget::Tree` state; widget struct fields are frozen until the next `view()`. Animation that depends on `App::update()` values must be driven by messages/tasks, not bare `request_redraw()`.
 
 For scheduled next-frame ticks:
 ```rust
@@ -325,12 +317,7 @@ For non-rectangular hit-testing (circles, paths), compute manually against bound
 
 ### Stable hover hit regions
 
-Hover sensors must not be attached to layout-affecting animated bounds. If a `mouse_area` wraps content whose size changes during a hover-triggered animation, the sensor boundary moves during animation, causing enter/exit thrashing:
-
-1. Content starts small → cursor enters → animation grows content
-2. Sensor boundary moves → cursor is now outside → exit fires
-3. Content shrinks → cursor is inside again → enter fires
-4. Result: visible flickering
+Hover sensors must not be attached to layout-affecting animated bounds: a `mouse_area` wrapping content that resizes during its own hover animation thrashes enter/exit and flickers.
 
 **Rule**: use a stable outer hitbox. Animated content lives inside the hitbox — it does not define it.
 
@@ -354,7 +341,7 @@ See `guide-animated-layout.md` for full collapsed-to-expanded transition pattern
 
 ### 8. Scrollable compatibility
 
-Parents like `scrollable` listen for mouse events and can steal drags. If your widget starts a drag, **capture the event**:
+If your widget starts a drag, **capture the event** or parents like `scrollable` steal it:
 
 ```rust
 Event::Mouse(mouse::Event::ButtonPressed(_)) if cursor.is_over(bounds) => {
@@ -363,11 +350,9 @@ Event::Mouse(mouse::Event::ButtonPressed(_)) if cursor.is_over(bounds) => {
 }
 ```
 
-Without `capture_event()`, the parent `scrollable` will also process the mouse-down and start scrolling.
-
 ### 9. Construction API
 
-Provide a free-function constructor for ergonomic use in `view()`:
+Provide a free-function constructor:
 
 ```rust
 pub fn my_widget(value: f32) -> MyWidget {
@@ -420,9 +405,9 @@ Used in `view()` as `my_widget(self.value).width(300).on_press(Message::Tick).in
 
 ## Constraints from the wider framework
 
-Non-negotiable — violating causes subtle bugs:
+Non-negotiable:
 
-- **Widget tree consistency** — always wrap, conditionally attach the handler. Never `if cond { mouse_area(x).into() } else { x.into() }`. `MouseArea` has **no `on_press_maybe`** (that is `button`-only); its `on_press` takes a plain `Message`, so keep the wrapper unconditional and gate the call: `let mut a = mouse_area(x); if cond { a = a.on_press(msg); } a`.
+- **Widget tree consistency** — always wrap, conditionally attach the handler. Never `if cond { mouse_area(x).into() } else { x.into() }`. `MouseArea` has **no `on_press_maybe`** (`button`-only); keep the wrapper unconditional and gate the call: `let mut a = mouse_area(x); if cond { a = a.on_press(msg); } a`.
 - **`view()` is pure** — no side effects, no mutable state. All state in `State`, mutated only in `update()`.
 - **Single message per interaction** — one interaction → one message. Composite actions use a state machine in `update()`.
 - **Overlay state isolation** — overlay layers must not affect base layer widget structure.

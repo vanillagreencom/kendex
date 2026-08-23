@@ -1,7 +1,7 @@
 .github/workflows/review-gate-writer.yml	652
 crates/app/gen/schemas/desktop-schema.json	2590
 crates/app/gen/schemas/linux-schema.json	2590
-docs/ARCHITECTURE.md	1301
+docs/ARCHITECTURE.md	874
 hooks/block-repo-copy.sh	511
 hooks/pre-commit-check.sh	423
 pi-extensions/pi-agents-tmux/extensions/subagent/browser.ts	650
@@ -86,8 +86,8 @@ skills/iced-rs/iced_wgpu/src/text.rs	649
 skills/iced-rs/iced_wgpu/src/triangle.rs	887
 skills/iced-rs/iced_wgpu/src/window/compositor.rs	427
 skills/iced-rs/references/api-module-tree.md	1111
-skills/iced-rs/references/guide-custom-overlays.md	500
-skills/iced-rs/references/guide-custom-widgets.md	439
+skills/iced-rs/references/guide-custom-overlays.md	479
+skills/iced-rs/references/guide-custom-widgets.md	424
 skills/linear/scripts/commands/cache-query.sh	1366
 skills/linear/scripts/commands/initiatives.sh	492
 skills/linear/scripts/commands/issues.sh	3351

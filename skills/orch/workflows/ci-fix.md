@@ -48,7 +48,7 @@ git -C "[WORKTREE_PATH]" push
 
 ### 3.2 Delegated Fixes
 
-Infer the agent from the component paths or issue labels. A test failure in concurrent code that passes locally is a flaky-test candidate — check the project's testing conventions for the usual patterns (missing barriers, iteration-based waits, static mutable state) before treating it as a real regression.
+Infer the agent from the component paths or issue labels. A test failure in concurrent code that passes locally is a flaky-test candidate — check the project's testing conventions (missing barriers, iteration-based waits, static mutable state) before treating it as a real regression.
 
 Stamp the round as separate tool calls immediately before delegating, and arm the watchdog per [SKILL.md § Round Closure](../SKILL.md#round-closure):
 
@@ -62,9 +62,9 @@ Stamp the round as separate tool calls immediately before delegating, and arm th
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
 ```
 
-`worktree-claim` exit 75 aborts the delegation — another session holds this worktree, and its stderr names the holder; exit 1 is an unverifiable guard, which stops the workflow and is reported. Its printed token is the delegation's `Worktree Lease:` line.
+`worktree-claim` exit 75 aborts the delegation (another session holds this worktree; stderr names the holder); exit 1 stops the workflow and is reported. Its printed token is the delegation's `Worktree Lease:` line.
 
-This agent pushes its fix directly and writes **no** dev-return artifact, so the round-mode check for this fresh token is *expected* to report `ok == false`. The fresh token is still what guarantees a leftover artifact from an earlier round — on disk under the previous token — can never be mis-accepted here. Accept this round on the agent's return message plus the pushed fix commit, and on a genuinely absent return follow the escalation ladder.
+This agent pushes its fix directly and writes **no** dev-return artifact; the round-mode check for this token reports `ok == false`, which is expected. Accept this round on the agent's return message plus the pushed fix commit; on an absent return follow the escalation ladder.
 
 <delegation_format>
 CI failure on PR #[PR_NUMBER] ([BRANCH_NAME]).
@@ -123,7 +123,7 @@ Report findings for a user decision.
 
 ## 5. Verify
 
-A fix push moved the head, so the review gate is re-confirmed at the new head **before** CI is waited on — the same review-before-CI ordering as `submit-pr.md`, applied universally with no repo detection. On approval-gated repos CI for the new head starts only after exact-head review evidence exists, so waiting on CI first would deadlock or watch an intentionally red gate run; on always-on repos the re-confirmation costs nothing.
+Re-confirm the review gate at the new head **before** waiting on CI, on every repo with no repo detection.
 
 ```bash
 .agents/skills/orch/scripts/approval-wait --resolve-mode
@@ -135,15 +135,15 @@ A fix push moved the head, so the review gate is re-confirmed at the new head **
 .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE]
 ```
 
-- `approved` / `reviewed` / `proceeded` → wait for CI. `proceeded` is the reviewer-down degrade: this workflow returns it rather than persisting it, so the caller records it under its own gate bookkeeping. The proceed is a LOCAL verdict — orch posts no status, so on a repo whose CI gates on review evidence the CI wait below may sit against a gate that will not converge; that posture is the engine's to govern, not orch's.
+- `approved` / `reviewed` / `proceeded` → wait for CI. `proceeded` is returned to the caller, not persisted here; it is a LOCAL verdict — orch posts no status.
 - `comments` / `changes_requested` → new feedback on the fix push. Managed: return it to the caller's review-gate handling. Standalone: run that triage pass, then re-run this step.
-- `timeout` → no exact-head evidence yet. On repos whose CI is gated on review evidence, CI cannot have started, so a missing or red run here is not a fix failure. Report the unconfirmed gate, then re-run this step once or hand back.
+- `timeout` → no exact-head evidence yet; a missing or red CI run here is not a fix failure. Report the unconfirmed gate, then re-run this step once or hand back.
 
 ```bash
 .agents/skills/orch/scripts/ci-wait [PR_NUMBER]
 ```
 
-**Linear only** — post the short status to the tracker; a GitHub item's PR conversation already records the fix:
+**Linear only** — post the short status to the tracker:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh comments create "$ISSUE" --body "CI Fix: [ERROR_TYPE] → [FIX_DESCRIPTION]"

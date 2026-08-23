@@ -28,7 +28,7 @@ Type follows domain count when the caller did not supply one: 1 domain is Target
 .agents/skills/linear/scripts/linear.sh cache labels list --format=safe
 ```
 
-Resolve `RESEARCH_WORKFLOW_LABEL` from the project taxonomy and this inventory per [labels.md](../references/labels.md) — it is the project-configured workflow/classification label for research issues; do not assume the literal name `research` exists.
+Resolve `RESEARCH_WORKFLOW_LABEL` from the project taxonomy and this inventory per [labels.md](../references/labels.md); do not assume the literal name `research` exists.
 
 Build `VALIDATED_LABELS = [agent:researcher, RESEARCH_WORKFLOW_LABEL, DOMAINS...]` from issue labels only, and confirm each exists in the live inventory, is assignable (not a parent/group label), and satisfies the taxonomy's category and exclusivity rules. Unknown labels, parent/group labels, missing required categories, or exclusivity violations halt before mutation. A required label missing from the tracker needs explicit user authorization before creation — never create one automatically.
 
@@ -47,7 +47,7 @@ Write the description to a file, then:
   --description-file [BODY_FILE]
 ```
 
-`--state "Backlog"` is mandatory: a research issue leaves this workflow fully triaged, and the team-default Triage state is where the workspace's triage loop fires.
+`--state "Backlog"` is mandatory, never the team-default Triage.
 
 ```markdown
 ## Summary
@@ -60,7 +60,7 @@ Write the description to a file, then:
 Next available ID via `.agents/skills/decider/scripts/decisions next-id`
 ```
 
-Execution and output sections are appended in § 3, once the assets they name exist.
+Execution and output sections are appended in § 3.
 
 `[TYPE_SECTION]`: omitted for Targeted; `## Affected Domains` with each domain and its reason for Pervasive; `## Creates Roadmap` with scope and phases for Strategic.
 
@@ -74,9 +74,9 @@ Capture the returned identifier as `[RESEARCH_ISSUE_ID]`. **Skip if** no `blocke
 
 ### 2.1 Consult Domain Agents
 
-Map each domain label to its agent type (project-configurable) and delegate in parallel. This is asset preparation — gathering context for the research prompt — not impact analysis, which happens in research-complete § 5.
+Map each domain label to its agent type (project-configurable) and delegate in parallel. This is asset preparation, not impact analysis (research-complete § 5).
 
-Re-delegate to `[CONSULTATION_AGENT_NAME]` when the caller supplied one; it already holds the context, so omit the reading block below. Otherwise start a fresh agent with the full block.
+Re-delegate to `[CONSULTATION_AGENT_NAME]` when the caller supplied one, omitting the reading block below. Otherwise start a fresh agent with the full block.
 
 <delegation_format>
 Research: [RESEARCH_ISSUE_ID] - [TOPIC]
@@ -105,8 +105,8 @@ Reply with a structured section per item.
 Under `[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/`:
 
 - **prompt.txt** — research objective (one sentence), context summary (2-3 sentences), attached files with descriptions, the merged and prioritized questions, scope constraints, deliverables.
-- **context-[topic].md** — the agents' extractions, fully self-contained. Every reference is resolved into the file: no doc paths, no issue IDs, no decision IDs, no "per project rules". "See docs/architecture/module.md" becomes the extracted content; "Reference [ISSUE_ID] findings" becomes the findings inline; "Message Bus Design (D001)" becomes "Message Bus Design". The researcher has no repository access — anything it needs must be in this file.
-- **run.sh** (and `command.txt` with the same command, since the harness may not preserve executable bits):
+- **context-[topic].md** — the agents' extractions, fully self-contained. Every reference is resolved into the file: no doc paths, no issue IDs, no decision IDs, no "per project rules". "See docs/architecture/module.md" becomes the extracted content; "Reference [ISSUE_ID] findings" becomes the findings inline; "Message Bus Design (D001)" becomes "Message Bus Design". The researcher has no repository access.
+- **run.sh** (and `command.txt` with the same command):
 
   ```bash
   #!/usr/bin/env bash

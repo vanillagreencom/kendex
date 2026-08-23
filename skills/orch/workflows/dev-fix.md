@@ -8,7 +8,7 @@ Delegate fix items to a specialist dev agent. Standalone (user-initiated) or man
 | `dev-fix [ISSUE_ID]` | Fix items for a specific issue |
 | (from a review workflow) | Managed lifecycle with caller context |
 
-**Caller context** (via `⤵`): `worktree`; `lifecycle` — `"managed"` (return at § 3) or `"self"` (default); `dev_agent` — a live dev agent; `issue_id` — the workflow-state key, the normalized issue ID (`issue-N` for GitHub, `PROJ-123` for Linear), never the bare GitHub issue number; `items` — formatted review items; `source` — `pr-review` | `qa-review` | `review` | `local-review` (default `conversation`); `qa_agent`; `convergence` — the caller's convergence decision (`cut`, `structural`, or `split`) and its reason, when it made one. The caller already applied it to `items`; it tells the round the shape of the fix, not which items to skip.
+**Caller context** (via `⤵`): `worktree`; `lifecycle` — `"managed"` (return at § 3) or `"self"` (default); `dev_agent` — a live dev agent; `issue_id` — the workflow-state key, the normalized issue ID (`issue-N` for GitHub, `PROJ-123` for Linear), never the bare GitHub issue number; `items` — formatted review items; `source` — `pr-review` | `qa-review` | `review` | `local-review` (default `conversation`); `qa_agent`; `convergence` — the caller's convergence decision (`cut`, `structural`, or `split`) and its reason, when it made one; it tells the round the shape of the fix, not which items to skip.
 
 **Standalone init** (`lifecycle: "self"`). Use the argument as `ISSUE_ID`, else `git-context issue-from-branch .`. Apply [Worktree Scope](../SKILL.md#workflow-execution) and resolve `WT_PATH` (inside a worktree, the current directory; from the main repo, `worktree path [ISSUE_ID]`, asking before creating).
 
@@ -86,7 +86,7 @@ Cancel ends the workflow; a selection goes to § 2.
    .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
    ```
 
-   `worktree-claim` exit 75 aborts the delegation — another session holds this worktree, and its stderr names the holder; exit 1 is an unverifiable guard, which stops the workflow and is reported. Its printed token is the delegation's `Worktree Lease:` line.
+   `worktree-claim` exit 75 aborts the delegation (another session holds this worktree; stderr names the holder); exit 1 stops the workflow and is reported. Its printed token is the delegation's `Worktree Lease:` line.
 
    Then persist the delegated item set on disk. Write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool — a JSON array of `{"n": [N], "text": "[ITEM_TEXT]"}`, one per delegated item, `[ITEM_TEXT]` being that item's formatted block verbatim — then:
 
@@ -94,7 +94,7 @@ Cancel ends the workflow; a selection goes to § 2.
    .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json
    ```
 
-   `--issue` takes the same normalized workflow-state key everything else here uses — the value the delegation's `Artifact Key:` line carries; a mismatch strands the record where no reader looks. The file route keeps backticks and quotes out of the command line; only when every item's text is plain may you pass `--item [N] '[ITEM_TEXT]'` pairs inline in one command instead.
+   `--issue` takes the normalized workflow-state key — the value the delegation's `Artifact Key:` line carries. Only when every item's text is plain (no backticks or quotes) may you pass `--item [N] '[ITEM_TEXT]'` pairs inline in one command instead.
 
    **An analysis (read-only) round has no delegated item set** — skip `dev-round-write` entirely and run step 6's Check A without an expected-set flag.
 
@@ -121,7 +121,7 @@ Cancel ends the workflow; a selection goes to § 2.
    [FORMATTED_ITEMS]
    </delegation_format>
 
-5. **Accept the round.** Acceptance is a pure function of **A** (the round-scoped artifact) and **B** (git completion), never the return message — a return is routinely absent when a long validation outlasts the agent's turn.
+5. **Accept the round.** Acceptance is a pure function of **A** (the round-scoped artifact) and **B** (git completion), never the return message.
 
    **Check A** — two tool calls:
 
@@ -141,19 +141,19 @@ Cancel ends the workflow; a selection goes to § 2.
    git -C "[WORKTREE_PATH]" log -1 --oneline
    ```
 
-   `B = pass` when the worktree is clean and the reported fix commit resolves in the log — or when the round applied nothing and correctly made no commit, which legitimately leaves `HEAD` unchanged.
+   `B = pass` when the worktree is clean and the reported fix commit resolves in the log — or when the round applied nothing and made no commit.
 
    | A (verdict) | B (git) | Action |
    |---|---|---|
    | `accept` | pass | **Accept.** First confirm exact-commit binding: the artifact's `.commit` equals `git -C [WORKTREE_PATH] rev-parse HEAD` (an all-skipped round's `.commit` is the unchanged HEAD). Then read the item decisions, commits, and validate status from the return when present, else from the artifact. → step 6. |
    | `accept` | fail | The artifact claims done but the worktree is dirty or the commit is missing. Re-read git ONCE after a brief pause, then re-delegate only the missing step: commit, or revert leftover work. |
-   | `wait` | pass | Fix code appears landed but the round did not finish — its per-item decisions are unproven. Do NOT re-run the fix and do NOT accept on git alone. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write --kind fix … --round-id [DEV_ROUND_ID]` with one `--item` per review item; if you no longer have the delegation, your item set is on disk at `tmp/dev-round-[ISSUE_ID]-[DEV_ROUND_ID].json`) and re-report your item decisions; do NOT re-run the fix."* Accept only when a valid artifact for THIS round appears. |
+   | `wait` | pass | Do NOT re-run the fix and do NOT accept on git alone. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write --kind fix … --round-id [DEV_ROUND_ID]` with one `--item` per review item; if the delegation is gone from your context, your item set is on disk at `tmp/dev-round-[ISSUE_ID]-[DEV_ROUND_ID].json`) and re-report your item decisions; do NOT re-run the fix."* Accept only when a valid artifact for THIS round appears. |
    | `wait` | fail | **Not done.** Wait to the deadline, then escalate per [SKILL.md § Round Closure](../SKILL.md#round-closure). |
 | `retry` | any | An artifact for THIS round exists but fails a gate — the check's `reason` names it. A failing `validate` re-delegates fixing the validation; an identity/schema failure gets the report-only tail-rewrite nudge. Never accept, and never treat it as absent. |
 
    **Analysis rounds** run Check A without an expected-set flag, and B expects no new commit and a clean worktree. On accept, read the `summary` recommendation and decide the next step: delegate the actual fixes as a fresh round, or close and re-scope with reasoning.
 
-6. **Record the outcome** — one tool call per block; the appends run per item and cannot fold into one expression:
+6. **Record the outcome** — one tool call per block, appends run per item:
 
    ```bash
    .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] fixed_items '{"description":"[DESC]","location":"[LOC]","commit":"[SHA]","source":"[SOURCE]"}'
@@ -165,7 +165,7 @@ Cancel ends the workflow; a selection goes to § 2.
    .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] cycles
    ```
 
-   `[OUTCOME]` carries the item's accepted decision: Blocked → `"blocked"`, Skipped → `"skipped"`. The audit builder maps it to distinct origins, so a deliberately skipped item is never filed as an unfixable blocker.
+   `[OUTCOME]` carries the item's accepted decision: Blocked → `"blocked"`, Skipped → `"skipped"`.
 
 ## 3. Return
 

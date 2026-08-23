@@ -1,8 +1,6 @@
 # Surface Selection
 
-Iced offers five ways to build UI content. Picking correctly is the most important decision in an Iced project.
-
-For **trading charts or dense visualizations** (>1000 primitives/frame), the answer is always Shader + Canvas overlay hybrid. If a chart-specific skill is available, load it — it supersedes Q3 below.
+For **trading charts or dense visualizations** (>1000 primitives/frame), use Shader + Canvas overlay hybrid. If a chart-specific skill is available, load it — it supersedes Q3 below.
 
 ## The five surfaces
 
@@ -30,7 +28,7 @@ For **trading charts or dense visualizations** (>1000 primitives/frame), the ans
 
 ### Q3: Visual surface — which surface?
 
-**If it's any trading chart or dense market-data visualization → the answer is Shader + Canvas overlay hybrid. Load a chart-specific skill if available.**
+**Trading chart or dense market-data visualization → Shader + Canvas overlay hybrid. Load a chart-specific skill if available.**
 
 For non-chart visual surfaces:
 
@@ -63,7 +61,7 @@ See `guide-custom-widgets.md`.
 
 ### Q5: Floating layer above the rest of the UI?
 
-**First try built-ins** — custom overlays are the #1 `container.rs unwrap on None` source:
+**First try built-ins:**
 
 | Need | Built-in |
 |---|---|
@@ -99,8 +97,6 @@ Only implement `iced::advanced::overlay::Overlay` when none fit. See `guide-cust
 3. Charts use Shader + Canvas overlay hybrid
 4. `stack + opaque` before custom Overlay
 5. If none of the above, use `iced::advanced::Widget`
-
-Violating this order means 10x the code for the same feature.
 
 ## See also
 

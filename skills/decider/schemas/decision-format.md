@@ -11,13 +11,13 @@ Canonical constraints for decision documents and their index.
 |------|----|----------|----------|-----------|--------------|--------|------|
 ```
 
-The column order is a machine contract: the `decisions` CLI selects rows starting `| YYYY-MM-DD |` and reads the eight cells positionally. The Link cell must name the decision document — body search and `get` resolve it through that cell. Rows are append-only, never re-sorted. Row format and field sizing: `../templates/index-row.md`.
+Column order is a machine contract: the `decisions` CLI selects rows starting `| YYYY-MM-DD |` and reads the eight cells positionally. The Link cell must name the decision document. Rows are append-only, never re-sorted. Row format: `../templates/index-row.md`.
 
-Below the table the index carries a Format Reference section stating what to log, what not to log, and the status values in use.
+Below the table: a Format Reference section listing what to log, what not to log, and the status values in use.
 
 ## Decision document
 
-File name `[DECISION_ID]-kebab-case-descriptor.md` — `D001-session-caching.md`, `ADR-0001-runtime-choice.md`. A `DECISION_ID` is a prefix plus a numeric suffix, and a project keeps one scheme throughout (`D001` by default; preserve `ADR-0001` where already established).
+File name `[DECISION_ID]-kebab-case-descriptor.md` — `D001-session-caching.md`, `ADR-0001-runtime-choice.md`. A `DECISION_ID` is a prefix plus numeric suffix; a project keeps one scheme (`D001` by default; keep `ADR-0001` where established).
 
 | Element | Format |
 |---------|--------|
@@ -41,7 +41,7 @@ Optional metadata lines: `**Applies to**:` (scoped decisions), `**Refines**:` (e
 | `Superseded by [DECISION_ID]` | Fully replaced |
 | `Revisited` | Re-evaluated, outcome recorded in the document |
 
-`list` returns every decision whose status starts with `Active`, so partial supersessions stay listed.
+`list` returns every decision whose status starts with `Active`, including partial supersessions.
 
 ## Cross-references
 

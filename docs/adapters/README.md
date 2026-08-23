@@ -38,9 +38,9 @@ Two tests keep the table honest: the `observe` column must equal what the
 adapters declare as surfaces, and no mutation column may exceed the
 observation of whatever the mutation writes.
 
-**Format facts** — `format_caps(harness) -> FormatCaps` owns the byte cap on
-a SKILL.md body, the name rule the harness's loader enforces
-(`Any` or `LowerKebab { max_len }`), and the MCP transports it speaks. These
+**Format facts** — `format_caps(harness) -> FormatCaps` owns the name rule
+the harness's loader enforces (`Any` or `LowerKebab { max_len }`) and the
+MCP transports it speaks. No harness caps a SKILL.md body. These
 live beside the op table rather than as literals inside renderers, so the
 renderers, the validators and the surface model all read one source.
 
@@ -74,10 +74,10 @@ scope (`Surface` in `crates/core/src/harness/mod.rs`):
 Several tools read the same physical directory. Codex and Pi both consume
 `.agents/skills` in a project; Gemini and Copilot read skill trees other
 tools own. Harnesses whose skill directory resolves to the same path form a
-**surface group** carrying exactly one rendered variant, built to the group's
-combined constraints (tightest byte cap wins). A variant whose bytes match the
-shared tree collapses onto it through a link; a divergent one gets its own
-tree, and the move runs both ways as the source grows and shrinks. A refusal
+**surface group** carrying exactly one rendered variant, validated against
+every member's loader. A variant whose bytes match the shared tree collapses
+onto it through a link; a divergent one gets its own tree, and the move runs
+both ways. A refusal
 is per surface, not per tool.
 
 A cross-read is never a second installation. An adapter claims only its own

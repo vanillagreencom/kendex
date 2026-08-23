@@ -38,11 +38,11 @@ The delegation prompt carries the dev agent's completion summary, the triggering
 
 ## 2. Review
 
-Identify the changed files (same two commands as `review.md` § 1: `resolve-base-branch`, then the diff), then run your agent-specific review per your agent file and the reviewer skill's Ethos. Suggestions that contradict the delegation's listed decisions are invalid — unless the decision itself is flawed, which is a blocker citing the decision and why.
+Identify the changed files (same two commands as `review.md` § 1: `resolve-base-branch`, then the diff), then run your agent-specific review per your agent file and the reviewer skill's Ethos. Suggestions that contradict the delegation's listed decisions are invalid; a flawed decision is a blocker citing the decision.
 
 Mutation-validating a test as evidence commits you to the skill's Mutation-Stability Pairing.
 
-**Performance QA agent only**: additionally follow [`../references/perf-qa.md`](../references/perf-qa.md) for benchmark execution, regression classification, and recording, and carry `benchmark_commit` into § 3.
+**Performance QA agent only**: also follow [`../references/perf-qa.md`](../references/perf-qa.md) and carry `benchmark_commit` into § 3.
 
 ## 3. Artifact, Validate, Return
 
