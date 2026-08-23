@@ -6,15 +6,16 @@ import {
 } from "@/lib/customized-places";
 import { placeName } from "@/lib/update-groups";
 
-/** What a mark says, and where clicking it goes.
- *
- *  A badge that cannot be followed is a fact with no exit: the reader is
- *  told a place is theirs and left to find it. Every mark carries the
- *  place it named. */
+/** What a mark says, and where it leads if anywhere. */
 export interface PlaceMark {
   label: string;
-  /** The place the label names, which a click opens. Null when the mark
-   *  is about no single place. */
+  /** The place a click opens, where opening one is worth offering.
+   *
+   *  Null in two cases, and the label tells them apart: the mark names
+   *  several places, so no one of them is the destination; or it names
+   *  the place already on screen, where a control would lead back to
+   *  where the reader stands. A single-place mark is therefore not always
+   *  a followable one. */
   goTo: Scope | null;
   why: Why | null;
 }

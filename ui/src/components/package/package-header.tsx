@@ -39,8 +39,9 @@ export function PackageHeader({
             <Badge variant="outline">{FORKED_BADGE_LABEL}</Badge>
           ) : null}
           {mark ? (
-            // The mark names a place, so it goes there. A badge that names
-            // a place and cannot be followed leaves the reader to find it.
+            // The place it names is the page being read, so there is
+            // nowhere for it to lead: it states where, and the way there
+            // is already underfoot.
             <Badge variant="customized">{mark.label}</Badge>
           ) : null}
         </span>
