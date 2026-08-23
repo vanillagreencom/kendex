@@ -1,5 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::collections::BTreeMap;
 
 use crate::apply::{Op, Plan, PlannedOp};
 use crate::env::Env;
@@ -26,7 +25,9 @@ mod desired_mcp;
 mod desired_skill;
 mod desired_source;
 pub mod detach;
+pub mod exits;
 mod expansion;
+mod file_plan;
 pub mod fork;
 mod gate;
 mod gemini;
@@ -45,6 +46,7 @@ mod review_hash;
 pub mod reviewable;
 mod scope_writes;
 mod set_change;
+mod takeover;
 mod targets;
 mod tree_plan;
 mod unmanaged;
@@ -78,6 +80,7 @@ use scope_writes::{
 };
 pub use set_change::{KeptInstall, SetChange, SetDirection};
 use set_change::{kept_members, set_changes};
+pub(crate) use unmanaged::declared_over_existing_files;
 use unmanaged::unmanaged_rows;
 
 mod report_types;
@@ -119,20 +122,18 @@ pub fn plan_scope(
 
     plan_manifest_write(env, scope, repo_moved, manifest, &state, &mut ops)?;
 
-    let emitted_paths = emitted_paths(lock);
-    // Answered before anything is planned, and read again when the move
-    // is planned: a pi hook whose copy under the name pi reserved is not
-    // this pass's to take holds whole, so the fresh rendering never
-    // quietly takes over from bytes the person kept.
+    // Answered before anything is planned, and read again when the move is
+    // planned: a pi hook whose copy under the name pi reserved is not this
+    // pass's to take holds whole, so the fresh rendering never quietly
+    // takes over from bytes the person kept.
     let legacy_pi = pi_hooks_move::preflight(env, scope, lock, options, &state);
-
     plan_pass::plan_items(
         env,
         &state,
         scope,
         lock,
         options,
-        &emitted_paths,
+        &owned::paths(env, scope, lock),
         &legacy_pi,
         &mut drift,
         &mut ops,
@@ -223,6 +224,7 @@ pub fn plan_scope(
     };
     report.notes.extend(moved_notes);
     unmanaged_rows(env, scope, manifest, lock, &state.items, &mut report.drift);
+    takeover::refuse_unsettled_takeover(options, &report.drift)?;
     Ok(report)
 }
 
@@ -240,14 +242,6 @@ fn fresh_lock(manifest: &Manifest, lock: &Lock, state: &desired::DesiredState) -
 
 /// What earlier installs put on disk under another kind's name. A path
 /// one of them wrote is ours to replace, whichever entry holds it now.
-fn emitted_paths(lock: &Lock) -> BTreeSet<PathBuf> {
-    lock.entries
-        .values()
-        .filter_map(|entry| entry.emitted.as_ref())
-        .flat_map(|emitted| emitted.paths.iter().cloned())
-        .collect()
-}
-
 /// The plan's one manifest write, when anything needs it: skills an agent
 /// gained upstream or a review of findings this run was asked to record
 /// take the full serialized write — or, with neither, the repository move

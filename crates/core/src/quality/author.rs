@@ -15,14 +15,13 @@
 //! - It settles only what the publisher wrote. Rendering adds content they
 //!   never did — a project's `[skill-instructions]`, an agent's launch and
 //!   additional instructions, its project-configured hooks — so a decision
-//!   speaks for as many occurrences of a finding as the publisher's own
-//!   text carries in what actually installs, and no more. That number is
-//!   [`Budget::earned`]'s, counted against the item rendered from the
-//!   publisher's inputs alone: the renderer is asked what it produces
-//!   without the project's contributions rather than being read backwards
-//!   for markers, so nothing in the project's own text can be mistaken for
-//!   the publisher's. The extra occurrence is a different question and
-//!   stays counted.
+//!   settles only the occurrences the publisher's own text produced in
+//!   what actually installs. Which those are is [`Budget::earned`]'s
+//!   question, asked of the item rendered from the publisher's inputs
+//!   alone: the renderer is asked what it produces without the project's
+//!   contributions rather than being read backwards for markers, so
+//!   nothing in the project's own text can be mistaken for the
+//!   publisher's. The project's own occurrence stays counted.
 //! - It carries only the reasons an author can honestly give. A
 //!   `trusted-source` dismissal is a claim about where bytes came from,
 //!   which only the installer's own machine can check; the writer refuses
@@ -36,7 +35,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use super::reviews::DismissReason;
-use super::{Content, Finding, SafetyScore, Severity};
+use super::{Content, Finding, SafetyScore};
 use crate::error::Result;
 use crate::model::ItemKind;
 use crate::source_read::SealedSource;
@@ -69,8 +68,9 @@ pub struct AuthorDismissal {
 ///   has to publish this record. It buys nothing arithmetically.
 /// - `dismissed` keys: shaped like fingerprints this build could have
 ///   written ([`read::honest`]), and published by that catalog for this
-///   item. What each is *worth* is counted from the catalog's own content,
-///   never carried here — see `engine::observed::vouching`.
+///   item. Whether each settles anything here is derived from the content
+///   in front of us ([`Budget::earned`]), never carried on this record's
+///   own word.
 /// - `dismissed[_].reason` and `.dismissed_at`: printed, and have to match
 ///   what the catalog published.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -104,7 +104,7 @@ impl AuthorReview {
     /// content is the publisher's — the authoring check and the pre-install
     /// preview, where nothing else has been added to it yet.
     pub fn whole_budget(&self) -> Budget {
-        Budget::whole(self.dismissed.keys().cloned().collect())
+        Budget(self.dismissed.keys().cloned().collect())
     }
 }
 

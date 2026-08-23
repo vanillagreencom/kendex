@@ -3,10 +3,10 @@
 //!
 //! Everything here reads through the same core the app and the engine use:
 //! [`super::list_items`] decides what is offered, [`crate::check_catalog`]
-//! decides the verdicts, [`super::about`] says what was found where. That is
-//! the invariant the directory rests on — what the site says a marketplace
-//! offers is exactly what subscribing finds. Every string is catalog text:
-//! capped and control-char-safe before it leaves this module.
+//! decides the verdicts, [`super::about()`] says what was found where. That
+//! is the invariant the directory rests on — what the site says a
+//! marketplace offers is exactly what subscribing finds. Every string is
+//! catalog text: capped and control-char-safe before it leaves this module.
 
 use serde::Serialize;
 

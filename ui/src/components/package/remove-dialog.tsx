@@ -33,7 +33,12 @@ export function RemoveDialog({
       busy={busy}
       onConfirm={() => {
         void (async () => {
-          for (const scope of scopes) await removeItem(scope, kind, name);
+          // One failure stops the rest: a removal that could not finish
+          // leaves the item where it was, and carrying on would take it
+          // out of the other scopes anyway.
+          for (const scope of scopes) {
+            if (!(await removeItem(scope, kind, name))) return;
+          }
           onOpenChange(false);
           const stillHere = useScanStore
             .getState()

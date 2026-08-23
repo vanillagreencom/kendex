@@ -2,6 +2,7 @@ pub mod add;
 pub mod add_collection;
 pub mod adopt;
 pub mod apply_cmd;
+pub mod blocked;
 pub mod check;
 pub mod check_catalog;
 pub mod decisions_cmd;

@@ -4,6 +4,7 @@ import type { DriftRow, ItemKind } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { KindHarnessChips } from "@/components/kind-harness-chips";
 import { Button } from "@/components/ui/button";
+import { adoptAll } from "@/lib/adopt-all";
 import { type SharedLink, sharedLinkOf } from "@/lib/adopt-shared";
 import {
   HIDE_ITEMS_LABEL,
@@ -12,10 +13,10 @@ import {
   startManagingAllLabel,
 } from "@/lib/copy";
 import {
-  ADOPT_SHARED_CONFIRM,
-  ADOPT_SHARED_TITLE,
-  adoptSharedBody,
-} from "@/lib/copy-safety";
+  KEEP_FILES_CONFIRM_LABEL,
+  keepFilesConfirmTitle,
+  keepSharedBody,
+} from "@/lib/copy-in-the-way";
 import type { MergedDriftRow } from "@/lib/drift-merge";
 import { summarizePaths } from "@/lib/drift-merge";
 import { kindLabel } from "@/lib/labels";
@@ -49,12 +50,14 @@ export function UnmanagedItems({
   /** The list's heading — a project's name where several projects' lists
    *  sit under one panel heading, or nothing where the panel says it all. */
   title: string | null;
+  /** Every tool an item sits at, handed over in one call. Answers whether
+   *  it worked, so a list stops at the first item that did not. */
   onAdopt: (
     kind: DriftRow["kind"],
     name: string,
-    harness: DriftRow["harness"],
-    opts?: { silent?: boolean },
-  ) => void | Promise<void>;
+    harnesses: DriftRow["harness"][],
+    quiet?: boolean,
+  ) => Promise<boolean>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [confirmingShared, setConfirmingShared] = useState<SharedLink | null>(
@@ -64,24 +67,8 @@ export function UnmanagedItems({
   const foldable = canFold && rows.length > INLINE_LIMIT;
   const showList = !foldable || expanded;
 
-  // One adoption at a time: every apply takes the scope's writer lock, so
-  // firing them together turns all but the first into "scope is busy".
-  const adoptAll = async (groups: MergedDriftRow[]) => {
-    let index = 0;
-    let shared: SharedLink | null = null;
-    for (const group of groups) {
-      const link = sharedLinkOf(group);
-      if (link) {
-        // A shared folder needs its own confirmation; the first one found
-        // opens it after the plain adoptions finish.
-        shared ??= link;
-        continue;
-      }
-      for (const row of group.installations) {
-        await onAdopt(row.kind, row.name, row.harness, { silent: index > 0 });
-        index += 1;
-      }
-    }
+  const startAll = async (groups: MergedDriftRow[]) => {
+    const shared = await adoptAll(groups, sharedLinkOf, onAdopt);
     if (shared) setConfirmingShared(shared);
   };
 
@@ -130,7 +117,7 @@ export function UnmanagedItems({
               variant="outline"
               className="shrink-0"
               disabled={busy}
-              onClick={() => void adoptAll(rows)}
+              onClick={() => void startAll(rows)}
             >
               {startManagingAllLabel(rows.length)}
             </Button>
@@ -172,7 +159,7 @@ export function UnmanagedItems({
                     variant="outline"
                     className="shrink-0"
                     disabled={busy}
-                    onClick={() => void adoptAll([group])}
+                    onClick={() => void startAll([group])}
                   >
                     {START_MANAGING_LABEL}
                   </Button>
@@ -186,13 +173,13 @@ export function UnmanagedItems({
         onOpenChange={(open) => {
           if (!open) setConfirmingShared(null);
         }}
-        title={ADOPT_SHARED_TITLE}
+        title={keepFilesConfirmTitle(confirmingShared?.group.name ?? "")}
         description={
           confirmingShared
-            ? adoptSharedBody(confirmingShared.target, confirmingShared.tools)
+            ? keepSharedBody(confirmingShared.target, confirmingShared.tools)
             : undefined
         }
-        confirmLabel={ADOPT_SHARED_CONFIRM}
+        confirmLabel={KEEP_FILES_CONFIRM_LABEL}
         destructive
         busy={busy}
         onConfirm={() => {
@@ -200,7 +187,7 @@ export function UnmanagedItems({
             void onAdopt(
               confirmingShared.group.kind,
               confirmingShared.group.name,
-              confirmingShared.harness,
+              [confirmingShared.harness],
             );
           }
           setConfirmingShared(null);

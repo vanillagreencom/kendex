@@ -2,6 +2,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { useState } from "react";
 import type { AuditView, DismissReason } from "@/bindings";
 import { ApplyDialog } from "@/components/apply-dialog";
+import { BlockedDeclarations } from "@/components/blocked-declarations";
 import { SafetyWarnings } from "@/components/safety-findings-affected";
 import { BlockedFindings } from "@/components/safety-findings-blocked";
 import { ScopeChanges } from "@/components/scope-details";
@@ -15,7 +16,7 @@ import {
   scopeSummaryLabel,
 } from "@/lib/copy";
 import { DECISION_ZONE_TITLE } from "@/lib/copy-safety";
-import { mergeDriftRows } from "@/lib/drift-merge";
+import { driftZones, Exits } from "@/lib/drift-zones";
 import { partitionSafety } from "@/lib/group-findings";
 import { scopeName, scopePath } from "@/lib/labels";
 import { evidenceGroups, openOccurrences } from "@/lib/reviewable";
@@ -34,24 +35,34 @@ export function SyncScopeCard({
   busy,
   onApply,
   onDismiss,
+  onKeepFiles,
+  onReplaceFiles,
   onSeeUnmanaged,
 }: {
   view: AuditView;
   busy: boolean;
   onApply: (removeOrphans: boolean, allowUnsafe?: string[]) => void;
   onDismiss: (tokens: string[], reason: DismissReason) => void;
+  /** Hand the files already at an item's place to kendex as they are, for
+   *  every tool the item is blocked for. */
+  onKeepFiles: (
+    kind: AuditView["drift"][number]["kind"],
+    name: string,
+    harnesses: AuditView["drift"][number]["harness"][],
+  ) => Promise<unknown>;
+  /** Install what kendex.toml asks for over them instead. */
+  onReplaceFiles: (
+    kind: AuditView["drift"][number]["kind"],
+    name: string,
+  ) => Promise<unknown>;
   /** Opens the Library's Installed tab on this scope, where adopting lives. */
   onSeeUnmanaged: () => void;
 }) {
   const [applyOpen, setApplyOpen] = useState(false);
-  const changes = mergeDriftRows(
-    view.drift.filter((row) => row.state !== "unmanaged"),
-  );
-  const unmanaged = mergeDriftRows(
-    view.drift.filter((row) => row.state === "unmanaged"),
-  );
-  const orphans = mergeDriftRows(
-    view.drift.filter((row) => row.state === "orphaned"),
+  const exits = new Exits(view.exits);
+  const { inTheWay, changes, unmanaged, orphans } = driftZones(
+    view.drift,
+    exits,
   );
   const {
     blocked,
@@ -70,12 +81,13 @@ export function SyncScopeCard({
   const canApply = view.plan.length > 0 || orphans.length > 0;
   const summary = scopeSummaryLabel({
     changes: changes.length,
+    decide: inTheWay.length,
     blocked: blockedCount,
     open: openCount,
     unmanaged: unmanaged.length,
   });
   const [open, setOpen] = useState(
-    blockedCount > 0 || openCount > 0 || canApply,
+    blockedCount > 0 || openCount > 0 || inTheWay.length > 0 || canApply,
   );
   const path = scopePath(view.scope);
 
@@ -128,9 +140,18 @@ export function SyncScopeCard({
           them lives. */}
       {open ? (
         <div className="flex flex-col gap-6 border-t px-4 py-4">
-          {blockedCount > 0 || openCount > 0 ? (
+          {blockedCount > 0 || openCount > 0 || inTheWay.length > 0 ? (
             <Section title={DECISION_ZONE_TITLE}>
               <div className="flex flex-col gap-3">
+                <BlockedDeclarations
+                  rows={inTheWay}
+                  adoptable={view.adoptable}
+                  exits={exits}
+                  alsoApplies={view.plan.length > 0}
+                  busy={busy}
+                  onKeep={onKeepFiles}
+                  onReplace={onReplaceFiles}
+                />
                 <BlockedFindings
                   rows={blocked}
                   heldBack={view.heldBack}

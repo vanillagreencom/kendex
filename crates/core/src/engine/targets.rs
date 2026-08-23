@@ -317,8 +317,6 @@ pub(super) fn plugin_settings(env: &Env, scope: &Scope, harness: HarnessId) -> O
     }
 }
 
-/// A declared-disabled artifact keeps its content under the `.disabled`
-/// name; toggling is a rename (invariant 5).
 pub(super) fn disabled_name(path: &std::path::Path) -> PathBuf {
     PathBuf::from(format!("{}.disabled", path.display()))
 }

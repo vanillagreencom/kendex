@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { type ComponentProps, type MouseEvent, useEffect } from "react";
 import type { AvailablePackage, Catalog, Verdict } from "@/bindings";
 import { StatusDot } from "@/components/status-dot";
 import { TagBadges } from "@/components/tag-badge";
@@ -11,8 +11,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { SAFETY_DOT_UNCHECKED, safetyDotWords } from "@/lib/copy-safety";
 import { kindIcon } from "@/lib/kind-icon";
-import { kindLabel, packageDisplayName, VERDICT_LABELS } from "@/lib/labels";
+import { kindLabel, packageDisplayName } from "@/lib/labels";
 import {
   catalogKey,
   catalogLabel,
@@ -32,6 +38,13 @@ const VERDICT_TONES: Record<Verdict, "good" | "warning" | "critical"> = {
   warn: "warning",
   block: "critical",
 };
+
+/** What a row click means something other than "open this package". A row is
+ *  a shortcut to the page, so it carries only what the row itself says; every
+ *  control in it has already answered the click with its own meaning. A
+ *  tooltip popup counts as one of them wherever the browser draws it, because
+ *  React sends its clicks back through the row that owns it. */
+const ROW_CONTROLS = 'a, button, input, [data-slot="tooltip-content"]';
 
 /** The one table of offered packages — the Packages tab across every
  * subscription and a marketplace detail's own list are both this. */
@@ -92,8 +105,10 @@ function PackageRow({
     want(catalog, row.kind, row.name);
   }, [want, catalog, row.kind, row.name]);
 
-  const open = () =>
+  const open = (event: MouseEvent<HTMLTableRowElement>) => {
+    if ((event.target as HTMLElement).closest(ROW_CONTROLS)) return;
     goToAvailablePackage({ catalog, kind: row.kind, name: row.name });
+  };
 
   return (
     <TableRow className="cursor-pointer" onClick={open}>
@@ -125,13 +140,12 @@ function PackageRow({
       ) : null}
       <TableCell>
         {safety ? (
-          <StatusDot
-            className="inline-block"
+          <SafetyDot
             tone={VERDICT_TONES[safety.verdict]}
-            title={`${VERDICT_LABELS[safety.verdict]} — safety ${safety.safety.score}/100`}
+            words={safetyDotWords(safety.verdict, safety.safety.score)}
           />
         ) : (
-          <StatusDot className="inline-block" tone="muted" title="Checking…" />
+          <SafetyDot tone="muted" words={SAFETY_DOT_UNCHECKED} />
         )}
       </TableCell>
       <TableCell className="text-right">
@@ -148,12 +162,16 @@ function PackageRow({
           // is the one action, so the row only says the package is here.
           <span className="text-xs text-muted-foreground">Available</span>
         ) : (
+          // Scores arrive one at a time, and a read that fails leaves a
+          // row without one until it mounts again, so a row is offered
+          // before its dot resolves. The plan's gate is what holds a risky
+          // package back, never this button — so the dot's words say a
+          // result is missing instead of the row going quiet.
           <Button
             size="sm"
             variant="outline"
             disabled={busy}
-            onClick={(e) => {
-              e.stopPropagation();
+            onClick={() => {
               void install({
                 scope: catalog.scope,
                 source: catalog.source,
@@ -166,5 +184,28 @@ function PackageRow({
         )}
       </TableCell>
     </TableRow>
+  );
+}
+
+/** A row's safety reading: the colour, and the words the colour stands for.
+ *  A row installs from the list without the package's page ever opening, so
+ *  the words have to be reachable from the row itself — the trigger takes
+ *  focus, putting them a tab before Install, and they sit in the row's text
+ *  for anyone who never hovers. */
+function SafetyDot({
+  tone,
+  words,
+}: {
+  tone: ComponentProps<typeof StatusDot>["tone"];
+  words: string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger className="inline-flex items-center rounded-full outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
+        <StatusDot tone={tone} />
+        <span className="sr-only">{words}</span>
+      </TooltipTrigger>
+      <TooltipContent side="left">{words}</TooltipContent>
+    </Tooltip>
   );
 }

@@ -305,9 +305,10 @@ fn render_or_refuse(
 }
 
 /// The publisher's own agent, rendered. What it is built from is
-/// [`Inputs::PublisherOnly`]'s answer, so this only asks the renderer;
-/// subtracting from the rendered text instead would be reading a document
-/// backwards for text a project could have written to look like anything.
+/// [`effective_agent`]'s answer over an empty [`Project`], so this only
+/// asks the renderer; subtracting from the rendered text instead would be
+/// reading a document backwards for text a project could have written to
+/// look like anything.
 /// `None` where the publisher's own inputs render to nothing this harness
 /// can hold, which settles nothing.
 fn authored_agent(

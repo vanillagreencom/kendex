@@ -29,7 +29,7 @@ fn forkable_agent_harness(harness: HarnessId) -> bool {
 
 /// A captured skill tree in source form: a disabled rendering's
 /// `SKILL.md.disabled` becomes `SKILL.md`. A tree holding both never gets
-/// here — [`fork`] refuses it first.
+/// here — [`super::fork`] refuses it first.
 pub(super) fn source_form(files: Vec<(PathBuf, Vec<u8>)>) -> Vec<(PathBuf, Vec<u8>)> {
     files
         .into_iter()

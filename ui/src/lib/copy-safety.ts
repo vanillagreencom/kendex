@@ -1,8 +1,9 @@
 // Product prose for the safety surfaces: the decision zone, the held-back
 // panel, accepting findings, and taking over a shared folder. Split from copy.ts for the file line cap — same house style,
 // same rules (see the top of copy.ts).
-import type { DismissReason } from "@/bindings";
+import type { DismissReason, Verdict } from "@/bindings";
 import { REASON_LABELS } from "@/lib/copy-decisions";
+import { VERDICT_LABELS } from "@/lib/labels";
 
 // The zone only a person can clear: held-back installs first, then the
 // findings nobody has ruled on. Its caption counts both halves.
@@ -33,6 +34,35 @@ export const publisherSettledNote = (
 export const SAFETY_HELP =
   "Strict catches more, and flags more things that turn out fine. Lenient stops only the riskiest.";
 
+// The check matches patterns over as much of a package as it reads. So every
+// place a verdict is shown says what was determined and nothing more: a
+// verdict with nothing in it means nothing was matched, never that the
+// package is safe to run.
+export const SAFETY_SECTION_EXPLAINER =
+  "kendex looks for risky patterns in each package before it installs. It is an automated check rather than a review. It can miss things, and a large skill is read only in part.";
+// Sits under the verdict on the page where somebody decides to install.
+// It describes what the check did, never who wrote the package: this repo
+// publishes a catalog of its own, so a claim about provenance is false for
+// the items in it. Only a skill tree is read to a budget — every other kind
+// reads whole — so the partial read is named as a skill's.
+export const PREINSTALL_SAFETY_CAVEAT =
+  "An automated check for risky patterns, not a review. It can miss things, and a large skill is read only in part.";
+// A list gives a package one dot and no line of its own, so the dot's words
+// carry the caveat along with the number — worded as the package's own page
+// words it. A row here installs without ever opening that page, and a bare
+// score would be the assurance the check cannot give.
+export const safetyDotWords = (verdict: Verdict, score: number): string =>
+  `${VERDICT_LABELS[verdict]} · ${score}/100. ${PREINSTALL_SAFETY_CAVEAT}`;
+// The same row installs before its score arrives, so the dot's words say
+// there is no result rather than falling silent. A queued read and a failed
+// one look alike from here, so this claims no check is under way — only that
+// none has answered, which is the one thing true of both.
+export const SAFETY_DOT_UNCHECKED = `Not checked yet. ${PREINSTALL_SAFETY_CAVEAT}`;
+// The About tab's findings are about the catalog's own layout and
+// configuration. Nothing here has read a single package.
+export const CATALOG_LAYOUT_CLEAN =
+  "Nothing wrong with how this catalog is put together.";
+
 // This list scores what is on disk right now, not what a plan would write —
 // so every row here is a thing the harnesses will load the next time they start.
 // "Held back" describes what kendex refuses to do with it, and must never be
@@ -61,12 +91,3 @@ export const ACCEPT_BLOCKED_CONFIRM = "Accept and install";
 
 // Withdrawing an acceptance, from the recorded-decisions list.
 export const WITHDRAW_LABEL = "Withdraw";
-
-// Taking over a folder that several harnesses read through links. The dialog
-// names the real folder and every harness kendex knows is reading it; the
-// last sentence is the one honest warning — links kendex cannot see will
-// break, and there is no way to list them.
-export const ADOPT_SHARED_TITLE = "Take over this shared folder?";
-export const adoptSharedBody = (target: string, harnesses: string[]): string =>
-  `${harnesses.join(" and ")} read this skill from ${target}. kendex moves the folder's content into its own keeping (the folder goes to the trash, recoverable) and gives each harness listed a link to kendex's copy, so they stay in sync. Anything else that points at the old folder will stop working.`;
-export const ADOPT_SHARED_CONFIRM = "Take it over";

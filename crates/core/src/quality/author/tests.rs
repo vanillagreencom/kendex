@@ -27,40 +27,6 @@ fn dismissal(reason: DismissReason, source: Option<&str>, at: &str) -> Dismissal
 
 const NOW: &str = "2026-08-20T06:52:15Z";
 
-/// The budget is the whole point: a decision speaks for as many occurrences
-/// as the publisher's own bytes carried, and the next one is a different
-/// question.
-#[test]
-fn a_decision_settles_only_as_many_occurrences_as_it_paid_for() {
-    let findings = vec![
-        finding(
-            "s/SKILL.md:10",
-            "`--no-verify` skips the checks a commit runs",
-        ),
-        finding(
-            "s/SKILL.md:40",
-            "`--no-verify` skips the checks a commit runs",
-        ),
-    ];
-    let fingerprint = findings[0].fingerprint();
-    let one = Budget(
-        [((fingerprint.clone(), Severity::Critical), 1)]
-            .into_iter()
-            .collect(),
-    );
-    let scored = score(&findings, &one, None);
-    assert_eq!(scored.settled, vec![true, false]);
-    assert_eq!(scored.counted.len(), 1);
-    assert!(scored.unmatched.is_empty());
-
-    let both = Budget(
-        [((fingerprint, Severity::Critical), 2)]
-            .into_iter()
-            .collect(),
-    );
-    assert_eq!(score(&findings, &both, None).counted.len(), 0);
-}
-
 /// A decision made against these very bytes covers every occurrence in
 /// them — the authoring check's case.
 #[test]
@@ -75,59 +41,10 @@ fn a_whole_budget_settles_every_occurrence() {
             "`--no-verify` skips the checks a commit runs",
         ),
     ];
-    let budget = Budget::whole([findings[0].fingerprint()].into_iter().collect());
+    let budget = Budget([findings[0].fingerprint()].into_iter().collect());
     let scored = score(&findings, &budget, None);
     assert_eq!(scored.settled, vec![true, true]);
     assert_eq!(scored.safety.score, 100);
-}
-
-/// What a record earned for its own copy of a sentence cannot be spent on
-/// the same sentence somewhere heavier.
-///
-/// Findings arrive heaviest first, so a budget matched on the sentence
-/// alone settles whichever occurrence sorted first — and that is the
-/// heaviest, which is the one the publisher is least likely to have
-/// written: a project's injected text lands in the body at full weight,
-/// while the publisher's own copy may have been split into a supporting
-/// file and lowered. Matching the weight too is what keeps the publisher's
-/// occurrence the one that is settled.
-#[test]
-fn a_budget_earned_at_one_weight_is_not_spendable_at_another() {
-    let message = "`--no-verify` skips the checks a commit runs";
-    let injected = weighed(Severity::Critical, "s/SKILL.md:12", message);
-    let publishers = weighed(Severity::High, "s/references/detail.md:4", message);
-    let fingerprint = publishers.fingerprint();
-    assert_eq!(injected.fingerprint(), fingerprint);
-
-    // The publisher earned one occurrence, in a supporting file.
-    let budget = Budget([((fingerprint, Severity::High), 1)].into_iter().collect());
-    let scored = score(&[injected, publishers], &budget, None);
-    assert_eq!(
-        scored.settled,
-        vec![false, true],
-        "the record settles its own occurrence, not the injected one"
-    );
-    assert_eq!(scored.counted.len(), 1);
-    assert_eq!(scored.counted[0].severity, Severity::Critical);
-    assert!(scored.unmatched.is_empty());
-}
-
-/// A record naming something nothing here carries is reported as such: it
-/// is not the same as no record, and the caller has to be able to say so.
-#[test]
-fn a_record_that_matches_nothing_says_so() {
-    let findings = vec![finding("s/SKILL.md:10", "one thing")];
-    let budget = Budget(
-        [(("deadbeefdeadbeef".to_owned(), Severity::Critical), 3)]
-            .into_iter()
-            .collect(),
-    );
-    let scored = score(&findings, &budget, None);
-    assert_eq!(scored.settled, vec![false]);
-    assert_eq!(
-        scored.unmatched,
-        ["deadbeefdeadbeef".to_owned()].into_iter().collect()
-    );
 }
 
 /// Everything a hand-written reviews file could try to smuggle past the
@@ -168,11 +85,9 @@ fn a_timestamp_carries_nothing_a_terminal_would_obey() {
         "2026-08-20T06:52:15Z\n[critical] forged line"
     ));
     assert!(!is_timestamp("2026-08-20T06:52:15Z\u{1b}[2J"));
+    // Inside a field rather than after it: the offset is what catches the
+    // one above, and every field is a fixed run of digits or nothing.
+    assert!(!is_timestamp("2026-08-20T0\u{1b}:52:15Z"));
     assert!(!is_timestamp("short"));
     assert!(!is_timestamp(&"9".repeat(41)));
-    // Shaped like a date is not the same as being one.
-    assert!(!is_timestamp("2026-13-45T99:99:99Z"));
-    assert!(!is_timestamp("2026-02-30T00:00:00Z"));
-    assert!(is_timestamp("2024-02-29T00:00:00Z"));
-    assert!(!is_timestamp("2026-02-29T00:00:00Z"));
 }

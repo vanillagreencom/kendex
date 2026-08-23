@@ -9,6 +9,7 @@
 import type { AuditView, DriftRow } from "@/bindings";
 import { heldBack } from "@/lib/derive";
 import { mergeDriftRows } from "@/lib/drift-merge";
+import { Exits } from "@/lib/drift-zones";
 import { partitionSafety } from "@/lib/group-findings";
 import { mergeHeldBack } from "@/lib/group-findings-blocked";
 import { evidenceGroups, openOccurrences } from "@/lib/reviewable";
@@ -16,6 +17,10 @@ import { evidenceGroups, openOccurrences } from "@/lib/reviewable";
 export interface AuditCounts {
   /** Writes kendex is ready to make: install, update, remove. */
   changes: number;
+  /** Declared, with files already where they go. Apply cannot move these —
+   *  only a person choosing which way they go — so counting them as work
+   *  ready to apply promises a button that will not touch them. */
+  inTheWay: number;
   /** On disk, but kendex was never asked to look after it. Not a debt —
    *  adopting is an offer the user takes up, so it is counted apart from
    *  the work that is actually queued. */
@@ -29,9 +34,29 @@ export interface AuditCounts {
   open: number;
 }
 
-function countMerged(views: AuditView[], keep: (row: DriftRow) => boolean) {
+/** Whether this row sits on a decision rather than under Apply — the same
+ *  question `driftZones` groups by, asked of the same answer, so the two
+ *  never quote different numbers. */
+function blocking(view: AuditView, row: DriftRow): boolean {
+  const exits = new Exits(view.exits);
+  return (
+    exits.blocking(row) &&
+    view.drift.some(
+      (other) =>
+        other.kind === row.kind &&
+        other.name === row.name &&
+        exits.files(other),
+    )
+  );
+}
+
+function countMerged(
+  views: AuditView[],
+  keep: (view: AuditView, row: DriftRow) => boolean,
+) {
   return views.reduce(
-    (sum, view) => sum + mergeDriftRows(view.drift.filter(keep)).length,
+    (sum, view) =>
+      sum + mergeDriftRows(view.drift.filter((row) => keep(view, row))).length,
     0,
   );
 }
@@ -57,8 +82,15 @@ export function openCount(view: AuditView): number {
 
 export function auditCounts(views: AuditView[]): AuditCounts {
   return {
-    changes: countMerged(views, (row) => row.state !== "unmanaged"),
-    unmanaged: countMerged(views, (row) => row.state === "unmanaged"),
+    // Counted the way Review draws them, so the two never quote different
+    // numbers: a place nothing can settle sits on the decision row beside
+    // the files in the way, not under the button that cannot move it.
+    changes: countMerged(
+      views,
+      (view, row) => row.state !== "unmanaged" && !blocking(view, row),
+    ),
+    inTheWay: countMerged(views, blocking),
+    unmanaged: countMerged(views, (_view, row) => row.state === "unmanaged"),
     blocked: views.reduce((sum, view) => sum + blockedCount(view), 0),
     open: views.reduce((sum, view) => sum + openCount(view), 0),
   };
@@ -67,10 +99,10 @@ export function auditCounts(views: AuditView[]): AuditCounts {
 /** What the Review page has waiting for a person: work to apply, plus
  *  the decisions only they can make — held-back items and open findings. */
 export function needsReviewCount(counts: AuditCounts): number {
-  return counts.changes + counts.blocked + counts.open;
+  return counts.changes + counts.inTheWay + counts.blocked + counts.open;
 }
 
 /** The decisions alone: what "Needs your decision" holds across scopes. */
 export function decisionsPendingCount(counts: AuditCounts): number {
-  return counts.blocked + counts.open;
+  return counts.inTheWay + counts.blocked + counts.open;
 }

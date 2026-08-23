@@ -67,7 +67,7 @@ describe("mock bridge", () => {
       scope: acme,
       kind: "skill",
       name: "scratch",
-      harness: "claude",
+      harnesses: ["claude"],
     })) as AuditView;
     expect(after.drift.some((r) => r.name === "scratch")).toBe(false);
     const manifest = (await mockInvoke("get_manifest", { scope: acme })) as {

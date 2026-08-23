@@ -15,8 +15,17 @@ import { useAuditStore } from "@/stores/audit";
 import { useNavStore } from "@/stores/nav";
 
 export function ReviewPage() {
-  const { views, auditing, error, busy, refresh, applyPlan, dismiss } =
-    useAuditStore();
+  const {
+    views,
+    auditing,
+    error,
+    busy,
+    refresh,
+    applyPlan,
+    dismiss,
+    adopt,
+    replaceUnmanaged,
+  } = useAuditStore();
   const goTo = useNavStore((s) => s.goTo);
 
   useEffect(() => {
@@ -75,6 +84,12 @@ export function ReviewPage() {
                   }
                   onDismiss={(tokens, reason) =>
                     void dismiss(view.scope, tokens, reason)
+                  }
+                  onKeepFiles={(kind, name, harnesses) =>
+                    adopt(view.scope, kind, name, harnesses)
+                  }
+                  onReplaceFiles={(kind, name) =>
+                    replaceUnmanaged(view.scope, kind, name)
                   }
                   onSeeUnmanaged={() => goTo("unmanaged")}
                 />

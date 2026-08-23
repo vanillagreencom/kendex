@@ -279,7 +279,7 @@ fn plan_install(repo: &Repo) -> Result<(Vec<PlannedOp>, String)> {
 }
 
 /// Release this worktree's lease; disarm only when the last one goes —
-/// see [`uninstall`] for what that entails.
+/// see [`mod@uninstall`] for what that entails.
 pub fn uninstall(env: &Env, dir: &Path) -> Result<HooksReport> {
     let repo = Repo::at(dir)?;
     // A repository with nothing of ours in it gets its answer without

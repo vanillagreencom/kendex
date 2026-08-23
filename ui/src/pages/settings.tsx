@@ -14,7 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { SAFETY_HELP } from "@/lib/copy-safety";
+import { SAFETY_HELP, SAFETY_SECTION_EXPLAINER } from "@/lib/copy-safety";
 import { SETTINGS_SUBTITLE } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { cn } from "@/lib/utils";
@@ -120,7 +120,7 @@ export function SettingsPage() {
             </SettingRow>
           </Section>
 
-          <Section title="Safety check">
+          <Section title="Safety check" description={SAFETY_SECTION_EXPLAINER}>
             <SettingRow label="How cautious" description={SAFETY_HELP}>
               <Select
                 value={level === "custom" ? "balanced" : level}

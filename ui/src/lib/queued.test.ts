@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AuditView, ItemSafety } from "@/bindings";
+import { ADOPTABLE } from "@/lib/adoptable";
 import { queuedDecisions } from "./queued";
 
 function row(name: string, hash: string, dismissed = false): ItemSafety {
@@ -51,6 +52,8 @@ function view(safety: ItemSafety[], queued: ItemSafety[]): AuditView {
     notes: [],
     warnings: [],
     safety,
+    adoptable: ADOPTABLE,
+    exits: [],
     heldBack: [],
     queued,
   };

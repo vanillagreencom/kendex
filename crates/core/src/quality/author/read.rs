@@ -172,5 +172,5 @@ pub fn honest(fingerprint: &str, dismissal: &crate::quality::reviews::Dismissal)
 /// one. Not a full RFC 3339 parse — enough that nothing printable-hostile
 /// and nothing unbounded reaches a terminal.
 pub(super) fn is_timestamp(value: &str) -> bool {
-    value.len() <= 40 && crate::clock::is_instant(value)
+    value.len() <= 40 && crate::clock::looks_like_instant(value)
 }
