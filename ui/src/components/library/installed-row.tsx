@@ -1,4 +1,4 @@
-import type { HarnessId, Origin } from "@/bindings";
+import type { HarnessId, Origin, Scope } from "@/bindings";
 import { HarnessBadge } from "@/components/harness-badge";
 import { StatusDot } from "@/components/status-dot";
 import { TagBadges } from "@/components/tag-badge";
@@ -10,7 +10,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { bundledWithLabel, FORKED_BADGE_LABEL, vendorHelp } from "@/lib/copy";
-import { CUSTOMIZED_MARK, STATUS_LABELS } from "@/lib/copy-customize";
+import { STATUS_LABELS } from "@/lib/copy-customize";
 import {
   type GroupStatus,
   groupScopes,
@@ -25,10 +25,10 @@ import {
   kindLabel,
   scopeName,
 } from "@/lib/labels";
+import type { PlaceMark } from "@/lib/place-marks";
 import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
 import { originLabel, originTitle } from "@/stores/provenance";
-import { useUpdatesStore } from "@/stores/updates";
 
 const STATUS_TONES: Record<GroupStatus, "good" | "warning" | "critical"> = {
   active: "good",
@@ -39,21 +39,22 @@ const STATUS_TONES: Record<GroupStatus, "good" | "warning" | "critical"> = {
 export function InstalledRow({
   group,
   origin,
-  customized,
+  mark,
+  forkedIn,
   onOpen,
 }: {
   group: ItemGroup;
   origin: Origin | null;
-  /** Whether anything in the manifest changes this package here. */
-  customized: boolean;
-  onOpen: () => void;
+  /** What this package holds where, and the place a click on it opens.
+   *  Null where no place holds anything of the reader's. */
+  mark: PlaceMark | null;
+  /** The places whose copy is the reader's own fork. A fork belongs to the
+   *  place it was made in, like every other per-place fact. */
+  forkedIn: Scope[];
+  onOpen: (scope?: Scope) => void;
 }) {
   const Icon = kindIcon(group.kind);
-  const forked = useUpdatesStore((s) =>
-    s.rows.some(
-      (row) => row.kind === group.kind && row.name === group.name && row.forked,
-    ),
-  );
+  const customized = mark !== null;
   const displayName =
     group.kind === "hook" ? hookDisplayName(group.name) : group.name;
   const vendor = groupVendor(group);
@@ -66,7 +67,7 @@ export function InstalledRow({
     .join(", ");
 
   return (
-    <TableRow onClick={onOpen} className="cursor-pointer">
+    <TableRow onClick={() => onOpen()} className="cursor-pointer">
       {/* Cells are nowrap by default; the description is the one column that
           wants to wrap rather than run out of the row and get cut mid-word. */}
       <TableCell className="max-w-[22rem] font-medium whitespace-normal">
@@ -74,25 +75,30 @@ export function InstalledRow({
           {/* The one place colour says something other than "which tool":
               the Library's legend names it, and the row still says so in
               words for anyone who cannot see the difference. */}
-          <span
-            title={customized ? CUSTOMIZED_MARK : undefined}
-            className="mt-0.5 shrink-0"
-          >
+          <span className="mt-0.5 shrink-0">
             <Icon
               className={cn(
                 "size-4",
                 customized ? "text-customized" : "text-muted-foreground",
               )}
             />
-            {customized ? (
-              <span className="sr-only">{CUSTOMIZED_MARK}</span>
-            ) : null}
           </span>
           <span className="min-w-0">
             <span className="flex items-center gap-1.5">
               <span className="block truncate">{displayName}</span>
-              {forked ? (
-                <Badge variant="outline">{FORKED_BADGE_LABEL}</Badge>
+              {forkedIn.length > 0 ? (
+                <Badge
+                  variant="outline"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onOpen(forkedIn.length === 1 ? forkedIn[0] : undefined);
+                  }}
+                  className={forkedIn.length === 1 ? "cursor-pointer" : ""}
+                >
+                  {forkedIn.length === 1
+                    ? `${FORKED_BADGE_LABEL} in ${scopeName(forkedIn[0])}`
+                    : FORKED_BADGE_LABEL}
+                </Badge>
               ) : null}
               {vendor ? (
                 <Badge variant="outline" title={vendorHelp(vendor)}>
@@ -100,6 +106,22 @@ export function InstalledRow({
                 </Badge>
               ) : null}
             </span>
+            {/* In words on the row, not only in a tooltip: the whole point
+                of the mark is saying which place is the reader's, and a
+                fact only a hover reveals is a fact most readers never get.
+                It opens the place it names. */}
+            {mark ? (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpen(mark.goTo ?? undefined);
+                }}
+                className="mt-0.5 block text-left text-xs text-customized hover:underline"
+              >
+                {mark.label}
+              </button>
+            ) : null}
             {group.description ? (
               <span
                 className={cn(

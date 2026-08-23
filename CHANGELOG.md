@@ -201,6 +201,18 @@ changes carry a **Breaking** call-out with their migration note inline.
   research deferred as standalone work.
 
 ### Fixed
+- Everywhere the app says a package is customized, it now says **where**. A
+  skill installed at your user level and in two projects, changed in one of
+  them, reads "Customized in vg · 1 of 3 places" on its Library row and
+  "Customized in vg" in its own header, instead of reading as changed
+  everywhere — and clicking the mark opens the place it names. A place
+  counts as customized whether you changed it on the Customize tab, edited
+  its installed files by hand, or forked it, so a package you hand-edited
+  is marked even when it is up to date. The Forked mark names its place
+  too. Where the app has not read a place — its copy comes from a local
+  folder the engine has no version to compare against, or the update check
+  has not landed — that place is left out of the count rather than passing
+  as untouched.
 
 - A debug build no longer touches your real setup. A debug build is what
   `cargo build` and `tauri dev` produce — what a contributor or an agent

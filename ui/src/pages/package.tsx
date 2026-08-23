@@ -16,14 +16,12 @@ import {
 } from "@/components/package/use-package-data";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CUSTOMIZE_TAB, OVERVIEW_TAB } from "@/lib/copy-customize";
-import {
-  canCustomize,
-  isCustomized,
-  itemCustomization,
-} from "@/lib/customization";
+import { canCustomize } from "@/lib/customization";
+import { indexRows, placeStandings } from "@/lib/customized-places";
 import { groupItems, groupScopes } from "@/lib/derive";
 import { packageDisplayName } from "@/lib/labels";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
+import { headerMark } from "@/lib/place-marks";
 import { sameScope } from "@/lib/scope";
 import { cn } from "@/lib/utils";
 import { installedRow, latestRow, versionRowLabel } from "@/lib/versions";
@@ -42,7 +40,7 @@ export function PackagePage() {
   const back = useNavStore((s) => s.back);
   const result = useScanStore((s) => s.result);
   const toggle = useAuditStore((s) => s.toggle);
-  const { draft, dirty, saving, openScope, load, save } = useEditorStore();
+  const { dirty, saving, openScope, load, save } = useEditorStore();
 
   const [view, setView] = useState<PackageView>(() =>
     initialView
@@ -83,6 +81,8 @@ export function PackagePage() {
     diffHarness(view, group?.installations[0]?.harness ?? null),
   );
   const updatesLoaded = useUpdatesStore((s) => s.loaded);
+  const updateRows = useUpdatesStore((s) => s.rows);
+  const saved = useEditorStore((s) => s.saved);
   const edited = useUpdatesStore((s) =>
     s.rows.some(
       (row) =>
@@ -117,8 +117,17 @@ export function PackagePage() {
     updatesLoaded &&
     !edited;
   const customizable = canCustomize(group.kind);
-  const customized = isCustomized(
-    itemCustomization(draft, group.kind, group.name),
+  // The header names a place, so its badge answers for that place. Read
+  // off the editor's open draft it answered for whichever place the
+  // Customize tab last touched, which is not the one the page is about.
+  const mark = headerMark(
+    placeStandings(
+      { manifests: saved, rows: indexRows(updateRows), updatesLoaded },
+      group.kind,
+      group.name,
+      groupScopes(group),
+    ),
+    ref.scope,
   );
 
   const inEveryScope = async (act: (scope: Scope) => Promise<void>) => {
@@ -175,7 +184,7 @@ export function PackagePage() {
         displayName={displayName}
         description={group.description}
         forked={meta?.fork != null}
-        customized={customized}
+        mark={mark}
         action={
           <PackageActions
             scope={primary.scope}

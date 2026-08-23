@@ -4,8 +4,8 @@ import { InlineMarkdown } from "@/components/inline-markdown";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { FORKED_BADGE_LABEL } from "@/lib/copy";
-import { CUSTOMIZED_BADGE } from "@/lib/copy-customize";
 import { kindIcon } from "@/lib/kind-icon";
+import type { PlaceMark } from "@/lib/place-marks";
 
 /** The package page's title block: what this is, what it says about itself,
  *  and the things you can do to it. */
@@ -14,14 +14,14 @@ export function PackageHeader({
   displayName,
   description,
   forked,
-  customized,
+  mark,
   action,
 }: {
   kind: ItemKind;
   displayName: string;
   description: string | null;
   forked: boolean;
-  customized: boolean;
+  mark: PlaceMark | null;
   action: ReactNode;
 }) {
   const Icon = kindIcon(kind);
@@ -38,9 +38,7 @@ export function PackageHeader({
           {forked ? (
             <Badge variant="outline">{FORKED_BADGE_LABEL}</Badge>
           ) : null}
-          {customized ? (
-            <Badge variant="customized">{CUSTOMIZED_BADGE}</Badge>
-          ) : null}
+          {mark ? <Badge variant="customized">{mark.label}</Badge> : null}
         </span>
       }
       subtitle={

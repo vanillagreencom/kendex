@@ -18,7 +18,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { TAGS_ROW_LABEL } from "@/lib/copy";
-import { customizedItems } from "@/lib/customization";
+import {
+  indexRows,
+  type PlacesSource,
+  placeStandings,
+} from "@/lib/customized-places";
 import {
   filterItems,
   groupItems,
@@ -27,7 +31,7 @@ import {
 } from "@/lib/derive";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { isNarrowed, UNFILTERED } from "@/lib/library-handoff";
-import { scopeKey } from "@/lib/scope";
+import { libraryMark } from "@/lib/place-marks";
 import { cn } from "@/lib/utils";
 import { useEditorStore } from "@/stores/editor";
 import {
@@ -41,6 +45,7 @@ import {
   useProvenanceStore,
 } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
+import { useUpdatesStore } from "@/stores/updates";
 
 /** "Installed": everything on this machine, filterable. A row opens the
  *  package's own page; the filters and scroll position live in a store so
@@ -73,6 +78,8 @@ export function InstalledView() {
   // Every scope's manifest, so a row can say whether you have changed the
   // package wherever it is installed — not only in the scope last edited.
   const saved = useEditorStore((s) => s.saved);
+  const updateRows = useUpdatesStore((s) => s.rows);
+  const updatesLoaded = useUpdatesStore((s) => s.loaded);
   const loadAll = useEditorStore((s) => s.loadAll);
   useEffect(() => {
     void loadAll();
@@ -84,19 +91,14 @@ export function InstalledView() {
     if (!result) return;
     void loadProvenance();
   }, [loadProvenance, result]);
-  const customizedKeys = useMemo(() => {
-    const keys = new Set<string>();
-    for (const [where, draft] of Object.entries(saved)) {
-      for (const item of customizedItems(draft)) {
-        keys.add(`${where}|${item.kind}:${item.name}`);
-      }
-    }
-    return keys;
-  }, [saved]);
-  const isCustomizedHere = (group: ReturnType<typeof groupItems>[number]) =>
-    groupScopes(group).some((scope) =>
-      customizedKeys.has(`${scopeKey(scope)}|${group.kind}:${group.name}`),
-    );
+  // Customization is per place, so the join is too: which place holds
+  // what, rather than whether any place holds anything.
+  const places: PlacesSource = useMemo(
+    () => ({ manifests: saved, rows: indexRows(updateRows), updatesLoaded }),
+    [saved, updateRows, updatesLoaded],
+  );
+  const standingsFor = (group: ReturnType<typeof groupItems>[number]) =>
+    placeStandings(places, group.kind, group.name, groupScopes(group));
 
   const replaced = useFilterHandoff();
 
@@ -179,7 +181,9 @@ export function InstalledView() {
             className="min-w-0 flex-1 overflow-y-auto pr-2 [scrollbar-gutter:stable]"
           >
             <NotManagedPanel />
-            {groups.some(isCustomizedHere) ? <LibraryLegend /> : null}
+            {groups.some((g) => libraryMark(standingsFor(g))) ? (
+              <LibraryLegend />
+            ) : null}
             <Table>
               <TableHeader>
                 <TableRow>
@@ -206,13 +210,17 @@ export function InstalledView() {
                         group.name,
                         groupScopes(group),
                       )}
-                      customized={isCustomizedHere(group)}
-                      onOpen={() => {
-                        if (!primary) return;
+                      mark={libraryMark(standingsFor(group))}
+                      forkedIn={standingsFor(group)
+                        .filter((s) => s.why === "forked")
+                        .map((s) => s.scope)}
+                      onOpen={(scope) => {
+                        const where = scope ?? primary?.scope;
+                        if (!where) return;
                         goToPackage({
                           kind: group.kind,
                           name: group.name,
-                          scope: primary.scope,
+                          scope: where,
                         });
                       }}
                     />
