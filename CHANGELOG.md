@@ -172,19 +172,14 @@ changes carry a **Breaking** call-out with their migration note inline.
   choose. The package page's version menu and toasts say the same.
 - `kendex updates` names the place — global or the project path — at the
   start of every line.
-- The `second-opinion` skill now budgets 18 minutes (1080 seconds) for an
-  external review by default, up from 5. It is a budget, not a ceiling: a
-  retry started near the deadline and the grace before the kill can carry a
-  run about 90 seconds past it, plus the script's own work, so size a
-  caller-side watchdog above 1170 seconds. Deep-reasoning reviewers were
-  timing out on every cycle at the old limit; set `SECOND_OPINION_TIMEOUT`
-  to override. Existing installs keep their seeded value — `kendex refresh`
-  never rewrites settings you already have — so a project whose
-  `kendex.settings.toml` carries `SECOND_OPINION_TIMEOUT = "300"` from an
-  earlier install must update it to `"1080"` by hand to get the new wait.
-  **Breaking**: an external review now requires a `timeout` binary and
-  refuses to run without one rather than running with no limit at all.
-  Stock macOS ships none: `brew install coreutils`.
+- The `second-opinion` skill now waits 18 minutes (1080 seconds) for an
+  external review by default, up from 5 — deep-reasoning reviewers were
+  timing out at the old limit. Set `SECOND_OPINION_TIMEOUT` to override.
+  Existing installs keep their seeded value — `kendex refresh` never
+  rewrites settings you already have — so a `kendex.settings.toml` carrying
+  `SECOND_OPINION_TIMEOUT = "300"` from an earlier install must be updated
+  to `"1080"` by hand. Without a `timeout` binary (stock macOS) the script
+  warns and runs without a time limit.
 - The `dangerous-commands` check no longer reads a shell `case` arm's
   pattern list as a command: naming `sudo` among the words a parser should
   skip is not running it. Skills and hooks that parse command lines stop
