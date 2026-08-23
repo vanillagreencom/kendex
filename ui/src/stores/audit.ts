@@ -45,6 +45,10 @@ interface AuditState {
     kind: ItemKind,
     name: string,
     harnesses: HarnessId[],
+    /** Say nothing on success. A run over a whole page is one action to
+     *  the person doing it, and a toast per item buries the page it was
+     *  about. */
+    quiet?: boolean,
   ) => Promise<boolean>;
   /** Install what kendex.toml asks for over the files already at one
    *  item's place. Named item only, so a neighbour blocked the same way
@@ -124,10 +128,10 @@ export const useAuditStore = create<AuditState>((set, get) => {
           "If it keeps failing, check the project folder is writable",
         ],
       }),
-    adopt: (scope, kind, name, harnesses) =>
+    adopt: (scope, kind, name, harnesses, quiet) =>
       run(() => commands.adoptItem(scope, kind, name, harnesses), {
         title: `Couldn't start managing ${name}`,
-        successMessage: adoptedToastLabel(name),
+        successMessage: quiet ? undefined : adoptedToastLabel(name),
         steps: ["Try again"],
       }),
     replaceUnmanaged: (scope, kind, name) =>

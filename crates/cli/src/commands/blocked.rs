@@ -98,20 +98,14 @@ fn exits_under<'a>(env: &Env, rows: &[&'a DriftRow], row: &&'a DriftRow) -> Vec<
 /// — at column 0 it reads as a heading over the plan that follows, which is
 /// the plan that runs without it.
 ///
-/// The flag reaches every blocked item in the scope and refuses the whole
-/// run over one it could only half take over, so it is only a way out
-/// where every one of them is wholly replaceable. Printed on the strength
-/// of a single item, it is a command guaranteed to fail.
+/// The flag sweeps up the items it can take over and refuses the whole run
+/// over one it could only half settle, so every item it reaches has to be
+/// wholly replaceable and there has to be one. An unrelated item with no
+/// take-over of its own is never reached by it, and never a reason to
+/// withhold it.
 fn say_scope_exit(rows: &[&DriftRow]) {
-    // The flag sweeps up the items it can take over, and refuses one it
-    // could only half settle. So it is a way out where some item has a
-    // place to replace and nothing on that item it cannot — an unrelated
-    // item with no take-over of its own is never reached by it.
     let item_of =
         |row: &DriftRow, other: &DriftRow| other.kind == row.kind && other.name == row.name;
-    // Every item it would sweep up has to be one it can settle whole, and
-    // there has to be one — an unrelated item with nothing to replace is
-    // never reached by it, and never a reason to withhold it.
     let swept: Vec<&&DriftRow> = rows
         .iter()
         .filter(|row| row.cause.is_some_and(DriftCause::can_replace))

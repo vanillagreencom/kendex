@@ -76,8 +76,8 @@ export function NotManagedPanel() {
               rows={rows}
               busy={busy}
               title={several ? scopeName(view.scope) : null}
-              onAdopt={(kind, name, harnesses) =>
-                adopt(view.scope, kind, name, harnesses)
+              onAdopt={(kind, name, harnesses, quiet) =>
+                adopt(view.scope, kind, name, harnesses, quiet)
               }
             />
           ))

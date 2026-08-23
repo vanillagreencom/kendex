@@ -55,6 +55,7 @@ export function UnmanagedItems({
     kind: DriftRow["kind"],
     name: string,
     harnesses: DriftRow["harness"][],
+    quiet?: boolean,
   ) => Promise<boolean>;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -74,6 +75,7 @@ export function UnmanagedItems({
   // the last and the declaration kept only the first.
   const adoptAll = async (groups: MergedDriftRow[]) => {
     let shared: SharedLink | null = null;
+    let said = false;
     for (const group of groups) {
       const link = sharedLinkOf(group);
       if (link) {
@@ -85,7 +87,10 @@ export function UnmanagedItems({
       const harnesses = [
         ...new Set(group.installations.map((row) => row.harness)),
       ];
-      if (!(await onAdopt(group.kind, group.name, harnesses))) return;
+      // One line for the run, not one per item: a page of them is one
+      // action to the person who clicked it.
+      if (!(await onAdopt(group.kind, group.name, harnesses, said))) return;
+      said = true;
     }
     if (shared) setConfirmingShared(shared);
   };
