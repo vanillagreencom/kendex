@@ -241,7 +241,7 @@ model list moves monthly and is gated by subscription, org policy, and
 ## 5. Discrepancy log — wshobson vs. official docs
 
 "wshobson" refers to `tools/adapters/{gemini,copilot}.py`,
-`tools/adapters/capabilities.py`, and `docs/harnesses.md` at commit
+`tools/adapters/capabilities.py`, and the harnesses doc of the wshobson repository at commit
 `c4b82b0`.
 
 | # | wshobson claims | Reality | Who's right | Official source |
