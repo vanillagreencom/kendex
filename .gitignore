@@ -19,7 +19,8 @@ docs/reviews/
 /.codex/
 /.cursor/
 /.opencode/
-/.pi/
+/.pi/*
+!/.pi/prompts/
 # Per-checkout install lock (absolute paths and timestamps).
 .kendex-lock.json
 .env.local

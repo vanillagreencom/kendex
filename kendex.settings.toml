@@ -228,15 +228,14 @@ SIZE_RATCHET_CLASSES = "*/README.md=120;*/tests/*=800;*/test/*=800;*/__tests__/*
 # paths only: an entry over tracked files makes git refuse writes in that
 # worktree while `git status` still reports clean.
 #
-# The harness directories are named whole (.pi, .codex, .opencode) because
-# nothing under them is tracked. .claude is named child by child instead:
-# it holds tracked files beside the kendex-rendered, gitignored ones, and
-# only the latter may be links.
+# .codex and .opencode are named whole: nothing under them is tracked.
+# .claude and .pi are named child by child: they hold tracked files
+# (.claude/CLAUDE.md, .pi/prompts) beside kendex-rendered, gitignored ones.
 WORKTREE_BASE_DIR = "~/dev/.worktrees/kendex"
 WORKTREE_COPIES = ".kendex-lock.json"
 WORKTREE_DEFAULT_BRANCH = "main"
 WORKTREE_MKDIRS = "tmp"
-WORKTREE_SYMLINKS = ".env.local .agents .cache .codex .opencode .pi .claude/agents .claude/hooks .claude/skills .claude/settings.json"
+WORKTREE_SYMLINKS = ".env.local .agents .cache .codex .opencode .pi/agents .pi/kendex .claude/agents .claude/hooks .claude/skills .claude/settings.json"
 
 # Nothing needs one: .claude/CLAUDE.md is a tracked symlink, so it arrives
 # through git, and naming it here would shadow tracked content.
