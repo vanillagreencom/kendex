@@ -258,3 +258,42 @@ fn an_edit_is_never_told_to_move_files() {
         "moving files settles neither of these: {planned}"
     );
 }
+
+/// Content under both spellings at once. Keeping would take one and leave
+/// the other, and a later switch reads what is left as kendex's own — so
+/// the reader settles it rather than being offered half a move.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn content_under_both_spellings_is_never_offered_the_keep() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let project = project_with(home, "[\"claude\"]", "copy");
+    fs::create_dir_all(home.join("catalog/agents")).unwrap();
+    fs::write(
+        home.join("catalog/agents/scout.md"),
+        "---\nname: scout\ndescription: looks around\n---\nUpstream.\n",
+    )
+    .unwrap();
+    let manifest = project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        format!("{text}\n[agents.scout]\nsource = \"cat\"\n"),
+    )
+    .unwrap();
+    let dir = project.join(".claude/agents");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("scout.md"), "on by hand").unwrap();
+    fs::write(dir.join("scout.md.disabled"), "off by hand").unwrap();
+
+    let planned = plan(home, &project);
+    assert_eq!(
+        offer(&planned),
+        "move them somewhere else first",
+        "{planned}"
+    );
+    assert!(
+        dir.join("scout.md.disabled").is_file(),
+        "both are left where they are"
+    );
+}

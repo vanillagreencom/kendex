@@ -38,6 +38,17 @@ pub(in crate::engine) fn position(
 /// the declaration is rewritten around a source that has nothing to give,
 /// and the apply that follows installs nothing: the reader is told their
 /// files were kept and they are gone.
+/// Whether both spellings of the toggled pair hold content. Keeping would
+/// take one and leave the other, and a later switch reads what is left as
+/// kendex's own — so the reader is asked to settle it first rather than
+/// offered a move that takes half of it.
+fn both_spellings(kind: ItemKind, at: &Path) -> bool {
+    match kind {
+        ItemKind::Skill => there(&at.join("SKILL.md")) && there(&at.join("SKILL.md.disabled")),
+        _ => there(at) && there(&crate::engine::file_plan::toggle_sibling(at)),
+    }
+}
+
 pub fn can_keep_for(
     env: &Env,
     scope: &Scope,
@@ -46,9 +57,12 @@ pub fn can_keep_for(
     harness: HarnessId,
 ) -> bool {
     super::supports(kind)
-        && position(env, scope, kind, name, harness).is_some_and(|path| match kind {
-            ItemKind::Skill => there(&path.join("SKILL.md")),
-            _ => there(&path),
+        && position(env, scope, kind, name, harness).is_some_and(|path| {
+            !both_spellings(kind, &path)
+                && match kind {
+                    ItemKind::Skill => there(&path.join("SKILL.md")),
+                    _ => there(&path),
+                }
         })
 }
 
