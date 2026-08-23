@@ -1149,10 +1149,10 @@ lives in one capability table read by core and UI.
   is no review hash, and a decision with nothing to compare against never
   reads as live — the same rule that reports an artifact kendex cannot compare
   as uncompared rather than as passing. Both cover every file to its last
-  byte; a prefix would score a package on the part a reader reached first and
-  leave the rest as content nobody objected to. Past what any reader holds in
-  memory a tree has no reading rather than a partial one, so every rule says
-  it could not read instead of finding nothing.
+  byte; a prefix would score a package on the part a reader reached first.
+  The memory bound is asked of the tree a surface is about to read, since a
+  render can add a file the catalog never held. Past it, or where part of a
+  tree will not open, there is no reading at all, and the reason says which.
 - - - - - - **A dismissal settles one finding; whose it is decides what it
   buys.** Beside the item-level acceptance sits the smaller decision: this one
   finding, on this one installation, is not the problem the rule says it is.

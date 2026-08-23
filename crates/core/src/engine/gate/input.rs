@@ -21,9 +21,7 @@ pub(in crate::engine) fn input_for(item: &Desired) -> AuditInput {
             canonical, files, ..
         } => (
             canonical.display().to_string(),
-            Content::SkillTree {
-                files: crate::quality::observe::tree_files_from_bytes(files),
-            },
+            crate::quality::observe::tree_content_from_bytes(files),
         ),
         Artifact::Registration { script, edits } => registration(item, script.as_ref(), edits),
     };

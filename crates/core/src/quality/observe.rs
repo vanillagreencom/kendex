@@ -12,6 +12,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::model::{ItemKind, ObservedItem};
+use crate::source_read::{TREE_BOUND, TreeBound};
 
 use super::{
     AuditInput, AuditResult, Content, McpEntry, PluginSources, TreeFile, UNREAD_MCP_ENTRY,
@@ -27,13 +28,26 @@ use super::{
 /// Every file, to its last byte. A prefix would score a package on the part
 /// of it a reader happened to reach first, and report the rest as nothing
 /// anybody objected to.
-pub fn tree_files_from_bytes(files: &[(PathBuf, Vec<u8>)]) -> Vec<TreeFile> {
+///
+/// The memory bound is asked here too, because rendering can make a tree
+/// larger than the catalog's own copy: a body past a tool's cap is split
+/// into `references/`, one file more than the publisher wrote. A tree that
+/// crosses the bound only once rendered has to read as unread everywhere,
+/// or the surfaces that never walk a directory score a package the audit
+/// over the install of it cannot read at all.
+pub fn tree_content_from_bytes(files: &[(PathBuf, Vec<u8>)]) -> Content {
+    let total: u64 = files.iter().map(|(_, bytes)| bytes.len() as u64).sum();
+    if TREE_BOUND.past(files.len(), total) {
+        return Content::Unread { why: TREE_TOO_BIG };
+    }
     let mut sorted: Vec<&(PathBuf, Vec<u8>)> = files.iter().collect();
     sorted.sort_by(|a, b| a.0.cmp(&b.0));
-    sorted
-        .into_iter()
-        .map(|(path, bytes)| TreeFile::read(path.clone(), bytes))
-        .collect()
+    Content::SkillTree {
+        files: sorted
+            .into_iter()
+            .map(|(path, bytes)| TreeFile::read(path.clone(), bytes))
+            .collect(),
+    }
 }
 
 /// What this observation carries, read as an audit input.
@@ -96,8 +110,16 @@ pub fn score(
 
 const UNREADABLE_FILE: &str = "the installed file could not be read from disk";
 const NOT_A_TREE: &str = "the installed skill is not a directory on disk";
+/// A package bigger than kendex can hold. Nothing on the reader's machine
+/// changes that, so the size is what they are told.
 const TREE_TOO_BIG: &str =
-    "the installed tree is larger than kendex reads into memory, so none of it was scored";
+    "this skill's tree is larger than kendex reads into memory, so none of it was scored";
+/// A package kendex was not allowed to open all of — a permission, not a
+/// size, and a different thing to do about it. Kept apart from the reason
+/// above for exactly that: one is the package's nature, the other is
+/// something the reader can fix.
+const TREE_UNREADABLE: &str =
+    "part of this skill's tree could not be read from disk, so none of it was scored";
 
 /// Decoded the same way a plan's own bytes are: lossily, so one byte that
 /// is not text cannot make a whole file invisible to every rule. What had to
@@ -168,58 +190,76 @@ pub fn config_json(path: &Path) -> Option<serde_json::Value> {
 }
 
 fn read_tree(root: &Path) -> Content {
+    match tree_files(root, TREE_BOUND) {
+        Ok(files) => Content::SkillTree { files },
+        Err(why) => Content::Unread { why },
+    }
+}
+
+/// Every file under an installed tree, or the one reason there is no
+/// reading of it. `bound` is [`TREE_BOUND`] in every caller — a test drives
+/// a small one so the byte half of the bound can be proved without a 64 MB
+/// fixture.
+fn tree_files(root: &Path, bound: TreeBound) -> Result<Vec<TreeFile>, &'static str> {
     if !root.is_dir() {
-        return Content::Unread { why: NOT_A_TREE };
+        return Err(NOT_A_TREE);
     }
     let mut files = Vec::new();
     let mut total = 0;
-    if !walk(root, root, &mut files, &mut total) {
-        return Content::Unread { why: TREE_TOO_BIG };
-    }
+    walk(root, Path::new(""), &mut files, &mut total, bound)?;
     files.sort_by(|a: &TreeFile, b: &TreeFile| a.path.cmp(&b.path));
-    Content::SkillTree { files }
+    Ok(files)
 }
 
 /// Depth-first and never through a symlink: the canonical tree is the one
 /// kendex wrote, and following a link out of it would audit somebody else's
 /// files under this item's name.
 ///
-/// `false` where the tree is past what any reader of a skill's bytes holds
-/// in memory — the same bound the sealed catalog walk refuses at, so the
-/// gate and this audit stop at one place. A tree past it has no reading at
-/// all rather than a truncated one, because every rule then reports itself
-/// not applicable instead of finding nothing in a tail it never saw.
-fn walk(root: &Path, dir: &Path, files: &mut Vec<TreeFile>, total: &mut u64) -> bool {
+/// Every failure is the whole tree's, because siblings are already
+/// collected by the time one arrives. A tree past the memory bound and a
+/// tree with a directory or a file this process cannot open both end the
+/// read with no reading at all: every rule then reports itself not
+/// applicable, instead of finding nothing in a part it never saw. "kendex
+/// could not read this" is an answer a person can act on; "clean" over the
+/// files that happened to open is not.
+fn walk(
+    dir: &Path,
+    rel: &Path,
+    files: &mut Vec<TreeFile>,
+    total: &mut u64,
+    bound: TreeBound,
+) -> Result<(), &'static str> {
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return true;
+        return Err(TREE_UNREADABLE);
     };
-    let mut paths: Vec<std::path::PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
-    paths.sort();
-    for path in paths {
+    let mut names: Vec<std::ffi::OsString> = Vec::new();
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return Err(TREE_UNREADABLE);
+        };
+        names.push(entry.file_name());
+    }
+    names.sort();
+    for name in names {
+        let path = dir.join(&name);
+        let rel = rel.join(&name);
         if path.is_symlink() {
             continue;
         }
         if path.is_dir() {
-            if !walk(root, &path, files, total) {
-                return false;
-            }
+            walk(&path, &rel, files, total, bound)?;
             continue;
         }
         let Ok(bytes) = std::fs::read(&path) else {
-            continue;
+            return Err(TREE_UNREADABLE);
         };
         *total += bytes.len() as u64;
-        if files.len() >= crate::source_read::MAX_TREE_FILES
-            || *total > crate::source_read::MAX_TREE_BYTES
-        {
-            return false;
+        if bound.past(files.len() + 1, *total) {
+            return Err(TREE_TOO_BIG);
         }
-        let Ok(relative) = path.strip_prefix(root) else {
-            continue;
-        };
-        files.push(TreeFile::read(relative.to_path_buf(), &bytes));
+        files.push(TreeFile::read(rel, &bytes));
     }
-    true
+    Ok(())
 }
 
 /// A plugin directory, when the observation points at one. The scanner
@@ -245,10 +285,11 @@ fn read_plugin(path: &Path) -> Content {
         .filter(|name| root.join(name).is_file())
         .map(|name| (*name).to_owned())
         .collect();
-    let Content::SkillTree { files } = read_tree(root) else {
-        return Content::Unread {
-            why: UNREADABLE_PLUGIN,
-        };
+    // A tree that could not be read says which way it failed; the plugin's
+    // own reason is for a path that is no tree to begin with.
+    let files = match tree_files(root, TREE_BOUND) {
+        Ok(files) => files,
+        Err(why) => return Content::Unread { why },
     };
     Content::Plugin(PluginSources {
         package_json: std::fs::read_to_string(root.join("package.json")).ok(),

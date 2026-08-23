@@ -175,9 +175,9 @@ pub fn content(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Result<Con
     // Through the same constructor every install-side reading uses, over
     // the same whole tree, so a token this check mints names content the
     // gate and the audit will read back.
-    Ok(Content::SkillTree {
-        files: super::observe::tree_files_from_bytes(&sealed.collect_skill_tree(path)?),
-    })
+    Ok(super::observe::tree_content_from_bytes(
+        &sealed.collect_skill_tree(path)?,
+    ))
 }
 
 mod budget;

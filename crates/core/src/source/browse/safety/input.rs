@@ -250,11 +250,9 @@ pub(super) fn input_for(
         // findings at weights the gate never gives them — the two
         // disagreeing about one package, which is the whole thing a preview
         // is for.
-        ItemKind::Skill => Content::SkillTree {
-            files: crate::quality::observe::tree_files_from_bytes(&installs_as(
-                browsed, kind, name, path,
-            )?),
-        },
+        ItemKind::Skill => crate::quality::observe::tree_content_from_bytes(&installs_as(
+            browsed, kind, name, path,
+        )?),
         // A hook's script is what the harness runs; browse scores it as a hook
         // so the rules that read event/command/script fire here too, not only
         // at the install gate. The MCP declaration and command bodies read as

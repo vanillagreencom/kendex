@@ -105,7 +105,7 @@ fn an_installed_tree_is_read_to_its_last_file() {
 /// saw.
 #[test]
 fn a_tree_past_the_memory_bound_has_no_reading() {
-    let bound = crate::source_read::MAX_TREE_FILES;
+    let bound = crate::source_read::TREE_BOUND.files;
     let tree = |count: usize| {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("big");
@@ -125,6 +125,88 @@ fn a_tree_past_the_memory_bound_has_no_reading() {
     assert!(
         matches!(past_bound, Content::Unread { why } if why == TREE_TOO_BIG),
         "{past_bound:?}"
+    );
+}
+
+/// The other half of that bound, which shares the branch and would
+/// otherwise be taken on trust: a tree can be a handful of files and still
+/// be more bytes than kendex holds. The limit is driven small so both sides
+/// of it can be read for real rather than asserted about a 64 MB fixture.
+#[test]
+fn a_tree_past_the_byte_bound_has_no_reading() {
+    const BOUND: TreeBound = TreeBound {
+        files: 8,
+        bytes: 64,
+    };
+    let tree = |bytes: usize| {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("big");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("SKILL.md"), "x".repeat(bytes)).unwrap();
+        (tree_files(&root, BOUND), tmp)
+    };
+
+    let (at_bound, _keep) = tree(BOUND.bytes as usize);
+    assert!(
+        matches!(&at_bound, Ok(files) if files.len() == 1),
+        "the bound itself is read: {at_bound:?}"
+    );
+    let (past_bound, _keep) = tree(BOUND.bytes as usize + 1);
+    assert_eq!(past_bound, Err(TREE_TOO_BIG));
+}
+
+/// A directory the audit cannot open stops the whole reading.
+///
+/// Sibling files are already collected by then, and scoring those alone
+/// reports a package as clean on the strength of the part that opened.
+/// Saying kendex could not read it is the honest answer, and it has to be
+/// told apart from a tree that was simply too large.
+#[test]
+#[cfg(unix)]
+fn a_directory_that_cannot_be_read_has_no_reading() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("big");
+    let shut = root.join("references");
+    std::fs::create_dir_all(&shut).unwrap();
+    std::fs::write(root.join("SKILL.md"), "---\nname: big\n---\nplain body\n").unwrap();
+    std::fs::write(shut.join("details.md"), "more\n").unwrap();
+    std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    let content = input_for(&skill_at(&root)).content;
+    std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert_eq!(
+        content,
+        Content::Unread {
+            why: TREE_UNREADABLE
+        }
+    );
+}
+
+/// And a file the audit cannot open, for the same reason.
+#[test]
+#[cfg(unix)]
+fn a_file_that_cannot_be_read_has_no_reading() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("big");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("SKILL.md"), "---\nname: big\n---\nplain body\n").unwrap();
+    let shut = root.join("setup.sh");
+    std::fs::write(&shut, "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    let content = input_for(&skill_at(&root)).content;
+    std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    assert_eq!(
+        content,
+        Content::Unread {
+            why: TREE_UNREADABLE
+        }
     );
 }
 

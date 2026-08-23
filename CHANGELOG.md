@@ -98,7 +98,13 @@ changes carry a **Breaking** call-out with their migration note inline.
   findings on large packages that scored clean before, your own catalog
   included: they were always there, nothing had looked. Scanning the largest
   package in kendex's own catalog — 5.5 MB across 337 files — takes about
-  50 ms.
+  50 ms. And a package kendex cannot read all of is now reported as
+  unchecked rather than scored on the part it reached: the report says every
+  rule had nothing to read, and names which of the two happened — the
+  package is larger than kendex holds in memory, or part of it would not
+  open, which a permission on a file or a folder usually explains. Both
+  answers are the same on the package's page, at the install gate, and in
+  the check over what is installed.
 - **Breaking:** the install record's version moves to 5. Older files still
   load and the first apply upgrades them in place, through the normal
   journaled, previewed plan. What moves the version is the new evidence in
