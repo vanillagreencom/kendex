@@ -250,13 +250,20 @@ fn walk(
             walk(&path, &rel, files, total, bound)?;
             continue;
         }
-        let Ok(bytes) = std::fs::read(&path) else {
+        // The size is taken from the directory entry rather than from what
+        // was read, so a file too large to hold is refused before it is
+        // held: reading first and measuring after asks for the allocation
+        // the bound exists to refuse.
+        let Ok(len) = std::fs::metadata(&path).map(|at| at.len()) else {
             return Err(TREE_UNREADABLE);
         };
-        *total += bytes.len() as u64;
+        *total += len;
         if bound.past(files.len() + 1, *total) {
             return Err(TREE_TOO_BIG);
         }
+        let Ok(bytes) = std::fs::read(&path) else {
+            return Err(TREE_UNREADABLE);
+        };
         files.push(TreeFile::read(rel, &bytes));
     }
     Ok(())
