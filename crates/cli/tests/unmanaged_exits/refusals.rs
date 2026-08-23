@@ -4,7 +4,7 @@
 
 use std::fs;
 
-use super::{folder_at, kendex, link_at, offer, plan, project_with, said};
+use super::{folder_at, follow, kendex, link_at, offer, plan, project_with, said};
 
 /// folder, so the keep line must not be printed here.
 #[test]
@@ -287,8 +287,21 @@ fn a_file_under_the_switched_off_name_is_still_offered_the_keep() {
 
     let planned = plan(home, &project);
     assert!(planned.contains("conflict: agent scout"), "{planned}");
-    assert!(
-        planned.contains("to keep those files: kendex adopt agent scout --harness claude"),
+    assert_eq!(
+        offer(&planned),
+        "kendex adopt agent scout --harness claude",
         "the offer was withheld from a position adoption can take: {planned}"
+    );
+
+    // Run it, because an offer that only prints is how a way out that
+    // cannot be taken ships.
+    follow(home, &project, &planned);
+    let after = plan(home, &project);
+    assert!(!after.contains("conflict: agent scout"), "{after}");
+    assert!(
+        fs::read_to_string(project.join("kendex.toml"))
+            .unwrap()
+            .contains("[agents.scout]\nsource = \"local\""),
+        "the kept file was not written into the manifest"
     );
 }

@@ -156,6 +156,10 @@ pub fn adopt(
 /// tool's copy, so the question and the action are one rule: an offer
 /// naming a tool that has nothing here would error the moment it was
 /// followed.
+///
+/// An item switched off parks its content under the suffixed name, and a
+/// hand-made file sits there just as easily. The pair is one position, so
+/// whichever spelling is on disk is the one adoption reads.
 pub(super) fn position(
     env: &Env,
     scope: &Scope,
@@ -164,9 +168,15 @@ pub(super) fn position(
     harness: HarnessId,
 ) -> Option<PathBuf> {
     let dir = native_dir(env, scope, harness, kind)?;
-    Some(match kind {
+    let plain = match kind {
         ItemKind::Agent => dir.join(crate::render::agent::file_name(harness, name)),
         _ => dir.join(name),
+    };
+    let parked = super::file_plan::toggle_sibling(&plain);
+    let here = |at: &Path| at.exists() || at.is_symlink();
+    Some(match here(&plain) || !here(&parked) {
+        true => plain,
+        false => parked,
     })
 }
 
@@ -194,13 +204,8 @@ pub fn can_keep_for(
         })
 }
 
-/// Under either spelling of the toggled pair: an item switched off parks
-/// its content under the suffixed name, and a hand-made file can sit there
-/// just as easily. Asking about one spelling withholds the offer from a
-/// position adoption would take.
 fn there(path: &Path) -> bool {
-    let here = |at: &Path| at.exists() || at.is_symlink();
-    here(path) || here(&super::file_plan::toggle_sibling(path))
+    path.exists() || path.is_symlink()
 }
 
 /// Where in the scope's local source the kept content lands. Read wherever
