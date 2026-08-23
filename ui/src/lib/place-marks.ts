@@ -52,7 +52,11 @@ export function libraryMark(standings: PlaceStanding[]): PlaceMark | null {
 
 /** The package header's mark: about the place the page is showing, and
  *  only that one. The header names a place, so its badge answers for the
- *  place it names rather than for the package everywhere. */
+ *  place it names rather than for the package everywhere.
+ *
+ *  It leads nowhere on purpose. The place it names is the page the reader
+ *  is on, so there is no elsewhere to open — a control here would look
+ *  like a way somewhere and do nothing. */
 export function headerMark(
   standings: PlaceStanding[],
   scope: Scope,
@@ -64,7 +68,7 @@ export function headerMark(
       here.scope,
       standings.map((s) => s.scope),
     )}`,
-    goTo: here.scope,
+    goTo: null,
     why: here.why,
   };
 }

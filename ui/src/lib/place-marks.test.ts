@@ -60,6 +60,12 @@ describe("headerMark", () => {
     expect(headerMark(standings, HYPR)).toBeNull();
   });
 
+  // The place it names is the page the reader is on, so a control here
+  // would look like a way somewhere and do nothing.
+  it("offers no destination: the place it names is the page itself", () => {
+    expect(headerMark([mine(VG)], VG)?.goTo).toBeNull();
+  });
+
   it("finds the place by value, not by identity", () => {
     const got = headerMark([mine(VG)], { scope: "project", root: "/work/vg" });
     expect(got?.label).toBe("Customized in vg");

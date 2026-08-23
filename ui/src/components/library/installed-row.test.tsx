@@ -46,7 +46,8 @@ describe("the row's customized mark", () => {
   });
 
   // Naming two places and opening a third — the row's primary, which may
-  // hold nothing — is the wrong-place fault this change exists to remove.
+  // hold nothing of the reader's — sends them somewhere the label never
+  // mentioned.
   it("offers no destination when it names more than one place", () => {
     const shown = render({
       label: "Customized in vg and hyprtrade · 2 of 2 places",

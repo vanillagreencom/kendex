@@ -92,22 +92,29 @@ export function PackagePage() {
   );
 
   const mark = usePackageMark(group, ref?.scope ?? null);
+  // The package can still be installed elsewhere while this place has no
+  // copy of it — a page about a place that does not have it has nothing
+  // to show and no actions that would land anywhere.
+  const installedHere =
+    group?.installations.some(
+      (install) => ref != null && sameScope(install.scope, ref.scope),
+    ) ?? false;
 
   // The scan no longer knows this package (removed, renamed): leave the
   // way the user came.
   useEffect(() => {
-    if (ref && result && !group) back();
-  }, [ref, result, group, back]);
+    if (ref && result && !installedHere) back();
+  }, [ref, result, installedHere, back]);
 
   if (!ref || !group) return null;
   // The installation this page is about. A package can be installed in
   // several places and the page names one of them, so the actions that
-  // open files have to reach that place's copy — otherwise the page
-  // describes one place while its buttons work on another.
-  const primary =
-    group.installations.find((install) =>
-      sameScope(install.scope, ref.scope),
-    ) ?? group.installations[0];
+  // open files reach that place's copy. Falling back to another place's
+  // would have the page describe one place while its buttons work on
+  // another, which is the fault the marks exist to remove.
+  const primary = group.installations.find((install) =>
+    sameScope(install.scope, ref.scope),
+  );
   if (!primary) return null;
 
   const displayName = packageDisplayName(ref);
@@ -179,7 +186,6 @@ export function PackagePage() {
         description={group.description}
         forked={meta?.fork != null}
         mark={mark}
-        onOpenPlace={(scope) => void openScope(scope)}
         action={
           <PackageActions
             scope={primary.scope}

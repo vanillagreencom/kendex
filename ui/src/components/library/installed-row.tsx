@@ -88,10 +88,9 @@ export function InstalledRow({
           <span className="min-w-0">
             <span className="flex items-center gap-1.5">
               <span className="block truncate">{displayName}</span>
-              {/* One badge per place. Collapsing several to a bare "Forked"
-                  is the same fault as the customized mark had: the reader
-                  is told it happened and not where, and the badge that
-                  named no place could not be followed either. */}
+              {/* One badge per place. A single "Forked" over several tells
+                  the reader it happened and not where, and leaves nothing
+                  to open — a fork belongs to the place it was made in. */}
               {forkedIn.map((where) => (
                 <Badge
                   key={scopeKey(where)}

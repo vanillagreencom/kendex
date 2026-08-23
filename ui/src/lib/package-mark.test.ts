@@ -29,8 +29,8 @@ const saved = {
 
 describe("markFor", () => {
   // The page reads this with the place it is about. Handed the editor's
-  // open place instead — the old bug — the same package answers differently,
-  // which is what makes the argument worth pinning.
+  // open place instead, the same package answers differently — which is
+  // what makes the argument worth pinning.
   it("answers for the place it is given", () => {
     expect(markFor(saved as never, [], true, group, VG)?.label).toBe(
       "Customized in vg",
