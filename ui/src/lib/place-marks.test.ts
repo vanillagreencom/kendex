@@ -65,3 +65,23 @@ describe("headerMark", () => {
     expect(got?.label).toBe("Customized in vg");
   });
 });
+
+// Two projects can end in the same folder name. A mark that names only the
+// last folder points at both and identifies neither.
+const CLIENT_A: Scope = { scope: "project", root: "/work/client" };
+const CLIENT_B: Scope = { scope: "project", root: "/personal/client" };
+
+describe("places that share a folder name", () => {
+  it("names enough of the path to tell them apart on a row", () => {
+    const got = libraryMark([mine(CLIENT_A), stock(CLIENT_B)]);
+    expect(got?.label).toContain("work/client");
+    expect(got?.label).not.toContain("personal/client");
+  });
+
+  it("tells them apart in the header too", () => {
+    const standings = [mine(CLIENT_A), stock(CLIENT_B)];
+    expect(headerMark(standings, CLIENT_A)?.label).toBe(
+      "Customized in work/client",
+    );
+  });
+});

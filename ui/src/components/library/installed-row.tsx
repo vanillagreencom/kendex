@@ -27,6 +27,8 @@ import {
 } from "@/lib/labels";
 import type { PlaceMark } from "@/lib/place-marks";
 import { relativeTime } from "@/lib/relative-time";
+import { scopeKey } from "@/lib/scope";
+import { placeName } from "@/lib/update-groups";
 import { cn } from "@/lib/utils";
 import { originLabel, originTitle } from "@/stores/provenance";
 
@@ -86,20 +88,23 @@ export function InstalledRow({
           <span className="min-w-0">
             <span className="flex items-center gap-1.5">
               <span className="block truncate">{displayName}</span>
-              {forkedIn.length > 0 ? (
+              {/* One badge per place. Collapsing several to a bare "Forked"
+                  is the same fault as the customized mark had: the reader
+                  is told it happened and not where, and the badge that
+                  named no place could not be followed either. */}
+              {forkedIn.map((where) => (
                 <Badge
+                  key={scopeKey(where)}
                   variant="outline"
                   onClick={(event) => {
                     event.stopPropagation();
-                    onOpen(forkedIn.length === 1 ? forkedIn[0] : undefined);
+                    onOpen(where);
                   }}
-                  className={forkedIn.length === 1 ? "cursor-pointer" : ""}
+                  className="cursor-pointer"
                 >
-                  {forkedIn.length === 1
-                    ? `${FORKED_BADGE_LABEL} in ${scopeName(forkedIn[0])}`
-                    : FORKED_BADGE_LABEL}
+                  {`${FORKED_BADGE_LABEL} in ${placeName(where, scopes)}`}
                 </Badge>
-              ) : null}
+              ))}
               {vendor ? (
                 <Badge variant="outline" title={vendorHelp(vendor)}>
                   {bundledWithLabel(group.installations[0].harness)}

@@ -17,11 +17,10 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CUSTOMIZE_TAB, OVERVIEW_TAB } from "@/lib/copy-customize";
 import { canCustomize } from "@/lib/customization";
-import { indexRows, placeStandings } from "@/lib/customized-places";
 import { groupItems, groupScopes } from "@/lib/derive";
 import { packageDisplayName } from "@/lib/labels";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
-import { headerMark } from "@/lib/place-marks";
+import { usePackageMark } from "@/lib/package-mark";
 import { sameScope } from "@/lib/scope";
 import { cn } from "@/lib/utils";
 import { installedRow, latestRow, versionRowLabel } from "@/lib/versions";
@@ -81,8 +80,6 @@ export function PackagePage() {
     diffHarness(view, group?.installations[0]?.harness ?? null),
   );
   const updatesLoaded = useUpdatesStore((s) => s.loaded);
-  const updateRows = useUpdatesStore((s) => s.rows);
-  const saved = useEditorStore((s) => s.saved);
   const edited = useUpdatesStore((s) =>
     s.rows.some(
       (row) =>
@@ -93,6 +90,8 @@ export function PackagePage() {
         row.blockedByLocalEdit,
     ),
   );
+
+  const mark = usePackageMark(group, ref?.scope ?? null);
 
   // The scan no longer knows this package (removed, renamed): leave the
   // way the user came.
@@ -117,18 +116,6 @@ export function PackagePage() {
     updatesLoaded &&
     !edited;
   const customizable = canCustomize(group.kind);
-  // The header names a place, so its badge answers for that place. Read
-  // off the editor's open draft it answered for whichever place the
-  // Customize tab last touched, which is not the one the page is about.
-  const mark = headerMark(
-    placeStandings(
-      { manifests: saved, rows: indexRows(updateRows), updatesLoaded },
-      group.kind,
-      group.name,
-      groupScopes(group),
-    ),
-    ref.scope,
-  );
 
   const inEveryScope = async (act: (scope: Scope) => Promise<void>) => {
     for (const scope of groupScopes(group)) await act(scope);
@@ -185,6 +172,7 @@ export function PackagePage() {
         description={group.description}
         forked={meta?.fork != null}
         mark={mark}
+        onOpenPlace={(scope) => void openScope(scope)}
         action={
           <PackageActions
             scope={primary.scope}

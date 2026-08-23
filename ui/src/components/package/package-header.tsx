@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { ItemKind } from "@/bindings";
+import type { ItemKind, Scope } from "@/bindings";
 import { InlineMarkdown } from "@/components/inline-markdown";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -15,6 +15,7 @@ export function PackageHeader({
   description,
   forked,
   mark,
+  onOpenPlace,
   action,
 }: {
   kind: ItemKind;
@@ -22,9 +23,14 @@ export function PackageHeader({
   description: string | null;
   forked: boolean;
   mark: PlaceMark | null;
+  /** Open the place the mark names. */
+  onOpenPlace: (scope: Scope) => void;
   action: ReactNode;
 }) {
   const Icon = kindIcon(kind);
+  // The place the mark names, bound once so the handler carries a scope
+  // rather than a maybe-scope.
+  const goTo = mark?.goTo ?? null;
   return (
     <PageHeader
       wide
@@ -38,7 +44,17 @@ export function PackageHeader({
           {forked ? (
             <Badge variant="outline">{FORKED_BADGE_LABEL}</Badge>
           ) : null}
-          {mark ? <Badge variant="customized">{mark.label}</Badge> : null}
+          {mark ? (
+            // The mark names a place, so it goes there. A badge that names
+            // a place and cannot be followed leaves the reader to find it.
+            <Badge
+              variant="customized"
+              onClick={goTo ? () => onOpenPlace(goTo) : undefined}
+              className={goTo ? "cursor-pointer" : undefined}
+            >
+              {mark.label}
+            </Badge>
+          ) : null}
         </span>
       }
       subtitle={

@@ -32,6 +32,8 @@ export interface PlacesSource {
   /** Whether the update read has landed. Hand edits are known only after
    *  it has; before, a place with no row is unread rather than clean. */
   updatesLoaded: boolean;
+  /** {@link indexCustomized} over {@link manifests}, built once. */
+  settings: ReadonlySet<string>;
 }
 
 const placeKey = (kind: ItemKind, name: string, scope: Scope): string =>
@@ -43,11 +45,20 @@ export function indexRows(rows: UpdateRow[]): Map<string, UpdateRow> {
   return out;
 }
 
-/** Whether this place's saved manifest holds anything for the package. */
-function inSettings(manifest: Draft, kind: ItemKind, name: string): boolean {
-  for (const item of customizedItems(manifest))
-    if (item.kind === kind && item.name === name) return true;
-  return false;
+/** Every package each place holds something for, keyed by place and
+ *  package.
+ *
+ *  Built once per screen rather than per row: `customizedItems` walks a
+ *  whole manifest, and asking it per package per place walks every
+ *  manifest again for every row on the Library. */
+export function indexCustomized(
+  manifests: Record<string, Draft>,
+): ReadonlySet<string> {
+  const keys = new Set<string>();
+  for (const [where, manifest] of Object.entries(manifests))
+    for (const item of customizedItems(manifest))
+      keys.add(`${where}|${item.kind}:${item.name}`);
+  return keys;
 }
 
 /** How each place stands, in the order the scopes were given.
@@ -65,14 +76,23 @@ export function placeStandings(
   return scopes.map((scope) => {
     const manifest = source.manifests[scopeKey(scope)];
     const row = source.rows.get(placeKey(kind, name, scope));
-    // The manifest answers when it was read; the engine's row carries the
-    // same fork fact for a place whose manifest is not in hand.
-    const forked = manifest
-      ? manifest.forks?.[kind]?.[name] != null
-      : source.updatesLoaded && row
-        ? row.forked
-        : null;
-    const settings = manifest ? inSettings(manifest, kind, name) : null;
+    // Two readers of one fact, and either saying yes is a yes. Preferring
+    // the manifest outright loses a fork this app has just made: the row
+    // is re-read with the write, the saved manifest is not, so the mark
+    // vanished at the moment the reader created it. The cost of taking
+    // either is a mark that outlives a discard until the next read, which
+    // is the mark being late rather than the mark being missing.
+    const inManifest = manifest ? manifest.forks?.[kind]?.[name] != null : null;
+    const inRow = source.updatesLoaded && row ? row.forked : null;
+    const forked =
+      inManifest || inRow
+        ? true
+        : inManifest === null && inRow === null
+          ? null
+          : false;
+    const settings = manifest
+      ? source.settings.has(`${scopeKey(scope)}|${kind}:${name}`)
+      : null;
     // A place with no row after the read has landed is one the engine
     // cannot speak about — a local source has no version to compare
     // against — so its hand-edit state stays unknown rather than false.

@@ -4,7 +4,7 @@ import {
   standingIn,
   type Why,
 } from "@/lib/customized-places";
-import { scopeName } from "@/lib/labels";
+import { placeName } from "@/lib/update-groups";
 
 /** What a mark says, and where clicking it goes.
  *
@@ -28,12 +28,13 @@ const customized = (s: PlaceStanding) => s.standing === "customized";
  *  being asked. The count follows only when it adds something, and the
  *  bare word never appears alone. */
 export function libraryMark(standings: PlaceStanding[]): PlaceMark | null {
+  const all = standings.map((s) => s.scope);
   const mine = standings.filter(customized);
   if (mine.length === 0) return null;
   const unknown = standings.some((s) => s.standing === "unknown");
   if (mine.length === 1) {
     const only = mine[0];
-    const where = scopeName(only.scope);
+    const where = placeName(only.scope, all);
     // With a place unread, "1 of 3" would be counting places nobody has
     // looked at — so the count is left off rather than guessed at.
     const label =
@@ -42,7 +43,7 @@ export function libraryMark(standings: PlaceStanding[]): PlaceMark | null {
         : `Customized in ${where} · 1 of ${standings.length} places`;
     return { label, goTo: only.scope, why: only.why };
   }
-  const named = mine.map((s) => scopeName(s.scope)).join(" and ");
+  const named = mine.map((s) => placeName(s.scope, all)).join(" and ");
   const label = unknown
     ? `Customized in ${named}`
     : `Customized in ${named} · ${mine.length} of ${standings.length} places`;
@@ -59,7 +60,10 @@ export function headerMark(
   const here = standingIn(standings, scope) ?? null;
   if (!here || !customized(here)) return null;
   return {
-    label: `Customized in ${scopeName(here.scope)}`,
+    label: `Customized in ${placeName(
+      here.scope,
+      standings.map((s) => s.scope),
+    )}`,
     goTo: here.scope,
     why: here.why,
   };

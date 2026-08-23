@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Scope, UpdateRow } from "@/bindings";
 import type { Draft } from "@/lib/editor-draft";
 import {
+  indexCustomized,
   indexRows,
   type PlacesSource,
   placeStandings,
@@ -43,7 +44,14 @@ function row(scope: Scope, over: Partial<UpdateRow> = {}): UpdateRow {
 }
 
 function source(over: Partial<PlacesSource> = {}): PlacesSource {
-  return { manifests: {}, rows: new Map(), updatesLoaded: true, ...over };
+  const manifests = over.manifests ?? {};
+  return {
+    manifests,
+    rows: new Map(),
+    updatesLoaded: true,
+    settings: indexCustomized(manifests),
+    ...over,
+  };
 }
 
 describe("placeStandings", () => {
@@ -109,5 +117,17 @@ describe("placeStandings", () => {
     });
     const [only] = placeStandings(s, "skill", "gh", [VG]);
     expect(only.standing).toBe("unknown");
+  });
+
+  // The row is re-read with the write; the saved manifest is not. Reading
+  // only the manifest loses the fork at the moment it is made.
+  it("takes a fork the row knows about but the saved manifest predates", () => {
+    const s = source({
+      manifests: { "/work/vg": empty() },
+      rows: indexRows([row(VG, { forked: true })]),
+    });
+    const [only] = placeStandings(s, "skill", "gh", [VG]);
+    expect(only.standing).toBe("customized");
+    expect(only.why).toBe("forked");
   });
 });
