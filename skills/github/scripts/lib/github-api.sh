@@ -196,15 +196,9 @@ gh_graphql() {
     done
 }
 
-# Every page of a list endpoint as one array: GitHub returns 30 rows a page
-# by default, so a PR with 300 reviews answered with 30 until this existed.
-# Usage: gh_rest_all "repos/{owner}/{repo}/pulls/123/reviews"
+# Every page of a list endpoint as one array (REST pages at 30 by default).
 gh_rest_all() {
-    local endpoint="$1"
-    shift
-    local sep='?'
-    case "$endpoint" in *\?*) sep='&' ;; esac
-    gh_rest "${endpoint}${sep}per_page=100" --paginate --slurp "$@" | jq -c 'add // []'
+    gh_rest "$1?per_page=100" --paginate --slurp | jq -c 'add // []'
 }
 
 # Execute REST API call with error handling
@@ -751,18 +745,12 @@ query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
 }'
     # One page holds 100 threads; the unresolved ones may sit on the next.
     threads='[]'
-    local cursor="" page has_next
+    local cursor="" page
     while :; do
-        if [ -z "$cursor" ]; then
-            page=$(gh_graphql "$query" -F owner="$owner" -F repo="$repo" -F pr="$pr") || return 1
-        else
-            page=$(gh_graphql "$query" -F owner="$owner" -F repo="$repo" -F pr="$pr" -F cursor="$cursor") || return 1
-        fi
+        page=$(gh_graphql "$query" -F owner="$owner" -F repo="$repo" -F pr="$pr" ${cursor:+-F cursor="$cursor"}) || return 1
         threads=$(printf '%s\n%s\n' "$threads" "$page" \
             | jq -sc '.[0] + (.[1].repository.pullRequest.reviewThreads.nodes // [])') || return 1
-        has_next=$(jq -r '.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false' <<<"$page")
-        [ "$has_next" = "true" ] || break
-        cursor=$(jq -r '.repository.pullRequest.reviewThreads.pageInfo.endCursor // ""' <<<"$page")
+        cursor=$(jq -r '.repository.pullRequest.reviewThreads | select(.pageInfo.hasNextPage) | .pageInfo.endCursor // ""' <<<"$page")
         [ -n "$cursor" ] || break
     done
 
