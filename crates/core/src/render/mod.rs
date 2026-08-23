@@ -3,7 +3,6 @@ pub mod command;
 mod fences;
 pub mod permission;
 pub mod skill;
-pub mod split;
 pub mod validate;
 pub mod vocab;
 

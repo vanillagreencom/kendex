@@ -1,6 +1,5 @@
-//! A tool's copy of a skill moves between the shared tree and one of its
-//! own as the skill grows past a byte cap and shrinks back, and a rendering
-//! one surface refuses never takes down a tree another surface still reads.
+//! A rendering one surface refuses never takes down a tree another surface
+//! still reads.
 #![cfg(unix)]
 
 use std::fs;
@@ -17,25 +16,12 @@ fn put(path: &Path, text: &str) {
     fs::write(path, text).unwrap();
 }
 
-/// A skill body of roughly `sections` headed sections — small ones fit
-/// Codex's 8192-byte cap, large ones split into `references/`.
-fn sectioned(sections: usize) -> String {
-    let mut body = String::from("---\nname: big\ndescription: long\n---\n\n# Big\n\nIntro.\n");
-    for section in 0..sections {
-        body.push_str(&format!(
-            "\n## Section {section}\n\n{}\n",
-            "prose ".repeat(60)
-        ));
-    }
-    body
-}
-
-/// One fenced block spanning the cap: nothing can be cut without breaking
-/// the fence, so the capped surface refuses the rendering outright.
-fn one_huge_block() -> String {
+/// A description past Codex's 1024-character limit: Codex rejects the
+/// skill outright, so the surface it reads refuses the rendering.
+fn long_description() -> String {
     format!(
-        "---\nname: big\ndescription: long\n---\n\n```text\n{}```\n",
-        "sample line of a very long transcript\n".repeat(600)
+        "---\nname: big\ndescription: {}\n---\n\nBody.\n",
+        "d".repeat(1025)
     )
 }
 
@@ -68,7 +54,10 @@ fn world() -> World {
     // and the engine hands back canonical paths.
     let home = tmp.path().canonicalize().unwrap();
     let source = home.join("catalog");
-    put(&source.join("skills/big/SKILL.md"), &sectioned(5));
+    put(
+        &source.join("skills/big/SKILL.md"),
+        "---\nname: big\ndescription: long\n---\n\n# Big\n\nIntro.\n",
+    );
     World {
         env: Env::fake(&home, FakeOs::Linux),
         home,
@@ -86,55 +75,6 @@ fn declare(w: &World, manifest: &Path, harnesses: &str) {
             w.source.display()
         ),
     );
-}
-
-/// Claude has no byte cap, so an oversized skill must give it a tree of its
-/// own — even though its previous, matching rendering collapsed onto the
-/// shared one through a link. Both directions of that move are ours to
-/// make: the position is recorded as ours in the lock.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_tool_diverges_and_reconverges_without_ever_serving_the_split_body() {
-    let w = world();
-    let project = w.home.join("dev/app");
-    declare(
-        &w,
-        &project.join("kendex.toml"),
-        "\"claude\", \"codex\", \"pi\"",
-    );
-    let scope = Scope::Project {
-        root: project.clone(),
-    };
-    apply_now(&w.env, &scope);
-
-    let shared = project.join(".agents/skills/big");
-    let claude = project.join(".claude/skills/big");
-    assert_eq!(fs::read_link(&claude).unwrap(), shared);
-
-    // Grow it past Codex's cap. Claude must stop reading through the link,
-    // or it serves the split head as if it were the whole skill.
-    let grown = sectioned(40);
-    assert!(grown.len() > 8192);
-    put(&w.source.join("skills/big/SKILL.md"), &grown);
-    apply_now(&w.env, &scope);
-
-    assert!(!claude.is_symlink(), "claude keeps reading a shared tree");
-    assert_eq!(fs::read_to_string(claude.join("SKILL.md")).unwrap(), grown);
-    let head = fs::read_to_string(shared.join("SKILL.md")).unwrap();
-    assert!(head.len() <= 8192);
-    assert!(shared.join("references/details.md").is_file());
-    assert!(audit(&w.env, &scope).unwrap().drift.is_empty());
-
-    // Shrink it back: Claude's variant matches the shared one again, so it
-    // collapses onto it rather than keeping a stale copy forever.
-    let shrunk = sectioned(5);
-    put(&w.source.join("skills/big/SKILL.md"), &shrunk);
-    apply_now(&w.env, &scope);
-
-    assert_eq!(fs::read_link(&claude).unwrap(), shared);
-    assert_eq!(fs::read_to_string(shared.join("SKILL.md")).unwrap(), shrunk);
-    assert!(!shared.join("references/details.md").exists());
-    assert!(audit(&w.env, &scope).unwrap().drift.is_empty());
 }
 
 /// Codex and Pi read one physical tree, so a rendering Codex refuses is
@@ -156,7 +96,7 @@ fn two_tools_refusing_one_shared_tree_still_applies() {
     };
     apply_now(&w.env, &scope);
 
-    put(&w.source.join("skills/big/SKILL.md"), &one_huge_block());
+    put(&w.source.join("skills/big/SKILL.md"), &long_description());
     let report = audit(&w.env, &scope).unwrap();
     let shared = project.join(".agents/skills/big");
     assert_eq!(trashes(&report, &shared), 1, "{:?}", report.plan.ops);
@@ -173,12 +113,12 @@ fn two_tools_refusing_one_shared_tree_still_applies() {
             after.drift
         );
     }
-    // Claude has no cap, so it keeps the whole skill in a tree of its own.
+    // Claude takes any description, so it keeps the skill in a tree of its own.
     let claude = project.join(".claude/skills/big");
     assert!(!claude.is_symlink());
     assert_eq!(
         fs::read_to_string(claude.join("SKILL.md")).unwrap(),
-        one_huge_block()
+        long_description()
     );
     assert!(!shared.exists());
     apply::execute(&w.env, &after.plan, None).unwrap();
@@ -201,7 +141,7 @@ fn a_refusal_keeps_the_tree_another_tool_still_reads() {
     assert_eq!(fs::read_link(&claude).unwrap(), rendered);
     assert_eq!(fs::read_link(&codex).unwrap(), rendered);
 
-    put(&w.source.join("skills/big/SKILL.md"), &one_huge_block());
+    put(&w.source.join("skills/big/SKILL.md"), &long_description());
     let report = audit(&w.env, &scope).unwrap();
     assert_eq!(trashes(&report, &rendered), 0, "{:?}", report.plan.ops);
     apply::execute(&w.env, &report.plan, None).unwrap();
@@ -210,7 +150,7 @@ fn a_refusal_keeps_the_tree_another_tool_still_reads() {
     assert_eq!(fs::read_link(&claude).unwrap(), rendered);
     assert_eq!(
         fs::read_to_string(rendered.join("SKILL.md")).unwrap(),
-        one_huge_block()
+        long_description()
     );
 }
 

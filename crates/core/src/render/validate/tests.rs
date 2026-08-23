@@ -241,16 +241,28 @@ fn a_skill_tree_must_carry_a_skill_md_that_names_its_own_directory() {
 }
 
 #[test]
-fn a_skill_over_the_codex_cap_is_refused_there_and_installs_on_claude() {
+fn a_skill_whose_description_runs_past_codexs_limit_is_refused_there_and_installs_on_claude() {
     let body = format!(
-        "---\nname: gh\ndescription: GitHub\n---\n{}",
-        "prose ".repeat(2000)
+        "---\nname: gh\ndescription: {}\n---\nBody.\n",
+        "é".repeat(1025)
     );
     let files = skill_tree(&body);
     let codex = validate_skill_tree(HarnessId::Codex, "gh", "gh", &files);
     let said = spoken(&codex);
     assert_eq!(blocking(&codex).len(), 1, "{said}");
-    assert!(said.contains("stops reading at 8192"), "{said}");
-    assert!(said.contains("references/"), "{said}");
+    assert!(
+        said.contains("`gh`'s description is 1025 characters"),
+        "{said}"
+    );
+    assert!(said.contains("past 1024"), "{said}");
     assert!(validate_skill_tree(HarnessId::Claude, "gh", "gh", &files).is_empty());
+
+    // Exactly at the limit is fine, and the body's length is nobody's
+    // concern: Codex reads the whole file.
+    let long = format!(
+        "---\nname: gh\ndescription: {}\n---\n{}",
+        "d".repeat(1024),
+        "prose ".repeat(4000)
+    );
+    assert!(validate_skill_tree(HarnessId::Codex, "gh", "gh", &skill_tree(&long)).is_empty());
 }

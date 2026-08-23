@@ -51,7 +51,6 @@ mod targets;
 mod tree_plan;
 mod unmanaged;
 
-pub(crate) use desired::harnesses_for;
 pub(crate) use desired_agent::contributes_to_agent;
 pub(crate) use gate::content_hash;
 pub use gate::{ItemSafety, allow_unsafe_flag, refuse_unmatched_grants};

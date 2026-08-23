@@ -19,11 +19,6 @@ use crate::quality::Verdict;
 /// One catalog opened for reading, with the scope records the
 /// installed-state join needs.
 pub(crate) struct Browsed {
-    /// The scope this reading is against — the subscription's own, or the
-    /// personal scope for a repository nobody subscribes to, since that is
-    /// where subscribing lands by default. What installs where depends on
-    /// it, so a preview that models an install has to know it.
-    pub(crate) scope: Scope,
     pub(crate) manifest: Manifest,
     pub(crate) lock: Lock,
     pub(crate) source: ResolvedSource,
@@ -59,13 +54,7 @@ pub(crate) fn open(env: &Env, catalog: &Catalog) -> Result<Browsed> {
         Catalog::Subscription { scope, source } => {
             let (manifest, lock) = records(env, scope)?;
             let resolved = require_ready(env, scope, source, &manifest)?;
-            browsed(
-                scope.clone(),
-                manifest,
-                lock,
-                resolved,
-                Some(source.clone()),
-            )
+            browsed(manifest, lock, resolved, Some(source.clone()))
         }
         Catalog::Repo { repo } => {
             let key = browsable(repo)?;
@@ -97,11 +86,10 @@ pub(crate) fn open_repo(
         provenance: key,
         commit: Some(resolution.commit),
     };
-    browsed(Scope::Global, manifest, lock, source, None)
+    browsed(manifest, lock, source, None)
 }
 
 fn browsed(
-    scope: Scope,
     manifest: Manifest,
     lock: Lock,
     source: ResolvedSource,
@@ -120,7 +108,6 @@ fn browsed(
         ),
     };
     Ok(Browsed {
-        scope,
         manifest,
         lock,
         source,

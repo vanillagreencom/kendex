@@ -2,8 +2,11 @@ use std::path::PathBuf;
 
 use super::{Finding, frontmatter_map};
 use crate::frontmatter::Value;
-use crate::harness::format_caps;
 use crate::model::HarnessId;
+
+/// Codex's documented ceiling on a skill's frontmatter `description`
+/// (developers.openai.com/codex/skills): characters, not bytes.
+const CODEX_DESCRIPTION_MAX_CHARS: usize = 1024;
 
 /// The tree's SKILL.md under either name — a disabled skill keeps the same
 /// content parked under `.disabled`, and it is validated all the same so
@@ -79,15 +82,19 @@ pub(super) fn findings(
             "add a one-line `description:` saying when the skill applies",
         ));
     }
-    if let Some(cap) = format_caps(harness).skill_body_max_bytes
-        && bytes.len() > cap
+    // Codex bounds the frontmatter `description` — the one hard limit its
+    // skill loader documents — and rejects the skill outright past it. The
+    // body has no cap: Codex reads the whole file.
+    if harness == HarnessId::Codex
+        && let Some(description) = map.get("description").and_then(Value::as_str)
+        && description.chars().count() > CODEX_DESCRIPTION_MAX_CHARS
     {
         findings.push(Finding::breakage(
             format!(
-                "SKILL.md is {} bytes and {tool} stops reading at {cap} — the rest is dropped without a word",
-                bytes.len()
+                "`{name}`'s description is {} characters and {tool} rejects a skill whose description runs past {CODEX_DESCRIPTION_MAX_CHARS}",
+                description.chars().count()
             ),
-            "move the detail into `references/` files the skill body points at",
+            "shorten the `description:` in the skill's SKILL.md — say when the skill applies, and leave the how to the body",
         ));
     }
     findings

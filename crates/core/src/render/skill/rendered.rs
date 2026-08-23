@@ -19,8 +19,7 @@ pub type Files = Vec<(PathBuf, Vec<u8>)>;
 /// are these" depends on the two agreeing. Every step that moves a file or
 /// the content in one goes through this, so the block cannot be left naming
 /// a file the tree no longer has — which is what a rename applied to the
-/// tree and not to the block did, and what the split did before it took the
-/// block as an argument.
+/// tree and not to the block did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rendered {
     files: Files,
@@ -101,12 +100,6 @@ impl Rendered {
             true => block.renamed(to.clone()),
             false => block,
         });
-    }
-
-    /// The tree after a split, which moves content between files and can
-    /// leave the block somewhere else in the head.
-    pub(in crate::render) fn split(files: Files, block: Option<Block>) -> Rendered {
-        Rendered { files, block }
     }
 }
 

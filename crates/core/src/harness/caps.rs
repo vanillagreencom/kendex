@@ -146,10 +146,6 @@ use McpTransport::{Http, Sse, Stdio};
 /// literals. Extended axis by axis as consumers land.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FormatCaps {
-    /// Bytes the harness reliably loads from one SKILL.md before it
-    /// truncates; `None` means no known cap. Oversized bodies split into
-    /// `references/` rather than truncating.
-    pub skill_body_max_bytes: Option<usize>,
     pub name_rule: NameRule,
     /// Empty where the harness reads no MCP servers at all.
     pub mcp_transports: &'static [McpTransport],
@@ -157,7 +153,6 @@ pub struct FormatCaps {
 
 const fn format_defaults() -> FormatCaps {
     FormatCaps {
-        skill_body_max_bytes: None,
         name_rule: NameRule::Any,
         mcp_transports: &[Stdio, Http, Sse],
     }
@@ -167,11 +162,12 @@ pub const fn format_caps(harness: HarnessId) -> FormatCaps {
     match harness {
         // Claude's three transports are the ones the MCP writer emits.
         HarnessId::Claude => format_defaults(),
+        // Codex has no SKILL.md byte cap — its loader reads the whole file
+        // and only bounds the frontmatter `description` (see validate).
         HarnessId::Codex => FormatCaps {
-            skill_body_max_bytes: Some(8192),
             // Codex speaks Streamable HTTP, never SSE.
             mcp_transports: &[Stdio, Http],
-            ..format_defaults()
+            name_rule: NameRule::Any,
         },
         // OpenCode keys agents and skills by a slug it will not coerce:
         // capitals and underscores make the item unloadable, not renamed.
@@ -180,7 +176,6 @@ pub const fn format_caps(harness: HarnessId) -> FormatCaps {
         HarnessId::Opencode => FormatCaps {
             name_rule: NameRule::LowerKebab { max_len: Some(64) },
             mcp_transports: &[Stdio, Http],
-            ..format_defaults()
         },
         // Cursor takes a command, an SSE url, or a streamable-HTTP url
         // (cursor.com/docs/context/mcp).

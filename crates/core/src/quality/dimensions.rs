@@ -51,10 +51,6 @@ struct Authored<'a> {
     files: &'a [TreeFile],
 }
 
-/// The tightest SKILL.md budget any supported harness has. Content over it
-/// is silently truncated by that tool rather than rejected.
-const TIGHTEST_BODY_CAP: usize = 8192;
-
 pub fn quality(prepared: &Prepared) -> Option<QualityScore> {
     let authored = match &prepared.input.content {
         Content::Document { text } => Authored { text, files: &[] },
@@ -321,20 +317,6 @@ fn relative_links(body: &str) -> Vec<String> {
 /// What would read differently, or not at all, on another tool.
 fn portability(authored: &Authored, anti: &mut Vec<AntiPattern>) -> u32 {
     let mut points: u32 = 100;
-    let skill_bytes = authored
-        .files
-        .iter()
-        .find(|file| file.path.to_str() == Some("SKILL.md"))
-        .map(|file| file.bytes);
-    if let Some(bytes) = skill_bytes.filter(|bytes| *bytes > TIGHTEST_BODY_CAP) {
-        flag(
-            anti,
-            "OVER_CODEX_CAP",
-            format!("SKILL.md is {bytes} bytes and the tightest cap is {TIGHTEST_BODY_CAP}"),
-            "move the detail into `references/` files the body points at",
-        );
-        points = points.saturating_sub(60);
-    }
     const ONE_TOOL_ONLY: &[&str] = &["the bash tool", "the read tool", "the write tool"];
     let lower = authored.text.to_ascii_lowercase();
     if let Some(phrase) = ONE_TOOL_ONLY.iter().find(|phrase| lower.contains(*phrase)) {

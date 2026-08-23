@@ -232,8 +232,8 @@ fn seed_settings_env(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()> {
     Ok(())
 }
 
-/// Render one group's variant under its combined constraints: the tightest
-/// byte cap any member enforces, applied after instruction injection.
+/// Render one group's variant: one tree every member reads byte-for-byte,
+/// validated against each member's loader.
 fn render_variant(
     ctx: &ItemCtx,
     state: &mut DesiredState,
@@ -254,26 +254,6 @@ fn render_variant(
     // catalog's own SKILL.md knows nothing of that.
     if group.installed != ctx.name {
         rendered.set_skill_name(&group.installed);
-    }
-    // The tightest cap in the group and the member that enforces it, taken
-    // together: they are one fact, and reading them from separate passes
-    // invites a fallback for a state that cannot happen.
-    let capped = tightest_cap(group);
-    if let Some((cap, capped_by)) = capped {
-        let outcome = crate::render::split::enforce_body_cap(rendered, cap);
-        if let Some(reason) = outcome.refusal {
-            return Ok(refuse(ctx, state, group, &reason));
-        }
-        for warning in outcome.warnings {
-            state.warnings.push(super::ItemWarning {
-                kind: ItemKind::Skill,
-                name: ctx.name.to_owned(),
-                harness: Some(capped_by),
-                message: warning.message,
-                remediation: warning.remediation,
-            });
-        }
-        rendered = outcome.rendered;
     }
     // The group's members share one physical tree, so a rendering one of
     // their loaders rejects is refused for all of them — installing it for
@@ -358,19 +338,4 @@ fn both_names(files: &Files) -> Option<String> {
          would write one over the other"
             .to_owned()
     })
-}
-
-/// The tightest body cap any member of this group enforces, and the member
-/// that enforces it — one fact, read once, so the two renderings below
-/// cannot be shaped differently.
-fn tightest_cap(group: &SurfaceGroup) -> Option<(usize, HarnessId)> {
-    group
-        .members
-        .iter()
-        .filter_map(|h| {
-            crate::harness::format_caps(*h)
-                .skill_body_max_bytes
-                .map(|c| (c, *h))
-        })
-        .min_by_key(|(cap, _)| *cap)
 }

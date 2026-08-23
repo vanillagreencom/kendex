@@ -245,6 +245,16 @@ changes carry a **Breaking** call-out with their migration note inline.
   research deferred as standalone work.
 
 ### Fixed
+- Codex now reads the same skill as every other tool. kendex used to cut any
+  SKILL.md over 8 KB for Codex — a shortened body plus a
+  `references/details.md` — on the strength of a limit Codex does not have,
+  so Codex followed different instructions than Claude for the same skill
+  and its copy could not share the other tools' folder. The cut is gone:
+  a skill renders once and every tool links to it, and the `details.md`
+  files earlier installs wrote are cleared on the next apply. The one limit
+  Codex does document — a description of at most 1024 characters — is
+  checked, and a skill over it is held back for Codex by name.
+
 - Everywhere the app says a package is customized, it now says **where**. A
   skill installed at your user level and in two projects, changed in one of
   them, reads "Customized in vg · 1 of 3 places" on its Library row and

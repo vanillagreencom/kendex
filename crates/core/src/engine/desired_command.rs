@@ -128,15 +128,6 @@ fn as_skill(
         PathBuf::from("SKILL.md"),
         crate::render::command::codex_skill(&name, &body, ctx.name).into_bytes(),
     )]);
-    // A command is one file the author cannot split themselves, so an
-    // oversized one is cut into references/ exactly like a skill — nothing
-    // is dropped, and only a body the splitter cannot cut is refused.
-    if let Some(cap) = crate::harness::format_caps(harness).skill_body_max_bytes {
-        let Some(capped) = split_to_cap(ctx, state, harness, rendered, cap) else {
-            return Ok(None);
-        };
-        rendered = capped;
-    }
     if !ctx.decl.enabled {
         rendered.disable();
     }
@@ -191,41 +182,6 @@ fn as_skill(
         paths: vec![tree],
     });
     Ok(Some(item))
-}
-
-/// Cut the generated skill down to the harness's byte cap. `None` means the
-/// splitter could not cut it at all — one code block bigger than the cap —
-/// and the command is refused for this harness rather than truncated.
-fn split_to_cap(
-    ctx: &ItemCtx,
-    state: &mut DesiredState,
-    harness: HarnessId,
-    rendered: crate::render::skill::Rendered,
-    cap: usize,
-) -> Option<crate::render::skill::Rendered> {
-    let outcome = crate::render::split::enforce_body_cap(rendered, cap);
-    if let Some(reason) = outcome.refusal {
-        state.refused.push(super::desired::Refused {
-            kind: ItemKind::Command,
-            name: ctx.name.to_owned(),
-            harness,
-            reason: format!("{reason} — break the block up in the command's own file"),
-        });
-        return None;
-    }
-    for warning in outcome.warnings {
-        state.warnings.push(ItemWarning {
-            kind: ItemKind::Command,
-            name: ctx.name.to_owned(),
-            harness: Some(harness),
-            message: warning.message,
-            remediation: Some(format!(
-                "nothing to fix — {} reads the rest from references/; shorten the command to keep it in one file",
-                harness.display_name()
-            )),
-        });
-    }
-    Some(outcome.rendered)
 }
 
 /// The name the generated skill takes. A real skill keeps its own name, so

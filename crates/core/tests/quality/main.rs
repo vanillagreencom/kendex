@@ -11,7 +11,6 @@ mod author_reviews_installations;
 mod author_reviews_occurrence;
 mod author_reviews_provenance;
 mod author_reviews_records;
-mod author_reviews_split;
 mod author_reviews_untrusted;
 mod convergence;
 mod decisions;
