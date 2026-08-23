@@ -41,7 +41,9 @@ export async function adoptAll(
     const harnesses = [
       ...new Set(group.installations.map((row) => row.harness)),
     ];
-    if (!(await adopt(group.kind, group.name, harnesses, said))) return shared;
+    // Nothing carries past a failure, the deferred folder included: its
+    // confirmation would open against a page that is now wrong.
+    if (!(await adopt(group.kind, group.name, harnesses, said))) return null;
     said = true;
   }
   return shared;

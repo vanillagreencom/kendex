@@ -84,3 +84,27 @@ describe("starting to manage a page of items", () => {
     expect(calls.map((call) => call.name)).toEqual(["deploy"]);
   });
 });
+
+describe("a shared folder read before something fails", () => {
+  // Its confirmation would open against a page that is now wrong, so the
+  // failure takes the deferred folder with it.
+  it("is dropped rather than confirmed after the failure", async () => {
+    const { calls, adopt } = record(() => false);
+    const browser = group("browser", ["claude"]);
+    const link: SharedLink = {
+      group: browser,
+      harness: "claude",
+      target: "/w/shared",
+      tools: ["claude"],
+    };
+
+    const shared = await adoptAll(
+      [browser, group("deploy", ["claude"])],
+      (g) => (g.name === "browser" ? link : null),
+      adopt,
+    );
+
+    expect(shared).toBeNull();
+    expect(calls.map((call) => call.name)).toEqual(["deploy"]);
+  });
+});
