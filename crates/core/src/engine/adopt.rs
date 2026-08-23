@@ -2,7 +2,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::adopt_shared::{SharedTarget, shared_capture_ops, shared_target};
-use super::desired::native_dir;
 use super::ops::manifest_for_mutation;
 use crate::apply::{Op, Plan, PlannedOp, Pre};
 use crate::env::Env;
@@ -134,7 +133,18 @@ pub fn adopt(
         }
     }
     let already_declared = manifest.declared(kind).contains_key(name);
-    declare(&mut manifest, kind, name, wanted, already_declared);
+    // What was kept was switched off, and declaring it on would turn it on
+    // behind the reader — the apply that follows this one writes what the
+    // declaration says.
+    let switched_off = positions.iter().any(|(_, at)| parked(kind, at));
+    declare(
+        &mut manifest,
+        kind,
+        name,
+        wanted,
+        already_declared,
+        switched_off,
+    );
 
     let manifest_path = manifest::manifest_path(env, scope);
     ops.push(PlannedOp {
@@ -149,63 +159,6 @@ pub fn adopt(
         scope: scope.clone(),
         ops,
     })
-}
-
-/// The place one tool reads this item from — the only place adoption looks
-/// for it. Read wherever a surface asks whether adoption could keep a
-/// tool's copy, so the question and the action are one rule: an offer
-/// naming a tool that has nothing here would error the moment it was
-/// followed.
-///
-/// An item switched off parks its content under the suffixed name, and a
-/// hand-made file sits there just as easily. The pair is one position, so
-/// whichever spelling is on disk is the one adoption reads.
-pub(super) fn position(
-    env: &Env,
-    scope: &Scope,
-    kind: ItemKind,
-    name: &str,
-    harness: HarnessId,
-) -> Option<PathBuf> {
-    let dir = native_dir(env, scope, harness, kind)?;
-    let plain = match kind {
-        ItemKind::Agent => dir.join(crate::render::agent::file_name(harness, name)),
-        _ => dir.join(name),
-    };
-    let parked = super::file_plan::toggle_sibling(&plain);
-    let here = |at: &Path| at.exists() || at.is_symlink();
-    Some(match here(&plain) || !here(&parked) {
-        true => plain,
-        false => parked,
-    })
-}
-
-/// Whether this tool has something adoption can keep. A tool with an empty
-/// position is never named in an offer: adoption works at that position and
-/// nowhere else, and the folder a link points at is reached through the
-/// tool whose own place is the link.
-///
-/// A skill is a folder holding a `SKILL.md` — that is what the local source
-/// finds again afterwards. Kept without one, the folder goes to the trash,
-/// the declaration is rewritten around a source that has nothing to give,
-/// and the apply that follows installs nothing: the reader is told their
-/// files were kept and they are gone.
-pub fn can_keep_for(
-    env: &Env,
-    scope: &Scope,
-    kind: ItemKind,
-    name: &str,
-    harness: HarnessId,
-) -> bool {
-    supports(kind)
-        && position(env, scope, kind, name, harness).is_some_and(|path| match kind {
-            ItemKind::Skill => there(&path.join("SKILL.md")),
-            _ => there(&path),
-        })
-}
-
-fn there(path: &Path) -> bool {
-    path.exists() || path.is_symlink()
 }
 
 /// Where in the scope's local source the kept content lands. Read wherever
@@ -379,8 +332,11 @@ pub(super) mod capture;
 pub(crate) use capture::read_tree;
 
 mod declare;
+mod position;
 
 use declare::declare;
+pub use position::can_keep_for;
+pub(super) use position::{parked, position};
 
 #[cfg(test)]
 mod tests;

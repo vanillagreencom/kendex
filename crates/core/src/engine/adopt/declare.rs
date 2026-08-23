@@ -15,6 +15,7 @@ pub(super) fn declare(
     name: &str,
     wanted: Vec<HarnessId>,
     already_declared: bool,
+    switched_off: bool,
 ) {
     let defaults_match = {
         let defaults: std::collections::BTreeSet<&HarnessId> =
@@ -29,6 +30,9 @@ pub(super) fn declare(
         .entry(name.to_owned())
         .or_insert_with(|| ItemDecl::from_source(LOCAL_SOURCE_NAME));
     decl.source = LOCAL_SOURCE_NAME.to_owned();
+    if switched_off {
+        decl.enabled = false;
+    }
     // A revision names a commit in the source it came from. Carried onto
     // the local source, which has no revisions, the next plan fails and the
     // scope cannot be planned at all until somebody edits kendex.toml — and

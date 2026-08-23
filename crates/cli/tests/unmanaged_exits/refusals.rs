@@ -305,3 +305,74 @@ fn a_file_under_the_switched_off_name_is_still_offered_the_keep() {
         "the kept file was not written into the manifest"
     );
 }
+
+/// Keeping something that was switched off leaves it switched off. The
+/// apply that follows writes what the declaration says, so declaring it on
+/// would turn it on behind the reader.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn keeping_a_switched_off_item_leaves_it_switched_off() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let project = project_with(home, "[\"claude\"]", "copy");
+    fs::create_dir_all(home.join("catalog/agents")).unwrap();
+    fs::write(
+        home.join("catalog/agents/scout.md"),
+        "---\nname: scout\ndescription: looks around\n---\nUpstream.\n",
+    )
+    .unwrap();
+    let manifest = project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        format!("{text}\n[agents.scout]\nsource = \"cat\"\n"),
+    )
+    .unwrap();
+    let parked = project.join(".claude/agents/scout.md.disabled");
+    fs::create_dir_all(parked.parent().unwrap()).unwrap();
+    fs::write(&parked, "the tool that came before").unwrap();
+
+    follow(home, &project, &plan(home, &project));
+
+    let written = fs::read_to_string(&manifest).unwrap();
+    assert!(
+        written.contains("enabled = false"),
+        "the item was turned on by being kept:\n{written}"
+    );
+    assert!(
+        !project.join(".claude/agents/scout.md").exists(),
+        "and it is still parked on disk"
+    );
+}
+
+/// A skill folder keeps its name whether the skill is on or off — the
+/// marker inside it is what carries the toggle, so a folder holding only
+/// the switched-off marker is a position adoption can take.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_skill_parked_inside_its_folder_is_offered_the_keep() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let project = project_with(home, "[\"claude\"]", "copy");
+    let here = project.join(".claude/skills/deploy");
+    fs::create_dir_all(&here).unwrap();
+    fs::write(
+        here.join("SKILL.md.disabled"),
+        "---\nname: deploy\ndescription: ship it\n---\nBy hand.\n",
+    )
+    .unwrap();
+
+    let planned = plan(home, &project);
+    assert_eq!(
+        offer(&planned),
+        "kendex adopt skill deploy --harness claude",
+        "{planned}"
+    );
+    follow(home, &project, &planned);
+    assert!(
+        fs::read_to_string(project.join("kendex.toml"))
+            .unwrap()
+            .contains("enabled = false"),
+        "a skill kept while switched off was turned on"
+    );
+}
