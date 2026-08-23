@@ -49,11 +49,17 @@ export function PackageHeader({
             // a place and cannot be followed leaves the reader to find it.
             <Badge
               variant="customized"
-              onClick={goTo ? () => onOpenPlace(goTo) : undefined}
               className={goTo ? "cursor-pointer" : undefined}
-            >
-              {mark.label}
-            </Badge>
+              render={
+                goTo ? (
+                  <button type="button" onClick={() => onOpenPlace(goTo)}>
+                    {mark.label}
+                  </button>
+                ) : (
+                  <span>{mark.label}</span>
+                )
+              }
+            />
           ) : null}
         </span>
       }

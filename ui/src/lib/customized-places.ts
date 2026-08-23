@@ -78,10 +78,10 @@ export function placeStandings(
     const row = source.rows.get(placeKey(kind, name, scope));
     // Two readers of one fact, and either saying yes is a yes. Preferring
     // the manifest outright loses a fork this app has just made: the row
-    // is re-read with the write, the saved manifest is not, so the mark
-    // vanished at the moment the reader created it. The cost of taking
-    // either is a mark that outlives a discard until the next read, which
-    // is the mark being late rather than the mark being missing.
+    // is re-read with the write and the saved manifest is not, so the mark
+    // goes missing at the one moment the reader is certain it is theirs.
+    // The cost of taking either is a mark that outlives a discard until the
+    // next read — the mark being late rather than the mark being missing.
     const inManifest = manifest ? manifest.forks?.[kind]?.[name] != null : null;
     const inRow = source.updatesLoaded && row ? row.forked : null;
     const forked =

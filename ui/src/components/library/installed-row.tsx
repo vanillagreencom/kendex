@@ -96,14 +96,19 @@ export function InstalledRow({
                 <Badge
                   key={scopeKey(where)}
                   variant="outline"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onOpen(where);
-                  }}
                   className="cursor-pointer"
-                >
-                  {`${FORKED_BADGE_LABEL} in ${placeName(where, scopes)}`}
-                </Badge>
+                  render={
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onOpen(where);
+                      }}
+                    >
+                      {`${FORKED_BADGE_LABEL} in ${placeName(where, scopes)}`}
+                    </button>
+                  }
+                />
               ))}
               {vendor ? (
                 <Badge variant="outline" title={vendorHelp(vendor)}>
@@ -127,10 +132,10 @@ export function InstalledRow({
                 {mark.label}
               </button>
             ) : mark ? (
-              // Several places, so the mark names no one destination. Sending
-              // it to the row's primary place would open somewhere the label
-              // never mentioned, and possibly one holding nothing of the
-              // reader's — the same wrong-place fault this change is about.
+              // Several places, so the mark names no one destination.
+              // Sending it to the row's primary place would open somewhere
+              // the label never mentioned, and possibly one holding nothing
+              // of the reader's.
               <span className="mt-0.5 block text-xs text-customized">
                 {mark.label}
               </span>
