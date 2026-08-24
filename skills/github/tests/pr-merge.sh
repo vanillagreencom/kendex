@@ -192,7 +192,23 @@ case "${1:-}" in
                 exit 0
                 ;;
             checks)
-                printf '%s\n' "${STUB_CHECKS:?}"
+                # Project the fixture onto the requested --json field list,
+                # like real gh: a field the caller did not ask for must not
+                # arrive. This is what lets a missing startedAt in a fetch
+                # show up as wrong run ordering instead of passing silently.
+                fields=""
+                prev=""
+                for a in "$@"; do
+                    if [[ "$prev" == "--json" ]]; then fields="$a"; fi
+                    prev="$a"
+                done
+                if [[ -n "$fields" ]]; then
+                    jq -c --arg f "$fields" \
+                        'map(. as $c | ($f | split(",")) | map({key: ., value: ($c[.] // null)}) | from_entries | with_entries(select(.value != null)))' \
+                        <<<"${STUB_CHECKS:?}"
+                else
+                    printf '%s\n' "${STUB_CHECKS:?}"
+                fi
                 exit "${STUB_CHECKS_EXIT:-0}"
                 ;;
         esac
@@ -721,6 +737,38 @@ assert_contains "$out" "note: checks pass now" "cause: none says to re-run the r
 # Terminal states classify by lifecycle, not by manufactured blockers.
 out=$(STUB_CHECKS='[]' STUB_STATE=MERGED STUB_MERGED_AT=2026-07-21T00:00:00Z run_classify)
 assert_eq "$(head -1 <<<"$out")" "cause: merged" "terminal MERGED classifies as cause: merged"
+
+out=$(STUB_CHECKS='[]' STUB_STATE=CLOSED run_classify)
+assert_eq "$(head -1 <<<"$out")" "cause: closed" "terminal CLOSED classifies as cause: closed"
+
+# A failed thread lookup is a fetch error, even beside another blocker.
+checks='[{"name":"Lint","state":"FAILURE","bucket":"fail"}]'
+out=$(STUB_CHECKS="$checks" STUB_CHECKS_EXIT=8 STUB_THREADS_FETCH_FAIL=true run_classify)
+assert_eq "$(head -1 <<<"$out")" "cause: fetch_error" "thread fetch failure headlines as fetch_error over ci_failed"
+assert_contains "$out" "issue: review_threads_fetch_failed:" "fetch-error refusal keeps its raw issue line"
+
+# The priority chain on a multi-issue refusal: threads headline over a red
+# check, and both issues stay visible.
+checks='[{"name":"Lint","state":"FAILURE","bucket":"fail"}]'
+out=$(STUB_CHECKS="$checks" STUB_CHECKS_EXIT=8 STUB_THREADS_JSON="$actionable_threads" run_classify)
+assert_eq "$(head -1 <<<"$out")" "cause: threads" "threads headline over ci_failed on a multi-issue refusal"
+assert_contains "$out" "issue: unresolved_threads:" "multi-issue refusal keeps the thread issue line"
+assert_contains "$out" "issue: ci_failed:" "multi-issue refusal keeps the CI issue line"
+
+# Run ordering is by startedAt, not run id: a rerun keeps its ORIGINAL lower
+# run id, so the authoritative run here is the LOWER id with the LATER
+# startedAt. The gh stub projects fixtures onto the requested field list, so
+# a correlation fetch that forgets startedAt flips this attribution and
+# fails these assertions.
+checks='[
+  {"name":"Lint","state":"FAILURE","bucket":"fail","link":"https://github.com/owner/repo/actions/runs/29098545030/job/101","workflow":"CI","startedAt":"2026-07-10T12:00:00Z"},
+  {"name":"Lint","state":"SUCCESS","bucket":"pass","link":"https://github.com/owner/repo/actions/runs/29099680623/job/201","workflow":"CI","startedAt":"2026-07-10T11:00:00Z"}
+]'
+out=$(STUB_CHECKS="$checks" STUB_CHECKS_EXIT=8 run_classify)
+assert_eq "$(head -1 <<<"$out")" "cause: ci_failed" "rerun-in-place failure classifies as ci_failed"
+assert_contains "$out" "head-run: 29098545030" "head-run names the later-started rerun despite its lower run id"
+assert_contains "$out" "fail: Lint state=FAILURE workflow=CI run=29098545030" "failure attributes to the rerun, not the higher run id"
+assert_contains "$out" "superseded: workflow=CI run=29099680623" "the higher-id but earlier run is the superseded one"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

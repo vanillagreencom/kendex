@@ -10,11 +10,16 @@
 # Output (stdout, one item per line):
 #   cause: <word>          primary cause — fetch_error | merge_conflict |
 #                          changes_requested | threads | ci_failed |
-#                          ci_pending | computing | merged | closed | none
+#                          ci_pending | computing | merged | closed | none.
+#                          An issue prefix outside that vocabulary becomes
+#                          the cause word itself, so a new pr-merge prefix
+#                          names itself instead of reading as all-clear
 #   issue: <raw>           every refusal issue, verbatim
 #   head-run: <ids>        (ci_failed/ci_pending only) run ids the CI
 #                          classification was scoped to; "none" when no
-#                          run-correlated checks exist
+#                          run-correlated checks exist. For ci_failed it is
+#                          recomputed from the same snapshot as the fail:/
+#                          superseded: lines below it
 #   fail: ...              (ci_failed only) each failing check with its
 #                          state, workflow, and run id
 #   superseded: ...        (ci_failed only) runs on the head whose checks
@@ -34,9 +39,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Shared with pr-merge.sh and orch ci-wait, so this diagnosis and the merge
-# gate cannot disagree about which run is current.
+# gate cannot disagree about which run is current. CI_RUN_JQ_DEFS carries the
+# one runid/bucket implementation for every jq program below.
 # shellcheck source=../lib/ci-run-correlation.sh
 source "$SCRIPT_DIR/../lib/ci-run-correlation.sh"
+
+# Check and workflow names are chosen by fork PRs and third-party check apps;
+# a newline inside one would forge a line in this line-oriented output.
+SANITIZE_JQ='def clean: tostring | gsub("[\r\n\t]"; " ");'
 
 # The leading comment block is the contract, printed by shape rather than by
 # line number so --help cannot drift as that block grows.
@@ -51,13 +61,14 @@ while [ $# -gt 0 ]; do
         show_help
         exit 0
         ;;
-    [0-9]*)
-        pr_num="$1"
-        shift
-        ;;
     *)
-        echo "Error: Unknown option: $1" >&2
-        exit 2
+        if [[ "$1" =~ ^[0-9]+$ ]] && [ -z "$pr_num" ]; then
+            pr_num="$1"
+            shift
+        else
+            echo "Error: expected exactly one numeric PR number, got: $1" >&2
+            exit 2
+        fi
         ;;
     esac
 done
@@ -69,10 +80,14 @@ fi
 
 # pr-merge --check prints its own verdict lines on stderr; only its JSON is
 # input here. A run that produces no parseable object is this script's own
-# failure, never a classification.
-check_json=$(bash "$SCRIPT_DIR/pr-merge.sh" "$pr_num" --check 2>/dev/null) || true
+# failure — surfaced with pr-merge's last stderr line, which on a crash is
+# the real diagnostic.
+check_err="$(mktemp)" || { echo "Error: could not create a temporary file" >&2; exit 1; }
+trap 'rm -f "$check_err"' EXIT
+check_json=$(bash "$SCRIPT_DIR/pr-merge.sh" "$pr_num" --check 2>"$check_err") || true
 if ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$check_json"; then
     echo "Error: pr-merge --check produced no parseable JSON for PR #$pr_num" >&2
+    tail -1 "$check_err" | tr -d '\r' | sed 's/^/  /' >&2
     exit 1
 fi
 
@@ -88,6 +103,9 @@ fi
 
 # Primary cause by priority: an unreadable GitHub answer taints every other
 # signal, then the permanent blockers, then the ones that clear on their own.
+# `none` is reserved for an empty issues[] — an issue whose prefix is not in
+# this table names itself, so a new pr-merge prefix routes as "report it",
+# never as a false all-clear.
 cause=$(jq -r '
     def matched(re): any(.issues[]?; test(re));
     if (.issues // [] | length) == 0 then "none"
@@ -98,59 +116,62 @@ cause=$(jq -r '
     elif matched("^ci_failed:") then "ci_failed"
     elif matched("^ci_pending:") then "ci_pending"
     elif matched("^unknown:") then "computing"
-    else "none"
+    else (.issues[0] | split(":")[0] | gsub("[^A-Za-z0-9_-]"; "_"))
     end
 ' <<<"$check_json")
 
 echo "cause: $cause"
-jq -r '.issues[]? | "issue: " + .' <<<"$check_json"
+jq -r "$SANITIZE_JQ"' .issues[]? | "issue: " + clean' <<<"$check_json"
 
 if [ "$cause" = "none" ]; then
     echo "note: checks pass now — the refusal did not come from these gates (or has cleared); re-run the refusing command"
     exit 0
 fi
 
-case "$cause" in
-ci_failed | ci_pending) ;;
-*) exit 0 ;;
-esac
+check_head_runs() {
+    jq -r '.head_runs // [] | if length == 0 then "none" else map(tostring) | join(",") end' <<<"$check_json"
+}
 
-echo "head-run: $(jq -r '.head_runs // [] | if length == 0 then "none" else map(tostring) | join(",") end' <<<"$check_json")"
+if [ "$cause" = "ci_pending" ]; then
+    echo "head-run: $(check_head_runs)"
+    exit 0
+fi
 
 [ "$cause" = "ci_failed" ] || exit 0
 
 # Correlate each failing check with its run, and name the runs on this head
 # whose checks were dropped as superseded — the run a raw `gh pr checks`
-# failure line usually belongs to when it disagrees with the gate.
-ci_json=$(gh pr checks "$pr_num" --json name,state,bucket,link,workflow 2>&1) || true
+# failure line usually belongs to when it disagrees with the gate. One fresh
+# snapshot governs the whole detail block, head-run: included, so the run
+# scope and the fail/superseded attribution cannot disagree mid-flux;
+# startedAt must be fetched because scope_current_run orders runs by it (a
+# rerun keeps its original, lower run id).
+ci_json=$(gh pr checks "$pr_num" --json name,state,bucket,link,workflow,startedAt 2>"$check_err") || true
 if ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$ci_json"; then
-    echo "detail: could not fetch checks for run correlation — $(head -1 <<<"$ci_json")"
+    echo "head-run: $(check_head_runs)"
+    echo "detail: could not fetch checks for run correlation — $(tail -1 "$check_err" | tr -d '\r\n')"
     exit 0
 fi
 
 scoped_json=$(echo "$ci_json" | scope_current_run)
-echo "$scoped_json" | jq -r '
-    def bucket:
-        (.bucket // (
-            if (.state == "SUCCESS") then "pass"
-            elif (.state == "SKIPPED") then "skipping"
-            elif ((.state // "") | IN("PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "EXPECTED")) then "pending"
-            elif (.state == "CANCELLED") then "cancel"
-            else "fail"
-            end
-        ));
-    .[]
-    | select((bucket != "pass") and (bucket != "skipping") and (bucket != "pending"))
-    | "fail: \(.name) state=\(.state // "?") workflow=\(if (.workflow // "") == "" then "-" else .workflow end) run=\(((.link // "") | (capture("/actions/runs/(?<r>[0-9]+)")? | .r)) // "none")"
+
+echo "$scoped_json" | jq -r "$CI_RUN_JQ_DEFS"'
+    [.[] | select((.workflow // "") != "") | runid | select(. != null)] | unique
+    | "head-run: " + (if length == 0 then "none" else map(tostring) | join(",") end)
 '
 
-jq -n --argjson raw "$ci_json" --argjson scoped "$scoped_json" '
-    def runid: ((.link // "") | (capture("/actions/runs/(?<r>[0-9]+)")? | .r) // null);
+echo "$scoped_json" | jq -r "$CI_RUN_JQ_DEFS$SANITIZE_JQ"'
+    .[]
+    | select((bucket != "pass") and (bucket != "skipping") and (bucket != "pending"))
+    | "fail: \(.name | clean) state=\((.state // "?") | clean) workflow=\(if (.workflow // "") == "" then "-" else (.workflow | clean) end) run=\(runid // "none")"
+'
+
+jq -n --argjson raw "$ci_json" --argjson scoped "$scoped_json" "$CI_RUN_JQ_DEFS$SANITIZE_JQ"'
     ([$scoped[] | runid | select(. != null)] | unique) as $kept
     | $raw
     | map(select((.workflow // "") != "") | {workflow, run: runid} | select(.run != null))
     | unique
     | map(select(.run as $r | ($kept | index($r)) | not))
     | .[]
-    | "superseded: workflow=\(.workflow) run=\(.run) (checks from this run were not counted)"
+    | "superseded: workflow=\(.workflow | clean) run=\(.run) (checks from this run were not counted)"
 ' -r

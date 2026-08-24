@@ -69,7 +69,7 @@ Route the findings per the `review-finding` schema. No blockers and no `category
    .agents/skills/orch/scripts/worktree-push --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID] --set-upstream
    ```
 
-   The push auto-rebases onto the updated base. When the rebase rewrites commits, `worktree-push` records the old→new map in `.rebase_map` and rewrites the fix commits stored in workflow state (`fixed_items`, `pr_comment_review.fixes`) itself, reporting what changed on its `sha-reconcile:` line. A non-zero exit after a successful push means the map was NOT recorded — repair workflow state before publishing any recorded SHA.
+   The push auto-rebases onto the updated base. When the rebase rewrites commits, `worktree-push` records the old→new map in `.rebase_map` and rewrites the fix commits stored in workflow state (`fixed_items`, `pr_comment_review.fixes`) itself — a commit that vanished in the rebase becomes `dropped:<sha>`, which is never published as a live SHA — reporting what changed on its `sha-reconcile:` line. A failed push exits with the push's own code after any printed map is applied (the rebase happens before the push). An error saying the map was NOT recorded means it waits in the sidecar the error names — repair workflow state and re-run `worktree-push` before publishing any recorded SHA.
 
    Regenerate any already-drafted publication text from the reconciled state, and resolve every SHA sourced from a review or QA artifact (e.g. a perf QA `benchmark_commit`) through `.rebase_map` before publishing it — follow the chain until no key matches. Publishing an unreconciled pre-rebase SHA is forbidden.
 

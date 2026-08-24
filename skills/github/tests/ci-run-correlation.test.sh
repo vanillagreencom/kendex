@@ -27,7 +27,8 @@ source "$LIB"
 echo "=== single implementation ==="
 
 for script in "$REPO_ROOT/skills/orch/scripts/ci-wait" \
-              "$REPO_ROOT/skills/github/scripts/commands/pr-merge.sh"; do
+              "$REPO_ROOT/skills/github/scripts/commands/pr-merge.sh" \
+              "$REPO_ROOT/skills/github/scripts/commands/ci-classify-refusal.sh"; do
   name="$(basename "$script")"
   if grep -qE '^scope_current_run\(\)' "$script"; then
     fail "$name defines its own scope_current_run (drift reintroduced — source the shared library instead)"
@@ -38,6 +39,19 @@ for script in "$REPO_ROOT/skills/orch/scripts/ci-wait" \
     pass "$name sources the shared library"
   else
     fail "$name sources the shared library"
+  fi
+done
+
+# The bucket taxonomy and run-id capture are exported as CI_RUN_JQ_DEFS; a
+# GitHub-skill script inlining its own `def bucket`/`def runid` copy is the
+# same drift one layer down. (orch ci-wait still carries pre-CI_RUN_JQ_DEFS
+# copies — migrating it is tracked separately, so it is not scanned here.)
+for script in "$REPO_ROOT"/skills/github/scripts/commands/*.sh; do
+  name="$(basename "$script")"
+  if grep -qE 'def (bucket|runid):' "$script"; then
+    fail "$name inlines its own def bucket/def runid (prepend CI_RUN_JQ_DEFS from the shared library instead)"
+  else
+    pass "$name has no local def bucket/def runid copy"
   fi
 done
 

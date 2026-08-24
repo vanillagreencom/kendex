@@ -234,23 +234,11 @@ run_checks() {
         #. Mirrors orch ci-wait's pre-classification scoping.
         local scoped_ci_json ci_classification pending failed
         scoped_ci_json=$(echo "$ci_json" | scope_current_run)
-        head_runs_json=$(echo "$scoped_ci_json" | jq -c '
-            [.[]
-             | select((.workflow // "") != "")
-             | ((.link // "") | (capture("/actions/runs/(?<r>[0-9]+)")? | .r)) // empty
-             | tonumber]
+        head_runs_json=$(echo "$scoped_ci_json" | jq -c "$CI_RUN_JQ_DEFS"'
+            [.[] | select((.workflow // "") != "") | runid | select(. != null)]
             | unique
         ')
-        ci_classification=$(echo "$scoped_ci_json" | jq -c '
-            def bucket:
-                (.bucket // (
-                    if (.state == "SUCCESS") then "pass"
-                    elif (.state == "SKIPPED") then "skipping"
-                    elif ((.state // "") | IN("PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "EXPECTED")) then "pending"
-                    elif (.state == "CANCELLED") then "cancel"
-                    else "fail"
-                    end
-                ));
+        ci_classification=$(echo "$scoped_ci_json" | jq -c "$CI_RUN_JQ_DEFS"'
             {
                 pending: [.[] | select(bucket == "pending") | .name + " (" + .state + ")"],
                 failed: [.[] | select((bucket != "pass") and (bucket != "skipping") and (bucket != "pending")) | .name + " (" + .state + ")"]

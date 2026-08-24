@@ -37,21 +37,31 @@
 # Checks with no parseable run id in `link` (external contexts, default-setup
 # `.../runs/<CHECK_RUN_ID>` links, older gh output with no link) are always kept,
 # deduped by name keeping the latest `startedAt`.
+
+# Shared jq preamble: the run-id extraction and the check-bucket taxonomy,
+# exported as one string so every consumer (this scoping, pr-merge's
+# classification and head_runs, ci-classify-refusal's diagnosis) prepends the
+# SAME definitions — a local `def bucket`/`def runid` copy is the drift this
+# library exists to kill, and ci-run-correlation.test.sh rejects one.
+# `runid` maps a check to its Actions run id (number) or null.
+CI_RUN_JQ_DEFS='
+  def runid:
+    (.link // "")
+    | ((capture("/actions/runs/(?<r>[0-9]+)")? | .r) // null)
+    | (if . == null then null else tonumber end);
+  def bucket:
+    (.bucket // (
+      if (.state == "SUCCESS") then "pass"
+      elif (.state == "SKIPPED") then "skipping"
+      elif ((.state // "") | IN("PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "EXPECTED")) then "pending"
+      elif (.state == "CANCELLED") then "cancel"
+      else "fail"
+      end
+    ));
+'
+
 scope_current_run() {
-  jq -c '
-    def runid:
-      (.link // "")
-      | ((capture("/actions/runs/(?<r>[0-9]+)")? | .r) // null)
-      | (if . == null then null else tonumber end);
-    def bucket:
-      (.bucket // (
-        if (.state == "SUCCESS") then "pass"
-        elif (.state == "SKIPPED") then "skipping"
-        elif ((.state // "") | IN("PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "EXPECTED")) then "pending"
-        elif (.state == "CANCELLED") then "cancel"
-        else "fail"
-        end
-      ));
+  jq -c "$CI_RUN_JQ_DEFS"'
     def status_target:
       ((.link // "") | test("/actions/runs/[0-9]+/?$"));
     # Go renders a missing timestamp as its zero value; treat that as unknown.

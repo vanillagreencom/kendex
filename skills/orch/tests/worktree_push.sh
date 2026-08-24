@@ -2,8 +2,10 @@
 # Regression tests for worktree-push: the push wrapper that reconciles
 # rebased commit SHAs in workflow state. A `rebase-map:` line from the
 # worktree skill's push must land in `.rebase_map` and rewrite every recorded
-# fix commit in the same call; a push that lands with a map the wrapper
-# cannot record must fail loudly, never leave stale SHAs silently.
+# fix commit in the same call — including when the network push itself fails,
+# because the rebase (and its map) happens before the push. A map the wrapper
+# cannot record persists in a sidecar for the retry to consume; nothing may
+# leave stale SHAs silently.
 
 set -euo pipefail
 
@@ -61,19 +63,23 @@ NEW_A="$(printf 'c%.0s' {1..39})2"
 NEW_A2="$(printf 'd%.0s' {1..39})3"
 
 wt="$TMP_ROOT/wt"
-mkdir -p "$wt"
+mkdir -p "$wt/tmp"
+SIDECAR="$wt/tmp/worktree-push-pending-map-KEN-1.json"
 
-# Fresh state with one recorded fix commit per surface: a short SHA prefix of
-# OLD_A in fixed_items, a short prefix of OLD_B (mapped to dropped) in
-# pr_comment_review.fixes.
+# Fresh state with recorded fix commits on both surfaces: a short prefix of
+# OLD_A in fixed_items; in pr_comment_review.fixes one prefix of OLD_B
+# (mapped to dropped) and one longer prefix of OLD_A (mapped to a real SHA),
+# so both the rewrite and the dropped-marking paths run on .fixes.
 reset_state() {
   local work="$1"
   rm -rf "$work"
   mkdir -p "$work"
+  rm -f "$SIDECAR"
   (cd "$work" \
     && "$STATE" init KEN-1 --agent generalist --worktree "$wt" --branch ken-1 >/dev/null \
     && "$STATE" append KEN-1 fixed_items "{\"description\":\"fix\",\"commit\":\"${OLD_A:0:7}\",\"source\":\"pr-review\"}" \
-    && "$STATE" append KEN-1 pr_comment_review.fixes "{\"description\":\"reply fix\",\"commit\":\"${OLD_B:0:8}\",\"source\":\"bot\"}")
+    && "$STATE" append KEN-1 pr_comment_review.fixes "{\"description\":\"reply fix\",\"commit\":\"${OLD_B:0:8}\",\"source\":\"bot\"}" \
+    && "$STATE" append KEN-1 pr_comment_review.fixes "{\"description\":\"second reply fix\",\"commit\":\"${OLD_A:0:10}\",\"source\":\"bot\"}")
 }
 
 run_out="$TMP_ROOT/run.out"
@@ -102,12 +108,19 @@ assert_eq "$(grep -c 'sha-reconcile:' "$run_out" || true)" "0" "no reconcile lin
 assert_eq "$(state_json "$work")" "$before" "state is untouched without a map"
 
 echo
-echo "=== push flags pass through to worktree push ==="
+echo "=== flag parsing and pass-through ==="
 
 args_log="$TMP_ROOT/args.log"
 : >"$args_log"
 STUB_ARGS_LOG="$args_log" STUB_PUSH_STDOUT="" run_push "$work" --worktree "$wt" --issue KEN-1 --set-upstream
 assert_contains "$(cat "$args_log")" "push $wt --set-upstream" "worktree push receives the worktree and pass-through flags"
+
+STUB_PUSH_STDOUT="" run_push "$work" "--worktree=$wt" --issue=KEN-1
+assert_eq "$RUN_RC" "0" "equals-form flags parse"
+
+run_push "$work" --worktree "$wt" --issue KEN-1 --force
+assert_eq "$RUN_RC" "1" "an unknown flag is a usage error, not a silent pass-through"
+assert_contains "$(cat "$run_err")" "unknown option: --force" "the unknown flag is named"
 
 echo
 echo "=== a rebase map is recorded and recorded fix SHAs rewritten ==="
@@ -121,8 +134,10 @@ assert_eq "$RUN_RC" "0" "mapped push exits 0"
 assert_eq "$(state_json "$work" | jq -r ".rebase_map[\"$OLD_A\"]")" "$NEW_A" "old→new mapping recorded"
 assert_eq "$(state_json "$work" | jq -r ".rebase_map[\"$OLD_B\"]")" "dropped" "dropped mapping recorded literally"
 assert_eq "$(state_json "$work" | jq -r '.fixed_items[0].commit')" "${NEW_A:0:7}" "fixed_items short SHA rewritten, truncated to recorded length"
-assert_eq "$(state_json "$work" | jq -r '.pr_comment_review.fixes[0].commit')" "${OLD_B:0:8}" "dropped mapping leaves the recorded commit unchanged"
-assert_contains "$(cat "$run_out")" "sha-reconcile: rebase_map +2, fixed_items 1 rewritten, pr_comment_review.fixes 0 rewritten" "reconcile summary reports what changed"
+assert_eq "$(state_json "$work" | jq -r '.pr_comment_review.fixes[0].commit')" "dropped:${OLD_B:0:8}" "dropped mapping marks the recorded commit unpublishable"
+assert_eq "$(state_json "$work" | jq -r '.pr_comment_review.fixes[1].commit')" "${NEW_A:0:10}" "pr_comment_review.fixes SHA rewritten, truncated to recorded length"
+assert_contains "$(cat "$run_out")" "sha-reconcile: rebase_map +2, fixed_items 1 rewritten, pr_comment_review.fixes 2 rewritten" "reconcile summary reports what changed"
+[[ ! -f "$SIDECAR" ]] && pass "sidecar deleted after a successful state write" || fail "sidecar deleted after a successful state write"
 
 echo
 echo "=== a second push chains through the already-rewritten SHA ==="
@@ -131,33 +146,47 @@ STUB_PUSH_STDOUT="rebase-map: $NEW_A $NEW_A2" run_push "$work" --worktree "$wt" 
 assert_eq "$RUN_RC" "0" "second mapped push exits 0"
 assert_eq "$(state_json "$work" | jq -r '.rebase_map | length')" "3" "second map merges into rebase_map"
 assert_eq "$(state_json "$work" | jq -r '.fixed_items[0].commit')" "${NEW_A2:0:7}" "already-rewritten SHA follows the new mapping"
+assert_eq "$(state_json "$work" | jq -r '.pr_comment_review.fixes[0].commit')" "dropped:${OLD_B:0:8}" "a dropped-marked commit stays marked across pushes"
 
 echo
-echo "=== a failed push touches nothing and keeps its exit code ==="
+echo "=== a failed push still applies its map (rebase precedes the push) ==="
 
 work="$TMP_ROOT/work-failed"
 reset_state "$work"
-before="$(state_json "$work")"
 STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" STUB_PUSH_EXIT=7 run_push "$work" --worktree "$wt" --issue KEN-1
 assert_eq "$RUN_RC" "7" "push failure keeps the push's exit code"
-assert_eq "$(state_json "$work")" "$before" "state is untouched on push failure"
+assert_eq "$(state_json "$work" | jq -r ".rebase_map[\"$OLD_A\"]")" "$NEW_A" "map from a failed push is still recorded"
+assert_eq "$(state_json "$work" | jq -r '.fixed_items[0].commit')" "${NEW_A:0:7}" "fix SHA rewritten even though the push failed"
+[[ ! -f "$SIDECAR" ]] && pass "sidecar consumed on the failed-push path too" || fail "sidecar consumed on the failed-push path too"
 
 echo
-echo "=== a map the wrapper cannot record fails loudly ==="
+echo "=== a map the wrapper cannot record persists for the retry ==="
 
 # No state file: the push landed, the SHAs are stale, and silence here is the
-# exact failure mode the wrapper exists to close.
+# exact failure mode the wrapper exists to close — the map waits in the
+# sidecar and the next run consumes it before pushing.
 work="$TMP_ROOT/work-nostate"
-mkdir -p "$work"
+rm -rf "$work" && mkdir -p "$work"
+rm -f "$SIDECAR"
 STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" run_push "$work" --worktree "$wt" --issue KEN-1
 assert_eq "$RUN_RC" "1" "missing state file fails the call"
 assert_contains "$(cat "$run_err")" "NOT recorded" "missing state names the unreconciled-SHA consequence"
+[[ -f "$SIDECAR" ]] && pass "unapplied map persists in the sidecar" || fail "unapplied map persists in the sidecar"
+
+(cd "$work" \
+  && "$STATE" init KEN-1 --agent generalist --worktree "$wt" --branch ken-1 >/dev/null \
+  && "$STATE" append KEN-1 fixed_items "{\"description\":\"fix\",\"commit\":\"${OLD_A:0:7}\",\"source\":\"pr-review\"}")
+STUB_PUSH_STDOUT="→ pushed" run_push "$work" --worktree "$wt" --issue KEN-1
+assert_eq "$RUN_RC" "0" "retry after repairing state exits 0"
+assert_eq "$(state_json "$work" | jq -r '.fixed_items[0].commit')" "${NEW_A:0:7}" "retry consumes the sidecar map before pushing"
+[[ ! -f "$SIDECAR" ]] && pass "sidecar deleted after the retry applies it" || fail "sidecar deleted after the retry applies it"
 
 work="$TMP_ROOT/work-badmap"
 reset_state "$work"
 STUB_PUSH_STDOUT="rebase-map: not-a-sha $NEW_A" run_push "$work" --worktree "$wt" --issue KEN-1
 assert_eq "$RUN_RC" "1" "unparseable map line fails the call"
 assert_contains "$(cat "$run_err")" "NOT reconciled" "unparseable map names the unreconciled-SHA consequence"
+[[ ! -f "$SIDECAR" ]] && pass "no sidecar is written for an unparseable map" || fail "no sidecar is written for an unparseable map"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
