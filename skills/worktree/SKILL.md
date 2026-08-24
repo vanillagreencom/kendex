@@ -27,7 +27,7 @@ Worktrees live at `<parent-of-checkout>/.worktrees/<checkout-name>/{id}`, outsid
 
 | Command | Description |
 |---------|-------------|
-| `create` | Claim a new issue worktree. Bare `create <ID>` is a new-work claim, not a discovery command: existing ownership (worktree, branch, or PR) exits 75 and leaves local branches unchanged — inspect or monitor owned work instead of spawning a second implementer. Reuse, conflict recovery, and `--recover-local`: `create --help` |
+| `create` | Claim a new issue worktree — a new-work claim, not a discovery command: existing ownership exits 75, and owned work is inspected or monitored, never given a second implementer. Reuse, conflict recovery, `--recover-local`: `create --help` |
 | `restack` | Guardedly continue, skip, or abort a tool-created paused restack |
 | `list` | List all worktrees |
 | `remove` | Remove worktree, clean symlinks, prune branches |

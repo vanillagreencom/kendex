@@ -4,8 +4,9 @@ A tighten-only gate on file size. New code cannot introduce a tracked file
 over the line threshold; files already over it are frozen in a baseline at
 their current counts and may only shrink. Growth is never automated away:
 the single path to a bigger number is a human editing the baseline row in a
-reviewed diff, with the justification on the record. `SKILL.md` is the full
-verdict-and-flag reference; `DEVELOPMENT.md` covers internals.
+reviewed diff, with the justification on the record. Flags and exit codes:
+`size-ratchet --help`; verdict details: [Semantics](#semantics) below;
+`DEVELOPMENT.md` covers internals.
 
 ## Usage
 

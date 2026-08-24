@@ -1245,7 +1245,7 @@ grep -qF -- ".probe." "$unwritable_count" 2>/dev/null \
 exit_code_prose='0 lease for this owner, 1 path not registered, 3 unclaimed, 4 locked outside the guard, 75'
 assert_contains_prose "$ROOT_DIR/README.md" "$exit_code_prose"
 
-# The tool's own usage table is the fourth copy of the contract and drifted
+# The tool's own usage table restates the same contract and drifted
 # once already, so pin it too — including the refusal --stale added, which the
 # table's original wording did not cover.
 assert_contains_prose "$GUARD" \

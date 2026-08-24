@@ -29,9 +29,9 @@ human editing the row in a reviewed diff.
 .agents/skills/size-ratchet/scripts/size-ratchet --seed     # write the FIRST baseline
 ```
 
-Flags, verdict classes, `SIZE_RATCHET_*` keys, and exit codes:
-`size-ratchet --help`. Semantics, baseline/excludes formats, path classes,
-and seeding: [README.md](README.md). Collection internals and the migration
+Flags, `SIZE_RATCHET_*` keys, and exit codes: `size-ratchet --help`.
+Verdict classes, semantics, baseline/excludes formats, path classes, and
+seeding: [README.md](README.md). Collection internals and the migration
 note for repos already using this format: [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Responding to a failure
