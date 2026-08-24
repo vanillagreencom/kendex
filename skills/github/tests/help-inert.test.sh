@@ -37,6 +37,19 @@ check "pr-view --help routes to the subcommand help" "View PR details" pr-view -
 check "pr-merge -h routes to the subcommand help" "Merge PR" pr-merge -h
 check "pr-view 123 --help routes late-position help" "View PR details" pr-view 123 --help
 check "pr-merge 42 -h routes late-position help" "Merge PR" pr-merge 42 -h
+# Arity is command-scoped: --body selects a field in sticky-comment (takes
+# no value), and an option invalid for the routed command consumes nothing
+# — a --help behind either is still a help request, so neither run may
+# source the repository's .env.
+check "sticky-comment 23 --body --help routes to help" "Sticky" sticky-comment 23 --body --help
+set +e
+err=$(cd "$TMP/repo" && "$GITHUB_SH" pr-merge --body --help 2>&1)
+set -e
+if grep -qF "Unknown option: --body" <<<"$err"; then
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "pr-merge --body --help is help-routed; the parser then names the invalid option"
+else
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "pr-merge --body --help is help-routed; the parser then names the invalid option"
+fi
 
 if [[ -e "$TMP/env-executed" ]]; then
   FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "help sourced the project .env"

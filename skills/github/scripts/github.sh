@@ -107,13 +107,26 @@ case "$command" in
     help|--help|-h) show_help; exit 0 ;;
 esac
 
-# Does this option consume the following argument? Names whose arity
-# differs by subcommand (--pr, --json) resolve against the routed command.
+# Does this option consume the following argument? Arity is a property of
+# one command's parser, never of an option name — --body selects a field in
+# sticky-comment but takes a body in post-comment — so every entry is
+# command-scoped. An option invalid for the routed command consumes
+# nothing, so a --help after it is still a help request.
 _takes_value() {
-    case "$1" in
-        --body|--body-file|--title|--message|--pattern|--author|--user|--base|--head|--label|--lines|--interval|--max-iter) return 0 ;;
-        --pr) [ "$command" = "post-reply" ] ;;
-        --json) [ "$command" = "pr-view" ] ;;
+    case "$command:$1" in
+        await-mergeable:--interval | await-mergeable:--max-iter) return 0 ;;
+        ci-logs:--lines) return 0 ;;
+        dismiss-review:--message | dismiss-review:--user) return 0 ;;
+        edit-comment:--body | edit-comment:--body-file) return 0 ;;
+        find-comment:--author | find-comment:--pattern) return 0 ;;
+        post-comment:--body | post-comment:--body-file) return 0 ;;
+        post-reply:--body | post-reply:--body-file | post-reply:--pr) return 0 ;;
+        pr-create:--title | pr-create:--body | pr-create:--body-file) return 0 ;;
+        pr-create:--base | pr-create:--head | pr-create:--label) return 0 ;;
+        pr-data:--format | pr-threads:--format) return 0 ;;
+        pr-edit-body:--body-file) return 0 ;;
+        pr-view:--json) return 0 ;;
+        sticky-comment:--bot) return 0 ;;
         *) return 1 ;;
     esac
 }
