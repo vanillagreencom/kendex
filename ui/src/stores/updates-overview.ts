@@ -1,4 +1,4 @@
-import type { ItemWarning, UpdateRow } from "@/bindings";
+import { commands, type ItemWarning, type UpdateRow } from "@/bindings";
 import { settled } from "@/lib/settled";
 import { landings } from "./landings";
 
@@ -72,7 +72,17 @@ export function overviewApplier(
       if (kind === "refresh") {
         order.landAuthoritative();
         set({ loaded: false, error: response.error });
+        return response.error;
       }
+      // A mutation can commit and then fail building its overview: the
+      // rows on screen may no longer be the truth, so one reconciling
+      // read answers either way — success lands whatever actually
+      // committed, failure marks the retained rows stale under the
+      // operation's own error.
+      const reread = await settled<Overview>(commands.updatesOverview());
+      order.landAuthoritative();
+      if (reread.status === "ok") landOk(reread.data);
+      else set({ loaded: false, error: response.error });
       return response.error;
     });
     // The chain outlives a link that throws; the error still reaches this

@@ -8,39 +8,16 @@ import {
 } from "@/lib/copy-updates";
 import { scopeKey } from "@/lib/scope";
 import {
-  packageCount,
   placeName,
   skippedPlaces,
   updatablePlaces,
+  visibleUpdates,
 } from "@/lib/update-groups";
 import { bulkUpdateToast } from "@/lib/update-toasts";
 import { useAuditStore } from "./audit";
 import { useProblemsStore } from "./problems";
 import { useScanStore } from "./scan";
 import { overviewApplier } from "./updates-overview";
-
-/** A row worth a line on the page: a newer version, a package gone from
- *  its source, or installs disagreeing on their version — each a standing
- *  fact someone can act on. */
-const noteworthy = (row: UpdateRow): boolean =>
-  row.updateAvailable || row.removedUpstream || row.mixed;
-
-/** The sidebar badge's number: packages with news someone would want to
- *  hear, counted once however many places they are installed in. Ignored
- *  ones asked not to be counted; held ones still count — a hold is "not
- *  yet", not "never tell me". */
-export const visibleUpdateCount = (rows: UpdateRow[]): number =>
-  packageCount(visibleUpdates(rows));
-
-/** The Updates page's main list: everything noteworthy that has not been
- *  muted. */
-export const visibleUpdates = (rows: UpdateRow[]): UpdateRow[] =>
-  rows.filter((row) => noteworthy(row) && !row.ignored);
-
-/** The collapsed "hidden updates" section: muted packages whose news is
- *  still real — with the way back out. */
-export const hiddenUpdates = (rows: UpdateRow[]): UpdateRow[] =>
-  rows.filter((row) => noteworthy(row) && row.ignored);
 
 interface UpdatesState {
   rows: UpdateRow[];
@@ -57,6 +34,12 @@ interface UpdatesState {
   error: string | null;
   load: () => Promise<void>;
   check: () => Promise<void>;
+  /** Run backend-mutating work on the same chain as every other side
+   *  effect, landing a fresh overview after it — so operations land in
+   *  commit order and none of their answers can shadow a newer one.
+   *  Returns the work's own error, or null; the overview that follows
+   *  reflects whatever actually committed either way. */
+  mutate: (work: () => Promise<string | null>) => Promise<string | null>;
   updateOne: (row: UpdateRow) => Promise<void>;
   /** Bring every updatable place among `rows` current — the page-level
    *  button passes every visible row, a package's button its own places. */
@@ -107,6 +90,15 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
       await reload();
     },
 
+    mutate: async (work) => {
+      let failure: string | null = null;
+      await applyOverview(async () => {
+        failure = await work();
+        return commands.updatesOverview();
+      }, "mutation");
+      return failure;
+    },
+
     check: async () => {
       // A check already running answers this click too; a second in flight
       // would land last-write-wins and could overwrite the fresh answer
@@ -127,7 +119,14 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     updateOne: async (row) => {
       set({ busy: true });
       try {
-        if (await apply(row)) {
+        // The commit and its follow-up overview ride the side-effect
+        // chain, so nothing older can land on top of them.
+        let applied = false;
+        await get().mutate(async () => {
+          applied = await apply(row);
+          return null;
+        });
+        if (applied) {
           // A follower comes current by applying its scope, which brings
           // that scope's other followers along — the toast says so rather
           // than letting the extra changes look like a surprise.
@@ -136,7 +135,6 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
               ? updatedToastLabel(row.name)
               : updatedWithPlaceToastLabel(row.name, placeName(row.scope)),
           );
-          await reload();
           await useScanStore.getState().refresh();
           await useAuditStore.getState().refresh({ force: true });
         }
@@ -161,26 +159,30 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
         }
         // Move every hold first — each move applies its whole scope, so
         // that scope's followers are already current — then one apply per
-        // scope no hold touched. Never two applies for one scope.
+        // scope no hold touched. Never two applies for one scope. The
+        // whole sequence and its follow-up overview ride the side-effect
+        // chain, so nothing older can land on top of them.
         let ok = true;
-        const applied = new Set<string>();
-        for (const row of rows.filter((row) => row.pinned)) {
-          if (await apply(row)) applied.add(scopeKey(row.scope));
-          else ok = false;
-        }
-        const scopes = new Map(
-          rows
-            .filter((row) => !row.pinned && !applied.has(scopeKey(row.scope)))
-            .map((row) => [scopeKey(row.scope), row] as const),
-        );
-        for (const row of scopes.values()) {
-          const response = await commands.applyPlan(row.scope, false, []);
-          if (response.status === "error") {
-            showError(UPDATE_ERROR_TITLE, response.error);
-            ok = false;
+        await get().mutate(async () => {
+          const applied = new Set<string>();
+          for (const row of rows.filter((row) => row.pinned)) {
+            if (await apply(row)) applied.add(scopeKey(row.scope));
+            else ok = false;
           }
-        }
-        await reload();
+          const scopes = new Map(
+            rows
+              .filter((row) => !row.pinned && !applied.has(scopeKey(row.scope)))
+              .map((row) => [scopeKey(row.scope), row] as const),
+          );
+          for (const row of scopes.values()) {
+            const response = await commands.applyPlan(row.scope, false, []);
+            if (response.status === "error") {
+              showError(UPDATE_ERROR_TITLE, response.error);
+              ok = false;
+            }
+          }
+          return null;
+        });
         if (ok)
           toast.success(
             bulkUpdateToast(rows, skipped, visibleUpdates(get().rows)),
@@ -200,16 +202,16 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
       if (!auto && hold === null) return;
       set({ busy: true });
       try {
-        const response = await commands.packageSetRev(
-          row.scope,
-          row.kind,
-          row.name,
-          auto ? null : hold,
-        );
-        if (response.status === "error") {
-          showError(UPDATE_ERROR_TITLE, response.error);
-        }
-        await reload();
+        const error = await get().mutate(async () => {
+          const response = await commands.packageSetRev(
+            row.scope,
+            row.kind,
+            row.name,
+            auto ? null : hold,
+          );
+          return response.status === "error" ? response.error : null;
+        });
+        if (error !== null) showError(UPDATE_ERROR_TITLE, error);
       } finally {
         set({ busy: false });
       }

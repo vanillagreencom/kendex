@@ -2,13 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
-import { useProblemsStore } from "./problems";
 import {
   hiddenUpdates,
-  useUpdatesStore,
   visibleUpdateCount,
   visibleUpdates,
-} from "./updates";
+} from "@/lib/update-groups";
+import { useProblemsStore } from "./problems";
+import { useUpdatesStore } from "./updates";
 
 vi.mock("@/bindings", () => ({
   commands: {
@@ -326,6 +326,57 @@ describe("updates store", () => {
     expect(useUpdatesStore.getState().rows).toEqual(secondState);
   });
 
+  // An update's commit and its follow-up overview ride the same chain as
+  // every other side effect, so a slower mutation answered earlier cannot
+  // land its older rows on top of the update's fresh ones.
+  it("an update's overview is not shadowed by an older mutation's answer", async () => {
+    let resolveMute!: (
+      value: Awaited<ReturnType<typeof commands.updateSetIgnored>>,
+    ) => void;
+    vi.mocked(commands.updateSetIgnored).mockReturnValue(
+      new Promise((resolve) => {
+        resolveMute = resolve;
+      }),
+    );
+    const muting = useUpdatesStore.getState().setIgnored(row({}), true);
+
+    vi.mocked(commands.applyPlan).mockResolvedValue({
+      status: "ok",
+      data: {
+        scope: { scope: "global" },
+        drift: [],
+        plan: [],
+        notes: [],
+        warnings: [],
+        safety: [],
+        adoptable: ADOPTABLE,
+        exits: [],
+        heldBack: [],
+        queued: [],
+      },
+    });
+    const updated: UpdateRow[] = [];
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: updated, warnings: [] },
+    });
+    vi.mocked(commands.scanMachine).mockResolvedValue({
+      status: "ok",
+      data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
+    });
+    vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
+    const updating = useUpdatesStore.getState().updateOne(row({}));
+
+    resolveMute({
+      status: "ok",
+      data: { rows: [row({ ignored: true })], warnings: [] },
+    });
+    await muting;
+    await updating;
+
+    expect(useUpdatesStore.getState().rows).toEqual(updated);
+  });
+
   // An explicit check that failed is an answer to report: a quicker plain
   // load landing in between must not bury it and leave stale rows marked
   // current.
@@ -351,9 +402,9 @@ describe("updates store", () => {
     expect(useUpdatesStore.getState().error).toBe("mirror down");
   });
 
-  // A refused mute re-read nothing: the rows on screen are still the last
-  // good read's answer, and marking them stale would disable Update
-  // buttons over a failure that had nothing to do with checking.
+  // A failed mute may still have committed before erroring, so the store
+  // re-reads rather than trusting either story: here the truth confirms
+  // the kept rows, and nothing is marked stale.
   it("a mute that fails leaves the last good read trusted", async () => {
     const kept = [row({})];
     useUpdatesStore.setState({ rows: kept, loaded: true, error: null });
@@ -364,6 +415,10 @@ describe("updates store", () => {
       status: "error",
       error: "manifest busy",
     });
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: kept, warnings: [] },
+    });
 
     await useUpdatesStore.getState().setIgnored(row({}), true);
 
@@ -373,6 +428,45 @@ describe("updates store", () => {
     // The refusal still reaches the person, through the error modal.
     expect(useProblemsStore.getState().dialog.open).toBe(true);
     expect(useProblemsStore.getState().dialog.message).toBe("manifest busy");
+  });
+
+  // The backend can persist the preference and then fail building its
+  // overview: the reconciling read lands what actually committed instead
+  // of leaving the old row marked current.
+  it("a mute that commits but errors re-reads the truth", async () => {
+    useUpdatesStore.setState({ rows: [row({})], loaded: true, error: null });
+    vi.mocked(commands.updateSetIgnored).mockResolvedValue({
+      status: "error",
+      error: "couldn't rebuild the overview",
+    });
+    const muted = [row({ ignored: true })];
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: muted, warnings: [] },
+    });
+
+    await useUpdatesStore.getState().setIgnored(row({}), true);
+
+    expect(useUpdatesStore.getState().rows).toEqual(muted);
+    expect(useUpdatesStore.getState().loaded).toBe(true);
+  });
+
+  it("marks the rows stale when the reconciling read also fails", async () => {
+    const kept = [row({})];
+    useUpdatesStore.setState({ rows: kept, loaded: true, error: null });
+    vi.mocked(commands.updateSetIgnored).mockResolvedValue({
+      status: "error",
+      error: "half done",
+    });
+    vi.mocked(commands.updatesOverview).mockRejectedValue(
+      new Error("ipc down"),
+    );
+
+    await useUpdatesStore.getState().setIgnored(row({}), true);
+
+    expect(useUpdatesStore.getState().rows).toEqual(kept);
+    expect(useUpdatesStore.getState().loaded).toBe(false);
+    expect(useUpdatesStore.getState().error).toBe("half done");
   });
 
   it("muting keeps the row, flagged — and unmuting brings it back", async () => {

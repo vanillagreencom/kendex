@@ -31,13 +31,14 @@ import {
   updatesSubtitle,
 } from "@/lib/copy-updates";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
-import { packageCount, updatablePlaces } from "@/lib/update-groups";
-import { cn } from "@/lib/utils";
 import {
   hiddenUpdates,
-  useUpdatesStore,
+  packageCount,
+  updatablePlaces,
   visibleUpdates,
-} from "@/stores/updates";
+} from "@/lib/update-groups";
+import { cn } from "@/lib/utils";
+import { useUpdatesStore } from "@/stores/updates";
 
 /** Which packages have newer versions, what changed, and per-package
  *  control over how loudly to hear about it. */

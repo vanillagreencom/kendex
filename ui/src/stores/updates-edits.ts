@@ -14,14 +14,15 @@ import { useUpdatesStore } from "./updates";
 const run = async (work: () => Promise<string | null>) => {
   useUpdatesStore.setState({ busy: true });
   try {
-    const error = await work();
+    // The commit and the overview that follows ride the updates store's
+    // side-effect chain, in commit order with every other operation.
+    const error = await useUpdatesStore.getState().mutate(work);
     if (error !== null) {
       useProblemsStore
         .getState()
         .showError({ title: FORK_ERROR_TITLE, message: error });
       return;
     }
-    await useUpdatesStore.getState().load();
     await useScanStore.getState().refresh();
     await useAuditStore.getState().refresh({ force: true });
   } finally {

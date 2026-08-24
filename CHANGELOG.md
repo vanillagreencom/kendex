@@ -314,8 +314,12 @@ changes carry a **Breaking** call-out with their migration note inline.
   no longer land out of order — a slow early read cannot overwrite a
   fresher answer or take back a change that just succeeded, a check that
   fetched the sources outranks any quicker re-read of old mirrors whether
-  it succeeded or failed, and back-to-back changes land in the order they
-  were made.
+  it succeeded or failed, and back-to-back changes — updates, mutes,
+  follow switches, and fork decisions alike — land in the order they were
+  made. A change that fails midway re-reads the standing rather than
+  presenting the old rows as current. The status footer stops saying "Up
+  to date" beside a failed scan: a failed first scan reads "Couldn't
+  scan", and a kept result is labeled last-scanned instead of current.
 - `kendex apply --replace-unmanaged` no longer gives up on the whole scope
   because one item cannot be settled. A repo arriving on kendex with one
   odd corner — say, a shortcut somebody set up where a skill installs —
