@@ -287,10 +287,10 @@ A thread is new when its `threads[].id` is not in `known`. No new threads → §
 
 | Outcome | Response |
 |---------|----------|
-| Applied | `Applied in [SHA]` |
-| Skipped (decision) | `Acknowledged — contradicts [DECISION_ID]` |
-| Skipped (not actionable) | `Acknowledged — not actionable` |
-| Blocked or issue created | `Tracking in [ISSUE_ID]` |
+| Applied | `Fixed in [SHA]` |
+| Skipped (decision) | `Declined: contradicts [DECISION_ID]` |
+| Skipped (not actionable) | `Declined: not actionable` |
+| Blocked or issue created | `Tracked: [ISSUE_ID]` (issue exists first) |
 | Question | The finding's `draft_response` |
 
 Use inline `--body` only for plain strings; Markdown with backticks or fences goes to a file and `--body-file` (`post-reply` for threads, `post-comment` for PR-level). Number lists `1.` `2.` `3.`, never `#N`.
