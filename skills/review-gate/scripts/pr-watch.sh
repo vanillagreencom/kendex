@@ -487,6 +487,11 @@ for number in $pr_numbers; do
   case "$verdict" in
     untracked-claim)
       emit "$number" "$head" untracked-claim "$detail$queued"
+      attention=1
+      if [ "$gate_state" = "success" ]; then
+        emit "$number" "$head" gate-stale "an unanchored tracking claim but the newest '$GATE_CONTEXT' row is success — the writer has not converged$queued"
+        heal "$number" "$head"
+      fi
       continue
       ;;
     threads-open)
