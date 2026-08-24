@@ -61,6 +61,9 @@ assert_not_contains() {
 
 mkdir -p "$TMP_ROOT/repo/.agents/skills"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
+# review-gate too: --resolve-mode reads REVIEW_GATE_MODE through that
+# skill's own settings resolver when it is installed.
+ln -s "$REPO_ROOT/skills/review-gate" "$TMP_ROOT/repo/.agents/skills/review-gate"
 git -C "$TMP_ROOT/repo" init -q
 git -C "$TMP_ROOT/repo" config user.email test@example.com
 git -C "$TMP_ROOT/repo" config user.name Test
@@ -149,6 +152,34 @@ EOF
 assert_eq "$(run_resolve_mode)" "review" "resolve: dotenv PR_REVIEW_GATE keeps full precedence (control)"
 rm -f "$TMP_ROOT/repo/.env"
 
+# REVIEW_GATE_MODE goes through the ENGINE's resolver (rg_setting), so its
+# settings-file semantics are the engine's, not the generic loader's.
+cat > "$TMP_ROOT/repo/kendex.settings.toml" <<'EOF'
+[env]
+REVIEW_GATE_MODE = "off"
+EOF
+assert_eq "$(run_resolve_mode REVIEW_GATE_SETTINGS_FILE=/dev/null)" "approval" "resolve: REVIEW_GATE_SETTINGS_FILE=/dev/null forces the default over settings off"
+rm -f "$TMP_ROOT/repo/kendex.settings.toml"
+cat > "$TMP_ROOT/repo/alt-settings.toml" <<'EOF'
+REVIEW_GATE_MODE = "off"
+EOF
+assert_eq "$(run_resolve_mode REVIEW_GATE_SETTINGS_FILE=alt-settings.toml)" "off" "resolve: the REVIEW_GATE_SETTINGS_FILE override is honored"
+rm -f "$TMP_ROOT/repo/alt-settings.toml"
+# The engine fails loud on a duplicate assignment; the waiter propagates it
+# instead of quietly picking a value the predicate would reject.
+cat > "$TMP_ROOT/repo/kendex.settings.toml" <<'EOF'
+REVIEW_GATE_MODE = "off"
+REVIEW_GATE_MODE = "enforce"
+EOF
+stderr="$TMP_ROOT/dup.err"
+set +e
+run_resolve_mode >/dev/null 2>"$stderr"
+rc=$?
+set -e
+assert_eq "$rc" "2" "resolve: a duplicate REVIEW_GATE_MODE assignment fails loud" "$stderr"
+assert_contains "$(cat "$stderr")" "assigned more than once" "resolve: the duplicate diagnostic names the cause"
+rm -f "$TMP_ROOT/repo/kendex.settings.toml"
+
 echo "=== -h/--help answer in the arg parser (KEN-556) ==="
 
 # Usage must terminate before auth or any gh call — --help was once consumed
@@ -202,6 +233,30 @@ else
 fi
 rm -f "$TMP_ROOT/argval-gh.calls"
 
+
+
+# Missing arguments are the usage-error class (exit 2), never exit 1 —
+# exit 1 is reserved for operational review results.
+stderr="$TMP_ROOT/missing.err"
+set +e
+output=$(run_help 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "2" "missing PR# exits 2" "$stderr"
+assert_contains "$(cat "$stderr")" "missing required <PR#>" "missing PR# names the argument"
+
+set +e
+output=$(run_help 1 --mode 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "2" "--mode without a value exits 2" "$stderr"
+assert_contains "$(cat "$stderr")" "requires a value" "--mode diagnostic names the requirement"
+
+set +e
+output=$(run_help 1 --on-timeout 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "2" "--on-timeout without a value exits 2" "$stderr"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

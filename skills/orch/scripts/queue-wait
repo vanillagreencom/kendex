@@ -174,7 +174,8 @@ Exit codes:
   0  merged
   1  ejected, disarmed, dequeued, closed, still-queued at the deadline,
      never armed, or a non-auth error
-  2  usage error: unknown flag or non-integer argument (matches ci-wait)
+  2  usage error: missing PR#, unknown flag, or non-integer argument
+     (matches ci-wait)
   3  GitHub auth/CLI error (matches ci-wait and approval-wait)
 USAGE
 }
@@ -204,7 +205,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-PR_NUM="${POSITIONAL[0]:?Usage: queue-wait <PR#> [poll_interval] [max_wait] [--json] [--no-check-probe]}"
+if [[ "${#POSITIONAL[@]}" -lt 1 ]]; then
+  echo "queue-wait: missing required <PR#> argument" >&2
+  print_usage >&2
+  exit 2
+fi
+PR_NUM="${POSITIONAL[0]}"
 POLL_INTERVAL="${POSITIONAL[1]:-30}"
 MAX_WAIT="${POSITIONAL[2]:-2400}"
 START_TIME="$(date +%s)"

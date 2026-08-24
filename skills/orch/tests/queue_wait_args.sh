@@ -96,6 +96,12 @@ assert_eq "$rc" "2" "unknown flag exits 2" "$err"
 assert_contains "$(cat "$err")" "unknown option" "unknown-flag error names the flag, not a positional" "$err"
 
 
+# Missing PR# is the usage-error class (exit 2), never exit 1.
+err="$TMP_ROOT/e-missing"
+run_qw >/dev/null 2>"$err" && rc=0 || rc=$?
+assert_eq "$rc" "2" "missing PR# exits 2" "$err"
+assert_contains "$(cat "$err")" "missing required <PR#>" "missing PR# names the argument" "$err"
+
 if [[ -e "$TMP_ROOT/argval-gh.calls" ]]; then
   assert_eq "$(cat "$TMP_ROOT/argval-gh.calls")" "" "no case above ever invoked gh"
 else

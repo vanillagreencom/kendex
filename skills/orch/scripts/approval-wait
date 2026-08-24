@@ -74,10 +74,13 @@ instead of idling out the full timeout.
 
 Mode resolution (--resolve-mode): prints the effective mode and exits;
 needs no auth or PR argument. Resolved FIRST is REVIEW_GATE_MODE — the
-ENGINE's per-repo gate disable, read from process env and
-kendex.settings.toml ONLY: the engine never reads .env files, so neither
-does this key — a value in .env/.env.local is ignored (the PR_REVIEW_*
-keys keep full dotenv precedence). Exactly "off" prints "off"; any other
+ENGINE's per-repo gate disable, read through the review-gate engine's own
+resolver (rg_setting) when that skill is installed: set-even-empty process
+env, then the REVIEW_GATE_SETTINGS_FILE-selected settings file (/dev/null
+means defaults only), else "enforce"; a malformed or duplicate assignment
+fails loud (exit 2). The engine never reads .env files, so neither does
+this key (the PR_REVIEW_* keys keep full dotenv precedence); without the
+review-gate skill the same source set is read via the generic loader. Exactly "off" prints "off"; any other
 value leaves the reviewer keys authoritative. Then PR_REVIEW_GATE
 (approval|review|off) when set; otherwise the legacy PR_APPROVAL_GATE maps
 on -> approval and off -> off; both unset defaults to approval. An
@@ -181,7 +184,8 @@ Exit codes:
      (deadline reached under PR_REVIEW_ON_TIMEOUT=proceed)
   1  changes requested, unresolved comments pending, timeout, or a
      non-auth error
-  2  invalid --mode value or unknown flag
+  2  usage error: missing or empty argument, invalid --mode value, or
+     unknown flag
   3  hard GitHub auth/CLI failure (matches ci-wait and queue-wait)
 USAGE
 }
@@ -198,11 +202,13 @@ while [[ $# -gt 0 ]]; do
     --json) JSON_OUTPUT=true; shift ;;
     --resolve-mode) RESOLVE_MODE=true; shift ;;
     --mode)
-      MODE="${2:?approval-wait: --mode requires a value: approval or review}"
+      [[ -n "${2:-}" ]] || { echo "approval-wait: --mode requires a value: approval or review" >&2; exit 2; }
+      MODE="$2"
       shift 2
       ;;
     --on-timeout)
-      ON_TIMEOUT_FLAG="${2:?approval-wait: --on-timeout requires a value: block or proceed}"
+      [[ -n "${2:-}" ]] || { echo "approval-wait: --on-timeout requires a value: block or proceed" >&2; exit 2; }
+      ON_TIMEOUT_FLAG="$2"
       shift 2
       ;;
     -*)
@@ -230,18 +236,31 @@ if $RESOLVE_MODE; then
   # keys authoritative — the engine predicate is where a bad value fails
   # loud, and a typo must never silently disable a wait.
   #
-  # Resolved with the ENGINE's own source set — explicit env (set wins even
-  # when empty) > the repo's kendex.settings.toml > enforce — never .env or
-  # .env.local, and not through orch-env (whose ladder includes both dotenv
-  # files): a dotenv-only value would turn the waiter off while the gate
-  # stays enforcing, splitting the two (PR #1615). The PR_REVIEW_* keys
-  # below keep the full dotenv precedence.
-  if [[ -n "${REVIEW_GATE_MODE+x}" ]]; then
+  # Resolved through the ENGINE's own resolver so waiter and gate cannot
+  # split by construction (PR #1615): rg_setting honors set-even-empty env,
+  # the REVIEW_GATE_SETTINGS_FILE override (including the /dev/null
+  # force-defaults sentinel), never reads dotenv, and fails loud on a
+  # malformed or duplicate assignment — exactly as the predicate does.
+  # Subshell so the sourced lib leaks nothing; cd because the engine
+  # resolves its default settings path relative to the repo root.
+  rg_lib="$SCRIPT_DIR/../../review-gate/scripts/lib/settings.sh"
+  if [[ -f "$rg_lib" ]]; then
+    if ! engine_gate_mode="$(
+      cd "$PROJECT_ROOT" || exit 1
+      # shellcheck source=/dev/null
+      . "$rg_lib"
+      rg_setting REVIEW_GATE_MODE "enforce"
+    )"; then
+      echo "approval-wait: REVIEW_GATE_MODE could not be resolved through the review-gate settings lib (see error above)" >&2
+      exit 2
+    fi
+  elif [[ -n "${REVIEW_GATE_MODE+x}" ]]; then
+    # Review-gate not installed: no engine exists to split from. Mirror its
+    # source set anyway — set-even-empty env, else the repo's settings file,
+    # never dotenv.
     engine_gate_mode="$REVIEW_GATE_MODE"
   else
     engine_gate_mode="$(
-      # Subshell: the settings load must not leak other [env] keys into
-      # this process ahead of the full-precedence load below.
       # shellcheck source=lib/kendex-env.sh
       source "$SCRIPT_DIR/lib/kendex-env.sh"
       kendex_load_settings_file "$PROJECT_ROOT/kendex.settings.toml"
@@ -284,7 +303,12 @@ case "$MODE" in
     ;;
 esac
 
-PR_NUM="${POSITIONAL[0]:?Usage: approval-wait <PR#> [poll_interval] [max_wait] [--json] [--mode approval|review]}"
+if [[ "${#POSITIONAL[@]}" -lt 1 ]]; then
+  echo "approval-wait: missing required <PR#> argument" >&2
+  print_usage >&2
+  exit 2
+fi
+PR_NUM="${POSITIONAL[0]}"
 POLL_INTERVAL="${POSITIONAL[1]:-15}"
 # Absent positional resolves through the per-repo quiet-period setting:
 # env > kendex.settings.toml > 900. orch-env's numeric-default guard keeps
