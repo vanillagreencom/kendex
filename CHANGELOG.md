@@ -132,8 +132,8 @@ changes carry a **Breaking** call-out with their migration note inline.
   with no `[guards]` tables refuse every commit until `kendex guard
   import-v1` converts them once, and a Biome project whose pinned
   `biome` launcher cannot start (no `node` on PATH) blocks naming the
-  launcher instead of skipping. On Claude Code and Codex, where this
-  script is the hook, commands the old parser refused — `$(…)`,
+  launcher instead of skipping. Where this script is the harness hook
+  (every harness but Pi), commands the old parser refused — `$(…)`,
   backticks, `cd "$dir"`, an unexpanded `$repo` — no longer block
   commits, and forms it silently mischecked (`--git-dir`/`--work-tree`,
   `(cd … && git commit)`) are no longer mischecked: git runs the target

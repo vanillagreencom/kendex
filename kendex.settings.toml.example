@@ -273,18 +273,26 @@ SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md review-bots.md .github/instructi
 
 # SIZE RATCHET
 
+# A [guards.size-ratchet] table like every other check. The v1
+# SIZE_RATCHET_* keys are refused at commit until `kendex guard import-v1`
+# converts them once — do not add them here.
+# [guards.size-ratchet]
+
 # Line threshold for paths matching no class below. Files already over it
 # are frozen in the baseline TSV and may only shrink.
-# SIZE_RATCHET_THRESHOLD = "400"
+# threshold = 400
 
-# Per-path-class thresholds, `pattern=threshold` entries `;`-separated, FIRST
-# match wins. Globs cross `/`; a directory name needs both `tests/*` and
-# `*/tests/*`. A malformed entry is a config error, never a silent fallback.
-# SIZE_RATCHET_CLASSES = "tests/*=800;*/tests/*=800;*.test.*=800"
+# Per-path-class thresholds, first match wins; patterns are gitignore-style
+# (`*` stops at `/`, `**` crosses). A malformed entry is a config error,
+# never a silent fallback.
+# classes = [
+#   { pattern = "**/tests/**", threshold = 800 },
+#   { pattern = "**/*.test.*", threshold = 800 },
+# ]
 
 # Relocate the baseline TSV / exclusion list (repo-root-relative).
-# SIZE_RATCHET_BASELINE = "tools/size-ratchet-baseline.tsv"
-# SIZE_RATCHET_EXCLUDES = "tools/size-ratchet-excludes"
+# baseline = "tools/size-ratchet-baseline.tsv"
+# excludes = "tools/size-ratchet-excludes"
 
 # PRE-COMMIT HOOK
 

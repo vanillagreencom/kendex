@@ -36,15 +36,15 @@ fi
 WORDS=" $(printf '%s' "$COMMAND" | sed 's/\\[ntr]/ /g' | tr -c 'a-zA-Z0-9_=-' ' ') "
 printf '%s' "$WORDS" | grep -qE ' git( .*)? commit ' || exit 0
 
-# Repository-moving words (-C, --git-dir, --work-tree, cd) mean the commit
-# may land elsewhere. This lane never follows them — git does, where the
+# Repository-moving words (-C, --git-dir, --work-tree, cd, a GIT_DIR or
+# GIT_WORK_TREE assignment) mean the commit may land elsewhere. This lane never follows them — git does, where the
 # target has an armed hook — so where it cannot defer it says which
 # directory it judged, and that the target's own hook is the target's gate.
 MOVES=""
-printf '%s' "$WORDS" | grep -qE ' (cd|-C|--git-dir[^ ]*|--work-tree[^ ]*) ' && MOVES=1
+printf '%s' "$WORDS" | grep -qE ' (cd|-C|--git-dir[^ ]*|--work-tree[^ ]*|GIT_DIR[^ ]*|GIT_WORK_TREE[^ ]*) ' && MOVES=1
 elsewhere_notice() {
   [ -z "$MOVES" ] && return 0
-  echo "pre-commit-check: the command moves repositories (-C, --git-dir, --work-tree, or cd); this hook judged $PWD only — the target repository is gated by its own armed git pre-commit hook, if any (kendex guard install there)" >&2
+  echo "pre-commit-check: the command moves repositories (-C, --git-dir, --work-tree, cd, GIT_DIR, or GIT_WORK_TREE); this hook judged $PWD only — the target repository is gated by its own armed git pre-commit hook, if any (kendex guard install there)" >&2
 }
 
 # An armed hook means git itself will gate the commit; running the chain
@@ -54,13 +54,17 @@ elsewhere_notice() {
 # skip the hook, and a `core.hooksPath` override points git at
 # hooks this lane did not inspect — then git's check never happens and
 # this lane is the check after all. One of those words from some other
-# command on the line costs a guard run, never a check.
+# command on the line costs a guard run, never a check. Git reads config
+# keys case-insensitively (core.hookspath, CORE.HOOKSPATH, the
+# GIT_CONFIG_KEY_n form), so that alternative is matched the same way;
+# git's long options are case-sensitive and stay so.
 HOOKS_DIR=$(git rev-parse --git-path hooks 2>/dev/null) || {
   elsewhere_notice
   exit 0
 }
 if [ -x "$HOOKS_DIR/pre-commit" ] \
-  && ! printf '%s' "$WORDS" | grep -qE ' (--no-veri[a-z]*|-[a-zA-Z]*n[a-zA-Z]*|core hooksPath[^ ]*) '; then
+  && ! printf '%s' "$WORDS" | grep -qE ' (--no-veri[a-z]*|-[a-zA-Z]*n[a-zA-Z]*) ' \
+  && ! printf '%s' "$WORDS" | grep -qiE '[ =]core hookspath[^ ]* '; then
   exit 0
 fi
 elsewhere_notice

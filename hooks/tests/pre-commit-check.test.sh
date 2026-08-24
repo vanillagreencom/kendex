@@ -222,7 +222,9 @@ for form in \
   'git commit --no-verif -m x' \
   'git commit -n -m x' \
   'git commit -anm x' \
-  'git -c core.hooksPath=/dev/null commit -m x'; do
+  'git -c core.hooksPath=/dev/null commit -m x' \
+  'git -c core.hookspath=/dev/null commit -m x' \
+  'GIT_CONFIG_KEY_0=Core.HooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m x'; do
   run_hook "$ARMED" "$(payload "$form")" KENDEX_EXIT=1
   assert_eq "$rc" "2" "not waved through: $form"
   assert_contains "$log" "kendex guard run pre-commit" "the chain gates: $form"
