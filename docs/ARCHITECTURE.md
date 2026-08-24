@@ -269,8 +269,13 @@ lives in one capability table read by core and UI.
 - A section with nothing in it is not rendered; an empty state appears only
   when the page would otherwise be blank.
 - A list whose data has not arrived draws skeleton rows; the empty state
-  waits for the read to finish. Startup reads — settings, scan, audit,
-  updates — run side by side.
+  waits for the read to finish. Skeletons stand only while a read is
+  genuinely in flight: a read that failed is an answer, and the page shows
+  its error with a retry instead. Figures kept from before a failed re-read
+  are drawn but headed as the last kendex could check, and nothing derived
+  from a read that did not answer is presented as a definite count — least
+  of all zero. Startup reads — settings, scan, audit, updates — run side by
+  side.
 - Commands that touch disk, git, or a subprocess are
   `#[tauri::command(async)]`. Only window operations stay synchronous.
 - No database: manifests, locks, and native dirs are the state; scans are

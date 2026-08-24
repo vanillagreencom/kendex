@@ -15,6 +15,7 @@ import {
   UNDO_LABEL,
 } from "@/lib/copy-decisions";
 import { replacedToastLabel } from "@/lib/copy-in-the-way";
+import { settled } from "@/lib/settled";
 import { auditRunner, replaceView } from "./audit-run";
 import { useProblemsStore } from "./problems";
 
@@ -100,7 +101,10 @@ export const useAuditStore = create<AuditState>((set, get) => {
       if (fresh && !opts?.force) return;
       set({ auditing: true });
       try {
-        const response = await commands.auditAll();
+        // `settled` lands a rejected call as the same failed audit as a
+        // returned refusal, which keeps Home's attention section off its
+        // skeleton, the same as the scan.
+        const response = await settled(commands.auditAll());
         if (response.status === "ok") {
           set({
             views: response.data,

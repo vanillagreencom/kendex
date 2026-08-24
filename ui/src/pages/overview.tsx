@@ -34,10 +34,16 @@ const RECENT_ACTIVITY_LIMIT = 6;
 export function OverviewPage() {
   const { result, error, scanning, refresh } = useScanStore();
   const views = useAuditStore((s) => s.views);
-  // The safety pass is the slowest thing the app does; until it has run
-  // once, Home cannot say whether anything needs attention — so it says
-  // that it is still looking rather than showing an empty page.
-  const stillChecking = useAuditStore((s) => s.auditedAt === null);
+  // The safety pass is the slowest thing the app does; until it has
+  // ANSWERED once, Home cannot say whether anything needs attention — so
+  // it says that it is still looking rather than showing an empty page. A
+  // failed audit is an answer: the section renders what is known, with the
+  // failure as a row of its own, instead of a skeleton for the session.
+  const stillChecking = useAuditStore(
+    (s) => s.auditedAt === null && s.error === null,
+  );
+  const auditError = useAuditStore((s) => s.error);
+  const auditRefresh = useAuditStore((s) => s.refresh);
   const projectCount = useSettingsStore(
     (s) => s.settings?.projects?.length ?? 0,
   );
@@ -55,9 +61,12 @@ export function OverviewPage() {
   const marketplaceCount = useMarketplacesStore((s) => s.rows.length);
   // `rows` survives a failed re-read; `rowsCurrent` is whether they are
   // the answer of the last one. Only a current read may put a number —
-  // above all a zero — on the tile.
+  // above all a zero — on the tile. `loaded` is whether any read has
+  // answered at all: answered-but-not-current is the failure to note,
+  // while not-yet-answered is just the dash. The store's shared `error`
+  // field is not consulted — writes clear it without making rows current.
   const marketplacesCurrent = useMarketplacesStore((s) => s.rowsCurrent);
-  const marketplacesError = useMarketplacesStore((s) => s.error);
+  const marketplacesLoaded = useMarketplacesStore((s) => s.loaded);
   const loadMarketplaces = useMarketplacesStore((s) => s.load);
   useEffect(() => {
     void loadMarketplaces();
@@ -101,6 +110,7 @@ export function OverviewPage() {
     views,
     result,
     updatesError,
+    auditError,
     onReview: () => setPage("review"),
     onUnmanaged: () => goTo("unmanaged"),
     onProjects: () => goTo("projects"),
@@ -108,6 +118,7 @@ export function OverviewPage() {
     onLibrary: () => goToLibrary(),
     onPackage: (row) =>
       goToPackage({ kind: row.kind, name: row.name, scope: row.scope }),
+    onAuditRetry: () => void auditRefresh({ force: true }),
   });
 
   const harnessNames = (result?.harnesses ?? [])
@@ -172,16 +183,16 @@ export function OverviewPage() {
                 />
                 <StatTile
                   label="Marketplaces"
-                  value={marketplacesCurrent ? marketplaceCount : "—"}
+                  value={marketplacesCurrent ? marketplaceCount : null}
                   detail={
                     marketplacesCurrent
                       ? marketplaceCount === 0
                         ? "browse and subscribe"
                         : undefined
-                      : // Not current and no error is the first read still on
-                        // its way — the dash alone carries that; the failure
-                        // note is for a read that answered it couldn't.
-                        marketplacesError
+                      : // Answered but not current is a read that failed;
+                        // not yet answered is the first read still on its
+                        // way, and the dash alone carries that.
+                        marketplacesLoaded
                         ? MARKETPLACES_UNCHECKED_DETAIL
                         : undefined
                   }

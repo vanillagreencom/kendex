@@ -2,16 +2,19 @@ import type { AuditView, ScanResult, UpdateRow } from "@/bindings";
 import type { AttentionRow } from "@/components/home/attention-section";
 import { auditCounts } from "@/lib/audit-counts";
 import {
+  AUDIT_ATTENTION_DETAIL,
+  AUDIT_ATTENTION_TITLE,
   FORKED_ATTENTION_DETAIL,
   forkedAttentionTitle,
   REVIEW_ACTION_LABEL,
+  TRY_AGAIN_LABEL,
   UPDATES_ATTENTION_DETAIL,
   UPDATES_ATTENTION_TITLE,
 } from "@/lib/copy";
 
 /** Everything Home's attention list is derived from, with the way into
- *  each row's destination handed in — the derivation orders the rows,
- *  worst first, and the page stays a layout. */
+ *  each row's destination handed in — the derivation emits the rows in a
+ *  fixed product order, and the page stays a layout. */
 export interface AttentionSource {
   editedPackages: UpdateRow[];
   views: AuditView[];
@@ -20,12 +23,17 @@ export interface AttentionSource {
    *  to show, not a silence: with nothing said, a list without an "edited
    *  packages" row would read as kendex having looked and found nothing. */
   updatesError: string | null;
+  /** Why the last audit failed, or null — the counts above came from an
+   *  audit that could not finish, so what needs attention may be missing
+   *  from this very list. */
+  auditError: string | null;
   onReview: () => void;
   onUnmanaged: () => void;
   onProjects: () => void;
   onUpdates: () => void;
   onLibrary: () => void;
   onPackage: (row: UpdateRow) => void;
+  onAuditRetry: () => void;
 }
 
 export function attentionRows(source: AttentionSource): AttentionRow[] {
@@ -36,7 +44,7 @@ export function attentionRows(source: AttentionSource): AttentionRow[] {
     blocked,
     open,
   } = auditCounts(source.views);
-  const { editedPackages, result, updatesError } = source;
+  const { editedPackages, result, updatesError, auditError } = source;
   const missing = result?.missingProjects ?? [];
 
   const rows: AttentionRow[] = [];
@@ -119,6 +127,18 @@ export function attentionRows(source: AttentionSource): AttentionRow[] {
           ? `We can't find ${missing[0]}. If you moved it, add it again.`
           : "If you moved these, add them again from Harnesses & Projects.",
       action: { label: "Projects", onClick: source.onProjects },
+    });
+  }
+  // A failed audit means the counts above answer for less than the whole
+  // machine — the row says so and offers the retry, instead of the section
+  // holding its skeleton for the session.
+  if (auditError !== null) {
+    rows.push({
+      key: "audit-unchecked",
+      tone: "warning",
+      title: AUDIT_ATTENTION_TITLE,
+      detail: AUDIT_ATTENTION_DETAIL,
+      action: { label: TRY_AGAIN_LABEL, onClick: source.onAuditRetry },
     });
   }
   if (updatesError !== null) {

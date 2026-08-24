@@ -64,6 +64,17 @@ describe("audit store refresh", () => {
     expect(toast.error).toHaveBeenCalledTimes(1);
   });
 
+  // A rejected call used to escape the store: auditedAt stayed null with
+  // no error, which Home read as an audit still on its way — forever.
+  it("lands a rejected call as a failed audit", async () => {
+    vi.mocked(commands.auditAll).mockRejectedValue(new Error("ipc down"));
+
+    await useAuditStore.getState().refresh();
+
+    expect(useAuditStore.getState().error).toBe("ipc down");
+    expect(useAuditStore.getState().auditing).toBe(false);
+  });
+
   it("re-arms the toast after a successful audit", async () => {
     vi.mocked(commands.auditAll).mockResolvedValueOnce({
       status: "error",

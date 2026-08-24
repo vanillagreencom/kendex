@@ -2,10 +2,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ScanResult } from "@/bindings";
 import {
+  AUDIT_ATTENTION_TITLE,
   MARKETPLACES_UNCHECKED_DETAIL,
   SCAN_AGAIN_LABEL,
   SCAN_FAILED_TITLE,
   SCAN_STALE_TITLE,
+  TRY_AGAIN_LABEL,
   UPDATES_ATTENTION_TITLE,
 } from "@/lib/copy";
 import { OverviewPage } from "./overview";
@@ -26,8 +28,11 @@ const { stub, wrap } = vi.hoisted(() => {
       scanning: false,
     },
     updates: { error: null as string | null },
-    market: { rowsCurrent: true, error: null as string | null },
-    audit: { auditedAt: null as number | null },
+    market: { rowsCurrent: true, loaded: true },
+    audit: {
+      auditedAt: null as number | null,
+      error: null as string | null,
+    },
   };
   const wrap = <M extends object>(
     mod: M,
@@ -64,7 +69,10 @@ vi.mock("@/stores/marketplaces", async (importOriginal) => {
 });
 vi.mock("@/stores/audit", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/stores/audit")>();
-  return wrap(mod, "useAuditStore", () => stub.audit);
+  return wrap(mod, "useAuditStore", () => ({
+    ...stub.audit,
+    refresh: async () => {},
+  }));
 });
 
 const scanned: ScanResult = {
@@ -77,8 +85,8 @@ const scanned: ScanResult = {
 beforeEach(() => {
   stub.scan = { result: null, error: null, scanning: false };
   stub.updates = { error: null };
-  stub.market = { rowsCurrent: true, error: null };
-  stub.audit = { auditedAt: null };
+  stub.market = { rowsCurrent: true, loaded: true };
+  stub.audit = { auditedAt: null, error: null };
 });
 
 // `result` starting null and staying null used to leave every section on
@@ -129,7 +137,7 @@ describe("Home when a later scan fails", () => {
 describe("Home when the update check fails", () => {
   it("says updates couldn't be checked in the attention list", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
-    stub.audit = { auditedAt: Date.now() };
+    stub.audit = { auditedAt: Date.now(), error: null };
     stub.updates = { error: "no network" };
     expect(renderToStaticMarkup(<OverviewPage />)).toContain(
       esc(UPDATES_ATTENTION_TITLE),
@@ -138,8 +146,38 @@ describe("Home when the update check fails", () => {
 
   it("claims nothing when the check answered", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
-    stub.audit = { auditedAt: Date.now() };
+    stub.audit = { auditedAt: Date.now(), error: null };
     expect(renderToStaticMarkup(<OverviewPage />)).not.toContain(
+      esc(UPDATES_ATTENTION_TITLE),
+    );
+  });
+});
+
+// auditedAt stays null forever after a failed startup audit; gating the
+// skeleton on it alone held the section in "still looking" for the session
+// and swallowed every other attention row.
+describe("Home when the audit fails", () => {
+  it("keeps the skeleton only while the audit has not answered", () => {
+    stub.scan = { result: scanned, error: null, scanning: false };
+    const html = renderToStaticMarkup(<OverviewPage />);
+    expect(html).toContain('data-slot="skeleton"');
+    expect(html).not.toContain(esc(AUDIT_ATTENTION_TITLE));
+  });
+
+  it("drops the skeleton and says the audit failed, with the retry", () => {
+    stub.scan = { result: scanned, error: null, scanning: false };
+    stub.audit = { auditedAt: null, error: "audit crashed" };
+    const html = renderToStaticMarkup(<OverviewPage />);
+    expect(html).toContain(esc(AUDIT_ATTENTION_TITLE));
+    expect(html).toContain(TRY_AGAIN_LABEL);
+    expect(html).not.toContain('data-slot="skeleton"');
+  });
+
+  it("no longer suppresses the other failure rows", () => {
+    stub.scan = { result: scanned, error: null, scanning: false };
+    stub.audit = { auditedAt: null, error: "audit crashed" };
+    stub.updates = { error: "no network" };
+    expect(renderToStaticMarkup(<OverviewPage />)).toContain(
       esc(UPDATES_ATTENTION_TITLE),
     );
   });
@@ -150,11 +188,19 @@ describe("Home when the update check fails", () => {
 describe("the Marketplaces tile when its read is not current", () => {
   it("shows a dash and the failure note instead of a definite zero", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
-    stub.market = { rowsCurrent: false, error: "offline" };
+    stub.market = { rowsCurrent: false, loaded: true };
     const html = renderToStaticMarkup(<OverviewPage />);
     expect(html).toContain(">—<");
     expect(html).toContain(esc(MARKETPLACES_UNCHECKED_DETAIL));
     expect(html).not.toContain("browse and subscribe");
+  });
+
+  it("shows the dash alone while the first read is still on its way", () => {
+    stub.scan = { result: scanned, error: null, scanning: false };
+    stub.market = { rowsCurrent: false, loaded: false };
+    const html = renderToStaticMarkup(<OverviewPage />);
+    expect(html).toContain(">—<");
+    expect(html).not.toContain(esc(MARKETPLACES_UNCHECKED_DETAIL));
   });
 
   it("counts a current read, zero included", () => {

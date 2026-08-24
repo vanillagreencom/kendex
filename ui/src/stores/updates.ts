@@ -7,6 +7,7 @@ import {
   updatedWithPlaceToastLabel,
 } from "@/lib/copy-updates";
 import { scopeKey } from "@/lib/scope";
+import { settled } from "@/lib/settled";
 import {
   packageCount,
   placeName,
@@ -88,20 +89,32 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     return true;
   };
 
-  const reload = async () => {
-    const response = await commands.updatesOverview();
-    // A failed reload marks the data stale (loaded = false) rather than
-    // leaving the last-good rows trusted — the package page gates the
-    // Update button on `loaded`, and acting on rows we could not refresh
-    // is exactly the fail-open this closes.
-    if (response.status === "ok")
+  // The one place a read of the standing lands, however it went. A failure
+  // — a returned refusal and a rejected call alike, via `settled` — marks
+  // the data stale (loaded = false) and keeps why (error) rather than
+  // leaving the last-good rows trusted: the package page gates the Update
+  // button on `loaded`, and acting on rows we could not refresh is exactly
+  // the fail-open this closes. Returns why the read failed, or null, so
+  // callers make their own noise.
+  const applyOverview = async (
+    read: ReturnType<typeof commands.updatesOverview>,
+  ): Promise<string | null> => {
+    const response = await settled(read);
+    if (response.status === "ok") {
       set({
         rows: response.data.rows,
         warnings: response.data.warnings,
         loaded: true,
         error: null,
       });
-    else set({ loaded: false, error: response.error });
+      return null;
+    }
+    set({ loaded: false, error: response.error });
+    return response.error;
+  };
+
+  const reload = async () => {
+    await applyOverview(commands.updatesOverview());
   };
 
   return {
@@ -117,20 +130,14 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     },
 
     check: async () => {
+      // A check already running answers this click too; a second in flight
+      // would land last-write-wins and could overwrite the fresh answer
+      // with a staler one.
+      if (get().checking) return;
       set({ checking: true });
       try {
-        const response = await commands.updatesRefresh();
-        if (response.status === "ok") {
-          set({
-            rows: response.data.rows,
-            warnings: response.data.warnings,
-            loaded: true,
-            error: null,
-          });
-        } else {
-          set({ loaded: false, error: response.error });
-          showError(UPDATE_ERROR_TITLE, response.error);
-        }
+        const error = await applyOverview(commands.updatesRefresh());
+        if (error !== null) showError(UPDATE_ERROR_TITLE, error);
       } finally {
         set({ checking: false });
       }
@@ -228,21 +235,16 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     },
 
     setIgnored: async (row, ignored) => {
-      const response = await commands.updateSetIgnored(
-        row.scope,
-        row.kind,
-        row.name,
-        row.repo,
-        ignored,
+      const error = await applyOverview(
+        commands.updateSetIgnored(
+          row.scope,
+          row.kind,
+          row.name,
+          row.repo,
+          ignored,
+        ),
       );
-      if (response.status === "ok")
-        set({
-          rows: response.data.rows,
-          warnings: response.data.warnings,
-          loaded: true,
-          error: null,
-        });
-      else showError(UPDATE_ERROR_TITLE, response.error);
+      if (error !== null) showError(UPDATE_ERROR_TITLE, error);
     },
   };
 });

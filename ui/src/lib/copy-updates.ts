@@ -43,3 +43,10 @@ export const updatedCountToastLabel = (updated: number): string =>
   `Updated ${updated === 1 ? "1 package" : `${updated} packages`}`;
 export const nothingToUpdateToastLabel = (skipped: number): string =>
   `Nothing to update — ${skipped === 1 ? "1 place needs" : `${skipped} places need`} attention on its own row`;
+
+// Before the first read answers there is nothing to be up to date about,
+// and a check that failed leaves the last rows on screen rather than
+// blanking the page — drawn, but never presented as current.
+export const UPDATES_CHECKING = "Checking for updates…";
+export const UPDATES_UNCONFIRMED_TITLE =
+  "These are the last versions kendex could check";

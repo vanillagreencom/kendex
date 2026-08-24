@@ -112,6 +112,47 @@ describe("updates store", () => {
     expect(useUpdatesStore.getState().loaded).toBe(true);
   });
 
+  // A rejected call used to escape the store entirely — no error recorded,
+  // the promise discarded by its callers — while a returned refusal landed.
+  it("lands a rejected read the same as a returned refusal", async () => {
+    const kept = [row({})];
+    useUpdatesStore.setState({ rows: kept, loaded: true });
+    vi.mocked(commands.updatesOverview).mockRejectedValue(
+      new Error("ipc down"),
+    );
+
+    await useUpdatesStore.getState().load();
+
+    expect(useUpdatesStore.getState().error).toBe("ipc down");
+    expect(useUpdatesStore.getState().loaded).toBe(false);
+    expect(useUpdatesStore.getState().rows).toEqual(kept);
+  });
+
+  // The explicit check goes through the same single read-application path:
+  // refusal and rejection both land as the store's one failure state.
+  it("records why a check failed, rejection included", async () => {
+    vi.mocked(commands.updatesRefresh).mockResolvedValue({
+      status: "error",
+      error: "mirror down",
+    });
+    await useUpdatesStore.getState().check();
+    expect(useUpdatesStore.getState().error).toBe("mirror down");
+    expect(useUpdatesStore.getState().loaded).toBe(false);
+    expect(useUpdatesStore.getState().checking).toBe(false);
+
+    vi.mocked(commands.updatesRefresh).mockRejectedValue(new Error("ipc"));
+    await useUpdatesStore.getState().check();
+    expect(useUpdatesStore.getState().error).toBe("ipc");
+    expect(useUpdatesStore.getState().checking).toBe(false);
+  });
+
+  it("ignores a check clicked while one is already running", async () => {
+    useUpdatesStore.setState({ checking: true });
+    await useUpdatesStore.getState().check();
+    expect(commands.updatesRefresh).not.toHaveBeenCalled();
+    useUpdatesStore.setState({ checking: false });
+  });
+
   it("muting keeps the row, flagged — and unmuting brings it back", async () => {
     const muted = [row({ ignored: true })];
     vi.mocked(commands.updateSetIgnored).mockResolvedValue({

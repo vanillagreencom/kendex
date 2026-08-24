@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UPDATES_ATTENTION_TITLE } from "@/lib/copy";
 import { Sidebar } from "./sidebar";
+import { updateRow } from "./updates-test-rows";
 
 // Static markup escapes apostrophes, so a pinned copy token must be
 // escaped the same way before it can be looked for.
@@ -40,6 +41,18 @@ describe("the Updates badge after a failed check", () => {
     stub.updates = { rows: [], error: "no network" };
     const html = renderToStaticMarkup(<Sidebar />);
     expect(html).toContain(">?<");
+    expect(html).toContain(esc(UPDATES_ATTENTION_TITLE));
+  });
+
+  // Rows kept from before the failure still carry their count — last-known
+  // is worth showing — but the badge wears the warning tone for it rather
+  // than presenting the number as confirmed.
+  it("keeps a last-known count, in the warning tone", () => {
+    stub.updates = { rows: [updateRow("gh", null)], error: "no network" };
+    const html = renderToStaticMarkup(<Sidebar />);
+    expect(html).toContain(">1<");
+    expect(html).not.toContain(">?<");
+    expect(html).toContain("text-warning");
     expect(html).toContain(esc(UPDATES_ATTENTION_TITLE));
   });
 });

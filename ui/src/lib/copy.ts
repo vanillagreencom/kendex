@@ -155,6 +155,10 @@ export const SCAN_STALE_TITLE = "These are the last figures kendex could check";
 export const UPDATES_ATTENTION_TITLE = "Couldn't check for updates";
 export const UPDATES_ATTENTION_DETAIL =
   "Anything new since the last check isn't counted here.";
+export const AUDIT_ATTENTION_TITLE = "Couldn't check installed content";
+export const AUDIT_ATTENTION_DETAIL =
+  "Problems and pending changes may be missing here.";
+export const TRY_AGAIN_LABEL = "Try again";
 export const MARKETPLACES_UNCHECKED_DETAIL = "couldn't be checked";
 
 // The status footer's right side: quiet counts that link to Review & apply.

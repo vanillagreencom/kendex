@@ -9,7 +9,9 @@ import type { UpdateRow } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
+import { StatusNote } from "@/components/status-note";
 import { Button } from "@/components/ui/button";
+import { updatesBeforeList } from "@/components/updates-before-list";
 import { UpdatesTable } from "@/components/updates-table";
 import {
   CHECK_FOR_UPDATES_LABEL,
@@ -22,7 +24,11 @@ import {
   UPDATES_EMPTY_BODY,
   UPDATES_UNCHECKED_TITLE,
 } from "@/lib/copy";
-import { FOLLOW_SOURCE_HELP, updatesSubtitle } from "@/lib/copy-updates";
+import {
+  FOLLOW_SOURCE_HELP,
+  UPDATES_UNCONFIRMED_TITLE,
+  updatesSubtitle,
+} from "@/lib/copy-updates";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { packageCount, updatablePlaces } from "@/lib/update-groups";
 import { cn } from "@/lib/utils";
@@ -37,6 +43,8 @@ import {
 export function UpdatesPage() {
   const { rows, warnings, busy, checking, check, updateRows } =
     useUpdatesStore();
+  const loaded = useUpdatesStore((s) => s.loaded);
+  const error = useUpdatesStore((s) => s.error);
   const load = useUpdatesStore((s) => s.load);
   const [showHidden, setShowHidden] = useState(false);
   const [confirmIgnore, setConfirmIgnore] = useState<UpdateRow | null>(null);
@@ -48,31 +56,17 @@ export function UpdatesPage() {
   const visible = visibleUpdates(rows);
   const hidden = hiddenUpdates(rows);
   const HiddenChevron = showHidden ? ChevronDown : ChevronRight;
+  const empty =
+    visible.length === 0 && hidden.length === 0 && warnings.length === 0;
 
-  // With nothing to update there is nothing to introduce: a title and a
-  // sentence explaining a list that isn't there is furniture around good
-  // news. The sidebar already says which page this is.
-  if (visible.length === 0 && hidden.length === 0 && warnings.length === 0) {
-    return (
-      <div className="flex min-h-full items-center justify-center">
-        <EmptyState
-          icon={CheckCircle2}
-          title={UPDATES_EMPTY}
-          action={
-            <Button
-              variant="outline"
-              disabled={checking}
-              onClick={() => void check()}
-            >
-              {CHECK_FOR_UPDATES_LABEL}
-            </Button>
-          }
-        >
-          {UPDATES_EMPTY_BODY}
-        </EmptyState>
-      </div>
-    );
-  }
+  const beforeList = updatesBeforeList({
+    loaded,
+    error,
+    empty,
+    checking,
+    onCheck: () => void check(),
+  });
+  if (beforeList) return beforeList;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -120,10 +114,24 @@ export function UpdatesPage() {
       />
       <div className={cn("min-h-0 flex-1 overflow-y-auto", PAGE_GUTTER)}>
         <div className={cn("pb-8", WIDE_CONTENT_WIDTH)}>
+          {/* Rows kept from before a failed check stay on screen — right —
+              but headed as what they are: the last read that answered, not
+              the current standing. */}
+          {error !== null ? (
+            <StatusNote
+              tone="warning"
+              title={UPDATES_UNCONFIRMED_TITLE}
+              className="mb-6"
+            >
+              {error}
+            </StatusNote>
+          ) : null}
           {visible.length === 0 ? (
-            <EmptyState icon={CheckCircle2} title={UPDATES_EMPTY}>
-              {UPDATES_EMPTY_BODY}
-            </EmptyState>
+            error === null ? (
+              <EmptyState icon={CheckCircle2} title={UPDATES_EMPTY}>
+                {UPDATES_EMPTY_BODY}
+              </EmptyState>
+            ) : null
           ) : (
             <UpdatesTable rows={visible} onIgnore={setConfirmIgnore} />
           )}

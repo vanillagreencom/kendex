@@ -1,6 +1,5 @@
 import { toast } from "sonner";
 import { create } from "zustand";
-import type { MarketplaceRow } from "@/bindings";
 import {
   type AboutView,
   type AvailablePackage,
@@ -9,19 +8,20 @@ import {
   type CatalogSummary,
   commands,
   type InstallItem,
+  type MarketplaceRow,
   type Scope,
 } from "@/bindings";
+import { settled } from "@/lib/settled";
 import { catalogReads } from "./marketplaces-reads";
 import {
-  cachedRepoCatalogs,
   catalogKey,
   dropCatalogCaches,
-  dropSummariesHeldBy,
   isRepoKey,
   openLead,
   refreshDownstream,
   subscription,
 } from "./marketplaces-shared";
+import { sourceActions } from "./marketplaces-sources";
 
 export {
   bundleKey,
@@ -97,7 +97,9 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
   error: null,
 
   load: async () => {
-    const response = await commands.marketplacesOverview();
+    // A failed read — refusal or rejection, via `settled` — still answers:
+    // `loaded` comes up, `rowsCurrent` does not, and the kept rows stay.
+    const response = await settled(commands.marketplacesOverview());
     if (response.status === "ok") {
       set({
         rows: response.data,
@@ -175,38 +177,7 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
     return true;
   },
 
-  toggle: async (scope, source, enabled) => {
-    const response = await commands.sourceToggle(scope, source, enabled);
-    if (response.status === "error") {
-      toast.error(response.error);
-      return;
-    }
-    dropCatalogCaches(set);
-    dropSummariesHeldBy(set, get().rows, scope, source);
-    await get().load();
-    await refreshDownstream();
-  },
-
-  checkForUpdates: async () => {
-    set({ busy: true });
-    try {
-      const response = await commands.sourcesRefresh();
-      if (response.status === "ok") {
-        for (const warning of response.data) toast.message(warning);
-        // A fetch can move any subscription to a new commit; everything
-        // derived from catalog bytes re-reads.
-        dropCatalogCaches(set);
-        await get().load();
-        for (const repo of cachedRepoCatalogs(get().summaries)) {
-          void get().loadSummary(repo);
-        }
-      } else {
-        toast.error(response.error);
-      }
-    } finally {
-      set({ busy: false });
-    }
-  },
+  ...sourceActions(set, get),
 
   install: async ({ scope, source, items, bundle = null, destination }) => {
     set({ busy: true });

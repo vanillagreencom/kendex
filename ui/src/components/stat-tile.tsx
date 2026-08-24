@@ -9,9 +9,10 @@ export function StatTile({
   onClick,
 }: {
   label: string;
-  /** A count, or "—" when the read behind it has not answered — a tile
-   *  must not show a definite zero off a read that failed. */
-  value: number | string;
+  /** A count, or null when the read behind it has not answered — a tile
+   *  must not show a definite zero off a read that failed, and the dash
+   *  that stands in is this component's to draw. */
+  value: number | null;
   detail?: ReactNode;
   onClick?: () => void;
 }) {
@@ -25,7 +26,7 @@ export function StatTile({
         onClick && "cursor-pointer hover:bg-accent",
       )}
     >
-      <p className="text-2xl font-semibold tracking-tight">{value}</p>
+      <p className="text-2xl font-semibold tracking-tight">{value ?? "—"}</p>
       <p className="text-xs font-medium tracking-widest text-muted-foreground uppercase">
         {label}
       </p>
