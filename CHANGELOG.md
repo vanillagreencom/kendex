@@ -246,8 +246,9 @@ changes carry a **Breaking** call-out with their migration note inline.
   used to get "changed while you were deciding" and nothing replaced at
   all. Now every item that can be replaced is, and each held-back item is
   named with why its files stayed. The run fails only when nothing at all
-  could be replaced. Per-item choices in the app are unchanged: they still
-  act on the one row you clicked, whole or not at all.
+  could be replaced, and then says which items it held. Per-item choices
+  in the app are unchanged: they still act on the one row you clicked,
+  whole or not at all.
 
 - Codex now reads the same skill as every other tool. kendex used to cut any
   SKILL.md over 8 KB for Codex — a shortened body plus a

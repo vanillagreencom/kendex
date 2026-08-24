@@ -110,8 +110,9 @@ pub enum CoreError {
     #[error("{name} changed while you were deciding — nothing was changed")]
     TakeOverLeavesSome { name: String },
 
-    #[error("nothing was replaced: every item in the way also has a conflict to settle first")]
-    TakeOverAllHeld,
+    /// Each held item as `kind name`: no plan survives to carry the notes.
+    #[error("nothing was replaced: every item in the way ({}) also has a conflict to settle first — kendex apply --plan lists them", held.join(", "))]
+    TakeOverAllHeld { held: Vec<String> },
 
     #[error(
         "{name}'s files are different for {first} and {second}. kendex keeps one copy of an item, so move the copy you don't want somewhere else first."

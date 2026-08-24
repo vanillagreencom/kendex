@@ -98,20 +98,19 @@ fn exits_under<'a>(env: &Env, rows: &[&'a DriftRow], row: &&'a DriftRow) -> Vec<
 /// — at column 0 it reads as a heading over the plan that follows, which is
 /// the plan that runs without it.
 ///
-/// The flag sweeps up the items it can take over and refuses the whole run
-/// over one it could only half settle, so every item it reaches has to be
-/// wholly replaceable and there has to be one. An unrelated item with no
-/// take-over of its own is never reached by it, and never a reason to
-/// withhold it.
+/// The flag sweeps up the items it can take over, replaces each one it can
+/// settle whole, holds back the ones it could only half settle, and
+/// refuses only when nothing settles — so one wholly replaceable item is
+/// reason enough to print it, and a held-back neighbour is no reason to
+/// withhold it. An unrelated item with no take-over of its own is never
+/// reached by it either way.
 fn say_scope_exit(rows: &[&DriftRow]) {
     let item_of =
         |row: &DriftRow, other: &DriftRow| other.kind == row.kind && other.name == row.name;
-    let swept: Vec<&&DriftRow> = rows
+    let replaceable = rows
         .iter()
         .filter(|row| row.cause.is_some_and(DriftCause::can_replace))
-        .collect();
-    let replaceable = !swept.is_empty()
-        && swept.iter().all(|row| {
+        .any(|row| {
             rows.iter()
                 .filter(|other| item_of(row, other) && other.dead_stop())
                 .all(|other| other.cause.is_some_and(DriftCause::can_replace))

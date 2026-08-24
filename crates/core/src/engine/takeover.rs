@@ -48,14 +48,14 @@ pub(crate) fn refuse_unsettled_takeover(
     Ok(())
 }
 
-/// An item the scope-wide sweep cannot settle whole is held back, never a
-/// reason to abort the scope: a repo with one odd item still needs the way
-/// out the flag is. The plan is rebuilt naming only the items that settle,
-/// so nothing staged for a held item survives as half a take-over — and a
-/// sweep that settles nothing at all refuses rather than reporting a
-/// success it did not have. Items a caller named individually are not
-/// exempted from the split: the named check above has already refused any
-/// of them a dead stop reaches.
+/// An item the scope-wide sweep cannot settle whole has its take-over held
+/// back, never a reason to abort the scope: a repo with one odd item still
+/// needs the way out the flag is. The plan is rebuilt naming only the items
+/// that settle, so nothing staged for a held item survives as half a
+/// take-over — and a sweep that settles nothing at all refuses, naming what
+/// it held, rather than reporting a success it did not have. Items a caller
+/// named individually are not exempted from the split: the named check
+/// above has already refused any of them a dead stop reaches.
 pub(crate) fn hold_back_sweep(
     options: &PlanOptions,
     report: super::EngineReport,
@@ -68,19 +68,25 @@ pub(crate) fn hold_back_sweep(
     if held.is_empty() {
         return Ok(report);
     }
+    let held: Vec<String> = held
+        .iter()
+        .map(|(kind, name)| format!("{} {name}", kind.name()))
+        .collect();
     if settled.is_empty() {
-        return Err(crate::error::CoreError::TakeOverAllHeld);
+        return Err(crate::error::CoreError::TakeOverAllHeld { held });
     }
+    // Only the take-over is held: the item is otherwise planned exactly as
+    // a run without the flag plans it, so one of its places with nothing
+    // in the way still gets its install.
     let sweep = PlanOptions {
         replace_unmanaged: false,
         replace_unmanaged_names: Some(settled),
         ..options.clone()
     };
     let mut report = replan(&sweep)?;
-    for (kind, name) in &held {
+    for item in &held {
         report.notes.push(format!(
-            "{} {name} was not replaced: another of its places has a conflict replacing cannot settle, so all its files stay where they are",
-            kind.name()
+            "{item} was not replaced: another of its places has a conflict replacing cannot settle, so the files in its way stay where they are"
         ));
     }
     Ok(report)

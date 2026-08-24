@@ -13,7 +13,7 @@ use crate::model::Scope;
 use super::item_plan::plan_item;
 use super::{
     DriftCause, DriftRow, DriftState, PlanOptions, config_edits, desired, holds, item_plan,
-    removal, tree_plan,
+    removal, written,
 };
 
 /// One pass over the desired items, with the two holds that outrank
@@ -32,7 +32,7 @@ pub(super) fn plan_items(
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut config_edits::ConfigEditPlan,
     new_lock: &mut Lock,
-    written: &mut tree_plan::Written,
+    written: &mut written::Written,
 ) -> Result<()> {
     for item in &state.items {
         let mut sink = item_plan::PlanSink {

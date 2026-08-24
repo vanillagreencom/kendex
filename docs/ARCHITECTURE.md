@@ -93,9 +93,9 @@ lives in one capability table read by core and UI.
      bytes the plan read. A link is never its target, nor is a position
      any install recorded writing. A take-over acts on an item whole or
      not at all: named per item, a place nothing can settle refuses the
-     run; scope-wide, that item is held back whole and named in the notes
-     while every other item is replaced, and the sweep fails only when it
-     can replace nothing.
+     run; scope-wide, its take-over is held back — the files in its way
+     stay, the rest of it plans as without the flag — and named in the
+     notes; the sweep fails, naming what it held, only when nothing settles.
    The row states which files are in the way and which exits apply; the
    app offers them as buttons, the CLI names the verb and flag. A foreign
    link pointing at a real skill folder several tools read offers keeping

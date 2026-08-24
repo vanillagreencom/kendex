@@ -128,12 +128,14 @@ fn a_folder_that_is_not_a_skill_is_not_offered_the_keep() {
     assert_eq!(offer(&planned), "move them somewhere else first");
 }
 
-/// The scope-wide flag reaches every blocked item and refuses the whole run
-/// over one it could only half take over. Printed on the strength of a
-/// single replaceable item, it is a command guaranteed to fail.
+/// The scope-wide flag replaces every item it can take over whole and
+/// holds back one it could only half settle, naming it in the notes — it
+/// refuses only when nothing settles. So one wholly replaceable item makes
+/// the command worth typing, and a held-back neighbour is no reason to
+/// withhold it.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn the_scope_wide_exit_is_not_printed_beside_an_item_it_would_refuse() {
+fn one_wholly_replaceable_item_is_reason_enough_for_the_scope_exit() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let project = project_with(home, "[\"claude\", \"codex\"]", "copy");
@@ -166,8 +168,8 @@ fn the_scope_wide_exit_is_not_printed_beside_an_item_it_would_refuse() {
     let planned = plan(home, &project);
     assert!(planned.contains("conflict: skill lint"), "{planned}");
     assert!(
-        !planned.contains("--replace-unmanaged"),
-        "a command that would refuse the whole run was printed: {planned}"
+        planned.contains("--replace-unmanaged"),
+        "the exit the sweep would follow through on was withheld: {planned}"
     );
 }
 

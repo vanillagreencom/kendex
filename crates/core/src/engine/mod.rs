@@ -50,6 +50,7 @@ mod takeover;
 mod targets;
 mod tree_plan;
 mod unmanaged;
+mod written;
 
 pub(crate) use desired_agent::contributes_to_agent;
 pub(crate) use gate::content_hash;
@@ -130,7 +131,7 @@ fn plan_scope_once(
     let mut drift = Vec::new();
     let mut ops: Vec<PlannedOp> = Vec::new();
     let mut new_lock = fresh_lock(manifest, lock, &state);
-    let mut written = tree_plan::Written::default();
+    let mut written = written::Written::default();
     let mut config_edits = config_edits::ConfigEditPlan::default();
 
     plan_manifest_write(env, scope, repo_moved, manifest, &state, &mut ops)?;

@@ -13,7 +13,8 @@ use super::config_edits::ConfigEditPlan;
 use super::desired::{Artifact, Desired};
 use super::file_plan::{plan_file, plan_written_file};
 use super::item_record::{registration, rendered_hash};
-use super::tree_plan::{Written, plan_tree};
+use super::tree_plan::plan_tree;
+use super::written::Written;
 use crate::configedit::ConfigEdit;
 
 /// Everything one pass over the desired items accumulates.

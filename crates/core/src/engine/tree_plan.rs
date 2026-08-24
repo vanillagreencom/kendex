@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use super::desired::{Artifact, Desired, artifact_disk_hash};
 use super::file_plan::{TAKEN_OVER, set_aside};
 use super::item_plan::{Planned, unmanaged};
+use super::written::Written;
 use super::{DriftCause, DriftState};
 use crate::apply::{Op, PlannedOp, Pre};
 use crate::env::Env;
@@ -100,7 +101,7 @@ pub(super) fn plan_tree(
     let Some(link) = link else {
         return Ok(result);
     };
-    plan_link(
+    let linked = plan_link(
         env,
         item,
         link,
@@ -109,62 +110,17 @@ pub(super) fn plan_tree(
         owned,
         written,
         ops,
-        result,
-    )
-}
-
-/// Positions this pass has already planned a write for. Two harnesses can
-/// read one physical tree — and, where a global root is pointed at another
-/// tool's, one link — and planning the same write twice fails the second op
-/// and rolls the whole apply back.
-#[derive(Default)]
-pub(super) struct Written {
-    pub(super) canonicals: BTreeSet<PathBuf>,
-    links: BTreeSet<PathBuf>,
-    /// What the item being planned right now claimed. A refusal is reached
-    /// after the tree half has already claimed its position, and a claim
-    /// left standing for an item that plans nothing would silently drop the
-    /// next harness's install of the same tree.
-    claimed: Vec<Claimed>,
-}
-
-enum Claimed {
-    Canonical(PathBuf),
-    Link(PathBuf),
-}
-
-impl Written {
-    /// Start one item's pass. What it claims from here is undone together.
-    pub(super) fn start_item(&mut self) {
-        self.claimed.clear();
-    }
-
-    /// Take back everything the item just claimed — it plans nothing.
-    pub(super) fn undo_item(&mut self) {
-        for claimed in self.claimed.drain(..) {
-            match claimed {
-                Claimed::Canonical(path) => self.canonicals.remove(&path),
-                Claimed::Link(path) => self.links.remove(&path),
-            };
-        }
-    }
-
-    /// Whether this pass is the one that claims the position.
-    fn claim_canonical(&mut self, path: &Path) -> bool {
-        let first = self.canonicals.insert(path.to_path_buf());
-        if first {
-            self.claimed.push(Claimed::Canonical(path.to_path_buf()));
-        }
-        first
-    }
-
-    fn claim_link(&mut self, path: &Path) -> bool {
-        let first = self.links.insert(path.to_path_buf());
-        if first {
-            self.claimed.push(Claimed::Link(path.to_path_buf()));
-        }
-        first
-    }
+        &result,
+    )?;
+    // A take-over staged for the tree is what this item's row has to say:
+    // the sweep reads the row back to know which items it settled, and a
+    // link that merely is not connected yet must not hide the files going
+    // to the trash. A refusal at the link still wins — the item plans
+    // nothing then.
+    Ok(match (&result, &linked) {
+        (Planned::Drift(_, staged), Planned::Drift(..)) if staged == TAKEN_OVER => result,
+        _ => linked,
+    })
 }
 
 /// Files kendex did not write, where a tree goes. Adoption puts a folder
@@ -275,12 +231,12 @@ fn plan_link(
     owned: &BTreeSet<PathBuf>,
     written: &mut Written,
     ops: &mut Vec<PlannedOp>,
-    result: Planned,
+    result: &Planned,
 ) -> Result<Planned> {
     if link.is_symlink() {
         let points_to = std::fs::read_link(link).unwrap_or_default();
         if points_to == canonical {
-            return Ok(result);
+            return Ok(result.clone());
         }
         // A target that is the canonical tree under its pre-rename spelling
         // is our own: only kendex ever pointed links there, so the position

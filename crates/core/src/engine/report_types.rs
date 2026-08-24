@@ -180,9 +180,10 @@ pub struct PlanOptions {
     /// each one moves to the trash and the declared render takes its
     /// place. The opposite direction from adopt, which keeps the files and
     /// rewrites the declaration around them. An item with a place the
-    /// replacement cannot settle — a foreign link, a source clash — is
-    /// held back whole and named in the notes; the plan fails only when
-    /// that holds back every item the sweep reached.
+    /// replacement cannot settle — a foreign link, a source clash — has
+    /// its take-over held back whole and is named in the notes, planned
+    /// otherwise as without the flag; the plan fails only when that holds
+    /// back every item the sweep reached.
     pub replace_unmanaged: bool,
     /// Replace them for these items only, by kind and name — leaving every
     /// other blocked declaration in the scope exactly as it is. The
