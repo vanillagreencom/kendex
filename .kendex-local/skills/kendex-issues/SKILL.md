@@ -71,9 +71,9 @@ orch owns every step. kendex-specific parameters:
 - **Delegate to**: `generalist` (shell/docs/skills), `rust` (crates/),
   `iced` (iced-rs). Tests required; relevant suite green
   (`bash skills/orch/tests/run-all.sh`, per-skill `tests/*.sh`, `cargo test --workspace`).
-- **Scope is the reported symptom.** Every surface in the diff traces to a
-  line in the issue; anything else is cut or filed. Expect the fix to be
-  about the size of its first commit.
+- **Scope is the reported symptom** (dev skill § Engineering Rules: its two
+  exceptions — mechanical enablers ride, an armed defect is in scope). Expect
+  the fix to be about the size of its first commit.
 - **Fix direction**: determinism and tooling first — a deletion, a
   short-circuit, or a script; added prose last. Skills are instructions,
   not explanations; `tools/guard` refuses history and reasons in them.
@@ -88,8 +88,9 @@ orch owns every step. kendex-specific parameters:
   gate rejects a tracking claim naming no issue). Never `--admin`.
 - **Review the diff yourself** before submit — the actual root cause, not a
   plausible one. A stalled delegate: inspect its worktree, nudge once.
-- Coupled real defect found along the way → file it; fix it only if it is
-  in the report's scope.
+- Findings and coupled defects disposition per orch
+  `references/finding-disposition.md` — the defect fork first, one reply
+  form per thread.
 - Disjoint files → parallel; same file → sequence or bundle.
 - A required check that cannot be rerun gets a fresh head
   (`commit --amend --no-edit` + `push --force-with-lease`, never-shared

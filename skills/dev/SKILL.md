@@ -30,8 +30,6 @@ Review and QA-review belong to the reviewer skill: [`../reviewer/workflows/revie
 
 ## Engineering Rules
 
-Repo-portable; a repo's AGENTS.md adds only what is specific to it.
-
 - Scope is the reported symptom. Every behavioral surface a change touches must trace to a line in the report — if you cannot name that line, keep it out of this change. Two exceptions: mechanical enablers of landing it (locks, changelog, baselines, dismissal renewals) ride without a line, and a defect the change introduces or arms is in scope by definition.
 - Prefer deleting code to abstracting it. Three similar lines beat a premature abstraction. A new dependency needs a one-line justification in its commit message.
 - Every behavior change ships with a test that fails without it.

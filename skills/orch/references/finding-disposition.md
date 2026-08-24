@@ -11,12 +11,12 @@ One pass, in order; the first verdict stands.
 1. **Does it claim a defect** (a failing state, broken path, wrong output)? Verify the mechanism yourself:
    - **False** → `decline`, naming the passing state or the false premise. Scope, age, and "pre-existing" never answer a defect claim.
    - **True, and this diff introduces or arms it** → `fix`, in scope by definition. Pre-existing caps, thresholds, or code the diff newly composes into a failing path count as armed.
-   - **True, pre-existing, unarmed by this diff** → `issue` (create it first, reply `Tracked: <ID>`); `fix` here only when it blocks this change from working.
+   - **True, pre-existing, unarmed by this diff** → `issue` if it clears the filing bar below (create it first, reply `Tracked: <ID>`), else `decline` naming the bar it misses; `fix` here only when it blocks this change from working.
 2. **Actionable?** It needs a specific deliverable, an observable impact, and bounded scope. Vague items ("add logging", "consider X") and informational notes are omitted. Automated regression detection is never informational.
 3. **Related?** The test is semantic — about the problem or the change — not file membership. An out-of-diff file documenting the mechanism being fixed is related; a nearby improvement unrelated to the problem is not. Unrelated → `issue` regardless of size.
 4. **Size?** Small enough to apply here → `fix`. Needs delegation, tracking, history, or new files → `issue`.
 
-Uncertain about category, prefer `fix` (if related); uncertain about relevance, prefer `issue`; if neither fits, omit. Every disposition ends as exactly one thread reply: `Fixed in <sha>`, `Declined: <reason>`, or `Tracked: <ID>` — the merge gate rejects a tracking claim naming no issue.
+Uncertain about category, prefer `fix` (if related); uncertain about relevance, prefer `issue`; if neither fits, omit. A finding that lives in a PR review thread ends as exactly one reply — `Fixed in <sha>`, `Declined: <reason>`, or `Tracked: <ID>` (the merge gate rejects a tracking claim naming no issue); local and pre-PR reviews record the same verdicts in the review artifact instead.
 
 | Signal | Category |
 |--------|----------|
