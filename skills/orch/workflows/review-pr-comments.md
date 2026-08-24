@@ -234,10 +234,13 @@ git -C "[WORKTREE_PATH]" push origin HEAD
 
 | Outcome | Reply body |
 |---------|------------|
-| Applied | `Applied in [COMMIT_SHA]: [SHORT_FIX_SUMMARY]` |
-| Skipped | `Acknowledged — [REASON]` |
-| Blocked → issue | `Tracking in [CREATED_ISSUE_ID]` |
+| Applied | `Fixed in [COMMIT_SHA]: [SHORT_FIX_SUMMARY]` |
+| Skipped / declined | `Declined: [REASON]` |
+| Blocked → issue | `Tracked: [CREATED_ISSUE_ID]` — the issue exists BEFORE the reply; the gate rejects a tracking claim naming no issue |
 | Already fixed | The finding's `draft_response` |
+
+The word "tracked" (any form) in a reply without a `KEN-` or `#` issue id
+turns the gate red (`untracked-claim`). A decline is a decline — say so.
 
 ```bash
 .agents/skills/github/scripts/github.sh post-reply "[THREAD_ID]" "[REPLY_BODY]" --pr "[PR_NUMBER]"

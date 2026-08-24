@@ -15,3 +15,21 @@ Rules the tooling cannot enforce:
 - The CHANGELOG is for consumers (Keep a Changelog): document app, CLI, and package changes; keep engine-internal and maintainer-only details out.
 
 `tools/guard` (the pre-commit hook) enforces the rest — read the script; it is the list.
+
+## Code Review Rules
+
+For automated reviewers (Codex code review, Copilot). Working agents: your
+reply contract is in the orch skill, not here.
+
+- Raise only defects in the changed lines or directly broken by them:
+  correctness, security, data loss, fail-open in gate/guard/CI code.
+- One comment per root cause, naming every affected site. Everything you
+  have about the diff goes in one round.
+- No style, wording, or naming preferences. No speculative hardening on
+  fail-closed paths. No test-coverage asks unless the diff changes behavior
+  no test exercises. Formatting and lint belong to CI, not review.
+- Do not re-raise a finding class answered `Declined: <reason>` on this PR
+  unless the relevant code changed since.
+- Author replies are `Fixed in <sha>`, `Declined: <reason>`, or
+  `Tracked: KEN-<n>` / `#<n>`; the merge gate rejects tracking claims that
+  name no issue.

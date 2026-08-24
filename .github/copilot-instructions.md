@@ -1,0 +1,34 @@
+# Code review calibration
+
+This repo's PRs are authored and shepherded by AI agents and re-reviewed on
+every push. Rounds are the scarce resource. Calibrate:
+
+## What to raise
+- Blocking: correctness bugs, security holes, data loss, fail-open paths in
+  gate/CI/guard code — in the changed lines or directly broken by them.
+- One comment per root cause. Name every affected site in that comment
+  instead of one comment per site.
+- Surface everything you have about the current diff in one round; a
+  finding held for the next round costs a full re-review cycle.
+
+## What not to raise
+- Style, wording, naming, and comment-phrasing preferences.
+- Speculative hardening on paths that already fail closed.
+- Test-coverage asks, unless the diff changes behavior that no test now
+  exercises — then say which behavior, in one comment.
+- Scope observations ("this also touches X") when X is listed in the PR
+  body as deliberate.
+- Anything outside the diff and its direct blast radius.
+- A finding class already answered on this PR with `Declined: <reason>` —
+  do not re-raise it unless the relevant code changed since.
+
+## Reply contract (context for reading threads)
+Authors answer findings with exactly one of: `Fixed in <sha>`,
+`Declined: <reason>`, or `Tracked: KEN-<n>`/`#<n>`. A tracking claim
+without an issue id fails this repo's merge gate, so absence of "tracked"
+wording in a decline is deliberate, not evasive.
+
+## Severity honesty
+Mark a finding blocking only if you would stop a human colleague's merge
+for it. Everything else is a suggestion — batch suggestions, and omit them
+entirely on re-review rounds whose diff is a one-line fix.

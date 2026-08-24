@@ -80,10 +80,12 @@ orch owns every step. kendex-specific parameters:
 - **Size ratchet**: split at a seam. `RATCHET_RAISE=1` only when the added
   lines are the fix itself and no seam exists; never for tests, docs, or
   review-round additions.
-- **Review must converge** (orch SKILL.md): new defects at round 3 stop
-  per-comment patching. A round that is only scope, test-coverage, or
-  wording asks ends the review: reply, resolve, push nothing, merge through
-  the gate. Never `--admin`.
+- **Review must converge** (orch SKILL.md): a recurring defect class is
+  fixed at its source, never per comment. A round that is only scope,
+  test-coverage, or wording asks ends the review: reply, resolve, push
+  nothing, merge through the gate. Replies are `Fixed in <sha>`,
+  `Declined: <reason>`, or `Tracked: KEN-<n>` (issue created first — the
+  gate rejects a tracking claim naming no issue). Never `--admin`.
 - **Review the diff yourself** before submit — the actual root cause, not a
   plausible one. A stalled delegate: inspect its worktree, nudge once.
 - Coupled real defect found along the way → file it; fix it only if it is

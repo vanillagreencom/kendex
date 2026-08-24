@@ -1055,6 +1055,7 @@ fi
 # only the thread term is disabled; evidence and changes-requested still
 # fail closed exactly as before.
 unresolved=0
+untracked=0
 if [ "$THREADS_MODE" = "enforce" ]; then
 # Threads are counted across PAGES: long-lived PRs accumulate hundreds of
 # resolved threads, and failing closed at the first page's hasNextPage made
@@ -1063,10 +1064,18 @@ if [ "$THREADS_MODE" = "enforce" ]; then
 # past it, and on a truthy hasNextPage with no advancing cursor, the old
 # fail-closed "overflow" posture still applies. Malformed nodes keep
 # failing closed per page exactly as before.
+# A human reply claiming a finding is "tracked" must name the tracker issue
+# (KEN-123 or #123): a tracking claim with nothing behind it is a false
+# disposition, and the gate is where it becomes visible. Bot comments are
+# exempt (they quote each other); a missing comments field reads as none.
 t_threads_page_jq='if ((.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | type) != "boolean")
     or ([.data.repository.pullRequest.reviewThreads.nodes[] | select((.isResolved | type) != "boolean")] | length) > 0
   then "malformed"
   else ([.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length | tostring)
+    + " " + ([.data.repository.pullRequest.reviewThreads.nodes[] | ((.comments.nodes // [])[]
+        | select((.author.__typename // "User") != "Bot")
+        | select((.body // "") | test("(?i)\\btrack(ed|ing|s)?\\b"))
+        | select(((.body // "") | test("KEN-[0-9]+|#[0-9]+")) | not))] | length | tostring)
     + " " + (.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | tostring)
     + " " + (.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // "END")
   end'
@@ -1080,7 +1089,7 @@ while :; do
   fi
   if [ -n "$t_cursor" ]; then
     t_page="$(gh_read graphql \
-      -f query='query($owner:String!,$repo:String!,$number:Int!,$after:String){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{isResolved}}}}}' \
+      -f query='query($owner:String!,$repo:String!,$number:Int!,$after:String){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:50){nodes{body author{__typename}}}}}}}}' \
       -F owner="${GH_REPO%/*}" -F repo="${GH_REPO#*/}" -F number="$PR_NUMBER" -f after="$t_cursor" \
       --jq "$t_threads_page_jq")" || {
       echo "::error::could not read review threads" >&2
@@ -1088,7 +1097,7 @@ while :; do
     }
   else
     t_page="$(gh_read graphql \
-      -f query='query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{isResolved}}}}}' \
+      -f query='query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:50){nodes{body author{__typename}}}}}}}}' \
       -F owner="${GH_REPO%/*}" -F repo="${GH_REPO#*/}" -F number="$PR_NUMBER" \
       --jq "$t_threads_page_jq")" || {
       echo "::error::could not read review threads" >&2
@@ -1108,15 +1117,18 @@ while :; do
   fi
   t_count="${t_page%% *}"
   t_rest="${t_page#* }"
+  t_claim="${t_rest%% *}"
+  t_rest="${t_rest#* }"
   t_next="${t_rest%% *}"
   t_cursor_next="${t_rest#* }"
-  case "$t_count" in
+  case "$t_count$t_claim" in
     '' | *[!0-9]*)
       unresolved="malformed"
       break
       ;;
   esac
   unresolved=$((unresolved + t_count))
+  untracked=$((untracked + t_claim))
   [ "$t_next" = "true" ] || break
   if [ "$t_cursor_next" = "END" ] || [ -z "$t_cursor_next" ] || [ "$t_cursor_next" = "$t_cursor" ]; then
     # hasNextPage with no ADVANCING cursor (missing, or identical to the
@@ -1129,7 +1141,7 @@ while :; do
 done
 fi
 
-echo "PR #$PR_NUMBER head $HEAD_SHA: reviews=$got clean-analysis=$check comment-form=$comment_hits outage-marker=$outageok carried=$carried changes-requested=$cr unresolved-threads=$unresolved (threads=$THREADS_MODE)" >&2
+echo "PR #$PR_NUMBER head $HEAD_SHA: reviews=$got clean-analysis=$check comment-form=$comment_hits outage-marker=$outageok carried=$carried changes-requested=$cr unresolved-threads=$unresolved untracked-claims=$untracked (threads=$THREADS_MODE)" >&2
 
 if [ "$cr" != "0" ]; then
   echo "verdict=changes-requested detail=standing review changes requested (persists across pushes until re-approval or dismissal)"
@@ -1137,6 +1149,8 @@ elif [ "$got" = "0" ] && [ "$check" = "0" ] && [ "$comment_hits" = "0" ] && [ "$
   echo "verdict=awaiting detail=awaiting a non-author review for $HEAD_SHA"
 elif [ "$unresolved" != "0" ]; then
   echo "verdict=threads-open detail=$unresolved unresolved review thread(s)"
+elif [ "$untracked" != "0" ]; then
+  echo "verdict=untracked-claim detail=$untracked tracking claim(s) name no issue — write Declined: <reason>, or add the KEN-/#id"
 elif [ "$carried" = "1" ]; then
   echo "verdict=approved detail=review evidence at $carry_base carried to head across a $carry_kind"
 elif [ "$outageok" != "0" ] && [ "$got" = "0" ] && [ "$check" = "0" ] && [ "$comment_hits" = "0" ]; then

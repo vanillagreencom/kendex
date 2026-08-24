@@ -194,6 +194,7 @@ case "$verdict" in
   approved)              desired="success" ;;
   changes-requested)     desired="failure" ;;
   awaiting|threads-open) desired="pending" ;;
+  untracked-claim)       desired="failure" ;;
   *)
     echo "::error::unknown verdict '$verdict'"
     exit 1
