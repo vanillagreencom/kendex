@@ -39,7 +39,7 @@ while IFS= read -r f; do
   esac
   lines=$(wc -l <"$f")
   [ "$lines" -gt "$cap" ] &&
-    say "$f is $lines lines (cap $cap) — split it, don't compress it"
+    say "$f is $lines lines (cap $cap) — split at a concept seam the reader never crosses back over; never shatter one concept to duck the count"
 done <<<"$files"
 
 # Content rules over hand-written source. Usage: scan <grep-ERE> [path-ERE]

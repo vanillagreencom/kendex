@@ -47,10 +47,26 @@ Every diagnostic names the file, its count, the baseline row it violated,
 the deciding threshold (class pattern or default), and the remedy: *split
 at a concept seam*.
 
-**Raising a row** is allowed only when the added lines are the fix for the
-reported symptom and the file has no concept seam to split at. Never for
-tests, docs, comments, or lines a review round asked for. Commit with
-`RATCHET_RAISE=1` and name the reason in the commit body.
+**The ratchet serves cohesion, never defeats it.** The goal is files an
+agent can load and reason about whole: one concept per file, whole
+concept in the file. A *concept seam* is a boundary where the extracted
+file stands alone — its reader never needs the source file open beside
+it. Moving half a function, a helper only one caller uses, or "part 2 of
+X" into a second file to duck the count is worse than the long file:
+prefer the raise.
+
+**Raising a row** (`RATCHET_RAISE=1`, reason in the commit body) is
+correct in exactly three cases:
+1. The added lines are the fix for the reported symptom and the file has
+   no concept seam.
+2. **Merging fragments**: files that are one concept read together —
+   ping-pong calls, a helper file with one importer, "part 2" files —
+   are combined back into one, and the merged file's row rises to its
+   real size. Shrink or delete the emptied rows in the same diff.
+3. A generated or vendored file whose size the repo does not control.
+
+Never raise for tests, docs, comments, or lines a review round asked
+for — those either fit, split at a real seam, or do not belong.
 
 Exit codes: `0` clean, `1` violations, `2` usage/config/collection error
 (malformed baseline or excludes, bad threshold, a tracked path containing
