@@ -28,6 +28,18 @@ orch is the caller and runtime: it owns delegation format, round acceptance, and
 
 Review and QA-review belong to the reviewer skill: [`../reviewer/workflows/review.md`](../reviewer/workflows/review.md), [`../reviewer/workflows/qa-review.md`](../reviewer/workflows/qa-review.md). Command shapes, literal format tags, and round mechanics are orch's: [`../orch/SKILL.md`](../orch/SKILL.md) § Harness-Safe Shell, § Format Tags Are Literal, § Round Closure.
 
+## Engineering Rules
+
+Repo-portable; a repo's AGENTS.md adds only what is specific to it.
+
+- Scope is the reported symptom. Every behavioral surface a change touches must trace to a line in the report — if you cannot name that line, keep it out of this change. Two exceptions: mechanical enablers of landing it (locks, changelog, baselines, dismissal renewals) ride without a line, and a defect the change introduces or arms is in scope by definition.
+- Prefer deleting code to abstracting it. Three similar lines beat a premature abstraction. A new dependency needs a one-line justification in its commit message.
+- Every behavior change ships with a test that fails without it.
+- An `else` that "shouldn't happen" is a bug: assert or return an error, never continue silently.
+- Plain words over jargon: name things by what they do. Comments say why, never what or when — no temporal markers, no references to the change that wrote them. Commit bodies explain intent, never narrate the diff.
+- Delete unused code completely — no compat shims, no `_renamed` vars, no "removed" comments.
+- Stale docs are bugs: contradicting a committed doc means updating it in the same change.
+
 ## Round Contract
 
 Execute workflow sections in order; a "**Skip if**" condition is the workflow's decision, never your own scope assessment. Never push and never open a PR — the orchestrator does that after review passes.
