@@ -234,6 +234,34 @@ describe("updates store", () => {
     expect(useUpdatesStore.getState().rows).toEqual(muted);
   });
 
+  // The symmetric interleaving: the mutation begins first, a read lands
+  // its pre-mutation snapshot in between, and the mutation's overview —
+  // the state after its commit — lands last. Ranking it by when it began
+  // would discard it and leave the screen contradicting the backend.
+  it("a mutation's answer survives a read that lands before it", async () => {
+    let resolveMutation!: (
+      value: Awaited<ReturnType<typeof commands.updateSetIgnored>>,
+    ) => void;
+    vi.mocked(commands.updateSetIgnored).mockReturnValue(
+      new Promise((resolve) => {
+        resolveMutation = resolve;
+      }),
+    );
+    const muting = useUpdatesStore.getState().setIgnored(row({}), true);
+
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [row({})], warnings: [] },
+    });
+    await useUpdatesStore.getState().load();
+
+    const muted = [row({ ignored: true })];
+    resolveMutation({ status: "ok", data: { rows: muted, warnings: [] } });
+    await muting;
+
+    expect(useUpdatesStore.getState().rows).toEqual(muted);
+  });
+
   // A refused mute re-read nothing: the rows on screen are still the last
   // good read's answer, and marking them stale would disable Update
   // buttons over a failure that had nothing to do with checking.

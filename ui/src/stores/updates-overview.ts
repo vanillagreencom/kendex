@@ -1,5 +1,6 @@
 import type { ItemWarning, UpdateRow } from "@/bindings";
 import { settled } from "@/lib/settled";
+import { landings } from "./landings";
 
 type OverviewResult =
   | { status: "ok"; data: { rows: UpdateRow[]; warnings: ItemWarning[] } }
@@ -13,12 +14,11 @@ type OverviewResult =
 // the fail-open this closes. Returns why the read failed, or null, so
 // callers make their own noise.
 //
-// Landings are ordered: the mount-time load, an explicit check, and a
-// mutation's returned overview can resolve in any order, and a slow
-// early read landing last would overwrite a fresher answer and stamp its
-// stale rows loaded and current. Each read takes a ticket when it
-// starts; a landing older than the last one written is discarded — its
-// return value still reports how the operation itself went.
+// Landings are ordered (see `landings`): the mount-time load, an explicit
+// check, and a mutation's returned overview can resolve in any order, and
+// a slow early read landing last would overwrite a fresher answer and
+// stamp its stale rows loaded and current. A discarded landing's return
+// value still reports how the operation itself went.
 export function overviewApplier(
   set: (partial: {
     rows?: UpdateRow[];
@@ -27,20 +27,23 @@ export function overviewApplier(
     error?: string | null;
   }) => void,
 ) {
-  let started = 0;
-  let written = 0;
+  const order = landings();
   return async (
     read: Promise<OverviewResult>,
     // A read that failed leaves the rows on screen unconfirmed; a mutation
     // that failed re-read nothing, so the rows are still the last good
-    // read's answer — only reads may mark them stale.
+    // read's answer — only reads may mark them stale. A mutation that
+    // SUCCEEDED always lands: its overview reports the state after its
+    // commit, which no read still in flight can be fresher than.
     opts?: { mutation?: boolean },
   ): Promise<string | null> => {
-    const ticket = ++started;
+    const ticket = order.begin();
     const response = await settled(read);
     if (response.status === "ok") {
-      if (ticket > written) {
-        written = ticket;
+      const lands = opts?.mutation
+        ? order.landAuthoritative()
+        : order.land(ticket);
+      if (lands) {
         set({
           rows: response.data.rows,
           warnings: response.data.warnings,
@@ -50,8 +53,7 @@ export function overviewApplier(
       }
       return null;
     }
-    if (!opts?.mutation && ticket > written) {
-      written = ticket;
+    if (!opts?.mutation && order.land(ticket)) {
       set({ loaded: false, error: response.error });
     }
     return response.error;

@@ -1,8 +1,13 @@
-import { Store } from "lucide-react";
+import { Store, TriangleAlert } from "lucide-react";
 import type { MarketplaceRow, Scope } from "@/bindings";
 import { EmptyState } from "@/components/empty-state";
 import { SubscribedRow } from "@/components/marketplaces/subscribed-row";
 import { Button } from "@/components/ui/button";
+import {
+  MARKETPLACES_CHECK_FAILED_TITLE,
+  MARKETPLACES_EMPTY_TITLE,
+  TRY_AGAIN_LABEL,
+} from "@/lib/copy";
 import { scopeLabel } from "@/lib/derive";
 import { scopeName, scopePath } from "@/lib/labels";
 import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
@@ -14,12 +19,33 @@ import { useMarketplacesStore } from "@/stores/marketplaces";
 export function SubscribedTab({ onSubscribe }: { onSubscribe: () => void }) {
   const rows = useMarketplacesStore((s) => s.rows);
   const loaded = useMarketplacesStore((s) => s.loaded);
+  const rowsCurrent = useMarketplacesStore((s) => s.rowsCurrent);
+  const error = useMarketplacesStore((s) => s.error);
+  const load = useMarketplacesStore((s) => s.load);
 
   if (loaded && rows.length === 0) {
+    // Empty with nothing retained from a read that failed is a failure to
+    // show, not an invitation to subscribe: "No marketplaces yet" here
+    // would assert an emptiness nobody could check.
+    if (!rowsCurrent) {
+      return (
+        <EmptyState
+          icon={TriangleAlert}
+          title={MARKETPLACES_CHECK_FAILED_TITLE}
+          action={
+            <Button variant="outline" onClick={() => void load()}>
+              {TRY_AGAIN_LABEL}
+            </Button>
+          }
+        >
+          {error}
+        </EmptyState>
+      );
+    }
     return (
       <EmptyState
         icon={Store}
-        title="No marketplaces yet"
+        title={MARKETPLACES_EMPTY_TITLE}
         action={<Button onClick={onSubscribe}>Subscribe to one</Button>}
       >
         Subscribe to a repository of skills and agents to start installing from

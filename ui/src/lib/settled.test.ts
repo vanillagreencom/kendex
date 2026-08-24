@@ -14,9 +14,10 @@ describe("settled", () => {
     ).resolves.toEqual({ status: "error", error: "ipc down" });
   });
 
-  // An Error thrown with no message would land as an empty string, which
-  // renders as a blank error body — and reads as no error at all to any
-  // consumer testing the message by truthiness.
+  // An empty failure message renders as a blank error body — and reads as
+  // no error at all to any consumer testing the message by truthiness —
+  // whether it arrives as a thrown Error with no message or as a refusal
+  // the engine returned with an empty reason.
   it("never lands an empty failure message", async () => {
     await expect(settled(Promise.reject(new Error()))).resolves.toEqual({
       status: "error",
@@ -26,5 +27,8 @@ describe("settled", () => {
       status: "error",
       error: NO_REASON_GIVEN,
     });
+    await expect(
+      settled(Promise.resolve({ status: "error" as const, error: "" })),
+    ).resolves.toEqual({ status: "error", error: NO_REASON_GIVEN });
   });
 });

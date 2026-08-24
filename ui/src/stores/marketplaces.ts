@@ -12,6 +12,7 @@ import {
   type Scope,
 } from "@/bindings";
 import { settled } from "@/lib/settled";
+import { landings } from "./landings";
 import { catalogReads } from "./marketplaces-reads";
 import {
   catalogKey,
@@ -84,6 +85,12 @@ interface MarketplacesState {
   }) => Promise<boolean>;
 }
 
+// Overview reads overlap — Home's mount-time load against the page's own,
+// or a mutation's re-read — and a slow early one landing last would stamp
+// pre-mutation rows current. Every write goes through subscribe/unsubscribe
+// re-reading via load(), so read ordering alone covers it.
+const overviewLandings = landings();
+
 export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
   rows: [],
   packages: {},
@@ -99,7 +106,9 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
   load: async () => {
     // A failed read — refusal or rejection, via `settled` — still answers:
     // `loaded` comes up, `rowsCurrent` does not, and the kept rows stay.
+    const ticket = overviewLandings.begin();
     const response = await settled(commands.marketplacesOverview());
+    if (!overviewLandings.land(ticket)) return;
     if (response.status === "ok") {
       set({
         rows: response.data,

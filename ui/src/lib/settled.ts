@@ -16,7 +16,13 @@ export async function settled<T>(
   read: Promise<CommandResult<T>>,
 ): Promise<CommandResult<T>> {
   try {
-    return await read;
+    const response = await read;
+    // The engine can return a refusal with an empty reason too — normalize
+    // it the same way as an unsaid rejection below.
+    if (response.status === "error" && response.error === "") {
+      return { status: "error", error: NO_REASON_GIVEN };
+    }
+    return response;
   } catch (thrown) {
     const message = thrown instanceof Error ? thrown.message : String(thrown);
     return {

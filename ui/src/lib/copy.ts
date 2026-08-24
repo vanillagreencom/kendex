@@ -160,6 +160,9 @@ export const AUDIT_ATTENTION_DETAIL =
   "Problems and pending changes may be missing here.";
 export const TRY_AGAIN_LABEL = "Try again";
 export const MARKETPLACES_UNCHECKED_DETAIL = "couldn't be checked";
+export const MARKETPLACES_CHECK_FAILED_TITLE =
+  "Couldn't check your marketplaces";
+export const MARKETPLACES_EMPTY_TITLE = "No marketplaces yet";
 
 // The status footer's right side: quiet counts that link to Review & apply.
 export const pendingChangesLabel = (count: number): string =>

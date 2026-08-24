@@ -69,4 +69,55 @@ describe("the marketplaces overview read failing", () => {
     expect(state.loaded).toBe(true);
     expect(state.error).toBe("ipc down");
   });
+
+  // Home's mount-time load overlaps the page's own reads; without ordering
+  // a slow early one landing last would stamp its stale rows current.
+  it("discards a slow load that lands after a fresher one", async () => {
+    let resolveFirst!: (
+      value: Awaited<ReturnType<typeof commands.marketplacesOverview>>,
+    ) => void;
+    vi.mocked(commands.marketplacesOverview).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveFirst = resolve;
+      }),
+    );
+    const first = useMarketplacesStore.getState().load();
+
+    const fresh = [{ ...kept, name: "fresh" }];
+    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
+      status: "ok",
+      data: fresh,
+    });
+    await useMarketplacesStore.getState().load();
+
+    resolveFirst({ status: "ok", data: [{ ...kept, name: "stale" }] });
+    await first;
+
+    const state = useMarketplacesStore.getState();
+    expect(state.rows).toEqual(fresh);
+    expect(state.rowsCurrent).toBe(true);
+  });
+
+  it("discards a slow failed load landing after a fresher answer", async () => {
+    let rejectFirst!: (reason: Error) => void;
+    vi.mocked(commands.marketplacesOverview).mockReturnValueOnce(
+      new Promise((_, reject) => {
+        rejectFirst = reject;
+      }),
+    );
+    const first = useMarketplacesStore.getState().load();
+
+    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
+      status: "ok",
+      data: [kept],
+    });
+    await useMarketplacesStore.getState().load();
+
+    rejectFirst(new Error("ipc down"));
+    await first;
+
+    const state = useMarketplacesStore.getState();
+    expect(state.rowsCurrent).toBe(true);
+    expect(state.error).toBeNull();
+  });
 });

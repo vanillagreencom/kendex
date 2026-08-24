@@ -1,20 +1,33 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import { Table, TableBody } from "@/components/ui/table";
 import { UPDATE_NEEDS_CHECK_NOTE } from "@/lib/copy-updates";
 import { groupUpdates } from "@/lib/update-groups";
-import { useUpdatesStore } from "@/stores/updates";
 import { PackageRows, UpdatesTable } from "./updates-table";
 import { updateRow as row } from "./updates-test-rows";
 
 const render = (rows: UpdateRow[]) =>
   renderToStaticMarkup(<UpdatesTable rows={rows} onIgnore={() => {}} />);
 
-// The table reads the real store; the rows it renders imply a read that
-// answered, so each test starts from that state.
+// Static rendering reads a zustand store's initial snapshot, never one set
+// later, so the store is wrapped to let a test stage what the last read
+// left behind. Rows on the table imply a read that answered, so that is
+// the default.
+const stub = vi.hoisted(() => ({ loaded: true, busy: false }));
+
+vi.mock("@/stores/updates", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("@/stores/updates")>();
+  const hook = (selector?: (state: unknown) => unknown) => {
+    const state = { ...mod.useUpdatesStore.getState(), ...stub };
+    return selector ? selector(state) : state;
+  };
+  return { ...mod, useUpdatesStore: Object.assign(hook, mod.useUpdatesStore) };
+});
+
 beforeEach(() => {
-  useUpdatesStore.setState({ loaded: true, busy: false });
+  stub.loaded = true;
+  stub.busy = false;
 });
 
 describe("UpdatesTable", () => {
@@ -149,7 +162,7 @@ describe("UpdatesTable", () => {
   // — updating from them would move a hold to a stale commit, so every
   // Update action waits for a check that succeeds.
   it("holds every Update action on rows a failed check left behind", () => {
-    useUpdatesStore.setState({ loaded: false });
+    stub.loaded = false;
     const html = renderToStaticMarkup(
       <Table>
         <TableBody>
