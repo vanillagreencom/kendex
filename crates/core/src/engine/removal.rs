@@ -310,8 +310,10 @@ pub(super) fn orphans(
             continue;
         }
         // An automatic removal (a sweep, an unfiltered orphan cleanup)
-        // never takes edited or unprovable bytes; only naming the item —
-        // or asking for edits to be discarded — does.
+        // never takes bytes a record could vouch for and does not —
+        // `edit_holds`' doc draws that line, and names the anchor-less
+        // non-pi hook whose record vouches for nothing; only naming the
+        // item, or asking for edits to be discarded, takes what it holds.
         if !named && !options.overwrite_edited && edit_holds(env, scope, entry) {
             drift.push(DriftRow {
                 kind: entry.kind,

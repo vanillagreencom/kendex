@@ -298,8 +298,9 @@ fn a_record_that_names_no_registration_leaves_a_moved_entry_alone() {
 /// A record that names its registration exactly, duplicated in place: two
 /// entries answer to every field the record kept, and neither can be told
 /// from the other. Retiring by guess would take both, and wedging is a
-/// conflict the person cannot see past — so the refresh settles, and the
-/// duplicate is theirs to keep or to clean up.
+/// conflict the person cannot see past — so the refresh settles without
+/// one, and the byte-identical handler converges back to a single entry
+/// through the idempotent upsert.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_exact_duplicate_of_the_recorded_entry_does_not_wedge_the_refresh() {
@@ -329,6 +330,14 @@ fn an_exact_duplicate_of_the_recorded_entry_does_not_wedge_the_refresh() {
         report.drift
     );
     apply::execute(&f.env, &report.plan, None).unwrap();
+    assert_eq!(
+        settings(&f)["hooks"]["PreToolUse"][0]["hooks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1,
+        "the byte-identical handler converges to one entry"
+    );
     let settled = audit(&f.env, &f.scope).unwrap();
     assert!(settled.plan.ops.is_empty(), "{:?}", settled.plan.ops);
 }

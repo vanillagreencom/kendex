@@ -344,3 +344,44 @@ fn a_hold_no_discard_can_release_reads_the_same_when_nothing_asks_for_it() {
     );
     assert!(row.cause.is_none(), "nor a cause for one: {:?}", row.cause);
 }
+
+/// The sweep's edit gate with the reserved name long gone: a pi record
+/// that predates the anchor can prove nothing about the file at the new
+/// path, because pi's paths are derived, never recorded — so an
+/// automatic sweep must not take it, and the record survives to claim
+/// it when the person says what they meant.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_anchorless_record_holds_the_sweep_at_the_new_path() {
+    let w = super::world();
+    apply(&w);
+    assert!(
+        !w.dot().join("hooks").exists() && !w.dot().join("hooks.json").exists(),
+        "nothing of the old layout is in play"
+    );
+    forget_rendered_hash(&w);
+    undeclare(&w);
+
+    let report = plan_apply(&w.env, &w.scope(), &reconcile()).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+
+    assert!(
+        report
+            .drift
+            .iter()
+            .any(|row| row.name == "guard" && row.state == DriftState::Conflict),
+        "what the record cannot prove is a conflict, not a removal: {:?}",
+        report.drift
+    );
+    assert!(
+        w.dot().join("kendex/hooks/guard.sh").exists(),
+        "the copy stays"
+    );
+    let lock: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(w.project.join(".kendex-lock.json")).unwrap())
+            .unwrap();
+    assert!(
+        lock["entries"].get("hook:guard:pi").is_some(),
+        "and the record that can claim it later stays with it: {lock}"
+    );
+}
