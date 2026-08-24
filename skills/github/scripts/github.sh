@@ -97,14 +97,19 @@ shift || true
 # Help is answered before project configuration or auth is touched:
 # sourcing a repo's .env under --help would execute repository-controlled
 # shell code, and help must not fail on auth. A subcommand's --help routes
-# straight to its script, which prints help before any API work.
+# straight to its script, which prints help before any API work. The scan
+# covers every argv position — enumerating positions is how this class
+# leaks.
 case "$command" in
     help|--help|-h) show_help; exit 0 ;;
 esac
 _help_route=""
-case "${1:-}" in
-    --help|-h) _help_route=1 ;;
-esac
+for _arg in "$@"; do
+    case "$_arg" in
+        --help|-h) _help_route=1; break ;;
+    esac
+done
+unset _arg
 
 if [ -z "$_help_route" ]; then
     # Auto-source project config and export GH_TOKEN for all subcommands.

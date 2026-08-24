@@ -35,6 +35,8 @@ check "bare invocation prints the command index" "GitHub API CLI"
 check "label-add --help routes to the subcommand help" "Add a label" label-add --help
 check "pr-view --help routes to the subcommand help" "View PR details" pr-view --help
 check "pr-merge -h routes to the subcommand help" "Merge PR" pr-merge -h
+check "pr-view 123 --help routes late-position help" "View PR details" pr-view 123 --help
+check "pr-merge 42 -h routes late-position help" "Merge PR" pr-merge 42 -h
 
 if [[ -e "$TMP/env-executed" ]]; then
   FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "help sourced the project .env"

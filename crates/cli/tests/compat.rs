@@ -282,7 +282,11 @@ fn init_scaffolds_and_validates() {
         &[],
     );
     assert!(output.status.success());
-    assert!(home.join("catalog/skills/deploy/SKILL.md").is_file());
+    let skill_md = std::fs::read_to_string(home.join("catalog/skills/deploy/SKILL.md")).unwrap();
+    assert!(
+        skill_md.contains("commands to run, rules to follow"),
+        "scaffold body lost the do-only directive: {skill_md}"
+    );
 
     let usage = kendex_in(home, &home.join("catalog"), &["init"], &[]);
     assert!(usage.status.success());

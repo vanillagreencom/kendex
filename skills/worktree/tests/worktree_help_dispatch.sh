@@ -61,6 +61,18 @@ done
 out=$(cd "$REPO" && "$WORKTREE_SCRIPT" claude-setup --help)
 assert_contains "$out" "App-created worktree hooks" "hook commands share the app-hook help"
 
+# Help at ANY argv position, not only right after the command: enumerating
+# positions is how this class leaks.
+out=$(cd "$REPO" && "$WORKTREE_SCRIPT" remove CC-1 --help)
+assert_eq "$?" 0 "worktree remove CC-1 --help exits 0"
+assert_contains "$out" "Usage: worktree remove" "late --help prints the remove help"
+out=$(cd "$REPO" && "$WORKTREE_SCRIPT" cleanup --stale --help)
+assert_eq "$?" 0 "worktree cleanup --stale --help exits 0"
+assert_contains "$out" "Usage: worktree cleanup" "late --help prints the cleanup help"
+out=$(cd "$REPO" && "$WORKTREE_SCRIPT" push some-id -h)
+assert_eq "$?" 0 "worktree push some-id -h exits 0"
+assert_contains "$out" "Usage: worktree push" "late -h prints the push help"
+
 if [[ -e "$TMP_ROOT/env-executed" ]]; then
   FAIL=$((FAIL + 1))
   printf '  FAIL  %s\n' "help sourced the project .env"

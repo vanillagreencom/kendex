@@ -455,11 +455,18 @@ EOF
 
 # Every help form is answered here, before git resolution and before any
 # project env file is read: a sourced .env statement must never run under
-# --help, and help must work outside a repository.
+# --help, and help must work outside a repository. The scan covers every
+# argv position — enumerating positions is how this class leaks.
 case "${1:-}" in
   --help|-h|help) print_worktree_usage; exit 0 ;;
 esac
-if [[ "${2:-}" == "--help" || "${2:-}" == "-h" ]]; then
+_want_help=""
+for _arg in "${@:2}"; do
+  case "$_arg" in
+    --help|-h) _want_help=1; break ;;
+  esac
+done
+if [[ -n "$_want_help" ]]; then
   case "${1:-}" in
     restack)      print_restack_help; exit 0 ;;
     create)       print_create_help; exit 0 ;;
@@ -473,6 +480,7 @@ if [[ "${2:-}" == "--help" || "${2:-}" == "-h" ]]; then
                   print_hooks_help; exit 0 ;;
   esac
 fi
+unset _want_help _arg
 
 canonical_existing_dir() {
   local path="$1"
@@ -3992,7 +4000,6 @@ case "${1:-}" in
     shift || true
     while [[ $# -gt 0 ]]; do
       case "$1" in
-        --help|-h) print_remove_help; exit 0 ;;
         --force) REMOVE_FORCE=true; shift ;;
         # Reject stray option-looking arguments before they are treated as an
         # identifier and turned into a trees/<id> path. Otherwise any typo'd
@@ -4122,7 +4129,6 @@ case "${1:-}" in
     shift || true
     while [[ $# -gt 0 ]]; do
       case "$1" in
-        --help|-h) print_cleanup_help; exit 0 ;;
         --stale) CLEANUP_STALE=true; shift ;;
         --ttl-minutes)
           if [[ $# -lt 2 ]]; then

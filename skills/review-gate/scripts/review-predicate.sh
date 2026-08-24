@@ -200,21 +200,19 @@ Per-invocation env seams (never settings keys):
 USAGE
 }
 
-case "${1:-}" in
-  --help|-h)
-    print_usage
-    exit 0
-    ;;
-  "") ;;
-  *)
-    # The predicate is env-driven and takes no positional arguments. An
-    # unrecognized argument is a configuration error with no verdict: a
-    # misspelled or stale wrapper flag must never fall through to a normal
-    # gate evaluation.
-    echo "review-predicate.sh: unknown argument '${1}' — env-driven, no positional arguments (run --help)" >&2
-    exit 2
-    ;;
-esac
+# The predicate is env-driven: zero arguments evaluate, exactly one
+# -h/--help prints usage, and every other argument list — an explicitly
+# empty argument included — is a configuration error with no verdict. A
+# misspelled or stale wrapper flag must never fall through to a normal
+# gate evaluation, so validation is by argument count, not by position.
+if [ "$#" -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
+  print_usage
+  exit 0
+fi
+if [ "$#" -gt 0 ]; then
+  echo "review-predicate.sh: unknown argument list ($# argument(s), first: '${1}') — env-driven, no positional arguments (run --help)" >&2
+  exit 2
+fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$script_dir/lib/settings.sh"

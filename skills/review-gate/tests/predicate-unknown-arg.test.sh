@@ -16,20 +16,34 @@ bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 
 echo "=== review-predicate rejects unknown arguments without a verdict ==="
 
-for arg in --wibble -x extra "--help=1"; do
+# Validation is by argument count, not position: an explicitly empty
+# argument, an empty argument smuggling a flag behind it, and any list of
+# two or more arguments — help forms included — all reject.
+reject_case() {
+  local name="$1"; shift
+  local out code err
   set +e
-  out=$("$PREDICATE" "$arg" 2>"$TEST_DIR/.stderr")
+  out=$("$PREDICATE" "$@" 2>"$TEST_DIR/.stderr")
   code=$?
   err=$(cat "$TEST_DIR/.stderr"); rm -f "$TEST_DIR/.stderr"
   set -e
-  [[ "$code" -eq 2 ]] && ok "'$arg' exits 2" || bad "'$arg' exits 2 (got $code)"
-  grep -qF "unknown argument" <<<"$err" && ok "'$arg' names the rejection" || bad "'$arg' names the rejection"
+  [[ "$code" -eq 2 ]] && ok "$name exits 2" || bad "$name exits 2 (got $code)"
+  grep -qF "unknown argument" <<<"$err" && ok "$name names the rejection" || bad "$name names the rejection"
   if grep -q "^verdict=" <<<"$out"; then
-    bad "'$arg' emits no verdict line"
+    bad "$name emits no verdict line"
   else
-    ok "'$arg' emits no verdict line"
+    ok "$name emits no verdict line"
   fi
-done
+}
+
+reject_case "'--wibble'" --wibble
+reject_case "'-x'" -x
+reject_case "'extra'" extra
+reject_case "'--help=1'" "--help=1"
+reject_case "explicitly empty argument" ""
+reject_case "empty argument then flag" "" --wibble
+reject_case "--help with a trailing argument" --help extra
+reject_case "repeated -h" -h -h
 
 out=$("$PREDICATE" --help)
 grep -qF "no positional arguments" <<<"$out" && ok "--help states the no-positionals contract" || bad "--help states the no-positionals contract"
