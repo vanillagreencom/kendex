@@ -332,7 +332,8 @@ check_pr_watch() {
     return 0
   fi
   # Non-zero with no per-PR lines is pr-watch's GLOBAL failure shape
-  # (gates.md): it reports on stderr only, and nothing here can be trusted.
+  # (pr-watch.sh --help): it reports on stderr only, and nothing here can be
+  # trusted.
   [[ -n "$PW_OUT" ]] || die "pr-watch failed (rc=$PW_RC) with no per-PR lines: ${PW_ERR:-<no stderr>}"
   keys="$(awk -F'\t' 'NF >= 3 { print $1 "\t" $3 }' <<<"$PW_OUT")"
   while IFS= read -r key; do

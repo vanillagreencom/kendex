@@ -22,7 +22,10 @@ and "stale" both keep polling: a prior round's artifact on disk is the normal
 state while the current reviewer works. A deadline return (missing/stale) is
 the escalation trigger. Arm it in the background at delegation and the caller
 wakes the moment the reviewer writes, independent of any return-message
-delivery.
+delivery. Backgrounding per harness: Claude Code runs it as a background shell
+(the exit wake IS the event); Pi runs it under bg_task, which emits no exit
+wake, so pair it with the per-wake check; Codex and OpenCode run it via
+scheduled re-entry, or fall back to the per-wake check alone.
 
 Path mode (--path): prints the canonical artifact path for the agent with a
 real UTC timestamp ([WORKTREE]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json) and
@@ -60,7 +63,8 @@ reason meanings when ok=false:
   incomplete artifact declares the qa/second-opinion shape (a qa_metadata
              object is present) but its findings are unusable — either
              blockers[]/suggestions[] are absent or not arrays, OR a present
-             item is missing a required review-finding field so the
+             item is missing a required review-finding field — including
+             category ("fix" or "issue") on suggestions — so the
              orchestrator cannot route it. `detail` names the array and what it
              was, or the first offending item and field. Artifacts without
              qa_metadata are unaffected.

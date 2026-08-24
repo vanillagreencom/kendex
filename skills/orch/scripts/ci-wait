@@ -1,57 +1,7 @@
 #!/usr/bin/env bash
-# Wait for CI checks to complete. Always emits a final result on stdout —
-# a "CI passed"/"CI failed"/"CI timeout"/"CI error" line, or a JSON object
-# with --json — so callers can route pass vs fail deterministically
-# (kendex#454). Auto-retries transient infrastructure failures (max 1 retry).
-#
-# Uses JSON-based state detection to avoid false positives from stale checks
-# left by prior workflow runs (e.g., SUCCESS/SKIPPED checks from a superseded
-# earlier run). A settled failure attributable only to superseded runs is
-# additionally correlated with the head's Actions run list before it can
-# terminate the wait (kendex#650, kendex#699); see superseding_run_state below.
-#
-# Usage: ci-wait <PR#> [poll_interval] [max_wait] [--json]
-#
-# Exit codes:
-#   0 - CI complete and passing
-#   1 - CI failed, timed out with checks still pending, or a non-auth error
-#       (no checks registered, merge conflicts, repo/API failure)
-#   2 - usage error: unknown flag or non-integer argument (matches queue-wait)
-#   3 - GitHub auth/CLI error (matches approval-wait)
-#
-# JSON output (always when --json):
-#   {
-#     "status": "complete" | "timeout" | "error",
-#     "verdict": "pass" | "fail" | "pending" | "none",
-#     "elapsed_seconds": <int>,
-#     "error": <string>,            # only when status == "error"
-#     "pending_checks": [ {name,state} ... ],
-#     "failed_checks":  [ {name,state} ... ],
-#     "passed_checks":  [ {name,state} ... ]
-#   }
-#   Still-pending checks at the deadline report status "timeout", never
-#   silent success.
-#
-# Auth resolution ladder (see kendex#19):
-#   1. Validate the currently selected GH_TOKEN/GITHUB_TOKEN once, if present.
-#   2. If that env token fails, try keyring auth once with env tokens removed.
-#   3. If keyring does not recover, unset the stale env token and load a
-#      GH_BOT_TOKEN candidate from project config/secrets.
-#   4. Validate the loaded bot token once, or keyring once when no env token
-#      was present at startup.
-#   5. If no auth path works after that, exit 3 with a clear diagnostic.
-#      Exit 3 matches approval-wait's auth-error exit so callers can
-#      treat the two consistently.
-#
-# Environment:
-#   GIT_HOST_CLI  - (optional) Path to git host CLI script for enriched output
-#   CI_WAIT_NO_CHECKS_GRACE - (optional) Seconds to keep polling before failing
-#                 when no checks have registered yet (default 180). ci-wait
-#                 runs after the submit-pr approval gate; approval-gated repos
-#                 dispatch CI from the pull_request_review event, so check
-#                 registration can lag. Within the grace window the result
-#                 stays verdict "pending"; past it, the explicit "no checks
-#                 registered" diagnostic fires.
+# Wait for CI checks to complete on a PR. The authoritative contract —
+# verdicts, stale-check handling, JSON output, environment, auth, exit
+# codes — is print_usage below: run with --help.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -64,10 +14,80 @@ print_usage() {
   cat <<'USAGE'
 Usage: ci-wait <PR#> [poll_interval] [max_wait] [--json]
 
+Wait for CI checks to complete on a PR. Every exit path emits a final
+result on stdout — a "CI passed"/"CI failed"/"CI timeout"/"CI error" line,
+or a JSON object with --json — so callers can route pass vs fail
+deterministically (kendex#454). Auto-retries transient infrastructure
+failures (max 1 retry).
+
   <PR#>          pull request number (required)
   poll_interval  seconds between polls (default 15)
   max_wait       total budget in seconds (default 600)
   --json         emit the machine-readable result object on stdout
+
+Verdicts (JSON "verdict"):
+  pass     every current-head check settled green
+  fail     a settled current-head failure — current-run failures are
+           terminal
+  pending  checks still running or not yet registered; at the deadline the
+           result is status "timeout", never silent success
+  none     (with status "complete") the repo has no CI to wait for: no
+           active workflows, no branch protection, and no required-check
+           rules on the PR's base branch, each probe answering
+           affirmatively — a probe failure falls through to the normal
+           no-checks grace path instead. Treat "none" as the no-CI route,
+           never as a failure needing an override.
+
+Stale-check handling (kendex#650, kendex#699): the current-head substantive
+run is selected ignoring later all-skipped dispatches, and an aggregate
+status still linked to an older run is treated as pending while a newer
+substantive run has no failures. A settled failure attributable only to
+superseded runs is correlated against the head's Actions run list before it
+can terminate the wait: any queued or in-progress substantive-event run on
+the head — including a rerun attempt of an older run, which keeps its
+original run id — keeps the verdict pending; a newest same-workflow run
+that completed successfully discards the stale failures; a failed newest
+run, or a cancelled run with no newer or fresher sibling, stays terminal.
+A missing replacement reaches the timeout rather than passing.
+
+JSON output (always when --json):
+  {
+    "status": "complete" | "timeout" | "error",
+    "verdict": "pass" | "fail" | "pending" | "none",
+    "elapsed_seconds": <int>,
+    "error": <string>,            # only when status == "error"
+    "pending_checks": [ {name,state} ... ],
+    "failed_checks":  [ {name,state} ... ],
+    "passed_checks":  [ {name,state} ... ]
+  }
+
+Environment:
+  GIT_HOST_CLI  (optional) path to a git host CLI script for enriched
+                output
+  CI_WAIT_NO_CHECKS_GRACE
+                seconds to keep polling before failing when no checks have
+                registered yet (default 180). ci-wait runs after the
+                submit-pr approval gate; approval-gated repos dispatch CI
+                from the pull_request_review event, so check registration
+                can lag. Within the grace window the result stays verdict
+                "pending"; past it, the explicit "no checks registered"
+                diagnostic fires.
+
+Auth: resolved through lib/gh-auth.sh, shared with approval-wait and
+queue-wait (kendex#19) — env-first: already-resolved GH_TOKEN /
+GITHUB_TOKEN / GH_BOT_TOKEN values from the parent process win before
+local files are read, `op read` runs only for the final selected op://
+reference, each candidate source is probed at most once, and a selected
+env token is validated with `gh api user`. Full ladder: orch
+DEVELOPMENT.md.
+
+Exit codes:
+  0  CI complete and passing
+  1  CI failed, timed out with checks still pending, or a non-auth error
+     (no checks registered, merge conflicts, repo/API failure)
+  2  usage error: unknown flag or non-integer argument (matches
+     queue-wait)
+  3  GitHub auth/CLI error (matches approval-wait and queue-wait)
 USAGE
 }
 

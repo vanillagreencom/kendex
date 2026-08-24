@@ -89,7 +89,10 @@ build a JSON array of {n, text} with the harness file-write tool and pass
 integer n, unique, non-empty text; extra element keys are dropped).
 A round's record is immutable: an identical re-invocation is an idempotent
 success; different content under the same round id exits 2 — a changed
-delegation needs a NEW round id. --issue / --round-id must match
+delegation needs a NEW round id. The record is read back by
+dev-artifact-check --expect-items-from-round, by a respawned dev agent
+recovering its items, and by the tail-reconciliation nudge.
+--issue / --round-id must match
 ^[A-Za-z0-9._-]+$ with no '..'. Canonical schema:
 skills/orch/schemas/dev-round.md.
 EOF

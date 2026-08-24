@@ -2,7 +2,7 @@
 
 The on-disk record a dev or QA agent writes at the end of an implement, fix, or analysis delegation. Orch accepts a completion from it **independently of the live return message**.
 
-Written **only** by `dev-return-write` — never hand-authored, never composed with a file-write tool. The writer builds the JSON with `jq` and writes it atomically; its `--help` is the flag reference. Validation gates live in [`../references/artifact-checks.md`](../references/artifact-checks.md).
+Written **only** by `dev-return-write` — never hand-authored, never composed with a file-write tool. The writer builds the JSON with `jq` and writes it atomically; its `--help` is the flag reference. Validation gates live in `dev-artifact-check --help`; round-closure routing in [`../references/artifact-checks.md`](../references/artifact-checks.md).
 
 ## Identity: the round id
 

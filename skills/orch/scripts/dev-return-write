@@ -122,6 +122,7 @@ kendex#1236) and rejects --commit, --validate, --validate-note, --item, and
 keys are omitted from the artifact.
 --issue / --round-id must match ^[A-Za-z0-9._-]+$. Canonical schema:
 skills/orch/schemas/dev-return.md. Validated by dev-artifact-check.
+Exit 0 on success; every usage/validation error exits 2.
 EOF
 }
 

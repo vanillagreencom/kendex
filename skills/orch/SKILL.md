@@ -74,9 +74,9 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `worktree-claim` | Take or verify this session's possession of an issue worktree; exits 75 when a foreign owner or lock holds it, or when the token it is bound to differs from the lease. `--help` |
 | `dev-round-write` | Persist a fix round's delegated item set at stamp time. `--help`; schema `schemas/dev-round.md` |
 | `dev-artifact-check` | Validate a dev round's completion artifact by round id. `--help` + [references/artifact-checks.md](references/artifact-checks.md) |
-| `approval-wait` | Poll the reviewer gate; `--resolve-mode` prints the effective gate mode. [references/gates.md](references/gates.md) |
-| `ci-wait` | Block until CI completes on a PR. [references/gates.md](references/gates.md) |
-| `queue-wait` | Block until a merge-queue / auto-merge outcome. [references/gates.md](references/gates.md) |
+| `approval-wait` | Poll the reviewer gate; `--resolve-mode` prints the effective gate mode. `--help` + [references/gates.md](references/gates.md) |
+| `ci-wait` | Block until CI completes on a PR. `--help` + [references/gates.md](references/gates.md) |
+| `queue-wait` | Block until a merge-queue / auto-merge outcome. `--help` + [references/gates.md](references/gates.md) |
 | `orch-env` | Effective value of a kendex `[env]` setting (process env > `kendex.settings.toml` > default) |
 | `spawn-adapter` | Resolve Codex spawn parameters (`spawn`) and the runtime thread budget (`slots`) |
 | `open-terminal` | Terminal handoff; model, effort, and permission flags via `--launch-flags`. `--help` |

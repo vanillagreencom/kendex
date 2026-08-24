@@ -62,7 +62,11 @@ Usage:
 verdict leaves "wait" (an artifact landed: accept or retry) or SECS elapse (the
 last result, verdict "wait", is printed). Run it as the armed round watchdog: it
 returns the moment the receipt is written, independent of any return-message
-delivery, and a deadline return is the escalation trigger.
+delivery, and a deadline return is the escalation trigger. Backgrounding per
+harness: Claude Code runs it as a background shell (the exit wake IS the
+event); Pi runs it under bg_task, which emits no exit wake, so pair it with
+the per-wake check; Codex and OpenCode run it via scheduled re-entry, or fall
+back to the per-wake check alone.
 
 Round mode (the production path): resolves WT/tmp/dev-return-ISSUE-RID.json,
 requires it exists, its internal .round_id == RID, then the scalar/kind, commit

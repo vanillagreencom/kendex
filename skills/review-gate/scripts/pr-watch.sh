@@ -2,86 +2,107 @@
 # pr-watch — reduce every open PR to normalized needs-attention lines
 # (kendex#1117), the long-horizon third piece beside the predicate (one
 # head's verdict) and the writer (converge the gate). Those two keep the
-# GATE correct; nothing told the AGENT when a PR needs a human/agent hand.
-# Sessions watching several PRs across hours hand-rolled monitors keyed on
-# gate-state transitions — and a PR sitting steadily at "pending because
-# review threads are open" TRANSITIONS NOTHING, so the observed failure
-# mode was an agent idling for hours over a thread a reviewer posted
-# minutes after its last pass.
-#
-# One invocation answers: does any open PR need attention RIGHT NOW?
-#
-#   threads-open       unresolved review threads — read DIRECTLY in both
-#                      modes (never only via the predicate: a repo running
-#                      REVIEW_GATE_THREADS=off gets approved verdicts with
-#                      threads open, and thread transitions have no webhook
-#                      anywhere — seeing them is this tool's reason to
-#                      exist). Counted across pages (bound: 20 pages / 2000
-#                      threads); past the bound, or on pagination metadata
-#                      that cannot advance, the count fails CLOSED as
-#                      attention.
-#                      QUEUED PRs are annotated — a queued PR needs a
-#                      DEQUEUE before any fix push, GitHub rejects pushes
-#                      to queued branches
-#   changes-requested  a standing objection blocks the gate
-#   gate-stale         the predicate says approved but the gate context's
-#                      newest row is not success — the writer has not
-#                      converged (event missed, cron slipped). With --heal,
-#                      one writer dispatch per invocation self-heals it.
-#   disarmed           gate open (success) on an un-queued PR with
-#                      auto-merge NOT armed — mergeable, but nothing will
-#                      merge it (the known eviction-disarm failure mode)
-#   awaiting-stale     no evidence and the head has sat unreviewed longer
-#                      than the quiet period (PR_REVIEW_WAIT_SECS, default
-#                      900) — time for a manual re-review trigger or the
-#                      caller's on-timeout policy
-#   heal-dispatched    informational companion to a healed gate-stale: the
-#                      one bounded writer dispatch of this invocation fired
-#   head-moved         the head changed while this PR was being reduced —
-#                      the findings (or the silence) describe the OLD head;
-#                      re-run. Attention, not an error: the race is
-#                      ordinary, the response is one more poll
-#   error              this PR could not be evaluated (predicate exit 2 /
-#                      read failure) — fail LOUD per engine ethos, never
-#                      silently skipped
-#
-# A verdict of awaiting inside the quiet period, and approved+success with
-# auto-merge armed or queued, are healthy states and emit NOTHING — the
-# contract is that silence on stdout means "nothing needs you", which is
-# what makes the exit code a cheap loop/cron predicate.
-#
-# Output: one tab-separated line per finding on stdout:
-#   <pr-number> <TAB> <head-sha-8> <TAB> <kind> <TAB> <detail>
-# Exit: 0 = nothing needs attention; 1 = at least one attention line;
-#       2 = at least one PR errored (attention lines may also be present).
-#
-# Usage: pr-watch.sh [PR# ...] [--no-evaluate] [--heal] [--awaiting-after SECS]
-#   PR# ...            watch only these PRs (default: every open PR)
-#   --no-evaluate      cheap mode: skips ONLY the predicate (the expensive
-#                      multi-read evaluation) — the thread, queue, and
-#                      gate-status reads still run, so threads-open,
-#                      disarmed, and the threads-driven gate-stale (a green
-#                      gate over open threads under enforced threads — no
-#                      predicate needed) all fire; the verdict-driven
-#                      gate-stale forms, changes-requested, and
-#                      awaiting-stale need the predicate and do not
-#   --heal             on gate-stale, dispatch the writer workflow once per
-#                      invocation (name: PR_WATCH_WRITER_WORKFLOW, default
-#                      "Review gate writer")
-#   --awaiting-after S override the awaiting-stale threshold (default: the
-#                      PR_REVIEW_WAIT_SECS setting, else 900)
-#
-# Env (required): GH_TOKEN (or ambient gh auth), GH_REPO
-# Consumers: orch's waiters/workflows treat this as the single state
-# reducer for multi-PR watching (orch's approval-wait remains the
-# single-PR foreground wait with nudge/on-timeout policy); harness wake-up
-# mechanisms (a monitor loop, cron, a scheduler) wrap it in a few lines
-# instead of re-deriving state keys per session.
+# GATE correct; this one tells the AGENT when a PR needs a hand — a PR
+# sitting steadily at "pending because review threads are open"
+# TRANSITIONS NOTHING, so watchers keyed on gate-state transitions idled
+# for hours over a thread posted minutes after their last pass.
+# The authoritative contract — attention kinds, output format, exit
+# codes, env — is print_usage below: run with --help.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/settings.sh
 . "$script_dir/lib/settings.sh"
+
+print_usage() {
+  cat <<'USAGE'
+Usage: pr-watch.sh [PR# ...] [--no-evaluate] [--heal] [--awaiting-after SECS]
+
+Reduce every open PR to normalized needs-attention lines — the
+long-horizon needs-attention reducer beside the predicate (one head's
+verdict) and the writer (converge the gate). One invocation answers: does
+any open PR need attention RIGHT NOW?
+
+  PR# ...            watch only these PRs (default: every open PR)
+  --no-evaluate      cheap mode: skips ONLY the predicate (the expensive
+                     multi-read evaluation) — the thread, queue, and
+                     gate-status reads still run, so threads-open,
+                     disarmed, and the threads-driven gate-stale (a green
+                     gate over open threads under enforced threads — no
+                     predicate needed) all fire; the verdict-driven
+                     gate-stale forms, changes-requested, and
+                     awaiting-stale need the predicate and do not
+  --heal             on gate-stale, dispatch the writer workflow once per
+                     invocation (name: PR_WATCH_WRITER_WORKFLOW, default
+                     "Review gate writer")
+  --awaiting-after S override the awaiting-stale threshold (default: the
+                     PR_REVIEW_WAIT_SECS setting, else 900)
+
+Attention kinds:
+  threads-open       unresolved review threads — read DIRECTLY in both
+                     modes, never only via the predicate (a repo running
+                     REVIEW_GATE_THREADS=off gets approved verdicts with
+                     threads open, and thread transitions have no webhook
+                     anywhere). Counted across pages (bound: 20 pages /
+                     2000 threads); past the bound, or on pagination
+                     metadata that cannot advance, the count fails CLOSED
+                     as attention. QUEUED PRs are annotated — a queued PR
+                     needs a DEQUEUE before any fix push; GitHub rejects
+                     pushes to queued branches
+  changes-requested  a standing objection blocks the gate
+  gate-stale         the predicate and the gate context's newest row
+                     disagree, in either mismatch direction — the writer
+                     has not converged (event missed, cron slipped). With
+                     --heal, one writer dispatch per invocation self-heals
+                     it
+  disarmed           gate open (success) on an un-queued PR with auto-merge
+                     NOT armed — mergeable, but nothing will merge it (the
+                     known eviction-disarm failure mode)
+  awaiting-stale     no evidence and the head has sat unreviewed longer
+                     than the quiet period (PR_REVIEW_WAIT_SECS, default
+                     900) — time for a manual re-review trigger or the
+                     caller's on-timeout policy
+  heal-dispatched    informational companion to a healed gate-stale: the
+                     one bounded writer dispatch of this invocation fired
+  head-moved         the head changed while this PR was being reduced —
+                     the findings (or the silence) describe the OLD head;
+                     re-run. Attention, not an error: the race is
+                     ordinary, the response is one more poll
+  error              this PR could not be evaluated (predicate exit 2 /
+                     read failure) — fail LOUD, never silently skipped
+
+A verdict of awaiting inside the quiet period, and approved+success with
+auto-merge armed or queued, are healthy states and emit NOTHING — silence
+on stdout means "nothing needs you", which is what makes the exit code a
+cheap loop/cron predicate.
+
+Output: one tab-separated line per finding on stdout:
+  <pr-number> <TAB> <head-sha-8> <TAB> <kind> <TAB> <detail>
+
+Exit codes:
+  0  nothing needs attention
+  1  at least one attention line
+  2  read failure, in two shapes: per-PR failures carry `error` lines on
+     stdout (attention lines may also be present), while GLOBAL failures
+     (missing GH_REPO, a broken open-PR listing) report on stderr only
+     with no per-PR lines — surface stderr, not just stdout
+
+Env (required): GH_TOKEN (or ambient gh auth), GH_REPO
+
+Consumers: orch's workflows treat this as the single state reducer for
+multi-PR watching (orch's approval-wait remains the single-PR foreground
+wait with nudge/on-timeout policy; orch's oversee consumes it through
+oversee-watch); harness wake-up mechanisms (a monitor loop, cron, a
+scheduler) wrap it in a few lines instead of re-deriving state keys per
+session — the wrap-in-anything loop lives in references/adoption.md.
+USAGE
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help) print_usage; exit 0 ;;
+  esac
+done
 
 if [ -z "${GH_REPO:-}" ]; then
   echo "::error::pr-watch: GH_REPO is required" >&2
