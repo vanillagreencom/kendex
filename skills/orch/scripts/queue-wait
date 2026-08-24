@@ -151,19 +151,19 @@ JSON output (always when --json):
   }
 
 Auth: resolved through lib/gh-auth.sh, shared with approval-wait and
-ci-wait (kendex#19) — env-first: already-resolved GH_TOKEN / GITHUB_TOKEN /
-GH_BOT_TOKEN values from the parent process win before local files are
-read, `op read` runs only for the final selected op:// reference, each
-candidate source is probed at most once, and a selected env token is
-validated with `gh api user`. Full ladder: orch DEVELOPMENT.md.
+ci-wait (kendex#19) — env-first: already-resolved GH_TOKEN/GITHUB_TOKEN/
+GH_BOT_TOKEN parent-process values win before local files are read, `op
+read` runs only for the final selected op:// reference, each candidate
+source is probed at most once, and a selected env token is validated with
+`gh api user`. Full ladder: orch DEVELOPMENT.md.
 
-Environment (process env > kendex.settings.toml > default):
+Environment (orch-env ladder: parent env > .env.local > kendex.settings.toml /
+  .kendex/settings.toml [env] > .env > default):
   QUEUE_WAIT_ARM_GRACE      seconds to keep polling before reporting
                 "not_queued" when no poll has yet seen the PR queued or
                 armed (default 120). Enqueue registration lags the merge
-                call; within the window the wait keeps polling, past it
-                the explicit never-armed diagnostic fires instead of
-                burning the whole budget on a merge that was never armed.
+                call; past the window the explicit never-armed diagnostic
+                fires instead of burning the budget on a never-armed merge.
   QUEUE_WAIT_CONFIRM_POLLS  consecutive polls that must agree before an
                 ejection/disarm terminates the wait (default 2).
   QUEUE_WAIT_PROBE_INTERVAL minimum seconds between delegated ci-wait

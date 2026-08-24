@@ -25,9 +25,9 @@ vs proceeded deterministically (kendex#538, kendex#642).
   <PR#>          pull request number (required)
   poll_interval  seconds between polls (default 15)
   max_wait       total budget in seconds. When the positional is absent,
-                 PR_REVIEW_WAIT_SECS resolves it (process env >
-                 kendex.settings.toml > 900) — the per-repo review
-                 quiet-period knob; an explicit positional always wins
+                 PR_REVIEW_WAIT_SECS resolves it (the Settings ladder
+                 below; default 900) — the per-repo review quiet-period
+                 knob; an explicit positional always wins
   --json         emit the machine-readable result object on stdout
   --mode         approval (default) | review — see Modes
   --on-timeout   block | proceed — overrides the PR_REVIEW_ON_TIMEOUT
@@ -82,14 +82,15 @@ value leaves the reviewer keys authoritative. Then PR_REVIEW_GATE
 (approval|review|off) when set; otherwise the legacy PR_APPROVAL_GATE maps
 on -> approval and off -> off; both unset defaults to approval. An
 unrecognized PR_REVIEW_GATE value warns on stderr and resolves to
-approval. All read
-with the same process env > kendex.settings.toml > default precedence.
+approval. PR_REVIEW_GATE and
+the legacy key read with the full Settings ladder below.
 This is the single implementation of the derivation: callers read the mode
 only through it, and never auto-detect the mode from the
 requested-reviewer list. Mode "off" means a reviewer-less repo — the
 caller skips the wait and records the gate not-applicable.
 
-Settings (process env > kendex.settings.toml > default):
+Settings (orch-env ladder: parent env > .env.local > kendex.settings.toml /
+  .kendex/settings.toml [env] > .env > default; REVIEW_GATE_MODE skips dotenv):
   PR_REVIEW_GATE        approval | review | off — see Mode resolution
                         (default approval)
   PR_REVIEW_CHECK       exact name the trusted review bot publishes on
@@ -168,13 +169,12 @@ JSON output (always when --json):
   }
 
 Auth: resolved through lib/gh-auth.sh, shared with ci-wait and queue-wait
-(kendex#19) — env-first: already-resolved GH_TOKEN / GITHUB_TOKEN /
-GH_BOT_TOKEN values from the parent process win before local files are
-read, `op read` runs only for the final selected op:// reference, each
-candidate source is probed at most once, and a selected env token is
-validated with `gh api user` (`gh auth status` is authoritative for
-keyring auth only when no env token is selected). Full ladder: orch
-DEVELOPMENT.md.
+(kendex#19) — env-first: already-resolved GH_TOKEN/GITHUB_TOKEN/GH_BOT_TOKEN
+parent-process values win before local files are read, `op read` runs only
+for the final selected op:// reference, each candidate source is probed at
+most once, and a selected env token is validated with `gh api user` (`gh
+auth status` is authoritative for keyring auth only when no env token is
+selected). Full ladder: orch DEVELOPMENT.md.
 
 Exit codes:
   0  approved (approval mode) / reviewed (review mode) / proceeded
@@ -218,8 +218,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 # --resolve-mode: print the effective reviewer-gate mode and exit. Needs no
-# auth or PR argument — it only reads project configuration, with the same
-# precedence as orch-env (process env > kendex.settings.toml > default).
+# auth or PR argument — REVIEW_GATE_MODE from the engine's sources (process
+# env, kendex.settings.toml); the reviewer keys via the full dotenv ladder.
 if $RESOLVE_MODE; then
   # The engine's one-switch gate disable wins over every reviewer-gate key:
   # REVIEW_GATE_MODE=off means the repo's review gate is disabled by
@@ -294,9 +294,9 @@ MAX_WAIT="${POSITIONAL[2]:-$("$SCRIPT_DIR/orch-env" PR_REVIEW_WAIT_SECS 900)}"
 START_TIME="$(date +%s)"
 elapsed=0
 
-# Nudge configuration (kendex#642), read through orch-env so the same
-# process env > kendex.settings.toml > default precedence applies without
-# sourcing project env files into this process. The numeric default guard in
+# Nudge configuration (kendex#642), read through orch-env so the standard
+# orch-env ladder (parent env > .env.local > settings files > .env > default)
+# applies without sourcing project env files into this process. The numeric default guard in
 # orch-env keeps NUDGE_SECS usable; 0 disables nudging.
 NUDGE_SECS="$("$SCRIPT_DIR/orch-env" PR_REVIEW_NUDGE_SECS 600)"
 NUDGE_BODY="$("$SCRIPT_DIR/orch-env" PR_REVIEW_NUDGE "")"
