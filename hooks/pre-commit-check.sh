@@ -57,16 +57,21 @@ elsewhere_notice() {
 # `--config-env` word, a `GIT_CONFIG_*` assignment — can point git at
 # hooks this lane did not inspect, by `core.hooksPath` directly or by an
 # `include.path` that loads it, so the whole class is refused rather
-# than one spelling of it. One of those words from some other command
-# on the line costs a refusal to reword, never an unchecked commit.
+# than one spelling of it — and so is a `git config` write of
+# core.hooksPath in the same command, which disarms the hook before the
+# commit reaches it (the key is matched in any case, with up to four
+# words of `--local`/`--global`/`--file <f>`/`set` between). One of
+# those words from some other command on the line costs a refusal to
+# reword, never an unchecked commit.
 HOOKS_DIR=$(git rev-parse --git-path hooks 2>/dev/null) || {
   elsewhere_notice
   exit 0
 }
 if [ -x "$HOOKS_DIR/pre-commit" ]; then
   BYPASS=$(printf '%s' "$WORDS" | grep -oE ' (--no-veri[a-z]*|-[a-zA-Z]*n[a-zA-Z]*|-c|--config-env[^ ]*|GIT_CONFIG_[^ ]*) ' | head -1) \
+    || BYPASS=$(printf '%s' "$WORDS" | grep -oiE ' config( +[^ ]+){0,4} +(core +)?hookspath ' | head -1) \
     || exit 0
-  echo "pre-commit-check: '$(printf '%s' "$BYPASS" | tr -d ' ')' bypasses this repository's armed git hooks or injects configuration that could, and the commit-msg gate cannot be checked from here — commit without bypassing hooks or passing git configuration; git runs the installed pre-commit and commit-msg hooks itself" >&2
+  echo "pre-commit-check: '$(printf '%s' "$BYPASS" | sed 's/^ *//; s/ *$//')' bypasses this repository's armed git hooks or injects configuration that could, and the commit-msg gate cannot be checked from here — commit without bypassing hooks or passing git configuration; git runs the installed pre-commit and commit-msg hooks itself" >&2
   exit 2
 fi
 elsewhere_notice
