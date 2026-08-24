@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Regression test: shipped project settings must keep the documented
-# second-opinion default timeout at 1080s, while caller env overrides still win.
+# Regression test for the script's timeout handling: the built-in default is
+# 1080s, a caller env override wins, --timeout 0 is refused, and a host
+# without a timeout binary warns and still runs.
 
 set -euo pipefail
 
@@ -97,6 +98,20 @@ PATH="$TMP_ROOT/bin:$PATH" \
 
 assert_contains "$override_stderr" "timeout=7s" "caller timeout override wins"
 assert_contains "$override_stderr" "cmd: timeout -k 30 7s codex" "launch log includes explicit override timeout"
+
+# GNU timeout reads 0 as "no limit at all", so --timeout 0 must be refused
+# rather than silently disabling the deadline.
+zero_stderr="$TMP_ROOT/zero.stderr"
+zero_rc=0
+PATH="$TMP_ROOT/bin:$PATH" \
+  SECOND_OPINION_TARGET=codex \
+  SECOND_OPINION_CODEX_CMD=codex \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --timeout 0 >/dev/null 2>"$zero_stderr" || zero_rc=$?
+if [[ $zero_rc -eq 0 ]]; then
+  printf 'FAIL: --timeout 0 must exit non-zero\n' >&2
+  exit 1
+fi
+assert_contains "$zero_stderr" "must be a positive integer" "--timeout 0 is refused"
 
 # A host without timeout/gtimeout (stock macOS) still runs the review — with a
 # warning, not a refusal. Hide both binaries behind a symlink farm of the rest

@@ -515,7 +515,7 @@ fi
 command -v jq >/dev/null 2>&1 || { echo "Error: jq is required but not found" >&2; exit 1; }
 
 [[ -n "$MODE" ]] || { echo "Error: mode required (review|challenge|audit|quick|detect)" >&2; exit 1; }
-[[ "$TIMEOUT" =~ ^[0-9]+$ ]] || { echo "Error: --timeout must be a positive integer" >&2; exit 1; }
+[[ "$TIMEOUT" =~ ^0*[1-9][0-9]*$ ]] || { echo "Error: --timeout must be a positive integer" >&2; exit 1; } # 0 means "no limit" to GNU timeout
 
 # --- Harness detection --------------------------------------------------------
 

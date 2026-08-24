@@ -210,14 +210,14 @@ Still `ok == false` after that, or the § 3.2 deadline reached → mark the agen
 
 ### 3.2 Watchdog
 
-Sweep the filesystem on every event. Per-agent deadline from `review_delegated_at`: 25 minutes for an agent whose name contains `perf`, 15 minutes for every other agent. The external lane's deadline is `SECOND_OPINION_TIMEOUT` (or the script's 1080s default) plus a 3-minute margin. The external lane is a background shell command, not a messageable agent: the ping row and its 2-minute early end never apply to it; only its own deadline ends it.
+Sweep the filesystem on every event. Per-agent deadline from `review_delegated_at`: 25 minutes for an agent whose name contains `perf`, 15 minutes for every other agent. The external lane's deadline is twice `SECOND_OPINION_TIMEOUT` (or twice the script's 1080s default) plus a 3-minute margin — the script's one retry on a malformed response runs with a fresh full timeout, so a healthy lane can take two windows. The external lane is a background shell command, not a messageable agent: the ping row and its 2-minute early end never apply to it; only its own deadline ends it.
 
 | Event | Action |
 |-------|--------|
 | Return arrives | Run `review-artifact-check` (§ 3.1) |
 | 2 min after the first return, or 10 min from delegation with no returns — once per cycle (wave mode: per wave) | Ping each outstanding agent once (external exempt): `Status check on [ISSUE_ID] review — return your verdict if complete, or report the blocker.` |
 | 2 min after that ping | Mark each non-perf **agent** still outstanding `unresponsive` — never the external lane |
-| Per-agent deadline (external: `SECOND_OPINION_TIMEOUT` + 3 min) | Mark that agent or lane `unresponsive` |
+| Per-agent deadline (external: 2 × `SECOND_OPINION_TIMEOUT` + 3 min) | Mark that agent or lane `unresponsive` |
 
 Wave mode also shuts an `unresponsive` reviewer down and records it, so the slot frees and the reviewer does not relaunch this cycle:
 
