@@ -1243,6 +1243,31 @@ EOF
 assert_eq "$(run_resolve_mode)" "off" "resolve: settings-file REVIEW_GATE_MODE=off applies"
 rm -f "$TMP_ROOT/repo/kendex.settings.toml"
 
+# The engine boundary (PR #1615): REVIEW_GATE_MODE resolves from process env
+# and kendex.settings.toml ONLY — the review-gate engine never reads dotenv
+# files, so a .env/.env.local value must not turn the waiter off while the
+# gate stays enforcing. The PR_REVIEW_* keys keep full dotenv precedence.
+cat > "$TMP_ROOT/repo/.env" <<'EOF'
+REVIEW_GATE_MODE=off
+EOF
+assert_eq "$(run_resolve_mode)" "approval" "resolve: dotenv REVIEW_GATE_MODE=off is ignored (engine boundary)"
+assert_eq "$(run_resolve_mode REVIEW_GATE_MODE=off)" "off" "resolve: parent-env off still applies beside a dotenv file"
+cat > "$TMP_ROOT/repo/kendex.settings.toml" <<'EOF'
+[env]
+REVIEW_GATE_MODE = "off"
+EOF
+assert_eq "$(run_resolve_mode)" "off" "resolve: settings-file off still applies beside a dotenv file"
+rm -f "$TMP_ROOT/repo/kendex.settings.toml"
+mv "$TMP_ROOT/repo/.env" "$TMP_ROOT/repo/.env.local"
+assert_eq "$(run_resolve_mode)" "approval" "resolve: .env.local REVIEW_GATE_MODE=off is ignored too"
+rm -f "$TMP_ROOT/repo/.env.local"
+# Control: the reviewer keys keep their dotenv precedence.
+cat > "$TMP_ROOT/repo/.env" <<'EOF'
+PR_REVIEW_GATE=review
+EOF
+assert_eq "$(run_resolve_mode)" "review" "resolve: dotenv PR_REVIEW_GATE keeps full precedence (control)"
+rm -f "$TMP_ROOT/repo/.env"
+
 echo "=== approval-wait nudge behavior ==="
 
 nudge_log_lines() {
