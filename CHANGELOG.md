@@ -286,6 +286,14 @@ changes carry a **Breaking** call-out with their migration note inline.
   research deferred as standalone work.
 
 ### Fixed
+- Home no longer shows its loading skeletons forever when the first scan of
+  the machine fails: the page says the scan failed, shows why, and offers
+  Scan again. When a later scan fails, Home still draws what it had, headed
+  by a note that these are the last figures kendex could check, with the
+  retry beside it. A failed update check now appears in Needs attention and
+  turns the sidebar's Updates badge into a warning instead of contributing
+  silence, and the Marketplaces tile shows a dash rather than a definite
+  zero when its read did not answer.
 - `kendex apply --replace-unmanaged` no longer gives up on the whole scope
   because one item cannot be settled. A repo arriving on kendex with one
   odd corner — say, a shortcut somebody set up where a skill installs —

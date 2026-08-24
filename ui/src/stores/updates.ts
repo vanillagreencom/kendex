@@ -50,6 +50,10 @@ interface UpdatesState {
   /** True while a mirror fetch is running — the explicit "check". */
   checking: boolean;
   loaded: boolean;
+  /** Why the last read of the standing failed, or null. A load runs on its
+   *  own at startup, so a failure here is a state for Home and the badge to
+   *  show — silence would read as "nothing to update". */
+  error: string | null;
   load: () => Promise<void>;
   check: () => Promise<void>;
   updateOne: (row: UpdateRow) => Promise<void>;
@@ -95,8 +99,9 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
         rows: response.data.rows,
         warnings: response.data.warnings,
         loaded: true,
+        error: null,
       });
-    else set({ loaded: false });
+    else set({ loaded: false, error: response.error });
   };
 
   return {
@@ -105,6 +110,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     busy: false,
     checking: false,
     loaded: false,
+    error: null,
 
     load: async () => {
       await reload();
@@ -119,9 +125,10 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
             rows: response.data.rows,
             warnings: response.data.warnings,
             loaded: true,
+            error: null,
           });
         } else {
-          set({ loaded: false });
+          set({ loaded: false, error: response.error });
           showError(UPDATE_ERROR_TITLE, response.error);
         }
       } finally {
@@ -233,6 +240,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
           rows: response.data.rows,
           warnings: response.data.warnings,
           loaded: true,
+          error: null,
         });
       else showError(UPDATE_ERROR_TITLE, response.error);
     },

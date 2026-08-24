@@ -9,7 +9,9 @@ export function StatTile({
   onClick,
 }: {
   label: string;
-  value: number;
+  /** A count, or "—" when the read behind it has not answered — a tile
+   *  must not show a definite zero off a read that failed. */
+  value: number | string;
   detail?: ReactNode;
   onClick?: () => void;
 }) {

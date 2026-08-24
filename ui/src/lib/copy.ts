@@ -146,6 +146,17 @@ export const SCANNING_LABEL = "Scanning…";
 export const scanStatusLabel = (scannedAgo: string | null): string =>
   scannedAgo ? `Up to date · scanned ${scannedAgo}` : "Up to date";
 
+// Home. A read that failed is an answer, not a wait: the page says what
+// happened instead of holding skeletons up, and a result kept from before
+// a failed re-scan is drawn as last-known rather than current.
+export const SCAN_AGAIN_LABEL = "Scan again";
+export const SCAN_FAILED_TITLE = "Couldn't scan this machine";
+export const SCAN_STALE_TITLE = "These are the last figures kendex could check";
+export const UPDATES_ATTENTION_TITLE = "Couldn't check for updates";
+export const UPDATES_ATTENTION_DETAIL =
+  "Anything new since the last check isn't counted here.";
+export const MARKETPLACES_UNCHECKED_DETAIL = "couldn't be checked";
+
 // The status footer's right side: quiet counts that link to Review & apply.
 export const pendingChangesLabel = (count: number): string =>
   count === 1 ? "1 change ready" : `${count} changes ready`;

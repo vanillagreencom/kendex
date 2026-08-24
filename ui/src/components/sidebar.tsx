@@ -14,6 +14,7 @@ import { useEffect } from "react";
 import { commands } from "@/bindings";
 import { Button } from "@/components/ui/button";
 import { auditCounts, needsReviewCount } from "@/lib/audit-counts";
+import { UPDATES_ATTENTION_TITLE } from "@/lib/copy";
 import { isSearchShortcutKey } from "@/lib/search-shortcut";
 import { cn } from "@/lib/utils";
 import { useAuditStore } from "@/stores/audit";
@@ -47,6 +48,10 @@ export function Sidebar() {
     needsReviewCount(auditCounts(s.views)),
   );
   const updateCount = useUpdatesStore((s) => visibleUpdateCount(s.rows));
+  // A failed check keeps the last rows, so any count shown is last-known;
+  // the badge wears the warning tone for it. With no rows at all, "?" is
+  // the honest number: absence would read as "nothing to update".
+  const updatesUnchecked = useUpdatesStore((s) => s.error !== null);
 
   // The shortcut lives in the always-mounted chrome so "/" works on every
   // page, not only the one holding the search box.
@@ -112,9 +117,17 @@ export function Sidebar() {
                 {driftCount}
               </span>
             ) : null}
-            {target === "updates" && updateCount > 0 ? (
-              <span className="rounded bg-foreground/[0.09] px-1.5 py-0.5 text-[11px] font-medium tabular-nums">
-                {updateCount}
+            {target === "updates" && (updateCount > 0 || updatesUnchecked) ? (
+              <span
+                title={updatesUnchecked ? UPDATES_ATTENTION_TITLE : undefined}
+                className={cn(
+                  "rounded px-1.5 py-0.5 text-[11px] font-medium tabular-nums",
+                  updatesUnchecked
+                    ? "bg-warning/15 text-warning"
+                    : "bg-foreground/[0.09]",
+                )}
+              >
+                {updateCount > 0 ? updateCount : "?"}
               </span>
             ) : null}
           </button>

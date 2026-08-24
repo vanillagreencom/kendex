@@ -54,7 +54,12 @@ function row(overrides: Partial<UpdateRow>): UpdateRow {
 
 describe("updates store", () => {
   beforeEach(() => {
-    useUpdatesStore.setState({ rows: [], busy: false, loaded: false });
+    useUpdatesStore.setState({
+      rows: [],
+      busy: false,
+      loaded: false,
+      error: null,
+    });
     vi.clearAllMocks();
   });
 
@@ -84,6 +89,27 @@ describe("updates store", () => {
     expect(visibleUpdates(rows).map((r) => r.name)).toEqual(["gone", "split"]);
     expect(hiddenUpdates(rows).map((r) => r.name)).toEqual(["muted-gone"]);
     expect(visibleUpdateCount(rows)).toBe(2);
+  });
+
+  // A failed read used to leave only `loaded: false` behind —
+  // indistinguishable from a read still on its way, so Home and the badge
+  // had nothing to show for it.
+  it("keeps why a read failed, and a good read clears it", async () => {
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "error",
+      error: "no network",
+    });
+    await useUpdatesStore.getState().load();
+    expect(useUpdatesStore.getState().error).toBe("no network");
+    expect(useUpdatesStore.getState().loaded).toBe(false);
+
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [] },
+    });
+    await useUpdatesStore.getState().load();
+    expect(useUpdatesStore.getState().error).toBeNull();
+    expect(useUpdatesStore.getState().loaded).toBe(true);
   });
 
   it("muting keeps the row, flagged — and unmuting brings it back", async () => {
