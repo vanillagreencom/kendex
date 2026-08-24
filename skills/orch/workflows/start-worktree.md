@@ -32,7 +32,7 @@ The full session from inside a worktree: implement → review → submit → fin
    .agents/skills/worktree/scripts/worktree-session-guard claim [WORKTREE_PATH] --owner [ISSUE_ID]
    ```
 
-   Do **not** pass `--repo` (`claim` and `refresh` reject it). Exit 75 means another session holds the lease — coordinate with that owner instead of proceeding. Exit 1 with a `flock` message means the host has no `flock`: continue unguarded, but do not assume the tree is protected.
+   Do **not** pass `--repo` (`claim` and `refresh` reject it). Exit 75 means another session holds the lease — coordinate with that owner instead of proceeding. A flock-less host still serializes through the guard's mkdir mutex; exit 1 means the guard itself failed — stop and read its message, never continue unguarded.
 
 4. **Initialize state**:
 

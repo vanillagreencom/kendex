@@ -68,13 +68,14 @@ prose_hits() {
   local out status
   out=$(grep -nEi "$1" "$2")
   status=$?
-  [ "$status" -le 1 ] || { echo "guard: could not read $2"; exit 2; }
+  [ "$status" -le 1 ] || return 1
   printf '%s' "$out"
 }
 while IFS= read -r f; do
   [ -f "$f" ] || continue
-  hits=$(prose_hits "$prose_hist" "$f")
-  case "$f" in docs/*) : ;; *) hits+=$(printf '\n%s' "$(prose_hits "$prose_why" "$f" | grep -vE '["`]rationale["`]')") ;; esac # a quoted key is a schema field, not prose
+  hits=$(prose_hits "$prose_hist" "$f") || { say "$f is unreadable — the prose check could not run"; continue; }
+  case "$f" in docs/*) : ;; *) more=$(prose_hits "$prose_why" "$f") || { say "$f is unreadable — the prose check could not run"; continue; }
+    hits+=$(printf '\n%s' "$(printf '%s' "$more" | grep -vE '["`]rationale["`]')") ;; esac # a quoted key is a schema field, not prose
   hits=$(printf '%s' "$hits" | sed '/^$/d')
   [ -n "$hits" ] && say "$f carries history or rationale — state the rule, delete the story:
 $(printf '%s\n' "$hits" | head -5 | sed 's/^/  /')"
@@ -83,8 +84,10 @@ done <<<"$prose_files"
 # The size-ratchet baseline only tightens. Raising a row is a decision, not
 # a remedy: RATCHET_RAISE=1 on the commit says so out loud.
 if [ "${RATCHET_RAISE:-}" != "1" ] && git cat-file -e HEAD:tools/size-ratchet-baseline.tsv 2>/dev/null; then
-  raised=$(join -t "$(printf '\t')" <(git show HEAD:tools/size-ratchet-baseline.tsv | sort) <(sort tools/size-ratchet-baseline.tsv) |
-    awk -F'\t' '$3 > $2 { print "  " $1 ": " $2 " -> " $3 }')
+  raised=$({ join -t "$(printf '\t')" <(git show HEAD:tools/size-ratchet-baseline.tsv | sort) <(sort tools/size-ratchet-baseline.tsv) |
+    awk -F'\t' '$3 > $2 { print "  " $1 ": " $2 " -> " $3 }';
+    comm -13 <(git show HEAD:tools/size-ratchet-baseline.tsv | cut -f1 | sort) <(cut -f1 tools/size-ratchet-baseline.tsv | sort) |
+    sed 's/^/  new row: /'; })
   [ -n "$raised" ] && say "size-ratchet baseline rows went up — split at a seam; RATCHET_RAISE=1 only when the new lines are the fix itself:
 $raised"
 fi

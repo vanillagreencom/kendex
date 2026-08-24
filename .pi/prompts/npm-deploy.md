@@ -10,6 +10,7 @@ Find every `pi-extensions/*/package.json` package whose source/docs/package cont
 kendex distribution is independent of npm. `kendex add`/`refresh` copies local source — npm publishing only populates the pi.dev gallery and lets external users run `pi install npm:@vanillagreen/<name>`. Skipping a publish never breaks kendex consumers.
 
 ## Hard rules
+- Publish only from `main` equal to `origin/main` (`git fetch && git status -sb` shows no ahead/behind); never from a branch or a dirty tree.
 - Publish only Pi extension packages that actually need a new npm version.
 - Use scoped npm names from `package.json` (normally `@vanillagreen/<name>`).
 - Per-package release tags use `<unscoped-name>-v<version>` (example: `pi-qol-v1.0.4`).
