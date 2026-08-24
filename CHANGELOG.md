@@ -6,6 +6,12 @@ changes carry a **Breaking** call-out with their migration note inline.
 
 ## [Unreleased]
 
+### Removed
+
+- The `trading-design` skill is no longer offered. Projects that install it
+  from this catalog should drop its `[skills.trading-design]` entry from
+  `kendex.toml`; `kendex refresh` then removes the installed copies.
+
 ### Added
 
 - Asking for an item whose files are already on disk — the normal shape of

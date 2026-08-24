@@ -313,14 +313,6 @@ harnesses = [
 ]
 enabled = true
 
-[skills.trading-design]
-source = "."
-harnesses = [
-    "claude",
-    "codex",
-    "pi",
-]
-enabled = true
 
 [skills.worktree]
 source = "."
