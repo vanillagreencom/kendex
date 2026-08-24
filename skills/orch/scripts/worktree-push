@@ -45,8 +45,11 @@
 #   push failed  -> the push's own exit code, always — any printed map is
 #                   applied to workflow state where possible, left in the
 #                   sidecar when that write fails, and a map that cannot
-#                   even be parsed or persisted is reported on stderr
-#                   without changing the exit code
+#                   even be parsed is reported on stderr without changing
+#                   the exit code, with the transcript (its rebase-map
+#                   lines included) replayed first as the surviving copy.
+#                   A sidecar that cannot be written still gets its map
+#                   applied to workflow state directly
 #   push ok      -> 0 when no rebase-map printed, or every mapping was
 #                   recorded and applied
 #   1            -> the push landed (or never ran: usage error, pending
@@ -222,8 +225,12 @@ push_rc=0
 
 # A failure after the push keeps the push's own exit code: exit 1 must mean
 # "the push landed but reconciliation did not", never dress a failed push as
-# a landed one.
+# a landed one. The transcript replays first: on these paths no sidecar
+# exists, so the rebase-map lines in the transcript are the only surviving
+# copy of a map the completed rebase cannot regenerate (|| true keeps the
+# dying-stdout case from suppressing the diagnostic).
 fail_post_push() {
+	cat "$push_out" || true
 	printf 'worktree-push: %s\n' "$1" >&2
 	if [[ "$push_rc" -ne 0 ]]; then
 		exit "$push_rc"
@@ -252,11 +259,29 @@ fi
 # The rebase is local reality even when the network push failed, so the map
 # is persisted BEFORE the transcript replay and applied regardless of the
 # push's exit code; the sidecar survives a failed state write (or a dying
-# stdout) for the retry to consume.
+# stdout) for the retry to consume. The state write is independent of the
+# sidecar, so a sidecar that cannot be written still gets its map applied —
+# only both failing together loses nothing but the retry convenience, with
+# the transcript's map lines as the surviving copy.
+reconciled_without_sidecar=false
 if [[ "$map_json" != '{}' ]]; then
-	mkdir -p -- "$worktree_abs/tmp" || fail_post_push "could not create $worktree_abs/tmp for the rebase-map sidecar"
-	printf '%s\n' "$map_json" >"$sidecar.tmp" || fail_post_push "could not persist the rebase map beside the worktree"
-	mv -- "$sidecar.tmp" "$sidecar" || fail_post_push "could not persist the rebase map beside the worktree"
+	sidecar_err=''
+	if ! mkdir -p -- "$worktree_abs/tmp"; then
+		sidecar_err="could not create $worktree_abs/tmp for the rebase-map sidecar"
+	elif ! printf '%s\n' "$map_json" >"$sidecar.tmp"; then
+		sidecar_err="could not write the rebase-map sidecar at $sidecar.tmp"
+	elif ! mv -- "$sidecar.tmp" "$sidecar"; then
+		rm -f -- "$sidecar.tmp"
+		sidecar_err="could not move the rebase-map sidecar into place at $sidecar"
+	fi
+	if [[ -n "$sidecar_err" ]]; then
+		if reconcile_map "$map_json"; then
+			reconciled_without_sidecar=true
+			printf 'worktree-push: %s; the map was still applied to workflow state\n' "$sidecar_err" >&2
+		else
+			fail_post_push "$sidecar_err AND the map could not be applied to workflow state; recorded SHAs are NOT reconciled — the rebase-map lines in the transcript above are the only copy"
+		fi
+	fi
 fi
 
 # The replay is informational; a broken stdout must not abort the run before
@@ -264,6 +289,10 @@ fi
 cat "$push_out" || true
 
 if [[ "$map_json" == '{}' ]]; then
+	exit "$push_rc"
+fi
+
+if [[ "$reconciled_without_sidecar" == true ]]; then
 	exit "$push_rc"
 fi
 

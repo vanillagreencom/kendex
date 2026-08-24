@@ -237,14 +237,66 @@ echo "=== a dying stdout cannot lose the map ==="
 
 # The map is parsed and persisted before the transcript replay, so even a
 # full stdout (every print fails) leaves the mapping recorded in state.
-work="$TMP_ROOT/work-devfull"
+# /dev/full is Linux-only; on hosts without it the case is skipped visibly.
+if [[ -e /dev/full && -w /dev/full ]]; then
+  work="$TMP_ROOT/work-devfull"
+  reset_state "$work"
+  RUN_RC=0
+  (cd "$work" && STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" "$PUSH" --worktree "$wt" --issue KEN-1) >/dev/full 2>"$run_err" || RUN_RC=$?
+  [[ "$RUN_RC" -ne 0 ]] && pass "a dying stdout is reported as a failure" || fail "a dying stdout is reported as a failure"
+  assert_eq "$(state_json "$work" | jq -r ".rebase_map[\"$OLD_A\"]")" "$NEW_A" "the map reaches workflow state despite the dead stdout"
+  assert_eq "$(state_json "$work" | jq -r '.fixed_items[0].commit')" "${NEW_A:0:7}" "the fix SHA is rewritten despite the dead stdout"
+  rm -f "$SIDECAR"
+else
+  printf '  skip  %s\n' "dying-stdout case: /dev/full not available on this host"
+fi
+
+echo
+echo "=== a parse failure still shows the map in the transcript ==="
+
+# On a parse failure no sidecar exists and the completed rebase cannot
+# regenerate the map — the replayed transcript is the only surviving copy,
+# valid lines beside the malformed one included.
+work="$TMP_ROOT/work-parsefail-replay"
 reset_state "$work"
-RUN_RC=0
-(cd "$work" && STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" "$PUSH" --worktree "$wt" --issue KEN-1) >/dev/full 2>"$run_err" || RUN_RC=$?
-[[ "$RUN_RC" -ne 0 ]] && pass "a dying stdout is reported as a failure" || fail "a dying stdout is reported as a failure"
-assert_eq "$(state_json "$work" | jq -r ".rebase_map[\"$OLD_A\"]")" "$NEW_A" "the map reaches workflow state despite the dead stdout"
-assert_eq "$(state_json "$work" | jq -r '.fixed_items[0].commit')" "${NEW_A:0:7}" "the fix SHA is rewritten despite the dead stdout"
-rm -f "$SIDECAR"
+map_out="rebase-map: $OLD_A $NEW_A
+rebase-map: not-a-sha $NEW_A2"
+STUB_PUSH_STDOUT="$map_out" run_push "$work" --worktree "$wt" --issue KEN-1
+assert_eq "$RUN_RC" "1" "a malformed line beside a valid one still fails the call"
+assert_contains "$(cat "$run_out")" "rebase-map: $OLD_A $NEW_A" "the valid map line survives in the replayed transcript"
+assert_contains "$(cat "$run_out")" "rebase-map: not-a-sha $NEW_A2" "the malformed map line survives in the replayed transcript"
+[[ ! -f "$SIDECAR" ]] && pass "no sidecar exists on the parse-failure path" || fail "no sidecar exists on the parse-failure path"
+
+echo
+echo "=== a sidecar that cannot be written still gets its map applied ==="
+
+# The state write is independent of the sidecar; an unwritable tmp/ costs
+# only the retry convenience, never the reconciliation.
+work="$TMP_ROOT/work-rotmp"
+reset_state "$work"
+chmod a-w "$wt/tmp"
+STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" run_push "$work" --worktree "$wt" --issue KEN-1
+chmod u+w "$wt/tmp"
+assert_eq "$RUN_RC" "0" "an unwritable sidecar directory does not fail a landed push"
+assert_eq "$(state_json "$work" | jq -r ".rebase_map[\"$OLD_A\"]")" "$NEW_A" "the map is applied to state despite the unwritable sidecar"
+assert_contains "$(cat "$run_err")" "the map was still applied to workflow state" "the sidecar failure is named alongside the applied map"
+
+echo
+echo "=== the bare-numeric alias binds, not refuses ==="
+
+# Issue N stored under issue-N is the one accepted spelling difference: the
+# aliased state is this issue's record, and the push must reconcile it.
+work="$TMP_ROOT/work-alias"
+rm -rf "$work" && mkdir -p "$work"
+alias_sidecar="$wt/tmp/worktree-push-pending-map-7.json"
+rm -f "$alias_sidecar"
+(cd "$work" \
+  && "$STATE" init issue-7 --agent generalist --worktree "$wt" --branch issue-7 >/dev/null \
+  && "$STATE" append issue-7 fixed_items "{\"description\":\"fix\",\"commit\":\"${OLD_A:0:7}\",\"source\":\"pr-review\"}")
+STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" run_push "$work" --worktree "$wt" --issue 7
+assert_eq "$RUN_RC" "0" "a bare-numeric issue binds to its issue-N state instead of refusing"
+assert_eq "$(jq -r '.fixed_items[0].commit' "$work/tmp/workflow-state-issue-7.json")" "${NEW_A:0:7}" "the aliased record's fix SHA is rewritten"
+rm -f "$alias_sidecar"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
