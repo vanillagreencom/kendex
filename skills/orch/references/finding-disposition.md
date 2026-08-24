@@ -6,11 +6,17 @@ How a review finding is dispositioned: applied in this PR, filed as a tracked is
 
 ## Decision flow
 
-1. **Actionable?** It needs a specific deliverable, an observable impact, and bounded scope. Vague items ("add logging", "consider X") and informational notes are omitted. Automated regression detection is never informational.
-2. **Related?** The test is semantic — about the problem or the change — not file membership. An out-of-diff file documenting the mechanism being fixed is related; a nearby improvement unrelated to the problem is not. Unrelated → `issue` regardless of size.
-3. **Size?** Small enough to apply here → `fix`. Needs delegation, tracking, history, or new files → `issue`.
+One pass, in order; the first verdict stands.
 
-Uncertain about category, prefer `fix` (if related); uncertain about relevance, prefer `issue`; if neither fits, omit.
+1. **Does it claim a defect** (a failing state, broken path, wrong output)? Verify the mechanism yourself:
+   - **False** → `decline`, naming the passing state or the false premise. Scope, age, and "pre-existing" never answer a defect claim.
+   - **True, and this diff introduces or arms it** → `fix`, in scope by definition. Pre-existing caps, thresholds, or code the diff newly composes into a failing path count as armed.
+   - **True, pre-existing, unarmed by this diff** → `issue` (create it first, reply `Tracked: <ID>`); `fix` here only when it blocks this change from working.
+2. **Actionable?** It needs a specific deliverable, an observable impact, and bounded scope. Vague items ("add logging", "consider X") and informational notes are omitted. Automated regression detection is never informational.
+3. **Related?** The test is semantic — about the problem or the change — not file membership. An out-of-diff file documenting the mechanism being fixed is related; a nearby improvement unrelated to the problem is not. Unrelated → `issue` regardless of size.
+4. **Size?** Small enough to apply here → `fix`. Needs delegation, tracking, history, or new files → `issue`.
+
+Uncertain about category, prefer `fix` (if related); uncertain about relevance, prefer `issue`; if neither fits, omit. Every disposition ends as exactly one thread reply: `Fixed in <sha>`, `Declined: <reason>`, or `Tracked: <ID>` — the merge gate rejects a tracking claim naming no issue.
 
 | Signal | Category |
 |--------|----------|
@@ -37,7 +43,7 @@ An `issue` signal is necessary but not sufficient. Every candidate carries its s
 
 The audit pipeline applies project-management's creation bar (its SKILL.md § Disposition) as the final authority; these classes describe what clears it.
 
-Everything else is absorbed or declined. P4 polish never files: absorb it when it is est-1 and related, otherwise drop it with a one-line note in the review summary. A finding that cannot affect real usage is declined with a one-line reason — neither fixed nor filed. A decline of a claimed DEFECT must disprove the mechanism: name the state that passes or the premise that is false. A defect the diff introduces or arms is in scope by definition — pre-existing caps, thresholds, or code that the diff newly composes into a failing path count as armed. A decline is terminal: it appears as its summary line and is never re-presented as a question ("file it anyway?").
+Everything else is absorbed or declined. P4 polish never files: absorb it when it is est-1 and related, otherwise drop it with a one-line note in the review summary. A finding that cannot affect real usage is declined with a one-line reason — neither fixed nor filed. A decline is terminal: it appears as its summary line and is never re-presented as a question ("file it anyway?").
 
 When a same-surface bundle or umbrella parent already exists, residue attaches to it as a child or related issue; a standalone filing needs a stated reason.
 
