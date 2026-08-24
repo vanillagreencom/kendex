@@ -290,6 +290,67 @@ describe("updates store", () => {
     expect(useUpdatesStore.getState().rows).toEqual(muted);
   });
 
+  // Side-effecting operations run one at a time: the second command is
+  // not sent until the first answer has landed, so a first response
+  // arriving late can never overwrite the second commit's newer state.
+  it("lands overlapping mutations in commit order", async () => {
+    let resolveFirst!: (
+      value: Awaited<ReturnType<typeof commands.updateSetIgnored>>,
+    ) => void;
+    const secondState = [row({})];
+    vi.mocked(commands.updateSetIgnored)
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveFirst = resolve;
+        }),
+      )
+      .mockResolvedValueOnce({
+        status: "ok",
+        data: { rows: secondState, warnings: [] },
+      });
+
+    const first = useUpdatesStore.getState().setIgnored(row({}), true);
+    const second = useUpdatesStore.getState().setIgnored(row({}), false);
+    await vi.waitFor(() =>
+      expect(commands.updateSetIgnored).toHaveBeenCalledTimes(1),
+    );
+
+    resolveFirst({
+      status: "ok",
+      data: { rows: [row({ ignored: true })], warnings: [] },
+    });
+    await first;
+    await second;
+
+    expect(commands.updateSetIgnored).toHaveBeenCalledTimes(2);
+    expect(useUpdatesStore.getState().rows).toEqual(secondState);
+  });
+
+  // An explicit check that failed is an answer to report: a quicker plain
+  // load landing in between must not bury it and leave stale rows marked
+  // current.
+  it("a slow check's failure still reports after a later-started load", async () => {
+    let rejectCheck!: (reason: Error) => void;
+    vi.mocked(commands.updatesRefresh).mockReturnValue(
+      new Promise((_, reject) => {
+        rejectCheck = reject;
+      }),
+    );
+    const checking = useUpdatesStore.getState().check();
+
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [row({})], warnings: [] },
+    });
+    await useUpdatesStore.getState().load();
+
+    rejectCheck(new Error("mirror down"));
+    await checking;
+
+    expect(useUpdatesStore.getState().loaded).toBe(false);
+    expect(useUpdatesStore.getState().error).toBe("mirror down");
+  });
+
   // A refused mute re-read nothing: the rows on screen are still the last
   // good read's answer, and marking them stale would disable Update
   // buttons over a failure that had nothing to do with checking.

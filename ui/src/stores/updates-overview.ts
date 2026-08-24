@@ -2,8 +2,9 @@ import type { ItemWarning, UpdateRow } from "@/bindings";
 import { settled } from "@/lib/settled";
 import { landings } from "./landings";
 
+type Overview = { rows: UpdateRow[]; warnings: ItemWarning[] };
 type OverviewResult =
-  | { status: "ok"; data: { rows: UpdateRow[]; warnings: ItemWarning[] } }
+  | { status: "ok"; data: Overview }
   | { status: "error"; error: string };
 
 // The one place a read of the standing lands, however it went. A failure
@@ -14,11 +15,21 @@ type OverviewResult =
 // the fail-open this closes. Returns why the read failed, or null, so
 // callers make their own noise.
 //
-// Landings are ordered (see `landings`): the mount-time load, an explicit
-// check, and a mutation's returned overview can resolve in any order, and
-// a slow early read landing last would overwrite a fresher answer and
-// stamp its stale rows loaded and current. A discarded landing's return
-// value still reports how the operation itself went.
+// Two ordering rules, by what produced the overview:
+//
+// - Plain reads run concurrently and rank by when they began (see
+//   `landings`): a slow early read landing last is discarded rather than
+//   overwriting a fresher answer.
+// - Side-effecting operations — a refresh that fetches every source, a
+//   mutation that commits a change — run one at a time on a chain: the
+//   next command is not sent until the previous answer has landed, so
+//   their landings are in commit order by construction and no rank rule
+//   between them is needed. Each landing is authoritative over every
+//   plain read begun before it, success and refresh-failure alike — an
+//   explicit check that failed is an answer to report, not one a quicker
+//   re-read of old mirrors may bury. Only a failed mutation touches
+//   nothing: it re-read nothing, and the rows on screen are still the
+//   last good read's answer.
 export function overviewApplier(
   set: (partial: {
     rows?: UpdateRow[];
@@ -28,35 +39,45 @@ export function overviewApplier(
   }) => void,
 ) {
   const order = landings();
+  let chain: Promise<unknown> = Promise.resolve();
+
+  const landOk = (data: Overview) =>
+    set({
+      rows: data.rows,
+      warnings: data.warnings,
+      loaded: true,
+      error: null,
+    });
+
   return async (
-    read: Promise<OverviewResult>,
-    // What produced this overview decides how it lands. A plain read ranks
-    // by when it began, success and failure alike. A refresh fetched every
-    // source before answering, and a mutation committed a change: their
-    // successful answers report a state no read still in flight can be
-    // fresher than, so both land authoritatively. On failure a refresh is
-    // just a read that could not answer — it marks the rows stale — while
-    // a failed mutation re-read nothing and touches nothing.
+    read: () => Promise<OverviewResult>,
     kind: "read" | "refresh" | "mutation" = "read",
   ): Promise<string | null> => {
-    const ticket = order.begin();
-    const response = await settled(read);
-    if (response.status === "ok") {
-      const lands =
-        kind === "read" ? order.land(ticket) : order.landAuthoritative();
-      if (lands) {
-        set({
-          rows: response.data.rows,
-          warnings: response.data.warnings,
-          loaded: true,
-          error: null,
-        });
+    if (kind === "read") {
+      const ticket = order.begin();
+      const response = await settled<Overview>(Promise.resolve().then(read));
+      if (order.land(ticket)) {
+        if (response.status === "ok") landOk(response.data);
+        else set({ loaded: false, error: response.error });
       }
-      return null;
+      return response.status === "ok" ? null : response.error;
     }
-    if (kind !== "mutation" && order.land(ticket)) {
-      set({ loaded: false, error: response.error });
-    }
-    return response.error;
+    const turn = chain.then(async (): Promise<string | null> => {
+      const response = await settled<Overview>(Promise.resolve().then(read));
+      if (response.status === "ok") {
+        order.landAuthoritative();
+        landOk(response.data);
+        return null;
+      }
+      if (kind === "refresh") {
+        order.landAuthoritative();
+        set({ loaded: false, error: response.error });
+      }
+      return response.error;
+    });
+    // The chain outlives a link that throws; the error still reaches this
+    // operation's caller through `turn`.
+    chain = turn.catch(() => {});
+    return await turn;
   };
 }

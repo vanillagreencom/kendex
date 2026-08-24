@@ -92,7 +92,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
   const applyOverview = overviewApplier(set);
 
   const reload = async () => {
-    await applyOverview(commands.updatesOverview());
+    await applyOverview(() => commands.updatesOverview());
   };
 
   return {
@@ -114,7 +114,10 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
       if (get().checking) return;
       set({ checking: true });
       try {
-        const error = await applyOverview(commands.updatesRefresh(), "refresh");
+        const error = await applyOverview(
+          () => commands.updatesRefresh(),
+          "refresh",
+        );
         if (error !== null) showError(UPDATE_ERROR_TITLE, error);
       } finally {
         set({ checking: false });
@@ -214,13 +217,14 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
 
     setIgnored: async (row, ignored) => {
       const error = await applyOverview(
-        commands.updateSetIgnored(
-          row.scope,
-          row.kind,
-          row.name,
-          row.repo,
-          ignored,
-        ),
+        () =>
+          commands.updateSetIgnored(
+            row.scope,
+            row.kind,
+            row.name,
+            row.repo,
+            ignored,
+          ),
         "mutation",
       );
       if (error !== null) showError(UPDATE_ERROR_TITLE, error);
