@@ -34,6 +34,10 @@ check "--help prints help" --help
 check "-h prints help" -h
 check "bare search prints help" search
 check "search --help prints help" search --help
+# Any argv position, with option values skipped: --limit consumes the 2.
+check "list --help prints help" list --help
+check "search query -h prints help" search query -h
+check "search query --limit 2 --help prints help" search query --limit 2 --help
 
 if [[ -e "$TMP/env-executed" ]]; then
   FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "help sourced the project .env"

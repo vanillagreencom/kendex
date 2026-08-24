@@ -236,9 +236,39 @@ EOF
 case "${1:-help}" in
     help|--help|-h) show_help; exit 0 ;;
 esac
-case "${2:-}" in
-    --help|-h) show_help; exit 0 ;;
-esac
+
+# The help scan covers every argv position — enumerating positions is how
+# this class leaks — but skips the value an option consumes, so a --title
+# or --summary of '--help' stays data.
+_help_takes_value() {
+    case "$1" in
+        --agent | --assignee | --attach | --blocked-by | --blocks | --by | \
+            --cycle | --description | --description-file | --duplicate | \
+            --estimate | --format | --include-children-of | --label | \
+            --labels | --limit | --milestone | --parent | --priority | \
+            --project | --reason | --related | --search | --sort-order | \
+            --state | --status | --summary | --summary-file | --team | \
+            --title) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+_want_help=""
+_skip_value=""
+for _arg in "$@"; do
+    if [ -n "$_skip_value" ]; then
+        _skip_value=""
+        continue
+    fi
+    case "$_arg" in
+        --help | -h) _want_help=1; break ;;
+        --*) if _help_takes_value "$_arg"; then _skip_value=1; fi ;;
+    esac
+done
+if [ -n "$_want_help" ]; then
+    show_help
+    exit 0
+fi
+unset _want_help _skip_value _arg
 
 source "$SCRIPT_DIR/../lib/common.sh"
 source "$SCRIPT_DIR/../lib/cache.sh"

@@ -65,12 +65,32 @@ EOF
 case "${1:-help}" in
   help|--help|-h) show_help; exit 0 ;;
   search)
-    if [[ -z "${2:-}" || "${2:-}" == "--help" ]]; then
+    if [[ -z "${2:-}" ]]; then
       show_help
       exit 0
     fi
     ;;
 esac
+# The help scan covers every argv position — enumerating positions is how
+# this class leaks — but skips the value an option consumes (--limit N,
+# --issue ID; their = forms consume nothing).
+_want_help=""
+_skip_value=""
+for _arg in "$@"; do
+  if [[ -n "$_skip_value" ]]; then
+    _skip_value=""
+    continue
+  fi
+  case "$_arg" in
+    --help|-h) _want_help=1; break ;;
+    --limit|--issue) _skip_value=1 ;;
+  esac
+done
+if [[ -n "$_want_help" ]]; then
+  show_help
+  exit 0
+fi
+unset _want_help _skip_value _arg
 
 # Load optional project config before DECISIONS_DIR auto-discovery.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

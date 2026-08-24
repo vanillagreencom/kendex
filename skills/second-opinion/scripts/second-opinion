@@ -24,8 +24,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Resolve project root for .env sourcing (works in worktrees and main repos)
-PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
 
 # Whether SECOND_OPINION_CURRENT_MODEL arrived from the CALLER'S OWN
 # environment rather than a project settings file. Captured here because this
@@ -255,6 +253,10 @@ for _arg in "$@"; do
   esac
 done
 unset _arg
+
+# Resolved only after help is answered: help must not require a git
+# checkout around the installed script.
+PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
 
 # Source project config/secrets. .env.local overrides public settings; the
 # caller's own environment (set or set-but-empty) outranks every project file —

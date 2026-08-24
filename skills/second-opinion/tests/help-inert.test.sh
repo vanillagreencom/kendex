@@ -36,6 +36,16 @@ check "-h prints help" -h
 check "review --help prints help" review --help
 check "quick -h prints help" quick -h
 
+# Help needs no git checkout around the installed script at all.
+mkdir -p "$TMP/norepo"
+cp -R "$SCRIPTS_DIR" "$TMP/norepo/scripts"
+out=$("$TMP/norepo/scripts/second-opinion" --help)
+if grep -qF "Cross-model second opinion" <<<"$out"; then
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "--help works outside a git repository"
+else
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "--help works outside a git repository"
+fi
+
 if [[ -e "$TMP/env-executed" ]]; then
   FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "help sourced the project .env"
 else
