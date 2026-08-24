@@ -5,6 +5,7 @@ import { useMarketplacesStore } from "./marketplaces";
 vi.mock("@/bindings", () => ({
   commands: {
     marketplacesOverview: vi.fn(),
+    marketplaceSubscribe: vi.fn(),
   },
 }));
 vi.mock("sonner", () => ({
@@ -35,6 +36,7 @@ describe("the marketplaces overview read failing", () => {
       loaded: true,
       rowsCurrent: true,
       error: null,
+      checkError: null,
     });
     vi.clearAllMocks();
   });
@@ -52,6 +54,47 @@ describe("the marketplaces overview read failing", () => {
     expect(state.rowsCurrent).toBe(false);
     expect(state.loaded).toBe(true);
     expect(state.error).toBe("offline");
+    expect(state.checkError).toBe("offline");
+  });
+
+  // Actions write the shared error field too; only load() may write the
+  // reason the stale-read notices show, or a failed subscribe would
+  // rewrite it while the rows stay stale for the original reason.
+  it("a subscribe refusal does not change the stale-read notice", async () => {
+    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
+      status: "error",
+      error: "offline",
+    });
+    await useMarketplacesStore.getState().load();
+
+    vi.mocked(commands.marketplaceSubscribe).mockResolvedValue({
+      status: "error",
+      error: "bad repo",
+    });
+    await useMarketplacesStore
+      .getState()
+      .subscribe({ scope: "global" }, "acme/kit", null);
+
+    const state = useMarketplacesStore.getState();
+    expect(state.error).toBe("bad repo");
+    expect(state.checkError).toBe("offline");
+    expect(state.rowsCurrent).toBe(false);
+  });
+
+  it("clears the stale-read reason once a read answers again", async () => {
+    vi.mocked(commands.marketplacesOverview).mockResolvedValueOnce({
+      status: "error",
+      error: "offline",
+    });
+    await useMarketplacesStore.getState().load();
+    expect(useMarketplacesStore.getState().checkError).toBe("offline");
+
+    vi.mocked(commands.marketplacesOverview).mockResolvedValueOnce({
+      status: "ok",
+      data: [kept],
+    });
+    await useMarketplacesStore.getState().load();
+    expect(useMarketplacesStore.getState().checkError).toBeNull();
   });
 
   // A rejected call used to escape the store entirely: rowsCurrent stayed

@@ -58,6 +58,11 @@ interface MarketplacesState {
   rowsCurrent: boolean;
   busy: boolean;
   error: string | null;
+  /** Why the last overview read failed, or null — written only by `load`.
+   * The shared `error` above is also set by subscribe/unsubscribe/install,
+   * so a failed action would otherwise rewrite the reason the stale-read
+   * notices show. */
+  checkError: string | null;
   load: () => Promise<void>;
   loadPackages: (catalog: Catalog) => Promise<void>;
   loadSummary: (catalog: Catalog) => Promise<void>;
@@ -102,6 +107,7 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
   rowsCurrent: false,
   busy: false,
   error: null,
+  checkError: null,
 
   load: async () => {
     // A failed read — refusal or rejection, via `settled` — still answers:
@@ -115,9 +121,15 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
         loaded: true,
         rowsCurrent: true,
         error: null,
+        checkError: null,
       });
     } else {
-      set({ loaded: true, rowsCurrent: false, error: response.error });
+      set({
+        loaded: true,
+        rowsCurrent: false,
+        error: response.error,
+        checkError: response.error,
+      });
     }
   },
 

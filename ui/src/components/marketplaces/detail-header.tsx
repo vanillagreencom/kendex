@@ -4,6 +4,7 @@ import type { Catalog, CatalogSummary, MarketplaceRow } from "@/bindings";
 import { RepoAction } from "@/components/marketplaces/repo-action";
 import { UnsubscribeDialog } from "@/components/marketplaces/unsubscribe-dialog";
 import { PageHeader } from "@/components/page-header";
+import { StatusNote } from "@/components/status-note";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,6 +14,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
+import { TRY_AGAIN_LABEL } from "@/lib/copy";
+import {
+  MARKETPLACES_NEEDS_CHECK_NOTE,
+  MARKETPLACES_UNCONFIRMED_TITLE,
+} from "@/lib/copy-marketplaces";
+import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import { useCommunityStore } from "@/stores/community";
 import { useMarketplacesStore } from "@/stores/marketplaces";
@@ -36,6 +43,15 @@ export function DetailHeader({
   const toggle = useMarketplacesStore((s) => s.toggle);
   const checkForUpdates = useMarketplacesStore((s) => s.checkForUpdates);
   const busy = useMarketplacesStore((s) => s.busy);
+  // A subscription row selected from rows a failed read left behind may
+  // not be the subscription as it stands now: its switch and Unsubscribe
+  // wait for a read that succeeds, and the page says so below the header.
+  // Check for updates stays live — it is the way back.
+  const loaded = useMarketplacesStore((s) => s.loaded);
+  const rowsCurrent = useMarketplacesStore((s) => s.rowsCurrent);
+  const checkError = useMarketplacesStore((s) => s.checkError);
+  const load = useMarketplacesStore((s) => s.load);
+  const stale = catalog.by === "subscription" && loaded && !rowsCurrent;
   const listing = useCommunityStore((s) =>
     requested.by === "repo"
       ? s.directory?.rows.find((r) => r.repo === requested.repo)
@@ -66,6 +82,8 @@ export function DetailHeader({
         {row ? (
           <Switch
             checked={row.enabled}
+            disabled={stale}
+            title={stale ? MARKETPLACES_NEEDS_CHECK_NOTE : undefined}
             onCheckedChange={(enabled) => void toggle(scope, source, enabled)}
             aria-label={row.enabled ? "Turn off" : "Turn on"}
           />
@@ -90,6 +108,7 @@ export function DetailHeader({
           <DropdownMenuContent align="end">
             <DropdownMenuItem
               className="text-critical"
+              disabled={stale}
               onClick={() => setUnsubscribeOpen(true)}
             >
               Unsubscribe…
@@ -115,36 +134,55 @@ export function DetailHeader({
   }
 
   return (
-    <PageHeader
-      wide
-      title={
-        <span className="flex items-center gap-2.5">
-          {title}
-          {listing?.featured ? (
-            <Badge variant="secondary" className="gap-1">
-              <Star className="size-3" /> featured
-            </Badge>
-          ) : null}
-        </span>
-      }
-      subtitle={
-        <>
-          {description ? <p>{description}</p> : null}
-          {metaLine.length > 0 ? (
-            <p className="mt-1 font-mono text-xs">{metaLine.join(" · ")}</p>
-          ) : null}
-          {tags.length > 0 ? (
-            <span className="mt-2 flex flex-wrap gap-1.5">
-              {tags.map((tag) => (
-                <Badge key={tag} variant="secondary">
-                  {tag}
-                </Badge>
-              ))}
-            </span>
-          ) : null}
-        </>
-      }
-      action={action}
-    />
+    <>
+      <PageHeader
+        wide
+        title={
+          <span className="flex items-center gap-2.5">
+            {title}
+            {listing?.featured ? (
+              <Badge variant="secondary" className="gap-1">
+                <Star className="size-3" /> featured
+              </Badge>
+            ) : null}
+          </span>
+        }
+        subtitle={
+          <>
+            {description ? <p>{description}</p> : null}
+            {metaLine.length > 0 ? (
+              <p className="mt-1 font-mono text-xs">{metaLine.join(" · ")}</p>
+            ) : null}
+            {tags.length > 0 ? (
+              <span className="mt-2 flex flex-wrap gap-1.5">
+                {tags.map((tag) => (
+                  <Badge key={tag} variant="secondary">
+                    {tag}
+                  </Badge>
+                ))}
+              </span>
+            ) : null}
+          </>
+        }
+        action={action}
+      />
+      {stale ? (
+        <div className={cn(PAGE_BODY, "pt-0")}>
+          <div className={WIDE_CONTENT_WIDTH}>
+            <StatusNote
+              tone="warning"
+              title={MARKETPLACES_UNCONFIRMED_TITLE}
+              action={
+                <Button size="sm" variant="outline" onClick={() => void load()}>
+                  {TRY_AGAIN_LABEL}
+                </Button>
+              }
+            >
+              {checkError}
+            </StatusNote>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }

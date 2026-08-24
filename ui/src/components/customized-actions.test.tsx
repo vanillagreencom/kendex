@@ -5,12 +5,14 @@ import { UpdatesTable } from "./updates-table";
 import { updateRow as row } from "./updates-test-rows";
 
 // Static rendering reads a zustand store's initial snapshot, never one set
-// later, so the store hook is wrapped to let a test flip `busy`.
-const stub = vi.hoisted(() => ({ busy: false }));
+// later, so the store hook is wrapped to let a test flip `busy` and
+// `loaded`. Rows on screen imply a read that answered, so that is the
+// default.
+const stub = vi.hoisted(() => ({ busy: false, loaded: true }));
 vi.mock("@/stores/updates", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/stores/updates")>();
   const hook = (selector?: (state: unknown) => unknown) => {
-    const state = { ...mod.useUpdatesStore.getState(), busy: stub.busy };
+    const state = { ...mod.useUpdatesStore.getState(), ...stub };
     return selector ? selector(state) : state;
   };
   return { ...mod, useUpdatesStore: Object.assign(hook, mod.useUpdatesStore) };
@@ -112,6 +114,27 @@ describe("customized places", () => {
     expect(html).toContain(">Keep as my own<");
     expect(html).not.toContain(">Use new version…<");
     expect(html).toContain(">No longer in its source<");
+  });
+
+  // Discarding edits on a held place moves the hold to row.latest's commit
+  // — a stale row would pin exactly the old version the Update guards now
+  // prevent. Keeping the files as a fork copies what is on disk, so it
+  // stays live.
+  it("holds Use new version on rows a failed check left behind", () => {
+    stub.loaded = false;
+    try {
+      const html = render([
+        row("one", null, {
+          blockedByLocalEdit: true,
+          editedHarnesses: ["claude"],
+          forkableHarness: "claude",
+        }),
+      ]);
+      expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Use new version…</);
+      expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Keep as my own</);
+    } finally {
+      stub.loaded = true;
+    }
   });
 
   it("holds the fork decision while another update is running", () => {

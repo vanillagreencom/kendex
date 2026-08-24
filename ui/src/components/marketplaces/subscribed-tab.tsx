@@ -22,7 +22,9 @@ export function SubscribedTab({ onSubscribe }: { onSubscribe: () => void }) {
   const rows = useMarketplacesStore((s) => s.rows);
   const loaded = useMarketplacesStore((s) => s.loaded);
   const rowsCurrent = useMarketplacesStore((s) => s.rowsCurrent);
-  const error = useMarketplacesStore((s) => s.error);
+  // `checkError`, not the store's shared `error`: actions write the shared
+  // field too, and a failed subscribe is not a failed overview read.
+  const checkError = useMarketplacesStore((s) => s.checkError);
   const load = useMarketplacesStore((s) => s.load);
 
   if (loaded && rows.length === 0) {
@@ -40,7 +42,7 @@ export function SubscribedTab({ onSubscribe }: { onSubscribe: () => void }) {
             </Button>
           }
         >
-          {error}
+          {checkError}
         </EmptyState>
       );
     }
@@ -73,7 +75,7 @@ export function SubscribedTab({ onSubscribe }: { onSubscribe: () => void }) {
               </Button>
             }
           >
-            {error}
+            {checkError}
           </StatusNote>
         ) : null}
         {groups.map(({ scope, list }) => (

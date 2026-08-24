@@ -302,13 +302,15 @@ changes carry a **Breaking** call-out with their migration note inline.
   engine refuses. Update buttons wait for a check that succeeded — updating
   from versions nobody confirmed could move a held package to a stale
   commit — and a failed check always leaves its retry reachable, even when
-  everything noteworthy is muted, with the Follow source switch waiting
-  alongside the Update buttons — switching follow off from a stale row
-  would pin a package to an old commit. The Marketplaces page's Subscribed
-  tab says its read failed and offers Try again instead of claiming "No
-  marketplaces yet", subscriptions kept from a failed read are drawn under
-  the same last-checked note with their toggle and unsubscribe held, and
-  overlapping reads of updates and marketplaces can
+  everything noteworthy is muted, with the Follow source switch and an
+  edited package's "Use new version" waiting alongside the Update buttons
+  — acting from a stale row would pin a package to an old commit. The
+  Marketplaces page's Subscribed tab says its read failed and offers Try
+  again instead of claiming "No marketplaces yet", subscriptions kept from
+  a failed read are drawn under the same last-checked note with their
+  toggle and unsubscribe held — on the tab and on each marketplace's own
+  page — a failed subscribe can no longer rewrite the reason that note
+  shows, and overlapping reads of updates and marketplaces can
   no longer land out of order — a slow early read cannot overwrite a
   fresher answer or take back a change that just succeeded, a check that
   fetched the sources outranks any quicker re-read of old mirrors whether
