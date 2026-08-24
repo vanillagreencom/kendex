@@ -141,5 +141,15 @@ run_ratchet
 [ "$RC" -eq 0 ] && ok "and the ratchet, under the repo's classes, wants no row for them either" \
   || bad "and the ratchet, under the repo's classes, wants no row for them either" "rc=$RC out=$OUT"
 
+echo "=== the test cap is the ratchet's test class for every extension ==="
+mkfile crates/x/tests/big.rs 500
+git -C "$R" add -A
+run_guard RATCHET_RAISE=
+[ "$RC" -eq 0 ] && ok "a 500-line crates/x/tests/big.rs passes the guard with no row" \
+  || bad "a 500-line crates/x/tests/big.rs passes the guard with no row" "rc=$RC out=$OUT"
+run_ratchet
+[ "$RC" -eq 0 ] && ok "and the ratchet wants no row for it either" \
+  || bad "and the ratchet wants no row for it either" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
