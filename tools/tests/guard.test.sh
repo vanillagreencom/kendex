@@ -129,5 +129,17 @@ run_ratchet
 [ "$RC" -eq 0 ] && ok "a 300-line ui/ test .ts still belongs to the 800 test class, not the 250 one" \
   || bad "a 300-line ui/ test .ts still belongs to the 800 test class, not the 250 one" "rc=$RC out=$OUT"
 
+echo "=== a UI test file between 250 and 800 passes both gates with no row ==="
+# The guard's cap mirrors the ratchet's test classes; otherwise a test file
+# the ratchet allows up to 800 needs a row the ratchet then calls stale.
+mkfile ui/x.test.ts 300
+git -C "$R" add -A
+run_guard RATCHET_RAISE=
+[ "$RC" -eq 0 ] && ok "300-line ui/x.test.ts and ui/tests/big.test.ts pass the guard with no row" \
+  || bad "300-line ui/x.test.ts and ui/tests/big.test.ts pass the guard with no row" "rc=$RC out=$OUT"
+run_ratchet
+[ "$RC" -eq 0 ] && ok "and the ratchet, under the repo's classes, wants no row for them either" \
+  || bad "and the ratchet, under the repo's classes, wants no row for them either" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
