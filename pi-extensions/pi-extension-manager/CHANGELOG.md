@@ -2,6 +2,13 @@
 
 ## Consumer-impacting changes
 
+### 2.0.0
+
+- **Breaking**: the settings namespace is renamed from `vstack` to `kendex`, with no compatibility fallback. Configuration previously read from `vstack.extensionManager.config["@vanillagreen/pi-extension-manager"]` in `.pi/settings.json` is now read from `kendex.extensionManager.config["@vanillagreen/pi-extension-manager"]`; settings still stored under the old key are ignored and this package silently falls back to its defaults until the key is renamed. The `package.json` block that declares these settings is renamed from `"vstack"` to `"kendex"` to match.
+- **Breaking**: cross-extension interop symbols move from the `vstack.*` to the `kendex.*` `Symbol.for` registry (`kendex.pi-extension-manager.installed`, `kendex.pi.extension-config-resolver`, `kendex.pi.extension-manager.open-quick-settings`, `kendex.pi.modal-lock`, `kendex.pi.project-trust`). Symbol identity is the interop contract, so a package on the old namespace cannot see one on the new namespace — upgrade every installed `@vanillagreen` Pi extension together rather than one at a time.
+- Project-root detection recognizes `.kendex-lock.json` instead of `.vstack-lock.json`.
+- Repository, homepage, issue-tracker, and README asset URLs now point at `vanillagreencom/kendex`.
+
 ### 1.4.0
 
 - The settings editor shows the value an extension actually resolves when that value comes from a config file the manager does not own. A row backed by such a file names the file under the setting; editing the row writes Pi settings, which override the file; `delete` reports the file instead of resetting, because the value is not stored in Pi settings. Manager config still outranks an extension's own files, so the external lookup runs only when neither manager scope holds the key.

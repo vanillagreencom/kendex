@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-skills-manager",
-  "version": "1.1.4",
+  "version": "2.0.0",
   "description": "Polished Pi skills manager with a dedicated /skill menu for browsing, previewing, inserting, creating, editing, renaming, deleting, and toggling skills while preserving native /skill:name invocation.",
   "license": "MIT",
   "keywords": [

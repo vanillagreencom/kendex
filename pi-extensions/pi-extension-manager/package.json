@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-extension-manager",
-  "version": "1.4.0",
+  "version": "2.0.0",
   "description": "Pi package manager with update/uninstall actions plus a separate schema-driven settings editor for kendex packages.",
   "license": "MIT",
   "keywords": [

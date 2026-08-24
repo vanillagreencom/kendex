@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-output-policy",
-  "version": "1.2.0",
+  "version": "2.0.0",
   "description": "Large-output policy for Pi: runaway model-output guards plus tool-result minimization, truncation, and spill preservation.",
   "license": "MIT",
   "keywords": [

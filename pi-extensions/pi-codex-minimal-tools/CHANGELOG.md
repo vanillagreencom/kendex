@@ -2,6 +2,13 @@
 
 ## Consumer-impacting changes
 
+### 2.0.0
+
+- **Breaking**: the settings namespace is renamed from `vstack` to `kendex`, with no compatibility fallback. Configuration previously read from `vstack.extensionManager.config["@vanillagreen/pi-codex-minimal-tools"]` in `.pi/settings.json` is now read from `kendex.extensionManager.config["@vanillagreen/pi-codex-minimal-tools"]`; settings still stored under the old key are ignored and this package silently falls back to its defaults until the key is renamed. The `package.json` block that declares these settings is renamed from `"vstack"` to `"kendex"` to match.
+- **Breaking**: cross-extension interop symbols move from the `vstack.*` to the `kendex.*` `Symbol.for` registry (`kendex.pi-codex-minimal-tools.installed`, `kendex.pi.extension-manager.open-quick-settings`, `kendex.pi.project-trust`). Symbol identity is the interop contract, so a package on the old namespace cannot see one on the new namespace — upgrade every installed `@vanillagreen` Pi extension together rather than one at a time.
+- Project-root detection recognizes `.kendex-lock.json` instead of `.vstack-lock.json`.
+- Repository, homepage, issue-tracker, and README asset URLs now point at `vanillagreencom/kendex`.
+
 ### 1.4.0
 
 - Pi 0.84.0 parity: `null` provider headers are now treated as deletion markers. `ModelRegistry.getApiKeyAndHeaders()` returns `ProviderHeaders` (`Record<string, string | null>`) where `null` means "remove this header"; the background image-generation request passed them to `Headers.set()`, which stringified them and transmitted the literal `"null"`. `buildHeaders()` is now exported and deletes on `null`.

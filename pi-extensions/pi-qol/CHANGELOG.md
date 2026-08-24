@@ -2,6 +2,13 @@
 
 ## Consumer-impacting changes
 
+### 2.0.0
+
+- **Breaking**: the settings namespace is renamed from `vstack` to `kendex`, with no compatibility fallback. Configuration previously read from `vstack.extensionManager.config["@vanillagreen/pi-qol"]` in `.pi/settings.json` is now read from `kendex.extensionManager.config["@vanillagreen/pi-qol"]`; settings still stored under the old key are ignored and this package silently falls back to its defaults until the key is renamed. The `package.json` block that declares these settings is renamed from `"vstack"` to `"kendex"` to match.
+- **Breaking**: cross-extension interop symbols move from the `vstack.*` to the `kendex.*` `Symbol.for` registry (`kendex.pi-agents-tmux.statusline`, `kendex.pi-qol.installed`, `kendex.pi-qol.notification-service`, `kendex.pi-qol.pending-queue.theme-patch`, `kendex.pi-qol.session-search.pending-context`, `kendex.pi-qol.status-text-alignment-patch`, `kendex.pi-qol.thinking-timer.patch`, `kendex.pi-qol.thinking-timer.store`, `kendex.pi-questions.service`, `kendex.pi.caveman`, `kendex.pi.extension-manager.open-quick-settings`, `kendex.pi.modal-lock`, `kendex.pi.project-trust`). Symbol identity is the interop contract, so a package on the old namespace cannot see one on the new namespace — upgrade every installed `@vanillagreen` Pi extension together rather than one at a time.
+- Project-root detection recognizes `.kendex-lock.json` instead of `.vstack-lock.json`.
+- Repository, homepage, issue-tracker, and README asset URLs now point at `vanillagreencom/kendex`.
+
 ### 1.8.0
 
 - Pi 0.84.0 parity: session auto-rename now forwards `null` provider headers unchanged. `ModelRegistry.getApiKeyAndHeaders()` returns `ProviderHeaders` (`Record<string, string | null>`) where `null` is a header-deletion marker pi-ai acts on; `headerRecord()` dropped those entries, silently re-sending headers Pi asked to remove. `headerRecord()` is now exported and preserves `null` while still dropping empty and non-string values.

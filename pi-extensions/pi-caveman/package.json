@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-caveman",
-  "version": "1.2.4",
+  "version": "2.0.0",
   "description": "Native Pi caveman communication mode with session persistence, slash command control, status badge, and settings-manager integration.",
   "license": "MIT",
   "keywords": [

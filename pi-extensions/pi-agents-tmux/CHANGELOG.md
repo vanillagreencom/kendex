@@ -2,6 +2,13 @@
 
 ## Consumer-impacting changes
 
+### 3.0.0
+
+- **Breaking**: the settings namespace is renamed from `vstack` to `kendex`, with no compatibility fallback. Configuration previously read from `vstack.extensionManager.config["@vanillagreen/pi-agents-tmux"]` in `.pi/settings.json` is now read from `kendex.extensionManager.config["@vanillagreen/pi-agents-tmux"]`; settings still stored under the old key are ignored and this package silently falls back to its defaults until the key is renamed. The `package.json` block that declares these settings is renamed from `"vstack"` to `"kendex"` to match.
+- **Breaking**: cross-extension interop symbols move from the `vstack.*` to the `kendex.*` `Symbol.for` registry (`kendex.pi-agents-tmux.installed`, `kendex.pi-agents-tmux.statusline`, `kendex.pi.activity`, `kendex.pi.agents`, `kendex.pi.mini-dashboard-stack`, `kendex.pi.modal-lock`, `kendex.pi.project-trust`). Symbol identity is the interop contract, so a package on the old namespace cannot see one on the new namespace — upgrade every installed `@vanillagreen` Pi extension together rather than one at a time.
+- Project-root detection recognizes `.kendex-lock.json` instead of `.vstack-lock.json`.
+- Repository, homepage, issue-tracker, and README asset URLs now point at `vanillagreencom/kendex`.
+
 ### 2.8.8
 
 - `PANE_LAUNCHER_VERSION` bumped 10 → 11: the launcher template changed
