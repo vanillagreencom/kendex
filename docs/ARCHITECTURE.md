@@ -415,15 +415,15 @@ lives in one capability table read by core and UI.
 - **A registration is reconciled, not added to.** What a hook registered
   is recorded (`engine::item_record`); a catalog moving it to another
   event retires the recorded entry where the document still has it,
-  applies what is rendered, records that. A first install retires
-  nothing, and neither does an answer short of certainty: an entry moved,
+  applies what is rendered, records that. A first install retires nothing,
+  and neither does an answer short of certainty: an entry moved,
   duplicated, or unnamed by the record is the person's to keep, and the
-  pass registers under the identity it renders beside it. Only pi's move,
-  which deletes what it identifies, holds the installation over ambiguity
-  (`engine::pi_hooks_move`). Removal reads the same record; an editor
-  rewrites only what its own registration names; an entry no edit of
-  kendex's can reach is neither reconciled nor retired — proven by
-  applying and reading back.
+  pass registers under the identity it renders beside it. Only a pi hook's
+  ambiguity holds (`engine::item_record::retire_previous`), because pi's
+  move deletes what it identifies (`engine::pi_hooks_move`). Removal reads
+  the same record; an editor rewrites only what its own registration
+  names; an entry no edit of kendex's can reach is neither reconciled nor
+  retired — proven by applying and reading back.
 - **Pi hooks are enforced through the carrier.** The `pi-hooks` extension
   package hosts native listeners; hook content rides in the registry
   kendex renders beside them (`kendex/hooks/<name>.sh` plus

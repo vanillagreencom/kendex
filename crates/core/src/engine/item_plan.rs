@@ -224,9 +224,10 @@ fn plan_registration(
     let retire = match super::item_record::retire_previous(item, existing) {
         super::item_record::Previous::Settled => None,
         super::item_record::Previous::Retire(path, edit) => Some((path, edit)),
-        // Nothing is written beside entries kendex cannot tell its own
-        // from: this one registration holds, and says which document to
-        // look at.
+        // Only a pi hook answers this way — elsewhere an unsettled
+        // document settles. Nothing is written beside entries pi's pass
+        // cannot tell its own from: this one registration holds, and
+        // says which document to look at.
         super::item_record::Previous::Ambiguous(why) => return Ok(Planned::Conflict(why)),
     };
     let edits: Vec<(PathBuf, ConfigEdit)> =

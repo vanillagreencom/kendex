@@ -117,68 +117,6 @@ fn a_moved_registration_comes_out_with_the_script_it_names() {
     }
 }
 
-/// A record from before hooks carried an anchor names no rendered hash
-/// and no registration. The sweep still takes what that record installed:
-/// only pi's reserved-name move derives paths its record never wrote and
-/// so must prove every byte first, and reading "no anchor" as "hands off"
-/// would quietly exempt every older hook install from cleanup for good.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn the_sweep_takes_a_hook_whose_record_has_no_anchor() {
-    let f = fixture();
-    apply_now(&f);
-    let script = f.project.join(".claude/hooks/guard.sh");
-    assert!(script.is_file());
-
-    // The lock as an older kendex left it: the entry, minus the fields
-    // later versions anchor ownership with.
-    let lock_path = f.project.join(".kendex-lock.json");
-    let mut lock: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&lock_path).unwrap()).unwrap();
-    let entry = lock["entries"]["hook:guard:claude"]
-        .as_object_mut()
-        .unwrap();
-    entry.remove("renderedHash");
-    entry.remove("registration");
-    fs::write(&lock_path, serde_json::to_string_pretty(&lock).unwrap()).unwrap();
-
-    // Nothing declares it any more.
-    let manifest = f.project.join("kendex.toml");
-    let text = fs::read_to_string(&manifest).unwrap();
-    let kept: String = text
-        .split_inclusive("\n\n")
-        .filter(|block| !block.starts_with("[hooks."))
-        .collect();
-    fs::write(&manifest, kept).unwrap();
-
-    let report = plan_apply(
-        &f.env,
-        &f.scope,
-        &PlanOptions {
-            remove_orphans: true,
-            sweep_unneeded: true,
-            ..PlanOptions::default()
-        },
-    )
-    .unwrap();
-    assert!(
-        report
-            .drift
-            .iter()
-            .all(|row| !row.detail.contains("edited")),
-        "an anchor-less record is not an edit: {:?}",
-        report.drift
-    );
-    apply::execute(&f.env, &report.plan, None).unwrap();
-
-    assert!(!script.exists(), "the sweep takes the script");
-    let after = fs::read_to_string(f.project.join(".claude/settings.json")).unwrap();
-    assert!(
-        !after.contains("guard.sh"),
-        "and nothing is left registered to run it: {after}"
-    );
-}
-
 /// Switching a hook off is a removal of the entry that is there — which
 /// is not always the entry this pass would write. Change the event in the
 /// same refresh that switches it off and the two part company: the

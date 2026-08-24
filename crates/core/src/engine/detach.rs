@@ -226,9 +226,10 @@ fn edited_items(
 }
 
 /// Whether the user has edited this installation's bytes, for the kinds detach
-/// can lose bytes for. The engine's own check covers skills, agents and
-/// commands; a hook installs an editable script the engine's check skips, so
-/// detach compares it to what apply last wrote and catches an edited hook too.
+/// can lose bytes for. The engine's own check covers skills, agents, commands
+/// and anchored hooks; an anchor-less non-pi hook record holds nothing there,
+/// so the sweep can still clean it up — but detach can lose bytes, so here any
+/// present file of such a record's holds.
 /// (An MCP server is a config entry with no standalone file — its edits are not
 /// detected here, the one gap that remains.)
 fn install_edited(env: &Env, scope: &Scope, entry: &crate::lock::LockEntry) -> bool {

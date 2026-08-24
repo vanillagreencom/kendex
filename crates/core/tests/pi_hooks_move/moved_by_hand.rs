@@ -342,3 +342,42 @@ fn an_entry_from_before_the_record_still_holds_over_a_moved_registration() {
         "so what they moved is left where they moved it"
     );
 }
+
+/// The same record, and a copy of kendex's command somebody added under
+/// another listener while kendex's own entry stays put. The record kept
+/// no registration, so nothing can say which of the two is kendex's —
+/// and pi's pass deletes what it identifies, so the installation holds
+/// with the line naming the document, where every other harness settles
+/// and leaves the duplicate to the person.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_entry_from_before_the_record_holds_over_a_duplicated_command() {
+    let w = world();
+    apply(&w);
+    let path = w.project.join(".kendex-lock.json");
+    let mut lock: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    lock["entries"]["hook:guard:pi"]
+        .as_object_mut()
+        .unwrap()
+        .remove("registration");
+    fs::write(&path, serde_json::to_string_pretty(&lock).unwrap()).unwrap();
+
+    let registry = w.dot().join("kendex/hooks.json");
+    let mut value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&registry).unwrap()).unwrap();
+    let group = value["hooks"]["tool_call"][0].clone();
+    value["hooks"]["turn_end"] = serde_json::json!([group]);
+    fs::write(&registry, serde_json::to_string_pretty(&value).unwrap()).unwrap();
+
+    let report = audit(&w.env, &w.scope()).unwrap();
+    assert!(
+        report.drift.iter().any(|row| {
+            row.name == "guard"
+                && row.state == DriftState::Conflict
+                && row.detail.contains("more than once")
+        }),
+        "two entries the record cannot tell apart hold the installation: {:?}",
+        report.drift
+    );
+}
