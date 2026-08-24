@@ -57,10 +57,12 @@ function row(overrides: Partial<UpdateRow>): UpdateRow {
 
 describe("updates store", () => {
   beforeEach(() => {
+    // Rows being acted on imply a read that answered; tests staging the
+    // opposite set loaded themselves.
     useUpdatesStore.setState({
       rows: [],
       busy: false,
-      loaded: false,
+      loaded: true,
       error: null,
     });
     vi.clearAllMocks();
@@ -328,10 +330,9 @@ describe("updates store", () => {
     expect(useUpdatesStore.getState().rows).toEqual(secondState);
   });
 
-  // An update's commit and its follow-up overview ride the same chain as
-  // every other side effect, so a slower mutation answered earlier cannot
-  // land its older rows on top of the update's fresh ones.
-  it("an update's overview is not shadowed by an older mutation's answer", async () => {
+  // A mutation still in flight counts too: its landing will replace these
+  // rows, so an update accepted now would run on captured arguments.
+  it("refuses an update while another mutation is in flight", async () => {
     let resolveMute!: (
       value: Awaited<ReturnType<typeof commands.updateSetIgnored>>,
     ) => void;
@@ -342,41 +343,51 @@ describe("updates store", () => {
     );
     const muting = useUpdatesStore.getState().setIgnored(row({}), true);
 
-    vi.mocked(commands.applyPlan).mockResolvedValue({
-      status: "ok",
-      data: {
-        scope: { scope: "global" },
-        drift: [],
-        plan: [],
-        notes: [],
-        warnings: [],
-        safety: [],
-        adoptable: ADOPTABLE,
-        exits: [],
-        heldBack: [],
-        queued: [],
-      },
+    useProblemsStore.setState({
+      dialog: { open: false, title: "", steps: [], actions: [] },
     });
-    const updated: UpdateRow[] = [];
-    vi.mocked(commands.updatesOverview).mockResolvedValue({
-      status: "ok",
-      data: { rows: updated, warnings: [] },
-    });
-    vi.mocked(commands.scanMachine).mockResolvedValue({
-      status: "ok",
-      data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
-    });
-    vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
-    const updating = useUpdatesStore.getState().updateOne(row({}));
+    await useUpdatesStore.getState().updateOne(row({ pinned: true }));
 
-    resolveMute({
-      status: "ok",
-      data: { rows: [row({ ignored: true })], warnings: [] },
-    });
+    expect(commands.packageSetRev).not.toHaveBeenCalled();
+    expect(commands.applyPlan).not.toHaveBeenCalled();
+    expect(useProblemsStore.getState().dialog.message).toBe(
+      UPDATE_NEEDS_CHECK_NOTE,
+    );
+
+    const muted = [row({ ignored: true })];
+    resolveMute({ status: "ok", data: { rows: muted, warnings: [] } });
     await muting;
-    await updating;
+    expect(useUpdatesStore.getState().rows).toEqual(muted);
+  });
 
-    expect(useUpdatesStore.getState().rows).toEqual(updated);
+  // The same for a plain read: a focus-triggered load leaves loaded true
+  // and never sets checking, but its landing is about to replace the rows
+  // an update would capture its commit from.
+  it("refuses an update while a focus load is in flight", async () => {
+    let resolveLoad!: (
+      value: Awaited<ReturnType<typeof commands.updatesOverview>>,
+    ) => void;
+    vi.mocked(commands.updatesOverview).mockReturnValue(
+      new Promise((resolve) => {
+        resolveLoad = resolve;
+      }),
+    );
+    const loading = useUpdatesStore.getState().load();
+
+    useProblemsStore.setState({
+      dialog: { open: false, title: "", steps: [], actions: [] },
+    });
+    await useUpdatesStore.getState().updateOne(row({ pinned: true }));
+
+    expect(commands.packageSetRev).not.toHaveBeenCalled();
+    expect(commands.applyPlan).not.toHaveBeenCalled();
+    expect(useProblemsStore.getState().dialog.message).toBe(
+      UPDATE_NEEDS_CHECK_NOTE,
+    );
+
+    resolveLoad({ status: "ok", data: { rows: [], warnings: [] } });
+    await loading;
+    expect(commands.packageSetRev).not.toHaveBeenCalled();
   });
 
   // An explicit check that failed is an answer to report: a quicker plain

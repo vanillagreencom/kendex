@@ -28,6 +28,10 @@ interface UpdatesState {
   busy: boolean;
   /** True while a mirror fetch is running — the explicit "check". */
   checking: boolean;
+  /** True while ANY overview-producing operation — a plain load, a check,
+   *  a mutation — is in flight: the rows on screen are about to be
+   *  replaced, so no commit-applying action may trust them. */
+  overviewInFlight: boolean;
   loaded: boolean;
   /** Why the last read of the standing failed, or null. A load runs on its
    *  own at startup, so a failure here is a state for Home and the badge to
@@ -57,6 +61,19 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
 
   const applyOverview = overviewApplier(set);
 
+  // One predicate for every commit-applying action: the captured row
+  // arguments are trustworthy only when the rows are a confirmed current
+  // answer and nothing that could replace them is in flight — a failed
+  // read, a running check, and a focus-triggered load are all the same
+  // reason to wait. Returns whether the action was refused, reporting it.
+  const refuseUnsettled = (): boolean => {
+    const state = get();
+    if (state.loaded && !state.checking && !state.overviewInFlight)
+      return false;
+    showError(UPDATE_ERROR_TITLE, UPDATE_NEEDS_CHECK_NOTE);
+    return true;
+  };
+
   const reload = async () => {
     await applyOverview(() => commands.updatesOverview());
   };
@@ -66,6 +83,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     warnings: [],
     busy: false,
     checking: false,
+    overviewInFlight: false,
     loaded: false,
     error: null,
 
@@ -103,13 +121,11 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     },
 
     updateOne: async (row) => {
-      // A check in flight is about to replace these rows: an update
-      // queued now would apply the latest captured before it — refuse
-      // rather than commit stale arguments after fresher rows land.
-      if (get().checking) {
-        showError(UPDATE_ERROR_TITLE, UPDATE_NEEDS_CHECK_NOTE);
-        return;
-      }
+      // Anything overview-producing in flight is about to replace these
+      // rows: an update accepted now would apply the latest captured
+      // before it — refuse rather than commit stale arguments after
+      // fresher rows land.
+      if (refuseUnsettled()) return;
       set({ busy: true });
       try {
         // The commit and its follow-up overview ride the side-effect
@@ -139,12 +155,9 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     },
 
     updateRows: async (wanted) => {
-      // Same mid-check refusal as updateOne: these rows are about to be
-      // replaced, and the holds among them would move to captured commits.
-      if (get().checking) {
-        showError(UPDATE_ERROR_TITLE, UPDATE_NEEDS_CHECK_NOTE);
-        return;
-      }
+      // Same refusal as updateOne: the holds among these rows would move
+      // to captured commits.
+      if (refuseUnsettled()) return;
       set({ busy: true });
       try {
         // Edited packages are held by the engine and cannot be updated
@@ -188,12 +201,9 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
       // never fall through to null, which means "follow" (the opposite).
       const hold = row.current?.commit ?? null;
       if (!auto && hold === null) return;
-      // Mid-check refusal: the hold would pin a commit captured from rows
-      // a running check is about to replace.
-      if (get().checking) {
-        showError(UPDATE_ERROR_TITLE, UPDATE_NEEDS_CHECK_NOTE);
-        return;
-      }
+      // Same refusal as updateOne: the hold would pin a commit captured
+      // from rows an in-flight read is about to replace.
+      if (refuseUnsettled()) return;
       set({ busy: true });
       try {
         const error = await get().mutate(async () => {

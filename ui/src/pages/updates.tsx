@@ -47,6 +47,11 @@ export function UpdatesPage() {
     useUpdatesStore();
   const loaded = useUpdatesStore((s) => s.loaded);
   const error = useUpdatesStore((s) => s.error);
+  // Anything overview-producing in flight holds Update all, same as the
+  // per-row controls: these rows are about to be replaced.
+  const unconfirmed = useUpdatesStore(
+    (s) => !s.loaded || s.checking || s.overviewInFlight,
+  );
   const load = useUpdatesStore((s) => s.load);
   const [showHidden, setShowHidden] = useState(false);
   const [confirmIgnore, setConfirmIgnore] = useState<UpdateRow | null>(null);
@@ -109,14 +114,9 @@ export function UpdatesPage() {
               <Button
                 size="sm"
                 disabled={
-                  busy ||
-                  !loaded ||
-                  checking ||
-                  updatablePlaces(visible).length === 0
+                  busy || unconfirmed || updatablePlaces(visible).length === 0
                 }
-                title={
-                  !loaded || checking ? UPDATE_NEEDS_CHECK_NOTE : undefined
-                }
+                title={unconfirmed ? UPDATE_NEEDS_CHECK_NOTE : undefined}
                 onClick={() => void updateRows(visible)}
               >
                 {UPDATE_ALL_LABEL}

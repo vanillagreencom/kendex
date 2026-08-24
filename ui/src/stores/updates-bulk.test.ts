@@ -53,7 +53,7 @@ function row(overrides: Partial<UpdateRow>): UpdateRow {
 
 describe("updates store: bulk update", () => {
   beforeEach(() => {
-    useUpdatesStore.setState({ rows: [], busy: false, loaded: false });
+    useUpdatesStore.setState({ rows: [], busy: false, loaded: true });
     vi.clearAllMocks();
   });
 

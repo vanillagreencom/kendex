@@ -36,10 +36,16 @@ export function overviewApplier(
     warnings?: ItemWarning[];
     loaded?: boolean;
     error?: string | null;
+    overviewInFlight?: boolean;
   }) => void,
 ) {
   const order = landings();
   let chain: Promise<unknown> = Promise.resolve();
+  // Every operation this applier runs — plain read, refresh, mutation —
+  // is about to replace the rows on screen: the store's overviewInFlight
+  // says so while any is outstanding, and the commit-applying actions
+  // refuse for as long as it is up.
+  let inFlight = 0;
 
   const landOk = (data: Overview) =>
     set({
@@ -53,41 +59,48 @@ export function overviewApplier(
     read: () => Promise<OverviewResult>,
     kind: "read" | "refresh" | "mutation" = "read",
   ): Promise<string | null> => {
-    if (kind === "read") {
-      const ticket = order.begin();
-      const response = await settled<Overview>(Promise.resolve().then(read));
-      if (order.land(ticket)) {
-        if (response.status === "ok") landOk(response.data);
+    inFlight += 1;
+    set({ overviewInFlight: true });
+    try {
+      if (kind === "read") {
+        const ticket = order.begin();
+        const response = await settled<Overview>(Promise.resolve().then(read));
+        if (order.land(ticket)) {
+          if (response.status === "ok") landOk(response.data);
+          else set({ loaded: false, error: response.error });
+        }
+        return response.status === "ok" ? null : response.error;
+      }
+      const turn = chain.then(async (): Promise<string | null> => {
+        const response = await settled<Overview>(Promise.resolve().then(read));
+        if (response.status === "ok") {
+          order.landAuthoritative();
+          landOk(response.data);
+          return null;
+        }
+        if (kind === "refresh") {
+          order.landAuthoritative();
+          set({ loaded: false, error: response.error });
+          return response.error;
+        }
+        // A mutation can commit and then fail building its overview: the
+        // rows on screen may no longer be the truth, so one reconciling
+        // read answers either way — success lands whatever actually
+        // committed, failure marks the retained rows stale under the
+        // operation's own error.
+        const reread = await settled<Overview>(commands.updatesOverview());
+        order.landAuthoritative();
+        if (reread.status === "ok") landOk(reread.data);
         else set({ loaded: false, error: response.error });
-      }
-      return response.status === "ok" ? null : response.error;
-    }
-    const turn = chain.then(async (): Promise<string | null> => {
-      const response = await settled<Overview>(Promise.resolve().then(read));
-      if (response.status === "ok") {
-        order.landAuthoritative();
-        landOk(response.data);
-        return null;
-      }
-      if (kind === "refresh") {
-        order.landAuthoritative();
-        set({ loaded: false, error: response.error });
         return response.error;
-      }
-      // A mutation can commit and then fail building its overview: the
-      // rows on screen may no longer be the truth, so one reconciling
-      // read answers either way — success lands whatever actually
-      // committed, failure marks the retained rows stale under the
-      // operation's own error.
-      const reread = await settled<Overview>(commands.updatesOverview());
-      order.landAuthoritative();
-      if (reread.status === "ok") landOk(reread.data);
-      else set({ loaded: false, error: response.error });
-      return response.error;
-    });
-    // The chain outlives a link that throws; the error still reaches this
-    // operation's caller through `turn`.
-    chain = turn.catch(() => {});
-    return await turn;
+      });
+      // The chain outlives a link that throws; the error still reaches
+      // this operation's caller through `turn`.
+      chain = turn.catch(() => {});
+      return await turn;
+    } finally {
+      inFlight -= 1;
+      if (inFlight === 0) set({ overviewInFlight: false });
+    }
   };
 }

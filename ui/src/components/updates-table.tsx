@@ -94,9 +94,11 @@ export function PackageRows({
   const [open, setOpen] = useState(defaultOpen);
   const placesId = useId();
   const busy = useUpdatesStore((s) => s.busy);
-  // Not loaded and mid-check hold Update alike: either way these rows are
-  // not the rows an update would act on.
-  const unconfirmed = useUpdatesStore((s) => !s.loaded || s.checking);
+  // Not loaded, mid-check, and mid-load hold Update alike: either way
+  // these rows are not the rows an update would act on.
+  const unconfirmed = useUpdatesStore(
+    (s) => !s.loaded || s.checking || s.overviewInFlight,
+  );
   const updateRows = useUpdatesStore((s) => s.updateRows);
   const Icon = kindIcon(group.kind);
   const name = packageDisplayName(group);

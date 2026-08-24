@@ -55,11 +55,11 @@ export const keepAsOwn = async (row: UpdateRow): Promise<void> => {
 export const takeNewVersion = async (row: UpdateRow): Promise<void> => {
   // The action boundary owns the guarantee: a confirmation opened before
   // a check failed still holds a retained row, and its latest names a
-  // commit nobody confirmed — the same is true mid-check, when a running
-  // refresh is about to replace the rows. The trigger gates are UX; this
-  // is the stop.
-  const { loaded, checking } = useUpdatesStore.getState();
-  if (!loaded || checking) {
+  // commit nobody confirmed — the same while anything overview-producing
+  // is in flight, about to replace the rows. The trigger gates are UX;
+  // this is the stop.
+  const { loaded, checking, overviewInFlight } = useUpdatesStore.getState();
+  if (!loaded || checking || overviewInFlight) {
     useProblemsStore
       .getState()
       .showError({ title: FORK_ERROR_TITLE, message: UPDATE_NEEDS_CHECK_NOTE });

@@ -322,8 +322,9 @@ changes carry a **Breaking** call-out with their migration note inline.
   made. A change that fails midway re-reads the standing rather than
   presenting the old rows as current, a change whose call never reached
   the engine reports the failure instead of staying silent or toasting
-  success, and updating waits out a running check rather than applying
-  versions it is about to replace. The status footer stops saying "Up
+  success, and updating waits out anything already re-reading the standing
+  — a running check, a focus-triggered re-read, another change landing —
+  rather than applying versions it is about to replace. The status footer stops saying "Up
   to date" beside a failed scan: a failed first scan reads "Couldn't
   scan", and a kept result is labeled last-scanned instead of current.
 - `kendex apply --replace-unmanaged` no longer gives up on the whole scope

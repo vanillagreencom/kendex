@@ -42,11 +42,19 @@ export function PlaceCells({
   among: Scope[];
   onIgnore?: (row: UpdateRow) => void;
 }) {
-  const { busy, loaded, checking, updateOne, setAutoUpdate, setIgnored } =
-    useUpdatesStore();
-  // Mid-check the rows are about to be replaced; the store actions refuse
-  // regardless, and the controls say so instead of inviting the click.
-  const held = !loaded || checking;
+  const {
+    busy,
+    loaded,
+    checking,
+    overviewInFlight,
+    updateOne,
+    setAutoUpdate,
+    setIgnored,
+  } = useUpdatesStore();
+  // Anything overview-producing in flight is about to replace these rows;
+  // the store actions refuse regardless, and the controls say so instead
+  // of inviting the click.
+  const held = !loaded || checking || overviewInFlight;
   const goToPackage = useNavStore((s) => s.goToPackage);
   const name = packageDisplayName(row);
   const place = placeName(row.scope, among);

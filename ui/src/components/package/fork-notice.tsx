@@ -46,7 +46,9 @@ export function ForkNotice({
   // is about to replace, that pins an old version — so the discard waits
   // for a check. Keeping the files as a fork copies what is on disk and
   // stays live.
-  const held = useUpdatesStore((s) => !s.loaded || s.checking);
+  const held = useUpdatesStore(
+    (s) => !s.loaded || s.checking || s.overviewInFlight,
+  );
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const several = row.editedHarnesses.length > 1;
   const whyNoFork = row.derived

@@ -38,7 +38,9 @@ export function CustomizedActions({
   // version the other Update guards prevent — so the discard waits for a
   // check the same as Update. Keeping the files as a fork copies what is
   // on disk and stays live.
-  const held = useUpdatesStore((s) => !s.loaded || s.checking);
+  const held = useUpdatesStore(
+    (s) => !s.loaded || s.checking || s.overviewInFlight,
+  );
   const whyNoFork = row.derived
     ? DERIVED_EDIT_NOTE
     : row.editedHarnesses.length > 1
