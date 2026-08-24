@@ -28,8 +28,8 @@ CHANGELOG's Unreleased section has an Added entry; major only when asked).
    crates/app/tauri.conf.json CHANGELOG.md`; push through the normal PR
    flow if branch protection requires it, else push `main`.
 5. Tag the MERGED commit, never the local branch: after the bump is on
-   `origin/main`, run `git checkout main && git pull --ff-only`, confirm
-   `git log -1` is the bump commit, then `git tag vX.Y.Z && git push
+   `origin/main`, run `git fetch origin`, confirm `git log -1 origin/main`
+   is the bump commit, then `git tag vX.Y.Z origin/main && git push
    origin vX.Y.Z`. The tag starts
    `.github/workflows/release.yml`, which builds every target and creates a
    **draft** release. Do not call `gh release create`.

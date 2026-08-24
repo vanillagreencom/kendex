@@ -10,7 +10,7 @@ Find every `pi-extensions/*/package.json` package whose source/docs/package cont
 kendex distribution is independent of npm. `kendex add`/`refresh` copies local source — npm publishing only populates the pi.dev gallery and lets external users run `pi install npm:@vanillagreen/<name>`. Skipping a publish never breaks kendex consumers.
 
 ## Hard rules
-- Publish only from `main` equal to `origin/main` (`git fetch && git status -sb` shows no ahead/behind); never from a branch or a dirty tree.
+- Publish only from `main` equal to `origin/main` (`git fetch && git status -sb` shows no ahead/behind); never from a branch or a dirty tree. The version-bump commit is pushed before `npm publish` (step 5 under Version bump and publish) so the rule holds at publish time.
 - Publish only Pi extension packages that actually need a new npm version.
 - Use scoped npm names from `package.json` (normally `@vanillagreen/<name>`).
 - Per-package release tags use `<unscoped-name>-v<version>` (example: `pi-qol-v1.0.4`).
@@ -81,19 +81,25 @@ For each marked package that needs publishing:
    ```
 3. Stage only that package's `package.json` and any lockfile changed by `npm version`.
 4. Commit version bumps. Prefer a single coordinated commit if deploying multiple packages.
-5. Publish each package:
+5. Push `main` and confirm local `main` equals `origin/main` before publishing anything:
+   ```bash
+   git push origin main
+   git fetch origin && git status -sb
+   ```
+   Stop if `git status -sb` shows ahead/behind — the bump commit must be on `origin/main` first.
+6. Publish each package:
    ```bash
    cd pi-extensions/<dir>
    op run --env-file=../../.env.npm -- npm publish --userconfig=../../.npmrc
    cd ../..
    ```
-6. Verify npm reports the new version:
+7. Verify npm reports the new version:
    `npm view <name> version`.
-7. Create per-package git tags at the version-bump commit:
+8. Create per-package git tags at the version-bump commit:
    `git tag <unscoped-name>-v<version>`.
 
-## Push, refresh, verify
-1. Push `main` and all new package tags.
+## Push tags, refresh, verify
+1. Push all new package tags.
 2. Run:
    ```bash
    kendex refresh
