@@ -109,9 +109,14 @@ export function UpdatesPage() {
               <Button
                 size="sm"
                 disabled={
-                  busy || !loaded || updatablePlaces(visible).length === 0
+                  busy ||
+                  !loaded ||
+                  checking ||
+                  updatablePlaces(visible).length === 0
                 }
-                title={!loaded ? UPDATE_NEEDS_CHECK_NOTE : undefined}
+                title={
+                  !loaded || checking ? UPDATE_NEEDS_CHECK_NOTE : undefined
+                }
                 onClick={() => void updateRows(visible)}
               >
                 {UPDATE_ALL_LABEL}

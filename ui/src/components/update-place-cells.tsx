@@ -42,8 +42,11 @@ export function PlaceCells({
   among: Scope[];
   onIgnore?: (row: UpdateRow) => void;
 }) {
-  const { busy, loaded, updateOne, setAutoUpdate, setIgnored } =
+  const { busy, loaded, checking, updateOne, setAutoUpdate, setIgnored } =
     useUpdatesStore();
+  // Mid-check the rows are about to be replaced; the store actions refuse
+  // regardless, and the controls say so instead of inviting the click.
+  const held = !loaded || checking;
   const goToPackage = useNavStore((s) => s.goToPackage);
   const name = packageDisplayName(row);
   const place = placeName(row.scope, among);
@@ -88,13 +91,13 @@ export function PlaceCells({
             <Switch
               aria-label={followSourceLabel(name, place)}
               checked={!row.pinned}
-              disabled={busy || !loaded || locked !== null}
+              disabled={busy || held || locked !== null}
               title={
                 locked?.kind === "source"
                   ? heldBySourceNote(locked.name)
                   : locked
                     ? HELD_BY_OWNER_NOTE
-                    : !loaded
+                    : held
                       ? UPDATE_NEEDS_CHECK_NOTE
                       : undefined
               }
@@ -119,12 +122,12 @@ export function PlaceCells({
                   size="sm"
                   variant="outline"
                   disabled={
-                    busy || !loaded || !row.updateAvailable || heldByOwner(row)
+                    busy || held || !row.updateAvailable || heldByOwner(row)
                   }
                   title={
                     heldByOwner(row)
                       ? HELD_BY_OWNER_NOTE
-                      : !loaded
+                      : held
                         ? UPDATE_NEEDS_CHECK_NOTE
                         : undefined
                   }

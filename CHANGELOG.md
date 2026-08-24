@@ -320,7 +320,10 @@ changes carry a **Breaking** call-out with their migration note inline.
   it succeeded or failed, and back-to-back changes — updates, mutes,
   follow switches, and fork decisions alike — land in the order they were
   made. A change that fails midway re-reads the standing rather than
-  presenting the old rows as current. The status footer stops saying "Up
+  presenting the old rows as current, a change whose call never reached
+  the engine reports the failure instead of staying silent or toasting
+  success, and updating waits out a running check rather than applying
+  versions it is about to replace. The status footer stops saying "Up
   to date" beside a failed scan: a failed first scan reads "Couldn't
   scan", and a kept result is labeled last-scanned instead of current.
 - `kendex apply --replace-unmanaged` no longer gives up on the whole scope

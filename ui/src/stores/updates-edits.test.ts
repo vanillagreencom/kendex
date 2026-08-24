@@ -60,6 +60,54 @@ describe("updates store: edited places", () => {
     vi.clearAllMocks();
   });
 
+  // A transport rejection never assigns work's error — only the applier
+  // sees it, and dropping its return let the fork and discard flows carry
+  // on to their success paths over an IPC failure.
+  it("a fork whose transport failed does not proceed as success", async () => {
+    useProblemsStore.setState({
+      dialog: { open: false, title: "", steps: [], actions: [] },
+    });
+    vi.mocked(commands.packageFork).mockRejectedValue(new Error("ipc down"));
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [] },
+    });
+
+    await keepAsOwn(
+      row({
+        blockedByLocalEdit: true,
+        editedHarnesses: ["claude"],
+        forkableHarness: "claude",
+      }),
+    );
+
+    expect(useProblemsStore.getState().dialog.open).toBe(true);
+    expect(useProblemsStore.getState().dialog.message).toBe("ipc down");
+    // run() stops at the failure instead of refreshing as if it landed.
+    expect(commands.auditAll).not.toHaveBeenCalled();
+  });
+
+  it("a discard whose transport failed surfaces the failure", async () => {
+    useProblemsStore.setState({
+      dialog: { open: false, title: "", steps: [], actions: [] },
+    });
+    vi.mocked(commands.applyDiscardEdits).mockRejectedValue(
+      new Error("ipc down"),
+    );
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [] },
+    });
+
+    await takeNewVersion(
+      row({ blockedByLocalEdit: true, editedHarnesses: ["claude"] }),
+    );
+
+    expect(useProblemsStore.getState().dialog.open).toBe(true);
+    expect(useProblemsStore.getState().dialog.message).toBe("ipc down");
+    expect(commands.auditAll).not.toHaveBeenCalled();
+  });
+
   // The action boundary owns the guarantee: a confirmation opened before
   // a check failed still holds a retained row whose latest nobody
   // confirmed — the store refuses it however the dialog got there.

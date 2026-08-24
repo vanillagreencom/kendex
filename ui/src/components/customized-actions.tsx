@@ -34,10 +34,11 @@ export function CustomizedActions({
 }) {
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   // Discarding edits on a held place moves the hold to row.latest's commit
-  // — from a stale row that pins exactly the old version the other Update
-  // guards prevent — so the discard waits for a check the same as Update.
-  // Keeping the files as a fork copies what is on disk and stays live.
-  const loaded = useUpdatesStore((s) => s.loaded);
+  // — from a stale or about-to-be-replaced row that pins exactly the old
+  // version the other Update guards prevent — so the discard waits for a
+  // check the same as Update. Keeping the files as a fork copies what is
+  // on disk and stays live.
+  const held = useUpdatesStore((s) => !s.loaded || s.checking);
   const whyNoFork = row.derived
     ? DERIVED_EDIT_NOTE
     : row.editedHarnesses.length > 1
@@ -69,8 +70,8 @@ export function CustomizedActions({
         <Button
           size="sm"
           variant="outline"
-          disabled={busy || !loaded}
-          title={!loaded ? UPDATE_NEEDS_CHECK_NOTE : undefined}
+          disabled={busy || held}
+          title={held ? UPDATE_NEEDS_CHECK_NOTE : undefined}
           onClick={() => setConfirmDiscard(true)}
         >
           {row.canTakeLatest ? USE_NEW_VERSION_LABEL : DISCARD_EDITS_LABEL}
@@ -85,7 +86,7 @@ export function CustomizedActions({
         confirmLabel={DISCARD_EDITS_CONFIRM_LABEL}
         destructive
         busy={busy}
-        confirmDisabled={!loaded}
+        confirmDisabled={held}
         confirmDisabledNote={UPDATE_NEEDS_CHECK_NOTE}
         onConfirm={() =>
           void takeNewVersion(row).then(() => setConfirmDiscard(false))

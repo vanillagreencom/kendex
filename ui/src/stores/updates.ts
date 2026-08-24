@@ -4,9 +4,9 @@ import { commands, type ItemWarning, type UpdateRow } from "@/bindings";
 import { UPDATE_ERROR_TITLE, updatedToastLabel } from "@/lib/copy";
 import {
   nothingToUpdateToastLabel,
+  UPDATE_NEEDS_CHECK_NOTE,
   updatedWithPlaceToastLabel,
 } from "@/lib/copy-updates";
-import { scopeKey } from "@/lib/scope";
 import {
   placeName,
   skippedPlaces,
@@ -17,6 +17,7 @@ import { bulkUpdateToast } from "@/lib/update-toasts";
 import { useAuditStore } from "./audit";
 import { useProblemsStore } from "./problems";
 import { useScanStore } from "./scan";
+import { applyRow, applyRows } from "./updates-apply";
 import { overviewApplier } from "./updates-overview";
 
 interface UpdatesState {
@@ -52,25 +53,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
   const showError = (title: string, message: string) =>
     useProblemsStore.getState().showError({ title, message });
 
-  const apply = async (row: UpdateRow): Promise<boolean> => {
-    // Held packages move by moving the hold; following ones come current
-    // by applying the scope — which is what following means, and brings
-    // any other pending changes in that scope along.
-    const response =
-      row.pinned && row.latest
-        ? await commands.packageSetRev(
-            row.scope,
-            row.kind,
-            row.name,
-            row.latest.commit,
-          )
-        : await commands.applyPlan(row.scope, false, []);
-    if (response.status === "error") {
-      showError(UPDATE_ERROR_TITLE, response.error);
-      return false;
-    }
-    return true;
-  };
+  const reportUpdate = (error: string) => showError(UPDATE_ERROR_TITLE, error);
 
   const applyOverview = overviewApplier(set);
 
@@ -91,12 +74,15 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     },
 
     mutate: async (work) => {
+      // The applier's own error matters too: work() rejecting in transport
+      // never assigns failure, and only the applier saw the rejection —
+      // dropping it would let callers toast success over an IPC failure.
       let failure: string | null = null;
-      await applyOverview(async () => {
+      const applierError = await applyOverview(async () => {
         failure = await work();
         return commands.updatesOverview();
       }, "mutation");
-      return failure;
+      return failure ?? applierError;
     },
 
     check: async () => {
@@ -117,16 +103,25 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     },
 
     updateOne: async (row) => {
+      // A check in flight is about to replace these rows: an update
+      // queued now would apply the latest captured before it — refuse
+      // rather than commit stale arguments after fresher rows land.
+      if (get().checking) {
+        showError(UPDATE_ERROR_TITLE, UPDATE_NEEDS_CHECK_NOTE);
+        return;
+      }
       set({ busy: true });
       try {
         // The commit and its follow-up overview ride the side-effect
         // chain, so nothing older can land on top of them.
         let applied = false;
-        await get().mutate(async () => {
-          applied = await apply(row);
+        const error = await get().mutate(async () => {
+          applied = await applyRow(row, reportUpdate);
           return null;
         });
-        if (applied) {
+        if (error !== null) {
+          showError(UPDATE_ERROR_TITLE, error);
+        } else if (applied) {
           // A follower comes current by applying its scope, which brings
           // that scope's other followers along — the toast says so rather
           // than letting the extra changes look like a surprise.
@@ -144,6 +139,12 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     },
 
     updateRows: async (wanted) => {
+      // Same mid-check refusal as updateOne: these rows are about to be
+      // replaced, and the holds among them would move to captured commits.
+      if (get().checking) {
+        showError(UPDATE_ERROR_TITLE, UPDATE_NEEDS_CHECK_NOTE);
+        return;
+      }
       set({ busy: true });
       try {
         // Edited packages are held by the engine and cannot be updated
@@ -157,32 +158,19 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
           toast.info(nothingToUpdateToastLabel(skipped));
           return;
         }
-        // Move every hold first — each move applies its whole scope, so
-        // that scope's followers are already current — then one apply per
-        // scope no hold touched. Never two applies for one scope. The
-        // whole sequence and its follow-up overview ride the side-effect
-        // chain, so nothing older can land on top of them.
+        // The whole sequence and its follow-up overview ride the
+        // side-effect chain, so nothing older can land on top of them.
         let ok = true;
-        await get().mutate(async () => {
-          const applied = new Set<string>();
-          for (const row of rows.filter((row) => row.pinned)) {
-            if (await apply(row)) applied.add(scopeKey(row.scope));
-            else ok = false;
-          }
-          const scopes = new Map(
-            rows
-              .filter((row) => !row.pinned && !applied.has(scopeKey(row.scope)))
-              .map((row) => [scopeKey(row.scope), row] as const),
-          );
-          for (const row of scopes.values()) {
-            const response = await commands.applyPlan(row.scope, false, []);
-            if (response.status === "error") {
-              showError(UPDATE_ERROR_TITLE, response.error);
-              ok = false;
-            }
-          }
+        const error = await get().mutate(async () => {
+          ok = await applyRows(rows, reportUpdate);
           return null;
         });
+        // A rejection escapes the sequence without touching ok — only the
+        // applier saw it, and success must not be claimed over it.
+        if (error !== null) {
+          showError(UPDATE_ERROR_TITLE, error);
+          ok = false;
+        }
         if (ok)
           toast.success(
             bulkUpdateToast(rows, skipped, visibleUpdates(get().rows)),
@@ -200,6 +188,12 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
       // never fall through to null, which means "follow" (the opposite).
       const hold = row.current?.commit ?? null;
       if (!auto && hold === null) return;
+      // Mid-check refusal: the hold would pin a commit captured from rows
+      // a running check is about to replace.
+      if (get().checking) {
+        showError(UPDATE_ERROR_TITLE, UPDATE_NEEDS_CHECK_NOTE);
+        return;
+      }
       set({ busy: true });
       try {
         const error = await get().mutate(async () => {

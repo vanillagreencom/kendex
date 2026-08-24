@@ -1,7 +1,9 @@
+import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
+import { UPDATE_NEEDS_CHECK_NOTE } from "@/lib/copy-updates";
 import {
   hiddenUpdates,
   visibleUpdateCount,
@@ -428,6 +430,72 @@ describe("updates store", () => {
     // The refusal still reaches the person, through the error modal.
     expect(useProblemsStore.getState().dialog.open).toBe(true);
     expect(useProblemsStore.getState().dialog.message).toBe("manifest busy");
+  });
+
+  // A transport failure rejects instead of returning an error result —
+  // only the applier sees it, and dropping its return left updateOne
+  // silent and setAutoUpdate mute about a switch that never happened.
+  it("surfaces an update whose transport failed instead of staying silent", async () => {
+    useProblemsStore.setState({
+      dialog: { open: false, title: "", steps: [], actions: [] },
+    });
+    vi.mocked(commands.applyPlan).mockRejectedValue(new Error("ipc down"));
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [] },
+    });
+
+    await useUpdatesStore.getState().updateOne(row({}));
+
+    expect(useProblemsStore.getState().dialog.open).toBe(true);
+    expect(useProblemsStore.getState().dialog.message).toBe("ipc down");
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a follow switch whose transport failed", async () => {
+    useProblemsStore.setState({
+      dialog: { open: false, title: "", steps: [], actions: [] },
+    });
+    vi.mocked(commands.packageSetRev).mockRejectedValue(new Error("ipc down"));
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [] },
+    });
+
+    await useUpdatesStore.getState().setAutoUpdate(row({}), false);
+
+    expect(useProblemsStore.getState().dialog.open).toBe(true);
+    expect(useProblemsStore.getState().dialog.message).toBe("ipc down");
+  });
+
+  // A check in flight is about to replace the rows: an update accepted
+  // now would queue behind it on the chain and apply the latest captured
+  // before it — refused at the action boundary, not just on the buttons.
+  it("refuses an update clicked while a check is running", async () => {
+    let resolveCheck!: (
+      value: Awaited<ReturnType<typeof commands.updatesRefresh>>,
+    ) => void;
+    vi.mocked(commands.updatesRefresh).mockReturnValue(
+      new Promise((resolve) => {
+        resolveCheck = resolve;
+      }),
+    );
+    const checking = useUpdatesStore.getState().check();
+
+    useProblemsStore.setState({
+      dialog: { open: false, title: "", steps: [], actions: [] },
+    });
+    await useUpdatesStore.getState().updateOne(row({ pinned: true }));
+
+    expect(commands.packageSetRev).not.toHaveBeenCalled();
+    expect(commands.applyPlan).not.toHaveBeenCalled();
+    expect(useProblemsStore.getState().dialog.message).toBe(
+      UPDATE_NEEDS_CHECK_NOTE,
+    );
+
+    resolveCheck({ status: "ok", data: { rows: [], warnings: [] } });
+    await checking;
+    expect(commands.packageSetRev).not.toHaveBeenCalled();
   });
 
   // The backend can persist the preference and then fail building its

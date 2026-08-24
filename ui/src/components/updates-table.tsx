@@ -94,7 +94,9 @@ export function PackageRows({
   const [open, setOpen] = useState(defaultOpen);
   const placesId = useId();
   const busy = useUpdatesStore((s) => s.busy);
-  const loaded = useUpdatesStore((s) => s.loaded);
+  // Not loaded and mid-check hold Update alike: either way these rows are
+  // not the rows an update would act on.
+  const unconfirmed = useUpdatesStore((s) => !s.loaded || s.checking);
   const updateRows = useUpdatesStore((s) => s.updateRows);
   const Icon = kindIcon(group.kind);
   const name = packageDisplayName(group);
@@ -157,9 +159,9 @@ export function PackageRows({
                   size="sm"
                   variant="outline"
                   disabled={
-                    busy || !loaded || updatablePlaces(places).length === 0
+                    busy || unconfirmed || updatablePlaces(places).length === 0
                   }
-                  title={!loaded ? UPDATE_NEEDS_CHECK_NOTE : undefined}
+                  title={unconfirmed ? UPDATE_NEEDS_CHECK_NOTE : undefined}
                   onClick={() => void updateRows(places)}
                 >
                   {UPDATE_PACKAGE_EVERYWHERE_LABEL}
