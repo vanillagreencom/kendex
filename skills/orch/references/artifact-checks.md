@@ -4,10 +4,10 @@ Cross-script routing behind the artifact rows in [../SKILL.md](../SKILL.md). Eac
 
 | Script | Role |
 |--------|------|
-| `review-artifact-check` | Validates a reviewer's on-disk JSON artifact — the sole reviewer completion condition. Every rejection carries a `detail`; review-pr.md § 3.1 relays it on the single permitted re-delegation. |
+| `review-artifact-check` | Validates a reviewer's on-disk JSON artifact — the sole reviewer completion condition; review-pr.md § 3.1 relays a rejection's `detail` on the single permitted re-delegation. |
 | `dev-return-write` | Writes a dev round's completion artifact atomically. Schema: [`../schemas/dev-return.md`](../schemas/dev-return.md). |
 | `dev-round-write` | Orchestrator-side twin persisting a fix round's delegated item set at stamp time; immutable per round. Schema: [`../schemas/dev-round.md`](../schemas/dev-round.md). |
-| `dev-artifact-check` | Validates a dev round's artifact by round id and answers `accept`/`wait`/`retry`. Gates are ordered missing → invalid → incomplete → valid; the first failure wins. Tracker corroboration and exact-commit acceptance binding stay in the orch acceptance tables. |
+| `dev-artifact-check` | Validates a dev round's artifact by round id and answers `accept`/`wait`/`retry`. Tracker corroboration and exact-commit acceptance binding stay in the orch acceptance tables. |
 
 ## Round-closure mechanics
 

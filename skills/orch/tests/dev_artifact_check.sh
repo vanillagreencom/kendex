@@ -544,11 +544,23 @@ dev_return_schema="$REPO_ROOT/skills/orch/schemas/dev-return.md"
 assert_file_contains "$dev_return_schema" "dev-return-write" "dev-return schema references the writer"
 assert_file_contains "$dev_return_schema" "round_id" "dev-return schema documents round_id identity"
 assert_file_contains "$dev_return_schema" "schema_version" "dev-return schema documents schema_version"
-# Validation gates have ONE canonical home — the artifact-checks reference —
-# so the schema documents the shape and the reference documents the verdicts.
+# Validation gates have ONE canonical home — dev-artifact-check --help —
+# and the artifact-checks reference only routes to it (KEN-556). Pin the
+# gate-ordering and reason vocabulary in the canonical copy.
+check_help="$("$CHECK" --help)"
+assert_contains_str() {
+  local haystack="$1" needle="$2" name="$3"
+  if grep -Fq -- "$needle" <<<"$haystack"; then
+    PASS=$((PASS + 1)); printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  %s (missing: %s)\n' "$name" "$needle"
+  fi
+}
+assert_contains_str "$check_help" "Gates ordered:" "--help documents the gate ordering"
+assert_contains_str "$check_help" "commit_unresolvable" "--help documents the commit gate"
+assert_contains_str "$check_help" "incomplete" "--help documents the incomplete reason"
 artifact_checks_ref="$REPO_ROOT/skills/orch/references/artifact-checks.md"
-assert_file_contains "$artifact_checks_ref" "incomplete" "artifact-checks reference documents the incomplete reason"
-assert_file_contains "$artifact_checks_ref" "missing → invalid → incomplete → valid" "artifact-checks reference documents the gate ordering"
+assert_file_contains "$artifact_checks_ref" "--help" "artifact-checks reference routes to the help contracts"
 assert_file_not_contains "$dev_return_schema" "reason \`incomplete\`" "dev-return schema does not duplicate the verdict vocabulary"
 assert_file_contains "$dev_return_schema" "--expect-items" "dev-return schema documents the exact item-set rule"
 

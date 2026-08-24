@@ -192,6 +192,14 @@ while [[ $# -gt 0 ]]; do
     --check-probe) CHECK_PROBE=true; shift ;;
     --no-guard) GUARD=false; shift ;;
     --guard) GUARD=true; shift ;;
+    -*)
+      # An unrecognized flag must never fall through into a positional slot:
+      # it would be consumed as a PR#/interval and die later with a diagnostic
+      # naming an argument the caller never typed (kendex#981, same as ci-wait).
+      echo "queue-wait: unknown option '$1'" >&2
+      print_usage >&2
+      exit 2
+      ;;
     *) POSITIONAL+=("$1"); shift ;;
   esac
 done

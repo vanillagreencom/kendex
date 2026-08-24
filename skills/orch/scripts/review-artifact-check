@@ -7,8 +7,10 @@
 
 set -euo pipefail
 
+# The per-harness backgrounding paragraph under --wait is an intentional twin
+# of dev-artifact-check's: each --help is self-contained, so edit both.
 usage() {
-  cat >&2 << 'EOF'
+  cat << 'EOF'
 Usage:
   review-artifact-check <worktree_path> <agent_name> <delegated_at_epoch> \
     [--wait SECS] [--interval SECS]
@@ -176,10 +178,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/review-artifact-gates.sh
 source "$SCRIPT_DIR/lib/review-artifact-gates.sh"
 
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
 # --- Path mode: print the canonical artifact path for an agent ---
 if [[ "${1:-}" == "--path" ]]; then
   if [[ $# -ne 3 || -z "${2:-}" || -z "${3:-}" ]]; then
-    usage
+    usage >&2
     exit 2
   fi
   wt="$2"
@@ -204,7 +211,7 @@ if [[ "${1:-}" == "--file" ]]; then
   # omitted, keep the existence + verdict behavior so existing callers do not
   # break.
   if [[ $# -lt 2 || $# -gt 3 ]]; then
-    usage
+    usage >&2
     exit 2
   fi
   file="$2"
@@ -264,11 +271,11 @@ if (( $# >= 3 )); then
     case "$1" in
       --wait)     [[ -n "${2:-}" ]] || { echo "Error: --wait requires a value" >&2; exit 2; }; wait_secs="$2"; shift 2 ;;
       --interval) [[ -n "${2:-}" ]] || { echo "Error: --interval requires a value" >&2; exit 2; }; interval="$2"; shift 2 ;;
-      *) usage; exit 2 ;;
+      *) usage >&2; exit 2 ;;
     esac
   done
 else
-  usage
+  usage >&2
   exit 2
 fi
 [[ "$wait_secs" =~ ^[0-9]+$ ]] || { echo "Error: --wait must be a non-negative integer (seconds), got '$wait_secs'" >&2; exit 2; }

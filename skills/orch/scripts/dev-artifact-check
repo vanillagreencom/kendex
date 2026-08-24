@@ -50,6 +50,8 @@ ID_GRAMMAR='^[A-Za-z0-9._-]+$'
 # --expect-items is a comma-separated list of item numbers.
 EXPECT_GRAMMAR='^[0-9]+(,[0-9]+)*$'
 
+# The per-harness backgrounding paragraph under --wait is an intentional twin
+# of review-artifact-check's: each --help is self-contained, so edit both.
 usage() {
   cat << 'EOF'
 Usage:

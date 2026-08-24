@@ -50,6 +50,10 @@ Attention kinds:
                      needs a DEQUEUE before any fix push; GitHub rejects
                      pushes to queued branches
   changes-requested  a standing objection blocks the gate
+  untracked-claim    a tracking claim in a PR reply anchored to no issue —
+                     the gate holds until the reply is replaced with
+                     Fixed in <sha>, Declined: <reason>, or Tracked:
+                     <issue>. Needs the predicate (evaluate mode only)
   gate-stale         the predicate and the gate context's newest row
                      disagree, in either mismatch direction — the writer
                      has not converged (event missed, cron slipped). With

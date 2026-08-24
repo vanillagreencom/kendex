@@ -1629,6 +1629,51 @@ output=$(run_wait_json STUB_APPROVAL_MODE=approved_decision 2>"$TMP_ROOT/emitok.
 assert_eq "$(json_field "$output" '.status')" "approved" \
   "control: the same poll approves once emission works again" "$TMP_ROOT/emitok.err"
 
+echo "=== -h/--help answer in the arg parser (KEN-556) ==="
+
+# Usage must terminate before auth or any gh call — --help was once consumed
+# as the PR number (same shape as ci-wait's kendex#981). The recording stub
+# proves gh was never reached, and the token pins guard the heredoc: it is
+# the contract's sole home (KEN-555: tokens, never sentences).
+mkdir -p "$TMP_ROOT/argbin"
+cat > "$TMP_ROOT/argbin/gh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$TMP_ROOT/argval-gh.calls"
+exit 1
+EOF
+chmod +x "$TMP_ROOT/argbin/gh"
+
+run_help() {
+  (cd "$TMP_ROOT/repo" \
+    && PATH="$TMP_ROOT/argbin:$PATH" \
+       .agents/skills/orch/scripts/approval-wait "$@")
+}
+
+stderr="$TMP_ROOT/help.err"
+set +e
+output=$(run_help --help 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "--help exits 0" "$stderr"
+assert_contains "$output" "Usage: approval-wait" "--help prints usage"
+assert_contains "$output" "Exit codes:" "--help carries the exit-code table"
+assert_contains "$output" "proceeded" "--help carries the proceeded status"
+assert_contains "$output" "PR_REVIEW_QUORUM" "--help carries the quorum setting"
+assert_contains "$output" "PR_REVIEW_ON_TIMEOUT" "--help carries the on-timeout setting"
+if [[ -e "$TMP_ROOT/argval-gh.calls" ]]; then
+  assert_eq "$(cat "$TMP_ROOT/argval-gh.calls")" "" "--help never invokes gh"
+else
+  assert_eq "no-calls" "no-calls" "--help never invokes gh"
+fi
+rm -f "$TMP_ROOT/argval-gh.calls"
+
+set +e
+output=$(run_help -h 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "-h exits 0" "$stderr"
+assert_contains "$output" "Usage: approval-wait" "-h prints usage"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

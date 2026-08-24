@@ -1153,6 +1153,27 @@ assert_eq "$rc" "1" "pw70: cheap-mode threads over green gate exits 1"
 assert_contains "$out" "gate-stale" "pw70: threads-driven gate-stale fires"
 assert_eq "$(wc -l < "$TMP_ROOT/dispatch.log" | tr -d ' ')" "1" "pw70: and heals"
 
+echo "=== pw71: --help answers before the GH_REPO requirement (KEN-556) ==="
+
+# The -h/--help pre-scan runs BEFORE the GH_REPO check — that ordering is
+# load-bearing: the contract must be readable with no environment at all.
+# Token pins guard the heredoc, the contract's sole home (KEN-555).
+set +e
+out=$(cd "$TMP_ROOT/cwd" && env -u GH_REPO "$TMP_ROOT/scripts/pr-watch.sh" --help 2>"$TMP_ROOT/help.err")
+rc=$?
+set -e
+assert_eq "$rc" "0" "pw71: --help exits 0 with GH_REPO unset"
+assert_contains "$out" "Usage: pr-watch.sh" "pw71: --help prints usage"
+assert_contains "$out" "untracked-claim" "pw71: --help lists the untracked-claim kind"
+assert_contains "$out" "GLOBAL failures" "pw71: --help carries the exit-2 shapes"
+
+set +e
+out=$(cd "$TMP_ROOT/cwd" && env -u GH_REPO "$TMP_ROOT/scripts/pr-watch.sh" -h 2>/dev/null)
+rc=$?
+set -e
+assert_eq "$rc" "0" "pw71b: -h exits 0"
+assert_contains "$out" "Usage: pr-watch.sh" "pw71b: -h prints usage"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -18,9 +18,9 @@ The reviewer-gate settings — `PR_REVIEW_GATE`, `PR_REVIEW_CHECK`, `PR_REVIEW_Q
 
 | Waiting on | Tool |
 |------------|------|
-| Reviewer verdict on one PR | `approval-wait` — statuses `approved`/`reviewed`/`changes_requested`/`comments`/`timeout`/`proceeded`/`error`; `comments` routes to comment triage, `proceeded` is the recorded reviewer-down degrade |
-| CI on one PR | `ci-wait` — verdicts `pass`/`fail`/`pending`/`none`; `none` is the no-CI route, never a failure needing an override |
-| Merge-queue / auto-merge outcome | `queue-wait` — exit `0` only for `merged`; a `queued` timeout stays armed, and a `still_progressing` merge is never re-armed |
+| Reviewer verdict on one PR | `approval-wait` — statuses `approved`/`reviewed`/`changes_requested`/`comments`/`timeout`/`proceeded`/`error` |
+| CI on one PR | `ci-wait` — verdicts `pass`/`fail`/`pending`/`none` |
+| Merge-queue / auto-merge outcome | `queue-wait` — verdicts `merged`/`ejected`/`disarmed`/`dequeued`/`closed`/`queued`/`not_queued` |
 | Many PRs, long horizon | `pr-watch.sh` — § Multi-PR watching |
 
 Per-verdict routing lives in the workflows (`submit-pr.md` § 4, `merge-pr.md` § 5); each verdict's semantics live in that script's `--help`.

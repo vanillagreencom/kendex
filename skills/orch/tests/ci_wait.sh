@@ -859,6 +859,11 @@ rc=$?
 set -e
 assert_eq "$rc" "0" "case32: --help exits 0" "$stderr"
 assert_contains "$output" "Usage: ci-wait" "case32: --help prints usage"
+# The heredoc is the contract's sole home (KEN-556): pin tokens whose
+# semantics live nowhere else (KEN-555: tokens, never sentences).
+assert_contains "$output" "Exit codes:" "case32: --help carries the exit-code table"
+assert_contains "$output" "no-CI route" "case32: --help carries the verdict=none contract"
+assert_contains "$output" "CI_WAIT_NO_CHECKS_GRACE" "case32: --help carries the grace knob"
 assert_no_gh_calls "case32: --help never invokes gh"
 
 # Case 32b: -h behaves like --help.

@@ -78,7 +78,9 @@ ENGINE's per-repo gate disable, set in kendex.settings.toml (the engine
 does not read .env files): exactly "off" prints "off"; any other value
 leaves the reviewer keys authoritative. Then PR_REVIEW_GATE
 (approval|review|off) when set; otherwise the legacy PR_APPROVAL_GATE maps
-on -> approval and off -> off; both unset defaults to approval. All read
+on -> approval and off -> off; both unset defaults to approval. An
+unrecognized PR_REVIEW_GATE value warns on stderr and resolves to
+approval. All read
 with the same process env > kendex.settings.toml > default precedence.
 This is the single implementation of the derivation: callers read the mode
 only through it, and never auto-detect the mode from the
