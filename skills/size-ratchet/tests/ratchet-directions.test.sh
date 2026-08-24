@@ -19,7 +19,7 @@ FAIL=0
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
-REMEDY="split at a concept seam (raise the row only when the added lines are the fix itself and no seam exists: RATCHET_RAISE=1)"
+REMEDY="split at a concept seam (RATCHET_RAISE=1 raises the row only when the added lines are the fix with no seam, or fragments of one concept are merged back into one file)"
 
 new_repo() { # NAME — fresh fixture repo in $R
   R="$TMP/$1"

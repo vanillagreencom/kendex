@@ -12,6 +12,16 @@ say() {
 
 files=$({ git ls-files; git diff --cached --name-only; } | sort -u)
 
+# Over the hard cap, a file is the size-ratchet's to govern once a baseline
+# row covers its count: a row already at HEAD, or one this change adds or
+# raises under RATCHET_RAISE=1 — merging fragments back into one concept is
+# that raise.
+frozen() { # PATH LINES
+  awk -F'\t' -v p="$1" -v n="$2" '$1 == p && $2 >= n { f = 1 } END { exit !f }' tools/size-ratchet-baseline.tsv 2>/dev/null || return 1
+  [ "${RATCHET_RAISE:-}" = "1" ] ||
+    git show HEAD:tools/size-ratchet-baseline.tsv 2>/dev/null | awk -F'\t' -v p="$1" '$1 == p { f = 1 } END { exit !f }'
+}
+
 while IFS= read -r f; do
   [ -f "$f" ] || continue
 
@@ -38,8 +48,9 @@ while IFS= read -r f; do
     *) cap=400 ;;
   esac
   lines=$(wc -l <"$f")
-  [ "$lines" -gt "$cap" ] &&
-    say "$f is $lines lines (cap $cap) — split at a concept seam the reader never crosses back over; never shatter one concept to duck the count"
+  [ "$lines" -gt "$cap" ] || continue
+  frozen "$f" "$lines" && continue
+  say "$f is $lines lines (cap $cap) — split at a concept seam the reader never crosses back over; never shatter one concept to duck the count. Fragments merged back into one concept are a raise: RATCHET_RAISE=1 with the file's row in tools/size-ratchet-baseline.tsv"
 done <<<"$files"
 
 # Content rules over hand-written source. Usage: scan <grep-ERE> [path-ERE]
@@ -88,7 +99,7 @@ if [ "${RATCHET_RAISE:-}" != "1" ] && git cat-file -e HEAD:tools/size-ratchet-ba
     awk -F'\t' '$3 > $2 { print "  " $1 ": " $2 " -> " $3 }';
     comm -13 <(git show HEAD:tools/size-ratchet-baseline.tsv | cut -f1 | sort) <(cut -f1 tools/size-ratchet-baseline.tsv | sort) |
     sed 's/^/  new row: /'; })
-  [ -n "$raised" ] && say "size-ratchet baseline rows went up — split at a seam; RATCHET_RAISE=1 only when the new lines are the fix itself:
+  [ -n "$raised" ] && say "size-ratchet baseline rows went up — split at a seam; RATCHET_RAISE=1 only when the new lines are the fix with no seam, or fragments of one concept merged back into one file:
 $raised"
 fi
 

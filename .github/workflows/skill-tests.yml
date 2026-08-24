@@ -159,6 +159,10 @@ jobs:
           fi
           exit "$fail"
 
+      - name: tools/guard suite
+        if: matrix.shard == 'shell'
+        run: bash tools/tests/guard.test.sh
+
       - name: hook suites
         if: matrix.shard == 'shell'
         run: |

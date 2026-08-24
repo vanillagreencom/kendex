@@ -714,11 +714,11 @@ report() { # VIOLATIONS-FILE — human diagnostics on stdout
     case "$kind" in
       NEW)
         echo "size-ratchet FAIL new offender: $path — $n lines > threshold $PT ($why), no baseline row"
-        echo "  remedy: split at a concept seam (raise the row only when the added lines are the fix itself and no seam exists: RATCHET_RAISE=1)"
+        echo "  remedy: split at a concept seam (RATCHET_RAISE=1 raises the row only when the added lines are the fix with no seam, or fragments of one concept are merged back into one file)"
         ;;
       GROW)
         echo "size-ratchet FAIL baselined file grew: $path — $n lines > baseline $b (threshold $PT, $why)"
-        echo "  remedy: split at a concept seam (raise the row only when the added lines are the fix itself and no seam exists: RATCHET_RAISE=1)"
+        echo "  remedy: split at a concept seam (RATCHET_RAISE=1 raises the row only when the added lines are the fix with no seam, or fragments of one concept are merged back into one file)"
         ;;
       LOOSE)
         echo "size-ratchet FAIL baseline looser than reality: $path — baseline $b > actual $n lines, still over threshold $PT ($why); the ratchet only moves down"

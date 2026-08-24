@@ -56,17 +56,18 @@ X" into a second file to duck the count is worse than the long file:
 prefer the raise.
 
 **Raising a row** (`RATCHET_RAISE=1`, reason in the commit body) is
-correct in exactly three cases:
+correct in exactly two cases, both for hand-written files:
 1. The added lines are the fix for the reported symptom and the file has
    no concept seam.
 2. **Merging fragments**: files that are one concept read together —
    ping-pong calls, a helper file with one importer, "part 2" files —
    are combined back into one, and the merged file's row rises to its
    real size. Shrink or delete the emptied rows in the same diff.
-3. A generated or vendored file whose size the repo does not control.
 
 Never raise for tests, docs, comments, or lines a review round asked
-for — those either fit, split at a real seam, or do not belong.
+for — those either fit, split at a real seam, or do not belong. Generated
+and vendored content is never raised either: it is excluded (the
+exclusion list, `pattern<TAB>reason`) and leaves the counted set.
 
 Exit codes: `0` clean, `1` violations, `2` usage/config/collection error
 (malformed baseline or excludes, bad threshold, a tracked path containing
