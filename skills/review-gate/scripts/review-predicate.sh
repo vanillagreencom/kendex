@@ -1065,7 +1065,7 @@ if [ "$THREADS_MODE" = "enforce" ]; then
 # fail-closed "overflow" posture still applies. Malformed nodes keep
 # failing closed per page exactly as before.
 # A human reply claiming a finding is "tracked" must name the tracker issue
-# (KEN-123 or #123): a tracking claim with nothing behind it is a false
+# (an ABC-123 tracker id or #123): a tracking claim with nothing behind it is a false
 # disposition, and the gate is where it becomes visible. Bot comments are
 # exempt (they quote each other); a missing comments field reads as none.
 t_threads_page_jq='if ((.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | type) != "boolean")
@@ -1075,7 +1075,7 @@ t_threads_page_jq='if ((.data.repository.pullRequest.reviewThreads.pageInfo.hasN
     + " " + ([.data.repository.pullRequest.reviewThreads.nodes[] | ((.comments.nodes // [])[]
         | select((.author.__typename // "User") != "Bot")
         | select((.body // "") | test("(?i)\\btrack(ed|ing|s)?\\b"))
-        | select(((.body // "") | test("KEN-[0-9]+|#[0-9]+")) | not))] | length | tostring)
+        | select(((.body // "") | test("[A-Z][A-Z0-9]+-[0-9]+|#[0-9]+")) | not))] | length | tostring)
     + " " + (.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | tostring)
     + " " + (.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // "END")
   end'
@@ -1150,7 +1150,7 @@ elif [ "$got" = "0" ] && [ "$check" = "0" ] && [ "$comment_hits" = "0" ] && [ "$
 elif [ "$unresolved" != "0" ]; then
   echo "verdict=threads-open detail=$unresolved unresolved review thread(s)"
 elif [ "$untracked" != "0" ]; then
-  echo "verdict=untracked-claim detail=$untracked tracking claim(s) name no issue — write Declined: <reason>, or add the KEN-/#id"
+  echo "verdict=untracked-claim detail=$untracked tracking claim(s) name no issue — write Declined: <reason>, or add the tracker/#id"
 elif [ "$carried" = "1" ]; then
   echo "verdict=approved detail=review evidence at $carry_base carried to head across a $carry_kind"
 elif [ "$outageok" != "0" ] && [ "$got" = "0" ] && [ "$check" = "0" ] && [ "$comment_hits" = "0" ]; then

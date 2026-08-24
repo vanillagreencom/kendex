@@ -1,6 +1,17 @@
+# kendex
+
+kendex is a distribution of agent-stack assets: skills (`skills/`, Bash
+scripts plus markdown), agent definitions (`agents/`), hooks (`hooks/`),
+Pi extensions (`pi-extensions/`, TypeScript with committed bundles), a
+Rust engine and CLI (`crates/`), and a Tauri + React app (`crates/app`,
+`ui/`). Consumers vendor the skills and extensions and re-vendor in
+deliberate batches. Path-scoped review rules live in
+`.github/instructions/*.instructions.md`; fleet review economics and
+accepted residual classes in `review-bots.md` — follow both.
+
 # Code review calibration
 
-This repo's PRs are authored and shepherded by AI agents and re-reviewed on
+PRs here are authored and shepherded by AI agents and re-reviewed on
 every push. Rounds are the scarce resource. Calibrate:
 
 ## What to raise
