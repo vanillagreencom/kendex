@@ -240,3 +240,15 @@ WORKTREE_SYMLINKS = ".env.local .agents .cache .codex .opencode .pi/agents .pi/k
 # Nothing needs one: .claude/CLAUDE.md is a tracked symlink, so it arrives
 # through git, and naming it here would shadow tracked content.
 WORKTREE_RELATIVE_SYMLINKS = ""
+
+[guards.size-ratchet]
+classes = [
+  { pattern = "*/README.md", threshold = 120 },
+  { pattern = "*/tests/*", threshold = 800 },
+  { pattern = "*/test/*", threshold = 800 },
+  { pattern = "*/__tests__/*", threshold = 800 },
+  { pattern = "*/tests.rs", threshold = 800 },
+  { pattern = "*test_util.rs", threshold = 800 },
+  { pattern = "*.test.*", threshold = 800 },
+]
+classes-dialect = "legacy-glob"

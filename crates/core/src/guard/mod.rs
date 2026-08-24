@@ -205,8 +205,16 @@ pub fn run_pre_commit(ctx: &GuardCtx) -> ChainReport {
     report.step(&policy, "suppression-ban", |policy| {
         suppression_ban::run(ctx, policy, false)
     });
+    let before_fmt = (report.violations, report.errors);
     report.step(&policy, "rust-fmt", |_| lint::run_fmt(ctx));
-    report.step(&policy, "rust-clippy", |_| lint::run_clippy(ctx));
+    // Clippy after a failed fmt lane would only restate an already-blocked
+    // commit at the price of a full build.
+    match (report.violations, report.errors) == before_fmt {
+        true => report.step(&policy, "rust-clippy", |_| lint::run_clippy(ctx)),
+        false => report
+            .lines
+            .push("=== rust-clippy: skipped — rust-fmt already blocked the commit".to_owned()),
+    }
     report.step(&policy, "biome", |_| lint::run_biome(ctx));
     // The old spelling stays readable: machine-local chain hooks are set
     // once and forgotten. The current name wins when both are set.

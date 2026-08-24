@@ -200,3 +200,77 @@ fn the_pre_commit_chain_carries_the_lint_lanes() {
     }
     assert_eq!(report.exit_code(), 0, "{:?}", report.lines);
 }
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn biome_keeps_a_dash_named_staged_path_a_path_operand() {
+    let r = repo();
+    stage(&r, "biome.json", "{}\n");
+    stage(&r, "--config-path=x.json", "{}\n");
+    install_fake_biome(&r, 0);
+    lint::run_biome(&ctx(&r)).unwrap();
+    let args = std::fs::read_to_string(r.root.join("args.log")).unwrap();
+    let words: Vec<&str> = args.lines().collect();
+    assert!(words.contains(&"./--config-path=x.json"), "{args}");
+    assert!(
+        !words.contains(&"--config-path=x.json"),
+        "a staged path reached biome's option position: {args}"
+    );
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn biome_blocks_when_the_pinned_launcher_cannot_run() {
+    use std::os::unix::fs::PermissionsExt;
+    let r = repo();
+    stage(&r, "biome.json", "{}\n");
+    stage(&r, "src/x.js", "let x = 1\n");
+    let bin = r.root.join("node_modules/.bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let launcher = bin.join("biome");
+    // The real launcher is `#!/usr/bin/env node`; an absent interpreter
+    // is ENOENT from execve — the errno a missing binary gives — and must
+    // still block, not skip.
+    std::fs::write(&launcher, "#!/nonexistent/interpreter\nexit 0\n").unwrap();
+    std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let error = lint::run_biome(&ctx(&r)).unwrap_err().to_string();
+    assert!(
+        error.contains("could not run") && error.contains("node_modules/.bin/biome"),
+        "{error}"
+    );
+
+    // A launcher that starts but cannot find its command exits 127 with
+    // env's complaint: a tool that could not run, not a lint finding.
+    std::fs::write(
+        &launcher,
+        "#!/bin/sh\necho 'env: node: No such file or directory' >&2\nexit 127\n",
+    )
+    .unwrap();
+    let error = lint::run_biome(&ctx(&r)).unwrap_err().to_string();
+    assert!(
+        error.contains("could not run") && error.contains("env: node"),
+        "{error}"
+    );
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_chain_skips_clippy_once_fmt_has_blocked_the_commit() {
+    let r = repo();
+    stage(&r, "Cargo.toml", &package_manifest("fixture"));
+    stage(&r, "src/lib.rs", "pub fn f( ) ->  u8 {  7 }\n");
+    let report = guard::run_pre_commit(&ctx(&r));
+    assert_eq!(report.exit_code(), 1, "{:?}", report.lines);
+    assert!(
+        report
+            .lines
+            .contains(&"=== rust-clippy: skipped — rust-fmt already blocked the commit".to_owned()),
+        "{:?}",
+        report.lines
+    );
+    assert!(
+        !report.lines.iter().any(|l| l.starts_with("rust-clippy")),
+        "clippy ran after fmt failed: {:?}",
+        report.lines
+    );
+}

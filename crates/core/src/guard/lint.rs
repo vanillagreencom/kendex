@@ -220,7 +220,11 @@ fn remedy(check: &str) -> String {
 /// biome — staged JS/TS/JSON files in a Biome project lint clean. The
 /// project's own pinned binary outranks PATH; a Biome project with no
 /// binary anywhere is a visible skip, not a silent pass — installing
-/// dependencies is a machine-local act this guard cannot take. The
+/// dependencies is a machine-local act this guard cannot take. Absence is
+/// settled before the spawn and nowhere else: once a binary is chosen,
+/// every way it can fail to run blocks, including the ENOENT a launcher
+/// with a missing `#!` interpreter raises — the same errno a missing
+/// binary gives, which is why the spawn error must not be the judge. The
 /// `--no-errors-on-unmatched` flag keeps a commit that stages only
 /// ignored paths committable: those files are ignored precisely because
 /// they must not be linted.
@@ -240,55 +244,76 @@ pub fn run_biome(ctx: &GuardCtx) -> Result<Outcome> {
         out.say("biome: OK — not a Biome project");
         return Ok(out);
     }
-    let pinned = ctx.root.join("node_modules/.bin/biome");
-    let binary = match is_executable(&pinned) {
-        true => pinned,
-        false => PathBuf::from("biome"),
+    let Some(binary) = biome_binary(&ctx.root) else {
+        out.say("biome: biome.json present but no biome binary found, pinned or on PATH — skipped");
+        return Ok(out);
     };
     // Only staged paths that still exist on disk: the lane lints the
     // working tree, and a path renamed away since staging has nothing
-    // there to lint.
-    let files: Vec<&str> = staged
+    // there to lint. Staged paths are repo-relative and git lets them
+    // start with `-`; the `./` keeps each one a path operand rather than
+    // an option biome would honor (`--config-path=…` would repoint the
+    // lint at a config of the commit's choosing).
+    let files: Vec<String> = staged
         .iter()
-        .map(String::as_str)
         .filter(|path| ctx.root.join(path).is_file())
+        .map(|path| format!("./{path}"))
         .collect();
     if files.is_empty() {
         out.say("biome: OK — no staged Biome-checkable files on disk");
         return Ok(out);
     }
     let mut args = vec!["check", "--no-errors-on-unmatched"];
-    args.extend(&files);
-    let output = match Hardened::lint_tool(&binary, &args, &ctx.root)
+    args.extend(files.iter().map(String::as_str));
+    let output = Hardened::lint_tool(&binary, &args, &ctx.root)
         .timeout(LINT_TIMEOUT)
         .run()
-    {
-        Ok(output) => output,
-        // Only "the binary is not there" downgrades to the visible skip;
-        // a binary that exists but fails to run blocks like any lane that
-        // could not complete.
-        Err(crate::error::CoreError::Io { source, .. })
-            if source.kind() == std::io::ErrorKind::NotFound =>
-        {
-            out.say("biome: biome.json present but no biome binary found — skipped");
-            return Ok(out);
+        .map_err(|error| {
+            guard_err(
+                CHECK,
+                format!("{} could not run: {error}", binary.display()),
+            )
+        })?;
+    match output.status.code() {
+        Some(0) => out.say(format!(
+            "biome: OK — {} staged file(s) checked",
+            files.len()
+        )),
+        // 126 and 127 are the launcher's verdicts — interpreter or
+        // command missing — never biome's findings.
+        Some(126 | 127) => {
+            return Err(guard_err(
+                CHECK,
+                format!(
+                    "{} could not run: {}",
+                    binary.display(),
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+            ));
         }
-        Err(error) => return Err(guard_err(CHECK, error.to_string())),
-    };
-    if !output.status.success() {
-        fail_with_output(
+        _ => fail_with_output(
             &mut out,
             &output,
             "biome FAIL: biome check on staged files".to_owned(),
             "run biome check --write and restage",
-        );
-    } else {
-        out.say(format!(
-            "biome: OK — {} staged file(s) checked",
-            files.len()
-        ));
+        ),
     }
     Ok(out)
+}
+
+/// The project's pinned biome when it is executable, else the first
+/// executable `biome` on PATH — the same PATH the child inherits — else
+/// nothing.
+fn biome_binary(root: &Path) -> Option<PathBuf> {
+    let pinned = root.join("node_modules/.bin/biome");
+    if is_executable(&pinned) {
+        return Some(pinned);
+    }
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|dir| dir.join("biome"))
+            .find(|candidate| is_executable(candidate))
+    })
 }
 
 fn is_executable(path: &Path) -> bool {

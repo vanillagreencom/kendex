@@ -389,7 +389,12 @@ lives in one capability table read by core and UI.
   scoped per staged file's owning `Cargo.toml`. Which repository a commit
   targets is git's question: the `pre-commit-check` PreToolUse hook only
   word-matches for a commit, defers to an armed git pre-commit hook, and
-  runs the chain in its own working directory only where none is armed.
+  runs the chain in its own working directory only where none is armed —
+  or where the command sidesteps the armed one (`--no-verify`, `-n`, a
+  `core.hooksPath` override), since git then never runs it. A payload
+  whose command the hook cannot read is a refusal, and the chain's own
+  refusals (unconverted v1 settings, a lint tool that could not run)
+  block through it.
 - **kendex owns its hooks directory — provably.** The guards reach git
   through `<git-common-dir>/kendex-hooks/`, two entrypoints whose call
   surface (`kendex guard run <hook>`) is a stable contract, with
