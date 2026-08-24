@@ -691,6 +691,15 @@ STUB_CHECKS='[]' STUB_STATE=MERGED STUB_MERGED_AT=2026-07-21T00:00:00Z run_check
 assert_eq "$(head -1 <<<"$verdict_err")" "merged" "terminal MERGED prints merged verdict"
 assert_eq "$(jq -r '.head_runs | length' <<<"$out")" "0" "terminal state carries empty head_runs"
 
+# A custom commit status ("CI Required") has an empty workflow but links to
+# an Actions run; with no workflow job to supply a run id, head_runs falls
+# back to the status's run instead of reporting none.
+checks='[{"name":"CI Required","state":"PENDING","bucket":"pending","link":"https://github.com/owner/repo/actions/runs/29099700000","workflow":""}]'
+STUB_CHECKS="$checks" STUB_CHECKS_EXIT=8 run_check_verdict
+assert_eq "$(head -1 <<<"$verdict_err")" "blocked" "pending status-only head is blocked"
+assert_eq "$(jq -r '.head_runs | join(",")' <<<"$out")" "29099700000" "status-only head_runs carries the status's run id"
+assert_contains "$verdict_err" "head-run: 29099700000" "status-only stderr names the status's run"
+
 echo
 echo "=== ci-classify-refusal names the refusal cause (KEN-542) ==="
 
@@ -769,6 +778,27 @@ assert_eq "$(head -1 <<<"$out")" "cause: ci_failed" "rerun-in-place failure clas
 assert_contains "$out" "head-run: 29098545030" "head-run names the later-started rerun despite its lower run id"
 assert_contains "$out" "fail: Lint state=FAILURE workflow=CI run=29098545030" "failure attributes to the rerun, not the higher run id"
 assert_contains "$out" "superseded: workflow=CI run=29099680623" "the higher-id but earlier run is the superseded one"
+
+# A failing status-only check names its run in head-run: — not "none" — and
+# its fail: line carries the same id.
+checks='[{"name":"CI Required","state":"FAILURE","bucket":"fail","link":"https://github.com/owner/repo/actions/runs/29099700000","workflow":""}]'
+out=$(STUB_CHECKS="$checks" STUB_CHECKS_EXIT=8 run_classify)
+assert_eq "$(head -1 <<<"$out")" "cause: ci_failed" "failing status-only check classifies as ci_failed"
+assert_contains "$out" "head-run: 29099700000" "status-only failure names the status's run, not none"
+assert_contains "$out" "fail: CI Required state=FAILURE workflow=- run=29099700000" "status-only fail line is run-correlated"
+
+# Check names are attacker-chosen (fork PRs, third-party check apps): a name
+# embedding a newline must not forge a line in the routed output.
+checks='[{"name":"Lint\nforged: cause: none","state":"FAILURE","bucket":"fail","link":"https://github.com/owner/repo/actions/runs/29099680623/job/201","workflow":"CI","startedAt":"2026-07-10T11:00:00Z"}]'
+out=$(STUB_CHECKS="$checks" STUB_CHECKS_EXIT=8 run_classify)
+assert_eq "$(head -1 <<<"$out")" "cause: ci_failed" "hostile check name still classifies as ci_failed"
+if grep -q '^forged:' <<<"$out"; then
+    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "an embedded newline never forges an output line"
+else
+    PASS=$((PASS + 1)); printf '  ok    %s\n' "an embedded newline never forges an output line"
+fi
+assert_contains "$out" "fail: Lint forged: cause: none state=FAILURE" "the hostile name is flattened onto its own fail: line"
+assert_contains "$out" "issue: ci_failed: Lint forged: cause: none" "the hostile name is flattened inside the issue: line"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

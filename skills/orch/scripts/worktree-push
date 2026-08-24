@@ -42,17 +42,19 @@
 # directory.
 #
 # Exit codes:
-#   push failed  -> the push's own exit code; any printed map is applied to
-#                   workflow state first (or left in the sidecar when that
-#                   write fails, for the retry to consume)
+#   push failed  -> the push's own exit code, always — any printed map is
+#                   applied to workflow state where possible, left in the
+#                   sidecar when that write fails, and a map that cannot
+#                   even be parsed or persisted is reported on stderr
+#                   without changing the exit code
 #   push ok      -> 0 when no rebase-map printed, or every mapping was
 #                   recorded and applied
-#   1            -> reconciliation did not land (no state file, unparseable
-#                   map line, jq/update failure) on an otherwise successful
-#                   push, or a pending sidecar map could not be applied. The
-#                   recorded SHAs are NOT reconciled — repair state, then
-#                   re-run to consume the sidecar, before publishing any of
-#                   them.
+#   1            -> the push landed (or never ran: usage error, pending
+#                   sidecar or state mismatch before the push) but
+#                   reconciliation did not (no state file, unparseable map
+#                   line, jq/update failure). The recorded SHAs are NOT
+#                   reconciled — repair state, then re-run to consume the
+#                   sidecar, before publishing any of them.
 
 set -euo pipefail
 
@@ -171,12 +173,40 @@ reconcile_map() {
 		"$(jq -r '.pr_fixes' <<<"$report")"
 }
 
+# A workflow state resolved from the wrong arguments would rewrite another
+# record's commits and report success while the intended state stays stale,
+# so the selected state must agree with the arguments before anything runs.
+# The bare-numeric alias (issue N stored under issue-N) is the one accepted
+# spelling difference; an empty recorded worktree cannot be verified and is
+# accepted as-is.
+if "$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} exists "$issue"; then
+	state_issue="$("$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} get "$issue" '.issue_id // ""')" \
+		|| fail "could not read the workflow state for $issue"
+	if [[ "$state_issue" != "$issue" ]] \
+		&& ! [[ "$issue" =~ ^[0-9]+$ && "$state_issue" == "issue-$issue" ]]; then
+		fail "workflow state for '$issue' records issue_id '$state_issue'; refusing to rewrite another issue's record"
+	fi
+	state_wt="$("$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} get "$issue" '.worktree // ""')" \
+		|| fail "could not read the workflow state for $issue"
+	if [[ -n "$state_wt" ]]; then
+		state_wt_abs="$(cd -P -- "$state_wt" 2>/dev/null && pwd -P)" \
+			|| fail "workflow state for $issue records worktree '$state_wt', which does not resolve; refusing to reconcile against it"
+		[[ "$state_wt_abs" == "$worktree_abs" ]] \
+			|| fail "workflow state for $issue records worktree '$state_wt_abs', not '$worktree_abs'; refusing to rewrite another worktree's record"
+	fi
+fi
+
 # A sidecar left by an earlier run is a rebase that already happened; its map
-# must land before this run pushes (and possibly rebases again).
+# must land before this run pushes (and possibly rebases again). It is held
+# to the same grammar the writer enforces — a corrupted or planted file must
+# not merge arbitrary values into the record and then delete itself.
 if [[ -f "$sidecar" ]]; then
 	pending_map="$(cat -- "$sidecar")" || fail "could not read the pending rebase map at $sidecar"
-	jq -e 'type == "object"' >/dev/null 2>&1 <<<"$pending_map" \
-		|| fail "the pending rebase map at $sidecar is not a JSON object; repair or remove it before pushing"
+	jq -e --arg sha "^[0-9a-f]{40}\$" '
+		type == "object"
+		and (to_entries | all((.key | test($sha)) and ((.value == "dropped") or (.value | test($sha)))))
+	' >/dev/null 2>&1 <<<"$pending_map" \
+		|| fail "the pending rebase map at $sidecar is not a valid old->new SHA map; repair or remove it before pushing"
 	reconcile_map "$pending_map" \
 		|| fail "a pending rebase map from an earlier push could not be applied to $issue's workflow state; recorded SHAs are NOT reconciled (map kept at $sidecar)"
 	rm -f -- "$sidecar"
@@ -185,40 +215,57 @@ fi
 push_out="$(mktemp)" || fail "could not create a temporary file for the push output"
 trap 'rm -f "$push_out"' EXIT
 
-# Push stderr streams through live; stdout is captured for the rebase-map
-# parse and replayed verbatim so callers still see the full push transcript.
+# Push stderr streams through live; stdout is captured, then replayed after
+# the rebase map is safely parsed and persisted — see below.
 push_rc=0
 "$WORKTREE_BIN" push "$worktree_abs" ${push_args[@]+"${push_args[@]}"} >"$push_out" || push_rc=$?
-cat "$push_out"
+
+# A failure after the push keeps the push's own exit code: exit 1 must mean
+# "the push landed but reconciliation did not", never dress a failed push as
+# a landed one.
+fail_post_push() {
+	printf 'worktree-push: %s\n' "$1" >&2
+	if [[ "$push_rc" -ne 0 ]]; then
+		exit "$push_rc"
+	fi
+	exit 1
+}
 
 map_lines=''
 grep_rc=0
 map_lines="$(grep '^rebase-map: ' "$push_out")" || grep_rc=$?
 [[ "$grep_rc" -le 1 ]] \
-	|| fail "could not scan the push output for rebase-map lines (grep exit $grep_rc, push exit $push_rc); recorded SHAs are NOT reconciled"
+	|| fail_post_push "could not scan the push output for rebase-map lines (grep exit $grep_rc, push exit $push_rc); recorded SHAs are NOT reconciled"
 
 map_json='{}'
 if [[ -n "$map_lines" ]]; then
 	while IFS=' ' read -r _ old new; do
 		[[ "$old" =~ $SHA_GRAMMAR ]] \
-			|| fail "unparseable rebase-map line (old SHA '$old', push exit $push_rc); recorded SHAs are NOT reconciled"
+			|| fail_post_push "unparseable rebase-map line (old SHA '$old', push exit $push_rc); recorded SHAs are NOT reconciled"
 		[[ "$new" == "dropped" || "$new" =~ $SHA_GRAMMAR ]] \
-			|| fail "unparseable rebase-map line (new SHA '$new', push exit $push_rc); recorded SHAs are NOT reconciled"
+			|| fail_post_push "unparseable rebase-map line (new SHA '$new', push exit $push_rc); recorded SHAs are NOT reconciled"
 		map_json="$(jq -c --arg o "$old" --arg n "$new" '. + {($o): $n}' <<<"$map_json")" \
-			|| fail "could not assemble the rebase map (push exit $push_rc); recorded SHAs are NOT reconciled"
+			|| fail_post_push "could not assemble the rebase map (push exit $push_rc); recorded SHAs are NOT reconciled"
 	done <<<"$map_lines"
 fi
+
+# The rebase is local reality even when the network push failed, so the map
+# is persisted BEFORE the transcript replay and applied regardless of the
+# push's exit code; the sidecar survives a failed state write (or a dying
+# stdout) for the retry to consume.
+if [[ "$map_json" != '{}' ]]; then
+	mkdir -p -- "$worktree_abs/tmp" || fail_post_push "could not create $worktree_abs/tmp for the rebase-map sidecar"
+	printf '%s\n' "$map_json" >"$sidecar.tmp" || fail_post_push "could not persist the rebase map beside the worktree"
+	mv -- "$sidecar.tmp" "$sidecar" || fail_post_push "could not persist the rebase map beside the worktree"
+fi
+
+# The replay is informational; a broken stdout must not abort the run before
+# the map reaches workflow state (the sidecar already has it either way).
+cat "$push_out" || true
 
 if [[ "$map_json" == '{}' ]]; then
 	exit "$push_rc"
 fi
-
-# The rebase is local reality even when the network push failed, so the map
-# is persisted first and applied regardless of the push's exit code; the
-# sidecar survives a failed state write for the retry to consume.
-mkdir -p -- "$worktree_abs/tmp" || fail "could not create $worktree_abs/tmp for the rebase-map sidecar"
-printf '%s\n' "$map_json" >"$sidecar.tmp" || fail "could not persist the rebase map beside the worktree"
-mv -- "$sidecar.tmp" "$sidecar" || fail "could not persist the rebase map beside the worktree"
 
 if reconcile_map "$map_json"; then
 	rm -f -- "$sidecar"

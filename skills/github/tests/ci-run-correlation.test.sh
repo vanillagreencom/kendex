@@ -44,8 +44,8 @@ done
 
 # The bucket taxonomy and run-id capture are exported as CI_RUN_JQ_DEFS; a
 # GitHub-skill script inlining its own `def bucket`/`def runid` copy is the
-# same drift one layer down. (orch ci-wait still carries pre-CI_RUN_JQ_DEFS
-# copies — migrating it is tracked separately, so it is not scanned here.)
+# same drift one layer down. (orch ci-wait's local copies predate
+# CI_RUN_JQ_DEFS and are exempted from this scan.)
 for script in "$REPO_ROOT"/skills/github/scripts/commands/*.sh; do
   name="$(basename "$script")"
   if grep -qE 'def (bucket|runid):' "$script"; then

@@ -38,12 +38,17 @@
 # `.../runs/<CHECK_RUN_ID>` links, older gh output with no link) are always kept,
 # deduped by name keeping the latest `startedAt`.
 
-# Shared jq preamble: the run-id extraction and the check-bucket taxonomy,
-# exported as one string so every consumer (this scoping, pr-merge's
-# classification and head_runs, ci-classify-refusal's diagnosis) prepends the
-# SAME definitions — a local `def bucket`/`def runid` copy is the drift this
-# library exists to kill, and ci-run-correlation.test.sh rejects one.
-# `runid` maps a check to its Actions run id (number) or null.
+# Shared jq preamble: the run-id extraction, the check-bucket taxonomy, and
+# the run-scope reduction, exported as one string so every consumer (this
+# scoping, pr-merge's classification and head_runs, ci-classify-refusal's
+# diagnosis) prepends the SAME definitions — a local `def bucket`/`def runid`
+# copy is the drift this library exists to kill, and
+# ci-run-correlation.test.sh rejects one.
+# `runid` maps a check to its Actions run id (number) or null. `head_runs`
+# (input: a SCOPED check array) names the run ids a classification was scoped
+# to: the authoritative workflow runs, falling back to the runs custom commit
+# statuses link to when no workflow job carries a run id — a status-only repo
+# ("CI Required") still names its run instead of "none".
 CI_RUN_JQ_DEFS='
   def runid:
     (.link // "")
@@ -58,6 +63,11 @@ CI_RUN_JQ_DEFS='
       else "fail"
       end
     ));
+  def head_runs:
+    ([.[] | select((.workflow // "") != "") | runid | select(. != null)] | unique) as $wf
+    | if ($wf | length) > 0 then $wf
+      else ([.[] | runid | select(. != null)] | unique)
+      end;
 '
 
 scope_current_run() {

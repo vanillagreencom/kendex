@@ -176,8 +176,10 @@ exit_terminal_state() {
 #    merged_at,           # merge timestamp, "" unless state is MERGED
 #    head_runs}           # run ids the CI classification was scoped to —
 #                         # the authoritative run per workflow after
-#                         # scope_current_run; [] when no run-correlated
-#                         # checks exist or the fetch failed
+#                         # scope_current_run, or the runs custom commit
+#                         # statuses link to when no workflow job carries a
+#                         # run id; [] when no run-correlated checks exist
+#                         # or the fetch failed
 run_checks() {
     local pr_num="$1"
     local can_merge=true
@@ -234,14 +236,15 @@ run_checks() {
         #. Mirrors orch ci-wait's pre-classification scoping.
         local scoped_ci_json ci_classification pending failed
         scoped_ci_json=$(echo "$ci_json" | scope_current_run)
-        head_runs_json=$(echo "$scoped_ci_json" | jq -c "$CI_RUN_JQ_DEFS"'
-            [.[] | select((.workflow // "") != "") | runid | select(. != null)]
-            | unique
-        ')
+        head_runs_json=$(echo "$scoped_ci_json" | jq -c "$CI_RUN_JQ_DEFS"'head_runs')
+        # Check names are chosen by fork PRs and third-party check apps; the
+        # issues array is rebuilt from newline-joined strings, so a newline
+        # inside a name would otherwise forge a standalone issue entry.
         ci_classification=$(echo "$scoped_ci_json" | jq -c "$CI_RUN_JQ_DEFS"'
+            def clean: tostring | gsub("[\r\n\t]"; " ");
             {
-                pending: [.[] | select(bucket == "pending") | .name + " (" + .state + ")"],
-                failed: [.[] | select((bucket != "pass") and (bucket != "skipping") and (bucket != "pending")) | .name + " (" + .state + ")"]
+                pending: [.[] | select(bucket == "pending") | (.name | clean) + " (" + .state + ")"],
+                failed: [.[] | select((bucket != "pass") and (bucket != "skipping") and (bucket != "pending")) | (.name | clean) + " (" + .state + ")"]
             }
         ')
         pending=$(echo "$ci_classification" | jq -r '.pending | join(", ")')

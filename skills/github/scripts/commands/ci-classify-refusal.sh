@@ -156,7 +156,7 @@ fi
 scoped_json=$(echo "$ci_json" | scope_current_run)
 
 echo "$scoped_json" | jq -r "$CI_RUN_JQ_DEFS"'
-    [.[] | select((.workflow // "") != "") | runid | select(. != null)] | unique
+    head_runs
     | "head-run: " + (if length == 0 then "none" else map(tostring) | join(",") end)
 '
 

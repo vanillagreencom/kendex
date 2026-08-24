@@ -173,12 +173,16 @@ assert_eq "$RUN_RC" "1" "missing state file fails the call"
 assert_contains "$(cat "$run_err")" "NOT recorded" "missing state names the unreconciled-SHA consequence"
 [[ -f "$SIDECAR" ]] && pass "unapplied map persists in the sidecar" || fail "unapplied map persists in the sidecar"
 
+# The retry's own push rebases AGAIN: the pending sidecar (OLD_A→NEW_A) must
+# be consumed BEFORE the new push's map (NEW_A→NEW_A2) applies, or the
+# commit never chains through to NEW_A2.
 (cd "$work" \
   && "$STATE" init KEN-1 --agent generalist --worktree "$wt" --branch ken-1 >/dev/null \
   && "$STATE" append KEN-1 fixed_items "{\"description\":\"fix\",\"commit\":\"${OLD_A:0:7}\",\"source\":\"pr-review\"}")
-STUB_PUSH_STDOUT="→ pushed" run_push "$work" --worktree "$wt" --issue KEN-1
+STUB_PUSH_STDOUT="rebase-map: $NEW_A $NEW_A2" run_push "$work" --worktree "$wt" --issue KEN-1
 assert_eq "$RUN_RC" "0" "retry after repairing state exits 0"
-assert_eq "$(state_json "$work" | jq -r '.fixed_items[0].commit')" "${NEW_A:0:7}" "retry consumes the sidecar map before pushing"
+assert_eq "$(state_json "$work" | jq -r '.fixed_items[0].commit')" "${NEW_A2:0:7}" "sidecar applies before the retry push's own map, chaining OLD_A through NEW_A to NEW_A2"
+assert_eq "$(state_json "$work" | jq -r '.rebase_map | length')" "2" "both the sidecar map and the retry push's map are recorded"
 [[ ! -f "$SIDECAR" ]] && pass "sidecar deleted after the retry applies it" || fail "sidecar deleted after the retry applies it"
 
 work="$TMP_ROOT/work-badmap"
@@ -187,6 +191,60 @@ STUB_PUSH_STDOUT="rebase-map: not-a-sha $NEW_A" run_push "$work" --worktree "$wt
 assert_eq "$RUN_RC" "1" "unparseable map line fails the call"
 assert_contains "$(cat "$run_err")" "NOT reconciled" "unparseable map names the unreconciled-SHA consequence"
 [[ ! -f "$SIDECAR" ]] && pass "no sidecar is written for an unparseable map" || fail "no sidecar is written for an unparseable map"
+
+# An unparseable map on a FAILED push keeps the push's exit code — exit 1
+# must never dress a failed push as a landed one.
+reset_state "$work"
+STUB_PUSH_STDOUT="rebase-map: not-a-sha $NEW_A" STUB_PUSH_EXIT=7 run_push "$work" --worktree "$wt" --issue KEN-1
+assert_eq "$RUN_RC" "7" "unparseable map on a failed push keeps the push's exit code"
+assert_contains "$(cat "$run_err")" "NOT reconciled" "the failed-push parse error still names the consequence"
+
+echo
+echo "=== the arguments must match the state they would rewrite ==="
+
+work="$TMP_ROOT/work-mismatch"
+mkdir -p "$work/tmp"
+printf '%s\n' '{"issue_id":"KEN-9","worktree":"","fixed_items":[],"pr_comment_review":{"fixes":[]}}' >"$work/tmp/workflow-state-KEN-1.json"
+STUB_PUSH_STDOUT="→ pushed" run_push "$work" --worktree "$wt" --issue KEN-1
+assert_eq "$RUN_RC" "1" "a state recording another issue id refuses before pushing"
+assert_contains "$(cat "$run_err")" "refusing to rewrite another issue" "the issue mismatch is named"
+
+other_wt="$TMP_ROOT/other-wt"
+mkdir -p "$other_wt"
+work="$TMP_ROOT/work-wt-mismatch"
+rm -rf "$work" && mkdir -p "$work"
+(cd "$work" && "$STATE" init KEN-1 --agent generalist --worktree "$other_wt" --branch ken-1 >/dev/null)
+STUB_PUSH_STDOUT="→ pushed" run_push "$work" --worktree "$wt" --issue KEN-1
+assert_eq "$RUN_RC" "1" "a state recording another worktree refuses before pushing"
+assert_contains "$(cat "$run_err")" "refusing to rewrite another worktree" "the worktree mismatch is named"
+
+echo
+echo "=== a corrupted sidecar is refused, never merged ==="
+
+work="$TMP_ROOT/work-badsidecar"
+reset_state "$work"
+printf '%s\n' '{"abcdef0-evil":"bogus"}' >"$SIDECAR"
+before="$(state_json "$work")"
+STUB_PUSH_STDOUT="→ pushed" run_push "$work" --worktree "$wt" --issue KEN-1
+assert_eq "$RUN_RC" "1" "a sidecar failing the SHA grammar refuses before pushing"
+assert_contains "$(cat "$run_err")" "repair or remove it" "the corrupted sidecar names its remedy"
+assert_eq "$(state_json "$work")" "$before" "nothing from the corrupted sidecar reaches the state"
+[[ -f "$SIDECAR" ]] && pass "the corrupted sidecar is kept for inspection" || fail "the corrupted sidecar is kept for inspection"
+rm -f "$SIDECAR"
+
+echo
+echo "=== a dying stdout cannot lose the map ==="
+
+# The map is parsed and persisted before the transcript replay, so even a
+# full stdout (every print fails) leaves the mapping recorded in state.
+work="$TMP_ROOT/work-devfull"
+reset_state "$work"
+RUN_RC=0
+(cd "$work" && STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" "$PUSH" --worktree "$wt" --issue KEN-1) >/dev/full 2>"$run_err" || RUN_RC=$?
+[[ "$RUN_RC" -ne 0 ]] && pass "a dying stdout is reported as a failure" || fail "a dying stdout is reported as a failure"
+assert_eq "$(state_json "$work" | jq -r ".rebase_map[\"$OLD_A\"]")" "$NEW_A" "the map reaches workflow state despite the dead stdout"
+assert_eq "$(state_json "$work" | jq -r '.fixed_items[0].commit')" "${NEW_A:0:7}" "the fix SHA is rewritten despite the dead stdout"
+rm -f "$SIDECAR"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
