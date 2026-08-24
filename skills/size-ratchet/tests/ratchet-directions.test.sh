@@ -60,6 +60,16 @@ run_sr
   || bad "one line over the threshold fails as a new offender" "rc=$RC out=$OUT"
 case "$OUT" in *"$REMEDY"*) ok "new-offender diagnostic carries the remedy verbatim" ;; *) bad "new-offender diagnostic carries the remedy verbatim" "$OUT" ;; esac
 
+echo "=== a test offender gets the split remedy alone ==="
+new_repo testoff
+mkfile x.test.txt 11
+git -C "$R" add -A
+run_sr
+[ "$RC" -eq 1 ] && case "$OUT" in *"new offender: x.test.txt"*) true ;; *) false ;; esac \
+  && ok "a test path over the threshold is still a new offender" \
+  || bad "a test path over the threshold is still a new offender" "rc=$RC out=$OUT"
+case "$OUT" in *RATCHET_RAISE*) bad "a test offender is never offered a raise" "$OUT" ;; *) ok "a test offender is never offered a raise" ;; esac
+
 echo "=== a baseline row at the current count freezes the offender ==="
 new_repo frozen
 mkfile big.txt 15

@@ -180,5 +180,22 @@ run_ratchet
 [ "$RC" -eq 0 ] && ok "and the ratchet wants no row for it either" \
   || bad "and the ratchet wants no row for it either" "rc=$RC out=$OUT"
 
+echo "=== a test never takes the raise branch ==="
+# A row already at HEAD is grandfathered for every path; a row this change
+# adds or raises is a raise, and tests are never raised.
+git -C "$R" commit -q --no-verify -m tests
+mkfile ui/x.test.ts 900
+printf 'big.rs\t450\nui/big.ts\t300\nui/x.test.ts\t900\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+run_guard RATCHET_RAISE=1
+[ "$RC" -ne 0 ] && case "$OUT" in *"ui/x.test.ts is 900 lines (cap 800)"*) true ;; *) false ;; esac \
+  && ok "a 900-line ui/x.test.ts with a new row under RATCHET_RAISE=1 still fails the cap" \
+  || bad "a 900-line ui/x.test.ts with a new row under RATCHET_RAISE=1 still fails the cap" "rc=$RC out=$OUT"
+case "$OUT" in *RATCHET_RAISE*) bad "the test diagnostic offers the split remedy alone" "$OUT" ;; *) ok "the test diagnostic offers the split remedy alone" ;; esac
+git -C "$R" commit -q --no-verify -m test-row
+run_guard RATCHET_RAISE=
+[ "$RC" -eq 0 ] && ok "a HEAD-baselined test row is grandfathered" \
+  || bad "a HEAD-baselined test row is grandfathered" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

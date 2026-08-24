@@ -707,18 +707,18 @@ evaluate() { # BASELINE-TSV — violations on stdout, one per line, tab-separate
 }
 
 report() { # VIOLATIONS-FILE — human diagnostics on stdout
-  local kind path n b why
+  local kind path n b why rem
   while IFS="$TAB" read -r kind path n b; do
-    path_threshold "$path"
-    if [ -n "$PC" ]; then why="class $PC"; else why="default"; fi
+    path_threshold "$path"; if [ -n "$PC" ]; then why="class $PC"; else why="default"; fi
+    case "$path" in */tests/* | */test/* | */__tests__/* | */tests.rs | *test_util.rs | *.test.*) rem="split at a concept seam (a test is never raised)" ;; *) rem="split at a concept seam (RATCHET_RAISE=1 raises the row only when the added lines are the fix with no seam, or fragments of one concept are merged back into one file)" ;; esac
     case "$kind" in
       NEW)
         echo "size-ratchet FAIL new offender: $path — $n lines > threshold $PT ($why), no baseline row"
-        echo "  remedy: split at a concept seam (RATCHET_RAISE=1 raises the row only when the added lines are the fix with no seam, or fragments of one concept are merged back into one file)"
+        echo "  remedy: $rem"
         ;;
       GROW)
         echo "size-ratchet FAIL baselined file grew: $path — $n lines > baseline $b (threshold $PT, $why)"
-        echo "  remedy: split at a concept seam (RATCHET_RAISE=1 raises the row only when the added lines are the fix with no seam, or fragments of one concept are merged back into one file)"
+        echo "  remedy: $rem"
         ;;
       LOOSE)
         echo "size-ratchet FAIL baseline looser than reality: $path — baseline $b > actual $n lines, still over threshold $PT ($why); the ratchet only moves down"

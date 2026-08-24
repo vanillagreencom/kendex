@@ -12,14 +12,21 @@ say() {
 
 files=$({ git ls-files; git diff --cached --name-only; } | sort -u)
 
+# The size-ratchet's test classes, whatever the extension: room up to 800,
+# and never a raise.
+is_test_path() {
+  case "$1" in */tests/* | */test/* | */__tests__/* | */tests.rs | *test_util.rs | *.test.*) return 0 ;; esac
+  return 1
+}
+
 # Over the hard cap, a file is the size-ratchet's to govern once a baseline
 # row names its exact count (the ratchet rejects any other row): a row
-# already at HEAD, or one this change adds or raises under RATCHET_RAISE=1 —
-# merging fragments back into one concept is that raise.
+# already at HEAD, or — for anything but a test — one this change adds or
+# raises under RATCHET_RAISE=1, merging fragments back into one concept.
 frozen() { # PATH LINES
   awk -F'\t' -v p="$1" -v n="$2" '$1 == p && $2 == n { f = 1 } END { exit !f }' tools/size-ratchet-baseline.tsv 2>/dev/null || return 1
-  [ "${RATCHET_RAISE:-}" = "1" ] ||
-    git show HEAD:tools/size-ratchet-baseline.tsv 2>/dev/null | awk -F'\t' -v p="$1" '$1 == p { f = 1 } END { exit !f }'
+  git show HEAD:tools/size-ratchet-baseline.tsv 2>/dev/null | awk -F'\t' -v p="$1" '$1 == p { f = 1 } END { exit !f }' && return 0
+  [ "${RATCHET_RAISE:-}" = "1" ] && ! is_test_path "$1"
 }
 
 while IFS= read -r f; do
@@ -43,15 +50,19 @@ while IFS= read -r f; do
     ui/src/components/ui/* | ui/src/bindings.ts) continue ;; # generated: shadcn, tauri-specta
     kendex-local.toml) continue ;; # kendex writes it, one table per declared item — the CLI owns its shape, so it cannot be split
     .github/workflows/*) continue ;; # declarative pipelines, one file per workflow by GitHub's contract — a workflow cannot be split without severing its jobs
-    */tests/* | */test/* | */__tests__/* | */tests.rs | *test_util.rs | *.test.*) cap=800 ;; # the size-ratchet's test classes, whatever the extension
     *.rs) cap=400 ;;
     *.ts | *.tsx) cap=250 ;;
     *) cap=400 ;;
   esac
+  is_test_path "$f" && cap=800
   lines=$(wc -l <"$f")
   [ "$lines" -gt "$cap" ] || continue
   frozen "$f" "$lines" && continue
-  say "$f is $lines lines (cap $cap) — split at a concept seam the reader never crosses back over; never shatter one concept to duck the count. Fragments merged back into one concept are a raise: RATCHET_RAISE=1 with the file's row in tools/size-ratchet-baseline.tsv"
+  if is_test_path "$f"; then
+    say "$f is $lines lines (cap $cap) — split at a concept seam; a test is never raised"
+  else
+    say "$f is $lines lines (cap $cap) — split at a concept seam the reader never crosses back over; never shatter one concept to duck the count. Fragments merged back into one concept are a raise: RATCHET_RAISE=1 with the file's row in tools/size-ratchet-baseline.tsv"
+  fi
 done <<<"$files"
 
 # Content rules over hand-written source. Usage: scan <grep-ERE> [path-ERE]
