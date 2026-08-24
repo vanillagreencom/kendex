@@ -226,7 +226,10 @@ for form in \
   'git commit -anm x' \
   'git -c core.hooksPath=/dev/null commit -m x' \
   'git -c core.hookspath=/dev/null commit -m x' \
-  'GIT_CONFIG_KEY_0=Core.HooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m x'; do
+  'git -c include.path=/tmp/alt.config commit -m x' \
+  'git --config-env=core.hooksPath=HP commit -m x' \
+  'GIT_CONFIG_KEY_0=Core.HooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m x' \
+  'GIT_CONFIG_COUNT=1 git commit -m x'; do
   run_hook "$ARMED" "$(payload "$form")" KENDEX_EXIT=0
   assert_eq "$rc" "2" "refused: $form"
   assert_not_contains "$log" "kendex" "no chain run stands in for the bypassed hooks: $form"

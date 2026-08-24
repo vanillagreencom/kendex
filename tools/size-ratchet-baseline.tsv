@@ -1,5 +1,5 @@
 .github/workflows/review-gate-writer.yml	652
-docs/ARCHITECTURE.md	896
+docs/ARCHITECTURE.md	901
 hooks/block-repo-copy.sh	511
 pi-extensions/pi-agents-tmux/extensions/subagent/browser.ts	650
 pi-extensions/pi-agents-tmux/extensions/subagent/dashboard.ts	431
