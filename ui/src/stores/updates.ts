@@ -114,7 +114,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
       if (get().checking) return;
       set({ checking: true });
       try {
-        const error = await applyOverview(commands.updatesRefresh());
+        const error = await applyOverview(commands.updatesRefresh(), "refresh");
         if (error !== null) showError(UPDATE_ERROR_TITLE, error);
       } finally {
         set({ checking: false });
@@ -221,7 +221,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
           row.repo,
           ignored,
         ),
-        { mutation: true },
+        "mutation",
       );
       if (error !== null) showError(UPDATE_ERROR_TITLE, error);
     },

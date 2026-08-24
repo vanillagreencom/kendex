@@ -306,7 +306,8 @@ changes carry a **Breaking** call-out with their migration note inline.
   says its read failed and offers Try again instead of claiming "No
   marketplaces yet", and overlapping reads of updates and marketplaces can
   no longer land out of order — a slow early read cannot overwrite a
-  fresher answer or take back a change that just succeeded.
+  fresher answer or take back a change that just succeeded, and a check
+  that fetched the sources outranks any quicker re-read of old mirrors.
 - `kendex apply --replace-unmanaged` no longer gives up on the whole scope
   because one item cannot be settled. A repo arriving on kendex with one
   odd corner — say, a shortcut somebody set up where a skill installs —

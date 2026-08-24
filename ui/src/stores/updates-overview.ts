@@ -30,19 +30,20 @@ export function overviewApplier(
   const order = landings();
   return async (
     read: Promise<OverviewResult>,
-    // A read that failed leaves the rows on screen unconfirmed; a mutation
-    // that failed re-read nothing, so the rows are still the last good
-    // read's answer — only reads may mark them stale. A mutation that
-    // SUCCEEDED always lands: its overview reports the state after its
-    // commit, which no read still in flight can be fresher than.
-    opts?: { mutation?: boolean },
+    // What produced this overview decides how it lands. A plain read ranks
+    // by when it began, success and failure alike. A refresh fetched every
+    // source before answering, and a mutation committed a change: their
+    // successful answers report a state no read still in flight can be
+    // fresher than, so both land authoritatively. On failure a refresh is
+    // just a read that could not answer — it marks the rows stale — while
+    // a failed mutation re-read nothing and touches nothing.
+    kind: "read" | "refresh" | "mutation" = "read",
   ): Promise<string | null> => {
     const ticket = order.begin();
     const response = await settled(read);
     if (response.status === "ok") {
-      const lands = opts?.mutation
-        ? order.landAuthoritative()
-        : order.land(ticket);
+      const lands =
+        kind === "read" ? order.land(ticket) : order.landAuthoritative();
       if (lands) {
         set({
           rows: response.data.rows,
@@ -53,7 +54,7 @@ export function overviewApplier(
       }
       return null;
     }
-    if (!opts?.mutation && order.land(ticket)) {
+    if (kind !== "mutation" && order.land(ticket)) {
       set({ loaded: false, error: response.error });
     }
     return response.error;

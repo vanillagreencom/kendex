@@ -234,6 +234,34 @@ describe("updates store", () => {
     expect(useUpdatesStore.getState().rows).toEqual(muted);
   });
 
+  // A refresh fetches every source before answering, so its result is
+  // fresher than any plain read's however late that read began: a load
+  // started after a slow check reads the old mirrors, and landing first
+  // must not make its staler rows the answer.
+  it("a slow check's fresh answer survives a later-started load", async () => {
+    let resolveCheck!: (
+      value: Awaited<ReturnType<typeof commands.updatesRefresh>>,
+    ) => void;
+    vi.mocked(commands.updatesRefresh).mockReturnValue(
+      new Promise((resolve) => {
+        resolveCheck = resolve;
+      }),
+    );
+    const checking = useUpdatesStore.getState().check();
+
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [row({ name: "stale" })], warnings: [] },
+    });
+    await useUpdatesStore.getState().load();
+
+    const fresh = [row({ name: "fresh" })];
+    resolveCheck({ status: "ok", data: { rows: fresh, warnings: [] } });
+    await checking;
+
+    expect(useUpdatesStore.getState().rows).toEqual(fresh);
+  });
+
   // The symmetric interleaving: the mutation begins first, a read lands
   // its pre-mutation snapshot in between, and the mutation's overview —
   // the state after its commit — lands last. Ranking it by when it began
