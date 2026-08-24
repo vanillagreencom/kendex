@@ -85,6 +85,8 @@ export function CustomizedActions({
         confirmLabel={DISCARD_EDITS_CONFIRM_LABEL}
         destructive
         busy={busy}
+        confirmDisabled={!loaded}
+        confirmDisabledNote={UPDATE_NEEDS_CHECK_NOTE}
         onConfirm={() =>
           void takeNewVersion(row).then(() => setConfirmDiscard(false))
         }

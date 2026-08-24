@@ -9,6 +9,7 @@ import type {
   Scope,
 } from "@/bindings";
 import { commands } from "@/bindings";
+import { MARKETPLACES_NEEDS_CHECK_NOTE } from "@/lib/copy-marketplaces";
 import {
   cachedRepoCatalogs,
   dropCatalogCaches,
@@ -19,6 +20,7 @@ import {
 /** What these actions need back from the store. */
 interface Sources {
   rows: MarketplaceRow[];
+  rowsCurrent: boolean;
   summaries: Record<string, CatalogSummary>;
   load: () => Promise<void>;
   loadSummary: (catalog: Catalog) => Promise<void>;
@@ -33,6 +35,13 @@ type Set = (
 export function sourceActions(set: Set, get: () => Sources) {
   return {
     toggle: async (scope: Scope, source: string, enabled: boolean) => {
+      // The action boundary owns the guarantee: any trigger acting on a
+      // row a failed read left behind is refused here, not just gated in
+      // the component that happens to render it.
+      if (!get().rowsCurrent) {
+        toast.error(MARKETPLACES_NEEDS_CHECK_NOTE);
+        return;
+      }
       const response = await commands.sourceToggle(scope, source, enabled);
       if (response.status === "error") {
         toast.error(response.error);

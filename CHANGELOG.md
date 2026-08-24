@@ -310,7 +310,10 @@ changes carry a **Breaking** call-out with their migration note inline.
   a failed read are drawn under the same last-checked note with their
   toggle and unsubscribe held — on the tab and on each marketplace's own
   page — a failed subscribe can no longer rewrite the reason that note
-  shows, and overlapping reads of updates and marketplaces can
+  shows. These holds are enforced where the action runs, not only on the
+  buttons: a confirmation dialog already open when a check fails can no
+  longer commit from the stale rows it was opened over. And overlapping
+  reads of updates and marketplaces can
   no longer land out of order — a slow early read cannot overwrite a
   fresher answer or take back a change that just succeeded, a check that
   fetched the sources outranks any quicker re-read of old mirrors whether

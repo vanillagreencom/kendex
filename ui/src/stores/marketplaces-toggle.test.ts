@@ -1,7 +1,8 @@
 // A bare repository page's action and what toggling its holder does to
 // the summaries that decide which subscription the page carries on as.
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands, type MarketplaceRow } from "@/bindings";
+import { MARKETPLACES_NEEDS_CHECK_NOTE } from "@/lib/copy-marketplaces";
 import { useMarketplacesStore } from "./marketplaces";
 import { catalogKey, declaredHolder, repoAction } from "./marketplaces-shared";
 
@@ -35,6 +36,31 @@ const row = (repo: string, repoKey: string | null): MarketplaceRow => ({
   counts: null,
   meta: null,
   mode: null,
+});
+
+// Rows being acted on imply a read that answered; tests staging a failed
+// read set rowsCurrent themselves.
+beforeEach(() => {
+  useMarketplacesStore.setState({ rowsCurrent: true });
+});
+
+// The action boundary owns the guarantee: whatever component triggers a
+// toggle on rows a failed read left behind, the store refuses it.
+describe("toggling from rows a failed read left behind", () => {
+  it("refuses with the needs-check note instead of committing", async () => {
+    const { toast } = await import("sonner");
+    useMarketplacesStore.setState({
+      rows: [row("acme/kit", "acme/kit")],
+      rowsCurrent: false,
+    });
+
+    await useMarketplacesStore
+      .getState()
+      .toggle({ scope: "global" }, "kit", false);
+
+    expect(commands.sourceToggle).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(MARKETPLACES_NEEDS_CHECK_NOTE);
+  });
 });
 
 describe("a bare repository page's action", () => {

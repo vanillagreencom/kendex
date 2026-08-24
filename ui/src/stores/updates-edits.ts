@@ -1,6 +1,7 @@
 import { toast } from "sonner";
 import { commands, type UpdateRow } from "@/bindings";
 import { FORK_ERROR_TITLE, forkedToastLabel } from "@/lib/copy";
+import { UPDATE_NEEDS_CHECK_NOTE } from "@/lib/copy-updates";
 import { packageDisplayName } from "@/lib/labels";
 import { useAuditStore } from "./audit";
 import { useProblemsStore } from "./problems";
@@ -52,6 +53,15 @@ export const keepAsOwn = async (row: UpdateRow): Promise<void> => {
 /** Drop an edited place's edits and take the newest version — moving the
  *  hold along when the place is held, in the same apply. */
 export const takeNewVersion = async (row: UpdateRow): Promise<void> => {
+  // The action boundary owns the guarantee: a confirmation opened before
+  // a check failed still holds a retained row, and its latest names a
+  // commit nobody confirmed. The trigger gates are UX; this is the stop.
+  if (!useUpdatesStore.getState().loaded) {
+    useProblemsStore
+      .getState()
+      .showError({ title: FORK_ERROR_TITLE, message: UPDATE_NEEDS_CHECK_NOTE });
+    return;
+  }
   await run(async () => {
     const response = await commands.applyDiscardEdits(
       row.scope,

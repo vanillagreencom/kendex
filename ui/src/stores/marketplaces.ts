@@ -11,6 +11,7 @@ import {
   type MarketplaceRow,
   type Scope,
 } from "@/bindings";
+import { MARKETPLACES_NEEDS_CHECK_NOTE } from "@/lib/copy-marketplaces";
 import { settled } from "@/lib/settled";
 import { landings } from "./landings";
 import { catalogReads } from "./marketplaces-reads";
@@ -168,6 +169,13 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
   },
 
   unsubscribe: async (scope, source, keep, discardEdits) => {
+    // The action boundary owns the guarantee: a dialog opened while rows
+    // were current can still confirm after a failed re-read left them
+    // stale — refusing here covers every trigger at once.
+    if (!get().rowsCurrent) {
+      set({ error: MARKETPLACES_NEEDS_CHECK_NOTE });
+      return false;
+    }
     set({ busy: true });
     let response: Awaited<ReturnType<typeof commands.marketplaceUnsubscribe>>;
     try {
