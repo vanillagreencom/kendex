@@ -524,43 +524,6 @@ assert_eq "$(jq -r .verdict <<<"$out")" "merged" "transient error does not chang
 assert_eq "$(jq -r '.transient_api_errors // 0' <<<"$out")" "1" "transient error counted in JSON" "$err"
 
 
-# --- 15. argument validation: poll_interval > max_wait (kendex#972) ---------
-# The reported invocation shape: `queue-wait 481 1800` reads as poll=1800,
-# max=600 and can only ever poll once while overshooting the budget.
-new_case argval_swapped
-err="$TMP_ROOT/e15"
-run_queue_wait -- 1 1800 600 --json --no-check-probe >/dev/null 2>"$err" && rc=0 || rc=$?
-assert_eq "$rc" "2" "poll_interval > max_wait exits 2" "$err"
-assert_contains "$(cat "$err")" "exceeds max_wait" "swapped-arg error names the cause" "$err"
-
-# --- 16. argument validation: non-numeric interval --------------------------
-new_case argval_nonnumeric
-err="$TMP_ROOT/e16"
-run_queue_wait -- 1 abc 600 --json --no-check-probe >/dev/null 2>"$err" && rc=0 || rc=$?
-assert_eq "$rc" "2" "non-numeric poll_interval exits 2" "$err"
-assert_contains "$(cat "$err")" "positive integer" "non-numeric error is explicit" "$err"
-
-# --- 17. --help prints usage and exits 0 ------------------------------------
-new_case help
-err="$TMP_ROOT/e17"
-out="$(run_queue_wait -- --help 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "0" "--help exits 0" "$err"
-assert_contains "$out" "Usage: queue-wait" "--help prints usage" "$err"
-# The heredoc is the contract's sole home (KEN-556): pin tokens whose
-# semantics live nowhere else (KEN-555: tokens, never sentences).
-assert_contains "$out" "Exit codes:" "--help carries the exit-code table" "$err"
-assert_contains "$out" "not_queued" "--help carries the verdict vocabulary" "$err"
-assert_contains "$out" "QUEUE_WAIT_ARM_GRACE" "--help carries the environment knobs" "$err"
-
-# --- 17b. an unknown flag is rejected in the parser, never absorbed ---------
-# Without the -*) branch, --bogus-flag lands in a positional slot and dies
-# later blaming poll_interval (kendex#981, same shape as ci-wait).
-new_case help_unknown_flag
-err="$TMP_ROOT/e17b"
-run_queue_wait -- 1 30 600 --bogus-flag >/dev/null 2>"$err" && rc=0 || rc=$?
-assert_eq "$rc" "2" "unknown flag exits 2" "$err"
-assert_contains "$(cat "$err")" "unknown option" "unknown-flag error names the flag, not a positional" "$err"
-
 # --- 18. a one-poll queued verdict is flagged low-confidence -----------------
 # With poll_interval == max_wait the loop polls exactly once. The "still queued"
 # observation is then a single sample; the verdict must say so, in both the

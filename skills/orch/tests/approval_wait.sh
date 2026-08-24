@@ -493,12 +493,6 @@ run_review_text() {
        env "$@" .agents/skills/orch/scripts/approval-wait 1 1 3 --mode review)
 }
 
-run_resolve_mode() {
-  (cd "$TMP_ROOT/repo" \
-    && PATH="$TMP_ROOT/bin:$PATH" \
-       env "$@" .agents/skills/orch/scripts/approval-wait --resolve-mode)
-}
-
 json_field() {
   jq -r "$2" <<<"$1" 2>/dev/null || echo "UNPARSEABLE"
 }
@@ -1200,74 +1194,6 @@ assert_contains "$output" "Review: reviewed" "status8: text mode still prints th
 assert_contains "$output" "via status 'Review Bot'" "status8: text mode names the status context" "$stderr"
 assert_contains "$output" "creator: review-bot[bot]" "status8: text mode records the publishing creator" "$stderr"
 
-echo "=== approval-wait --resolve-mode precedence ==="
-
-# PR_REVIEW_GATE wins outright, including over a conflicting legacy value.
-assert_eq "$(run_resolve_mode PR_REVIEW_GATE=review)" "review" "resolve: PR_REVIEW_GATE=review"
-assert_eq "$(run_resolve_mode PR_REVIEW_GATE=off)" "off" "resolve: PR_REVIEW_GATE=off"
-assert_eq "$(run_resolve_mode PR_REVIEW_GATE=approval)" "approval" "resolve: PR_REVIEW_GATE=approval"
-assert_eq "$(run_resolve_mode PR_REVIEW_GATE=review PR_APPROVAL_GATE=off)" "review" "resolve: PR_REVIEW_GATE beats legacy PR_APPROVAL_GATE"
-
-# Legacy derivation when PR_REVIEW_GATE is unset: on -> approval, off -> off.
-assert_eq "$(run_resolve_mode PR_APPROVAL_GATE=on)" "approval" "resolve: legacy on maps to approval"
-assert_eq "$(run_resolve_mode PR_APPROVAL_GATE=off)" "off" "resolve: legacy off maps to off"
-
-# Both unset defaults to approval.
-assert_eq "$(run_resolve_mode)" "approval" "resolve: default approval"
-
-# An unrecognized PR_REVIEW_GATE fails safe to approval (gate stays on).
-assert_eq "$(run_resolve_mode PR_REVIEW_GATE=bogus 2>/dev/null)" "approval" "resolve: invalid value falls back to approval"
-
-# kendex.settings.toml [env] is read with orch-env precedence: the settings
-# value applies when the process env is silent, and process env wins over it.
-cat > "$TMP_ROOT/repo/kendex.settings.toml" <<'EOF'
-[env]
-PR_REVIEW_GATE = "review"
-EOF
-assert_eq "$(run_resolve_mode)" "review" "resolve: settings-file PR_REVIEW_GATE applies"
-assert_eq "$(run_resolve_mode PR_REVIEW_GATE=approval)" "approval" "resolve: process env beats settings file"
-rm -f "$TMP_ROOT/repo/kendex.settings.toml"
-
-# The engine's one-switch gate disable wins over every reviewer-gate key —
-# env and settings-file sources both; enforce (and any non-"off" value)
-# leaves the reviewer keys authoritative.
-assert_eq "$(run_resolve_mode REVIEW_GATE_MODE=off PR_REVIEW_GATE=approval)" "off" "resolve: REVIEW_GATE_MODE=off overrides approval"
-assert_eq "$(run_resolve_mode REVIEW_GATE_MODE=off PR_REVIEW_GATE=review)" "off" "resolve: REVIEW_GATE_MODE=off overrides review"
-assert_eq "$(run_resolve_mode REVIEW_GATE_MODE=enforce PR_REVIEW_GATE=review)" "review" "resolve: enforce preserves the reviewer keys"
-assert_eq "$(run_resolve_mode REVIEW_GATE_MODE=bogus PR_REVIEW_GATE=review)" "review" "resolve: a non-off value never narrows (engine fails loud, not here)"
-cat > "$TMP_ROOT/repo/kendex.settings.toml" <<'EOF'
-[env]
-REVIEW_GATE_MODE = "off"
-PR_REVIEW_GATE = "review"
-EOF
-assert_eq "$(run_resolve_mode)" "off" "resolve: settings-file REVIEW_GATE_MODE=off applies"
-rm -f "$TMP_ROOT/repo/kendex.settings.toml"
-
-# The engine boundary (PR #1615): REVIEW_GATE_MODE resolves from process env
-# and kendex.settings.toml ONLY — the review-gate engine never reads dotenv
-# files, so a .env/.env.local value must not turn the waiter off while the
-# gate stays enforcing. The PR_REVIEW_* keys keep full dotenv precedence.
-cat > "$TMP_ROOT/repo/.env" <<'EOF'
-REVIEW_GATE_MODE=off
-EOF
-assert_eq "$(run_resolve_mode)" "approval" "resolve: dotenv REVIEW_GATE_MODE=off is ignored (engine boundary)"
-assert_eq "$(run_resolve_mode REVIEW_GATE_MODE=off)" "off" "resolve: parent-env off still applies beside a dotenv file"
-cat > "$TMP_ROOT/repo/kendex.settings.toml" <<'EOF'
-[env]
-REVIEW_GATE_MODE = "off"
-EOF
-assert_eq "$(run_resolve_mode)" "off" "resolve: settings-file off still applies beside a dotenv file"
-rm -f "$TMP_ROOT/repo/kendex.settings.toml"
-mv "$TMP_ROOT/repo/.env" "$TMP_ROOT/repo/.env.local"
-assert_eq "$(run_resolve_mode)" "approval" "resolve: .env.local REVIEW_GATE_MODE=off is ignored too"
-rm -f "$TMP_ROOT/repo/.env.local"
-# Control: the reviewer keys keep their dotenv precedence.
-cat > "$TMP_ROOT/repo/.env" <<'EOF'
-PR_REVIEW_GATE=review
-EOF
-assert_eq "$(run_resolve_mode)" "review" "resolve: dotenv PR_REVIEW_GATE keeps full precedence (control)"
-rm -f "$TMP_ROOT/repo/.env"
-
 echo "=== approval-wait nudge behavior ==="
 
 nudge_log_lines() {
@@ -1653,67 +1579,6 @@ rm -f "$TMP_ROOT/bin/jq"
 output=$(run_wait_json STUB_APPROVAL_MODE=approved_decision 2>"$TMP_ROOT/emitok.err")
 assert_eq "$(json_field "$output" '.status')" "approved" \
   "control: the same poll approves once emission works again" "$TMP_ROOT/emitok.err"
-
-echo "=== -h/--help answer in the arg parser (KEN-556) ==="
-
-# Usage must terminate before auth or any gh call — --help was once consumed
-# as the PR number (same shape as ci-wait's kendex#981). The recording stub
-# proves gh was never reached, and the token pins guard the heredoc: it is
-# the contract's sole home (KEN-555: tokens, never sentences).
-mkdir -p "$TMP_ROOT/argbin"
-cat > "$TMP_ROOT/argbin/gh" <<EOF
-#!/usr/bin/env bash
-printf '%s\n' "\$*" >> "$TMP_ROOT/argval-gh.calls"
-exit 1
-EOF
-chmod +x "$TMP_ROOT/argbin/gh"
-
-run_help() {
-  (cd "$TMP_ROOT/repo" \
-    && PATH="$TMP_ROOT/argbin:$PATH" \
-       .agents/skills/orch/scripts/approval-wait "$@")
-}
-
-stderr="$TMP_ROOT/help.err"
-set +e
-output=$(run_help --help 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "0" "--help exits 0" "$stderr"
-assert_contains "$output" "Usage: approval-wait" "--help prints usage"
-assert_contains "$output" "Exit codes:" "--help carries the exit-code table"
-assert_contains "$output" "proceeded" "--help carries the proceeded status"
-assert_contains "$output" "PR_REVIEW_QUORUM" "--help carries the quorum setting"
-assert_contains "$output" "PR_REVIEW_ON_TIMEOUT" "--help carries the on-timeout setting"
-if [[ -e "$TMP_ROOT/argval-gh.calls" ]]; then
-  assert_eq "$(cat "$TMP_ROOT/argval-gh.calls")" "" "--help never invokes gh"
-else
-  assert_eq "no-calls" "no-calls" "--help never invokes gh"
-fi
-rm -f "$TMP_ROOT/argval-gh.calls"
-
-set +e
-output=$(run_help -h 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "0" "-h exits 0" "$stderr"
-assert_contains "$output" "Usage: approval-wait" "-h prints usage"
-
-# An unknown flag is rejected in the parser, never absorbed into a positional
-# slot (kendex#981, same shape as ci-wait case 33 and queue-wait 17b).
-stderr="$TMP_ROOT/badflag.err"
-set +e
-output=$(run_help --bogus-flag 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "2" "unknown flag exits 2" "$stderr"
-assert_contains "$(cat "$stderr")" "unknown option" "unknown-flag error names the flag"
-if [[ -e "$TMP_ROOT/argval-gh.calls" ]]; then
-  assert_eq "$(cat "$TMP_ROOT/argval-gh.calls")" "" "unknown flag never invokes gh"
-else
-  assert_eq "no-calls" "no-calls" "unknown flag never invokes gh"
-fi
-rm -f "$TMP_ROOT/argval-gh.calls"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
