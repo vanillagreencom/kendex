@@ -205,6 +205,15 @@ case "${1:-}" in
     print_usage
     exit 0
     ;;
+  "") ;;
+  *)
+    # The predicate is env-driven and takes no positional arguments. An
+    # unrecognized argument is a configuration error with no verdict: a
+    # misspelled or stale wrapper flag must never fall through to a normal
+    # gate evaluation.
+    echo "review-predicate.sh: unknown argument '${1}' — env-driven, no positional arguments (run --help)" >&2
+    exit 2
+    ;;
 esac
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

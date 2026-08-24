@@ -5,71 +5,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/../lib/common.sh"
-source "$SCRIPT_DIR/../lib/cache.sh"
-source "$SCRIPT_DIR/../lib/attachments.sh"
-source "$SCRIPT_DIR/../lib/issue-validation.sh"
 
-# Shared issue fields for mutation responses — matches list query for cache parity
-ISSUE_RETURN_FIELDS='
-    id
-    identifier
-    title
-    description
-    state { name type }
-    assignee { name }
-    project { id name }
-    projectMilestone { id name }
-    cycle { id name number }
-    parent { id identifier title }
-    team { name }
-    labels { nodes { name } }
-    priority
-    estimate
-    sortOrder
-    url
-    createdAt
-    updatedAt
-    archivedAt
-    trashed
-    relations { nodes { id type relatedIssue { id identifier title state { name type } } } }
-    inverseRelations { nodes { id type issue { id identifier title state { name type } } } }
-'
-
-linear_mutation_success() {
-    local normalized="$1"
-    [ "$(echo "$normalized" | jq -r '.success // false' 2>/dev/null || echo false)" = "true" ]
-}
-
-emit_linear_issue_activity() { return 0; }
-
-emit_linear_relation_activity() { return 0; }
-
-read_description_file() {
-    local description_file="$1"
-    if [[ -z "$description_file" ]]; then
-        echo '{"error": "--description-file requires a non-empty path argument"}' >&2
-        return 1
-    fi
-    if [[ ! -r "$description_file" ]]; then
-        echo "{\"error\": \"--description-file path not readable: $description_file\"}" >&2
-        return 1
-    fi
-    description=$(<"$description_file")
-}
-
-linear_update_activity_type() {
-    local normalized="$1"
-    local state state_type
-    state=$(echo "$normalized" | jq -r '.data.issue.state.name // empty' 2>/dev/null || true)
-    state_type=$(echo "$normalized" | jq -r '.data.issue.state.type // empty' 2>/dev/null || true)
-    case "$(printf '%s' "$state_type:$state" | tr '[:upper:]' '[:lower:]')" in
-        completed:*|*:done|*:complete|*:completed) printf 'linear.issue_finished success\n' ;;
-        canceled:*|cancelled:*|*:canceled|*:cancelled|*:canceled*|*:cancelled*) printf 'linear.issue_cancelled warning\n' ;;
-        *) printf 'linear.issue_updated info\n' ;;
-    esac
-}
-
+# Help is answered before the libraries load: common.sh sources the repo's
+# .env files as shell code and resolves API auth, and help needs neither.
 show_help() {
     cat <<'EOF'
 Issue Operations
@@ -294,6 +232,81 @@ Examples:
   issues.sh list --state Todo --search "market_data|order_book"  # Title/description contains either term (server-side)
 EOF
 }
+
+case "${1:-help}" in
+    help|--help|-h) show_help; exit 0 ;;
+esac
+case "${2:-}" in
+    --help|-h) show_help; exit 0 ;;
+esac
+
+source "$SCRIPT_DIR/../lib/common.sh"
+source "$SCRIPT_DIR/../lib/cache.sh"
+source "$SCRIPT_DIR/../lib/attachments.sh"
+source "$SCRIPT_DIR/../lib/issue-validation.sh"
+
+# Shared issue fields for mutation responses — matches list query for cache parity
+ISSUE_RETURN_FIELDS='
+    id
+    identifier
+    title
+    description
+    state { name type }
+    assignee { name }
+    project { id name }
+    projectMilestone { id name }
+    cycle { id name number }
+    parent { id identifier title }
+    team { name }
+    labels { nodes { name } }
+    priority
+    estimate
+    sortOrder
+    url
+    createdAt
+    updatedAt
+    archivedAt
+    trashed
+    relations { nodes { id type relatedIssue { id identifier title state { name type } } } }
+    inverseRelations { nodes { id type issue { id identifier title state { name type } } } }
+'
+
+linear_mutation_success() {
+    local normalized="$1"
+    [ "$(echo "$normalized" | jq -r '.success // false' 2>/dev/null || echo false)" = "true" ]
+}
+
+emit_linear_issue_activity() { return 0; }
+
+emit_linear_relation_activity() { return 0; }
+
+read_description_file() {
+    local description_file="$1"
+    if [[ -z "$description_file" ]]; then
+        echo '{"error": "--description-file requires a non-empty path argument"}' >&2
+        return 1
+    fi
+    if [[ ! -r "$description_file" ]]; then
+        echo "{\"error\": \"--description-file path not readable: $description_file\"}" >&2
+        return 1
+    fi
+    description=$(<"$description_file")
+}
+
+linear_update_activity_type() {
+    local normalized="$1"
+    local state state_type
+    # An unparseable response classifies as the generic update: the activity
+    # type is presentation, never a gate.
+    state=$(echo "$normalized" | jq -r '.data.issue.state.name // empty' 2>/dev/null) || state=""
+    state_type=$(echo "$normalized" | jq -r '.data.issue.state.type // empty' 2>/dev/null) || state_type=""
+    case "$(printf '%s' "$state_type:$state" | tr '[:upper:]' '[:lower:]')" in
+        completed:*|*:done|*:complete|*:completed) printf 'linear.issue_finished success\n' ;;
+        canceled:*|cancelled:*|*:canceled|*:cancelled|*:canceled*|*:cancelled*) printf 'linear.issue_cancelled warning\n' ;;
+        *) printf 'linear.issue_updated info\n' ;;
+    esac
+}
+
 
 list_issues() {
     local with_relations="false"
@@ -3237,11 +3250,6 @@ main() {
 
     case "$action" in
     list)
-        case "${1:-}" in --help | -h)
-            show_help
-            exit 0
-            ;;
-        esac
         list_issues "$@"
         ;;
     get)
@@ -3249,11 +3257,6 @@ main() {
         get_issue "$@"
         ;;
     bulk-get)
-        case "${1:-}" in --help | -h)
-            show_help
-            exit 0
-            ;;
-        esac
         bulk_get_issues "$@"
         ;;
     bulk-update)
@@ -3261,11 +3264,6 @@ main() {
         bulk_update_issues "$@"
         ;;
     create)
-        case "${1:-}" in --help | -h)
-            show_help
-            exit 0
-            ;;
-        esac
         create_issue "$@"
         ;;
     update)
@@ -3334,9 +3332,6 @@ main() {
         echo "  linear.sh issues bulk-get [ISSUE_ID_1] [ISSUE_ID_2]   # live state (post-mutation verification)" >&2
         echo "  linear.sh cache issues get [ISSUE_ID]                 # cache read" >&2
         exit 1
-        ;;
-    help | --help | -h)
-        show_help
         ;;
     *)
         echo "Error: Unknown action '$action'" >&2

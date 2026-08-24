@@ -62,88 +62,6 @@ CURRENT_MODEL_IS_SESSION_SCOPED=false
 CURRENT_MODEL_IN_CALLER_ENV=false
 [[ -z "${SECOND_OPINION_CURRENT_MODEL+x}" ]] || CURRENT_MODEL_IN_CALLER_ENV=true
 
-# Source project config/secrets. .env.local overrides public settings; the
-# caller's own environment (set or set-but-empty) outranks every project file —
-# kendex_load_project_env snapshots and re-asserts it.
-# shellcheck source=lib/kendex-env.sh
-source "$SCRIPT_DIR/lib/kendex-env.sh"
-kendex_load_project_env "$PROJECT_ROOT"
-
-# Portability: macOS lacks timeout, try gtimeout fallback
-if ! command -v timeout >/dev/null 2>&1; then
-  if command -v gtimeout >/dev/null 2>&1; then
-    timeout() { gtimeout "$@"; }
-  else
-    # No timeout available — warn once and run without a limit. The shim
-    # drops this script's fixed `-k 30 SECS` arguments.
-    echo "Warning: no timeout or gtimeout on PATH — external CLI calls will run without a time limit" >&2
-    timeout() { shift 3; "$@"; }
-  fi
-fi
-
-# --- Defaults -----------------------------------------------------------------
-
-MODE=""
-PROMPT_FILE=""
-INLINE_PROMPT=""
-OUTPUT_PATH=""
-TARGET=""
-TIMEOUT="${SECOND_OPINION_TIMEOUT:-1080}"
-CWD="."
-RANGE=""
-
-# Distinct exit codes (kendex#652) so callers can tell "there was nothing to
-# review" and "the model reported it performed no review" apart from generic
-# failures (1). A response missing the required qa_metadata object (kendex#672)
-# or still structurally incomplete after the one-shot retry (kendex#678) is
-# rejected the same way. None of these paths writes the --output artifact.
-#
-# EXIT_CLI_FAILED (kendex#809): the external CLI failed to produce ANY review at
-# all — it exited non-zero (quota/auth/network), timed out, or returned nothing
-# usable on a zero exit. That yields no external verdict, so like exits 3/4 it
-# must never be a silent exit-0 success; it joins the no-verdict class. It is
-# kept DISTINCT from EXIT_NO_REVIEW (4) on purpose: 4 is a response-level defect
-# (the model answered, but the answer is unusable), whereas 5 is a lane-level
-# failure (the model never answered) — an operator retries a down lane but reads
-# a code-4 as a real signal about the review. Only review/audit modes (the ones
-# with the no-verdict contract) use it; challenge/quick keep the generic 1.
-EXIT_NO_SCOPE=3
-EXIT_NO_REVIEW=4
-EXIT_CLI_FAILED=5
-
-# WHERE `--` IS USED IN THIS FILE, and why it is not used everywhere.
-#
-# The macOS/Bash 3.2 support target ships BSD utilities, and they do not agree
-# with GNU about the end-of-options marker: BSD sed reads `--` as a FILE
-# operand, and BSD dirname can reject it outright. So `--` appears only with
-# the shell builtins (cd, printf, set) and with `rm` and `mkdir`, which take it
-# on both. Everywhere else the operand is made safe instead of marked safe:
-#   * caller input reaches a utility through a REDIRECTION (`cat < "$f"`,
-#     `jq … < "$f"`), which has no option parsing at all;
-#   * $CWD is canonicalized to an absolute path once (see its validation), so
-#     every path built from it starts with '/' and can never look like a flag;
-#   * dirname and basename are replaced by parameter expansion — path_dir below
-#     and `${BASH_SOURCE[0]##*/}` — needing no utility and no marker.
-# Adding `--` to sed/head/stat/cat/basename here would buy nothing and break
-# the BSD path; this note exists because a sweep already did it once.
-#
-# The containing directory of a path, without `dirname`. --output is caller
-# input and may legitimately begin with '-', which dirname parses as options.
-# Parameter expansion has no such problem. Mirrors dirname for the cases that
-# reach it: no slash yields ".", a root-level path yields "/".
-path_dir() {
-  local path="$1" dir="${1%/*}"
-  if [[ "$dir" == "$path" ]]; then
-    printf '%s' "."
-  elif [[ -z "$dir" ]]; then
-    printf '%s' "/"
-  else
-    printf '%s' "$dir"
-  fi
-}
-
-# --- Help ---------------------------------------------------------------------
-
 show_help() {
   cat <<'HELP'
 Cross-model second opinion via external AI CLI.
@@ -251,19 +169,23 @@ export it in the environment of the session that needs it:
                              (the file or a parent directory) pointing outside
                              --cwd is skipped loudly, never followed
 
-Review scope and stamping (review/audit modes):
+Review scope (review mode only):
   The wrapper derives the review scope from the worktree before invoking the
   external CLI — current branch, diff range (--range or origin/BASE...HEAD),
-  diffstat, and the changed-file list are embedded in the prompt. A first
-  response that is unparseable, or structurally incomplete, gets one retry
-  resending the full original request (scope block included) alongside the
-  captured response; unusable responses never become the artifact.
-  The wrapper overwrites the JSON timestamp field with its own UTC wall clock
-  (date -u) after the model responds, and overwrites agent with
-  external-<target> for a lane or external-union(...) for a union.
-  review stamps qa_metadata.reviewed_head — the reviewed range's endpoint
-  commit, captured when the scope is derived (before the model runs); a
-  multi-lane union also stamps qa_metadata.requested_count/selected_count.
+  diffstat, and the changed-file list are embedded in the prompt. audit
+  derives no scope: it reads only its supplied --prompt file and ignores
+  --range. review stamps qa_metadata.reviewed_head — the reviewed range's
+  endpoint commit, captured when the scope is derived (before the model
+  runs); a multi-lane union also stamps
+  qa_metadata.requested_count/selected_count.
+
+Response handling and stamping (review and audit modes):
+  A first response that is unparseable, or structurally incomplete, gets one
+  retry resending the full original request (scope block included for
+  review) alongside the captured response; unusable responses never become
+  the artifact. The wrapper overwrites the JSON timestamp field with its own
+  UTC wall clock (date -u) after the model responds, and overwrites agent
+  with external-<target> for a lane or external-union(...) for a union.
 
 Default commands:
   claude: claude -p --no-session-persistence --model opus --effort max
@@ -323,6 +245,100 @@ Exit codes:
 HELP
 }
 
+# Help is answered before project configuration is read: sourcing a repo's
+# .env under --help would execute repository-controlled shell code. The
+# option parser treats -h/--help at any position as help, so the same scan
+# decides here.
+for _arg in "$@"; do
+  case "$_arg" in
+    -h|--help) show_help; exit 0 ;;
+  esac
+done
+unset _arg
+
+# Source project config/secrets. .env.local overrides public settings; the
+# caller's own environment (set or set-but-empty) outranks every project file —
+# kendex_load_project_env snapshots and re-asserts it.
+# shellcheck source=lib/kendex-env.sh
+source "$SCRIPT_DIR/lib/kendex-env.sh"
+kendex_load_project_env "$PROJECT_ROOT"
+
+# Portability: macOS lacks timeout, try gtimeout fallback
+if ! command -v timeout >/dev/null 2>&1; then
+  if command -v gtimeout >/dev/null 2>&1; then
+    timeout() { gtimeout "$@"; }
+  else
+    # No timeout available — warn once and run without a limit. The shim
+    # drops this script's fixed `-k 30 SECS` arguments.
+    echo "Warning: no timeout or gtimeout on PATH — external CLI calls will run without a time limit" >&2
+    timeout() { shift 3; "$@"; }
+  fi
+fi
+
+# --- Defaults -----------------------------------------------------------------
+
+MODE=""
+PROMPT_FILE=""
+INLINE_PROMPT=""
+OUTPUT_PATH=""
+TARGET=""
+TIMEOUT="${SECOND_OPINION_TIMEOUT:-1080}"
+CWD="."
+RANGE=""
+
+# Distinct exit codes (kendex#652) so callers can tell "there was nothing to
+# review" and "the model reported it performed no review" apart from generic
+# failures (1). A response missing the required qa_metadata object (kendex#672)
+# or still structurally incomplete after the one-shot retry (kendex#678) is
+# rejected the same way. None of these paths writes the --output artifact.
+#
+# EXIT_CLI_FAILED (kendex#809): the external CLI failed to produce ANY review at
+# all — it exited non-zero (quota/auth/network), timed out, or returned nothing
+# usable on a zero exit. That yields no external verdict, so like exits 3/4 it
+# must never be a silent exit-0 success; it joins the no-verdict class. It is
+# kept DISTINCT from EXIT_NO_REVIEW (4) on purpose: 4 is a response-level defect
+# (the model answered, but the answer is unusable), whereas 5 is a lane-level
+# failure (the model never answered) — an operator retries a down lane but reads
+# a code-4 as a real signal about the review. Only review/audit modes (the ones
+# with the no-verdict contract) use it; challenge/quick keep the generic 1.
+EXIT_NO_SCOPE=3
+EXIT_NO_REVIEW=4
+EXIT_CLI_FAILED=5
+
+# WHERE `--` IS USED IN THIS FILE, and why it is not used everywhere.
+#
+# The macOS/Bash 3.2 support target ships BSD utilities, and they do not agree
+# with GNU about the end-of-options marker: BSD sed reads `--` as a FILE
+# operand, and BSD dirname can reject it outright. So `--` appears only with
+# the shell builtins (cd, printf, set) and with `rm` and `mkdir`, which take it
+# on both. Everywhere else the operand is made safe instead of marked safe:
+#   * caller input reaches a utility through a REDIRECTION (`cat < "$f"`,
+#     `jq … < "$f"`), which has no option parsing at all;
+#   * $CWD is canonicalized to an absolute path once (see its validation), so
+#     every path built from it starts with '/' and can never look like a flag;
+#   * dirname and basename are replaced by parameter expansion — path_dir below
+#     and `${BASH_SOURCE[0]##*/}` — needing no utility and no marker.
+# Adding `--` to sed/head/stat/cat/basename here would buy nothing and break
+# the BSD path; this note exists because a sweep already did it once.
+#
+# The containing directory of a path, without `dirname`. --output is caller
+# input and may legitimately begin with '-', which dirname parses as options.
+# Parameter expansion has no such problem. Mirrors dirname for the cases that
+# reach it: no slash yields ".", a root-level path yields "/".
+path_dir() {
+  local path="$1" dir="${1%/*}"
+  if [[ "$dir" == "$path" ]]; then
+    printf '%s' "."
+  elif [[ -z "$dir" ]]; then
+    printf '%s' "/"
+  else
+    printf '%s' "$dir"
+  fi
+}
+
+# --- Help ---------------------------------------------------------------------
+
+
 # --- Argument parsing ---------------------------------------------------------
 # A malformed argument does not exit here: it records PARSE_ERROR and stops the
 # loop, so the stale-output clearing below still runs on whatever --output was
@@ -366,7 +382,6 @@ while [[ $# -gt 0 ]]; do
     # table names any variable it likes, and whether an output path belongs to
     # the caller is not something ambient configuration may decide.
     --scratch-output) SCRATCH_OUTPUT=true; shift ;;
-    -h|--help)   show_help; exit 0 ;;
     --*)
       PARSE_ERROR="unknown flag: $1"
       # Keep parsing: a later --output still names an artifact this run must not

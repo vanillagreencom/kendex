@@ -432,6 +432,27 @@ worktree, only the main checkout and its default branch.
 EOF
 }
 
+print_hooks_help() {
+  cat <<'EOF'
+Usage: worktree codex-setup    [PATH]
+       worktree codex-branch   <ISSUE> [PATH]
+       worktree codex-cleanup  [PATH]
+       worktree claude-setup   [PATH]
+       worktree claude-cleanup [PATH]
+
+App-created worktree hooks. The app (Codex Desktop, Claude Code) owns
+worktree and branch creation and deletion; the setup hooks apply the same
+project-local setup that create applies — env/config symlinks, configured
+copies and dirs, optional bot git config and remote — inside a worktree git
+has already created (default: the current directory). codex-branch
+normalizes an app-managed branch name to the issue branch orch expects
+before 'orch start'. The cleanup hooks are non-destructive and never remove
+symlinks: mutating tracked symlink paths before the app has actually
+removed the worktree can leave it dirty. Installation wiring: the worktree
+skill's references/hooks.md.
+EOF
+}
+
 # Every help form is answered here, before git resolution and before any
 # project env file is read: a sourced .env statement must never run under
 # --help, and help must work outside a repository.
@@ -448,6 +469,8 @@ if [[ "${2:-}" == "--help" || "${2:-}" == "-h" ]]; then
     push)         print_push_help; exit 0 ;;
     fix-links)    print_fix_links_help; exit 0 ;;
     repair-links) print_repair_links_help; exit 0 ;;
+    codex-setup|codex-branch|codex-cleanup|claude-setup|claude-cleanup)
+                  print_hooks_help; exit 0 ;;
   esac
 fi
 

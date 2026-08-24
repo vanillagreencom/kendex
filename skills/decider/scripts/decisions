@@ -7,6 +7,71 @@
 # feed the creation workflow (next-id, get) require an initialized directory.
 set -euo pipefail
 
+# Help is answered before project configuration is read: sourcing a repo's
+# .env under --help would execute repository-controlled shell code.
+show_help() {
+  cat << 'EOF'
+Decision Lookup Tool
+
+Usage: decisions <action> [options]
+
+Actions:
+  search <query>       Ranked search (multi-word = AND, scored). Matches the
+                       INDEX summary columns (decision, rationale, id) AND the
+                       linked decision document bodies; summary matches outrank
+                       body-only matches. A query containing | ( ) or \ switches
+                       to regex mode (no scoring).
+  search --issue ID    Decisions linked to an issue (Research column, exact
+                       match; bodies are not scanned)
+  list                 Active decisions
+  next-id              Next decision ID, scheme inferred from the ID column
+  get <DECISION_ID>    Decision details (status, date, path)
+
+Options:
+  --limit N            Max search results (default: 5)
+
+Output (JSON):
+  search:  [{id, decision, path}] (keyword mode adds score)
+  list:    [{id, decision, path}]
+  get:     {id, decision, status, date, path}
+
+Scoring per term: decision 3, id 3, rationale 1, body 0.5.
+
+Environment:
+  DECISIONS_DIR        Decision documents directory (default: the nearest
+                       ancestor holding docs/decisions/, decisions/,
+                       doc/decisions/, or adr/ with an INDEX.md). Set shared
+                       values in kendex.settings.toml under [env];
+                       .env.local overrides locally. When absent, search/list
+                       emit [] and exit 0 (note on stderr); next-id/get
+                       error. A configured path that exists but is not a
+                       directory is a hard error.
+  DECISION_ID_PREFIX   ID prefix for next-id (default: inferred from the
+                       last populated ID-column value, else D)
+  DECISION_ID_WIDTH    Zero-padding width for next-id (default: inferred
+                       from that same value, else 3)
+
+Examples:
+  decisions search "FFI error handling"
+  decisions search "seqlock|mmap"
+  decisions search --issue PROJ-189
+  decisions search "FFI" --limit 3
+  decisions list
+  decisions next-id
+  decisions get D017
+EOF
+}
+
+case "${1:-help}" in
+  help|--help|-h) show_help; exit 0 ;;
+  search)
+    if [[ -z "${2:-}" || "${2:-}" == "--help" ]]; then
+      show_help
+      exit 0
+    fi
+    ;;
+esac
+
 # Load optional project config before DECISIONS_DIR auto-discovery.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -138,58 +203,6 @@ parse_index() {
     ]' "$INDEX_FILE"
 }
 
-show_help() {
-  cat << 'EOF'
-Decision Lookup Tool
-
-Usage: decisions <action> [options]
-
-Actions:
-  search <query>       Ranked search (multi-word = AND, scored). Matches the
-                       INDEX summary columns (decision, rationale, id) AND the
-                       linked decision document bodies; summary matches outrank
-                       body-only matches. A query containing | ( ) or \ switches
-                       to regex mode (no scoring).
-  search --issue ID    Decisions linked to an issue (Research column, exact
-                       match; bodies are not scanned)
-  list                 Active decisions
-  next-id              Next decision ID, scheme inferred from the ID column
-  get <DECISION_ID>    Decision details (status, date, path)
-
-Options:
-  --limit N            Max search results (default: 5)
-
-Output (JSON):
-  search:  [{id, decision, path}] (keyword mode adds score)
-  list:    [{id, decision, path}]
-  get:     {id, decision, status, date, path}
-
-Scoring per term: decision 3, id 3, rationale 1, body 0.5.
-
-Environment:
-  DECISIONS_DIR        Decision documents directory (default: the nearest
-                       ancestor holding docs/decisions/, decisions/,
-                       doc/decisions/, or adr/ with an INDEX.md). Set shared
-                       values in kendex.settings.toml under [env];
-                       .env.local overrides locally. When absent, search/list
-                       emit [] and exit 0 (note on stderr); next-id/get
-                       error. A configured path that exists but is not a
-                       directory is a hard error.
-  DECISION_ID_PREFIX   ID prefix for next-id (default: inferred from the
-                       last populated ID-column value, else D)
-  DECISION_ID_WIDTH    Zero-padding width for next-id (default: inferred
-                       from that same value, else 3)
-
-Examples:
-  decisions search "FFI error handling"
-  decisions search "seqlock|mmap"
-  decisions search --issue PROJ-189
-  decisions search "FFI" --limit 3
-  decisions list
-  decisions next-id
-  decisions get D017
-EOF
-}
 
 # Which indexed decision BODIES match each term.
 #
@@ -426,10 +439,6 @@ shift || true
 
 case "$action" in
   search)
-    if [[ -z "${1:-}" ]] || [[ "${1:-}" == "--help" ]]; then
-      show_help
-      exit 0
-    fi
     search_decisions "$@"
     ;;
   list)
@@ -442,9 +451,6 @@ case "$action" in
   get)
     require_decisions_dir
     cmd_get "$@"
-    ;;
-  help|--help|-h)
-    show_help
     ;;
   issue|issues)
     echo "Error: Unknown action '$action' — issue lookup is: decisions search --issue <ISSUE_ID>" >&2

@@ -51,11 +51,15 @@ for form in "--help" "-h" "help"; do
   assert_contains "$out" "Usage: worktree <command>" "worktree $form prints the command index"
 done
 
-for cmd in restack create remove cleanup check push fix-links repair-links; do
+for cmd in restack create remove cleanup check push fix-links repair-links \
+  codex-setup codex-branch codex-cleanup claude-setup claude-cleanup; do
   out=$(cd "$REPO" && "$WORKTREE_SCRIPT" "$cmd" --help)
   assert_eq "$?" 0 "worktree $cmd --help exits 0"
   [[ -n "$out" ]] || { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "worktree $cmd --help prints something"; }
 done
+
+out=$(cd "$REPO" && "$WORKTREE_SCRIPT" claude-setup --help)
+assert_contains "$out" "App-created worktree hooks" "hook commands share the app-hook help"
 
 if [[ -e "$TMP_ROOT/env-executed" ]]; then
   FAIL=$((FAIL + 1))
