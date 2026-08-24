@@ -51,7 +51,8 @@ for form in "--help" "-h" "help"; do
   assert_contains "$out" "Usage: worktree <command>" "worktree $form prints the command index"
 done
 
-for cmd in restack create remove cleanup check push fix-links repair-links \
+for cmd in restack create remove cleanup check list path exists push \
+  fix-links repair-links \
   codex-setup codex-branch codex-cleanup claude-setup claude-cleanup; do
   out=$(cd "$REPO" && "$WORKTREE_SCRIPT" "$cmd" --help)
   assert_eq "$?" 0 "worktree $cmd --help exits 0"
@@ -81,13 +82,25 @@ else
   printf '  ok    %s\n' "no help form sourced the project .env"
 fi
 
+out=$(cd "$REPO" && "$WORKTREE_SCRIPT" list --help)
+assert_contains "$out" "Usage: worktree list" "list --help prints the list help"
+out=$(cd "$REPO" && "$WORKTREE_SCRIPT" path --help)
+assert_contains "$out" "Usage: worktree path" "path --help prints help, not an issue lookup"
+out=$(cd "$REPO" && "$WORKTREE_SCRIPT" exists -h)
+assert_contains "$out" "worktree exists" "exists -h prints help, not an issue lookup"
+
 # Help needs no repository at all.
 NOREPO="$TMP_ROOT/norepo"
 mkdir -p "$NOREPO"
 out=$(cd "$NOREPO" && "$WORKTREE_SCRIPT" --help)
 assert_eq "$?" 0 "worktree --help exits 0 outside a git repository"
+for cmd in list path exists; do
+  out=$(cd "$NOREPO" && "$WORKTREE_SCRIPT" "$cmd" --help)
+  assert_eq "$?" 0 "worktree $cmd --help exits 0 outside a git repository"
+done
 
 # The top-level help states the loader's real precedence, lowest to highest.
+out=$(cd "$NOREPO" && "$WORKTREE_SCRIPT" --help)
 assert_contains "$out" ".env, then kendex.settings.toml" "help orders .env below the settings files"
 assert_contains "$out" ".kendex/settings.toml" "help names the .kendex settings file"
 assert_contains "$out" "parent environment beats every project file" "help states parent env outranks project files"

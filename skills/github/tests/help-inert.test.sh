@@ -44,5 +44,36 @@ else
   PASS=$((PASS + 1)); printf '  ok    %s\n' "no help form sourced the project .env"
 fi
 
+echo
+echo "=== -h/--help supplied as an option's VALUE stays data ==="
+
+# A stub gh keeps the run local: the point is only that the router loads
+# project configuration (the marker) instead of routing to help.
+mkdir -p "$TMP/bin"
+printf '#!/bin/sh\nexit 1\n' >"$TMP/bin/gh"
+chmod +x "$TMP/bin/gh"
+
+value_case() {
+  local name="$1" token="$2"; shift 2
+  local out
+  rm -f "$TMP/env-executed"
+  set +e
+  out=$(cd "$TMP/repo" && PATH="$TMP/bin:$PATH" "$GITHUB_SH" "$@" 2>&1)
+  set -e
+  if grep -qF "$token" <<<"$out"; then
+    FAIL=$((FAIL + 1)); printf '  FAIL  %s (printed help)\n' "$name"
+  else
+    PASS=$((PASS + 1)); printf '  ok    %s treats it as data\n' "$name"
+  fi
+  if [[ -e "$TMP/env-executed" ]]; then
+    PASS=$((PASS + 1)); printf '  ok    %s loads project config\n' "$name"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  %s loads project config\n' "$name"
+  fi
+}
+
+value_case "find-comment 42 --pattern -h" "Find PR Comment" find-comment 42 --pattern -h
+value_case "post-comment 42 --body -h" "Post PR-Level Comment" post-comment 42 --body -h
+
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

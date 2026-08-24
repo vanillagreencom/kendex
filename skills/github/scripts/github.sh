@@ -99,17 +99,37 @@ shift || true
 # shell code, and help must not fail on auth. A subcommand's --help routes
 # straight to its script, which prints help before any API work. The scan
 # covers every argv position — enumerating positions is how this class
-# leaks.
+# leaks — but skips the value an option consumes, so '--pattern -h' stays
+# data. An option missing from the value list only re-enables help routing
+# on a help-shaped value; configuration is still never loaded on an
+# apparent help call.
 case "$command" in
     help|--help|-h) show_help; exit 0 ;;
 esac
+
+# Does this option consume the following argument? Names whose arity
+# differs by subcommand (--pr, --json) resolve against the routed command.
+_takes_value() {
+    case "$1" in
+        --body|--body-file|--title|--message|--pattern|--author|--user|--base|--head|--label|--lines|--interval|--max-iter) return 0 ;;
+        --pr) [ "$command" = "post-reply" ] ;;
+        --json) [ "$command" = "pr-view" ] ;;
+        *) return 1 ;;
+    esac
+}
 _help_route=""
+_skip_value=""
 for _arg in "$@"; do
+    if [ -n "$_skip_value" ]; then
+        _skip_value=""
+        continue
+    fi
     case "$_arg" in
         --help|-h) _help_route=1; break ;;
+        --*) if _takes_value "$_arg"; then _skip_value=1; fi ;;
     esac
 done
-unset _arg
+unset _arg _skip_value
 
 if [ -z "$_help_route" ]; then
     # Auto-source project config and export GH_TOKEN for all subcommands.

@@ -432,6 +432,27 @@ worktree, only the main checkout and its default branch.
 EOF
 }
 
+print_list_help() {
+  cat <<'EOF'
+Usage: worktree list
+
+List every worktree registered to this repository (git worktree list), the
+main checkout included.
+EOF
+}
+
+print_path_exists_help() {
+  cat <<'EOF'
+Usage: worktree path <ID>
+       worktree exists <ID>
+
+path prints the worktree path derived for an issue ID (the configured base
+dir, falling back to the worktree registered for the issue branch). exists
+prints "true" when a directory exists at that path, "false" otherwise; both
+print to stdout and exit 0.
+EOF
+}
+
 print_hooks_help() {
   cat <<'EOF'
 Usage: worktree codex-setup    [PATH]
@@ -473,6 +494,8 @@ if [[ -n "$_want_help" ]]; then
     remove)       print_remove_help; exit 0 ;;
     cleanup)      print_cleanup_help; exit 0 ;;
     check)        print_check_help; exit 0 ;;
+    list)         print_list_help; exit 0 ;;
+    path|exists)  print_path_exists_help; exit 0 ;;
     push)         print_push_help; exit 0 ;;
     fix-links)    print_fix_links_help; exit 0 ;;
     repair-links) print_repair_links_help; exit 0 ;;
