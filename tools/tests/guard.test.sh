@@ -86,6 +86,19 @@ run_guard RATCHET_RAISE=1
 [ "$RC" -eq 0 ] && ok "the raised row with RATCHET_RAISE=1 passes" \
   || bad "the raised row with RATCHET_RAISE=1 passes" "rc=$RC out=$OUT"
 
+echo "=== a row only freezes the count it names ==="
+# The ratchet calls a row above the real count looser than reality; the
+# guard must not call the same file frozen. RATCHET_RAISE=1 keeps the raise
+# check quiet so the verdict is the cap check's alone.
+printf 'big.rs\t500\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+run_guard RATCHET_RAISE=1
+[ "$RC" -ne 0 ] && case "$OUT" in *"big.rs is 450 lines"*) true ;; *) false ;; esac \
+  && ok "450 lines under a 500 row is not frozen — the cap still fails" \
+  || bad "450 lines under a 500 row is not frozen — the cap still fails" "rc=$RC out=$OUT"
+printf 'big.rs\t450\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+
 echo "=== a UI TypeScript file between the 250 cap and the 400 default has a passing state ==="
 # The guard caps .ts at 250 and lifts the cap only for a baseline row; the
 # ratchet must judge .ts by the same 250, or it rejects that row as stale
