@@ -86,10 +86,11 @@ run_guard RATCHET_RAISE=1
 [ "$RC" -eq 0 ] && ok "the raised row with RATCHET_RAISE=1 passes" \
   || bad "the raised row with RATCHET_RAISE=1 passes" "rc=$RC out=$OUT"
 
-echo "=== a TypeScript file between the 250 cap and the 400 default has a passing state ==="
+echo "=== a UI TypeScript file between the 250 cap and the 400 default has a passing state ==="
 # The guard caps .ts at 250 and lifts the cap only for a baseline row; the
 # ratchet must judge .ts by the same 250, or it rejects that row as stale
-# and the file can pass neither gate.
+# and the file can pass neither gate. The class mirrors the guard's domain:
+# catalog TypeScript the guard never caps stays at the default.
 git -C "$R" commit -q --no-verify -m frozen
 SR="$(cd "$TEST_DIR/../.." && pwd)/skills/size-ratchet/scripts/size-ratchet"
 CLASSES=$(grep -E '^(SIZE_RATCHET_CLASSES|classes) = "' "$(cd "$TEST_DIR/../.." && pwd)/kendex.settings.toml" | head -1 | sed 's/.*= "\(.*\)".*/\1/')
@@ -99,25 +100,34 @@ run_ratchet() { # sets OUT and RC — the repo's classes, nothing else
   RC=0
   OUT="$(cd "$R" && env -u SIZE_RATCHET_THRESHOLD SIZE_RATCHET_SETTINGS_FILE=/dev/null SIZE_RATCHET_CLASSES="$CLASSES" "$SR" 2>&1)" || RC=$?
 }
-mkfile big.ts 300
+mkfile ui/big.ts 300
 git -C "$R" add -A
 run_guard RATCHET_RAISE=
-[ "$RC" -ne 0 ] && case "$OUT" in *"big.ts is 300 lines (cap 250)"*) true ;; *) false ;; esac \
-  && ok "300 lines of .ts with no row fails the 250 cap" \
-  || bad "300 lines of .ts with no row fails the 250 cap" "rc=$RC out=$OUT"
-printf 'big.rs\t450\nbig.ts\t300\n' >"$R/tools/size-ratchet-baseline.tsv"
+[ "$RC" -ne 0 ] && case "$OUT" in *"ui/big.ts is 300 lines (cap 250)"*) true ;; *) false ;; esac \
+  && ok "300 lines of ui/ .ts with no row fails the 250 cap" \
+  || bad "300 lines of ui/ .ts with no row fails the 250 cap" "rc=$RC out=$OUT"
+printf 'big.rs\t450\nui/big.ts\t300\n' >"$R/tools/size-ratchet-baseline.tsv"
 git -C "$R" add -A
 run_guard RATCHET_RAISE=1
-[ "$RC" -eq 0 ] && ok "300 lines of .ts with its row and RATCHET_RAISE=1 passes the guard" \
-  || bad "300 lines of .ts with its row and RATCHET_RAISE=1 passes the guard" "rc=$RC out=$OUT"
+[ "$RC" -eq 0 ] && ok "300 lines of ui/ .ts with its row and RATCHET_RAISE=1 passes the guard" \
+  || bad "300 lines of ui/ .ts with its row and RATCHET_RAISE=1 passes the guard" "rc=$RC out=$OUT"
 run_ratchet
 [ "$RC" -eq 0 ] && ok "the ratchet, under the repo's classes, accepts that same row" \
   || bad "the ratchet, under the repo's classes, accepts that same row" "rc=$RC out=$OUT"
-mkfile sub/tests/big.test.ts 300
+git -C "$R" commit -q --no-verify -m ui-row
+mkfile pi-extensions/x/big.ts 300
+git -C "$R" add -A
+run_guard RATCHET_RAISE=
+[ "$RC" -eq 0 ] && ok "control: the guard does not cap catalog .ts" \
+  || bad "control: the guard does not cap catalog .ts" "rc=$RC out=$OUT"
+run_ratchet
+[ "$RC" -eq 0 ] && ok "a 300-line catalog .ts needs no row — the 250 class stops where the guard's cap does" \
+  || bad "a 300-line catalog .ts needs no row — the 250 class stops where the guard's cap does" "rc=$RC out=$OUT"
+mkfile ui/tests/big.test.ts 300
 git -C "$R" add -A
 run_ratchet
-[ "$RC" -eq 0 ] && ok "a 300-line test .ts still belongs to the 800 test class, not the 250 one" \
-  || bad "a 300-line test .ts still belongs to the 800 test class, not the 250 one" "rc=$RC out=$OUT"
+[ "$RC" -eq 0 ] && ok "a 300-line ui/ test .ts still belongs to the 800 test class, not the 250 one" \
+  || bad "a 300-line ui/ test .ts still belongs to the 800 test class, not the 250 one" "rc=$RC out=$OUT"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
