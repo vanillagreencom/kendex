@@ -45,6 +45,7 @@ describe("audit store refresh", () => {
       views: [],
       auditing: false,
       error: null,
+      checkError: null,
       busy: false,
       auditedAt: null,
       backgroundFailureAnnounced: false,
@@ -72,7 +73,24 @@ describe("audit store refresh", () => {
     await useAuditStore.getState().refresh();
 
     expect(useAuditStore.getState().error).toBe("ipc down");
+    expect(useAuditStore.getState().checkError).toBe("ipc down");
     expect(useAuditStore.getState().auditing).toBe(false);
+  });
+
+  it("clears checkError once an audit answers again", async () => {
+    vi.mocked(commands.auditAll).mockResolvedValueOnce({
+      status: "error",
+      error: "boom",
+    });
+    await useAuditStore.getState().refresh();
+    expect(useAuditStore.getState().checkError).toBe("boom");
+
+    vi.mocked(commands.auditAll).mockResolvedValueOnce({
+      status: "ok",
+      data: [],
+    });
+    await useAuditStore.getState().refresh({ force: true });
+    expect(useAuditStore.getState().checkError).toBeNull();
   });
 
   it("re-arms the toast after a successful audit", async () => {
@@ -133,6 +151,7 @@ describe("audit store run() actions", () => {
       views: [emptyView],
       auditing: false,
       error: null,
+      checkError: null,
       busy: false,
       auditedAt: null,
       backgroundFailureAnnounced: false,
@@ -156,6 +175,9 @@ describe("audit store run() actions", () => {
     expect(dialog.title).toBe("Couldn't apply these changes");
     expect(dialog.message).toBe("disk is full");
     expect(useAuditStore.getState().error).toBe("disk is full");
+    // A failed item action is not a failed audit: only refresh may write
+    // the signal Home's couldn't-check row reads.
+    expect(useAuditStore.getState().checkError).toBeNull();
     expect(toast.error).not.toHaveBeenCalled();
   });
 
@@ -208,6 +230,7 @@ describe("applyPlan", () => {
       views: [emptyView],
       auditing: false,
       error: null,
+      checkError: null,
       busy: false,
       auditedAt: null,
       backgroundFailureAnnounced: false,

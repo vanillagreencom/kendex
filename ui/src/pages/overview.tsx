@@ -40,9 +40,11 @@ export function OverviewPage() {
   // failed audit is an answer: the section renders what is known, with the
   // failure as a row of its own, instead of a skeleton for the session.
   const stillChecking = useAuditStore(
-    (s) => s.auditedAt === null && s.error === null,
+    (s) => s.auditedAt === null && s.checkError === null,
   );
-  const auditError = useAuditStore((s) => s.error);
+  // `checkError`, not the store's shared `error`: item actions write the
+  // shared field too, and a failed remove or adopt is not a failed audit.
+  const auditError = useAuditStore((s) => s.checkError);
   const auditRefresh = useAuditStore((s) => s.refresh);
   const projectCount = useSettingsStore(
     (s) => s.settings?.projects?.length ?? 0,
@@ -86,7 +88,7 @@ export function OverviewPage() {
   // A first scan that failed is an answer, not a wait. Skeletons here would
   // say "still checking" for the rest of the session; the page says what
   // happened instead, with the retry beside it.
-  if (!result && error) {
+  if (!result && error !== null) {
     return (
       <div>
         <PageHeader title="Home" />
@@ -137,7 +139,7 @@ export function OverviewPage() {
               blank, but a re-scan that failed means everything below
               answers for an earlier moment — said here once, over all of
               it, rather than presented as current. */}
-          {result && error ? (
+          {result && error !== null ? (
             <StatusNote
               tone="warning"
               title={SCAN_STALE_TITLE}

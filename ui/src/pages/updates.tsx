@@ -26,6 +26,7 @@ import {
 } from "@/lib/copy";
 import {
   FOLLOW_SOURCE_HELP,
+  UPDATE_NEEDS_CHECK_NOTE,
   UPDATES_UNCONFIRMED_TITLE,
   updatesSubtitle,
 } from "@/lib/copy-updates";
@@ -87,7 +88,10 @@ export function UpdatesPage() {
         }
         action={
           <div className="flex gap-2">
-            {visible.length > 0 ? (
+            {/* A failed check always leaves its retry reachable: with no
+                visible rows but hidden ones or warnings keeping the page
+                on, this button is the only way to try again. */}
+            {visible.length > 0 || error !== null ? (
               <Button
                 size="sm"
                 variant="outline"
@@ -103,7 +107,10 @@ export function UpdatesPage() {
             {packageCount(visible) > 1 ? (
               <Button
                 size="sm"
-                disabled={busy || updatablePlaces(visible).length === 0}
+                disabled={
+                  busy || !loaded || updatablePlaces(visible).length === 0
+                }
+                title={!loaded ? UPDATE_NEEDS_CHECK_NOTE : undefined}
                 onClick={() => void updateRows(visible)}
               >
                 {UPDATE_ALL_LABEL}

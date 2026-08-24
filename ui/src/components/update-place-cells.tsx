@@ -20,6 +20,7 @@ import {
   followSourceLabel,
   HELD_BY_OWNER_NOTE,
   heldBySourceNote,
+  UPDATE_NEEDS_CHECK_NOTE,
 } from "@/lib/copy-updates";
 import { packageDisplayName } from "@/lib/labels";
 import { heldByOwner, placeName, switchLockedBy } from "@/lib/update-groups";
@@ -41,7 +42,8 @@ export function PlaceCells({
   among: Scope[];
   onIgnore?: (row: UpdateRow) => void;
 }) {
-  const { busy, updateOne, setAutoUpdate, setIgnored } = useUpdatesStore();
+  const { busy, loaded, updateOne, setAutoUpdate, setIgnored } =
+    useUpdatesStore();
   const goToPackage = useNavStore((s) => s.goToPackage);
   const name = packageDisplayName(row);
   const place = placeName(row.scope, among);
@@ -111,8 +113,16 @@ export function PlaceCells({
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={busy || !row.updateAvailable || heldByOwner(row)}
-                  title={heldByOwner(row) ? HELD_BY_OWNER_NOTE : undefined}
+                  disabled={
+                    busy || !loaded || !row.updateAvailable || heldByOwner(row)
+                  }
+                  title={
+                    heldByOwner(row)
+                      ? HELD_BY_OWNER_NOTE
+                      : !loaded
+                        ? UPDATE_NEEDS_CHECK_NOTE
+                        : undefined
+                  }
                   onClick={() => void updateOne(row)}
                 >
                   {UPDATE_LABEL}

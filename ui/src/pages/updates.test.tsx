@@ -2,8 +2,14 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import { updateRow } from "@/components/updates-test-rows";
-import { UPDATES_ATTENTION_TITLE, UPDATES_EMPTY } from "@/lib/copy";
 import {
+  CHECK_FOR_UPDATES_LABEL,
+  UPDATE_ALL_LABEL,
+  UPDATES_ATTENTION_TITLE,
+  UPDATES_EMPTY,
+} from "@/lib/copy";
+import {
+  UPDATE_NEEDS_CHECK_NOTE,
   UPDATES_CHECKING,
   UPDATES_UNCONFIRMED_TITLE,
 } from "@/lib/copy-updates";
@@ -87,5 +93,35 @@ describe("the Updates page across its read states", () => {
     expect(renderToStaticMarkup(<UpdatesPage />)).not.toContain(
       UPDATES_UNCONFIRMED_TITLE,
     );
+  });
+
+  // With every noteworthy row muted, a failed check used to strand the
+  // page: the stale note and error with no way to try again anywhere.
+  it("keeps the retry reachable when only hidden rows remain", () => {
+    stub.rows = [updateRow("gh", null, { ignored: true })];
+    stub.loaded = false;
+    stub.error = "no network";
+    const html = renderToStaticMarkup(<UpdatesPage />);
+    expect(html).toContain(UPDATES_UNCONFIRMED_TITLE);
+    expect(html).toContain(CHECK_FOR_UPDATES_LABEL);
+  });
+
+  it("offers no header check button on a clean page with nothing visible", () => {
+    stub.rows = [updateRow("gh", null, { ignored: true })];
+    const html = renderToStaticMarkup(<UpdatesPage />);
+    expect(html).not.toContain(CHECK_FOR_UPDATES_LABEL);
+  });
+
+  // Stale rows name a `latest` nobody confirmed; the page-wide Update all
+  // waits for a check that succeeds, like the per-row actions.
+  it("holds Update all over rows a failed check left behind", () => {
+    stub.rows = [updateRow("one", null), updateRow("two", null)];
+    stub.loaded = false;
+    stub.error = "no network";
+    const html = renderToStaticMarkup(<UpdatesPage />);
+    expect(html).toMatch(
+      new RegExp(`<button[^>]*disabled=""[^>]*>${UPDATE_ALL_LABEL}<`),
+    );
+    expect(html).toContain(`title="${UPDATE_NEEDS_CHECK_NOTE}"`);
   });
 });

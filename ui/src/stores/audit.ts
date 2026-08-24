@@ -23,6 +23,11 @@ interface AuditState {
   views: AuditView[];
   auditing: boolean;
   error: string | null;
+  /** Why the last audit itself failed, or null — written only by
+   *  `refresh`. The shared `error` above is also set by item actions, so a
+   *  failed remove or adopt would otherwise read as a machine that could
+   *  not be checked. */
+  checkError: string | null;
   busy: boolean;
   /** The startup audit has already toasted its failure — suppresses repeat
    * toasts on every silent retry until one succeeds. */
@@ -86,6 +91,7 @@ export const useAuditStore = create<AuditState>((set, get) => {
     auditedAt: null,
     auditing: false,
     error: null,
+    checkError: null,
     busy: false,
     backgroundFailureAnnounced: false,
 
@@ -110,10 +116,11 @@ export const useAuditStore = create<AuditState>((set, get) => {
             views: response.data,
             auditedAt: Date.now(),
             error: null,
+            checkError: null,
             backgroundFailureAnnounced: false,
           });
         } else {
-          set({ error: response.error });
+          set({ error: response.error, checkError: response.error });
           if (!get().backgroundFailureAnnounced) {
             toast.error(response.error);
             set({ backgroundFailureAnnounced: true });

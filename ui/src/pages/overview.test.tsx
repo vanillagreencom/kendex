@@ -31,6 +31,7 @@ const { stub, wrap } = vi.hoisted(() => {
     market: { rowsCurrent: true, loaded: true },
     audit: {
       auditedAt: null as number | null,
+      checkError: null as string | null,
       error: null as string | null,
     },
   };
@@ -86,7 +87,7 @@ beforeEach(() => {
   stub.scan = { result: null, error: null, scanning: false };
   stub.updates = { error: null };
   stub.market = { rowsCurrent: true, loaded: true };
-  stub.audit = { auditedAt: null, error: null };
+  stub.audit = { auditedAt: null, checkError: null, error: null };
 });
 
 // `result` starting null and staying null used to leave every section on
@@ -105,6 +106,15 @@ describe("Home when the first scan fails", () => {
     expect(html).toContain(esc(SCAN_FAILED_TITLE));
     expect(html).toContain("config unreadable");
     expect(html).toContain(SCAN_AGAIN_LABEL);
+    expect(html).not.toContain('data-slot="skeleton"');
+  });
+
+  // An empty message is still a failure — testing it by truthiness would
+  // read "" as no error and hold the skeletons for the session.
+  it("treats a failure with an empty message as a failure, not a wait", () => {
+    stub.scan.error = "";
+    const html = renderToStaticMarkup(<OverviewPage />);
+    expect(html).toContain(esc(SCAN_FAILED_TITLE));
     expect(html).not.toContain('data-slot="skeleton"');
   });
 });
@@ -129,6 +139,11 @@ describe("Home when a later scan fails", () => {
       SCAN_STALE_TITLE,
     );
   });
+
+  it("marks retained figures stale on a failure with an empty message", () => {
+    stub.scan = { result: scanned, error: "", scanning: false };
+    expect(renderToStaticMarkup(<OverviewPage />)).toContain(SCAN_STALE_TITLE);
+  });
 });
 
 // Home derives its attention list from the updates store's rows; a failed
@@ -137,7 +152,7 @@ describe("Home when a later scan fails", () => {
 describe("Home when the update check fails", () => {
   it("says updates couldn't be checked in the attention list", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
-    stub.audit = { auditedAt: Date.now(), error: null };
+    stub.audit = { auditedAt: Date.now(), checkError: null, error: null };
     stub.updates = { error: "no network" };
     expect(renderToStaticMarkup(<OverviewPage />)).toContain(
       esc(UPDATES_ATTENTION_TITLE),
@@ -146,7 +161,7 @@ describe("Home when the update check fails", () => {
 
   it("claims nothing when the check answered", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
-    stub.audit = { auditedAt: Date.now(), error: null };
+    stub.audit = { auditedAt: Date.now(), checkError: null, error: null };
     expect(renderToStaticMarkup(<OverviewPage />)).not.toContain(
       esc(UPDATES_ATTENTION_TITLE),
     );
@@ -166,7 +181,11 @@ describe("Home when the audit fails", () => {
 
   it("drops the skeleton and says the audit failed, with the retry", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
-    stub.audit = { auditedAt: null, error: "audit crashed" };
+    stub.audit = {
+      auditedAt: null,
+      checkError: "audit crashed",
+      error: "audit crashed",
+    };
     const html = renderToStaticMarkup(<OverviewPage />);
     expect(html).toContain(esc(AUDIT_ATTENTION_TITLE));
     expect(html).toContain(TRY_AGAIN_LABEL);
@@ -175,10 +194,38 @@ describe("Home when the audit fails", () => {
 
   it("no longer suppresses the other failure rows", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
-    stub.audit = { auditedAt: null, error: "audit crashed" };
+    stub.audit = {
+      auditedAt: null,
+      checkError: "audit crashed",
+      error: "audit crashed",
+    };
     stub.updates = { error: "no network" };
     expect(renderToStaticMarkup(<OverviewPage />)).toContain(
       esc(UPDATES_ATTENTION_TITLE),
+    );
+  });
+
+  // The inverse control: a healthy Home must carry no audit row, or the
+  // row's gate could be anything at all and the suite would not notice.
+  it("claims nothing when the audit answered clean", () => {
+    stub.scan = { result: scanned, error: null, scanning: false };
+    stub.audit = { auditedAt: Date.now(), checkError: null, error: null };
+    expect(renderToStaticMarkup(<OverviewPage />)).not.toContain(
+      esc(AUDIT_ATTENTION_TITLE),
+    );
+  });
+
+  // Item actions write the store's shared `error`; only `checkError` —
+  // written by refresh alone — may put the couldn't-check row on Home.
+  it("does not blame the audit for a failed item action", () => {
+    stub.scan = { result: scanned, error: null, scanning: false };
+    stub.audit = {
+      auditedAt: Date.now(),
+      checkError: null,
+      error: "couldn't remove gh",
+    };
+    expect(renderToStaticMarkup(<OverviewPage />)).not.toContain(
+      esc(AUDIT_ATTENTION_TITLE),
     );
   });
 });

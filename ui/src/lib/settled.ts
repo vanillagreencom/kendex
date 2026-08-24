@@ -2,6 +2,11 @@ type CommandResult<T> =
   | { status: "ok"; data: T }
   | { status: "error"; error: string };
 
+/** Stands in when a rejection carries no message at all. An empty error
+ *  body renders as blank under whatever title shows it, and consumers that
+ *  test the message by truthiness would read the failure as no failure. */
+export const NO_REASON_GIVEN = "Something went wrong, but no reason was given";
+
 /** Await a command so it always answers. A rejected call — transport
  *  failing, not the engine refusing — used to escape the stores entirely,
  *  leaving no error and no result: to the person that silence read as a
@@ -13,9 +18,10 @@ export async function settled<T>(
   try {
     return await read;
   } catch (thrown) {
+    const message = thrown instanceof Error ? thrown.message : String(thrown);
     return {
       status: "error",
-      error: thrown instanceof Error ? thrown.message : String(thrown),
+      error: message === "" ? NO_REASON_GIVEN : message,
     };
   }
 }

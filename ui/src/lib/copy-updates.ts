@@ -50,3 +50,5 @@ export const nothingToUpdateToastLabel = (skipped: number): string =>
 export const UPDATES_CHECKING = "Checking for updates…";
 export const UPDATES_UNCONFIRMED_TITLE =
   "These are the last versions kendex could check";
+export const UPDATE_NEEDS_CHECK_NOTE =
+  "Updating needs a check that succeeds first — these versions may be stale";

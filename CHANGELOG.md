@@ -299,7 +299,10 @@ changes carry a **Breaking** call-out with their migration note inline.
   when a check fails, and heads versions kept from an earlier check as the
   last kendex could check instead of presenting them as current. These
   states now also cover a call that fails in transport, not only one the
-  engine refuses.
+  engine refuses. Update buttons wait for a check that succeeded — updating
+  from versions nobody confirmed could move a held package to a stale
+  commit — and a failed check always leaves its retry reachable, even when
+  everything noteworthy is muted.
 - `kendex apply --replace-unmanaged` no longer gives up on the whole scope
   because one item cannot be settled. A repo arriving on kendex with one
   odd corner — say, a shortcut somebody set up where a skill installs —

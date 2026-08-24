@@ -7,7 +7,6 @@ import {
   updatedWithPlaceToastLabel,
 } from "@/lib/copy-updates";
 import { scopeKey } from "@/lib/scope";
-import { settled } from "@/lib/settled";
 import {
   packageCount,
   placeName,
@@ -18,6 +17,7 @@ import { bulkUpdateToast } from "@/lib/update-toasts";
 import { useAuditStore } from "./audit";
 import { useProblemsStore } from "./problems";
 import { useScanStore } from "./scan";
+import { overviewApplier } from "./updates-overview";
 
 /** A row worth a line on the page: a newer version, a package gone from
  *  its source, or installs disagreeing on their version — each a standing
@@ -89,29 +89,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     return true;
   };
 
-  // The one place a read of the standing lands, however it went. A failure
-  // — a returned refusal and a rejected call alike, via `settled` — marks
-  // the data stale (loaded = false) and keeps why (error) rather than
-  // leaving the last-good rows trusted: the package page gates the Update
-  // button on `loaded`, and acting on rows we could not refresh is exactly
-  // the fail-open this closes. Returns why the read failed, or null, so
-  // callers make their own noise.
-  const applyOverview = async (
-    read: ReturnType<typeof commands.updatesOverview>,
-  ): Promise<string | null> => {
-    const response = await settled(read);
-    if (response.status === "ok") {
-      set({
-        rows: response.data.rows,
-        warnings: response.data.warnings,
-        loaded: true,
-        error: null,
-      });
-      return null;
-    }
-    set({ loaded: false, error: response.error });
-    return response.error;
-  };
+  const applyOverview = overviewApplier(set);
 
   const reload = async () => {
     await applyOverview(commands.updatesOverview());
@@ -243,6 +221,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
           row.repo,
           ignored,
         ),
+        { mutation: true },
       );
       if (error !== null) showError(UPDATE_ERROR_TITLE, error);
     },

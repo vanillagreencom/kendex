@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
+import { useProblemsStore } from "./problems";
 import {
   hiddenUpdates,
   useUpdatesStore,
@@ -151,6 +152,110 @@ describe("updates store", () => {
     await useUpdatesStore.getState().check();
     expect(commands.updatesRefresh).not.toHaveBeenCalled();
     useUpdatesStore.setState({ checking: false });
+  });
+
+  // Reads land in any order: without ordering, a slow mount-time load
+  // landing last would overwrite a fresher answer and stamp its stale rows
+  // loaded and current.
+  it("discards a slow load that lands after a fresher check", async () => {
+    let resolveLoad!: (
+      value: Awaited<ReturnType<typeof commands.updatesOverview>>,
+    ) => void;
+    vi.mocked(commands.updatesOverview).mockReturnValue(
+      new Promise((resolve) => {
+        resolveLoad = resolve;
+      }),
+    );
+    const loading = useUpdatesStore.getState().load();
+
+    const fresh = [row({ name: "fresh" })];
+    vi.mocked(commands.updatesRefresh).mockResolvedValue({
+      status: "ok",
+      data: { rows: fresh, warnings: [] },
+    });
+    await useUpdatesStore.getState().check();
+
+    resolveLoad({
+      status: "ok",
+      data: { rows: [row({ name: "stale" })], warnings: [] },
+    });
+    await loading;
+
+    expect(useUpdatesStore.getState().rows).toEqual(fresh);
+    expect(useUpdatesStore.getState().loaded).toBe(true);
+  });
+
+  it("discards a slow failed load landing after a fresher answer", async () => {
+    let rejectLoad!: (reason: Error) => void;
+    vi.mocked(commands.updatesOverview).mockReturnValue(
+      new Promise((_, reject) => {
+        rejectLoad = reject;
+      }),
+    );
+    const loading = useUpdatesStore.getState().load();
+
+    vi.mocked(commands.updatesRefresh).mockResolvedValue({
+      status: "ok",
+      data: { rows: [row({})], warnings: [] },
+    });
+    await useUpdatesStore.getState().check();
+
+    rejectLoad(new Error("ipc down"));
+    await loading;
+
+    expect(useUpdatesStore.getState().loaded).toBe(true);
+    expect(useUpdatesStore.getState().error).toBeNull();
+  });
+
+  it("keeps a mutation's answer over a slower load's", async () => {
+    let resolveLoad!: (
+      value: Awaited<ReturnType<typeof commands.updatesOverview>>,
+    ) => void;
+    vi.mocked(commands.updatesOverview).mockReturnValue(
+      new Promise((resolve) => {
+        resolveLoad = resolve;
+      }),
+    );
+    const loading = useUpdatesStore.getState().load();
+
+    const muted = [row({ ignored: true })];
+    vi.mocked(commands.updateSetIgnored).mockResolvedValue({
+      status: "ok",
+      data: { rows: muted, warnings: [] },
+    });
+    await useUpdatesStore.getState().setIgnored(row({}), true);
+
+    resolveLoad({
+      status: "ok",
+      data: { rows: [row({})], warnings: [] },
+    });
+    await loading;
+
+    expect(useUpdatesStore.getState().rows).toEqual(muted);
+  });
+
+  // A refused mute re-read nothing: the rows on screen are still the last
+  // good read's answer, and marking them stale would disable Update
+  // buttons over a failure that had nothing to do with checking.
+  it("a mute that fails leaves the last good read trusted", async () => {
+    const kept = [row({})];
+    useUpdatesStore.setState({ rows: kept, loaded: true, error: null });
+    useProblemsStore.setState({
+      dialog: { open: false, title: "", steps: [], actions: [] },
+    });
+    vi.mocked(commands.updateSetIgnored).mockResolvedValue({
+      status: "error",
+      error: "manifest busy",
+    });
+
+    await useUpdatesStore.getState().setIgnored(row({}), true);
+
+    expect(useUpdatesStore.getState().rows).toEqual(kept);
+    expect(useUpdatesStore.getState().loaded).toBe(true);
+    expect(useUpdatesStore.getState().error).toBeNull();
+    // The refusal still reaches the person, through the error modal.
+    expect(useProblemsStore.getState().dialog.open).toBe(true);
+    expect(useProblemsStore.getState().dialog.message).toBe("manifest busy");
   });
 
   it("muting keeps the row, flagged — and unmuting brings it back", async () => {
