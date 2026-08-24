@@ -106,8 +106,24 @@ echo "=== a UI TypeScript file between the 250 cap and the 400 default has a pas
 # catalog TypeScript the guard never caps stays at the default.
 git -C "$R" commit -q --no-verify -m frozen
 SR="$(cd "$TEST_DIR/../.." && pwd)/skills/size-ratchet/scripts/size-ratchet"
-CLASSES=$(grep -E '^(SIZE_RATCHET_CLASSES|classes) = "' "$(cd "$TEST_DIR/../.." && pwd)/kendex.settings.toml" | head -1 | sed 's/.*= "\(.*\)".*/\1/')
-[ -n "$CLASSES" ] || { echo "no size-ratchet classes found in kendex.settings.toml"; exit 2; }
+SETTINGS="$(cd "$TEST_DIR/../.." && pwd)/kendex.settings.toml"
+# The native chain (kendex guard run) reads the ordered [guards.size-ratchet]
+# classes array; the shell ratchet reads the v1 SIZE_RATCHET_CLASSES line.
+# The cases below judge by the array, and the two must agree entry for entry.
+CLASSES=$(awk '
+  /^\[guards\.size-ratchet\]/ { t = 1; next }
+  t && /^\[/ { t = 0 }
+  t && /^classes = \[/ { c = 1; next }
+  c && /^\]/ { c = 0 }
+  c && match($0, /pattern = "[^"]*"/) {
+    p = substr($0, RSTART + 11, RLENGTH - 12)
+    if (match($0, /threshold = [0-9]+/)) printf "%s%s=%s", (n++ ? ";" : ""), p, substr($0, RSTART + 12, RLENGTH - 12)
+  }
+' "$SETTINGS")
+[ -n "$CLASSES" ] || { echo "no [guards.size-ratchet] classes array found in kendex.settings.toml"; exit 2; }
+V1=$(sed -n 's/^SIZE_RATCHET_CLASSES = "\(.*\)"$/\1/p' "$SETTINGS")
+[ "$V1" = "$CLASSES" ] && ok "the v1 SIZE_RATCHET_CLASSES line and the [guards.size-ratchet] array agree" \
+  || bad "the v1 SIZE_RATCHET_CLASSES line and the [guards.size-ratchet] array agree" "v1=$V1 array=$CLASSES"
 run_ratchet() { # sets OUT and RC — the repo's classes, nothing else
   OUT=""
   RC=0
