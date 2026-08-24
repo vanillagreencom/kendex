@@ -220,8 +220,10 @@ LINEAR_FORMAT = "safe"
 ORCH_STATE_DIR = "tmp"
 
 # File-size ratchet classes: the ceiling a path gets when it is not the
-# default. Tests and generated READMEs earn room the default does not give.
-SIZE_RATCHET_CLASSES = "*/README.md=120;*/tests/*=800;*/test/*=800;*/__tests__/*=800;*/tests.rs=800;*test_util.rs=800;*.test.*=800"
+# default. Tests and generated READMEs earn room the default does not give;
+# TypeScript shares the 250 cap tools/guard holds it to, so a row the guard
+# accepts is never stale here.
+SIZE_RATCHET_CLASSES = "*/README.md=120;*/tests/*=800;*/test/*=800;*/__tests__/*=800;*/tests.rs=800;*test_util.rs=800;*.test.*=800;*.ts=250;*.tsx=250"
 
 # ── Worktrees ────────────────────────────────────────────────────────────
 # What a fresh issue worktree gets from this checkout. Symlink untracked
