@@ -1432,9 +1432,9 @@ export interface BlockReason {
 /**
  * Locate the nearest Cargo manifest directory for the relevant Rust files when
  * the repo root has no Cargo.toml (kendex nests its workspace under cli/), so
- * `cargo metadata` from the repo root finds nothing. Mirrors
- * hooks/pre-commit-check.sh: walk up from each file's directory to the first
- * ancestor that contains a Cargo.toml. Returns an absolute directory or null.
+ * `cargo metadata` from the repo root finds nothing. Walks up from each
+ * file's directory to the first ancestor that contains a Cargo.toml.
+ * Returns an absolute directory or null.
  * Files are repo-root-relative (from `git ... --name-only`).
  */
 export function nearestCargoManifestDir(repoRoot: string, files: string[]): string | null {
@@ -1464,9 +1464,8 @@ export async function runPreCommitCheck(cwd: string, timeoutMs: number, command:
 	let workspace = await findCargoWorkspaceRootResultAsync(commit.cwd, metadataBudget);
 	if (workspace.kind === "none") {
 		// The manifest may live in a subdirectory (kendex nests cli/Cargo.toml),
-		// so `cargo metadata` from the repo root finds nothing. Mirror
-		// hooks/pre-commit-check.sh and resolve the workspace from the nearest
-		// Cargo.toml above the relevant Rust files.
+		// so `cargo metadata` from the repo root finds nothing; resolve the
+		// workspace from the nearest Cargo.toml above the relevant Rust files.
 		const manifestDir = nearestCargoManifestDir(commit.root, rustFiles.files);
 		if (manifestDir) {
 			workspace = await findCargoWorkspaceRootResultAsync(manifestDir, metadataBudget);

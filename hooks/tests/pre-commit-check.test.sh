@@ -42,6 +42,10 @@ case "${KENDEX_EXIT:-0}" in
     echo "pre-commit: a guard could not complete — commit blocked; fix the errors above"
     ;;
 esac
+if [ "${KENDEX_SKIP:-0}" != "0" ]; then
+  echo "=== biome"
+  echo "biome: biome.json present but no biome binary found, pinned or on PATH — skipped"
+fi
 exit "${KENDEX_EXIT:-0}"
 EOF
 chmod +x "$BIN_DIR/kendex"
@@ -228,10 +232,44 @@ run_hook "$ARMED_BY_PATH" "$(payload 'git commit --no-verify -m x')" KENDEX_EXIT
 assert_eq "$rc" "2" "--no-verify beside a hooksPath hook is not waved through either"
 
 echo
+echo "the hook gates its working directory only"
+
+# The contract as built: git answers the which-repository question only
+# where the target has an armed hook; this hook never follows -C, cd,
+# --git-dir or --work-tree. From an armed directory it defers whatever
+# the target; from an unarmed one it judges itself and says so.
+run_hook "$ARMED" "$(payload "git -C $UNARMED commit -m x")" KENDEX_EXIT=1
+assert_eq "$rc" "0" "an armed cwd defers even when the commit is aimed at an unarmed repository"
+assert_not_contains "$log" "kendex" "the unarmed target gets no chain from here — its own hook is its gate"
+
+run_hook "$UNARMED" "$(payload "git -C $ARMED commit -m x")" KENDEX_EXIT=1
+assert_eq "$rc" "2" "an unarmed cwd runs the chain for itself whatever the target"
+assert_contains "$log" "kendex guard run pre-commit" "the chain ran in the unarmed cwd"
+assert_contains "$err" "judged $UNARMED only" "the notice names the directory that was judged"
+
+# The quotes arrive JSON-escaped, as the harness sends them.
+# shellcheck disable=SC2016
+run_hook "$UNARMED" '{"tool_input":{"command":"cd \"$dir\" && git commit -m x"}}' KENDEX_EXIT=0
+assert_contains "$err" "moves repositories" "a leading cd is a repository-moving word"
+
+run_hook "$UNARMED" "$(payload 'git commit -m x')" KENDEX_EXIT=0
+assert_not_contains "$err" "moves repositories" "no notice for a commit in place"
+
+run_hook "$NOT_A_REPO" "$(payload "git -C $UNARMED commit -m x")" KENDEX_EXIT=1
+assert_eq "$rc" "0" "a non-repository cwd gates nothing"
+assert_contains "$err" "moves repositories" "and says the target is elsewhere"
+
+echo
 echo "fallback verdicts"
 
 run_hook "$UNARMED" "$(payload 'git commit -m test')" KENDEX_EXIT=0
 assert_eq "$rc" "0" "a clean chain lets the commit proceed"
+assert_eq "$err" "" "a clean chain with nothing skipped is silent"
+
+run_hook "$UNARMED" "$(payload 'git commit -m test')" KENDEX_EXIT=0 KENDEX_SKIP=1
+assert_eq "$rc" "0" "a clean chain with a skipped lane still lets the commit proceed"
+assert_contains "$err" "no biome binary found" "the skipped lane's own line reaches stderr"
+assert_not_contains "$err" "=== biome" "only the skip line is forwarded, not the whole report"
 
 run_hook "$UNARMED" "$(payload 'git commit -m test')" KENDEX_EXIT=1
 assert_contains "$err" "rust-clippy FAIL" "the chain's own output reaches stderr"

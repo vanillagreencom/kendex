@@ -117,22 +117,32 @@ changes carry a **Breaking** call-out with their migration note inline.
   project's own pinned binary first). Each is a `[guards.<name>]` table
   like every other check — `enabled = false` turns one off. The
   `pre-commit-check` agent hook no longer re-implements those checks or
-  tries to parse which repository a command commits to: it defers to the
-  repository's armed git pre-commit hook — one validation per commit, and
-  git itself answers the which-repo question — and runs the guard chain
-  from its working directory only where no hook is armed, or where the
-  command sidesteps the armed one (`--no-verify`, `-n`, a `core.hooksPath`
-  override). In a repository with no armed hook the chain is the gate, so
-  its refusals block there too: settings still carrying v1
-  `SIZE_RATCHET_*`/`GROWTH_GUARDS_*` values with no `[guards]` tables
-  refuse every commit until `kendex guard import-v1` converts them once,
-  and a Biome project whose pinned `biome` launcher cannot start (no
-  `node` on PATH) blocks naming the launcher instead of skipping.
-  Commands the old
-  parser refused — `$(…)`, backticks, `cd "$dir"`, an unexpanded `$repo` —
-  no longer block commits, and forms it silently mischecked
-  (`--git-dir`/`--work-tree`, `(cd … && git commit)`) are now checked in
-  the right repository by git. **Breaking**: the hook's
+  tries to parse which repository a command commits to. Its contract: it
+  defers to the armed git pre-commit hook of its own working directory —
+  one validation per commit — and runs the guard chain from that
+  directory only where no hook is armed there, or where the command
+  sidesteps the armed one (`--no-verify`, `-n`, a `core.hooksPath`
+  override). It gates its working directory only: a commit aimed at
+  another repository (`git -C`, `--git-dir`, `cd … && git commit`) is
+  gated by that repository's own armed hook — `kendex guard install`
+  there — and by nothing in this hook, which says so on stderr when it
+  sees such a command from an unarmed directory. In a repository with no
+  armed hook the chain is the gate, so its refusals block there too:
+  settings still carrying v1 `SIZE_RATCHET_*`/`GROWTH_GUARDS_*` values
+  with no `[guards]` tables refuse every commit until `kendex guard
+  import-v1` converts them once, and a Biome project whose pinned
+  `biome` launcher cannot start (no `node` on PATH) blocks naming the
+  launcher instead of skipping. On Claude Code and Codex, where this
+  script is the hook, commands the old parser refused — `$(…)`,
+  backticks, `cd "$dir"`, an unexpanded `$repo` — no longer block
+  commits, and forms it silently mischecked (`--git-dir`/`--work-tree`,
+  `(cd … && git commit)`) are no longer mischecked: git runs the target
+  repository's hook where one is armed. Pi's native pre-commit listener
+  (`pi-hooks`) still parses commit targets, still refuses shell
+  expansion, and runs only fmt and clippy (KEN-554). The agent hook no
+  longer runs `preflight --staged`; commit-time preflight is the
+  repository's own git pre-commit hook or the chain's machine-local
+  extension, per the preflight skill. **Breaking**: the hook's
   `KENDEX_PRE_COMMIT_RUST_CLIPPY` setting is gone; disable the lane with
   `[guards.rust-clippy] enabled = false` (or
   `KENDEX_GUARDS_RUST_CLIPPY_ENABLED=false` machine-locally), and point a

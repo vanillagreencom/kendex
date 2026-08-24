@@ -252,7 +252,11 @@ fn run_local_entry(ctx: &GuardCtx, entry: &str) -> Result<Outcome> {
         true => path.to_path_buf(),
         false => ctx.root.join(path),
     };
-    let output = crate::process::Hardened::local_guard(&absolute, &ctx.root)
+    let mut command = crate::process::Hardened::local_guard(&absolute, &ctx.root);
+    if let Some(index) = &ctx.index_file {
+        command = command.index_file(index);
+    }
+    let output = command
         .run()
         .map_err(|error| guard_err("repo-local", error.to_string()))?;
     let mut outcome = Outcome::default();

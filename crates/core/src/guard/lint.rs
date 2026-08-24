@@ -117,29 +117,41 @@ enum FailureReads {
 /// rust-fmt — staged `.rs` files must be formatted.
 pub fn run_fmt(ctx: &GuardCtx) -> Result<Outcome> {
     const CHECK: &str = "rust-fmt";
-    rust_lane(ctx, CHECK, FailureReads::ExitOneOnly, |manifest| {
-        let mut args = vec!["fmt"];
-        if let Some(path) = manifest {
-            args.extend(["--manifest-path", path]);
-        }
-        args.push("--check");
-        args
-    })
+    rust_lane(
+        ctx,
+        CHECK,
+        FailureReads::ExitOneOnly,
+        "run cargo fmt and restage",
+        |manifest| {
+            let mut args = vec!["fmt"];
+            if let Some(path) = manifest {
+                args.extend(["--manifest-path", path]);
+            }
+            args.push("--check");
+            args
+        },
+    )
 }
 
 /// rust-clippy — staged `.rs` files lint clean under `-D warnings`,
 /// scoped per owning manifest.
 pub fn run_clippy(ctx: &GuardCtx) -> Result<Outcome> {
     const CHECK: &str = "rust-clippy";
-    rust_lane(ctx, CHECK, FailureReads::AnyFailure, |manifest| {
-        let mut args = vec!["clippy"];
-        match manifest {
-            Some(path) => args.extend(["--manifest-path", path]),
-            None => args.push("--workspace"),
-        }
-        args.extend(["--all-targets", "--", "-D", "warnings"]);
-        args
-    })
+    rust_lane(
+        ctx,
+        CHECK,
+        FailureReads::AnyFailure,
+        "fix the reported warnings before committing",
+        |manifest| {
+            let mut args = vec!["clippy"];
+            match manifest {
+                Some(path) => args.extend(["--manifest-path", path]),
+                None => args.push("--workspace"),
+            }
+            args.extend(["--all-targets", "--", "-D", "warnings"]);
+            args
+        },
+    )
 }
 
 /// The shared shape of both Rust lanes: resolve scope from the staged
@@ -149,6 +161,7 @@ fn rust_lane(
     ctx: &GuardCtx,
     check: &str,
     failures: FailureReads,
+    remedy: &str,
     lane_args: impl Fn(Option<&str>) -> Vec<&str>,
 ) -> Result<Outcome> {
     let mut out = Outcome::default();
@@ -196,7 +209,7 @@ fn rust_lane(
                 &mut out,
                 &output,
                 format!("{check} FAIL: {invocation}"),
-                &remedy(check),
+                remedy,
             );
         }
     }
@@ -208,13 +221,6 @@ fn rust_lane(
         ));
     }
     Ok(out)
-}
-
-fn remedy(check: &str) -> String {
-    match check {
-        "rust-fmt" => "run cargo fmt and restage".to_owned(),
-        _ => "fix the reported warnings before committing".to_owned(),
-    }
 }
 
 /// biome — staged JS/TS/JSON files in a Biome project lint clean. The

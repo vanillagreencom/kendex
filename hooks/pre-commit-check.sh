@@ -3,8 +3,8 @@
 # name: pre-commit-check
 # event: PreToolUse
 # matcher: Bash
-# description: On a git commit, defer to the repository's armed git pre-commit hook (kendex guard install arms one); where none is armed, or the command sidesteps it with git's no-verify flag, -n, or a core.hooksPath override, run the kendex guard pre-commit chain — format, lint, and commit guards — from the working directory as the fallback gate.
-# safety: Prevents committing unchecked code in repositories without an armed git pre-commit hook, and in armed repositories when the command bypasses that hook (no-verify, -n, core.hooksPath).
+# description: On a git commit, defer to the working directory's armed git pre-commit hook (kendex guard install arms one); where none is armed there, or the command sidesteps it with git's no-verify flag, -n, or a core.hooksPath override, run the kendex guard pre-commit chain — format, lint, and commit guards — from the working directory as the fallback gate. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
+# safety: Prevents committing unchecked code from the working directory when it has no armed git pre-commit hook or the command bypasses that hook (no-verify, -n, core.hooksPath); a commit aimed at another repository is that repository's armed hook's to gate.
 # timeout: 1800
 # ---
 
@@ -36,6 +36,17 @@ fi
 WORDS=" $(printf '%s' "$COMMAND" | sed 's/\\[ntr]/ /g' | tr -c 'a-zA-Z0-9_=-' ' ') "
 printf '%s' "$WORDS" | grep -qE ' git( .*)? commit ' || exit 0
 
+# Repository-moving words (-C, --git-dir, --work-tree, cd) mean the commit
+# may land elsewhere. This lane never follows them — git does, where the
+# target has an armed hook — so where it cannot defer it says which
+# directory it judged, and that the target's own hook is the target's gate.
+MOVES=""
+printf '%s' "$WORDS" | grep -qE ' (cd|-C|--git-dir[^ ]*|--work-tree[^ ]*) ' && MOVES=1
+elsewhere_notice() {
+  [ -z "$MOVES" ] && return 0
+  echo "pre-commit-check: the command moves repositories (-C, --git-dir, --work-tree, or cd); this hook judged $PWD only — the target repository is gated by its own armed git pre-commit hook, if any (kendex guard install there)" >&2
+}
+
 # An armed hook means git itself will gate the commit; running the chain
 # here too would validate everything twice. Unless the command sidesteps
 # it: git's no-verify flag — spelled out or cut to any unique prefix, as
@@ -44,11 +55,15 @@ printf '%s' "$WORDS" | grep -qE ' git( .*)? commit ' || exit 0
 # hooks this lane did not inspect — then git's check never happens and
 # this lane is the check after all. One of those words from some other
 # command on the line costs a guard run, never a check.
-HOOKS_DIR=$(git rev-parse --git-path hooks 2>/dev/null) || exit 0
+HOOKS_DIR=$(git rev-parse --git-path hooks 2>/dev/null) || {
+  elsewhere_notice
+  exit 0
+}
 if [ -x "$HOOKS_DIR/pre-commit" ] \
   && ! printf '%s' "$WORDS" | grep -qE ' (--no-veri[a-z]*|-[a-zA-Z]*n[a-zA-Z]*|core hooksPath[^ ]*) '; then
   exit 0
 fi
+elsewhere_notice
 
 if ! command -v kendex >/dev/null 2>&1; then
   echo "pre-commit-check: no git pre-commit hook will run for this commit and the kendex binary is not on PATH, so nothing can check it — install kendex, or remove this hook" >&2
@@ -60,6 +75,15 @@ fi
 CHAIN=$(kendex guard run pre-commit 2>&1) || {
   printf '%s\n' "$CHAIN" >&2
   echo "pre-commit-check: commit blocked by the failures above (no git pre-commit hook runs for this commit; kendex guard install arms one, which git runs unless the command bypasses it)" >&2
+  exit 2
+}
+# A lane that skipped itself said so for a reason; a clean verdict must
+# not swallow it. grep's 1 is "nothing skipped"; anything else is grep
+# itself failing, which no clean verdict may paper over.
+status=0
+printf '%s\n' "$CHAIN" | grep -F 'skipped' >&2 || status=$?
+[ "$status" -le 1 ] || {
+  echo "pre-commit-check: could not scan the chain report for skipped lanes (grep exited $status)" >&2
   exit 2
 }
 exit 0

@@ -62,6 +62,11 @@ fn rust_fmt_flags_unformatted_staged_rust_then_passes_formatted() {
     let out = lint::run_fmt(&ctx(&r)).unwrap();
     assert!(out.violations > 0, "unformatted staged rust must fail");
     assert!(out.lines.iter().any(|l| l.contains("rust-fmt FAIL")));
+    assert!(
+        out.lines.iter().any(|l| l.contains("Diff in")),
+        "rustfmt's own diagnostic must reach the report: {:?}",
+        out.lines
+    );
 
     stage(&r, "src/lib.rs", "pub fn f() -> u8 {\n    7\n}\n");
     let out = lint::run_fmt(&ctx(&r)).unwrap();
@@ -91,6 +96,11 @@ fn rust_clippy_answers_for_the_owning_manifest_only() {
             .iter()
             .any(|l| l.contains("rust-clippy FAIL") && l.contains("warned")),
         "{:?}",
+        out.lines
+    );
+    assert!(
+        out.lines.iter().any(|l| l.contains("unused variable")),
+        "clippy's own diagnostic must reach the report: {:?}",
         out.lines
     );
 
@@ -165,9 +175,10 @@ fn biome_stays_out_of_non_biome_projects_and_says_so_without_a_binary() {
     assert_eq!(out.violations, 0);
     assert!(out.lines.iter().any(|l| l.contains("not a Biome project")));
 
-    // A Biome project with no binary anywhere skips out loud. The PATH
-    // fallback is hidden from the child so a machine with a real biome
-    // still exercises the no-binary answer.
+    // A Biome project with no binary anywhere skips out loud. PATH is not
+    // hidden from the lane, so the skip is asserted only on a machine
+    // with no biome on PATH; with one, the lane runs it and the pinned
+    // answer is the zero-violation verdict below.
     stage(&r, "biome.json", "{}\n");
     let out = lint::run_biome(&ctx(&r)).unwrap();
     if !path_has_biome() {

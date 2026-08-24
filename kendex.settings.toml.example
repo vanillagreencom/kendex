@@ -288,10 +288,11 @@ SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md review-bots.md .github/instructi
 
 # PRE-COMMIT HOOK
 
-# Clippy lane for staged Rust files: unset = per-crate `cargo clippy
-# --all-targets -- -D warnings`; "off" skips the lane; any other value runs
-# verbatim as the check. The environment variable outranks this file.
-# VSTACK_PRE_COMMIT_RUST_CLIPPY = "off"
+# The commit checks run as `kendex guard run pre-commit`; each lane is a
+# [guards.<name>] table. Turn the clippy lane off for this repository
+# here, or for this machine only with KENDEX_GUARDS_RUST_CLIPPY_ENABLED=false.
+# [guards.rust-clippy]
+# enabled = false
 
 # DEBUG / OVERRIDE HOOKS
 

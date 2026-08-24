@@ -135,17 +135,20 @@ impl Hardened {
     /// under the standard hardening (no stdin, captured output, a
     /// timeout). Never configured from a committed file.
     pub fn local_guard(program: &Path, cwd: &Path) -> Hardened {
-        let mut hardened = Hardened::new(&program.to_string_lossy(), Vec::new());
-        hardened.command.current_dir(cwd);
-        hardened
+        Hardened::lint_tool(program, &[], cwd)
     }
 
     /// A lint tool the commit-time guards invoke — cargo, biome — run from
     /// the repository root under the standard hardening. The program is
     /// either a bare well-known name resolved on PATH or a path the guard
-    /// itself derived; never a command a committed file named.
+    /// itself derived; never a command a committed file named. Under a git
+    /// hook the parent carries git's redirect exports (a temporary index
+    /// among them); a build script or formatter reading those would judge
+    /// the wrong repository, so the child sees none of them — the one
+    /// sanctioned redirect is threaded through `index_file` explicitly.
     pub fn lint_tool(program: &Path, args: &[&str], cwd: &Path) -> Hardened {
         let mut hardened = Hardened::new(&program.to_string_lossy(), owned(args));
+        hardened.scrub_git_redirects();
         hardened.command.current_dir(cwd);
         hardened
     }
@@ -233,10 +236,7 @@ impl Hardened {
             .chain(args)
             .collect(),
         );
-        for variable in GIT_REDIRECTS {
-            hardened.command.env_remove(variable);
-        }
-        hardened.command.env("GIT_TERMINAL_PROMPT", "0");
+        hardened.scrub_git_redirects();
         let inherited = std::env::var("GIT_SSH_COMMAND").ok();
         hardened
             .command
@@ -245,6 +245,15 @@ impl Hardened {
             hardened.command.current_dir(cwd);
         }
         hardened
+    }
+
+    /// No inherited redirect reaches the child, and no prompt can wait on
+    /// a terminal nobody is watching.
+    fn scrub_git_redirects(&mut self) {
+        for variable in GIT_REDIRECTS {
+            self.command.env_remove(variable);
+        }
+        self.command.env("GIT_TERMINAL_PROMPT", "0");
     }
 
     fn new(program: &str, args: Vec<OsString>) -> Hardened {

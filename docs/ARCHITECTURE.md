@@ -386,15 +386,19 @@ lives in one capability table read by core and UI.
   take the staged list from that index but run the project's toolchain
   (cargo, biome — well-known names or the project's untracked
   `node_modules/.bin`, never a committed command) over the working tree,
-  scoped per staged file's owning `Cargo.toml`. Which repository a commit
-  targets is git's question: the `pre-commit-check` PreToolUse hook only
-  word-matches for a commit, defers to an armed git pre-commit hook, and
-  runs the chain in its own working directory only where none is armed —
+  scoped per staged file's owning `Cargo.toml`, and see none of the git
+  redirects a hook's parent exports. Which repository a commit targets
+  is git's question, answered where the target has an armed hook: the
+  `pre-commit-check` PreToolUse hook only word-matches for a commit,
+  defers to the armed git pre-commit hook of its own working directory,
+  and runs the chain in that directory only where none is armed there —
   or where the command sidesteps the armed one (`--no-verify`, `-n`, a
-  `core.hooksPath` override), since git then never runs it. A payload
-  whose command the hook cannot read is a refusal, and the chain's own
-  refusals (unconverted v1 settings, a lint tool that could not run)
-  block through it.
+  `core.hooksPath` override), since git then never runs it. It gates its
+  working directory only: a commit aimed elsewhere from an unarmed or
+  non-repository directory is not gated by it (a stderr notice says so),
+  and it never parses the target. A payload whose command the hook
+  cannot read is a refusal, and the chain's own refusals (unconverted v1
+  settings, a lint tool that could not run) block through it.
 - **kendex owns its hooks directory — provably.** The guards reach git
   through `<git-common-dir>/kendex-hooks/`, two entrypoints whose call
   surface (`kendex guard run <hook>`) is a stable contract, with
