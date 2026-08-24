@@ -109,6 +109,9 @@ changes carry a **Breaking** call-out with their migration note inline.
   publishes is told so plainly, and settles nothing.
 ### Changed
 
+- The skill skeleton `kendex init <name> --kind skill` writes now says what
+  a SKILL.md body is for: commands to run and rules to follow, never a
+  description of how the skill works inside.
 - The commit checks moved to where git runs them. `kendex guard run
   pre-commit` — what a `kendex guard install` hook runs — now carries the
   format and lint gate too: `rust-fmt` (cargo fmt over each staged Rust

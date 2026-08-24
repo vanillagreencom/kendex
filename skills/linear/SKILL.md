@@ -125,15 +125,12 @@ Available states: Backlog, Todo, In Progress, In Review, Done, Canceled (not "Ca
 
 `--labels` REPLACES the whole issue-label set. Fetch current labels, compute the final set, validate it against `cache labels list --format=safe` (which reports `is_group` so parent/group labels can be rejected), then pass the complete set. A name that does not resolve fails the update; `--clear-labels` is the only way to empty the set.
 
-- `agent:*` labels are mutually exclusive, one per issue. `issues activate ISSUE --agent NAME` applies `agent:NAME` in the same update as the "In Progress" transition and fails without changing state when the label does not exist.
-- `issues complete ISSUE --summary-file PATH` posts the completion comment first, then transitions to Done; a failed post leaves the state unchanged.
+- `agent:*` labels are mutually exclusive, one per issue; `issues activate` applies them with the "In Progress" transition (semantics: `issues --help`).
 - `issues bulk-update` is non-atomic: on partial failure it emits `partial: true` with per-issue results and exits non-zero.
 - `issues block` applies the `blocked` label, creates the blocking relation, and comments. A rejected relation fails the command.
 
 ## validate-completion
 
-A pre-merge check. Session-root targets are expected in "In Progress"/"In Review" (Done fails `state_ok`). `--include-children-of` expands a bundle and validates each child as Done — completed children pass, a pending child fails, canceled children are excluded from the expansion.
-
-`--container` marks the target a container parent whose children each ship as their own PR and which closes LAST. The container's own state passes for any live state (canceled fails) and needs no pre-posted summary; the expanded children still gate on Done. Requires exactly one target, a paired `--include-children-of` naming that same issue, and at least one non-canceled child. A child of a container validates alone as its own session root. Without `--container`, children must be Done before the root (the "(one PR)" single-PR bundle).
+The pre-merge check on state plus summary comment. The expected-state matrix — session root vs bundle children vs `--container` parents, and the fail-closed flag pairing — is in `issues --help` § Validate-Completion.
 
 A "labelIds not exclusive child labels" error means two labels from one exclusive group. Requires Bash 4.0+ (macOS system Bash 3.2 is unsupported), `curl`, and `jq`.

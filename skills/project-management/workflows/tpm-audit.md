@@ -109,7 +109,7 @@ For each contract row, set `ISSUE_KEY` to its identifier or index and resolve on
 .agents/skills/project-management/scripts/verification-scope --worktree "[WORKTREE]" --docs-only --changed-file "[DOC_PATH]"
 ```
 
-Store each result as `VERIFICATION_CONTEXTS[ISSUE_KEY]` and read `mode`, `changed_files[]`, `source_roots[]`, `verification_paths[]`, `code_verification_required`. Never reuse another issue's linked PR, branch diff, or resolved context; `ISSUE_VERIFICATION_CONTEXT` always means the entry for the issue currently being checked. Returned paths are repository-relative; resolve them against the returned absolute `worktree` before any `rg`, `ls`, or read.
+Store each result as `VERIFICATION_CONTEXTS[ISSUE_KEY]` — the output fields and path-resolution rule are in `verification-scope --help`. Never reuse another issue's linked PR, branch diff, or resolved context; `ISSUE_VERIFICATION_CONTEXT` always means the entry for the issue currently being checked.
 
 - `changed` mode: search this issue's exact changed or contract target first. Expand only when its creates-consumes contract or an architecture reference proves another path is relevant.
 - `repository` mode: search the returned source roots. Never substitute `[WORKTREE]/src`.
@@ -137,7 +137,7 @@ Do not compare every pair. Build candidates from signals: same target component,
 
 A relation on a Done issue is a valid historical record. Flag it for removal only when the dependency itself is wrong (no creates-consumes), not for the source being Done.
 
-**Completed-blocker relations are auto-satisfied, never stale.** A `blocked_by` whose blocker is Done or Cancelled is satisfied history; the relation stays for provenance. Do NOT add such relations to `remove_relations[]`, and do NOT report them under any stale-metadata heading. The one legitimate finding for an active issue whose blockers have all completed is a scheduling signal: `ready_to_schedule[]` in project mode, or "gates cleared, ready to schedule" in the issue's `reason` in issues mode.
+**Completed-blocker relations are auto-satisfied, never stale** (the owning rule: linear SKILL.md § Blocked Label vs Issue Relations). Do NOT add such relations to `remove_relations[]`, and do NOT report them under any stale-metadata heading. The one legitimate finding for an active issue whose blockers have all completed is a scheduling signal: `ready_to_schedule[]` in project mode, or "gates cleared, ready to schedule" in the issue's `reason` in issues mode.
 
 ### 4.2 Scan Relation Violations
 

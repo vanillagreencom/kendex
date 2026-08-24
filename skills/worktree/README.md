@@ -53,7 +53,7 @@ WORKTREE_RELATIVE_SYMLINKS = ".claude/CLAUDE.md=../AGENTS.md"
 WORKTREE_MKDIRS = "tmp"
 ```
 
-Point `WORKTREE_SYMLINKS` at untracked paths. A directory entry containing tracked files stays a real directory with only its untracked children linked; a tracked file entry is marked assume-unchanged before replacement. Full rules: `references/config.md`.
+Point `WORKTREE_SYMLINKS` at untracked paths. A directory entry containing tracked files stays a real directory with only its untracked children linked; a tracked file entry is marked assume-unchanged before replacement. Full rules: `scripts/worktree --help` and `scripts/worktree fix-links --help`.
 
 ### App-created worktrees
 

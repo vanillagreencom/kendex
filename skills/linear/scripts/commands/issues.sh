@@ -237,9 +237,9 @@ Validate-Completion:
   all_ok answers "may this container complete now?". The flag fails closed:
   it requires exactly one issue ID plus --include-children-of naming that
   same issue, and errors (exit 1) when the bundle has no non-canceled
-  children — a leaf cannot validate as a container. Use it only for
-  containers; explicit single-PR bundles keep the default children-Done-first
-  contract.
+  children — a leaf cannot validate as a container. A child of a container
+  validates alone as its own session root. Use it only for containers;
+  explicit single-PR bundles keep the default children-Done-first contract.
 
 Examples:
   # Basic operations

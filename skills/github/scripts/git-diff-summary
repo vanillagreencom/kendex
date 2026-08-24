@@ -24,6 +24,22 @@ Arguments:
   --head         Show uncommitted changes vs HEAD
 
 Output: JSON with scope (production|support), domain groupings, stats, and risk flags
+
+Risk flags:
+  unsafe_code_added, repr_c_struct_changed, extern_c_changed,
+  atomics_modified
+                 Rust-specific flags; each scans ADDED lines in .rs diffs
+                 only (unsafe blocks, #[repr(C)] structs, extern "C" items,
+                 atomics use)
+  panic_path_added
+                 panic patterns (panic!/unwrap()) added to production source
+  test_panic_path_added
+                 the same panic patterns added in a test surface instead —
+                 #[cfg(test)] modules, tests/ dirs, *_tests.rs, or files
+                 reachable only through a #[cfg(test)]-gated mod declaration
+                 in their declaring module, #[path] siblings included.
+                 Informational: re-review scoping treats this flag as
+                 non-risk.
 EOF
 }
 

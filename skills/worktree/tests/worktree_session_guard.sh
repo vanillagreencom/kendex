@@ -1238,14 +1238,12 @@ grep -qF -- ".probe." "$unwritable_count" 2>/dev/null \
 
 # ── The documented exit-code contract ────────────────────────────────
 
-# The skill's agent-facing documents restate the exit codes agents are told to branch
-# on. The behavioural assertions above pin what the tool returns; these pin the
-# prose to the same list, so an exit-code change cannot leave the documents
-# confidently wrong while the suite stays green.
+# README.md is the one document still restating the exit codes agents branch on
+# (SKILL.md routes to `worktree-session-guard --help` instead). The behavioural
+# assertions above pin what the tool returns; this pins the prose to the same
+# list, so an exit-code change cannot leave the document confidently wrong.
 exit_code_prose='0 lease for this owner, 1 path not registered, 3 unclaimed, 4 locked outside the guard, 75'
-for doc in SKILL.md README.md; do
-	assert_contains_prose "$ROOT_DIR/$doc" "$exit_code_prose"
-done
+assert_contains_prose "$ROOT_DIR/README.md" "$exit_code_prose"
 
 # The tool's own usage table is the fourth copy of the contract and drifted
 # once already, so pin it too — including the refusal --stale added, which the

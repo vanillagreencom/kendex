@@ -57,7 +57,7 @@ Returned inline by `tpm-audit.md` and written by the caller to `tmp/audit-projec
 | `declined[]` | `title`, `reason` — one line naming the creation-bar test it failed |
 | `project_dependency_issues[]` | `from_project`, `to_project`, `current_relation`, `should_be`, `reason` |
 
-**`ready_to_schedule[]`** is a scheduling signal only — an active issue whose blockers are all Done or Cancelled. Completed-blocker relations are satisfied history, never stale metadata: they never appear in `remove_relations[]` or under any stale-metadata framing.
+**`ready_to_schedule[]`** is a scheduling signal only — an active issue whose blockers are all Done or Cancelled. Completed-blocker relations are satisfied history, never stale metadata (the owning rule: linear SKILL.md § Blocked Label vs Issue Relations): they never appear in `remove_relations[]` or under any stale-metadata framing.
 
 **`analysis[]`** holds non-actionable observations only; anything actionable must use a structured field.
 

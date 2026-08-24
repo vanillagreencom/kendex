@@ -34,7 +34,7 @@ pub fn run(name: Option<String>, kind: Option<String>) -> CliResult {
             write_new(
                 &path,
                 &format!(
-                    "---\nname: {name}\ndescription: When to reach for this skill.\n---\n\n# {name}\n\nHow to use it.\n"
+                    "---\nname: {name}\ndescription: When to reach for this skill.\n---\n\n# {name}\n\nHow to use it. The body is do-only — commands to run, rules to follow; never how it works inside.\n"
                 ),
             )?;
             out(&format!("created {}", path.display()));

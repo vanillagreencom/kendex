@@ -124,6 +124,9 @@ Options:
   --repo DIR         Any checkout of the target repository (default: current
                      directory). Applies to: release, status, list, sweep;
                      needed for release/status when PATH no longer exists.
+                     claim and refresh reject it — passing it makes every
+                     claim fail, and a best-effort wrapper that swallows that
+                     error leaves `status` exit 3 as the only symptom.
 
 Staleness is heartbeat age and nothing else. The recorded pid (the claiming
 session's leader) and host identify who took a claim; this tool never consults

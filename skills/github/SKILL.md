@@ -70,21 +70,10 @@ Unknown flags and extra positionals are rejected.
 
 ### Label application contract
 
-`label-add` verifies the label exists in the live repository inventory, then
-writes through GitHub's shared issue/PR label REST endpoint. That endpoint's
-response is authoritative for the token's effective `issues=write` /
-`pull_requests=write` grant — repository role is not a proxy for it. Label
-names are sent literally, including names starting with `@` or resembling
-booleans, integers, nulls, and placeholders.
-
-- `--required` (default): a missing label is a configuration error (exit 78); a
-  label-write denial is a capability error (exit 77). Neither mutates anything.
-  Workflow-required QA labels use this, even against a misconfigured repo.
-- `--optional`: a missing label or denied permission emits a structured
-  `optional_unsupported` result and exits zero without mutating. Use only where
-  project policy marks the label non-gating.
-- Auth, lookup, rate-limit, and server errors are operational errors in both
-  modes — never optional skips.
+Workflow-required QA labels use `--required` (the default), even against a
+misconfigured repo; use `--optional` only where project policy marks the
+label non-gating. Mode semantics, exit codes, and the error classes that are
+never optional skips: `label-add --help`.
 
 ### Git HTTPS Auth Helper
 
@@ -105,15 +94,8 @@ Set `KENDEX_GITHUB_GIT_HTTPS_FALLBACK=never` to disable the fallback, or
 
 `git-diff-summary [-C path] [base-branch|--staged|--head]` emits JSON with
 changed-file domains, scope, insert/delete stats, and `risk_flags` for review
-routing. The Rust-specific flags (`unsafe_code_added`, `repr_c_struct_changed`,
-`extern_c_changed`, `atomics_modified`) scan added lines in `.rs` diffs only.
-
-Panic patterns (`panic!`/`unwrap()`) added to production source emit
-`panic_path_added`. The same patterns in a test surface — `#[cfg(test)]`
-modules, `tests/` dirs, `*_tests.rs`, or files reachable only through a
-`#[cfg(test)]`-gated `mod` declaration in their declaring module, `#[path]`
-siblings included — emit the distinct informational `test_panic_path_added`
-instead; re-review scoping treats that flag as non-risk.
+routing. The flag definitions — including which `test_panic_path_added`
+surfaces are informational rather than risk — are in `git-diff-summary --help`.
 
 ### PR Merge Outcomes
 
@@ -206,35 +188,16 @@ so a thread id absent from its output is genuinely absent. Repeat
 ### Waiting for merge state
 
 **Never gate termination on `gh pr view --json mergeable`.** That field stays
-`UNKNOWN` permanently after a merge. Use `await-mergeable`, which polls `state`
-and `mergeStateStatus`:
-
-```bash
-github.sh await-mergeable 42                    # block until resolved
-STATE=$(github.sh await-mergeable 42 | jq -r '.state')   # capture for branching
-```
-
-It resolves when `state` is `MERGED`/`CLOSED`, or `mergeStateStatus` is
-anything but `UNKNOWN`.
-
-To watch MANY PRs, do not hand-roll a poll loop keyed on state transitions.
-Use the review-gate skill's reducer when installed
+`UNKNOWN` permanently after a merge. Use `await-mergeable` (resolution rules
+and exit codes: `await-mergeable --help`). To watch MANY PRs, do not
+hand-roll a poll loop keyed on state transitions — use the review-gate
+skill's reducer when installed
 (`.agents/skills/review-gate/scripts/pr-watch.sh`).
 
 ## Output Formats
 
-`--format` is command-specific, not a global flag. Commands not listed below
-(e.g. `pr-view`, which takes only `--json FIELDS`) reject it. An unrecognized
-format value is an error rather than a silent fallback to `safe`.
-
-| Format | Description | Commands |
-|--------|-------------|----------|
-| `safe` | DEFAULT. Flat, normalized JSON | pr-data, pr-threads, pr-list-ready, pr-list-failing, pr-issue, ci-logs, bot-token |
-| `raw` | Original API structure | pr-data, pr-threads |
-| `text` | Plain text extraction | pr-issue, ci-logs, bot-token |
-| `table` | Human-readable table | pr-list-ready, pr-list-failing |
-
-`--json` is accepted as an alias for `--format=safe` on pr-list-ready, pr-list-failing, pr-issue, ci-logs, and bot-token; pr-data and pr-threads take `--format=safe|raw` only and reject unknown flags.
+`--format` is command-specific, not a global flag; the per-command modes, the
+`--json` alias, and the reject-unknown rules are in `github.sh --help`.
 
 ## Configuration
 
@@ -264,23 +227,11 @@ selection drops `GH_TOKEN`/`GITHUB_TOKEN` so `gh` uses keyring auth; a selected
 tokens with `gh api user`, and `gh auth status` is authoritative only when no
 env token is selected.
 
-### `pr-view` failure contract
-
-`pr-view --json ...` returns normal `gh pr view` JSON on success. On failure it
-prints structured JSON to stdout and exits nonzero:
-
-```json
-{"status":"no_pr","error":"No pull request found for the current branch","detail":"...","exit_code":1,"number":null}
-```
-
-`status` is one of `no_pr`, `auth_error`, `token_resolution_failed`,
-`token_resolution_timeout`, `token_resolution_unavailable`, `auth_timeout`,
-`gh_timeout`, `gh_error`. Raw `gh`/`op` detail also goes to stderr.
-
 ## Error Handling
 
 - Most commands emit `{"error": "message"}` on stderr and exit 1.
-- `pr-view --json ...` emits structured failure JSON on stdout.
+- `pr-view --json ...` emits structured failure JSON on stdout (the `status`
+  values and shape: `pr-view --help`).
 - Rate limits retry automatically (3 attempts, exponential backoff).
 - An unreadable thread list, comment list, or CI log is reported as a failure,
   never as "none found".

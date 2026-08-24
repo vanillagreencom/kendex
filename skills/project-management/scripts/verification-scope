@@ -7,8 +7,27 @@ usage() {
 Usage: verification-scope [--worktree PATH] [--base-ref REF]
                           [--changed-file PATH]... [--docs-only]
 
+Resolve repository-aware paths for tpm-audit code and deliverable checks.
 Prefer --changed-file for PR-provided paths or --base-ref for a branch diff.
 Without either, tracked source roots are discovered across the repository.
+
+Output: one JSON object on stdout with these fields:
+  worktree                    Absolute repository root the paths resolve
+                              against
+  mode                        "changed" (explicit or diffed paths),
+                              "repository" (discovered source roots), or
+                              "docs-only" (--docs-only, or every changed
+                              path is documentation)
+  basis                       How the scope was derived
+  base_ref                    The diff base, or null without --base-ref
+  changed_files[]             Repository-relative changed paths
+  source_roots[]              Discovered tracked source roots
+  verification_paths[]        The paths to verify against: source_roots in
+                              "repository" mode, the changed paths otherwise
+  code_verification_required  false only in "docs-only" mode
+
+Returned paths are repository-relative; resolve them against the returned
+absolute worktree before any search or read.
 EOF
 }
 

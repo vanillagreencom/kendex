@@ -28,6 +28,15 @@ Options:
                     the repository lacks the label or label-write capability.
   --help, -h        Show this help.
 
+Contract: the label must exist in the live repository inventory before the
+write, which goes through GitHub's shared issue/PR label REST endpoint.
+That endpoint's response is authoritative for the token's effective
+issues=write / pull_requests=write grant — repository role is not a proxy
+for it. Label names are sent literally, including names starting with '@'
+or resembling booleans, integers, nulls, and placeholders. Neither mode
+mutates anything on a refusal, and auth, lookup, rate-limit, and server
+errors are operational errors in both modes — never optional skips.
+
 Examples:
   label-add.sh 44 needs-qa
   label-add.sh 123 needs-triage --issue

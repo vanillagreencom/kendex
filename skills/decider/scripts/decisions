@@ -167,10 +167,18 @@ Output (JSON):
 Scoring per term: decision 3, id 3, rationale 1, body 0.5.
 
 Environment:
-  DECISIONS_DIR        Decision documents directory. When absent, search/list
-                       emit [] and exit 0 (note on stderr); next-id/get error.
-  DECISION_ID_PREFIX   ID prefix for next-id (default: inferred)
-  DECISION_ID_WIDTH    Zero-padding width for next-id (default: inferred)
+  DECISIONS_DIR        Decision documents directory (default: the nearest
+                       ancestor holding docs/decisions/, decisions/,
+                       doc/decisions/, or adr/ with an INDEX.md). Set shared
+                       values in kendex.settings.toml under [env];
+                       .env.local overrides locally. When absent, search/list
+                       emit [] and exit 0 (note on stderr); next-id/get
+                       error. A configured path that exists but is not a
+                       directory is a hard error.
+  DECISION_ID_PREFIX   ID prefix for next-id (default: inferred from the
+                       last populated ID-column value, else D)
+  DECISION_ID_WIDTH    Zero-padding width for next-id (default: inferred
+                       from that same value, else 3)
 
 Examples:
   decisions search "FFI error handling"

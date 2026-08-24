@@ -1,6 +1,6 @@
 # Session guard limits
 
-The claim/release/status contract, exit codes, and lifecycle table live in [../SKILL.md](../SKILL.md).
+The claim/release/status contract and exit codes live in `worktree-session-guard --help`; each worktree command's lease behaviour is in its own `--help`.
 
 The lease is scoped to the OWNER string, which the calling workflow sets to the issue ID: two sessions on the same issue share one lease and either may release it. Bare `create <ID>` exits 75 on existing ownership; `create --reuse|--restack` skips that refusal, so **nothing prevents a second implementer there**. The per-issue claim lock is a repository-local flock held only inside one `create` invocation and is not that gate either.
 

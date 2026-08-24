@@ -70,10 +70,11 @@ Note:
   'github.sh pr-data [PR] --format=safe|raw'.
 
 Errors:
-  Emits structured JSON with status=no_pr, auth_error, token_resolution_failed,
-  token_resolution_timeout, token_resolution_unavailable, auth_timeout,
-  gh_timeout, or gh_error and exits nonzero. Raw gh/op detail is preserved in
-  stderr and the JSON detail field.
+  Emits structured JSON on stdout ({"status":..., "error":..., "detail":...,
+  "exit_code":..., "number":...}) and exits nonzero. status is one of no_pr,
+  auth_error, token_resolution_failed, token_resolution_timeout,
+  token_resolution_unavailable, auth_timeout, gh_timeout, or gh_error. Raw
+  gh/op detail is preserved in stderr and the JSON detail field.
 
 Examples:
   github.sh pr-view              # View PR for current branch

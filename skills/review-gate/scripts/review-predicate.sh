@@ -1,157 +1,211 @@
 #!/usr/bin/env bash
 # Review-gate predicate — the single source of truth for "is this PR head
 # reviewed?". Shipped by the kendex review-gate skill and vendored into
-# consumers at .agents/skills/review-gate/scripts/. Callers: review-writer.sh
-# (the single writer, which converges the merge-blocking commit status to
-# this verdict on its evaluating legs — its merge_group leg posts success
-# without evaluation, post-approval by construction, and its fork
-# pull_request_review leg is a read-only no-op) and the repo's ungated
-# selftest CI job.
-#
-# Predicate: review evidence present for the CURRENT head — any of
-#   (a) a review OBJECT at the exact head from a non-author, non-dismissed,
-#       trusted login (trust list empty = any non-author) whose body is not
-#       the reviewer's own errored-run attestation: the reviews API has no
-#       errored state, so a bot review that ERRORS lands as a normal review
-#       row (COMMENTED) whose body says the review never ran ("encountered
-#       an error and was unable to review"). Like a skip-marked check pass
-#       it proves nothing ran — silence, routed to NOT-EVIDENCE, never to
-#       failure, and never a carry-forward candidate;
-#   (b) a trusted clean-analysis CHECK-RUN or legacy COMMIT STATUS succeeding
-#       on this head, whose title/summary/description carries no
-#       skip-pattern marker (a "pass" that says the analysis was rate
-#       limited, skipped or queued proves nothing ran — it is silence, not
-#       approval, and routes to NOT-EVIDENCE, never to failure). On BOTH
-#       surfaces the NEWEST row/run per name decides (statuses by list
-#       order, check-runs by run id — kendex#1110): an older clean success
-#       never outlives its reviewer's newer pending/failed round;
-#   (c) a trusted comment-form clean pass: an issue comment by a trusted bot
-#       login whose body binds the evidence to this head's sha;
-#   (d) the trusted reviewer-outage attestation status — substitutes for
-#       MISSING evidence only;
-# AND no STANDING changes-requested (each reviewer's latest decisive review
-# across the WHOLE PR — GitHub keeps an objection standing across pushes
-# until re-approval or dismissal, so the reduction must not be scoped to the
-# head; positive evidence stays exact-head) AND zero unresolved review
-# threads. Changes-requested and unresolved threads always fail closed, even
-# with evidence present.
-#
-# APPROVAL IS NEVER SUPERSEDED BY A LATER COMMENT. The evidence reduction is
-# "an accepted review row exists at head" — never "the latest review per
-# reviewer" — so a reviewer that posts APPROVED and then a trailing COMMENTED
-# on the same commit still counts as approval. Only a LATER
-# CHANGES_REQUESTED from the same login withdraws it (and the separate
-# changes-requested term fails the gate then anyway). The selftest pins this.
-#
-# TRUST MODEL: trust keys on NAMES ONLY GITHUB CONTROLS — the author login of
-# a review or comment (exact match on the app's bot login) or the exact
-# context/name of a check/status on repos where every publisher is trusted. A
-# comment BODY is never trusted to establish trust; it is read only to BIND
-# the evidence to a specific commit, so a stale comment cannot vouch for a
-# later push.
-#
-# Per-repo trust configuration comes from REVIEW_GATE_* settings — explicit
-# environment first, then the repo's kendex.settings.toml, then built-in
-# defaults (lib/settings.sh). Keys read here:
-#   REVIEW_GATE_TRUSTED_STATUS_CONTEXTS       (b) check/status names, ';'-separated
-#   REVIEW_GATE_CHECKRUN_SKIP_PATTERNS        (b) pass-without-analysis markers, ';'-separated,
-#                                             case-insensitive substrings; empty disables
-#   REVIEW_GATE_COMMENT_REVIEWERS             (c) 'login:binding-pattern' pairs, ';'-separated
-#                                             (first ':' splits; pattern is a literal prefix)
-#   REVIEW_GATE_SHA_PREFIX_FLOOR              (c) shortest sha prefix a comment may bind
-#   REVIEW_GATE_OUTAGE_CONTEXT                (d) attestation status context; empty disables
-#   REVIEW_GATE_STATUS_PUBLISHER_REJECT       (b,d) commit-status creator logins whose
-#                                             statuses are never evidence, ';'-separated;
-#                                             empty disables (opt-in per repo)
-#   REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS  (a) trust list; empty = any non-author
-#   REVIEW_GATE_REVIEW_OBJECT_MIN_STATE       (a) "any" (any review row) or "approved"
-#                                             (an APPROVED row not withdrawn by a later
-#                                             CHANGES_REQUESTED from the same login)
-#   REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS  (a) errored-attestation body markers,
-#                                             ';'-separated, case-insensitive
-#                                             substrings; empty disables
-#   REVIEW_GATE_THREADS                       "enforce" (default) or "off": "off" skips
-#                                             the reviewThreads GraphQL read entirely and
-#                                             never emits threads-open — for repos whose
-#                                             thread hygiene is a server-side zero-bypass
-#                                             ruleset (the CI-side term is a latency
-#                                             optimization there, not the enforcement
-#                                             point of record)
-#   REVIEW_GATE_API_ATTEMPTS                  bounded in-predicate retries for every
-#                                             evidence read (default 1 = single attempt);
-#                                             a read failing through the retries is still
-#                                             exit 2 — the fail-loud contract is unchanged
-#   REVIEW_GATE_API_RETRY_DELAY_SECONDS       delay between retry attempts (default 2)
-#   REVIEW_GATE_CARRY_FORWARD                 carry-safe delta classes ("docs", "comments",
-#                                             ';' or '|' separated; empty = off, today's
-#                                             behavior): when NO evidence exists at head,
-#                                             a qualifying review object at an ancestor
-#                                             commit N still satisfies the evidence term
-#                                             if the N→head diff classifies ENTIRELY into
-#                                             the enabled classes (or is an identical
-#                                             tree). Never a waiver: real evidence must
-#                                             exist, and only EXTENDS across a delta
-#                                             review would not re-examine; code changes
-#                                             always require fresh evidence, and
-#                                             changes-requested / unresolved threads
-#                                             still fail closed.
-#   REVIEW_GATE_CARRY_FORWARD_EXCLUDE         path globs (';'-separated, shell-style;
-#                                             '*' matches '/' too — fnmatch without
-#                                             FNM_PATHNAME) that disqualify a carry:
-#                                             any file in the N→head delta matching an
-#                                             exclusion forces fresh evidence even when
-#                                             the delta classifies carry-safe. For
-#                                             policy-bearing files the classes would
-#                                             otherwise carry (AGENTS.md and other
-#                                             agent/reviewer instruction markdown —
-#                                             kendex#1115). Empty = no exclusions.
-#                                             Identical-tree carries are unaffected
-#                                             (no delta, nothing to exclude).
-#   REVIEW_GATE_MODE                          "enforce" (default) or "off": "off" makes
-#                                             this predicate answer approved WITHOUT
-#                                             evaluating any evidence — the one-switch
-#                                             per-repo gate disable (owner decision
-#                                             2026-08-08). The verdict detail carries the
-#                                             attestation so every posted status says the
-#                                             gate is disabled, not that a review
-#                                             happened. Unknown values are a config
-#                                             error (exit 2) — a typo must never
-#                                             silently disable a merge gate.
-#
-# Env (required): GH_TOKEN (or ambient gh auth), GH_REPO, PR_NUMBER, HEAD_SHA
-# Env (optional): PR_AUTHOR — resolved from the PR when empty.
-# Env (optional): REVIEW_GATE_STATUS_SNAPSHOT_FILE — path to a status snapshot
-#   (JSON object with a `statuses` array and a top-level `sha` equal to
-#   HEAD_SHA) supplied by the CALLER; when set, the predicate evaluates
-#   trusted-context and outage evidence against it instead of fetching the
-#   statuses itself. LIST-ENDPOINT ROWS ONLY: the rows must come from the
-#   per-commit statuses LIST endpoint (/commits/<sha>/statuses), the same
-#   endpoint the fetch path below uses — full per-context HISTORY, real
-#   `creator.login` on every row. The combined endpoint
-#   (/commits/<sha>/status) is NOT a valid source: it projects
-#   latest-per-context (masking newer-row supersession) and serializes
-#   `creator` as null for App-posted rows, which the
-#   REVIEW_GATE_STATUS_PUBLISHER_REJECT anomaly rule would then silently
-#   drop as not-evidence. While the reject list is configured, a row without
-#   a creator login is refused AT THE SEAM (exit 2) rather than silently
-#   erased downstream. The snapshot must contain the COMPLETE status set for
-#   the head: a caller that paginated (heads with >100 rows) merges every
-#   page's rows into one array under one top-level `sha` before handing it
-#   in — a first-page-only snapshot would silently drop later-page
-#   evidence. Per-invocation env seam (like REVIEW_GATE_SETTINGS_FILE),
-#   never a settings key: the snapshot is bound to one head at one moment,
-#   and the `sha` requirement enforces that binding. An
-#   unreadable/malformed/wrong-head snapshot is exit 2.
-#
-# Output: one machine-readable line on stdout:
-#   verdict=approved|awaiting|threads-open|changes-requested detail=<human text>
-# (diagnostic detail also echoed for logs). Exit codes:
-#   0 — evaluated (verdict line is authoritative)
-#   2 — an evidence read failed or the configuration is invalid; NO verdict
-#       was reached. Callers must treat this as "take no action", never as
-#       awaiting: acting on a transient API failure could flip a healthy PR's
-#       merge state.
+# consumers at .agents/skills/review-gate/scripts/. The authoritative caller
+# contract — evidence forms, trust model, settings keys, the carry-forward
+# engine, env seams, output, and exit codes — is print_usage below: run with
+# --help.
 set -u
+
+print_usage() {
+  cat <<'USAGE'
+Usage: review-predicate.sh [--help]   (env-driven; no positional arguments)
+
+The single source of truth for "is this PR head reviewed?". Callers:
+review-writer.sh (the single writer, which converges the merge-blocking
+commit status to this verdict on its evaluating legs — its merge_group leg
+posts success without evaluation, post-approval by construction, and its
+fork pull_request_review leg is a read-only no-op) and the repo's ungated
+selftest CI job.
+
+Env (required): GH_TOKEN (or ambient gh auth), GH_REPO, PR_NUMBER, HEAD_SHA
+Env (optional): PR_AUTHOR — resolved from the PR when empty.
+
+Output: one machine-readable line on stdout:
+  verdict=approved|awaiting|threads-open|changes-requested detail=<human text>
+(diagnostic detail also echoed for logs).
+
+Exit codes:
+  0  evaluated (the verdict line is authoritative)
+  2  an evidence read failed or the configuration is invalid; NO verdict was
+     reached. Callers must treat this as "take no action", never as awaiting:
+     acting on a transient API failure could flip a healthy PR's merge state.
+
+Predicate: review evidence present for the CURRENT head — any of
+  (a) a review OBJECT at the exact head from a non-author, non-dismissed,
+      trusted login (trust list empty = any non-author) whose body is not
+      the reviewer's own errored-run attestation: the reviews API has no
+      errored state, so a bot review that ERRORS lands as a normal review
+      row (COMMENTED) whose body says the review never ran. Like a
+      skip-marked check pass it proves nothing ran — silence, routed to
+      NOT-EVIDENCE, never to failure, and never a carry-forward candidate;
+  (b) a trusted clean-analysis CHECK-RUN or legacy COMMIT STATUS succeeding
+      on this head, whose title/summary/description carries no skip-pattern
+      marker (a "pass" that says the analysis was rate limited, skipped, or
+      queued proves nothing ran — silence, not approval, NOT-EVIDENCE). On
+      BOTH surfaces the NEWEST row/run per name decides (statuses by list
+      order, check-runs by run id — kendex#1110): an older clean success
+      never outlives its reviewer's newer pending/failed round;
+  (c) a trusted comment-form clean pass: an issue comment by a trusted bot
+      login whose body binds the evidence to this head's sha;
+  (d) the trusted operator-override (reviewer-outage) attestation status —
+      substitutes for MISSING evidence only;
+AND no STANDING changes-requested (each reviewer's latest decisive review
+across the WHOLE PR — GitHub keeps an objection standing across pushes until
+re-approval or dismissal, so that reduction is not scoped to the head;
+positive evidence stays exact-head) AND zero unresolved review threads.
+Changes-requested and unresolved threads always fail closed, even with
+evidence present.
+
+APPROVAL IS NEVER SUPERSEDED BY A LATER COMMENT. The evidence reduction is
+"an accepted review row exists at head" — never "the latest review per
+reviewer" — so a reviewer that posts APPROVED and then a trailing COMMENTED
+on the same commit still counts as approval. Only a LATER CHANGES_REQUESTED
+from the same login withdraws it (and the separate changes-requested term
+fails the gate then anyway). The selftest pins this.
+
+Trust model: trust keys on NAMES ONLY GITHUB CONTROLS — the author login of
+a review or comment (exact match on the app's bot login) or the exact
+context/name of a check/status on repos where every publisher is trusted. A
+comment BODY is never trusted to establish trust; it is read only to BIND
+the evidence to a specific commit, so a stale comment cannot vouch for a
+later push.
+
+Settings (explicit environment first, then the repo's kendex.settings.toml,
+then built-in defaults — lib/settings.sh; list values pack with ';'):
+  REVIEW_GATE_TRUSTED_STATUS_CONTEXTS       (b) check/status names; empty
+                                            disables the source
+  REVIEW_GATE_CHECKRUN_SKIP_PATTERNS        (b) pass-without-analysis markers,
+                                            case-insensitive substrings
+                                            (default 'rate limited;skipped;
+                                            queued'); empty disables
+  REVIEW_GATE_COMMENT_REVIEWERS             (c) 'login:binding-pattern' pairs
+                                            (first ':' splits; pattern is a
+                                            literal prefix); empty disables
+  REVIEW_GATE_SHA_PREFIX_FLOOR              (c) shortest sha prefix a comment
+                                            may bind (4..40; default 7)
+  REVIEW_GATE_OVERRIDE_CONTEXT              (d) operator override status
+                                            context, v2 name; when present
+                                            anywhere — even empty, which
+                                            disables the source — it wins
+                                            over the legacy name
+  REVIEW_GATE_OUTAGE_CONTEXT                (d) LEGACY override-context name
+                                            (default kendex-reviewer-outage);
+                                            empty disables
+  REVIEW_GATE_STATUS_PUBLISHER_REJECT       (b,d) commit-status creator logins
+                                            whose statuses are never
+                                            evidence; while configured, a
+                                            status with NO creator login is
+                                            not evidence; empty disables (the
+                                            shipped default)
+  REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS  (a) trust list; empty = any
+                                            non-author
+  REVIEW_GATE_REVIEW_OBJECT_MIN_STATE       (a) 'any' counts any accepted
+                                            review row; 'approved' requires
+                                            an APPROVED row not withdrawn by
+                                            a later CHANGES_REQUESTED from
+                                            the same login
+  REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS  (a) errored-attestation body
+                                            markers, case-insensitive
+                                            substrings; a configured value
+                                            replaces the default list
+                                            ('encountered an error and was
+                                            unable to review'); never a
+                                            blocker — the changes-requested
+                                            reduction ignores this list;
+                                            empty disables
+  REVIEW_GATE_THREADS                       'enforce' (default) fails closed
+                                            on unresolved review threads;
+                                            'off' skips the reviewThreads
+                                            GraphQL read entirely and never
+                                            emits threads-open — only for
+                                            repos whose thread hygiene is a
+                                            server-side zero-bypass
+                                            required_review_thread_resolution
+                                            ruleset (the CI-side term is a
+                                            latency optimization there, not
+                                            the enforcement point of record).
+                                            Only the thread term is disabled;
+                                            evidence and changes-requested
+                                            still fail closed
+  REVIEW_GATE_API_ATTEMPTS                  bounded in-predicate retries for
+                                            every evidence read (default 1 =
+                                            single attempt); a read failing
+                                            through the retries is still
+                                            exit 2 — fail-loud unchanged
+  REVIEW_GATE_API_RETRY_DELAY_SECONDS       delay between retry attempts
+                                            (default 2)
+  REVIEW_GATE_MODE                          'enforce' (default) or 'off':
+                                            'off' answers approved WITHOUT
+                                            evaluating any evidence — the
+                                            one-switch per-repo gate disable.
+                                            The verdict detail carries the
+                                            attestation so every posted
+                                            status says the gate is disabled,
+                                            not that a review happened.
+                                            Unknown values are a config error
+                                            (exit 2) — a typo must never
+                                            silently disable a merge gate
+
+Carry-forward engine:
+  REVIEW_GATE_CARRY_FORWARD    Carry-safe delta classes ('docs', 'comments';
+      ';' or '|' separated; empty = off — exact-head evidence only). When NO
+      evidence exists at head, a qualifying review object at an ancestor
+      commit N still satisfies the evidence term if the N->head diff
+      classifies ENTIRELY into the enabled classes, or the trees are
+      identical. Classes: 'docs' = docs-only files (*.md / *.markdown by
+      extension); 'comments' = comment-only changes to code files
+      (per-extension comment-token table; added/removed/renamed files,
+      patch-less files, and unknown extensions refuse). Only the NEWEST
+      ancestor candidate decides. A delta at the compare API's 300-file cap
+      refuses carry. Never a waiver: real evidence must exist, and only
+      EXTENDS across a delta a review would not re-examine; code changes
+      always require fresh evidence, and changes-requested / unresolved
+      threads still fail closed with carried evidence. The 'comments'
+      classifier is line-lexical (blind to heredocs and multiline strings) —
+      enable it only where that residual risk is acceptable.
+  REVIEW_GATE_CARRY_FORWARD_EXCLUDE    Path globs (';'-separated,
+      shell-style; '*' matches '/' too — fnmatch without FNM_PATHNAME) that
+      disqualify a carry: any file in the N->head delta matching an
+      exclusion forces fresh evidence even when the delta classifies
+      carry-safe — for policy-bearing files the classes would otherwise
+      carry (AGENTS.md and other agent/reviewer instruction markdown —
+      kendex#1115). Empty = no exclusions. Identical-tree carries are
+      unaffected (no delta, nothing to exclude). Inert while
+      REVIEW_GATE_CARRY_FORWARD is empty.
+
+Per-invocation env seams (never settings keys):
+  REVIEW_GATE_SETTINGS_FILE         Overrides the settings-file path (tests,
+      or a caller resolving settings for a different checkout).
+  REVIEW_GATE_STATUS_SNAPSHOT_FILE  Path to a status snapshot (JSON object
+      with a 'statuses' array and a top-level 'sha' equal to HEAD_SHA)
+      supplied by the CALLER; when set, the predicate evaluates
+      trusted-context and override evidence against it instead of fetching
+      the statuses itself. LIST-ENDPOINT ROWS ONLY: the rows must come from
+      the per-commit statuses LIST endpoint (/commits/<sha>/statuses), the
+      same endpoint the fetch path uses — full per-context HISTORY, real
+      creator.login on every row. The combined endpoint
+      (/commits/<sha>/status) is NOT a valid source: it projects
+      latest-per-context (masking newer-row supersession) and serializes
+      creator as null for App-posted rows, which the publisher-reject rule
+      would then silently drop as not-evidence; while that list is
+      configured, a row without a creator login is refused AT THE SEAM
+      (exit 2). The snapshot must contain the COMPLETE status set for the
+      head: a caller that paginated (heads with >100 rows) merges every
+      page's rows into one array under one top-level 'sha' — a
+      first-page-only snapshot would silently drop later-page evidence.
+      Bound to one head at one moment (the 'sha' requirement enforces the
+      binding); a snapshot for another head, or an unreadable/malformed one,
+      is exit 2.
+USAGE
+}
+
+case "${1:-}" in
+  --help|-h)
+    print_usage
+    exit 0
+    ;;
+esac
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$script_dir/lib/settings.sh"

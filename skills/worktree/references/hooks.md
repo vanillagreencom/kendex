@@ -1,17 +1,6 @@
-# App-created worktree hooks and git-hook auto-repair
+# App-created worktree hooks
 
-Installation-time wiring for app-created worktrees. Command index: [../SKILL.md](../SKILL.md).
-
-## Git-hook auto-repair (`repair-links`)
-
-A rebase, merge, or branch checkout can re-materialize a `WORKTREE_SYMLINKS` entry as a real directory holding only the tracked files beneath it.
-
-`create` and `fix-links` install shared `post-checkout`, `post-merge`, and `post-rewrite` hooks into the **main checkout's** hooks directory (`git rev-parse --git-path hooks`), which covers every worktree and every harness.
-
-- The hook logic lives in an owned helper file, `hooks/kendex-worktree-autorepair`, rewritten on every install. The three stock hooks get one marked delegating line: an existing shell hook is **appended to**, never overwritten; a non-shell or non-executable (disabled) hook is left alone with a warning; the append is idempotent.
-- `core.hooksPath` is never used or modified. When it is set, the install is skipped with a warning; add a `repair-links` call to those hooks manually.
-- The helper no-ops in the main checkout and in repos without the skill installed, and never fails the git operation it runs after.
-- Repair is the `fix-links` logic with one extra guarantee: a materialized path holding files git does not track (untracked **or** ignored) is never clobbered; the hook warns loudly, names the files, and points at manual `fix-links` after the data has been moved or deleted.
+Installation-time wiring for app-created worktrees. Command index: [../SKILL.md](../SKILL.md). The git-hook auto-repair contract (`repair-links`, the shared `post-checkout`/`post-merge`/`post-rewrite` hooks, `core.hooksPath` handling) is under `worktree fix-links --help`.
 
 ## Codex Desktop hooks
 

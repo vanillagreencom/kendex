@@ -78,7 +78,7 @@ Write the artifact first, per [dev SKILL.md § Round Contract](../SKILL.md#round
 .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind fix --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] --item [N] [DECISION] [REASONING] [--item ...]
 ```
 
-One `--item N DECISION REASONING` per **delegated** item — Applied, Skipped, and Blocked alike; the artifact must cover exactly the delegated set. `N` is the item's `#[N]` number, `DECISION` is Applied, Skipped, or Blocked, `REASONING` non-empty plain text with no backticks. `--commit` is HEAD after the commit, or the prior HEAD when no commit was needed.
+One `--item N DECISION REASONING` per **delegated** item — Applied, Skipped, and Blocked alike; the artifact must cover exactly the delegated set, `N` being the item's `#[N]` number (value shapes: `dev-return-write --help`; keep `REASONING` free of backticks). `--commit` is HEAD after the commit, or the prior HEAD when no commit was needed.
 
 **Respawned mid-round without the `Review items:` list?** Do not reconstruct it from the raw review JSONs and do not guess. Read `[WORKTREE_PATH]/tmp/dev-round-[ARTIFACT_KEY]-[DEV_ROUND_ID].json`, whose `items[]` entries each carry the delegated number `n` and the item's full text, and write one `--item` per entry. If that file is missing too, report the gap and write no artifact.
 

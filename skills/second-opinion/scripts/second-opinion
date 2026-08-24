@@ -192,13 +192,19 @@ export it in the environment of the session that needs it:
                              the run refuses rather than using the default
   SECOND_OPINION_COUNT       Opinions to collect in review mode (default: 1)
   SECOND_OPINION_CURRENT_MODEL
-                             Model identity of THIS session; overrides harness
-                             detection. Required in a multi-model front end
-                             (Pi, OpenCode, Cursor) or an undetected shell —
-                             refused until set; "none" = no session model.
-                             Model ids normalize, provider prefix included
-                             (opus, anthropic/claude-* -> claude; gpt-*,
-                             openai-codex/gpt-* -> codex).
+                             Model identity of THIS session. A positively
+                             detected single-model harness (claude, codex)
+                             outranks it: an agreeing declaration is not used,
+                             a contradicting one is refused naming both values
+                             and where the declaration came from. Required in
+                             a multi-model front end (Pi, OpenCode, Cursor) or
+                             an undetected shell — refused until set; "none" =
+                             no session model. Model ids normalize, provider
+                             prefix included (opus, anthropic/claude-* ->
+                             claude; gpt-*, openai-codex/gpt-* -> codex);
+                             a DECLARED identity the roster does not spell is
+                             refused, while a DETECTED identity the roster
+                             does not name excludes nothing.
                              EXPORT IT IN THE SESSION, do not commit it to a
                              project settings file: those are read by every
                              session in the repo, so a value from one is not a
@@ -209,17 +215,55 @@ export it in the environment of the session that needs it:
                              hyphens become underscores); claude and codex
                              have defaults (below)
   SECOND_OPINION_TARGET      Force one target; still subject to self-exclusion
-  SECOND_OPINION_TIMEOUT     Timeout in seconds (default: 1080)
+  SECOND_OPINION_TIMEOUT     Timeout in seconds (default: 1080), per
+                             invocation: review/audit's one retry on a
+                             malformed response gets a fresh window, so a lane
+                             can run up to twice this. The default exceeds the
+                             ~600s ceiling most agent harnesses put on a
+                             foreground shell call — run the script in the
+                             background, or pass --timeout at or below that
+                             ceiling
   SECOND_OPINION_ARTIFACT_DIR
                              Home for review/audit records written without
-                             --output, and for a multi-lane stdout run's lane
-                             artifacts (default: tmp/second-opinion under --cwd)
+                             --output (preserved raw, failed, and rejected
+                             responses), and for a multi-lane stdout run's
+                             per-lane review artifacts (default:
+                             tmp/second-opinion under --cwd; ~/... and
+                             absolute paths taken as given). Created
+                             owner-only when absent, seeded with a '*'
+                             .gitignore; a relative home that is a symlink or
+                             resolves outside --cwd, or one that cannot be
+                             created, falls back to a temp file, loudly,
+                             without changing the exit code. --output is the
+                             explicit override for the artifact itself
   SECOND_OPINION_REVIEW_INSTRUCTIONS
                              Repo instruction-file globs appended to the review
                              prompt, resolved inside --cwd (default:
                              "AGENTS.md review-bots.md
                              .github/instructions/*.instructions.md
-                             .github/copilot-instructions.md"; set empty to disable)
+                             .github/copilot-instructions.md"; set empty to
+                             disable). When the list carries the literal
+                             AGENTS.md entry, nested AGENTS.md files governing
+                             the changed paths are collected too
+                             (ancestor-directory walk, same containment and
+                             dedupe). Matches must be regular files physically
+                             inside the reviewed repo: a committed symlink
+                             (the file or a parent directory) pointing outside
+                             --cwd is skipped loudly, never followed
+
+Review scope and stamping (review/audit modes):
+  The wrapper derives the review scope from the worktree before invoking the
+  external CLI — current branch, diff range (--range or origin/BASE...HEAD),
+  diffstat, and the changed-file list are embedded in the prompt. A first
+  response that is unparseable, or structurally incomplete, gets one retry
+  resending the full original request (scope block included) alongside the
+  captured response; unusable responses never become the artifact.
+  The wrapper overwrites the JSON timestamp field with its own UTC wall clock
+  (date -u) after the model responds, and overwrites agent with
+  external-<target> for a lane or external-union(...) for a union.
+  review stamps qa_metadata.reviewed_head — the reviewed range's endpoint
+  commit, captured when the scope is derived (before the model runs); a
+  multi-lane union also stamps qa_metadata.requested_count/selected_count.
 
 Default commands:
   claude: claude -p --no-session-persistence --model opus --effort max
@@ -227,11 +271,44 @@ Default commands:
   codex:  codex exec -m gpt-5.6-sol -s read-only -c model_reasoning_effort=xhigh
             --ephemeral
 
+Output clearing and ownership:
+  No exit leaves a previous run's output behind. Every mode that writes
+  --output (review, audit, challenge, quick) clears that path as soon as the
+  arguments are read — ahead of a bad-flag error, the jq check, the mode
+  check, --timeout validation, target selection, or any CLI run — together
+  with the sidecar records that mode can produce: review and audit add
+  .raw.txt, .retry.txt, .failed.json, .noreview.json and .incomplete.json;
+  challenge and quick clear their output path alone. --help and detect clear
+  nothing.
+  One rule governs every deletion: a path is removed unconditionally only
+  when THIS run will write it (--output itself, and each <output>.<lane>.json
+  a multi-lane run is about to write); anything else must first prove the
+  skill wrote it — the review schema PLUS the external-... agent marker. That
+  applies to roster-named siblings too: at the default SECOND_OPINION_COUNT=1
+  a run writes no lane file, so an <output>.codex.json holding your data
+  survives. The ownership check requires jq: without it the designated output
+  is still cleared, but sibling lane artifacts are left alone and the run
+  says so on stderr before exiting on the missing dependency. A sibling
+  sharing only the name shape (<output>.notes.json), or sharing the schema
+  under another agent (an internal reviewer-* artifact), is never touched.
+
+Option syntax: options take their value in either form, --opt VALUE or
+--opt=VALUE; the split form refuses a value that begins with '-', so a
+dash-leading path is passed as --output=-report.json.
+
+Errors: runtime failures emit a JSON error object on stderr
+({"error": "...", "target": "..."}); pre-flight configuration errors —
+unknown flag, an option missing its value, missing mode, non-integer
+--timeout or SECOND_OPINION_COUNT, missing jq, a directory or an uncreatable
+parent at --output, a missing --cwd — are plain 'Error:' lines on stderr
+with exit 1.
+
 Exit codes:
   0  success
   1  config failure (bad target, missing jq), no eligible cross-model target
-     (refused — never a same-model review), or an unrecoverable non-JSON
-     response that survived the one-shot retry (review/audit)
+     (refused — never a same-model review), any challenge/quick CLI failure
+     including timeout, or an unrecoverable non-JSON response that survived
+     the one-shot retry (review/audit)
   3  review: derived diff scope is empty or invalid — nothing to review
   4  review/audit: model self-reported no review was performed
      (qa_metadata.review_performed=false) or omitted the required qa_metadata

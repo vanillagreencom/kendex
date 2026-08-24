@@ -47,11 +47,11 @@ Standard review-finding JSON — same schema used by all internal review agents:
 }
 ```
 
-When multiple lanes ran, the artifact is a union: `agent` is `external-union(<lane>+<lane>)`, each finding carries `sources` (the lanes that reported it, deduplicated by location), `qa_metadata.lanes` records every lane's outcome, and `qa_metadata.coverage` is `"full"` or `"degraded"` (a lane failed — say so when presenting). Lane artifacts sit beside the union as `<output>.<target>.json`. `qa_metadata.reviewed_head` records the head commit the review covered — budget review passes per head, not per submission.
+When multiple lanes ran, the artifact is a union — field meanings, merge rules, and lane-artifact placement: [../references/multi-lane.md](../references/multi-lane.md). When `qa_metadata.coverage` is `"degraded"`, say so when presenting. `qa_metadata.reviewed_head` records the head commit the review covered — budget review passes per head, not per submission.
 
 `questions` is always empty (no PR comment context).
 
-The script never writes an artifact for a review that did not happen (empty diff, response unusable after its one retry, CLI never answered — each exits non-zero). **On any non-zero exit, report what failed instead of presenting a verdict**; the codes and their sidecar files are in SKILL.md § Error Handling.
+The script never writes an artifact for a review that did not happen (empty diff, response unusable after its one retry, CLI never answered — each exits non-zero). **On any non-zero exit, report what failed instead of presenting a verdict**; the codes and their sidecar files are in `second-opinion --help`.
 
 <output_format>
 
