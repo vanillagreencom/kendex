@@ -463,7 +463,7 @@ for number in $pr_numbers; do
     # The writer validates this same interface; an unknown or empty verdict
     # from a zero-exit predicate is a broken reducer, never a healthy PR.
     case "$verdict" in
-      approved|awaiting|threads-open|changes-requested) ;;
+      approved|awaiting|threads-open|changes-requested|untracked-claim) ;;
       *)
         emit "$number" "$head" error "predicate produced no recognizable verdict (broken output)"
         errored=1
@@ -485,6 +485,10 @@ for number in $pr_numbers; do
   read_gate_state "$number" "$head" || continue
 
   case "$verdict" in
+    untracked-claim)
+      emit "$number" "$head" untracked-claim "$detail$queued"
+      continue
+      ;;
     threads-open)
       # Already reported from the direct read — dedupe the predicate's
       # duplicate verdict. Before stopping, re-check the FRESH gate state:

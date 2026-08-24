@@ -1068,8 +1068,12 @@ if [ "$THREADS_MODE" = "enforce" ]; then
 # (an ABC-123 tracker id or #123): a tracking claim with nothing behind it is a false
 # disposition, and the gate is where it becomes visible. Bot comments are
 # exempt (they quote each other); a missing comments field reads as none.
+# A thread past 50 comments cannot be fully read in this page shape, so it
+# fails closed as malformed rather than approving a claim it never saw.
 t_threads_page_jq='if ((.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | type) != "boolean")
     or ([.data.repository.pullRequest.reviewThreads.nodes[] | select((.isResolved | type) != "boolean")] | length) > 0
+  then "malformed"
+  elif ([.data.repository.pullRequest.reviewThreads.nodes[] | select(.comments.pageInfo.hasNextPage == true)] | length) > 0
   then "malformed"
   else ([.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length | tostring)
     + " " + ([.data.repository.pullRequest.reviewThreads.nodes[] | ((.comments.nodes // [])[]
@@ -1089,7 +1093,7 @@ while :; do
   fi
   if [ -n "$t_cursor" ]; then
     t_page="$(gh_read graphql \
-      -f query='query($owner:String!,$repo:String!,$number:Int!,$after:String){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:50){nodes{body author{__typename}}}}}}}}' \
+      -f query='query($owner:String!,$repo:String!,$number:Int!,$after:String){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:50){pageInfo{hasNextPage} nodes{body author{__typename}}}}}}}}' \
       -F owner="${GH_REPO%/*}" -F repo="${GH_REPO#*/}" -F number="$PR_NUMBER" -f after="$t_cursor" \
       --jq "$t_threads_page_jq")" || {
       echo "::error::could not read review threads" >&2
@@ -1097,7 +1101,7 @@ while :; do
     }
   else
     t_page="$(gh_read graphql \
-      -f query='query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:50){nodes{body author{__typename}}}}}}}}' \
+      -f query='query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:50){pageInfo{hasNextPage} nodes{body author{__typename}}}}}}}}' \
       -F owner="${GH_REPO%/*}" -F repo="${GH_REPO#*/}" -F number="$PR_NUMBER" \
       --jq "$t_threads_page_jq")" || {
       echo "::error::could not read review threads" >&2
