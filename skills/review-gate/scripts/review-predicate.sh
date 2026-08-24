@@ -1079,7 +1079,7 @@ t_threads_page_jq='if ((.data.repository.pullRequest.reviewThreads.pageInfo.hasN
     + " " + ([.data.repository.pullRequest.reviewThreads.nodes[] | ((.comments.nodes // [])[]
         | select((.author.__typename // "User") != "Bot")
         | select((.body // "") | test("(?i)\\btrack(ed|ing|s)?\\b"))
-        | select(((.body // "") | test("[A-Z][A-Z0-9]+-[0-9]+|#[0-9]+")) | not))] | length | tostring)
+        | select(((.body // "") | test("([A-Z][A-Z0-9]+-[0-9]+|#[0-9]+)\\b")) | not))] | length | tostring)
     + " " + (.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | tostring)
     + " " + (.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // "END")
   end'

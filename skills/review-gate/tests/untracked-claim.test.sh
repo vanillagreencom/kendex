@@ -27,6 +27,9 @@ bot()   { printf '{"body":%s,"author":{"__typename":"Bot"}}'  "$(jq -Rn --arg b 
 out=$(page "$(thread true "$(human 'Out of scope for this PR, tracked.')")")
 case "$out" in "0 1 "*) ok "issue-less tracking claim counts";; *) bad "issue-less tracking claim counts" "$out";; esac
 
+out=$(page "$(thread true "$(human 'Tracked: KEN-12oops')"),$(thread true "$(human 'tracked in #34abc')")")
+case "$out" in "0 2 "*) ok "a malformed id does not anchor a claim";; *) bad "a malformed id does not anchor a claim" "$out";; esac
+
 out=$(page "$(thread true "$(human 'Tracked: KEN-536')"),$(thread true "$(human 'Tracked: DRV-12')"),$(thread true "$(human 'Fixed in abc123, tracked as #77')")")
 case "$out" in "0 0 "*) ok "claims naming KEN-/other-prefix/#id pass";; *) bad "claims naming KEN-/other-prefix/#id pass" "$out";; esac
 
