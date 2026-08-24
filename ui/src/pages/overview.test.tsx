@@ -3,13 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ScanResult } from "@/bindings";
 import {
   AUDIT_ATTENTION_TITLE,
-  MARKETPLACES_UNCHECKED_DETAIL,
   SCAN_AGAIN_LABEL,
   SCAN_FAILED_TITLE,
   SCAN_STALE_TITLE,
   TRY_AGAIN_LABEL,
   UPDATES_ATTENTION_TITLE,
 } from "@/lib/copy";
+import { MARKETPLACES_UNCHECKED_DETAIL } from "@/lib/copy-marketplaces";
 import { OverviewPage } from "./overview";
 
 // Static markup escapes apostrophes, so a pinned copy token must be

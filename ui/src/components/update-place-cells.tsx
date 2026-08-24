@@ -82,16 +82,21 @@ export function PlaceCells({
       ) : (
         <>
           <TableCell className="text-center">
+            {/* Switching follow OFF holds the package at row.current's
+                commit — from a stale row that pins it to an old version,
+                so the switch waits for a check the same as Update. */}
             <Switch
               aria-label={followSourceLabel(name, place)}
               checked={!row.pinned}
-              disabled={busy || locked !== null}
+              disabled={busy || !loaded || locked !== null}
               title={
                 locked?.kind === "source"
                   ? heldBySourceNote(locked.name)
                   : locked
                     ? HELD_BY_OWNER_NOTE
-                    : undefined
+                    : !loaded
+                      ? UPDATE_NEEDS_CHECK_NOTE
+                      : undefined
               }
               onCheckedChange={(follow) => void setAutoUpdate(row, follow)}
             />

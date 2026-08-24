@@ -2,12 +2,14 @@ import { Store, TriangleAlert } from "lucide-react";
 import type { MarketplaceRow, Scope } from "@/bindings";
 import { EmptyState } from "@/components/empty-state";
 import { SubscribedRow } from "@/components/marketplaces/subscribed-row";
+import { StatusNote } from "@/components/status-note";
 import { Button } from "@/components/ui/button";
+import { TRY_AGAIN_LABEL } from "@/lib/copy";
 import {
   MARKETPLACES_CHECK_FAILED_TITLE,
   MARKETPLACES_EMPTY_TITLE,
-  TRY_AGAIN_LABEL,
-} from "@/lib/copy";
+  MARKETPLACES_UNCONFIRMED_TITLE,
+} from "@/lib/copy-marketplaces";
 import { scopeLabel } from "@/lib/derive";
 import { scopeName, scopePath } from "@/lib/labels";
 import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
@@ -58,6 +60,22 @@ export function SubscribedTab({ onSubscribe }: { onSubscribe: () => void }) {
   return (
     <div className={cn(PAGE_BODY, "pt-0")}>
       <div className={cn(WIDE_CONTENT_WIDTH, "space-y-8")}>
+        {/* Rows kept from before a failed read stay on screen — right —
+            but headed as what they are: the last read that answered, not
+            confirmed subscriptions. Their actions gate on the same flag. */}
+        {loaded && !rowsCurrent ? (
+          <StatusNote
+            tone="warning"
+            title={MARKETPLACES_UNCONFIRMED_TITLE}
+            action={
+              <Button size="sm" variant="outline" onClick={() => void load()}>
+                {TRY_AGAIN_LABEL}
+              </Button>
+            }
+          >
+            {error}
+          </StatusNote>
+        ) : null}
         {groups.map(({ scope, list }) => (
           <section key={scopeLabel(scope)}>
             <div className="mb-2 flex items-baseline gap-2">

@@ -13,11 +13,11 @@ import { StatTile } from "@/components/stat-tile";
 import { StatusNote } from "@/components/status-note";
 import { Button } from "@/components/ui/button";
 import {
-  MARKETPLACES_UNCHECKED_DETAIL,
   SCAN_AGAIN_LABEL,
   SCAN_FAILED_TITLE,
   SCAN_STALE_TITLE,
 } from "@/lib/copy";
+import { MARKETPLACES_UNCHECKED_DETAIL } from "@/lib/copy-marketplaces";
 import { groupItems, recentItems } from "@/lib/derive";
 import { harnessName } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";

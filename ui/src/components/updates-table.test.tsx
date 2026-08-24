@@ -178,9 +178,14 @@ describe("UpdatesTable", () => {
     );
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Update all</);
     expect(html.match(/<button[^>]*disabled=""[^>]*>Update</g)).toHaveLength(2);
+    // The Follow switch holds at row.current's commit when switched off —
+    // a stale row would pin an old version — so it waits too.
+    expect(
+      html.match(/<span[^>]*data-disabled=""[^>]*role="switch"/g),
+    ).toHaveLength(2);
     expect(
       html.match(new RegExp(`title="${UPDATE_NEEDS_CHECK_NOTE}"`, "g")),
-    ).toHaveLength(3);
+    ).toHaveLength(5);
   });
 
   it("offers no package-wide Update all in the muted table", () => {
