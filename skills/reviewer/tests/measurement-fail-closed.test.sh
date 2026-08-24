@@ -112,8 +112,8 @@ schema="$SKILL_DIR/schemas/review-finding.md"
 
 # --- a. the rule is stated where every reviewer loads it ---
 
-require_fixed "$skill" 'produced zero samples' 'Ethos states the zero-sample rule'
-require_fixed "$skill" 'exited nonzero' 'Ethos covers a measuring pipeline that failed'
+require_fixed "$skill" 'Zero samples' 'Ethos states the zero-sample rule'
+require_fixed "$skill" 'nonzero measuring pipeline' 'Ethos covers a measuring pipeline that failed'
 require_fixed "$skill" 'instrument failure' 'Ethos names the classification'
 require_fixed "$skill" 'measurement_failed' 'Ethos names the declaration, so evidence is kept not deleted'
 require_fixed "$skill" 'top-level' 'Ethos says where the declaration goes'

@@ -30,7 +30,7 @@ Shared contract for every review specialist; each agent's domain and probes live
 ## Ethos
 
 - Verify before reporting: if the repo contains the caller, config, test, or doc that settles a suspicion, read it. Never file "maybe X handles this" when X is in the repo.
-- Never trust a green check you have not seen fail: prove any instrument you rely on (a grep scope, a substitution, a measurement, a test assertion) on a control input that must fail — or, for a substitution, visibly transform — before trusting its pass on the real target. A run that produced zero samples, or whose measuring pipeline exited nonzero, is instrument failure, not a result: declare it in the top-level `measurement_failed` ([`schemas/review-finding.md`](./schemas/review-finding.md)) and never cite its numbers as evidence. A zero RESULT is not a zero sample — `stability: 0/10` is ten measured runs and a finding to report.
+- Never trust a green check you have not seen fail: prove every instrument (grep scope, substitution, measurement, assertion) on a control input that must fail before trusting its pass. Zero samples or a nonzero measuring pipeline = instrument failure: declare the top-level `measurement_failed` ([`schemas/review-finding.md`](./schemas/review-finding.md)), cite no numbers. A zero RESULT is a result — `stability: 0/10` is ten measured runs and a finding.
 - **Report the class, not the instance.** When a finding generalizes (the same missing guard at sibling sites), enumerate every affected site in that one finding.
 - Fewer high-conviction findings beat lists of nits.
 - Project decisions and architecture docs outrank generic heuristics. Do not contradict or re-litigate the decisions the delegation lists.
@@ -59,4 +59,18 @@ Items the delegation lists as resolved are not re-reported. Scope the pass to th
 
 ## Mutation-Stability Pairing
 
-Mutation-validating a test (temporarily breaking the code under test to confirm the test fails, then reverting) proves the test can fail, not that it fails only for the right reason. Plant and revert a mutation inside a single tool call; when that is not possible, run it on a `git archive [SHA]` copy outside the worktree, never in the shared tree — one fresh `mktemp -d` per mutant, no `rm -rf` (a variable-path `rm -rf` halts the whole session on a harness confirmation no flag can suppress). The mutant must be killed under every selection/invocation mode the changed code exposes, not only the default. Every test you mutation-validate also gets repeat runs (default N=10) at elevated parallelism (e.g. `--test-threads` at roughly double the runner's default). Report both numbers in your artifact's `summary`, in this fixed format: `mutation: killed X/X; stability: Y/N at T threads`. That field and `qa_metadata` are the only carriers read as your own measurement; the same citation living only inside a blocker or suggestion is treated as quoted evidence and is not checked. A test that passes mutation but fails any stability run is a concurrency-sensitive finding, never a pass.
+Mutation proves a test can fail; stability proves it fails only for the
+right reason. Run both with one command, on a copy, never in the shared
+tree:
+
+```bash
+.agents/skills/reviewer/scripts/mutation-stability --worktree [WORKTREE_PATH] --sha [SHA] --test '[TEST_CMD]' --mutate '[MUTATE_CMD]'
+```
+
+- Kill the mutant under every selection/invocation mode the changed code
+  exposes, not only the default (one call per mode).
+- Copy the printed `mutation: … stability: …` line into your artifact's
+  `summary`; that field and `qa_metadata` are the only carriers read as
+  your own measurement.
+- Mutation-pass + any stability-fail is a concurrency-sensitive finding,
+  never a pass. A survived mutant means the test is not evidence.

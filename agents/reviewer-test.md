@@ -27,7 +27,7 @@ Coverage of changed paths (branches, error paths, boundaries), test quality, det
 - **Assertion tightness**: matchers loose enough to also match a skip note, a shared suffix, or a wrong-cause message; assertions on source text that survive logic inversion.
 - **Wiring**: a new test file is only real if a runner invokes it — verify CI/run-all wiring for every added suite.
 - **Environment**: assumptions that break under root, another locale, or elevated parallelism.
-- Any test you mutation-validate also gets repeat runs at elevated parallelism (reviewer skill's Mutation-Stability Pairing); report both numbers — mutation-pass + stability-fail is a finding, not a pass.
+- Any test you mutation-validate also gets repeat runs at elevated parallelism (reviewer skill's `mutation-stability` script); report both numbers — mutation-pass + stability-fail is a finding, not a pass.
 
 ## Output
 
