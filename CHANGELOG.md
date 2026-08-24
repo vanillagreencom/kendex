@@ -109,6 +109,27 @@ changes carry a **Breaking** call-out with their migration note inline.
   publishes is told so plainly, and settles nothing.
 ### Changed
 
+- The commit checks moved to where git runs them. `kendex guard run
+  pre-commit` — what a `kendex guard install` hook runs — now carries the
+  format and lint gate too: `rust-fmt` (cargo fmt over each staged Rust
+  file's owning crate), `rust-clippy` (cargo clippy, `-D warnings`, scoped
+  the same way), and `biome` (staged JS/TS/JSON in Biome projects, the
+  project's own pinned binary first). Each is a `[guards.<name>]` table
+  like every other check — `enabled = false` turns one off. The
+  `pre-commit-check` agent hook no longer re-implements those checks or
+  tries to parse which repository a command commits to: it defers to the
+  repository's armed git pre-commit hook — one validation per commit, and
+  git itself answers the which-repo question — and runs the guard chain
+  from its working directory only where no hook is armed. Commands the old
+  parser refused — `$(…)`, backticks, `cd "$dir"`, an unexpanded `$repo` —
+  no longer block commits, and forms it silently mischecked
+  (`--git-dir`/`--work-tree`, `(cd … && git commit)`) are now checked in
+  the right repository by git. **Breaking**: the hook's
+  `KENDEX_PRE_COMMIT_RUST_CLIPPY` setting is gone; disable the lane with
+  `[guards.rust-clippy] enabled = false` (or
+  `KENDEX_GUARDS_RUST_CLIPPY_ENABLED=false` machine-locally), and point a
+  custom command at the chain's machine-local extension
+  (`KENDEX_GUARD_PRE_COMMIT_LOCAL`) instead.
 - Keeping a folder several tools read through shortcuts now asks in the
   same words as the button that opened it, rather than renaming the action
   halfway through. It still names the folder, the tools reading it, and

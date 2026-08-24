@@ -1,6 +1,8 @@
 //! The commit-time guard family, native: size-ratchet, todo-ban,
 //! byte-ceiling, suppression-ban, commit-msg — v1's semantics carried, the
-//! machinery rebuilt on the index git names for the commit.
+//! machinery rebuilt on the index git names for the commit — plus the
+//! lint lanes (rust-fmt, rust-clippy, biome), which read the staged list
+//! from that index and run the project's toolchain over the working tree.
 //!
 //! Family contract: a check returns an [`Outcome`] (0 clean, otherwise its
 //! violations) or an error — configuration wrong, or a measurement that
@@ -15,6 +17,7 @@ pub mod byte_ceiling;
 pub mod commit_msg;
 mod ctx;
 pub mod import;
+pub mod lint;
 pub mod patterns;
 pub mod settings;
 pub mod size_ratchet;
@@ -202,6 +205,9 @@ pub fn run_pre_commit(ctx: &GuardCtx) -> ChainReport {
     report.step(&policy, "suppression-ban", |policy| {
         suppression_ban::run(ctx, policy, false)
     });
+    report.step(&policy, "rust-fmt", |_| lint::run_fmt(ctx));
+    report.step(&policy, "rust-clippy", |_| lint::run_clippy(ctx));
+    report.step(&policy, "biome", |_| lint::run_biome(ctx));
     // The old spelling stays readable: machine-local chain hooks are set
     // once and forgotten. The current name wins when both are set.
     if let Ok(local) = std::env::var("KENDEX_GUARD_PRE_COMMIT_LOCAL")

@@ -140,6 +140,16 @@ impl Hardened {
         hardened
     }
 
+    /// A lint tool the commit-time guards invoke — cargo, biome — run from
+    /// the repository root under the standard hardening. The program is
+    /// either a bare well-known name resolved on PATH or a path the guard
+    /// itself derived; never a command a committed file named.
+    pub fn lint_tool(program: &Path, args: &[&str], cwd: &Path) -> Hardened {
+        let mut hardened = Hardened::new(&program.to_string_lossy(), owned(args));
+        hardened.command.current_dir(cwd);
+        hardened
+    }
+
     pub fn timeout(mut self, timeout: Duration) -> Hardened {
         self.timeout = timeout;
         self

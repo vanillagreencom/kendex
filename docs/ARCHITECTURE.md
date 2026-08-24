@@ -367,7 +367,8 @@ lives in one capability table read by core and UI.
   both repo spellings as kendex-owned.
 - **Commits walk through the guards whatever tool makes them.** The guard
   family (`core/guard/`) — size-ratchet, todo-ban, byte-ceiling,
-  suppression-ban, commit-msg — judges the index git names for the commit
+  suppression-ban, commit-msg, and the lint lanes rust-fmt, rust-clippy
+  and biome — judges the index git names for the commit
   (`GIT_INDEX_FILE`, captured once and threaded through a validated
   context; the one sanctioned redirect past invariant 13). Policy is read
   from the commit: the `[guards]` tables in `kendex.settings.toml`,
@@ -381,7 +382,14 @@ lives in one capability table read by core and UI.
   exit 1 (violations) and 2 (could not run) both block. Baseline TSVs read
   as-is; legacy env-style settings convert once through `guard import-v1`;
   imported excludes keep v1's legacy-glob dialect, marked as such; a
-  pattern outside the documented dialect is a refusal.
+  pattern outside the documented dialect is a refusal. The lint lanes
+  take the staged list from that index but run the project's toolchain
+  (cargo, biome — well-known names or the project's untracked
+  `node_modules/.bin`, never a committed command) over the working tree,
+  scoped per staged file's owning `Cargo.toml`. Which repository a commit
+  targets is git's question: the `pre-commit-check` PreToolUse hook only
+  word-matches for a commit, defers to an armed git pre-commit hook, and
+  runs the chain in its own working directory only where none is armed.
 - **kendex owns its hooks directory — provably.** The guards reach git
   through `<git-common-dir>/kendex-hooks/`, two entrypoints whose call
   surface (`kendex guard run <hook>`) is a stable contract, with
