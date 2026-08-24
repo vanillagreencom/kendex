@@ -142,9 +142,11 @@ assert_file_contains "$merge_workflow" 'The `Base sync` row is never omitted' \
   "merge-pr never omits the Base sync row, so a stale base cannot pass unreported"
 
 # A push that rebases rewrites every stored fix SHA. Without reconciliation the
-# PR body cites commits that no longer exist.
-assert_file_contains "$submit_workflow" 'Rebase-map reconciliation (required)' \
-  "submit-pr keeps the rebase-map reconciliation step"
+# PR body cites commits that no longer exist; worktree-push owns that remap.
+assert_file_contains "$submit_workflow" 'scripts/worktree-push --worktree' \
+  "submit-pr pushes through the SHA-reconciling worktree-push wrapper"
+assert_file_contains "$submit_workflow" 'Publishing an unreconciled pre-rebase SHA is forbidden' \
+  "submit-pr keeps the unreconciled-SHA publication ban"
 
 # The lease is what stops two sessions working the same tree.
 assert_file_contains "$SKILL_DIR/workflows/start-worktree.md" \

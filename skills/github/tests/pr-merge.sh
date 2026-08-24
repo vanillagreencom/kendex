@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Regression tests for pr-merge --check CI readiness classification.
+# Regression tests for pr-merge --check CI readiness classification, the
+# --check verdict/head-run stderr lines, and ci-classify-refusal.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -204,7 +205,16 @@ EOF
 chmod +x "$TMPDIR/bin/gh"
 
 run_check() {
-    (cd "$TMPDIR/repo" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN "$PR_MERGE" 123 --check)
+    (cd "$TMPDIR/repo" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN "$PR_MERGE" 123 --check 2>/dev/null)
+}
+
+# Like run_check, but keeps stdout JSON in $out and the stderr verdict lines
+# in $verdict_err.
+verdict_err=""
+run_check_verdict() {
+    local err_file="$TMPDIR/check-verdict.err"
+    out=$( (cd "$TMPDIR/repo" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN "$PR_MERGE" 123 --check 2>"$err_file") )
+    verdict_err=$(cat "$err_file")
 }
 
 run_merge() {
@@ -630,6 +640,87 @@ set -e
 assert_eq "$status" "1" "failed --force stays blocked when a queue entry was already active"
 assert_contains "$out" "BLOCKED PR #123 — gh pr merge failed" "queued --force failure is not reported as pending success"
 assert_contains "$out" "merge queue is required" "queued --force failure preserves the immediate failure detail"
+
+echo
+echo "=== pr-merge --check verdict + head-run stderr lines (KEN-542) ==="
+
+# Mergeable head with one authoritative run: JSON carries the scoped run ids,
+# stderr carries the one-word verdict and the same ids on a head-run: line.
+checks='[
+  {"name":"Lint","state":"SUCCESS","bucket":"pass","link":"https://github.com/owner/repo/actions/runs/29099680623/job/201","workflow":"CI","startedAt":"2026-07-10T11:00:00Z"},
+  {"name":"Changes","state":"SUCCESS","bucket":"pass","link":"https://github.com/owner/repo/actions/runs/29099680623/job/202","workflow":"CI","startedAt":"2026-07-10T11:00:01Z"}
+]'
+STUB_CHECKS="$checks" run_check_verdict
+assert_eq "$(jq -r '.head_runs | join(",")' <<<"$out")" "29099680623" "head_runs carries the scoped run id"
+assert_eq "$(head -1 <<<"$verdict_err")" "mergeable" "clean check prints one-word mergeable verdict"
+assert_contains "$verdict_err" "head-run: 29099680623" "stderr names the scoped run"
+
+# A superseded run's id must NOT appear in the run scope — head-run reports
+# what the classification counted, not every run on the head.
+checks='[
+  {"name":"Lint","state":"CANCELLED","bucket":"cancel","link":"https://github.com/owner/repo/actions/runs/29098545030/job/101","workflow":"CI","startedAt":"2026-07-10T10:00:00Z"},
+  {"name":"Lint","state":"SUCCESS","bucket":"pass","link":"https://github.com/owner/repo/actions/runs/29099680623/job/201","workflow":"CI","startedAt":"2026-07-10T11:00:00Z"},
+  {"name":"Changes","state":"SUCCESS","bucket":"pass","link":"https://github.com/owner/repo/actions/runs/29099680623/job/202","workflow":"CI","startedAt":"2026-07-10T11:00:01Z"}
+]'
+STUB_CHECKS="$checks" run_check_verdict
+assert_eq "$(jq -r '.head_runs | join(",")' <<<"$out")" "29099680623" "superseded run id excluded from head_runs"
+assert_not_contains "$verdict_err" "29098545030" "superseded run id excluded from head-run line"
+
+checks='[{"name":"Unit Tests","state":"SUCCESS","bucket":"pass"},{"name":"Lint","state":"FAILURE","bucket":"fail"}]'
+STUB_CHECKS="$checks" run_check_verdict
+assert_eq "$(head -1 <<<"$verdict_err")" "blocked" "failing check prints blocked verdict"
+assert_contains "$verdict_err" "head-run: none" "checks without run links report head-run: none"
+
+STUB_CHECKS='[]' STUB_STATE=MERGED STUB_MERGED_AT=2026-07-21T00:00:00Z run_check_verdict
+assert_eq "$(head -1 <<<"$verdict_err")" "merged" "terminal MERGED prints merged verdict"
+assert_eq "$(jq -r '.head_runs | length' <<<"$out")" "0" "terminal state carries empty head_runs"
+
+echo
+echo "=== ci-classify-refusal names the refusal cause (KEN-542) ==="
+
+CLASSIFY="$REPO_ROOT/skills/github/scripts/commands/ci-classify-refusal.sh"
+
+run_classify() {
+    (cd "$TMPDIR/repo" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN "$CLASSIFY" 123)
+}
+
+# Unresolved actionable threads headline as cause: threads.
+checks='[{"name":"CI Required","state":"SUCCESS","bucket":"pass"}]'
+actionable_threads='[{"id":"PRRT_actionable","isResolved":false,"isOutdated":false,"path":"src/lib.rs","line":12,"comments":{"nodes":[{"author":{"login":"reviewer"},"body":"Fix this"}]}}]'
+out=$(STUB_CHECKS="$checks" STUB_THREADS_JSON="$actionable_threads" run_classify)
+assert_eq "$(head -1 <<<"$out")" "cause: threads" "unresolved threads classify as cause: threads"
+assert_contains "$out" "issue: unresolved_threads:" "thread refusal keeps the raw issue line"
+
+# A current-run failure classifies as ci_failed, run-correlated to the
+# authoritative run; the superseded run is named but its checks not counted.
+checks='[
+  {"name":"Lint","state":"CANCELLED","bucket":"cancel","link":"https://github.com/owner/repo/actions/runs/29098545030/job/101","workflow":"CI","startedAt":"2026-07-10T10:00:00Z"},
+  {"name":"Lint","state":"SUCCESS","bucket":"pass","link":"https://github.com/owner/repo/actions/runs/29099680623/job/201","workflow":"CI","startedAt":"2026-07-10T11:00:00Z"},
+  {"name":"Integration","state":"FAILURE","bucket":"fail","link":"https://github.com/owner/repo/actions/runs/29099680623/job/202","workflow":"CI","startedAt":"2026-07-10T11:00:01Z"}
+]'
+out=$(STUB_CHECKS="$checks" STUB_CHECKS_EXIT=8 run_classify)
+assert_eq "$(head -1 <<<"$out")" "cause: ci_failed" "current-run failure classifies as ci_failed"
+assert_contains "$out" "head-run: 29099680623" "ci_failed names the run it scoped to"
+assert_contains "$out" "fail: Integration state=FAILURE workflow=CI run=29099680623" "failing check is run-correlated"
+assert_not_contains "$out" "fail: Lint" "superseded CANCELLED check is not a fail line"
+assert_contains "$out" "superseded: workflow=CI run=29098545030" "superseded run is named with its id"
+
+# Pending-only refusals name the run scope but list no failures.
+checks='[{"name":"Changes","state":"IN_PROGRESS","bucket":"pending","link":"https://github.com/owner/repo/actions/runs/29099680623/job/201","workflow":"CI","startedAt":"2026-07-10T11:00:00Z"}]'
+out=$(STUB_CHECKS="$checks" STUB_CHECKS_EXIT=8 run_classify)
+assert_eq "$(head -1 <<<"$out")" "cause: ci_pending" "pending-only refusal classifies as ci_pending"
+assert_contains "$out" "head-run: 29099680623" "ci_pending names the run it scoped to"
+assert_not_contains "$out" "fail:" "ci_pending lists no fail lines"
+
+# A passing head is not a refusal.
+checks='[{"name":"CI Required","state":"SUCCESS","bucket":"pass"}]'
+out=$(STUB_CHECKS="$checks" run_classify)
+assert_eq "$(head -1 <<<"$out")" "cause: none" "passing head classifies as cause: none"
+assert_contains "$out" "note: checks pass now" "cause: none says to re-run the refusing command"
+
+# Terminal states classify by lifecycle, not by manufactured blockers.
+out=$(STUB_CHECKS='[]' STUB_STATE=MERGED STUB_MERGED_AT=2026-07-21T00:00:00Z run_classify)
+assert_eq "$(head -1 <<<"$out")" "cause: merged" "terminal MERGED classifies as cause: merged"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -66,27 +66,12 @@ Route the findings per the `review-finding` schema. No blockers and no `category
 1. **Push**:
 
    ```bash
-   .agents/skills/worktree/scripts/worktree push "[WORKTREE_PATH]" --set-upstream
+   .agents/skills/orch/scripts/worktree-push --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID] --set-upstream
    ```
 
-   **Rebase-map reconciliation (required).** `worktree push` auto-rebases onto the updated base and prints one `rebase-map: [OLD_SHA] [NEW_SHA]` line per rewritten commit (`[NEW_SHA]` is the literal word `dropped` when the replayed patch was already upstream). When the push output carries any `rebase-map:` lines, reconcile every SHA recorded before the push — `fixed_items`, `pr_comment_review.fixes`, a perf QA `benchmark_commit` — before anything publishes them. Publishing an unreconciled pre-rebase SHA is forbidden.
+   The push auto-rebases onto the updated base. When the rebase rewrites commits, `worktree-push` records the old→new map in `.rebase_map` and rewrites the fix commits stored in workflow state (`fixed_items`, `pr_comment_review.fixes`) itself, reporting what changed on its `sha-reconcile:` line. A non-zero exit after a successful push means the map was NOT recorded — repair workflow state before publishing any recorded SHA.
 
-   Record the map, one command per mapping line, storing `dropped` literally:
-
-   ```bash
-   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.rebase_map = (.rebase_map // {}) + {"[OLD_SHA]": "[NEW_SHA]"}'
-   ```
-
-   Then rewrite every stored fix commit that matches a mapped old SHA — a recorded short SHA matches when it is a prefix of `[OLD_SHA]`, and is replaced by `[NEW_SHA]` truncated to the recorded length, one command per matching item:
-
-   ```bash
-   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '(.fixed_items[]? | select(.commit == "[RECORDED_SHA]") | .commit) = "[MAPPED_SHA]"'
-   ```
-   ```bash
-   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '(.pr_comment_review.fixes[]? | select(.commit == "[RECORDED_SHA]") | .commit) = "[MAPPED_SHA]"'
-   ```
-
-   Regenerate any already-drafted publication text from the reconciled state, and resolve every SHA sourced from a review or QA artifact through `.rebase_map` before publishing it — follow the chain until no key matches.
+   Regenerate any already-drafted publication text from the reconciled state, and resolve every SHA sourced from a review or QA artifact (e.g. a perf QA `benchmark_commit`) through `.rebase_map` before publishing it — follow the chain until no key matches. Publishing an unreconciled pre-rebase SHA is forbidden.
 
 2. **Check for an existing PR**:
 
@@ -291,7 +276,7 @@ A PR merges on exactly four deterministic gates. Gates 2 and 4 **verify results 
 
 Empty `json_paths` means no internal review is recorded: report the unmet gate and recommend `orch review-pr [PR_NUMBER]`.
 
-**Gate 2** — verify the recorded result; do not re-run ci-wait. Raw `gh pr checks` output is never the gate. On a `pr-merge --check` refusal right after a green § 5, read the refusal's `issues` and route by type: threads → gate 3; merge conflicts and fetch errors → report; only CI-shaped issues (`ci_failed:`, failing checks) take the stale-CI diagnosis: identify which run each reported failure belongs to (`gh pr checks [PR_NUMBER] --json name,state,link,workflow` — the run id is in `link`; run ids do not order runs by execution) before treating it as real. If every reported failure belongs to a superseded or duplicate run while the required aggregate is green, report it with the run ids rather than forcing or abandoning the merge.
+**Gate 2** = the recorded § 5 result — do not re-run ci-wait, and raw `gh pr checks` output is never the gate. On a `pr-merge --check` refusal run `.agents/skills/github/scripts/github.sh ci-classify-refusal [PR_NUMBER]` and route on its `cause:` line: `threads` → gate 3; anything else → report the cause with its printed detail (for `ci_failed` that includes the `fail:` and `superseded:` run ids) rather than forcing or abandoning the merge.
 
 **Gate 3** — final live check:
 

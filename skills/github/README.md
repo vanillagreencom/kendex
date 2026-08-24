@@ -24,6 +24,7 @@ reference.
 ./scripts/github.sh pr-view 123 --json number,title,state
 ./scripts/github.sh pr-threads 123 --unresolved
 ./scripts/github.sh pr-merge 123 --check
+./scripts/github.sh ci-classify-refusal 123
 ./scripts/github.sh label-add 123 needs-review --required
 ./scripts/git-https-auth -C . fetch --prune origin
 ```

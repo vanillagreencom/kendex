@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# worktree-push — push an issue worktree and reconcile rebased commit SHAs in
+# workflow state, in one call.
+#
+# `worktree push` auto-rebases onto the updated base and prints one
+# 'rebase-map: <old-sha> <new-sha>' line per rewritten commit, with the
+# literal word `dropped` in place of the new SHA when the replayed patch was
+# already upstream. Every SHA recorded in workflow state before that rebase
+# — `fixed_items[].commit`, `pr_comment_review.fixes[].commit` — is stale the
+# moment the map prints, and publishing a stale SHA is forbidden. This
+# wrapper closes that gap at push time instead of leaving the remap to the
+# calling agent:
+#
+#   - merges every mapping into `.rebase_map` (old -> new, `dropped` stored
+#     literally);
+#   - rewrites each recorded fix commit whose SHA is a prefix of a mapped old
+#     SHA to the new SHA truncated to the recorded length; a `dropped`
+#     mapping leaves the recorded commit unchanged and lives only in the map;
+#   - prints one `sha-reconcile:` summary line naming what changed.
+#
+# Artifact-sourced SHAs (for example a perf QA `benchmark_commit`) are not in
+# workflow state; publishers resolve those through `.rebase_map`, following
+# the chain until no key matches.
+#
+# Usage:
+#   worktree-push --worktree PATH --issue ID [--state-dir DIR] [push flags...]
+#
+# Unrecognized flags (e.g. --set-upstream, --no-rebase) pass through to
+# `worktree push`, which validates them. The state file resolves exactly like
+# any other workflow-state call: --state-dir, then $ORCH_STATE_DIR, then tmp/
+# under the caller's working directory.
+#
+# Exit codes:
+#   push failed  -> the push's own exit code; workflow state untouched
+#   push ok      -> 0 when no rebase-map printed, or every mapping was
+#                   recorded and applied
+#   1            -> the push landed but reconciliation did not (no state
+#                   file, unparseable map line, jq/update failure). The
+#                   branch IS pushed; the recorded SHAs are NOT reconciled —
+#                   repair state before publishing any of them.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKTREE_BIN="${ORCH_WORKTREE_BIN:-$SCRIPT_DIR/../../worktree/scripts/worktree}"
+WORKFLOW_STATE="$SCRIPT_DIR/workflow-state"
+
+SHA_GRAMMAR='^[0-9a-f]{40}$'
+
+# The leading comment block is the contract, printed by shape rather than by
+# line number so --help cannot drift as that block grows.
+usage() {
+	awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"
+}
+
+fail() {
+	printf 'worktree-push: %s\n' "$1" >&2
+	exit 1
+}
+
+worktree=''
+issue=''
+state_dir=''
+push_args=()
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--worktree)
+		[[ $# -ge 2 ]] || fail "--worktree requires a path"
+		worktree="$2"
+		shift 2
+		;;
+	--issue)
+		[[ $# -ge 2 ]] || fail "--issue requires an issue id"
+		issue="$2"
+		shift 2
+		;;
+	--state-dir)
+		[[ $# -ge 2 ]] || fail "--state-dir requires a path"
+		state_dir="$2"
+		shift 2
+		;;
+	-h | --help)
+		usage
+		exit 0
+		;;
+	*)
+		push_args+=("$1")
+		shift
+		;;
+	esac
+done
+
+[[ -n "$worktree" ]] || fail "--worktree is required"
+[[ -n "$issue" ]] || fail "--issue is required"
+[[ -x "$WORKTREE_BIN" ]] || fail "worktree script is not executable at $WORKTREE_BIN"
+command -v jq >/dev/null 2>&1 || fail "jq is required to reconcile rebased SHAs"
+
+push_out="$(mktemp)" || fail "could not create a temporary file for the push output"
+trap 'rm -f "$push_out"' EXIT
+
+# Push stderr streams through live; stdout is captured for the rebase-map
+# parse and replayed verbatim so callers still see the full push transcript.
+push_rc=0
+"$WORKTREE_BIN" push "$worktree" ${push_args[@]+"${push_args[@]}"} >"$push_out" || push_rc=$?
+cat "$push_out"
+[[ "$push_rc" -eq 0 ]] || exit "$push_rc"
+
+map_lines=''
+grep_rc=0
+map_lines="$(grep '^rebase-map: ' "$push_out")" || grep_rc=$?
+[[ "$grep_rc" -le 1 ]] \
+	|| fail "could not scan the push output for rebase-map lines (grep exit $grep_rc); recorded SHAs are NOT reconciled"
+
+map_json='{}'
+if [[ -n "$map_lines" ]]; then
+	while IFS=' ' read -r _ old new; do
+		[[ "$old" =~ $SHA_GRAMMAR ]] \
+			|| fail "unparseable rebase-map line (old SHA '$old'); recorded SHAs are NOT reconciled"
+		[[ "$new" == "dropped" || "$new" =~ $SHA_GRAMMAR ]] \
+			|| fail "unparseable rebase-map line (new SHA '$new'); recorded SHAs are NOT reconciled"
+		map_json="$(jq -c --arg o "$old" --arg n "$new" '. + {($o): $n}' <<<"$map_json")" \
+			|| fail "could not assemble the rebase map; recorded SHAs are NOT reconciled"
+	done <<<"$map_lines"
+fi
+
+if [[ "$map_json" == '{}' ]]; then
+	exit 0
+fi
+
+state_flags=()
+[[ -z "$state_dir" ]] || state_flags=(--state-dir "$state_dir")
+
+# The map keys and values are validated hex (or `dropped`), so interpolating
+# them into the jq program is safe. A recorded short SHA matches when it is a
+# prefix of a mapped old SHA and is replaced by the new SHA truncated to the
+# recorded length; comparisons always run against the entry's original value
+# so one push's mappings cannot chain through each other.
+report="$("$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} update-report "$issue" "
+def remap(\$map): . as \$sha
+  | reduce (\$map | to_entries[]) as \$e (\$sha;
+      if \$e.value != \"dropped\" and (\$e.key | startswith(\$sha)) then \$e.value[0:(\$sha | length)] else . end);
+${map_json} as \$map
+| . as \$s
+| (\$s.fixed_items // []) as \$fi
+| (\$s.pr_comment_review.fixes // []) as \$pf
+| (\$fi | map(if (.commit? // \"\") != \"\" then .commit |= remap(\$map) else . end)) as \$fi2
+| (\$pf | map(if (.commit? // \"\") != \"\" then .commit |= remap(\$map) else . end)) as \$pf2
+| {
+    state: (\$s
+      | .rebase_map = ((.rebase_map // {}) + \$map)
+      | .fixed_items = \$fi2
+      | .pr_comment_review = ((.pr_comment_review // {}) | .fixes = \$pf2)),
+    report: {
+      map_entries: (\$map | length),
+      fixed_items: ([range(0; (\$fi | length)) | select(\$fi[.] != \$fi2[.])] | length),
+      pr_fixes: ([range(0; (\$pf | length)) | select(\$pf[.] != \$pf2[.])] | length)
+    }
+  }")" \
+	|| fail "push landed but the rebase map was NOT recorded for $issue; repair workflow state before publishing any recorded SHA"
+
+printf 'sha-reconcile: rebase_map +%s, fixed_items %s rewritten, pr_comment_review.fixes %s rewritten\n' \
+	"$(jq -r '.map_entries' <<<"$report")" \
+	"$(jq -r '.fixed_items' <<<"$report")" \
+	"$(jq -r '.pr_fixes' <<<"$report")"
