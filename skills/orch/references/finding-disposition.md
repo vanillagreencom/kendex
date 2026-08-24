@@ -37,7 +37,7 @@ An `issue` signal is necessary but not sufficient. Every candidate carries its s
 
 The audit pipeline applies project-management's creation bar (its SKILL.md § Disposition) as the final authority; these classes describe what clears it.
 
-Everything else is absorbed or declined. P4 polish never files: absorb it when it is est-1 and related, otherwise drop it with a one-line note in the review summary. A finding that cannot affect real usage is declined with a one-line reason — neither fixed nor filed. A decline is terminal: it appears as its summary line and is never re-presented as a question ("file it anyway?").
+Everything else is absorbed or declined. P4 polish never files: absorb it when it is est-1 and related, otherwise drop it with a one-line note in the review summary. A finding that cannot affect real usage is declined with a one-line reason — neither fixed nor filed. A decline of a claimed DEFECT must disprove the mechanism: name the state that passes or the premise that is false. A defect the diff introduces or arms is in scope by definition — pre-existing caps, thresholds, or code that the diff newly composes into a failing path count as armed. A decline is terminal: it appears as its summary line and is never re-presented as a question ("file it anyway?").
 
 When a same-surface bundle or umbrella parent already exists, residue attaches to it as a child or related issue; a standalone filing needs a stated reason.
 
