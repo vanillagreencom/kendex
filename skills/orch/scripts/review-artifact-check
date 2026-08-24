@@ -174,14 +174,16 @@ file_mtime() {
   stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"
 }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/review-artifact-gates.sh
-source "$SCRIPT_DIR/lib/review-artifact-gates.sh"
-
+# Help must not depend on the gates lib: its source-time mktemp can fail
+# (unwritable TMPDIR) and --help still has to print the contract.
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   usage
   exit 0
 fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/review-artifact-gates.sh
+source "$SCRIPT_DIR/lib/review-artifact-gates.sh"
 
 # --- Path mode: print the canonical artifact path for an agent ---
 if [[ "${1:-}" == "--path" ]]; then

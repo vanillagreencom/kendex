@@ -179,7 +179,7 @@ Exit codes:
      (deadline reached under PR_REVIEW_ON_TIMEOUT=proceed)
   1  changes requested, unresolved comments pending, timeout, or a
      non-auth error
-  2  invalid --mode value
+  2  invalid --mode value or unknown flag
   3  hard GitHub auth/CLI failure (matches ci-wait and queue-wait)
 USAGE
 }
@@ -202,6 +202,14 @@ while [[ $# -gt 0 ]]; do
     --on-timeout)
       ON_TIMEOUT_FLAG="${2:?approval-wait: --on-timeout requires a value: block or proceed}"
       shift 2
+      ;;
+    -*)
+      # An unrecognized flag must never fall through into a positional slot:
+      # it would be consumed as the PR#/interval and die downstream blaming
+      # an argument the caller never typed (kendex#981, same as ci-wait).
+      echo "approval-wait: unknown option '$1'" >&2
+      print_usage >&2
+      exit 2
       ;;
     *) POSITIONAL+=("$1"); shift ;;
   esac

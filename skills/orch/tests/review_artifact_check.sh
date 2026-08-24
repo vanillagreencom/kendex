@@ -743,5 +743,34 @@ assert_eq "$rc" "2" "a non-integer --wait is a usage error"
 rc=0; "$CHECK" "$wwt" waitrev 0 >/dev/null 2>&1 || rc=$?
 assert_eq "$rc" "0" "the bare three-positional contract still validates"
 
+echo "=== -h/--help answers before any temp-file initialization (KEN-556) ==="
+
+# Token pins per KEN-555: the heredoc is the contract's sole home.
+set +e
+help_out="$("$CHECK" --help 2>"$TMP_ROOT/help.err")"
+rc=$?
+set -e
+assert_eq "$rc" "0" "--help exits 0"
+assert_substr "$help_out" "Usage:" "--help prints usage on stdout"
+assert_eq "$(cat "$TMP_ROOT/help.err")" "" "--help writes nothing to stderr"
+assert_substr "$help_out" "zero_sample" "--help carries the reason vocabulary"
+assert_substr "$help_out" "measurement_failed" "--help carries the declaration contract"
+
+set +e
+help_out="$("$CHECK" -h 2>/dev/null)"
+rc=$?
+set -e
+assert_eq "$rc" "0" "-h exits 0"
+assert_substr "$help_out" "Usage:" "-h prints usage"
+
+# The dispatch runs BEFORE the gates lib is sourced: its source-time mktemp
+# fails under an unusable TMPDIR, and --help must still print the contract.
+set +e
+help_out="$(TMPDIR="$TMP_ROOT/does-not-exist/nope" "$CHECK" --help 2>"$TMP_ROOT/help2.err")"
+rc=$?
+set -e
+assert_eq "$rc" "0" "--help exits 0 with an unusable TMPDIR"
+assert_substr "$help_out" "Usage:" "--help still prints the contract under it"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

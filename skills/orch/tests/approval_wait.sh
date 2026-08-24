@@ -1674,6 +1674,22 @@ set -e
 assert_eq "$rc" "0" "-h exits 0" "$stderr"
 assert_contains "$output" "Usage: approval-wait" "-h prints usage"
 
+# An unknown flag is rejected in the parser, never absorbed into a positional
+# slot (kendex#981, same shape as ci-wait case 33 and queue-wait 17b).
+stderr="$TMP_ROOT/badflag.err"
+set +e
+output=$(run_help --bogus-flag 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "2" "unknown flag exits 2" "$stderr"
+assert_contains "$(cat "$stderr")" "unknown option" "unknown-flag error names the flag"
+if [[ -e "$TMP_ROOT/argval-gh.calls" ]]; then
+  assert_eq "$(cat "$TMP_ROOT/argval-gh.calls")" "" "unknown flag never invokes gh"
+else
+  assert_eq "no-calls" "no-calls" "unknown flag never invokes gh"
+fi
+rm -f "$TMP_ROOT/argval-gh.calls"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
