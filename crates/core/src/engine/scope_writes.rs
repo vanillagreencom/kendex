@@ -15,6 +15,18 @@ use crate::source::SourceState;
 use super::desired::DesiredState;
 use super::{DriftRow, DriftState, config_edits};
 
+/// Whether a plan already persists the manifest — the full serialized
+/// write, or the repository move's surgical text edit. A caller about to
+/// insert its own save must count both: a second write to the same file
+/// binds to bytes the first one replaces and could never run.
+pub fn persists_manifest(ops: &[PlannedOp]) -> bool {
+    ops.iter().any(|op| {
+        matches!(op.op, Op::WriteManifest { .. })
+            || (op.description == crate::repo_move::MOVE_DESCRIPTION
+                && matches!(op.op, Op::WriteFile { .. }))
+    })
+}
+
 /// One mutation per config file, whatever asked for it — a single
 /// precondition can hold; per-edit preconditions against the same original
 /// bytes cannot.

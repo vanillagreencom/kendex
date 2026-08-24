@@ -4,6 +4,8 @@
 //! kendex did not create is still never a clobber target (invariant 6).
 #![cfg(unix)]
 
+mod held_back;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 

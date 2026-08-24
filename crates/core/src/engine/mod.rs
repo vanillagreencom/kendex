@@ -73,6 +73,7 @@ pub fn installed_paths(
 }
 
 use desired::desired_state;
+pub use scope_writes::persists_manifest;
 use scope_writes::{
     plan_config_edits, plan_lock_write, plan_repo_move_write, plan_schema_upgrade,
     plan_settings_seed, source_revisions,
@@ -85,9 +86,22 @@ use unmanaged::unmanaged_rows;
 mod report_types;
 pub use report_types::{DriftCause, DriftRow, DriftState, EngineReport, ItemWarning, PlanOptions};
 
-/// Compute drift and the plan that would fix it, in one pass — the Audit
-/// page and `apply` both consume this.
+/// Compute drift and the plan that would fix it — the Audit page and
+/// `apply` both consume this.
 pub fn plan_scope(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    lock: &Lock,
+    options: &PlanOptions,
+) -> Result<EngineReport> {
+    let report = plan_scope_once(env, scope, manifest, lock, options)?;
+    takeover::hold_back_sweep(options, report, |sweep| {
+        plan_scope_once(env, scope, manifest, lock, sweep)
+    })
+}
+
+fn plan_scope_once(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
@@ -283,18 +297,6 @@ fn plan_manifest_write(
         },
     });
     Ok(())
-}
-
-/// Whether a plan already persists the manifest — the full serialized
-/// write, or the repository move's surgical text edit. A caller about to
-/// insert its own save must count both: a second write to the same file
-/// binds to bytes the first one replaces and could never run.
-pub fn persists_manifest(ops: &[PlannedOp]) -> bool {
-    ops.iter().any(|op| {
-        matches!(op.op, Op::WriteManifest { .. })
-            || (op.description == crate::repo_move::MOVE_DESCRIPTION
-                && matches!(op.op, Op::WriteFile { .. }))
-    })
 }
 
 /// A scope still under the old product name renames first: everything
