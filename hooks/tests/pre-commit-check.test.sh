@@ -215,8 +215,10 @@ assert_eq "$rc" "2" "a non-executable core.hooksPath pre-commit falls back to th
 assert_contains "$log" "kendex guard run pre-commit" "the chain ran beside the non-executable hooksPath hook"
 
 echo
-echo "bypassing the armed hook is not a deferral"
+echo "bypassing the armed hook is refused, not half-checked"
 
+# The fallback chain cannot stand in for git's hooks here: the same flag
+# skips commit-msg, whose gate this hook cannot judge at PreToolUse time.
 for form in \
   'git commit --no-verify -m x' \
   'git commit --no-verif -m x' \
@@ -225,13 +227,18 @@ for form in \
   'git -c core.hooksPath=/dev/null commit -m x' \
   'git -c core.hookspath=/dev/null commit -m x' \
   'GIT_CONFIG_KEY_0=Core.HooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m x'; do
-  run_hook "$ARMED" "$(payload "$form")" KENDEX_EXIT=1
-  assert_eq "$rc" "2" "not waved through: $form"
-  assert_contains "$log" "kendex guard run pre-commit" "the chain gates: $form"
+  run_hook "$ARMED" "$(payload "$form")" KENDEX_EXIT=0
+  assert_eq "$rc" "2" "refused: $form"
+  assert_not_contains "$log" "kendex" "no chain run stands in for the bypassed hooks: $form"
+  assert_contains "$err" "bypasses this repository's armed git hooks" "the refusal names the bypass: $form"
 done
 
-run_hook "$ARMED_BY_PATH" "$(payload 'git commit --no-verify -m x')" KENDEX_EXIT=1
-assert_eq "$rc" "2" "--no-verify beside a hooksPath hook is not waved through either"
+run_hook "$ARMED" "$(payload 'git commit --no-verify -m x')" KENDEX_EXIT=0
+assert_contains "$err" "'--no-verify' bypasses" "the refusal names the flag it saw"
+
+run_hook "$ARMED_BY_PATH" "$(payload 'git commit --no-verify -m x')" KENDEX_EXIT=0
+assert_eq "$rc" "2" "--no-verify beside a hooksPath hook is refused too"
+assert_not_contains "$log" "kendex" "and runs no chain there either"
 
 echo
 echo "the hook gates its working directory only"
@@ -333,7 +340,7 @@ set +e
   bash "$HOOK" <<<"$(payload 'git commit --no-verify -m test')") >/dev/null 2>"$ERR_FILE"
 rc=$?
 set -e
-assert_eq "$rc" "2" "bypassing the armed hook with no kendex binary is refused"
+assert_eq "$rc" "2" "bypassing the armed hook is refused with or without a kendex binary"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

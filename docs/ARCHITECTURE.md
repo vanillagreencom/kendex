@@ -391,9 +391,9 @@ lives in one capability table read by core and UI.
   is git's question, answered where the target has an armed hook: the
   `pre-commit-check` PreToolUse hook only word-matches for a commit,
   defers to the armed git pre-commit hook of its own working directory,
-  and runs the chain in that directory only where none is armed there —
-  or where the command sidesteps the armed one (`--no-verify`, `-n`, a
-  `core.hooksPath` override), since git then never runs it. It gates its
+  and runs the chain in that directory only where none is armed there;
+  sidestepping an armed one (`--no-verify`, `-n`, `core.hooksPath`) is
+  refused — git would skip commit-msg too, unjudgeable here. It gates its
   working directory only: a commit aimed elsewhere from an unarmed or
   non-repository directory is not gated by it (a stderr notice says so),
   and it never parses the target. A payload whose command the hook

@@ -3,8 +3,8 @@
 # name: pre-commit-check
 # event: PreToolUse
 # matcher: Bash
-# description: On a git commit, defer to the working directory's armed git pre-commit hook (kendex guard install arms one); where none is armed there, or the command sidesteps it with git's no-verify flag, -n, or a core.hooksPath override, run the kendex guard pre-commit chain — format, lint, and commit guards — from the working directory as the fallback gate. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
-# safety: Prevents committing unchecked code from the working directory when it has no armed git pre-commit hook or the command bypasses that hook (no-verify, -n, core.hooksPath); a commit aimed at another repository is that repository's armed hook's to gate.
+# description: On a git commit, defer to the working directory's armed git pre-commit hook (kendex guard install arms one); where none is armed there, run the kendex guard pre-commit chain — format, lint, and commit guards — from the working directory as the fallback gate. Where one is armed, a command that sidesteps it with git's no-verify flag, -n, or a core.hooksPath override is refused: git would skip the commit-msg hook too, and no fallback here can check the message. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
+# safety: Prevents committing unchecked code from the working directory when it has no armed git pre-commit hook, and refuses a command that bypasses an armed hook (no-verify, -n, core.hooksPath) rather than half-checking it; a commit aimed at another repository is that repository's armed hook's to gate.
 # timeout: 1800
 # ---
 
@@ -48,24 +48,27 @@ elsewhere_notice() {
 }
 
 # An armed hook means git itself will gate the commit; running the chain
-# here too would validate everything twice. Unless the command sidesteps
-# it: git's no-verify flag — spelled out or cut to any unique prefix, as
-# git allows, or `-n` alone or inside a short-flag cluster — tells git to
-# skip the hook, and a `core.hooksPath` override points git at
-# hooks this lane did not inspect — then git's check never happens and
-# this lane is the check after all. One of those words from some other
-# command on the line costs a guard run, never a check. Git reads config
-# keys case-insensitively (core.hookspath, CORE.HOOKSPATH, the
+# here too would validate everything twice. A command that sidesteps it
+# is refused, not covered: git's no-verify flag — spelled out or cut to
+# any unique prefix, as git allows, or `-n` alone or inside a short-flag
+# cluster — tells git to skip the commit-msg hook as well, and the
+# message is not knowable here, so no fallback could stand in; a
+# `core.hooksPath` override points git at hooks this lane did not
+# inspect. One of those words from some other command on the line costs
+# a refusal to reword, never an unchecked commit. Git reads config keys
+# case-insensitively (core.hookspath, CORE.HOOKSPATH, the
 # GIT_CONFIG_KEY_n form), so that alternative is matched the same way;
 # git's long options are case-sensitive and stay so.
 HOOKS_DIR=$(git rev-parse --git-path hooks 2>/dev/null) || {
   elsewhere_notice
   exit 0
 }
-if [ -x "$HOOKS_DIR/pre-commit" ] \
-  && ! printf '%s' "$WORDS" | grep -qE ' (--no-veri[a-z]*|-[a-zA-Z]*n[a-zA-Z]*) ' \
-  && ! printf '%s' "$WORDS" | grep -qiE '[ =]core hookspath[^ ]* '; then
-  exit 0
+if [ -x "$HOOKS_DIR/pre-commit" ]; then
+  BYPASS=$(printf '%s' "$WORDS" | grep -oE ' (--no-veri[a-z]*|-[a-zA-Z]*n[a-zA-Z]*) ' | head -1) \
+    || BYPASS=$(printf '%s' "$WORDS" | grep -oiE '[ =]core hookspath[^ ]* ' | head -1) \
+    || exit 0
+  echo "pre-commit-check: '$(printf '%s' "$BYPASS" | tr -d ' =')' bypasses this repository's armed git hooks, and the commit-msg gate cannot be checked from here — commit without bypassing hooks; git runs the installed pre-commit and commit-msg hooks itself" >&2
+  exit 2
 fi
 elsewhere_notice
 

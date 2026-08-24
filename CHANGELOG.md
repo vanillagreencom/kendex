@@ -120,9 +120,11 @@ changes carry a **Breaking** call-out with their migration note inline.
   tries to parse which repository a command commits to. Its contract: it
   defers to the armed git pre-commit hook of its own working directory —
   one validation per commit — and runs the guard chain from that
-  directory only where no hook is armed there, or where the command
-  sidesteps the armed one (`--no-verify`, `-n`, a `core.hooksPath`
-  override). It gates its working directory only: a commit aimed at
+  directory only where no hook is armed there. Where one is armed, a
+  command that sidesteps it (`--no-verify`, `-n`, a `core.hooksPath`
+  override) is refused outright: git would skip the commit-msg hook too,
+  and no fallback here can check the message. It gates its working
+  directory only: a commit aimed at
   another repository (`git -C`, `--git-dir`, `cd … && git commit`) is
   gated by that repository's own armed hook — `kendex guard install`
   there — and by nothing in this hook, which says so on stderr when it
