@@ -219,6 +219,68 @@ fn a_linked_item_s_take_over_still_counts_as_settled() {
     );
 }
 
+/// Under the flag, the row that holds an item back is the only place its
+/// dead stop shows: without it the files in the way are refused before
+/// the link beside them is looked at. So the note, and the refusal when
+/// every item is held, carry the place that holds it — or the reader is
+/// sent round a loop with the cause named nowhere.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_held_item_is_named_with_the_place_that_holds_it() {
+    let w = world();
+    lint_in_catalog(&w);
+    for name in ["deploy", "lint"] {
+        let dir = w.home.join(format!("app/.agents/skills/{name}"));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("SKILL.md"), "the tool that came before").unwrap();
+    }
+    let declare = |skills: &str| {
+        fs::write(
+            w.home.join("app/kendex.toml"),
+            format!(
+                "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"symlink\"\n\n{skills}",
+                w.home.join("catalog").display()
+            ),
+        )
+        .unwrap();
+    };
+    let elsewhere = w.home.join("documents");
+    fs::create_dir_all(&elsewhere).unwrap();
+    let link = w.home.join("app/.claude/skills/deploy");
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &link).unwrap();
+    let names_the_link =
+        |text: &str| text.contains("Claude") && text.contains(".claude/skills/deploy");
+
+    declare(BOTH_SKILLS);
+    let report = plan_apply(&w.env, &w.scope, &take_over()).unwrap();
+    let note = report
+        .notes
+        .iter()
+        .find(|note| note.contains("skill deploy was not replaced"))
+        .unwrap_or_else(|| panic!("{:?}", report.notes));
+    assert!(
+        names_the_link(note),
+        "the note does not say what holds it: {note}"
+    );
+
+    declare("[skills.deploy]\nsource = \"cat\"\n");
+    let refused = plan_apply(&w.env, &w.scope, &take_over());
+    let Err(error) = refused else {
+        panic!("{refused:?}");
+    };
+    assert!(
+        matches!(&error, CoreError::TakeOverAllHeld { .. }),
+        "{error:?}"
+    );
+    let said = error.to_string();
+    assert!(
+        names_the_link(&said),
+        "the refusal does not say what holds it: {said}"
+    );
+    assert!(!said.contains("--plan"), "sent round the loop: {said}");
+}
+
 /// The button was clicked on an item one of whose places nothing can
 /// settle: replacing the rest would leave that place blocked with the
 /// item no longer its tool's, so the whole run refuses.
@@ -289,7 +351,7 @@ fn a_sweep_that_can_replace_nothing_refuses() {
         panic!("a sweep with nothing to do did not say so: {refused:?}");
     };
     assert!(
-        matches!(&error, CoreError::TakeOverAllHeld { held } if held == &["skill deploy"]),
+        matches!(&error, CoreError::TakeOverAllHeld { held } if held.len() == 1 && held[0].starts_with("skill deploy — ")),
         "{error:?}"
     );
     assert!(

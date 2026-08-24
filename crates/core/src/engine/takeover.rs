@@ -68,12 +68,13 @@ pub(crate) fn hold_back_sweep(
     if held.is_empty() {
         return Ok(report);
     }
-    let held: Vec<String> = held
-        .iter()
-        .map(|(kind, name)| format!("{} {name}", kind.name()))
-        .collect();
     if settled.is_empty() {
-        return Err(crate::error::CoreError::TakeOverAllHeld { held });
+        return Err(crate::error::CoreError::TakeOverAllHeld {
+            held: held
+                .iter()
+                .map(|(item, why)| format!("{item} — {why}"))
+                .collect(),
+        });
     }
     // Only the take-over is held: the item is otherwise planned exactly as
     // a run without the flag plans it, so one of its places with nothing
@@ -84,34 +85,47 @@ pub(crate) fn hold_back_sweep(
         ..options.clone()
     };
     let mut report = replan(&sweep)?;
-    for item in &held {
+    for (item, why) in &held {
         report.notes.push(format!(
-            "{item} was not replaced: another of its places has a conflict replacing cannot settle, so the files in its way stay where they are"
+            "{item} was not replaced, so the files in its way stay where they are — {why}"
         ));
     }
     Ok(report)
 }
 
 /// The sweep's division of the items it swept up: the ones every row lets
-/// it settle whole, and the ones a dead-stop row beside the files blocks.
+/// it settle whole, and the ones a dead-stop row beside the files blocks —
+/// each held one carried with the place holding it, since under the flag
+/// that row is the only place the dead stop shows: without the flag the
+/// files in the way are refused before the place beside them is looked at.
 type Swept = Vec<(ItemKind, String)>;
-fn split_sweep(drift: &[DriftRow]) -> (Swept, Swept) {
-    let mut settled = Vec::new();
-    let mut held = Vec::new();
+fn split_sweep(drift: &[DriftRow]) -> (Swept, Vec<(String, String)>) {
+    let mut settled: Swept = Vec::new();
+    let mut held: Vec<(String, String)> = Vec::new();
     for row in drift
         .iter()
         .filter(|row| row.detail == super::file_plan::TAKEN_OVER)
     {
-        let item = (row.kind, row.name.clone());
-        let blocked = drift
+        let stop = drift
             .iter()
-            .any(|other| other.kind == row.kind && other.name == row.name && other.dead_stop());
-        let bucket = match blocked {
-            true => &mut held,
-            false => &mut settled,
+            .find(|other| other.kind == row.kind && other.name == row.name && other.dead_stop());
+        let Some(stop) = stop else {
+            let item = (row.kind, row.name.clone());
+            if !settled.contains(&item) {
+                settled.push(item);
+            }
+            continue;
         };
-        if !bucket.contains(&item) {
-            bucket.push(item);
+        let item = format!("{} {}", row.kind.name(), row.name);
+        if !held.iter().any(|(name, _)| *name == item) {
+            held.push((
+                item,
+                format!(
+                    "replacing cannot settle its conflict for {}: {}",
+                    stop.harness.display_name(),
+                    stop.detail
+                ),
+            ));
         }
     }
     (settled, held)
