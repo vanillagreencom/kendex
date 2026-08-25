@@ -336,9 +336,8 @@ mod place;
 // `requested` edge and survive a later bundle uninstall as "also
 // requested". Subsumption only claims a declaration whose effective
 // options equal what the bundle derives for that member; one the user
-// shaped — its own harness list, method, hold, enabled flag, frontmatter
-// override or accepted safety decision — is kept, and the preview says
-// why.
+// shaped — its own harness list, method, hold, enabled flag or
+// frontmatter override — is kept, and the preview says why.
 
 /// Invariant 4 for bundles: `[bundles.<name>]` is keyed by bare name, so a
 /// second marketplace's same-named bundle is refused naming the first —

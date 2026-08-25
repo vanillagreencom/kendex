@@ -172,6 +172,76 @@ fn the_upgrade_drops_the_retired_tables_and_keeps_every_other_byte() {
     );
 }
 
+/// The retired tables in spellings the text cut does not recognise — a
+/// quoted header, a top-level dotted key, an inline table. The loader gate
+/// sends each to the full rewrite: after one apply the file loads at the
+/// current schema and carries neither name. (Written surgically, such a
+/// file would keep the table and be refused on every later load.)
+#[test]
+#[allow(clippy::unwrap_used)]
+fn every_spelling_of_a_retired_table_is_gone_after_one_apply() {
+    let quoted = (
+        "",
+        "[\"safety-overrides\".\"skill:gh:claude\"]\nreview-hash = \"abc\"\n",
+    );
+    let dotted = (
+        "safety-reviews.\"skill:gh:claude\".review-hash = \"abc\"\n",
+        "",
+    );
+    let inline = (
+        "safety-overrides = { \"skill:gh:claude\" = { review-hash = \"abc\" } }\n",
+        "",
+    );
+    for (top, tail) in [quoted, dotted, inline] {
+        let f = fixture(|source| {
+            let kept = KEPT.replace("{source}", &source.display().to_string());
+            format!(
+                "{}\n{tail}",
+                kept.replacen("schema = 5\n", &format!("schema = 5\n{top}"), 1)
+            )
+        });
+        let before = view(&f.env, &f.scope);
+        assert!(
+            before.error.is_none(),
+            "{top}{tail}: {:?}",
+            before.error.map(|e| e.message)
+        );
+        assert!(
+            before.plan.iter().any(|op| op == UPGRADE_OP),
+            "{:?}",
+            before.plan
+        );
+
+        apply_scope(&f.env, &f.scope, false).unwrap();
+
+        let migrated = fs::read_to_string(&f.manifest_path).unwrap();
+        assert!(
+            !migrated.contains("safety-overrides"),
+            "{top}{tail}: {migrated}"
+        );
+        assert!(
+            !migrated.contains("safety-reviews"),
+            "{top}{tail}: {migrated}"
+        );
+        assert!(
+            migrated.contains(&format!("schema = {MANIFEST_SCHEMA}")),
+            "{migrated}"
+        );
+        assert!(migrated.contains("[skills.gh]"), "{migrated}");
+        let after = view(&f.env, &f.scope);
+        assert!(
+            after.error.is_none(),
+            "{top}{tail}: {:?}",
+            after.error.map(|e| e.message)
+        );
+        assert!(
+            !after.plan.iter().any(|op| op == UPGRADE_OP),
+            "{:?}",
+            after.plan
+        );
+    }
+}
+
 /// A manifest that vanished between the preview and the click is an error
 /// said out loud, never a silent empty apply.
 #[test]

@@ -11,16 +11,8 @@ use crate::model::Scope;
 
 use super::scoring::ItemSafety;
 
-/// Every row worth showing: findings, or rules that could not run. A row
-/// where every rule ran and found nothing has nothing to say.
-pub fn observed_safety(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
-    Ok(observed_rows(env, scope)?
-        .into_iter()
-        .filter(|row| !row.findings.is_empty() || !row.skipped.is_empty())
-        .collect())
-}
-
-/// Every installation in this scope, scored — the clean ones included.
+/// Every installation in this scope, scored — the clean ones included, so
+/// a package with nothing found still has a score to show.
 pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
     let scope = scope.canonical();
     let settings = crate::settings::load(env)?;

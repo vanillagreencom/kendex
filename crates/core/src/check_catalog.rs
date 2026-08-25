@@ -29,8 +29,9 @@ use crate::source_read::SealedSource;
 
 /// The versioned envelope `check --catalog --json` and `marketplace mine
 /// --json` wrap their reports in. Schema 2 counts safety findings as
-/// `safety_findings`, carries no per-finding token, and answers `ok` on
-/// breakage alone.
+/// `safety_findings`, carries no per-finding token, and `ok` answers what
+/// fails the run — breakage, plus structural advisories under `--strict` —
+/// never a safety finding.
 pub const CHECK_SCHEMA: u32 = 2;
 
 /// The `pass` a safety finding carries; structural findings carry the

@@ -23,7 +23,7 @@ pub(crate) struct TreeBound {
 
 /// The one bound every reader of a skill's bytes stops at — the sealed
 /// catalog walk below, the audit's walk over installed content, and the
-/// rendered tree the install gate and the browse preview score. Rendering
+/// rendered tree the plan and the browse preview score. Rendering
 /// can make a tree larger than the catalog's own copy, so the bound is
 /// asked of what a surface is about to read rather than only of the source.
 pub(crate) const TREE_BOUND: TreeBound = TreeBound {

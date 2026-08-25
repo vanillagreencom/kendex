@@ -1,8 +1,8 @@
 //! What a preview gives the safety rules to read.
 //!
 //! Split out of `safety.rs`. One question, and the whole reason a preview
-//! is worth showing: it has to be the reading the install gate does, over
-//! the content the install would write.
+//! is worth showing: it has to be the reading an install's plan scores,
+//! over the content the install would write.
 
 use std::path::PathBuf;
 
@@ -18,8 +18,8 @@ use super::Item;
 /// reads the same rendering, so there is one tree to score.
 ///
 /// The project's own instructions are deliberately *not* folded in — the
-/// page says so — because a preview is about the package, and the gate
-/// stays the authority on what the combination scores.
+/// page says so — because a preview is about the package, and the plan's
+/// own scoring says what the combination scores.
 fn installs_as(browsed: &Browsed, path: &std::path::Path) -> Result<Vec<(PathBuf, Vec<u8>)>> {
     crate::render::skill::render_authored(&browsed.sealed, path)
 }
@@ -37,16 +37,16 @@ pub(super) fn input_for(
         .display()
         .to_string();
     let content = match kind {
-        // Through the same constructor the install gate reads a tree with,
-        // over the tree this project would install — the rendering every
-        // tool gets — so preview and gate cannot disagree about one package.
+        // Through the same constructor the plan reads a tree with, over
+        // the tree this project would install — the rendering every tool
+        // gets — so preview and plan cannot disagree about one package.
         ItemKind::Skill => {
             crate::quality::observe::tree_content_from_bytes(&installs_as(browsed, path)?)
         }
         // A hook's script is what the harness runs; browse scores it as a hook
         // so the rules that read event/command/script fire here too, not only
-        // at the install gate. The MCP declaration and command bodies read as
-        // their file text; the install gate stays the authoritative verdict.
+        // in the plan. The MCP declaration and command bodies read as their
+        // file text; the plan's own score is the one an install shows.
         ItemKind::Hook => Content::Hook {
             event: String::new(),
             matcher: None,

@@ -55,44 +55,130 @@ fn opens_table(line: &str) -> bool {
     line.trim_start().starts_with('[')
 }
 
+fn is_comment(line: &str) -> bool {
+    line.trim_start().starts_with('#')
+}
+
+/// Where a retired header's own introduction starts inside the blank and
+/// comment lines above it: the comment block touching the header, and the
+/// blank lines above that. A comment block a blank line away is the
+/// reader's own note, not the table's, and stays.
+fn introduces(preamble: &[&str]) -> usize {
+    let mut at = preamble.len();
+    while at > 0 && is_comment(preamble[at - 1]) {
+        at -= 1;
+    }
+    while at > 0 && preamble[at - 1].trim().is_empty() {
+        at -= 1;
+    }
+    at
+}
+
 /// The manifest text with the retired safety-decision tables cut out and
 /// every other byte kept: the records decide nothing any more, and a
 /// migration that rewrote the whole file to drop them would take the
-/// reader's comments and formatting with it (invariant 10). Blank and
-/// comment lines directly above a header introduce that table, so they go
-/// with a retired one and stay with a kept one. Whatever this misreads —
-/// a bracket opening a line inside a multi-line value — the caller's
-/// reproduction check turns into the full rewrite, never a wrong file.
+/// reader's comments and formatting with it (invariant 10). A retired
+/// block takes its header, its lines, and the introduction above it (see
+/// [`introduces`]); everything else, notes above a kept header included,
+/// stays where it was written. Only the bracketed spellings are cut here —
+/// a quoted header, a dotted key or an inline table passes through, and
+/// the loader gate in [`surgical_manifest_write`] sends such a file to the
+/// full rewrite rather than writing it under a schema that refuses it.
 fn retire_safety_tables(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
-    let mut preamble = String::new();
+    let mut preamble: Vec<&str> = Vec::new();
     let mut retiring = false;
     for line in text.split_inclusive('\n') {
-        let body = line.trim();
-        if body.is_empty() || body.starts_with('#') {
-            preamble.push_str(line);
+        if line.trim().is_empty() || is_comment(line) {
+            preamble.push(line);
             continue;
         }
         if opens_table(line) {
             retiring = opens_retired_table(line);
+            if retiring {
+                out.extend(preamble.drain(..introduces(&preamble)));
+            }
         }
         if !retiring {
-            out.push_str(&preamble);
+            out.extend(preamble.drain(..));
             out.push_str(line);
         }
         preamble.clear();
     }
-    out.push_str(&preamble);
+    out.extend(preamble);
     out
 }
 
-/// Upgrade an older-schema manifest through the normal journaled apply.
-/// The bump is a surgical text edit — the schema line changes, the tables
-/// schema 6 retired are cut out, and nothing else moves (invariant 10).
-/// The edit must reproduce exactly the manifest the plan loaded; when it
-/// cannot — no schema assignment to find, a table the cut did not
-/// recognise — the full rewrite is the fallback that keeps the plan
-/// correct at the cost of formatting.
+/// One surgical write of the manifest: the retired tables cut out, the
+/// schema line bumped, `edit_line` applied to every other line, and the
+/// file's missing final newline repaired once (the #1308 class) — with
+/// every byte the edit did not have to change kept. The edit is trusted
+/// only when the loader reads it back as exactly the manifest the plan
+/// computed at the current schema, so anything the text edit misread — a
+/// retired table in a spelling the cut does not know, a bracket inside a
+/// multi-line value — falls back to the full rewrite, which serializes the
+/// manifest without the retired records. Never a wrong file: at worst a
+/// reformatted one.
+fn surgical_manifest_write(
+    env: &Env,
+    scope: &Scope,
+    loaded: &Manifest,
+    base: Option<&Base>,
+    edit_line: impl Fn(&str) -> Option<String>,
+    description: String,
+    ops: &mut Vec<PlannedOp>,
+) -> Result<()> {
+    let path = manifest::manifest_path(env, scope);
+    let mut expected = loaded.clone();
+    expected.schema = manifest::MANIFEST_SCHEMA;
+    let current = crate::fs::read_if_exists(&path)?.unwrap_or_default();
+    let mut schema_done = loaded.schema == manifest::MANIFEST_SCHEMA;
+    let mut edited: String = retire_safety_tables(&current)
+        .split_inclusive('\n')
+        .map(|line| {
+            let (body, newline) = match line.strip_suffix('\n') {
+                Some(body) => (body, "\n"),
+                None => (line, ""),
+            };
+            if !schema_done
+                && let Some(new_body) =
+                    rewrite_schema_line(body, loaded.schema, manifest::MANIFEST_SCHEMA)
+            {
+                schema_done = true;
+                return format!("{new_body}{newline}");
+            }
+            match edit_line(body) {
+                Some(new_body) => format!("{new_body}{newline}"),
+                None => line.to_owned(),
+            }
+        })
+        .collect();
+    if !edited.is_empty() && !edited.ends_with('\n') {
+        edited.push('\n');
+    }
+    let reproduced = schema_done
+        && matches!(
+            manifest::parse_text(&path, &edited),
+            Ok(manifest::ManifestFile::Current(parsed)) if *parsed == expected
+        );
+    let op = match reproduced {
+        true => Op::WriteFile {
+            pre: manifest_pre(base, &path)?,
+            path,
+            bytes: edited.into_bytes(),
+        },
+        false => Op::WriteManifest {
+            pre: manifest_pre(base, &path)?,
+            path,
+            manifest: Box::new(expected),
+        },
+    };
+    ops.push(PlannedOp { description, op });
+    Ok(())
+}
+
+/// Upgrade an older-schema manifest through the normal journaled apply:
+/// the schema line and the retired tables, nothing else (invariant 10).
 pub(in crate::engine) fn plan_schema_upgrade(
     env: &Env,
     scope: &Scope,
@@ -100,59 +186,11 @@ pub(in crate::engine) fn plan_schema_upgrade(
     base: Option<&Base>,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<()> {
-    let path = manifest::manifest_path(env, scope);
     let description = format!(
         "Upgrade {} to the current format",
         crate::rename::MANIFEST_FILE
     );
-    let current = crate::fs::read_if_exists(&path)?.unwrap_or_default();
-    let mut rewritten = false;
-    let upgraded_text: String = retire_safety_tables(&current)
-        .split_inclusive('\n')
-        .map(|line| {
-            let (body, newline) = match line.strip_suffix('\n') {
-                Some(body) => (body, "\n"),
-                None => (line, ""),
-            };
-            match rewritten {
-                false => {
-                    match rewrite_schema_line(body, manifest.schema, manifest::MANIFEST_SCHEMA) {
-                        Some(new_body) => {
-                            rewritten = true;
-                            format!("{new_body}{newline}")
-                        }
-                        None => line.to_owned(),
-                    }
-                }
-                true => line.to_owned(),
-            }
-        })
-        .collect();
-    // The one terminator repair a managed write makes (the #1308 class):
-    // a file missing its final newline gains one, once, and every later
-    // write is byte-stable.
-    let mut upgraded_text = upgraded_text;
-    if !upgraded_text.is_empty() && !upgraded_text.ends_with('\n') {
-        upgraded_text.push('\n');
-    }
-    let mut upgraded = manifest.clone();
-    upgraded.schema = manifest::MANIFEST_SCHEMA;
-    let reproduced = rewritten
-        && toml::from_str::<Manifest>(&upgraded_text).is_ok_and(|parsed| parsed == upgraded);
-    let op = match reproduced {
-        true => Op::WriteFile {
-            pre: manifest_pre(base, &path)?,
-            path,
-            bytes: upgraded_text.into_bytes(),
-        },
-        false => Op::WriteManifest {
-            pre: manifest_pre(base, &path)?,
-            path,
-            manifest: Box::new(upgraded),
-        },
-    };
-    ops.push(PlannedOp { description, op });
-    Ok(())
+    surgical_manifest_write(env, scope, manifest, base, |_| None, description, ops)
 }
 
 /// A `repo = "<old default>"` assignment rewritten to point at the new
@@ -180,14 +218,11 @@ fn rewrite_repo_line(line: &str) -> Option<String> {
     ))
 }
 
-/// The repository move as a surgical text edit: the file's bytes change
-/// only where the old repository sits in a repo value position — and on
-/// the schema line, with the retired safety tables cut out, when the
-/// format is old — so comments, ordering, and formatting survive
-/// (invariant 10). The edit must reproduce exactly the
-/// manifest the plan computed; when it cannot — an inline table, a string
-/// with escapes, another mutation riding the same plan — the full rewrite
-/// is the fallback that keeps the plan correct at the cost of formatting.
+/// The repository move: the file's bytes change only where the old
+/// repository sits in a repo value position — and on the schema line, with
+/// the retired tables cut, when the format is old. An inline table or a
+/// string with escapes is what the edit cannot reproduce, and takes the
+/// full rewrite.
 pub(in crate::engine) fn plan_repo_move_write(
     env: &Env,
     scope: &Scope,
@@ -195,53 +230,50 @@ pub(in crate::engine) fn plan_repo_move_write(
     base: Option<&Base>,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<()> {
-    let path = manifest::manifest_path(env, scope);
-    let mut expected = migrated.clone();
-    expected.schema = manifest::MANIFEST_SCHEMA;
-    let current = crate::fs::read_if_exists(&path)?.unwrap_or_default();
-    let mut schema_done = migrated.schema == manifest::MANIFEST_SCHEMA;
-    let mut edited: String = retire_safety_tables(&current)
-        .split_inclusive('\n')
-        .map(|line| {
-            let (body, newline) = match line.strip_suffix('\n') {
-                Some(body) => (body, "\n"),
-                None => (line, ""),
-            };
-            if !schema_done
-                && let Some(new_body) =
-                    rewrite_schema_line(body, migrated.schema, manifest::MANIFEST_SCHEMA)
-            {
-                schema_done = true;
-                return format!("{new_body}{newline}");
-            }
-            match rewrite_repo_line(body) {
-                Some(new_body) => format!("{new_body}{newline}"),
-                None => line.to_owned(),
-            }
-        })
-        .collect();
-    // The one terminator repair a managed write makes (the #1308 class):
-    // a file missing its final newline gains one, once, and every later
-    // write is byte-stable.
-    if !edited.is_empty() && !edited.ends_with('\n') {
-        edited.push('\n');
+    surgical_manifest_write(
+        env,
+        scope,
+        migrated,
+        base,
+        rewrite_repo_line,
+        crate::repo_move::MOVE_DESCRIPTION.into(),
+        ops,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::retire_safety_tables;
+
+    /// A retired block takes the comment touching its header and the blank
+    /// lines above that; a note a blank line away is the reader's and
+    /// stays. The header after the block keeps its own introduction.
+    #[test]
+    fn a_note_a_blank_line_above_a_retired_header_stays() {
+        let text = "schema = 5\n\n[skills.gh]\nsource = \"cat\"\n\n# my notes\n# more notes\n\n# the overrides\n[safety-overrides.\"skill:gh:claude\"]\nreview-hash = \"abc\"\n\n# the fork stays\n[forks.skill.zed]\nsource = \"cat\"\n";
+        assert_eq!(
+            retire_safety_tables(text),
+            "schema = 5\n\n[skills.gh]\nsource = \"cat\"\n\n# my notes\n# more notes\n\n# the fork stays\n[forks.skill.zed]\nsource = \"cat\"\n"
+        );
     }
-    let reproduced = toml::from_str::<Manifest>(&edited).is_ok_and(|parsed| parsed == expected);
-    let op = match reproduced {
-        true => Op::WriteFile {
-            pre: manifest_pre(base, &path)?,
-            path,
-            bytes: edited.into_bytes(),
-        },
-        false => Op::WriteManifest {
-            pre: manifest_pre(base, &path)?,
-            path,
-            manifest: Box::new(expected),
-        },
-    };
-    ops.push(PlannedOp {
-        description: crate::repo_move::MOVE_DESCRIPTION.into(),
-        op,
-    });
-    Ok(())
+
+    /// Blank lines alone above the header go with it, and a block at the
+    /// end of the file leaves the kept text ending where it did.
+    #[test]
+    fn blank_lines_above_a_retired_header_go_with_it() {
+        let text = "schema = 5\n[skills.gh]\nsource = \"cat\"   # keep\n\n[safety-reviews.\"skill:gh:claude\"]\nruleset = 3\n\n[safety-reviews.\"skill:gh:claude\".dismissed.f2]\nreason = \"intended\"\n";
+        assert_eq!(
+            retire_safety_tables(text),
+            "schema = 5\n[skills.gh]\nsource = \"cat\"   # keep\n"
+        );
+    }
+
+    /// Only the bracketed spellings are cut here; the others reach the
+    /// loader gate, which refuses them at the new schema.
+    #[test]
+    fn other_spellings_pass_through_to_the_gate() {
+        let text =
+            "schema = 5\nsafety-overrides = { x = 1 }\n[\"safety-reviews\".k]\nruleset = 3\n";
+        assert_eq!(retire_safety_tables(text), text);
+    }
 }

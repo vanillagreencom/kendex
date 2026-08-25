@@ -237,6 +237,39 @@ fn the_move_cuts_the_retired_tables_and_keeps_every_other_byte() {
     assert!(audit(&f.env, &f.scope).unwrap().plan.ops.is_empty());
 }
 
+/// A retired table in a spelling the text cut does not know rides the
+/// move too: the loader gate sends the file to the full rewrite, which
+/// keeps the fork and drops the record, and the scope loads afterwards.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_move_drops_a_quoted_retired_table_through_the_full_rewrite() {
+    let f = pre_move_fixture();
+    let path = f.project.join("kendex.toml");
+    fs::write(
+        &path,
+        format!(
+            "schema = 5\n\n[sources.vstack]\nrepo = \"{LEGACY_SOURCE_REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"vstack\"\n\n[forks.skill.zed]\nsource = \"vstack\"\nrepo = \"{LEGACY_SOURCE_REPO}\"\nforked-at = \"2026-01-01T00:00:00Z\"\n\n[\"safety-reviews\".\"skill:gh:claude\"]\nruleset = 3\n"
+        ),
+    )
+    .unwrap();
+
+    let report = audit(&f.env, &f.scope).unwrap();
+    apply::execute(&f.env, &report.plan, None).unwrap();
+
+    let after = fs::read_to_string(&path).unwrap();
+    assert!(!after.contains("safety-reviews"), "{after}");
+    assert!(!after.contains(LEGACY_SOURCE_REPO), "{after}");
+    assert!(after.contains("[forks.skill.zed]"), "{after}");
+    assert!(
+        after.contains(&format!(
+            "schema = {}",
+            kendex_core::manifest::MANIFEST_SCHEMA
+        )),
+        "{after}"
+    );
+    assert!(audit(&f.env, &f.scope).unwrap().plan.ops.is_empty());
+}
+
 /// Planning migrates in memory and resolves the new spelling, which adopts
 /// the old spelling's cache — but nothing has been applied, so the
 /// manifest on disk still says the old repository. Every surface reading

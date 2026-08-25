@@ -42,20 +42,20 @@ fn a_critical_finding_is_reported_and_installs_anyway() {
     assert!(installed(&f, "clean"));
 }
 
-/// The audit reads the same rows back off disk, and only rows with
-/// something to say are reported.
+/// The audit reads the same rows back off disk, every installation
+/// scored — the clean one is a row with nothing found, not a missing row.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn the_audit_reports_the_installed_rows() {
+fn the_audit_reports_every_installed_row() {
     let f = fixture();
     let report = plan(&f);
     apply::execute(&f.env, &report.plan, None).unwrap();
 
-    let rows = kendex_core::engine::observed_safety(&f.env, &f.scope).unwrap();
+    let rows = kendex_core::engine::observed_rows(&f.env, &f.scope).unwrap();
     let hostile = rows.iter().find(|row| row.name == "hostile").unwrap();
     assert_eq!(hostile.safety.score, 75);
-    assert!(
-        rows.iter().all(|row| row.name != "clean"),
-        "a clean row every rule could read has nothing to say"
-    );
+    let clean = rows.iter().find(|row| row.name == "clean").unwrap();
+    assert_eq!(clean.safety.score, 100);
+    assert!(clean.findings.is_empty(), "{:?}", clean.findings);
+    assert!(clean.skipped.is_empty(), "{:?}", clean.skipped);
 }

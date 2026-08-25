@@ -50,7 +50,7 @@ mod written;
 
 pub(crate) use desired_agent::contributes_to_agent;
 pub use item_source::{ItemSource, item_source};
-pub use observed::{observed_rows, observed_safety};
+pub use observed::observed_rows;
 pub use planned::{PlannedDeclaration, planned_declarations};
 pub use scoring::ItemSafety;
 
