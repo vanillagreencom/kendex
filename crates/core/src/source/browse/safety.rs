@@ -251,3 +251,6 @@ fn item(browsed: &Browsed, kind: ItemKind, name: &str) -> Result<Item> {
     };
     Ok(Item { path })
 }
+
+#[cfg(test)]
+mod tests;

@@ -25,6 +25,8 @@ mod homoglyph;
 pub mod observe;
 mod phrase;
 pub mod rules;
+#[cfg(test)]
+pub(crate) mod sample;
 mod score;
 mod secret;
 mod text;

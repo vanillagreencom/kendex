@@ -64,3 +64,6 @@ pub(super) fn run(scope: &Scope, state: &DesiredState) -> Vec<ItemSafety> {
 
 mod input;
 use input::input_for;
+
+#[cfg(test)]
+mod tests;
