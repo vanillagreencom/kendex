@@ -2,6 +2,7 @@ import { ChevronRight } from "lucide-react";
 import type { ItemKind, Scope } from "@/bindings";
 import { Button } from "@/components/ui/button";
 import {
+  CUSTOMIZED_UPDATES_UNCHECKED,
   customizedLine,
   NOT_INSTALLED_HERE,
   NOTHING_CUSTOMIZED,
@@ -22,10 +23,15 @@ import { useScanStore } from "@/stores/scan";
 export function CustomizedIndex({
   items,
   scope,
+  updatesFailed,
   onRemove,
 }: {
   items: CustomizedHere[];
   scope: Scope;
+  /** The update read failed with nothing landed. Hand edits are read from
+   *  it, so a package missing here may be missing for that reason, and
+   *  the section says so rather than calling the place clean. */
+  updatesFailed: boolean;
   onRemove: (kind: ItemKind, name: string) => void;
 }) {
   const goToPackage = useNavStore((s) => s.goToPackage);
@@ -33,15 +39,25 @@ export function CustomizedIndex({
   // is a new snapshot every render, and React re-renders until it is not.
   const installed = useScanStore((s) => s.result)?.items ?? [];
 
+  const unchecked = updatesFailed ? (
+    <p className="pt-1 text-sm text-muted-foreground">
+      {CUSTOMIZED_UPDATES_UNCHECKED}
+    </p>
+  ) : null;
+
   if (items.length === 0) {
     return (
-      <p className="pt-1 text-sm text-muted-foreground">{NOTHING_CUSTOMIZED}</p>
+      unchecked ?? (
+        <p className="pt-1 text-sm text-muted-foreground">
+          {NOTHING_CUSTOMIZED}
+        </p>
+      )
     );
   }
 
   return (
     <div className="flex flex-col divide-y">
-      {items.map(({ kind, name, why, customization }) => {
+      {items.map(({ kind, name, edited, forked, customization }) => {
         const Icon = kindIcon(kind);
         // Installed *here*: a row that opened a page for another scope's
         // copy would show version and files that belong to somewhere else.
@@ -57,7 +73,8 @@ export function CustomizedIndex({
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium">{name}</p>
               <p className="truncate text-[13px] text-muted-foreground">
-                {kindLabel(kind)} · {customizedLine(why, customization)}
+                {kindLabel(kind)} ·{" "}
+                {customizedLine({ edited, forked }, customization)}
               </p>
             </div>
             {here ? (
@@ -88,6 +105,7 @@ export function CustomizedIndex({
           </div>
         );
       })}
+      {unchecked}
     </div>
   );
 }

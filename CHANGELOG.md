@@ -12,7 +12,7 @@ an outside contributor.
 
 - Customize › Customized packages now lists every package you changed at
   that location, hand-edited and forked ones included, so it matches the
-  Library's "Customized in" mark instead of showing only saved settings.
+  Library's "Customized in" mark instead of only packages with settings.
 - macOS builds are Developer ID signed and notarized: installing from any
   channel no longer ends in "kendex is damaged" or an `xattr -cr` workaround.
 

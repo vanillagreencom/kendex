@@ -49,19 +49,27 @@ describe("customizedLine", () => {
     frontmatter: [],
   };
 
+  const facts = (edited: boolean, forked: boolean) => ({ edited, forked });
+
   it("names a hand edit on its own", () => {
-    expect(customizedLine("edited", nothing)).toBe("Edited by you");
+    expect(customizedLine(facts(true, false), nothing)).toBe("Edited by you");
   });
 
   it("names a fork and the settings set on top of it", () => {
-    expect(customizedLine("forked", { ...nothing, instructions: "x" })).toBe(
-      "Forked · Extra instructions",
+    expect(
+      customizedLine(facts(false, true), { ...nothing, instructions: "x" }),
+    ).toBe("Forked · Extra instructions");
+  });
+
+  it("names a fork edited since, then its settings", () => {
+    expect(customizedLine(facts(true, true), { ...nothing, launch: "x" })).toBe(
+      "Forked · Edited by you · Launch instructions",
     );
   });
 
   it("lists only the settings for a settings row", () => {
-    expect(customizedLine("settings", { ...nothing, launch: "x" })).toBe(
-      "Launch instructions",
-    );
+    expect(
+      customizedLine(facts(false, false), { ...nothing, launch: "x" }),
+    ).toBe("Launch instructions");
   });
 });

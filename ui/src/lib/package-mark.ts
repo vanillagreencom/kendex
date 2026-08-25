@@ -1,9 +1,5 @@
 import type { Scope, UpdateRow } from "@/bindings";
-import {
-  indexCustomized,
-  indexRows,
-  placeStandings,
-} from "@/lib/customized-places";
+import { placeStandings, placesSource } from "@/lib/customized-places";
 import type { ItemGroup } from "@/lib/derive";
 import { groupScopes } from "@/lib/derive";
 import type { Draft } from "@/lib/editor-draft";
@@ -25,12 +21,7 @@ export function markFor(
 ): PlaceMark | null {
   return headerMark(
     placeStandings(
-      {
-        manifests: saved,
-        rows: indexRows(rows),
-        updatesLoaded,
-        settings: indexCustomized(saved),
-      },
+      placesSource(saved, rows, updatesLoaded),
       group.kind,
       group.name,
       groupScopes(group),

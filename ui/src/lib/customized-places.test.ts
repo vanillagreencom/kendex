@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { Scope, UpdateRow } from "@/bindings";
+import { customizedLine } from "@/lib/copy-customize";
 import type { Draft } from "@/lib/editor-draft";
 import { libraryMark } from "@/lib/place-marks";
 import {
   customizedHere,
-  indexCustomized,
-  indexRows,
-  type PlacesSource,
+  manifestsForEditing,
   placeStandings,
+  placesSource,
 } from "./customized-places";
 
 const GLOBAL: Scope = { scope: "global" };
@@ -45,15 +45,16 @@ function row(scope: Scope, over: Partial<UpdateRow> = {}): UpdateRow {
   } as UpdateRow;
 }
 
-function source(over: Partial<PlacesSource> = {}): PlacesSource {
-  const manifests = over.manifests ?? {};
-  return {
-    manifests,
-    rows: new Map(),
-    updatesLoaded: true,
-    settings: indexCustomized(manifests),
-    ...over,
-  };
+function source({
+  manifests = {},
+  rows = [],
+  updatesLoaded = true,
+}: {
+  manifests?: Record<string, Draft>;
+  rows?: UpdateRow[];
+  updatesLoaded?: boolean;
+} = {}) {
+  return placesSource(manifests, rows, updatesLoaded);
 }
 
 describe("placeStandings", () => {
@@ -64,7 +65,7 @@ describe("placeStandings", () => {
         "/work/vg": withSetting(),
         "/work/hyprtrade": empty(),
       },
-      rows: indexRows([row(GLOBAL), row(VG), row(HYPR)]),
+      rows: [row(GLOBAL), row(VG), row(HYPR)],
     });
     const got = placeStandings(s, "skill", "gh", [GLOBAL, VG, HYPR]);
     expect(got.map((p) => p.standing)).toEqual([
@@ -78,7 +79,7 @@ describe("placeStandings", () => {
   it("counts a hand-edited place even when nothing is out of date", () => {
     const s = source({
       manifests: { "/work/vg": empty() },
-      rows: indexRows([row(VG, { blockedByLocalEdit: true })]),
+      rows: [row(VG, { blockedByLocalEdit: true })],
     });
     const [only] = placeStandings(s, "skill", "gh", [VG]);
     expect(only.standing).toBe("customized");
@@ -100,13 +101,13 @@ describe("placeStandings", () => {
   // A place the app never read must not be reported as the author wrote
   // it: not knowing and knowing it is clean are different answers.
   it("leaves a place whose manifest was never read unknown", () => {
-    const s = source({ manifests: {}, rows: indexRows([row(VG)]) });
+    const s = source({ manifests: {}, rows: [row(VG)] });
     const [only] = placeStandings(s, "skill", "gh", [VG]);
     expect(only.standing).toBe("unknown");
   });
 
   it("leaves a local-source place unknown: the engine has no row for it", () => {
-    const s = source({ manifests: { "/work/vg": empty() }, rows: new Map() });
+    const s = source({ manifests: { "/work/vg": empty() }, rows: [] });
     const [only] = placeStandings(s, "skill", "gh", [VG]);
     expect(only.standing).toBe("unknown");
   });
@@ -114,7 +115,7 @@ describe("placeStandings", () => {
   it("does not call a place stock before the update read has landed", () => {
     const s = source({
       manifests: { "/work/vg": empty() },
-      rows: new Map(),
+      rows: [],
       updatesLoaded: false,
     });
     const [only] = placeStandings(s, "skill", "gh", [VG]);
@@ -126,7 +127,7 @@ describe("placeStandings", () => {
   it("takes a fork the row knows about but the saved manifest predates", () => {
     const s = source({
       manifests: { "/work/vg": empty() },
-      rows: indexRows([row(VG, { forked: true })]),
+      rows: [row(VG, { forked: true })],
     });
     const [only] = placeStandings(s, "skill", "gh", [VG]);
     expect(only.standing).toBe("customized");
@@ -141,14 +142,55 @@ describe("customizedHere", () => {
   it("lists a hand-edit-only package the Library row marks", () => {
     const s = source({
       manifests: { "/work/vg": empty() },
-      rows: indexRows([row(VG, { blockedByLocalEdit: true })]),
+      rows: [row(VG, { blockedByLocalEdit: true })],
     });
-    expect(libraryMark(placeStandings(s, "skill", "gh", [VG]))?.label).toBe(
-      "Customized in vg",
-    );
+    const mark = libraryMark(placeStandings(s, "skill", "gh", [VG]));
+    expect(mark?.label).toBe("Customized in vg");
+    expect(mark?.why).toBe("edited");
     expect(customizedHere(s, VG)).toMatchObject([
-      { kind: "skill", name: "gh", why: "edited" },
+      { kind: "skill", name: "gh", edited: true, forked: false },
     ]);
+  });
+
+  // A fork is in the manifest before any update row says so, and a local
+  // source never gets a row at all: the forks table alone has to carry it.
+  it("lists a fork the manifest alone records", () => {
+    const manifest: Draft = {
+      ...empty(),
+      forks: { skill: { gh: { source: "cat", repo: "o/r" } as never } },
+    };
+    for (const updatesLoaded of [true, false]) {
+      const s = source({ manifests: { "/work/vg": manifest }, updatesLoaded });
+      expect(customizedHere(s, VG)).toMatchObject([
+        {
+          kind: "skill",
+          name: "gh",
+          forked: true,
+          edited: false,
+          customization: {
+            launch: null,
+            additional: null,
+            instructions: null,
+            skills: null,
+            frontmatter: [],
+          },
+        },
+      ]);
+    }
+  });
+
+  // Settings outrank a hand edit for where a click lands, but the row's
+  // line names both: the edit is what holds updates back.
+  it("names a hand edit under a package that also has settings", () => {
+    const s = source({
+      manifests: { "/work/vg": withSetting() },
+      rows: [row(VG, { blockedByLocalEdit: true })],
+    });
+    const [only] = customizedHere(s, VG);
+    expect(only).toMatchObject({ edited: true, forked: false });
+    expect(customizedLine(only, only.customization)).toBe(
+      "Edited by you · Extra instructions",
+    );
   });
 
   it("lists a fork recorded in the manifest, with its settings", () => {
@@ -161,7 +203,7 @@ describe("customizedHere", () => {
       {
         kind: "skill",
         name: "gh",
-        why: "forked",
+        forked: true,
         customization: { instructions: "mine" },
       },
     ]);
@@ -170,14 +212,14 @@ describe("customizedHere", () => {
   it("lists a settings-only package with what was set", () => {
     const s = source({ manifests: { "/work/vg": withSetting() } });
     expect(customizedHere(s, VG)).toMatchObject([
-      { kind: "skill", name: "gh", why: "settings" },
+      { kind: "skill", name: "gh", edited: false, forked: false },
     ]);
   });
 
   it("leaves out stock rows and other places' settings", () => {
     const s = source({
       manifests: { "/work/vg": empty(), "/work/hyprtrade": withSetting() },
-      rows: indexRows([row(VG), row(HYPR, { blockedByLocalEdit: true })]),
+      rows: [row(VG), row(HYPR, { blockedByLocalEdit: true })],
     });
     expect(customizedHere(s, VG)).toEqual([]);
   });
@@ -187,29 +229,47 @@ describe("customizedHere", () => {
   it("holds a hand edit back until the update read has landed", () => {
     const s = source({
       manifests: { "/work/vg": withSetting() },
-      rows: indexRows([
+      rows: [
         row(VG, { blockedByLocalEdit: true }),
         row(VG, { kind: "agent", name: "orch", blockedByLocalEdit: true }),
-      ]),
+      ],
       updatesLoaded: false,
     });
     expect(customizedHere(s, VG)).toMatchObject([
-      { kind: "skill", name: "gh", why: "settings" },
+      { kind: "skill", name: "gh", edited: false },
     ]);
   });
 
   it("orders agents before skills, each by name", () => {
     const s = source({
       manifests: { "/work/vg": withSetting() },
-      rows: indexRows([
+      rows: [
         row(VG, { name: "zed", blockedByLocalEdit: true }),
         row(VG, { kind: "agent", name: "orch", forked: true }),
-      ]),
+      ],
     });
     expect(customizedHere(s, VG).map((r) => `${r.kind}:${r.name}`)).toEqual([
       "agent:orch",
       "skill:gh",
       "skill:zed",
     ]);
+  });
+});
+
+describe("manifestsForEditing", () => {
+  // Remove edits the draft, and the row it removes has to go with it
+  // before a save; the saved manifest still holds the setting until then.
+  it("reads the open draft in place of that place's saved manifest", () => {
+    const saved = { "/work/vg": withSetting(), global: withSetting() };
+    const manifests = manifestsForEditing(saved, empty(), VG);
+    expect(customizedHere(placesSource(manifests, [], true), VG)).toEqual([]);
+    expect(
+      customizedHere(placesSource(manifests, [], true), GLOBAL),
+    ).toHaveLength(1);
+  });
+
+  it("leaves the saved manifests alone while there is no draft", () => {
+    const saved = { "/work/vg": withSetting() };
+    expect(manifestsForEditing(saved, null, VG)).toBe(saved);
   });
 });

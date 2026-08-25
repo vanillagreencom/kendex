@@ -7,63 +7,100 @@ import {
 import type { Draft } from "@/lib/editor-draft";
 import { sameScope, scopeKey } from "@/lib/scope";
 
+/** Why a place counts as customized, which decides where a click lands. */
+export type Why = "settings" | "edited" | "forked";
+
 /** What one place holds for one package.
  *
  *  Three answers, not two. A place whose manifest was read and holds
  *  nothing is not the same as a place nobody could read: the first is
  *  "yours is the stock copy", the second is "nobody knows", and printing
- *  the first over the second is the badge lying in a new way. */
-export type Standing = "customized" | "stock" | "unknown";
+ *  the first over the second is the badge lying in a new way. A
+ *  customized place always says why; the other two never do. */
+export type PlaceStanding =
+  | { scope: Scope; standing: "customized"; why: Why }
+  | { scope: Scope; standing: "stock" | "unknown"; why: null };
 
-/** Why a place counts as customized, which decides where a click lands. */
-export type Why = "settings" | "edited" | "forked";
-
-export interface PlaceStanding {
-  scope: Scope;
-  standing: Standing;
-  why: Why | null;
-}
-
-/** Everything the standings are read from, gathered once per screen. */
+/** Everything the standings are read from, gathered once per screen.
+ *  Built through {@link placesSource}, never by hand: {@link settings} is
+ *  an index over {@link manifests}, and the two must not drift apart. */
 export interface PlacesSource {
-  /** Each place's saved manifest, keyed by scope. A place absent here has
-   *  not been read — which is the whole reason this is a record and not a
+  /** Each place's manifest, keyed by scope. A place absent here has not
+   *  been read — which is the whole reason this is a record and not a
    *  list of the customized ones. */
   manifests: Record<string, Draft>;
-  /** Update rows keyed by {@link placeKey}: the per-place hand-edit and
+  /** Update rows keyed by place and package: the per-place hand-edit and
    *  fork facts, absent for places the engine cannot speak about. */
   rows: Map<string, UpdateRow>;
   /** Whether the update read has landed. Hand edits are known only after
    *  it has; before, a place with no row is unread rather than clean. */
   updatesLoaded: boolean;
-  /** {@link indexCustomized} over {@link manifests}, built once. */
+  /** Every package each place's manifest holds settings for, keyed
+   *  `scope|kind:name`. Built once: `customizedItems` walks a whole
+   *  manifest, and asking it per package per place walks every manifest
+   *  again for every row on the Library. */
   settings: ReadonlySet<string>;
 }
 
 const placeKey = (kind: ItemKind, name: string, scope: Scope): string =>
   `${kind}:${name}:${scopeKey(scope)}`;
 
-export function indexRows(rows: UpdateRow[]): Map<string, UpdateRow> {
-  const out = new Map<string, UpdateRow>();
-  for (const row of rows) out.set(placeKey(row.kind, row.name, row.scope), row);
-  return out;
-}
-
-/** Every package each place holds something for, keyed by place and
- *  package.
- *
- *  Built once per screen rather than per row: `customizedItems` walks a
- *  whole manifest, and asking it per package per place walks every
- *  manifest again for every row on the Library. */
-export function indexCustomized(
+export function placesSource(
   manifests: Record<string, Draft>,
-): ReadonlySet<string> {
-  const keys = new Set<string>();
+  rows: UpdateRow[],
+  updatesLoaded: boolean,
+): PlacesSource {
+  const byPlace = new Map<string, UpdateRow>();
+  for (const row of rows)
+    byPlace.set(placeKey(row.kind, row.name, row.scope), row);
+  const settings = new Set<string>();
   for (const [where, manifest] of Object.entries(manifests))
     for (const item of customizedItems(manifest))
-      keys.add(`${where}|${item.kind}:${item.name}`);
-  return keys;
+      settings.add(`${where}|${item.kind}:${item.name}`);
+  return { manifests, rows: byPlace, updatesLoaded, settings };
 }
+
+/** The manifests a page editing one place reads: its open draft in place
+ *  of that place's saved manifest, so a setting removed and not yet saved
+ *  leaves the index at once, as the Remove control promises, and one
+ *  typed on a package's own page joins it. */
+export function manifestsForEditing(
+  saved: Record<string, Draft>,
+  draft: Draft | null,
+  scope: Scope,
+): Record<string, Draft> {
+  return draft ? { ...saved, [scopeKey(scope)]: draft } : saved;
+}
+
+/** Whether this place's copy is a fork, or null when nobody can say.
+ *
+ *  Two readers of one fact, and either saying yes is a yes. Preferring
+ *  the manifest outright loses a fork this app has just made: the row is
+ *  re-read with the write and the saved manifest is not, so the mark goes
+ *  missing at the one moment the reader is certain it is theirs. The cost
+ *  of taking either is a mark that outlives a discard until the next read
+ *  — the mark being late rather than the mark being missing. */
+function forkedAt(
+  manifest: Draft | undefined,
+  row: UpdateRow | undefined,
+  updatesLoaded: boolean,
+  kind: ItemKind,
+  name: string,
+): boolean | null {
+  const inManifest = manifest ? manifest.forks?.[kind]?.[name] != null : null;
+  const inRow = updatesLoaded && row ? row.forked : null;
+  if (inManifest || inRow) return true;
+  return inManifest === null && inRow === null ? null : false;
+}
+
+/** Whether this place's files were edited by hand, or null when nobody
+ *  can say. A place with no row after the read has landed is one the
+ *  engine cannot speak about — a local source has no version to compare
+ *  against — so its hand-edit state stays unknown rather than false. */
+const editedAt = (
+  row: UpdateRow | undefined,
+  updatesLoaded: boolean,
+): boolean | null => (updatesLoaded && row ? row.blockedByLocalEdit : null);
 
 /** How each place stands, in the order the scopes were given.
  *
@@ -80,27 +117,11 @@ export function placeStandings(
   return scopes.map((scope) => {
     const manifest = source.manifests[scopeKey(scope)];
     const row = source.rows.get(placeKey(kind, name, scope));
-    // Two readers of one fact, and either saying yes is a yes. Preferring
-    // the manifest outright loses a fork this app has just made: the row
-    // is re-read with the write and the saved manifest is not, so the mark
-    // goes missing at the one moment the reader is certain it is theirs.
-    // The cost of taking either is a mark that outlives a discard until the
-    // next read — the mark being late rather than the mark being missing.
-    const inManifest = manifest ? manifest.forks?.[kind]?.[name] != null : null;
-    const inRow = source.updatesLoaded && row ? row.forked : null;
-    const forked =
-      inManifest || inRow
-        ? true
-        : inManifest === null && inRow === null
-          ? null
-          : false;
+    const forked = forkedAt(manifest, row, source.updatesLoaded, kind, name);
     const settings = manifest
       ? source.settings.has(`${scopeKey(scope)}|${kind}:${name}`)
       : null;
-    // A place with no row after the read has landed is one the engine
-    // cannot speak about — a local source has no version to compare
-    // against — so its hand-edit state stays unknown rather than false.
-    const edited = source.updatesLoaded && row ? row.blockedByLocalEdit : null;
+    const edited = editedAt(row, source.updatesLoaded);
     if (forked) return { scope, standing: "customized", why: "forked" };
     if (settings) return { scope, standing: "customized", why: "settings" };
     if (edited) return { scope, standing: "customized", why: "edited" };
@@ -122,11 +143,12 @@ export function standingIn(
 }
 
 /** One row of the Customize page's index: a package this place holds
- *  something for, why it counts, and what its overlay sets. */
+ *  something for, every fact that makes it so, and what its overlay sets. */
 export interface CustomizedHere {
   kind: ItemKind;
   name: string;
-  why: Why;
+  edited: boolean;
+  forked: boolean;
   customization: ItemCustomization;
 }
 
@@ -139,11 +161,12 @@ export function customizedHere(
   source: PlacesSource,
   scope: Scope,
 ): CustomizedHere[] {
-  const manifest = source.manifests[scopeKey(scope)] ?? null;
+  const manifest = source.manifests[scopeKey(scope)];
   const candidates = new Map<string, [ItemKind, string]>();
   const add = (kind: ItemKind, name: string) =>
     candidates.set(`${kind}:${name}`, [kind, name]);
-  for (const item of customizedItems(manifest)) add(item.kind, item.name);
+  for (const item of customizedItems(manifest ?? null))
+    add(item.kind, item.name);
   for (const [kind, byName] of Object.entries(manifest?.forks ?? {}))
     for (const name of Object.keys(byName ?? {})) add(kind as ItemKind, name);
   for (const row of source.rows.values())
@@ -153,13 +176,14 @@ export function customizedHere(
   for (const [kind, name] of candidates.values()) {
     const [standing] = placeStandings(source, kind, name, [scope]);
     if (standing.standing !== "customized") continue;
-    if (standing.why === null)
-      throw new Error(`customized place ${kind}:${name} names no reason`);
+    const row = source.rows.get(placeKey(kind, name, scope));
     out.push({
       kind,
       name,
-      why: standing.why,
-      customization: itemCustomization(manifest, kind, name),
+      edited: editedAt(row, source.updatesLoaded) === true,
+      forked:
+        forkedAt(manifest, row, source.updatesLoaded, kind, name) === true,
+      customization: itemCustomization(manifest ?? null, kind, name),
     });
   }
   return out.sort(

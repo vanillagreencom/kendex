@@ -33,6 +33,7 @@ import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import { useEditorStore } from "@/stores/editor";
 import { useSettingsStore } from "@/stores/settings";
+import { useUpdatesStore } from "@/stores/updates";
 
 /** What you have changed that isn't about one package — instructions every
  *  agent and skill gets, hooks of your own, where a project keeps its
@@ -54,6 +55,10 @@ export function CustomizePage() {
   } = useEditorStore();
   const projects = useSettingsStore((s) => s.settings?.projects ?? []);
   const customized = useCustomizedHere(draft, scope);
+  // Rows kept from before a failed re-read are last-known and do not count
+  // as hand-edit facts, so this is the case where the index cannot list
+  // an edited package: nothing landed and the read said why.
+  const updatesFailed = useUpdatesStore((s) => !s.loaded && s.error !== null);
 
   // Unsaved edits made on a package's own page live in this same draft;
   // reloading over them here would throw away work with nothing said.
@@ -128,6 +133,7 @@ export function CustomizePage() {
                 <CustomizedIndex
                   items={customized}
                   scope={scope}
+                  updatesFailed={updatesFailed}
                   onRemove={(kind, name) =>
                     edit((current) =>
                       clearItemCustomization(current, kind, name),

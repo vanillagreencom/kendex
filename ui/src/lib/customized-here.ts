@@ -3,20 +3,16 @@ import type { Scope } from "@/bindings";
 import {
   type CustomizedHere,
   customizedHere,
-  indexCustomized,
-  indexRows,
+  manifestsForEditing,
+  placesSource,
 } from "@/lib/customized-places";
 import type { Draft } from "@/lib/editor-draft";
-import { scopeKey } from "@/lib/scope";
 import { useEditorStore } from "@/stores/editor";
 import { useUpdatesStore } from "@/stores/updates";
 
-/** The Customize page's index for the place it is editing.
- *
- *  The open draft stands in for that place's saved manifest: a setting
- *  removed here and not yet saved leaves the list at once, as the Remove
- *  control promises, and one typed on a package's own page joins it. Hand
- *  edits and forks are read from the same rows the Library reads. */
+/** The Customize page's index for the place it is editing: the open draft
+ *  for settings, the same update rows the Library reads for hand edits
+ *  and forks. */
 export function useCustomizedHere(
   draft: Draft | null,
   scope: Scope,
@@ -24,16 +20,16 @@ export function useCustomizedHere(
   const saved = useEditorStore((s) => s.saved);
   const rows = useUpdatesStore((s) => s.rows);
   const updatesLoaded = useUpdatesStore((s) => s.loaded);
-  return useMemo(() => {
-    const manifests = draft ? { ...saved, [scopeKey(scope)]: draft } : saved;
-    return customizedHere(
-      {
-        manifests,
-        rows: indexRows(rows),
-        updatesLoaded,
-        settings: indexCustomized(manifests),
-      },
-      scope,
-    );
-  }, [draft, saved, rows, updatesLoaded, scope]);
+  return useMemo(
+    () =>
+      customizedHere(
+        placesSource(
+          manifestsForEditing(saved, draft, scope),
+          rows,
+          updatesLoaded,
+        ),
+        scope,
+      ),
+    [draft, saved, rows, updatesLoaded, scope],
+  );
 }

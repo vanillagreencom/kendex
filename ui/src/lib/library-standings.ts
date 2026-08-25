@@ -1,9 +1,8 @@
 import { useMemo } from "react";
 import {
-  indexCustomized,
-  indexRows,
   type PlaceStanding,
   placeStandings,
+  placesSource,
 } from "@/lib/customized-places";
 import type { ItemGroup } from "@/lib/derive";
 import { groupScopes } from "@/lib/derive";
@@ -22,12 +21,7 @@ export function useLibraryStandings(
   const updateRows = useUpdatesStore((s) => s.rows);
   const updatesLoaded = useUpdatesStore((s) => s.loaded);
   const places = useMemo(
-    () => ({
-      manifests: saved,
-      rows: indexRows(updateRows),
-      updatesLoaded,
-      settings: indexCustomized(saved),
-    }),
+    () => placesSource(saved, updateRows, updatesLoaded),
     [saved, updateRows, updatesLoaded],
   );
   const byKey = useMemo(() => {

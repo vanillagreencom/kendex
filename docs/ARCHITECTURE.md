@@ -250,10 +250,13 @@ lives in one capability table read by core and UI.
   question. Three readers, no other: the Library row's mark
   (`lib/library-standings.ts`), the package header's mark
   (`lib/package-mark.ts`), and the Customize page's index
-  (`customizedHere`, via `lib/customized-here.ts`). The index lists every
-  package the Library marks for the place being edited, reading the open
-  draft in place of that place's saved manifest so an unsaved removal
-  leaves the list at once.
+  (`customizedHere`, via `lib/customized-here.ts`). Each builds its
+  `PlacesSource` through `placesSource`, never by hand. The index lists
+  every package the Library marks for the place being edited, reading the
+  open draft in place of that place's saved manifest
+  (`manifestsForEditing`) so an unsaved removal leaves the list at once;
+  when the update read failed with nothing landed it says hand-edited
+  packages cannot be listed rather than calling the place clean.
 - Hook events have one vocabulary — Claude Code's names, in
   `core/hook.rs::EVENTS`; every other harness's map is keyed by it. The
   picker offers that list, the validator rejects anything outside it, the
