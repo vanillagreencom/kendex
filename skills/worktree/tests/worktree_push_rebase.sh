@@ -246,6 +246,40 @@ assert_eq "$norebase_post_head" "$norebase_pre_head" "--no-rebase leaves HEAD un
 assert_path_absent "$NOREBASE_ROOT/trees/issue-norebase/main-advanced.txt" "--no-rebase does not pull in advanced main"
 assert_not_contains "$(cat "$NOREBASE_ROOT/push.out")" "rebase-map:" "--no-rebase emits no rebase-map lines"
 
+# --- KEN-570: push rejects unknown flags --------------------------------------
+# The argument loop used to end in a catch-all shift, so a typo'd flag was
+# dropped and the caller got a default-behavior push it never asked for. An
+# unrecognized flag must now be a usage error, which is what lets orch's
+# worktree-push wrapper pass flags through instead of keeping its own copy of
+# this vocabulary.
+run_push_args() {
+  local label="$1"
+  shift
+  set +e
+  (
+    cd "$NOREBASE_ROOT/main" && \
+      "$WORKTREE_SCRIPT" push "$@" \
+        >"$NOREBASE_ROOT/$label.out" 2>"$NOREBASE_ROOT/$label.err"
+  )
+  PUSH_ARGS_RC=$?
+  set -e
+}
+
+typo_pre_head="$(git -C "$NOREBASE_ROOT/trees/issue-norebase" rev-parse HEAD)"
+run_push_args typo "$NOREBASE_ROOT/trees/issue-norebase" --no-rebse
+assert_eq "$PUSH_ARGS_RC" "1" "a typo'd flag is a usage error, not a silent default push"
+assert_contains "$(cat "$NOREBASE_ROOT/typo.err")" "unknown option '--no-rebse' for push" "the rejected flag is named"
+assert_eq "$(git -C "$NOREBASE_ROOT/trees/issue-norebase" rev-parse HEAD)" "$typo_pre_head" "a rejected flag pushes and rebases nothing"
+
+# The known flags still parse ahead of the positional, so a flag-first call is
+# not mistaken for an issue ID.
+run_push_args flagfirst --no-rebase "$NOREBASE_ROOT/trees/issue-norebase"
+assert_eq "$PUSH_ARGS_RC" "0" "flags may precede the ID or path"
+
+run_push_args twoargs "$NOREBASE_ROOT/trees/issue-norebase" issue-norebase
+assert_eq "$PUSH_ARGS_RC" "1" "a second positional is a usage error"
+assert_contains "$(cat "$NOREBASE_ROOT/twoargs.err")" "takes a single issue ID or path" "the duplicate positional is reported"
+
 # --- kendex#728: a commit dropped by the rebase maps to "dropped" --------------
 # The branch carries a commit whose patch main already merged (different SHA,
 # same patch-id) plus its own fix. The rebase drops the duplicated commit, so

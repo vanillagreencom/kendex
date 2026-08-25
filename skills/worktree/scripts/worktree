@@ -336,6 +336,10 @@ the normal SSH path.
 Options:
   -u, --set-upstream    Set upstream tracking branch
   --no-rebase           Skip auto-rebase
+
+Any other flag is a usage error (exit 1), so a typo cannot quietly become a
+default-behavior push. The ID or path may appear before or after the flags,
+but only once.
 EOF
 }
 
@@ -4274,15 +4278,31 @@ case "${1:-}" in
     ;;
 
   push)
-    ARG="${2:-}"
+    ARG=""
     SET_UPSTREAM=""
     AUTO_REBASE=true
-    shift 2 || shift || true
+    shift || true
     while [[ $# -gt 0 ]]; do
       case "$1" in
         -u|--set-upstream) SET_UPSTREAM="-u"; shift ;;
         --no-rebase) AUTO_REBASE=false; shift ;;
-        *) shift ;;
+        # An unknown --flag must fail rather than be dropped. The catch-all
+        # shift this replaces turned a typo like `--no-rebse` into a silent
+        # default-behavior push, and forced callers to pre-screen flags
+        # against a copy of this vocabulary (KEN-570).
+        -*)
+          echo "Error: unknown option '$1' for push" >&2
+          echo "Run: $0 push --help" >&2
+          exit 1
+          ;;
+        *)
+          if [[ -n "$ARG" ]]; then
+            echo "Error: push takes a single issue ID or path (got '$ARG' and '$1')" >&2
+            exit 1
+          fi
+          ARG="$1"
+          shift
+          ;;
       esac
     done
 

@@ -37,9 +37,10 @@
 # Usage:
 #   worktree-push --worktree PATH --issue ID [--state-dir DIR] [push flags...]
 #
-# Push flags forwarded to `worktree push`: -u/--set-upstream and --no-rebase.
-# Any other flag is a usage error here — `worktree push` ignores flags it
-# does not know, so forwarding a typo would silently change nothing.
+# Every argument this wrapper does not own (--worktree, --issue, --state-dir,
+# --help) is forwarded verbatim to `worktree push`, which rejects a flag it
+# does not know. The flag vocabulary lives there alone; see `worktree push
+# --help`.
 # The state file resolves exactly like any other workflow-state call:
 # --state-dir, then $ORCH_STATE_DIR, then tmp/ under the caller's working
 # directory.
@@ -116,15 +117,17 @@ while [[ $# -gt 0 ]]; do
 		state_dir="${1#--state-dir=}"
 		shift
 		;;
-	-u | --set-upstream | --no-rebase)
-		push_args+=("$1")
-		shift
-		;;
 	-h | --help)
 		usage
 		exit 0
 		;;
-	*) fail "unknown option: $1 (worktree push ignores unknown flags, so it is refused here)" ;;
+	# Everything this wrapper does not own is `worktree push`'s to accept or
+	# reject; push fails closed on a flag it does not know, so pass-through
+	# here keeps one copy of that vocabulary (KEN-570).
+	*)
+		push_args+=("$1")
+		shift
+		;;
 	esac
 done
 

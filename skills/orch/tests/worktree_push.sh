@@ -121,9 +121,17 @@ assert_contains "$(cat "$args_log")" "push $wt --set-upstream" "worktree push re
 STUB_PUSH_STDOUT="" run_push "$work" "--worktree=$wt" --issue=KEN-1
 assert_eq "$RUN_RC" "0" "equals-form flags parse"
 
-run_push "$work" --worktree "$wt" --issue KEN-1 --force
-assert_eq "$RUN_RC" "1" "an unknown flag is a usage error, not a silent pass-through"
-assert_contains "$(cat "$run_err")" "unknown option: --force" "the unknown flag is named"
+# KEN-570: the wrapper keeps no copy of push's flag vocabulary. A flag it does
+# not own is forwarded verbatim, and `worktree push` — which fails closed on an
+# unknown flag — is the one that rejects it.
+: >"$args_log"
+STUB_ARGS_LOG="$args_log" STUB_PUSH_STDOUT="" run_push "$work" --worktree "$wt" --issue KEN-1 --no-rebase --future-flag
+assert_contains "$(cat "$args_log")" "push $wt --no-rebase --future-flag" "flags the wrapper does not own are forwarded verbatim, in order"
+
+: >"$args_log"
+STUB_ARGS_LOG="$args_log" STUB_PUSH_EXIT=1 run_push "$work" --worktree "$wt" --issue KEN-1 --force
+assert_eq "$RUN_RC" "1" "a flag push rejects fails the wrapper with push's own exit code"
+assert_contains "$(cat "$args_log")" "push $wt --force" "the rejected flag reached push rather than being screened here"
 
 echo
 echo "=== a rebase map is recorded and recorded fix SHAs rewritten ==="
