@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, Result};
-use crate::fs::{copy_tree, make_symlink, remove_any, sync_dir, sync_file, sync_tree};
+use crate::fs::{
+    copy_tree, make_symlink, remove_any, sync_dir, sync_dir_durable, sync_file, sync_tree,
+};
 
 /// Pre-images of everything an apply is about to touch. Restore is
 /// idempotent, so a crash mid-rollback recovers by rolling back again.
@@ -247,10 +249,12 @@ pub fn clear(dir: &Path) -> Result<()> {
     // not meta.json would leave a pending journal with no restore set,
     // for a recovery that restores every snapshot — over the paths the
     // filter left alone. With meta gone the dir is a leftover the next
-    // recovery pass sweeps, never a journal it replays.
+    // recovery pass sweeps, never a journal it replays. A sync that fails
+    // stops here: the sweep may not run while meta's removal is still
+    // only in memory.
     let meta = dir.join("meta.json");
     match fs::remove_file(&meta) {
-        Ok(()) => sync_dir(dir),
+        Ok(()) => sync_dir_durable(dir)?,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(CoreError::io(&meta, e)),
     }

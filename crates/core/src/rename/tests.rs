@@ -61,6 +61,38 @@ fn a_dangling_link_in_the_local_source_dir_moves_with_it() {
     assert!(!old_local.exists());
 }
 
+/// A pipe under the old local-source dir refuses the scope at planning,
+/// naming the pipe: the journal snapshots a moved directory by copying
+/// it, and a copy of a reader-less pipe never returns — under the scope
+/// lock. Refused here, the person learns which entry to remove.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_pipe_in_the_local_source_dir_refuses_planning_by_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("app");
+    let old_local = root.join(".vstack-local");
+    std::fs::create_dir_all(old_local.join("skills/x")).unwrap();
+    std::fs::write(old_local.join("skills/x/SKILL.md"), "v1").unwrap();
+    let pipe = old_local.join("skills/x/pipe");
+    rustix::fs::mknodat(
+        rustix::fs::CWD,
+        &pipe,
+        rustix::fs::FileType::Fifo,
+        rustix::fs::Mode::RWXU,
+        0,
+    )
+    .unwrap();
+    std::fs::write(root.join("vstack.toml"), "schema = 5\n").unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let scope = Scope::Project { root };
+
+    let error = rename_ops(&env, &scope).unwrap_err();
+    assert!(
+        matches!(&error, CoreError::Io { path, .. } if *path == pipe),
+        "{error:?}"
+    );
+}
+
 #[test]
 fn source_catalog_migration_renames_both_definition_and_install_state() {
     let tmp = tempfile::tempdir().unwrap();

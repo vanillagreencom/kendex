@@ -157,6 +157,23 @@ pub(crate) fn sync_dir(path: &Path) {
     let _ = path;
 }
 
+/// `sync_dir` with the outcome kept: for a transition that must be on
+/// disk before the next step may run. Unix only; elsewhere the volume
+/// flush is all there is, and the call reports nothing.
+pub(crate) fn sync_dir_durable(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        fs::File::open(path)
+            .and_then(|dir| dir.sync_all())
+            .map_err(|e| CoreError::io(path, e))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(())
+    }
+}
+
 pub(crate) fn sync_tree(root: &Path) -> Result<()> {
     if root.is_file() {
         return sync_file(root);

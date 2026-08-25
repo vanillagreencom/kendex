@@ -40,10 +40,11 @@ pub enum Pre {
         target: PathBuf,
     },
     /// The entries at and beneath the path, as they sit: files by bytes,
-    /// links by target, anything else by kind, no link followed. What a
-    /// directory move binds to — a rename carries the entries themselves,
-    /// so a dangling link is part of what the plan proved it may move,
-    /// never a reason to refuse the scope.
+    /// links by target, no link followed. What a directory move binds to
+    /// — a rename carries the entries themselves, so a dangling link is
+    /// part of what the plan proved it may move, never a reason to refuse
+    /// the scope. A pipe, socket or device is refused at planning, named:
+    /// the journal could not snapshot the move.
     TreeIs {
         hash: String,
     },

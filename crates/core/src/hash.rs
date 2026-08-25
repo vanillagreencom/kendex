@@ -55,14 +55,16 @@ fn hash_into(hasher: &mut Sha256, path: &Path, rel: &Path, depth: usize) -> Resu
     Ok(())
 }
 
-/// SHA-256 over a tree as it sits, never following a link and never
-/// failing on what it finds: a plain file by relative path and bytes, a
-/// link by relative path and target, anything else by relative path and
-/// kind. What a directory move binds to — a rename carries the entries
-/// themselves, a dangling link included, so the precondition names
-/// exactly those and never the bytes a link points at. The byte after
-/// the path says which kind wrote the record, so a file whose bytes spell
-/// a target never hashes like a link to it.
+/// SHA-256 over a tree as it sits, never following a link: a plain file
+/// by relative path and bytes, a link by relative path and target,
+/// dangling or not. What a directory move binds to — a rename carries
+/// the entries themselves, a dangling link included, so the precondition
+/// names exactly those and never the bytes a link points at. The byte
+/// after the path says which kind wrote the record, so a file whose
+/// bytes spell a target never hashes like a link to it. Anything else (a
+/// pipe, a socket, a device) is an error naming the entry, as in
+/// `hash_tree`: the journal snapshots a moved directory by copying it,
+/// and a copy of a reader-less pipe never returns.
 pub fn hash_tree_as_is(path: &Path) -> Result<String> {
     let mut hasher = Sha256::new();
     hash_as_is_into(&mut hasher, path, Path::new(""))?;
@@ -70,6 +72,7 @@ pub fn hash_tree_as_is(path: &Path) -> Result<String> {
 }
 
 fn hash_as_is_into(hasher: &mut Sha256, path: &Path, rel: &Path) -> Result<()> {
+    let refuse = |why: &str| CoreError::io(path, std::io::Error::other(why.to_owned()));
     let kind = fs::symlink_metadata(path)
         .map_err(|e| CoreError::io(path, e))?
         .file_type();
@@ -99,9 +102,7 @@ fn hash_as_is_into(hasher: &mut Sha256, path: &Path, rel: &Path) -> Result<()> {
         hasher.update(&bytes);
         hasher.update([0]);
     } else {
-        hasher.update(rel.to_string_lossy().as_bytes());
-        hasher.update([2]);
-        hasher.update([0]);
+        return Err(refuse("not a regular file, directory or link"));
     }
     Ok(())
 }
