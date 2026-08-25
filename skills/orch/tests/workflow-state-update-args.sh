@@ -65,6 +65,52 @@ survivor="$("$WS" --state-dir "$sd" get KEN-1 '.fixed_items[0].location')"
   && ok "the matching fixed_items entry is dropped and the unrelated one survives" \
   || bad "the matching fixed_items entry is dropped and the unrelated one survives" "len=$remaining first=$survivor"
 
+# --- the documented § 4 form, end to end from an artifact file --------------
+# review-pr § 4 types only a path, an array name, and an index: the finding's
+# text never enters a shell word, which is the only way a location holding an
+# apostrophe survives (the harness rejects $(...) and multi-command blocks, so
+# a shell variable cannot carry it either). The value here also holds a double
+# quote and a newline.
+ART_LOC="crates/core/src/fs.rs::write_all's \"atomic\" guard"
+ART_DESC="line one of the finding
+line two, with an apostrophe's worth of trouble and a \"quoted\" span"
+ART="$TMP_ROOT/review-security.json"
+jq -n --arg l "$ART_LOC" --arg d "$ART_DESC" \
+  '{verdict: "action_required", blockers: [{location: $l, description: $d}], suggestions: []}' > "$ART"
+
+sda="$TMP_ROOT/state-artifact"
+"$WS" --state-dir "$sda" init KEN-2 --worktree "$REPO_ROOT" --branch ken-2 >/dev/null
+"$WS" --state-dir "$sda" append KEN-2 fixed_items \
+  "$(jq -n --arg l "$ART_LOC" --arg d "$ART_DESC" '{description: $d, location: $l, commit: "abc123f", source: "pr-review"}')" >/dev/null
+
+"$WS" --state-dir "$sda" update KEN-2 --argjson-file art "$ART" --arg src pr-review \
+  '$art.blockers[0] as $item | .fixed_items = ((.fixed_items // []) | map(select(.location != $item.location or .description != $item.description))) | .escalated_items = ((.escalated_items // []) + [{description: $item.description, location: $item.location, reason: "outstanding at the review cycle cap", outcome: "blocked", source: $src}])' >/dev/null \
+  && rc=0 || rc=$?
+[[ "$rc" -eq 0 ]] && ok "the documented artifact-bound write succeeds" \
+  || bad "the documented artifact-bound write succeeds" "rc=$rc"
+
+art_loc="$("$WS" --state-dir "$sda" get KEN-2 '.escalated_items[0].location')"
+art_desc="$("$WS" --state-dir "$sda" get KEN-2 '.escalated_items[0].description')"
+[[ "$art_loc" == "$ART_LOC" ]] && ok "the artifact location round-trips through the file binding" \
+  || bad "the artifact location round-trips through the file binding" "got=$art_loc"
+[[ "$art_desc" == "$ART_DESC" ]] && ok "a multi-line description round-trips through the file binding" \
+  || bad "a multi-line description round-trips through the file binding" "got=$art_desc"
+
+art_fixed="$("$WS" --state-dir "$sda" get KEN-2 '.fixed_items | length')"
+[[ "$art_fixed" == "0" ]] && ok "the superseded entry is dropped by the artifact-bound write" \
+  || bad "the superseded entry is dropped by the artifact-bound write" "len=$art_fixed"
+
+err="$("$WS" --state-dir "$sda" update KEN-2 --argjson-file art "$TMP_ROOT/absent.json" '.cycles = 1' 2>&1 >/dev/null)" && rc=0 || rc=$?
+[[ "$rc" -ne 0 ]] && [[ "$err" == *"no such file"* ]] \
+  && ok "--argjson-file refuses a missing file" \
+  || bad "--argjson-file refuses a missing file" "rc=$rc err=$err"
+
+printf 'not json' > "$TMP_ROOT/bad.json"
+err="$("$WS" --state-dir "$sda" update KEN-2 --argjson-file art "$TMP_ROOT/bad.json" '.cycles = 1' 2>&1 >/dev/null)" && rc=0 || rc=$?
+[[ "$rc" -ne 0 ]] && [[ "$err" == *"exactly one JSON value"* ]] \
+  && ok "--argjson-file refuses a file that is not one JSON value" \
+  || bad "--argjson-file refuses a file that is not one JSON value" "rc=$rc err=$err"
+
 # --- --argjson binds parsed JSON, and refuses what is not JSON -------------
 "$WS" --state-dir "$sd" update KEN-1 --argjson labels '["needs-review","skills"]' '.qa_labels = $labels' >/dev/null
 labels="$("$WS" --state-dir "$sd" get KEN-1 '.qa_labels | join(",")')"
@@ -145,6 +191,21 @@ else
   done
   [[ "$refused" -eq 2 ]] && ok "the -e form refuses both false and null, which this fix accepts" \
     || bad "the -e form refuses both false and null, which this fix accepts" "refused=$refused of 2"
+fi
+
+# The form review-pr documented before this change pasted the location into a
+# single-quoted shell word. The apostrophe closes that word and the stray
+# double quote leaves the command unterminated, so the shell never builds the
+# call at all and no binding can help. Written to a file and run, exactly as an
+# agent would have issued it.
+sdp="$TMP_ROOT/state-pasted"
+"$WS" --state-dir "$sdp" init KEN-4 --worktree "$REPO_ROOT" --branch ken-4 >/dev/null
+printf "%s --state-dir %s update KEN-4 --arg loc '%s' '.cycles = 1'\n" \
+  "$WS" "$sdp" "$ART_LOC" > "$TMP_ROOT/pasted.sh"
+if bash "$TMP_ROOT/pasted.sh" >/dev/null 2>&1; then
+  bad "the pasted-into-quotes form breaks on a location holding an apostrophe" "it parsed and ran"
+else
+  ok "the pasted-into-quotes form breaks on a location holding an apostrophe"
 fi
 
 sd2="$TMP_ROOT/state-interpolated"

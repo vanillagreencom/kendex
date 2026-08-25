@@ -6,19 +6,14 @@
 # blockers as declined with `reason: not recorded` and dropped them from the
 # filing candidates — nothing filed them.
 #
-# The fix records each outstanding item in `escalated_items` (outcome
-# "blocked", so the audit builder maps it to origin "escalated") before the
-# route to § 5, dropping its superseded `fixed_items` entry in the SAME
-# workflow-state update: one finding then sits in neither both buckets nor
-# none, whichever moment a dying session stops at. This lint pins that single
-# write inside § 4's At The Cap section, its outcome field, the selection
-# clause deciding which items it covers, the schema's coverage of the cap path,
-# and the same contract in workflow-state's cap-refusal message — the
-# instruction an orchestrator receives at the instant the cap fires.
-#
-# The section is read with HTML comments stripped, and the pre-fix
-# report-only sentence is rejected outright, so a rule that is present but
-# inert does not satisfy the greps.
+# What this pins are IDENTIFIERS and their relationships, never sentences:
+# review-bots.md bans sentence-pinning lints on markdown, and an editorial
+# rephrase must not fail a suite while the contract holds. The contract is
+# carried by tokens that cannot be reworded without changing behaviour —
+# `escalated_items`, `fixed_items`, `outcome`/`blocked`, `--argjson-file`,
+# `qa-review`, the `At The Cap` heading — plus the relationships between them:
+# one command carries the drop and the record, the cap section precedes Fix
+# Delegation, and every token sits inside the section that owns it.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,13 +32,11 @@ fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 
 echo "=== review-pr capped items escalated lint (KEN-518) ==="
 
-# The cap rule lives in § 4's At The Cap subsection, which must precede Fix
-# Delegation: the cap has to decide before another fix round runs, or the items
-# it escalates predate that round's diff. HTML comment regions are stripped
-# from EVERY line before the section gate runs, so a comment opened above the
-# heading blanks the heading too and the section never opens: a commented-out
-# instruction is not an instruction, wherever the comment starts.
-cap_section() {
+# HTML comment regions are stripped from EVERY line before any section gate, so
+# a comment opened above a heading blanks the heading too and the section never
+# opens: a commented-out instruction is not an instruction, wherever the
+# comment starts.
+strip_comments() {
   awk '
     {
       line = $0; out = ""
@@ -61,55 +54,47 @@ cap_section() {
           line = substr(line, p + 4)
         }
       }
-      $0 = out
+      print out
     }
-    /^### At The Cap/ { on = 1; next }
-    on && /^###? /    { on = 0 }
-    !on { next }
-    { print }
   ' "$1"
 }
 
-# § 4 whole, for the ordering check. Line number of the first line holding a
-# fixed substring, or 0 — index() so bracketed placeholders need no escaping.
-section_4() { awk '/^## 4\./{on=1;next} /^## 5\./{on=0} on' "$1"; }
-first_line() { awk -v s="$1" 'index($0, s) && !n { n = NR } END { print n + 0 }'; }
+# $1 = file, $2 = opening heading, $3 = ERE ending the slice.
+slice() {
+  strip_comments "$1" | awk -v head="$2" -v tail="$3" '
+    $0 == head      { on = 1; next }
+    on && $0 ~ tail { on = 0 }
+    !on { next }
+    { print }
+  '
+}
 
-# The refusal `workflow-state set … rereview_panel` prints once cycles is
-# past the cap.
-cap_refusal() { grep -F 'cycles is past the cap' "$1"; }
+cap_section() { slice "$1" '### At The Cap' '^###? '; }
+section_4()   { slice "$1" '## 4. Handle Review Items' '^## 5[.]'; }
+section_7()   { slice "$1" '## 7. Handle QA Items' '^## 8[.]'; }
 
-# Every grep below reads its input through a herestring, never a pipe: `grep -q`
-# exits at the first match, a pipe would deliver SIGPIPE to the extractor, and
-# `pipefail` would promote that 141 into a failed check for text that is
-# present. The race grows with the section's length, so it is latent until an
-# edit lengthens § 4.
-# -e/-F -e so a pattern that begins with a dash is a pattern, not a flag.
-sec_has()  { grep -q  -e "$2" <<<"$(cap_section "$1")"; }
-sec_hasF() { grep -qF -e "$2" <<<"$(cap_section "$1")"; }
-
-# The one command the cap rule runs per item. It is a single `update` filter,
-# not a drop followed by an append: between two writes the item is in neither
-# bucket, which is exactly the state § 8 reads as declined, so a session that
-# dies in that window re-declines a live blocker.
+# The one command the cap rule runs per item. Every grep reads a herestring,
+# never a pipe: `grep -q` exits at the first match, SIGPIPE would kill the
+# extractor, and `pipefail` would promote its 141 into a false failure.
 CAP_WRITE_RE='workflow-state update \[ISSUE_ID\].*escalated_items'
 CAP_WRITE_TXT='workflow-state update [ISSUE_ID]'
 cap_write() { grep -E "$CAP_WRITE_RE" <<<"$(cap_section "$1")"; }
 write_has() { grep -q -e "$2" <<<"$(cap_write "$1")"; }
+sec_has()   { grep -q -e "$2" <<<"$(cap_section "$1")"; }
+s7_has()    { grep -q -e "$2" <<<"$(section_7 "$1")"; }
 
-# The schema row for the cap path. POSIX classes only, never \s: BSD grep -E
-# does not know it, and the assertion would go vacuous on macOS rather than
-# loud.
+# Line number of the first line holding a fixed substring, or 0. index(), so
+# bracketed placeholders need no escaping.
+first_line() { awk -v s="$1" 'index($0, s) && !n { n = NR } END { print n + 0 }'; }
+
+# POSIX classes only, never \s: BSD grep -E does not know it, and the assertion
+# would go vacuous on macOS rather than loud.
 SCHEMA_CAP_RE='\|[[:space:]]*`escalated_items`.*cycle cap'
+cap_refusal() { grep -F 'cycles is past the cap' "$1"; }
 
-# The pre-fix instruction: route and report, record nothing.
-REPORT_ONLY='At the cap, report the outstanding items'
-
-# --- ordering: the cap decides before any fix round is delegated ------------
-# With Fix Delegation first, reaching the cap still runs one more fix round,
-# and the items escalated afterwards are the ones the pass BEFORE that round
-# reported: an item the last fix resolved gets recorded as outstanding and the
-# supersede clause drops its newly valid fixed_items entry.
+# --- 1: the cap decides before any fix round is delegated -------------------
+# With Fix Delegation first, reaching the cap still runs one more fix round and
+# the items escalated afterwards predate that round's diff.
 S4="$(section_4 "$REVIEW_PR_WF")"
 cap_at="$(first_line '### At The Cap' <<<"$S4")"
 fix_at="$(first_line '### Fix Delegation' <<<"$S4")"
@@ -119,269 +104,212 @@ else
   fail "§ 4 delegates a fix round before the cap check (cap=$cap_at fix=$fix_at)"
 fi
 
-# --- a: the cap paragraph records outstanding items as escalated ------------
+# --- 2: the section carries a state write naming escalated_items ------------
 if [[ -n "$(cap_write "$REVIEW_PR_WF")" ]]; then
-  pass "At The Cap records capped items in escalated_items before § 5"
+  pass "At The Cap writes escalated_items"
 else
-  fail "At The Cap lost the escalated_items write for capped items"
+  fail "At The Cap lost its escalated_items write"
 fi
 
-# --- b: the entry carries the typed outcome so audit maps it to escalated ---
-if write_has "$REVIEW_PR_WF" 'outcome: "blocked"'; then
-  pass "the capped-item entry writes outcome \"blocked\""
+# --- 3: the entry is typed so the audit builder maps it to escalated --------
+if write_has "$REVIEW_PR_WF" 'outcome' && write_has "$REVIEW_PR_WF" 'blocked'; then
+  pass "the entry carries outcome and blocked"
 else
-  fail "the capped-item entry lost outcome \"blocked\""
+  fail "the entry lost outcome or blocked"
 fi
 
-# --- b2: the finding's own text is bound, never interpolated ----------------
-# A location or description carrying an apostrophe or a quote breaks the
-# filter when it is spliced in, and the item goes unrecorded — the failure this
-# rule exists to prevent. --arg hands jq a literal string instead.
-if write_has "$REVIEW_PR_WF" '--arg desc' && write_has "$REVIEW_PR_WF" 'description: \$desc'; then
-  pass "the cap write binds the finding text with --arg and names \$desc"
+# --- 4: one command drops the superseded entry and records the new one ------
+# Two commands leave a window where the item is in neither bucket, which § 8
+# reads as declined; no drop at all leaves it in both, printed as ✅ FIXED
+# against a stale SHA and as ⚠️ ESCALATED at once. The drop is keyed on both
+# fields, the same key § 8 dedupes on.
+if write_has "$REVIEW_PR_WF" 'fixed_items' \
+   && write_has "$REVIEW_PR_WF" '\.location' \
+   && write_has "$REVIEW_PR_WF" '\.description'; then
+  pass "the same command drops fixed_items, keyed on location and description"
 else
-  fail "the cap write interpolates the finding text instead of binding it"
+  fail "the fixed_items drop is missing from the escalated_items command or unkeyed"
 fi
 
-# --- c: the rule states the disposition, not just the mechanics -------------
-# Without the stated contract, a future edit can keep an append somewhere while
-# reverting to report-only routing at the cap.
-if sec_has "$REVIEW_PR_WF" 'Capped items are escalated, never dropped'; then
-  pass "At The Cap states the capped-items-are-escalated contract"
+# --- 5: the finding's text is bound from its artifact, never pasted ---------
+# A location like fs.rs::write_all's guard ends a quoted shell word early, so
+# the command breaks before any binding can help.
+if write_has "$REVIEW_PR_WF" -- '--argjson-file' && write_has "$REVIEW_PR_WF" -- '--arg src'; then
+  if grep -q -e "--arg [a-z]* '\[" <<<"$(cap_write "$REVIEW_PR_WF")"; then
+    fail "the cap write pastes a placeholder into a quoted shell word"
+  else
+    pass "the cap write binds from the artifact file and pastes no finding text"
+  fi
 else
-  fail "At The Cap lost the capped-items-are-escalated contract"
+  fail "the cap write lost its --argjson-file or --arg src binding"
 fi
 
-# --- d: a re-found item an earlier round called fixed is still recorded -----
-# The cap is reached when fixes are not converging, so the ordinary content of
-# the final pass is a blocker whose recorded fix did not hold. Excluding it
-# leaves § 8 printing a live blocker as ✅ FIXED against a stale SHA.
-if sec_has "$REVIEW_PR_WF" 'whose fix did not hold'; then
-  pass "the selection clause keeps an item whose recorded fix did not hold"
+# --- 6: both provenances are named where the rule is stated -----------------
+if sec_has "$REVIEW_PR_WF" 'pr-review' && sec_has "$REVIEW_PR_WF" 'qa-review'; then
+  pass "At The Cap names both the pr-review and qa-review sources"
 else
-  fail "the selection clause lost the re-found fixed_items case"
+  fail "At The Cap lost one of its source values"
 fi
 
-# --- e: § 4 declines stay declined -----------------------------------------
+# --- 7: § 4 declines are excluded by name -----------------------------------
 # A decline sits in neither bucket, exactly like an unrecorded capped item, so
-# the clause must separate them by name or it sweeps declines into escalated.
-if sec_hasF "$REVIEW_PR_WF" 'a decline is terminal'; then
-  pass "the selection clause excludes § 4 declines"
+# the rule must name them or it sweeps declines into escalated.
+if sec_has "$REVIEW_PR_WF" 'declined'; then
+  pass "At The Cap names declined items as excluded"
 else
-  fail "the selection clause lost the decline exclusion"
+  fail "At The Cap lost the declined exclusion"
 fi
 
-# --- f: the dedup key is named, not left to the reader ----------------------
-if sec_hasF "$REVIEW_PR_WF" '(location, description)'; then
-  pass "the selection clause names the (location, description) match key"
-else
-  fail "the selection clause lost the match key"
-fi
-
-# --- g: the pre-fix report-only instruction is gone -------------------------
-if sec_hasF "$REVIEW_PR_WF" "$REPORT_ONLY"; then
-  fail "At The Cap carries the pre-fix report-only instruction again"
-else
-  pass "At The Cap carries no report-only cap instruction"
-fi
-
-# --- h: one write does both, so no window exists ----------------------------
-# Recording without dropping the superseded fixed_items entry puts one finding
-# in both buckets: § 8 renders it under ✅ FIXED with the stale SHA AND under
-# ⚠️ ESCALATED, and post-summary counts it twice. Dropping and recording as two
-# commands is worse — between them the item is in neither bucket, which § 8
-# reads as declined. The drop must therefore ride the same command.
-if write_has "$REVIEW_PR_WF" '\.fixed_items'; then
-  pass "the same command drops the superseded fixed_items entry"
-else
-  fail "the cap rule records the item without dropping its fixed_items entry in the same command"
-fi
-
-# --- i: the rule states the outcome that single write exists to produce -----
-if sec_hasF "$REVIEW_PR_WF" 'never in both buckets and never in neither'; then
-  pass "the cap rule states the never-both, never-neither contract"
-else
-  fail "the cap rule lost the never-both, never-neither contract"
-fi
-
-# --- j: the schema documents the cap path into escalated_items --------------
+# --- 8: the schema documents the cap path into escalated_items --------------
 if grep -qE "$SCHEMA_CAP_RE" "$STATE_SCHEMA"; then
   pass "workflow-state schema covers the cycle-cap path into escalated_items"
 else
   fail "workflow-state schema lost the cycle-cap path for escalated_items"
 fi
 
-# --- k: the cap refusal says record-then-route, matching § 4 ----------------
-# The doc-side mirror. workflow-state-cycle-cap.sh asserts the same text on the
-# refusal this branch actually prints, which is what proves it reachable.
-if grep -q 'escalated_items' <<<"$(cap_refusal "$WS_SCRIPT")"; then
-  pass "the cap refusal names the escalated_items recording step"
+# --- 9: the cap refusal carries both halves of the contract -----------------
+# The doc-side mirror. workflow-state-cycle-cap.sh asserts the same tokens on
+# the message the refusal actually prints, which is what proves it reachable.
+REFUSAL="$(cap_refusal "$WS_SCRIPT")"
+if grep -q 'escalated_items' <<<"$REFUSAL" && grep -q 'fixed_items' <<<"$REFUSAL"; then
+  pass "the cap refusal names escalated_items and fixed_items"
 else
-  fail "the cap refusal lost the escalated_items recording step"
+  fail "the cap refusal lost one half of the recording contract"
+fi
+
+# --- 10: a re-found QA item reaches the cap disposition ---------------------
+# § 7 used to drop anything already fixed, so a QA blocker whose fix did not
+# hold never reached the cap rule and § 8 kept reporting it as fixed. Naming
+# both buckets is what distinguishes the retaining rule from the blanket one.
+if s7_has "$REVIEW_PR_WF" 'fixed_items' \
+   && s7_has "$REVIEW_PR_WF" 'escalated_items' \
+   && s7_has "$REVIEW_PR_WF" 'qa-review'; then
+  pass "§ 7 states its exclusions against fixed_items and escalated_items by name"
+else
+  fail "§ 7 lost the named-bucket exclusion that retains a re-found QA item"
 fi
 
 # --- planted controls: prove each check can fail ----------------------------
 echo
 echo "--- planted controls ---"
 
-# $1 = control name, $2 = sed program applied to review-pr.md. Sets CTRL to
-# the fixture path and reports whether the program changed anything: one that
-# matches nothing leaves the source untouched, and the control then proves
-# nothing. This runs in the parent shell, never a command substitution, so its
-# verdict reaches the counters.
+# $1 = control name, $2 = sed program. Sets CTRL and reports whether the
+# program changed anything: one matching nothing leaves the source untouched
+# and the control proves nothing. Runs in the parent shell, never a command
+# substitution, so its verdict reaches the counters.
 plant_pr() {
   CTRL="$TMP_ROOT/pr-$1.md"
   sed "$2" "$REVIEW_PR_WF" > "$CTRL"
   ! cmp -s "$CTRL" "$REVIEW_PR_WF"
 }
 
-# The pre-fix shape: outstanding items reported, never recorded.
 if ! plant_pr write "/$CAP_WRITE_RE/d"; then
   fail "write control planted nothing — its sed program matched no text"
 elif [[ -n "$(cap_write "$CTRL")" ]]; then
-  fail "lint MISSED a dropped capped-item escalated_items write"
+  fail "lint MISSED a dropped escalated_items write"
 else
-  pass "lint flags a dropped capped-item escalated_items write"
+  pass "lint flags a dropped escalated_items write"
 fi
 
 if ! plant_pr outcome 's/outcome: "blocked", //'; then
   fail "outcome control planted nothing — its sed program matched no text"
-elif write_has "$CTRL" 'outcome: "blocked"'; then
-  fail "lint MISSED a dropped outcome field on the capped-item entry"
+elif write_has "$CTRL" 'outcome'; then
+  fail "lint MISSED a dropped outcome field"
 else
-  pass "lint flags a dropped outcome field on the capped-item entry"
+  pass "lint flags a dropped outcome field"
 fi
 
-# The pre-fix shape of this command: the finding's text spliced into the filter.
-if ! plant_pr interpolated 's/--arg loc '"'"'\[LOC\]'"'"' --arg desc '"'"'\[DESC\]'"'"' --arg src '"'"'\[SOURCE\]'"'"' //; s/\$loc/"[LOC]"/g; s/\$desc/"[DESC]"/g; s/\$src/"[SOURCE]"/g'; then
-  fail "interpolation control planted nothing — its sed program matched no text"
-elif write_has "$CTRL" '--arg desc' || write_has "$CTRL" 'description: \$desc'; then
-  fail "lint MISSED a cap write that interpolates the finding text"
-else
-  pass "lint flags a cap write that interpolates the finding text"
-fi
-
-if ! plant_pr contract "s/\*\*Capped items are escalated, never dropped\.\*\* Record every blocker.*$/$REPORT_ONLY after that pass and proceed to § 5./"; then
-  fail "contract control planted nothing — its sed program matched no text"
-elif sec_has "$CTRL" 'Capped items are escalated, never dropped'; then
-  fail "lint MISSED a reverted report-only cap rule"
-else
-  pass "lint flags a reverted report-only cap rule"
-fi
-
-if ! plant_pr refound 's/ whose fix did not hold//'; then
-  fail "re-found control planted nothing — its sed program matched no text"
-elif sec_has "$CTRL" 'whose fix did not hold'; then
-  fail "lint MISSED a selection clause that drops the re-found fixed_items case"
-else
-  pass "lint flags a selection clause that drops the re-found fixed_items case"
-fi
-
-if ! plant_pr decline 's/; a decline is terminal//'; then
-  fail "decline control planted nothing — its sed program matched no text"
-elif sec_hasF "$CTRL" 'a decline is terminal'; then
-  fail "lint MISSED a selection clause that drops the decline exclusion"
-else
-  pass "lint flags a selection clause that drops the decline exclusion"
-fi
-
-if ! plant_pr key 's/ Match on (location, description), the § 8 key\.//'; then
-  fail "match-key control planted nothing — its sed program matched no text"
-elif sec_hasF "$CTRL" '(location, description)'; then
-  fail "lint MISSED a selection clause that drops the match key"
-else
-  pass "lint flags a selection clause that drops the match key"
-fi
-
-# The both-buckets regression: record the item, leave its fixed_items entry.
-if ! plant_pr supersede "s/'\.fixed_items = .*))) | \.escalated_items/'.escalated_items/"; then
+# Records the item, leaves its stale fixed_items entry: the both-buckets shape.
+if ! plant_pr supersede 's/\$art\.\[ARRAY\].*\.escalated_items = /$art.[ARRAY][[INDEX]] as $item | .escalated_items = /'; then
   fail "supersede control planted nothing — its sed program matched no text"
-elif write_has "$CTRL" '\.fixed_items'; then
-  fail "lint MISSED a cap rule that records without dropping the fixed_items entry"
+elif write_has "$CTRL" 'fixed_items'; then
+  fail "lint MISSED a write that records without dropping the fixed_items entry"
 else
-  pass "lint flags a cap rule that records without dropping the fixed_items entry"
+  pass "lint flags a write that records without dropping the fixed_items entry"
 fi
 
-# The neither-bucket regression: the drop and the record split into two
-# commands, leaving a window in which the item is in no bucket at all.
+# The drop and the record split into two commands: the neither-bucket shape.
 TWOWRITE="$TMP_ROOT/pr-twowrite.md"
 awk -v q="'" '
   {
-    i = index($0, "))) | .escalated_items")
+    i = index($0, ")))) | .escalated_items")
+    if (i == 0) i = index($0, "))) | .escalated_items")
     if (i > 0 && !done) {
       print substr($0, 1, i + 2) q
-      print ".agents/skills/orch/scripts/workflow-state append [ISSUE_ID] escalated_items " \
-            q "{\"description\":\"[DESC]\",\"location\":\"[LOC]\",\"outcome\":\"blocked\",\"source\":\"[SOURCE]\"}" q
+      print ".agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --argjson-file art [ARTIFACT_PATH] --arg src [SOURCE] " \
+            q "$art.[ARRAY][[INDEX]] as $item | .escalated_items = ((.escalated_items // []) + [{description: $item.description, outcome: \"blocked\", source: $src}])" q
       done = 1
       next
     }
     print
   }
 ' "$REVIEW_PR_WF" > "$TWOWRITE"
-if ! grep -qF 'workflow-state append [ISSUE_ID] escalated_items' "$TWOWRITE"; then
+if [[ "$(grep -cF -- '--argjson-file art' "$TWOWRITE")" -lt 2 ]]; then
   fail "two-write control planted nothing — the command was not split"
-elif write_has "$TWOWRITE" '\.fixed_items'; then
+elif write_has "$TWOWRITE" 'fixed_items'; then
   fail "lint credits a drop and a record split across two commands"
 else
   pass "lint flags a drop and a record split across two commands"
 fi
 
-if ! plant_pr neither 's/, so the item is never in both buckets and never in neither//'; then
-  fail "never-both control planted nothing — its sed program matched no text"
-elif sec_hasF "$CTRL" 'never in both buckets and never in neither'; then
-  fail "lint MISSED a cap rule that drops the never-both, never-neither contract"
+# The pasted-text shape this PR exists to remove.
+if ! plant_pr pasted "s/--argjson-file art \[ARTIFACT_PATH\]/--arg loc '[LOC]' --arg desc '[DESC]'/"; then
+  fail "pasted-text control planted nothing — its sed program matched no text"
+elif grep -q -e "--arg [a-z]* '\[" <<<"$(cap_write "$CTRL")"; then
+  pass "lint flags a placeholder pasted into a quoted shell word"
 else
-  pass "lint flags a cap rule that drops the never-both, never-neither contract"
+  fail "lint MISSED a placeholder pasted into a quoted shell word"
 fi
 
-# Inverse control: the rule's text is preserved verbatim but made inert — the
-# whole cap rule wrapped in an HTML comment, with the pre-fix report-only
-# sentence re-added after it. Every text-presence check must still go red.
+if ! plant_pr source 's/`qa-review` when § 7 applies this rule/the § 7 value when it applies this rule/'; then
+  fail "source control planted nothing — its sed program matched no text"
+elif sec_has "$CTRL" 'qa-review'; then
+  fail "lint MISSED a cap rule that stops naming qa-review"
+else
+  pass "lint flags a cap rule that stops naming qa-review"
+fi
+
+if ! plant_pr declined 's/declined/set aside/g'; then
+  fail "declined control planted nothing — its sed program matched no text"
+elif sec_has "$CTRL" 'declined'; then
+  fail "lint MISSED a cap rule that drops the declined exclusion"
+else
+  pass "lint flags a cap rule that drops the declined exclusion"
+fi
+
+# Inert-text control: the rule preserved verbatim but commented out, anchored
+# on the headings rather than on any sentence.
 INERT="$TMP_ROOT/pr-inert.md"
-awk -v report_only="$REPORT_ONLY after that pass and proceed to § 5." '
-  st == 0 && /\*\*Capped items are escalated/ {
-    i = index($0, "**Capped items are escalated")
-    print substr($0, 1, i - 1) "<!-- " substr($0, i)
-    st = 1
-    next
-  }
-  st == 1 && /^```$/ && seen_append { print $0 " -->"; print ""; print report_only; st = 2; next }
-  st == 1 && /escalated_items/ { seen_append = 1 }
+awk '
+  /^### At The Cap/      { print; print "<!--"; next }
+  /^### Fix Delegation/ && !closed { print "-->"; closed = 1 }
   { print }
 ' "$REVIEW_PR_WF" > "$INERT"
-if ! grep -qF '<!-- **Capped items are escalated' "$INERT"; then
-  fail "inert-rule control planted nothing — the cap rule was not commented out"
+if ! grep -qF '<!--' "$INERT" || ! grep -qF -- '-->' "$INERT"; then
+  fail "inert-rule control planted nothing — no comment region was opened"
 elif [[ -n "$(cap_write "$INERT")" ]]; then
-  fail "lint credits an escalated_items write that sits inside an HTML comment"
-elif sec_has "$INERT" 'Capped items are escalated, never dropped'; then
-  fail "lint credits a contract sentence that sits inside an HTML comment"
-elif ! sec_hasF "$INERT" "$REPORT_ONLY"; then
-  fail "lint does not see the restored report-only instruction"
+  fail "lint credits a write that sits inside an HTML comment"
 else
-  pass "lint flags a cap rule commented out and replaced by report-only routing"
+  pass "lint flags a cap rule commented out inside its own section"
 fi
 
-# The same evasion from OUTSIDE the section: opening the comment on the line
-# above the heading, closing it after the append. Stripping before the section
-# gate is what catches this — gating first would leave `incomment` unset.
+# The same evasion from OUTSIDE the section: the comment opens above the
+# heading. Stripping before the section gate is what catches this.
 ABOVE="$TMP_ROOT/pr-above.md"
 awk '
   /^### At The Cap/ && !opened { print "<!--"; opened = 1 }
-  /^`\[SOURCE\]` is/ && opened && !closed { print "-->"; closed = 1 }
+  /^### Fix Delegation/ && opened && !closed { print "-->"; closed = 1 }
   { print }
 ' "$REVIEW_PR_WF" > "$ABOVE"
 if ! grep -qF '<!--' "$ABOVE"; then
   fail "above-heading control planted nothing — no comment was opened"
 elif [[ -n "$(cap_write "$ABOVE")" ]]; then
   fail "lint credits a write under a comment opened above the section heading"
-elif sec_has "$ABOVE" 'Capped items are escalated, never dropped'; then
-  fail "lint credits a contract sentence under a comment opened above the heading"
 else
   pass "lint flags a cap rule commented out from above the section heading"
 fi
 
-# Ordering control: the pre-fix arrangement, with the whole At The Cap block
-# moved down behind Fix Delegation.
+# Ordering control: the whole At The Cap block moved back behind delegation.
 REORDERED="$TMP_ROOT/pr-reordered.md"
 awk '
   /^### At The Cap/ { cap = 1; buf = $0 ORS; next }
@@ -397,21 +325,20 @@ if [[ "$r_cap" -eq 0 ]] || [[ "$r_fix" -eq 0 ]]; then
   fail "ordering control planted nothing — a heading went missing (cap=$r_cap fix=$r_fix)"
 elif [[ "$r_cap" -lt "$r_fix" ]]; then
   fail "ordering control planted nothing — the sections did not swap"
-elif ! grep -qF 'Capped items are escalated, never dropped' "$REORDERED"; then
-  fail "ordering control lost the cap rule instead of moving it"
+elif [[ -z "$(cap_write "$REORDERED")" ]]; then
+  fail "ordering control lost the cap write instead of moving it"
 else
   pass "lint flags § 4 delegating a fix round ahead of the cap check"
 fi
 
-# Scoping control: an escalated_items write elsewhere (dev-fix's § 6 pattern
-# quoted in another section) must not satisfy check a. Built with awk, not a
-# sed \n replacement: BSD sed emits a literal 'n' there, which would leave the
-# plant welded to the § 5 heading and the control proving nothing.
+# Scoping control: a write elsewhere must not satisfy check 2. Built with awk,
+# not a sed \n replacement: BSD sed emits a literal 'n' there, which would weld
+# the plant to the heading and prove nothing.
 CTRL="$TMP_ROOT/pr-scope.md"
 awk -v cap="$CAP_WRITE_TXT" '
-  /^### At The Cap/ { on = 1 }
-  /^## 5\. Verdict Pass$/  { on = 0 }
-  on && index($0, cap)     { next }
+  /^### At The Cap/       { on = 1 }
+  /^### Fix Delegation/   { on = 0 }
+  on && index($0, cap)    { next }
   { print }
   /^## 5\. Verdict Pass$/ && !planted {
     print ""
@@ -427,6 +354,16 @@ else
   pass "lint scopes the write check to At The Cap"
 fi
 
+# § 7's retaining rule reverted to the blanket exclusion.
+QA_REVERT='s/, and excluding a .fixed_items. entry only when this round.s QA artifact does not report it again//; s/A re-found item is retained on purpose[^.]*[.] //'
+if ! plant_pr qa "$QA_REVERT"; then
+  fail "qa control planted nothing — its sed program matched no text"
+elif s7_has "$CTRL" 'fixed_items'; then
+  fail "lint MISSED § 7 reverting to the blanket fixed-or-escalated exclusion"
+else
+  pass "lint flags § 7 reverting to the blanket fixed-or-escalated exclusion"
+fi
+
 SCRATCH_SCHEMA="$TMP_ROOT/schema.md"
 sed 's/, plus items still outstanding when review-pr'\''s cycle cap ends the fix loop//; s/; the cap path always writes this//' "$STATE_SCHEMA" > "$SCRATCH_SCHEMA"
 if cmp -s "$SCRATCH_SCHEMA" "$STATE_SCHEMA"; then
@@ -438,13 +375,13 @@ else
 fi
 
 SCRATCH_WS="$TMP_ROOT/workflow-state"
-sed 's/in escalated_items (outcome/in the state (outcome/' "$WS_SCRIPT" > "$SCRATCH_WS"
+sed 's/ and drops its superseded fixed_items entry in the same write//' "$WS_SCRIPT" > "$SCRATCH_WS"
 if cmp -s "$SCRATCH_WS" "$WS_SCRIPT"; then
   fail "refusal control planted nothing — its sed program matched no text"
-elif grep -q 'escalated_items' <<<"$(cap_refusal "$SCRATCH_WS")"; then
-  fail "lint MISSED a cap refusal that routes without recording"
+elif grep -q 'fixed_items' <<<"$(cap_refusal "$SCRATCH_WS")"; then
+  fail "lint MISSED a cap refusal that names only the escalated half"
 else
-  pass "lint flags a cap refusal that routes without recording"
+  pass "lint flags a cap refusal that names only the escalated half"
 fi
 
 echo
