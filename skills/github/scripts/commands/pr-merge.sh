@@ -66,9 +66,8 @@ Options:
   --check          Run checks only, don't merge. JSON on stdout; a one-word
                    verdict (mergeable|blocked|merged|closed) plus the run
                    scope ("head-run: <ids>" — the runs the CI classification
-                   was scoped to: the authoritative run per workflow plus
-                   the runs custom commit statuses link to) on stderr.
-                   On a refusal, ci-classify-refusal names the cause.
+                   was scoped to) on stderr. On a refusal,
+                   ci-classify-refusal names the cause.
   --force          Skip checks and merge (requires explicit user decision;
                    cannot be combined with --auto)
   --auto           If immediate merge is blocked, enable GitHub auto-merge
@@ -175,25 +174,18 @@ exit_terminal_state() {
 #    transient: bool,     # true when only TRANSIENT issues are blocking
 #    state,               # PR lifecycle state: OPEN, MERGED, CLOSED, UNKNOWN
 #    merged_at,           # merge timestamp, "" unless state is MERGED
-#    head_runs,           # run ids the CI classification was scoped to —
-#                         # the authoritative run per workflow after
-#                         # scope_current_run, or the runs custom commit
-#                         # statuses link to when no workflow job carries a
-#                         # run id; [] when no run-correlated checks exist
-#                         # or the fetch failed
-#    checks}              # the raw checks rollup this classification read,
-#                         # validated but unscoped — ci-classify-refusal
-#                         # re-scopes it through the same scope_current_run
-#                         # instead of refetching, so the verdict and its
-#                         # detail lines come from ONE snapshot; [] when the
-#                         # fetch failed or no checks are configured
+#    head_runs,           # run ids the CI classification was scoped to
+#                         # (classify_checks_rollup); [] when none or no fetch
+#    checks}              # the raw rollup this classification read — the
+#                         # ONE snapshot ci-classify-refusal re-scopes
+#                         # instead of refetching; [] on fetch failure or
+#                         # no configured checks
 run_checks() {
     local pr_num="$1"
     local can_merge=true
     local issues=()
     local warnings=()
-    local head_runs_json='[]'
-    local checks_json='[]'
+    local head_runs_json='[]' checks_json='[]'
 
     local pr_state pr_merged_at
     if ! load_pr_state_json "$pr_num"; then
@@ -224,40 +216,26 @@ run_checks() {
         issues+=("unknown: GitHub still computing mergeable status, await-mergeable then retry")
     fi
 
-    # 2. Check CI status
+    # 2. Check CI status. The fetch tolerance (gh exit 8 with usable JSON)
+    # lives with the shared fetch_checks_rollup.
     local ci_json
-    set +e
-    ci_json=$(gh pr checks "$pr_num" --json name,state,bucket,link,startedAt,workflow 2>&1)
-    set -e
-
-    # `gh pr checks` exits 8 while checks are pending, but still prints usable
-    # JSON. Treat any valid array response as authoritative regardless of the
-    # command's exit status.
-    if ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$ci_json"; then
+    if ! ci_json=$(fetch_checks_rollup "$pr_num"); then
         can_merge=false
         issues+=("ci_fetch_failed: Failed to fetch CI checks from GitHub")
     elif [ "$(echo "$ci_json" | jq 'length')" -eq 0 ]; then
         warnings+=("ci_unconfigured: No status checks configured")
     else
         # Drop checks belonging to superseded workflow runs before classifying,
-        # so a prior canceled run can't be reported as a current merge blocker
-        #. Mirrors orch ci-wait's pre-classification scoping.
-        local scoped_ci_json ci_classification pending failed
-        checks_json=$(echo "$ci_json" | jq -c .)
-        scoped_ci_json=$(echo "$ci_json" | scope_current_run)
-        head_runs_json=$(echo "$scoped_ci_json" | jq -c "$CI_RUN_JQ_DEFS"'head_runs')
-        # Check names are chosen by fork PRs and third-party check apps; the
-        # issues array is rebuilt from newline-joined strings, so a newline
-        # inside a name would otherwise forge a standalone issue entry.
-        ci_classification=$(echo "$scoped_ci_json" | jq -c "$CI_RUN_JQ_DEFS"'
-            def clean: tostring | gsub("[\r\n\t]"; " ");
-            {
-                pending: [.[] | select(bucket == "pending") | (.name | clean) + " (" + .state + ")"],
-                failed: [.[] | select((bucket != "pass") and (bucket != "skipping") and (bucket != "pending")) | (.name | clean) + " (" + .state + ")"]
-            }
-        ')
-        pending=$(echo "$ci_classification" | jq -r '.pending | join(", ")')
-        failed=$(echo "$ci_classification" | jq -r '.failed | join(", ")')
+        # so a prior canceled run can't be reported as a current merge blocker.
+        # Mirrors orch ci-wait's pre-classification scoping; the shared
+        # classify_checks_rollup carries the scoping and name-sanitization
+        # contract.
+        local rollup pending failed
+        rollup=$(echo "$ci_json" | classify_checks_rollup)
+        checks_json=$(jq -c '.checks' <<<"$rollup")
+        head_runs_json=$(jq -c '.head_runs' <<<"$rollup")
+        pending=$(jq -r '.pending' <<<"$rollup")
+        failed=$(jq -r '.failed' <<<"$rollup")
         if [ -n "$pending" ]; then
             can_merge=false
             issues+=("ci_pending: $pending")
@@ -552,30 +530,13 @@ main() {
         exit 1
     fi
 
-    # Check-only mode: JSON on stdout stays the machine interface; the
-    # one-word verdict and the run scope go to stderr so jq pipelines keep
-    # parsing. `head-run:` names the run ids the CI classification was scoped
-    # to — the answer to "which run produced these check results".
+    # Check-only mode: JSON on stdout stays the machine interface; the verdict
+    # and run scope (shared check_verdict_lines) go to stderr for jq pipelines.
     if [ "$check_only" = true ]; then
-        local check_json verdict head_runs
+        local check_json
         check_json=$(run_checks "$pr_num")
         printf '%s\n' "$check_json"
-        case "$(jq -r '.state' <<<"$check_json")" in
-        MERGED) verdict="merged" ;;
-        CLOSED) verdict="closed" ;;
-        *)
-            if [ "$(jq -r '.can_merge' <<<"$check_json")" = "true" ]; then
-                verdict="mergeable"
-            else
-                verdict="blocked"
-            fi
-            ;;
-        esac
-        head_runs=$(jq -r '.head_runs | if length == 0 then "none" else map(tostring) | join(",") end' <<<"$check_json")
-        {
-            echo "$verdict"
-            echo "head-run: $head_runs"
-        } >&2
+        check_verdict_lines <<<"$check_json" >&2
         exit 0
     fi
 

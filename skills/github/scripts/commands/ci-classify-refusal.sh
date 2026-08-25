@@ -133,12 +133,8 @@ if [ "$cause" = "none" ]; then
     exit 0
 fi
 
-check_head_runs() {
-    jq -r '.head_runs // [] | if length == 0 then "none" else map(tostring) | join(",") end' <<<"$check_json"
-}
-
 if [ "$cause" = "ci_pending" ]; then
-    echo "head-run: $(check_head_runs)"
+    check_head_run_line <<<"$check_json"
     exit 0
 fi
 
@@ -152,7 +148,7 @@ fi
 # re-derives here through the same sourced scope_current_run — a rerun
 # starting between two fetches can no longer make cause:/issue: and the
 # fail:/superseded: detail describe different states.
-echo "head-run: $(check_head_runs)"
+check_head_run_line <<<"$check_json"
 
 ci_json=$(jq -c '.checks // []' <<<"$check_json")
 scoped_json=$(echo "$ci_json" | scope_current_run)
