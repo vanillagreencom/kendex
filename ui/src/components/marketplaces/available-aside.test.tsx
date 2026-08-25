@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { PackageView } from "@/bindings";
-import { PREINSTALL_SAFETY_CAVEAT } from "@/lib/copy-safety";
+import { SAFETY_CAVEAT } from "@/lib/copy-safety";
 import { subscription } from "@/stores/marketplaces-shared";
 import { AvailableAside } from "./available-aside";
 
@@ -43,17 +43,17 @@ const render = (view: PackageView | null) =>
     />,
   );
 
-describe("the available package's Safety column", () => {
-  it("puts the caveat under the score, on the page that installs it", () => {
-    const html = render(checked);
-    expect(html).toContain("100/100");
-    expect(html).toContain(PREINSTALL_SAFETY_CAVEAT);
-    expect(html.indexOf("100/100")).toBeLessThan(
-      html.indexOf(PREINSTALL_SAFETY_CAVEAT),
-    );
+describe("the available package's facts column", () => {
+  it("says where the package comes from", () => {
+    expect(render(checked)).toContain("kendex");
   });
 
-  it("says nothing about a check that has not answered yet", () => {
-    expect(render(null)).not.toContain(PREINSTALL_SAFETY_CAVEAT);
+  // The score and the findings that produced it are one block, in the main
+  // column. A number here and its findings elsewhere would be two claims
+  // about one reading, and the caveat would end up under only one of them.
+  it("leaves the whole safety reading to the main column", () => {
+    const html = render(checked);
+    expect(html).not.toContain("100/100");
+    expect(html).not.toContain(SAFETY_CAVEAT);
   });
 });

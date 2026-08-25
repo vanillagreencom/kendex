@@ -199,7 +199,7 @@ an outside contributor.
   include glob.
 - A pi-hooks carrier registered through a scoped path such as
   `./packages/@vanillagreen/pi-hooks` no longer draws the false "nothing
-  will run it" warning from `kendex apply` and the Review & apply page.
+  will run it" warning from `kendex apply`.
 - The review-gate predicate matches `REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS`
   only in the first line of a review body, so a review quoting a pattern in
   later text (e.g. a PR editing that setting) counts as evidence again.
@@ -301,6 +301,12 @@ an outside contributor.
 - Managing a project skill moves it to `.agents/skills/<name>` and leaves the
   path its tool read as a link. That tree is the content of record, so
   refresh maintains links and layout and never rewrites what you wrote.
+- Every package surface in the app shows its safety score in a circle with
+  the findings under it — the package page, the Updates table, and the page
+  you install from. Nothing asks you to review, accept, or dismiss one.
+- Content kendex did not install is counted on its place's card under
+  Projects and taken on from there. The Library and Home no longer mention
+  it — nothing is wrong with a file kendex did not write.
 - `kendex update` reads schema 1 feeds (including legacy feeds with no schema). Current stays a no-op; older refuses unless `--force`.
   A newer feed, or a forced current/older feed, with no target binary exits 0 with release notes and changes nothing.
 - Updates: a package you edited can't be updated over; its row offers

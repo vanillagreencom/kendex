@@ -2303,8 +2303,8 @@ export type VersionSel =
 export type WriteRefused = 
 /**
  *  The file is no longer the one this copy was read from. Something
- *  else wrote it — a fork, a hold, a dismissal, an install, another
- *  window — and writing this copy would put that back.
+ *  else wrote it — a fork, a hold, an install, another window — and
+ *  writing this copy would put that back.
  */
 { kind: "stale" } | { kind: "failed"; message: string };
 

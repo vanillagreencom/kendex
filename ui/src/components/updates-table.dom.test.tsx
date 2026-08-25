@@ -253,12 +253,14 @@ describe("a page with only muted updates", () => {
 describe("the explanations on the header and the tag", () => {
   it("open their words on focus, not only on hover", () => {
     mount(<UpdatesTable rows={[edited]} onIgnore={() => {}} />);
-    const [help, tag] = [
+    // Three triggers in document order: the header's Follow source note,
+    // then the row's score and its Edited tag.
+    const [help, , tag] = [
       ...document.querySelectorAll<HTMLElement>(
         '[data-slot="tooltip-trigger"]',
       ),
     ];
-    if (!help || !tag) throw new Error("expected two tooltip triggers");
+    if (!help || !tag) throw new Error("expected three tooltip triggers");
     expect(document.querySelector('[data-slot="tooltip-content"]')).toBeNull();
 
     act(() => help.focus());

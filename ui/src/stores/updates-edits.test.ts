@@ -347,7 +347,7 @@ describe("updates store: installing beside an edited place", () => {
 
     expect(await installAsNew(row(edited), "claude", "gh-mine")).toBeNull();
     expect(toast.info).toHaveBeenCalledWith(
-      "Your edited copy is now gh-mine, but gh didn't install: render refused: disk full. Review & apply finishes it.",
+      "Your edited copy is now gh-mine, but gh didn't install: render refused: disk full.",
     );
     expect(toast.success).not.toHaveBeenCalled();
     expect(useProblemsStore.getState().dialog.open).toBe(false);

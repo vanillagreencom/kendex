@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { Finding } from "@/bindings";
 import {
   CATALOG_LAYOUT_CLEAN,
-  PREINSTALL_SAFETY_CAVEAT,
+  installedScoreWords,
+  SAFETY_CAVEAT,
   SAFETY_DOT_UNCHECKED,
   safetyDotWords,
+  safetyHeadline,
   severityTone,
 } from "./copy-safety";
 
@@ -23,10 +25,13 @@ describe("what a score is allowed to claim", () => {
   // are matched as plain substrings, which the copy affords by never
   // reaching for them — not even in a negated form.
   const besideAScore = [
-    PREINSTALL_SAFETY_CAVEAT,
+    SAFETY_CAVEAT,
     CATALOG_LAYOUT_CLEAN,
     safetyDotWords(100, 0, []),
     safetyDotWords(100, 3, []),
+    safetyHeadline([], 0),
+    safetyHeadline([], 3),
+    installedScoreWords(100, 0, []),
     SAFETY_DOT_UNCHECKED,
   ];
 
@@ -52,7 +57,7 @@ describe("what a score is allowed to claim", () => {
     expect(safetyDotWords(60, 0, [finding("high")])).toBe(
       "Important · 60/100. An automated check for risky patterns, not a review. It can miss things, and a package too large to read is not checked at all.",
     );
-    expect(PREINSTALL_SAFETY_CAVEAT).toBe(
+    expect(SAFETY_CAVEAT).toBe(
       "An automated check for risky patterns, not a review. It can miss things, and a package too large to read is not checked at all.",
     );
   });
@@ -112,5 +117,30 @@ describe("severityTone", () => {
     );
     expect(severityTone([finding("low"), finding("high")])).toBe("warning");
     expect(severityTone([])).toBe("good");
+  });
+});
+
+describe("the line under a score", () => {
+  it("names the worst severity and how many, in the app's own words", () => {
+    expect(safetyHeadline([finding("low"), finding("critical")], 0)).toBe(
+      "Serious · 2 findings",
+    );
+    expect(safetyHeadline([finding("high")], 0)).toBe("Important · 1 finding");
+  });
+
+  // A clean read and a partial one are different claims: one says nothing
+  // was matched, the other that nothing was matched in what was reached.
+  it("keeps a partial read apart from a clean one", () => {
+    expect(safetyHeadline([], 0)).toBe("Nothing found");
+    expect(safetyHeadline([], 2)).toBe("Nothing found in what was read");
+  });
+
+  // The Updates page's rows are about a version that is not installed yet.
+  // A bare number there would be read as the one the update would earn.
+  it("says which copy the Updates page's score is of", () => {
+    const words = installedScoreWords(58, 0, [finding("high")]);
+    expect(words).toContain("installed now");
+    expect(words).toContain("58/100");
+    expect(words).toContain("Important");
   });
 });

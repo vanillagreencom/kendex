@@ -2,61 +2,65 @@ import { PackageCheck } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { UnmanagedItems } from "@/components/unmanaged-items";
+import { unmanagedIn } from "@/lib/audit-counts";
 import {
   ALL_MANAGED_BODY,
   ALL_MANAGED_TITLE,
-  UNMANAGED_PAGE_SUBTITLE,
+  UNMANAGED_SECTION_EXPLAINER,
 } from "@/lib/copy";
-import { mergeDriftRows } from "@/lib/drift-merge";
 import { scopeName } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
+import { sameScope } from "@/lib/scope";
 import { cn } from "@/lib/utils";
-import { useAuditStore } from "@/stores/audit";
+import { useAuditOnMount, useAuditStore } from "@/stores/audit";
+import { useNavStore } from "@/stores/nav";
 
 /**
- * Everything on this machine kendex didn't put there, on a page of its own.
+ * One place's items that kendex didn't put there, and the offer to take
+ * them on.
  *
- * The Library shows the same list above its table, folded, because there it
- * is a footnote to what is installed. Arriving here from Home the list *is*
- * the task, so nothing is folded and every row is ready to act on.
+ * Reached from that place's card on Projects, which is the only surface
+ * that mentions them at all — nothing is wrong with an unmanaged file, so
+ * nothing chases the user about it. Arriving here the list *is* the task,
+ * so nothing is folded and every row is ready to act on.
  */
 export function UnmanagedPage() {
+  useAuditOnMount();
+  const scope = useNavStore((s) => s.unmanagedScope);
   const views = useAuditStore((s) => s.views);
   const busy = useAuditStore((s) => s.busy);
   const adopt = useAuditStore((s) => s.adopt);
 
-  const perScope = views
-    .map((view) => ({
-      view,
-      rows: mergeDriftRows(
-        view.drift.filter((row) => row.state === "unmanaged"),
-      ),
-    }))
-    .filter(({ rows }) => rows.length > 0);
-  const several = perScope.length > 1;
+  // No place named is no page: every way in names one, so this is a
+  // navigation that never happened rather than a state to design for.
+  if (!scope) return null;
+  const view = views.find((row) => sameScope(row.scope, scope));
+  const rows = view ? unmanagedIn(view) : [];
 
   return (
     <div>
-      <PageHeader title="Unmanaged items" subtitle={UNMANAGED_PAGE_SUBTITLE} />
+      {/* The title names the place, so the subtitle spends its line on
+          what the page is for rather than repeating it. */}
+      <PageHeader
+        title={`Not managed in ${scopeName(scope)}`}
+        subtitle={UNMANAGED_SECTION_EXPLAINER}
+      />
       <div className={PAGE_BODY}>
-        <div className={cn("flex flex-col gap-6", CONTENT_WIDTH)}>
-          {perScope.length === 0 ? (
+        <div className={cn("flex flex-col gap-4", CONTENT_WIDTH)}>
+          {rows.length === 0 ? (
             <EmptyState icon={PackageCheck} title={ALL_MANAGED_TITLE}>
               {ALL_MANAGED_BODY}
             </EmptyState>
           ) : (
-            perScope.map(({ view, rows }) => (
-              <UnmanagedItems
-                key={scopeName(view.scope)}
-                rows={rows}
-                busy={busy}
-                title={several ? scopeName(view.scope) : null}
-                foldable={false}
-                onAdopt={(kind, name, harnesses, quiet) =>
-                  adopt(view.scope, kind, name, harnesses, quiet)
-                }
-              />
-            ))
+            <UnmanagedItems
+              rows={rows}
+              busy={busy}
+              title={null}
+              foldable={false}
+              onAdopt={(kind, name, harnesses, quiet) =>
+                adopt(scope, kind, name, harnesses, quiet)
+              }
+            />
           )}
         </div>
       </div>

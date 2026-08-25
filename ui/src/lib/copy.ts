@@ -13,16 +13,20 @@ export const morePlacesLabel = (count: number): string =>
 export const AFFECTS_LABEL = "Affects";
 
 // What "managing" an item buys you, said once here so "Start managing"
-// doesn't need to explain itself on every row. Says what you get, not what
-// the app calls the state you'd be leaving.
+// doesn't need to explain itself on every row, and used as the subtitle of
+// the page that offers it. Says what you get, not what the app calls the
+// state you'd be leaving.
 export const UNMANAGED_SECTION_EXPLAINER =
   "Hand one over and kendex keeps it updated, checked and copied to every harness.";
 export const START_MANAGING_LABEL = "Start managing";
-export const UNMANAGED_PAGE_SUBTITLE =
-  "On your machine, but kendex didn't put them there";
+// The one mention of unmanaged content anywhere in the app, on the card for
+// the place holding it. It says what the click opens, not that anything is
+// wrong: nothing here is a problem, and the offer is the user's to take.
+export const unmanagedHereLabel = (count: number): string =>
+  `${count} not managed yet`;
 export const ALL_MANAGED_TITLE = "Everything is managed";
 export const ALL_MANAGED_BODY =
-  "kendex looks after every skill, agent and hook it can see.";
+  "kendex looks after everything it can see here.";
 export const SEE_IN_LIBRARY_LABEL = "See them in the Library";
 // Where a harness keeps its files — only worth setting for one that was
 // moved somewhere other than its usual place.

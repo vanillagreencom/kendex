@@ -1,6 +1,7 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useId, useState } from "react";
 import type { UpdateRow } from "@/bindings";
+import { InstalledScore } from "@/components/installed-score";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
@@ -113,6 +114,11 @@ export function PackageRows({
         <TableCell>
           <div className="flex min-w-0 items-center gap-2.5">
             <Icon className="size-4 shrink-0 text-muted-foreground" />
+            {/* What the copy on disk scored. It reads as part of the
+                package's identity rather than a column of its own: a
+                column would be one more thing to size on a table that
+                already has to fit the default window. */}
+            <InstalledScore kind={group.kind} name={group.name} />
             <span className="truncate font-medium">{name}</span>
             {tags.map((tag) =>
               tag === EDITED_UPDATE_TAG ? (

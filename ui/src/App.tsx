@@ -116,8 +116,12 @@ function useScanTriggers() {
       last = Date.now();
       void refresh();
       // An update or edit could have landed while the window was away —
-      // the badge should notice without a visit to the page.
+      // the badge should notice without a visit to the page. The audit is
+      // forced along with it: an editor saving a skill while the app was
+      // out of focus is exactly the change every score on screen is now
+      // wrong about, and the freshness window would hold the old one.
       void updatesLoad();
+      void auditRefresh({ force: true });
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);

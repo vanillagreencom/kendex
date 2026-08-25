@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { toast } from "sonner";
 import { create } from "zustand";
 import {
@@ -31,9 +32,9 @@ interface AuditState {
   refresh: (opts?: { force?: boolean }) => Promise<void>;
   /** Every action here answers whether it worked. Most callers only need
    *  the state update that comes with it; the ones running several in a
-   *  row need to stop at the first failure. */
-  applyPlan: (scope: Scope, removeOrphans: boolean) => Promise<boolean>;
-  /** Hand the files already at an item's place to kendex as they are, for
+   *  row need to stop at the first failure.
+   *
+   *  Hand the files already at an item's place to kendex as they are, for
    *  every tool the item is blocked for — one call, so no tool's copy is
    *  captured over another's. */
   adopt: (
@@ -171,14 +172,6 @@ export const useAuditStore = create<AuditState>((set, get) => {
       }
     },
 
-    applyPlan: (scope, removeOrphans) =>
-      run(() => commands.applyPlan(scope, removeOrphans), {
-        title: "Couldn't apply these changes",
-        steps: [
-          "Nothing was changed — try again",
-          "If it keeps failing, check the project folder is writable",
-        ],
-      }),
     adopt: (scope, kind, name, harnesses, quiet) =>
       run(() => commands.adoptItem(scope, kind, name, harnesses), {
         title: `Couldn't start managing ${name}`,
@@ -197,3 +190,17 @@ export const useAuditStore = create<AuditState>((set, get) => {
       }),
   };
 });
+
+/** Ask for a fresh audit as a page that renders one comes up.
+ *
+ *  Content can change under the app between visits — an editor saved a
+ *  skill, another tool wrote a hook — and a page showing a score is showing
+ *  a claim about files it has not looked at since. The store's own
+ *  freshness window decides whether the ask costs anything, so a page says
+ *  what it needs without knowing when the last audit ran. */
+export function useAuditOnMount() {
+  const refresh = useAuditStore((s) => s.refresh);
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+}

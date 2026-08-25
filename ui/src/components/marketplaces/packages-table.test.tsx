@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { AvailablePackage, Finding, PackageSafety } from "@/bindings";
 import {
-  PREINSTALL_SAFETY_CAVEAT,
+  SAFETY_CAVEAT,
   SAFETY_DOT_UNCHECKED,
   safetyDotWords,
 } from "@/lib/copy-safety";
@@ -116,13 +116,13 @@ describe("the safety dot in the packages list", () => {
     const html = render(scored(100));
     expect(html).toContain(">Install<");
     expect(trigger(html)).toContain("100/100.");
-    expect(trigger(html)).toContain(PREINSTALL_SAFETY_CAVEAT);
+    expect(trigger(html)).toContain(SAFETY_CAVEAT);
   });
 
   it("says the same for a score with findings behind it", () => {
     const html = render(scored(60, [FINDING]));
     expect(trigger(html)).toContain("60/100.");
-    expect(trigger(html)).toContain(PREINSTALL_SAFETY_CAVEAT);
+    expect(trigger(html)).toContain(SAFETY_CAVEAT);
   });
 
   it("names the worst severity in words, so the colour is never alone", () => {
@@ -139,9 +139,7 @@ describe("the safety dot in the packages list", () => {
     expect(trigger(html)).toContain(
       `<span class="sr-only">${safetyDotWords(100, 0, [])}</span>`,
     );
-    expect(html.indexOf(PREINSTALL_SAFETY_CAVEAT)).toBeLessThan(
-      html.indexOf(">Install<"),
-    );
+    expect(html.indexOf(SAFETY_CAVEAT)).toBeLessThan(html.indexOf(">Install<"));
     expect(html).not.toContain(`title="${safetyDotWords(100, 0, [])}`);
   });
 
@@ -152,7 +150,7 @@ describe("the safety dot in the packages list", () => {
     const html = render(null);
     expect(html).toContain(">Install<");
     expect(trigger(html)).toContain("Not checked yet.");
-    expect(trigger(html)).toContain(PREINSTALL_SAFETY_CAVEAT);
+    expect(trigger(html)).toContain(SAFETY_CAVEAT);
     expect(trigger(html)).toContain(SAFETY_DOT_UNCHECKED);
     expect(trigger(html)).not.toMatch(/\d+\/100/);
     expect(html.indexOf(SAFETY_DOT_UNCHECKED)).toBeLessThan(
@@ -210,7 +208,7 @@ describe("reading the safety dot", () => {
     act(() => dot.focus());
     expect(
       document.querySelector('[data-slot="tooltip-content"]')?.textContent,
-    ).toContain(PREINSTALL_SAFETY_CAVEAT);
+    ).toContain(SAFETY_CAVEAT);
   });
 
   it("does not open the package page from the popup's own words", async () => {

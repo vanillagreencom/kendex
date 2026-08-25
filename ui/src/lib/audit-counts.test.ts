@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AuditView, DriftRow, HarnessId } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
-import { auditCounts } from "./audit-counts";
+import { unmanagedCount } from "./audit-counts";
 
 function drift(
   name: string,
@@ -32,19 +32,20 @@ function view(rows: DriftRow[], root?: string): AuditView {
   };
 }
 
-describe("auditCounts", () => {
+describe("unmanagedCount", () => {
   it("counts one item installed for five tools once", () => {
     const tools: HarnessId[] = ["claude", "codex", "opencode", "cursor", "pi"];
     const rows = tools.map((h) => drift("agent-browser", h, "unmanaged"));
 
-    expect(auditCounts([view(rows)]).unmanaged).toBe(1);
+    expect(unmanagedCount(view(rows))).toBe(1);
   });
 
-  it("keeps the same name in two projects apart", () => {
+  it("counts each place on its own, never folding two projects together", () => {
     const personal = view([drift("github", "claude", "unmanaged")]);
     const project = view([drift("github", "claude", "unmanaged", "/p")], "/p");
 
-    expect(auditCounts([personal, project]).unmanaged).toBe(2);
+    expect(unmanagedCount(personal)).toBe(1);
+    expect(unmanagedCount(project)).toBe(1);
   });
 
   it("counts only what was never adopted, not pending writes", () => {
@@ -54,6 +55,6 @@ describe("auditCounts", () => {
       drift("c", "claude", "unmanaged"),
     ];
 
-    expect(auditCounts([view(rows)]).unmanaged).toBe(1);
+    expect(unmanagedCount(view(rows))).toBe(1);
   });
 });

@@ -9,7 +9,6 @@ import { useProblemsStore } from "./problems";
 vi.mock("@/bindings", () => ({
   commands: {
     auditAll: vi.fn(),
-    applyPlan: vi.fn(),
     adoptItem: vi.fn(),
     toggleItem: vi.fn(),
     removeItem: vi.fn(),
@@ -160,17 +159,17 @@ describe("audit store run() actions", () => {
     vi.clearAllMocks();
   });
 
-  it("shows the error modal with the backend message on an apply failure, not silently", async () => {
-    vi.mocked(commands.applyPlan).mockResolvedValue({
+  it("shows the error modal with the backend message on a failed action, not silently", async () => {
+    vi.mocked(commands.removeItem).mockResolvedValue({
       status: "error",
       error: "disk is full",
     });
 
-    await useAuditStore.getState().applyPlan(globalScope, false);
+    await useAuditStore.getState().removeItem(globalScope, "hook", "lint");
 
     const dialog = useProblemsStore.getState().dialog;
     expect(dialog.open).toBe(true);
-    expect(dialog.title).toBe("Couldn't apply these changes");
+    expect(dialog.title).toBe("Couldn't remove lint");
     expect(dialog.message).toBe("disk is full");
     expect(useAuditStore.getState().error).toBe("disk is full");
     // A failed item action is not a failed audit: only refresh may write
@@ -210,50 +209,24 @@ describe("audit store run() actions", () => {
     expect(toast.error).not.toHaveBeenCalled();
   });
 
-  it("does not toast success for a silent action like applying a plan", async () => {
-    vi.mocked(commands.applyPlan).mockResolvedValue({
+  it("does not toast success for a silent action like a toggle", async () => {
+    vi.mocked(commands.toggleItem).mockResolvedValue({
       status: "ok",
       data: emptyView,
     });
 
-    await useAuditStore.getState().applyPlan(globalScope, false);
+    await useAuditStore.getState().toggle(globalScope, "hook", "lint", false);
 
     expect(toast.success).not.toHaveBeenCalled();
   });
-});
 
-describe("applyPlan", () => {
-  beforeEach(() => {
-    useAuditStore.setState({
-      views: [emptyView],
-      auditing: false,
-      error: null,
-      checkError: null,
-      busy: false,
-      auditedAt: null,
-      backgroundFailureAnnounced: false,
-    });
-    vi.clearAllMocks();
-  });
-
-  it("passes the scope and the orphan choice through to the backend", async () => {
-    vi.mocked(commands.applyPlan).mockResolvedValue({
-      status: "ok",
-      data: emptyView,
-    });
-
-    await useAuditStore.getState().applyPlan(globalScope, true);
-
-    expect(commands.applyPlan).toHaveBeenCalledWith(globalScope, true);
-  });
-
-  it("a refused apply surfaces as an error, never a silent success", async () => {
-    vi.mocked(commands.applyPlan).mockResolvedValue({
+  it("a refused action surfaces as an error, never a silent success", async () => {
+    vi.mocked(commands.toggleItem).mockResolvedValue({
       status: "error",
       error: "'scraper' changed since the plan was read",
     });
 
-    await useAuditStore.getState().applyPlan(globalScope, false);
+    await useAuditStore.getState().toggle(globalScope, "hook", "lint", false);
 
     expect(useProblemsStore.getState().dialog.open).toBe(true);
     expect(useProblemsStore.getState().dialog.message).toContain(

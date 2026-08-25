@@ -179,7 +179,7 @@ export const PAGE_LABELS: Record<Page, string> = {
   updates: "Updates",
   harnesses: "Harnesses",
   projects: "Projects",
-  unmanaged: "Unmanaged items",
+  unmanaged: "Not managed",
   customize: "Customize",
   settings: "Settings",
   problems: "Problems",

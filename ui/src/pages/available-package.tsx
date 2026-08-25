@@ -12,7 +12,7 @@ import {
 import { RepoAction } from "@/components/marketplaces/repo-action";
 import { useCatalog } from "@/components/marketplaces/use-catalog";
 import { PageHeader } from "@/components/page-header";
-import { FindingLine } from "@/components/safety-findings";
+import { SafetyPanel } from "@/components/safety-panel";
 import { TagBadges } from "@/components/tag-badge";
 import { Button } from "@/components/ui/button";
 import { kindIcon } from "@/lib/kind-icon";
@@ -180,6 +180,12 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
                   {shownError}
                 </p>
               ) : null}
+              {/* The reading comes before the package's own words about
+                  itself: the header already says what this is, and this is
+                  the page somebody installs from. */}
+              {view ? (
+                <SafetyPanel result={view.safety} notes={view.safety.notes} />
+              ) : null}
               {view && selectedFile ? (
                 <section>
                   <CatalogFilePreview
@@ -197,24 +203,6 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
                 <p className="text-sm text-muted-foreground">
                   This package carries no README.
                 </p>
-              ) : null}
-              {view && view.safety.findings.length > 0 ? (
-                <section>
-                  <h3 className="mb-3 text-sm font-semibold">
-                    Before you install
-                  </h3>
-                  <div className="space-y-3">
-                    {/* One line can match a rule twice with the same
-                        address in both; two rows alike in every field are
-                        the same row to a reader. */}
-                    {view.safety.findings.map((row) => (
-                      <FindingLine
-                        key={`${row.rule}:${row.location}:${row.message}`}
-                        finding={row}
-                      />
-                    ))}
-                  </div>
-                </section>
               ) : null}
             </div>
             <AvailableAside

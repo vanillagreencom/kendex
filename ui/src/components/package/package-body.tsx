@@ -9,6 +9,7 @@ import { DiffView } from "@/components/diff/diff-view";
 import { DotSpinner } from "@/components/loading";
 import { FilePreview } from "@/components/package/file-preview";
 import { EditedNotice } from "@/components/package/fork-notice";
+import { PackageSafety } from "@/components/package/package-safety";
 import { PackageSidebar } from "@/components/package/package-sidebar";
 import type { PackageView } from "@/components/package/use-package-data";
 import type { ItemGroup } from "@/lib/derive";
@@ -90,28 +91,33 @@ export function PackageBody({
           </p>
         )
       ) : (
-        <div className="flex flex-col gap-8 lg:flex-row">
-          <PackageSidebar
-            group={group}
-            primary={primary}
-            meta={meta}
-            versions={versions}
-            files={files}
-            selectedFile={view.file}
-            busy={busy}
-            onToggle={(_, enable) => onToggle(enable)}
-            onSwitchVersion={onSwitchVersion}
-            onCompare={onCompare}
-            onFollow={onFollow}
-            onSelectFile={(file) => setView({ mode: "files", file })}
-          />
-          <div className="min-w-0 flex-1">
-            <FilePreview
-              scope={reference.scope}
-              kind={reference.kind}
-              name={reference.name}
-              path={view.file}
+        <div className="flex flex-col gap-8">
+          {/* The score answers for the whole package, so it sits above the
+              split rather than inside a column that is about one file. */}
+          <PackageSafety reference={reference} />
+          <div className="flex flex-col gap-8 lg:flex-row">
+            <PackageSidebar
+              group={group}
+              primary={primary}
+              meta={meta}
+              versions={versions}
+              files={files}
+              selectedFile={view.file}
+              busy={busy}
+              onToggle={(_, enable) => onToggle(enable)}
+              onSwitchVersion={onSwitchVersion}
+              onCompare={onCompare}
+              onFollow={onFollow}
+              onSelectFile={(file) => setView({ mode: "files", file })}
             />
+            <div className="min-w-0 flex-1">
+              <FilePreview
+                scope={reference.scope}
+                kind={reference.kind}
+                name={reference.name}
+                path={view.file}
+              />
+            </div>
           </div>
         </div>
       )}

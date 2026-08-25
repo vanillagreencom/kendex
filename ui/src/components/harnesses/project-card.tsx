@@ -5,6 +5,7 @@ import { KindCountBadges } from "@/components/kind-count-badges";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { clickAsksToOpen } from "@/lib/click-asks-to-open";
+import { unmanagedHereLabel } from "@/lib/copy";
 
 /**
  * One place a setup applies — Personal, or a project folder. Personal and a
@@ -23,6 +24,8 @@ export function ProjectCard({
   emptyLabel,
   badge,
   action,
+  unmanaged,
+  onUnmanaged,
 }: {
   name: string;
   subtitle: string;
@@ -40,6 +43,12 @@ export function ProjectCard({
   /** A state worth flagging beside the name, e.g. a missing folder. */
   badge?: string;
   action?: ReactNode;
+  /** How many items here kendex was never asked to look after. Zero says
+   *  nothing: this is the one place the app mentions them, and a card
+   *  reporting "0 not managed" on every project would be a nag on a page
+   *  that is about what is installed. */
+  unmanaged?: number;
+  onUnmanaged?: () => void;
 }) {
   return (
     <Card
@@ -63,13 +72,25 @@ export function ProjectCard({
         </div>
         {action ? <div className="shrink-0">{action}</div> : null}
       </div>
-      <div className="flex flex-wrap gap-1.5 px-4">
+      <div className="flex flex-wrap items-center gap-1.5 px-4">
         <KindCountBadges
           counts={counts}
           onKindClick={onKindClick}
           emptyLabel={emptyLabel}
           emptyClassName="text-[13px] text-muted-foreground"
         />
+        {/* Sits with the counts because it is one: how much of what is at
+            this place kendex is not looking after. The words say what the
+            click opens, so the pill is not a number nobody can act on. */}
+        {unmanaged && onUnmanaged ? (
+          <button
+            type="button"
+            onClick={onUnmanaged}
+            className="text-[13px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+          >
+            {unmanagedHereLabel(unmanaged)}
+          </button>
+        ) : null}
       </div>
     </Card>
   );

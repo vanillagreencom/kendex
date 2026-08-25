@@ -21,8 +21,9 @@ import { MARKETPLACES_UNCHECKED_DETAIL } from "@/lib/copy-marketplaces";
 import { groupItems, installedCount, recentItems } from "@/lib/derive";
 import { harnessName } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
+import { rescanEverything } from "@/lib/rescan";
 import { cn } from "@/lib/utils";
-import { useAuditStore } from "@/stores/audit";
+import { useAuditOnMount, useAuditStore } from "@/stores/audit";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 import { useScanStore } from "@/stores/scan";
@@ -32,8 +33,10 @@ import { useUpdatesStore } from "@/stores/updates";
 const RECENT_ACTIVITY_LIMIT = 6;
 
 export function OverviewPage() {
-  const { result, error, scanning, refresh } = useScanStore();
-  const views = useAuditStore((s) => s.views);
+  // Home says whether anything needs attention, which is the audit's
+  // answer as much as the scan's.
+  useAuditOnMount();
+  const { result, error, scanning } = useScanStore();
   // The safety pass is the slowest thing the app does; until it has
   // ANSWERED once, Home cannot say whether anything needs attention — so
   // it says that it is still looking rather than showing an empty page. A
@@ -85,7 +88,7 @@ export function OverviewPage() {
       size="sm"
       variant="outline"
       disabled={scanning}
-      onClick={() => void refresh({ announce: true })}
+      onClick={() => void rescanEverything()}
     >
       {SCAN_AGAIN_LABEL}
     </Button>
@@ -115,11 +118,9 @@ export function OverviewPage() {
 
   const rows = attentionRows({
     editedPackages,
-    views,
     result,
     updatesError,
     auditError,
-    onUnmanaged: () => goTo("unmanaged"),
     onProjects: () => goTo("projects"),
     onUpdates: () => setPage("updates"),
     onLibrary: () => goToLibrary(),

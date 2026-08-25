@@ -1,10 +1,11 @@
 import type { Catalog, PackageView } from "@/bindings";
 import { FileList } from "@/components/package/file-list";
-import { PREINSTALL_SAFETY_CAVEAT } from "@/lib/copy-safety";
 import { catalogLabel } from "@/stores/marketplaces";
 
-/** The available-package page's facts column: where it comes from, its
- * safety score, the sets that carry it, its files, and a name clash. */
+/** The available-package page's facts column: where it comes from, the sets
+ * that carry it, its files, and a name clash. The safety reading is not
+ * here — score and findings are one block, and it sits in the main column
+ * where there is room for the findings under the number. */
 export function AvailableAside({
   catalog,
   repo,
@@ -35,33 +36,6 @@ export function AvailableAside({
           ) : null}
         </p>
       </section>
-      {view ? (
-        <section>
-          <h3 className="mb-1 text-xs font-semibold text-muted-foreground uppercase">
-            Safety
-          </h3>
-          <p>
-            {view.safety.skipped.length > 0 && view.safety.findings.length === 0
-              ? "Not fully checked · "
-              : ""}
-            {view.safety.safety.score}/100
-          </p>
-          {/* What the number is a reading of. Under a heading called
-              Safety, a score alone reads as an assurance; the check can
-              establish only that nothing matched in what it read. */}
-          <p className="mt-1 text-xs text-foreground/70">
-            {PREINSTALL_SAFETY_CAVEAT}
-          </p>
-          {/* What this reading did not account for. A preview that showed a
-              number without its caveat would be the page a person reads
-              right before the install disagrees with it. */}
-          {view.safety.notes.map((note) => (
-            <p key={note} className="mt-1 text-xs text-foreground/70">
-              {note}
-            </p>
-          ))}
-        </section>
-      ) : null}
       {view && view.preview.bundles.length > 0 ? (
         <section>
           <h3 className="mb-1 text-xs font-semibold text-muted-foreground uppercase">

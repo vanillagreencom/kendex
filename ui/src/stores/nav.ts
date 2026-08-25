@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { Scope } from "@/bindings";
 import type { ScopeSelection } from "@/lib/derive";
 import type {
   AvailableRef,
@@ -48,6 +49,9 @@ interface NavState {
   marketplaceRef: MarketplaceRef | null;
   bundleRef: BundleRef | null;
   availableRef: AvailableRef | null;
+  /** Which place the unmanaged page is listing. Every way in names one —
+   *  the page is a project card's own list, not a machine-wide inbox. */
+  unmanagedScope: Scope | null;
   /** Consumed once by the package page on mount, then cleared. */
   packageView: PackageView | null;
   history: HistoryEntry[];
@@ -69,6 +73,7 @@ interface NavState {
   goToMarketplace: (ref: MarketplaceRef) => void;
   goToBundle: (ref: BundleRef) => void;
   goToAvailablePackage: (ref: AvailableRef) => void;
+  goToUnmanaged: (scope: Scope) => void;
   clearLibraryFilter: () => void;
   clearPackageView: () => void;
   back: () => void;
@@ -86,6 +91,7 @@ export const useNavStore = create<NavState>((set) => ({
   marketplaceRef: null,
   bundleRef: null,
   availableRef: null,
+  unmanagedScope: null,
   packageView: null,
   history: [],
   future: [],
@@ -102,6 +108,7 @@ export const useNavStore = create<NavState>((set) => ({
       marketplaceRef: null,
       bundleRef: null,
       availableRef: null,
+      unmanagedScope: null,
     }),
   setLibraryScope: (libraryScope) => set({ libraryScope }),
   setSearch: (search) => set({ search }),
@@ -170,6 +177,13 @@ export const useNavStore = create<NavState>((set) => ({
       history: pushHistory(state, "availablePackage"),
       future: [],
     })),
+  goToUnmanaged: (scope) =>
+    set((state) => ({
+      page: "unmanaged",
+      unmanagedScope: scope,
+      history: pushHistory(state, "unmanaged"),
+      future: [],
+    })),
   clearLibraryFilter: () => set({ libraryFilter: null }),
   clearPackageView: () => set({ packageView: null }),
   back: () =>
@@ -207,6 +221,7 @@ function here(state: NavState): HistoryEntry {
     marketplaceRef: state.marketplaceRef,
     bundleRef: state.bundleRef,
     availableRef: state.availableRef,
+    unmanagedScope: state.unmanagedScope,
   };
 }
 

@@ -122,7 +122,9 @@ export function manifests(): Record<string, Manifest_Serialize> {
       hooks: { guard: decl("kendex") },
       "mcp-servers": { postgres: decl("kendex") },
       "agent-skills": { orch: ["github", "deploy"], reviewer: ["github"] },
-      "agent-launch-instructions": { all: "Prefer small, reviewable changes." },
+      "agent-launch-instructions": {
+        all: "Prefer small, self-contained changes.",
+      },
       "agent-frontmatter": {
         claude: { orch: { model: "opus", color: "blue" } },
       },

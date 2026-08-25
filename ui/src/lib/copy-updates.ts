@@ -43,12 +43,16 @@ export const OWN_COPY_NAME_LABEL = "Name for your edited copy";
 export const ownCopyDefaultName = (name: string): string => `${name}-edited`;
 export const installedAsNewToastLabel = (name: string, own: string): string =>
   `Installed ${name} — your edited copy is now ${own}`;
+// The rename went into the manifest and the write to disk did not, so this
+// says both halves rather than only the one that worked. It names no way to
+// finish: the page that ran a recorded plan is gone, and pointing at a
+// screen that no longer exists is worse than the reason on its own.
 export const installedBesideUnfinishedToast = (
   name: string,
   own: string,
   why: string,
 ): string =>
-  `Your edited copy is now ${own}, but ${name} didn't install: ${why}. Review & apply finishes it.`;
+  `Your edited copy is now ${own}, but ${name} didn't install: ${why}.`;
 export const OPEN_PACKAGE_LABEL = "Open package";
 
 export const updatedWithPlaceToastLabel = (

@@ -10,8 +10,8 @@ export type Page =
   | "harnesses"
   | "projects"
   | "customize"
-  // Reached from Home's attention list — adopting is an offer, not a
-  // sidebar destination.
+  // Reached from one place's card on Projects — adopting is an offer
+  // about that place, not a sidebar destination.
   | "unmanaged"
   | "settings"
   | "updates"
@@ -83,4 +83,5 @@ export interface HistoryEntry {
   marketplaceRef: MarketplaceRef | null;
   bundleRef: BundleRef | null;
   availableRef: AvailableRef | null;
+  unmanagedScope: Scope | null;
 }

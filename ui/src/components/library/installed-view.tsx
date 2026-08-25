@@ -4,7 +4,6 @@ import { InstalledRow } from "@/components/library/installed-row";
 import { InstalledSkeleton } from "@/components/library/installed-skeleton";
 import { LibraryFilters } from "@/components/library/library-filters";
 import { LibraryLegend } from "@/components/library/library-legend";
-import { NotManagedPanel } from "@/components/library/not-managed";
 import { TableEmptyRow } from "@/components/library/table-empty";
 import {
   applyLibraryView,
@@ -167,7 +166,6 @@ export function InstalledView() {
             ref={scroller}
             className="min-w-0 flex-1 overflow-y-auto pr-2 [scrollbar-gutter:stable]"
           >
-            <NotManagedPanel />
             {groups.some((g) => libraryMark(standingsFor(g))) ? (
               <LibraryLegend />
             ) : null}

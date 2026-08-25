@@ -1,21 +1,37 @@
 import { Trash2 } from "lucide-react";
 import { useState } from "react";
+import type { Scope } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { AddProjectDialog } from "@/components/harnesses/add-project-dialog";
 import { ProjectCard } from "@/components/harnesses/project-card";
 import { ScanFolderDialog } from "@/components/harnesses/scan-folder-dialog";
 import { Button } from "@/components/ui/button";
+import { unmanagedCount } from "@/lib/audit-counts";
 import { countByKind } from "@/lib/derive";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
+import { sameScope } from "@/lib/scope";
 import { cn } from "@/lib/utils";
+import { useAuditOnMount, useAuditStore } from "@/stores/audit";
 import { useNavStore } from "@/stores/nav";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
 
+const GLOBAL: Scope = { scope: "global" };
+
 /** "Projects": personal plus every registered project, one card each. */
 export function ProjectList() {
+  useAuditOnMount();
   const result = useScanStore((s) => s.result);
+  const views = useAuditStore((s) => s.views);
   const goToLibrary = useNavStore((s) => s.goToLibrary);
+  const goToUnmanaged = useNavStore((s) => s.goToUnmanaged);
+  // What kendex is not looking after at one place. This is the only surface
+  // in the app that mentions it: a count on the card for the place it is
+  // at, and the flow that offers to take it on behind the click.
+  const notManaged = (scope: Scope): number => {
+    const view = views.find((v) => sameScope(v.scope, scope));
+    return view ? unmanagedCount(view) : 0;
+  };
   const { settings, registerProject, unregisterProject, discoverProjects } =
     useSettingsStore();
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
@@ -46,6 +62,8 @@ export function ProjectList() {
           emptyLabel="Nothing from kendex yet."
           onOpen={() => goToLibrary({ scope: "global" })}
           onKindClick={(kind) => goToLibrary({ kind, scope: "global" })}
+          unmanaged={notManaged(GLOBAL)}
+          onUnmanaged={() => goToUnmanaged(GLOBAL)}
         />
 
         {projects.length === 0 ? (
@@ -59,6 +77,7 @@ export function ProjectList() {
                 (i) => i.scope.scope === "project" && i.scope.root === root,
               ) ?? [];
             const name = root.split("/").pop() ?? root;
+            const scope: Scope = { scope: "project", root };
             return (
               <ProjectCard
                 key={root}
@@ -76,6 +95,8 @@ export function ProjectList() {
                 onKindClick={(kind) =>
                   goToLibrary({ kind, scope: { project: root } })
                 }
+                unmanaged={notManaged(scope)}
+                onUnmanaged={() => goToUnmanaged(scope)}
                 action={
                   <Button
                     variant="ghost"

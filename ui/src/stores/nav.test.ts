@@ -152,8 +152,27 @@ describe("nav store", () => {
         marketplaceRef: null,
         bundleRef: null,
         availableRef: null,
+        unmanagedScope: null,
       },
     ]);
+  });
+
+  // The unmanaged list is one place's, opened from that place's card, so
+  // the way in names the place the same way a package link names a package.
+  it("goToUnmanaged names the place its list is about", () => {
+    const scope = { scope: "project" as const, root: "/work/acme" };
+    useNavStore.getState().goToUnmanaged(scope);
+
+    const state = useNavStore.getState();
+    expect(state.page).toBe("unmanaged");
+    expect(state.unmanagedScope).toEqual(scope);
+  });
+
+  it("a sidebar pick drops the place a previous unmanaged list was about", () => {
+    useNavStore.getState().goToUnmanaged({ scope: "global" });
+    useNavStore.getState().setPage("settings");
+
+    expect(useNavStore.getState().unmanagedScope).toBeNull();
   });
 
   it("back() pops history and restores the prior page and tab", () => {
@@ -203,6 +222,7 @@ describe("nav store", () => {
         marketplaceRef: null,
         bundleRef: null,
         availableRef: null,
+        unmanagedScope: null,
       },
     ]);
   });

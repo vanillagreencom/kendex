@@ -4,13 +4,16 @@ import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Manifest_Serialize, ObservedItem, Scope } from "@/bindings";
 import { commands } from "@/bindings";
+import { ADOPTABLE } from "@/lib/adoptable";
 import {
   OPEN_IN_EDITOR_LABEL,
   OPEN_IN_FILE_BROWSER_LABEL,
   OPEN_IN_LABEL,
 } from "@/lib/copy";
 import { editorOpenPath } from "@/lib/editor-path";
+import { SEVERITY_LABELS } from "@/lib/labels";
 import { scopeKey } from "@/lib/scope";
+import { useAuditStore } from "@/stores/audit";
 import { useEditorStore } from "@/stores/editor";
 import { useNavStore } from "@/stores/nav";
 import { useScanStore } from "@/stores/scan";
@@ -33,6 +36,8 @@ vi.mock("@/bindings", async (importOriginal) => ({
     revealPath: vi.fn(),
     openInEditor: vi.fn(),
     libraryProvenance: vi.fn(),
+    // The page's safety block asks for a fresh audit as it mounts.
+    auditAll: vi.fn(),
   },
 }));
 
@@ -128,6 +133,92 @@ beforeEach(() => {
     dirty: false,
   });
   useUpdatesStore.setState({ rows: [], loaded: true });
+  useAuditStore.setState({ views: [], auditedAt: null, checkError: null });
+});
+
+// The score the audit gave this package's bytes, and what produced it.
+// Nothing else in the app renders a scope's `safety` rows, so a page that
+// dropped this block would leave every installed reading unread.
+describe("the package page's safety block", () => {
+  it("shows the score for this place, with the findings behind it", async () => {
+    useAuditStore.setState({
+      auditedAt: 1,
+      views: [
+        {
+          scope: VG,
+          drift: [],
+          plan: [],
+          notes: [],
+          warnings: [],
+          adoptable: ADOPTABLE,
+          exits: [],
+          safety: [
+            {
+              kind: "skill",
+              name: "gh",
+              harness: "claude",
+              scope: VG,
+              location: "",
+              findings: [
+                {
+                  rule: "dangerous-commands",
+                  severity: "high",
+                  location: "SKILL.md:20",
+                  message: "runs a shell command that deletes files",
+                  remediation: "scope the command to a specific path",
+                },
+              ],
+              skipped: [],
+              safety: { score: 58, deductions: [] },
+              quality: null,
+              ruleset: 3,
+            },
+          ],
+        },
+      ],
+    });
+
+    const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+
+    expect(host.textContent).toContain("58/100");
+    expect(host.textContent).toContain(SEVERITY_LABELS.high);
+    expect(host.textContent).toContain("SKILL.md:20");
+  });
+
+  it("scores the place the page is about, not another place's copy", async () => {
+    useAuditStore.setState({
+      auditedAt: 1,
+      views: [
+        {
+          scope: HYPR,
+          drift: [],
+          plan: [],
+          notes: [],
+          warnings: [],
+          adoptable: ADOPTABLE,
+          exits: [],
+          safety: [
+            {
+              kind: "skill",
+              name: "gh",
+              harness: "claude",
+              scope: HYPR,
+              location: "",
+              findings: [],
+              skipped: [],
+              safety: { score: 12, deductions: [] },
+              quality: null,
+              ruleset: 3,
+            },
+          ],
+        },
+      ],
+    });
+
+    const host = await openPage(VG, [VG, HYPR], { [scopeKey(VG)]: PLAIN });
+
+    expect(host.textContent).not.toContain("12/100");
+  });
 });
 
 // The header names a place, and the editor is pointed wherever the

@@ -1,6 +1,5 @@
-import type { AuditView, ScanResult, UpdateRow } from "@/bindings";
+import type { ScanResult, UpdateRow } from "@/bindings";
 import type { AttentionRow } from "@/components/home/attention-section";
-import { auditCounts } from "@/lib/audit-counts";
 import {
   AUDIT_ATTENTION_DETAIL,
   AUDIT_ATTENTION_TITLE,
@@ -16,7 +15,6 @@ import {
  *  fixed product order, and the page stays a layout. */
 export interface AttentionSource {
   editedPackages: UpdateRow[];
-  views: AuditView[];
   result: ScanResult | null;
   /** Why the last update check failed, or null. A failed check is a state
    *  to show, not a silence: with nothing said, a list without an "edited
@@ -26,7 +24,6 @@ export interface AttentionSource {
    *  audit that could not finish, so what needs attention may be missing
    *  from this very list. */
   auditError: string | null;
-  onUnmanaged: () => void;
   onProjects: () => void;
   onUpdates: () => void;
   onLibrary: () => void;
@@ -35,7 +32,6 @@ export interface AttentionSource {
 }
 
 export function attentionRows(source: AttentionSource): AttentionRow[] {
-  const { unmanaged: unmanagedCount } = auditCounts(source.views);
   const { editedPackages, result, updatesError, auditError } = source;
   const missing = result?.missingProjects ?? [];
 
@@ -51,18 +47,6 @@ export function attentionRows(source: AttentionSource): AttentionRow[] {
         editedPackages.length === 1 && first
           ? { label: first.name, onClick: () => source.onPackage(first) }
           : { label: "Library", onClick: source.onLibrary },
-    });
-  }
-  if (unmanagedCount > 0) {
-    rows.push({
-      key: "unmanaged",
-      tone: "muted",
-      title:
-        unmanagedCount === 1
-          ? "1 unmanaged item"
-          : `${unmanagedCount} unmanaged items`,
-      detail: "kendex didn't put them there.",
-      action: { label: "Review", onClick: source.onUnmanaged },
     });
   }
   if (missing.length > 0) {

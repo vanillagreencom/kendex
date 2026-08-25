@@ -13,6 +13,7 @@ import { useEffect } from "react";
 import { commands } from "@/bindings";
 import { Button } from "@/components/ui/button";
 import { UPDATES_ATTENTION_TITLE } from "@/lib/copy";
+import { rescanEverything } from "@/lib/rescan";
 import { isSearchShortcutKey } from "@/lib/search-shortcut";
 import { visibleUpdateCount } from "@/lib/update-groups";
 import { cn } from "@/lib/utils";
@@ -40,7 +41,7 @@ const NAV: { page: Page; label: string; icon: typeof Home }[] = [
 
 export function Sidebar() {
   const { page, setPage, focusSearch } = useNavStore();
-  const { scanning, refresh } = useScanStore();
+  const scanning = useScanStore((s) => s.scanning);
   const updateCount = useUpdatesStore((s) => visibleUpdateCount(s.rows));
   // A failed check keeps the last rows, so any count shown is last-known;
   // the badge wears the warning tone for it. With no rows at all, "?" is
@@ -79,7 +80,7 @@ export function Sidebar() {
           size="icon"
           aria-label="Scan again"
           title="Scan again"
-          onClick={() => void refresh({ announce: true })}
+          onClick={() => void rescanEverything()}
           disabled={scanning}
         >
           <RefreshCw className={cn("size-4", scanning && "animate-spin")} />

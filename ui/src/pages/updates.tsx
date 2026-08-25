@@ -38,6 +38,7 @@ import {
 } from "@/lib/update-groups";
 import { rowUnsettled } from "@/lib/updates-read-state";
 import { cn } from "@/lib/utils";
+import { useAuditOnMount } from "@/stores/audit";
 import { useUpdatesStore } from "@/stores/updates";
 import { useUpdatesView } from "@/stores/updates-view";
 
@@ -65,6 +66,9 @@ export function UpdatesPage() {
   useEffect(() => {
     void load();
   }, [load]);
+  // The rows carry the score of what is installed now, which is the audit's
+  // answer, not the update check's.
+  useAuditOnMount();
 
   const visible = visibleUpdates(rows);
   const hidden = hiddenUpdates(rows);
