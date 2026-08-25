@@ -133,6 +133,32 @@ STUB_ARGS_LOG="$args_log" STUB_PUSH_EXIT=1 run_push "$work" --worktree "$wt" --i
 assert_eq "$RUN_RC" "1" "a flag push rejects fails the wrapper with push's own exit code"
 assert_contains "$(cat "$args_log")" "push $wt --force" "the rejected flag reached push rather than being screened here"
 
+# Pass-through stops at this wrapper's own namespace. --state-dir falls back
+# silently, so a typo of it would resolve another record, consume this issue's
+# pending sidecar into it, and only then let push reject the flag — with the
+# sidecar already deleted.
+work="$TMP_ROOT/work-owned-typo"
+reset_state "$work"
+owned_before="$(state_json "$work")"
+printf '{"%s":"%s"}\n' "$OLD_A" "$NEW_A" >"$SIDECAR"
+: >"$args_log"
+STUB_ARGS_LOG="$args_log" run_push "$work" --worktree "$wt" --issue KEN-1 "--statedir=$TMP_ROOT/elsewhere"
+assert_eq "$RUN_RC" "1" "a misspelled owned flag is refused instead of forwarded"
+assert_contains "$(cat "$run_err")" "unrecognized option: --statedir=" "the refusal names the misspelled flag"
+assert_eq "$(cat "$args_log")" "" "the refused call never reaches push"
+[[ -f "$SIDECAR" ]] && pass "the pending sidecar survives the refusal" || fail "the pending sidecar survives the refusal"
+assert_eq "$(state_json "$work")" "$owned_before" "the refused call reconciles nothing"
+rm -f "$SIDECAR"
+
+# The same check for the two flags that do fail closed, and for the separator
+# spellings a hand-typed flag actually takes.
+for owned_typo in --worktre --issu --state_dir --hel; do
+  : >"$args_log"
+  STUB_ARGS_LOG="$args_log" run_push "$work" --worktree "$wt" --issue KEN-1 "$owned_typo"
+  assert_eq "$RUN_RC" "1" "$owned_typo is refused as a mangled owned flag"
+  assert_eq "$(cat "$args_log")" "" "$owned_typo never reaches push"
+done
+
 echo
 echo "=== a rebase map is recorded and recorded fix SHAs rewritten ==="
 

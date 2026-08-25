@@ -37,10 +37,12 @@
 # Usage:
 #   worktree-push --worktree PATH --issue ID [--state-dir DIR] [push flags...]
 #
-# Every argument this wrapper does not own (--worktree, --issue, --state-dir,
-# --help) is forwarded verbatim to `worktree push`, which rejects a flag it
-# does not know. The flag vocabulary lives there alone; see `worktree push
-# --help`.
+# Every argument outside this wrapper's own namespace (--worktree, --issue,
+# --state-dir, --help) is forwarded verbatim to `worktree push`, which rejects
+# a flag it does not know. The push flag vocabulary lives there alone; see
+# `worktree push --help`. An argument that reads as a misspelling of an owned
+# flag is refused here instead of forwarded, because a mistaken --state-dir
+# would silently resolve, and reconcile, the wrong workflow state.
 # The state file resolves exactly like any other workflow-state call:
 # --state-dir, then $ORCH_STATE_DIR, then tmp/ under the caller's working
 # directory.
@@ -88,6 +90,35 @@ issue=''
 state_dir=''
 push_args=()
 
+# A misspelling of one of this wrapper's own flags must not reach push as a
+# pass-through argument. --worktree and --issue fail closed on their
+# required-flag checks, but --state-dir falls back silently (ORCH_STATE_DIR,
+# then tmp/ under the caller's directory): a typo would resolve some other
+# issue's state, consume this issue's pending sidecar into it, and only then
+# let push reject the flag, with the sidecar already deleted. So an argument
+# that reads as a mangled owned flag is refused here. Comparison is by prefix
+# after folding separators away, and only against the wrapper's own four
+# names: it catches a dropped or underscored separator and a truncation
+# (--statedir, --state_dir, --state-di), and a genuine push flag shares no
+# such name and passes through untouched. A transposition (--sate-dir) is not
+# caught: push refuses it, but only after this run reconciled the default
+# state the caller did not mean.
+OWNED_FLAG_NAMES='worktree issue statedir help'
+
+reads_as_owned_flag() {
+	local arg="${1%%=*}" name owned
+	case "$arg" in
+	--?*) name="${arg#--}" ;;
+	*) return 1 ;;
+	esac
+	name="$(printf '%s' "$name" | tr 'A-Z_' 'a-z-' | tr -d '-')"
+	[[ -n "$name" ]] || return 1
+	for owned in $OWNED_FLAG_NAMES; do
+		[[ "$owned" == "$name"* ]] && return 0
+	done
+	return 1
+}
+
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--worktree)
@@ -121,10 +152,12 @@ while [[ $# -gt 0 ]]; do
 		usage
 		exit 0
 		;;
-	# Everything this wrapper does not own is `worktree push`'s to accept or
-	# reject; push fails closed on a flag it does not know, so pass-through
-	# here keeps one copy of that vocabulary (KEN-570).
+	# Everything outside this wrapper's own namespace is `worktree push`'s to
+	# accept or reject; push fails closed on a flag it does not know, so
+	# pass-through here keeps one copy of that vocabulary (KEN-570).
 	*)
+		! reads_as_owned_flag "$1" \
+			|| fail "unrecognized option: $1 (it reads as a misspelling of --worktree, --issue, --state-dir, or --help; a mistaken --state-dir would reconcile the wrong workflow state)"
 		push_args+=("$1")
 		shift
 		;;
