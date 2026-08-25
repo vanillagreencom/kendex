@@ -45,17 +45,7 @@ pub fn adopt(
 ) -> Result<Plan> {
     usable(name)?;
     let mut manifest = manifest_for_mutation(env, scope)?;
-    let local_item = local_item_path(env, scope, kind, name)?;
-    // A legal name still spells a path, and the directories above the
-    // destination are not the name's to vouch for: a symlinked
-    // `.kendex-local/skills` puts the capture outside the sealed source,
-    // where trash-then-write lands on an unrelated tree, and a namespaced
-    // destination can sit inside a package already stored here, whose
-    // every later render would carry these files as its own. Both answers
-    // come from the reader a fork's capture asks, not a second rule here.
-    if let Some(problem) = crate::source::slot_unreachable(env, scope, kind, name, &local_item)? {
-        return Err(unusable(name, problem));
-    }
+    let local_item = destination(env, scope, kind, name)?;
 
     let mut positions: Vec<(HarnessId, PathBuf)> = Vec::new();
     for &harness in harnesses {
@@ -180,9 +170,9 @@ pub fn adopt(
 ///
 /// Three calls, three surfaces, not one guard thrice: `adopt` answers the
 /// verb, ahead of the manifest read so a bad name is named as one rather
-/// than as whatever else the scope is missing; `local_item_path` answers
-/// the planner, through `link_target` and `shared_tools`; `position`
-/// answers `can_keep_for` and the exits a page draws from it.
+/// than as whatever else the scope is missing; `destination` answers
+/// every path derived from a name, the planner's included; `position`
+/// answers the exits a page draws.
 fn usable(name: &str) -> Result<()> {
     match crate::names::item_problem(name) {
         Some(problem) => Err(unusable(name, problem)),
@@ -190,8 +180,22 @@ fn usable(name: &str) -> Result<()> {
     }
 }
 
-/// A refusal naming the name. A name reaches a terminal as text, so it is
-/// shown: an escape sequence inside it is printed rather than run.
+/// Where the capture would land, or why it may not land there. A legal
+/// name still spells a path, and the directories above the destination
+/// are not the name's to vouch for — `slot_unreachable` holds what that
+/// costs. One rule, asked by the verb before it plans a byte and by
+/// `can_keep_for` before a surface draws a Keep, so no offer names an
+/// action the capture would refuse.
+fn destination(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Result<PathBuf> {
+    let slot = local_item_path(env, scope, kind, name)?;
+    match crate::source::slot_unreachable(env, scope, kind, name, &slot)? {
+        Some(problem) => Err(unusable(name, problem)),
+        None => Ok(slot),
+    }
+}
+
+/// A refusal naming the name, shown: a name reaches a terminal as text,
+/// so an escape sequence inside it is printed rather than run.
 fn unusable(name: &str, problem: String) -> CoreError {
     CoreError::AdoptNameUnusable {
         name: crate::names::shown(name),
@@ -475,7 +479,7 @@ fn shared_at(
     link: &Path,
 ) -> Option<SharedTarget> {
     let points_to = fs::read_link(link).ok()?;
-    let local_item = local_item_path(env, scope, kind, name).ok()?;
+    let local_item = destination(env, scope, kind, name).ok()?;
     shared_target(env, scope, kind, name, link, points_to, &local_item).ok()
 }
 
@@ -686,6 +690,10 @@ pub fn can_keep_for(
     harness: HarnessId,
 ) -> bool {
     supports(kind)
+        // Fail-closed: the destination the capture would use, so a Keep
+        // is never drawn for one the verb refuses, and a source that
+        // cannot be read is not one that said yes.
+        && destination(env, scope, kind, name).is_ok()
         && position(env, scope, kind, name, harness).is_some_and(|path| {
             !both_spellings(kind, &path)
                 && match kind {

@@ -595,3 +595,101 @@ fn a_refusal_prints_the_escape_sequences_it_refuses() {
     assert!(!said.contains('\u{1b}'), "{said:?}");
     assert!(said.contains("\\u{1b}"), "{said:?}");
 }
+
+/// An agent's item is a file, so a plain `plugin` and a namespaced
+/// `plugin/item` are siblings — `agents/plugin.md` beside
+/// `agents/plugin/item.md` — and the local source lists both. Neither
+/// nests inside the other, so neither refuses the other's adoption.
+#[test]
+fn a_plain_agent_and_a_namespaced_agent_both_adopt() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let project = tmp.path().join("app");
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    let agents = project.join(".claude/agents");
+    fs::create_dir_all(&agents).unwrap();
+    fs::write(agents.join("data-science.md"), "the plain one").unwrap();
+    fs::write(agents.join("data-science__eda.md"), "the namespaced one").unwrap();
+
+    for name in ["data-science", "data-science/eda"] {
+        assert!(
+            can_keep_for(&env, &scope, ItemKind::Agent, name, HarnessId::Claude),
+            "{name} should be offered"
+        );
+        let plan = adopt(&env, &scope, ItemKind::Agent, name, &[HarnessId::Claude]).unwrap();
+        crate::apply::execute(&env, &plan, None).unwrap();
+    }
+
+    let local = project.join(".kendex-local/agents");
+    assert_eq!(
+        fs::read_to_string(local.join("data-science.md")).unwrap(),
+        "the plain one"
+    );
+    assert_eq!(
+        fs::read_to_string(local.join("data-science/eda.md")).unwrap(),
+        "the namespaced one"
+    );
+}
+
+/// The offer reads the destination rule the capture reads. A slot behind
+/// a symlink, and one nesting inside a package the local source already
+/// holds, both refuse the verb — so neither may be drawn as a Keep.
+#[test]
+fn a_destination_the_capture_refuses_is_never_offered() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let project = tmp.path().join("app");
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    let outside = tmp.path().join("elsewhere");
+    fs::create_dir_all(outside.join("handmade")).unwrap();
+    fs::create_dir_all(project.join(".kendex-local")).unwrap();
+    std::os::unix::fs::symlink(&outside, project.join(".kendex-local/skills")).unwrap();
+    fs::create_dir_all(project.join(".claude/skills/handmade")).unwrap();
+    fs::write(project.join(".claude/skills/handmade/SKILL.md"), "mine").unwrap();
+
+    assert!(!can_keep_for(
+        &env,
+        &scope,
+        ItemKind::Skill,
+        "handmade",
+        HarnessId::Claude
+    ));
+
+    // The shared-folder offer reads it too. A row for a hand-made
+    // sharing layout takes its Keep from `link_target`, not from
+    // `can_keep_for`, so the rule has to reach that answer as well.
+    let shared = tmp.path().join("shared/browser");
+    fs::create_dir_all(&shared).unwrap();
+    fs::write(shared.join("SKILL.md"), "shared content").unwrap();
+    let link = project.join(".claude/skills/browser");
+    std::os::unix::fs::symlink(&shared, &link).unwrap();
+    assert!(link_target(&env, &scope, ItemKind::Skill, "browser", &link).is_none());
+
+    // The package-nesting half, in a scope whose local source is a plain
+    // directory.
+    let other = tmp.path().join("app2");
+    let scope = Scope::Project {
+        root: other.clone(),
+    };
+    let parent = other.join(".kendex-local/skills/data-science");
+    fs::create_dir_all(&parent).unwrap();
+    fs::write(parent.join("SKILL.md"), "a package of its own").unwrap();
+    fs::create_dir_all(other.join(".claude/skills/data-science__eda")).unwrap();
+    fs::write(
+        other.join(".claude/skills/data-science__eda/SKILL.md"),
+        "mine",
+    )
+    .unwrap();
+
+    assert!(!can_keep_for(
+        &env,
+        &scope,
+        ItemKind::Skill,
+        "data-science/eda",
+        HarnessId::Claude
+    ));
+}

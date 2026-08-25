@@ -70,7 +70,14 @@ pub(crate) fn slot_unreachable(
     let Some((plugin, _)) = crate::names::split(name) else {
         return Ok(None);
     };
-    if find_item(&sealed, &config, kind, plugin).is_some() {
+    // Nesting is a fact about the two paths, not about the plugin half
+    // naming something. A skill's package IS the directory `plugin`, so a
+    // `plugin/item` slot sits inside it. An agent's package is the file
+    // `plugin.md`, and `plugin/item.md` is its sibling — the layout lists
+    // both, so neither hides the other. Asked of the resolved path, a
+    // kind whose item is a file is never refused for a nesting that
+    // cannot happen.
+    if find_item(&sealed, &config, kind, plugin).is_some_and(|package| slot.starts_with(&package)) {
         return Ok(Some(format!(
             "`{}` is a package of its own here, and this name would be stored inside it",
             crate::names::shown(plugin)
