@@ -26,20 +26,51 @@ source "$LIB"
 
 echo "=== single implementation ==="
 
+# A scan target is named by path, so a rename or a typo can point it at
+# nothing — and `grep -q` on a missing file exits 2, which an `if` reads as
+# "no match" and reports as a clean scan. Every scan therefore answers
+# `missing` first, and the matchers tolerate any whitespace the language
+# allows: jq accepts `def  bucket :` as readily as `def bucket:`, and bash
+# accepts `scope_current_run ()`, so a matcher pinned to one spelling makes
+# the guard's coverage a matter of formatting. Both holes fail open, and a
+# fail-open guard reports nothing at all.
+DRIFT_DEF_RE='def[[:space:]]+(bucket|runid)[[:space:]]*:'
+SCOPE_FN_RE='^scope_current_run[[:space:]]*\(\)'
+
+# missing | local | shared
+scope_target_state() {
+  [[ -f "$1" ]] || { printf 'missing\n'; return; }
+  if grep -qE "$SCOPE_FN_RE" "$1"; then printf 'local\n'; else printf 'shared\n'; fi
+}
+
+# missing | absent | sources
+lib_source_state() {
+  [[ -f "$1" ]] || { printf 'missing\n'; return; }
+  if grep -q 'ci-run-correlation.sh' "$1"; then printf 'sources\n'; else printf 'absent\n'; fi
+}
+
+# missing | drift | clean
+local_defs_state() {
+  [[ -f "$1" ]] || { printf 'missing\n'; return; }
+  if grep -qE "$DRIFT_DEF_RE" "$1"; then printf 'drift\n'; else printf 'clean\n'; fi
+}
+
+missing_target() { fail "$1 is missing at $2 (scan target moved or the path is a typo)"; }
+
 for script in "$REPO_ROOT/skills/orch/scripts/ci-wait" \
               "$REPO_ROOT/skills/github/scripts/commands/pr-merge.sh" \
               "$REPO_ROOT/skills/github/scripts/commands/ci-classify-refusal.sh"; do
   name="$(basename "$script")"
-  if grep -qE '^scope_current_run\(\)' "$script"; then
-    fail "$name defines its own scope_current_run (drift reintroduced — source the shared library instead)"
-  else
-    pass "$name does not define its own scope_current_run"
-  fi
-  if grep -q 'ci-run-correlation.sh' "$script"; then
-    pass "$name sources the shared library"
-  else
-    fail "$name sources the shared library"
-  fi
+  case "$(scope_target_state "$script")" in
+    missing) missing_target "$name" "$script" ;;
+    local)   fail "$name defines its own scope_current_run (drift reintroduced — source the shared library instead)" ;;
+    shared)  pass "$name does not define its own scope_current_run" ;;
+  esac
+  case "$(lib_source_state "$script")" in
+    missing) missing_target "$name" "$script" ;;
+    sources) pass "$name sources the shared library" ;;
+    absent)  fail "$name sources the shared library" ;;
+  esac
 done
 
 # The bucket taxonomy and run-id capture are exported as CI_RUN_JQ_DEFS; a
@@ -48,12 +79,48 @@ done
 for script in "$REPO_ROOT/skills/orch/scripts/ci-wait" \
               "$REPO_ROOT"/skills/github/scripts/commands/*.sh; do
   name="$(basename "$script")"
-  if grep -qE 'def (bucket|runid):' "$script"; then
-    fail "$name inlines its own def bucket/def runid (prepend CI_RUN_JQ_DEFS from the shared library instead)"
-  else
-    pass "$name has no local def bucket/def runid copy"
-  fi
+  case "$(local_defs_state "$script")" in
+    missing) missing_target "$name" "$script" ;;
+    drift)   fail "$name inlines its own def bucket/def runid (prepend CI_RUN_JQ_DEFS from the shared library instead)" ;;
+    clean)   pass "$name has no local def bucket/def runid copy" ;;
+  esac
 done
+
+echo "=== scan guards ==="
+
+# The scans above are only worth their green when they go red on the things
+# they exist to catch. Each state function is exercised against a fixture.
+FIXTURES="$(mktemp -d)"
+trap 'rm -rf "$FIXTURES"' EXIT
+
+state_is() {
+  local want="$1" got="$2" what="$3"
+  if [[ "$got" == "$want" ]]; then pass "$what"; else fail "$what (got $got, want $want)"; fi
+}
+
+state_is missing "$(local_defs_state "$REPO_ROOT/skills/orch/scripts/ci-waitX")" \
+  "a mistyped scan path reports missing, not clean"
+state_is missing "$(scope_target_state "$REPO_ROOT/skills/orch/scripts/ci-waitX")" \
+  "a mistyped scope-scan path reports missing, not shared"
+state_is missing "$(lib_source_state "$REPO_ROOT/skills/orch/scripts/ci-waitX")" \
+  "a mistyped library-source path reports missing, not absent"
+
+printf 'def bucket:\n' > "$FIXTURES/plain.sh"
+state_is drift "$(local_defs_state "$FIXTURES/plain.sh")" "a plain def bucket copy is caught"
+
+printf 'def  bucket :\n' > "$FIXTURES/spaced.sh"
+state_is drift "$(local_defs_state "$FIXTURES/spaced.sh")" "a whitespace-variant def bucket copy is caught"
+
+printf '  def\trunid  :\n' > "$FIXTURES/tabbed.sh"
+state_is drift "$(local_defs_state "$FIXTURES/tabbed.sh")" "a tab-separated def runid copy is caught"
+
+printf 'source lib/ci-run-correlation.sh\n' > "$FIXTURES/clean.sh"
+state_is clean "$(local_defs_state "$FIXTURES/clean.sh")" "a library-sourcing script scans clean"
+state_is sources "$(lib_source_state "$FIXTURES/clean.sh")" "a library-sourcing script is seen sourcing it"
+state_is shared "$(scope_target_state "$FIXTURES/clean.sh")" "a library-sourcing script defines no scope_current_run"
+
+printf 'scope_current_run () {\n  :\n}\n' > "$FIXTURES/localfn.sh"
+state_is local "$(scope_target_state "$FIXTURES/localfn.sh")" "a spaced scope_current_run definition is caught"
 
 echo "=== scoping behaviour ==="
 
