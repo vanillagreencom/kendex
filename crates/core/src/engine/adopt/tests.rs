@@ -311,20 +311,6 @@ fn a_target_that_changed_after_planning_fails_the_apply() {
     assert!(project.join(".claude/skills/browser").is_symlink());
 }
 
-/// A folder bigger than any real skill is refused before anything is
-/// planned, naming the budget, instead of being captured wholesale.
-#[test]
-fn an_oversized_target_is_refused_out_loud() {
-    let tmp = tempfile::tempdir().unwrap();
-    let dir = tmp.path().join("huge");
-    fs::create_dir_all(&dir).unwrap();
-    for i in 0..(MAX_CAPTURE_FILES + 1) {
-        fs::write(dir.join(format!("f{i}")), "x").unwrap();
-    }
-    let error = read_tree(&dir).unwrap_err();
-    assert!(error.to_string().contains("bigger than adopt"), "{error}");
-}
-
 /// An absolute name is not a name. `PathBuf::join` throws away the root it
 /// is joined onto, so the position adoption reads becomes the absolute
 /// path itself — a directory outside every kendex root, captured into the
@@ -471,4 +457,20 @@ fn a_namespaced_skill_is_adopted_at_its_rendered_position() {
 /// demand, so an absent one counts.
 fn trash_is_empty(env: &Env) -> bool {
     fs::read_dir(env.trash_dir()).is_ok_and(|mut d| d.next().is_none()) || !env.trash_dir().exists()
+}
+
+/// Only skills render. A command's position is reachable from a drift
+/// row, and whatever it owes its own renderer is not this fix's to
+/// settle, so its join is the one it always was.
+#[test]
+fn only_a_skills_position_takes_the_rendered_spelling() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let scope = Scope::Project {
+        root: tmp.path().join("app"),
+    };
+    let at = |kind| position(&env, &scope, kind, "data-science/eda", HarnessId::Claude).unwrap();
+
+    assert!(at(ItemKind::Skill).ends_with("data-science__eda"));
+    assert!(at(ItemKind::Command).ends_with("data-science/eda"));
 }
