@@ -1,13 +1,12 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Scope } from "@/bindings";
 import { FORKED_BADGE_LABEL } from "@/lib/copy";
 import { groupItems } from "@/lib/derive";
 import type { PlaceMark } from "@/lib/place-marks";
+import { mount as mountTree } from "@/test/dom";
 import { InstalledRow } from "./installed-row";
 
 const VG: Scope = { scope: "project", root: "/work/vg" };
@@ -71,34 +70,24 @@ describe("the row's customized mark", () => {
 
 // Whether a click reaches the row, and what a keypress lands on, are
 // questions about a live DOM that static markup cannot answer.
-const mounted: Root[] = [];
 afterEach(() => {
-  act(() => {
-    for (const root of mounted) root.unmount();
-  });
-  mounted.length = 0;
-  document.body.replaceChildren();
   vi.restoreAllMocks();
 });
 
 const mount = (forkedIn: Scope[] = [], mark: PlaceMark | null = null) => {
   const onOpen = vi.fn();
   // A tr needs a table around it for the DOM to keep the row a row.
-  const host = document.body.appendChild(document.createElement("table"));
-  const root = createRoot(host);
-  mounted.push(root);
-  act(() =>
-    root.render(
-      <tbody>
-        <InstalledRow
-          group={group}
-          origin={null}
-          mark={mark}
-          forkedIn={forkedIn}
-          onOpen={onOpen}
-        />
-      </tbody>,
-    ),
+  const host = mountTree(
+    <tbody>
+      <InstalledRow
+        group={group}
+        origin={null}
+        mark={mark}
+        forkedIn={forkedIn}
+        onOpen={onOpen}
+      />
+    </tbody>,
+    { host: "table" },
   );
   return { host, onOpen };
 };

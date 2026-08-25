@@ -1,7 +1,5 @@
 // @vitest-environment jsdom
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { Scope } from "@/bindings";
 import {
   CUSTOMIZED_CHECKING,
@@ -13,11 +11,8 @@ import {
 import type { CustomizedHere } from "@/lib/customized-places";
 import type { UpdatesReadState } from "@/lib/updates-read-state";
 import { useScanStore } from "@/stores/scan";
+import { mount } from "@/test/dom";
 import { CustomizedIndex } from "./customized-index";
-
-(
-  globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
-).IS_REACT_ACT_ENVIRONMENT = true;
 
 const VG: Scope = { scope: "project", root: "/work/vg" };
 
@@ -52,35 +47,18 @@ const row = (over: Partial<CustomizedHere> = {}): CustomizedHere => ({
 // Mounted rather than rendered to a string: a static render reads a
 // zustand store's initial snapshot, and the scan store is what says
 // whether a row's package is installed here.
-const mounted: Root[] = [];
 const render = (
   items: CustomizedHere[],
   updates: UpdatesReadState = "landed",
-): string => {
-  const host = document.createElement("div");
-  document.body.append(host);
-  const root = createRoot(host);
-  mounted.push(root);
-  act(() => {
-    root.render(
-      <CustomizedIndex
-        items={items}
-        scope={VG}
-        updates={updates}
-        onRemove={() => {}}
-      />,
-    );
-  });
-  return host.innerHTML;
-};
-
-afterEach(() => {
-  act(() => {
-    for (const root of mounted) root.unmount();
-  });
-  mounted.length = 0;
-  document.body.replaceChildren();
-});
+): string =>
+  mount(
+    <CustomizedIndex
+      items={items}
+      scope={VG}
+      updates={updates}
+      onRemove={() => {}}
+    />,
+  ).innerHTML;
 
 describe("CustomizedIndex", () => {
   beforeEach(() => {

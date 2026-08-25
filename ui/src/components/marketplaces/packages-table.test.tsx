@@ -1,9 +1,8 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AvailablePackage, PackageSafety, Verdict } from "@/bindings";
 import {
   PREINSTALL_SAFETY_CAVEAT,
@@ -13,6 +12,7 @@ import {
 import { subscription } from "@/stores/marketplaces-shared";
 import { useNavStore } from "@/stores/nav";
 import { safetyKey } from "@/stores/preinstall-safety";
+import { mount as mountTree } from "@/test/dom";
 import { PackagesTable } from "./packages-table";
 
 // Static rendering reads a zustand store's initial snapshot, so the score
@@ -124,27 +124,12 @@ describe("the safety dot in the packages list", () => {
 
 // The activation tests need a live DOM: whether a click reaches the row is a
 // question about event propagation, which static markup cannot answer.
-const mounted: Root[] = [];
-// A tooltip left open by one test is in the document the next one reads.
-afterEach(() => {
-  act(() => {
-    for (const root of mounted) root.unmount();
-  });
-  mounted.length = 0;
-  document.body.replaceChildren();
-});
-
 const mount = (safety: PackageSafety | null) => {
   stub.scores = safety ? { [safetyKey(catalog, "skill", "gh")]: safety } : {};
   const goToAvailablePackage = vi.fn();
   useNavStore.setState({ goToAvailablePackage });
-  const host = document.body.appendChild(document.createElement("div"));
-  const root = createRoot(host);
-  mounted.push(root);
-  act(() =>
-    root.render(
-      <PackagesTable entries={[{ catalog, row }]} showMarketplace={false} />,
-    ),
+  const host = mountTree(
+    <PackagesTable entries={[{ catalog, row }]} showMarketplace={false} />,
   );
   const dot = host.querySelector<HTMLButtonElement>(
     '[data-slot="tooltip-trigger"]',

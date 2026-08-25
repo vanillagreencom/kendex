@@ -1,11 +1,10 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { harnessName } from "@/lib/labels";
 import { showEverythingLabel } from "@/lib/show-everything-label";
 import { useNavStore } from "@/stores/nav";
+import { mount as mountTree } from "@/test/dom";
 import { HarnessRow } from "./harness-row";
 
 // The nav store is the real one — whether a click lands the Library on the
@@ -13,34 +12,22 @@ import { HarnessRow } from "./harness-row";
 // page that is not the Library and no pending filter.
 const navHome = { page: "home" as const, libraryFilter: null };
 
-const mounted: Root[] = [];
 afterEach(() => {
-  act(() => {
-    for (const root of mounted) root.unmount();
-  });
-  mounted.length = 0;
-  document.body.replaceChildren();
   vi.restoreAllMocks();
 });
 
 const mount = (detectedRoot: string | null) => {
   useNavStore.setState(navHome);
-  const host = document.body.appendChild(document.createElement("div"));
-  const root = createRoot(host);
-  mounted.push(root);
-  act(() =>
-    root.render(
-      <HarnessRow
-        id="claude"
-        detectedRoot={detectedRoot}
-        version={null}
-        counts={[["skill", 3]]}
-        folder=""
-        onFolderChange={() => {}}
-      />,
-    ),
+  return mountTree(
+    <HarnessRow
+      id="claude"
+      detectedRoot={detectedRoot}
+      version={null}
+      counts={[["skill", 3]]}
+      folder=""
+      onFolderChange={() => {}}
+    />,
   );
-  return host;
 };
 
 const label = showEverythingLabel(harnessName("claude"));
