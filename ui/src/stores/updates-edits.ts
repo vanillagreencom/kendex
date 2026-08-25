@@ -3,9 +3,11 @@ import { commands, type HarnessId, type UpdateRow } from "@/bindings";
 import { FORK_ERROR_TITLE, forkedToastLabel } from "@/lib/copy";
 import {
   installedAsNewToastLabel,
+  installedBesideUnfinishedToast,
   UPDATE_NEEDS_CHECK_NOTE,
 } from "@/lib/copy-updates";
 import { packageDisplayName } from "@/lib/labels";
+import { unsettled } from "@/lib/updates-read-state";
 import { useAuditStore } from "./audit";
 import { useProblemsStore } from "./problems";
 import { useScanStore } from "./scan";
@@ -44,10 +46,7 @@ const report = (error: string | null) => {
 /** Rows kept from a failed check, or about to be replaced by a running
  *  one, name a `latest` nobody confirmed — an action that may move a hold
  *  to it stops here, whatever the trigger looked like. */
-const unsettled = (): boolean => {
-  const { loaded, checking, overviewInFlight } = useUpdatesStore.getState();
-  return !loaded || checking || overviewInFlight;
-};
+const stale = (): boolean => unsettled(useUpdatesStore.getState());
 
 /** Keep an edited place's files as a local fork of its own. Only some
  *  tools' renderings read back as source; the row names the edited one a
@@ -73,7 +72,7 @@ export const keepAsOwn = async (row: UpdateRow): Promise<void> => {
 /** Drop an edited place's edits and take the newest version — moving the
  *  hold along when the place is held, in the same apply. */
 export const takeNewVersion = async (row: UpdateRow): Promise<void> => {
-  if (unsettled()) {
+  if (stale()) {
     report(UPDATE_NEEDS_CHECK_NOTE);
     return;
   }
@@ -95,14 +94,19 @@ export const takeNewVersion = async (row: UpdateRow): Promise<void> => {
 
 /** Keep an edited place's files as the user's own package under `own`,
  *  and let the source's newest version back in under the original name.
- *  `harness` is the edited rendering the row named as forkable. Returns
- *  the refusal for the dialog to show at the point of action, or null. */
+ *  `harness` is the edited rendering the row named as forkable. Returns a
+ *  refusal — nothing written, another name may go through — for the
+ *  dialog to show at the point of action, or null. A fork the scope
+ *  recorded but could not render is not a refusal: the dialog closes, the
+ *  toast says what landed, and the refreshed rows carry the rest. */
 export const installAsNew = async (
   row: UpdateRow,
   harness: HarnessId,
   own: string,
 ): Promise<string | null> => {
-  if (unsettled()) return UPDATE_NEEDS_CHECK_NOTE;
+  if (stale()) return UPDATE_NEEDS_CHECK_NOTE;
+  const name = packageDisplayName(row);
+  let unfinished: string | null = null;
   const error = await run(async () => {
     const response = await commands.packageForkBeside(
       row.scope,
@@ -114,9 +118,13 @@ export const installAsNew = async (
       // that hold is its own to move.
       row.pinned && row.canTakeLatest ? (row.latest?.commit ?? null) : null,
     );
-    return response.status === "error" ? response.error : null;
+    if (response.status === "ok") return null;
+    if (response.error.phase === "refused") return response.error.message;
+    unfinished = response.error.message;
+    return null;
   });
-  if (error === null)
-    toast.success(installedAsNewToastLabel(packageDisplayName(row), own));
-  return error;
+  if (error !== null) return error;
+  if (unfinished === null) toast.success(installedAsNewToastLabel(name, own));
+  else toast.info(installedBesideUnfinishedToast(name, own, unfinished));
+  return null;
 };

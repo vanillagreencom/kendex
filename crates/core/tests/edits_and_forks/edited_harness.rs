@@ -83,7 +83,7 @@ fn an_edited_agent_names_the_rendering_that_was_edited() {
     assert_eq!(row.forkable_harness, Some(HarnessId::Claude));
 }
 
-/// "Use new version" on a held, edited place: the hold moves to the new
+/// "Discard edits" on a held, edited place: the hold moves to the new
 /// commit and the edits go in the same apply — two steps would restore
 /// the old held copy first and leave the update pending.
 #[test]

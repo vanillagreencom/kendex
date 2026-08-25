@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
 import { act } from "react";
+import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
@@ -124,7 +125,10 @@ describe("installing beside an edited place, from the row", () => {
   it("shows the engine's refusal under the field and keeps the dialog open", async () => {
     vi.mocked(commands.packageForkBeside).mockResolvedValue({
       status: "error",
-      error: "'gh-edited' already installed from this scope's manifest",
+      error: {
+        phase: "refused",
+        message: "'gh-edited' already installed from this scope's manifest",
+      },
     });
     mount(<UpdatesTable rows={[edited]} onIgnore={() => {}} />);
     await userEvent.click(button(INSTALL_AS_NEW_LABEL));
@@ -147,6 +151,29 @@ describe("installing beside an edited place, from the row", () => {
     if (!field) throw new Error("no name field");
     await userEvent.type(field, "2");
     expect(open.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  // Once the fork is recorded, the name field has nothing left to fix:
+  // the dialog closes and the toast says what landed.
+  it("closes on a failure after the fork was recorded, rather than asking for another name", async () => {
+    vi.mocked(commands.packageForkBeside).mockResolvedValue({
+      status: "error",
+      error: { phase: "recorded", message: "render refused" },
+    });
+    mount(<UpdatesTable rows={[edited]} onIgnore={() => {}} />);
+    await userEvent.click(button(INSTALL_AS_NEW_LABEL));
+    const open = dialog();
+    if (!open) throw new Error("no dialog opened");
+    await userEvent.click(
+      [...open.querySelectorAll("button")].find(
+        (b) => b.textContent === INSTALL_AS_NEW_LABEL,
+      ) ?? open,
+    );
+    await settle();
+    expect(dialog()).toBeNull();
+    expect(toast.info).toHaveBeenCalledWith(
+      expect.stringContaining("render refused"),
+    );
   });
 
   it("holds the button while nothing can be kept but keeps an empty name out", async () => {
@@ -201,6 +228,22 @@ describe("the table's own menu", () => {
     expect(useUpdatesView.getState().showVersion).toBe(true);
     expect(host.querySelectorAll("th")).toHaveLength(12);
     expect(host.textContent).toContain("1111111 → v2");
+  });
+});
+
+describe("a page with only muted updates", () => {
+  it("still carries the `…` menu, on the muted table", async () => {
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [row("two", null, { ignored: true })], warnings: [] },
+    });
+    const host = mount(<UpdatesPage />);
+    await settle();
+    expect(host.querySelector('[aria-label="Table options"]')).toBeNull();
+    await userEvent.click(button("1 hidden update"));
+    expect(host.querySelectorAll('[aria-label="Table options"]')).toHaveLength(
+      1,
+    );
   });
 });
 

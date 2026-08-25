@@ -36,6 +36,7 @@ import {
   updatablePlaces,
   visibleUpdates,
 } from "@/lib/update-groups";
+import { unsettled } from "@/lib/updates-read-state";
 import { cn } from "@/lib/utils";
 import { useUpdatesStore } from "@/stores/updates";
 import { useUpdatesView } from "@/stores/updates-view";
@@ -49,13 +50,10 @@ export function UpdatesPage() {
   const error = useUpdatesStore((s) => s.error);
   // Anything overview-producing in flight holds Update all, same as the
   // per-row controls: these rows are about to be replaced.
-  const unconfirmed = useUpdatesStore(
-    (s) => !s.loaded || s.checking || s.overviewInFlight,
-  );
+  const unconfirmed = useUpdatesStore(unsettled);
   const load = useUpdatesStore((s) => s.load);
   // One choice for every table on the page; the `…` menu lives on the
-  // main one.
-  const showVersion = useUpdatesView((s) => s.showVersion);
+  // main table, or on the muted one when it is the only table drawn.
   const setShowVersion = useUpdatesView((s) => s.setShowVersion);
   const [showHidden, setShowHidden] = useState(false);
   const [confirmIgnore, setConfirmIgnore] = useState<UpdateRow | null>(null);
@@ -146,7 +144,6 @@ export function UpdatesPage() {
             <UpdatesTable
               rows={visible}
               onIgnore={setConfirmIgnore}
-              showVersion={showVersion}
               onShowVersion={setShowVersion}
             />
           )}
@@ -178,7 +175,12 @@ export function UpdatesPage() {
               </button>
               {showHidden ? (
                 <div className="mt-2 opacity-80">
-                  <UpdatesTable rows={hidden} showVersion={showVersion} />
+                  <UpdatesTable
+                    rows={hidden}
+                    onShowVersion={
+                      visible.length === 0 ? setShowVersion : undefined
+                    }
+                  />
                 </div>
               ) : null}
             </div>

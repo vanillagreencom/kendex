@@ -3,6 +3,7 @@
 //! the two ways out are explicit: keep it as a fork, or discard the edits.
 #![cfg(unix)]
 
+mod beside;
 mod disabled;
 mod edited_harness;
 

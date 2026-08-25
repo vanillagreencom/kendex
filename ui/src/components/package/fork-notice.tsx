@@ -22,6 +22,7 @@ import {
 import { UPDATE_NEEDS_CHECK_NOTE } from "@/lib/copy-updates";
 import { harnessName } from "@/lib/labels";
 import { sameScope } from "@/lib/scope";
+import { unsettled } from "@/lib/updates-read-state";
 import { useUpdatesStore } from "@/stores/updates";
 import { keepAsOwn, takeNewVersion } from "@/stores/updates-edits";
 
@@ -46,9 +47,7 @@ export function ForkNotice({
   // is about to replace, that pins an old version — so the discard waits
   // for a check. Keeping the files as a fork copies what is on disk and
   // stays live.
-  const held = useUpdatesStore(
-    (s) => !s.loaded || s.checking || s.overviewInFlight,
-  );
+  const held = useUpdatesStore(unsettled);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const several = row.editedHarnesses.length > 1;
   const whyNoFork = row.derived

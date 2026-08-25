@@ -1,12 +1,12 @@
 //! Renaming a fork: the declaration, its provenance record, and its files in
 //! the local source move to the new name together.
 
-use super::local_item;
+use super::{local_item, vacant_name};
 use crate::apply::{Op, Plan, PlannedOp, Pre};
 use crate::engine::ops::manifest_for_mutation;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-use crate::manifest::{self, LOCAL_SOURCE_NAME};
+use crate::manifest;
 use crate::model::{ItemKind, Scope};
 
 /// Rename a fork. Only a fork nothing depends on may change its installed
@@ -24,19 +24,7 @@ pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &st
             name: old.to_owned(),
         });
     }
-    if let Some(problem) = crate::names::item_problem(new) {
-        return Err(CoreError::ItemNotInSource {
-            name: problem,
-            source_name: "the new name".to_owned(),
-        });
-    }
-    if manifest.declared(kind).contains_key(new) {
-        return Err(CoreError::SourceCollision {
-            name: new.to_owned(),
-            existing: "this scope's manifest".to_owned(),
-            requested: LOCAL_SOURCE_NAME.to_owned(),
-        });
-    }
+    vacant_name(env, scope, &manifest, kind, new)?;
     let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
     let depended_on = lock
         .entries

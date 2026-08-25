@@ -32,7 +32,9 @@ import {
   type UpdateGroup,
   updatablePlaces,
 } from "@/lib/update-groups";
+import { unsettled } from "@/lib/updates-read-state";
 import { useUpdatesStore } from "@/stores/updates";
+import { useUpdatesView } from "@/stores/updates-view";
 
 /** Pending updates, one row per package. A package out of date in one
  *  place carries that place's controls on its row; one out of date in
@@ -42,30 +44,24 @@ import { useUpdatesStore } from "@/stores/updates";
 export function UpdatesTable({
   rows,
   onIgnore,
-  showVersion = false,
   onShowVersion,
 }: {
   rows: UpdateRow[];
   /** Absent for muted rows: their only extra action is "notify again". */
   onIgnore?: (row: UpdateRow) => void;
-  /** Whether the Version column — commit ids — is drawn. */
-  showVersion?: boolean;
-  /** Present on the table that carries the `…` menu to change it. */
+  /** Present on the table that carries the `…` menu showing the Version
+   *  column; the column itself follows the page-wide choice. */
   onShowVersion?: (show: boolean) => void;
 }) {
   return (
     <Table>
-      <UpdatesTableHeader
-        showVersion={showVersion}
-        onShowVersion={onShowVersion}
-      />
+      <UpdatesTableHeader onShowVersion={onShowVersion} />
       <TableBody>
         {groupUpdates(rows).map((group) => (
           <PackageRows
             key={groupKey(group)}
             group={group}
             onIgnore={onIgnore}
-            showVersion={showVersion}
           />
         ))}
       </TableBody>
@@ -78,21 +74,18 @@ export function PackageRows({
   group,
   onIgnore,
   defaultOpen = false,
-  showVersion = false,
 }: {
   group: UpdateGroup;
   onIgnore?: (row: UpdateRow) => void;
   defaultOpen?: boolean;
-  showVersion?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const placesId = useId();
   const busy = useUpdatesStore((s) => s.busy);
   // Not loaded, mid-check, and mid-load hold Update alike: either way
   // these rows are not the rows an update would act on.
-  const unconfirmed = useUpdatesStore(
-    (s) => !s.loaded || s.checking || s.overviewInFlight,
-  );
+  const unconfirmed = useUpdatesStore(unsettled);
+  const showVersion = useUpdatesView((s) => s.showVersion);
   const updateRows = useUpdatesStore((s) => s.updateRows);
   const Icon = kindIcon(group.kind);
   const name = packageDisplayName(group);
@@ -147,12 +140,7 @@ export function PackageRows({
           {kindLabel(group.kind)}
         </TableCell>
         {only ? (
-          <PlaceCells
-            row={only}
-            among={scopes}
-            onIgnore={onIgnore}
-            showVersion={showVersion}
-          />
+          <PlaceCells row={only} among={scopes} onIgnore={onIgnore} />
         ) : (
           <>
             <TableCell>
@@ -198,12 +186,7 @@ export function PackageRows({
               className="bg-muted/20"
             >
               <TableCell colSpan={2} />
-              <PlaceCells
-                row={row}
-                among={scopes}
-                onIgnore={onIgnore}
-                showVersion={showVersion}
-              />
+              <PlaceCells row={row} among={scopes} onIgnore={onIgnore} />
             </TableRow>
           ))
         : null}

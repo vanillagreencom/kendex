@@ -22,20 +22,20 @@ import {
   UPDATES_TYPE_COLUMN,
   UPDATES_VERSION_COLUMN,
 } from "@/lib/copy-updates";
+import { useUpdatesView } from "@/stores/updates-view";
 
 /** The updates table's header: the columns, the one-sentence explanation
  *  of the Follow source switch on its own column, and — where the page
  *  puts it — the `…` menu at the table's top right that shows the Version
  *  column. */
 export function UpdatesTableHeader({
-  showVersion,
   onShowVersion,
 }: {
-  showVersion: boolean;
   /** Present on the one table that carries the menu: the setting is the
    *  page's, and every table on it follows. */
   onShowVersion?: (show: boolean) => void;
 }) {
+  const showVersion = useUpdatesView((s) => s.showVersion);
   return (
     <TableHeader>
       <TableRow>

@@ -12,3 +12,13 @@ export function updatesReadState(state: {
   if (state.error !== null) return "failed";
   return state.loaded ? "landed" : "pending";
 }
+
+/** Whether the rows on screen are not to be acted on: the first read has
+ *  not answered or the last one failed, a check is running, or anything
+ *  overview-producing is in flight and about to replace them. One
+ *  predicate for every control that holds and every action that refuses. */
+export const unsettled = (state: {
+  loaded: boolean;
+  checking: boolean;
+  overviewInFlight: boolean;
+}): boolean => !state.loaded || state.checking || state.overviewInFlight;

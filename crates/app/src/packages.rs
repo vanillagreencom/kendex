@@ -8,6 +8,8 @@ use kendex_core::env::Env;
 use kendex_core::model::{HarnessId, ItemKind, Scope};
 use kendex_core::package::{self, detail, diff, updates};
 use kendex_core::{manifest, remote};
+use serde::Serialize;
+use specta::Type;
 
 use crate::audit::{AuditView, view};
 
@@ -144,10 +146,17 @@ pub fn package_fork(
 ) -> Result<AuditView, String> {
     let env = env()?;
     let plan = engine::fork::fork(&env, &scope, kind, &name, harness).map_err(|e| e.to_string())?;
-    apply::execute(&env, &plan, None).map_err(|e| e.to_string())?;
-    let report = engine::audit(&env, &scope).map_err(|e| e.to_string())?;
-    apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
-    Ok(view(&env, &scope))
+    settle(&env, &scope, &plan)
+}
+
+/// Why installing beside did not finish, by phase: a refusal wrote
+/// nothing, so another name may well go through; a fork the scope already
+/// recorded but could not render needs an apply, not a different name.
+#[derive(Debug, Serialize, Type)]
+#[serde(tag = "phase", rename_all = "kebab-case")]
+pub enum ForkBesideError {
+    Refused { message: String },
+    Recorded { message: String },
 }
 
 /// Keep an edited install as a local fork under a new name, leave the
@@ -161,8 +170,9 @@ pub fn package_fork_beside(
     harness: HarnessId,
     new_name: String,
     rev: Option<String>,
-) -> Result<AuditView, String> {
-    let env = env()?;
+) -> Result<AuditView, ForkBesideError> {
+    let refused = |message: String| ForkBesideError::Refused { message };
+    let env = env().map_err(refused)?;
     let plan = engine::fork::fork_beside(
         &env,
         &scope,
@@ -172,11 +182,24 @@ pub fn package_fork_beside(
         &new_name,
         rev.as_deref(),
     )
-    .map_err(|e| e.to_string())?;
-    apply::execute(&env, &plan, None).map_err(|e| e.to_string())?;
-    let report = engine::audit(&env, &scope).map_err(|e| e.to_string())?;
-    apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
-    Ok(view(&env, &scope))
+    .map_err(|e| refused(e.to_string()))?;
+    // A plan that fails to apply rolls back: nothing recorded, a refusal.
+    apply::execute(&env, &plan, None).map_err(|e| refused(e.to_string()))?;
+    render_scope(&env, &scope).map_err(|message| ForkBesideError::Recorded { message })
+}
+
+/// Apply one plan, then render the scope it changed.
+fn settle(env: &Env, scope: &Scope, plan: &apply::Plan) -> Result<AuditView, String> {
+    apply::execute(env, plan, None).map_err(|e| e.to_string())?;
+    render_scope(env, scope)
+}
+
+/// Bring a scope's installs in line with its manifest and answer with the
+/// standing that leaves.
+fn render_scope(env: &Env, scope: &Scope) -> Result<AuditView, String> {
+    let report = engine::audit(env, scope).map_err(|e| e.to_string())?;
+    apply::execute(env, &report.plan, None).map_err(|e| e.to_string())?;
+    Ok(view(env, scope))
 }
 
 #[tauri::command(async)]

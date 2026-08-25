@@ -149,11 +149,12 @@ export const packageHandlers: Record<string, Handler> = {
     name: string;
     newName: string;
   }) => {
-    // Refusals cross the bridge as plain strings, the way Tauri's do.
+    // A refusal crosses the bridge as the command's typed error.
     if (store.state.items.some((item) => item.name === newName))
-      return Promise.reject(
-        `'${newName}' already installed from this scope's manifest — refusing to rebind to local`,
-      );
+      return Promise.reject({
+        phase: "refused",
+        message: `'${newName}' already installed from this scope's manifest — refusing to rebind to local`,
+      });
     store.state.keptBeside.push(name);
     return view(scope);
   },

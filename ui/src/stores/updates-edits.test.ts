@@ -295,7 +295,7 @@ describe("updates store: installing beside an edited place", () => {
   it("hands the engine's refusal back instead of raising a dialog", async () => {
     vi.mocked(commands.packageForkBeside).mockResolvedValue({
       status: "error",
-      error: "'docs' already installed",
+      error: { phase: "refused", message: "'docs' already installed" },
     });
 
     expect(await installAsNew(row(edited), "claude", "docs")).toBe(
@@ -303,7 +303,49 @@ describe("updates store: installing beside an edited place", () => {
     );
     expect(useProblemsStore.getState().dialog.open).toBe(false);
     expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.info).not.toHaveBeenCalled();
     expect(commands.auditAll).not.toHaveBeenCalled();
+  });
+
+  // A fork the scope recorded but could not render is not a refusal:
+  // another name would not help, and the rows now carry the drift. The
+  // dialog gets null and closes; the toast says what landed.
+  it("treats a failure after the fork was recorded as a partial result, not a refusal", async () => {
+    vi.mocked(commands.packageForkBeside).mockResolvedValue({
+      status: "error",
+      error: { phase: "recorded", message: "render refused: disk full" },
+    });
+
+    expect(await installAsNew(row(edited), "claude", "gh-mine")).toBeNull();
+    expect(toast.info).toHaveBeenCalledWith(
+      "Your edited copy is now gh-mine, but gh didn't install: render refused: disk full. Review & apply finishes it.",
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(useProblemsStore.getState().dialog.open).toBe(false);
+    // The refreshes run: what landed is on disk and the rows must say so.
+    expect(commands.updatesOverview).toHaveBeenCalled();
+    expect(commands.auditAll).toHaveBeenCalled();
+  });
+
+  // The hold moves only when it is this declaration's to move.
+  it("leaves the hold alone when the newest is not this place's to take", async () => {
+    vi.mocked(commands.packageForkBeside).mockResolvedValue({
+      status: "error",
+      error: { phase: "refused", message: "nope" },
+    });
+    await installAsNew(
+      row({ ...edited, pinned: true, canTakeLatest: false }),
+      "claude",
+      "gh-mine",
+    );
+    expect(commands.packageForkBeside).toHaveBeenLastCalledWith(
+      { scope: "global" },
+      "skill",
+      "gh",
+      "claude",
+      "gh-mine",
+      null,
+    );
   });
 
   it("refuses rows a failed check left behind, before any call", async () => {

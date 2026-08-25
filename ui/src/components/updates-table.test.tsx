@@ -7,6 +7,7 @@ import {
   EDITED_TAG_HELP,
   FOLLOW_SOURCE_HELP,
   INSTALL_AS_NEW_LABEL,
+  OPEN_PACKAGE_LABEL,
   UPDATE_NEEDS_CHECK_NOTE,
 } from "@/lib/copy-updates";
 import { groupUpdates } from "@/lib/update-groups";
@@ -33,20 +34,43 @@ const triggers = (html: string): string[] =>
 // later, so the store is wrapped to let a test stage what the last read
 // left behind. Rows on the table imply a read that answered, so that is
 // the default.
-const stub = vi.hoisted(() => ({ loaded: true, busy: false }));
+const stub = vi.hoisted(() => ({
+  loaded: true,
+  busy: false,
+  showVersion: false,
+}));
 
 vi.mock("@/stores/updates", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/stores/updates")>();
   const hook = (selector?: (state: unknown) => unknown) => {
-    const state = { ...mod.useUpdatesStore.getState(), ...stub };
+    const state = {
+      ...mod.useUpdatesStore.getState(),
+      loaded: stub.loaded,
+      busy: stub.busy,
+    };
     return selector ? selector(state) : state;
   };
   return { ...mod, useUpdatesStore: Object.assign(hook, mod.useUpdatesStore) };
 });
 
+// The Version column follows the page-wide choice; the same wrapping lets
+// a static render see it switched on.
+vi.mock("@/stores/updates-view", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("@/stores/updates-view")>();
+  const hook = (selector?: (state: unknown) => unknown) => {
+    const state = {
+      ...mod.useUpdatesView.getState(),
+      showVersion: stub.showVersion,
+    };
+    return selector ? selector(state) : state;
+  };
+  return { ...mod, useUpdatesView: Object.assign(hook, mod.useUpdatesView) };
+});
+
 beforeEach(() => {
   stub.loaded = true;
   stub.busy = false;
+  stub.showVersion = false;
 });
 
 describe("UpdatesTable", () => {
@@ -71,13 +95,8 @@ describe("UpdatesTable", () => {
     expect(html.match(/<th\b/g)).toHaveLength(5);
     expect(html).not.toContain('aria-label="Table options"');
 
-    const shown = renderToStaticMarkup(
-      <UpdatesTable
-        rows={[row("one", null)]}
-        onIgnore={() => {}}
-        showVersion
-      />,
-    );
+    stub.showVersion = true;
+    const shown = render([row("one", null)]);
     expect(shown).toContain(">Version<");
     expect(shown).toContain("1111111 → v2");
     expect(shown.match(/<th\b/g)).toHaveLength(6);
@@ -111,6 +130,54 @@ describe("UpdatesTable", () => {
     expect(html).not.toContain("Customized here");
     expect(html).not.toContain("Use new version");
     expect(html).not.toContain("Keep as my own");
+  });
+
+  // With nothing newer the source still carries, there is nothing to put
+  // beside the edits: the fork-or-discard choice on the package page is
+  // what is left, and the row says where.
+  it("offers no install beside where there is nothing to install", () => {
+    const edited = {
+      blockedByLocalEdit: true,
+      editedHarnesses: ["claude" as const],
+      forkableHarness: "claude" as const,
+    };
+    const gone = render([
+      row("gh", null, {
+        ...edited,
+        latest: null,
+        updateAvailable: false,
+        canDiscard: false,
+        removedUpstream: true,
+      }),
+    ]);
+    expect(gone).toContain(esc(EDITED_CANT_UPDATE_NOTE));
+    expect(gone).not.toContain(`>${INSTALL_AS_NEW_LABEL}<`);
+    expect(gone).not.toContain(">Update<");
+    // Nothing to compare either: the package page is the route.
+    expect(gone).not.toContain(">Preview changes<");
+    expect(gone).toContain(`>${OPEN_PACKAGE_LABEL}<`);
+
+    const current = render([
+      row("gh", null, { ...edited, updateAvailable: false }),
+    ]);
+    expect(current).toContain(esc(EDITED_CANT_UPDATE_NOTE));
+    expect(current).not.toContain(`>${INSTALL_AS_NEW_LABEL}<`);
+    expect(current).not.toContain(">Update<");
+    expect(current).toContain(">Preview changes<");
+  });
+
+  it("holds Install as new package while the store is busy", () => {
+    stub.busy = true;
+    const html = render([
+      row("gh", null, {
+        blockedByLocalEdit: true,
+        editedHarnesses: ["claude"],
+        forkableHarness: "claude",
+      }),
+    ]);
+    expect(html).toMatch(
+      new RegExp(`<button[^>]*disabled=""[^>]*>${INSTALL_AS_NEW_LABEL}<`),
+    );
   });
 
   it("offers no install beside where the edited rendering can't be kept", () => {
@@ -191,6 +258,17 @@ describe("UpdatesTable", () => {
     expect(html).toContain(">Update all<");
     expect(html).not.toContain('role="switch"');
     expect(html).not.toContain(">Preview changes<");
+    // The collapsed row's cells line up under the header's columns, the
+    // Version spacer included only when the column is drawn.
+    expect(html.match(/<td\b/g)).toHaveLength(5);
+    stub.showVersion = true;
+    const shown = render([
+      row("gh", null),
+      row("gh", "/home/x/acme"),
+      row("gh", "/home/x/shop"),
+    ]);
+    expect(shown.match(/<td\b/g)).toHaveLength(6);
+    expect(shown.match(/<th\b/g)).toHaveLength(6);
   });
 
   it("expands a package into one row per place, each with its own controls", () => {

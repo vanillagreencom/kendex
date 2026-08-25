@@ -212,8 +212,10 @@ fn is_true(value: &bool) -> bool {
 
 /// Where a fork came from. A fork keeps the item's installed name — the
 /// declaration just switches to the local source, so nothing that depends
-/// on the name breaks — and this records what it replaced. Manifest, not
-/// lock, because the package page keeps reading it after any cache loss.
+/// on the name breaks — and this records what it replaced. A fork made
+/// beside the original takes a new name and records the same provenance:
+/// what it was copied from, and at which commit. Manifest, not lock,
+/// because the package page keeps reading it after any cache loss.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "kebab-case")]
 pub struct ForkProvenance {

@@ -54,9 +54,10 @@ lives in one capability table read by core and UI.
 1. Generated artifacts are always overwritable — by us. Refresh
    regenerates from scratch and re-merges the manifest, but bytes no
    apply ever wrote are the user's: an edited installation becomes a
-   conflict naming its exits (keep it as a fork, keep it as a fork under
-   a new name beside the source's version, or discard the edits), and no
-   write, sweep, refusal, or re-shape touches it. Discarding is an
+   conflict naming its exits (keep it as a fork, or discard the edits) —
+   the Updates row offers a third, keeping the fork under a new name
+   beside the source's version — and no write, sweep, refusal, or
+   re-shape touches it. Discarding is an
    explicit option (`overwrite_edited` / `--discard-edits`). The anchor
    is the lock's rendered hash; a record that cannot prove which bytes
    are whose is one conflict, never one silent loss.
@@ -340,7 +341,8 @@ lives in one capability table read by core and UI.
 - **Every atomic write gets its own temp file.** `write_then_rename` names
   its temp file per write, not per process.
 - GUI + CLI are equal thin shells over `crates/core`; every core operation
-  has a CLI verb. `tools/guard` gates commits; the review gate and the merge queue's suites gate PRs.
+  has a CLI verb (the verb for `fork_beside` is tracked separately; the
+  app has it today). `tools/guard` gates commits; the review gate and the merge queue's suites gate PRs.
 - Every capability ships cross-harness through the capability table; a
   harness without native support for a kind is marked unsupported — never
   shimmed. Where a vendor stores one surface as another (Codex: prompts as
@@ -672,11 +674,11 @@ lives in one capability table read by core and UI.
   from, a parent skill excluding any nested child skill — into the scope's
   local source, flips the declaration to `local` with fork provenance, and
   removes the subscription; local writes are ordered before the manifest
-  flip in one plan (invariant 11). Keep refuses an edited package (fork or
-  discard first; hooks are compared to what apply wrote) and preflights the
-  local target: a symlink, a case/composition-folding sibling, or different
-  bytes there is a refusal (invariants 4 and 6). The local source lists a
-  `plugin/item` name beside a plain `plugin`.
+  flip in one plan (invariant 11). Keep refuses an edited package (fork,
+  install beside, or discard first; hooks are compared to what apply wrote)
+  and preflights the local target: a symlink, a case/composition-folding
+  sibling, or different bytes there is a refusal (invariants 4 and 6). The
+  local source lists a `plugin/item` name beside a plain `plugin`.
 - **The machine seam reads through the same core installing reads
   through.** `check_catalog.rs` (core) owns the two authoring passes —
   structural (would each harness's loader hold this item) and safety (the

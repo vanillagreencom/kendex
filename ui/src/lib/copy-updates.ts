@@ -41,6 +41,13 @@ export const OWN_COPY_NAME_LABEL = "Name for your edited copy";
 export const ownCopyDefaultName = (name: string): string => `${name}-edited`;
 export const installedAsNewToastLabel = (name: string, own: string): string =>
   `Installed ${name} — your edited copy is now ${own}`;
+export const installedBesideUnfinishedToast = (
+  name: string,
+  own: string,
+  why: string,
+): string =>
+  `Your edited copy is now ${own}, but ${name} didn't install: ${why}. Review & apply finishes it.`;
+export const OPEN_PACKAGE_LABEL = "Open package";
 
 export const updatedWithPlaceToastLabel = (
   name: string,

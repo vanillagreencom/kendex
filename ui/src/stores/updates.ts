@@ -14,6 +14,7 @@ import {
   visibleUpdates,
 } from "@/lib/update-groups";
 import { bulkUpdateToast } from "@/lib/update-toasts";
+import { unsettled } from "@/lib/updates-read-state";
 import { useAuditStore } from "./audit";
 import { useProblemsStore } from "./problems";
 import { useScanStore } from "./scan";
@@ -67,9 +68,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
   // read, a running check, and a focus-triggered load are all the same
   // reason to wait. Returns whether the action was refused, reporting it.
   const refuseUnsettled = (): boolean => {
-    const state = get();
-    if (state.loaded && !state.checking && !state.overviewInFlight)
-      return false;
+    if (!unsettled(get())) return false;
     showError(UPDATE_ERROR_TITLE, UPDATE_NEEDS_CHECK_NOTE);
     return true;
   };
