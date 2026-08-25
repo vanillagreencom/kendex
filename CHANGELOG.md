@@ -299,6 +299,11 @@ changes carry a **Breaking** call-out with their migration note inline.
   the lock alive past its owner. The lock now releases explicitly the
   instant an apply finishes. The source cache's download lock had the
   same flaw and got the same fix.
+- Home's Installed tile now counts what the Library counts: packages, not
+  copies. A package applied to two harnesses used to count twice on the
+  tile and once in the Library table it opens, so the click landed on a
+  smaller total with nothing explaining the gap. Both numbers now come from
+  the same count.
 - Home no longer shows its loading skeletons forever when the first scan of
   the machine fails: the page says the scan failed, shows why, and offers
   Scan again. When a later scan fails, Home still draws what it had, headed

@@ -18,7 +18,7 @@ import {
   SCAN_STALE_TITLE,
 } from "@/lib/copy";
 import { MARKETPLACES_UNCHECKED_DETAIL } from "@/lib/copy-marketplaces";
-import { groupItems, recentItems } from "@/lib/derive";
+import { groupItems, installedCount, recentItems } from "@/lib/derive";
 import { harnessName } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { cn } from "@/lib/utils";
@@ -173,9 +173,12 @@ export function OverviewPage() {
                   detail={harnessNames || undefined}
                   onClick={() => goTo("harnesses")}
                 />
+                {/* Counted in the Library's unit — packages, not
+                    installations — so the number matches the table the
+                    click lands on. */}
                 <StatTile
                   label="Installed"
-                  value={result.items.length}
+                  value={installedCount(result.items)}
                   onClick={() => goToLibrary()}
                 />
                 <StatTile

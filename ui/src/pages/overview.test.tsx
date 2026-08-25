@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ScanResult } from "@/bindings";
+import type { ObservedItem, ScanResult } from "@/bindings";
 import {
   AUDIT_ATTENTION_TITLE,
   SCAN_AGAIN_LABEL,
@@ -82,6 +82,22 @@ const scanned: ScanResult = {
   missingProjects: [],
   warnings: [],
 };
+
+const installed = (overrides: Partial<ObservedItem>): ObservedItem => ({
+  kind: "skill",
+  name: "deploy",
+  harness: "claude",
+  scope: { scope: "global" },
+  path: "/h/.claude/skills/deploy",
+  fileState: { state: "dir" },
+  enabled: true,
+  origin: null,
+  description: null,
+  tags: [],
+  modifiedAt: null,
+  vendor: null,
+  ...overrides,
+});
 
 beforeEach(() => {
   stub.scan = { result: null, error: null, scanning: false };
@@ -227,6 +243,28 @@ describe("Home when the audit fails", () => {
     expect(renderToStaticMarkup(<OverviewPage />)).not.toContain(
       esc(AUDIT_ATTENTION_TITLE),
     );
+  });
+});
+
+// The tile opens the Library, whose table shows one row per package however
+// many harnesses carry it; counting installations here made the tile's
+// number exceed the total on the page it lands on.
+describe("the Installed tile", () => {
+  it("counts packages the way the Library it opens does, not installations", () => {
+    stub.scan = {
+      result: {
+        ...scanned,
+        items: [
+          installed({ harness: "claude" }),
+          installed({ harness: "codex" }),
+        ],
+      },
+      error: null,
+      scanning: false,
+    };
+    const html = renderToStaticMarkup(<OverviewPage />);
+    expect(html).toContain(">1<");
+    expect(html).not.toContain(">2<");
   });
 });
 

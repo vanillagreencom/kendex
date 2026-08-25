@@ -8,6 +8,7 @@ import {
   groupScopes,
   groupVendor,
   installationAt,
+  installedCount,
   recentItems,
   scopeMatches,
 } from "./derive";
@@ -116,6 +117,22 @@ describe("groupItems", () => {
 
     const withoutTimes = groupItems([item({ name: "solo" })]);
     expect(withoutTimes.find((g) => g.name === "solo")?.modifiedAt).toBeNull();
+  });
+});
+
+describe("installedCount", () => {
+  it("counts packages, not installations", () => {
+    expect(
+      installedCount([
+        item({ harness: "claude" }),
+        item({ harness: "codex" }),
+        item({ name: "solo" }),
+      ]),
+    ).toBe(2);
+  });
+
+  it("keeps same-named items of different kinds apart", () => {
+    expect(installedCount([item({}), item({ kind: "agent" })])).toBe(2);
   });
 });
 
