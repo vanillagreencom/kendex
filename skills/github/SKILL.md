@@ -163,8 +163,8 @@ Callers read the `transient` field from `--check`:
 `can_merge: false` with an empty `issues` array means the PR is terminal — read
 `state` before treating a refusal as a blocker to clear. `head_runs` lists the
 run ids the CI classification was scoped to (the authoritative run per
-workflow, or the runs custom commit statuses link to when no workflow job
-carries a run id); `--check` repeats them on stderr as `head-run: <ids>` under the
+workflow plus the runs custom commit statuses link to — a mixed head names
+both); `--check` repeats them on stderr as `head-run: <ids>` under the
 one-word verdict (`mergeable`, `blocked`, `merged`, `closed`). To turn a
 refusal into a named cause — including which failing checks are run-correlated
 to the authoritative run and which runs were superseded — run

@@ -271,15 +271,24 @@ echo
 echo "=== a sidecar that cannot be written still gets its map applied ==="
 
 # The state write is independent of the sidecar; an unwritable tmp/ costs
-# only the retry convenience, never the reconciliation.
+# only the retry convenience, never the reconciliation. chmod mode bits do
+# not bind root (CAP_DAC_OVERRIDE writes straight through them), so the
+# denial is probed and the case skipped visibly where it cannot take effect
+# — mirroring the /dev/full gate above.
 work="$TMP_ROOT/work-rotmp"
 reset_state "$work"
 chmod a-w "$wt/tmp"
-STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" run_push "$work" --worktree "$wt" --issue KEN-1
-chmod u+w "$wt/tmp"
-assert_eq "$RUN_RC" "0" "an unwritable sidecar directory does not fail a landed push"
-assert_eq "$(state_json "$work" | jq -r ".rebase_map[\"$OLD_A\"]")" "$NEW_A" "the map is applied to state despite the unwritable sidecar"
-assert_contains "$(cat "$run_err")" "the map was still applied to workflow state" "the sidecar failure is named alongside the applied map"
+if touch "$wt/tmp/.write-probe" 2>/dev/null; then
+  rm -f "$wt/tmp/.write-probe"
+  chmod u+w "$wt/tmp"
+  printf '  skip  %s\n' "unwritable-sidecar case: chmod a-w does not deny writes here (running as root?)"
+else
+  STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" run_push "$work" --worktree "$wt" --issue KEN-1
+  chmod u+w "$wt/tmp"
+  assert_eq "$RUN_RC" "0" "an unwritable sidecar directory does not fail a landed push"
+  assert_eq "$(state_json "$work" | jq -r ".rebase_map[\"$OLD_A\"]")" "$NEW_A" "the map is applied to state despite the unwritable sidecar"
+  assert_contains "$(cat "$run_err")" "the map was still applied to workflow state" "the sidecar failure is named alongside the applied map"
+fi
 
 echo
 echo "=== the bare-numeric alias binds, not refuses ==="
@@ -297,6 +306,28 @@ STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" run_push "$work" --worktree "$wt" -
 assert_eq "$RUN_RC" "0" "a bare-numeric issue binds to its issue-N state instead of refusing"
 assert_eq "$(jq -r '.fixed_items[0].commit' "$work/tmp/workflow-state-issue-7.json")" "${NEW_A:0:7}" "the aliased record's fix SHA is rewritten"
 rm -f "$alias_sidecar"
+
+echo
+echo "=== an ambiguous state key refuses before pushing ==="
+
+# Files under BOTH the bare-numeric and the issue-N key make the
+# reconciliation target ambiguous (workflow-state exists exits 2). Proceeding
+# would land a rebase whose map has no definite record to land in — the push
+# must not run at all.
+work="$TMP_ROOT/work-ambiguous"
+rm -rf "$work" && mkdir -p "$work"
+rm -f "$alias_sidecar"
+(cd "$work" \
+  && "$STATE" init issue-7 --agent generalist --worktree "$wt" --branch issue-7 >/dev/null \
+  && "$STATE" init 7 --agent generalist --worktree "$wt" --branch issue-7 >/dev/null)
+ambig_args_log="$TMP_ROOT/ambig-args.log"
+: >"$ambig_args_log"
+STUB_ARGS_LOG="$ambig_args_log" STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" \
+  run_push "$work" --worktree "$wt" --issue 7
+assert_eq "$RUN_RC" "1" "an ambiguous state key fails the call"
+assert_contains "$(cat "$run_err")" "ambiguous" "the refusal names the ambiguity"
+assert_eq "$(wc -l <"$ambig_args_log")" "0" "the push never runs against an ambiguous state"
+[[ ! -f "$alias_sidecar" ]] && pass "no sidecar is written when the push never ran" || fail "no sidecar is written when the push never ran"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

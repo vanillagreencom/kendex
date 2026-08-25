@@ -46,9 +46,11 @@
 # ci-run-correlation.test.sh rejects one.
 # `runid` maps a check to its Actions run id (number) or null. `head_runs`
 # (input: a SCOPED check array) names the run ids a classification was scoped
-# to: the authoritative workflow runs, falling back to the runs custom commit
-# statuses link to when no workflow job carries a run id — a status-only repo
-# ("CI Required") still names its run instead of "none".
+# to: every run the scoped checks link to — authoritative workflow runs and
+# custom commit statuses alike, so a status failure on a mixed head names its
+# run beside the workflow's instead of vanishing behind it. The one exclusion
+# is a status held EXPECTED: its link names the superseded run the rewrite
+# just retired, which must not read as current scope.
 CI_RUN_JQ_DEFS='
   def runid:
     (.link // "")
@@ -64,10 +66,11 @@ CI_RUN_JQ_DEFS='
       end
     ));
   def head_runs:
-    ([.[] | select((.workflow // "") != "") | runid | select(. != null)] | unique) as $wf
-    | if ($wf | length) > 0 then $wf
-      else ([.[] | runid | select(. != null)] | unique)
-      end;
+    [.[]
+     | select(((.workflow // "") != "") or ((.state // "") != "EXPECTED"))
+     | runid
+     | select(. != null)]
+    | unique;
 '
 
 scope_current_run() {

@@ -65,8 +65,9 @@ Options:
   --keep-branch    Keep branch after merge
   --check          Run checks only, don't merge. JSON on stdout; a one-word
                    verdict (mergeable|blocked|merged|closed) plus the run
-                   scope ("head-run: <ids>" — the authoritative run per
-                   workflow the CI classification was scoped to) on stderr.
+                   scope ("head-run: <ids>" — the runs the CI classification
+                   was scoped to: the authoritative run per workflow plus
+                   the runs custom commit statuses link to) on stderr.
                    On a refusal, ci-classify-refusal names the cause.
   --force          Skip checks and merge (requires explicit user decision;
                    cannot be combined with --auto)

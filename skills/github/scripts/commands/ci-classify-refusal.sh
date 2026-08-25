@@ -23,8 +23,10 @@
 #   fail: ...              (ci_failed only) each failing check with its
 #                          state, workflow, and run id
 #   superseded: ...        (ci_failed only) runs on the head whose checks
-#                          were NOT counted — a failure someone read from
-#                          raw `gh pr checks` output may belong here
+#                          were NOT counted — workflow runs (`workflow=`)
+#                          and older same-name commit statuses (`status=`)
+#                          alike; a failure someone read from raw
+#                          `gh pr checks` output may belong here
 #
 # `cause: none` means the checks pass now: the refusal was not produced by
 # these gates (or has cleared since) — re-run the refusing command.
@@ -166,12 +168,21 @@ echo "$scoped_json" | jq -r "$CI_RUN_JQ_DEFS$SANITIZE_JQ"'
     | "fail: \(.name | clean) state=\((.state // "?") | clean) workflow=\(if (.workflow // "") == "" then "-" else (.workflow | clean) end) run=\(runid // "none")"
 '
 
+# Superseded covers both record kinds: workflow runs whose checks were
+# dropped by run selection, and commit-status records that lost the
+# per-name grouping to a newer same-name status.
 jq -n --argjson raw "$ci_json" --argjson scoped "$scoped_json" "$CI_RUN_JQ_DEFS$SANITIZE_JQ"'
     ([$scoped[] | runid | select(. != null)] | unique) as $kept
-    | $raw
-    | map(select((.workflow // "") != "") | {workflow, run: runid} | select(.run != null))
+    | (($raw
+        | map(select((.workflow // "") != "")
+              | {id: ("workflow=" + (.workflow | clean)), run: runid}
+              | select(.run != null)))
+       + ($raw
+          | map(select((.workflow // "") == "")
+                | {id: ("status=" + (.name | clean)), run: runid}
+                | select(.run != null))))
     | unique
     | map(select(.run as $r | ($kept | index($r)) | not))
     | .[]
-    | "superseded: workflow=\(.workflow | clean) run=\(.run) (checks from this run were not counted)"
+    | "superseded: \(.id) run=\(.run) (checks from this run were not counted)"
 ' -r

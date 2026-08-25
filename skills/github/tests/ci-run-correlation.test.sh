@@ -175,6 +175,27 @@ if jq -e '[.[] | select(.name == "CI Required" and .state == "EXPECTED")] | leng
 else
   fail "an aggregate pointing at a superseded run is held pending (got $OUT)"
 fi
+if [[ "$(jq -r "$CI_RUN_JQ_DEFS"'head_runs | join(",")' <<<"$OUT")" == "200" ]]; then
+  pass "a status held EXPECTED keeps its retired run out of head_runs"
+else
+  fail "a status held EXPECTED keeps its retired run out of head_runs (got $(jq -c "$CI_RUN_JQ_DEFS"'head_runs' <<<"$OUT"))"
+fi
+
+echo "=== head_runs run scope ==="
+
+# A custom commit status linking a run of its own is first-class scope: on a
+# mixed head its run id appears BESIDE the workflow's, so a status failure's
+# fail: line never cites a run head-run: omits.
+MIXED='[
+ {"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:00:00Z","link":"https://x/actions/runs/100/job/1"},
+ {"name":"CI Required","state":"FAILURE","bucket":"fail","workflow":"","link":"https://x/actions/runs/200"}
+]'
+OUT="$(run_scope "$MIXED")"
+if [[ "$(jq -r "$CI_RUN_JQ_DEFS"'head_runs | join(",")' <<<"$OUT")" == "100,200" ]]; then
+  pass "a mixed head names the status-linked run beside the workflow run"
+else
+  fail "a mixed head names the status-linked run beside the workflow run (got $(jq -c "$CI_RUN_JQ_DEFS"'head_runs' <<<"$OUT"))"
+fi
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

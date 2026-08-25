@@ -53,7 +53,7 @@
 #   push ok      -> 0 when no rebase-map printed, or every mapping was
 #                   recorded and applied
 #   1            -> the push landed (or never ran: usage error, pending
-#                   sidecar or state mismatch before the push) but
+#                   sidecar, or ambiguous/mismatched state before the push) but
 #                   reconciliation did not (no state file, unparseable map
 #                   line, jq/update failure). The recorded SHAs are NOT
 #                   reconciled — repair state, then re-run to consume the
@@ -181,8 +181,17 @@ reconcile_map() {
 # so the selected state must agree with the arguments before anything runs.
 # The bare-numeric alias (issue N stored under issue-N) is the one accepted
 # spelling difference; an empty recorded worktree cannot be verified and is
-# accepted as-is.
-if "$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} exists "$issue"; then
+# accepted as-is. `exists` answers 0 (present), 1 (missing), or errors — 2
+# when BOTH the bare-numeric and issue-N files exist and the target is
+# ambiguous. Only a definite yes or no may reach the push: an ambiguous or
+# unreadable state cannot be the reconciliation target of the rebase the
+# push is about to perform.
+state_exists_rc=0
+"$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} exists "$issue" || state_exists_rc=$?
+if [[ "$state_exists_rc" -gt 1 ]]; then
+	fail "could not resolve the workflow state for '$issue' (exists exit $state_exists_rc; the error above names the conflicting files); refusing to push a rebase whose reconciliation target is ambiguous"
+fi
+if [[ "$state_exists_rc" -eq 0 ]]; then
 	state_issue="$("$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} get "$issue" '.issue_id // ""')" \
 		|| fail "could not read the workflow state for $issue"
 	if [[ "$state_issue" != "$issue" ]] \
@@ -261,8 +270,9 @@ fi
 # push's exit code; the sidecar survives a failed state write (or a dying
 # stdout) for the retry to consume. The state write is independent of the
 # sidecar, so a sidecar that cannot be written still gets its map applied —
-# only both failing together loses nothing but the retry convenience, with
-# the transcript's map lines as the surviving copy.
+# a sidecar failure alone costs only the retry convenience; only both failing
+# together loses the reconciliation, with the transcript's map lines as the
+# surviving copy.
 reconciled_without_sidecar=false
 if [[ "$map_json" != '{}' ]]; then
 	sidecar_err=''

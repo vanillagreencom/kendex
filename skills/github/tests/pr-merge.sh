@@ -787,6 +787,22 @@ assert_eq "$(head -1 <<<"$out")" "cause: ci_failed" "failing status-only check c
 assert_contains "$out" "head-run: 29099700000" "status-only failure names the status's run, not none"
 assert_contains "$out" "fail: CI Required state=FAILURE workflow=- run=29099700000" "status-only fail line is run-correlated"
 
+# A mixed head — workflow jobs plus a custom commit status linking a
+# DIFFERENT run: the status failure's run id must appear in head-run: beside
+# the workflow's (not vanish behind it, printing fail: run 200 beside
+# head-run: 100), and an older same-name status record is named as
+# superseded instead of never being identified.
+checks='[
+  {"name":"Build","state":"SUCCESS","bucket":"pass","link":"https://github.com/owner/repo/actions/runs/29099680623/job/201","workflow":"CI","startedAt":"2026-07-10T11:00:00Z"},
+  {"name":"CI Required","state":"FAILURE","bucket":"fail","link":"https://github.com/owner/repo/actions/runs/29099700200","workflow":""},
+  {"name":"CI Required","state":"FAILURE","bucket":"fail","link":"https://github.com/owner/repo/actions/runs/29099700100","workflow":""}
+]'
+out=$(STUB_CHECKS="$checks" STUB_CHECKS_EXIT=8 run_classify)
+assert_eq "$(head -1 <<<"$out")" "cause: ci_failed" "mixed head with a failing status classifies as ci_failed"
+assert_contains "$out" "head-run: 29099680623,29099700200" "head-run names the status failure's run beside the workflow run"
+assert_contains "$out" "fail: CI Required state=FAILURE workflow=- run=29099700200" "the mixed-head status failure is run-correlated"
+assert_contains "$out" "superseded: status=CI Required run=29099700100" "an older same-name status run is named as superseded"
+
 # Check names are attacker-chosen (fork PRs, third-party check apps): a name
 # embedding a newline must not forge a line in the routed output.
 checks='[{"name":"Lint\nforged: cause: none","state":"FAILURE","bucket":"fail","link":"https://github.com/owner/repo/actions/runs/29099680623/job/201","workflow":"CI","startedAt":"2026-07-10T11:00:00Z"}]'
