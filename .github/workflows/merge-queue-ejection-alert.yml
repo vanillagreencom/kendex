@@ -2,27 +2,23 @@
 # notifies nobody, and the review-gate wiring only writes commit statuses —
 # vstack#1166 sat CLEAN-but-unqueued for ~9 hours before a human asked why
 # nothing had merged (VST-196 / vstack#1177). This workflow turns the
-# ejection into two durable signals:
-#   1. a PR comment naming the dequeue reason and the failing merge-group
-#      run, with a flake-vs-genuine hint (same-named check state on the PR's
-#      own head) — informational only, it NEVER re-arms auto-merge;
-#   2. an intake issue, so the ejection enters the triage queue (the
-#      GH→Linear creation sync mirrors it) instead of vanishing.
-# One issue per PR per ejection run id; re-runs and duplicate deliveries
-# de-duplicate against the existing open issue.
+# ejection into one durable signal: a PR comment naming the dequeue reason
+# and the failing merge-group run, with a flake-vs-genuine hint (same-named
+# check state on the PR's own head) — informational only, it NEVER re-arms
+# auto-merge.
 #
-# The intake issue is REASON-AWARE: MANUAL is a deliberate dequeue (the
-# dequeue-push-rearm flow) and MERGE_CONFLICT is routine queue re-evaluation
-# after a sibling merged — both get the PR comment (the dropped arm is still
-# real) but no tracker issue. Only failure-shaped reasons (CI_FAILURE and
-# anything unrecognized, fail-closed) enter the triage queue.
+# The comment is the whole output. Live recovery belongs to the queue-wait
+# watcher armed on every queued PR (it reports ejected/disarmed/not_queued
+# to the owning session); a tracker issue per ejection only mirrored noise
+# into the issue history, one issue per queue attempt, without making
+# recovery faster.
 name: Merge queue ejection alert
 
 # pull_request_target, not pull_request: a fork PR's dequeue would hand a
-# plain pull_request workflow a read-only GITHUB_TOKEN, silencing both the
-# comment and the intake issue. This workflow never checks out or executes
-# PR-controlled code (same posture as review-gate-writer.yml), so the
-# base-repository context is safe.
+# plain pull_request workflow a read-only GITHUB_TOKEN, silencing the
+# comment. This workflow never checks out or executes PR-controlled code
+# (same posture as review-gate-writer.yml), so the base-repository context
+# is safe.
 "on":
   pull_request_target:
     types: [dequeued]
@@ -31,7 +27,6 @@ permissions:
   contents: read
   actions: read
   checks: read
-  issues: write
   pull-requests: write
 
 jobs:
@@ -42,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Comment on the PR and file the intake issue
+      - name: Comment on the PR
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -176,46 +171,3 @@ jobs:
           _Automated by merge-queue-ejection-alert (VST-196). This alert never re-arms auto-merge._
           BODY
           gh pr comment "$PR_NUMBER" --body-file "$body_file"
-
-          # Intake issue (deduped per PR + ejection run), failure-shaped
-          # reasons only: a deliberate dequeue or a routine queue
-          # re-evaluation is not triage work. Guarded by a flag, not an
-          # early exit, so steps appended later still run for every reason.
-          create_intake_issue=1
-          case "${DEQUEUE_REASON}" in
-            MANUAL|MERGE_CONFLICT)
-              echo "reason ${DEQUEUE_REASON}: deliberate dequeue / queue re-evaluation — comment posted, no intake issue"
-              create_intake_issue=0
-              ;;
-          esac
-          # An unidentified ejecting run must not collapse successive
-          # ejections into one marker: fall back to this alert run's own id.
-          marker="ejection-alert:pr-${PR_NUMBER}:run-${run_id:-alert-${GITHUB_RUN_ID}}"
-          # The dedupe lookup runs only when an issue could be created: a
-          # transient Issues API failure must not kill a deliberately
-          # non-intake run under set -e.
-          if [ "$create_intake_issue" = "1" ]; then
-            existing="$(gh issue list --search "\"$marker\" in:body" --state open --json number --jq 'length')"
-            if [ "$existing" != "0" ]; then
-              echo "intake issue for $marker already open; skipping create"
-              create_intake_issue=0
-            fi
-          fi
-          if [ "$create_intake_issue" = "1" ]; then
-            issue_file="$(mktemp)"
-            cat > "$issue_file" <<BODY
-          PR #${PR_NUMBER} was ejected from the merge queue (reason: \`${DEQUEUE_REASON}\`); its auto-merge arm is dropped and it will sit unmerged until re-armed.
-
-          Ejecting run: ${run_url:-not identified}
-
-          Failing job(s):
-          ${failing_jobs}
-
-          ${hint}
-
-          <!-- ${marker} -->
-          BODY
-            gh issue create \
-              --title "merge-queue ejection: PR #${PR_NUMBER} — ${run_name:-failing required check}" \
-              --body-file "$issue_file"
-          fi
