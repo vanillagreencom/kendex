@@ -1,26 +1,44 @@
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::error::{CoreError, Result};
+
+mod lock;
+pub(crate) use lock::{LockedFile, open_read_no_follow};
 
 /// Write via a sibling temp file + rename so readers never see a torn file.
 /// A symlink at the path is followed: the file it points at is replaced and
 /// the link stays — renaming over the link itself would swap a user's
 /// dotfiles link for a detached copy.
 pub fn atomic_write(path: &Path, contents: &str) -> Result<()> {
-    write_then_rename(path, contents, false)
+    write_then_rename(path, contents, false, true)
 }
 
 /// `atomic_write` plus full crash durability: the temp file syncs before
 /// the rename and the parent directory syncs after, so after this returns
 /// the file either exists complete or not at all — even across power loss.
 pub fn atomic_write_durable(path: &Path, contents: &str) -> Result<()> {
-    write_then_rename(path, contents, true)
+    write_then_rename(path, contents, true, true)
 }
 
-fn write_then_rename(path: &Path, contents: &str, durable: bool) -> Result<()> {
-    let path = follow_link(path);
+/// Atomic cache write that replaces a final symlink instead of writing
+/// through it. Cache entries are owned files, never user-managed links.
+pub(crate) fn atomic_write_no_follow(path: &Path, contents: &str) -> Result<()> {
+    write_then_rename(path, contents, false, false)
+}
+
+fn write_then_rename(
+    path: &Path,
+    contents: &str,
+    durable: bool,
+    follow_final_link: bool,
+) -> Result<()> {
+    let path = match follow_final_link {
+        true => follow_link(path),
+        false => path.to_path_buf(),
+    };
     let parent = path
         .parent()
         .ok_or_else(|| CoreError::io(&path, std::io::Error::other("path has no parent")))?;
@@ -30,11 +48,22 @@ fn write_then_rename(path: &Path, contents: &str, durable: bool) -> Result<()> {
     // fails with ENOENT or writes its payload straight over the live file
     // the winner just moved into place. The app writes settings from a
     // thread pool, so same-path writes really do overlap.
-    let tmp = path.with_extension(format!(
-        "tmp.{}.{}",
-        std::process::id(),
-        NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
-    ));
+    let (tmp, mut temp_file) = loop {
+        let candidate = path.with_extension(format!(
+            "tmp.{}.{}",
+            std::process::id(),
+            NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+        ));
+        match fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&candidate)
+        {
+            Ok(file) => break (candidate, file),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(CoreError::io(&candidate, error)),
+        }
+    };
     // A failed write leaves nothing behind. With a name per attempt there is
     // no next writer to overwrite an abandoned temp file, so it would just
     // sit there beside the real one — a full copy of whatever was being
@@ -43,12 +72,15 @@ fn write_then_rename(path: &Path, contents: &str, durable: bool) -> Result<()> {
         let _ = fs::remove_file(&tmp);
         CoreError::io(at, error)
     };
-    fs::write(&tmp, contents).map_err(|e| discard(e, &tmp))?;
-    if durable {
-        fs::File::open(&tmp)
-            .and_then(|f| f.sync_all())
-            .map_err(|e| discard(e, &tmp))?;
+    if let Err(error) = temp_file.write_all(contents.as_bytes()) {
+        drop(temp_file);
+        return Err(discard(error, &tmp));
     }
+    if durable && let Err(error) = temp_file.sync_all() {
+        drop(temp_file);
+        return Err(discard(error, &tmp));
+    }
+    drop(temp_file);
     fs::rename(&tmp, &path).map_err(|e| discard(e, &path))?;
     #[cfg(unix)]
     if durable && let Ok(dir) = fs::File::open(parent) {
@@ -65,70 +97,6 @@ fn follow_link(path: &Path) -> PathBuf {
     match path.is_symlink() {
         true => fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
         false => path.to_path_buf(),
-    }
-}
-
-/// A file held under the OS's exclusive lock, released on drop. The one
-/// owner of the lock-file ritual: callers hold a `LockedFile` and never
-/// touch fd-lock, `mem::forget`, or the release themselves.
-pub(crate) struct LockedFile {
-    file: fs::File,
-}
-
-impl LockedFile {
-    /// Take the exclusive lock at `path`, creating the file as needed.
-    /// `Ok(None)` is contention — a live holder exists. Any other failure
-    /// is an error: a filesystem that cannot lock at all must say so, or
-    /// every caller would read it as "busy" and wait on nobody.
-    pub(crate) fn try_exclusive(path: &Path) -> std::io::Result<Option<LockedFile>> {
-        let file = fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(path)?;
-        // fd-lock ties its guard lifetime to the RwLock borrow; the OS
-        // lock is really held by the open fd, so forget the guard and
-        // keep the file — Drop below releases explicitly.
-        let mut lock = fd_lock::RwLock::new(file);
-        match lock.try_write() {
-            Ok(guard) => std::mem::forget(guard),
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(None),
-            Err(error) => return Err(error),
-        }
-        Ok(Some(LockedFile {
-            file: lock.into_inner(),
-        }))
-    }
-
-    /// Test-only view of the fd, for cloning a description copy.
-    #[cfg(test)]
-    pub(crate) fn file(&self) -> &fs::File {
-        &self.file
-    }
-}
-
-/// Release the OS lock before the fd closes. On unix, close alone is not
-/// release: a child forked by any thread while this fd was open holds a
-/// copy of the open file description until it execs — O_CLOEXEC closes at
-/// exec, not at fork — and the lock stays held until every copy is gone.
-/// That window turns an unlock-by-close into a spurious "busy" for whoever
-/// re-locks the path next, with no holder actually alive. An explicit
-/// unlock frees the description immediately, no matter who still holds a
-/// copy. Windows spawns without fork, so no copy outlives the guard; the
-/// handle's close is the release there, which LockFileEx documents may lag
-/// briefly — accepted, since the safe unlock APIs do not reach Windows and
-/// there is no fork window to defend against.
-impl Drop for LockedFile {
-    fn drop(&mut self) {
-        // Unlocking a valid fd has no failure mode worth surfacing from a
-        // Drop, and the close that follows releases too once stray
-        // description copies are gone; best-effort is honest here.
-        // Solaris has no flock in rustix; fd-lock locks there via fcntl,
-        // so the release mirrors it.
-        #[cfg(all(unix, not(target_os = "solaris")))]
-        let _ = rustix::fs::flock(&self.file, rustix::fs::FlockOperation::Unlock);
-        #[cfg(target_os = "solaris")]
-        let _ = rustix::fs::fcntl_lock(&self.file, rustix::fs::FlockOperation::Unlock);
     }
 }
 
@@ -355,5 +323,21 @@ mod tests {
 
         assert!(link.is_symlink());
         assert_eq!(fs::read_to_string(&real).unwrap(), "newer");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_owned_cache_write_replaces_the_link_not_its_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("target");
+        fs::write(&target, "keep").unwrap();
+        let cache = tmp.path().join("cache.json");
+        std::os::unix::fs::symlink(&target, &cache).unwrap();
+
+        atomic_write_no_follow(&cache, "cached").unwrap();
+
+        assert!(!cache.is_symlink());
+        assert_eq!(fs::read_to_string(cache).unwrap(), "cached");
+        assert_eq!(fs::read_to_string(target).unwrap(), "keep");
     }
 }

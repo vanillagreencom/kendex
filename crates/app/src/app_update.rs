@@ -1,6 +1,6 @@
 use kendex_core::app_update::AppUpdateView;
 use kendex_core::env::Env;
-use kendex_core::registry::CurlFetch;
+use kendex_core::registry::ReleaseFeedFetch;
 
 const RELEASE_FEED: &str =
     "https://github.com/vanillagreencom/kendex/releases/latest/download/feed.json";
@@ -28,7 +28,7 @@ fn check(refresh: bool) -> Result<AppUpdateView, String> {
     let settings = kendex_core::settings::load(&env).map_err(|error| error.to_string())?;
     kendex_core::app_update::check(
         &env,
-        &CurlFetch,
+        &ReleaseFeedFetch,
         kendex_core::app_update::CheckRequest {
             current_version: env!("CARGO_PKG_VERSION"),
             target: env!("KENDEX_TARGET"),

@@ -4,9 +4,6 @@ use thiserror::Error;
 
 use crate::model::{HarnessId, ItemKind};
 
-mod result;
-pub use result::Result;
-
 #[derive(Debug, Error)]
 pub enum CoreError {
     #[error("cannot locate the home directory on this system")]
@@ -131,6 +128,9 @@ pub enum CoreError {
 
     #[error("settings are busy: another kendex process holds {lock}")]
     SettingsBusy { lock: PathBuf },
+
+    #[error("app update check is busy: another kendex process holds {lock}")]
+    AppUpdateBusy { lock: PathBuf },
 
     #[error("source cache is busy: another download holds {lock}")]
     CacheBusy { lock: PathBuf },
@@ -397,3 +397,14 @@ pub enum CoreError {
     #[error("{message}")]
     Authoring { message: String },
 }
+
+impl CoreError {
+    pub fn io(path: impl Into<PathBuf>, source: std::io::Error) -> Self {
+        CoreError::Io {
+            path: path.into(),
+            source,
+        }
+    }
+}
+
+pub type Result<T> = std::result::Result<T, CoreError>;

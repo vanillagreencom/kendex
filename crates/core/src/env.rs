@@ -223,6 +223,11 @@ impl Env {
         self.cache_dir.join(APP_DIR).join("app-update.json")
     }
 
+    /// Cross-process lock for one release-check cache transaction.
+    pub fn app_update_lock_file(&self) -> PathBuf {
+        self.cache_dir.join(APP_DIR).join("app-update.lock")
+    }
+
     pub fn trash_dir(&self) -> PathBuf {
         self.data_dir.join(APP_DIR).join("trash")
     }

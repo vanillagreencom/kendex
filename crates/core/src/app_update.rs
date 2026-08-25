@@ -1,5 +1,6 @@
 //! Cached app release checks shared by the desktop command and its tests.
 
+use std::io::Read;
 use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
@@ -8,13 +9,15 @@ use specta::Type;
 use crate::clock;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-use crate::fs::{atomic_write, read_if_exists};
+use crate::fs::{LockedFile, atomic_write_no_follow, open_read_no_follow};
 use crate::registry::Fetch;
 use crate::update_feed::{ReleaseFeed, VersionRelation, release_notes_url};
 
 pub const DEFAULT_TTL_SECS: u64 = 6 * 60 * 60;
-const MAX_CACHE_BYTES: u64 = crate::update_feed::MAX_FEED_BYTES as u64 * 2;
+const MAX_CACHE_BYTES: u64 = crate::update_feed::MAX_FEED_BYTES as u64 * 3;
 const MAX_ERROR_BYTES: usize = 512;
+const MAX_ETAG_BYTES: usize = 512;
+const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 static CHECK_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -69,6 +72,8 @@ pub enum AppUpdateErrorKind {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct Cache {
+    #[serde(default)]
+    feed_url: String,
     etag: Option<String>,
     fetched_at: Option<u64>,
     last_attempt_at: Option<u64>,
@@ -97,8 +102,21 @@ pub fn check(env: &Env, fetch: &dyn Fetch, request: CheckRequest<'_>) -> Result<
         .get_or_init(|| Mutex::new(()))
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _process_guard = update_lock(env)?;
     let now = clock::unix_now();
     let mut cached = read_cache(env)?.unwrap_or_default();
+    let feed_url = request.feed_url.trim();
+    if feed_url.is_empty() {
+        return Err(CoreError::UpdateFeedMalformed {
+            why: "the feed URL is empty".to_owned(),
+        });
+    }
+    if cached.feed_url != feed_url {
+        cached = Cache {
+            feed_url: feed_url.to_owned(),
+            ..Cache::default()
+        };
+    }
     let due = cached
         .last_attempt_at
         .is_none_or(|attempt| now.saturating_sub(attempt) >= DEFAULT_TTL_SECS);
@@ -114,7 +132,7 @@ pub fn check(env: &Env, fetch: &dyn Fetch, request: CheckRequest<'_>) -> Result<
     }
 
     cached.last_attempt_at = Some(now);
-    let response = fetch.get(request.feed_url, cached.etag.as_deref());
+    let response = fetch.get(feed_url, cached.etag.as_deref());
     match response {
         Ok(response) if response.status == 304 && cached.body.is_some() => {
             cached.fetched_at = Some(now);
@@ -124,7 +142,7 @@ pub fn check(env: &Env, fetch: &dyn Fetch, request: CheckRequest<'_>) -> Result<
         Ok(response) if response.status == 200 => match ReleaseFeed::parse(&response.body) {
             Ok(_) => match String::from_utf8(response.body) {
                 Ok(body) => {
-                    cached.etag = response.etag;
+                    cached.etag = response.etag.filter(|etag| etag.len() <= MAX_ETAG_BYTES);
                     cached.fetched_at = Some(now);
                     cached.last_success_at = Some(now);
                     cached.body = Some(body);
@@ -214,15 +232,31 @@ fn view(
 
 fn read_cache(env: &Env) -> Result<Option<Cache>> {
     let path = env.app_update_cache_file();
-    let size = match std::fs::metadata(&path) {
-        Ok(metadata) => metadata.len(),
+    let file = match open_read_no_follow(&path) {
+        Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_)
+            if std::fs::symlink_metadata(&path)
+                .is_ok_and(|metadata| metadata.file_type().is_symlink()) =>
+        {
+            return Ok(None);
+        }
         Err(error) => return Err(CoreError::io(&path, error)),
     };
-    if size > MAX_CACHE_BYTES {
+    let metadata = file
+        .metadata()
+        .map_err(|error| CoreError::io(&path, error))?;
+    if !metadata.is_file() || metadata.len() > MAX_CACHE_BYTES {
         return Ok(None);
     }
-    let Some(text) = read_if_exists(&path)? else {
+    let mut bytes = Vec::new();
+    file.take(MAX_CACHE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| CoreError::io(&path, error))?;
+    if bytes.len() as u64 > MAX_CACHE_BYTES {
+        return Ok(None);
+    }
+    let Ok(text) = String::from_utf8(bytes) else {
         return Ok(None);
     };
     let Ok(cache) = serde_json::from_str::<Cache>(&text) else {
@@ -245,7 +279,26 @@ fn write_cache(env: &Env, cache: &Cache) -> Result<()> {
     let json = serde_json::to_string(cache).map_err(|error| CoreError::UpdateFeedMalformed {
         why: error.to_string(),
     })?;
-    atomic_write(&path, &json)
+    atomic_write_no_follow(&path, &json)
+}
+
+fn update_lock(env: &Env) -> Result<LockedFile> {
+    let path = env.app_update_lock_file();
+    let parent = path
+        .parent()
+        .ok_or_else(|| CoreError::io(&path, std::io::Error::other("path has no parent")))?;
+    std::fs::create_dir_all(parent).map_err(|error| CoreError::io(parent, error))?;
+    let deadline = std::time::Instant::now() + LOCK_WAIT;
+    loop {
+        match LockedFile::try_exclusive_no_follow(&path) {
+            Ok(Some(lock)) => return Ok(lock),
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Ok(None) => return Err(CoreError::AppUpdateBusy { lock: path }),
+            Err(error) => return Err(CoreError::io(&path, error)),
+        }
+    }
 }
 
 fn update_error(kind: AppUpdateErrorKind, message: &str) -> AppUpdateError {
