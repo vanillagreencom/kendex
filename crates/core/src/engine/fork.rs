@@ -19,10 +19,12 @@ use crate::source::local_source_root;
 mod beside;
 mod forkable;
 mod rename;
+mod vacant;
 pub use beside::fork_beside;
 use forkable::{ambiguous_skill_tree, source_form};
 pub use forkable::{forkable_harness, forkable_rendering};
 pub use rename::rename_fork;
+use vacant::vacant_name;
 
 /// Turn one edited installation into a local fork. The harness names which
 /// installation's bytes are captured — an agent renders per tool, and the
@@ -51,7 +53,7 @@ pub fn fork(
     let edited = edited_rendering(env, scope, kind, name, harness)?;
     let captured = capture(kind, &edited)?;
     let mut ops = capture_ops(env, scope, kind, name, &edited, captured)?;
-    let provenance = provenance(env, scope, kind, name, &manifest, &decl)?;
+    let provenance = provenance(env, scope, kind, name, harness, &manifest, &decl)?;
     let entry = manifest
         .declared_mut(kind)
         .get_mut(name)
@@ -147,26 +149,38 @@ fn edited_rendering(
 }
 
 /// Where the original came from, recorded on the fork so the Library can
-/// say what it replaced and which commit the edits were made on.
+/// say what it replaced and which commit the edits were made on. The
+/// commit is the captured harness's own lock record — installations can
+/// sit at different commits mid-refresh, and the edits live in the one
+/// rendering being kept. A harness with no record yet falls back to any
+/// installation's commit: an approximate base beats none.
 fn provenance(
     env: &Env,
     scope: &Scope,
     kind: ItemKind,
     name: &str,
+    harness: HarnessId,
     manifest: &manifest::Manifest,
     decl: &manifest::ItemDecl,
 ) -> Result<ForkProvenance> {
+    let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
+    let mut recorded = lock
+        .entries
+        .values()
+        .filter(|entry| entry.kind == kind && entry.name == name)
+        .filter(|entry| entry.source_commit.is_some());
+    let commit = recorded
+        .clone()
+        .find(|entry| entry.harness == harness)
+        .or_else(|| recorded.next())
+        .and_then(|entry| entry.source_commit.clone());
     Ok(ForkProvenance {
         repo: manifest
             .sources
             .get(&decl.source)
             .and_then(|s| s.repo.clone()),
         source: decl.source.clone(),
-        commit: crate::lock::load(&crate::lock::lock_path(env, scope))?
-            .entries
-            .values()
-            .filter(|entry| entry.kind == kind && entry.name == name)
-            .find_map(|entry| entry.source_commit.clone()),
+        commit,
         forked_at: crate::clock::timestamp(),
     })
 }
@@ -195,71 +209,6 @@ fn local_item(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> PathBuf {
         ItemKind::Skill => local_root.join("skills").join(name),
         _ => local_root.join("agents").join(format!("{name}.md")),
     }
-}
-
-/// Whether `new` can be declared here as a local item: a legal name, no
-/// declaration of this kind under it, nothing in the local source's slot
-/// for it — a dangling link included, which exists to the OS and to nothing
-/// that follows it — and nothing that folds to it. A declared `Docs` beside
-/// a new `docs`, or a `café` spelled two ways, renders to one path on a
-/// case- or composition-folding filesystem, where the planner would refuse
-/// both and sweep the one that was there; each tool's rendered name and a
-/// local-source sibling fold the same way.
-fn vacant_name(
-    env: &Env,
-    scope: &Scope,
-    manifest: &manifest::Manifest,
-    kind: ItemKind,
-    new: &str,
-) -> Result<()> {
-    if let Some(problem) = crate::names::item_problem(new) {
-        return Err(CoreError::ItemNotInSource {
-            name: problem,
-            source_name: "the new name".to_owned(),
-        });
-    }
-    let collision = |existing: &str| CoreError::SourceCollision {
-        name: new.to_owned(),
-        existing: existing.to_owned(),
-        requested: LOCAL_SOURCE_NAME.to_owned(),
-    };
-    let same_slot = |a: &str, b: &str| {
-        crate::names::fold(a) == crate::names::fold(b)
-            || HarnessId::ALL.iter().any(|harness| {
-                crate::names::fold(&crate::harness::rendered_name(*harness, a))
-                    == crate::names::fold(&crate::harness::rendered_name(*harness, b))
-            })
-            || crate::names::fold(&crate::harness::canonical_name(a))
-                == crate::names::fold(&crate::harness::canonical_name(b))
-    };
-    if manifest
-        .declared(kind)
-        .keys()
-        .any(|existing| same_slot(existing, new))
-    {
-        return Err(collision("this scope's manifest"));
-    }
-    if fs::symlink_metadata(local_item(env, scope, kind, new)).is_ok() {
-        return Err(collision("this scope's local source"));
-    }
-    let slot = local_item(env, scope, kind, new);
-    let siblings = slot
-        .parent()
-        .and_then(|dir| fs::read_dir(dir).ok())
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.file_name().to_string_lossy().into_owned());
-    for sibling in siblings {
-        let sibling = match kind {
-            ItemKind::Skill => sibling,
-            _ => sibling.strip_suffix(".md").unwrap_or(&sibling).to_owned(),
-        };
-        if same_slot(&sibling, new) {
-            return Err(collision("this scope's local source"));
-        }
-    }
-    Ok(())
 }
 
 /// The ops that move the edited bytes into the local source: an earlier

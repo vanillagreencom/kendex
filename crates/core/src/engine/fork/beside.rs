@@ -17,9 +17,10 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// repository can name — moves the original's hold to that commit, so the
 /// source version that lands is the newest rather than the one the edits
 /// were made on; `None` leaves the hold as it is. Everything is proven
-/// before anything is written (invariant 11): the new name is vacant, the
-/// source still carries the original at the target revision, and the
-/// edited bytes name themselves in a way one scalar can replace.
+/// before anything is written (invariant 11): the new name is vacant and
+/// every target loader takes it, the source still carries the original at
+/// the target revision, and the edited bytes can carry the new name in
+/// their frontmatter.
 ///
 /// The plan: capture the edited bytes into the local source under the
 /// new name, trash the edited artifact so the follow-up apply re-renders
@@ -41,12 +42,20 @@ pub fn fork_beside(
             name: name.to_owned(),
         });
     };
-    vacant_name(env, scope, &manifest, kind, new_name)?;
-    let hold = crate::package::resolve_hold(env, scope, &manifest, kind, name, rev)?;
+    vacant_name(env, scope, &manifest, kind, &decl, new_name)?;
+    let hold = match rev {
+        Some(selector) => Some(crate::package::resolve_hold(
+            env, &manifest, kind, name, selector,
+        )?),
+        None => {
+            crate::package::prove_present(env, scope, &manifest, kind, name)?;
+            None
+        }
+    };
     let edited = edited_rendering(env, scope, kind, name, harness)?;
-    let captured = named(capture(kind, &edited)?, name, new_name)?;
+    let captured = named(capture(kind, &edited)?, new_name)?;
     let mut ops = capture_ops(env, scope, kind, new_name, &edited, captured)?;
-    let provenance = provenance(env, scope, kind, name, &manifest, &decl)?;
+    let provenance = provenance(env, scope, kind, name, harness, &manifest, &decl)?;
 
     let mut own = decl;
     own.source = LOCAL_SOURCE_NAME.to_owned();
@@ -84,17 +93,18 @@ pub fn fork_beside(
 /// agent by the name its frontmatter gives, and discovery treats a
 /// directory and its frontmatter disagreeing as a finding — so a copy under
 /// a new name says that name, or it would shadow the original it sits
-/// beside. Bytes whose name no single scalar can replace refuse the fork
-/// rather than land a copy that still answers to the old one.
-fn named(captured: Capture, name: &str, new_name: &str) -> Result<Capture> {
+/// beside. A frontmatter without a name gets one, exactly as rendering
+/// would give it one; bytes whose name no single scalar can carry refuse
+/// the fork rather than land a copy that still answers to the old one.
+fn named(captured: Capture, new_name: &str) -> Result<Capture> {
     let rename = |bytes: Vec<u8>| -> Result<Vec<u8>> {
-        let refused = |why: String| CoreError::ItemNotInSource {
-            name: name.to_owned(),
-            source_name: format!("a copy that can be renamed — {why}"),
+        let refused = |problem: String| CoreError::ForkNameUnusable {
+            name: new_name.to_owned(),
+            problem,
         };
         let text =
             std::str::from_utf8(&bytes).map_err(|_| refused("the file is not text".to_owned()))?;
-        crate::render::skill::renamed(text, new_name)
+        crate::render::skill::with_name(text, new_name)
             .map(String::into_bytes)
             .map_err(|problem| refused(problem.to_string()))
     };

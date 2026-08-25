@@ -570,21 +570,8 @@ fn capture_to_local(
     // A sibling that folds to the same name on a case- or composition-folding
     // filesystem would alias or overwrite this one on macOS or Windows, even
     // where an exact-path check on this planning host sees no collision.
-    if let Some(parent) = target.parent()
-        && let Some(leaf) = target.file_name().and_then(|n| n.to_str())
-    {
-        let folded = crate::names::fold(leaf);
-        if let Ok(entries) = std::fs::read_dir(parent) {
-            for entry in entries.flatten() {
-                let sibling = entry.file_name();
-                let Some(sibling) = sibling.to_str() else {
-                    continue;
-                };
-                if sibling != leaf && crate::names::fold(sibling) == folded {
-                    return occupied(parent.join(sibling));
-                }
-            }
-        }
+    if let Some(sibling) = crate::names::folding_sibling(target) {
+        return occupied(sibling);
     }
     if target.exists() {
         let existing = crate::hash::hash_tree(target)?;

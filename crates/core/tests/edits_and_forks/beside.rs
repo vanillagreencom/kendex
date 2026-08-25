@@ -149,7 +149,114 @@ fn fork_beside_refuses_a_name_the_scope_already_uses() {
     );
 
     let bad = beside("a/b/c");
-    assert!(matches!(bad, CoreError::ItemNotInSource { .. }), "{bad:?}");
+    assert!(matches!(bad, CoreError::ForkNameUnusable { .. }), "{bad:?}");
+}
+
+/// A derived install — a dependency or bundle member — has a lock entry
+/// but no declaration of its own; its name is no less taken. A refusal
+/// here writes nothing: the manifest stays byte-identical and the
+/// dependency's install is untouched.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn fork_beside_refuses_a_name_an_installed_dependency_holds() {
+    let w = world();
+    let gh = w.upstream.join("skills/gh/SKILL.md");
+    fs::create_dir_all(gh.parent().unwrap()).unwrap();
+    fs::write(
+        &gh,
+        "---\nname: gh\ndescription: about gh\ndependencies:\n  required: [helper]\n---\nParent.\n",
+    )
+    .unwrap();
+    write_skill(&w.upstream, "helper", "Helper.");
+    commit(&w.upstream, "one");
+    declare(&w, "[skills.gh]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    let helper = w.home.join("app/.agents/skills/helper/SKILL.md");
+    assert!(helper.is_file(), "dependency installed without declaration");
+    fs::write(skill_file(&w), "---\nname: gh\n---\nMine.\n").unwrap();
+    let before = manifest_text(&w);
+
+    let refused = fork::fork_beside(
+        &w.env,
+        &w.scope,
+        ItemKind::Skill,
+        "gh",
+        HarnessId::Claude,
+        "helper",
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(refused, CoreError::SourceCollision { .. }),
+        "{refused:?}"
+    );
+    assert_eq!(manifest_text(&w), before);
+    assert!(fs::read_to_string(&helper).unwrap().contains("Helper."));
+    assert!(
+        fs::read_to_string(skill_file(&w))
+            .unwrap()
+            .contains("Mine.")
+    );
+}
+
+/// Something already sitting where the fork would render — a directory
+/// kendex never wrote — would make the render pass refuse after the fork
+/// was recorded. It refuses up front instead, touching nothing.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn fork_beside_refuses_a_destination_an_unmanaged_file_occupies() {
+    let (w, _one, _two) = edited_world();
+    let stray = w.home.join("app/.agents/skills/gh-mine");
+    fs::create_dir_all(&stray).unwrap();
+    fs::write(stray.join("notes.md"), "not kendex's").unwrap();
+    let before = manifest_text(&w);
+
+    let refused = fork::fork_beside(
+        &w.env,
+        &w.scope,
+        ItemKind::Skill,
+        "gh",
+        HarnessId::Claude,
+        "gh-mine",
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(refused, CoreError::ForkNameUnusable { .. }),
+        "{refused:?}"
+    );
+    assert_eq!(manifest_text(&w), before);
+    assert!(!w.home.join("app/.kendex-local/skills/gh-mine").exists());
+    assert_eq!(
+        fs::read_to_string(stray.join("notes.md")).unwrap(),
+        "not kendex's"
+    );
+}
+
+/// A name a target tool's loader would reject records a fork and then
+/// installs nothing — so the loader's own check runs first, and the
+/// refusal names it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn fork_beside_refuses_a_name_a_target_loader_refuses() {
+    let (w, _one, _two) = edited_world();
+    let before = manifest_text(&w);
+    let refused = fork::fork_beside(
+        &w.env,
+        &w.scope,
+        ItemKind::Skill,
+        "gh",
+        HarnessId::Claude,
+        "a..b",
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(refused, CoreError::ForkNameUnusable { .. }),
+        "{refused:?}"
+    );
+    assert_eq!(manifest_text(&w), before);
+    assert!(!w.home.join("app/.kendex-local/skills/a..b").exists());
 }
 
 #[allow(clippy::unwrap_used)]
@@ -496,6 +603,75 @@ fn fork_beside_refuses_a_name_that_renders_like_a_namespaced_neighbour() {
     );
 }
 
+/// A local-source sibling folding onto a namespaced name's own directory
+/// slot is a collision too: the scan compares the slot's leaf against its
+/// neighbours, not the full `plugin/item` spelling against a bare leaf.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn fork_beside_refuses_a_folding_sibling_of_a_namespaced_name() {
+    let (w, _one, _two) = edited_world();
+    fs::create_dir_all(w.home.join("app/.kendex-local/skills/ns/GH")).unwrap();
+    let before = manifest_text(&w);
+
+    let refused = fork::fork_beside(
+        &w.env,
+        &w.scope,
+        ItemKind::Skill,
+        "gh",
+        HarnessId::Claude,
+        "ns/gh",
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(refused, CoreError::SourceCollision { .. }),
+        "{refused:?}"
+    );
+    assert_eq!(manifest_text(&w), before);
+}
+
+/// The fork record names the commit the captured harness's own bytes came
+/// from — installations can sit at different commits mid-refresh, and the
+/// edits live in the one rendering being kept.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn fork_beside_records_the_captured_harness_own_commit() {
+    let (w, one, _two) = edited_world();
+    // A second tool's record at another commit, keyed to iterate first: the
+    // harness lookup must decide, not iteration order.
+    let path = kendex_core::lock::lock_path(&w.env, &w.scope);
+    let mut lock = kendex_core::lock::load(&path).unwrap();
+    let claude = lock
+        .entries
+        .values()
+        .find(|entry| entry.kind == ItemKind::Skill && entry.name == "gh")
+        .unwrap()
+        .clone();
+    let mut other = claude;
+    other.harness = HarnessId::Opencode;
+    other.source_commit = Some("0".repeat(40));
+    lock.entries.insert("0-opencode-first".to_owned(), other);
+    kendex_core::lock::save(&path, &lock).unwrap();
+
+    let plan = fork::fork_beside(
+        &w.env,
+        &w.scope,
+        ItemKind::Skill,
+        "gh",
+        HarnessId::Claude,
+        "gh-edited",
+        None,
+    )
+    .unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    let record = manifest_text(&w);
+    let record = record.split("[forks.skill.gh-edited]").nth(1).unwrap();
+    assert!(
+        record.contains(&format!("commit = \"{one}\"")),
+        "the record carries the captured harness's commit, not another tool's: {record}"
+    );
+}
+
 /// The copy's frontmatter is rewritten by span: a quoted name, a comment,
 /// spaces before the colon, CRLF endings, and a `...` terminator all keep
 /// every other byte; a name no single scalar can replace refuses the fork.
@@ -518,6 +694,20 @@ fn fork_beside_renames_the_copy_by_its_name_span() {
         (
             "---\nname: \"gh\"\n---\nBody.\n",
             "---\nname: gh-edited\n---\nBody.\n",
+        ),
+        (
+            "---\nname: \"gh\" # package\n---\nBody.\n",
+            "---\nname: gh-edited # package\n---\nBody.\n",
+        ),
+        (
+            "---\nname: gh\n  # note\n---\nBody.\n",
+            "---\nname: gh-edited\n  # note\n---\nBody.\n",
+        ),
+        // A frontmatter without a name gets one, exactly as rendering
+        // would give it one.
+        (
+            "---\ndescription: d\n---\nBody.\n",
+            "---\nname: gh-edited\ndescription: d\n---\nBody.\n",
         ),
     ];
     for (text, want) in cases {
@@ -542,7 +732,6 @@ fn fork_beside_renames_the_copy_by_its_name_span() {
     for text in [
         "---\nname: |\n  gh\n---\nBody.\n",
         "---\nname: gh\nname: gh\n---\nBody.\n",
-        "---\ndescription: d\n---\nBody.\n",
     ] {
         let (w, _one, _two) = edited_world();
         fs::write(skill_file(&w), text).unwrap();
@@ -558,7 +747,7 @@ fn fork_beside_renames_the_copy_by_its_name_span() {
         )
         .unwrap_err();
         assert!(
-            matches!(refused, CoreError::ItemNotInSource { .. }),
+            matches!(refused, CoreError::ForkNameUnusable { .. }),
             "{text:?}: {refused:?}"
         );
         assert_eq!(manifest_text(&w), before);

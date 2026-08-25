@@ -337,30 +337,18 @@ fn land(target: &Path, staged: Vec<StagedWrite>, outcome: &mut ImportOutcome) ->
 /// A sibling whose name folds to the destination's spelling occupies it on
 /// a case-insensitive filesystem — refused before the copy, naming both.
 fn fold_collision(dest: &Path, name: &str) -> Result<()> {
-    let Some(parent) = dest.parent() else {
+    let Some(sibling) = crate::names::folding_sibling(dest) else {
         return Ok(());
     };
-    let Ok(entries) = std::fs::read_dir(parent) else {
-        return Ok(());
-    };
-    let Some(leaf) = dest
+    let sibling = sibling
         .file_name()
         .map(|leaf| leaf.to_string_lossy().into_owned())
-    else {
-        return Ok(());
-    };
-    let folded = crate::names::fold(&leaf);
-    for entry in entries.flatten() {
-        let sibling = entry.file_name().to_string_lossy().into_owned();
-        if sibling != leaf && crate::names::fold(&sibling) == folded {
-            return Err(CoreError::Authoring {
-                message: format!(
-                    "'{name}' would collide with existing '{sibling}' on a case-insensitive filesystem — pick another destination name"
-                ),
-            });
-        }
-    }
-    Ok(())
+        .unwrap_or_default();
+    Err(CoreError::Authoring {
+        message: format!(
+            "'{name}' would collide with existing '{sibling}' on a case-insensitive filesystem — pick another destination name"
+        ),
+    })
 }
 
 fn occupied(dest: &Path, name: &str) -> CoreError {

@@ -78,7 +78,7 @@ impl Rendered {
                 continue;
             }
             let text = String::from_utf8_lossy(bytes).into_owned();
-            if let Some(renamed) = with_name(&text, installed) {
+            if let Ok(renamed) = with_name(&text, installed) {
                 if holds.as_deref() == Some(rel.as_path()) {
                     moved = renamed.len() as isize - text.len() as isize;
                 }

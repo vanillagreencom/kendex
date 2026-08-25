@@ -104,27 +104,28 @@ pub(crate) fn renamed(text: &str, name: &str) -> std::result::Result<String, Nam
     ))
 }
 
-/// `None` when the file carries no frontmatter to name the skill in — the
-/// validators say so plainly, and writing one in here would hide it — or
-/// names it in a way no single scalar can replace. A frontmatter without a
-/// name gets one as its first line, in the file's own line ending.
-fn with_name(text: &str, installed: &str) -> Option<String> {
+/// [`renamed`], except a frontmatter without a `name` gets one as its
+/// first line, in the file's own line ending. The remaining problems —
+/// no frontmatter to carry a name, two names, a value no single scalar
+/// can replace — come back for the caller to refuse or ignore: the
+/// validators say those plainly, and writing around them here would hide
+/// them.
+pub(crate) fn with_name(text: &str, installed: &str) -> std::result::Result<String, NameProblem> {
     match renamed(text, installed) {
-        Ok(text) => Some(text),
         Err(NameProblem::Missing { insert_at }) => {
             let newline = if text.starts_with("---\r\n") {
                 "\r\n"
             } else {
                 "\n"
             };
-            Some(format!(
+            Ok(format!(
                 "{}name: {}{newline}{}",
                 &text[..insert_at],
                 super::yaml_scalar(installed),
                 &text[insert_at..]
             ))
         }
-        Err(NameProblem::NoFrontmatter | NameProblem::Twice | NameProblem::NotAScalar) => None,
+        other => other,
     }
 }
 
@@ -228,6 +229,16 @@ mod tests {
                 "---\nname: mine\n...\nBody.\n",
             ),
             ("---\nname: \"gh\"\n---\n", "mine", "---\nname: mine\n---\n"),
+            (
+                "---\nname: \"gh\" # package\n---\n",
+                "mine",
+                "---\nname: mine # package\n---\n",
+            ),
+            (
+                "---\nname: gh\n  # note\ndescription: d\n---\n",
+                "mine",
+                "---\nname: mine\n  # note\ndescription: d\n---\n",
+            ),
         ];
         for (text, name, want) in cases {
             assert_eq!(renamed(text, name).as_deref(), Ok(want), "{text:?}");
@@ -242,10 +253,16 @@ mod tests {
     fn with_name_adds_a_missing_name_in_the_files_own_line_ending() {
         assert_eq!(
             with_name("---\r\ndescription: d\r\n---\r\nBody.\r\n", "mine").as_deref(),
-            Some("---\r\nname: mine\r\ndescription: d\r\n---\r\nBody.\r\n")
+            Ok("---\r\nname: mine\r\ndescription: d\r\n---\r\nBody.\r\n")
         );
-        assert_eq!(with_name("Body.\n", "mine"), None);
-        assert_eq!(with_name("---\nname: a\nname: b\n---\n", "mine"), None);
+        assert_eq!(
+            with_name("Body.\n", "mine"),
+            Err(NameProblem::NoFrontmatter)
+        );
+        assert_eq!(
+            with_name("---\nname: a\nname: b\n---\n", "mine"),
+            Err(NameProblem::Twice)
+        );
     }
     use crate::manifest::MANIFEST_SCHEMA;
 
@@ -311,6 +328,27 @@ mod tests {
             text.matches("\r\n").count(),
             "the file's own line endings must survive: {text:?}"
         );
+    }
+
+    /// A catalog whose SKILL.md quotes its name or follows the name line
+    /// with a comment is renamed like any other when a plugin-registry
+    /// install puts it under a namespaced directory. These files rendered
+    /// before the span rewriter existed and must keep rendering — a copy
+    /// left silently under the catalog's leaf name is refused downstream.
+    #[test]
+    fn a_commented_name_takes_the_name_it_installs_under() {
+        for text in [
+            "---\nname: \"github\" # by acme\ndescription: gh\n---\nBody.\n",
+            "---\nname: github\n  # by acme\ndescription: gh\n---\nBody.\n",
+        ] {
+            let mut rendered =
+                Rendered::plain(vec![(PathBuf::from(SKILL_FILE), text.as_bytes().to_vec())]);
+            rendered.set_skill_name("acme__github");
+            let out = String::from_utf8_lossy(&rendered.files()[0].1).into_owned();
+            assert!(out.contains("name: acme__github"), "{out:?}");
+            assert!(!out.contains("\"github\""), "{out:?}");
+            assert!(out.contains("description: gh"), "{out:?}");
+        }
     }
 
     #[test]

@@ -307,6 +307,24 @@ describe("updates store: installing beside an edited place", () => {
     expect(commands.auditAll).not.toHaveBeenCalled();
   });
 
+  // An error in neither phase — Tauri rejecting an unknown command or bad
+  // args hands back a plain string — must never read as "your fork was
+  // recorded": it presents as a refusal, claiming nothing happened.
+  it("fails closed on an error shape that names no phase", async () => {
+    vi.mocked(commands.packageForkBeside).mockResolvedValue({
+      status: "error",
+      error: "invalid args `newName`" as never,
+    });
+
+    expect(await installAsNew(row(edited), "claude", "gh-mine")).toBe(
+      "invalid args `newName`",
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.info).not.toHaveBeenCalled();
+    expect(commands.auditAll).not.toHaveBeenCalled();
+    expect(useUpdatesStore.getState().busy).toBe(false);
+  });
+
   // A fork the scope recorded but could not render is not a refusal:
   // another name would not help, and the rows now carry the drift. The
   // dialog gets null and closes; the toast says what landed.

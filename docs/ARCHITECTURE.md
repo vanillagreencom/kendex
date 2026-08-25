@@ -340,9 +340,9 @@ lives in one capability table read by core and UI.
   cannot be split.
 - **Every atomic write gets its own temp file.** `write_then_rename` names
   its temp file per write, not per process.
-- GUI + CLI are equal thin shells over `crates/core`; every core operation
-  has a CLI verb (the verb for `fork_beside` is tracked separately; the
-  app has it today). `tools/guard` gates commits; the review gate and the merge queue's suites gate PRs.
+- GUI + CLI are equal thin shells over `crates/core`; core operations are
+  reachable from the CLI, with one exception: install-beside
+  (`fork_beside`) is app-only — no CLI verb exists. `tools/guard` gates commits; the review gate and the merge queue's suites gate PRs.
 - Every capability ships cross-harness through the capability table; a
   harness without native support for a kind is marked unsupported — never
   shimmed. Where a vendor stores one surface as another (Codex: prompts as
@@ -553,9 +553,10 @@ lives in one capability table read by core and UI.
   tag-decorated, never tag-replaced. Rows are per package per scope, folded
   by package and expanded by place; nothing applies on its own — followers
   come current on apply or refresh, held ones when their hold moves. An
-  edited place is never updated over: its row says so and offers only the
-  install beside it; the fork-or-discard choice lives on the package
-  page. Commit ids stay behind the table's `…` menu. Muting a package's
+  edited place is never updated over: its row says so and offers the
+  install beside it where a newer version the source still carries can
+  land, and a link to the package page otherwise; the fork-or-discard
+  choice lives on the package page. Commit ids stay behind the table's `…` menu. Muting a package's
   update notifications is a machine-local settings entry. Reuse
   is verified against a publish receipt outside the checkout: a full
   content hash of the tree. Pre-2.0 clones are read where the new layout

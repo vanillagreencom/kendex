@@ -204,6 +204,12 @@ pub enum CoreError {
     )]
     ForkAmbiguous { name: String },
 
+    /// An install-beside or fork rename refused before anything was
+    /// written: the copy cannot answer to the requested name, for the
+    /// reason in `problem`'s own words.
+    #[error("`{name}` can't be your copy's name: {problem}")]
+    ForkNameUnusable { name: String, problem: String },
+
     /// Case 4 of naming a catalog: a qualifier that names no subscription
     /// refuses, listing what is subscribed — never a guess, never a
     /// download.

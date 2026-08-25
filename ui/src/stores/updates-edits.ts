@@ -16,31 +16,37 @@ import { useUpdatesStore } from "./updates";
 /** The ways out of an edited place, run under the updates store's busy
  *  flag so every control on the page waits on the same one — a fork, a
  *  discard, or an install beside rewrites the scope's manifest like any
- *  update does. Each returns the failure, or null once the follow-up
- *  refreshes have landed. */
+ *  update does. Each returns the failure, or what the work answered once
+ *  the follow-up refreshes have landed. */
 
-const run = async (
-  work: () => Promise<string | null>,
-): Promise<string | null> => {
+type Outcome<T> = { error: string } | { ok: T };
+
+const run = async <T>(work: () => Promise<Outcome<T>>): Promise<Outcome<T>> => {
   useUpdatesStore.setState({ busy: true });
   try {
     // The commit and the overview that follows ride the updates store's
     // side-effect chain, in commit order with every other operation.
-    const error = await useUpdatesStore.getState().mutate(work);
-    if (error !== null) return error;
+    let answer: Outcome<T> | null = null;
+    const error = await useUpdatesStore.getState().mutate(async () => {
+      const outcome = await work();
+      answer = outcome;
+      return "error" in outcome ? outcome.error : null;
+    });
+    if (error !== null) return { error };
+    if (answer === null) return { error: "the operation never answered" };
     await useScanStore.getState().refresh();
     await useAuditStore.getState().refresh({ force: true });
-    return null;
+    return answer;
   } finally {
     useUpdatesStore.setState({ busy: false });
   }
 };
 
-const report = (error: string | null) => {
-  if (error !== null)
+const report = (outcome: Outcome<unknown>) => {
+  if ("error" in outcome)
     useProblemsStore
       .getState()
-      .showError({ title: FORK_ERROR_TITLE, message: error });
+      .showError({ title: FORK_ERROR_TITLE, message: outcome.error });
 };
 
 /** Rows kept from a failed check, or about to be replaced by a running
@@ -62,9 +68,9 @@ export const keepAsOwn = async (row: UpdateRow): Promise<void> => {
         row.name,
         harness,
       );
-      if (response.status === "error") return response.error;
+      if (response.status === "error") return { error: response.error };
       toast.success(forkedToastLabel(packageDisplayName(row)));
-      return null;
+      return { ok: null };
     }),
   );
 };
@@ -73,7 +79,7 @@ export const keepAsOwn = async (row: UpdateRow): Promise<void> => {
  *  hold along when the place is held, in the same apply. */
 export const takeNewVersion = async (row: UpdateRow): Promise<void> => {
   if (stale()) {
-    report(UPDATE_NEEDS_CHECK_NOTE);
+    report({ error: UPDATE_NEEDS_CHECK_NOTE });
     return;
   }
   report(
@@ -87,7 +93,9 @@ export const takeNewVersion = async (row: UpdateRow): Promise<void> => {
         // what is resolved now.
         row.pinned && row.canTakeLatest ? (row.latest?.commit ?? null) : null,
       );
-      return response.status === "error" ? response.error : null;
+      return response.status === "error"
+        ? { error: response.error }
+        : { ok: null };
     }),
   );
 };
@@ -98,7 +106,10 @@ export const takeNewVersion = async (row: UpdateRow): Promise<void> => {
  *  refusal — nothing written, another name may go through — for the
  *  dialog to show at the point of action, or null. A fork the scope
  *  recorded but could not render is not a refusal: the dialog closes, the
- *  toast says what landed, and the refreshed rows carry the rest. */
+ *  toast says what landed, and the refreshed rows carry the rest. An
+ *  error in neither phase — a transport rejection, a binary older than
+ *  this UI — must never read as a recorded fork: it is presented as a
+ *  refusal, the shape that claims nothing happened. */
 export const installAsNew = async (
   row: UpdateRow,
   harness: HarnessId,
@@ -106,8 +117,7 @@ export const installAsNew = async (
 ): Promise<string | null> => {
   if (stale()) return UPDATE_NEEDS_CHECK_NOTE;
   const name = packageDisplayName(row);
-  let unfinished: string | null = null;
-  const error = await run(async () => {
+  const outcome = await run<string | null>(async () => {
     const response = await commands.packageForkBeside(
       row.scope,
       row.kind,
@@ -118,13 +128,17 @@ export const installAsNew = async (
       // that hold is its own to move.
       row.pinned && row.canTakeLatest ? (row.latest?.commit ?? null) : null,
     );
-    if (response.status === "ok") return null;
-    if (response.error.phase === "refused") return response.error.message;
-    unfinished = response.error.message;
-    return null;
+    if (response.status === "ok") return { ok: null };
+    const failure: unknown = response.error;
+    if (typeof failure === "object" && failure !== null && "phase" in failure) {
+      const { phase, message } = failure as { phase: string; message: string };
+      if (phase === "recorded") return { ok: message };
+      if (phase === "refused") return { error: message };
+    }
+    return { error: String(failure) };
   });
-  if (error !== null) return error;
-  if (unfinished === null) toast.success(installedAsNewToastLabel(name, own));
-  else toast.info(installedBesideUnfinishedToast(name, own, unfinished));
+  if ("error" in outcome) return outcome.error;
+  if (outcome.ok === null) toast.success(installedAsNewToastLabel(name, own));
+  else toast.info(installedBesideUnfinishedToast(name, own, outcome.ok));
   return null;
 };

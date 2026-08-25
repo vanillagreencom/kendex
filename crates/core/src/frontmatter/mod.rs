@@ -166,20 +166,28 @@ pub fn name_value_span(text: &str) -> Result<std::ops::Range<usize>, NameProblem
         let lead = rest.len() - rest.trim_start_matches([' ', '\t']).len();
         let value = rest.trim_end();
         let value = value.get(lead..).unwrap_or_default();
-        let quoted = value.len() >= 2
-            && (value.starts_with('"') && value.ends_with('"')
-                || value.starts_with('\'') && value.ends_with('\''));
-        if value.is_empty() || (!is_plain_inline(value) && !quoted) {
-            return Err(NameProblem::NotAScalar);
-        }
-        let continued = lines
-            .get(index + 1)
-            .is_some_and(|next| next.starts_with([' ', '\t']) && !next.trim().is_empty());
+        let value_len = match value.chars().next() {
+            None => return Err(NameProblem::NotAScalar),
+            Some(quote @ ('"' | '\'')) => match quoted_len(value, quote) {
+                Some(len) => len,
+                None => return Err(NameProblem::NotAScalar),
+            },
+            Some(_) if is_plain_inline(value) => value.len(),
+            Some(_) => return Err(NameProblem::NotAScalar),
+        };
+        // Blank and comment-only lines attach to the entry without
+        // extending its value (YAML ignores them); only real indented
+        // content continues the scalar onto another line.
+        let continued = lines[index + 1..]
+            .iter()
+            .map(|line| (line.starts_with([' ', '\t']), line.trim()))
+            .find(|(_, text)| !text.is_empty() && !text.starts_with('#'))
+            .is_some_and(|(indented, _)| indented);
         if continued {
             return Err(NameProblem::NotAScalar);
         }
         let value_start = start + key.len() + 1 + lead;
-        found = Some(value_start..value_start + value.len());
+        found = Some(value_start..value_start + value_len);
     }
     found.ok_or(NameProblem::Missing {
         insert_at: yaml_start,
@@ -247,6 +255,34 @@ pub fn parse_tolerant(yaml: &str) -> Result<Parsed, String> {
     Ok(parsed)
 }
 
+/// Byte length of the quoted scalar opening `text`, when nothing follows
+/// its closing quote but whitespace and a comment — the shapes YAML itself
+/// accepts there. Single quotes escape themselves (`''`); double quotes
+/// escape with `\`. `None` when the quote never closes or real content
+/// follows it: not one inline scalar to replace.
+fn quoted_len(text: &str, quote: char) -> Option<usize> {
+    let mut end = None;
+    let mut chars = text.char_indices().skip(1);
+    while let Some((at, c)) = chars.next() {
+        if quote == '"' && c == '\\' {
+            chars.next();
+            continue;
+        }
+        if c == quote {
+            if quote == '\'' && text[at + 1..].starts_with('\'') {
+                chars.next();
+                continue;
+            }
+            end = Some(at + c.len_utf8());
+            break;
+        }
+    }
+    let end = end?;
+    let after = &text[end..];
+    let trimmed = after.trim_start_matches([' ', '\t']);
+    (trimmed.is_empty() || (trimmed.starts_with('#') && trimmed.len() < after.len())).then_some(end)
+}
+
 /// A plain inline value is one where verbatim capture and YAML agree apart
 /// from comment stripping — no quoting, no flow collections, no block
 /// indicators, no anchors/aliases/tags.
@@ -301,6 +337,18 @@ mod name_span_tests {
         assert_eq!(span_of("---\nname: gh #edited\n...\n"), Ok("gh #edited"));
         assert_eq!(span_of("---\nname: \"gh\"\n---\n"), Ok("\"gh\""));
         assert_eq!(span_of("---\nname: 'gh'\n---\n"), Ok("'gh'"));
+        // A comment after a quoted value belongs to the line, not the
+        // value; an escaped quote does not close the scalar.
+        assert_eq!(span_of("---\nname: \"gh\" # package\n---\n"), Ok("\"gh\""));
+        assert_eq!(span_of("---\nname: 'it''s' # x\n---\n"), Ok("'it''s'"));
+        assert_eq!(
+            span_of("---\nname: \"a\\\"b\" # c\n---\n"),
+            Ok("\"a\\\"b\"")
+        );
+        // A comment-only or blank line after the entry is not a
+        // continuation of its value, indented or not.
+        assert_eq!(span_of("---\nname: gh\n  # note\n---\n"), Ok("gh"));
+        assert_eq!(span_of("---\nname: gh\n\ndesc: d\n---\n"), Ok("gh"));
         // Not a top-level entry, and not the `name` key.
         assert_eq!(
             span_of("---\nmeta:\n  name: inner\nname: outer\n---\n"),
@@ -325,7 +373,11 @@ mod name_span_tests {
             "---\nname: >\n  gh\n---\n",
             "---\nname: &anchor gh\n---\n",
             "---\nname: gh\n  continued\n---\n",
+            "---\nname: gh\n  # note\n  continued\n---\n",
             "---\nname:\n---\n",
+            "---\nname: \"gh\n---\n",
+            "---\nname: \"gh\" trailing\n---\n",
+            "---\nname: \"gh\"#glued\n---\n",
         ] {
             assert_eq!(span_of(text), Err(NameProblem::NotAScalar), "{text:?}");
         }
