@@ -8,9 +8,9 @@ changes carry a **Breaking** call-out with their migration note inline.
 
 ### Removed
 
-- **Breaking:** the `trading-design` skill is no longer offered. Drop its
-  `[skills.trading-design]` entry from `kendex.toml`; `kendex refresh`
-  then removes the installed copies.
+- **Breaking:** the `trading-design` skill is no longer offered. Run
+  `kendex remove trading-design` in each project that installs it (or drop
+  its `[skills.trading-design]` entry and run `kendex apply`).
 
 ### Added
 
