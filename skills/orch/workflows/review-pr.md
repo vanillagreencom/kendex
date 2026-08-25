@@ -306,7 +306,13 @@ The scoped panel is the union of the reviewers whose domains the round's diff to
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] rereview_skipped '[REASON]'
 ```
 
-**The loop ends** when two consecutive cycles surface no new blocker, or when `cycles` reaches the cap (`orch-env REVIEW_MAX_CYCLES 4`; `workflow-state set … rereview_panel` refuses once `cycles` is past it). The cap bounds NEW cycles, never verification: a fix diff no reviewer has seen gets one focused verification pass — the `rereview_panel` rule above, scoped to exactly that diff — before § 5, cap or no cap. At the cap, report the outstanding items after that pass and proceed to § 5. In wave mode the panel replaces `[AGENTS]` for the cycle and wave mechanics apply unchanged.
+**The loop ends** when two consecutive cycles surface no new blocker, or when `cycles` reaches the cap (`orch-env REVIEW_MAX_CYCLES 4`; `workflow-state set … rereview_panel` refuses once `cycles` is past it). The cap bounds NEW cycles, never verification: a fix diff no reviewer has seen gets one focused verification pass — the `rereview_panel` rule above, scoped to exactly that diff — before § 5, cap or no cap. **Capped items are escalated, never dropped.** Record every blocker and `category == "fix"` suggestion still outstanding after that pass, and not already in `fixed_items` or `escalated_items`, before routing to § 5. One append per item:
+
+```bash
+.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] escalated_items '{"description":"[DESC]","location":"[LOC]","reason":"outstanding at the review cycle cap","outcome":"blocked","source":"pr-review"}'
+```
+
+§ 8 then reports them as escalated instead of re-deriving them as declined, and they reach its filing candidates. Report the outstanding items and proceed to § 5. In wave mode the panel replaces `[AGENTS]` for the cycle and wave mechanics apply unchanged.
 
 ## 5. Verdict Pass
 
