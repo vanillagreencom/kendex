@@ -62,6 +62,15 @@ jobs:
       # reads one layout instead of one per runner.
       - run: cargo build --release -p kendex-cli --target ${{ matrix.target }}
         shell: bash
+      # Tauri's bundler signs and notarizes on its own when the APPLE_*
+      # variables are present; the key file has to exist on disk because
+      # notarytool takes a path, not content.
+      - name: Stage the notary key
+        if: runner.os == 'macOS'
+        run: printf '%s' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY }}
+        shell: bash
       - name: Bundle the desktop app
         run: cd crates/app && ../../ui/node_modules/.bin/tauri build --target ${{ matrix.target }}
         shell: bash
@@ -69,6 +78,18 @@ jobs:
           # User-supplied gates: unset keys skip updater-artifact signing.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS Developer ID signing + notarization (KEN-394). Same
+          # gate: unset secrets skip both, and the non-mac lanes ignore
+          # every APPLE_* variable. APPLE_API_KEY is the key ID in
+          # tauri's vocabulary; the secret holding the .p8 content is
+          # staged to APPLE_API_KEY_PATH above.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
       - name: Stage release assets
         run: |
           mkdir -p dist

@@ -8,6 +8,11 @@ an outside contributor.
 
 ## [Unreleased]
 
+### Fixed
+
+- macOS builds are Developer ID signed and notarized: installing from any
+  channel no longer ends in "kendex is damaged" or an `xattr -cr` workaround.
+
 ### Removed
 
 - **Breaking:** the `trading-design` skill is no longer offered. Run
