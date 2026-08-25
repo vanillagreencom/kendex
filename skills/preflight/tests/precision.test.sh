@@ -374,6 +374,17 @@ git -C "$R" add -A
 run_pf
 clean "an env-assignment-prefixed vitest invocation wires the suite"
 
+# A quoted assignment value with embedded spaces is still one
+# assignment word.
+seed quotedassign
+printf '{\n  "scripts": { "test": "NODE_OPTIONS='"'"'--experimental-vm-modules --trace-warnings'"'"' jest" }\n}\n' >"$R/package.json"
+git -C "$R" add -A
+git -C "$R" commit -qm "jest behind a quoted multi-flag assignment"
+printf 'export {}\n' >"$R/qa.test.ts"
+git -C "$R" add -A
+run_pf
+clean "a quoted-value assignment before jest wires the suite"
+
 # And a chained invocation after a shell connector.
 seed chained
 printf '{\n  "scripts": { "test": "node setup.js && vitest run" }\n}\n' >"$R/package.json"

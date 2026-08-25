@@ -723,9 +723,9 @@ build_runner_index() {
     # connector (; & | backtick paren), a directly preceding manager or
     # exec-form word (npx pnpm yarn exec dlx), or a
     # colon opening a manifest or workflow value with an optional quote —
-    # allowing NAME=value assignment words between that opener and the
-    # word — and end at whitespace, a quote, a connector, or the line
-    # end. A
+    # allowing NAME=value assignment words, their values plain or
+    # quoted, between that opener and the word — and end at whitespace,
+    # a quote, a connector, or the line end. A
     # dependency key ("vitest": "^3"), a package path (@vitest/ui), a
     # path-prefixed binary (node_modules/.bin/vitest), and a prose mention
     # all fail that shape. Recorded as the directory the runner runs
@@ -733,7 +733,7 @@ build_runner_index() {
     # scripts run from the root of the tree that owns them.
     sed -e '/^[[:space:]]*#/d' -e 's/[[:space:]]#.*//' -- "$c" >"$TMP/runner.body.one"
     for kind in vitest jest; do
-      LC_ALL=C grep -qE "(^[[:space:]]*|[;&|\`(][[:space:]]*|(npx|pnpm|yarn|exec|dlx)[[:space:]]+|:[[:space:]]*[\"']?)([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*$kind([[:space:]\"'\`;&|)]|\$)" "$TMP/runner.body.one" || continue
+      LC_ALL=C grep -qE "(^[[:space:]]*|[;&|\`(][[:space:]]*|(npx|pnpm|yarn|exec|dlx)[[:space:]]+|:[[:space:]]*[\"']?)([A-Za-z_][A-Za-z0-9_]*=([^[:space:]'\"]|'[^']*'|\"[^\"]*\")*[[:space:]]+)*$kind([[:space:]\"'\`;&|)]|\$)" "$TMP/runner.body.one" || continue
       scope=""
       case "$r" in
         .github/workflows/*) ;;
