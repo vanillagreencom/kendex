@@ -13,10 +13,9 @@ an outside contributor.
 - Moving an existing repo onto kendex works now: an item whose files are
   already on disk offers **Replace them** (old files go to the trash) or
   **Keep these files**; CLI: `kendex adopt` and `kendex apply --replace-unmanaged`.
-- Catalog authors can settle a reviewed safety finding with
-  `kendex dismiss --catalog`, recorded in a committed `kendex-reviews.toml`.
-  Installs inherit the decision under the publisher's name; any edit to the
-  item brings the hold back, and hook tokens are refused.
+- Catalog authors settle a reviewed safety finding with
+  `kendex dismiss --catalog`, committed in `kendex-reviews.toml`; installs
+  inherit the decision, and any edit to the item brings the hold back.
 - The app has its own icon — the `x` from the kendex wordmark, at every size
   the desktop, dock, and installer use.
 - Releases ship for Intel Macs and arm64 Linux alongside Apple silicon,
@@ -40,26 +39,22 @@ an outside contributor.
 - **Breaking:** the default Homebrew formula installs the app; CLI-only
   moved to `kendex-cli`. Migrate with `brew uninstall kendex && brew
   install vanillagreencom/kendex/kendex-cli`.
-- Commit checks moved into the git pre-commit hook: `kendex guard run
-  pre-commit` now also runs rust-fmt, rust-clippy, and biome as
-  `[guards.*]` tables, and the agent hook defers to the armed hook —
-  commands that sidestep it (`--no-verify`, hook-skipping git config) are
-  refused. **Breaking:** `KENDEX_PRE_COMMIT_RUST_CLIPPY` is gone; use
-  `[guards.rust-clippy] enabled = false`.
+- Commit checks moved into the git pre-commit hook, which now also runs
+  rust-fmt, rust-clippy, and biome; commands that sidestep the armed hook
+  (`--no-verify`, hook-skipping git config) are refused.
+- **Breaking:** `KENDEX_PRE_COMMIT_RUST_CLIPPY` is gone; use
+  `[guards.rust-clippy] enabled = false` in kendex.toml.
 - The safety check reads every file to its last byte (it used to stop at
   512 KB or 200 files), so large packages can show findings that were
-  always there; a package it cannot fully read reports "Not fully checked"
-  instead of a score.
+  always there; unreadable ones report "Not fully checked", not a score.
 - Safety verdicts say what they are: automated checks, not reviews —
   beside every score, dot, and the About tab's wording.
-- A safety finding's message names what it fired on (the command, the
-  credential file, the hidden characters), and findings are identified by
-  rule and sentence so recorded decisions survive rendering. Decisions
+- A safety finding's message names what it fired on, and findings are
+  identified by rule and sentence so decisions survive rendering. Decisions
   recorded before this release need re-recording from `kendex findings`.
-- The Updates page is one row per package, expanding to a row per place
-  with its own versions, Follow source, Preview, and Update. "Update
-  automatically" is renamed **Follow source** — nothing applies on its own —
-  and `kendex updates` names the place on every line.
+- The Updates page is one row per package, expanding to a row per place;
+  "Update automatically" is renamed **Follow source** — nothing applies on
+  its own — and `kendex updates` names the place on every line.
 - The `second-opinion` skill waits 18 minutes for an external review, up
   from 5. A seeded `SECOND_OPINION_TIMEOUT = "300"` must be raised by hand.
 - The `dangerous-commands` check no longer reads a shell `case` pattern
@@ -69,10 +64,9 @@ an outside contributor.
   creation, and research runs inline by default.
 - `kendex init --kind skill` scaffolds now say what a SKILL.md body is for:
   commands and rules, never internals.
-- UI polish: project cards open that project's library; links into My
-  Library land on a clean filter strip; scrolling surfaces use the app's
-  own colors; the app uses the Geist typeface; the keep-shared-folder
-  dialog asks in the words of the button that opened it.
+- UI polish: project cards open that project's library, links into My
+  Library land on a clean filter strip, the app uses the Geist typeface,
+  and dialogs ask in the words of the button that opened them.
 
 ### Fixed
 
@@ -94,10 +88,9 @@ an outside contributor.
 - Pi no longer halts every session start in a managed project: kendex's Pi
   hooks moved out of Pi's reserved `hooks/` directory, and refresh migrates
   an existing install — moving only what kendex provably wrote.
-- Accepting a held-back update actually installs it: `kendex findings` now
-  prints the token `--allow-unsafe` takes, reports installed copy and
-  held-back update separately, and a stale acceptance stops the run out
-  loud instead of being ignored.
+- Accepting a held-back update actually installs it: `kendex findings`
+  prints the token `--allow-unsafe` takes, and a stale acceptance stops
+  the run out loud instead of being ignored.
 - `kendex apply` and `kendex refresh` print what they cannot change and
   why, instead of "nothing to do".
 - The Linux app draws at the right size on HiDPI Wayland (native Wayland
@@ -129,11 +122,11 @@ an outside contributor.
 
 ### Fixed
 
-- Release-review hardening: a collection link cannot point kendex at a
-  local directory; a reused subscription installs the pinned commit, not
-  the branch head; a momentary network failure no longer signs you out;
-  and the submit preflight measures "everything is pushed" against the
-  repository actually being submitted.
+- A collection link cannot point kendex at a local directory, and a
+  reused subscription installs the pinned commit, not the branch head.
+- A momentary network failure no longer signs you out, and the submit
+  preflight checks "everything is pushed" against the repository actually
+  being submitted.
 
 ## [5.0.0] — 2026-08-20
 
@@ -149,40 +142,33 @@ CLI, and the kendex.ai community ships alongside. Migrate with
   `kendex add https://kendex.ai/c/<id>` subscribes and installs every
   member at the exact pinned commits.
 - Publish what you build: submit a package to kendex.ai from the app or
-  `kendex marketplace submit`, with a preflight, GitHub sign-in, and
-  push-rights verification. `kendex login`/`logout` manage the terminal
-  session; credentials live in the system keychain.
+  `kendex marketplace submit`; `kendex login`/`logout` manage the terminal
+  session, with credentials in the system keychain.
 - Build your own marketplace: create, register, or import into a
   ready-to-publish repository from the Mine tab or
   `kendex marketplace new | use | mine | import`.
 - The Community tab: browse the kendex.ai directory and search skills.sh's
   index; installs are locked, safety-checked, and updatable like any other.
 - The Marketplaces page: subscribe to any repository of skills and agents,
-  browse packages and bundles with pre-install safety verdicts, and read a
-  package before anything lands. The Library becomes **My Library** with a
-  From column.
+  and read a package, with its safety verdict, before anything lands. The
+  Library becomes **My Library** with a From column.
 - Any repository that holds skills is a marketplace — existing ecosystem
   layouts are read with no special file, full git URLs and GitHub tree
   links work, and names can be qualified as `marketplace::name`.
-- Custom hooks run wherever a harness can run them (Claude Code, Codex,
-  Gemini, Copilot, Pi), are picked from a list of real events, pass the
-  same safety check as installed hooks, and each editor card says where a
-  hook is enforced versus advisory.
+- Custom hooks run wherever a harness can run them, picked from a list of
+  real events and safety-checked like installed hooks; each editor card
+  says where a hook is enforced versus advisory.
 - Commit checks guard every commit: `kendex guard install` puts a
-  kendex-owned hooks directory in front of git — size budgets, leftover
-  markers, oversized files, lint-silencing pragmas, and commit-message
-  format, each judging exactly what the commit records. v1 settings
-  convert once with `kendex guard import-v1`.
+  kendex-owned hooks directory in front of git, each check judging exactly
+  what the commit records; v1 settings convert with `kendex guard import-v1`.
 - `kendex check` is the drift contract (exit 0/1/2, `--quiet`, `--json`),
   instant via a per-project snapshot, delivered into new sessions by a
   removable session-start hook (`KENDEX_DRIFT_HOOK=off` disables).
-- Safety and quality are two scores, never mixed: safety ("could this
-  hurt me") can hold content back, quality ("is this well written")
-  informs. Every finding names file, line, and fix; leaked keys are shown
-  only as fingerprints.
+- Safety and quality are two scores, never mixed: safety can hold content
+  back, quality informs. Every finding names file, line, and fix; leaked
+  keys are shown only as fingerprints.
 - Safety findings can be dismissed with a reason, bound to exactly that
-  content and rule set; decisions live beside acceptances (project or
-  personal), inherited by teammates in plain sight. CLI:
+  content and rule set; teammates inherit decisions in plain sight. CLI:
   `kendex findings`, `kendex dismiss`, `kendex decisions [--revoke]`.
 - The Review page reads as two zones — needs your decision, ready to
   apply — with **Review one by one** walking findings worst-first, and
@@ -191,18 +177,16 @@ CLI, and the kendex.ai community ships alongside. Migrate with
   reads it, with a reusable GitHub Actions workflow; what `kendex init`
   scaffolds passes on the first run.
 - Bundles: a catalog can offer named sets; installing one brings every
-  member, and uninstalling explains exactly what stays and why. Skills
-  can require or optionally suggest other skills, and removals warn about
-  what still needs them.
+  member, and uninstalling explains what stays and why. Skills can require
+  or suggest other skills, and removals warn what still needs them.
 - GitHub Copilot and Gemini CLI are fully managed — agents, skills, hooks,
   and MCP servers land where each actually reads them, and everything the
   two tools borrow or gate is said out loud instead of left to surprise.
 - Every generated file is checked against its tool's real format before
   writing; agent instructions are reworded into each tool's own
   vocabulary where the reference is unmistakable.
-- A package's page carries a **Customize** tab — the instructions,
-  skills, and per-tool settings you changed — and the Library marks
-  customized rows. Vendor-bundled content (Anthropic's, OpenAI's) is
+- A package's page carries a **Customize** tab showing what you changed,
+  and the Library marks customized rows. Vendor-bundled content is
   labelled and left alone.
 - Seeded settings comments stay current on refresh — only while provably
   untouched; values are never touched.
@@ -210,31 +194,27 @@ CLI, and the kendex.ai community ships alongside. Migrate with
   required, bundled) and those reasons drive removals. Existing records
   gain "asked for directly", the only safe reading.
 - **Breaking:** installing can be refused: critical findings and scores
-  under 60 hold back, 60–80 installs with a warning. Override per exact
-  content with `kendex apply --allow-unsafe <name>@<code>`, recorded in
-  the project's `kendex.toml`.
+  under 60 hold back, 60–80 warns. Override per exact content with
+  `kendex apply --allow-unsafe <name>@<code>`, recorded in kendex.toml.
 - **Breaking:** `kendex refresh` never changes what is installed without
   asking; scripts add `--yes`.
 - **Breaking:** marketplace-style catalogs (`marketplace.json`) install
   one plugin at a time; their items are namespaced `<plugin>/<item>`.
   Plain catalogs are unaffected.
-- **Breaking:** a source can pin a revision (`rev = "<commit|tag|branch>"`
-  or `owner/repo@rev`); a commit is a pin forever, a tag or branch is
-  followed with changes previewed. The download cache keeps one folder
-  per version; deleting it is always safe.
+- **Breaking:** a source can pin a revision (`rev = "..."` or
+  `owner/repo@rev`); a commit pins forever, a tag or branch is followed
+  with changes previewed. The download cache is safe to delete.
 - **Breaking:** a plugin belongs to one tool; existing declarations read
   as Claude Code's. Add `harness = "copilot"` to aim one at Copilot.
 - **Breaking:** commands install on Codex as generated skills (Codex
-  retired its prompt directory); name collisions install as
-  `<name>__command` with a warning.
+  retired its prompt directory); collisions install as `<name>__command`.
+  Existing installs: run `kendex refresh` to generate them.
 
 ### Changed
 
-- **Breaking:** vstack is **kendex** — the app, CLI binary, crates, and
-  identifier. A `vstack` alias binary ships for one release cycle;
-  environment variables are now `KENDEX_*` (only guard variables keep a
-  fallback). Fresh installs subscribe to `vanillagreencom/kendex`, and
-  existing libraries are repointed by one previewed step.
+- **Breaking:** vstack is **kendex** — app, CLI binary, crates,
+  identifier, and `KENDEX_*` environment variables. A `vstack` alias ships
+  for one release cycle; existing libraries repoint in one previewed step.
 - The coding tools kendex writes to are called **harnesses**.
 - The app is reorganized around what you're doing: six sidebar
   destinations, Home leads with what needs attention, Sync is Review &
@@ -243,16 +223,14 @@ CLI, and the kendex.ai community ships alongside. Migrate with
   it), place pills, status dots, type icons, and one rule for the line
   under a name: always the description.
 - Errors got a home: failures open a dialog with the reason and fix,
-  ongoing problems live on a Problems page behind a status-bar count,
-  and every page shares one visual language for error, warning, info,
-  and success.
+  ongoing problems live on a Problems page behind a status-bar count, and
+  every page shares one visual language for errors and warnings.
 - Counts mean items, not rows-per-tool, computed in one shared place;
   summaries group a finding once over the items it affects instead of
   repeating it per row.
 - A considered look: the app draws its own title bar, color carries
-  meaning, one blue primary action per screen, back/forward work like a
-  browser, and the component layer moved to Base UI with behavior
-  verified page by page.
+  meaning, one blue primary action per screen, and back/forward work
+  like a browser.
 - The safety check got about seven times faster (0.8 s → 0.11 s on a
   large project) with findings unchanged byte for byte.
 - Loading states are the shape of what is coming, and the app never
@@ -271,11 +249,17 @@ CLI, and the kendex.ai community ships alongside. Migrate with
 - Migrating from v1 fails closed: a damaged record refuses with its path
   named, a stale record cannot bury live installs, and the migration runs
   as one journaled transaction.
+- Installed scripts run again: any installed file that opens with `#!` is
+  executable, everywhere trees are written.
+- Unsubscribing with "keep the packages" moves the effective values into
+  your own kendex.toml, so a kept agent keeps rendering as installed
+  instead of showing out of date right after.
 - The safety check stopped flagging ordinary code for reading its own
-  settings (`process.env`, `os.environ`, …) — a 39-item catalog went
-  from 296 findings to 12 — while commands in a SKILL.md code block now
-  count in full, single non-text bytes cannot hide a file, more lookalike
-  letters are recognized, and quoted values are redacted.
+  settings (`process.env`, `os.environ`, …) — a 39-item catalog went from
+  296 findings to 12.
+- Commands in a SKILL.md code block count in full, single non-text bytes
+  cannot hide a file, more lookalike letters are recognized, and quoted
+  values are redacted.
 - **Breaking:** accepting a problem now binds to every byte of what was
   installed, so nothing can change under an acceptance. Old acceptances
   cannot prove coverage and read as out of date until reviewed once more.
@@ -288,9 +272,8 @@ CLI, and the kendex.ai community ships alongside. Migrate with
   shared items, asked-for-by-name beats kept-removed, and disagreements
   are reported instead of settled by sort order.
 - Gemini's machine-wide MCP switch is never rewritten by a project, hook
-  matchers are translated into each tool's own tool names, advisory-only
-  harnesses are labelled, and `kendex verify` says why an installation
-  cannot do anything instead of printing a clean tick.
+  matchers translate into each tool's own tool names, and `kendex verify`
+  says why an installation cannot act instead of printing a clean tick.
 - Size-limit splitting works both directions (grow and shrink), splits at
   any heading, never cuts a code block, and generated command names are
   stable across applies.
@@ -336,9 +319,8 @@ replacing vstack v1.
 ### Changed
 
 - **Breaking:** fresh manifest and lock schema; v1 files are not read.
-  `vstack import` converts them (originals to the trash first), then
-  `vstack refresh` regenerates. v1 extras and theme packs are not
-  carried over.
+  `vstack import` converts them, then `vstack refresh` regenerates; v1
+  extras and theme packs are not carried over.
 
 [Unreleased]: https://github.com/vanillagreencom/kendex/compare/v5.0.1...HEAD
 [5.0.1]: https://github.com/vanillagreencom/kendex/compare/v5.0.0...v5.0.1
