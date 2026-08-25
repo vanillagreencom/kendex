@@ -6,6 +6,7 @@
 mod beside;
 mod disabled;
 mod edited_harness;
+mod vacant;
 
 mod forks;
 
@@ -161,6 +162,31 @@ fn sync_and_apply(w: &World) {
 
 fn skill_file(w: &World) -> PathBuf {
     w.home.join("app/.agents/skills/gh/SKILL.md")
+}
+
+/// A world with `gh` edited on disk and a newer upstream the mirror knows,
+/// returned with the commit the edits were made on and the newer one.
+#[allow(clippy::unwrap_used)]
+fn edited_world() -> (World, String, String) {
+    let w = world();
+    write_skill(&w.upstream, "gh", "Upstream.");
+    commit(&w.upstream, "one");
+    let one = head_commit(&w.upstream);
+    declare(
+        &w,
+        &format!("[skills.gh]\nsource = \"cat\"\nrev = \"{one}\"\n"),
+    );
+    sync_and_apply(&w);
+    fs::write(
+        skill_file(&w),
+        "---\nname: gh\ndescription: mine\n---\nMy fork.\n",
+    )
+    .unwrap();
+    write_skill(&w.upstream, "gh", "Upstream v2.");
+    commit(&w.upstream, "two");
+    let two = head_commit(&w.upstream);
+    sync_and_apply(&w);
+    (w, one, two)
 }
 
 #[test]

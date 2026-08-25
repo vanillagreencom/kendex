@@ -75,7 +75,11 @@ lives in one capability table read by core and UI.
    user confirmed. A fork keeps the item's installed name, so dependents
    and bundles keep resolving; a fork made beside (`fork_beside`) takes a
    new name the user chose, its frontmatter `name:` rewritten to match,
-   and leaves the original declared from its source.
+   and leaves the original declared from its source. That name is proven
+   free before the first durable write — no declaration, lock entry,
+   folding neighbour, or occupied render destination — and a namespaced
+   one may neither nest inside a package the local source already holds
+   nor reach its slot through a link.
 5. Enable/disable is non-destructive and lossless: file-backed kinds
    toggle by rename; kinds embedded in shared config files toggle by a
    structured edit that preserves every unrelated key. Uninstalling the

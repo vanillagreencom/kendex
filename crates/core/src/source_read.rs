@@ -73,8 +73,10 @@ impl SealedSource {
 
     /// The containment check every read goes through: the path must sit
     /// beneath the root — under either spelling of it — and no component
-    /// below the root may be a symlink.
-    fn contained(&self, path: &Path) -> Result<()> {
+    /// below the root may be a symlink. Also asked of a path about to be
+    /// written into a source, since bytes placed past a link are bytes no
+    /// later read of this source can reach.
+    pub(crate) fn contained(&self, path: &Path) -> Result<()> {
         let rel = path
             .strip_prefix(&self.root)
             .or_else(|_| path.strip_prefix(&self.given))
