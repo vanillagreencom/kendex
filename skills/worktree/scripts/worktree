@@ -1715,11 +1715,19 @@ collect_unrestored_links() {
       continue
     fi
     # An entry with tracked content underneath is a real directory BY DESIGN
-    # (VST-37); its untracked children are what must be links. Both indexes,
-    # main authoritative, matching how the repair path decides the shape.
-    if [[ ! -L "$wt/$path" && -d "$wt/$path" ]] &&
-       { [[ -n "$(git -C "$wt" ls-files -- ":(literal)$path/" 2>/dev/null)" ]] ||
-         [[ -n "$(git -C "$PROJECT_ROOT" ls-files -- ":(literal)$path/" 2>/dev/null || true)" ]]; }; then
+    # (VST-37); its untracked children are what must be links. The layout is
+    # decided from the INDEX alone — both, main authoritative, matching how the
+    # repair path decides it — never from what the destination happens to be
+    # right now. Reading the destination first would let a legacy parent
+    # symlink still shadowing the tracked subtree answer as a plain-symlink
+    # entry, and a symlink to exactly $PROJECT_ROOT/$path is what that check
+    # calls healthy: the unrestored path would drop out of this diagnostic.
+    if [[ -n "$(git -C "$wt" ls-files -- ":(literal)$path/" 2>/dev/null)" ]] ||
+       [[ -n "$(git -C "$PROJECT_ROOT" ls-files -- ":(literal)$path/" 2>/dev/null || true)" ]]; then
+      if [[ -L "$wt/$path" || ! -d "$wt/$path" ]]; then
+        printf '%s (must be a real directory holding per-child links, tracked content lives under it)\n' "$path"
+        continue
+      fi
       collect_unhealthy_child_links "$path" "$wt"
       continue
     fi
