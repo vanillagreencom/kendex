@@ -139,6 +139,14 @@ pub fn rollback(dir: &Path) -> Result<()> {
 /// durable before the first path is touched, so a crash mid-restore
 /// recovers with the same filter instead of falling back to a full
 /// restore that would destroy those protected bytes after all.
+///
+/// One exception the filter does not cover: a journaled directory root
+/// the transaction created (`PreState::Absent`, above a mutated path) is
+/// removed whole, and anything a writer outside the transaction placed
+/// beneath it after the journal was taken goes with it — a first install
+/// into a fresh `.codex/` while the Codex CLI writes its config there.
+/// The restore does not yet verify a root's post-image before removing
+/// it.
 pub fn rollback_mutated(dir: &Path, mutated: &[PathBuf]) -> Result<()> {
     // The persisted set is a crash guard for the restore below, never a
     // gate in front of it. When this write fails (ENOSPC can fail the op
@@ -233,6 +241,19 @@ fn rollback_where(dir: &Path, restore: impl Fn(&Path) -> bool) -> Result<()> {
 }
 
 pub fn clear(dir: &Path) -> Result<()> {
+    // meta.json is what makes a journal pending, and it goes first, on
+    // its own, made durable before the sweep: `remove_dir_all` deletes
+    // in no promised order, and a crash that had taken restore.json but
+    // not meta.json would leave a pending journal with no restore set,
+    // for a recovery that restores every snapshot — over the paths the
+    // filter left alone. With meta gone the dir is a leftover the next
+    // recovery pass sweeps, never a journal it replays.
+    let meta = dir.join("meta.json");
+    match fs::remove_file(&meta) {
+        Ok(()) => sync_dir(dir),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(CoreError::io(&meta, e)),
+    }
     if dir.exists() {
         fs::remove_dir_all(dir).map_err(|e| CoreError::io(dir, e))?;
     }

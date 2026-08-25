@@ -171,6 +171,62 @@ fn a_restore_failing_with_its_set_unsaved_names_both_failures() {
     assert!(pending(&journal_dir));
 }
 
+/// With meta.json gone the dir is a leftover, not a journal: recovery
+/// reads it as non-pending and sweeps it instead of replaying it.
+#[test]
+fn a_journal_without_meta_is_not_pending_and_is_swept() {
+    let tmp = tempfile::tempdir().unwrap();
+    let a = tmp.path().join("work/a.md");
+    fs::create_dir_all(a.parent().unwrap()).unwrap();
+    fs::write(&a, "a0").unwrap();
+    let journal_dir = tmp.path().join("journal/global");
+    write(&journal_dir, std::slice::from_ref(&a)).unwrap();
+    persist_restore_set(&journal_dir, std::slice::from_ref(&a)).unwrap();
+    fs::write(&a, "a1").unwrap();
+
+    fs::remove_file(journal_dir.join("meta.json")).unwrap();
+    assert!(!pending(&journal_dir));
+    clear(&journal_dir).unwrap();
+    assert!(!journal_dir.exists());
+    assert_eq!(fs::read_to_string(&a).unwrap(), "a1");
+}
+
+/// `clear` takes meta.json down before anything else: a sweep that dies
+/// midway leaves a leftover the next pass finishes, never a pending
+/// journal whose restore set already went. Pinned by a sweep that cannot
+/// finish — a subdirectory nothing may unlink from — after which meta is
+/// gone and the journal reads as non-pending.
+#[cfg(unix)]
+#[test]
+fn clear_takes_meta_down_before_the_sweep() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let tmp = tempfile::tempdir().unwrap();
+    let a = tmp.path().join("work/a.md");
+    fs::create_dir_all(a.parent().unwrap()).unwrap();
+    fs::write(&a, "a0").unwrap();
+    let journal_dir = tmp.path().join("journal/global");
+    write(&journal_dir, std::slice::from_ref(&a)).unwrap();
+    persist_restore_set(&journal_dir, std::slice::from_ref(&a)).unwrap();
+
+    let locked = journal_dir.join("store/locked");
+    fs::create_dir(&locked).unwrap();
+    fs::write(locked.join("held"), "").unwrap();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o500)).unwrap();
+    let unlock = || fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
+    if fs::write(locked.join("probe"), "").is_ok() {
+        // Permissions do not bind this user (root): the sweep cannot be
+        // made to fail here, so the order cannot be observed.
+        unlock();
+        return;
+    }
+
+    let error = clear(&journal_dir).unwrap_err();
+    assert!(matches!(error, CoreError::Io { .. }), "{error:?}");
+    assert!(!journal_dir.join("meta.json").exists());
+    assert!(!pending(&journal_dir));
+    unlock();
+}
+
 /// A journaled directory root above a mutated path is part of the
 /// transaction's footprint: the chain it created comes down with the
 /// rollback even though only the leaf is named as mutated.

@@ -133,6 +133,38 @@ fn a_fork_edited_after_the_rename_was_planned_refuses_the_move() {
     assert!(!w.home.join("app/.kendex-local/skills/my-gh").exists());
 }
 
+/// A dangling link inside a fork is the person's to keep: the rename
+/// carries the fork's files whole, link included, instead of refusing
+/// the fork because one entry has no bytes to hash.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_fork_holding_a_dangling_link_still_renames() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "Upstream.");
+    commit(&w.upstream, "one");
+    declare(&w, "[skills.gh]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    fs::write(
+        skill_file(&w),
+        "---\nname: gh\ndescription: mine\n---\nMine.\n",
+    )
+    .unwrap();
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    let report = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &report.plan, None).unwrap();
+
+    let source = w.home.join("app/.kendex-local/skills/gh");
+    std::os::unix::fs::symlink("nowhere", source.join("notes")).unwrap();
+
+    let plan = fork::rename_fork(&w.env, &w.scope, ItemKind::Skill, "gh", "my-gh").unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    let moved = w.home.join("app/.kendex-local/skills/my-gh/notes");
+    assert!(moved.is_symlink(), "{moved:?}");
+    assert!(!source.exists());
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn forking_a_codex_agent_is_refused_with_the_fix_named() {

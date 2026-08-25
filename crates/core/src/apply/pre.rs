@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::error::{CoreError, Result};
-use crate::hash::hash_tree;
+use crate::hash::{hash_tree, hash_tree_as_is};
 
 /// A precondition every mutation revalidates immediately before running —
 /// plans bind to the observed state they were computed from (invariant 7).
@@ -38,6 +38,14 @@ pub enum Pre {
     },
     SymlinkTo {
         target: PathBuf,
+    },
+    /// The entries at and beneath the path, as they sit: files by bytes,
+    /// links by target, anything else by kind, no link followed. What a
+    /// directory move binds to — a rename carries the entries themselves,
+    /// so a dangling link is part of what the plan proved it may move,
+    /// never a reason to refuse the scope.
+    TreeIs {
+        hash: String,
     },
     Any,
 }
@@ -71,6 +79,14 @@ impl Pre {
         }
     }
 
+    /// What a plan that moves `path` whole binds to: the entries as they
+    /// sit now. The one pairing of `TreeIs` with the hash that checks it.
+    pub fn tree_as_is(path: &Path) -> Result<Pre> {
+        Ok(Pre::TreeIs {
+            hash: hash_tree_as_is(path)?,
+        })
+    }
+
     pub(super) fn check(&self, path: &Path) -> Result<()> {
         let ok = match self {
             Pre::Any => true,
@@ -84,6 +100,7 @@ impl Pre {
             Pre::SymlinkTo { target } => {
                 path.is_symlink() && fs::read_link(path).ok().as_deref() == Some(target)
             }
+            Pre::TreeIs { hash } => hash_tree_as_is(path).map(|h| h == *hash).unwrap_or(false),
         };
         if ok {
             Ok(())

@@ -55,6 +55,57 @@ fn hash_into(hasher: &mut Sha256, path: &Path, rel: &Path, depth: usize) -> Resu
     Ok(())
 }
 
+/// SHA-256 over a tree as it sits, never following a link and never
+/// failing on what it finds: a plain file by relative path and bytes, a
+/// link by relative path and target, anything else by relative path and
+/// kind. What a directory move binds to — a rename carries the entries
+/// themselves, a dangling link included, so the precondition names
+/// exactly those and never the bytes a link points at. The byte after
+/// the path says which kind wrote the record, so a file whose bytes spell
+/// a target never hashes like a link to it.
+pub fn hash_tree_as_is(path: &Path) -> Result<String> {
+    let mut hasher = Sha256::new();
+    hash_as_is_into(&mut hasher, path, Path::new(""))?;
+    Ok(hex(&hasher.finalize()))
+}
+
+fn hash_as_is_into(hasher: &mut Sha256, path: &Path, rel: &Path) -> Result<()> {
+    let kind = fs::symlink_metadata(path)
+        .map_err(|e| CoreError::io(path, e))?
+        .file_type();
+    if kind.is_symlink() {
+        let target = fs::read_link(path).map_err(|e| CoreError::io(path, e))?;
+        hasher.update(rel.to_string_lossy().as_bytes());
+        hasher.update([1]);
+        hasher.update(target.to_string_lossy().as_bytes());
+        hasher.update([0]);
+    } else if kind.is_dir() {
+        let mut entries: Vec<_> = fs::read_dir(path)
+            .map_err(|e| CoreError::io(path, e))?
+            .flatten()
+            .map(|e| e.path())
+            .collect();
+        entries.sort();
+        for entry in entries {
+            let Some(name) = entry.file_name() else {
+                continue;
+            };
+            hash_as_is_into(hasher, &entry, &rel.join(name))?;
+        }
+    } else if kind.is_file() {
+        let bytes = fs::read(path).map_err(|e| CoreError::io(path, e))?;
+        hasher.update(rel.to_string_lossy().as_bytes());
+        hasher.update([0]);
+        hasher.update(&bytes);
+        hasher.update([0]);
+    } else {
+        hasher.update(rel.to_string_lossy().as_bytes());
+        hasher.update([2]);
+        hasher.update([0]);
+    }
+    Ok(())
+}
+
 /// The hash a single-file artifact will have once written — mirrors
 /// `hash_tree` applied to a lone file.
 pub fn hash_bytes(bytes: &[u8]) -> String {
@@ -196,6 +247,34 @@ mod tests {
         std::fs::write(root.join("SKILL.md"), "hello").unwrap();
         std::os::unix::fs::symlink(&root, root.join("loop")).unwrap();
         assert!(hash_tree(&root).is_err());
+    }
+
+    /// The as-is hash names the entries a move carries: a dangling link
+    /// is one of them, by its target, where the content hash has nothing
+    /// to read and refuses the tree.
+    #[cfg(unix)]
+    #[test]
+    fn as_is_hash_names_a_link_by_its_target_and_never_follows_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("dir");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a"), "bytes").unwrap();
+        std::os::unix::fs::symlink("nowhere", root.join("gone")).unwrap();
+        assert!(hash_tree(&root).is_err());
+
+        let dangling = hash_tree_as_is(&root).unwrap();
+        std::fs::remove_file(root.join("gone")).unwrap();
+        std::os::unix::fs::symlink("a", root.join("gone")).unwrap();
+        let resolving = hash_tree_as_is(&root).unwrap();
+        assert_ne!(dangling, resolving, "the target is part of the record");
+
+        std::fs::remove_file(root.join("gone")).unwrap();
+        std::fs::write(root.join("gone"), "a").unwrap();
+        let file = hash_tree_as_is(&root).unwrap();
+        assert_ne!(
+            resolving, file,
+            "a file spelling the target is not the link"
+        );
     }
 
     #[test]

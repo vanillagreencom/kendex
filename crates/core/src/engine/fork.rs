@@ -264,9 +264,10 @@ pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &st
         ops.push(PlannedOp {
             description: format!("rename the fork's files to {new}"),
             op: Op::Rename {
-                from_pre: Pre::HashIs {
-                    hash: crate::hash::hash_tree(&from)?,
-                },
+                // The fork moves whole, whatever sits in it: a dangling
+                // link the person left there is carried along, not a
+                // reason to refuse the rename.
+                from_pre: Pre::tree_as_is(&from)?,
                 from,
                 to,
                 to_pre: Pre::Absent,
