@@ -175,8 +175,12 @@ cmd_update() {
         case "$1" in
             --arg|--argjson)
                 [[ $# -ge 3 ]] || { echo "Error: $1 needs a NAME and a VALUE" >&2; return 1; }
-                if [[ "$1" == "--argjson" ]] && ! jq -e . >/dev/null 2>&1 <<<"$3"; then
-                    echo "Error: --argjson $2 is not valid JSON" >&2; return 1
+                # Count the parsed values, never their truthiness: `jq -e .`
+                # takes its status from the OUTPUT, so it rejects the perfectly
+                # valid scalars false and null. Slurping also rejects a stream
+                # of several values, which is not one binding.
+                if [[ "$1" == "--argjson" ]] && ! jq -s -e 'length == 1' >/dev/null 2>&1 <<<"$3"; then
+                    echo "Error: --argjson $2 is not exactly one JSON value" >&2; return 1
                 fi
                 jq_args+=("$1" "$2" "$3"); shift 3 ;;
             *)

@@ -74,9 +74,32 @@ labels="$("$WS" --state-dir "$sd" get KEN-1 '.qa_labels | join(",")')"
 before="$("$WS" --state-dir "$sd" get KEN-1 '.qa_labels | length')"
 err="$("$WS" --state-dir "$sd" update KEN-1 --argjson labels 'not json' '.qa_labels = $labels' 2>&1 >/dev/null)" && rc=0 || rc=$?
 after="$("$WS" --state-dir "$sd" get KEN-1 '.qa_labels | length')"
-[[ "$rc" -ne 0 ]] && [[ "$err" == *"not valid JSON"* ]] && [[ "$before" == "$after" ]] \
+[[ "$rc" -ne 0 ]] && [[ "$err" == *"exactly one JSON value"* ]] && [[ "$before" == "$after" ]] \
   && ok "--argjson refuses a non-JSON value and writes nothing" \
   || bad "--argjson refuses a non-JSON value and writes nothing" "rc=$rc err=$err before=$before after=$after"
+
+err="$("$WS" --state-dir "$sd" update KEN-1 --argjson pair '1 2' '.cycles = 0' 2>&1 >/dev/null)" && rc=0 || rc=$?
+[[ "$rc" -ne 0 ]] && [[ "$err" == *"exactly one JSON value"* ]] \
+  && ok "--argjson refuses a stream of several values" \
+  || bad "--argjson refuses a stream of several values" "rc=$rc err=$err"
+
+# false and null are JSON values like any other. Validating with `jq -e .`
+# reads the parsed value's truthiness instead of the parse, so both come back
+# as "not valid JSON" and an update the caller is entitled to make is refused.
+"$WS" --state-dir "$sd" update KEN-1 '.skip_qa = true' >/dev/null
+"$WS" --state-dir "$sd" update KEN-1 --argjson flag 'false' '.skip_qa = $flag' >/dev/null && rc=0 || rc=$?
+flag_val="$("$WS" --state-dir "$sd" get KEN-1 '.skip_qa')"
+flag_type="$("$WS" --state-dir "$sd" get KEN-1 '.skip_qa | type')"
+[[ "$rc" -eq 0 ]] && [[ "$flag_val" == "false" ]] && [[ "$flag_type" == "boolean" ]] \
+  && ok "--argjson binds the scalar false as a boolean" \
+  || bad "--argjson binds the scalar false as a boolean" "rc=$rc val=$flag_val type=$flag_type"
+
+"$WS" --state-dir "$sd" set KEN-1 pre_delegate_sha deadbeef >/dev/null
+"$WS" --state-dir "$sd" update KEN-1 --argjson sha 'null' '.pre_delegate_sha = $sha' >/dev/null && rc=0 || rc=$?
+sha_type="$("$WS" --state-dir "$sd" get KEN-1 '.pre_delegate_sha | type')"
+[[ "$rc" -eq 0 ]] && [[ "$sha_type" == "null" ]] \
+  && ok "--argjson binds the scalar null as JSON null" \
+  || bad "--argjson binds the scalar null as JSON null" "rc=$rc type=$sha_type"
 
 # --- argument-shape refusals -----------------------------------------------
 err="$("$WS" --state-dir "$sd" update KEN-1 --arg loc 2>&1 >/dev/null)" && rc=0 || rc=$?
@@ -103,6 +126,26 @@ cycles="$("$WS" --state-dir "$sd" get KEN-1 .cycles)"
 # --- must-fail control: the interpolated form on the same input -------------
 echo
 echo "--- planted control ---"
+
+# The pre-fix validation: `jq -e .` reads the value, so false and null are
+# refused. A copy of the script carrying it must reject both.
+CTRL_SCRIPTS="$TMP_ROOT/scripts"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$CTRL_SCRIPTS"
+sed "s/jq -s -e 'length == 1'/jq -e ./" "$WS" > "$CTRL_SCRIPTS/workflow-state"
+chmod +x "$CTRL_SCRIPTS/workflow-state"
+if cmp -s "$CTRL_SCRIPTS/workflow-state" "$WS"; then
+  bad "truthiness control planted nothing — its sed program matched no text"
+else
+  sdt="$TMP_ROOT/state-truthiness"
+  "$CTRL_SCRIPTS/workflow-state" --state-dir "$sdt" init KEN-3 --worktree "$REPO_ROOT" --branch ken-3 >/dev/null
+  refused=0
+  for scalar in false null; do
+    "$CTRL_SCRIPTS/workflow-state" --state-dir "$sdt" update KEN-3 --argjson v "$scalar" '.skip_qa = $v' >/dev/null 2>&1 \
+      || refused=$((refused + 1))
+  done
+  [[ "$refused" -eq 2 ]] && ok "the -e form refuses both false and null, which this fix accepts" \
+    || bad "the -e form refuses both false and null, which this fix accepts" "refused=$refused of 2"
+fi
 
 sd2="$TMP_ROOT/state-interpolated"
 "$WS" --state-dir "$sd2" init KEN-2 --worktree "$REPO_ROOT" --branch ken-2 >/dev/null
