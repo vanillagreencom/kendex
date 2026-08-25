@@ -12,7 +12,7 @@ use kendex_core::model::Scope;
 use kendex_core::registry::{CurlFetch, collections};
 use kendex_core::source_ops::{self, SourceAction};
 
-use super::engine_common::print_report;
+use super::engine_common::{print_report, print_safety};
 use super::{CliResult, say};
 
 pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool) -> CliResult {
@@ -138,6 +138,7 @@ fn install_step(
     if reused && let Some(commit) = &step.commit {
         for (kind, name) in &members {
             let pinned = kendex_core::package::set_rev(env, scope, *kind, name, Some(commit))?;
+            print_safety(&pinned);
             kendex_core::apply::execute(env, &pinned.plan, None)?;
         }
     }

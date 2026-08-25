@@ -206,12 +206,10 @@ lives in one capability table read by core and UI.
 - In a table, a harness is its mark (logo + hue), name on hover and for
   screen readers. Where a tool is stated once — a package's own details —
   the name is written out.
-- A status a colour can carry is a dot; words on hover and in a
-  screen-reader line.
+- A status a colour can carry is a dot; words on hover and in a screen-reader line.
 - Four type steps, no fifth: page title (24 semibold), section title (15
   semibold, full contrast), row label (14 medium), description (13 muted).
-  `components/section.tsx` owns all four. A heading outranks what it
-  introduces.
+  `components/section.tsx` owns all four. A heading outranks what it introduces.
 - Space groups things; boxes are for objects. A settings or detail surface
   is `Section` + `SettingRow`, never a stack of cards. A `Card` is a
   discrete thing a person acts on as a unit — a bundle, a problem, an error.
@@ -259,8 +257,7 @@ lives in one capability table read by core and UI.
   pending says it is checking, failed that packages may be missing).
 - Hook events have one vocabulary — Claude Code's names, in
   `core/hook.rs::EVENTS`; every other harness's map is keyed by it. The
-  picker offers that list, the validator rejects anything outside it, the
-  renderers read it.
+  picker offers that list, the validator rejects anything outside it, the renderers read it.
 - **One hook model, two authors, delivery decided by capability.** A
   catalog hook and a manifest `[[custom-hooks]]` entry both become a
   `HookSpec` (`core/hook/spec.rs`) — script-bodied for the catalog,

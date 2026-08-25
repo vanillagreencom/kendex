@@ -2,6 +2,7 @@ use kendex_core::engine::{adopt, audit};
 use kendex_core::env::Env;
 use kendex_core::model::{HarnessId, ItemKind};
 
+use super::engine_common::print_safety;
 use super::{CliResult, resolve_scopes, say};
 use crate::scope::ScopeFilter;
 
@@ -38,8 +39,10 @@ pub fn run(
     }
     kendex_core::apply::execute(env, &move_plan, None)?;
 
-    // Second transaction renders the managed replacement.
+    // Second transaction renders the managed replacement — with its score
+    // beside the write, like every other write path.
     let report = audit(env, &scope)?;
+    print_safety(&report);
     kendex_core::apply::execute(env, &report.plan, None)?;
     say(&format!(
         "adopted {} '{}' into the local source",

@@ -2,7 +2,7 @@ use kendex_core::drift::hook;
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
 
-use super::engine_common::confirm_and_execute;
+use super::engine_common::{confirm_and_execute, print_safety};
 use super::{CliResult, resolve_scopes, say};
 use crate::scope::ScopeFilter;
 
@@ -49,6 +49,7 @@ pub fn install(env: &Env, scope: &Scope, yes: bool) -> CliResult {
         for op in &report.plan.ops {
             say(&format!("  - {}", op.description));
         }
+        print_safety(&report);
         confirm_and_execute(env, &report, yes)?;
     }
     say(&format!("{}: drift hook installed", scope.label()));

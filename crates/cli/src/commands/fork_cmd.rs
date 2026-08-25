@@ -4,6 +4,7 @@ use kendex_core::engine::audit;
 use kendex_core::env::Env;
 use kendex_core::model::HarnessId;
 
+use super::engine_common::print_safety;
 use super::pin::parse_kind;
 use super::{CliResult, resolve_scopes, say};
 use crate::scope::ScopeFilter;
@@ -67,6 +68,7 @@ pub fn run(env: &Env, args: ForkArgs) -> CliResult {
         )?,
         None => audit(env, &scope)?,
     };
+    print_safety(&report);
     kendex_core::apply::execute(env, &report.plan, None)?;
     match args.rename {
         Some(new) => say(&format!("fork renamed to {new}")),
