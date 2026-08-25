@@ -316,6 +316,23 @@ assert_eq "$RUN_RC" "0" "a bare-numeric issue binds to its issue-N state instead
 assert_eq "$(jq -r '.fixed_items[0].commit' "$work/tmp/workflow-state-issue-7.json")" "${NEW_A:0:7}" "the aliased record's fix SHA is rewritten"
 [[ ! -f "$alias_sidecar" ]] && pass "the resolved-key sidecar is consumed after the write" || fail "the resolved-key sidecar is consumed after the write"
 
+# Spelling must not strand a map: a bare-numeric push with NO state yet
+# strands its map under the normalized issue-N key, so the natural retry —
+# state created as issue-N, either spelling — finds and consumes it.
+work="$TMP_ROOT/work-alias-retry"
+rm -rf "$work" && mkdir -p "$work"
+retry_sidecar="$work/tmp/worktree-push-pending-map-issue-7.json"
+STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" run_push "$work" --worktree "$wt" --issue 7
+assert_eq "$RUN_RC" "1" "a stateless bare-numeric push still fails the call"
+[[ -f "$retry_sidecar" ]] && pass "the stranded map is keyed by the normalized issue-N name" || fail "the stranded map is keyed by the normalized issue-N name (missing $retry_sidecar)"
+(cd "$work" \
+  && "$STATE" init issue-7 --agent generalist --worktree "$wt" --branch issue-7 >/dev/null \
+  && "$STATE" append issue-7 fixed_items "{\"description\":\"fix\",\"commit\":\"${OLD_A:0:7}\",\"source\":\"pr-review\"}")
+STUB_PUSH_STDOUT="→ pushed" run_push "$work" --worktree "$wt" --issue issue-7
+assert_eq "$RUN_RC" "0" "the issue-N-spelled retry exits 0"
+assert_eq "$(jq -r '.fixed_items[0].commit' "$work/tmp/workflow-state-issue-7.json")" "${NEW_A:0:7}" "the retry consumes the bare-numeric run's map and rewrites the SHA"
+[[ ! -f "$retry_sidecar" ]] && pass "the cross-spelling sidecar is consumed" || fail "the cross-spelling sidecar is consumed"
+
 echo
 echo "=== in-tree plants are inert: the sidecar lives outside the tree ==="
 

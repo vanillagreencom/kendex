@@ -220,10 +220,19 @@ fi
 # repository-controlled, and recovery state kept there could be planted (a
 # plausible map in a tracked file) or redirected (a symlink at its path).
 # Location closes that class outright — no per-variant content checks.
+# One canonical key per issue, whatever spelling the caller used: the key of
+# the resolved state file when one exists, and the normalized issue-N key
+# when none does — a missing state resolves to the raw spelling, but
+# GitHub-issue orchestration inits state under issue-N, so a bare-numeric
+# push that strands a map and an issue-N retry that must consume it have to
+# agree on one sidecar name.
 state_dir_resolved="$(dirname -- "$state_file")"
 state_key="$(basename -- "$state_file")"
 state_key="${state_key#workflow-state-}"
 state_key="${state_key%.json}"
+if [[ "$state_present" != "true" && "$issue" =~ ^[0-9]+$ ]]; then
+	state_key="issue-$issue"
+fi
 sidecar="$state_dir_resolved/worktree-push-pending-map-$state_key.json"
 
 # A sidecar left by an earlier run is a rebase that already happened; its map
