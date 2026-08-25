@@ -5,7 +5,7 @@ import { KindCountBadges } from "@/components/kind-count-badges";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { clickAsksToOpen } from "@/lib/click-asks-to-open";
-import { unmanagedHereLabel } from "@/lib/copy";
+import { PLACE_UNCHECKED_LABEL, unmanagedHereLabel } from "@/lib/copy";
 
 /**
  * One place a setup applies — Personal, or a project folder. Personal and a
@@ -46,8 +46,9 @@ export function ProjectCard({
   /** How many items here kendex was never asked to look after. Zero says
    *  nothing: this is the one place the app mentions them, and a card
    *  reporting "0 not managed" on every project would be a nag on a page
-   *  that is about what is installed. */
-  unmanaged?: number;
+   *  that is about what is installed. Null where the audit could not read
+   *  the place, which is not zero and must not read as it. */
+  unmanaged?: number | null;
   onUnmanaged?: () => void;
 }) {
   return (
@@ -81,8 +82,14 @@ export function ProjectCard({
         />
         {/* Sits with the counts because it is one: how much of what is at
             this place kendex is not looking after. The words say what the
-            click opens, so the pill is not a number nobody can act on. */}
-        {unmanaged && onUnmanaged ? (
+            click opens, so the pill is not a number nobody can act on. A
+            place that could not be read says so in the same slot, as plain
+            text — there is no number, and nothing to open. */}
+        {unmanaged === null ? (
+          <span className="text-[13px] text-muted-foreground">
+            {PLACE_UNCHECKED_LABEL}
+          </span>
+        ) : unmanaged && onUnmanaged ? (
           <button
             type="button"
             onClick={onUnmanaged}

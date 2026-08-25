@@ -11,10 +11,17 @@ import { type MergedDriftRow, mergeDriftRows } from "@/lib/drift-merge";
 
 /** Everything at this place kendex did not put there, one entry per item
  *  however many tools it is installed for. Adopting is an offer the user
- *  takes up, so this is never work waiting on them. */
-export function unmanagedIn(view: AuditView): MergedDriftRow[] {
+ *  takes up, so this is never work waiting on them.
+ *
+ *  Null where the audit could not read this place. What is there is
+ *  genuinely unknown, and an empty list is a claim: it would read as
+ *  "nothing unmanaged here", and every row the app would have offered to
+ *  adopt writes to the filesystem. Null so no caller can spend it as a
+ *  number without deciding what to say. */
+export function unmanagedIn(view: AuditView): MergedDriftRow[] | null {
+  if (view.error) return null;
   return mergeDriftRows(view.drift.filter((row) => row.state === "unmanaged"));
 }
 
-export const unmanagedCount = (view: AuditView): number =>
-  unmanagedIn(view).length;
+export const unmanagedCount = (view: AuditView): number | null =>
+  unmanagedIn(view)?.length ?? null;

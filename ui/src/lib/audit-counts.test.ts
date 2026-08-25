@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AuditView, DriftRow, HarnessId } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
-import { unmanagedCount } from "./audit-counts";
+import { unmanagedCount, unmanagedIn } from "./audit-counts";
 
 function drift(
   name: string,
@@ -56,5 +56,29 @@ describe("unmanagedCount", () => {
     ];
 
     expect(unmanagedCount(view(rows))).toBe(1);
+  });
+});
+
+// A place the audit could not read holds an unknown number of unmanaged
+// items, not zero. Zero is a claim, and every row this list feeds carries a
+// button that adopts — a write to the filesystem from rows nothing has
+// confirmed still exist.
+describe("a place the audit could not read", () => {
+  const unreadable = (): AuditView => ({
+    ...view([drift("gh", "claude", "unmanaged")]),
+    error: { kind: "lock-corrupt", message: "lock is not JSON" },
+  });
+
+  it("counts nothing rather than counting zero", () => {
+    expect(unmanagedCount(unreadable())).toBeNull();
+  });
+
+  it("lists nothing rather than listing an empty list", () => {
+    expect(unmanagedIn(unreadable())).toBeNull();
+  });
+
+  // The control: the same rows without the error are a real, countable list.
+  it("counts them once the place reads", () => {
+    expect(unmanagedCount(view([drift("gh", "claude", "unmanaged")]))).toBe(1);
   });
 });

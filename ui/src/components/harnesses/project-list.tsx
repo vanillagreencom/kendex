@@ -28,7 +28,9 @@ export function ProjectList() {
   // What kendex is not looking after at one place. This is the only surface
   // in the app that mentions it: a count on the card for the place it is
   // at, and the flow that offers to take it on behind the click.
-  const notManaged = (scope: Scope): number => {
+  // Null where the place could not be read; zero where the audit simply has
+  // not reached it yet, which says nothing and will resolve on its own.
+  const notManaged = (scope: Scope): number | null => {
     const view = views.find((v) => sameScope(v.scope, scope));
     return view ? unmanagedCount(view) : 0;
   };

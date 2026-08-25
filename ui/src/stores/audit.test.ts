@@ -314,6 +314,40 @@ describe("an audit that could not read one scope", () => {
     ).toHaveLength(1);
   });
 
+  // The scores are all that carries over. Drift is a comparison against a
+  // manifest this audit could not read, and the app adopts from those rows —
+  // a write to the filesystem off a picture nothing has confirmed.
+  it("keeps the scores and nothing else it could act on", async () => {
+    const withDrift: AuditView = {
+      ...scored(acme),
+      drift: [
+        {
+          kind: "skill",
+          name: "byhand",
+          harness: "claude",
+          state: "unmanaged",
+          detail: "/work/acme/.claude/skills/byhand",
+          scope: acme,
+        },
+      ],
+      plan: ["install byhand"],
+      notes: ["a note from before"],
+    };
+    useAuditStore.setState({ views: [withDrift] });
+    vi.mocked(commands.auditAll).mockResolvedValue({
+      status: "ok",
+      data: [unreadable(acme)],
+    });
+
+    await useAuditStore.getState().refresh({ force: true });
+
+    const kept = useAuditStore.getState().views[0];
+    expect(kept?.safety).toHaveLength(1);
+    expect(kept?.drift).toEqual([]);
+    expect(kept?.plan).toEqual([]);
+    expect(kept?.notes).toEqual([]);
+  });
+
   it("lets a scope that answered keep its fresh reading", async () => {
     const fresh = scored(globalScope);
     fresh.safety[0].safety = { score: 40, deductions: [] };

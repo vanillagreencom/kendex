@@ -24,6 +24,13 @@ export const START_MANAGING_LABEL = "Start managing";
 // wrong: nothing here is a problem, and the offer is the user's to take.
 export const unmanagedHereLabel = (count: number): string =>
   `${count} not managed yet`;
+// Where that count would sit, for a place the audit could not read. Not a
+// count and not a button: what is at the place is unknown, and every action
+// the card could offer would come from a reading nothing confirmed. The kind
+// counts beside it come from the scan and still hold, so this names the one
+// thing that failed rather than the whole card.
+export const PLACE_UNCHECKED_LABEL = "Couldn't check what's here";
+export const PLACE_UNCHECKED_TITLE = "Couldn't check this place";
 export const ALL_MANAGED_TITLE = "Everything is managed";
 export const ALL_MANAGED_BODY =
   "kendex looks after everything it can see here.";

@@ -1,4 +1,4 @@
-import { PackageCheck } from "lucide-react";
+import { FileWarning, PackageCheck } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { UnmanagedItems } from "@/components/unmanaged-items";
@@ -6,6 +6,7 @@ import { unmanagedIn } from "@/lib/audit-counts";
 import {
   ALL_MANAGED_BODY,
   ALL_MANAGED_TITLE,
+  PLACE_UNCHECKED_TITLE,
   UNMANAGED_SECTION_EXPLAINER,
 } from "@/lib/copy";
 import { scopeName } from "@/lib/labels";
@@ -35,6 +36,10 @@ export function UnmanagedPage() {
   // navigation that never happened rather than a state to design for.
   if (!scope) return null;
   const view = views.find((row) => sameScope(row.scope, scope));
+  // Null rows and no rows are different answers: null means the audit could
+  // not read this place, so what is at it is unknown. Every button on this
+  // page adopts, which writes to the filesystem from the rows it was handed,
+  // and those rows are a picture nothing has confirmed.
   const rows = view ? unmanagedIn(view) : [];
 
   return (
@@ -47,7 +52,11 @@ export function UnmanagedPage() {
       />
       <div className={PAGE_BODY}>
         <div className={cn("flex flex-col gap-4", CONTENT_WIDTH)}>
-          {rows.length === 0 ? (
+          {rows === null ? (
+            <EmptyState icon={FileWarning} title={PLACE_UNCHECKED_TITLE}>
+              {view?.error?.message}
+            </EmptyState>
+          ) : rows.length === 0 ? (
             <EmptyState icon={PackageCheck} title={ALL_MANAGED_TITLE}>
               {ALL_MANAGED_BODY}
             </EmptyState>
