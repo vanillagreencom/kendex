@@ -117,7 +117,15 @@ fn plan_scope_once(
     let disk_lock = lock;
     let manifest = moved_manifest.as_ref().unwrap_or(manifest);
     let lock = moved_lock.as_ref().unwrap_or(lock);
-    let state = desired_state(env, scope, manifest, lock)?;
+    // A single-package update plans from a copy of the manifest with every
+    // other follower pinned at its installed commit — the pins steer this
+    // pass's reads and are stripped from any manifest this plan writes.
+    let (planning, held_pins) = desired::hold::planning_manifest(manifest, lock, options);
+    let manifest = planning.as_ref();
+    let mut state = desired_state(env, scope, manifest, lock)?;
+    if let (Some(pins), Some(update)) = (&held_pins, state.manifest_update.as_mut()) {
+        pins.unpin(update);
+    }
     // Advisory scoring over what this plan would write, before the ops are
     // planned: the rows ride out on the report beside the plan.
     let safety = scoring::run(scope, &state);

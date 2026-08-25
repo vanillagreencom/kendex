@@ -98,6 +98,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             account::mine_submit,
             account::mine_submissions,
             packages::package_versions,
+            packages::package_update,
             packages::updates_overview,
             packages::updates_refresh,
             packages::update_set_ignored,

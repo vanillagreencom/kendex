@@ -102,10 +102,24 @@ pub fn update_set_ignored(
     updates_overview()
 }
 
+/// Bring one package current and apply — the Updates page's per-package
+/// and per-place Update, and the package page's. The scope's other
+/// followers stay at the commits their lock records; `refresh` is what
+/// brings a whole place current, and `Update all` reaches the same end by
+/// running this command once per row.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn package_update(scope: Scope, kind: ItemKind, name: String) -> Result<AuditView, String> {
+    let env = env()?;
+    let report = package::update_one(&env, &scope, kind, &name).map_err(|e| e.to_string())?;
+    apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
+    Ok(view(&env, &scope))
+}
+
 /// Hold a package at a version (or let it follow again) and apply the
-/// change. The plan is whole-scope, like every apply: packages that follow
-/// their source come current in the same pass, which is what following
-/// means.
+/// change, scoped to the package: every other follower in the scope reads
+/// the commit its lock records, so moving one hold never brings the
+/// neighbours current.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn package_set_rev(
@@ -115,8 +129,18 @@ pub fn package_set_rev(
     rev: Option<String>,
 ) -> Result<AuditView, String> {
     let env = env()?;
-    let report =
-        package::set_rev(&env, &scope, kind, &name, rev.as_deref()).map_err(|e| e.to_string())?;
+    let report = package::set_rev_with(
+        &env,
+        &scope,
+        kind,
+        &name,
+        rev.as_deref(),
+        &engine::PlanOptions {
+            update_only: Some((kind, name.clone())),
+            ..Default::default()
+        },
+    )
+    .map_err(|e| e.to_string())?;
     apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
     Ok(view(&env, &scope))
 }
@@ -235,9 +259,10 @@ pub fn fork_rename(
     Ok(view(&env, &scope))
 }
 
-/// Apply a scope with one package's edits discarded — the door back to
-/// "the catalog's version wins", scoped to the package the user named so
-/// a neighbour's edits are never taken along.
+/// Discard one package's edits and re-render it — the door back to "the
+/// catalog's version wins". Scoped to the package the user named twice
+/// over: a neighbour's edits are never taken along, and the scope's other
+/// followers stay at their installed commits.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn apply_discard_edits(
@@ -259,6 +284,7 @@ pub fn apply_discard_edits(
             Some(&rev),
             &engine::PlanOptions {
                 overwrite_edited_names: Some(vec![(kind, name.clone())]),
+                update_only: Some((kind, name.clone())),
                 ..Default::default()
             },
         )
@@ -277,7 +303,8 @@ pub fn apply_discard_edits(
         &manifest,
         &lock,
         &engine::PlanOptions {
-            overwrite_edited_names: Some(vec![(kind, name)]),
+            overwrite_edited_names: Some(vec![(kind, name.clone())]),
+            update_only: Some((kind, name)),
             ..Default::default()
         },
     )

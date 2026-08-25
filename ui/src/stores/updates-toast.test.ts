@@ -11,7 +11,7 @@ vi.mock("@/bindings", () => ({
     updatesRefresh: vi.fn(),
     updateSetIgnored: vi.fn(),
     packageSetRev: vi.fn(),
-    applyPlan: vi.fn(),
+    packageUpdate: vi.fn(),
     applyDiscardEdits: vi.fn(),
     packageFork: vi.fn(),
     scanMachine: vi.fn(),
@@ -62,7 +62,10 @@ const view = {
 };
 
 const ready = (remaining: UpdateRow[]) => {
-  vi.mocked(commands.applyPlan).mockResolvedValue({ status: "ok", data: view });
+  vi.mocked(commands.packageUpdate).mockResolvedValue({
+    status: "ok",
+    data: view,
+  });
   vi.mocked(commands.updatesOverview).mockResolvedValue({
     status: "ok",
     data: { rows: remaining, warnings: [] },

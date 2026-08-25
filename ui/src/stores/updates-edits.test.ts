@@ -14,7 +14,7 @@ vi.mock("@/bindings", () => ({
     updatesRefresh: vi.fn(),
     updateSetIgnored: vi.fn(),
     packageSetRev: vi.fn(),
-    applyPlan: vi.fn(),
+    packageUpdate: vi.fn(),
     applyDiscardEdits: vi.fn(),
     packageFork: vi.fn(),
     packageForkBeside: vi.fn(),

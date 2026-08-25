@@ -12,7 +12,7 @@ vi.mock("@/bindings", () => ({
     updatesRefresh: vi.fn(),
     updateSetIgnored: vi.fn(),
     packageSetRev: vi.fn(),
-    applyPlan: vi.fn(),
+    packageUpdate: vi.fn(),
     applyDiscardEdits: vi.fn(),
     packageFork: vi.fn(),
     scanMachine: vi.fn(),
@@ -64,7 +64,7 @@ describe("updates store: bulk update", () => {
     useProblemsStore.setState({
       dialog: { open: false, title: "", steps: [], actions: [] },
     });
-    vi.mocked(commands.applyPlan).mockRejectedValue(new Error("ipc down"));
+    vi.mocked(commands.packageUpdate).mockRejectedValue(new Error("ipc down"));
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
       data: { rows: [], warnings: [] },
@@ -82,7 +82,7 @@ describe("updates store: bulk update", () => {
     expect(useProblemsStore.getState().dialog.message).toBe("ipc down");
   });
 
-  it("a bulk update moves holds once each and applies every following scope once", async () => {
+  it("a bulk update brings each place current on its own", async () => {
     const acme = { scope: "project", root: "/home/x/acme" } as const;
     const shop = { scope: "project", root: "/home/x/shop" } as const;
     const view = {
@@ -99,7 +99,7 @@ describe("updates store: bulk update", () => {
       status: "ok",
       data: view,
     });
-    vi.mocked(commands.applyPlan).mockResolvedValue({
+    vi.mocked(commands.packageUpdate).mockResolvedValue({
       status: "ok",
       data: view,
     });
@@ -133,10 +133,12 @@ describe("updates store: bulk update", () => {
       "gh",
       "b".repeat(40),
     );
-    // Moving gh's hold already applied acme, so review came current with
-    // it; only the global follower still needs its own apply.
-    const applied = vi.mocked(commands.applyPlan).mock.calls.map((c) => c[0]);
-    expect(applied).toEqual([{ scope: "global" }]);
+    // Every following place gets its own package-scoped apply — moving
+    // gh's hold in acme leaves review's follower there untouched.
+    expect(vi.mocked(commands.packageUpdate).mock.calls).toEqual([
+      [acme, "skill", "review"],
+      [{ scope: "global" }, "skill", "gh"],
+    ]);
     expect(toast.success).toHaveBeenCalledWith(
       "Updated 2 packages — 1 place needs attention on its own row",
     );
@@ -145,7 +147,7 @@ describe("updates store: bulk update", () => {
   it("one package's bulk update leaves scopes only other packages live in alone", async () => {
     const acme = { scope: "project", root: "/home/x/acme" } as const;
     const shop = { scope: "project", root: "/home/x/shop" } as const;
-    vi.mocked(commands.applyPlan).mockResolvedValue({
+    vi.mocked(commands.packageUpdate).mockResolvedValue({
       status: "ok",
       data: {
         scope: acme,
@@ -179,8 +181,8 @@ describe("updates store: bulk update", () => {
       .getState()
       .updateRows([row({ name: "gh", scope: acme })]);
 
-    expect(vi.mocked(commands.applyPlan).mock.calls.map((c) => c[0])).toEqual([
-      acme,
+    expect(vi.mocked(commands.packageUpdate).mock.calls).toEqual([
+      [acme, "skill", "gh"],
     ]);
     expect(commands.packageSetRev).not.toHaveBeenCalled();
   });
@@ -195,7 +197,7 @@ describe("updates store: bulk update", () => {
       }),
     ]);
 
-    expect(commands.applyPlan).not.toHaveBeenCalled();
+    expect(commands.packageUpdate).not.toHaveBeenCalled();
     expect(commands.packageSetRev).not.toHaveBeenCalled();
     expect(toast.success).not.toHaveBeenCalled();
     expect(toast.info).toHaveBeenCalledWith(
@@ -205,7 +207,7 @@ describe("updates store: bulk update", () => {
 
   it("never moves a hold that belongs to a bundle or parent", async () => {
     const acme = { scope: "project", root: "/home/x/acme" } as const;
-    vi.mocked(commands.applyPlan).mockResolvedValue({
+    vi.mocked(commands.packageUpdate).mockResolvedValue({
       status: "ok",
       data: {
         scope: acme,
@@ -236,8 +238,8 @@ describe("updates store: bulk update", () => {
       ]);
 
     expect(commands.packageSetRev).not.toHaveBeenCalled();
-    expect(vi.mocked(commands.applyPlan).mock.calls.map((c) => c[0])).toEqual([
-      acme,
+    expect(vi.mocked(commands.packageUpdate).mock.calls).toEqual([
+      [acme, "skill", "review"],
     ]);
     expect(toast.success).toHaveBeenCalledWith(
       "Updated 1 package — 1 place needs attention on its own row",

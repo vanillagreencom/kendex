@@ -190,6 +190,17 @@ pub struct PlanOptions {
     /// "discard" the app offers, which must never take a neighbour's
     /// edits with it, even one that shares a name across kinds.
     pub overwrite_edited_names: Option<Vec<(ItemKind, String)>>,
+    /// Bring one package current and hold everything else where it is
+    /// installed. The named package — and, for a derived one, every
+    /// declaration that accounts for it, since the owner is what carries
+    /// its revision — resolves at the source's tip; every other unpinned
+    /// remote declaration and bundle is read at the commit its lock
+    /// entries record, so a sibling follower never moves as a side
+    /// effect. A package the lock cannot place (never installed, or
+    /// installations disagreeing on their commit) resolves fresh, which
+    /// is what a whole-scope apply does for it anyway. Refresh and the
+    /// whole-scope apply never set this.
+    pub update_only: Option<(ItemKind, String)>,
     /// The base of the manifest copy this plan reconciles to, where the
     /// manifest arrived whole from an editor rather than being read here.
     /// The plan's manifest write binds its precondition to it, so a file

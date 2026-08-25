@@ -251,6 +251,57 @@ pub fn resolve_version(
     Ok(resolve_selector(env, &repo, selector)?.commit)
 }
 
+/// Bring one package current and leave the rest of the scope where it is:
+/// the plan resolves this package — and, for a derived one, the
+/// declarations that carry it, since the owner is what holds its revision —
+/// at the source's tip, while every other follower reads the commit its
+/// lock entries record. A hold still holds: a package pinned by its own
+/// `rev`, its source, or a parent moves only when that hold moves. The
+/// whole-scope apply and `refresh` are unchanged and bring every follower
+/// current at once.
+pub fn update_one(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Result<EngineReport> {
+    let path = crate::manifest::manifest_path(env, scope);
+    let manifest = match crate::manifest::load(&path)? {
+        crate::manifest::ManifestFile::Current(manifest) => *manifest,
+        // An absent manifest declares nothing to update; a legacy one is
+        // refused loudly — the whole-scope audit's read-only posture would
+        // silently answer this targeted verb with an empty plan.
+        crate::manifest::ManifestFile::Absent => {
+            return Err(CoreError::NotDeclared {
+                kind,
+                name: name.to_owned(),
+            });
+        }
+        crate::manifest::ManifestFile::Legacy { .. } => {
+            return Err(CoreError::LegacyManifest { path });
+        }
+    };
+    // Derived packages (bundle members, dependencies) have no declaration
+    // of their own — their lock entries are what names them here.
+    let declared = manifest.declared(kind).contains_key(name);
+    let installed = match crate::lock::load_file(&crate::lock::lock_path(env, scope))? {
+        crate::lock::LockFile::Current(lock) => lock
+            .entries
+            .values()
+            .any(|entry| entry.kind == kind && entry.name == name),
+        _ => false,
+    };
+    if !declared && !installed {
+        return Err(CoreError::NotDeclared {
+            kind,
+            name: name.to_owned(),
+        });
+    }
+    crate::engine::plan_apply(
+        env,
+        scope,
+        &crate::engine::PlanOptions {
+            update_only: Some((kind, name.to_owned())),
+            ..Default::default()
+        },
+    )
+}
+
 /// Hold an item at a version, or let it follow its source again.
 ///
 /// The selector may be anything the repository can name — a tag, a branch,

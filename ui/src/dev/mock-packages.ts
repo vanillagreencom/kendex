@@ -54,6 +54,7 @@ export const packageHandlers: Record<string, Handler> = {
     return { rows: updateRows(), warnings: [] };
   },
   package_set_rev: ({ scope }: { scope: Scope }) => view(scope),
+  package_update: ({ scope }: { scope: Scope }) => view(scope),
   package_diff: ({ from, to }: { from: VersionSel; to: VersionSel }) => ({
     files: [
       {

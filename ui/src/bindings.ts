@@ -228,6 +228,14 @@ export const commands = {
 	mineSubmissions: () => typedError<SubmissionRow[], string>(__TAURI_INVOKE("mine_submissions")),
 	packageVersions: (scope: Scope, kind: ItemKind, name: string) => typedError<VersionRow[], string>(__TAURI_INVOKE("package_versions", { scope, kind, name })),
 	/**
+	 *  Bring one package current and apply — the Updates page's per-package
+	 *  and per-place Update, and the package page's. The scope's other
+	 *  followers stay at the commits their lock records; `refresh` is what
+	 *  brings a whole place current, and `Update all` reaches the same end by
+	 *  running this command once per row.
+	 */
+	packageUpdate: (scope: Scope, kind: ItemKind, name: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("package_update", { scope, kind, name })),
+	/**
 	 *  Every scope's update standing in one query — the sidebar badge, the
 	 *  Updates page, and the Library's fork/edited flags all read this. Rows
 	 *  carry the facts; warnings carry every package the standing could not be
@@ -243,9 +251,9 @@ export const commands = {
 	updateSetIgnored: (scope: Scope, kind: ItemKind, name: string, repo: string, ignored: boolean) => typedError<UpdatesReport_Serialize, string>(__TAURI_INVOKE("update_set_ignored", { scope, kind, name, repo, ignored })),
 	/**
 	 *  Hold a package at a version (or let it follow again) and apply the
-	 *  change. The plan is whole-scope, like every apply: packages that follow
-	 *  their source come current in the same pass, which is what following
-	 *  means.
+	 *  change, scoped to the package: every other follower in the scope reads
+	 *  the commit its lock records, so moving one hold never brings the
+	 *  neighbours current.
 	 */
 	packageSetRev: (scope: Scope, kind: ItemKind, name: string, rev: string | null) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("package_set_rev", { scope, kind, name, rev })),
 	packageDiff: (scope: Scope, kind: ItemKind, name: string, from: VersionSel, to: VersionSel, harness: "claude" | "codex" | "opencode" | "cursor" | "pi" | "gemini" | "copilot" | null) => typedError<PackageDiff, string>(__TAURI_INVOKE("package_diff", { scope, kind, name, from, to, harness })),
@@ -258,9 +266,10 @@ export const commands = {
 	packageForkBeside: (scope: Scope, kind: ItemKind, name: string, harness: HarnessId, newName: string, rev: string | null) => typedError<AuditView_Serialize, ForkBesideError>(__TAURI_INVOKE("package_fork_beside", { scope, kind, name, harness, newName, rev })),
 	forkRename: (scope: Scope, kind: ItemKind, oldName: string, newName: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("fork_rename", { scope, kind, oldName, newName })),
 	/**
-	 *  Apply a scope with one package's edits discarded — the door back to
-	 *  "the catalog's version wins", scoped to the package the user named so
-	 *  a neighbour's edits are never taken along.
+	 *  Discard one package's edits and re-render it — the door back to "the
+	 *  catalog's version wins". Scoped to the package the user named twice
+	 *  over: a neighbour's edits are never taken along, and the scope's other
+	 *  followers stay at their installed commits.
 	 */
 	applyDiscardEdits: (scope: Scope, kind: ItemKind, name: string, rev: string | null) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("apply_discard_edits", { scope, kind, name, rev })),
 	packageFiles: (scope: Scope, kind: ItemKind, name: string) => typedError<PackageFile[], string>(__TAURI_INVOKE("package_files", { scope, kind, name })),

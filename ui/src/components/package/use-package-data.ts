@@ -157,12 +157,13 @@ export function packageVersionActions(
     );
 
   // A held package moves its hold to the latest; a follower is brought
-  // current by applying its scope — Update never silently pins a follower.
+  // current by the single-package apply — Update never silently pins a
+  // follower, and never moves the scope's other followers along.
   const updateToLatest = (latest: VersionRow) =>
     held
       ? switchTo(latest)
       : run(
-          commands.applyPlan(ref.scope, false),
+          commands.packageUpdate(ref.scope, ref.kind, ref.name),
           updatedToastLabel(displayName),
         );
 

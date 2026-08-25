@@ -8,6 +8,13 @@ use crate::scope::ScopeFilter;
 
 #[derive(Subcommand)]
 pub enum UpdatesCommand {
+    /// Bring one package current, leaving the scope's other followers at
+    /// their installed versions (`--apply` brings the whole scope current)
+    Apply {
+        /// agent | skill | hook | command | mcp-server | pi-extension
+        kind: String,
+        name: String,
+    },
     /// Stop notifying about one package's updates
     Ignore {
         /// agent | skill | hook | command | mcp-server | pi-extension
@@ -54,6 +61,9 @@ pub fn run(env: &Env, args: UpdatesArgs) -> CliResult {
     let filter = ScopeFilter::resolve(scope.as_deref(), global, ScopeFilter::Project)?;
     let scope = resolve_scopes(env, filter)?.remove(0);
     match command {
+        Some(UpdatesCommand::Apply { kind, name }) => {
+            return apply_one(env, &scope, kind, name);
+        }
         Some(UpdatesCommand::Ignore { kind, name }) => {
             return set_ignored(env, &scope, kind, name, true);
         }
@@ -144,6 +154,51 @@ fn show_version(version: &kendex_core::package::updates::VersionRef) -> String {
         Some(label) => label.clone(),
         None => version.commit[..7.min(version.commit.len())].to_owned(),
     }
+}
+
+/// Bring one package current: the single-package apply, printed op by op.
+/// The scope's other followers stay at their installed commits; a hold on
+/// the package itself still holds, and any conflict the plan raises for it
+/// (a hand-edited copy, files in the way) is said instead of applied over.
+fn apply_one(
+    env: &Env,
+    scope: &kendex_core::model::Scope,
+    kind: String,
+    name: String,
+) -> CliResult {
+    let kind = parse_kind(&kind)?;
+    let report = kendex_core::package::update_one(env, scope, kind, &name)?;
+    let conflicts: Vec<&kendex_core::engine::DriftRow> = report
+        .drift
+        .iter()
+        .filter(|row| {
+            row.kind == kind
+                && row.name == name
+                && row.state == kendex_core::engine::DriftState::Conflict
+        })
+        .collect();
+    for row in &conflicts {
+        say(&format!("{}: {}", row.harness.name(), row.detail));
+    }
+    let changed = !report.plan.ops.is_empty();
+    for op in &report.plan.ops {
+        say(&op.description);
+    }
+    kendex_core::apply::execute(env, &report.plan, None)?;
+    // The deep work just ran; write it down so the next session-start check
+    // reads verdicts instead of guesses.
+    if let Err(error) = kendex_core::drift::snapshot::record(env, scope) {
+        say(&format!("warning: snapshot not derived ({error})"));
+    }
+    match (conflicts.is_empty(), changed) {
+        (false, _) => say(&format!(
+            "{} {name} is held back by the conflict above — nothing moved for it",
+            kind.name()
+        )),
+        (true, true) => say(&format!("applied — {} {name} is current here", kind.name())),
+        (true, false) => say(&format!("nothing to change for {} {name}", kind.name())),
+    }
+    Ok(())
 }
 
 fn set_ignored(

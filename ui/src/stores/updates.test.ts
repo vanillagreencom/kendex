@@ -18,7 +18,7 @@ vi.mock("@/bindings", () => ({
     updatesRefresh: vi.fn(),
     updateSetIgnored: vi.fn(),
     packageSetRev: vi.fn(),
-    applyPlan: vi.fn(),
+    packageUpdate: vi.fn(),
     scanMachine: vi.fn(),
     auditAll: vi.fn(),
   },
@@ -349,7 +349,7 @@ describe("updates store", () => {
     await useUpdatesStore.getState().updateOne(row({ pinned: true }));
 
     expect(commands.packageSetRev).not.toHaveBeenCalled();
-    expect(commands.applyPlan).not.toHaveBeenCalled();
+    expect(commands.packageUpdate).not.toHaveBeenCalled();
     expect(useProblemsStore.getState().dialog.message).toBe(
       UPDATE_NEEDS_CHECK_NOTE,
     );
@@ -380,7 +380,7 @@ describe("updates store", () => {
     await useUpdatesStore.getState().updateOne(row({ pinned: true }));
 
     expect(commands.packageSetRev).not.toHaveBeenCalled();
-    expect(commands.applyPlan).not.toHaveBeenCalled();
+    expect(commands.packageUpdate).not.toHaveBeenCalled();
     expect(useProblemsStore.getState().dialog.message).toBe(
       UPDATE_NEEDS_CHECK_NOTE,
     );
@@ -450,7 +450,7 @@ describe("updates store", () => {
     useProblemsStore.setState({
       dialog: { open: false, title: "", steps: [], actions: [] },
     });
-    vi.mocked(commands.applyPlan).mockRejectedValue(new Error("ipc down"));
+    vi.mocked(commands.packageUpdate).mockRejectedValue(new Error("ipc down"));
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
       data: { rows: [], warnings: [] },
@@ -499,7 +499,7 @@ describe("updates store", () => {
     await useUpdatesStore.getState().updateOne(row({ pinned: true }));
 
     expect(commands.packageSetRev).not.toHaveBeenCalled();
-    expect(commands.applyPlan).not.toHaveBeenCalled();
+    expect(commands.packageUpdate).not.toHaveBeenCalled();
     expect(useProblemsStore.getState().dialog.message).toBe(
       UPDATE_NEEDS_CHECK_NOTE,
     );
@@ -517,7 +517,7 @@ describe("updates store", () => {
     useProblemsStore.setState({
       dialog: { open: false, title: "", steps: [], actions: [] },
     });
-    vi.mocked(commands.applyPlan).mockResolvedValue({
+    vi.mocked(commands.packageUpdate).mockResolvedValue({
       status: "ok",
       data: {
         scope: { scope: "global" },
@@ -646,11 +646,11 @@ describe("updates store", () => {
       "gh",
       "b".repeat(40),
     );
-    expect(commands.applyPlan).not.toHaveBeenCalled();
+    expect(commands.packageUpdate).not.toHaveBeenCalled();
   });
 
-  it("updating a following package applies its scope", async () => {
-    vi.mocked(commands.applyPlan).mockResolvedValue({
+  it("updating a following package applies just that package", async () => {
+    vi.mocked(commands.packageUpdate).mockResolvedValue({
       status: "ok",
       data: {
         scope: { scope: "global" },
@@ -675,7 +675,11 @@ describe("updates store", () => {
 
     await useUpdatesStore.getState().updateOne(row({}));
 
-    expect(commands.applyPlan).toHaveBeenCalledWith({ scope: "global" }, false);
+    expect(commands.packageUpdate).toHaveBeenCalledWith(
+      { scope: "global" },
+      "skill",
+      "gh",
+    );
     expect(commands.packageSetRev).not.toHaveBeenCalled();
   });
 });

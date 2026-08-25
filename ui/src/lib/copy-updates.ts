@@ -3,7 +3,7 @@
 // reviewed in one place.
 export const FOLLOW_SOURCE_COLUMN = "Follow source";
 export const FOLLOW_SOURCE_HELP =
-  "On, this place takes new versions whenever it refreshes or you press Update; off, it stays on this version until you choose one.";
+  "On, this package takes the newest version when you press Update, and moves with everything else here when the place refreshes; off, it stays on this version until you choose one.";
 export const heldInLabel = (held: number, total: number): string =>
   `Held in ${held} of ${total}`;
 export const followSourceLabel = (name: string, place: string): string =>

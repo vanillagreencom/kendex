@@ -555,13 +555,13 @@ lives in one capability table read by core and UI.
   asks the mirror (pinned sources too) what newer content exists, its
   timeline listing only commits that touched the package's files,
   tag-decorated, never tag-replaced. Rows are per package per scope, folded
-  by package and expanded by place; nothing applies on its own — followers
-  come current on apply or refresh, held ones when their hold moves. An
-  edited place is never updated over: its row says so and offers the
-  install beside it where a newer version the source still carries can
-  land, and a link to the package page otherwise; the fork-or-discard
-  choice lives on the package page. Commit ids stay behind the table's `…` menu. Muting a package's
-  update notifications is a machine-local settings entry. Reuse
+  by package and expanded by place; a row's Update applies that package
+  (`PlanOptions::update_only`), apply and refresh a whole place. An edited
+  place is never updated over: its row says so and offers the install
+  beside it where a newer version the source still carries can land, and a
+  link to the package page otherwise; the fork-or-discard choice lives on
+  the package page. Commit ids stay behind the table's `…` menu. Muting a
+  package's update notifications is a machine-local settings entry. Reuse
   is verified against a publish receipt outside the checkout: a full
   content hash of the tree. Pre-2.0 clones are read where the new layout
   has nothing yet, never deleted. The store keeps one tree per resolved

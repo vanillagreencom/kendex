@@ -229,6 +229,7 @@ pub(crate) fn harnesses_for(
 
 mod artifact;
 pub use artifact::{artifact_disk_hash, artifact_paths};
+pub(super) mod hold;
 
 /// The desired world, computed against the manifest that will be on disk
 /// once this plan applies. An upstream skill merge rewrites the manifest,

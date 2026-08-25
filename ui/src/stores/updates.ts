@@ -5,10 +5,8 @@ import { UPDATE_ERROR_TITLE, updatedToastLabel } from "@/lib/copy";
 import {
   nothingToUpdateToastLabel,
   UPDATE_NEEDS_CHECK_NOTE,
-  updatedWithPlaceToastLabel,
 } from "@/lib/copy-updates";
 import {
-  placeName,
   skippedPlaces,
   updatablePlaces,
   visibleUpdates,
@@ -144,14 +142,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
         if (error !== null) {
           showError(UPDATE_ERROR_TITLE, error);
         } else if (applied) {
-          // A follower comes current by applying its scope, which brings
-          // that scope's other followers along — the toast says so rather
-          // than letting the extra changes look like a surprise.
-          toast.success(
-            row.pinned
-              ? updatedToastLabel(row.name)
-              : updatedWithPlaceToastLabel(row.name, placeName(row.scope)),
-          );
+          toast.success(updatedToastLabel(row.name));
           await useScanStore.getState().refresh();
           await useAuditStore.getState().refresh({ force: true });
         }
