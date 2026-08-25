@@ -797,13 +797,12 @@ lives in one capability table read by core and UI.
   current by a local refresh. Opening PRs in consumer repos is a permanent
   non-goal (invariant 9).
 - **Session start reads a snapshot; the background job earns it.** The
-  drift contract is `kendex check`: exit 0 clean / 1 drift, including
-  packages not yet evaluated / 2 could-not-check (unknown outranks drift),
-  `--quiet` bounded and silent when clean, `--json` for machines. It
-  reads the manifest, the lock, the
+  drift contract is `kendex check`: exit 0 clean / 1 drift or unevaluated /
+  2 could-not-check (unknown outranks drift), `--quiet` bounded and silent
+  when clean, `--json` for machines. It reads the manifest, the lock, the
   per-scope drift snapshot (`core/drift/snapshot.rs`), and per-mirror fetch
-  stamps — no source trees materialized, no catalogs hashed, no
-  per-package subprocesses. A declaration with no lock entry and files
+  stamps — no source trees materialized, no catalogs hashed, no per-package
+  subprocesses. A declaration with no lock entry and files
   already where it installs gets its own section, stating only what a stat
   proves and carrying the plan as its remedy. `updates`, `refresh`,
   `apply`, and the detached `kendex source refresh --stale` the check
