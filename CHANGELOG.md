@@ -292,6 +292,13 @@ changes carry a **Breaking** call-out with their migration note inline.
   research deferred as standalone work.
 
 ### Fixed
+- An apply could be refused with "scope is busy: another apply holds ..."
+  while no other apply was running. Releasing the lock relied on closing
+  its file, and a program kendex was launching at that instant (git, a
+  lint tool) held the file open a moment longer while it started, keeping
+  the lock alive past its owner. The lock now releases explicitly the
+  instant an apply finishes. The source cache's download lock had the
+  same flaw and got the same fix.
 - Home no longer shows its loading skeletons forever when the first scan of
   the machine fails: the page says the scan failed, shows why, and offers
   Scan again. When a later scan fails, Home still draws what it had, headed

@@ -107,14 +107,19 @@ pub use adopt::adopt_cache;
 /// takes it — reading a published checkout needs no lock, because a
 /// published checkout never changes.
 pub struct CacheGuard {
-    _file: fs::File,
+    file: fs::File,
+}
+
+impl Drop for CacheGuard {
+    fn drop(&mut self) {
+        crate::apply::unlock(&self.file);
+    }
 }
 
 /// How long a resolver waits for the lock before calling the cache busy.
-/// Long enough to ride out a neighbour that is only starting up — a
-/// process being launched holds a copy of every open descriptor for the
-/// instant before it takes over, this lock among them — and far too short
-/// to leave anyone waiting on someone else's download.
+/// Long enough to ride out a neighbour holding it for one quick step — a
+/// fetch stamp, publishing an already-materialized checkout — and far too
+/// short to leave anyone waiting on someone else's download.
 const LOCK_WAIT: Duration = Duration::from_millis(500);
 const LOCK_POLL: Duration = Duration::from_millis(10);
 
@@ -132,8 +137,8 @@ pub fn lock_repo(env: &Env, key: &str) -> Result<CacheGuard> {
     let deadline = Instant::now() + LOCK_WAIT;
     let acquired = loop {
         // As in apply's scope lock: the OS lock belongs to the open fd, so
-        // the guard is forgotten and the file kept — dropping CacheGuard
-        // closes the fd and releases the lock.
+        // the guard is forgotten and the file kept — CacheGuard's drop
+        // releases the lock explicitly.
         match lock.try_write() {
             Ok(guard) => {
                 std::mem::forget(guard);
@@ -145,7 +150,7 @@ pub fn lock_repo(env: &Env, key: &str) -> Result<CacheGuard> {
     };
     match acquired {
         true => Ok(CacheGuard {
-            _file: lock.into_inner(),
+            file: lock.into_inner(),
         }),
         false => Err(CoreError::CacheBusy { lock: path }),
     }

@@ -34,7 +34,31 @@ pub fn scope_key(scope: &Scope) -> String {
 /// a repository's common dir. Held for the whole journal → mutate → clear
 /// window; recovery runs under the same lock.
 pub struct ScopeGuard {
-    _file: fs::File,
+    file: fs::File,
+}
+
+impl Drop for ScopeGuard {
+    fn drop(&mut self) {
+        unlock(&self.file);
+    }
+}
+
+/// Release the OS lock before the fd closes. Close alone is not release:
+/// a child forked by any thread while this fd was open holds a copy of the
+/// open file description until it execs — O_CLOEXEC closes at exec, not at
+/// fork — and flock stays held until every copy is gone. That window turns
+/// an unlock-by-close into ScopeBusy for whoever re-locks the path next,
+/// with no writer actually alive. An explicit unlock frees the description
+/// immediately, no matter who still holds a copy. Windows spawns without
+/// fork, so closing the handle is a complete release there.
+pub(crate) fn unlock(file: &fs::File) {
+    #[cfg(unix)]
+    // Unlocking a valid fd has no failure mode worth surfacing from a
+    // Drop, and the close that follows releases too once stray
+    // description copies are gone; best-effort is honest here.
+    let _ = rustix::fs::flock(file, rustix::fs::FlockOperation::Unlock);
+    #[cfg(not(unix))]
+    let _ = file;
 }
 
 fn lock_scope(env: &Env, scope: &Scope) -> Result<ScopeGuard> {
@@ -54,9 +78,9 @@ pub(crate) fn lock_key(env: &Env, key: &str) -> Result<ScopeGuard> {
     let mut lock = fd_lock::RwLock::new(file);
     // fd-lock ties its guard lifetime to the RwLock borrow; the OS lock is
     // really held by the open fd, so forget the guard and keep the file —
-    // the lock releases when ScopeGuard drops (closing the fd). Only
-    // contention is "busy": a filesystem that cannot lock at all must say
-    // so, or every launch pass would skip recovery there in silence.
+    // ScopeGuard's drop releases the lock explicitly. Only contention is
+    // "busy": a filesystem that cannot lock at all must say so, or every
+    // launch pass would skip recovery there in silence.
     match lock.try_write() {
         Ok(guard) => std::mem::forget(guard),
         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -65,7 +89,7 @@ pub(crate) fn lock_key(env: &Env, key: &str) -> Result<ScopeGuard> {
         Err(error) => return Err(CoreError::io(&path, error)),
     }
     Ok(ScopeGuard {
-        _file: lock.into_inner(),
+        file: lock.into_inner(),
     })
 }
 
@@ -281,6 +305,26 @@ mod tests {
         assert!(recover(&env, &Scope::Global).unwrap());
         assert_eq!(fs::read_to_string(&target).unwrap(), "before");
         assert!(!recover(&env, &Scope::Global).unwrap());
+    }
+
+    /// A concurrently spawned child holds a copy of every parent fd's open
+    /// file description between fork and exec — O_CLOEXEC closes at exec,
+    /// not at fork — so a release that relied on closing the fd left flock
+    /// held for the length of any other thread's spawn window, and this
+    /// process was refused its own lock back with no writer alive. The
+    /// try_clone here is that fork copy at the description level: dropping
+    /// the guard must release the lock while the copy still exists.
+    #[cfg(unix)]
+    #[test]
+    fn drop_releases_the_lock_while_a_description_copy_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = env_in(tmp.path());
+        let guard = lock_scope(&env, &Scope::Global).unwrap();
+        let copy = guard.file.try_clone().unwrap();
+        drop(guard);
+        let relock = lock_scope(&env, &Scope::Global);
+        drop(copy);
+        relock.unwrap();
     }
 
     #[test]
