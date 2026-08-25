@@ -53,6 +53,10 @@ CI_WAIT_NO_CHECKS_GRACE = "180"
 # Max automated ci-fix rounds per PR before a human takes over.
 CI_FIX_MAX_CYCLES = "6"
 
+# Max internal review cycles per issue before the verdict pass; the cycle
+# counter refuses to pass it.
+REVIEW_MAX_CYCLES = "4"
+
 # Total concurrent agent-session budget, counting the primary; "0" =
 # unlimited. Reviews run in waves when the reviewer set exceeds free slots.
 # On the Codex runtime, set the cap `spawn-adapter slots` reports.

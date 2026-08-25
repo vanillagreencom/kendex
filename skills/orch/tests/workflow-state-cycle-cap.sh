@@ -35,7 +35,7 @@ err="$("$WS" --state-dir "$sd" increment KEN-1 cycles 2>&1 >/dev/null)" && rc=0 
 [[ "$rc" -ne 0 ]] && [[ "$err" == *"cycles is at the cap (4 of REVIEW_MAX_CYCLES=4)"* ]] \
   && ok "the fifth increment refuses, naming the count and the cap" \
   || bad "the fifth increment refuses, naming the count and the cap" "rc=$rc err=$err"
-[[ "$err" == *"review-pr § 5"* ]] && ok "the refusal names the step that follows" \
+[[ "$err" == *"verdict or submit step"* ]] && ok "the refusal names the step that follows" \
   || bad "the refusal names the step that follows" "$err"
 cycles="$("$WS" --state-dir "$sd" get KEN-1 .cycles)"
 [[ "$cycles" == "4" ]] && ok "a refused increment leaves cycles unchanged" \
@@ -57,6 +57,18 @@ err="$(REVIEW_MAX_CYCLES=2 "$WS" --state-dir "$sd" increment KEN-2 cycles 2>&1 >
 [[ "$rc" -ne 0 ]] && [[ "$err" == *"(2 of REVIEW_MAX_CYCLES=2)"* ]] \
   && ok "REVIEW_MAX_CYCLES=2 refuses the third increment" \
   || bad "REVIEW_MAX_CYCLES=2 refuses the third increment" "rc=$rc err=$err"
+
+# Two increments racing from cap-1: exactly one lands, the count stops at the cap.
+"$WS" --state-dir "$sd" init KEN-3 --worktree "$REPO_ROOT" --branch ken-3 >/dev/null
+"$WS" --state-dir "$sd" update KEN-3 '.cycles = 3' >/dev/null
+"$WS" --state-dir "$sd" increment KEN-3 cycles >/dev/null 2>&1 & p1=$!
+"$WS" --state-dir "$sd" increment KEN-3 cycles >/dev/null 2>&1 & p2=$!
+wait "$p1" && r1=0 || r1=$?
+wait "$p2" && r2=0 || r2=$?
+cycles="$("$WS" --state-dir "$sd" get KEN-3 .cycles)"
+[[ "$cycles" == "4" ]] && [[ $((r1 == 0 ? 1 : 0)) -ne $((r2 == 0 ? 1 : 0)) ]] \
+  && ok "two increments racing from cap-1 land exactly one, cycles stops at the cap" \
+  || bad "two increments racing from cap-1 land exactly one, cycles stops at the cap" "cycles=$cycles r1=$r1 r2=$r2"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
