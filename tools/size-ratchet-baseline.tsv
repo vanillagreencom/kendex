@@ -6,9 +6,9 @@ crates/core/src/engine/ops/add.rs	539
 crates/core/src/engine/pi_hooks_move/migrated.rs	540
 crates/core/src/engine/pi_hooks_move/mod.rs	508
 crates/core/src/engine/pi_hooks_move/preflight.rs	765
-crates/core/src/error.rs	410
+crates/core/src/error.rs	416
 crates/core/src/remote/store.rs	420
-docs/ARCHITECTURE.md	838
+docs/ARCHITECTURE.md	842
 hooks/block-repo-copy.sh	511
 pi-extensions/pi-agents-tmux/extensions/subagent/browser.ts	650
 pi-extensions/pi-agents-tmux/extensions/subagent/dashboard.ts	431
