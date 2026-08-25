@@ -23,10 +23,13 @@ pub const CARRIER: &str = "pi-hooks";
 fn names_carrier(raw: &str) -> bool {
     let text = raw.strip_prefix("npm:").unwrap_or(raw);
     let text = text.trim_end_matches('/');
-    // A version suffix is the last `@` past position 0 — a scoped name's
-    // leading `@` is identity, not version.
+    // A version suffix is an `@` inside the last path segment, past that
+    // segment's first character — an `@` opening a segment is a scope
+    // (`@vanillagreen/pi-hooks`, `./packages/@vanillagreen/pi-hooks`),
+    // identity rather than version.
+    let segment = text.rfind('/').map_or(0, |slash| slash + 1);
     let text = match text.rfind('@') {
-        Some(at) if at > 0 => &text[..at],
+        Some(at) if at > segment => &text[..at],
         _ => text,
     };
     text == CARRIER || text.ends_with(&format!("/{CARRIER}"))
@@ -108,6 +111,8 @@ mod tests {
             "./packages/pi-hooks",
             "/abs/path/packages/pi-hooks",
             "@vanillagreen/pi-hooks",
+            "./packages/@vanillagreen/pi-hooks",
+            "/abs/path/packages/@vanillagreen/pi-hooks",
             "npm:@vanillagreen/pi-hooks@0.4.0",
             "npm:pi-hooks@1.2.3",
             "./packages/pi-hooks/",

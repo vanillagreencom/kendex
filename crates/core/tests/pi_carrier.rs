@@ -40,7 +40,7 @@ fn register_carrier(settings_dir: &Path) {
     fs::create_dir_all(settings_dir).unwrap();
     fs::write(
         settings_dir.join("settings.json"),
-        r#"{ "packages": ["./packages/pi-hooks"] }"#,
+        r#"{ "packages": ["./packages/@vanillagreen/pi-hooks"] }"#,
     )
     .unwrap();
 }
