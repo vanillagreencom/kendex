@@ -310,8 +310,9 @@ lives in one capability table read by core and UI.
 - **Every atomic write gets its own temp file.** `write_then_rename` names
   its temp file per write, not per process.
 - GUI + CLI are equal thin shells over `crates/core`; every core operation
-  has a CLI verb. `tools/guard` gates commits locally; CI (cargo tests,
-  skill suites, preflight, the review gate) gates every PR.
+  has a CLI verb. `tools/guard` gates commits locally. On a PR, CI runs
+  the review gate (required) and preflight (advisory); the merge queue
+  runs the cargo and skill suites before anything lands.
 - Every capability ships cross-harness through the capability table; a
   harness without native support for a kind is marked unsupported — never
   shimmed. Where a vendor stores one surface as another (Codex: prompts as
