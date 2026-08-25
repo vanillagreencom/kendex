@@ -15,9 +15,13 @@ export const PREINSTALL_SAFETY_CAVEAT =
   "An automated check for risky patterns, not a review. It can miss things, and a package too large to read is not checked at all.";
 const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low"];
 
-/** The worst finding's severity, in the app's own words — what the dot's
- * colour stands for, so a tooltip or screen reader says it too. */
-export function worstSeverityLabel(findings: Finding[]): string | null {
+/** The worst finding's severity, in the app's own words — what a dot's
+ * colour or a badge's count stands for, so the words say it too. Any row
+ * carrying a severity string qualifies; one that is not a safety severity
+ * (a structural error or warning) has no word here. */
+export function worstSeverityLabel(
+  findings: { severity: string }[],
+): string | null {
   const worst = SEVERITY_ORDER.find((severity) =>
     findings.some((finding) => finding.severity === severity),
   );

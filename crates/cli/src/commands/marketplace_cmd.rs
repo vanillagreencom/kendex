@@ -94,7 +94,7 @@ pub enum MarketplaceCommand {
     Use { dir: std::path::PathBuf },
     /// The marketplaces you author, with their local readiness
     Mine {
-        /// Machine-readable rows (schema 1)
+        /// Machine-readable rows (schema 2)
         #[arg(long)]
         json: bool,
     },

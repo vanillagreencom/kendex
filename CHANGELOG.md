@@ -70,9 +70,9 @@ an outside contributor.
   `"class": "unevaluated"` where it had `"class": "unknown"`. A parser
   matching that field exhaustively has to accept the new value.
 - orch: the internal re-review loop stops at `REVIEW_MAX_CYCLES` (default 4) — `workflow-state set … rereview_panel` refuses once `cycles` is past it, so a review cannot run on for ten cycles before the PR is opened.
-- `kendex check --catalog` prints safety findings and never fails on them,
-  `--strict` included. Schema 2 envelopes: `check --catalog --json` counts
-  `safety_findings`, `marketplace mine --json` `safetyFindings` per marketplace, `index --json` too.
+- **Breaking:** `check --catalog --json`, `marketplace mine --json` and `index --json`
+  are schema 2: `held_back`/`warned`/`verdict` and per-finding `token`/`dismissed` are gone,
+  replaced by `safety_findings` (check), `safetyFindings` (mine), `findings` (index); the check never fails on them.
 - **Breaking:** the install record's format moves to version 5. Older files
   upgrade in place on the first apply; if two kendex versions share a
   project, update both.

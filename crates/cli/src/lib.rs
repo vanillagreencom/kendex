@@ -174,7 +174,7 @@ enum Command {
     /// consumes (default: the current directory)
     Index {
         dir: Option<std::path::PathBuf>,
-        /// Machine-readable summary (schema 1)
+        /// Machine-readable summary (schema 2)
         #[arg(long)]
         json: bool,
     },

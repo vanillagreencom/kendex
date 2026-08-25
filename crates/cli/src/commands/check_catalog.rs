@@ -47,20 +47,30 @@ fn machine(report: &CatalogCheck, ok: bool) -> CliResult {
     Ok(())
 }
 
+/// Every file, name and message here is read off the catalog's own
+/// files, so each is printed as what it is, never as an escape sequence
+/// the terminal would act on — the rule the plan's safety printer follows.
 fn lines(report: &CatalogCheck) {
+    use kendex_core::names::shown;
     for finding in &report.catalog {
         say(&format!(
             "[{}] {}: {}: {}",
-            finding.severity, finding.pass, finding.file, finding.message
+            finding.severity,
+            finding.pass,
+            shown(&finding.file),
+            shown(&finding.message)
         ));
-        say(&format!("    fix: {}", finding.fix));
+        say(&format!("    fix: {}", shown(&finding.fix)));
     }
     for item in &report.items {
         for finding in &item.findings {
             match &finding.rule {
                 None => say(&format!(
                     "[{}] {}: {}: {}",
-                    finding.severity, finding.pass, finding.file, finding.message
+                    finding.severity,
+                    finding.pass,
+                    shown(&finding.file),
+                    shown(&finding.message)
                 )),
                 // Safety findings carry their own severity rather than being
                 // relabelled error/warning: they fail nothing, and a line
@@ -68,17 +78,19 @@ fn lines(report: &CatalogCheck) {
                 // people learn to scroll past.
                 Some(rule) => say(&format!(
                     "[{}] safety: {}: {} ({rule})",
-                    finding.severity, finding.file, finding.message
+                    finding.severity,
+                    shown(&finding.file),
+                    shown(&finding.message)
                 )),
             }
-            say(&format!("    fix: {}", finding.fix));
+            say(&format!("    fix: {}", shown(&finding.fix)));
         }
         if item.findings.iter().any(|finding| finding.rule.is_some()) {
             say(&format!(
                 "safety: {}: {} {} scores {}/100",
-                item.file,
+                shown(&item.file),
                 item.kind.name(),
-                item.name,
+                shown(&item.name),
                 item.score
             ));
         }
