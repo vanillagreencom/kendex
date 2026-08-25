@@ -114,18 +114,19 @@ const candidates: ImportCandidate[] = [
   },
 ];
 
+const safetyLabel = ({ safetyFindings: n }: MineRow) =>
+  n ? `${n} safety finding(s), advisory` : "No safety findings";
+
 function preflightFor(path: string): SubmitPreflight {
-  const entry = rows.find(
-    (kept) => kept.state === "ready" && kept.row.path === path,
-  );
+  const entry = rows.find((k) => k.state === "ready" && k.row.path === path);
   const mine = entry && entry.state === "ready" ? entry.row : row({});
-  const ready = mine.git.candidate !== null;
   return {
     row: mine,
     candidate: mine.git.candidate,
-    ready,
+    ready: mine.git.candidate !== null,
     checks: [
       { ok: true, label: "Passes the check", fix: null },
+      { ok: true, label: safetyLabel(mine), fix: null },
       { ok: true, label: "Has a name and description", fix: null },
       {
         ok: mine.license !== null,

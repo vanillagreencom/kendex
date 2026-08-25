@@ -4,7 +4,6 @@ import {
   CATALOG_LAYOUT_CLEAN,
   PREINSTALL_SAFETY_CAVEAT,
   SAFETY_DOT_UNCHECKED,
-  SAFETY_SECTION_EXPLAINER,
   safetyDotWords,
   severityTone,
 } from "./copy-safety";
@@ -25,7 +24,6 @@ describe("what a score is allowed to claim", () => {
   // reaching for them — not even in a negated form.
   const besideAScore = [
     PREINSTALL_SAFETY_CAVEAT,
-    SAFETY_SECTION_EXPLAINER,
     CATALOG_LAYOUT_CLEAN,
     safetyDotWords(100, 0, []),
     safetyDotWords(100, 3, []),
@@ -56,9 +54,6 @@ describe("what a score is allowed to claim", () => {
     );
     expect(PREINSTALL_SAFETY_CAVEAT).toBe(
       "An automated check for risky patterns, not a review. It can miss things, and a package too large to read is not checked at all.",
-    );
-    expect(SAFETY_SECTION_EXPLAINER).toBe(
-      "kendex looks for risky patterns in each package. It is an automated check rather than a review, it can miss things, and a package too large to read is not checked at all. Nothing is held back over it.",
     );
   });
 

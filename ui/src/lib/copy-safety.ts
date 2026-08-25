@@ -5,14 +5,11 @@ import type { Finding } from "@/bindings";
 // The check matches patterns over as much of a package as it reads. So every
 // place a score is shown says what was determined and nothing more: a score
 // with nothing behind it means nothing was matched, never that the package
-// is safe to run.
-export const SAFETY_SECTION_EXPLAINER =
-  "kendex looks for risky patterns in each package. It is an automated check rather than a review, it can miss things, and a package too large to read is not checked at all. Nothing is held back over it.";
-// Sits under the score on the page where somebody decides to install.
-// It describes what the check did, never who wrote the package: this repo
-// publishes a catalog of its own, so a claim about provenance is false for
-// the items in it. Only a skill tree is read to a budget — every other kind
-// reads whole — so the partial read is named as a skill's.
+// is safe to run. Sits under the score on the page where somebody decides to
+// install. It describes what the check did, never who wrote the package:
+// this repo publishes a catalog of its own, so a claim about provenance is
+// false for the items in it. Only a skill tree is read to a budget — every
+// other kind reads whole — so the partial read is named as a skill's.
 export const PREINSTALL_SAFETY_CAVEAT =
   "An automated check for risky patterns, not a review. It can miss things, and a package too large to read is not checked at all.";
 // A list gives a package one dot and no line of its own, so the dot's words

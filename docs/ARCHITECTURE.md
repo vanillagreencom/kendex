@@ -19,9 +19,11 @@ Four verbs over one model: **scan → declare → diff → apply**.
 - **Apply** — make disk match declaration, plan shown first. Adopt is the
   reverse arrow: record an observed item into the manifest. It lives on the
   Library's Installed tab beside the item and behind `kendex adopt`. Taking
-  over a declared item whose files were already on disk is scoped to the
-  item named, revalidated against a fresh read before anything is written,
-  and the apply it runs is the scope's whole plan.
+  over files already sitting where a declared item goes is `kendex apply
+  --replace-unmanaged`, scope-wide; the app has no exit for that conflict
+  until KEN-582 attaches one, and `replace_unmanaged_item` (per item,
+  revalidated against a fresh read, running the scope's whole plan) is the
+  command it will wire.
 
 Every page and every CLI verb is a projection of these four; none owns
 logic.
@@ -85,15 +87,18 @@ lives in one capability table read by core and UI.
      at it) and never narrows an existing declaration. Adopt works only at
      a tool's own position, and only for kinds it can take — not a folder
      where one file goes or vice versa.
-   - **Take-over** (`replace_unmanaged` / `--replace-unmanaged`, or the
-     per-item `replace_unmanaged_names`) keeps the declaration and moves
-     the files to the trash first, bound to the bytes the plan read. A
-     link is never its target, nor is a position any install recorded
-     writing. Whole or not at all: named per item, a place nothing can
-     settle refuses the run; scope-wide it is held back (the files in its
-     way stay) and named in the notes with the place holding it; the sweep
-     fails, naming those, only when nothing settles. One refused at every
-     link is not held: its rows stand, nothing replaced.
+   - **Take-over** (`--replace-unmanaged` scope-wide, or the per-item
+     `replace_unmanaged_names` behind the app's `replace_unmanaged_item`)
+     keeps the declaration and moves the files to the trash first, bound
+     to the bytes the plan read. A link is never its target, nor is a
+     position any install recorded writing. Whole or not at all: named per
+     item, a place nothing can settle refuses the run; scope-wide it is
+     held back (the files in its way stay) and named in the notes with the
+     place holding it; the sweep fails, naming those, only when nothing
+     settles. One refused at every link is not held: its rows stand,
+     nothing replaced. The CLI offers both exits; the app offers adopt for
+     unmanaged items, and a declared item's conflict has no app exit until
+     KEN-582 attaches one.
    The row states which files are in the way and which exits apply; the
    app offers them as buttons, the CLI names the verb and flag. A foreign
    link pointing at a real skill folder several tools read offers keeping
@@ -216,8 +221,6 @@ lives in one capability table read by core and UI.
   inside one, groups use dividers, a tinted band, and space.
 - `--muted-foreground` stays legible against card and page in both themes;
   no surface dims it further with an opacity suffix.
-- A finding is ruled on where it sits. The decision dialog restates what it
-  is deciding.
 - Three surface planes, back to front: sidebar, page, card. Every page
   draws width and gutters from `lib/layout.ts` — two widths only, a reading
   measure and full-width for data-dense tables.
@@ -674,19 +677,17 @@ lives in one capability table read by core and UI.
   Structural breakage fails the check; safety findings are advisory
   everywhere, `--strict` included, and never fail it.
   `source/index.rs` emits the per-marketplace summary the community
-  directory consumes (`kendex index [<dir>] --json`, schema 1, plain
+  directory consumes (`kendex index [<dir>] --json`, schema 2, plain
   directory, no network): metadata from the catalog's `[marketplace]` table
   (`source/meta.rs` — read-only, strings capped, control-char-safe),
   packages from `list_items` (pinned by test), safety scores from the check
   passes, bundles with members, About rows, findings. Field order in both
   JSON shapes is the schema — serde structs, no maps. `kendex marketplace
   check` aliases `check --catalog --strict`, same exit codes.
-  Finding identity is the rule and the sentence it fired with
-  (`Finding::fingerprint`): the message says what the rule fired *on*,
-  never where. A digest standing in for unprintable content is always
-  `DIGEST_CHARS` wide. Line, file (Codex renders a command as a skill
-  tree) and severity (one step less in a supporting file) are out of the
-  fingerprint.
+  A finding's message says what the rule fired *on*, never where: the
+  location is its own field, and rendering moves content between files
+  (Codex renders a command as a skill tree). A digest standing in for
+  unprintable content is always `DIGEST_CHARS` wide.
 - **The community directory is read like any remote: strictly, capped,
   honest about staleness.** `registry/` (core) consumes what
   `source/index.rs` producers feed kendex.ai: `index.rs` re-parses the
@@ -791,11 +792,12 @@ lives in one capability table read by core and UI.
   25 / High 15 / Medium 8 / Low 3), first hit per rule at full weight and
   repeats at a point each until they have cost as much again. Quality is
   wshobson's weighted-dimension model, static layer only: no LLM judge, no
-  simulation, no letter grades. `engine::ItemSafety` is the one advisory
-  row every surface reads — the plan preview scores what it would write
+  simulation, no letter grades. Planned and installed rows share
+  `engine::ItemSafety` — the plan preview scores what it would write
   (`engine/scoring.rs`), the audit scores what is on disk
-  (`engine::observed_safety`), and browse previews catalog bytes
-  (`browse/safety.rs`).
+  (`engine::observed_rows`); browse (`PackageSafety`, `browse/safety.rs`)
+  and the catalog check (`CheckedItem`) carry the same score and findings
+  for content not yet installed.
 - **Rules read typed per-kind inputs and say when they cannot read.** A
   skill carries its whole tree, a hook its registration and script, an MCP
   server its command, args, env and headers, a plugin its manifest and

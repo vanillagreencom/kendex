@@ -122,7 +122,7 @@ export const readErrorKey = (key: string, read: string): string =>
   `${key}::${read}`;
 
 /** A tree or skills.sh URL was pointing at one package; land on it so
- * Install is the next click, with its safety verdict in view. */
+ * Install is the next click, with its safety score in view. */
 export async function openLead(scope: Scope, source: string, lead: string) {
   const { useNavStore } = await import("./nav");
   useNavStore.getState().goToAvailablePackage({

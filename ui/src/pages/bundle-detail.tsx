@@ -20,8 +20,9 @@ import { type BundleRef, useNavStore } from "@/stores/nav";
 
 /** One curated set: install the whole thing as a set that keeps itself
  * whole, or pick members to install as your own choices. Both go through
- * the normal preview and safety gate. From a repository nobody subscribes
- * to yet, the members are listed and Subscribe is the one action. */
+ * the normal preview, safety score in view and never a gate. From a
+ * repository nobody subscribes to yet, the members are listed and
+ * Subscribe is the one action. */
 export function BundleDetailPage() {
   const bundleRef = useNavStore((s) => s.bundleRef);
   if (!bundleRef) return null;

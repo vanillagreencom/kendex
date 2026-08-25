@@ -276,7 +276,7 @@ function projectActions(
                     toast.success(
                       result.data
                         ? "Drift report installed"
-                        : "Drift report added — it installs with the project's next apply",
+                        : "Drift report added — run kendex apply in that project to install it",
                     );
                     void rescan();
                   } else {
