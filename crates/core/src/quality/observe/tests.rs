@@ -310,3 +310,49 @@ fn a_hook_command_that_carries_the_danger_still_scores() {
         found.findings
     );
 }
+
+/// A credential in the hook's own entry — an `env` block, a header — is
+/// the hook's content: the harness uses it at run time whether or not the
+/// command spells it, and the narrowed reading still reaches it.
+#[test]
+fn a_secret_in_the_hooks_own_entry_still_scores() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("guard.json");
+    std::fs::write(
+        &path,
+        r#"{"version":1,"hooks":{"preToolUse":[{"type":"command","bash":"echo ok","env":{"GITHUB_TOKEN":"ghp_0123456789abcdefghijklmnopqrstuvwxyz"}}]}}"#,
+    )
+    .unwrap();
+    let item = ObservedItem {
+        harness: HarnessId::Copilot,
+        ..hook_at(&path, "preToolUse:*:echo")
+    };
+
+    let found = crate::quality::audit(input_for(&item));
+
+    assert!(
+        found
+            .findings
+            .iter()
+            .any(|f| f.rule == "plaintext-secrets" && f.location.contains("(entry)")),
+        "{:?}",
+        found.findings
+    );
+}
+
+/// A hook inside a shared config file is parsed by the reader its harness
+/// uses — Copilot's inline shape against the shared one — so the same path
+/// and name under two harnesses are two readings, never one parse reused
+/// for the other.
+#[test]
+fn the_same_hook_entry_under_two_parsers_is_two_readings() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("settings.json");
+    let claude = hook_at(&path, "PreToolUse:*:echo");
+    let copilot = ObservedItem {
+        harness: HarnessId::Copilot,
+        ..hook_at(&path, "PreToolUse:*:echo")
+    };
+
+    assert_ne!(same_reading(&claude), same_reading(&copilot));
+}

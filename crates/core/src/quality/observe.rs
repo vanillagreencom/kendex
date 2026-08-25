@@ -76,10 +76,14 @@ pub fn input_for(item: &ObservedItem) -> AuditInput {
 /// directory, and a scope with eighty of them would spend most of an audit
 /// scoring each tree twice. No rule reads the harness — every one of them
 /// judges the bytes — so the key is everything that decides the outcome:
-/// kind, path and name. Two observations that agree here score the same by
+/// kind, path and name. A hook inside a shared config file is the one
+/// exception: [`read_hook`] parses the file with the reader the scan chose
+/// for the hook's harness, so the harness decides the bytes there and is
+/// part of the key. Two observations that agree here score the same by
 /// construction, never by guess.
-pub fn same_reading(item: &ObservedItem) -> (ItemKind, PathBuf, String) {
-    (item.kind, item.path.clone(), item.name.clone())
+pub fn same_reading(item: &ObservedItem) -> (ItemKind, PathBuf, String, Option<HarnessId>) {
+    let parser = (item.kind == ItemKind::Hook).then_some(item.harness);
+    (item.kind, item.path.clone(), item.name.clone(), parser)
 }
 
 /// One observation's two hashes and what the rules made of it. The hashes
@@ -146,9 +150,10 @@ const HOOK_REGISTRY_UNPARSED: &str = "the config file holding this hook's regist
 ///
 /// A hook that is its own file — opencode's instruction carrier — is the
 /// file, and all of it is scored. A hook observed inside a shared config
-/// file is scored on its own registration: the command text of every entry
-/// the file holds under this observation's name, and nothing beside it.
-/// Sibling entries and the `permissions.ask`/`permissions.deny` lists are
+/// file is scored on its own registration: the command text and the whole
+/// entry — env, headers, url, every field the harness will use — of every
+/// entry the file holds under this observation's name, and nothing beside
+/// it. Sibling entries and the `permissions.ask`/`permissions.deny` lists are
 /// not this hook's content — an ask-list entry is a guard *against* a
 /// dangerous command, and reading the whole file as every hook's script
 /// turned one `mkfs` guard into a high-severity finding on all fifteen
@@ -167,6 +172,7 @@ fn read_hook(item: &ObservedItem) -> Content {
             event: String::new(),
             matcher: None,
             command: item.path.display().to_string(),
+            entry: None,
             script: Some(text),
         };
     }
@@ -196,8 +202,27 @@ fn read_hook(item: &ObservedItem) -> Content {
             .map(|reg| reg.command.as_str())
             .collect::<Vec<_>>()
             .join("\n"),
+        entry: Some(
+            registrations
+                .iter()
+                .map(entry_beside_command)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
         script: None,
     }
+}
+
+/// The registration entry with the field that supplied its command taken
+/// out. The command is a document of its own above, and scoring the same
+/// text twice would report every finding in it twice; everything else in
+/// the entry — env, headers, cwd, timeout — is scored here, once.
+fn entry_beside_command(reg: &crate::scan::hooks::Registration) -> String {
+    let mut entry = reg.entry.clone();
+    if let Some(fields) = entry.as_object_mut() {
+        fields.retain(|_, value| value.as_str() != Some(reg.command.as_str()));
+    }
+    entry.to_string()
 }
 
 /// The server entry a harness would launch, dug back out of the config file

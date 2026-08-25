@@ -242,6 +242,12 @@ pub enum Content {
         event: String,
         matcher: Option<String>,
         command: String,
+        /// The registration entry as the config file holds it — env,
+        /// headers, url, timeout, every field — for a hook read out of a
+        /// shared config file. Scored like the command: a credential in an
+        /// `env` block is used at run time whether or not the command
+        /// spells it.
+        entry: Option<String>,
         script: Option<String>,
     },
     Mcp(McpEntry),

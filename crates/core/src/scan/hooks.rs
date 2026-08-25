@@ -20,6 +20,12 @@ pub(crate) struct Registration {
     pub(crate) event: String,
     pub(crate) matcher: String,
     pub(crate) command: String,
+    /// The entry object itself, every field of it — timeout, env, cwd,
+    /// headers, whatever the harness lets an entry carry. The audit scores
+    /// it: a field the three columns above do not spell is still content
+    /// the harness will use, and dropping it here would hide a credential
+    /// in an `env` block from the rules.
+    pub(crate) entry: serde_json::Value,
 }
 
 impl Registration {
@@ -93,6 +99,7 @@ fn registrations(value: serde_json::Value) -> Vec<Registration> {
                     event: event.clone(),
                     matcher: matcher.to_owned(),
                     command: command.to_owned(),
+                    entry: handler.clone(),
                 });
             }
         }

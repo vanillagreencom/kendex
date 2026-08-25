@@ -115,12 +115,14 @@ fn registration(
                 event: event.clone(),
                 matcher: matcher.clone(),
                 command: command.clone(),
+                entry: None,
                 script: None,
             },
             None => Content::Hook {
                 event: String::new(),
                 matcher: None,
                 command: location.clone(),
+                entry: None,
                 script: None,
             },
         },
@@ -128,6 +130,7 @@ fn registration(
             event: String::new(),
             matcher: None,
             command: location.clone(),
+            entry: None,
             script: script.map(|(_, bytes)| String::from_utf8_lossy(bytes).into_owned()),
         },
     };

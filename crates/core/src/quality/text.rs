@@ -159,16 +159,25 @@ pub fn prepare(input: AuditInput) -> Prepared {
             event,
             matcher,
             command,
+            entry,
             script,
-        } => hook_content(
-            &input.location,
-            event,
-            matcher,
-            command,
-            script,
-            &mut clean,
-            &mut docs,
-        ),
+        } => {
+            let (command, entry, script) = hook_docs(
+                &input.location,
+                command,
+                entry,
+                script,
+                &mut clean,
+                &mut docs,
+            );
+            Content::Hook {
+                event,
+                matcher,
+                command,
+                entry,
+                script,
+            }
+        }
         Content::Mcp(entry) => Content::Mcp(entry),
         Content::Unread { why } => Content::Unread { why },
         Content::Plugin(sources) => Content::Plugin(super::PluginSources {
@@ -245,19 +254,29 @@ fn is_supporting(path: &std::path::Path) -> bool {
     })
 }
 
-fn hook_content(
+/// A hook's three documents — its command, the rest of its entry, and its
+/// script — each cleaned and pushed under its own label, handed back in
+/// that order.
+fn hook_docs(
     root: &str,
-    event: String,
-    matcher: Option<String>,
     command: String,
+    entry: Option<String>,
     script: Option<String>,
     clean: &mut impl FnMut(String, &str) -> String,
     docs: &mut Vec<Doc>,
-) -> Content {
+) -> (String, Option<String>, Option<String>) {
     let command = clean(format!("{root} (command)"), &command);
     docs.push(Doc {
         location: format!("{root} (command)"),
         lines: lines(&command),
+    });
+    let entry = entry.map(|text| {
+        let text = clean(format!("{root} (entry)"), &text);
+        docs.push(Doc {
+            location: format!("{root} (entry)"),
+            lines: lines(&text),
+        });
+        text
     });
     let script = script.map(|body| {
         let body = clean(root.to_owned(), &body);
@@ -267,12 +286,7 @@ fn hook_content(
         });
         body
     });
-    Content::Hook {
-        event,
-        matcher,
-        command,
-        script,
-    }
+    (command, entry, script)
 }
 
 /// Split into lines, marking the ones that are quoting somebody else.
