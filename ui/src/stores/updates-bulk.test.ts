@@ -359,3 +359,111 @@ describe("updates store: what a bulk update claims about held-back places", () =
     );
   });
 });
+
+describe("updates store: a bulk run that took a copy away", () => {
+  const emptyView = {
+    scope: { scope: "global" } as const,
+    drift: [],
+    plan: [],
+    notes: [],
+    warnings: [],
+    safety: [],
+    adoptable: ADOPTABLE,
+    exits: [],
+    error: null,
+  };
+  const conflict = (name: string) => ({
+    kind: "skill" as const,
+    name,
+    harness: "claude" as const,
+    scope: { scope: "global" } as const,
+    state: "conflict" as const,
+    detail: "the previous installation will be moved to the trash",
+    cause: null,
+  });
+  const stale = (name: string) => ({
+    ...conflict(name),
+    state: "stale" as const,
+    cause: "upstream-changed" as const,
+  });
+
+  const answering = (
+    per: Record<
+      string,
+      { heldBack?: string[]; removed?: string[]; moved?: string[] }
+    >,
+  ) => {
+    vi.mocked(commands.packageUpdate).mockImplementation(
+      async (_scope, _kind, name) => ({
+        status: "ok",
+        data: {
+          view: emptyView,
+          heldBack: (per[name]?.heldBack ?? []).map(conflict),
+          removed: (per[name]?.removed ?? []).map(conflict),
+          moved: (per[name]?.moved ?? []).map(stale),
+        },
+      }),
+    );
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [] },
+    });
+    vi.mocked(commands.scanMachine).mockResolvedValue({
+      status: "ok",
+      data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
+    });
+    vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
+  };
+
+  beforeEach(() => {
+    useUpdatesStore.setState({ rows: [], busy: false, loaded: true });
+    vi.clearAllMocks();
+  });
+
+  it("never claims success over a package whose only copy was trashed", async () => {
+    answering({ gh: { removed: ["gh"] } });
+
+    await useUpdatesStore.getState().updateRows([row({ name: "gh" })]);
+
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      "1 package could not be installed — its copy went to the trash and nothing replaced it",
+    );
+  });
+
+  // Three things happened; the run says all three rather than picking one.
+  it("names what moved, what was held, and what went to the trash", async () => {
+    answering({
+      gh: { moved: ["gh"] },
+      review: { heldBack: ["review"] },
+      deploy: { removed: ["deploy"] },
+    });
+
+    await useUpdatesStore
+      .getState()
+      .updateRows([
+        row({ name: "gh" }),
+        row({ name: "review" }),
+        row({ name: "deploy" }),
+      ]);
+
+    expect(toast.error).toHaveBeenCalledWith(
+      "1 package could not be installed — its copy went to the trash and nothing replaced it",
+    );
+    expect(toast.success).toHaveBeenCalledWith(
+      "Updated 1 package — 1 place needs attention on its own row",
+    );
+  });
+
+  // One package can be both: trashed in one tool, refused in another.
+  it("counts a package that was both trashed and held in both columns", async () => {
+    answering({ gh: { removed: ["gh"], heldBack: ["gh"] } });
+
+    await useUpdatesStore.getState().updateRows([row({ name: "gh" })]);
+
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      "1 package could not be installed — its copy went to the trash and nothing replaced it",
+    );
+  });
+});

@@ -82,6 +82,10 @@ export const removedNotReplacedToastLabel = (
   tools: string[],
 ): string =>
   `${name} could not be installed — the copy in ${toolList(tools)} went to the trash and nothing replaced it`;
+export const removedNotReplacedCountToastLabel = (removed: number): string =>
+  removed === 1
+    ? "1 package could not be installed — its copy went to the trash and nothing replaced it"
+    : `${removed} packages could not be installed — their copies went to the trash and nothing replaced them`;
 export const notUpdatedToastLabel = (name: string, tools: string[]): string =>
   `${name} was not updated — the copy in ${toolList(tools)} needs attention on the package page`;
 export const nothingMovedToastLabel = (held: number): string =>

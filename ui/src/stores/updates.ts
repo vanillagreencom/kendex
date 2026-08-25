@@ -174,7 +174,12 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
         }
         // The whole sequence and its follow-up overview ride the
         // side-effect chain, so nothing older can land on top of them.
-        let outcome = { ok: true, moved: [] as UpdateRow[], held: 0 };
+        let outcome = {
+          ok: true,
+          moved: [] as UpdateRow[],
+          held: 0,
+          removed: 0,
+        };
         const error = await get().mutate(async () => {
           outcome = await applyRows(rows, reportUpdate);
           return null;
@@ -189,11 +194,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
         // click covered: a place the plan held back needs attention on its
         // own row, it is not one more updated.
         if (outcome.ok)
-          showBulkOutcome(
-            outcome.moved,
-            skipped + outcome.held,
-            visibleUpdates(get().rows),
-          );
+          showBulkOutcome(outcome, skipped, visibleUpdates(get().rows));
         await useScanStore.getState().refresh();
         await useAuditStore.getState().refresh({ force: true });
       } finally {

@@ -9,6 +9,7 @@ import {
   type PackageUpdate_Serialize,
   type UpdateRow,
 } from "@/bindings";
+import { type BulkOutcome, outcomeOf } from "@/lib/update-outcome";
 
 type Report = (error: string) => void;
 
@@ -52,40 +53,27 @@ export const applyRow = async (
   return { ok: true, update: response.data };
 };
 
-/** What a run over several places did: the places it wrote, and how many
- *  a conflict held back. A place held in one tool while another came
- *  current counts in both — it moved, and it still needs a decision. */
-export type BulkOutcome = {
-  ok: boolean;
-  moved: UpdateRow[];
-  held: number;
-};
-
 /** Bring every place in `rows` current, one package-scoped apply per
- *  place, keeping what each one reported. Reducing this to a boolean is
- *  how a run counts a package it never moved: the plan holds a rendering
- *  back rather than writing over it, and only the command it ran can say
- *  so. */
+ *  place, keeping what each one reported. Deciding here what the answers
+ *  mean is how this path fell behind the per-row one twice: it reads
+ *  `outcomeOf` instead. */
 export const applyRows = async (
   rows: UpdateRow[],
   report: Report,
 ): Promise<BulkOutcome> => {
-  const outcome: BulkOutcome = { ok: true, moved: [], held: 0 };
+  const outcome: BulkOutcome = { ok: true, moved: [], held: 0, removed: 0 };
   for (const row of rows) {
     const one = await applyRow(row, report);
     if (!one.ok) {
       outcome.ok = false;
       continue;
     }
-    // A hold move answers with the view alone, so it counts as moved on
-    // the strength of the command succeeding — the same reading this path
-    // has always had.
-    if (!one.update || one.update.heldBack.length === 0) {
-      outcome.moved.push(row);
-      continue;
-    }
-    outcome.held += 1;
-    if (one.update.moved.length > 0) outcome.moved.push(row);
+    // Read, never re-derived: the same answer the per-row report shows, so
+    // a disposition added later reaches this count too.
+    const what = outcomeOf(one.update);
+    if (what.moved) outcome.moved.push(row);
+    if (what.held.length > 0) outcome.held += 1;
+    if (what.removed.length > 0) outcome.removed += 1;
   }
   return outcome;
 };
