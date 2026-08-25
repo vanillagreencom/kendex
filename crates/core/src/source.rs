@@ -77,7 +77,18 @@ pub(crate) fn slot_unreachable(
     // both, so neither hides the other. Asked of the resolved path, a
     // kind whose item is a file is never refused for a nesting that
     // cannot happen.
-    if find_item(&sealed, &config, kind, plugin).is_some_and(|package| slot.starts_with(&package)) {
+    //
+    // Both sides in one spelling first: `find_item` builds the package
+    // from the canonicalized root and the slot carries the caller's, so
+    // comparing them directly compares two names for one directory —
+    // false wherever an ancestor is a symlink, and the arm would stop
+    // guarding without a word.
+    if let Some(package) = find_item(&sealed, &config, kind, plugin)
+        && let Some(package) = sealed.relative(&package)
+        && sealed
+            .relative(slot)
+            .is_some_and(|slot| slot.starts_with(package))
+    {
         return Ok(Some(format!(
             "`{}` is a package of its own here, and this name would be stored inside it",
             crate::names::shown(plugin)

@@ -71,19 +71,29 @@ impl SealedSource {
         &self.root
     }
 
+    /// `path` as it sits under the root, whichever spelling of the root
+    /// it was built from. The one place the two meet: `open` canonicalized
+    /// the root, and a caller's path carries whatever spelling it was
+    /// handed, so a comparison between them is a comparison of two names
+    /// for one file — always unequal wherever an ancestor is a symlink,
+    /// which is macOS by default. Everything that compares paths under a
+    /// source compares what this returns (invariant 17).
+    pub(crate) fn relative<'a>(&self, path: &'a Path) -> Option<&'a Path> {
+        path.strip_prefix(&self.root)
+            .or_else(|_| path.strip_prefix(&self.given))
+            .ok()
+    }
+
     /// The containment check every read goes through: the path must sit
     /// beneath the root — under either spelling of it — and no component
     /// below the root may be a symlink. Also asked of a path about to be
     /// written into a source, since bytes placed past a link are bytes no
     /// later read of this source can reach.
     pub(crate) fn contained(&self, path: &Path) -> Result<()> {
-        let rel = path
-            .strip_prefix(&self.root)
-            .or_else(|_| path.strip_prefix(&self.given))
-            .map_err(|_| CoreError::SourceEscape {
-                path: path.to_path_buf(),
-                reason: "outside the source root".to_owned(),
-            })?;
+        let rel = self.relative(path).ok_or_else(|| CoreError::SourceEscape {
+            path: path.to_path_buf(),
+            reason: "outside the source root".to_owned(),
+        })?;
         let mut probe = self.root.clone();
         for component in rel.components() {
             match component {

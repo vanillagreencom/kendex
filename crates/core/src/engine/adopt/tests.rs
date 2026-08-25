@@ -693,3 +693,52 @@ fn a_destination_the_capture_refuses_is_never_offered() {
         HarnessId::Claude
     ));
 }
+
+/// The nesting refusal compares two paths, and the sealed reader hands
+/// back a canonicalized root while the slot carries the spelling the
+/// caller built it from. With a symlink anywhere above the local source —
+/// which is macOS by default, where a temporary directory sits under
+/// `/var` fronted by `/private/var` — comparing them raw is comparing two
+/// names for one directory, and the guard silently stops guarding.
+#[test]
+fn the_nesting_refusal_holds_under_a_symlinked_ancestor() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    fs::create_dir_all(tmp.path().join("real")).unwrap();
+    std::os::unix::fs::symlink(tmp.path().join("real"), tmp.path().join("front")).unwrap();
+    let project = tmp.path().join("front/app");
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    let parent = project.join(".kendex-local/skills/data-science");
+    fs::create_dir_all(&parent).unwrap();
+    fs::write(parent.join("SKILL.md"), "a package of its own").unwrap();
+    fs::create_dir_all(project.join(".claude/skills/data-science__eda")).unwrap();
+    fs::write(
+        project.join(".claude/skills/data-science__eda/SKILL.md"),
+        "mine",
+    )
+    .unwrap();
+
+    let refused = adopt(
+        &env,
+        &scope,
+        ItemKind::Skill,
+        "data-science/eda",
+        &[HarnessId::Claude],
+    )
+    .unwrap_err();
+
+    assert!(
+        matches!(refused, CoreError::AdoptNameUnusable { .. }),
+        "{refused:?}"
+    );
+    assert!(!parent.join("eda").exists());
+    assert!(!can_keep_for(
+        &env,
+        &scope,
+        ItemKind::Skill,
+        "data-science/eda",
+        HarnessId::Claude
+    ));
+}
