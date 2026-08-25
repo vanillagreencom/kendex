@@ -2,11 +2,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::adopt_shared::{SharedTarget, shared_capture_ops, shared_target};
+use super::desired::native_dir;
 use super::ops::manifest_for_mutation;
 use crate::apply::{Op, Plan, PlannedOp, Pre};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-use crate::manifest;
+use crate::manifest::{self, ItemDecl, LOCAL_SOURCE_NAME};
 use crate::model::{HarnessId, ItemKind, Scope};
 use crate::source::local_source_root;
 
@@ -326,16 +327,213 @@ fn copies_differ(name: &str, first: HarnessId, second: HarnessId) -> CoreError {
     }
 }
 
-pub(super) mod capture;
+// What a capture may read: the walk that turns a folder on disk into the
+// bytes adoption writes into the local source, and the budget that stops a
+// link at somebody's home directory becoming a memory problem.
 
-pub(crate) use capture::read_tree;
+/// Far beyond any real skill, but a hard stop before a link at a huge
+/// folder turns a capture into a memory problem. Fail-loud: the error
+/// names the file that broke the budget.
+pub(crate) const MAX_CAPTURE_FILES: usize = 2000;
+pub(crate) const MAX_CAPTURE_BYTES: u64 = 100 * 1024 * 1024;
 
-mod declare;
-mod position;
+pub(crate) fn read_tree(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>> {
+    fn walk(
+        dir: &Path,
+        rel: &Path,
+        files: &mut Vec<(PathBuf, Vec<u8>)>,
+        bytes: &mut u64,
+    ) -> Result<()> {
+        for entry in fs::read_dir(dir).map_err(|e| CoreError::io(dir, e))? {
+            // A per-entry read error is not silently skipped: dropping it
+            // would capture an incomplete tree and then trash the
+            // original, losing content the caller asked to keep.
+            let entry = entry.map_err(|e| CoreError::io(dir, e))?;
+            let path = entry.path();
+            let Some(name) = path.file_name() else {
+                continue;
+            };
+            let rel = rel.join(name);
+            // A link is not plain content: following it would read whatever
+            // it points at into the capture under this tree's name. Rather
+            // than silently drop it (and then trash the original), refuse —
+            // nothing the user asked to keep is lost without a word.
+            if path.is_symlink() {
+                return Err(CoreError::ForeignSymlink {
+                    points_to: fs::read_link(&path).unwrap_or_default(),
+                    target: path,
+                });
+            }
+            if path.is_dir() {
+                walk(&path, &rel, files, bytes)?;
+                continue;
+            }
+            // A FIFO would block the read forever and a device is not
+            // content; capturing arbitrary user folders means saying so
+            // instead of hanging.
+            let shape = fs::symlink_metadata(&path).map_err(|e| CoreError::io(&path, e))?;
+            if !shape.is_file() {
+                return Err(CoreError::io(
+                    &path,
+                    std::io::Error::other("not a regular file — adopt captures plain files only"),
+                ));
+            }
+            // The budget is spent on what was read, never on what the
+            // metadata said: a file that grows between the two would leave
+            // every file after it a budget that no longer exists, and the
+            // bound would hold only for a tree that sat still. So the
+            // reader is capped and the total counts the bytes it returned.
+            let room = MAX_CAPTURE_BYTES.saturating_sub(*bytes);
+            let mut body = Vec::new();
+            fs::File::open(&path)
+                .and_then(|file| {
+                    use std::io::Read;
+                    file.take(room + 1).read_to_end(&mut body)
+                })
+                .map_err(|e| CoreError::io(&path, e))?;
+            *bytes += body.len() as u64;
+            if files.len() >= MAX_CAPTURE_FILES || body.len() as u64 > room {
+                return Err(CoreError::io(
+                    &path,
+                    std::io::Error::other(format!(
+                        "this folder is bigger than adopt will capture (over {MAX_CAPTURE_FILES} files or {} MB)",
+                        MAX_CAPTURE_BYTES / (1024 * 1024)
+                    )),
+                ));
+            }
+            files.push((rel, body));
+        }
+        Ok(())
+    }
+    let mut files = Vec::new();
+    let mut bytes = 0;
+    walk(root, Path::new(""), &mut files, &mut bytes)?;
+    Ok(files)
+}
 
-use declare::declare;
-pub use position::can_keep_for;
-pub(super) use position::{both_spellings, position};
+// Writing the kept item into the manifest: which tools it names, and
+// which of the declaration's old facts no longer hold once its source is
+// the local one.
+
+/// Write the item into the manifest, bound to the tools that had it. Only
+/// when the `[install]` defaults name exactly that set may the list be left
+/// off: a wider default would install the item for tools the user never
+/// gave it to.
+fn declare(
+    manifest: &mut manifest::Manifest,
+    kind: ItemKind,
+    name: &str,
+    wanted: Vec<HarnessId>,
+    already_declared: bool,
+) {
+    let defaults_match = {
+        let defaults: std::collections::BTreeSet<&HarnessId> =
+            manifest.install.harnesses.iter().collect();
+        wanted
+            .iter()
+            .collect::<std::collections::BTreeSet<&HarnessId>>()
+            == defaults
+    };
+    let decl = manifest
+        .declared_mut(kind)
+        .entry(name.to_owned())
+        .or_insert_with(|| ItemDecl::from_source(LOCAL_SOURCE_NAME));
+    decl.source = LOCAL_SOURCE_NAME.to_owned();
+    // A revision names a commit in the source it came from. Carried onto
+    // the local source, which has no revisions, the next plan fails and the
+    // scope cannot be planned at all until somebody edits kendex.toml — and
+    // the capture has already run by then.
+    decl.rev = None;
+    match &mut decl.harnesses {
+        // A list already there is extended, never replaced: the tools it
+        // names still have the item, and pinning it to the ones being kept
+        // now would leave the rest with files nothing manages.
+        Some(listed) => {
+            for harness in wanted {
+                if !listed.contains(&harness) {
+                    listed.push(harness);
+                }
+            }
+        }
+        // A declaration that was already here and left the tools to the
+        // [install] defaults keeps them. Pinning it to what was observed
+        // would narrow it — a tool that had nothing at its place this pass
+        // would stop getting the item at all, which is not what keeping
+        // files was asked to do.
+        None if !defaults_match && !already_declared => decl.harnesses = Some(wanted),
+        None => {}
+    }
+}
+
+// Where a tool reads an item, and which spelling of the toggled pair is
+// the one on disk. The question a surface asks and the place adoption
+// reads are answered here together, so an offer never names a position
+// the capture will not find.
+
+/// The place one tool reads this item from — the only place adoption looks
+/// for it. Read wherever a surface asks whether adoption could keep a
+/// tool's copy, so the question and the action are one rule: an offer
+/// naming a tool that has nothing here would error the moment it was
+/// followed.
+pub(super) fn position(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    harness: HarnessId,
+) -> Option<PathBuf> {
+    let dir = native_dir(env, scope, harness, kind)?;
+    Some(match kind {
+        ItemKind::Agent => dir.join(crate::render::agent::file_name(harness, name)),
+        _ => dir.join(name),
+    })
+}
+
+/// Whether both spellings of the toggled pair hold content. Keeping would
+/// take one and leave the other, and a later switch reads what is left as
+/// kendex's own — so the reader is asked to settle it first rather than
+/// offered a move that takes half of it.
+pub(super) fn both_spellings(kind: ItemKind, at: &Path) -> bool {
+    match kind {
+        ItemKind::Skill => there(&at.join("SKILL.md")) && there(&at.join("SKILL.md.disabled")),
+        _ => there(at) && there(&crate::engine::file_plan::toggle_sibling(at)),
+    }
+}
+
+/// Whether this tool has something adoption can keep. A tool with an empty
+/// position is never named in an offer: adoption works at that position and
+/// nowhere else, and the folder a link points at is reached through the
+/// tool whose own place is the link.
+///
+/// A skill is a folder holding a `SKILL.md` — that is what the local source
+/// finds again afterwards. Kept without one, the folder goes to the trash,
+/// the declaration is rewritten around a source that has nothing to give,
+/// and the apply that follows installs nothing: the reader is told their
+/// files were kept and they are gone.
+pub fn can_keep_for(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    harness: HarnessId,
+) -> bool {
+    supports(kind)
+        && position(env, scope, kind, name, harness).is_some_and(|path| {
+            !both_spellings(kind, &path)
+                && match kind {
+                    // The marker is a file the capture reads. A directory
+                    // wearing its name is not one, and taking the tree
+                    // would trash the original for a source that has
+                    // nothing to give back.
+                    ItemKind::Skill => path.join("SKILL.md").is_file(),
+                    _ => there(&path),
+                }
+        })
+}
+
+fn there(path: &Path) -> bool {
+    path.exists() || path.is_symlink()
+}
 
 #[cfg(test)]
 mod tests;

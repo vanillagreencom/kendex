@@ -9,13 +9,11 @@ use crate::model::{HarnessId, ItemKind, Scope};
 
 mod add;
 mod decisions;
-mod persist;
 pub use add::{AddRequest, add, add_seeded};
 pub use decisions::{
     DecisionRecord, RecordState, RecordedDecision, dismiss, list_decisions, revoke_dismissal,
     revoke_override,
 };
-use persist::ensure_manifest_persisted;
 
 /// Every kind a manifest declares by name. Plugins are excluded: they carry
 /// only an enabled flag, in their own table.
@@ -326,4 +324,19 @@ pub fn toggle(
     let mut report = plan_scope(env, scope, &manifest, &lock, &PlanOptions::default())?;
     ensure_manifest_persisted(env, scope, &manifest, &mut report)?;
     Ok(report)
+}
+
+/// The plan must persist the mutated manifest exactly once; plan_scope adds
+/// its own write only when upstream skill merges changed it further.
+fn ensure_manifest_persisted(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    report: &mut EngineReport,
+) -> Result<()> {
+    let already = crate::engine::persists_manifest(&report.plan.ops);
+    if already {
+        return Ok(());
+    }
+    crate::rename::insert_manifest_save(env, scope, &mut report.plan, manifest.clone())
 }

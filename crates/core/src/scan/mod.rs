@@ -9,8 +9,6 @@ use crate::model::{DetectedHarness, FileState, ItemKind, ObservedItem, Scope};
 use crate::settings::AppSettings;
 
 pub(crate) mod copilot;
-mod entry;
-pub use entry::RawEntry;
 mod files;
 pub(crate) mod hooks;
 pub(crate) mod jsonc;
@@ -229,6 +227,7 @@ fn scan_surface(
 // exists — `tests` for `testing`. Silently dropping it leaves the author
 // thinking the item is tagged when it is not, so the scan says so and names
 // the vocabulary.
+
 fn warn_unknown_tags(found: &files::FoundFile, result: &mut ScanResult) {
     let Some(message) = found.meta.unknown_warning() else {
         return;
@@ -288,6 +287,24 @@ fn scan_structured_file(
             .warnings
             .push(format!("{}: {message}", path.display())),
     }
+}
+
+// What a structured reader hands back for one entry it found in a file.
+
+/// One parsed entry from a structured surface, before it becomes an
+/// `ObservedItem`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawEntry {
+    pub name: String,
+    pub enabled: Option<bool>,
+    pub description: Option<String>,
+    /// Where this entry's own files live, when the reader knows and that is
+    /// somewhere other than the file it was read from. A plugin cache lists
+    /// every plugin in one place but each one has a directory of its own,
+    /// and scoring a plugin against its neighbours' files is not scoring
+    /// that plugin. `None` for entries that really do only exist as a line
+    /// in a config file.
+    pub source_path: Option<PathBuf>,
 }
 
 #[cfg(test)]

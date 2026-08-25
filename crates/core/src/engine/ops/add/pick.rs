@@ -6,6 +6,10 @@
 use crate::error::{CoreError, Result};
 use crate::manifest::{DEFAULT_SOURCE_NAME, LOCAL_SOURCE_NAME, Manifest, SourceDecl};
 
+/// Map a CLI source argument to a declared source name, declaring it when
+/// new. References parse through [`crate::source_ref::parse_typed`], and a
+/// repository already subscribed under any spelling reuses that
+/// subscription.
 pub(super) fn ensure_source(manifest: &mut Manifest, requested: Option<&str>) -> Result<String> {
     let Some(requested) = requested else {
         return default_source(manifest);

@@ -571,7 +571,7 @@ lives in one capability table read by core and UI.
   zero is not found with the fix named. `default_source` serves only
   requests naming no item (`--all`, a bare bundle). Installing a whole
   bundle subsumes, in the same plan, already-declared members whose
-  effective options equal what the bundle derives (`add/subsume.rs`); a
+  effective options equal what the bundle derives (`add.rs`); a
   member the user shaped keeps its declaration, the preview saying why.
   `[bundles.<name>]` is keyed by bare name; a second marketplace's
   same-named bundle is refused naming the first.

@@ -12,7 +12,7 @@ use crate::error::{CoreError, Result};
 use crate::lock::{Lock, lock_path};
 use crate::manifest::{ItemDecl, Manifest, Method};
 use crate::model::{HarnessId, ItemKind, Scope};
-use crate::source::{self, find_item, list_items, source_config};
+use crate::source::{self, CatalogBundle, find_item, list_items, source_config};
 
 #[derive(Debug, Default, Clone)]
 pub struct AddRequest {
@@ -222,9 +222,9 @@ fn add_from(
     // declared earlier, while an item this same request asks for by name
     // is declared after — asking for both is asking for both.
     for bundle in sets {
-        subsume::require_free(manifest, &bundle.name, source_name)?;
+        require_free(manifest, &bundle.name, source_name)?;
         let decl = declare_bundle(manifest, &bundle, source_name, request, hold_at.as_deref());
-        subsume::subsume(manifest, &bundle, &decl, notes);
+        subsume(manifest, &bundle, &decl, notes);
     }
     for (kind, names) in [
         (ItemKind::Agent, agents),
@@ -326,13 +326,224 @@ fn optional_choices(
     Ok(chosen)
 }
 
-/// Map a CLI source argument to a declared source name, declaring it when
-/// new. References parse through [`crate::source_ref::parse_typed`], and a
-/// repository already subscribed under any spelling reuses that
-/// subscription.
-mod declare;
 mod pick;
 mod place;
-mod subsume;
 
-use declare::{declare, hold_commit};
+// Install-all subsumption, and the one-bundle-per-name rule.
+//
+// Declaring a bundle removes, in the same plan, the individual
+// declarations the bundle now subsumes — otherwise those members keep a
+// `requested` edge and survive a later bundle uninstall as "also
+// requested". Subsumption only claims a declaration whose effective
+// options equal what the bundle derives for that member; one the user
+// shaped — its own harness list, method, hold, enabled flag, frontmatter
+// override or accepted safety decision — is kept, and the preview says
+// why.
+
+/// Invariant 4 for bundles: `[bundles.<name>]` is keyed by bare name, so a
+/// second marketplace's same-named bundle is refused naming the first —
+/// with installing the members individually as the way out.
+fn require_free(manifest: &Manifest, name: &str, source_name: &str) -> Result<()> {
+    let Some(existing) = manifest.bundles.get(name) else {
+        return Ok(());
+    };
+    if existing.source == source_name {
+        return Ok(());
+    }
+    Err(CoreError::BundleCollision {
+        name: name.to_owned(),
+        existing: canonical(manifest, &existing.source),
+        requested: canonical(manifest, source_name),
+    })
+}
+
+/// The subscription's canonical repository (or path) beside its alias —
+/// an alias is a local label, not an identity.
+fn canonical(manifest: &Manifest, alias: &str) -> String {
+    match manifest
+        .sources
+        .get(alias)
+        .and_then(|decl| decl.repo.as_deref().or(decl.path.as_deref()))
+    {
+        Some(repo) => format!("{alias} ({repo})"),
+        None => alias.to_owned(),
+    }
+}
+
+/// Drop the individual declarations this bundle now accounts for, and say
+/// so — "N packages now come with the bundle". A member whose declaration
+/// differs from what the bundle would derive is kept, with the note naming
+/// what the user changed.
+fn subsume(
+    manifest: &mut Manifest,
+    bundle: &CatalogBundle,
+    bundle_decl: &ItemDecl,
+    notes: &mut Vec<String>,
+) {
+    let mut taken = 0usize;
+    for member in &bundle.members {
+        let Some(decl) = manifest.declared(member.kind).get(&member.name) else {
+            continue;
+        };
+        if decl.source != bundle_decl.source {
+            continue;
+        }
+        match shaped_by_user(manifest, member.kind, &member.name, decl, bundle_decl) {
+            None => {
+                manifest.declared_mut(member.kind).remove(&member.name);
+                taken += 1;
+            }
+            Some(why) => notes.push(format!("'{}' stays your own install — {why}", member.name)),
+        }
+    }
+    match taken {
+        0 => {}
+        1 => notes.push(format!(
+            "1 package now comes with the {} bundle",
+            bundle.name
+        )),
+        n => notes.push(format!(
+            "{n} packages now come with the {} bundle",
+            bundle.name
+        )),
+    }
+}
+
+/// Why a member's own declaration is not the bundle's — `None` when the
+/// two are effectively equal and the bundle can speak for it.
+fn shaped_by_user(
+    manifest: &Manifest,
+    kind: ItemKind,
+    name: &str,
+    decl: &ItemDecl,
+    bundle_decl: &ItemDecl,
+) -> Option<String> {
+    if decl.harnesses != bundle_decl.harnesses {
+        return Some("it has its own harness list".to_owned());
+    }
+    if decl.method != bundle_decl.method {
+        return Some("it has its own install method".to_owned());
+    }
+    if decl.rev != bundle_decl.rev {
+        return Some("it is held at its own version".to_owned());
+    }
+    if decl.enabled != bundle_decl.enabled {
+        return Some("you toggled it yourself".to_owned());
+    }
+    let about_item = |key: &String| {
+        crate::lock::parse_entry_key(key)
+            .is_some_and(|(key_kind, key_name, _)| key_kind == kind && key_name == name)
+    };
+    if manifest.safety_overrides.keys().any(about_item)
+        || manifest.safety_reviews.keys().any(about_item)
+    {
+        return Some("it carries safety decisions you accepted".to_owned());
+    }
+    if kind == ItemKind::Agent
+        && manifest
+            .agent_frontmatter
+            .values()
+            .any(|agents| agents.contains_key(name))
+    {
+        return Some("it carries your frontmatter overrides".to_owned());
+    }
+    None
+}
+
+// Writing one item's declaration into the manifest: the invariant-4
+// collision refusal (installed or merely declared), the `--hold` commit, and
+// the source label a collision names.
+
+/// The commit a `--hold` request freezes its declarations at. Only a
+/// remote resolves to one; a hold on anything else is refused before the
+/// first declaration is written (invariant 11).
+fn hold_commit(
+    request: &AddRequest,
+    source_name: &str,
+    ready: &crate::source::ResolvedSource,
+) -> Result<Option<String>> {
+    match (request.hold, &ready.commit) {
+        (false, _) => Ok(None),
+        (true, Some(commit)) => Ok(Some(commit.clone())),
+        (true, None) => Err(CoreError::ItemRevUnsupported {
+            source_name: source_name.to_owned(),
+        }),
+    }
+}
+
+/// How a source is named in a collision message: its repository or path when
+/// the alias is a subscription, the local-source name when it is a fork, and
+/// the bare alias as a last resort.
+fn source_repo_label(manifest: &Manifest, alias: &str) -> String {
+    if alias == crate::manifest::LOCAL_SOURCE_NAME {
+        return alias.to_owned();
+    }
+    manifest
+        .sources
+        .get(alias)
+        .and_then(|decl| decl.repo.clone().or_else(|| decl.path.clone()))
+        .unwrap_or_else(|| alias.to_owned())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn declare(
+    env: &Env,
+    scope: &Scope,
+    manifest: &mut Manifest,
+    lock: &Lock,
+    kind: ItemKind,
+    name: &str,
+    source_name: &str,
+    request: &AddRequest,
+    hold_at: Option<&str>,
+) -> Result<()> {
+    // Invariant 4: same-source redeclare is a no-op; a name already claimed
+    // from elsewhere is a hard error naming the original. The claim is either
+    // a lock entry (installed) or a manifest declaration not yet applied —
+    // both count, or a declared name could be silently rebound to another
+    // marketplace, which is exactly the collision the browse view warns about.
+    let collision_repo = lock
+        .entries
+        .values()
+        .find(|entry| entry.kind == kind && entry.name == name && entry.source != source_name)
+        .map(|entry| entry.source_repo.clone())
+        .or_else(|| {
+            manifest
+                .declared(kind)
+                .get(name)
+                .filter(|decl| decl.source != source_name)
+                .map(|decl| source_repo_label(manifest, &decl.source))
+        });
+    if let Some(existing) = collision_repo {
+        let requested = match source::resolve(env, scope, source_name, manifest)? {
+            source::SourceState::Ready(ready) => ready.provenance,
+            _ => source_name.to_owned(),
+        };
+        return Err(CoreError::SourceCollision {
+            name: name.to_owned(),
+            existing,
+            requested,
+        });
+    }
+    let decl = manifest
+        .declared_mut(kind)
+        .entry(name.to_owned())
+        .or_insert_with(|| ItemDecl::from_source(source_name));
+    decl.source = source_name.to_owned();
+    if let Some(harnesses) = &request.harnesses {
+        decl.harnesses = Some(harnesses.clone());
+    }
+    if request.copy {
+        decl.method = Some(Method::Copy);
+    }
+    if let Some(commit) = hold_at {
+        decl.rev = Some(commit.to_owned());
+    }
+    // Asking for something back is the plainest possible statement that it
+    // is wanted, so it outranks a removal recorded earlier.
+    if let Some(held) = manifest.suppressed.get_mut(&kind) {
+        held.retain(|suppressed| suppressed != name);
+    }
+    manifest.suppressed.retain(|_, held| !held.is_empty());
+    Ok(())
+}

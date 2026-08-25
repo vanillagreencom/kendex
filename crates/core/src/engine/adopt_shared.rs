@@ -372,7 +372,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("huge");
         fs::create_dir_all(&dir).unwrap();
-        for i in 0..(super::super::adopt::capture::MAX_CAPTURE_FILES + 1) {
+        for i in 0..(super::super::adopt::MAX_CAPTURE_FILES + 1) {
             fs::write(dir.join(format!("f{i}")), "x").unwrap();
         }
         let error = read_tree(&dir).unwrap_err();
