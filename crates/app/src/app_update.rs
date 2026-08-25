@@ -2,9 +2,6 @@ use kendex_core::app_update::AppUpdateView;
 use kendex_core::env::Env;
 use kendex_core::registry::ReleaseFeedFetch;
 
-const RELEASE_FEED: &str =
-    "https://github.com/vanillagreencom/kendex/releases/latest/download/feed.json";
-
 fn feed_url() -> String {
     #[cfg(debug_assertions)]
     {
@@ -19,7 +16,7 @@ fn feed_url() -> String {
 fn selected_feed(override_url: Option<String>, debug_build: bool) -> String {
     match (debug_build, override_url) {
         (true, Some(url)) => url,
-        (true, None) | (false, _) => RELEASE_FEED.to_owned(),
+        (true, None) | (false, _) => kendex_core::update_feed::RELEASE_FEED_URL.to_owned(),
     }
 }
 
@@ -68,6 +65,9 @@ mod tests {
     fn only_debug_builds_accept_a_feed_override() {
         let fixture = "file:///fixtures/feed.json".to_owned();
         assert_eq!(selected_feed(Some(fixture.clone()), true), fixture);
-        assert_eq!(selected_feed(Some(fixture), false), RELEASE_FEED);
+        assert_eq!(
+            selected_feed(Some(fixture), false),
+            kendex_core::update_feed::RELEASE_FEED_URL
+        );
     }
 }

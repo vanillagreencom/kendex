@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use kendex_core::process::Hardened;
-use kendex_core::update_feed::{ReleaseFeed, VersionRelation, release_notes_url};
+use kendex_core::update_feed::{RELEASE_FEED_URL, ReleaseFeed, VersionRelation, release_notes_url};
 
 use super::{CliResult, out, say};
 
@@ -10,9 +10,7 @@ use super::{CliResult, out, say};
 /// `KENDEX_UPDATE_FEED` overrides the URL so compat tests run against a
 /// local fixture instead of the network.
 fn feed_url() -> String {
-    std::env::var("KENDEX_UPDATE_FEED").unwrap_or_else(|_| {
-        "https://github.com/vanillagreencom/kendex/releases/latest/download/feed.json".to_owned()
-    })
+    std::env::var("KENDEX_UPDATE_FEED").unwrap_or_else(|_| RELEASE_FEED_URL.to_owned())
 }
 
 /// The feed keys its assets by the build target, one per lane in
@@ -24,7 +22,7 @@ fn target_triple() -> &'static str {
 fn fetch(url: &str) -> Result<Vec<u8>, String> {
     // This fetches release binaries as well as the small feed, so it needs
     // room for a slow download.
-    let output = Hardened::curl(&["-fsSL", url])
+    let output = Hardened::curl(&curl_args(url))
         .timeout(Duration::from_secs(600))
         .run()
         .map_err(|e| format!("curl unavailable: {e}"))?;
@@ -35,6 +33,10 @@ fn fetch(url: &str) -> Result<Vec<u8>, String> {
         ));
     }
     Ok(output.stdout)
+}
+
+fn curl_args(url: &str) -> [&str; 3] {
+    ["-fsSL", "--", url]
 }
 
 pub fn run(force: bool) -> CliResult {
@@ -87,4 +89,17 @@ fn staged_path(current: &std::path::Path) -> PathBuf {
         .unwrap_or_else(|| "kendex".to_owned());
     name.push_str(".update");
     current.with_file_name(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fetched_urls_are_always_positional_arguments() {
+        assert_eq!(
+            curl_args("--output=/tmp/owned"),
+            ["-fsSL", "--", "--output=/tmp/owned"]
+        );
+    }
 }

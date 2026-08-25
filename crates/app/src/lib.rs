@@ -133,6 +133,36 @@ pub fn prepare_launch(
     Ok(messages)
 }
 
+trait StartupCoordinator {
+    type Error;
+
+    fn show_window(&self) -> Result<(), Self::Error>;
+    fn schedule_update_check(&self);
+}
+
+fn complete_startup<C: StartupCoordinator>(coordinator: &C) -> Result<(), C::Error> {
+    coordinator.show_window()?;
+    coordinator.schedule_update_check();
+    Ok(())
+}
+
+struct AppStartup<'a> {
+    app: &'a tauri::App,
+    zoom: u16,
+}
+
+impl StartupCoordinator for AppStartup<'_> {
+    type Error = Box<dyn std::error::Error>;
+
+    fn show_window(&self) -> Result<(), Self::Error> {
+        window::show_at_zoom(self.app, self.zoom)
+    }
+
+    fn schedule_update_check(&self) {
+        app_update::schedule_startup_check();
+    }
+}
+
 pub fn run() -> tauri::Result<()> {
     #[cfg(target_os = "linux")]
     launch_env::apply();
@@ -180,10 +210,47 @@ pub fn run() -> tauri::Result<()> {
         // wired up here is not, because tauri's mock runtime answers for a
         // window it never draws. Deleting the line leaves `zoom` with no
         // reader, which fails `clippy -D warnings`.
-        .setup(move |app| {
-            window::show_at_zoom(app, zoom)?;
-            app_update::schedule_startup_check();
-            Ok(())
-        })
+        .setup(move |app| complete_startup(&AppStartup { app, zoom }))
         .run(tauri::generate_context!())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::*;
+
+    struct FakeStartup {
+        show_result: Result<(), &'static str>,
+        scheduled: Cell<usize>,
+    }
+
+    impl StartupCoordinator for FakeStartup {
+        type Error = &'static str;
+
+        fn show_window(&self) -> Result<(), Self::Error> {
+            self.show_result
+        }
+
+        fn schedule_update_check(&self) {
+            self.scheduled.set(self.scheduled.get() + 1);
+        }
+    }
+
+    #[test]
+    fn startup_schedules_once_only_after_the_window_is_ready() {
+        let ready = FakeStartup {
+            show_result: Ok(()),
+            scheduled: Cell::new(0),
+        };
+        complete_startup(&ready).unwrap();
+        assert_eq!(ready.scheduled.get(), 1);
+
+        let failed = FakeStartup {
+            show_result: Err("window failed"),
+            scheduled: Cell::new(0),
+        };
+        assert_eq!(complete_startup(&failed), Err("window failed"));
+        assert_eq!(failed.scheduled.get(), 0);
+    }
 }

@@ -167,32 +167,63 @@ fn failure_is_separate_from_the_last_valid_notice() {
 fn http_and_invalid_feed_errors_are_cached_for_the_interval() {
     let tmp = tempfile::tempdir().unwrap();
     let http_env = Env::fake(tmp.path().join("http"), FakeOs::Linux);
-    let http = Canned::new([Ok(FetchResponse {
-        status: 503,
-        etag: None,
-        body: Vec::new(),
-    })]);
+    let http = Canned::new([
+        response("5.1.0", ""),
+        Ok(FetchResponse {
+            status: 503,
+            etag: None,
+            body: Vec::new(),
+        }),
+    ]);
+    let http_good = check(&http_env, &http, true, true).unwrap();
     let failed = check(&http_env, &http, true, true).unwrap();
+    assert_eq!(failed.status, http_good.status);
+    assert_eq!(failed.last_success_at, http_good.last_success_at);
     assert_eq!(failed.last_error.unwrap().kind, AppUpdateErrorKind::Http);
     let remembered = check(&http_env, &http, false, true).unwrap();
     assert_eq!(
         remembered.last_error.unwrap().kind,
         AppUpdateErrorKind::Http
     );
-    assert_eq!(http.calls.get(), 1);
+    assert_eq!(http.calls.get(), 2);
 
     let invalid_env = Env::fake(tmp.path().join("invalid"), FakeOs::Linux);
-    let invalid = Canned::new([Ok(FetchResponse {
-        status: 200,
-        etag: None,
-        body: br#"{"schema":1,"version":"not-semver","assets":{}}"#.to_vec(),
-    })]);
+    let invalid = Canned::new([
+        response("5.1.0", ""),
+        Ok(FetchResponse {
+            status: 200,
+            etag: None,
+            body: br#"{"schema":1,"version":"not-semver","assets":{}}"#.to_vec(),
+        }),
+    ]);
+    let invalid_good = check(&invalid_env, &invalid, true, true).unwrap();
     let failed = check(&invalid_env, &invalid, true, true).unwrap();
+    assert_eq!(failed.status, invalid_good.status);
+    assert_eq!(failed.last_success_at, invalid_good.last_success_at);
     assert_eq!(
         failed.last_error.unwrap().kind,
         AppUpdateErrorKind::InvalidFeed
     );
-    assert_eq!(invalid.calls.get(), 1);
+    assert_eq!(invalid.calls.get(), 2);
+}
+
+#[test]
+fn cold_cache_304_is_an_http_error_without_a_success() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let fetch = Canned::new([Ok(FetchResponse {
+        status: 304,
+        etag: None,
+        body: Vec::new(),
+    })]);
+
+    let result = check(&env, &fetch, true, true).unwrap();
+
+    assert!(matches!(result.status, AppUpdateStatus::NeverChecked));
+    assert!(result.last_attempt_at.is_some());
+    assert!(result.last_success_at.is_none());
+    assert!(result.served_feed_at.is_none());
+    assert_eq!(result.last_error.unwrap().kind, AppUpdateErrorKind::Http);
 }
 
 #[test]

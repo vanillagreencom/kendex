@@ -270,6 +270,35 @@ fn update_replaces_the_binary_from_a_local_feed() {
 
 #[test]
 #[allow(clippy::unwrap_used)]
+fn update_refuses_an_asset_value_that_is_not_a_url() {
+    let tmp = sandbox_with_catalog();
+    let home = tmp.path();
+    let target = env!("KENDEX_TARGET");
+    fs::write(
+        home.join("feed.json"),
+        format!(
+            r#"{{"schema":1,"version":"99.0.0","assets":{{"{target}":"--output={}/owned"}}}}"#,
+            home.display()
+        ),
+    )
+    .unwrap();
+
+    let output = kendex_in(
+        home,
+        home,
+        &["update"],
+        &[(
+            "KENDEX_UPDATE_FEED",
+            format!("file://{}/feed.json", home.display()),
+        )],
+    );
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("URL must start"));
+    assert!(!home.join("owned").exists());
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
 fn import_migrates_v1_files_and_is_idempotent() {
     let tmp = sandbox_with_catalog();
     let home = tmp.path();

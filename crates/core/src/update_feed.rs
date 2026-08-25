@@ -10,6 +10,8 @@ use crate::error::{CoreError, Result};
 
 pub const FEED_SCHEMA: u32 = 1;
 pub const MAX_FEED_BYTES: usize = 64 * 1024;
+pub const RELEASE_FEED_URL: &str =
+    "https://github.com/vanillagreencom/kendex/releases/latest/download/feed.json";
 const MAX_VERSION_BYTES: usize = 128;
 const MAX_ASSETS: usize = 32;
 const MAX_TARGET_BYTES: usize = 128;
@@ -96,6 +98,11 @@ impl ReleaseFeed {
                     url.len()
                 ));
             }
+            if !url.starts_with("https://") && !url.starts_with("file://") {
+                return malformed(format!(
+                    "asset '{target}' URL must start with https:// or file://"
+                ));
+            }
         }
         Ok(())
     }
@@ -127,6 +134,16 @@ mod tests {
             r#"{{"schema":1,"version":"{version}","assets":{{"x86_64-unknown-linux-gnu":"https://example.test/kendex"}},"future":true}}"#
         )
         .into_bytes()
+    }
+
+    fn parse_assets(assets: BTreeMap<String, String>) -> Result<ReleaseFeed> {
+        let body = serde_json::to_vec(&ReleaseFeed {
+            schema: FEED_SCHEMA,
+            version: "5.1.0".to_owned(),
+            assets,
+        })
+        .unwrap();
+        ReleaseFeed::parse(&body)
     }
 
     #[test]
@@ -167,5 +184,37 @@ mod tests {
                 .unwrap(),
             VersionRelation::Older
         );
+    }
+
+    #[test]
+    fn asset_count_accepts_the_limit_and_refuses_one_more() {
+        let assets = |count| {
+            (0..count)
+                .map(|n| (format!("target-{n}"), format!("https://example.test/{n}")))
+                .collect()
+        };
+        assert!(parse_assets(assets(MAX_ASSETS)).is_ok());
+        assert!(parse_assets(assets(MAX_ASSETS + 1)).is_err());
+    }
+
+    #[test]
+    fn asset_target_accepts_exact_bounds_and_refuses_outside_them() {
+        let one =
+            |target: String| BTreeMap::from([(target, "https://example.test/kendex".to_owned())]);
+        assert!(parse_assets(one("t".repeat(MAX_TARGET_BYTES))).is_ok());
+        assert!(parse_assets(one(String::new())).is_err());
+        assert!(parse_assets(one("t".repeat(MAX_TARGET_BYTES + 1))).is_err());
+    }
+
+    #[test]
+    fn asset_url_accepts_exact_bounds_and_supported_schemes() {
+        let one = |url: String| BTreeMap::from([("target".to_owned(), url)]);
+        let longest = format!("https://{}", "a".repeat(MAX_URL_BYTES - "https://".len()));
+        assert!(parse_assets(one(longest.clone())).is_ok());
+        assert!(parse_assets(one(format!("{longest}a"))).is_err());
+        assert!(parse_assets(one("file:///fixture/kendex".to_owned())).is_ok());
+        for refused in ["", "--output=/tmp/x", "http://example.test/x", "ftp://x"] {
+            assert!(parse_assets(one(refused.to_owned())).is_err(), "{refused}");
+        }
     }
 }

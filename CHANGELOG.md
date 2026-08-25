@@ -70,6 +70,8 @@ an outside contributor.
 
 ### Changed
 
+- `kendex update` now requires a schema 1 release feed and refuses a
+  downgrade unless `--force` is explicit.
 - **Breaking:** in `kendex check --json`, a not-yet-evaluated line now has
   `"class": "unevaluated"` where it had `"class": "unknown"`. A parser
   matching that field exhaustively has to accept the new value.
