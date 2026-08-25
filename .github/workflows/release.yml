@@ -63,10 +63,12 @@ jobs:
       - run: cargo build --release -p kendex-cli --target ${{ matrix.target }}
         shell: bash
       # Tauri's bundler signs and notarizes on its own when the APPLE_*
-      # variables are present — and it checks presence, not content, so
+      # variables are present, and it checks presence, not content, so
       # the unset-secret gate must happen before they enter the
-      # environment: each group is exported only when its secret exists.
-      # The key lands on disk because notarytool takes a path.
+      # environment. The seven secrets are one unit: all set exports
+      # them, none set builds unsigned, anything in between fails here
+      # rather than shipping a signed-but-unnotarized bundle. The key
+      # lands on disk because notarytool takes a path.
       - name: Stage macOS signing environment
         if: runner.os == 'macOS'
         shell: bash
@@ -79,22 +81,31 @@ jobs:
           KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           KEY_P8: ${{ secrets.APPLE_API_KEY }}
         run: |
-          if [ -n "$CERT" ]; then
-            {
-              echo "APPLE_CERTIFICATE=$CERT"
-              echo "APPLE_CERTIFICATE_PASSWORD=$CERT_PW"
-              echo "APPLE_SIGNING_IDENTITY=$IDENTITY"
-              echo "APPLE_TEAM_ID=$TEAM"
-            } >> "$GITHUB_ENV"
+          missing=""
+          for name in CERT CERT_PW IDENTITY TEAM ISSUER KEY_ID KEY_P8; do
+            [ -z "${!name}" ] && missing="$missing $name"
+          done
+          if [ "$missing" = " CERT CERT_PW IDENTITY TEAM ISSUER KEY_ID KEY_P8" ]; then
+            echo "No APPLE_* secrets: building unsigned."
+            exit 0
           fi
-          if [ -n "$KEY_P8" ]; then
-            printf '%s' "$KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
-            {
-              echo "APPLE_API_ISSUER=$ISSUER"
-              echo "APPLE_API_KEY=$KEY_ID"
-              echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8"
-            } >> "$GITHUB_ENV"
+          if [ -n "$missing" ]; then
+            echo "::error::Partial Apple signing config; missing:$missing. Set all seven APPLE_* secrets or none."
+            exit 1
           fi
+          printf '%s' "$KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+          {
+            # The certificate is base64 that may arrive line-wrapped;
+            # GITHUB_ENV's NAME=VALUE form holds one line, and tauri
+            # decodes it whitespace-free either way.
+            echo "APPLE_CERTIFICATE=$(tr -d '[:space:]' <<<"$CERT")"
+            echo "APPLE_CERTIFICATE_PASSWORD=$CERT_PW"
+            echo "APPLE_SIGNING_IDENTITY=$IDENTITY"
+            echo "APPLE_TEAM_ID=$TEAM"
+            echo "APPLE_API_ISSUER=$ISSUER"
+            echo "APPLE_API_KEY=$KEY_ID"
+            echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8"
+          } >> "$GITHUB_ENV"
       - name: Bundle the desktop app
         run: cd crates/app && ../../ui/node_modules/.bin/tauri build --target ${{ matrix.target }}
         shell: bash
