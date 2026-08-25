@@ -1,4 +1,4 @@
-schema = 5
+schema = 6
 
 [sources."."]
 path = "."
