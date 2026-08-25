@@ -32,6 +32,7 @@ const scraperSafety = (): ItemSafety => ({
   quality: null,
   findings: SCRAPER_FINDINGS,
   skipped: [],
+  ruleset: 3,
 });
 
 // kendex keeps the same skill directory symlinked for every harness that
@@ -75,6 +76,7 @@ const visualQaSafety = (harness: HarnessId): ItemSafety => ({
   quality: null,
   findings: VISUAL_QA_FINDINGS,
   skipped: [],
+  ruleset: 3,
 });
 
 const METRICS_RELAY_FINDINGS: Finding[] = [
@@ -97,6 +99,7 @@ const metricsRelaySafety = (): ItemSafety => ({
   quality: null,
   findings: METRICS_RELAY_FINDINGS,
   skipped: [],
+  ruleset: 3,
 });
 
 export function acmeSafety(): ItemSafety[] {

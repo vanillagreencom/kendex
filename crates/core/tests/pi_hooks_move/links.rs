@@ -267,7 +267,7 @@ fn a_held_copy_says_what_is_in_the_way() {
         report
             .safety
             .iter()
-            .any(|item| item.name == "guard" && !item.findings.is_empty()),
+            .any(|item| item.name == "guard" && !item.advisory.findings.is_empty()),
         "the findings are still reported, on the safety rows"
     );
 }

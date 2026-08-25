@@ -24,6 +24,7 @@ const hookSafety = (name: string): ItemSafety => ({
   quality: null,
   findings: [HOOK_FINDING],
   skipped: [],
+  ruleset: 3,
 });
 
 const cleanPluginSafety = (name: string): ItemSafety => ({
@@ -39,6 +40,7 @@ const cleanPluginSafety = (name: string): ItemSafety => ({
     rule,
     reason: CLEAN_SKIP_REASON,
   })),
+  ruleset: 3,
 });
 
 export function personalSafety(): ItemSafety[] {

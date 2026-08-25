@@ -237,7 +237,7 @@ fn a_skill_with_findings_installs_and_seeds_like_any_other() {
         report
             .safety
             .iter()
-            .any(|row| row.name == "hostile" && !row.findings.is_empty()),
+            .any(|row| row.name == "hostile" && !row.advisory.findings.is_empty()),
         "the hostile skill is scored, and the findings ride on the plan"
     );
     apply::execute(&f.env, &report.plan, None).unwrap();

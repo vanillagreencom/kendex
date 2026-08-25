@@ -184,9 +184,12 @@ fn a_dangerous_command_is_scored_like_a_dangerous_catalog_script() {
         .find(|row| row.name == "fetch-and-run")
         .expect("a custom hook is scored as a hook");
     assert!(
-        row.findings.iter().any(|finding| finding.rule == "rce"),
+        row.advisory
+            .findings
+            .iter()
+            .any(|finding| finding.rule == "rce"),
         "curl-pipe-sh in a custom hook command is scored exactly as it is in a catalog script: {:?}",
-        row.findings
+        row.advisory.findings
     );
     kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
     assert!(

@@ -332,6 +332,29 @@ export type AppSettings = {
 export type Appearance = "system" | "light" | "dark";
 
 /**
+ *  The advisory payload, exactly as one audit produced it. Every surface
+ *  that shows a score embeds this whole — `engine::ItemSafety` and
+ *  `browse::PackageSafety` flatten it into their serialized rows,
+ *  `check_catalog::CheckedItem` carries it beside the structural pass — so
+ *  a field added here reaches all of them without another hand-copy.
+ */
+export type AuditResult = {
+	findings: Finding[],
+	skipped: SkippedRule[],
+	/**
+	 *  What every finding here costs — the advisory number every surface
+	 *  shows.
+	 */
+	safety: SafetyScore,
+	/**
+	 *  Advisory, never blocking, and `None` for kinds that carry no
+	 *  authored prose to judge — a settings toggle has no writing in it.
+	 */
+	quality: QualityScore | null,
+	ruleset: number,
+};
+
+/**
  *  What the Audit page renders: drift rows plus the human-readable plan
  *  that would fix them.
  */
@@ -1131,16 +1154,17 @@ export type ItemDecl_Serialize = {
 export type ItemKind = "agent" | "skill" | "hook" | "command" | "mcp-server" | "plugin" | "pi-extension";
 
 /**
- *  One installation's two scores and everything behind them. Safety and
- *  quality sit side by side and are never combined: one answers whether the
- *  content is dangerous, the other whether it is any good, and averaging
- *  them would let a well-written attack outscore a clumsy honest skill.
+ *  One installation's advisory payload and where it applies. Safety and
+ *  quality sit side by side inside it and are never combined: one answers
+ *  whether the content is dangerous, the other whether it is any good, and
+ *  averaging them would let a well-written attack outscore a clumsy honest
+ *  skill.
  * 
  *  Planned and installed rows share this shape: the plan preview scores
  *  what it would write, the audit scores what is on disk, and the app and
  *  the CLI read both. Content not yet installed is scored into
- *  `browse::PackageSafety` and `check_catalog::CheckedItem`, which carry
- *  the same score and findings.
+ *  `browse::PackageSafety` and `check_catalog::CheckedItem`, which embed
+ *  the same advisory payload.
  */
 export type ItemSafety = {
 	kind: ItemKind,
@@ -1152,13 +1176,7 @@ export type ItemSafety = {
 	 *  every finding's location is relative to.
 	 */
 	location: string,
-	safety: SafetyScore,
-	/**  Advisory too, and absent for kinds with no authored prose. */
-	quality: QualityScore | null,
-	findings: Finding[],
-	/**  Rules that apply to this kind but had no bytes to read here. */
-	skipped: SkippedRule[],
-};
+} & AuditResult;
 
 export type ItemSource = {
 	path: string,
@@ -1604,14 +1622,6 @@ export type PackageRef = {
 export type PackageSafety = {
 	kind: ItemKind,
 	name: string,
-	findings: Finding[],
-	safety: SafetyScore,
-	/**
-	 *  Advisory like the safety score, and absent for kinds with no
-	 *  authored prose.
-	 */
-	quality: QualityScore | null,
-	skipped: SkippedRule[],
 	/**
 	 *  What this preview did not read — the number an install would give
 	 *  can differ, and the page says why rather than letting its own be
@@ -1619,10 +1629,9 @@ export type PackageSafety = {
 	 */
 	notes: string[],
 	contentHash: string,
-	ruleset: number,
 	/**  Whether a verified cache entry answered instead of a fresh score. */
 	fromCache: boolean,
-};
+} & AuditResult;
 
 /**
  *  The available-package page's one payload: the preview beside the safety

@@ -232,7 +232,7 @@ fn preview_and_safety_read_the_repository_and_the_score_is_shared_with_a_later_s
 
     let scored = package_safety(&env, &repo(), ItemKind::Skill, "gh").unwrap();
     assert!(!scored.from_cache);
-    assert!(scored.safety.score < 100);
+    assert!(scored.advisory.safety.score < 100);
 
     let manifest = env.global_manifest_file();
     fs::create_dir_all(manifest.parent().unwrap()).unwrap();
@@ -252,7 +252,7 @@ fn preview_and_safety_read_the_repository_and_the_score_is_shared_with_a_later_s
     )
     .unwrap();
     assert!(subscribed.from_cache);
-    assert_eq!(subscribed.safety, scored.safety);
+    assert_eq!(subscribed.advisory.safety, scored.advisory.safety);
 }
 
 #[test]

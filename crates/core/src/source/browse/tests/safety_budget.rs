@@ -54,6 +54,7 @@ fn a_finding_in_the_tail_reaches_the_preview_and_the_plan() {
             .into_iter()
             .find(|row| row.name == "big")
             .expect("the plan scores what it would write")
+            .advisory
             .safety
             .score
     };
@@ -69,11 +70,12 @@ fn a_finding_in_the_tail_reaches_the_preview_and_the_plan() {
     .unwrap();
     assert!(
         preview
+            .advisory
             .findings
             .iter()
             .any(|finding| finding.rule == "rce" && finding.location.contains("f250.md")),
         "the tail is read: {:?}",
-        preview.findings
+        preview.advisory.findings
     );
-    assert_eq!(preview.safety.score, planned_score(&env));
+    assert_eq!(preview.advisory.safety.score, planned_score(&env));
 }

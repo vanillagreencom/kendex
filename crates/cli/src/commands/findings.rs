@@ -32,7 +32,7 @@ pub fn findings(env: &Env, args: FindingsArgs) -> CliResult {
             say(&format!("{}: nothing installed", scope.label()));
             continue;
         }
-        rows.sort_by_key(|row| row.safety.score);
+        rows.sort_by_key(|row| row.advisory.safety.score);
         say(&format!("{}:", scope.label()));
         for row in &rows {
             print_safety_row(row);

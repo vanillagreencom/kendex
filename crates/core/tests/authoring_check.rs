@@ -135,7 +135,7 @@ fn check_and_index_agree_on_the_offered_set() {
             .iter()
             .find(|package| package.name == item.name && package.kind == item.kind.name())
             .unwrap();
-        assert_eq!(package.safety.score, item.score);
+        assert_eq!(package.safety.score, item.advisory.safety.score);
     }
 }
 

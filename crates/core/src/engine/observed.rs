@@ -34,10 +34,7 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
             harness: item.harness,
             scope: item.scope.clone(),
             location: item.path.display().to_string(),
-            safety: result.safety,
-            quality: result.quality,
-            findings: result.findings,
-            skipped: result.skipped,
+            advisory: result,
         })
         .collect())
 }

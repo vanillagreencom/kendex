@@ -39,7 +39,7 @@ fn machine(report: &CatalogCheck, ok: bool) -> CliResult {
     let tally = report.tally();
     out(&serde_json::to_string_pretty(&serde_json::json!({
         "schema": CHECK_SCHEMA,
-        "findings": report.findings().collect::<Vec<&CheckFinding>>(),
+        "findings": report.findings().collect::<Vec<CheckFinding>>(),
         "breakage": tally.breakage,
         "safety_findings": tally.findings,
         "ok": ok,
@@ -63,7 +63,7 @@ fn lines(report: &CatalogCheck) {
         say(&format!("    fix: {}", shown(&finding.fix)));
     }
     for item in &report.items {
-        for finding in &item.findings {
+        for finding in item.rows() {
             match &finding.rule {
                 None => say(&format!(
                     "[{}] {}: {}: {}",
@@ -85,13 +85,13 @@ fn lines(report: &CatalogCheck) {
             }
             say(&format!("    fix: {}", shown(&finding.fix)));
         }
-        if item.findings.iter().any(|finding| finding.rule.is_some()) {
+        if !item.advisory.findings.is_empty() {
             say(&format!(
                 "safety: {}: {} {} scores {}/100",
                 shown(&item.file),
                 item.kind.name(),
                 shown(&item.name),
-                item.score
+                item.advisory.safety.score
             ));
         }
     }

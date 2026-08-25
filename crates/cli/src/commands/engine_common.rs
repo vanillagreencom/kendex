@@ -103,7 +103,7 @@ const UNMANAGED_SHOWN: usize = 10;
 /// not-fully-checked lines ride under a row only when there are any.
 pub fn print_safety(report: &EngineReport) {
     let mut rows: Vec<&kendex_core::engine::ItemSafety> = report.safety.iter().collect();
-    rows.sort_by_key(|row| row.safety.score);
+    rows.sort_by_key(|row| row.advisory.safety.score);
     for row in rows {
         print_safety_row(row);
     }
@@ -122,9 +122,9 @@ pub fn print_safety_row(row: &kendex_core::engine::ItemSafety) {
         row.kind.name(),
         shown(&row.name),
         row.harness.display_name(),
-        row.safety.score
+        row.advisory.safety.score
     ));
-    for finding in &row.findings {
+    for finding in &row.advisory.findings {
         say(&format!(
             "  [{}] {}: {}",
             finding.severity.name(),
@@ -137,12 +137,12 @@ pub fn print_safety_row(row: &kendex_core::engine::ItemSafety) {
 
 /// The rules that apply to this kind and had no bytes to read here.
 fn print_skipped(row: &kendex_core::engine::ItemSafety) {
-    let Some(first) = row.skipped.first() else {
+    let Some(first) = row.advisory.skipped.first() else {
         return;
     };
     say(&format!(
         "  not fully checked: {} rule(s) had nothing to read — {}",
-        row.skipped.len(),
+        row.advisory.skipped.len(),
         kendex_core::names::shown(&first.reason)
     ));
 }

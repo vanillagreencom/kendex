@@ -113,15 +113,15 @@ pub fn status(path: &Path) -> Result<MineRow> {
     })
 }
 
-fn shape(finding: &CheckFinding) -> StatusFinding {
+fn shape(finding: CheckFinding) -> StatusFinding {
     StatusFinding {
-        file: finding.file.clone(),
+        file: finding.file,
         kind: finding.kind.to_owned(),
-        name: finding.name.clone(),
-        pass: finding.pass.clone(),
+        name: finding.name,
+        pass: finding.pass,
         severity: finding.severity.to_owned(),
-        message: finding.message.clone(),
-        fix: finding.fix.clone(),
+        message: finding.message,
+        fix: finding.fix,
     }
 }
 

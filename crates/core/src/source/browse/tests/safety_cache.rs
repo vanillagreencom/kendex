@@ -103,13 +103,13 @@ fn a_second_call_reads_the_verified_cache_and_a_moved_hash_rescores() {
     let (_tmp, env, scope) = fixture();
     let first = score(&env, &scope);
     assert!(!first.from_cache);
-    assert!(first.safety.score < 100);
+    assert!(first.advisory.safety.score < 100);
     let path = cache_file(&env);
     let written = fs::read_to_string(&path).unwrap();
 
     let second = score(&env, &scope);
     assert!(second.from_cache);
-    assert_eq!(second.safety, first.safety);
+    assert_eq!(second.advisory.safety, first.advisory.safety);
     assert_eq!(fs::read_to_string(&path).unwrap(), written);
 
     // The record is what answers: an edited record with an intact key comes
@@ -119,7 +119,7 @@ fn a_second_call_reads_the_verified_cache_and_a_moved_hash_rescores() {
     fs::write(&path, record.to_string()).unwrap();
     let reread = score(&env, &scope);
     assert!(reread.from_cache);
-    assert_eq!(reread.safety.score, 7);
+    assert_eq!(reread.advisory.safety.score, 7);
 
     // A content hash that no longer names the bytes — a parser change that
     // moves bytes between items — is a miss: re-scored, and the record
@@ -128,7 +128,7 @@ fn a_second_call_reads_the_verified_cache_and_a_moved_hash_rescores() {
     fs::write(&path, record.to_string()).unwrap();
     let rescored = score(&env, &scope);
     assert!(!rescored.from_cache);
-    assert_eq!(rescored.safety, first.safety);
+    assert_eq!(rescored.advisory.safety, first.advisory.safety);
     assert!(score(&env, &scope).from_cache);
 }
 
@@ -156,7 +156,10 @@ fn a_version_bump_in_any_key_field_re_scores() {
             !rescored.from_cache,
             "a stale `{field}` version must miss the cache"
         );
-        assert_eq!(rescored.safety, first.safety, "and re-score to the same");
+        assert_eq!(
+            rescored.advisory.safety, first.advisory.safety,
+            "and re-score to the same"
+        );
         // The healed record reads from cache again.
         assert!(score(&env, &scope).from_cache, "and heals `{field}`");
     }

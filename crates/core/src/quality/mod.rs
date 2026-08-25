@@ -330,7 +330,12 @@ pub struct SkippedRule {
     pub reason: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+/// The advisory payload, exactly as one audit produced it. Every surface
+/// that shows a score embeds this whole — `engine::ItemSafety` and
+/// `browse::PackageSafety` flatten it into their serialized rows,
+/// `check_catalog::CheckedItem` carries it beside the structural pass — so
+/// a field added here reaches all of them without another hand-copy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AuditResult {
     pub findings: Vec<Finding>,

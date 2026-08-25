@@ -19,23 +19,27 @@ fn a_critical_finding_is_reported_and_installs_anyway() {
         .iter()
         .find(|row| row.name == "hostile")
         .unwrap();
-    assert_eq!(hostile.safety.score, 75);
+    assert_eq!(hostile.advisory.safety.score, 75);
     assert!(
         hostile
+            .advisory
             .findings
             .iter()
             .any(|finding| finding.severity == Severity::Critical),
         "{:?}",
-        hostile.findings
+        hostile.advisory.findings
     );
-    assert!(hostile.quality.is_some(), "a skill has authored prose");
+    assert!(
+        hostile.advisory.quality.is_some(),
+        "a skill has authored prose"
+    );
 
     let clean = report
         .safety
         .iter()
         .find(|row| row.name == "clean")
         .unwrap();
-    assert_eq!(clean.safety.score, 100);
+    assert_eq!(clean.advisory.safety.score, 100);
 
     apply::execute(&f.env, &report.plan, None).unwrap();
     assert!(installed(&f, "hostile"), "advisory means it installs");
@@ -53,9 +57,17 @@ fn the_audit_reports_every_installed_row() {
 
     let rows = kendex_core::engine::observed_rows(&f.env, &f.scope).unwrap();
     let hostile = rows.iter().find(|row| row.name == "hostile").unwrap();
-    assert_eq!(hostile.safety.score, 75);
+    assert_eq!(hostile.advisory.safety.score, 75);
     let clean = rows.iter().find(|row| row.name == "clean").unwrap();
-    assert_eq!(clean.safety.score, 100);
-    assert!(clean.findings.is_empty(), "{:?}", clean.findings);
-    assert!(clean.skipped.is_empty(), "{:?}", clean.skipped);
+    assert_eq!(clean.advisory.safety.score, 100);
+    assert!(
+        clean.advisory.findings.is_empty(),
+        "{:?}",
+        clean.advisory.findings
+    );
+    assert!(
+        clean.advisory.skipped.is_empty(),
+        "{:?}",
+        clean.advisory.skipped
+    );
 }

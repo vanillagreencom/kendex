@@ -133,7 +133,9 @@ pub fn index(sealed: &SealedSource, display: &str) -> Result<MarketplaceIndex> {
             name: safe_text(&item.name, MAX_TEXT),
             description,
             tags,
-            safety: IndexSafety { score: item.score },
+            safety: IndexSafety {
+                score: item.advisory.safety.score,
+            },
         });
     }
     let bundles = bundle_rows(sealed, &config)?;

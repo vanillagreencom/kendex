@@ -788,12 +788,16 @@ lives in one capability table read by core and UI.
   25 / High 15 / Medium 8 / Low 3), first hit per rule at full weight and
   repeats at a point each until they have cost as much again. Quality is
   wshobson's weighted-dimension model, static layer only: no LLM judge, no
-  simulation, no letter grades. Planned and installed rows share
-  `engine::ItemSafety` — the plan preview scores what it would write
-  (`engine/scoring.rs`), the audit scores what is on disk
-  (`engine::observed_rows`); browse (`PackageSafety`, `browse/safety.rs`)
-  and the catalog check (`CheckedItem`) carry the same score and findings
-  for content not yet installed.
+  simulation, no letter grades. One payload carries all of it:
+  `quality::AuditResult` (safety, quality, findings, skipped, ruleset) is
+  embedded whole by every surface — planned and installed rows share
+  `engine::ItemSafety` (the plan preview scores what it would write in
+  `engine/scoring.rs`, the audit scores what is on disk in
+  `engine::observed_rows`), and for content not yet installed browse's
+  `PackageSafety` (`browse/safety.rs`) and the catalog check's
+  `CheckedItem` embed the same payload. The two bound shapes flatten it, so
+  their serialized rows and the generated `AuditResult` TS type read the
+  fields at the top level.
 - **Rules read typed per-kind inputs and say when they cannot read.** A
   skill carries its whole tree, a hook its registration and script, an MCP
   server its command, args, env and headers, a plugin its manifest and

@@ -93,9 +93,32 @@ pub struct CheckedItem {
     pub name: String,
     /// The item's own path within the catalog.
     pub file: String,
-    /// Structural findings first, then safety, in report order.
-    pub findings: Vec<CheckFinding>,
-    pub score: u32,
+    /// The structural pass: would each harness's loader accept this?
+    pub structural: Vec<CheckFinding>,
+    /// The safety pass, the same payload every other score surface embeds.
+    pub advisory: quality::AuditResult,
+}
+
+impl CheckedItem {
+    /// Every finding as a schema-2 row: structural first, then safety, in
+    /// report order. This is the one adapter from the advisory payload to
+    /// the report shape — a safety finding's `remediation` becomes `fix`,
+    /// its `location` the row's `file`.
+    pub fn rows(&self) -> impl Iterator<Item = CheckFinding> + '_ {
+        self.structural
+            .iter()
+            .cloned()
+            .chain(self.advisory.findings.iter().map(|finding| CheckFinding {
+                file: finding.location.clone(),
+                kind: self.kind.name(),
+                name: self.name.clone(),
+                pass: SAFETY_PASS.to_owned(),
+                severity: finding.severity.name(),
+                rule: Some(finding.rule.clone()),
+                message: finding.message.clone(),
+                fix: finding.remediation.clone(),
+            }))
+    }
 }
 
 /// What both passes over a whole catalog produced.
@@ -132,18 +155,14 @@ impl CatalogCheck {
             }
         }
         for item in &self.items {
-            for finding in &item.findings {
-                match (
-                    finding.rule.is_none(),
-                    finding.is_note(),
-                    finding.is_breakage(),
-                ) {
-                    (true, false, true) => tally.breakage += 1,
-                    (true, false, false) => tally.advisory += 1,
-                    (false, _, _) => tally.findings += 1,
-                    _ => {}
+            for finding in &item.structural {
+                match (finding.is_note(), finding.is_breakage()) {
+                    (true, _) => {}
+                    (false, true) => tally.breakage += 1,
+                    (false, false) => tally.advisory += 1,
                 }
             }
+            tally.findings += item.advisory.findings.len();
         }
         tally
     }
@@ -160,10 +179,11 @@ impl CatalogCheck {
             }
     }
 
-    pub fn findings(&self) -> impl Iterator<Item = &CheckFinding> {
+    pub fn findings(&self) -> impl Iterator<Item = CheckFinding> + '_ {
         self.catalog
             .iter()
-            .chain(self.items.iter().flat_map(|item| item.findings.iter()))
+            .cloned()
+            .chain(self.items.iter().flat_map(CheckedItem::rows))
     }
 }
 
@@ -241,14 +261,22 @@ pub fn check_item(
         .unwrap_or(path)
         .display()
         .to_string();
-    let mut findings = structural(kind, name, &file, &content);
-    let score = safety(kind, name, &file, content, &mut findings);
+    let structural = structural(kind, name, &file, &content);
+    // The safety half of the authoring check: the same rules an install
+    // runs, over the same content.
+    let advisory = quality::audit(AuditInput {
+        kind,
+        name: name.to_owned(),
+        harness: None,
+        location: file.clone(),
+        content,
+    });
     Ok(CheckedItem {
         kind,
         name: name.to_owned(),
         file,
-        findings,
-        score,
+        structural,
+        advisory,
     })
 }
 
@@ -318,36 +346,4 @@ fn structural(kind: ItemKind, name: &str, file: &str, content: &Content) -> Vec<
         }));
     }
     out
-}
-
-// The safety half of the authoring check: the same rules an install runs,
-// over the same content.
-
-fn safety(
-    kind: ItemKind,
-    name: &str,
-    file: &str,
-    content: Content,
-    findings: &mut Vec<CheckFinding>,
-) -> u32 {
-    let result = quality::audit(AuditInput {
-        kind,
-        name: name.to_owned(),
-        harness: None,
-        location: file.to_owned(),
-        content,
-    });
-    for finding in result.findings {
-        findings.push(CheckFinding {
-            file: finding.location,
-            kind: kind.name(),
-            name: name.to_owned(),
-            pass: SAFETY_PASS.to_owned(),
-            severity: finding.severity.name(),
-            rule: Some(finding.rule),
-            message: finding.message,
-            fix: finding.remediation,
-        });
-    }
-    result.safety.score
 }

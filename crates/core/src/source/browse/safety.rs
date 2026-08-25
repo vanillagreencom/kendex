@@ -15,9 +15,7 @@ use specta::Type;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::model::ItemKind;
-use crate::quality::{
-    AuditInput, Content, Finding, QualityScore, RULESET_VERSION, SafetyScore, SkippedRule,
-};
+use crate::quality::{AuditInput, AuditResult, Content, RULESET_VERSION};
 use crate::source::DISCOVERY_VERSION;
 
 use super::{Browsed, Catalog};
@@ -30,18 +28,18 @@ use input::input_for;
 /// the record holds, or how the input is read into it, changes.
 const CACHE_FORMAT: u32 = 3;
 
-/// What one scoring pass produced, exactly as it is cached.
+/// What one scoring pass produced, exactly as it is cached. The advisory
+/// payload flattens into the record, so the cached JSON keeps `findings`,
+/// `safety`, `quality`, `skipped` and `ruleset` at the top level beside the
+/// cache-key fields.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CachedScore {
     format: u32,
     content_hash: String,
-    ruleset: u32,
     discovery: u32,
-    findings: Vec<Finding>,
-    safety: SafetyScore,
-    quality: Option<QualityScore>,
-    skipped: Vec<SkippedRule>,
+    #[serde(flatten)]
+    advisory: AuditResult,
 }
 
 /// One offered package's advisory scores — the number in the Packages
@@ -51,18 +49,15 @@ struct CachedScore {
 pub struct PackageSafety {
     pub kind: ItemKind,
     pub name: String,
-    pub findings: Vec<Finding>,
-    pub safety: SafetyScore,
-    /// Advisory like the safety score, and absent for kinds with no
-    /// authored prose.
-    pub quality: Option<QualityScore>,
-    pub skipped: Vec<SkippedRule>,
+    /// Flattened, so this row serves `findings`, `safety`, `quality` and
+    /// `skipped` at the same top-level paths `ItemSafety` does.
+    #[serde(flatten)]
+    pub advisory: AuditResult,
     /// What this preview did not read — the number an install would give
     /// can differ, and the page says why rather than letting its own be
     /// read as that one.
     pub notes: Vec<String>,
     pub content_hash: String,
-    pub ruleset: u32,
     /// Whether a verified cache entry answered instead of a fresh score.
     pub from_cache: bool,
 }
@@ -88,13 +83,9 @@ pub fn package_safety(
     Ok(PackageSafety {
         kind,
         name: name.to_owned(),
-        findings: score.findings,
-        safety: score.safety,
-        quality: score.quality,
-        skipped: score.skipped,
+        advisory: score.advisory,
         notes,
         content_hash: score.content_hash,
-        ruleset: score.ruleset,
         from_cache,
     })
 }
@@ -140,16 +131,11 @@ fn scored(
     {
         return Ok((hit, true));
     }
-    let result = crate::quality::audit(input);
     let fresh = CachedScore {
         format: CACHE_FORMAT,
         content_hash,
-        ruleset: result.ruleset,
         discovery: DISCOVERY_VERSION,
-        findings: result.findings,
-        safety: result.safety,
-        quality: result.quality,
-        skipped: result.skipped,
+        advisory: crate::quality::audit(input),
     };
     if let Some(path) = &cache {
         // Best-effort: an unwritable cache costs the next call a re-score,
@@ -223,7 +209,7 @@ fn verified(path: &std::path::Path, content_hash: &str) -> Option<CachedScore> {
     let text = std::fs::read_to_string(path).ok()?;
     let hit: CachedScore = serde_json::from_str(&text).ok()?;
     (hit.format == CACHE_FORMAT
-        && hit.ruleset == RULESET_VERSION
+        && hit.advisory.ruleset == RULESET_VERSION
         && hit.discovery == DISCOVERY_VERSION
         && hit.content_hash == content_hash)
         .then_some(hit)
