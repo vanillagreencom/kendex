@@ -270,7 +270,8 @@ fn edited_labels(edited: &[(ItemKind, String)]) -> Vec<String> {
 
 // Keeping a marketplace's packages: copying each installation's source-form
 // bytes into the scope's local source so the package stays after the source
-// is gone. The byte copy and its local-target preflight.
+// is gone. The byte copy, its local-target preflight, and the plan that
+// flips each declaration to local and removes the source.
 
 /// The commit one item's bytes are copied from: the commit its lock entries
 /// agree on, or its own declared pin when it was never applied. Per-harness

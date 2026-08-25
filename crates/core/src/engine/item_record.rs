@@ -328,16 +328,14 @@ pub(super) fn registration(item: &Desired) -> Option<crate::lock::HookRegistrati
 
 pub(super) fn rendered_hash(artifact: &Artifact) -> Option<String> {
     match artifact {
-        Artifact::File { .. } | Artifact::Tree { .. } => {
-            Some(super::desired::artifact_disk_hash(artifact))
-        }
+        Artifact::File { .. } | Artifact::Tree { .. } => Some(artifact.disk_hash()),
         // A hook's backing script is a file kendex alone writes, so it can
         // be anchored like any other. A registration with no script edits
         // only shared config, which holds other people's keys — nothing to
         // anchor there.
         Artifact::Registration {
             script: Some(_), ..
-        } => Some(super::desired::artifact_disk_hash(artifact)),
+        } => Some(artifact.disk_hash()),
         Artifact::Registration { script: None, .. } => None,
     }
 }

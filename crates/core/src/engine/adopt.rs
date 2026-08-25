@@ -421,12 +421,22 @@ fn shared_target(
     })
 }
 
-/// The folder a link at this position could be adopted through, or nothing
-/// where the link is one adoption would refuse. The planner asks this so a
-/// hand-made sharing layout — one real folder, several tools reading it
-/// through links — is offered the exit that works instead of being called
-/// a dead end, and asks it through the same boundary the adoption itself
-/// applies, so the offer and the action can never drift apart.
+/// What adoption would take over at this position, or nothing where the
+/// link is one adoption would refuse. The planner asks through the same
+/// boundary the adoption itself applies, so the offer and the action can
+/// never drift apart.
+fn shared_at(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    link: &Path,
+) -> Option<SharedTarget> {
+    let points_to = fs::read_link(link).ok()?;
+    let local_item = local_item_path(env, scope, kind, name).ok()?;
+    shared_target(env, scope, kind, name, link, points_to, &local_item).ok()
+}
+
 /// Every tool adoption will act on for this position. A folder shared by
 /// hand is read by whoever links at it, declared or not, and taking it
 /// over clears each of those links — so a surface offering the move has to
@@ -438,12 +448,14 @@ pub(super) fn shared_tools(
     name: &str,
     link: &Path,
 ) -> Option<Vec<HarnessId>> {
-    let points_to = fs::read_link(link).ok()?;
-    let local_item = local_item_path(env, scope, kind, name).ok()?;
-    let shared = shared_target(env, scope, kind, name, link, points_to, &local_item).ok()?;
-    Some(shared.harnesses)
+    shared_at(env, scope, kind, name, link).map(|s| s.harnesses)
 }
 
+/// The folder a link at this position could be adopted through, or nothing
+/// where the link is one adoption would refuse. The planner asks this so a
+/// hand-made sharing layout — one real folder, several tools reading it
+/// through links — is offered the exit that works instead of being called
+/// a dead end.
 pub(super) fn link_target(
     env: &Env,
     scope: &Scope,
@@ -451,10 +463,7 @@ pub(super) fn link_target(
     name: &str,
     link: &Path,
 ) -> Option<PathBuf> {
-    let points_to = fs::read_link(link).ok()?;
-    let local_item = local_item_path(env, scope, kind, name).ok()?;
-    let shared = shared_target(env, scope, kind, name, link, points_to, &local_item).ok()?;
-    Some(shared.target)
+    shared_at(env, scope, kind, name, link).map(|s| s.target)
 }
 
 /// The ops that take over a shared folder: capture its bytes into the

@@ -140,7 +140,7 @@ impl TrashGuard {
     pub(super) fn new(items: &[desired::Desired]) -> TrashGuard {
         let keep = items
             .iter()
-            .flat_map(|item| desired::artifact_paths(&item.artifact))
+            .flat_map(|item| item.artifact.paths())
             .collect();
         TrashGuard {
             keep,

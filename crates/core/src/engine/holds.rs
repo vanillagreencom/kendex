@@ -242,7 +242,7 @@ pub(super) fn hold_local_edit(
     ) else {
         return false;
     };
-    let wanted = super::desired::artifact_disk_hash(&item.artifact);
+    let wanted = item.artifact.disk_hash();
     if disk == wanted {
         return false;
     }
@@ -252,7 +252,7 @@ pub(super) fn hold_local_edit(
     // physical path, not just by hash — a different package that merely
     // happens to hash the same must still hold, or one package's edit
     // could ride out on another's upstream change.
-    let here = super::desired::artifact_paths(&item.artifact);
+    let here = item.artifact.paths();
     if wrote_here(env, scope, lock, &here, &disk) {
         return false;
     }

@@ -8,7 +8,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use super::desired::{Artifact, Desired, artifact_disk_hash};
+use super::desired::{Artifact, Desired};
 use super::file_plan::{TAKEN_OVER, set_aside};
 use super::item_plan::{Planned, unmanaged};
 use super::written::Written;
@@ -60,7 +60,7 @@ pub(super) fn plan_tree(
             Err(error) => return Ok(uncomparable(canonical, &error)),
         }
     }
-    let wanted = artifact_disk_hash(&item.artifact);
+    let wanted = item.artifact.disk_hash();
     let readable = collapsed.is_none() && canonical.is_dir();
     let disk = match readable.then(|| hash_tree(canonical)).transpose() {
         Ok(disk) => disk,

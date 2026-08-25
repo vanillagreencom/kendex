@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use crate::env::Env;
 use crate::error::Result;
 use crate::harness::{Surface, adapter};
+use crate::hash::{hash_bytes, hash_files};
 use crate::lock::Lock;
 use crate::manifest::{ItemDecl, Manifest, Method};
 use crate::model::{HarnessId, ItemKind, Scope};
@@ -78,6 +79,41 @@ pub enum Artifact {
         script: Option<(PathBuf, Vec<u8>)>,
         edits: Vec<(PathBuf, crate::configedit::ConfigEdit)>,
     },
+}
+
+impl Artifact {
+    /// Every path the artifact occupies. Cursor keeps hook rules in the
+    /// same dir as agents and codex shares skill trees with pi: without
+    /// this, the scanner reports content we just wrote as someone else's.
+    pub fn paths(&self) -> Vec<PathBuf> {
+        match self {
+            Artifact::File { path, .. } => vec![path.clone()],
+            Artifact::Tree {
+                canonical, link, ..
+            } => {
+                let mut paths = vec![canonical.clone()];
+                paths.extend(link.clone());
+                paths
+            }
+            Artifact::Registration { script, .. } => {
+                script.iter().map(|(path, _)| path.clone()).collect()
+            }
+        }
+    }
+
+    /// The on-disk hash the artifact will have — for clean/dirty
+    /// comparison. A registration's config edits are compared by
+    /// re-applying them, not by hash; only its backing file has one.
+    pub fn disk_hash(&self) -> String {
+        match self {
+            Artifact::File { bytes, .. } => hash_bytes(bytes),
+            Artifact::Tree { files, .. } => hash_files(files),
+            Artifact::Registration { script, .. } => match script {
+                Some((_, bytes)) => hash_bytes(bytes),
+                None => hash_bytes(&[]),
+            },
+        }
+    }
 }
 
 /// A declared installation a renderer refused to produce — expressing it on
@@ -205,16 +241,14 @@ pub(crate) fn harnesses_for(
         .collect()
 }
 
+mod rebuild;
+pub use rebuild::desired_as_installed;
+
 /// The desired world, computed against the manifest that will be on disk
 /// once this plan applies. An upstream skill merge rewrites the manifest,
 /// and hashes and renderings must reflect that rewrite — otherwise the very
 /// next audit reads the merged manifest and calls a clean install stale. The
 /// merge is idempotent, so recomputing against it converges in one repeat.
-mod artifact;
-mod rebuild;
-pub use artifact::{artifact_disk_hash, artifact_paths};
-pub use rebuild::desired_as_installed;
-
 pub fn desired_state(
     env: &Env,
     scope: &Scope,

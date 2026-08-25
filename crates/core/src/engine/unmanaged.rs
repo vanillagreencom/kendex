@@ -32,10 +32,7 @@ pub(super) fn unmanaged_rows(
         .chain(lock.entries.keys().cloned())
         .collect();
     let declared_keys = declared_installation_keys(manifest, scope);
-    let mut owned: BTreeSet<PathBuf> = desired
-        .iter()
-        .flat_map(|d| desired::artifact_paths(&d.artifact))
-        .collect();
+    let mut owned: BTreeSet<PathBuf> = desired.iter().flat_map(|d| d.artifact.paths()).collect();
     owned.extend(declared_artifact_paths(env, scope, manifest));
     let mut seen: BTreeSet<String> = BTreeSet::new();
     for item in &scan.items {
