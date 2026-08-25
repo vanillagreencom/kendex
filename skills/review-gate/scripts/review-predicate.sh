@@ -461,6 +461,23 @@ cr="$(jq '[.[] | select(.state != "DISMISSED" and .state != "PENDING") | select(
 # erase a standing objection would be a fail-open lever, and an errored row
 # can never block anyway (it is not CHANGES_REQUESTED).
 #
+# The filter is defined ONCE and concatenated in front of BOTH jq programs
+# that accept review rows — head evidence here, carry candidates below —
+# because attestation semantics must never drift between them: KEN-456 had
+# to be applied at both sites, and two hand-kept copies of the fragment
+# would part ways silently. Matching is scoped to the START of the body —
+# the first line, after trimming leading whitespace and markdown quote
+# markers: an attestation IS the body, while a review that merely quotes a
+# pattern in later text (any PR editing the setting itself) is genuine
+# evidence and must not be dropped (KEN-456). The body is bound BEFORE
+# testing containment — inside contains(.) the dot would rebind, the same
+# trap as the skip-pattern filter. $mk is the lowercased pattern list each
+# program builds from $errmarks.
+ATTESTATION_DEF='def not_errored_attestation($mk):
+  (((.body // "") | ascii_downcase
+    | sub("^[\\s>]+"; "") | split("\n") | (.[0] // "")) as $b
+   | [ $mk[] | . as $p | select($b | contains($p)) ] | length) == 0;'
+
 # Review-object evidence. NOT a latest-review-per-reviewer reduction (see the
 # header): in "any" mode every accepted row counts; in "approved" mode a
 # login contributes evidence when its newest APPROVED at head is not followed
@@ -468,22 +485,13 @@ cr="$(jq '[.[] | select(.state != "DISMISSED" and .state != "PENDING") | select(
 # never withdraws an approval.
 got="$(jq --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
         --arg trusted "$TRUSTED_LOGINS" --arg minstate "$MIN_STATE" \
-        --arg errmarks "$ERROR_PATTERNS" '
+        --arg errmarks "$ERROR_PATTERNS" "$ATTESTATION_DEF"'
   ($trusted | split("[;,\n]+"; "") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $t
   | ($errmarks | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase)) as $mk
   | [ .[]
       | select(.commit_id == $sha and .state != "DISMISSED" and .state != "PENDING" and .user.login != $author)
       | select(($t | length) == 0 or (.user.login as $l | ($t | index($l)) != null))
-      # Bind the body BEFORE testing containment — same rebinding trap as
-      # the skip-pattern filter: inside contains(.) the dot would rebind.
-      # Matched at the START of the body only — the first line, after
-      # trimming leading whitespace and markdown quote markers: an
-      # attestation IS the body, while a review that merely quotes a
-      # pattern in later text (any PR editing the setting itself) is
-      # genuine evidence and must not be dropped (KEN-456).
-      | select((((.body // "") | ascii_downcase
-                 | sub("^[\\s>]+"; "") | split("\n") | (.[0] // "")) as $b
-                | [ $mk[] | . as $p | select($b | contains($p)) ] | length) == 0)
+      | select(not_errored_attestation($mk))
     ]
   | if $minstate == "approved" then
       group_by(.user.login)
@@ -941,15 +949,13 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
   # bounded so a force-push-heavy PR cannot turn the walk into an API storm.
   carry_candidates="$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
       --arg trusted "$TRUSTED_LOGINS" --arg minstate "$MIN_STATE" \
-      --arg errmarks "$ERROR_PATTERNS" '
+      --arg errmarks "$ERROR_PATTERNS" "$ATTESTATION_DEF"'
     ($trusted | split("[;,\n]+"; "") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $t
     | ($errmarks | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase)) as $mk
     | [ .[]
         | select(.state != "DISMISSED" and .state != "PENDING" and .user.login != $author)
         | select(($t | length) == 0 or (.user.login as $l | ($t | index($l)) != null))
-        | select((((.body // "") | ascii_downcase
-                   | sub("^[\\s>]+"; "") | split("\n") | (.[0] // "")) as $b
-                  | [ $mk[] | . as $p | select($b | contains($p)) ] | length) == 0)
+        | select(not_errored_attestation($mk))
         | select($minstate != "approved" or .state == "APPROVED")
         | select((.commit_id // "") != "" and .commit_id != $sha)
       ]

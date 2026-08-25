@@ -52,9 +52,10 @@ Evidence for the CURRENT head is any of:
    and to APPROVED reviews when `REVIEW_GATE_REVIEW_OBJECT_MIN_STATE =
    "approved"`. An approval is never superseded by a later COMMENTED from the
    same reviewer; only a later CHANGES_REQUESTED withdraws it. A row whose
-   body STARTS with a `REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS` marker
-   (matched against the first line) is NOT-EVIDENCE, never a failure; a body
-   quoting a marker in later text stays evidence.
+   body's first line (after trimming leading whitespace and markdown quote
+   markers) contains a `REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS` marker is
+   NOT-EVIDENCE, never a failure; a body quoting a marker in later text
+   stays evidence.
 2. **Trusted clean-analysis check-run or commit status**
    (`REVIEW_GATE_TRUSTED_STATUS_CONTEXTS`) succeeding on this head — but a
    pass must prove analysis RAN: a success matching

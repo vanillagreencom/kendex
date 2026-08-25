@@ -14,8 +14,8 @@ an outside contributor.
   `./packages/@vanillagreen/pi-hooks` no longer draws the false "nothing
   will run it" warning from `kendex apply` and the Review & apply page.
 - The review-gate predicate matches `REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS`
-  only at the start of a review body, so a review quoting a pattern in later
-  text (e.g. a PR editing that setting) counts as evidence again.
+  only in the first line of a review body, so a review quoting a pattern in
+  later text (e.g. a PR editing that setting) counts as evidence again.
 - Customize › Customized packages now lists every package you changed at
   that location, hand-edited and forked ones included, so it matches the
   Library's "Customized in" mark instead of only packages with settings.

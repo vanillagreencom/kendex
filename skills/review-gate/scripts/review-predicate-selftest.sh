@@ -1881,6 +1881,16 @@ reviews_set "$(review "auto-reviewer" COMMENTED "2026-01-01T00:00:00Z" "$OTHER" 
 compare_fix ahead "[$DOCS_DELTA]"
 run "carry: an errored ancestor auto-review is not a carry candidate" awaiting
 
+# The carry-candidate filter shares the head path's first-line scoping
+# (KEN-456): an ancestor review that QUOTES a marker in later text is a
+# genuine review and stays a carry seed. Whole-body matching at this site
+# would reproduce the KEN-456 symptom on the carry route alone.
+reset
+CFG_CARRY="docs"; CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"; CFG_ERROR_PATTERNS="$ERRORED_MARK"
+reviews_set "$(review "reviewer" COMMENTED "2026-01-01T00:00:00Z" "$OTHER" "$(printf 'Reviewed 2 of 2 changed files.\n\nThe doc edit quotes the marker "encountered an error and was unable to review" verbatim; the wording matches the shipped default.')")"
+compare_fix ahead "[$DOCS_DELTA]"
+run "carry: an ancestor review QUOTING a pattern in later text is a candidate" approved
+
 reset
 carry_candidate
 CFG_CARRY="docs"
