@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { attentionRows } from "@/components/home/attention-rows";
 import { AttentionSection } from "@/components/home/attention-section";
 import {
@@ -18,7 +18,7 @@ import {
   SCAN_STALE_TITLE,
 } from "@/lib/copy";
 import { MARKETPLACES_UNCHECKED_DETAIL } from "@/lib/copy-marketplaces";
-import { groupItems, installedCount, recentItems } from "@/lib/derive";
+import { groupItems, recentItems } from "@/lib/derive";
 import { harnessName } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { cn } from "@/lib/utils";
@@ -73,6 +73,12 @@ export function OverviewPage() {
   useEffect(() => {
     void loadMarketplaces();
   }, [loadMarketplaces]);
+  // Grouped once per scan: Recently changed and the Installed tile both
+  // read these, and the page re-renders on six stores' writes.
+  const groups = useMemo(
+    () => (result ? groupItems(result.items) : []),
+    [result],
+  );
 
   const scanAgain = (
     <Button
@@ -126,9 +132,7 @@ export function OverviewPage() {
   const harnessNames = (result?.harnesses ?? [])
     .map((h) => harnessName(h.harness))
     .join(", ");
-  const recent = result
-    ? recentItems(groupItems(result.items), RECENT_ACTIVITY_LIMIT)
-    : [];
+  const recent = recentItems(groups, RECENT_ACTIVITY_LIMIT);
 
   return (
     <div>
@@ -178,7 +182,7 @@ export function OverviewPage() {
                     click lands on. */}
                 <StatTile
                   label="Installed"
-                  value={installedCount(result.items)}
+                  value={groups.length}
                   onClick={() => goToLibrary()}
                 />
                 <StatTile
