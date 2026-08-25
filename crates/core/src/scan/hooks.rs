@@ -29,6 +29,28 @@ pub(crate) struct Registration {
 }
 
 impl Registration {
+    /// Every executable this entry carries, in a stable order. Copilot lets
+    /// one command entry hold a `bash`, a `powershell` and a `command`
+    /// implementation for cross-platform execution and runs whichever fits
+    /// the platform, so each is what the hook runs; the shared shape holds
+    /// one `command`. An entry with none of them — an http or prompt entry
+    /// — hands back its action text, which is what it does instead. Two
+    /// spellings with the same text are one.
+    pub(crate) fn executables(&self) -> Vec<&str> {
+        let mut found: Vec<&str> = Vec::new();
+        for key in ["bash", "powershell", "command"] {
+            if let Some(text) = self.entry.get(key).and_then(serde_json::Value::as_str)
+                && !found.contains(&text)
+            {
+                found.push(text);
+            }
+        }
+        if found.is_empty() {
+            found.push(&self.command);
+        }
+        found
+    }
+
     /// How a scan names this entry. One rendering, in one place, from the
     /// parts — so nothing downstream has to take it apart again.
     pub(crate) fn name(&self) -> String {

@@ -60,13 +60,15 @@ pub(super) fn read_hook(item: &ObservedItem) -> Content {
     };
     // Names collide only when event, matcher and command stem all agree,
     // so the one observation the scan lists stands for every registration
-    // under that name, and every one of them is scored.
+    // under that name, and every one of them is scored — every executable
+    // each one carries, one per line, since the harness runs whichever
+    // fits the platform.
     Content::Hook {
         event: first.event.clone(),
         matcher: Some(first.matcher.clone()).filter(|m| m != crate::scan::hooks::ANY_MATCHER),
         command: registrations
             .iter()
-            .map(|reg| reg.command.as_str())
+            .flat_map(crate::scan::hooks::Registration::executables)
             .collect::<Vec<_>>()
             .join("\n"),
         values: Some(
