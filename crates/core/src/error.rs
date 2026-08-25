@@ -318,8 +318,21 @@ pub enum CoreError {
     #[error("source '{source_name}' offers no bundle called '{name}'")]
     NoSuchBundle { name: String, source_name: String },
 
+    /// Test-only fault injection stopped the apply. Never reached in a
+    /// real run: `fail_after` is how the rollback boundaries are exercised.
+    #[error("injected fault")]
+    Injected,
+
+    /// Nothing was left behind, and `cause` is the failure that stopped it
+    /// — kept whole rather than flattened into `reason`, because what a
+    /// caller does about a rollback depends on why: a precondition that
+    /// found the file changed is a reload to offer, and a disk that would
+    /// not take the write is not.
     #[error("apply failed and was rolled back: {reason}")]
-    RolledBack { reason: String },
+    RolledBack {
+        reason: String,
+        cause: Box<CoreError>,
+    },
 
     #[error("{path}: structured edit failed: {message}")]
     ConfigEdit { path: PathBuf, message: String },

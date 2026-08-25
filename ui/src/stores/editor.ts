@@ -10,6 +10,10 @@ interface EditorState {
   /** The single scope being edited — deliberately not the sidebar filter. */
   scope: Scope;
   draft: Draft | null;
+  /** What the manifest file was when `draft` was read from it — sent back
+   *  with every save, so a copy of a file something else has since written
+   *  is refused instead of putting the older file back. */
+  base: string | null;
   inventory: EditorInventory | null;
   /** Every scope's saved manifest, keyed by scope. What the Library and the
    *  Customize index read to mark what has been customized; `draft` above is
@@ -19,6 +23,9 @@ interface EditorState {
   loading: boolean;
   saving: boolean;
   error: string | null;
+  /** The save was refused because the file changed outside this draft.
+   *  The way out is the reload the page offers, not a retry. */
+  stale: boolean;
   setScope: (scope: Scope) => Promise<void>;
   /** Point the editor at a scope without discarding edits already in hand. */
   openScope: (scope: Scope) => Promise<void>;
@@ -44,36 +51,54 @@ export const useEditorStore = create<EditorState>((set, get) => {
       set({ loading: false });
     }
     if (manifest.status === "error") {
-      set({ draft: null, dirty: false, error: manifest.error });
+      set({
+        draft: null,
+        base: null,
+        dirty: false,
+        stale: false,
+        error: manifest.error,
+      });
       return;
     }
     // With no manifest here yet the editor still opens, on an empty one:
     // asking someone to press "create" before they can type is a step that
     // decides nothing. Saving is what writes the file.
-    const draft = manifest.data ? toDraft(manifest.data) : emptyDraft();
+    const draft = manifest.data.manifest
+      ? toDraft(manifest.data.manifest)
+      : emptyDraft();
     set((state) => ({
       draft,
+      base: manifest.data.base,
       inventory: inventory.status === "ok" ? inventory.data : state.inventory,
       saved: { ...state.saved, [scopeKey(scope)]: draft },
       dirty: false,
+      stale: false,
       error: inventory.status === "ok" ? null : inventory.error,
     }));
   };
 
   const write = async (draft: Draft) => {
-    const { scope } = get();
+    const { scope, base } = get();
     set({ saving: true });
     let response: Awaited<ReturnType<typeof commands.updateManifest>>;
     try {
-      response = await commands.updateManifest(scope, draft);
+      response = await commands.updateManifest(scope, draft, base);
     } finally {
       set({ saving: false });
     }
     if (response.status === "error") {
-      set({ error: response.error });
+      // Stale is a refusal, not a failure: the file changed outside this
+      // draft, and writing the draft would put the older file back. The
+      // draft cannot be merged, so the page offers the reload as a choice
+      // rather than taking the person's edits on its own.
+      if (response.error.kind === "stale") {
+        set({ stale: true, error: null });
+      } else {
+        set({ error: response.error.message, stale: false });
+      }
       return;
     }
-    set({ error: null });
+    set({ error: null, stale: false });
     await load();
     await useAuditStore.getState().refresh();
     await useScanStore.getState().refresh();
@@ -82,15 +107,24 @@ export const useEditorStore = create<EditorState>((set, get) => {
   return {
     scope: { scope: "global" },
     draft: null,
+    base: null,
     inventory: null,
     saved: {},
     dirty: false,
     loading: false,
     saving: false,
     error: null,
+    stale: false,
 
     setScope: async (scope) => {
-      set({ scope, draft: null, dirty: false, error: null });
+      set({
+        scope,
+        draft: null,
+        base: null,
+        dirty: false,
+        error: null,
+        stale: false,
+      });
       await load();
     },
 
@@ -118,8 +152,8 @@ export const useEditorStore = create<EditorState>((set, get) => {
       const saved: Record<string, Draft> = {};
       for (const [index, response] of loaded.entries()) {
         if (response.status !== "ok") continue;
-        saved[scopeKey(scopes[index])] = response.data
-          ? toDraft(response.data)
+        saved[scopeKey(scopes[index])] = response.data.manifest
+          ? toDraft(response.data.manifest)
           : emptyDraft();
       }
       set({ saved });

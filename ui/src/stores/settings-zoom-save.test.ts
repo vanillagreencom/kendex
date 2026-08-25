@@ -165,7 +165,12 @@ describe("zoom, on disk", () => {
     // person zooms.
     const themed = useSettingsStore.getState().setAppearance("dark");
     await useSettingsStore.getState().setZoom(150);
-    theme.settle(ok({ ...settings, appearance: "dark", zoom: 100 }));
+    theme.settle(
+      ok({
+        settings: { ...settings, appearance: "dark", zoom: 100 },
+        base: "b2",
+      }),
+    );
     await themed;
 
     expect(stored()).toBe(100);

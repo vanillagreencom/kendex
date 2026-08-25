@@ -134,7 +134,8 @@ fn plan_scope_once(
     let mut written = written::Written::default();
     let mut config_edits = config_edits::ConfigEditPlan::default();
 
-    plan_manifest_write(env, scope, repo_moved, manifest, &state, &mut ops)?;
+    let base = options.manifest_base.as_ref();
+    plan_manifest_write(env, scope, repo_moved, manifest, base, &state, &mut ops)?;
 
     // Answered before anything is planned, and read again when the move is
     // planned: a pi hook whose copy under the name pi reserved is not this
@@ -269,15 +270,16 @@ fn plan_manifest_write(
     scope: &Scope,
     repo_moved: bool,
     manifest: &Manifest,
+    base: Option<&crate::base::Base>,
     state: &desired::DesiredState,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<()> {
     let Some(update) = &state.manifest_update else {
         if repo_moved {
-            return plan_repo_move_write(env, scope, manifest, ops);
+            return plan_repo_move_write(env, scope, manifest, base, ops);
         }
         if manifest.schema < manifest::MANIFEST_SCHEMA {
-            plan_schema_upgrade(env, scope, manifest, ops)?;
+            plan_schema_upgrade(env, scope, manifest, base, ops)?;
         }
         return Ok(());
     };
@@ -292,7 +294,7 @@ fn plan_manifest_write(
             (false, false) => "Add new catalog skills to kendex.toml".into(),
         },
         op: Op::WriteManifest {
-            pre: crate::apply::Pre::observed(&path)?,
+            pre: scope_writes::manifest_pre(base, &path)?,
             path,
             manifest: Box::new(updated),
         },

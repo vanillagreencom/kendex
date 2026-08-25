@@ -2,6 +2,7 @@ import type { HarnessId, ItemKind, Scope } from "@/bindings";
 import { InstructionBox } from "@/components/customize/instruction-box";
 import { ItemSettings } from "@/components/customize/item-settings";
 import { ItemSkills } from "@/components/customize/item-skills";
+import { StaleNote } from "@/components/customize/stale-note";
 import { Pill } from "@/components/pill";
 import { Section } from "@/components/section";
 import { StatusNote } from "@/components/status-note";
@@ -38,7 +39,7 @@ export function ItemCustomize({
   scopes: Scope[];
   harnesses: HarnessId[];
 }) {
-  const { scope, draft, inventory, dirty, error, setScope, edit } =
+  const { scope, draft, inventory, dirty, error, stale, setScope, load, edit } =
     useEditorStore();
 
   const mine = itemCustomization(draft, kind, name);
@@ -49,6 +50,7 @@ export function ItemCustomize({
 
   return (
     <div className="flex flex-col gap-8 pt-2">
+      {stale ? <StaleNote onReload={() => void load()} /> : null}
       {error ? (
         <StatusNote tone="critical" title="That change couldn't be saved">
           <span className="whitespace-pre-wrap">{error}</span>

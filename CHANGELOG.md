@@ -81,6 +81,12 @@ an outside contributor.
   and dialogs ask in the words of the button that opened them.
 
 ### Fixed
+- A settings or `kendex.toml` save from a copy something else wrote since —
+  another window, a resize, the CLI — no longer puts the older file back: it
+  is refused and retried on a fresh copy, or offered Reload in the editor.
+- A refused apply's rollback keeps the hand edit that refused it — a
+  `kendex.toml` change landing mid-apply — instead of restoring the older
+  copy over it.
 - The Library works from the keyboard: each package name is a button, so
   Tab reaches it and Enter opens it. Dragging across text to copy it no
   longer opens anything in the Library, a marketplace list, or a Projects card.

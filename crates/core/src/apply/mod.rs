@@ -132,12 +132,14 @@ fn run_journaled(
             journal::rollback(&journal_dir)?;
             return Err(CoreError::RolledBack {
                 reason: format!("injected fault before '{}'", planned.description),
+                cause: Box::new(CoreError::Injected),
             });
         }
         if let Err(error) = planned.op.run(env) {
             journal::rollback(&journal_dir)?;
             return Err(CoreError::RolledBack {
                 reason: format!("'{}' failed: {error}", planned.description),
+                cause: Box::new(error),
             });
         }
     }

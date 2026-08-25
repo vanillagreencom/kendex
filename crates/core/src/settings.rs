@@ -1,9 +1,11 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+use crate::base::Base;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::fs::{atomic_write, read_if_exists};
@@ -122,60 +124,119 @@ pub fn load(env: &Env) -> Result<AppSettings> {
     let path = env.settings_file();
     match read_if_exists(&path)? {
         None => Ok(AppSettings::default()),
-        Some(text) => {
-            let mut document = text
-                .parse::<toml::Table>()
-                .map_err(|e| CoreError::TomlParse {
-                    path: path.clone(),
-                    message: e.to_string(),
-                })?;
-            bring_zoom_into_range(&mut document);
-            toml::Value::Table(document)
-                .try_into()
-                .map_err(|e: toml::de::Error| CoreError::TomlParse {
-                    path,
-                    message: e.to_string(),
-                })
-        }
+        Some(text) => parse(&path, &text),
     }
 }
 
-pub fn save(env: &Env, settings: &AppSettings) -> Result<()> {
+/// The settings and the base of the file they came from, from one read.
+/// Read apart, the settings could be the old file's and the base the new
+/// one's, and the write that follows would be accepted over the writer in
+/// between.
+pub fn read_for_mutation(env: &Env) -> Result<(AppSettings, Base)> {
+    let path = env.settings_file();
+    match read_if_exists(&path)? {
+        None => Ok((AppSettings::default(), Base::absent())),
+        Some(text) => Ok((parse(&path, &text)?, Base::of(&text))),
+    }
+}
+
+fn parse(path: &Path, text: &str) -> Result<AppSettings> {
+    let mut document = text
+        .parse::<toml::Table>()
+        .map_err(|e| CoreError::TomlParse {
+            path: path.to_path_buf(),
+            message: e.to_string(),
+        })?;
+    bring_zoom_into_range(&mut document);
+    toml::Value::Table(document)
+        .try_into()
+        .map_err(|e: toml::de::Error| CoreError::TomlParse {
+            path: path.to_path_buf(),
+            message: e.to_string(),
+        })
+}
+
+/// One writer at a time. The app saves settings from a thread pool, so a
+/// zoom commit and an appearance toggle really do overlap; unserialized,
+/// whichever load ran first writes last and puts back what the other one
+/// just changed. Process-wide, not cross-process: a stale copy from
+/// another process is what [`replace`]'s base check refuses.
+static WRITE: Mutex<()> = Mutex::new(());
+
+fn write_lock() -> std::sync::MutexGuard<'static, ()> {
+    // A panic under the lock leaves no partial state behind (the write is
+    // atomic), so the poison carries no information — clearing it beats
+    // failing every later save for a wound that already healed.
+    WRITE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn save(env: &Env, settings: &AppSettings) -> Result<String> {
     let text = toml::to_string_pretty(settings).map_err(|e| CoreError::TomlParse {
         path: env.settings_file(),
         message: e.to_string(),
     })?;
-    atomic_write(&env.settings_file(), &text)
+    atomic_write(&env.settings_file(), &text)?;
+    Ok(text)
+}
+
+/// Load, change, save — one breath, under the write lock. The targeted
+/// write path: a stale copy cannot reach it because the copy never leaves
+/// this function. Returns what was written and the base of the written
+/// bytes, so a caller holding the result holds a current pair.
+pub fn mutate(
+    env: &Env,
+    change: impl FnOnce(&mut AppSettings) -> Result<()>,
+) -> Result<(AppSettings, Base)> {
+    let _guard = write_lock();
+    let mut settings = load(env)?;
+    change(&mut settings)?;
+    let base = Base::of(&save(env, &settings)?);
+    Ok((settings, base))
+}
+
+/// The whole-file write path: replace everything with a copy something
+/// held, refusing a copy of a file that is no longer there. Returns the
+/// base of the bytes written — the base for the next write from the same
+/// copy. There is no way to write a whole settings object without
+/// presenting the base its copy was read from.
+pub fn replace(env: &Env, settings: &AppSettings, held: &Base) -> Result<Base> {
+    let _guard = write_lock();
+    held.verify(&env.settings_file())?;
+    Ok(Base::of(&save(env, settings)?))
 }
 
 /// Canonicalizes, rejects non-directories and duplicates, persists.
-pub fn register_project(env: &Env, path: &Path) -> Result<AppSettings> {
+pub fn register_project(env: &Env, path: &Path) -> Result<(AppSettings, Base)> {
     let canonical = path.canonicalize().map_err(|e| CoreError::io(path, e))?;
     if !canonical.is_dir() {
         return Err(CoreError::NotADirectory { path: canonical });
     }
-    let mut settings = load(env)?;
-    if settings.projects.contains(&canonical) {
-        return Err(CoreError::ProjectAlreadyRegistered { path: canonical });
-    }
-    settings.projects.push(canonical);
-    settings.projects.sort();
-    save(env, &settings)?;
-    Ok(settings)
+    mutate(env, |settings| {
+        if settings.projects.contains(&canonical) {
+            return Err(CoreError::ProjectAlreadyRegistered { path: canonical });
+        }
+        settings.projects.push(canonical);
+        settings.projects.sort();
+        Ok(())
+    })
 }
 
 /// Removes by canonical path when resolvable, else by the recorded path —
 /// a registered project whose directory vanished must still be removable.
-pub fn unregister_project(env: &Env, path: &Path) -> Result<AppSettings> {
+pub fn unregister_project(env: &Env, path: &Path) -> Result<(AppSettings, Base)> {
     let target = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let mut settings = load(env)?;
-    let before = settings.projects.len();
-    settings.projects.retain(|p| *p != target);
-    if settings.projects.len() == before {
-        return Err(CoreError::ProjectNotRegistered { path: target });
-    }
-    save(env, &settings)?;
-    Ok(settings)
+    mutate(env, |settings| {
+        let before = settings.projects.len();
+        settings.projects.retain(|p| *p != target);
+        match settings.projects.len() == before {
+            true => Err(CoreError::ProjectNotRegistered {
+                path: target.clone(),
+            }),
+            false => Ok(()),
+        }
+    })
 }
 
 #[cfg(test)]
@@ -222,14 +283,17 @@ mod tests {
         let project = tmp.path().join("proj");
         std::fs::create_dir(&project).unwrap();
 
-        let settings = register_project(&env, &project).unwrap();
+        let (settings, base) = register_project(&env, &project).unwrap();
         assert_eq!(settings.projects.len(), 1);
+        // The pair handed back is current: presenting it to the
+        // whole-file path writes without a re-read in between.
+        replace(&env, &settings, &base).unwrap();
         assert!(matches!(
             register_project(&env, &project),
             Err(CoreError::ProjectAlreadyRegistered { .. })
         ));
 
-        let settings = unregister_project(&env, &project).unwrap();
+        let (settings, _) = unregister_project(&env, &project).unwrap();
         assert!(settings.projects.is_empty());
         assert!(matches!(
             unregister_project(&env, &project),
@@ -306,10 +370,10 @@ mod tests {
         let env = env_in(tmp.path());
         let project = tmp.path().join("gone");
         std::fs::create_dir(&project).unwrap();
-        let registered = register_project(&env, &project).unwrap().projects[0].clone();
+        let registered = register_project(&env, &project).unwrap().0.projects[0].clone();
         std::fs::remove_dir(&project).unwrap();
 
-        let settings = unregister_project(&env, &registered).unwrap();
+        let (settings, _) = unregister_project(&env, &registered).unwrap();
         assert!(settings.projects.is_empty());
     }
 }

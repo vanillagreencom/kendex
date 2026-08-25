@@ -1,5 +1,5 @@
 import { expect, vi } from "vitest";
-import type { AppSettings } from "@/bindings";
+import type { AppSettings, SettingsRead, WriteRefused } from "@/bindings";
 import { commands } from "@/bindings";
 import { useProblemsStore } from "./problems";
 import { useSettingsStore } from "./settings";
@@ -17,8 +17,8 @@ export const settings: AppSettings = {
 };
 
 export type Reply =
-  | { status: "ok"; data: AppSettings }
-  | { status: "error"; error: string };
+  | { status: "ok"; data: SettingsRead }
+  | { status: "error"; error: WriteRefused };
 export type WindowReply =
   | { status: "ok"; data: null }
   | { status: "error"; error: string };
@@ -73,8 +73,8 @@ export function freshZoomStore() {
     percent: webviewAt,
     launchRefused: false,
   }));
-  vi.mocked(commands.updateSettings).mockImplementation(async (next) =>
-    ok(next),
+  vi.mocked(commands.updateSettings).mockImplementation(async (next, base) =>
+    ok({ settings: next, base }),
   );
   vi.mocked(commands.saveZoom).mockImplementation(async (percent) =>
     ok(percent),

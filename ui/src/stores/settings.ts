@@ -5,6 +5,7 @@ import {
   type AppSettings,
   type CapabilityRow,
   commands,
+  type SettingsRead,
   ZOOM,
 } from "@/bindings";
 import { useProblemsStore } from "./problems";
@@ -221,218 +222,289 @@ function zoomActions(
   return { shownZoom: null, tookZoom: null, onScreen, setZoom, saveZoom };
 }
 
-interface SettingsState extends ZoomSlice {
+interface ProjectFields {
   settings: AppSettings | null;
+  base: string | null;
+}
+
+interface ProjectsSlice {
+  registerProject: (path: string) => Promise<boolean>;
+  unregisterProject: (path: string) => Promise<void>;
+  discoverProjects: (root: string) => Promise<string[]>;
+}
+
+/** The project registry's actions. Registration and removal are targeted
+ *  server-side writes, so they carry no base — but each reply is a written
+ *  settings-plus-base pair, and holding it keeps the store's copy current
+ *  for the next whole-file save. */
+function projectActions(
+  set: (fields: Partial<ProjectFields>) => void,
+  get: () => ProjectFields,
+): ProjectsSlice {
+  const hold = (read: SettingsRead) =>
+    set({ settings: read.settings, base: read.base });
+
+  const rescan = async () => {
+    await useScanStore.getState().refresh();
+  };
+
+  return {
+    registerProject: async (path) => {
+      const before = get().settings?.projects ?? [];
+      const response = await commands.registerProject(path);
+      if (response.status === "ok") {
+        hold(response.data);
+        // Registration is where the drift report is offered: agents in this
+        // project start blind until the session-start hook is installed. An
+        // offer, never an auto-install — it injects into agent context.
+        const root =
+          (response.data.settings.projects ?? []).find(
+            (p) => !before.includes(p),
+          ) ?? path;
+        toast.success(`Added ${path.split("/").pop()}`, {
+          action: {
+            label: "Add session drift report",
+            onClick: () => {
+              void commands
+                .installDriftHook({ scope: "project", root })
+                .then((result) => {
+                  if (result.status === "ok") {
+                    // False: the scope had other pending changes, so only the
+                    // declaration landed — nothing is applied unreviewed.
+                    toast.success(
+                      result.data
+                        ? "Drift report installed"
+                        : "Drift report added — finish by applying changes in Review",
+                    );
+                    void rescan();
+                  } else {
+                    useProblemsStore.getState().showError({
+                      title: "Couldn't install the drift report",
+                      message: result.error,
+                    });
+                  }
+                });
+            },
+          },
+        });
+        await rescan();
+        return true;
+      }
+      useProblemsStore.getState().showError({
+        title: "Couldn't add the project",
+        message: response.error,
+        steps: [
+          "Check the folder path is correct",
+          "Make sure it isn't already added",
+        ],
+      });
+      return false;
+    },
+
+    unregisterProject: async (path) => {
+      const response = await commands.unregisterProject(path);
+      if (response.status === "ok") {
+        hold(response.data);
+        await rescan();
+      } else {
+        useProblemsStore.getState().showError({
+          title: "Couldn't stop tracking the project",
+          message: response.error,
+          steps: ["Try again"],
+        });
+      }
+    },
+
+    discoverProjects: async (root) => {
+      const response = await commands.discoverProjects(root);
+      if (response.status === "ok") return response.data;
+      useProblemsStore.getState().showError({
+        title: "Couldn't search that folder",
+        message: response.error,
+        steps: [
+          "Check the folder path is correct",
+          "Make sure kendex can read it",
+        ],
+      });
+      return [];
+    },
+  };
+}
+
+interface SettingsState extends ZoomSlice, ProjectsSlice {
+  settings: AppSettings | null;
+  /** What the settings file was when `settings` was read from it — sent
+   *  back with every whole-settings write, so a copy of a file something
+   *  else has since written is refused instead of putting the older file
+   *  back over it. */
+  base: string | null;
   capabilities: CapabilityRow[];
   load: () => Promise<void>;
   setAppearance: (appearance: Appearance) => Promise<void>;
   setSafety: (warnBelow: number, blockBelow: number) => Promise<void>;
   setHarnessRoot: (harness: string, root: string) => Promise<void>;
-  registerProject: (path: string) => Promise<boolean>;
-  unregisterProject: (path: string) => Promise<void>;
-  discoverProjects: (root: string) => Promise<string[]>;
 }
 
 async function rescan() {
   await useScanStore.getState().refresh();
 }
 
-export const useSettingsStore = create<SettingsState>((set, get) => ({
-  settings: null,
-  capabilities: [],
-  ...zoomActions(set, get),
+type WriteOutcome = { ok: true } | { ok: false; message: string };
 
-  load: async () => {
-    // The size comes from the window, not from the file: the file holds
-    // what the person asked for, and the zoom outlives the page, so a page
-    // that has just reloaded is the one least able to work it out itself.
-    const [settings, capabilities, webview] = await Promise.all([
-      commands.getSettings(),
-      commands.capabilityTable(),
-      commands.windowZoomState(),
-    ]);
-    if (settings.status === "ok") {
-      set({
-        settings: settings.data,
-        capabilities,
-        tookZoom: webview.percent,
-      });
-      // The opening had no UI to say this in, so it is said here rather
-      // than leaving the person with an app that quietly ignored their
-      // size. Both halves are needed: the refusal stands for the whole
-      // session, so on its own it would go on complaining after a resize
-      // put the person back where they wanted to be.
-      const asked = settings.data.zoom ?? ZOOM.default;
-      if (webview.launchRefused && webview.percent !== asked) {
+export const useSettingsStore = create<SettingsState>((set, get) => {
+  /** Keep the copy and its base together — one never moves without the
+   *  other, or the next save would present a base for bytes it does not
+   *  hold. */
+  const hold = (read: SettingsRead) =>
+    set({ settings: read.settings, base: read.base });
+
+  /** One change, written as the whole file with the base its copy was read
+   *  from. A stale refusal means something else wrote the file since the
+   *  copy was read — a resize, another window. The change is a field-level
+   *  intent, so it is carried onto a freshly read copy and written once
+   *  more; that reverts nothing, because the fresh copy holds everything
+   *  the stale one predated. Only a second refusal reaches the person. */
+  const write = async (
+    change: (current: AppSettings) => AppSettings,
+  ): Promise<WriteOutcome> => {
+    const { settings, base } = get();
+    if (!settings) return { ok: true };
+    let response = await commands.updateSettings(change(settings), base);
+    if (response.status === "error" && response.error.kind === "stale") {
+      const fresh = await commands.getSettings();
+      if (fresh.status === "ok") {
+        hold(fresh.data);
+        response = await commands.updateSettings(
+          change(fresh.data.settings),
+          fresh.data.base,
+        );
+      }
+    }
+    if (response.status === "ok") {
+      hold(response.data);
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      message:
+        response.error.kind === "failed"
+          ? response.error.message
+          : "Your settings changed in another window while this was saving. The change wasn't applied — the latest settings are shown now.",
+    };
+  };
+
+  return {
+    settings: null,
+    base: null,
+    capabilities: [],
+    ...zoomActions(set, get),
+    ...projectActions(set, get),
+
+    load: async () => {
+      // The size comes from the window, not from the file: the file holds
+      // what the person asked for, and the zoom outlives the page, so a page
+      // that has just reloaded is the one least able to work it out itself.
+      const [settings, capabilities, webview] = await Promise.all([
+        commands.getSettings(),
+        commands.capabilityTable(),
+        commands.windowZoomState(),
+      ]);
+      if (settings.status === "ok") {
+        set({
+          settings: settings.data.settings,
+          base: settings.data.base,
+          capabilities,
+          tookZoom: webview.percent,
+        });
+        // The opening had no UI to say this in, so it is said here rather
+        // than leaving the person with an app that quietly ignored their
+        // size. Both halves are needed: the refusal stands for the whole
+        // session, so on its own it would go on complaining after a resize
+        // put the person back where they wanted to be.
+        const asked = settings.data.settings.zoom ?? ZOOM.default;
+        if (webview.launchRefused && webview.percent !== asked) {
+          useProblemsStore.getState().showError({
+            title: "Couldn't open at your saved zoom",
+            message: `kendex is at ${webview.percent}% instead of the ${asked}% you saved. Your saved zoom is unchanged.`,
+            steps: ["Try again", "If it keeps happening, restart kendex"],
+            actions: [
+              { label: "Retry", onClick: () => void get().setZoom(asked) },
+            ],
+          });
+        }
+      } else {
         useProblemsStore.getState().showError({
-          title: "Couldn't open at your saved zoom",
-          message: `kendex is at ${webview.percent}% instead of the ${asked}% you saved. Your saved zoom is unchanged.`,
+          title: "Couldn't load your settings",
+          message: settings.error,
           steps: ["Try again", "If it keeps happening, restart kendex"],
+          actions: [{ label: "Retry", onClick: () => void get().load() }],
+        });
+      }
+    },
+
+    // Theme, safety threshold, and tool folder saves are instant and their
+    // effect is visible immediately on screen — a toast on top would just be
+    // noise, so success here stays silent and only failure speaks up.
+    setAppearance: async (appearance) => {
+      const result = await write((current) => ({ ...current, appearance }));
+      if (!result.ok)
+        useProblemsStore.getState().showError({
+          title: "Couldn't change the appearance",
+          message: result.message,
+          steps: ["Try again"],
           actions: [
-            { label: "Retry", onClick: () => void get().setZoom(asked) },
+            {
+              label: "Retry",
+              onClick: () => void get().setAppearance(appearance),
+            },
+          ],
+        });
+    },
+
+    setSafety: async (warnBelow, blockBelow) => {
+      const result = await write((current) => ({
+        ...current,
+        safety: { "warn-below": warnBelow, "block-below": blockBelow },
+      }));
+      if (!result.ok)
+        useProblemsStore.getState().showError({
+          title: "Couldn't update safety settings",
+          message: result.message,
+          steps: ["Try again"],
+          actions: [
+            {
+              label: "Retry",
+              onClick: () => void get().setSafety(warnBelow, blockBelow),
+            },
+          ],
+        });
+    },
+
+    setHarnessRoot: async (harness, root) => {
+      const result = await write((current) => {
+        const roots = { ...current["harness-roots"] };
+        if (root.trim() === "") delete roots[harness];
+        else roots[harness] = root;
+        return { ...current, "harness-roots": roots };
+      });
+      if (result.ok) {
+        await rescan();
+      } else {
+        useProblemsStore.getState().showError({
+          title: "Couldn't update the tool folder",
+          message: result.message,
+          steps: [
+            "Check that the folder exists and kendex can read it",
+            "Try again",
+          ],
+          actions: [
+            {
+              label: "Retry",
+              onClick: () => void get().setHarnessRoot(harness, root),
+            },
           ],
         });
       }
-    } else {
-      useProblemsStore.getState().showError({
-        title: "Couldn't load your settings",
-        message: settings.error,
-        steps: ["Try again", "If it keeps happening, restart kendex"],
-        actions: [{ label: "Retry", onClick: () => void get().load() }],
-      });
-    }
-  },
-
-  // Theme, safety threshold, and tool folder saves are instant and their
-  // effect is visible immediately on screen — a toast on top would just be
-  // noise, so success here stays silent and only failure speaks up.
-  setAppearance: async (appearance) => {
-    const current = get().settings;
-    if (!current) return;
-    const response = await commands.updateSettings({ ...current, appearance });
-    if (response.status === "ok") set({ settings: response.data });
-    else
-      useProblemsStore.getState().showError({
-        title: "Couldn't change the appearance",
-        message: response.error,
-        steps: ["Try again"],
-        actions: [
-          {
-            label: "Retry",
-            onClick: () => void get().setAppearance(appearance),
-          },
-        ],
-      });
-  },
-
-  setSafety: async (warnBelow, blockBelow) => {
-    const current = get().settings;
-    if (!current) return;
-    const response = await commands.updateSettings({
-      ...current,
-      safety: { "warn-below": warnBelow, "block-below": blockBelow },
-    });
-    if (response.status === "ok") set({ settings: response.data });
-    else
-      useProblemsStore.getState().showError({
-        title: "Couldn't update safety settings",
-        message: response.error,
-        steps: ["Try again"],
-        actions: [
-          {
-            label: "Retry",
-            onClick: () => void get().setSafety(warnBelow, blockBelow),
-          },
-        ],
-      });
-  },
-
-  setHarnessRoot: async (harness, root) => {
-    const current = get().settings;
-    if (!current) return;
-    const roots = { ...current["harness-roots"] };
-    if (root.trim() === "") delete roots[harness];
-    else roots[harness] = root;
-    const response = await commands.updateSettings({
-      ...current,
-      "harness-roots": roots,
-    });
-    if (response.status === "ok") {
-      set({ settings: response.data });
-      await rescan();
-    } else {
-      useProblemsStore.getState().showError({
-        title: "Couldn't update the tool folder",
-        message: response.error,
-        steps: [
-          "Check that the folder exists and kendex can read it",
-          "Try again",
-        ],
-        actions: [
-          {
-            label: "Retry",
-            onClick: () => void get().setHarnessRoot(harness, root),
-          },
-        ],
-      });
-    }
-  },
-
-  registerProject: async (path) => {
-    const before = get().settings?.projects ?? [];
-    const response = await commands.registerProject(path);
-    if (response.status === "ok") {
-      set({ settings: response.data });
-      // Registration is where the drift report is offered: agents in this
-      // project start blind until the session-start hook is installed. An
-      // offer, never an auto-install — it injects into agent context.
-      const root =
-        (response.data.projects ?? []).find((p) => !before.includes(p)) ?? path;
-      toast.success(`Added ${path.split("/").pop()}`, {
-        action: {
-          label: "Add session drift report",
-          onClick: () => {
-            void commands
-              .installDriftHook({ scope: "project", root })
-              .then((result) => {
-                if (result.status === "ok") {
-                  // False: the scope had other pending changes, so only the
-                  // declaration landed — nothing is applied unreviewed.
-                  toast.success(
-                    result.data
-                      ? "Drift report installed"
-                      : "Drift report added — finish by applying changes in Review",
-                  );
-                  void rescan();
-                } else {
-                  useProblemsStore.getState().showError({
-                    title: "Couldn't install the drift report",
-                    message: result.error,
-                  });
-                }
-              });
-          },
-        },
-      });
-      await rescan();
-      return true;
-    }
-    useProblemsStore.getState().showError({
-      title: "Couldn't add the project",
-      message: response.error,
-      steps: [
-        "Check the folder path is correct",
-        "Make sure it isn't already added",
-      ],
-    });
-    return false;
-  },
-
-  unregisterProject: async (path) => {
-    const response = await commands.unregisterProject(path);
-    if (response.status === "ok") {
-      set({ settings: response.data });
-      await rescan();
-    } else {
-      useProblemsStore.getState().showError({
-        title: "Couldn't stop tracking the project",
-        message: response.error,
-        steps: ["Try again"],
-      });
-    }
-  },
-
-  discoverProjects: async (root) => {
-    const response = await commands.discoverProjects(root);
-    if (response.status === "ok") return response.data;
-    useProblemsStore.getState().showError({
-      title: "Couldn't search that folder",
-      message: response.error,
-      steps: [
-        "Check the folder path is correct",
-        "Make sure kendex can read it",
-      ],
-    });
-    return [];
-  },
-}));
+    },
+  };
+});

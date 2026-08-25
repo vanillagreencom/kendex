@@ -172,9 +172,11 @@ fn thresholds_move_the_verdict_without_touching_the_cache() {
     let written = fs::read_to_string(&path).unwrap();
     let modified = fs::metadata(&path).unwrap().modified().unwrap();
 
-    let mut settings = crate::settings::load(&env).unwrap();
-    settings.safety.block_below = first.safety.score + 1;
-    crate::settings::save(&env, &settings).unwrap();
+    crate::settings::mutate(&env, |settings| {
+        settings.safety.block_below = first.safety.score + 1;
+        Ok(())
+    })
+    .unwrap();
 
     let judged = score(&env, &scope);
     assert_eq!(judged.verdict, Verdict::Block);

@@ -23,9 +23,11 @@ fn an_unreadable_scope_is_reported_beside_the_decisions_it_hides() {
         "schema = 5\n[nonsense]\nx = 1\n",
     )
     .unwrap();
-    let mut settings = kendex_core::settings::load(&env).unwrap();
-    settings.projects.push(project);
-    kendex_core::settings::save(&env, &settings).unwrap();
+    kendex_core::settings::mutate(&env, |settings| {
+        settings.projects.push(project);
+        Ok(())
+    })
+    .unwrap();
 
     let view = decisions_view(&env).unwrap();
     assert!(view.decisions.is_empty());

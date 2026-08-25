@@ -37,7 +37,7 @@ const settings: AppSettings = {
 
 describe("settings store", () => {
   beforeEach(() => {
-    useSettingsStore.setState({ settings: null, capabilities: [] });
+    useSettingsStore.setState({ settings: null, base: null, capabilities: [] });
     useScanStore.setState({
       result: null,
       scanning: false,
@@ -63,7 +63,7 @@ describe("settings store", () => {
     useSettingsStore.setState({ settings });
     vi.mocked(commands.updateSettings).mockResolvedValue({
       status: "error",
-      error: "disk is full",
+      error: { kind: "failed", message: "disk is full" },
     });
 
     await useSettingsStore.getState().setAppearance("dark");
@@ -80,7 +80,7 @@ describe("settings store", () => {
     useSettingsStore.setState({ settings });
     vi.mocked(commands.updateSettings).mockResolvedValue({
       status: "ok",
-      data: updated,
+      data: { settings: updated, base: "b1" },
     });
 
     await useSettingsStore.getState().setAppearance("dark");
@@ -90,10 +90,68 @@ describe("settings store", () => {
     expect(useSettingsStore.getState().settings).toEqual(updated);
   });
 
+  /// The refusal that closes the class: a copy read before something else
+  /// wrote the file is never applied. The change is a field-level intent,
+  /// so it is carried onto a freshly read copy and written again — nothing
+  /// the stale copy predated is reverted, and the person sees no error.
+  it("re-reads and re-applies the change when the copy in hand is stale", async () => {
+    useSettingsStore.setState({ settings, base: "old" });
+    const onDisk = { ...settings, projects: ["/home/x/acme-web"], zoom: 150 };
+    vi.mocked(commands.updateSettings)
+      .mockResolvedValueOnce({ status: "error", error: { kind: "stale" } })
+      .mockImplementationOnce(async (next) => ({
+        status: "ok",
+        data: { settings: next, base: "written" },
+      }));
+    vi.mocked(commands.getSettings).mockResolvedValue({
+      status: "ok",
+      data: { settings: onDisk, base: "fresh" },
+    });
+
+    await useSettingsStore.getState().setAppearance("dark");
+
+    // The second write carried the fresh copy — project and zoom kept —
+    // with only the intended field changed, under the fresh base.
+    expect(commands.updateSettings).toHaveBeenLastCalledWith(
+      { ...onDisk, appearance: "dark" },
+      "fresh",
+    );
+    expect(useProblemsStore.getState().dialog.open).toBe(false);
+    expect(useSettingsStore.getState().settings).toEqual({
+      ...onDisk,
+      appearance: "dark",
+    });
+    expect(useSettingsStore.getState().base).toBe("written");
+  });
+
+  /// Contention that survives the re-read reaches the person as a message,
+  /// not as a silent loop — and never as a write of the stale copy.
+  it("stops after one retry and tells the person when the file keeps moving", async () => {
+    useSettingsStore.setState({ settings, base: "old" });
+    vi.mocked(commands.updateSettings).mockResolvedValue({
+      status: "error",
+      error: { kind: "stale" },
+    });
+    vi.mocked(commands.getSettings).mockResolvedValue({
+      status: "ok",
+      data: { settings, base: "fresh" },
+    });
+
+    await useSettingsStore.getState().setAppearance("dark");
+
+    expect(commands.updateSettings).toHaveBeenCalledTimes(2);
+    const dialog = useProblemsStore.getState().dialog;
+    expect(dialog.open).toBe(true);
+    expect(dialog.title).toBe("Couldn't change the appearance");
+  });
+
   it("toasts success naming the folder when a project is added, and resolves true", async () => {
     vi.mocked(commands.registerProject).mockResolvedValue({
       status: "ok",
-      data: { ...settings, projects: ["/home/x/acme-web"] },
+      data: {
+        settings: { ...settings, projects: ["/home/x/acme-web"] },
+        base: "b1",
+      },
     });
 
     const ok = await useSettingsStore

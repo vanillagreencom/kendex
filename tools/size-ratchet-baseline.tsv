@@ -1,4 +1,5 @@
 .github/workflows/review-gate-writer.yml	652
+crates/core/src/error.rs	413
 docs/ARCHITECTURE.md	901
 hooks/block-repo-copy.sh	511
 pi-extensions/pi-agents-tmux/extensions/subagent/browser.ts	650
@@ -130,4 +131,4 @@ skills/worktree/scripts/worktree-session-guard	1197
 skills/worktree/tests/worktree_session_guard.sh	1282
 ui/src/stores/audit.ts	292
 ui/src/stores/marketplaces.ts	327
-ui/src/stores/settings.ts	438
+ui/src/stores/settings.ts	510

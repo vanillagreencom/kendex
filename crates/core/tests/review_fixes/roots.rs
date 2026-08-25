@@ -13,11 +13,13 @@ use super::{put, world};
 fn a_relocated_tool_folder_is_still_scanned_for_unmanaged_items() {
     let w = world();
     let elsewhere = w.home.join("elsewhere/claude");
-    let mut settings = kendex_core::settings::load(&w.env).unwrap();
-    settings
-        .harness_roots
-        .insert("claude".into(), elsewhere.clone());
-    kendex_core::settings::save(&w.env, &settings).unwrap();
+    kendex_core::settings::mutate(&w.env, |settings| {
+        settings
+            .harness_roots
+            .insert("claude".into(), elsewhere.clone());
+        Ok(())
+    })
+    .unwrap();
 
     put(
         &elsewhere.join("skills/handmade/SKILL.md"),

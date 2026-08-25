@@ -1,4 +1,5 @@
 mod account;
+mod app_settings;
 pub mod audit;
 mod commands;
 mod community;
@@ -16,6 +17,7 @@ mod paths;
 pub mod recovery;
 mod sources;
 mod unsubscribe;
+mod whole_file;
 mod window;
 
 use tauri_specta::{Builder, collect_commands};
@@ -29,13 +31,13 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         .commands(collect_commands![
             commands::app_version,
             commands::scan_machine,
-            commands::get_settings,
-            commands::update_settings,
-            commands::save_zoom,
-            commands::register_project,
-            commands::unregister_project,
+            app_settings::get_settings,
+            app_settings::update_settings,
+            app_settings::save_zoom,
+            app_settings::register_project,
+            app_settings::unregister_project,
             commands::install_drift_hook,
-            commands::discover_projects,
+            app_settings::discover_projects,
             commands::capability_table,
             commands::report_route,
             audit::audit_all,

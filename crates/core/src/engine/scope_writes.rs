@@ -3,8 +3,10 @@
 //! format line, and the settings a project's skills seed.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
-use crate::apply::{Op, PlannedOp};
+use crate::apply::{Op, PlannedOp, Pre};
+use crate::base::Base;
 use crate::env::Env;
 use crate::error::Result;
 use crate::lock::{Lock, SourceRev, lock_path};
@@ -25,6 +27,18 @@ pub fn persists_manifest(ops: &[PlannedOp]) -> bool {
             || (op.description == crate::repo_move::MOVE_DESCRIPTION
                 && matches!(op.op, Op::WriteFile { .. }))
     })
+}
+
+/// The precondition the plan's one manifest write binds to: the base of
+/// the editor copy when the manifest arrived whole from one, otherwise
+/// the file as it is now. An editor copy's write must bind to the file
+/// that copy was read from — observing the path here instead would accept
+/// a writer that landed after the copy left the editor.
+pub(super) fn manifest_pre(base: Option<&Base>, path: &Path) -> Result<Pre> {
+    match base {
+        Some(base) => Ok(base.into()),
+        None => Pre::observed(path),
+    }
 }
 
 /// One mutation per config file, whatever asked for it — a single
@@ -156,6 +170,7 @@ pub(super) fn plan_schema_upgrade(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
+    base: Option<&Base>,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<()> {
     let path = manifest::manifest_path(env, scope);
@@ -195,7 +210,7 @@ pub(super) fn plan_schema_upgrade(
     }
     let op = match rewritten {
         true => Op::WriteFile {
-            pre: crate::apply::Pre::observed(&path)?,
+            pre: manifest_pre(base, &path)?,
             path,
             bytes: upgraded_text.into_bytes(),
         },
@@ -203,7 +218,7 @@ pub(super) fn plan_schema_upgrade(
             let mut upgraded = manifest.clone();
             upgraded.schema = manifest::MANIFEST_SCHEMA;
             Op::WriteManifest {
-                pre: crate::apply::Pre::observed(&path)?,
+                pre: manifest_pre(base, &path)?,
                 path,
                 manifest: Box::new(upgraded),
             }
@@ -249,6 +264,7 @@ pub(super) fn plan_repo_move_write(
     env: &Env,
     scope: &Scope,
     migrated: &Manifest,
+    base: Option<&Base>,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<()> {
     let path = manifest::manifest_path(env, scope);
@@ -285,12 +301,12 @@ pub(super) fn plan_repo_move_write(
     let reproduced = toml::from_str::<Manifest>(&edited).is_ok_and(|parsed| parsed == expected);
     let op = match reproduced {
         true => Op::WriteFile {
-            pre: crate::apply::Pre::observed(&path)?,
+            pre: manifest_pre(base, &path)?,
             path,
             bytes: edited.into_bytes(),
         },
         false => Op::WriteManifest {
-            pre: crate::apply::Pre::observed(&path)?,
+            pre: manifest_pre(base, &path)?,
             path,
             manifest: Box::new(expected),
         },

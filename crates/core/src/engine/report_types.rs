@@ -195,6 +195,14 @@ pub struct PlanOptions {
     /// "discard" the app offers, which must never take a neighbour's
     /// edits with it, even one that shares a name across kinds.
     pub overwrite_edited_names: Option<Vec<(ItemKind, String)>>,
+    /// The base of the manifest copy this plan reconciles to, where the
+    /// manifest arrived whole from an editor rather than being read here.
+    /// The plan's manifest write binds its precondition to it, so a file
+    /// that moved after the copy was read is refused by the apply rather
+    /// than overwritten. Binding by path after planning cannot do this: a
+    /// scope still under the old product name retargets its writes to the
+    /// renamed file, and the path the caller knew no longer names them.
+    pub manifest_base: Option<crate::base::Base>,
 }
 
 impl PlanOptions {

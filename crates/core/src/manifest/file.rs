@@ -4,6 +4,7 @@
 
 use std::path::Path;
 
+use crate::base::Base;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::fs::{atomic_write, read_if_exists};
@@ -96,6 +97,31 @@ pub fn load_for_mutation(path: &Path) -> Result<Option<Manifest>> {
         ManifestFile::Current(mut manifest) => {
             manifest.schema = MANIFEST_SCHEMA;
             Ok(Some(*manifest))
+        }
+    }
+}
+
+/// A manifest and the base of the file it came from, from one read.
+///
+/// Two reads would pair a manifest with the base of whatever replaced it:
+/// a writer landing between them hands the caller old content under the
+/// new file's name, and the write that follows is accepted over that
+/// writer — the one thing a base exists to prevent. So the text is read
+/// once and both answers come from it.
+pub fn read_for_mutation(path: &Path) -> Result<(Option<Manifest>, Base)> {
+    crate::rename::refuse_both_generations(path)?;
+    let Some(text) = read_if_exists(path)? else {
+        return Ok((None, Base::absent()));
+    };
+    let base = Base::of(&text);
+    match parse_text(path, &text)? {
+        ManifestFile::Absent => Ok((None, base)),
+        ManifestFile::Legacy { .. } => Err(CoreError::LegacyManifest {
+            path: path.to_path_buf(),
+        }),
+        ManifestFile::Current(mut manifest) => {
+            manifest.schema = MANIFEST_SCHEMA;
+            Ok((Some(*manifest), base))
         }
     }
 }

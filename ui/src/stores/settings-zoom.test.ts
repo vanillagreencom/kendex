@@ -54,7 +54,7 @@ describe("zoom, on screen", () => {
   it("reads the size a launch that could not zoom actually opened at", async () => {
     useSettingsStore.setState({ settings: null, tookZoom: null });
     vi.mocked(commands.getSettings).mockResolvedValue(
-      ok({ ...settings, zoom: 150 }),
+      ok({ settings: { ...settings, zoom: 150 }, base: "file" }),
     );
     vi.mocked(commands.capabilityTable).mockResolvedValue([]);
     vi.mocked(commands.windowZoomState).mockResolvedValue({
@@ -96,7 +96,7 @@ describe("zoom, on screen", () => {
       tookZoom: null,
     });
     vi.mocked(commands.getSettings).mockResolvedValue(
-      ok({ ...settings, zoom: 150 }),
+      ok({ settings: { ...settings, zoom: 150 }, base: "file" }),
     );
     vi.mocked(commands.capabilityTable).mockResolvedValue([]);
 

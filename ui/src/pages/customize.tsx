@@ -3,6 +3,7 @@ import { CustomHooks } from "@/components/customize/custom-hooks";
 import { CustomizedIndex } from "@/components/customize/customized-index";
 import { SaveBar } from "@/components/customize/save-bar";
 import { SharedInstructions } from "@/components/customize/shared-instructions";
+import { StaleNote } from "@/components/customize/stale-note";
 import { DotSpinner } from "@/components/loading";
 import { PageHeader } from "@/components/page-header";
 import { Section } from "@/components/section";
@@ -45,6 +46,7 @@ export function CustomizePage() {
     loading,
     saving,
     error,
+    stale,
     setScope,
     load,
     edit,
@@ -98,6 +100,7 @@ export function CustomizePage() {
       />
       <div className={cn("flex-1", PAGE_BODY)}>
         <div className={cn("flex flex-col gap-10", CONTENT_WIDTH)}>
+          {stale ? <StaleNote onReload={() => void load()} /> : null}
           {error ? (
             <StatusNote tone="critical" title="That change couldn't be saved">
               <span className="whitespace-pre-wrap">{error}</span>

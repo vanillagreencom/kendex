@@ -7,16 +7,25 @@ import { invoke as __TAURI_INVOKE } from "@tauri-apps/api/core";
 export const commands = {
 	appVersion: () => __TAURI_INVOKE<string>("app_version"),
 	scanMachine: () => typedError<ScanResult, string>(__TAURI_INVOKE("scan_machine")),
-	getSettings: () => typedError<AppSettings, string>(__TAURI_INVOKE("get_settings")),
-	updateSettings: (settings: AppSettings) => typedError<AppSettings, string>(__TAURI_INVOKE("update_settings", { settings })),
+	getSettings: () => typedError<SettingsRead, string>(__TAURI_INVOKE("get_settings")),
+	/**
+	 *  Write the whole settings object back.
+	 * 
+	 *  `base` is what the file was when this copy was read. Every settings
+	 *  action sends the whole object, so a copy read before some other
+	 *  surface wrote the file — a resize, a project registered in another
+	 *  window — would put the older file back over it. A copy of a file that
+	 *  is no longer there is refused, never applied.
+	 */
+	updateSettings: (settings: AppSettings, base: string | null) => typedError<SettingsRead, WriteRefused>(__TAURI_INVOKE("update_settings", { settings, base })),
 	/**
 	 *  The size on screen, written on its own. Nothing else in the file moves
 	 *  with it, and nothing else can move it: a size the person is looking at
 	 *  survives whatever else is being saved at the same moment.
 	 */
 	saveZoom: (percent: number) => typedError<number, string>(__TAURI_INVOKE("save_zoom", { percent })),
-	registerProject: (path: string) => typedError<AppSettings, string>(__TAURI_INVOKE("register_project", { path })),
-	unregisterProject: (path: string) => typedError<AppSettings, string>(__TAURI_INVOKE("unregister_project", { path })),
+	registerProject: (path: string) => typedError<SettingsRead, string>(__TAURI_INVOKE("register_project", { path })),
+	unregisterProject: (path: string) => typedError<SettingsRead, string>(__TAURI_INVOKE("unregister_project", { path })),
 	/**
 	 *  Install the session-start drift report hook for a scope: script into the
 	 *  scope's local source, declaration into its manifest, then the ordinary
@@ -63,69 +72,16 @@ export const commands = {
 	 */
 	revokeDismissal: (scope: Scope, key: string, fingerprint: string, dismissedAt: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("revoke_dismissal", { scope, key, fingerprint, dismissedAt })),
 	revokeSafetyOverride: (scope: Scope, key: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("revoke_safety_override", { scope, key })),
-	getManifest: (scope: Scope) => typedError<{
-	schema: number,
-	sources?: { [key in string]: SourceDecl_Serialize },
-	install: InstallDefaults,
-	agents?: { [key in string]: ItemDecl_Serialize },
-	skills?: { [key in string]: ItemDecl_Serialize },
-	hooks?: { [key in string]: ItemDecl_Serialize },
-	commands?: { [key in string]: ItemDecl_Serialize },
-	"mcp-servers"?: { [key in string]: ItemDecl_Serialize },
+	getManifest: (scope: Scope) => typedError<ManifestRead_Serialize, string>(__TAURI_INVOKE("get_manifest", { scope })),
 	/**
-	 *  Plugins are observe + enable/disable only; the key is
-	 *  `name@marketplace`, provenance lives in the lock.
+	 *  Write an edited manifest and reconcile the scope to it.
+	 * 
+	 *  `base` is what the file was when this copy was read. A whole manifest
+	 *  goes back with every save, so a copy read before something else wrote
+	 *  the file would put that back — and the caller cannot be relied on to
+	 *  notice. Refusing here needs no caller to remember anything.
 	 */
-	plugins?: { [key in string]: PluginDecl },
-	/**
-	 *  Installed bundles: a curated set the catalog offers under one name.
-	 *  What the set holds is the catalog's to say and derives on every plan;
-	 *  this records only that the set is installed, and how its members
-	 *  install — the same choices any declaration makes.
-	 */
-	bundles?: { [key in string]: ItemDecl_Serialize },
-	"pi-extensions"?: { [key in string]: ItemDecl_Serialize },
-	/**
-	 *  Items the user removed and wants kept removed, by kind: a dependency
-	 *  another item requires, or a member of an installed bundle. A refresh
-	 *  honors these instead of re-deriving what was taken away, and the item
-	 *  that wanted them says so in the audit.
-	 */
-	suppressed?: Partial<{ [key in ItemKind]: string[] }>,
-	/**
-	 *  Optional dependencies taken at install time, per item that offers
-	 *  them. A choice, so it belongs here and survives refresh, cache loss,
-	 *  and other machines; what those choices pull in does not.
-	 */
-	"optional-dependencies"?: { [key in string]: string[] },
-	/**
-	 *  Reviews of content the safety gate blocked, keyed by installation.
-	 *  Each one binds to the content, the rule set and the findings it was
-	 *  granted against, so it stops applying the moment any of them moves.
-	 */
-	"safety-overrides"?: { [key in string]: SafetyOverride_Serialize },
-	/**
-	 *  Findings judged not to be problems, keyed by installation, one
-	 *  snapshot of the reviewed content per installation with each
-	 *  dismissal beneath it. A dismissal settles a question and never
-	 *  unblocks anything.
-	 */
-	"safety-reviews"?: { [key in string]: SafetyReview_Serialize },
-	"agent-skills"?: { [key in string]: string[] },
-	"agent-launch-instructions"?: { [key in string]: string },
-	"agent-additional-instructions"?: { [key in string]: string },
-	"skill-instructions"?: { [key in string]: string },
-	/**  `[agent-frontmatter.<harness>.<agent>]`. */
-	"agent-frontmatter"?: { [key in string]: { [key in string]: FrontmatterOverrides_Serialize } },
-	"custom-hooks"?: CustomHook_Serialize[],
-	/**
-	 *  Forked items by kind and name — `[forks.skill.<name>]`. The name is
-	 *  the item's installed name, unchanged by forking.
-	 */
-	forks?: Partial<{ [key in ItemKind]: { [key in string]: ForkProvenance_Serialize } }>,
-} | null, string>(__TAURI_INVOKE("get_manifest", { scope })),
-	/**  Write an edited manifest and reconcile the scope to it. */
-	updateManifest: (scope: Scope, manifest: Manifest_Deserialize) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("update_manifest", { scope, manifest })),
+	updateManifest: (scope: Scope, manifest: Manifest_Deserialize, base: string | null) => typedError<AuditView_Serialize, WriteRefused>(__TAURI_INVOKE("update_manifest", { scope, manifest, base })),
 	editorInventory: (scope: Scope) => typedError<EditorInventory, string>(__TAURI_INVOKE("editor_inventory", { scope })),
 	/**
 	 *  Per-hook, per-harness delivery for the hooks as currently drafted in the
@@ -536,6 +492,20 @@ export type AvailablePackage = {
 	 */
 	collision: string | null,
 };
+
+/**
+ *  The base of one whole-file copy.
+ * 
+ *  There is one way to derive one — [`Base::of`], over the bytes it
+ *  describes — because the failure this exists to prevent is a base paired
+ *  with content nobody read together. A base taken by a read separate from
+ *  the content it answers for describes a different moment: a writer
+ *  landing between the two hands the caller old content under the new
+ *  file's name, and the write that follows is accepted over that writer.
+ *  Nothing here takes a path and hands back a base, deliberately — a path
+ *  is not the bytes, and reading them apart is how the two come adrift.
+ */
+export type Base = string | null;
 
 /**
  *  A curated set with per-member state. Partly-installed is the derived
@@ -1655,6 +1625,43 @@ export type LoginStart = {
 
 export type Manifest = Manifest_Serialize | Manifest_Deserialize;
 
+/**
+ *  A place's manifest and what the file it came from was at that moment.
+ *  One value, because a copy without its base cannot be written back
+ *  safely, and the two read apart could describe different files.
+ */
+export type ManifestRead = ManifestRead_Serialize | ManifestRead_Deserialize;
+
+/**
+ *  A place's manifest and what the file it came from was at that moment.
+ *  One value, because a copy without its base cannot be written back
+ *  safely, and the two read apart could describe different files.
+ */
+export type ManifestRead_Deserialize = {
+	/**
+	 *  Absent where the place has no manifest yet — the editor still
+	 *  opens, on an empty one.
+	 */
+	manifest: Manifest_Deserialize | null,
+	/**  The file these bytes came from, read with them and never apart. */
+	base: Base,
+};
+
+/**
+ *  A place's manifest and what the file it came from was at that moment.
+ *  One value, because a copy without its base cannot be written back
+ *  safely, and the two read apart could describe different files.
+ */
+export type ManifestRead_Serialize = {
+	/**
+	 *  Absent where the place has no manifest yet — the editor still
+	 *  opens, on an empty one.
+	 */
+	manifest: Manifest_Serialize | null,
+	/**  The file these bytes came from, read with them and never apart. */
+	base: Base,
+};
+
 export type Manifest_Deserialize = {
 	schema: number,
 	sources?: { [key in string]: SourceDecl_Deserialize },
@@ -2311,6 +2318,17 @@ export type ScopeErrorKind =
 /**  The manifest parses but fails validation. */
 "manifest-invalid" | "other";
 
+/**
+ *  The settings and the base of the exact file they describe — paired by
+ *  one read, or handed back by the write that produced the file. One
+ *  value, because a copy without its base cannot be written back safely,
+ *  and the two obtained apart could describe different files.
+ */
+export type SettingsRead = {
+	settings: AppSettings,
+	base: Base,
+};
+
 export type Severity = "low" | "medium" | "high" | "critical";
 
 export type SkillsShHit = {
@@ -2627,6 +2645,19 @@ export type VersionSel =
 { at: "commit"; commit: string } | 
 /**  What is installed on disk right now. */
 { at: "installed" };
+
+/**
+ *  Why a whole-file write did not happen. Refusing is a normal answer
+ *  here, not a failure, so it is a shape the page can act on rather than
+ *  a message it would have to recognise by its words.
+ */
+export type WriteRefused = 
+/**
+ *  The file is no longer the one this copy was read from. Something
+ *  else wrote it — a fork, a hold, a dismissal, an install, another
+ *  window — and writing this copy would put that back.
+ */
+{ kind: "stale" } | { kind: "failed"; message: string };
 
 export type ZoomState = {
 	/**

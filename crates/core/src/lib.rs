@@ -1,5 +1,6 @@
 pub mod apply;
 pub mod author;
+pub mod base;
 pub mod check_catalog;
 pub mod clock;
 pub mod configedit;

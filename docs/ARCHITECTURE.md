@@ -302,11 +302,29 @@ lives in one capability table read by core and UI.
   the window has taken (on the window's reply), what the settings object
   holds (when the file does); the first two stay out of the settings
   object. The size reaches the file through its own command carrying only
-  a percent; `update_settings` leaves the stored size as found. At most one
+  a percent; a whole-settings copy read before a resize fails its base
+  check rather than carrying the older size back. At most one
   save in flight; asks during it collapse into one follow-up writing
   whatever is on screen. A write waits for the resize before reading what
   to write; a size the file refuses stays on screen. The close is not held
   for an in-flight write.
+- **A whole-file write carries the base of the file its copy came from.**
+  Two surfaces hand a person an entire file and write all of it back — the
+  Customize tab's `kendex.toml` and the Settings page's
+  `kendex.settings.toml`. Each read pairs content with a `Base`
+  (`kendex_core::base`, the hash of the exact bytes read — one derivation,
+  never taken from a path apart from its bytes); the write presents it, and
+  a file holding different bytes refuses the write as `stale`
+  (`WriteRefused`, one shape for every such surface), which the page
+  renders as a choice: the editor offers Reload, the settings store carries
+  the field-level change onto a fresh copy once and only then asks. The
+  manifest write also binds the base into its plan op's precondition
+  (`PlanOptions::manifest_base`), re-checked by the apply under the scope
+  lock just before the bytes go down. Targeted settings writes
+  (`save_zoom`, project registration, update mutes) go through
+  `settings::mutate` — load, change, save under one process-wide write
+  lock — so a stale copy cannot reach them, and no public path writes the
+  settings file without one of the two.
 - **Every atomic write gets its own temp file.** `write_then_rename` names
   its temp file per write, not per process.
 - GUI + CLI are equal thin shells over `crates/core`; every core operation
