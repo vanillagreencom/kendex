@@ -118,12 +118,14 @@ export function groupItems(items: ObservedItem[]): ItemGroup[] {
   return [...groups.values()].sort((a, b) => a.key.localeCompare(b.key));
 }
 
-/** How many packages are installed — one per kind+name group, the unit the
- *  Library shows a row per. Home's Installed tile and the Library's total
- *  both count with this, so the tile can never disagree with the table it
- *  opens: a package applied to two harnesses is one package, not two. */
-export function installedCount(items: ObservedItem[]): number {
-  return groupItems(items).length;
+/** How many packages a grouped scan holds — one per kind+name group, the
+ *  unit the Library shows a row per. Home's Installed tile and the
+ *  Library's total both count through this, so the tile can never disagree
+ *  with the table it opens: a package applied to two harnesses is one
+ *  package, not two. Takes the groups a caller already has, so counting
+ *  never costs a second grouping pass. */
+export function installedCount(groups: ItemGroup[]): number {
+  return groups.length;
 }
 
 /** The installation belonging to one place, where the group has one.

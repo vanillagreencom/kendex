@@ -121,7 +121,7 @@ export function InstalledView() {
   // Home's Installed tile so the two can never disagree.
   const standingsFor = useLibraryStandings(groups);
   const total = useMemo(
-    () => (result ? installedCount(result.items) : 0),
+    () => (result ? installedCount(groupItems(result.items)) : 0),
     [result],
   );
   // The filter's vocabulary is what the join actually says, so a value

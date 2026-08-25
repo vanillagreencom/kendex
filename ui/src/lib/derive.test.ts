@@ -123,16 +123,20 @@ describe("groupItems", () => {
 describe("installedCount", () => {
   it("counts packages, not installations", () => {
     expect(
-      installedCount([
-        item({ harness: "claude" }),
-        item({ harness: "codex" }),
-        item({ name: "solo" }),
-      ]),
+      installedCount(
+        groupItems([
+          item({ harness: "claude" }),
+          item({ harness: "codex" }),
+          item({ name: "solo" }),
+        ]),
+      ),
     ).toBe(2);
   });
 
   it("keeps same-named items of different kinds apart", () => {
-    expect(installedCount([item({}), item({ kind: "agent" })])).toBe(2);
+    expect(
+      installedCount(groupItems([item({}), item({ kind: "agent" })])),
+    ).toBe(2);
   });
 });
 
