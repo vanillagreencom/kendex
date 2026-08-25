@@ -49,15 +49,32 @@ impl CredentialRefreshGuard for LockedFile {}
 
 pub struct KeyringStore;
 
-/// The service this build reaches. `entry` holds no decision of its own, so
-/// what a build signs in as is settled here and nowhere else.
-fn active_service() -> &'static str {
-    service(crate::env::sandboxed())
+struct CredentialIdentity {
+    service: &'static str,
+    endpoint: String,
+}
+
+/// The named keychain entry and its transaction lock share this identity.
+fn active_identity() -> CredentialIdentity {
+    CredentialIdentity {
+        service: service(crate::env::sandboxed()),
+        endpoint: base_url(),
+    }
+}
+
+fn transaction_lock_file(
+    env: &crate::env::Env,
+    identity: &CredentialIdentity,
+) -> std::path::PathBuf {
+    let material = format!("{}\0{}", identity.service, identity.endpoint);
+    let digest = crate::hash::hash_bytes(material.as_bytes());
+    env.real_home()
+        .join(format!(".kendex-credential-{digest}.lock"))
 }
 
 fn entry() -> Result<keyring::Entry> {
-    let endpoint = base_url();
-    keyring::Entry::new(active_service(), &endpoint).map_err(|error| {
+    let identity = active_identity();
+    keyring::Entry::new(identity.service, &identity.endpoint).map_err(|error| {
         CoreError::RegistryUnavailable {
             why: format!("no usable credential store: {error}"),
         }
@@ -111,7 +128,7 @@ impl CredentialStore for KeyringStore {
 
     fn refresh_guard(&self) -> Result<Box<dyn CredentialRefreshGuard + '_>> {
         let env = crate::env::Env::detect()?;
-        let path = env.credential_refresh_lock_file();
+        let path = transaction_lock_file(&env, &active_identity());
         let parent = path
             .parent()
             .ok_or_else(|| CoreError::io(&path, std::io::Error::other("path has no parent")))?;
@@ -147,12 +164,39 @@ mod tests {
     /// naming one itself; which service that yields is the case above.
     #[test]
     fn the_entry_takes_its_service_from_the_sandbox() {
-        assert_eq!(active_service(), service(crate::env::sandboxed()));
+        assert_eq!(active_identity().service, service(crate::env::sandboxed()));
     }
 
     #[test]
     fn only_a_sandboxed_build_gets_the_sandbox_entry() {
         assert_eq!(service(false), SERVICE);
         assert_eq!(service(true), DEV_SERVICE);
+    }
+
+    #[test]
+    fn transaction_lock_uses_named_identity_not_data_root() {
+        let first = crate::env::Env::fake("/data/one", crate::env::FakeOs::Linux)
+            .with_real_home("/home/pat");
+        let second = crate::env::Env::fake("/data/two", crate::env::FakeOs::Linux)
+            .with_real_home("/home/pat");
+        let identity = CredentialIdentity {
+            service: SERVICE,
+            endpoint: "https://kendex.ai".to_owned(),
+        };
+
+        assert_eq!(
+            transaction_lock_file(&first, &identity),
+            transaction_lock_file(&second, &identity)
+        );
+        assert_ne!(
+            transaction_lock_file(
+                &first,
+                &CredentialIdentity {
+                    service: DEV_SERVICE,
+                    endpoint: identity.endpoint.clone(),
+                }
+            ),
+            transaction_lock_file(&first, &identity)
+        );
     }
 }

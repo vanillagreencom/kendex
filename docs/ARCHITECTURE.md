@@ -177,12 +177,14 @@ lives in one capability table read by core and UI.
     policy file are kept. `KENDEX_REAL_HOME=1`, and only that value, opts
     back out.
 
-    Two things ask `env/sandbox.rs` directly: the OS credential store's
-    service name carries the sandbox (keyed by name, not path), and the
-    real home stays reachable as `Env::real_home()` — project discovery
-    stops there, and a typed `~` means the person's home. Anything new
-    that is keyed by name, or that answers a question about the person
-    rather than this build's state, belongs on that list.
+    Three things ask `env/sandbox.rs` directly: the OS credential store's
+    service name carries the sandbox (keyed by name, not path); its
+    transaction lock uses the same service-plus-endpoint identity under
+    the real home, so XDG relocation cannot split one credential family;
+    and the real home stays reachable as `Env::real_home()`. Project
+    discovery stops there, and a typed `~` means the person's home.
+    Anything new that is keyed by name, or that answers a question about
+    the person rather than this build's state, belongs on that list.
 
     Three things sit outside the boundary: a project path handed to a
     debug build is still that project (`--scope project` reads and writes
@@ -713,8 +715,9 @@ lives in one capability table read by core and UI.
   one-hour TTL; a failed refresh serves the last fetch labeled stale with
   its real fetch time. All reads go through the `Fetch` trait (curl via
   `Hardened`, plain http only under `KENDEX_API`); tests inject transports.
-  Bearer calls route through `registry/client.rs`: one cross-process lock
-  serializes login, logout, and refresh rotation, saving rotations before retry.
+  Bearer calls route through `registry/client.rs`: one named cross-process
+  lock serializes login, logout, and refresh rotation, saving rotations
+  before retry.
   `skillssh.rs` pins its public wire schema and kill switch
   (`KENDEX_SKILLSSH=off`); a hit is a lead, never an identity, and installs
   through the same subscribe path. Collections and deep links arrive with W3/W4.

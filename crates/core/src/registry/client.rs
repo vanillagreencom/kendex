@@ -59,11 +59,14 @@ fn rotate_locked(
     let pair = match refresh(fetch, &credential.refresh_token) {
         Ok(pair) => pair,
         Err(Refused::Definitive(why)) => {
-            let ours = store
-                .load()?
-                .is_none_or(|kept| kept.refresh_token == credential.refresh_token);
-            if ours {
-                store.clear()?;
+            // Older installed clients do not take this guard. A network call
+            // gives one time to replace the family, so re-read before clearing.
+            match store.load()? {
+                Some(kept) if kept.refresh_token != credential.refresh_token => {
+                    return Err(sign_in_changed("refreshing"));
+                }
+                Some(_) => store.clear()?,
+                None => {}
             }
             return Err(CoreError::Authoring {
                 message: format!("your sign-in has expired ({why}) — run `kendex login` again"),
@@ -77,14 +80,11 @@ fn rotate_locked(
         refresh_token: pair.refresh_token,
         capabilities: pair.capabilities,
     };
+    // Mixed-version writers do not know this guard. Never replace a family
+    // an older client committed during the refresh request.
     let current = required(store.load()?)?;
     if current.refresh_token != credential.refresh_token {
-        drop(refresh_guard);
-        let retried = call(&current.access_token)?;
-        return match retried.status {
-            401 => Err(rejected_access()),
-            _ => Ok(retried),
-        };
+        return Err(sign_in_changed("refreshing"));
     }
     store.save(&rotated)?;
     drop(refresh_guard);
@@ -114,11 +114,13 @@ pub fn logout(fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result<bool> {
             why: format!("{error} — the local credential was kept so you can retry"),
         }
     })?;
-    let current = required(store.load()?)?;
+    // An older client can commit another family without taking this guard.
+    // Re-read after revocation so logout cannot clear that newer sign-in.
+    let Some(current) = store.load()? else {
+        return Ok(true);
+    };
     if current.refresh_token != credential.refresh_token {
-        return Err(CoreError::RegistryUnavailable {
-            why: "the sign-in changed during logout; retry against the current sign-in".to_owned(),
-        });
+        return Err(sign_in_changed("logging out"));
     }
     store.clear()?;
     Ok(true)
@@ -133,6 +135,12 @@ fn required(credential: Option<Credential>) -> Result<Credential> {
 fn rejected_access() -> CoreError {
     CoreError::Authoring {
         message: "the server does not accept this sign-in — run `kendex login` again".to_owned(),
+    }
+}
+
+fn sign_in_changed(action: &str) -> CoreError {
+    CoreError::RegistryUnavailable {
+        why: format!("the sign-in changed while {action}; retry the request"),
     }
 }
 

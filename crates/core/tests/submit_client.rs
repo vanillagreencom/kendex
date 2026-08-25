@@ -2,7 +2,7 @@
 //! refresh on a rejected access token (rotation saved before the retry),
 //! and an honest sign-out when the refresh itself is refused.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex, MutexGuard, mpsc};
 use std::time::{Duration, Instant};
@@ -248,20 +248,14 @@ fn rate_limit_and_timeout_refresh_failures_keep_the_credential() {
 struct ConcurrentStore {
     credential: Mutex<Option<Credential>>,
     refresh: Mutex<()>,
-    held: Arc<AtomicUsize>,
     guard_observer: Mutex<Option<mpsc::Sender<()>>>,
 }
 
 impl ConcurrentStore {
     fn signed_in() -> Self {
-        Self::signed_in_with_observer(Arc::new(AtomicUsize::new(0)))
-    }
-
-    fn signed_in_with_observer(held: Arc<AtomicUsize>) -> Self {
         Self {
             credential: Mutex::new(MemoryStore::signed_in().0.into_inner()),
             refresh: Mutex::new(()),
-            held,
             guard_observer: Mutex::new(None),
         }
     }
@@ -273,13 +267,20 @@ impl ConcurrentStore {
 
 struct ConcurrentGuard<'a> {
     _guard: MutexGuard<'a, ()>,
-    held: Arc<AtomicUsize>,
 }
 impl CredentialRefreshGuard for ConcurrentGuard<'_> {}
 
+thread_local! {
+    static REFRESH_GUARD_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+fn current_thread_holds_refresh_guard() -> bool {
+    REFRESH_GUARD_DEPTH.get() != 0
+}
+
 impl Drop for ConcurrentGuard<'_> {
     fn drop(&mut self) {
-        self.held.fetch_sub(1, Ordering::SeqCst);
+        REFRESH_GUARD_DEPTH.set(REFRESH_GUARD_DEPTH.get() - 1);
     }
 }
 
@@ -313,11 +314,8 @@ impl CredentialStore for ConcurrentStore {
                 })?;
         }
         let guard = self.refresh.lock().map_err(|_| lock_error())?;
-        self.held.fetch_add(1, Ordering::SeqCst);
-        Ok(Box::new(ConcurrentGuard {
-            _guard: guard,
-            held: Arc::clone(&self.held),
-        }))
+        REFRESH_GUARD_DEPTH.set(REFRESH_GUARD_DEPTH.get() + 1);
+        Ok(Box::new(ConcurrentGuard { _guard: guard }))
     }
 }
 
@@ -326,7 +324,6 @@ struct ConcurrentFetch {
     old_calls: AtomicUsize,
     refresh_calls: AtomicUsize,
     new_calls: AtomicUsize,
-    refresh_lock_held: Arc<AtomicUsize>,
     new_calls_under_lock: AtomicUsize,
 }
 
@@ -366,7 +363,7 @@ impl Fetch for ConcurrentFetch {
             }
             Some("kxa_new") => {
                 self.new_calls.fetch_add(1, Ordering::SeqCst);
-                if self.refresh_lock_held.load(Ordering::SeqCst) != 0 {
+                if current_thread_holds_refresh_guard() {
                     self.new_calls_under_lock.fetch_add(1, Ordering::SeqCst);
                 }
                 Self::response(201, r#"{"repo":"jane/skills","status":"listed"}"#)
@@ -388,16 +385,14 @@ impl Fetch for ConcurrentFetch {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn concurrent_cli_and_app_calls_rotate_one_refresh_token_once() {
-    let refresh_lock_held = Arc::new(AtomicUsize::new(0));
     let fetch = Arc::new(ConcurrentFetch {
         old_access: Arc::new(Barrier::new(2)),
         old_calls: AtomicUsize::new(0),
         refresh_calls: AtomicUsize::new(0),
         new_calls: AtomicUsize::new(0),
-        refresh_lock_held: Arc::clone(&refresh_lock_held),
         new_calls_under_lock: AtomicUsize::new(0),
     });
-    let store = Arc::new(ConcurrentStore::signed_in_with_observer(refresh_lock_held));
+    let store = Arc::new(ConcurrentStore::signed_in());
     let run = || {
         let fetch = Arc::clone(&fetch);
         let store = Arc::clone(&store);
@@ -496,6 +491,7 @@ fn logout_while_waiting_for_refresh_does_not_resurrect_the_credential() {
 struct TransactionFetch {
     refresh_started: mpsc::Sender<()>,
     allow_refresh: Mutex<mpsc::Receiver<()>>,
+    refresh_answer: (u16, &'static str),
     revoked: Mutex<Vec<String>>,
     login_access_calls: AtomicUsize,
 }
@@ -541,10 +537,7 @@ impl Fetch for TransactionFetch {
                     .map_err(|error| CoreError::RegistryUnavailable {
                         why: error.to_string(),
                     })?;
-                Self::response(
-                    200,
-                    r#"{"access_token":"kxa_rotated","refresh_token":"kxr_rotated","capabilities":["submission:write"]}"#,
-                )
+                Self::response(self.refresh_answer.0, self.refresh_answer.1)
             }
             None if url.ends_with("/api/v1/tokens/revoke") => {
                 self.revoked
@@ -569,6 +562,20 @@ fn transaction_fixture() -> (
     mpsc::Receiver<()>,
     mpsc::Sender<()>,
 ) {
+    transaction_fixture_with_refresh((
+        200,
+        r#"{"access_token":"kxa_rotated","refresh_token":"kxr_rotated","capabilities":["submission:write"]}"#,
+    ))
+}
+
+fn transaction_fixture_with_refresh(
+    refresh_answer: (u16, &'static str),
+) -> (
+    Arc<ConcurrentStore>,
+    Arc<TransactionFetch>,
+    mpsc::Receiver<()>,
+    mpsc::Sender<()>,
+) {
     let (refresh_started, observed) = mpsc::channel();
     let (allow, allow_refresh) = mpsc::channel();
     (
@@ -576,6 +583,7 @@ fn transaction_fixture() -> (
         Arc::new(TransactionFetch {
             refresh_started,
             allow_refresh: Mutex::new(allow_refresh),
+            refresh_answer,
             revoked: Mutex::new(Vec::new()),
             login_access_calls: AtomicUsize::new(0),
         }),
@@ -593,6 +601,15 @@ fn spawn_refresh(
     std::thread::spawn(move || submit(fetch.as_ref(), store.as_ref(), "jane/skills"))
 }
 
+fn replacement_login() -> Credential {
+    Credential {
+        endpoint: "https://kendex.ai".to_owned(),
+        access_token: "kxa_login".to_owned(),
+        refresh_token: "kxr_login".to_owned(),
+        capabilities: vec!["submission:write".to_owned()],
+    }
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_login_waiting_for_refresh_commits_the_new_family_last() {
@@ -604,15 +621,7 @@ fn a_login_waiting_for_refresh_commits_the_new_family_last() {
     store.observe_next_guard(guard_attempted);
     let login_store = Arc::clone(&store);
     let login = std::thread::spawn(move || {
-        client::commit_login(
-            login_store.as_ref(),
-            &Credential {
-                endpoint: "https://kendex.ai".to_owned(),
-                access_token: "kxa_login".to_owned(),
-                refresh_token: "kxr_login".to_owned(),
-                capabilities: vec!["submission:write".to_owned()],
-            },
-        )
+        client::commit_login(login_store.as_ref(), &replacement_login())
     });
     observed_guard.recv_timeout(Duration::from_secs(1)).unwrap();
     allow_refresh.send(()).unwrap();
@@ -627,6 +636,45 @@ fn a_login_waiting_for_refresh_commits_the_new_family_last() {
         0,
         "login must wait for the in-flight refresh transaction"
     );
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_mixed_version_login_during_refresh_is_preserved() {
+    let (store, fetch, refresh_started, allow_refresh) = transaction_fixture();
+    let refresh = spawn_refresh(&fetch, &store);
+    refresh_started.recv().unwrap();
+
+    // Models an older installed client that does not know the transaction lock.
+    store.save(&replacement_login()).unwrap();
+    allow_refresh.send(()).unwrap();
+
+    let refused = refresh.join().unwrap().unwrap_err().to_string();
+    assert!(refused.contains("sign-in changed"), "{refused}");
+    assert!(refused.contains("retry the request"), "{refused}");
+    let kept = store.load().unwrap().unwrap();
+    assert_eq!(kept.access_token, "kxa_login");
+    assert_eq!(kept.refresh_token, "kxr_login");
+    assert_eq!(fetch.login_access_calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_mixed_version_login_survives_a_refused_old_refresh() {
+    let (store, fetch, refresh_started, allow_refresh) =
+        transaction_fixture_with_refresh((401, r#"{"error":"invalid_grant"}"#));
+    let refresh = spawn_refresh(&fetch, &store);
+    refresh_started.recv().unwrap();
+
+    store.save(&replacement_login()).unwrap();
+    allow_refresh.send(()).unwrap();
+
+    let refused = refresh.join().unwrap().unwrap_err().to_string();
+    assert!(refused.contains("sign-in changed"), "{refused}");
+    assert!(refused.contains("retry the request"), "{refused}");
+    let kept = store.load().unwrap().unwrap();
+    assert_eq!(kept.access_token, "kxa_login");
+    assert_eq!(kept.refresh_token, "kxr_login");
 }
 
 #[test]
@@ -655,7 +703,7 @@ fn a_logout_waiting_for_refresh_revokes_the_rotated_family_last() {
 
 #[test]
 #[allow(clippy::unwrap_used)]
-fn production_keyring_refresh_guard_serializes_processes() {
+fn production_keyring_guard_ignores_divergent_data_roots() {
     const CHILD_ROOT: &str = "KENDEX_REFRESH_LOCK_CHILD_ROOT";
     if let Some(root) = std::env::var_os(CHILD_ROOT) {
         let root = std::path::PathBuf::from(root);
@@ -685,22 +733,22 @@ fn production_keyring_refresh_guard_serializes_processes() {
     let fixture = tempfile::tempdir().unwrap();
     let root = fixture.path();
     let executable = std::env::current_exe().unwrap();
-    let spawn = || {
+    let spawn = |data_root: &str| {
         std::process::Command::new(&executable)
             .arg("--exact")
-            .arg("production_keyring_refresh_guard_serializes_processes")
+            .arg("production_keyring_guard_ignores_divergent_data_roots")
             .arg("--nocapture")
             .env(CHILD_ROOT, root)
             .env("HOME", root)
             .env("KENDEX_REAL_HOME", "1")
-            .env("XDG_DATA_HOME", root.join("data"))
+            .env("XDG_DATA_HOME", root.join(data_root))
             .env("XDG_CACHE_HOME", root.join("cache"))
             .env("XDG_CONFIG_HOME", root.join("config"))
             .spawn()
             .unwrap()
     };
-    let mut first = spawn();
-    let mut second = spawn();
+    let mut first = spawn("data-a");
+    let mut second = spawn("data-b");
     let deadline = Instant::now() + Duration::from_secs(5);
     while std::fs::read_dir(root)
         .unwrap()
