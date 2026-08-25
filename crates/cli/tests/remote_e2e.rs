@@ -599,3 +599,120 @@ fn updates_apply_says_when_a_copy_went_to_the_trash() {
     );
     assert!(!rendered.exists(), "the copy really is gone");
 }
+
+/// `--refresh` is a fetch the person asked for before anything reads a
+/// catalog, and a targeted apply reads one. Skipped, the run applies the
+/// mirror's cached tip in answer to an explicit ask for fresh.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn updates_refresh_fetches_before_a_targeted_apply() {
+    let tmp = fixture();
+    let home = tmp.path();
+    let proj = home.join("proj");
+    let upstream = home.join("git/vanillagreencom/kendex");
+    assert!(
+        kendex(home, &proj, &["add", "--skill", "gh", "-y"])
+            .status
+            .success()
+    );
+    let rendered = proj.join(".agents/skills/gh/SKILL.md");
+
+    fs::write(
+        upstream.join("skills/gh/SKILL.md"),
+        "---\nname: gh\ndescription: github flows\n---\nUpstream v2.\n",
+    )
+    .unwrap();
+    git(&upstream, &["commit", "--quiet", "-am", "two"]);
+
+    // Without the flag the mirror is never asked, so the run has nothing
+    // newer to apply.
+    assert!(
+        kendex(home, &proj, &["updates", "apply", "skill", "gh", "-y"])
+            .status
+            .success()
+    );
+    assert!(
+        fs::read_to_string(&rendered)
+            .unwrap()
+            .contains("Upstream v1"),
+        "no fetch was asked for, so nothing newer was found"
+    );
+
+    // With it, the fetch happens first and the apply sees the new commit.
+    let printed = said(&kendex(
+        home,
+        &proj,
+        &["updates", "--refresh", "apply", "skill", "gh", "-y"],
+    ));
+    assert!(
+        printed.contains("applied — skill gh is current here"),
+        "{printed}"
+    );
+    assert!(
+        fs::read_to_string(&rendered)
+            .unwrap()
+            .contains("Upstream v2")
+    );
+}
+
+/// Muting reads no catalog, so `--refresh` beside it has nothing to be
+/// ahead of and must not spend the network on every source.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn updates_refresh_does_not_fetch_for_a_settings_only_verb() {
+    let tmp = fixture();
+    let home = tmp.path();
+    let proj = home.join("proj");
+    assert!(
+        kendex(home, &proj, &["add", "--skill", "gh", "-y"])
+            .status
+            .success()
+    );
+
+    // The source's own directory is gone: a fetch could only fail, and a
+    // failed fetch says so.
+    fs::rename(
+        home.join("git/vanillagreencom/kendex"),
+        home.join("git/moved-away"),
+    )
+    .unwrap();
+
+    let muted = kendex(
+        home,
+        &proj,
+        &["updates", "--refresh", "ignore", "skill", "gh"],
+    );
+    let printed = said(&muted);
+    assert!(muted.status.success(), "{printed}");
+    assert!(
+        !printed.contains("warning:"),
+        "no source was fetched, so none could complain: {printed}"
+    );
+}
+
+/// The whole place and one package are different asks; a run that carries
+/// both silently does one of them.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn updates_refuses_a_whole_place_apply_beside_a_named_package() {
+    let tmp = fixture();
+    let home = tmp.path();
+    let proj = home.join("proj");
+    assert!(
+        kendex(home, &proj, &["add", "--skill", "gh", "-y"])
+            .status
+            .success()
+    );
+
+    let refused = kendex(
+        home,
+        &proj,
+        &["updates", "--apply", "apply", "skill", "gh", "-y"],
+    );
+    let printed = said(&refused);
+    assert!(!refused.status.success(), "{printed}");
+    assert!(
+        printed.contains("--apply brings the whole place current"),
+        "{printed}"
+    );
+}

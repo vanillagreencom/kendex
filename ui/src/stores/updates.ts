@@ -193,8 +193,10 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
         // Counted off what the applies reported, never off the rows the
         // click covered: a place the plan held back needs attention on its
         // own row, it is not one more updated.
-        if (outcome.ok)
-          showBulkOutcome(outcome, skipped, visibleUpdates(get().rows));
+        // Said whether or not a place failed: the error is its own toast,
+        // and what the rest of the run did to the person's packages is not
+        // the error's to swallow.
+        showBulkOutcome(outcome, skipped, visibleUpdates(get().rows));
         await useScanStore.getState().refresh();
         await useAuditStore.getState().refresh({ force: true });
       } finally {

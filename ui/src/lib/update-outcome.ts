@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import type { HarnessId, PackageUpdate_Serialize, UpdateRow } from "@/bindings";
 import { updatedToastLabel } from "@/lib/copy";
 import {
+  movedDespiteErrorToastLabel,
   nothingMovedToastLabel,
   notUpdatedToastLabel,
   removedNotReplacedCountToastLabel,
@@ -17,6 +18,7 @@ import {
   updatedExceptToastLabel,
 } from "@/lib/copy-updates";
 import { harnessName } from "@/lib/labels";
+import { packageCount } from "@/lib/update-groups";
 import { bulkUpdateToast } from "@/lib/update-toasts";
 
 /** The tools named by a set of drift rows, each once, in the order they
@@ -106,6 +108,16 @@ export const showBulkOutcome = (
     toast.error(removedNotReplacedCountToastLabel(outcome.removed));
   }
   const attention = skipped + outcome.held;
+  // A place in this run failed. Its error is already on screen, and what
+  // the places that did run came to is said beside it — silence here is
+  // how a package that went to the trash goes unmentioned because an
+  // unrelated row could not be reached.
+  if (!outcome.ok) {
+    if (outcome.moved.length > 0) {
+      toast.info(movedDespiteErrorToastLabel(packageCount(outcome.moved)));
+    }
+    return;
+  }
   if (outcome.moved.length > 0) {
     toast.success(bulkUpdateToast(outcome.moved, attention, remaining));
     return;

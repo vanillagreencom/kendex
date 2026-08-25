@@ -88,6 +88,10 @@ export const removedNotReplacedCountToastLabel = (removed: number): string =>
     : `${removed} packages could not be installed — their copies went to the trash and nothing replaced them`;
 export const notUpdatedToastLabel = (name: string, tools: string[]): string =>
   `${name} was not updated — the copy in ${toolList(tools)} needs attention on the package page`;
+// A run where one place failed: the error is already on screen, so this
+// says what the rest of it came to — as a fact, never as a success.
+export const movedDespiteErrorToastLabel = (packages: number): string =>
+  `${packages === 1 ? "1 package" : `${packages} packages`} came current in this run — what did not is in the error above`;
 export const nothingMovedToastLabel = (held: number): string =>
   `Nothing was updated — ${held === 1 ? "1 place needs" : `${held} places need`} attention on its own row`;
 export const nothingToUpdateToastLabel = (skipped: number): string =>
