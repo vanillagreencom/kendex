@@ -62,6 +62,69 @@ fn an_edit_made_while_disabled_survives_being_re_enabled() {
     assert_eq!(content, "my edited disabled agent");
 }
 
+/// The re-enable toggle binds to the disabled file as it was when the
+/// plan was made. An edit landing after planning refuses the move: run
+/// anyway, the rename would put the edit at the enabled name for the
+/// install op behind it — planned against the unedited bytes — to
+/// overwrite.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_edit_landing_after_the_enable_was_planned_refuses_the_toggle() {
+    let w = world();
+    let dir = w.upstream.join("agents");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("rev.md"),
+        "---\nname: rev\ndescription: reviewer\n---\nReview.\n",
+    )
+    .unwrap();
+    commit(&w.upstream, "one");
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let manifest_with = |item: &str| {
+        format!(
+            "schema = 5\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n{item}"
+        )
+    };
+    fs::write(&path, manifest_with("[agents.rev]\nsource = \"cat\"\n")).unwrap();
+    sync_and_apply(&w);
+
+    fs::write(
+        &path,
+        manifest_with("[agents.rev]\nsource = \"cat\"\nenabled = false\n"),
+    )
+    .unwrap();
+    let report = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &report.plan, None).unwrap();
+    let disabled = w.home.join("app/.claude/agents/rev.md.disabled");
+    assert!(disabled.is_file());
+
+    fs::write(&path, manifest_with("[agents.rev]\nsource = \"cat\"\n")).unwrap();
+    let report = audit(&w.env, &w.scope).unwrap();
+    assert!(
+        report
+            .plan
+            .ops
+            .iter()
+            .any(|op| op.description.contains("Turn rev on")),
+        "{:?}",
+        report.plan.ops
+    );
+    fs::write(&disabled, "edited after planning").unwrap();
+
+    let error = apply::execute(&w.env, &report.plan, None).unwrap_err();
+    assert!(
+        matches!(&error, CoreError::RolledBack { cause, .. }
+            if matches!(**cause, CoreError::PlanStale { .. })),
+        "{error:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(&disabled).unwrap(),
+        "edited after planning"
+    );
+    assert!(!w.home.join("app/.claude/agents/rev.md").exists());
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn upstream_changing_while_disabled_is_not_a_false_edit() {

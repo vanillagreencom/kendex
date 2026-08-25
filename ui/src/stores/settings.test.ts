@@ -212,6 +212,38 @@ describe("settings store", () => {
     expect(dialog.message).toContain("cannot read the settings file");
   });
 
+  /// The backend serializes the writes, but replies arrive in any order:
+  /// a whole-file save resolving after a later project registration must
+  /// not put its older settings/base pair back over the newer one.
+  it("drops a reply that arrives after a newer one was held", async () => {
+    useSettingsStore.setState({ settings, base: "b0" });
+    let resolveUpdate: (value: {
+      status: "ok";
+      data: { settings: AppSettings; base: string };
+    }) => void = () => {};
+    vi.mocked(commands.updateSettings).mockReturnValue(
+      new Promise((resolve) => {
+        resolveUpdate = resolve;
+      }),
+    );
+    const registered = { ...settings, projects: ["/home/x/acme-web"] };
+    vi.mocked(commands.registerProject).mockResolvedValue({
+      status: "ok",
+      data: { settings: registered, base: "b2" },
+    });
+
+    const older = useSettingsStore.getState().setAppearance("dark");
+    await useSettingsStore.getState().registerProject("/home/x/acme-web");
+    resolveUpdate({
+      status: "ok",
+      data: { settings: { ...settings, appearance: "dark" }, base: "b1" },
+    });
+    await older;
+
+    expect(useSettingsStore.getState().base).toBe("b2");
+    expect(useSettingsStore.getState().settings).toEqual(registered);
+  });
+
   it("toasts success naming the folder when a project is added, and resolves true", async () => {
     vi.mocked(commands.registerProject).mockResolvedValue({
       status: "ok",

@@ -112,12 +112,18 @@ fn restore_set_path(dir: &Path) -> PathBuf {
 /// first, so recovery re-runs exactly that filter; with no persisted set,
 /// nothing can know which ops ran and every pre-image is restored.
 pub fn rollback(dir: &Path) -> Result<()> {
-    // The set is written atomically, so it is complete or absent; a parse
-    // failure is outside corruption, and the full restore below is the
-    // only set recovery can still justify.
-    if let Some(text) = crate::fs::read_if_exists(&restore_set_path(dir))?
-        && let Ok(mutated) = serde_json::from_str::<Vec<PathBuf>>(&text)
-    {
+    if let Some(text) = crate::fs::read_if_exists(&restore_set_path(dir))? {
+        // The file's presence proves a filtered restore was in flight, so
+        // some journaled paths hold bytes the filter protects. It is
+        // written atomically — complete or absent, never torn — so content
+        // that does not parse is outside interference, and widening to the
+        // full restore would destroy exactly those protected bytes. Refuse
+        // instead, leaving the journal pending for inspection.
+        let mutated: Vec<PathBuf> =
+            serde_json::from_str(&text).map_err(|e| CoreError::JsonParse {
+                path: restore_set_path(dir),
+                message: e.to_string(),
+            })?;
         return rollback_filtered(dir, &mutated);
     }
     rollback_where(dir, |_| true)
@@ -134,8 +140,27 @@ pub fn rollback(dir: &Path) -> Result<()> {
 /// recovers with the same filter instead of falling back to a full
 /// restore that would destroy those protected bytes after all.
 pub fn rollback_mutated(dir: &Path, mutated: &[PathBuf]) -> Result<()> {
-    persist_restore_set(dir, mutated)?;
-    rollback_filtered(dir, mutated)
+    // The persisted set is a crash guard for the restore below, never a
+    // gate in front of it. When this write fails (ENOSPC can fail the op
+    // and then fail this write to the same volume), the restore must still
+    // run: completed, it clears the journal and needs no filter afterwards,
+    // while skipping it would leave the journal pending for a recovery
+    // that, finding no set, restores every snapshot — the loss the filter
+    // exists to prevent. Only a crash between a failed persist and the end
+    // of the restore still reaches that full recovery.
+    let persisted = persist_restore_set(dir, mutated);
+    match (rollback_filtered(dir, mutated), persisted) {
+        (Ok(()), _) => Ok(()),
+        (Err(restore), Ok(())) => Err(restore),
+        // Both failed: the journal is pending with no filter on disk, so
+        // the recovery that clears it will restore every snapshot. Named
+        // together — the restore error alone reads as a retry of the same
+        // filtered restore, which is not what recovery will run.
+        (Err(restore), Err(persist)) => Err(CoreError::RestoreSetLost {
+            restore: Box::new(restore),
+            persist: Box::new(persist),
+        }),
+    }
 }
 
 fn persist_restore_set(dir: &Path, mutated: &[PathBuf]) -> Result<()> {
@@ -219,125 +244,4 @@ pub fn pending(dir: &Path) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The filtered restore is what keeps a refused apply from destroying
-    /// the very bytes the refusal protected: a path whose op never ran
-    /// keeps whatever a writer outside the transaction put there after the
-    /// journal was taken.
-    #[test]
-    fn a_filtered_rollback_leaves_unmutated_paths_as_the_world_left_them() {
-        let tmp = tempfile::tempdir().unwrap();
-        let work = tmp.path().join("work");
-        fs::create_dir_all(&work).unwrap();
-        let a = work.join("a.md");
-        let b = work.join("kendex.toml");
-        fs::write(&a, "a0").unwrap();
-        fs::write(&b, "b0").unwrap();
-
-        let journal_dir = tmp.path().join("journal/global");
-        write(&journal_dir, &[a.clone(), b.clone()]).unwrap();
-        // The transaction mutates `a`; a writer outside it lands on `b`
-        // before `b`'s own op refuses its precondition.
-        fs::write(&a, "a1").unwrap();
-        fs::write(&b, "external edit").unwrap();
-
-        rollback_mutated(&journal_dir, std::slice::from_ref(&a)).unwrap();
-
-        assert_eq!(fs::read_to_string(&a).unwrap(), "a0");
-        assert_eq!(fs::read_to_string(&b).unwrap(), "external edit");
-        assert!(!pending(&journal_dir));
-    }
-
-    /// A crash mid filtered restore must not widen the restore set: the
-    /// filter was persisted before the first path was touched, recovery
-    /// re-runs exactly it, and the external bytes it left alone survive
-    /// the second pass too.
-    #[test]
-    fn crash_recovery_honors_the_persisted_restore_filter() {
-        let tmp = tempfile::tempdir().unwrap();
-        let work = tmp.path().join("work");
-        fs::create_dir_all(&work).unwrap();
-        let a = work.join("a.md");
-        let b = work.join("kendex.toml");
-        fs::write(&a, "a0").unwrap();
-        fs::write(&b, "b0").unwrap();
-
-        let journal_dir = tmp.path().join("journal/global");
-        write(&journal_dir, &[a.clone(), b.clone()]).unwrap();
-        fs::write(&a, "a1").unwrap();
-        fs::write(&b, "external edit").unwrap();
-        // The filtered restore persisted its set, then the process died
-        // before restoring anything: the journal is still pending.
-        persist_restore_set(&journal_dir, std::slice::from_ref(&a)).unwrap();
-        assert!(pending(&journal_dir));
-
-        rollback(&journal_dir).unwrap();
-
-        assert_eq!(fs::read_to_string(&a).unwrap(), "a0");
-        assert_eq!(fs::read_to_string(&b).unwrap(), "external edit");
-        assert!(!pending(&journal_dir));
-    }
-
-    /// A journaled directory root above a mutated path is part of the
-    /// transaction's footprint: the chain it created comes down with the
-    /// rollback even though only the leaf is named as mutated.
-    #[test]
-    fn a_filtered_rollback_still_removes_the_chain_above_a_mutated_path() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path().join("work/.codex");
-        let leaf = root.join("skills/x.md");
-
-        let journal_dir = tmp.path().join("journal/global");
-        write(&journal_dir, &[leaf.clone(), root.clone()]).unwrap();
-        fs::create_dir_all(leaf.parent().unwrap()).unwrap();
-        fs::write(&leaf, "installed").unwrap();
-
-        rollback_mutated(&journal_dir, std::slice::from_ref(&leaf)).unwrap();
-
-        assert!(!root.exists());
-    }
-
-    #[test]
-    fn rollback_restores_files_dirs_symlinks_and_absence() {
-        let tmp = tempfile::tempdir().unwrap();
-        let work = tmp.path().join("work");
-        fs::create_dir_all(work.join("tree/sub")).unwrap();
-        fs::write(work.join("file.md"), "original").unwrap();
-        fs::write(work.join("tree/sub/x"), "x").unwrap();
-        make_symlink(Path::new("/nowhere"), &work.join("link")).unwrap();
-        let absent = work.join("was-absent");
-
-        let journal_dir = tmp.path().join("journal/global");
-        write(
-            &journal_dir,
-            &[
-                work.join("file.md"),
-                work.join("tree"),
-                work.join("link"),
-                absent.clone(),
-            ],
-        )
-        .unwrap();
-
-        fs::write(work.join("file.md"), "clobbered").unwrap();
-        fs::remove_dir_all(work.join("tree")).unwrap();
-        fs::remove_file(work.join("link")).unwrap();
-        fs::write(&absent, "should vanish").unwrap();
-
-        rollback(&journal_dir).unwrap();
-
-        assert_eq!(
-            fs::read_to_string(work.join("file.md")).unwrap(),
-            "original"
-        );
-        assert_eq!(fs::read_to_string(work.join("tree/sub/x")).unwrap(), "x");
-        assert_eq!(
-            fs::read_link(work.join("link")).unwrap(),
-            Path::new("/nowhere")
-        );
-        assert!(!absent.exists());
-        assert!(!pending(&journal_dir));
-    }
-}
+mod tests;

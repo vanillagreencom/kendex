@@ -2,6 +2,8 @@
 
 use std::fs;
 
+use kendex_core::error::CoreError;
+
 use super::*;
 
 #[test]
@@ -90,6 +92,45 @@ fn rename_fork_moves_the_declaration_and_refuses_depended_on_names() {
             .join("app/.kendex-local/skills/my-gh/SKILL.md")
             .is_file()
     );
+}
+
+/// The rename plan binds to the fork's files as they were when it was
+/// made. An edit landing on them after planning refuses the move — run
+/// anyway, the rename would carry the edit to the new name, where a later
+/// refusal's rollback could restore the old snapshot over it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_fork_edited_after_the_rename_was_planned_refuses_the_move() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "Upstream.");
+    commit(&w.upstream, "one");
+    declare(&w, "[skills.gh]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    fs::write(
+        skill_file(&w),
+        "---\nname: gh\ndescription: mine\n---\nMine.\n",
+    )
+    .unwrap();
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    let report = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &report.plan, None).unwrap();
+
+    let plan = fork::rename_fork(&w.env, &w.scope, ItemKind::Skill, "gh", "my-gh").unwrap();
+    let source = w.home.join("app/.kendex-local/skills/gh/SKILL.md");
+    fs::write(&source, "edited after planning").unwrap();
+
+    let error = apply::execute(&w.env, &plan, None).unwrap_err();
+    assert!(
+        matches!(&error, CoreError::RolledBack { cause, .. }
+            if matches!(**cause, CoreError::PlanStale { .. })),
+        "{error:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(&source).unwrap(),
+        "edited after planning"
+    );
+    assert!(!w.home.join("app/.kendex-local/skills/my-gh").exists());
 }
 
 #[test]

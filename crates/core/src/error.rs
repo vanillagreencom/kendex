@@ -337,6 +337,19 @@ pub enum CoreError {
         cause: Box<CoreError>,
     },
 
+    /// A filtered rollback stopped midway and its filter never reached
+    /// disk: the journal is pending, and the recovery that clears it
+    /// restores every snapshot, external bytes included. Both failures
+    /// are kept — the restore is what stopped, the persist is why
+    /// recovery will not run the same restore.
+    #[error(
+        "rollback stopped: {restore}; its restore set was not saved ({persist}), so recovery will restore every journaled path"
+    )]
+    RestoreSetLost {
+        restore: Box<CoreError>,
+        persist: Box<CoreError>,
+    },
+
     #[error("{path}: structured edit failed: {message}")]
     ConfigEdit { path: PathBuf, message: String },
 

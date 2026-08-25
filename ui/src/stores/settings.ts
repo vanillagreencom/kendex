@@ -224,7 +224,6 @@ function zoomActions(
 
 interface ProjectFields {
   settings: AppSettings | null;
-  base: string | null;
 }
 
 interface ProjectsSlice {
@@ -236,14 +235,16 @@ interface ProjectsSlice {
 /** The project registry's actions. Registration and removal are targeted
  *  server-side writes, so they carry no base — but each reply is a written
  *  settings-plus-base pair, and holding it keeps the store's copy current
- *  for the next whole-file save. */
+ *  for the next whole-file save. The hold comes from the store so every
+ *  settings-holding reply shares one ticket order: a reply older than the
+ *  newest one held is dropped, wherever it came from. */
 function projectActions(
-  set: (fields: Partial<ProjectFields>) => void,
   get: () => ProjectFields,
+  ordered: {
+    ticket: () => number;
+    hold: (read: SettingsRead, at: number) => void;
+  },
 ): ProjectsSlice {
-  const hold = (read: SettingsRead) =>
-    set({ settings: read.settings, base: read.base });
-
   const rescan = async () => {
     await useScanStore.getState().refresh();
   };
@@ -251,9 +252,10 @@ function projectActions(
   return {
     registerProject: async (path) => {
       const before = get().settings?.projects ?? [];
+      const at = ordered.ticket();
       const response = await commands.registerProject(path);
       if (response.status === "ok") {
-        hold(response.data);
+        ordered.hold(response.data, at);
         // Registration is where the drift report is offered: agents in this
         // project start blind until the session-start hook is installed. An
         // offer, never an auto-install — it injects into agent context.
@@ -302,9 +304,10 @@ function projectActions(
     },
 
     unregisterProject: async (path) => {
+      const at = ordered.ticket();
       const response = await commands.unregisterProject(path);
       if (response.status === "ok") {
-        hold(response.data);
+        ordered.hold(response.data, at);
         await rescan();
       } else {
         useProblemsStore.getState().showError({
@@ -352,11 +355,24 @@ async function rescan() {
 type WriteOutcome = { ok: true } | { ok: false; message: string };
 
 export const useSettingsStore = create<SettingsState>((set, get) => {
+  // The backend serializes the writes; the replies arrive in any order. A
+  // ticket taken as each request leaves orders them again on arrival: a
+  // reply whose ticket predates the newest one held is a view of the file
+  // something newer has already replaced, and holding it would walk the
+  // store backwards until the next reload.
+  let issued = 0;
+  let newest = 0;
+  const ticket = () => ++issued;
+
   /** Keep the copy and its base together — one never moves without the
    *  other, or the next save would present a base for bytes it does not
-   *  hold. */
-  const hold = (read: SettingsRead) =>
+   *  hold. Held only while `at` is the newest ticket seen: an older
+   *  request's late reply is dropped, not applied. */
+  const hold = (read: SettingsRead, at: number) => {
+    if (at < newest) return;
+    newest = at;
     set({ settings: read.settings, base: read.base });
+  };
 
   /** One change, written as the whole file with the base its copy was read
    *  from. A stale refusal means something else wrote the file since the
@@ -372,8 +388,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
     // would teach a caller to trust a change that was dropped.
     if (!settings)
       return { ok: false, message: "Your settings haven't loaded yet." };
+    let at = ticket();
     let response = await commands.updateSettings(change(settings), base);
     if (response.status === "error" && response.error.kind === "stale") {
+      const reread = ticket();
       const fresh = await commands.getSettings();
       // The re-read is the way out of a stale refusal. Failing, the fault
       // to name is the read itself — the contention wording would send
@@ -384,14 +402,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
           ok: false,
           message: `Couldn't re-read your settings to retry: ${fresh.error}`,
         };
-      hold(fresh.data);
+      hold(fresh.data, reread);
+      at = ticket();
       response = await commands.updateSettings(
         change(fresh.data.settings),
         fresh.data.base,
       );
     }
     if (response.status === "ok") {
-      hold(response.data);
+      hold(response.data, at);
       return { ok: true };
     }
     if (response.error.kind === "failed")
@@ -400,9 +419,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
     // so the copy in hand is behind it. One read-only refresh earns the
     // claim that the latest settings are shown; when even that read fails,
     // the claim goes with it.
+    const refresh = ticket();
     const last = await commands.getSettings();
     if (last.status === "ok") {
-      hold(last.data);
+      hold(last.data, refresh);
       return {
         ok: false,
         message:
@@ -420,24 +440,21 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
     base: null,
     capabilities: [],
     ...zoomActions(set, get),
-    ...projectActions(set, get),
+    ...projectActions(get, { ticket, hold }),
 
     load: async () => {
       // The size comes from the window, not from the file: the file holds
       // what the person asked for, and the zoom outlives the page, so a page
       // that has just reloaded is the one least able to work it out itself.
+      const at = ticket();
       const [settings, capabilities, webview] = await Promise.all([
         commands.getSettings(),
         commands.capabilityTable(),
         commands.windowZoomState(),
       ]);
       if (settings.status === "ok") {
-        set({
-          settings: settings.data.settings,
-          base: settings.data.base,
-          capabilities,
-          tookZoom: webview.percent,
-        });
+        hold(settings.data, at);
+        set({ capabilities, tookZoom: webview.percent });
         // The opening had no UI to say this in, so it is said here rather
         // than leaving the person with an app that quietly ignored their
         // size. Both halves are needed: the refusal stands for the whole

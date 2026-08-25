@@ -331,6 +331,39 @@ mod tests {
     use super::*;
     use crate::env::{Env, FakeOs};
 
+    /// The local-source dir rename binds to the tree as it was when the
+    /// plan was made. An edit landing inside it after planning refuses
+    /// the move, the edit survives, and the renames before it roll back.
+    #[test]
+    fn a_local_source_edit_after_planning_refuses_the_dir_rename() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("app");
+        let skill = root.join(".vstack-local/skills/x/SKILL.md");
+        std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        std::fs::write(&skill, "v1").unwrap();
+        std::fs::write(root.join("vstack.toml"), "schema = 5\n").unwrap();
+        let env = Env::fake(tmp.path(), FakeOs::Linux);
+        let scope = Scope::Project { root: root.clone() };
+
+        let ops = rename_ops(&env, &scope).unwrap();
+        std::fs::write(&skill, "edited after planning").unwrap();
+
+        let error = crate::apply::execute(&env, &Plan { scope, ops }, None).unwrap_err();
+        assert!(
+            matches!(&error, CoreError::RolledBack { cause, .. }
+                if matches!(**cause, CoreError::PlanStale { .. })),
+            "{error:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&skill).unwrap(),
+            "edited after planning"
+        );
+        assert!(!root.join(".kendex-local").exists());
+        // The manifest rename ahead of it rolled back to the old name.
+        assert!(root.join("vstack.toml").is_file());
+        assert!(!root.join("kendex.toml").exists());
+    }
+
     #[test]
     fn source_catalog_migration_renames_both_definition_and_install_state() {
         let tmp = tempfile::tempdir().unwrap();
