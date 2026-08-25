@@ -35,6 +35,7 @@ pub(super) fn hold_rev_conflict(
         state: DriftState::Conflict,
         detail: "wanted at two different revisions — nothing was changed".into(),
         cause: None,
+        compared: None,
     });
     if let Some(entry) = lock.entries.get(&item.key) {
         sink.new_lock
@@ -80,6 +81,7 @@ pub(super) fn hold_legacy_copy(
         state: DriftState::Conflict,
         detail,
         cause,
+        compared: None,
     });
     if let Some(entry) = lock.entries.get(&item.key) {
         sink.new_lock
@@ -178,6 +180,7 @@ fn hold_shared_edit(
         state: DriftState::Conflict,
         detail: "its files were edited on disk after another tool installed them — keep the edits as a fork, or apply with edits discarded".into(),
         cause: Some(DriftCause::LocalEdit),
+        compared: None,
     });
     true
 }
@@ -287,6 +290,7 @@ pub(super) fn hold_local_edit(
         state: DriftState::Conflict,
         detail: detail.into(),
         cause: Some(cause),
+        compared: None,
     });
     sink.new_lock
         .entries

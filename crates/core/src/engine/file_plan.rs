@@ -6,8 +6,9 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+use super::compared::of_file;
 use super::desired::{Artifact, Desired};
-use super::item_plan::{Planned, unmanaged};
+use super::item_plan::{Planned, unmanaged, unmanaged_compared};
 use super::{DriftCause, DriftState};
 use crate::apply::{Op, PlannedOp, Pre};
 use crate::env::Env;
@@ -80,7 +81,11 @@ pub(super) fn plan_written_file(
         Some(current) => {
             if !ours(path, owned) {
                 if !replace_unmanaged {
-                    return Ok(unmanaged(DriftCause::UnmanagedContent, path));
+                    return Ok(unmanaged_compared(
+                        DriftCause::UnmanagedContent,
+                        path,
+                        of_file(path, bytes),
+                    ));
                 }
                 ops.push(set_aside(path, Pre::HashIs { hash: current }));
                 ops.push(install(env, scope, item, path, bytes, Pre::Absent));
@@ -144,7 +149,11 @@ fn plan_absent_file(
     if alternate.is_file() {
         if !ours(path, owned) {
             if !replace_unmanaged {
-                return unmanaged(DriftCause::UnmanagedContent, &alternate);
+                return unmanaged_compared(
+                    DriftCause::UnmanagedContent,
+                    &alternate,
+                    of_file(&alternate, bytes),
+                );
             }
             let hash = match hash_tree(&alternate) {
                 Ok(hash) => hash,

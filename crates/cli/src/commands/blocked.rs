@@ -1,12 +1,14 @@
 //! What a blocked row says on a terminal, and the ways out printed under
-//! it. Every offer here is a command the reader can type: it carries the
-//! program name and the scope it was read in, and it is only printed where
-//! following it would actually settle the item.
+//! it. One conflict is said once however many tools hit it: the item, the
+//! reason, every position it sits at, how the content in the way compares
+//! with the install it blocks, and the exits under all of it.
 
-use kendex_core::engine::{DriftCause, DriftRow, DriftState, EngineReport};
+use kendex_core::engine::{Comparison, DriftCause, DriftRow, DriftState, EngineReport};
 use kendex_core::env::Env;
-use kendex_core::model::{HarnessId, Scope};
+use kendex_core::model::ItemKind;
+use kendex_core::names::shown;
 
+use super::offers::{Blocked, Offer, blocked_items, offer_goes_under, scope_flag};
 use super::say;
 
 /// What this apply cannot write and why. A conflict plans no op, so
@@ -17,37 +19,63 @@ use super::say;
 /// the score is advisory, and the row carries what actually stops the
 /// write — files in its way kendex did not write, or the user's edits in
 /// the installed copy — with the exits printed under it.
-pub fn print_conflicts(env: &Env, report: &EngineReport) -> bool {
+pub fn print_conflicts(env: &Env, report: &EngineReport) -> Vec<Blocked> {
     let rows = conflict_rows(report);
-    for row in &rows {
+    let blocked = blocked_items(env, &rows);
+    for (_, group) in grouped(&rows) {
+        let Some((first, rest)) = group.split_first() else {
+            continue;
+        };
+        let offer = blocked.iter().find(|item| item.is(first));
         say(&format!(
             "conflict: {} {} for {}: {}",
-            row.kind.name(),
-            kendex_core::names::shown(&row.name),
-            row.harness.display_name(),
-            conflict_detail(row)
+            first.kind.name(),
+            shown(&first.name),
+            tools(&group).join(", "),
+            conflict_detail(first)
         ));
-        for line in exits_under(env, &rows, row) {
-            say(&line);
+        // Every position, never a count: the exit for some of these is the
+        // reader moving the files themselves, and a place the output does
+        // not name is a place they cannot go to.
+        for place in also_at(first, rest) {
+            say(&format!("  also at {place}"));
         }
+        let offer = offer.and_then(|item| item.offer.as_ref());
+        if let Some(line) = compared_line(first.compared.as_ref(), offer) {
+            say(&format!("  {line}"));
+        }
+        say_offer(&rows, group.last().unwrap_or(first), offer);
     }
-    say_scope_exit(&rows);
-    !rows.is_empty()
+    say_scope_exit(&rows, &blocked);
+    blocked
 }
 
 /// The ways out alone, for a surface that has already listed the rows.
 /// Asking for more detail must not cost the reader the way out.
-pub fn print_exits(env: &Env, report: &EngineReport) {
+pub fn print_exits(env: &Env, report: &EngineReport) -> Vec<Blocked> {
     let rows = conflict_rows(report);
+    let blocked = blocked_items(env, &rows);
     for row in &rows {
-        for line in exits_under(env, &rows, row) {
-            say(&line);
-        }
+        let offer = blocked
+            .iter()
+            .find(|item| item.is(row))
+            .and_then(|item| item.offer.as_ref());
+        say_offer(&rows, row, offer);
     }
-    say_scope_exit(&rows);
+    say_scope_exit(&rows, &blocked);
+    blocked
 }
 
-fn conflict_rows(report: &EngineReport) -> Vec<&DriftRow> {
+/// One remedy per item, said under the last of the rows that can carry it.
+fn say_offer(rows: &[&DriftRow], row: &DriftRow, offer: Option<&Offer>) {
+    if let (Some(offer), true) = (offer, offer_goes_under(rows, row)) {
+        say(&format!("  to keep those files: {}", offer.line));
+    }
+}
+
+/// The rows a plan refused, in plan order — the one reading of "blocked"
+/// that the printed list, the counts, and the exits all share.
+pub fn conflict_rows(report: &EngineReport) -> Vec<&DriftRow> {
     report
         .drift
         .iter()
@@ -55,41 +83,121 @@ fn conflict_rows(report: &EngineReport) -> Vec<&DriftRow> {
         .collect()
 }
 
-/// One remedy per item, said under the last of the rows that have a way
-/// out: keeping an item's files is a single move covering every tool it is
-/// blocked for, and run once per tool it lands each tool's copy on top of
-/// the last. Only those rows count towards which is last — an item can also
-/// be edited under another tool, and waiting for a row that will never
-/// print the offer loses it altogether.
-fn exits_under<'a>(env: &Env, rows: &[&'a DriftRow], row: &&'a DriftRow) -> Vec<String> {
-    if !row.dead_stop() {
-        return Vec::new();
+/// What makes two rows the same conflict said twice: the item, the reason
+/// it is blocked, and how the content in the way compares. The position
+/// differs by tool and never splits the group — collapsing on it is the
+/// whole point. A row whose detail is a sentence rather than a place keeps
+/// that sentence in the key: an edit and a revision clash are different
+/// conflicts.
+type Key = (
+    ItemKind,
+    String,
+    Option<DriftCause>,
+    String,
+    Option<Comparison>,
+);
+
+fn grouped<'a>(rows: &[&'a DriftRow]) -> Vec<(Key, Vec<&'a DriftRow>)> {
+    let mut groups: Vec<(Key, Vec<&DriftRow>)> = Vec::new();
+    for row in rows {
+        let key = (
+            row.kind,
+            row.name.clone(),
+            row.cause,
+            match positional(row) {
+                true => String::new(),
+                false => row.detail.clone(),
+            },
+            row.compared.clone(),
+        );
+        match groups.iter_mut().find(|(seen, _)| *seen == key) {
+            Some((_, group)) => group.push(row),
+            None => groups.push((key, vec![row])),
+        }
     }
-    // Only where the item has files at its position. A revision clash or a
-    // source rebind is a dead stop too, and telling the reader to move
-    // files aside settles nothing there — nor does an edit beside it, which
-    // is a decision of its own and not files anybody has to move.
-    if !rows.iter().any(|other| {
-        other.kind == row.kind
-            && other.name == row.name
-            && other.dead_stop()
-            && other.cause.is_some()
-    }) {
-        return Vec::new();
+    groups
+}
+
+/// Whether this row's detail is a place on disk rather than a sentence —
+/// the four causes that say files are already where the install goes.
+fn positional(row: &DriftRow) -> bool {
+    row.cause
+        .is_some_and(|cause| cause.in_the_way() || cause == DriftCause::ForeignLink)
+}
+
+/// Every tool this conflict blocks, in the order the rows came.
+fn tools<'a>(group: &[&'a DriftRow]) -> Vec<&'a str> {
+    let mut named: Vec<&str> = Vec::new();
+    for row in group {
+        let tool = row.harness.display_name();
+        if !named.contains(&tool) {
+            named.push(tool);
+        }
     }
-    // Every conflict the item has, not only the ones with files in the
-    // way: keeping is one move for the whole item and the engine refuses
-    // one it could only half settle, so a hard conflict beside them — a
-    // link adoption will not touch — takes the offer with it.
-    let blocked =
-        |other: &&&DriftRow| other.kind == row.kind && other.name == row.name && other.dead_stop();
-    let index = rows.iter().position(|other| std::ptr::eq(*other, *row));
-    let after = index.map_or(0, |at| at + 1);
-    if rows[after..].iter().any(|later| blocked(&later)) {
-        return Vec::new();
+    named
+}
+
+/// The positions the head line did not name. Deduped on the place itself,
+/// never on its rendering: what makes two rows one place is the path.
+fn also_at(first: &DriftRow, rest: &[&DriftRow]) -> Vec<String> {
+    let mut places: Vec<&str> = Vec::new();
+    for row in rest {
+        if row.detail != first.detail && !places.contains(&row.detail.as_str()) {
+            places.push(&row.detail);
+        }
     }
-    let item: Vec<&DriftRow> = rows.iter().filter(blocked).copied().collect();
-    vec![format!("  to keep those files: {}", keep_exit(env, &item))]
+    places.into_iter().map(shown).collect()
+}
+
+/// What the files in the way are, measured against the install they block.
+/// A conflict over content identical to the catalog is a decision the
+/// reader can take without looking; one over content that differs is not,
+/// and the difference is worth naming before either exit runs.
+///
+/// Whether keeping identical content is *safe* is the exit's answer, not
+/// the comparison's: where the way out is the reader moving files aside by
+/// hand, calling adoption safe names a command that was never offered.
+fn compared_line(compared: Option<&Comparison>, offer: Option<&Offer>) -> Option<String> {
+    let compared = compared?;
+    // What the frontmatter claims about itself, said as that: a catalog
+    // still named vstack stamps the same token today.
+    let origin = match compared.vstack_stamped {
+        true => " (it carries a source: vstack stamp)",
+        false => "",
+    };
+    if compared.identical() {
+        let safe = match offer.is_some_and(|offer| offer.adopt) {
+            true => " — adopt is safe",
+            false => "",
+        };
+        return Some(format!("identical to the catalog{safe}{origin}"));
+    }
+    let named: Vec<String> = compared
+        .differing
+        .iter()
+        .take(NAMED_FILES)
+        .map(|file| shown(file))
+        .collect();
+    let total = compared.differing_total;
+    let more = match total.saturating_sub(u32::try_from(named.len()).unwrap_or(u32::MAX)) {
+        0 => String::new(),
+        n => format!(", and {n} more"),
+    };
+    Some(format!(
+        "differs from the catalog in {total} file{}: {}{more}{origin}",
+        plural(total),
+        named.join(", ")
+    ))
+}
+
+/// Enough to recognise what differs without reprinting the item.
+const NAMED_FILES: usize = 3;
+
+fn plural(n: u32) -> &'static str {
+    match n {
+        1 => "",
+        _ => "s",
+    }
 }
 
 /// Once, not per row: the half that names the item differs line by line and
@@ -97,37 +205,21 @@ fn exits_under<'a>(env: &Env, rows: &[&'a DriftRow], row: &&'a DriftRow) -> Vec<
 /// copies of it bury the paths that differ. Indented with them all the same
 /// — at column 0 it reads as a heading over the plan that follows, which is
 /// the plan that runs without it.
-///
-/// The flag sweeps up the items it can take over, replaces each one it can
-/// settle whole, holds back the ones it could only half settle, and
-/// refuses only when nothing settles — so one wholly replaceable item is
-/// reason enough to print it, and a held-back neighbour is no reason to
-/// withhold it. An unrelated item with no take-over of its own is never
-/// reached by it either way.
-fn say_scope_exit(rows: &[&DriftRow]) {
-    let item_of =
-        |row: &DriftRow, other: &DriftRow| other.kind == row.kind && other.name == row.name;
-    let replaceable = rows
-        .iter()
-        .filter(|row| row.cause.is_some_and(DriftCause::can_replace))
-        .any(|row| {
-            rows.iter()
-                .filter(|other| item_of(row, other) && other.dead_stop())
-                .all(|other| other.cause.is_some_and(DriftCause::can_replace))
-        });
-    if let (true, Some(row)) = (replaceable, rows.first()) {
-        say(&format!(
-            "  to install what kendex.toml asks for instead: kendex apply --replace-unmanaged{}",
-            scope_flag(&row.scope)
-        ));
-    }
+fn say_scope_exit(rows: &[&DriftRow], blocked: &[Blocked]) {
+    let (true, Some(row)) = (blocked.iter().any(|item| item.replace), rows.first()) else {
+        return;
+    };
+    say(&format!(
+        "  to install what kendex.toml asks for instead: kendex apply --replace-unmanaged{}",
+        scope_flag(&row.scope)
+    ));
 }
 
 /// What a conflict row says on a terminal. A row whose files were already
 /// there carries the path alone — the cause is what says the rest, and only
 /// a surface knows how to word it — so the sentence is written here.
 pub fn conflict_detail(row: &DriftRow) -> String {
-    let detail = kendex_core::names::shown(&row.detail);
+    let detail = shown(&row.detail);
     match row.cause {
         Some(DriftCause::UnmanagedContent | DriftCause::UnmanagedWrongShape) => {
             format!("{detail} already holds files kendex did not write")
@@ -142,69 +234,50 @@ pub fn conflict_detail(row: &DriftRow) -> String {
     }
 }
 
-/// The way out that keeps the files, spelled as the command that takes it —
-/// printed to be read once and typed, so it carries the program name.
-///
-/// Every tool it names is one adoption can actually act through: it works
-/// at a tool's own place and nowhere else, so a tool with nothing there —
-/// a folder its neighbours reach by a shortcut, say — would error the
-/// moment the reader followed the offer. Adoption cannot take every kind
-/// either, nor a folder where one file goes or a file where a folder goes;
-/// and a name a shell would read as more than one argument is never
-/// printed as one, since a name may legally hold a space or a semicolon
-/// and copied into a terminal that is somebody else's command. Wherever
-/// nothing can be offered the files are still the reader's to keep, by
-/// moving them out of the way themselves.
-fn keep_exit(env: &Env, item: &[&DriftRow]) -> String {
-    let away = "move them somewhere else first".to_owned();
-    let Some(row) = item.first() else {
-        return away;
-    };
-    let mut tools: Vec<HarnessId> = Vec::new();
-    for row in item {
-        // Core's answers, not a second reading of the cause. A shape it
-        // cannot take stops the whole item, since keeping is one move for
-        // all of it; a tool with nothing at its own place is a different
-        // thing and simply is not named, because the tool holding the
-        // folder keeps it for both.
-        let exits = kendex_core::engine::exits::for_row(env, &row.scope, row);
-        if !exits.keep {
-            return away;
-        }
-        // Every tool the move acts on, which is not always the tool the
-        // row is about: a folder shared by hand is read by whoever links
-        // at it, and each of those links is cleared. Named here, so the
-        // command says what it will touch.
-        if exits.enter {
-            for harness in exits.tools {
-                if !tools.contains(&harness) {
-                    tools.push(harness);
-                }
-            }
-        }
-    }
-    if tools.is_empty() || !kendex_core::names::plain_argument(&row.name) {
-        return away;
-    }
-    let named: String = tools
-        .iter()
-        .map(|harness| format!(" --harness {}", harness.name()))
-        .collect();
-    format!(
-        "kendex adopt {} {}{named}{}",
-        row.kind.name(),
-        row.name,
-        scope_flag(&row.scope)
-    )
-}
+#[cfg(test)]
+mod tests {
+    use kendex_core::model::{HarnessId, Scope};
 
-/// The flag that points a command at the scope the row was read in. A
-/// project needs none — it is what every command defaults to — but a
-/// remedy printed while looking at the global scope runs against the
-/// current project without it.
-fn scope_flag(scope: &Scope) -> &'static str {
-    match scope {
-        Scope::Global => " --global",
-        Scope::Project { .. } => "",
+    use super::*;
+
+    fn row(harness: HarnessId, detail: &str) -> DriftRow {
+        DriftRow {
+            kind: ItemKind::Skill,
+            name: "deploy".to_owned(),
+            harness,
+            scope: Scope::Global,
+            state: DriftState::Conflict,
+            detail: detail.to_owned(),
+            cause: Some(DriftCause::UnmanagedContent),
+            compared: None,
+        }
+    }
+
+    /// A position is an identity, and `shown` is not injective: a path
+    /// holding a real newline and one holding the two characters that
+    /// spell its escape render alike. Deduplicated on the rendering, one
+    /// of two real places would never be printed.
+    #[test]
+    fn two_positions_that_render_alike_are_both_named() {
+        let head = row(HarnessId::Claude, "/a/head");
+        let real = row(HarnessId::Codex, "/a/one\ntwo");
+        let literal = row(HarnessId::Cursor, "/a/one\\ntwo");
+        let places = also_at(&head, &[&real, &literal]);
+        assert_eq!(
+            places,
+            vec!["/a/one\\ntwo".to_owned(), "/a/one\\ntwo".to_owned()],
+            "two real places rendered alike were printed as one"
+        );
+    }
+
+    /// The same place under two tools is one place, said once.
+    #[test]
+    fn one_place_reached_twice_is_named_once() {
+        let first = row(HarnessId::Claude, "/a/shared");
+        let same = row(HarnessId::Codex, "/a/shared");
+        let other = row(HarnessId::Cursor, "/a/other");
+        let another = row(HarnessId::Pi, "/a/other");
+        let places = also_at(&first, &[&same, &other, &another]);
+        assert_eq!(places, vec!["/a/other".to_owned()]);
     }
 }

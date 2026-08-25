@@ -671,6 +671,32 @@ export type CatalogSummary = {
 	subscription: SubscriptionRef | null,
 };
 
+/**  How the content in the way compares with the install it blocks. */
+export type Comparison = {
+	/**
+	 *  Paths relative to the item's position whose bytes on disk are not
+	 *  the bytes that would install — a file only one side has included.
+	 *  At most `SHOWN_DIFFERING` of them: this rides in a drift row into
+	 *  `--json` and across IPC, and a wide walk must not inflate either.
+	 * 
+	 *  Stored as they are, never as their rendering, the way
+	 *  `DriftRow::detail` is: these are identities — two entries are the
+	 *  same file when their paths match — and escaping first would let two
+	 *  different names compare, and count, as one. Surfaces escape at the
+	 *  moment they print (`names::shown`).
+	 */
+	differing: string[],
+	/**  How many differ in all. Zero means the two are byte-identical. */
+	differingTotal: number,
+	/**
+	 *  The item's own marker file carries a `source: vstack` stamp. That
+	 *  is what the frontmatter says about itself, not proof of when the
+	 *  bytes were written — a catalog still named `vstack` stamps the same
+	 *  token today.
+	 */
+	vstackStamped: boolean,
+};
+
 export type CreateRequest = {
 	/**  Folder and repository name; must be a plain installable spelling. */
 	name: string,
@@ -835,6 +861,12 @@ export type DriftRow_Deserialize = {
 	state: DriftState,
 	detail: string,
 	cause?: DriftCause | null,
+	/**
+	 *  How the content in the way compares with the install this row
+	 *  refused — absent where the position holds nothing comparable, or
+	 *  where the row is not about content in the way at all.
+	 */
+	compared?: Comparison | null,
 };
 
 export type DriftRow_Serialize = {
@@ -845,6 +877,12 @@ export type DriftRow_Serialize = {
 	state: DriftState,
 	detail: string,
 	cause?: DriftCause | null,
+	/**
+	 *  How the content in the way compares with the install this row
+	 *  refused — absent where the position holds nothing comparable, or
+	 *  where the row is not about content in the way at all.
+	 */
+	compared?: Comparison | null,
 };
 
 export type DriftState = 

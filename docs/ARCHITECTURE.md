@@ -106,15 +106,15 @@ lives in one capability table read by core and UI.
      settles. One refused at every link is not held: its rows stand,
      nothing replaced. The app offers adopt for unmanaged items, and a
      declared item's conflict has no app exit until KEN-582 attaches one.
-   The row states which files are in the way and which exits apply; the
-   CLI names the verb and flag under it. A foreign
-   link pointing at a real skill folder several tools read offers keeping
-   only. Exception: a link the user explicitly adopts that resolves to a
-   real skill folder outside kendex's trees — adopt captures the folder's
-   content, trashes the folder (bound to the exact bytes captured) and
-   every sibling link reading it, and the follow-up apply restores the
-   sharing from kendex's copy; the confirm names the folder and every tool
-   reading it. A link at anything else stays a conflict.
+   The row states which files are in the way, which exits apply, and — where that
+   position can be read in full — how it compares with the install it blocks.
+   The CLI names the verb and flag under it. A foreign link pointing at a real
+   skill folder several tools read offers keeping only. Exception: a link the user
+   explicitly adopts that resolves to a real skill folder outside kendex's trees —
+   adopt captures the folder's content, trashes the folder (bound to the exact
+   bytes captured) and every sibling link reading it, and the follow-up apply
+   restores the sharing from kendex's copy; the confirm names the folder and every
+   tool reading it. A link at anything else stays a conflict.
    Ownership is what kendex wrote, read from the positions lock entries
    actually wrote (including paths recorded under another kind's name) —
    never from the lock key alone, and never from an entry merely being on

@@ -10,7 +10,7 @@ use crate::model::{HarnessId, ItemKind};
 
 /// Deeper than any rendered tree goes; a link that loops back into its own
 /// tree hits this instead of the stack limit.
-const MAX_DEPTH: usize = 32;
+pub(crate) const MAX_DEPTH: usize = 32;
 
 /// SHA-256 over a file's bytes, or over a directory tree as sorted
 /// relative-path + content pairs. Symlinks hash their resolved content.

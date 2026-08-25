@@ -63,9 +63,16 @@ pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()
     };
     for harness in ctx.harnesses.clone() {
         if !hook.applies_to(harness) {
+            // A fact with no consequence reads as a fault the reader has
+            // to chase. The consequence is the skip, and the two answers
+            // are the whole decision. What decides it is the hook script's
+            // own frontmatter, not the manifest — a remedy naming the
+            // manifest would widen the install set and change nothing.
             state.notes.push(format!(
-                "hook {}: not declared for {}",
+                "hook {}: skips {} — {} is not in the hook's own harnesses line in the catalog; add it there, or list this hook's harnesses in kendex.toml without {}",
                 ctx.name,
+                harness.name(),
+                harness.name(),
                 harness.name()
             ));
             continue;

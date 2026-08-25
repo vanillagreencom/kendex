@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+use super::compared::Comparison;
 use super::{DriftCause, DriftRow, DriftState};
 use crate::apply::PlannedOp;
 use crate::clock::timestamp;
@@ -54,6 +55,7 @@ pub(super) fn plan_item(
         state,
         detail,
         cause: None,
+        compared: None,
     };
     let existing = lock.entries.get(&item.key);
 
@@ -102,19 +104,20 @@ pub(super) fn plan_item(
     let dirty = !matches!(planned, Planned::Clean);
     // The two refusals differ only in whether the cause is known.
     let refused = match planned {
-        Planned::Unmanaged(cause, detail) => Some((Some(cause), detail)),
-        Planned::Conflict(detail) => Some((None, detail)),
+        Planned::Unmanaged(cause, detail, compared) => Some((Some(cause), detail, compared)),
+        Planned::Conflict(detail) => Some((None, detail, None)),
         Planned::Drift(state, detail) => {
             drift.push(row(state, detail));
             None
         }
         Planned::Clean => None,
     };
-    if let Some((cause, detail)) = refused {
+    if let Some((cause, detail, compared)) = refused {
         ops.truncate(staged);
         written.undo_item();
         let mut conflict = row(DriftState::Conflict, detail);
         conflict.cause = cause;
+        conflict.compared = compared;
         drift.push(conflict);
         if let Some(entry) = existing {
             new_lock.entries.insert(item.key.clone(), entry.clone());
@@ -174,8 +177,9 @@ pub(super) enum Planned {
     Conflict(String),
     /// Files kendex never wrote sit where this item installs. A conflict
     /// like any other, carrying the cause that says which ways out this
-    /// position has.
-    Unmanaged(DriftCause, String),
+    /// position has and how those files compare with the install they
+    /// block.
+    Unmanaged(DriftCause, String, Option<Comparison>),
 }
 
 /// The refusal: where the files in the way are, and nothing else. The
@@ -192,7 +196,27 @@ pub(super) enum Planned {
 /// that is not kendex, and a folder name carrying an escape sequence must
 /// reach a terminal as its own characters.
 pub(super) fn unmanaged(cause: DriftCause, path: &std::path::Path) -> Planned {
-    Planned::Unmanaged(cause, crate::names::shown(&path.display().to_string()))
+    Planned::Unmanaged(
+        cause,
+        crate::names::shown(&path.display().to_string()),
+        None,
+    )
+}
+
+/// The same refusal, carrying what the plan measured the files in the way
+/// against: the bytes it was about to write. Only the passes that hold both
+/// sides can answer, and where a position cannot be read as content at all
+/// — a link kendex will not follow — there is nothing to compare.
+pub(super) fn unmanaged_compared(
+    cause: DriftCause,
+    path: &std::path::Path,
+    compared: Option<Comparison>,
+) -> Planned {
+    Planned::Unmanaged(
+        cause,
+        crate::names::shown(&path.display().to_string()),
+        compared,
+    )
 }
 
 /// A registration is in sync when its backing file matches and re-applying

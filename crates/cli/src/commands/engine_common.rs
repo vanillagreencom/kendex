@@ -41,7 +41,7 @@ pub fn print_report(env: &Env, report: &EngineReport) {
         }
     }
     print_safety(report);
-    let blocked = print_conflicts(env, report);
+    let blocked = !print_conflicts(env, report).is_empty();
     if report.plan.is_empty() {
         // "nothing to do" directly under a conflict reads as "and nothing
         // you can do" — the run has plenty to do, once the reader picks.
@@ -191,8 +191,26 @@ fn print_skipped(advisory: &kendex_core::quality::AuditResult) {
 /// Prompted apply: `--yes` skips the prompt; a non-tty without `--yes`
 /// refuses rather than guessing.
 pub fn confirm_and_execute(env: &Env, report: &EngineReport, yes: bool) -> CliResult {
+    // Nothing to write is not a write of nothing: the caller has already
+    // said "nothing to do", and a completion line under it reads as a run
+    // that finished something.
     if report.plan.is_empty() {
         return Ok(());
+    }
+    let applied = confirm_and_apply(env, report, yes)?;
+    say(&format!("applied {applied} change(s)"));
+    Ok(())
+}
+
+/// The same prompt and the same write, handing back what it wrote instead
+/// of announcing it — for a verb that closes on a summary of its own.
+pub fn confirm_and_apply(
+    env: &Env,
+    report: &EngineReport,
+    yes: bool,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    if report.plan.is_empty() {
+        return Ok(0);
     }
     if !yes {
         if !std::io::stdin().is_terminal() {
@@ -205,9 +223,7 @@ pub fn confirm_and_execute(env: &Env, report: &EngineReport, yes: bool) -> CliRe
             return Err("apply cancelled".into());
         }
     }
-    let outcome = kendex_core::apply::execute(env, &report.plan, None)?;
-    say(&format!("applied {} change(s)", outcome.applied));
-    Ok(())
+    Ok(kendex_core::apply::execute(env, &report.plan, None)?.applied)
 }
 
 /// A refresh failure per v1: any per-item failure or a locked item missing

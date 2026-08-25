@@ -87,6 +87,15 @@ an outside contributor.
 - Updating or holding one package no longer brings the scope's other following
   packages along — from the Updates page, a package page, `kendex pin`, or the
   new `kendex updates apply <kind> <name>`. `kendex refresh` still updates everything.
+- `kendex refresh` ends on a ledger — `refreshed N changes · skipped K items on
+  conflict · flagged M items on safety` — each outcome it carries naming a next
+  step. A run whose installs were all blocked no longer says "nothing installed".
+- One conflict prints once, naming every tool it blocks and every position it
+  sits at, plus how the files in the way compare with the catalog — identical or
+  which files differ, noting where they carry a `source: vstack` stamp.
+- A hook that skips a tool now points at the hook's own `harnesses:` line in the
+  catalog, and skills that require each other read `installing dev also installs
+  orch, reviewer (required)`.
 - **Breaking:** in `kendex check --json`, a not-yet-evaluated line now has
   `"class": "unevaluated"` where it had `"class": "unknown"`. A parser
   matching that field exhaustively has to accept the new value.

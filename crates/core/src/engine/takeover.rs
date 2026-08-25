@@ -123,7 +123,10 @@ fn split_sweep(drift: &[DriftRow]) -> (Swept, Vec<(String, String)>) {
                 format!(
                     "replacing cannot settle its conflict for {}: {}",
                     stop.harness.display_name(),
-                    stop.detail
+                    // A note is a finished sentence its readers print as
+                    // it stands, so the path is escaped here rather than
+                    // at each of them.
+                    crate::names::shown(&stop.detail)
                 ),
             ));
         }

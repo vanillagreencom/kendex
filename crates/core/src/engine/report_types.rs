@@ -7,6 +7,7 @@ use specta::Type;
 use crate::apply::Plan;
 use crate::model::{HarnessId, ItemKind, Scope};
 
+use super::compared::Comparison;
 use super::scoring::ItemSafety;
 use super::set_change::{KeptInstall, SetChange};
 
@@ -100,6 +101,11 @@ pub struct DriftRow {
     pub detail: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cause: Option<DriftCause>,
+    /// How the content in the way compares with the install this row
+    /// refused — absent where the position holds nothing comparable, or
+    /// where the row is not about content in the way at all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compared: Option<Comparison>,
 }
 
 impl DriftRow {

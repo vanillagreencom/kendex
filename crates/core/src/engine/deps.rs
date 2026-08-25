@@ -104,6 +104,13 @@ pub(super) fn expand(
         );
         findings.insert(parent.clone(), found);
         for (dep, harnesses) in wanted {
+            // A reference filtered to no tool installs nothing, so it is
+            // no edge: the finding beside it already says the dependency
+            // is missing, and an edge here would have the cycle note
+            // claim a co-install the graph rejected.
+            if harnesses.is_empty() {
+                continue;
+            }
             edges.entry(parent.clone()).or_default().insert(dep.clone());
             let decl = ItemDecl {
                 source: source.clone(),
@@ -141,10 +148,59 @@ pub(super) fn expand(
     }
     state.warnings.extend(findings.into_values().flatten());
     for members in cycles(&edges) {
-        state.notes.push(format!(
-            "skills {} require each other — all of them install",
-            members.join(" and ")
-        ));
+        if let Some(note) = co_install(&members, expansion) {
+            state.notes.push(note);
+        }
+    }
+}
+
+/// What a knot of skills that require each other means for the reader: one
+/// of them was asked for, and taking it takes the rest. Said from the
+/// declared member where there is one — that is the name the reader typed —
+/// and from the first member otherwise, which is equally true: every member
+/// of a cycle reaches every other.
+fn co_install(members: &[String], expansion: &Expansion) -> Option<String> {
+    let declared = |name: &String| {
+        expansion
+            .harnesses(ItemKind::Skill, name)
+            .into_iter()
+            .any(|harness| {
+                expansion
+                    .reasons(ItemKind::Skill, name, harness)
+                    .contains(&Reason::Requested)
+            })
+    };
+    let asked = members
+        .iter()
+        .find(|name| declared(name))
+        .or_else(|| members.first())?;
+    // "also installs" is a claim about every tool the asked-for item lands
+    // on. Where a member does not reach all of them the sentence is false
+    // for the rest, and the missing-dependency finding says so instead.
+    let asked_on = expansion.harnesses(ItemKind::Skill, asked);
+    let reaches = |name: &String| {
+        let theirs = expansion.harnesses(ItemKind::Skill, name);
+        asked_on.iter().all(|harness| theirs.contains(harness))
+    };
+    if !members.iter().all(reaches) {
+        return None;
+    }
+    let rest: Vec<&str> = members
+        .iter()
+        .filter(|name| *name != asked)
+        .map(String::as_str)
+        .collect();
+    match rest.is_empty() {
+        // A skill that lists itself: the reference resolves to the item
+        // that wrote it. Said out loud rather than dropped — the reader
+        // owns the catalog line that put it there.
+        true => Some(format!(
+            "{asked} lists itself as required — that line installs nothing"
+        )),
+        false => Some(format!(
+            "installing {asked} also installs {} (required)",
+            rest.join(", ")
+        )),
     }
 }
 

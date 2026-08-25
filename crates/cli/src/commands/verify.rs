@@ -80,7 +80,7 @@ pub fn run(
                         entry.kind.name(),
                         entry.name,
                         entry.harness.name(),
-                        row.detail
+                        kendex_core::names::shown(&row.detail)
                     ));
                 }
                 None if unreachable_source => {

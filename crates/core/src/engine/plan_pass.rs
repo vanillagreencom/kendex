@@ -149,6 +149,7 @@ pub(super) fn plan_refusals(
                     state: DriftState::Conflict,
                     detail: format!("{} — {why}", refusal.reason),
                     cause,
+                    compared: None,
                 });
                 // The files stay, so the record of them stays. Dropping it
                 // would leave kendex's own rendering on disk with nothing
@@ -177,6 +178,7 @@ pub(super) fn plan_refusals(
                 true => refusal.reason.clone(),
             },
             cause: None,
+            compared: None,
         });
         ops.append(&mut removals);
     }

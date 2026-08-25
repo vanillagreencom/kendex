@@ -52,6 +52,7 @@ pub(super) fn unmanaged_rows(
             state: DriftState::Unmanaged,
             detail: item.path.display().to_string(),
             cause: None,
+            compared: None,
         });
     }
     Ok(())

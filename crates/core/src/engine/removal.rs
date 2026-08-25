@@ -274,6 +274,7 @@ pub(super) fn orphans(
                 "left over from an earlier setup; nothing needs it anymore".into()
             },
             cause: None,
+            compared: None,
         });
         if !removable {
             if unneeded {
@@ -305,6 +306,7 @@ pub(super) fn orphans(
                 state: DriftState::Conflict,
                 detail,
                 cause,
+                compared: None,
             });
             new_lock.entries.insert(key.clone(), entry.clone());
             continue;
@@ -323,6 +325,7 @@ pub(super) fn orphans(
                 state: DriftState::Conflict,
                 detail: "no longer wanted, but its files were edited on disk — remove it by name to confirm".into(),
                 cause: Some(super::DriftCause::LocalEdit),
+                compared: None,
             });
             new_lock.entries.insert(key.clone(), entry.clone());
             continue;

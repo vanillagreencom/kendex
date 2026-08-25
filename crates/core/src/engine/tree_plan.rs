@@ -8,9 +8,10 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use super::compared::of_tree;
 use super::desired::{Artifact, Desired};
 use super::file_plan::{TAKEN_OVER, set_aside};
-use super::item_plan::{Planned, unmanaged};
+use super::item_plan::{Planned, unmanaged, unmanaged_compared};
 use super::written::Written;
 use super::{DriftCause, DriftState};
 use crate::apply::{Op, PlannedOp, Pre};
@@ -37,7 +38,7 @@ pub(super) fn plan_tree(
     else {
         return Ok(Planned::Clean);
     };
-    let collapsed = match collapsed_link(env, scope, item, canonical, owned) {
+    let collapsed = match collapsed_link(env, scope, item, canonical, files, owned) {
         Ok(collapsed) => collapsed,
         Err(conflict) => return Ok(conflict),
     };
@@ -73,7 +74,7 @@ pub(super) fn plan_tree(
                 && !owned.contains(canonical)
                 && !written.canonicals.contains(canonical));
         if unowned && !replace_unmanaged {
-            return Ok(in_the_way(canonical));
+            return Ok(in_the_way(canonical, files));
         }
         result = match (disk.is_some() || collapsed.is_some(), unowned) {
             (_, true) => Planned::Drift(DriftState::Missing, TAKEN_OVER.into()),
@@ -106,6 +107,7 @@ pub(super) fn plan_tree(
         item,
         link,
         canonical,
+        files,
         replace_unmanaged,
         owned,
         written,
@@ -127,12 +129,14 @@ pub(super) fn plan_tree(
 /// in the local source, so a folder there is something it can take and
 /// anything else is not — said as the cause, because a surface that
 /// offered to keep the wrong shape would fail on the click.
-fn in_the_way(path: &Path) -> Planned {
-    let cause = match path.is_dir() {
-        true => DriftCause::UnmanagedContent,
-        false => DriftCause::UnmanagedWrongShape,
-    };
-    unmanaged(cause, path)
+fn in_the_way(path: &Path, files: &[(PathBuf, Vec<u8>)]) -> Planned {
+    match path.is_dir() {
+        // A folder against the folder that would replace it. The wrong
+        // shape has no per-file answer — one file where a tree goes is
+        // not a tree with one file differing — so it carries none.
+        true => unmanaged_compared(DriftCause::UnmanagedContent, path, of_tree(path, files)),
+        false => unmanaged(DriftCause::UnmanagedWrongShape, path),
+    }
 }
 
 /// A link where the tree belongs is this installation's own collapse onto a
@@ -149,6 +153,7 @@ fn collapsed_link(
     scope: &Scope,
     item: &Desired,
     canonical: &Path,
+    files: &[(PathBuf, Vec<u8>)],
     owned: &BTreeSet<PathBuf>,
 ) -> std::result::Result<Option<PathBuf>, Planned> {
     if !canonical.is_symlink() {
@@ -157,7 +162,11 @@ fn collapsed_link(
     if !owned.contains(canonical) {
         return Err(
             match super::adopt::link_target(env, scope, item.kind, &item.name, canonical) {
-                Some(target) => unmanaged(DriftCause::SharedLink, &target),
+                // The folder the link points at is real content adoption
+                // can take, so it compares like any other.
+                Some(target) => {
+                    unmanaged_compared(DriftCause::SharedLink, &target, of_tree(&target, files))
+                }
                 None => unmanaged(DriftCause::ForeignLink, canonical),
             },
         );
@@ -227,6 +236,7 @@ fn plan_link(
     item: &Desired,
     link: &Path,
     canonical: &Path,
+    files: &[(PathBuf, Vec<u8>)],
     replace_unmanaged: bool,
     owned: &BTreeSet<PathBuf>,
     written: &mut Written,
@@ -286,7 +296,7 @@ fn plan_link(
     let diverged = link.exists();
     let unowned = diverged && !owned.contains(link);
     if unowned && !replace_unmanaged {
-        return Ok(in_the_way(link));
+        return Ok(in_the_way(link, files));
     }
     let first = written.claim_link(link);
     if diverged && first {

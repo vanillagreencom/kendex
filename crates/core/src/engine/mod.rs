@@ -79,6 +79,8 @@ use set_change::{kept_members, set_changes};
 pub(crate) use unmanaged::declared_over_existing_files;
 use unmanaged::unmanaged_rows;
 
+mod compared;
+pub use compared::Comparison;
 mod report_types;
 pub use report_types::{DriftCause, DriftRow, DriftState, EngineReport, ItemWarning, PlanOptions};
 

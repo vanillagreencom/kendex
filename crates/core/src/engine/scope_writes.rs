@@ -220,6 +220,7 @@ pub(super) fn plan_settings_seed(
             state: DriftState::Conflict,
             detail: format!("{} is not a regular file", path.display()),
             cause: None,
+            compared: None,
         });
         return Ok(());
     }

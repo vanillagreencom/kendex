@@ -26,6 +26,12 @@ fn a_folder_shared_by_hand_is_kept_by_the_offer_it_prints() {
         planned.contains(".claude/skills/deploy"),
         "the folder the link points at is what the reader decides about: {planned}"
     );
+    // The folder is real content, so it is measured like any other: a
+    // shared layout is not a reason to say less about what is in the way.
+    assert!(
+        planned.contains("differs from the catalog in 1 file: SKILL.md"),
+        "the shared folder was never compared with the install it blocks: {planned}"
+    );
     // Replacing a link is never right: the files are not at that position,
     // and writing over it breaks the sharing somebody set up.
     assert!(!planned.contains("--replace-unmanaged"), "{planned}");

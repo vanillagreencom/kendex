@@ -263,7 +263,8 @@ fn a_dependency_the_catalog_lacks_is_a_finding() {
 }
 
 /// Two skills that need each other are a co-install their authors meant, so
-/// both install and the pair is reported as information.
+/// both install and the note says what that means for the reader: the name
+/// they declared, and what taking it takes along.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn skills_that_require_each_other_install_and_are_reported() {
@@ -277,8 +278,106 @@ fn skills_that_require_each_other_install_and_are_reported() {
         report
             .notes
             .iter()
-            .any(|note| note.contains("require each other") && note.contains("github")),
+            .any(|note| note == "installing dev also installs github (required)"),
         "{:?}",
+        report.notes
+    );
+}
+
+/// A skill listing itself resolves to the item that wrote the line. Said
+/// out loud: the reader owns the catalog line that put it there, and going
+/// quiet leaves a declaration that does nothing looking deliberate.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_skill_that_requires_itself_is_named() {
+    let f = fixture("[skills.dev]\nsource = \"cat\"\n");
+    skill(&f.source, "dev", "dependencies:\n  required: [dev]\n");
+
+    let report = audit(&f.env, &f.scope).unwrap();
+    apply::execute(&f.env, &report.plan, None).unwrap();
+    assert!(installed(&f, "dev"));
+    assert!(
+        report
+            .notes
+            .iter()
+            .any(|note| note == "dev lists itself as required — that line installs nothing"),
+        "{:?}",
+        report.notes
+    );
+}
+
+/// A dependency filtered to no tool installs nothing, so the note that
+/// says it co-installs is not made: the missing-dependency finding beside
+/// it is what that arrangement actually produces.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_cycle_split_across_tools_claims_no_co_install() {
+    let f = fixture(
+        "[skills.dev]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[skills.github]\nsource = \"cat\"\nharnesses = [\"codex\"]\n",
+    );
+    skill(&f.source, "github", "dependencies:\n  required: [dev]\n");
+
+    let report = audit(&f.env, &f.scope).unwrap();
+    assert!(
+        !report
+            .notes
+            .iter()
+            .any(|note| note.contains("also installs")),
+        "neither declaration installs the other: {:?}",
+        report.notes
+    );
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|w| w.message.contains("missing required dependency")),
+        "and the arrangement is still reported: {:?}",
+        report.warnings
+    );
+}
+
+/// The reaches guard on its own: both edges install, so the graph carries
+/// the cycle, but the requested item runs on a tool its partner does not.
+/// "Also installs" is a claim about every tool, and here it is false for
+/// one of them.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_cycle_reaching_only_some_tools_claims_no_co_install() {
+    let f = fixture(
+        "[skills.dev]\nsource = \"cat\"\nharnesses = [\"claude\", \"codex\"]\n\n[skills.github]\nsource = \"cat\"\nharnesses = [\"claude\"]\n",
+    );
+    skill(&f.source, "github", "dependencies:\n  required: [dev]\n");
+
+    let report = audit(&f.env, &f.scope).unwrap();
+    assert!(
+        !report
+            .notes
+            .iter()
+            .any(|note| note.contains("also installs")),
+        "codex runs dev without github: {:?}",
+        report.notes
+    );
+}
+
+/// The zero-harness guard on its own: neither declaration lands anywhere,
+/// so every reference between them installs nothing and there is no
+/// co-install to report — not even the vacuous one a cycle over two
+/// tool-less declarations would otherwise produce.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn references_between_declarations_no_tool_holds_claim_no_co_install() {
+    let f = fixture(
+        "[skills.dev]\nsource = \"cat\"\nharnesses = []\n\n[skills.github]\nsource = \"cat\"\nharnesses = []\n",
+    );
+    skill(&f.source, "github", "dependencies:\n  required: [dev]\n");
+
+    let report = audit(&f.env, &f.scope).unwrap();
+    assert!(
+        !report
+            .notes
+            .iter()
+            .any(|note| note.contains("also installs")),
+        "a reference that installs nothing was reported as a co-install: {:?}",
         report.notes
     );
 }
