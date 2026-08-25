@@ -267,10 +267,10 @@ lives in one capability table read by core and UI.
   other hook's. Custom hook commands pass the same safety gate as catalog
   scripts.
 - A section with nothing in it is not rendered; an empty state appears only
-  when the page would otherwise be blank.
-- A list whose data has not arrived draws skeleton rows; the empty state
-  waits for the read to finish. Startup reads — settings, scan, audit,
-  updates — run side by side.
+  when the page would otherwise be blank, its read done. Skeletons draw
+  mid-read; a failed read shows its error with a retry, kept figures headed
+  as the last kendex could check, never a definite count — least of all
+  zero. Startup reads — settings, scan, audit, updates — run side by side.
 - Commands that touch disk, git, or a subprocess are
   `#[tauri::command(async)]`. Only window operations stay synchronous.
 - No database: manifests, locks, and native dirs are the state; scans are

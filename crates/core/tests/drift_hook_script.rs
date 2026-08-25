@@ -37,12 +37,14 @@ fn run_hook(dir: &Path, stdin: &str, env: &[(&str, &str)], stub: Option<&str>) -
         .stderr(std::process::Stdio::null())
         .spawn()
         .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(stdin.as_bytes())
-        .unwrap();
+    // A hook that exits before reading stdin closes the pipe early; that
+    // is the script's business, not a harness failure — the contract under
+    // test is the output and exit code.
+    match child.stdin.take().unwrap().write_all(stdin.as_bytes()) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+        Err(error) => panic!("writing hook stdin: {error}"),
+    }
     let output = child.wait_with_output().unwrap();
     (
         String::from_utf8_lossy(&output.stdout).into_owned(),

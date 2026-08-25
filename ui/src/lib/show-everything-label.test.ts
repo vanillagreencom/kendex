@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { showEverythingLabel } from "./project-card-label";
+import { showEverythingLabel } from "./show-everything-label";
 
 describe("showEverythingLabel", () => {
   it("separates two projects whose folders share a name", () => {

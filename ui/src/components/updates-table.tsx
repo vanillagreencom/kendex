@@ -21,6 +21,7 @@ import {
   FOLLOW_SOURCE_COLUMN,
   heldInLabel,
   placesLabel,
+  UPDATE_NEEDS_CHECK_NOTE,
   UPDATE_PACKAGE_EVERYWHERE_LABEL,
   UPDATES_NAME_COLUMN,
   UPDATES_PLACE_COLUMN,
@@ -93,6 +94,11 @@ export function PackageRows({
   const [open, setOpen] = useState(defaultOpen);
   const placesId = useId();
   const busy = useUpdatesStore((s) => s.busy);
+  // Not loaded, mid-check, and mid-load hold Update alike: either way
+  // these rows are not the rows an update would act on.
+  const unconfirmed = useUpdatesStore(
+    (s) => !s.loaded || s.checking || s.overviewInFlight,
+  );
   const updateRows = useUpdatesStore((s) => s.updateRows);
   const Icon = kindIcon(group.kind);
   const name = packageDisplayName(group);
@@ -154,7 +160,10 @@ export function PackageRows({
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={busy || updatablePlaces(places).length === 0}
+                  disabled={
+                    busy || unconfirmed || updatablePlaces(places).length === 0
+                  }
+                  title={unconfirmed ? UPDATE_NEEDS_CHECK_NOTE : undefined}
                   onClick={() => void updateRows(places)}
                 >
                   {UPDATE_PACKAGE_EVERYWHERE_LABEL}

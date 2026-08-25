@@ -35,7 +35,8 @@ output, bot account support, configurable issue ID extraction.
 | `pr-list-failing [--all] [--format=safe\|table]` | List PRs with CI failures |
 | `pr-create [--title T] [--body B \| --body-file PATH] [--draft] [--dry-run] [--force]` | Create PR as bot. Safety checks: not main, has commits, pushed; `--force` skips them. |
 | `pr-edit-body <N> --body-file PATH` | Update an existing PR body through the sanitized router. |
-| `pr-merge <N> [--check\|--force\|--auto]` | Merge PR. `--check` reports readiness as JSON without merging; `--auto` queues a currently-blocked PR. Three exit codes, the review-thread gate, and `--force` — see *PR Merge Outcomes*. |
+| `pr-merge <N> [--check\|--force\|--auto]` | Merge PR. `--check` reports readiness as JSON on stdout plus a one-word verdict and `head-run: <ids>` (the run scope of the CI classification) on stderr; `--auto` queues a currently-blocked PR. Three exit codes, the review-thread gate, and `--force` — see *PR Merge Outcomes*. |
+| `ci-classify-refusal <N>` | Name the cause of a pr-merge refusal on one `cause:` line (`fetch_error`, `merge_conflict`, `changes_requested`, `threads`, `ci_failed`, `ci_pending`, `computing`, `merged`, `closed`, `none`; an issue prefix outside that vocabulary becomes the cause word itself, and `none` means the checks pass now); `ci_failed` adds `fail:` lines run-correlated to the authoritative run and `superseded:` lines naming runs whose checks were not counted. `--help` |
 | `pr-cross-check [N...] [--quick\|--verify]` | Cross-PR analysis. `--verify`: full build+test (auto-detects build system). |
 | `pr-issue <N> [--format=safe\|text]` | Extract issue ID from PR branch (configurable via `GH_ISSUE_PATTERN`) |
 | `label-add <PR-or-issue> <label> [--issue] [--required\|--optional]` | Add a label after checking the live inventory. Mode semantics and exit codes: *Label application contract*. |
@@ -154,13 +155,22 @@ BLOCKED is classified on stderr as **transient** (mergeable UNKNOWN,
 Callers read the `transient` field from `--check`:
 
 ```json
-{"can_merge": true, "issues": [], "warnings": [], "mergeable": "MERGEABLE", "review": "APPROVED", "transient": false, "state": "OPEN", "merged_at": ""}
+{"can_merge": true, "issues": [], "warnings": [], "mergeable": "MERGEABLE", "review": "APPROVED", "transient": false, "state": "OPEN", "merged_at": "", "head_runs": [17234567890], "checks": [{"name": "Cargo", "state": "SUCCESS", "bucket": "pass", "workflow": "CI", "link": "https://github.com/owner/repo/actions/runs/17234567890/job/1", "startedAt": "…"}]}
 ```
 
 `state` is the PR's lifecycle state (`OPEN`, `MERGED`, `CLOSED`, `UNKNOWN`), and
 `merged_at` carries the merge timestamp when that state is `MERGED`.
 `can_merge: false` with an empty `issues` array means the PR is terminal — read
-`state` before treating a refusal as a blocker to clear.
+`state` before treating a refusal as a blocker to clear. `head_runs` lists the
+run ids the CI classification was scoped to (the authoritative run per
+workflow plus the runs custom commit statuses link to — a mixed head names
+both); `--check` repeats them on stderr as `head-run: <ids>` under the
+one-word verdict (`mergeable`, `blocked`, `merged`, `closed`). `checks` is the
+raw rollup that classification read. To turn a refusal into a named cause —
+including which failing checks are run-correlated to the authoritative run and
+which runs were superseded — run `ci-classify-refusal <N>`; it scopes the
+`checks` snapshot embedded in the `--check` JSON rather than refetching, so
+its detail lines and the verdict describe one fetch.
 
 `transient: true` means every blocking issue is recoverable by waiting
 (prefixes `unknown:`, `ci_pending:`, `ci_unconfigured:`, `ci_fetch_failed:`).

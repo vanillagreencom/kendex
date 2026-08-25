@@ -8,6 +8,12 @@ an outside contributor.
 
 ## [Unreleased]
 
+### Removed
+
+- **Breaking:** the `trading-design` skill is no longer offered. Run
+  `kendex remove trading-design --scope all` wherever it is installed (or
+  drop its `[skills.trading-design]` entries and run `kendex apply --scope all`).
+
 ### Added
 
 - Moving an existing repo onto kendex works now: files already on disk
@@ -70,7 +76,23 @@ an outside contributor.
   and dialogs ask in the words of the button that opened them.
 
 ### Fixed
-
+- An apply is no longer refused as "scope is busy" while nothing else
+  runs: locks release explicitly when an apply finishes instead of waiting
+  on a file a just-launched program still held open. Same fix for downloads.
+- Home's Installed tile counts what the Library counts — packages, not
+  per-harness copies — so the tile and the table it opens agree.
+- A harness's name on the Harnesses page opens the Library showing
+  everything that harness has, the way a project's name already does; the
+  count badges still narrow to one kind each.
+- Home answers a failed scan: the page says why and offers Scan again, and
+  a later failure keeps the last figures, labeled as the last kendex could
+  check — the status footer stops saying "Up to date" beside them.
+- Updates and Marketplaces say when a check failed and offer a retry; rows
+  kept from an earlier check are headed as last-checked, and acting on
+  stale rows — update, follow, subscribe, unsubscribe — waits for a good check.
+- Overlapping reads land in order: a slow early read cannot overwrite a
+  fresher answer, changes apply in the order made, and a change that fails
+  midway re-reads the standing instead of presenting old rows as current.
 - `kendex apply --replace-unmanaged` no longer gives up on the whole scope
   because one item cannot be settled: everything replaceable is replaced
   and each held-back item is named with what holds it.

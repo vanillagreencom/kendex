@@ -141,18 +141,19 @@ export const WINDOW_CONTROL_LABELS = {
   close: "Close",
 } as const;
 
-// The status footer's left side: what the last scan is telling you.
-export const SCANNING_LABEL = "Scanning…";
-export const scanStatusLabel = (scannedAgo: string | null): string =>
-  scannedAgo ? `Up to date · scanned ${scannedAgo}` : "Up to date";
-
-// The status footer's right side: quiet counts that link to Review & apply.
-export const pendingChangesLabel = (count: number): string =>
-  count === 1 ? "1 change ready" : `${count} changes ready`;
-export const decisionsFooterLabel = (count: number): string =>
-  count === 1
-    ? "1 thing needs your decision"
-    : `${count} things need your decision`;
+// Home. A read that failed is an answer, not a wait: the page says what
+// happened instead of holding skeletons up, and a result kept from before
+// a failed re-scan is drawn as last-known rather than current.
+export const SCAN_AGAIN_LABEL = "Scan again";
+export const SCAN_FAILED_TITLE = "Couldn't scan this machine";
+export const SCAN_STALE_TITLE = "These are the last figures kendex could check";
+export const UPDATES_ATTENTION_TITLE = "Couldn't check for updates";
+export const UPDATES_ATTENTION_DETAIL =
+  "Anything new since the last check isn't counted here.";
+export const AUDIT_ATTENTION_TITLE = "Couldn't check installed content";
+export const AUDIT_ATTENTION_DETAIL =
+  "Problems and pending changes may be missing here.";
+export const TRY_AGAIN_LABEL = "Try again";
 
 // Package page: files, versions, and the diff between them.
 export const PACKAGE_FILES_TITLE = "Files";

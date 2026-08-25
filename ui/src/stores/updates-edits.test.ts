@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
+import { UPDATE_NEEDS_CHECK_NOTE } from "@/lib/copy-updates";
+import { useProblemsStore } from "./problems";
 import { useUpdatesStore } from "./updates";
 import { keepAsOwn, takeNewVersion } from "./updates-edits";
 
@@ -52,8 +54,82 @@ function row(overrides: Partial<UpdateRow>): UpdateRow {
 
 describe("updates store: edited places", () => {
   beforeEach(() => {
-    useUpdatesStore.setState({ rows: [], busy: false, loaded: false });
+    // Rows being acted on imply a read that answered; the stale-refusal
+    // test below stages the opposite itself.
+    useUpdatesStore.setState({ rows: [], busy: false, loaded: true });
     vi.clearAllMocks();
+  });
+
+  // A transport rejection never assigns work's error — only the applier
+  // sees it, and dropping its return let the fork and discard flows carry
+  // on to their success paths over an IPC failure.
+  it("a fork whose transport failed does not proceed as success", async () => {
+    useProblemsStore.setState({
+      dialog: { open: false, title: "", steps: [], actions: [] },
+    });
+    vi.mocked(commands.packageFork).mockRejectedValue(new Error("ipc down"));
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [] },
+    });
+
+    await keepAsOwn(
+      row({
+        blockedByLocalEdit: true,
+        editedHarnesses: ["claude"],
+        forkableHarness: "claude",
+      }),
+    );
+
+    expect(useProblemsStore.getState().dialog.open).toBe(true);
+    expect(useProblemsStore.getState().dialog.message).toBe("ipc down");
+    // run() stops at the failure instead of refreshing as if it landed.
+    expect(commands.auditAll).not.toHaveBeenCalled();
+  });
+
+  it("a discard whose transport failed surfaces the failure", async () => {
+    useProblemsStore.setState({
+      dialog: { open: false, title: "", steps: [], actions: [] },
+    });
+    vi.mocked(commands.applyDiscardEdits).mockRejectedValue(
+      new Error("ipc down"),
+    );
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [] },
+    });
+
+    await takeNewVersion(
+      row({ blockedByLocalEdit: true, editedHarnesses: ["claude"] }),
+    );
+
+    expect(useProblemsStore.getState().dialog.open).toBe(true);
+    expect(useProblemsStore.getState().dialog.message).toBe("ipc down");
+    expect(commands.auditAll).not.toHaveBeenCalled();
+  });
+
+  // The action boundary owns the guarantee: a confirmation opened before
+  // a check failed still holds a retained row whose latest nobody
+  // confirmed — the store refuses it however the dialog got there.
+  it("refuses to discard edits from rows a failed check left behind", async () => {
+    useUpdatesStore.setState({ loaded: false });
+    useProblemsStore.setState({
+      dialog: { open: false, title: "", steps: [], actions: [] },
+    });
+
+    await takeNewVersion(
+      row({
+        blockedByLocalEdit: true,
+        editedHarnesses: ["claude"],
+        pinned: true,
+      }),
+    );
+
+    expect(commands.applyDiscardEdits).not.toHaveBeenCalled();
+    expect(useProblemsStore.getState().dialog.open).toBe(true);
+    expect(useProblemsStore.getState().dialog.message).toBe(
+      UPDATE_NEEDS_CHECK_NOTE,
+    );
   });
 
   it("use new version on a held place moves the hold to latest in the same apply", async () => {

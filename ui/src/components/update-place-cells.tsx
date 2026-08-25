@@ -20,6 +20,7 @@ import {
   followSourceLabel,
   HELD_BY_OWNER_NOTE,
   heldBySourceNote,
+  UPDATE_NEEDS_CHECK_NOTE,
 } from "@/lib/copy-updates";
 import { packageDisplayName } from "@/lib/labels";
 import { heldByOwner, placeName, switchLockedBy } from "@/lib/update-groups";
@@ -41,7 +42,19 @@ export function PlaceCells({
   among: Scope[];
   onIgnore?: (row: UpdateRow) => void;
 }) {
-  const { busy, updateOne, setAutoUpdate, setIgnored } = useUpdatesStore();
+  const {
+    busy,
+    loaded,
+    checking,
+    overviewInFlight,
+    updateOne,
+    setAutoUpdate,
+    setIgnored,
+  } = useUpdatesStore();
+  // Anything overview-producing in flight is about to replace these rows;
+  // the store actions refuse regardless, and the controls say so instead
+  // of inviting the click.
+  const held = !loaded || checking || overviewInFlight;
   const goToPackage = useNavStore((s) => s.goToPackage);
   const name = packageDisplayName(row);
   const place = placeName(row.scope, among);
@@ -80,16 +93,21 @@ export function PlaceCells({
       ) : (
         <>
           <TableCell className="text-center">
+            {/* Switching follow OFF holds the package at row.current's
+                commit — from a stale row that pins it to an old version,
+                so the switch waits for a check the same as Update. */}
             <Switch
               aria-label={followSourceLabel(name, place)}
               checked={!row.pinned}
-              disabled={busy || locked !== null}
+              disabled={busy || held || locked !== null}
               title={
                 locked?.kind === "source"
                   ? heldBySourceNote(locked.name)
                   : locked
                     ? HELD_BY_OWNER_NOTE
-                    : undefined
+                    : held
+                      ? UPDATE_NEEDS_CHECK_NOTE
+                      : undefined
               }
               onCheckedChange={(follow) => void setAutoUpdate(row, follow)}
             />
@@ -111,8 +129,16 @@ export function PlaceCells({
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={busy || !row.updateAvailable || heldByOwner(row)}
-                  title={heldByOwner(row) ? HELD_BY_OWNER_NOTE : undefined}
+                  disabled={
+                    busy || held || !row.updateAvailable || heldByOwner(row)
+                  }
+                  title={
+                    heldByOwner(row)
+                      ? HELD_BY_OWNER_NOTE
+                      : held
+                        ? UPDATE_NEEDS_CHECK_NOTE
+                        : undefined
+                  }
                   onClick={() => void updateOne(row)}
                 >
                   {UPDATE_LABEL}

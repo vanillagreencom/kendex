@@ -19,6 +19,9 @@ unicode-normalization.workspace = true
 tempfile.workspace = true
 keyring.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
 fd-lock.workspace = true

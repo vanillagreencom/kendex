@@ -107,14 +107,21 @@ pub use adopt::adopt_cache;
 /// takes it — reading a published checkout needs no lock, because a
 /// published checkout never changes.
 pub struct CacheGuard {
-    _file: fs::File,
+    _file: crate::fs::LockedFile,
+}
+
+impl CacheGuard {
+    /// Test-only view of the fd, for cloning a description copy.
+    #[cfg(test)]
+    pub(crate) fn file(&self) -> &fs::File {
+        self._file.file()
+    }
 }
 
 /// How long a resolver waits for the lock before calling the cache busy.
-/// Long enough to ride out a neighbour that is only starting up — a
-/// process being launched holds a copy of every open descriptor for the
-/// instant before it takes over, this lock among them — and far too short
-/// to leave anyone waiting on someone else's download.
+/// Long enough to ride out a neighbour holding it for one quick step — a
+/// fetch stamp, publishing an already-materialized checkout — and far too
+/// short to leave anyone waiting on someone else's download.
 const LOCK_WAIT: Duration = Duration::from_millis(500);
 const LOCK_POLL: Duration = Duration::from_millis(10);
 
@@ -122,32 +129,18 @@ pub fn lock_repo(env: &Env, key: &str) -> Result<CacheGuard> {
     let dir = env.source_cache_dir().join(LOCKS);
     fs::create_dir_all(&dir).map_err(|e| CoreError::io(&dir, e))?;
     let path = dir.join(format!("{key}.lock"));
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&path)
-        .map_err(|e| CoreError::io(&path, e))?;
-    let mut lock = fd_lock::RwLock::new(file);
     let deadline = Instant::now() + LOCK_WAIT;
-    let acquired = loop {
-        // As in apply's scope lock: the OS lock belongs to the open fd, so
-        // the guard is forgotten and the file kept — dropping CacheGuard
-        // closes the fd and releases the lock.
-        match lock.try_write() {
-            Ok(guard) => {
-                std::mem::forget(guard);
-                break true;
+    loop {
+        match crate::fs::LockedFile::try_exclusive(&path) {
+            Ok(Some(file)) => return Ok(CacheGuard { _file: file }),
+            Ok(None) if Instant::now() >= deadline => {
+                return Err(CoreError::CacheBusy { lock: path });
             }
-            Err(_) if Instant::now() >= deadline => break false,
-            Err(_) => std::thread::sleep(LOCK_POLL),
+            Ok(None) => std::thread::sleep(LOCK_POLL),
+            // A filesystem that cannot lock at all is its own failure;
+            // waiting out the deadline would misname it "busy".
+            Err(error) => return Err(CoreError::io(&path, error)),
         }
-    };
-    match acquired {
-        true => Ok(CacheGuard {
-            _file: lock.into_inner(),
-        }),
-        false => Err(CoreError::CacheBusy { lock: path }),
     }
 }
 

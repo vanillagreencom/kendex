@@ -1,6 +1,7 @@
 import { toast } from "sonner";
 import { create } from "zustand";
 import { commands, type ScanResult } from "@/bindings";
+import { settled } from "@/lib/settled";
 
 interface ScanState {
   result: ScanResult | null;
@@ -28,7 +29,10 @@ export const useScanStore = create<ScanState>((set, get) => ({
     // The flag comes down however the call ends: a rejected call that left
     // it up would skip every later scan for the session.
     try {
-      const response = await commands.scanMachine();
+      // `settled` lands a rejected call as the same failed scan as a
+      // returned refusal, which keeps Home off its skeletons. The last
+      // good result stays kept either way.
+      const response = await settled(commands.scanMachine());
       if (response.status === "ok") {
         set({
           result: response.data,

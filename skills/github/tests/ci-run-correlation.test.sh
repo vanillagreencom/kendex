@@ -27,7 +27,8 @@ source "$LIB"
 echo "=== single implementation ==="
 
 for script in "$REPO_ROOT/skills/orch/scripts/ci-wait" \
-              "$REPO_ROOT/skills/github/scripts/commands/pr-merge.sh"; do
+              "$REPO_ROOT/skills/github/scripts/commands/pr-merge.sh" \
+              "$REPO_ROOT/skills/github/scripts/commands/ci-classify-refusal.sh"; do
   name="$(basename "$script")"
   if grep -qE '^scope_current_run\(\)' "$script"; then
     fail "$name defines its own scope_current_run (drift reintroduced — source the shared library instead)"
@@ -38,6 +39,19 @@ for script in "$REPO_ROOT/skills/orch/scripts/ci-wait" \
     pass "$name sources the shared library"
   else
     fail "$name sources the shared library"
+  fi
+done
+
+# The bucket taxonomy and run-id capture are exported as CI_RUN_JQ_DEFS; a
+# GitHub-skill script inlining its own `def bucket`/`def runid` copy is the
+# same drift one layer down. (orch ci-wait's local copies predate
+# CI_RUN_JQ_DEFS and are exempted from this scan.)
+for script in "$REPO_ROOT"/skills/github/scripts/commands/*.sh; do
+  name="$(basename "$script")"
+  if grep -qE 'def (bucket|runid):' "$script"; then
+    fail "$name inlines its own def bucket/def runid (prepend CI_RUN_JQ_DEFS from the shared library instead)"
+  else
+    pass "$name has no local def bucket/def runid copy"
   fi
 done
 
@@ -160,6 +174,27 @@ if jq -e '[.[] | select(.name == "CI Required" and .state == "EXPECTED")] | leng
   pass "an aggregate pointing at a superseded run is held pending"
 else
   fail "an aggregate pointing at a superseded run is held pending (got $OUT)"
+fi
+if [[ "$(jq -r "$CI_RUN_JQ_DEFS"'head_runs | join(",")' <<<"$OUT")" == "200" ]]; then
+  pass "a status held EXPECTED keeps its retired run out of head_runs"
+else
+  fail "a status held EXPECTED keeps its retired run out of head_runs (got $(jq -c "$CI_RUN_JQ_DEFS"'head_runs' <<<"$OUT"))"
+fi
+
+echo "=== head_runs run scope ==="
+
+# A custom commit status linking a run of its own is first-class scope: on a
+# mixed head its run id appears BESIDE the workflow's, so a status failure's
+# fail: line never cites a run head-run: omits.
+MIXED='[
+ {"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:00:00Z","link":"https://x/actions/runs/100/job/1"},
+ {"name":"CI Required","state":"FAILURE","bucket":"fail","workflow":"","link":"https://x/actions/runs/200"}
+]'
+OUT="$(run_scope "$MIXED")"
+if [[ "$(jq -r "$CI_RUN_JQ_DEFS"'head_runs | join(",")' <<<"$OUT")" == "100,200" ]]; then
+  pass "a mixed head names the status-linked run beside the workflow run"
+else
+  fail "a mixed head names the status-linked run beside the workflow run (got $(jq -c "$CI_RUN_JQ_DEFS"'head_runs' <<<"$OUT"))"
 fi
 
 echo

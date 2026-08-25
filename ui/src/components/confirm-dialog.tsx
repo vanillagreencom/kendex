@@ -19,6 +19,8 @@ export function ConfirmDialog({
   confirmLabel,
   destructive,
   busy,
+  confirmDisabled,
+  confirmDisabledNote,
   onConfirm,
   children,
 }: {
@@ -29,6 +31,11 @@ export function ConfirmDialog({
   confirmLabel: string;
   destructive?: boolean;
   busy?: boolean;
+  /** Holds the confirm button alone — Cancel stays live, so a dialog whose
+   *  premise went stale underneath it can still be closed. */
+  confirmDisabled?: boolean;
+  /** Why the confirm is held, shown as the button's title. */
+  confirmDisabledNote?: string;
   onConfirm: () => void;
   children?: ReactNode;
 }) {
@@ -52,7 +59,8 @@ export function ConfirmDialog({
           </Button>
           <Button
             variant={destructive ? "destructive" : "default"}
-            disabled={busy}
+            disabled={busy || confirmDisabled}
+            title={confirmDisabled ? confirmDisabledNote : undefined}
             onClick={onConfirm}
           >
             {confirmLabel}

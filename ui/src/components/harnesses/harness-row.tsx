@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { HarnessId, ItemKind } from "@/bindings";
 import { HarnessIcon } from "@/components/harness-icon";
 import { HarnessFolderDialog } from "@/components/harnesses/harness-folder-dialog";
+import { ShowEverythingButton } from "@/components/harnesses/show-everything-button";
 import { KindCountBadges } from "@/components/kind-count-badges";
 import { Button } from "@/components/ui/button";
 import { HARNESS_FOLDER_HELP, NOT_INSTALLED_LABEL } from "@/lib/copy";
@@ -41,14 +42,18 @@ export function HarnessRow({
       <div className="flex min-w-0 flex-col gap-1">
         <span className="flex items-center gap-2">
           <HarnessIcon harness={id} muted={!detectedRoot} className="size-5" />
-          <span
-            className={cn(
-              "text-sm font-medium",
-              !detectedRoot && "text-muted-foreground",
-            )}
-          >
-            {name}
-          </span>
+          {/* A harness that isn't installed has nothing to show, so only a
+              detected one gets the button. */}
+          {detectedRoot ? (
+            <ShowEverythingButton
+              name={name}
+              onOpen={() => goToLibrary({ harness: id })}
+            />
+          ) : (
+            <span className="text-sm font-medium text-muted-foreground">
+              {name}
+            </span>
+          )}
           {version ? (
             <span className="font-mono text-xs text-muted-foreground">
               {version}

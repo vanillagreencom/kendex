@@ -6,8 +6,9 @@ import {
   decisionsFooterLabel,
   pendingChangesLabel,
   SCANNING_LABEL,
+  scanFailedStatusLabel,
   scanStatusLabel,
-} from "@/lib/copy";
+} from "@/lib/copy-footer";
 import { problemsFooterLabel } from "@/lib/error-copy";
 import { relativeTime } from "@/lib/relative-time";
 import { useAuditStore } from "@/stores/audit";
@@ -23,6 +24,7 @@ const AGE_TICK_MS = 30_000;
 export function StatusFooter() {
   const scanning = useScanStore((s) => s.scanning);
   const lastScanAt = useScanStore((s) => s.lastScanAt);
+  const scanError = useScanStore((s) => s.error);
   const views = useAuditStore((s) => s.views);
   const problems = useProblems();
   const goTo = useNavStore((s) => s.goTo);
@@ -57,6 +59,15 @@ export function StatusFooter() {
             <>
               <RefreshCw className="size-3 animate-spin" />
               {SCANNING_LABEL}
+            </>
+          ) : scanError !== null ? (
+            // Never scanned is a failed status; a kept result is
+            // last-known — either way, not "Up to date".
+            <>
+              <StatusDot tone={lastScanAt ? "warning" : "critical"} />
+              {scanFailedStatusLabel(
+                lastScanAt ? relativeTime(lastScanAt, now) : null,
+              )}
             </>
           ) : (
             scanStatusLabel(lastScanAt ? relativeTime(lastScanAt, now) : null)

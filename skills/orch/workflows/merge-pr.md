@@ -132,7 +132,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Exit `0` = merged → step 2.
 
-   Exit `1` BLOCKED on pending required checks or a merge queue (the issues or stderr mention `ci_pending:`, checks that have not started, or a base branch requiring merges through a queue) → re-run with `--auto`. `--auto` never bypasses the § 3 gates. Any other BLOCKED cause (conflicts, `ci_failed:`, `changes_requested:`) is surfaced and returns to § 3.2 — do not queue it.
+   Exit `1` BLOCKED → run `[MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] ci-classify-refusal [PR_NUMBER]` and route on its `cause:` line: `ci_pending` — or `none` when the merge output names a base branch requiring merges through a queue — → re-run with `--auto` (`--auto` never bypasses the § 3 gates). Any other cause is surfaced with the printed detail and returns to § 3.2 — do not queue it.
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] --auto

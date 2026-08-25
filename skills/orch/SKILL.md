@@ -72,6 +72,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `review-artifact-check` | Validate a reviewer's JSON artifact — the sole reviewer completion condition. `--help` + [references/artifact-checks.md](references/artifact-checks.md) |
 | `dev-return-write` | Write a dev agent's round-scoped completion artifact; never hand-author the JSON. `--help`; schema `schemas/dev-return.md` |
 | `worktree-claim` | Take or verify this session's possession of an issue worktree; exits 75 when a foreign owner or lock holds it, or when the token it is bound to differs from the lease. `--help` |
+| `worktree-push` | Push an issue worktree via `worktree push` and reconcile rebased SHAs in workflow state (`.rebase_map`, `fixed_items`, `pr_comment_review.fixes`) in the same call. `--help` |
 | `dev-round-write` | Persist a fix round's delegated item set at stamp time. `--help`; schema `schemas/dev-round.md` |
 | `dev-artifact-check` | Validate a dev round's completion artifact by round id. `--help` + [references/artifact-checks.md](references/artifact-checks.md) |
 | `approval-wait` | Poll the reviewer gate; `--resolve-mode` prints the effective gate mode. `--help` + [references/gates.md](references/gates.md) |

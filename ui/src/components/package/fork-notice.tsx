@@ -19,6 +19,7 @@ import {
   VIEW_CHANGES_LABEL,
   viewChangesInLabel,
 } from "@/lib/copy";
+import { UPDATE_NEEDS_CHECK_NOTE } from "@/lib/copy-updates";
 import { harnessName } from "@/lib/labels";
 import { sameScope } from "@/lib/scope";
 import { useUpdatesStore } from "@/stores/updates";
@@ -40,6 +41,14 @@ export function ForkNotice({
   onResolved: () => void;
 }) {
   const busy = useUpdatesStore((s) => s.busy);
+  // Discarding applies the retained row's latest commit when the place is
+  // held — from rows a failed check left behind, or rows a running check
+  // is about to replace, that pins an old version — so the discard waits
+  // for a check. Keeping the files as a fork copies what is on disk and
+  // stays live.
+  const held = useUpdatesStore(
+    (s) => !s.loaded || s.checking || s.overviewInFlight,
+  );
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const several = row.editedHarnesses.length > 1;
   const whyNoFork = row.derived
@@ -96,7 +105,8 @@ export function ForkNotice({
           <Button
             size="sm"
             variant="outline"
-            disabled={busy}
+            disabled={busy || held}
+            title={held ? UPDATE_NEEDS_CHECK_NOTE : undefined}
             onClick={() => setConfirmDiscard(true)}
           >
             {several ? DISCARD_ALL_EDITS_LABEL : DISCARD_EDITS_LABEL}
@@ -111,6 +121,8 @@ export function ForkNotice({
         confirmLabel={DISCARD_EDITS_CONFIRM_LABEL}
         destructive
         busy={busy}
+        confirmDisabled={held}
+        confirmDisabledNote={UPDATE_NEEDS_CHECK_NOTE}
         onConfirm={() =>
           void takeNewVersion(row).then(() => {
             setConfirmDiscard(false);

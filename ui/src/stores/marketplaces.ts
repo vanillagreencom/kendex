@@ -1,6 +1,5 @@
 import { toast } from "sonner";
 import { create } from "zustand";
-import type { MarketplaceRow } from "@/bindings";
 import {
   type AboutView,
   type AvailablePackage,
@@ -9,19 +8,22 @@ import {
   type CatalogSummary,
   commands,
   type InstallItem,
+  type MarketplaceRow,
   type Scope,
 } from "@/bindings";
+import { MARKETPLACES_NEEDS_CHECK_NOTE } from "@/lib/copy-marketplaces";
+import { settled } from "@/lib/settled";
+import { landings } from "./landings";
 import { catalogReads } from "./marketplaces-reads";
 import {
-  cachedRepoCatalogs,
   catalogKey,
   dropCatalogCaches,
-  dropSummariesHeldBy,
   isRepoKey,
   openLead,
   refreshDownstream,
   subscription,
 } from "./marketplaces-shared";
+import { sourceActions } from "./marketplaces-sources";
 
 export {
   bundleKey,
@@ -57,6 +59,11 @@ interface MarketplacesState {
   rowsCurrent: boolean;
   busy: boolean;
   error: string | null;
+  /** Why the last overview read failed, or null — written only by `load`.
+   * The shared `error` above is also set by subscribe/unsubscribe/install,
+   * so a failed action would otherwise rewrite the reason the stale-read
+   * notices show. */
+  checkError: string | null;
   load: () => Promise<void>;
   loadPackages: (catalog: Catalog) => Promise<void>;
   loadSummary: (catalog: Catalog) => Promise<void>;
@@ -84,6 +91,12 @@ interface MarketplacesState {
   }) => Promise<boolean>;
 }
 
+// Overview reads overlap — Home's mount-time load against the page's own,
+// or a mutation's re-read — and a slow early one landing last would stamp
+// pre-mutation rows current. Every write goes through subscribe/unsubscribe
+// re-reading via load(), so read ordering alone covers it.
+const overviewLandings = landings();
+
 export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
   rows: [],
   packages: {},
@@ -95,18 +108,29 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
   rowsCurrent: false,
   busy: false,
   error: null,
+  checkError: null,
 
   load: async () => {
-    const response = await commands.marketplacesOverview();
+    // A failed read — refusal or rejection, via `settled` — still answers:
+    // `loaded` comes up, `rowsCurrent` does not, and the kept rows stay.
+    const ticket = overviewLandings.begin();
+    const response = await settled(commands.marketplacesOverview());
+    if (!overviewLandings.land(ticket)) return;
     if (response.status === "ok") {
       set({
         rows: response.data,
         loaded: true,
         rowsCurrent: true,
         error: null,
+        checkError: null,
       });
     } else {
-      set({ loaded: true, rowsCurrent: false, error: response.error });
+      set({
+        loaded: true,
+        rowsCurrent: false,
+        error: response.error,
+        checkError: response.error,
+      });
     }
   },
 
@@ -145,6 +169,13 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
   },
 
   unsubscribe: async (scope, source, keep, discardEdits) => {
+    // The action boundary owns the guarantee: a dialog opened while rows
+    // were current can still confirm after a failed re-read left them
+    // stale — refusing here covers every trigger at once.
+    if (!get().rowsCurrent) {
+      set({ error: MARKETPLACES_NEEDS_CHECK_NOTE });
+      return false;
+    }
     set({ busy: true });
     let response: Awaited<ReturnType<typeof commands.marketplaceUnsubscribe>>;
     try {
@@ -175,38 +206,7 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
     return true;
   },
 
-  toggle: async (scope, source, enabled) => {
-    const response = await commands.sourceToggle(scope, source, enabled);
-    if (response.status === "error") {
-      toast.error(response.error);
-      return;
-    }
-    dropCatalogCaches(set);
-    dropSummariesHeldBy(set, get().rows, scope, source);
-    await get().load();
-    await refreshDownstream();
-  },
-
-  checkForUpdates: async () => {
-    set({ busy: true });
-    try {
-      const response = await commands.sourcesRefresh();
-      if (response.status === "ok") {
-        for (const warning of response.data) toast.message(warning);
-        // A fetch can move any subscription to a new commit; everything
-        // derived from catalog bytes re-reads.
-        dropCatalogCaches(set);
-        await get().load();
-        for (const repo of cachedRepoCatalogs(get().summaries)) {
-          void get().loadSummary(repo);
-        }
-      } else {
-        toast.error(response.error);
-      }
-    } finally {
-      set({ busy: false });
-    }
-  },
+  ...sourceActions(set, get),
 
   install: async ({ scope, source, items, bundle = null, destination }) => {
     set({ busy: true });

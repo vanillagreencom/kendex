@@ -28,6 +28,9 @@ sha2 = "0.11"
 similar = "2"
 yaml-rust2 = "0.10"
 fd-lock = "4"
+# Already in the tree under fd-lock; used directly for the explicit unlock
+# that releases a lock's open file description before the fd closes.
+rustix = { version = "1", features = ["fs"] }
 unicode-normalization = "0.1"
 
 [workspace.lints.rust]

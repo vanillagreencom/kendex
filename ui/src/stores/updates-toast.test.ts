@@ -78,7 +78,7 @@ const ready = (remaining: UpdateRow[]) => {
 
 describe("updates store: what the success toast claims", () => {
   beforeEach(() => {
-    useUpdatesStore.setState({ rows: [], busy: false, loaded: false });
+    useUpdatesStore.setState({ rows: [], busy: false, loaded: true });
     vi.clearAllMocks();
   });
 

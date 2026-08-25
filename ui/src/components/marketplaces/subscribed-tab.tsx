@@ -1,8 +1,15 @@
-import { Store } from "lucide-react";
+import { Store, TriangleAlert } from "lucide-react";
 import type { MarketplaceRow, Scope } from "@/bindings";
 import { EmptyState } from "@/components/empty-state";
 import { SubscribedRow } from "@/components/marketplaces/subscribed-row";
+import { StatusNote } from "@/components/status-note";
 import { Button } from "@/components/ui/button";
+import { TRY_AGAIN_LABEL } from "@/lib/copy";
+import {
+  MARKETPLACES_CHECK_FAILED_TITLE,
+  MARKETPLACES_EMPTY_TITLE,
+  MARKETPLACES_UNCONFIRMED_TITLE,
+} from "@/lib/copy-marketplaces";
 import { scopeLabel } from "@/lib/derive";
 import { scopeName, scopePath } from "@/lib/labels";
 import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
@@ -14,12 +21,35 @@ import { useMarketplacesStore } from "@/stores/marketplaces";
 export function SubscribedTab({ onSubscribe }: { onSubscribe: () => void }) {
   const rows = useMarketplacesStore((s) => s.rows);
   const loaded = useMarketplacesStore((s) => s.loaded);
+  const rowsCurrent = useMarketplacesStore((s) => s.rowsCurrent);
+  // `checkError`, not the store's shared `error`: actions write the shared
+  // field too, and a failed subscribe is not a failed overview read.
+  const checkError = useMarketplacesStore((s) => s.checkError);
+  const load = useMarketplacesStore((s) => s.load);
 
   if (loaded && rows.length === 0) {
+    // Empty with nothing retained from a read that failed is a failure to
+    // show, not an invitation to subscribe: "No marketplaces yet" here
+    // would assert an emptiness nobody could check.
+    if (!rowsCurrent) {
+      return (
+        <EmptyState
+          icon={TriangleAlert}
+          title={MARKETPLACES_CHECK_FAILED_TITLE}
+          action={
+            <Button variant="outline" onClick={() => void load()}>
+              {TRY_AGAIN_LABEL}
+            </Button>
+          }
+        >
+          {checkError}
+        </EmptyState>
+      );
+    }
     return (
       <EmptyState
         icon={Store}
-        title="No marketplaces yet"
+        title={MARKETPLACES_EMPTY_TITLE}
         action={<Button onClick={onSubscribe}>Subscribe to one</Button>}
       >
         Subscribe to a repository of skills and agents to start installing from
@@ -32,6 +62,22 @@ export function SubscribedTab({ onSubscribe }: { onSubscribe: () => void }) {
   return (
     <div className={cn(PAGE_BODY, "pt-0")}>
       <div className={cn(WIDE_CONTENT_WIDTH, "space-y-8")}>
+        {/* Rows kept from before a failed read stay on screen — right —
+            but headed as what they are: the last read that answered, not
+            confirmed subscriptions. Their actions gate on the same flag. */}
+        {loaded && !rowsCurrent ? (
+          <StatusNote
+            tone="warning"
+            title={MARKETPLACES_UNCONFIRMED_TITLE}
+            action={
+              <Button size="sm" variant="outline" onClick={() => void load()}>
+                {TRY_AGAIN_LABEL}
+              </Button>
+            }
+          >
+            {checkError}
+          </StatusNote>
+        ) : null}
         {groups.map(({ scope, list }) => (
           <section key={scopeLabel(scope)}>
             <div className="mb-2 flex items-baseline gap-2">

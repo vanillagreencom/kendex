@@ -22,6 +22,7 @@ import {
   filterItems,
   groupItems,
   groupScopes,
+  installedCount,
   scopeChoices,
 } from "@/lib/derive";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
@@ -116,10 +117,11 @@ export function InstalledView() {
   }, [result, scope, kind, harness, tag, from, search, provenance]);
 
   // The count the filtered total is measured against: every row the table
-  // could show, not the ones left after the current narrowing.
+  // could show, not the ones left after the current narrowing. Shared with
+  // Home's Installed tile so the two can never disagree.
   const standingsFor = useLibraryStandings(groups);
   const total = useMemo(
-    () => (result ? groupItems(result.items).length : 0),
+    () => (result ? installedCount(groupItems(result.items)) : 0),
     [result],
   );
   // The filter's vocabulary is what the join actually says, so a value

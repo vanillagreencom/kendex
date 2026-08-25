@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
+import { useProblemsStore } from "./problems";
 import { useUpdatesStore } from "./updates";
 
 vi.mock("@/bindings", () => ({
@@ -52,8 +53,33 @@ function row(overrides: Partial<UpdateRow>): UpdateRow {
 
 describe("updates store: bulk update", () => {
   beforeEach(() => {
-    useUpdatesStore.setState({ rows: [], busy: false, loaded: false });
+    useUpdatesStore.setState({ rows: [], busy: false, loaded: true });
     vi.clearAllMocks();
+  });
+
+  // A transport rejection escapes the apply sequence without recording a
+  // failure — only the applier sees it, and the success toast must not
+  // stand over it.
+  it("claims no success when the transport fails mid-run", async () => {
+    useProblemsStore.setState({
+      dialog: { open: false, title: "", steps: [], actions: [] },
+    });
+    vi.mocked(commands.applyPlan).mockRejectedValue(new Error("ipc down"));
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [] },
+    });
+    vi.mocked(commands.scanMachine).mockResolvedValue({
+      status: "ok",
+      data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
+    });
+    vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
+
+    await useUpdatesStore.getState().updateRows([row({})]);
+
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(useProblemsStore.getState().dialog.open).toBe(true);
+    expect(useProblemsStore.getState().dialog.message).toBe("ipc down");
   });
 
   it("a bulk update moves holds once each and applies every following scope once", async () => {

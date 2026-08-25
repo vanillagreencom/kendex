@@ -37,21 +37,44 @@
 # Checks with no parseable run id in `link` (external contexts, default-setup
 # `.../runs/<CHECK_RUN_ID>` links, older gh output with no link) are always kept,
 # deduped by name keeping the latest `startedAt`.
+
+# Shared jq preamble: the run-id extraction, the check-bucket taxonomy, and
+# the run-scope reduction, exported as one string so every consumer (this
+# scoping, pr-merge's classification and head_runs, ci-classify-refusal's
+# diagnosis) prepends the SAME definitions — a local `def bucket`/`def runid`
+# copy is the drift this library exists to kill, and
+# ci-run-correlation.test.sh rejects one.
+# `runid` maps a check to its Actions run id (number) or null. `head_runs`
+# (input: a SCOPED check array) names the run ids a classification was scoped
+# to: every run the scoped checks link to — authoritative workflow runs and
+# custom commit statuses alike, so a status failure on a mixed head names its
+# run beside the workflow's instead of vanishing behind it. The one exclusion
+# is a status held EXPECTED: its link names the superseded run the rewrite
+# just retired, which must not read as current scope.
+CI_RUN_JQ_DEFS='
+  def runid:
+    (.link // "")
+    | ((capture("/actions/runs/(?<r>[0-9]+)")? | .r) // null)
+    | (if . == null then null else tonumber end);
+  def bucket:
+    (.bucket // (
+      if (.state == "SUCCESS") then "pass"
+      elif (.state == "SKIPPED") then "skipping"
+      elif ((.state // "") | IN("PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "EXPECTED")) then "pending"
+      elif (.state == "CANCELLED") then "cancel"
+      else "fail"
+      end
+    ));
+  def head_runs:
+    [.[]
+     | select(((.workflow // "") != "") or ((.state // "") != "EXPECTED"))
+     | runid
+     | select(. != null)]
+    | unique;
+'
+
 scope_current_run() {
-  jq -c '
-    def runid:
-      (.link // "")
-      | ((capture("/actions/runs/(?<r>[0-9]+)")? | .r) // null)
-      | (if . == null then null else tonumber end);
-    def bucket:
-      (.bucket // (
-        if (.state == "SUCCESS") then "pass"
-        elif (.state == "SKIPPED") then "skipping"
-        elif ((.state // "") | IN("PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "EXPECTED")) then "pending"
-        elif (.state == "CANCELLED") then "cancel"
-        else "fail"
-        end
-      ));
+  jq -c "$CI_RUN_JQ_DEFS"'
     def status_target:
       ((.link // "") | test("/actions/runs/[0-9]+/?$"));
     # Go renders a missing timestamp as its zero value; treat that as unknown.
@@ -133,4 +156,59 @@ scope_current_run() {
     | ($scoped_jobs + $scoped_statuses + $norun_deduped)
     | map(del(._runid, ._bucket, ._status_target, ._started))
   '
+}
+
+# Fetch the `gh pr checks` rollup for a PR (arg 1), startedAt included —
+# scope_current_run orders runs by it. gh exits 8 while checks are pending
+# but still prints usable JSON, so any valid array is authoritative
+# regardless of the exit status; a non-array answer returns 1 and prints
+# nothing.
+fetch_checks_rollup() {
+  local out
+  out=$(gh pr checks "$1" --json name,state,bucket,link,startedAt,workflow 2>&1) || true
+  jq -e 'type == "array"' >/dev/null 2>&1 <<<"$out" || return 1
+  printf '%s\n' "$out"
+}
+
+# Classify a raw (already-validated) `gh pr checks` rollup in one pass:
+# compact the snapshot, scope it, name the run scope, and join the pending/
+# failed check names into issue text. Emits one JSON object
+#   {checks, head_runs, pending, failed}
+# where `checks` is the compacted raw rollup — the single snapshot consumers
+# re-scope — and pending/failed are ", "-joined display strings. Names are
+# cleaned of newlines: check names are chosen by fork PRs and third-party
+# check apps, and a newline inside one would forge a standalone entry in the
+# line-oriented output built from these strings.
+classify_checks_rollup() {
+  local raw scoped
+  raw=$(jq -c .) || return 1
+  scoped=$(echo "$raw" | scope_current_run) || return 1
+  jq -cn --argjson raw "$raw" --argjson scoped "$scoped" "$CI_RUN_JQ_DEFS"'
+    def clean: tostring | gsub("[\r\n\t]"; " ");
+    {
+      checks: $raw,
+      head_runs: ($scoped | head_runs),
+      pending: ([$scoped[] | select(bucket == "pending") | (.name | clean) + " (" + .state + ")"] | join(", ")),
+      failed: ([$scoped[] | select((bucket != "pass") and (bucket != "skipping") and (bucket != "pending")) | (.name | clean) + " (" + .state + ")"] | join(", "))
+    }'
+}
+
+# The `head-run: <ids>` line for a --check JSON (stdin): the run ids the CI
+# classification was scoped to, "none" when no run-correlated checks exist.
+CHECK_HEAD_RUN_LINE_JQ='"head-run: " + (.head_runs // [] | if length == 0 then "none" else map(tostring) | join(",") end)'
+check_head_run_line() {
+  jq -r "$CHECK_HEAD_RUN_LINE_JQ"
+}
+
+# Reduce a --check JSON (stdin) to its one-word verdict plus the head-run:
+# line — the stderr contract of pr-merge --check. Terminal lifecycle states
+# outrank the check answer.
+check_verdict_lines() {
+  jq -r '
+    (if .state == "MERGED" then "merged"
+     elif .state == "CLOSED" then "closed"
+     elif .can_merge == true then "mergeable"
+     else "blocked"
+     end),
+    '"$CHECK_HEAD_RUN_LINE_JQ"
 }

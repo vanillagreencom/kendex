@@ -1,6 +1,7 @@
 import { toast } from "sonner";
 import { commands, type UpdateRow } from "@/bindings";
 import { FORK_ERROR_TITLE, forkedToastLabel } from "@/lib/copy";
+import { UPDATE_NEEDS_CHECK_NOTE } from "@/lib/copy-updates";
 import { packageDisplayName } from "@/lib/labels";
 import { useAuditStore } from "./audit";
 import { useProblemsStore } from "./problems";
@@ -14,14 +15,15 @@ import { useUpdatesStore } from "./updates";
 const run = async (work: () => Promise<string | null>) => {
   useUpdatesStore.setState({ busy: true });
   try {
-    const error = await work();
+    // The commit and the overview that follows ride the updates store's
+    // side-effect chain, in commit order with every other operation.
+    const error = await useUpdatesStore.getState().mutate(work);
     if (error !== null) {
       useProblemsStore
         .getState()
         .showError({ title: FORK_ERROR_TITLE, message: error });
       return;
     }
-    await useUpdatesStore.getState().load();
     await useScanStore.getState().refresh();
     await useAuditStore.getState().refresh({ force: true });
   } finally {
@@ -51,6 +53,18 @@ export const keepAsOwn = async (row: UpdateRow): Promise<void> => {
 /** Drop an edited place's edits and take the newest version — moving the
  *  hold along when the place is held, in the same apply. */
 export const takeNewVersion = async (row: UpdateRow): Promise<void> => {
+  // The action boundary owns the guarantee: a confirmation opened before
+  // a check failed still holds a retained row, and its latest names a
+  // commit nobody confirmed — the same while anything overview-producing
+  // is in flight, about to replace the rows. The trigger gates are UX;
+  // this is the stop.
+  const { loaded, checking, overviewInFlight } = useUpdatesStore.getState();
+  if (!loaded || checking || overviewInFlight) {
+    useProblemsStore
+      .getState()
+      .showError({ title: FORK_ERROR_TITLE, message: UPDATE_NEEDS_CHECK_NOTE });
+    return;
+  }
   await run(async () => {
     const response = await commands.applyDiscardEdits(
       row.scope,

@@ -1,8 +1,6 @@
-import { useEffect } from "react";
-import {
-  type AttentionRow,
-  AttentionSection,
-} from "@/components/home/attention-section";
+import { useEffect, useMemo } from "react";
+import { attentionRows } from "@/components/home/attention-rows";
+import { AttentionSection } from "@/components/home/attention-section";
 import {
   AttentionSkeleton,
   RecentSkeleton,
@@ -12,13 +10,15 @@ import { RecentActivity } from "@/components/home/recent-activity";
 import { PageHeader } from "@/components/page-header";
 import { Section } from "@/components/section";
 import { StatTile } from "@/components/stat-tile";
-import { auditCounts } from "@/lib/audit-counts";
+import { StatusNote } from "@/components/status-note";
+import { Button } from "@/components/ui/button";
 import {
-  FORKED_ATTENTION_DETAIL,
-  forkedAttentionTitle,
-  REVIEW_ACTION_LABEL,
+  SCAN_AGAIN_LABEL,
+  SCAN_FAILED_TITLE,
+  SCAN_STALE_TITLE,
 } from "@/lib/copy";
-import { groupItems, recentItems } from "@/lib/derive";
+import { MARKETPLACES_UNCHECKED_DETAIL } from "@/lib/copy-marketplaces";
+import { groupItems, installedCount, recentItems } from "@/lib/derive";
 import { harnessName } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { cn } from "@/lib/utils";
@@ -32,154 +32,126 @@ import { useUpdatesStore } from "@/stores/updates";
 const RECENT_ACTIVITY_LIMIT = 6;
 
 export function OverviewPage() {
-  const { result } = useScanStore();
+  const { result, error, scanning, refresh } = useScanStore();
   const views = useAuditStore((s) => s.views);
-  // The safety pass is the slowest thing the app does; until it has run
-  // once, Home cannot say whether anything needs attention — so it says
-  // that it is still looking rather than showing an empty page.
-  const stillChecking = useAuditStore((s) => s.auditedAt === null);
+  // The safety pass is the slowest thing the app does; until it has
+  // ANSWERED once, Home cannot say whether anything needs attention — so
+  // it says that it is still looking rather than showing an empty page. A
+  // failed audit is an answer: the section renders what is known, with the
+  // failure as a row of its own, instead of a skeleton for the session.
+  const stillChecking = useAuditStore(
+    (s) => s.auditedAt === null && s.checkError === null,
+  );
+  // `checkError`, not the store's shared `error`: item actions write the
+  // shared field too, and a failed remove or adopt is not a failed audit.
+  const auditError = useAuditStore((s) => s.checkError);
+  const auditRefresh = useAuditStore((s) => s.refresh);
   const projectCount = useSettingsStore(
     (s) => s.settings?.projects?.length ?? 0,
   );
   const setPage = useNavStore((s) => s.setPage);
   const goToPackage = useNavStore((s) => s.goToPackage);
   const updateRows = useUpdatesStore((s) => s.rows);
+  // Rows kept from before a failed re-check are last-known, still worth a
+  // line; the failure itself gets its own row below, so their absence
+  // never has to stand in for "couldn't check".
   const editedPackages = updateRows.filter((row) => row.blockedByLocalEdit);
+  const updatesError = useUpdatesStore((s) => s.error);
   const goTo = useNavStore((s) => s.goTo);
   const goToLibrary = useNavStore((s) => s.goToLibrary);
   const goToMarketplaces = useNavStore((s) => s.goToMarketplaces);
   const marketplaceCount = useMarketplacesStore((s) => s.rows.length);
+  // `rows` survives a failed re-read; `rowsCurrent` is whether they are
+  // the answer of the last one. Only a current read may put a number —
+  // above all a zero — on the tile. `loaded` is whether any read has
+  // answered at all: answered-but-not-current is the failure to note,
+  // while not-yet-answered is just the dash. The store's shared `error`
+  // field is not consulted — writes clear it without making rows current.
+  const marketplacesCurrent = useMarketplacesStore((s) => s.rowsCurrent);
+  const marketplacesLoaded = useMarketplacesStore((s) => s.loaded);
   const loadMarketplaces = useMarketplacesStore((s) => s.load);
   useEffect(() => {
     void loadMarketplaces();
   }, [loadMarketplaces]);
+  // Grouped once per scan: Recently changed and the Installed tile both
+  // read these, and the page re-renders on six stores' writes.
+  const groups = useMemo(
+    () => (result ? groupItems(result.items) : []),
+    [result],
+  );
 
-  const {
-    changes: actionableCount,
-    inTheWay,
-    unmanaged: unmanagedCount,
-    blocked,
-    open,
-  } = auditCounts(views);
-  const missing = result?.missingProjects ?? [];
+  const scanAgain = (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={scanning}
+      onClick={() => void refresh({ announce: true })}
+    >
+      {SCAN_AGAIN_LABEL}
+    </Button>
+  );
 
-  const rows: AttentionRow[] = [];
-  if (editedPackages.length > 0) {
-    const first = editedPackages[0];
-    rows.push({
-      key: "edited",
-      tone: "warning",
-      title: forkedAttentionTitle(editedPackages.length),
-      detail: FORKED_ATTENTION_DETAIL,
-      action:
-        editedPackages.length === 1 && first
-          ? {
-              label: first.name,
-              onClick: () =>
-                goToPackage({
-                  kind: first.kind,
-                  name: first.name,
-                  scope: first.scope,
-                }),
-            }
-          : { label: "Library", onClick: () => goToLibrary() },
-    });
+  // A first scan that failed is an answer, not a wait. Skeletons here would
+  // say "still checking" for the rest of the session; the page says what
+  // happened instead, with the retry beside it.
+  if (!result && error !== null) {
+    return (
+      <div>
+        <PageHeader title="Home" />
+        <div className={PAGE_BODY}>
+          <div className={cn(CONTENT_WIDTH)}>
+            <StatusNote
+              tone="critical"
+              title={SCAN_FAILED_TITLE}
+              action={scanAgain}
+            >
+              {error}
+            </StatusNote>
+          </div>
+        </div>
+      </div>
+    );
   }
-  if (blocked > 0) {
-    rows.push({
-      key: "safety",
-      tone: "critical",
-      title: blocked === 1 ? "1 problem found" : `${blocked} problems found`,
-      detail: "Held back until you accept them.",
-      action: { label: REVIEW_ACTION_LABEL, onClick: () => setPage("review") },
-    });
-  }
-  if (open > 0) {
-    rows.push({
-      key: "decisions",
-      tone: "warning",
-      title: open === 1 ? "1 finding to review" : `${open} findings to review`,
-      detail: "In content already installed.",
-      action: { label: REVIEW_ACTION_LABEL, onClick: () => setPage("review") },
-    });
-  }
-  if (inTheWay > 0) {
-    rows.push({
-      key: "in-the-way",
-      tone: "warning",
-      title:
-        inTheWay === 1
-          ? "1 item needs your decision"
-          : `${inTheWay} items need your decision`,
-      detail: "Files are already where they go.",
-      action: { label: REVIEW_ACTION_LABEL, onClick: () => setPage("review") },
-    });
-  }
-  if (actionableCount > 0) {
-    rows.push({
-      key: "drift",
-      tone: "info",
-      title:
-        actionableCount === 1
-          ? "1 change ready to apply"
-          : `${actionableCount} changes ready to apply`,
-      action: { label: REVIEW_ACTION_LABEL, onClick: () => setPage("review") },
-    });
-  }
-  if (unmanagedCount > 0) {
-    rows.push({
-      key: "unmanaged",
-      tone: "muted",
-      title:
-        unmanagedCount === 1
-          ? "1 unmanaged item"
-          : `${unmanagedCount} unmanaged items`,
-      detail: "kendex didn't put them there.",
-      action: { label: "Review", onClick: () => goTo("unmanaged") },
-    });
-  }
-  if (missing.length > 0) {
-    rows.push({
-      key: "missing-projects",
-      tone: "warning",
-      title:
-        missing.length === 1
-          ? "1 project folder can't be found"
-          : `${missing.length} project folders can't be found`,
-      detail:
-        missing.length === 1
-          ? `We can't find ${missing[0]}. If you moved it, add it again.`
-          : "If you moved these, add them again from Harnesses & Projects.",
-      action: {
-        label: "Projects",
-        onClick: () => goTo("projects"),
-      },
-    });
-  }
-  if (result && result.warnings.length > 0) {
-    rows.push({
-      key: "warnings",
-      tone: "warning",
-      title:
-        result.warnings.length === 1
-          ? "1 file couldn't be read"
-          : `${result.warnings.length} files couldn't be read`,
-      detail: result.warnings[0],
-    });
-  }
+
+  const rows = attentionRows({
+    editedPackages,
+    views,
+    result,
+    updatesError,
+    auditError,
+    onReview: () => setPage("review"),
+    onUnmanaged: () => goTo("unmanaged"),
+    onProjects: () => goTo("projects"),
+    onUpdates: () => setPage("updates"),
+    onLibrary: () => goToLibrary(),
+    onPackage: (row) =>
+      goToPackage({ kind: row.kind, name: row.name, scope: row.scope }),
+    onAuditRetry: () => void auditRefresh({ force: true }),
+  });
 
   const harnessNames = (result?.harnesses ?? [])
     .map((h) => harnessName(h.harness))
     .join(", ");
-  const recent = result
-    ? recentItems(groupItems(result.items), RECENT_ACTIVITY_LIMIT)
-    : [];
+  const recent = recentItems(groups, RECENT_ACTIVITY_LIMIT);
 
   return (
     <div>
       <PageHeader title="Home" />
       <div className={PAGE_BODY}>
         <div className={cn("flex flex-col gap-10", CONTENT_WIDTH)}>
+          {/* The store keeps the last good result so the page does not
+              blank, but a re-scan that failed means everything below
+              answers for an earlier moment — said here once, over all of
+              it, rather than presented as current. */}
+          {result && error !== null ? (
+            <StatusNote
+              tone="warning"
+              title={SCAN_STALE_TITLE}
+              action={scanAgain}
+            >
+              {error}
+            </StatusNote>
+          ) : null}
           {/* Nothing to decide means nothing to say: the section is gone
               rather than standing there reporting its own emptiness. */}
           {!result || stillChecking ? (
@@ -205,9 +177,12 @@ export function OverviewPage() {
                   detail={harnessNames || undefined}
                   onClick={() => goTo("harnesses")}
                 />
+                {/* Counted in the Library's unit — packages, not
+                    installations — so the number matches the table the
+                    click lands on. */}
                 <StatTile
                   label="Installed"
-                  value={result.items.length}
+                  value={installedCount(groups)}
                   onClick={() => goToLibrary()}
                 />
                 <StatTile
@@ -217,9 +192,18 @@ export function OverviewPage() {
                 />
                 <StatTile
                   label="Marketplaces"
-                  value={marketplaceCount}
+                  value={marketplacesCurrent ? marketplaceCount : null}
                   detail={
-                    marketplaceCount === 0 ? "browse and subscribe" : undefined
+                    marketplacesCurrent
+                      ? marketplaceCount === 0
+                        ? "browse and subscribe"
+                        : undefined
+                      : // Answered but not current is a read that failed;
+                        // not yet answered is the first read still on its
+                        // way, and the dash alone carries that.
+                        marketplacesLoaded
+                        ? MARKETPLACES_UNCHECKED_DETAIL
+                        : undefined
                   }
                   onClick={() => goToMarketplaces()}
                 />

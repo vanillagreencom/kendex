@@ -138,11 +138,17 @@ describe("scan store", () => {
     expect(toast.error).toHaveBeenCalledTimes(2);
   });
 
-  it("lowers the scanning flag when the call itself rejects", async () => {
+  // A rejected call used to escape the store entirely: no error, no
+  // result, and Home read the silence as a scan still on its way.
+  it("lands a rejected call as a failed scan, keeping the last result", async () => {
+    useScanStore.setState({ result: emptyResult });
     vi.mocked(commands.scanMachine).mockRejectedValue(new Error("ipc down"));
 
-    await expect(useScanStore.getState().refresh()).rejects.toThrow("ipc down");
+    await useScanStore.getState().refresh();
 
-    expect(useScanStore.getState().scanning).toBe(false);
+    const state = useScanStore.getState();
+    expect(state.error).toBe("ipc down");
+    expect(state.result).toEqual(emptyResult);
+    expect(state.scanning).toBe(false);
   });
 });

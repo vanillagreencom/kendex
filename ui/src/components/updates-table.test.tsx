@@ -1,13 +1,34 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import { Table, TableBody } from "@/components/ui/table";
+import { UPDATE_NEEDS_CHECK_NOTE } from "@/lib/copy-updates";
 import { groupUpdates } from "@/lib/update-groups";
 import { PackageRows, UpdatesTable } from "./updates-table";
 import { updateRow as row } from "./updates-test-rows";
 
 const render = (rows: UpdateRow[]) =>
   renderToStaticMarkup(<UpdatesTable rows={rows} onIgnore={() => {}} />);
+
+// Static rendering reads a zustand store's initial snapshot, never one set
+// later, so the store is wrapped to let a test stage what the last read
+// left behind. Rows on the table imply a read that answered, so that is
+// the default.
+const stub = vi.hoisted(() => ({ loaded: true, busy: false }));
+
+vi.mock("@/stores/updates", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("@/stores/updates")>();
+  const hook = (selector?: (state: unknown) => unknown) => {
+    const state = { ...mod.useUpdatesStore.getState(), ...stub };
+    return selector ? selector(state) : state;
+  };
+  return { ...mod, useUpdatesStore: Object.assign(hook, mod.useUpdatesStore) };
+});
+
+beforeEach(() => {
+  stub.loaded = true;
+  stub.busy = false;
+});
 
 describe("UpdatesTable", () => {
   it("names the follow-source column once in the header, not per row", () => {
@@ -135,6 +156,36 @@ describe("UpdatesTable", () => {
       "Held by the source &quot;cat&quot; as a whole — release it where that source is declared",
     );
     expect(html).toMatch(/<button[^>]*>Update</);
+  });
+
+  // Rows kept from before a failed check name a `latest` nobody confirmed
+  // — updating from them would move a hold to a stale commit, so every
+  // Update action waits for a check that succeeds.
+  it("holds every Update action on rows a failed check left behind", () => {
+    stub.loaded = false;
+    const html = renderToStaticMarkup(
+      <Table>
+        <TableBody>
+          <PackageRows
+            group={
+              groupUpdates([row("gh", null), row("gh", "/home/x/acme")])[0]
+            }
+            onIgnore={() => {}}
+            defaultOpen
+          />
+        </TableBody>
+      </Table>,
+    );
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Update all</);
+    expect(html.match(/<button[^>]*disabled=""[^>]*>Update</g)).toHaveLength(2);
+    // The Follow switch holds at row.current's commit when switched off —
+    // a stale row would pin an old version — so it waits too.
+    expect(
+      html.match(/<span[^>]*data-disabled=""[^>]*role="switch"/g),
+    ).toHaveLength(2);
+    expect(
+      html.match(new RegExp(`title="${UPDATE_NEEDS_CHECK_NOTE}"`, "g")),
+    ).toHaveLength(5);
   });
 
   it("offers no package-wide Update all in the muted table", () => {

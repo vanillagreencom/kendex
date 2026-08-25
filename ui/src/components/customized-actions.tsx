@@ -14,9 +14,11 @@ import {
   DERIVED_EDIT_NOTE,
   MULTI_TOOL_EDIT_NOTE,
   UNFORKABLE_EDIT_NOTE,
+  UPDATE_NEEDS_CHECK_NOTE,
   USE_NEW_VERSION_LABEL,
 } from "@/lib/copy-updates";
 import { scopeKey } from "@/lib/scope";
+import { useUpdatesStore } from "@/stores/updates";
 import { keepAsOwn, takeNewVersion } from "@/stores/updates-edits";
 
 /** A place whose files were edited by hand: the update waits on a
@@ -31,6 +33,14 @@ export function CustomizedActions({
   busy: boolean;
 }) {
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  // Discarding edits on a held place moves the hold to row.latest's commit
+  // — from a stale or about-to-be-replaced row that pins exactly the old
+  // version the other Update guards prevent — so the discard waits for a
+  // check the same as Update. Keeping the files as a fork copies what is
+  // on disk and stays live.
+  const held = useUpdatesStore(
+    (s) => !s.loaded || s.checking || s.overviewInFlight,
+  );
   const whyNoFork = row.derived
     ? DERIVED_EDIT_NOTE
     : row.editedHarnesses.length > 1
@@ -62,7 +72,8 @@ export function CustomizedActions({
         <Button
           size="sm"
           variant="outline"
-          disabled={busy}
+          disabled={busy || held}
+          title={held ? UPDATE_NEEDS_CHECK_NOTE : undefined}
           onClick={() => setConfirmDiscard(true)}
         >
           {row.canTakeLatest ? USE_NEW_VERSION_LABEL : DISCARD_EDITS_LABEL}
@@ -77,6 +88,8 @@ export function CustomizedActions({
         confirmLabel={DISCARD_EDITS_CONFIRM_LABEL}
         destructive
         busy={busy}
+        confirmDisabled={held}
+        confirmDisabledNote={UPDATE_NEEDS_CHECK_NOTE}
         onConfirm={() =>
           void takeNewVersion(row).then(() => setConfirmDiscard(false))
         }

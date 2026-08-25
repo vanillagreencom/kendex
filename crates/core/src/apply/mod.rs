@@ -34,7 +34,7 @@ pub fn scope_key(scope: &Scope) -> String {
 /// a repository's common dir. Held for the whole journal → mutate → clear
 /// window; recovery runs under the same lock.
 pub struct ScopeGuard {
-    _file: fs::File,
+    _file: crate::fs::LockedFile,
 }
 
 fn lock_scope(env: &Env, scope: &Scope) -> Result<ScopeGuard> {
@@ -45,28 +45,13 @@ pub(crate) fn lock_key(env: &Env, key: &str) -> Result<ScopeGuard> {
     let dir = env.scope_locks_dir();
     fs::create_dir_all(&dir).map_err(|e| CoreError::io(&dir, e))?;
     let path = dir.join(format!("{key}.lock"));
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&path)
-        .map_err(|e| CoreError::io(&path, e))?;
-    let mut lock = fd_lock::RwLock::new(file);
-    // fd-lock ties its guard lifetime to the RwLock borrow; the OS lock is
-    // really held by the open fd, so forget the guard and keep the file —
-    // the lock releases when ScopeGuard drops (closing the fd). Only
-    // contention is "busy": a filesystem that cannot lock at all must say
-    // so, or every launch pass would skip recovery there in silence.
-    match lock.try_write() {
-        Ok(guard) => std::mem::forget(guard),
-        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-            return Err(CoreError::ScopeBusy { lock: path });
-        }
-        Err(error) => return Err(CoreError::io(&path, error)),
+    // Only contention is "busy": a filesystem that cannot lock at all must
+    // say so, or every launch pass would skip recovery there in silence.
+    match crate::fs::LockedFile::try_exclusive(&path) {
+        Ok(Some(file)) => Ok(ScopeGuard { _file: file }),
+        Ok(None) => Err(CoreError::ScopeBusy { lock: path }),
+        Err(error) => Err(CoreError::io(&path, error)),
     }
-    Ok(ScopeGuard {
-        _file: lock.into_inner(),
-    })
 }
 
 /// Recovery under the scope lock, for callers outside an apply (launch
@@ -281,6 +266,26 @@ mod tests {
         assert!(recover(&env, &Scope::Global).unwrap());
         assert_eq!(fs::read_to_string(&target).unwrap(), "before");
         assert!(!recover(&env, &Scope::Global).unwrap());
+    }
+
+    /// A concurrently spawned child holds a copy of every parent fd's open
+    /// file description between fork and exec — O_CLOEXEC closes at exec,
+    /// not at fork — so a release that relied on closing the fd left flock
+    /// held for the length of any other thread's spawn window, and this
+    /// process was refused its own lock back with no writer alive. The
+    /// try_clone here is that fork copy at the description level: dropping
+    /// the guard must release the lock while the copy still exists.
+    #[cfg(unix)]
+    #[test]
+    fn drop_releases_the_lock_while_a_description_copy_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = env_in(tmp.path());
+        let guard = lock_scope(&env, &Scope::Global).unwrap();
+        let copy = guard._file.file().try_clone().unwrap();
+        drop(guard);
+        let relock = lock_scope(&env, &Scope::Global);
+        drop(copy);
+        relock.unwrap();
     }
 
     #[test]
