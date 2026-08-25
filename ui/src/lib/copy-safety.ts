@@ -82,13 +82,32 @@ export function safetyHeadline(findings: Finding[], skipped: number): string {
   return severity ? `${severity} · ${count}` : count;
 }
 
+// What a kept reading is, wherever a score outlives the check that would
+// have replaced it. Without this the app presents a number as current when
+// nothing current exists. The word "safety" is spelled around throughout
+// this file: it contains "safe", and no copy beside a score may say that.
+export const SAFETY_STALE_LEAD = "The last check couldn't run. Before it:";
+export const SAFETY_STALE_NOTE =
+  "The last check couldn't run. This is the reading before it.";
+// No reading at all, and the check is over rather than pending — so this
+// comes with something to press instead of a spinner.
+export const SAFETY_CHECK_FAILED =
+  "The check couldn't run, so nothing here has been scored.";
+export const SAFETY_RETRY_LABEL = "Try again";
+
 /** The same words for a row on the Updates page, where every other cell is
  *  about a version that is not installed yet. The score there is the copy
  *  on disk now, and saying so is what keeps the number from being read as
- *  the one the update would earn. */
+ *  the one the update would earn — unless the last check failed, when what
+ *  it is is the reading before that one. */
 export const installedScoreWords = (
   score: number,
   skipped: number,
   findings: Finding[],
+  stale = false,
 ): string =>
-  `The copy installed now: ${safetyDotWords(score, skipped, findings)}`;
+  `${stale ? SAFETY_STALE_LEAD : "The copy installed now:"} ${safetyDotWords(
+    score,
+    skipped,
+    findings,
+  )}`;

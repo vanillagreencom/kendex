@@ -4,7 +4,9 @@ import {
   CATALOG_LAYOUT_CLEAN,
   installedScoreWords,
   SAFETY_CAVEAT,
+  SAFETY_CHECK_FAILED,
   SAFETY_DOT_UNCHECKED,
+  SAFETY_STALE_NOTE,
   safetyDotWords,
   safetyHeadline,
   severityTone,
@@ -32,6 +34,9 @@ describe("what a score is allowed to claim", () => {
     safetyHeadline([], 0),
     safetyHeadline([], 3),
     installedScoreWords(100, 0, []),
+    installedScoreWords(100, 0, [], true),
+    SAFETY_CHECK_FAILED,
+    SAFETY_STALE_NOTE,
     SAFETY_DOT_UNCHECKED,
   ];
 
@@ -142,5 +147,14 @@ describe("the line under a score", () => {
     expect(words).toContain("installed now");
     expect(words).toContain("58/100");
     expect(words).toContain("Important");
+  });
+
+  // A number kept from before a failed check is not what the files say now,
+  // and presenting it as current is a claim nothing has made.
+  it("stops calling a kept reading the copy installed now", () => {
+    const kept = installedScoreWords(58, 0, [finding("high")], true);
+    expect(kept).toContain("58/100");
+    expect(kept).toContain("couldn't run");
+    expect(kept).not.toContain("installed now");
   });
 });

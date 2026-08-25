@@ -5,26 +5,44 @@
 // for five tools comes back as five rows of one reading. A person counts the
 // thing, not the renderings — the same rule `lib/drift-merge.ts` follows for
 // drift rows.
-import type { AuditResult, AuditView, ItemKind, Scope } from "@/bindings";
+import type {
+  AuditResult,
+  AuditView,
+  Finding,
+  ItemKind,
+  Scope,
+} from "@/bindings";
 import { sameScope } from "@/lib/scope";
 
-/** The reading for one package, or null where the audit has no row for it —
- *  it has not answered yet, or the package is not installed where asked.
+/** What makes two findings the same finding. The severity is in it because
+ *  one rule can fire at different weights, and the message because one rule
+ *  can match twice at one address for different reasons. Used both to fold
+ *  repeats out of a reading and to key the lines rendered from it, so a
+ *  screen never shows two rows a reader cannot tell apart. */
+export const findingKey = (finding: Finding): string =>
+  `${finding.rule}:${finding.severity}:${finding.location}:${finding.message}`;
+
+/** The reading for one package at the places asked about, or null where the
+ *  audit has no row for it — it has not answered yet, or the package is not
+ *  installed at any of them.
  *
- *  Where the rows disagree, the lowest score stands and every finding is
- *  kept: two tools reading different bytes under one name is a real state,
- *  and the worse of the two is the one worth showing. Findings alike in
- *  rule, place and message are one finding seen twice. */
+ *  Always the places the caller names. A package's row on the Updates page
+ *  is about the places that row lists, and a same-named package from an
+ *  unrelated catalog somewhere else on the machine is a different package.
+ *
+ *  Where the rows disagree, one whole row wins: the lowest score, with the
+ *  findings that earned it. Two tools reading different bytes under one name
+ *  is a real state, and the worse of the two is the one worth showing — but
+ *  it is shown entire, because a score from one reading over findings from
+ *  another is a number nothing on screen accounts for. */
 export function installedSafety(
   views: AuditView[],
   kind: ItemKind,
   name: string,
-  /** One place, or every place the package sits when left out — the
-   *  Updates page's rows are per package, not per place. */
-  scope?: Scope,
+  scopes: Scope[],
 ): AuditResult | null {
   const rows = views
-    .filter((view) => scope === undefined || sameScope(view.scope, scope))
+    .filter((view) => scopes.some((scope) => sameScope(view.scope, scope)))
     .flatMap((view) => view.safety)
     .filter((row) => row.kind === kind && row.name === name);
   const worst = rows.reduce<(typeof rows)[number] | null>(
@@ -37,15 +55,8 @@ export function installedSafety(
     safety: worst.safety,
     quality: worst.quality,
     ruleset: worst.ruleset,
-    findings: dedupe(
-      rows.flatMap((row) => row.findings),
-      (finding) =>
-        `${finding.rule}:${finding.severity}:${finding.location}:${finding.message}`,
-    ),
-    skipped: dedupe(
-      rows.flatMap((row) => row.skipped),
-      (skip) => `${skip.rule}:${skip.reason}`,
-    ),
+    findings: dedupe(worst.findings, findingKey),
+    skipped: dedupe(worst.skipped, (skip) => `${skip.rule}:${skip.reason}`),
   };
 }
 

@@ -3,9 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AuditView } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { UPDATE_LABEL } from "@/lib/copy";
+import { SAFETY_CAVEAT } from "@/lib/copy-safety";
 import {
   EDITED_TAG_HELP,
   FOLLOW_SOURCE_HELP,
@@ -16,6 +18,7 @@ import {
   TABLE_OPTIONS_LABEL,
 } from "@/lib/copy-updates";
 import { UpdatesPage } from "@/pages/updates";
+import { useAuditStore } from "@/stores/audit";
 import { useUpdatesStore } from "@/stores/updates";
 import { useUpdatesView } from "@/stores/updates-view";
 import { mount, settle } from "@/test/dom";
@@ -247,6 +250,89 @@ describe("a page with only muted updates", () => {
     expect(host.querySelectorAll('[aria-label="Table options"]')).toHaveLength(
       1,
     );
+  });
+});
+
+// A number with a severity and a count behind it and no way to the findings
+// is a claim the row cannot back up: the tooltip carries the score and the
+// caveat, never a file or a line.
+describe("the findings behind a row's score", () => {
+  const scoredGh = (): AuditView => ({
+    scope: { scope: "global" },
+    drift: [],
+    plan: [],
+    notes: [],
+    warnings: [],
+    adoptable: ADOPTABLE,
+    exits: [],
+    safety: [
+      {
+        kind: "skill",
+        name: "gh",
+        harness: "claude",
+        scope: { scope: "global" },
+        location: "",
+        findings: [
+          {
+            rule: "dangerous-commands",
+            severity: "high",
+            location: "SKILL.md:20",
+            message: "runs a shell command that deletes files without asking",
+            remediation: "scope the command to a specific path, or drop it",
+          },
+        ],
+        skipped: [],
+        safety: { score: 58, deductions: [] },
+        quality: null,
+        ruleset: 3,
+      },
+    ],
+  });
+
+  const score = (): HTMLElement => {
+    const found = document.querySelector<HTMLElement>(
+      '[data-slot="tooltip-trigger"][aria-expanded]',
+    );
+    if (!found) throw new Error("expected the score to open something");
+    return found;
+  };
+
+  it("opens them from the score, and keeps them out of the row until asked", async () => {
+    act(() => {
+      useAuditStore.setState({
+        views: [scoredGh()],
+        auditedAt: Date.now(),
+        checkError: null,
+      });
+    });
+    const host = mount(<UpdatesTable rows={[row("gh", null)]} />);
+
+    expect(host.textContent).not.toContain("SKILL.md:20");
+    expect(score().getAttribute("aria-expanded")).toBe("false");
+
+    await userEvent.click(score());
+
+    expect(host.textContent).toContain("SKILL.md:20");
+    expect(host.textContent).toContain("58/100");
+    expect(host.textContent).toContain(SAFETY_CAVEAT);
+    expect(score().getAttribute("aria-expanded")).toBe("true");
+  });
+
+  // Nothing behind the number is nothing to open: a control that expands
+  // onto an empty row is a promise the row cannot keep.
+  it("offers no way in for a clean reading", () => {
+    act(() => {
+      useAuditStore.setState({
+        views: [{ ...scoredGh(), safety: [] }],
+        auditedAt: Date.now(),
+        checkError: null,
+      });
+    });
+    mount(<UpdatesTable rows={[row("gh", null)]} />);
+
+    expect(
+      document.querySelector('[data-slot="tooltip-trigger"][aria-expanded]'),
+    ).toBeNull();
   });
 });
 

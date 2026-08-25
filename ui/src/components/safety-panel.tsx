@@ -1,7 +1,16 @@
 import type { AuditResult } from "@/bindings";
 import { FindingLine } from "@/components/safety-findings";
 import { ScoreCircle } from "@/components/score-circle";
-import { SAFETY_CAVEAT, safetyHeadline, severityTone } from "@/lib/copy-safety";
+import { Button } from "@/components/ui/button";
+import {
+  SAFETY_CAVEAT,
+  SAFETY_CHECK_FAILED,
+  SAFETY_RETRY_LABEL,
+  SAFETY_STALE_NOTE,
+  safetyHeadline,
+  severityTone,
+} from "@/lib/copy-safety";
+import { findingKey } from "@/lib/installed-safety";
 import { cn } from "@/lib/utils";
 
 /**
@@ -19,6 +28,8 @@ import { cn } from "@/lib/utils";
 export function SafetyPanel({
   result,
   notes = [],
+  stale = false,
+  onRetry,
   className,
 }: {
   result: AuditResult;
@@ -26,6 +37,11 @@ export function SafetyPanel({
    *  what an install would read differently. Empty for installed content,
    *  which was read where it sits. */
   notes?: string[];
+  /** The check that would have replaced this reading failed. The number
+   *  stays, because it is the last thing anything knows, but it stops being
+   *  presented as what the files say now. */
+  stale?: boolean;
+  onRetry?: () => void;
   className?: string;
 }) {
   const { findings, skipped } = result;
@@ -44,6 +60,16 @@ export function SafetyPanel({
             Safety check · {result.safety.score}/100
           </h3>
           <p className="text-sm">{safetyHeadline(findings, skipped.length)}</p>
+          {stale ? (
+            <div className="flex flex-wrap items-center gap-2 text-sm text-warning">
+              {SAFETY_STALE_NOTE}
+              {onRetry ? (
+                <Button size="sm" variant="outline" onClick={onRetry}>
+                  {SAFETY_RETRY_LABEL}
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
           <p className="max-w-prose text-xs text-foreground/70">
             {SAFETY_CAVEAT}
           </p>
@@ -56,17 +82,43 @@ export function SafetyPanel({
       </div>
       {findings.length > 0 ? (
         <div className="space-y-3">
-          {/* One line can match a rule twice with the same address in
-              both; two rows alike in every field are the same row to a
-              reader. */}
           {findings.map((finding) => (
-            <FindingLine
-              key={`${finding.rule}:${finding.location}:${finding.message}`}
-              finding={finding}
-            />
+            <FindingLine key={findingKey(finding)} finding={finding} />
           ))}
         </div>
       ) : null}
+    </section>
+  );
+}
+
+/**
+ * The check ran and could not answer, with nothing kept from before it.
+ *
+ * A block that rendered nothing here would read as a package the check
+ * found nothing in, which is the one claim it has not made. So the failure
+ * stands where the score would, and it carries the way to ask again: a
+ * toast is gone by the time anybody reads the page.
+ */
+export function SafetyUnavailable({
+  message,
+  onRetry,
+  className,
+}: {
+  /** What the audit said went wrong. Shown under the headline, because a
+   *  path or a permission is usually the whole answer. */
+  message: string | null;
+  onRetry: () => void;
+  className?: string;
+}) {
+  return (
+    <section className={cn("flex flex-col items-start gap-2", className)}>
+      <p className="text-sm">{SAFETY_CHECK_FAILED}</p>
+      {message ? (
+        <p className="max-w-prose text-xs text-foreground/70">{message}</p>
+      ) : null}
+      <Button size="sm" variant="outline" onClick={onRetry}>
+        {SAFETY_RETRY_LABEL}
+      </Button>
     </section>
   );
 }

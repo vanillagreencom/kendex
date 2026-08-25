@@ -188,11 +188,23 @@ describe("Home when the update check fails", () => {
 // skeleton on it alone held the section in "still looking" for the session
 // and swallowed every other attention row.
 describe("Home when the audit fails", () => {
-  it("keeps the skeleton only while the audit has not answered", () => {
+  // The audit is the slowest read in the app and no longer holds this
+  // section: every row bar the audit's own failure comes from the scan or
+  // the update check, so waiting on it hid rows that were ready.
+  it("shows the section as soon as the scan answers, audit or no audit", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
+    stub.updates = { error: "no network" };
     const html = renderToStaticMarkup(<OverviewPage />);
-    expect(html).toContain('data-slot="skeleton"');
+    expect(html).not.toContain('data-slot="skeleton"');
+    expect(html).toContain(esc(UPDATES_ATTENTION_TITLE));
     expect(html).not.toContain(esc(AUDIT_ATTENTION_TITLE));
+  });
+
+  it("holds the skeleton until the scan answers", () => {
+    stub.scan = { result: null, error: null, scanning: true };
+    expect(renderToStaticMarkup(<OverviewPage />)).toContain(
+      'data-slot="skeleton"',
+    );
   });
 
   it("drops the skeleton and says the audit failed, with the retry", () => {

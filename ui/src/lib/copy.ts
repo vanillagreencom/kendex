@@ -45,8 +45,6 @@ export const HARNESS_FOLDER_BODY =
 export const NOT_INSTALLED_LABEL = "Not installed";
 export const startManagingAllLabel = (count: number): string =>
   `Start managing all ${count}`;
-export const showAllItemsLabel = (count: number): string => `Show all ${count}`;
-export const HIDE_ITEMS_LABEL = "Hide";
 export const adoptedToastLabel = (name: string): string =>
   `Now managing ${name}`;
 

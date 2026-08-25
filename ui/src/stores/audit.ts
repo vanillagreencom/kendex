@@ -127,6 +127,48 @@ const AUDIT_FRESH_FOR_MS = 60_000;
 export const useAuditStore = create<AuditState>((set, get) => {
   const run = auditRunner(set, get);
 
+  // The audit in flight, and the one forced request waiting behind it.
+  // These are the truth about what is running, not the `auditing` flag: the
+  // flag says what to draw, and a request that arrives mid-run has to know
+  // whether there is something real to wait for.
+  let inFlight: Promise<void> | null = null;
+  let queued: Promise<void> | null = null;
+
+  const audit = async (): Promise<void> => {
+    set({ auditing: true });
+    try {
+      // `settled` lands a rejected call as the same failed audit as a
+      // returned refusal, which keeps Home's attention section off its
+      // skeleton, the same as the scan.
+      const response = await settled(commands.auditAll());
+      if (response.status === "ok") {
+        set({
+          views: response.data,
+          auditedAt: Date.now(),
+          error: null,
+          checkError: null,
+          backgroundFailureAnnounced: false,
+        });
+      } else {
+        set({ error: response.error, checkError: response.error });
+        if (!get().backgroundFailureAnnounced) {
+          toast.error(response.error);
+          set({ backgroundFailureAnnounced: true });
+        }
+      }
+    } finally {
+      set({ auditing: false });
+    }
+  };
+
+  const start = (): Promise<void> => {
+    const running = audit().finally(() => {
+      if (inFlight === running) inFlight = null;
+    });
+    inFlight = running;
+    return running;
+  };
+
   return {
     views: [],
     auditedAt: null,
@@ -137,39 +179,30 @@ export const useAuditStore = create<AuditState>((set, get) => {
     backgroundFailureAnnounced: false,
 
     // Auditing the whole machine is seconds of work to answer a question
-    // already on screen. A recent answer is reused; anything the app itself
-    // changes refreshes the scope it changed, and a stale window closes on
-    // its own inside a minute.
-    refresh: async (opts) => {
-      if (get().auditing) return;
+    // already on screen, so a recent answer is reused. A forced request is
+    // the opposite claim — the bytes changed — and is never reused away:
+    // every path that writes what is scored forces, and so does the person
+    // who pressed Scan again.
+    refresh: (opts) => {
+      const force = opts?.force === true;
+      if (inFlight) {
+        // The running audit may already have read the files this force is
+        // about, so it cannot answer for them. Dropping the force left
+        // every score on screen quoting the state before whatever prompted
+        // it. Exactly one follow-up waits: a second force joins that one
+        // rather than stacking a queue of identical machine-wide reads.
+        if (!force) return inFlight;
+        queued ??= inFlight.then(() => {
+          queued = null;
+          return start();
+        });
+        return queued;
+      }
       const auditedAt = get().auditedAt;
       const fresh =
         auditedAt != null && Date.now() - auditedAt < AUDIT_FRESH_FOR_MS;
-      if (fresh && !opts?.force) return;
-      set({ auditing: true });
-      try {
-        // `settled` lands a rejected call as the same failed audit as a
-        // returned refusal, which keeps Home's attention section off its
-        // skeleton, the same as the scan.
-        const response = await settled(commands.auditAll());
-        if (response.status === "ok") {
-          set({
-            views: response.data,
-            auditedAt: Date.now(),
-            error: null,
-            checkError: null,
-            backgroundFailureAnnounced: false,
-          });
-        } else {
-          set({ error: response.error, checkError: response.error });
-          if (!get().backgroundFailureAnnounced) {
-            toast.error(response.error);
-            set({ backgroundFailureAnnounced: true });
-          }
-        }
-      } finally {
-        set({ auditing: false });
-      }
+      if (fresh && !force) return Promise.resolve();
+      return start();
     },
 
     adopt: (scope, kind, name, harnesses, quiet) =>

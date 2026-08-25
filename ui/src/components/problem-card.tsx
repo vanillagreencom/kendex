@@ -5,15 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PROBLEM_HEADLINES, PROBLEM_STEPS } from "@/lib/error-copy";
 import { scopeName, scopePath } from "@/lib/labels";
-import { useAuditStore } from "@/stores/audit";
+import { rescanEverything } from "@/lib/rescan";
 import type { Problem } from "@/stores/problems";
-import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
 
 export function ProblemCard({ problem }: { problem: Problem }) {
   const [confirmRemove, setConfirmRemove] = useState(false);
-  const refreshScan = useScanStore((s) => s.refresh);
-  const refreshAudit = useAuditStore((s) => s.refresh);
   const unregisterProject = useSettingsStore((s) => s.unregisterProject);
 
   // A scan failure isn't about any one project, so it gets Rescan only —
@@ -51,10 +48,7 @@ export function ProblemCard({ problem }: { problem: Problem }) {
           <Button
             size="sm"
             variant="outline"
-            onClick={() => {
-              void refreshScan();
-              void refreshAudit();
-            }}
+            onClick={() => void rescanEverything()}
           >
             Rescan
           </Button>

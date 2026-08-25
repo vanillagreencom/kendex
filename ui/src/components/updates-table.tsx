@@ -1,7 +1,11 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useId, useState } from "react";
 import type { UpdateRow } from "@/bindings";
-import { InstalledScore } from "@/components/installed-score";
+import {
+  InstalledScore,
+  useInstalledReading,
+} from "@/components/installed-score";
+import { SafetyPanel, SafetyUnavailable } from "@/components/safety-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
@@ -81,7 +85,9 @@ export function PackageRows({
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const [showSafety, setShowSafety] = useState(false);
   const placesId = useId();
+  const safetyId = useId();
   const busy = useUpdatesStore((s) => s.busy);
   const places = group.places;
   // Not loaded, mid-check, mid-load, and a follow switch settling in any of
@@ -96,6 +102,15 @@ export function PackageRows({
   const name = packageDisplayName(group);
   const scopes = places.map((place) => place.scope);
   const only = places.length === 1 ? places[0] : null;
+  // The reading for this package at this row's places — not every copy of
+  // the name on the machine, which would score a package the row is not
+  // about.
+  const reading = useInstalledReading(group.kind, group.name, scopes);
+  // A number with a severity and a count behind it and no way to the
+  // findings is a claim the row cannot back up. Opening is offered whenever
+  // there is more to read: the findings, or why there is no reading at all.
+  const hasSafetyDetail =
+    (reading.result?.findings.length ?? 0) > 0 || reading.failure !== null;
   const Chevron = open ? ChevronDown : ChevronRight;
   const held = places.filter((p) => p.pinned).length;
   const tags = [
@@ -118,7 +133,16 @@ export function PackageRows({
                 package's identity rather than a column of its own: a
                 column would be one more thing to size on a table that
                 already has to fit the default window. */}
-            <InstalledScore kind={group.kind} name={group.name} />
+            <InstalledScore
+              reading={reading}
+              expanded={showSafety}
+              controls={safetyId}
+              onToggle={
+                hasSafetyDetail
+                  ? () => setShowSafety((value) => !value)
+                  : undefined
+              }
+            />
             <span className="truncate font-medium">{name}</span>
             {tags.map((tag) =>
               tag === EDITED_UPDATE_TAG ? (
@@ -187,6 +211,26 @@ export function PackageRows({
           </>
         )}
       </TableRow>
+      {/* The findings sit in a row of their own so the table keeps one line
+          per package until somebody asks for more. */}
+      {showSafety && hasSafetyDetail ? (
+        <TableRow id={safetyId} className="bg-muted/20">
+          <TableCell colSpan={showVersion ? 6 : 5} className="py-4">
+            {reading.result ? (
+              <SafetyPanel
+                result={reading.result}
+                stale={reading.failure !== null}
+                onRetry={reading.retry}
+              />
+            ) : (
+              <SafetyUnavailable
+                message={reading.failure}
+                onRetry={reading.retry}
+              />
+            )}
+          </TableCell>
+        </TableRow>
+      ) : null}
       {open && !only
         ? places.map((row, index) => (
             <TableRow

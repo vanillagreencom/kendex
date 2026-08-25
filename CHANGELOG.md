@@ -301,8 +301,8 @@ an outside contributor.
 - Managing a project skill moves it to `.agents/skills/<name>` and leaves the
   path its tool read as a link. That tree is the content of record, so
   refresh maintains links and layout and never rewrites what you wrote.
-- Every package surface in the app shows its safety score in a circle with
-  the findings under it — the package page, the Updates table, and the page
+- Every package surface in the app shows its safety score in a circle, with
+  the findings behind it: the package page, the Updates table, and the page
   you install from. Nothing asks you to review, accept, or dismiss one.
 - Content kendex did not install is counted on its place's card under
   Projects and taken on from there. The Library and Home no longer mention

@@ -1,5 +1,6 @@
 import { type ComponentProps, type MouseEvent, useEffect } from "react";
 import type { AvailablePackage, Catalog } from "@/bindings";
+import { ScoreTooltip } from "@/components/score-tooltip";
 import { StatusDot } from "@/components/status-dot";
 import { TagBadges } from "@/components/tag-badge";
 import { Button } from "@/components/ui/button";
@@ -11,11 +12,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { clickAsksToOpen } from "@/lib/click-asks-to-open";
 import {
   SAFETY_DOT_UNCHECKED,
@@ -194,12 +190,8 @@ function SafetyDot({
   words: string;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger className="inline-flex items-center rounded-full outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
-        <StatusDot tone={tone} />
-        <span className="sr-only">{words}</span>
-      </TooltipTrigger>
-      <TooltipContent side="left">{words}</TooltipContent>
-    </Tooltip>
+    <ScoreTooltip words={words} side="left">
+      <StatusDot tone={tone} />
+    </ScoreTooltip>
   );
 }

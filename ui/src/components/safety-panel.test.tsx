@@ -1,9 +1,18 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { AuditResult, Finding, Severity } from "@/bindings";
-import { SAFETY_CAVEAT } from "@/lib/copy-safety";
+import {
+  SAFETY_CAVEAT,
+  SAFETY_CHECK_FAILED,
+  SAFETY_RETRY_LABEL,
+  SAFETY_STALE_NOTE,
+} from "@/lib/copy-safety";
 import { SEVERITY_LABELS } from "@/lib/labels";
-import { SafetyPanel } from "./safety-panel";
+import { SafetyPanel, SafetyUnavailable } from "./safety-panel";
+
+// Static markup escapes apostrophes, so copy carrying one is escaped the
+// same way before it is looked for.
+const esc = (copy: string) => copy.replace(/'/g, "&#x27;");
 
 const finding = (severity: Severity, location: string): Finding => ({
   rule: "dangerous-commands",
@@ -69,6 +78,20 @@ describe("the safety block", () => {
     );
   });
 
+  // A reading kept from before a failed check is not what the files say now.
+  // Left unlabelled it is a number nothing on screen stands behind.
+  it("labels a kept reading rather than presenting it as the current one", () => {
+    const html = renderToStaticMarkup(
+      <SafetyPanel result={result()} stale onRetry={() => {}} />,
+    );
+    expect(html).toContain(esc(SAFETY_STALE_NOTE));
+    expect(html).toContain(SAFETY_RETRY_LABEL);
+  });
+
+  it("says nothing about staleness on a reading the check just made", () => {
+    expect(render()).not.toContain(esc(SAFETY_STALE_NOTE));
+  });
+
   // Nothing on this block asks for an answer: the score is advisory, and a
   // fix line would make a matched pattern read as an instruction.
   it("offers no verdict to give and no fix to follow", () => {
@@ -77,5 +100,27 @@ describe("the safety block", () => {
     // "not a review" in the caveat is the only place the word may appear:
     // it says what the check is, not something the reader has to do.
     expect(html).not.toMatch(/dismiss|\baccept\b|\bignore\b/i);
+  });
+});
+
+// Rendering nothing here would read as a package the check found nothing in,
+// which is the one claim it has not made — and the toast that announced the
+// failure is gone by the time anybody reads the page.
+describe("a check that could not run", () => {
+  it("says so, names what went wrong, and offers the way to ask again", () => {
+    const html = renderToStaticMarkup(
+      <SafetyUnavailable message="audit crashed" onRetry={() => {}} />,
+    );
+    expect(html).toContain(esc(SAFETY_CHECK_FAILED));
+    expect(html).toContain("audit crashed");
+    expect(html).toContain(SAFETY_RETRY_LABEL);
+  });
+
+  it("still offers the retry when the failure came with no message", () => {
+    const html = renderToStaticMarkup(
+      <SafetyUnavailable message={null} onRetry={() => {}} />,
+    );
+    expect(html).toContain(esc(SAFETY_CHECK_FAILED));
+    expect(html).toContain(SAFETY_RETRY_LABEL);
   });
 });

@@ -91,10 +91,15 @@ export const catalogLabel = (catalog: Catalog | undefined): string | null =>
       ? catalog.source
       : catalog.repo;
 
-/** What lands after any mutation: the tables everywhere else stay current. */
+/** What lands after any mutation: the tables everywhere else stay current.
+ *
+ * The audit is forced. An install writes the very bytes a score answers
+ * for, so the freshness window would hold a reading taken before the
+ * package existed — and a package with no row of its own shows no safety
+ * block at all. */
 export async function refreshDownstream() {
   await useScanStore.getState().refresh();
-  await useAuditStore.getState().refresh();
+  await useAuditStore.getState().refresh({ force: true });
 }
 
 export function without<T>(

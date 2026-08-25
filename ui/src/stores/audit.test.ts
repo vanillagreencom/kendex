@@ -130,6 +130,85 @@ describe("audit store refresh", () => {
     expect(commands.auditAll).toHaveBeenCalledTimes(2);
   });
 
+  // A force says the bytes changed. Dropping it because a machine-wide read
+  // happened to be running left every score on screen answering for the
+  // state before whatever prompted it — and the earlier guard dropped it on
+  // the `auditing` flag, which a caller can leave standing.
+  //
+  // Each call parks until the test lets it go, which is the only way to have
+  // a request arrive while an audit is genuinely in flight.
+  const parkAudits = () => {
+    const waiting: (() => void)[] = [];
+    vi.mocked(commands.auditAll).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          waiting.push(() => resolve({ status: "ok", data: [] }));
+        }) as ReturnType<typeof commands.auditAll>,
+    );
+    return () => {
+      for (const land of waiting.splice(0)) land();
+    };
+  };
+
+  it("runs a forced refresh that arrives while an audit is in flight", async () => {
+    const land = parkAudits();
+
+    const first = useAuditStore.getState().refresh();
+    const queued = useAuditStore.getState().refresh({ force: true });
+    expect(commands.auditAll).toHaveBeenCalledTimes(1);
+
+    land();
+    await first;
+    // The follow-up starts as the first audit lands, so its call is only
+    // on the record once that has happened.
+    expect(commands.auditAll).toHaveBeenCalledTimes(2);
+    land();
+    await queued;
+  });
+
+  it("queues one follow-up however many forces arrive mid-audit", async () => {
+    const land = parkAudits();
+
+    const first = useAuditStore.getState().refresh();
+    const forces = [
+      useAuditStore.getState().refresh({ force: true }),
+      useAuditStore.getState().refresh({ force: true }),
+      useAuditStore.getState().refresh({ force: true }),
+    ];
+
+    land();
+    await first;
+    land();
+    await Promise.all(forces);
+
+    expect(commands.auditAll).toHaveBeenCalledTimes(2);
+  });
+
+  // An unforced visit while an audit runs waits on that audit rather than
+  // starting a second machine-wide read of the same files.
+  it("does not start a second audit for an unforced visit mid-audit", async () => {
+    const land = parkAudits();
+
+    const first = useAuditStore.getState().refresh();
+    const visit = useAuditStore.getState().refresh();
+
+    land();
+    await Promise.all([first, visit]);
+
+    expect(commands.auditAll).toHaveBeenCalledTimes(1);
+  });
+
+  // The flag says what to draw. A caller that left it standing — a test
+  // staging state, a render mid-update — must not silence the next audit.
+  it("does not let a stale auditing flag swallow a forced refresh", async () => {
+    vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
+    useAuditStore.setState({ auditing: true });
+
+    await useAuditStore.getState().refresh({ force: true });
+
+    expect(commands.auditAll).toHaveBeenCalledTimes(1);
+  });
+
   it("does not toast on a successful audit", async () => {
     vi.mocked(commands.auditAll).mockResolvedValue({
       status: "ok",

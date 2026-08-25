@@ -100,7 +100,10 @@ export const useEditorStore = create<EditorState>((set, get) => {
     }
     set({ error: null, stale: false });
     await load();
-    await useAuditStore.getState().refresh();
+    // Forced: a save rewrote the manifest this scope renders from, so an
+    // audit inside its freshness window would keep every score answering
+    // for the files as they were before the edit.
+    await useAuditStore.getState().refresh({ force: true });
     await useScanStore.getState().refresh();
   };
 

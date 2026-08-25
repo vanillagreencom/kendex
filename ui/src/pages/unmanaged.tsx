@@ -55,8 +55,6 @@ export function UnmanagedPage() {
             <UnmanagedItems
               rows={rows}
               busy={busy}
-              title={null}
-              foldable={false}
               onAdopt={(kind, name, harnesses, quiet) =>
                 adopt(scope, kind, name, harnesses, quiet)
               }
