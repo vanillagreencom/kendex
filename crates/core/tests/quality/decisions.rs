@@ -137,7 +137,7 @@ fn a_dismissal_goes_stale_when_the_rules_move() {
     let path = manifest::manifest_path(&f.env, &f.scope);
     let mut recorded = manifest_of(&f);
     recorded.safety_reviews.get_mut(MILD_KEY).unwrap().ruleset += 1;
-    manifest::save(&path, &recorded).unwrap();
+    super::fixture::save_manifest(&path, &recorded);
 
     match &row(&f, "mild").decisions[0].state {
         DecisionState::Open { earlier: Some(why) } => {

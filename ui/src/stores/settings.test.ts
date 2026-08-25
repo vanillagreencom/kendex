@@ -124,6 +124,33 @@ describe("settings store", () => {
     expect(useSettingsStore.getState().base).toBe("written");
   });
 
+  /// The re-read is the way out of a stale refusal; when it fails, the
+  /// dialog names the failed read — not contention, which would claim a
+  /// refresh that never happened and invite retries of a path that
+  /// cannot progress.
+  it("names the failed re-read when stale recovery cannot read the settings", async () => {
+    useSettingsStore.setState({ settings, base: "old" });
+    vi.mocked(commands.updateSettings).mockResolvedValue({
+      status: "error",
+      error: { kind: "stale" },
+    });
+    vi.mocked(commands.getSettings).mockResolvedValue({
+      status: "error",
+      error: "cannot read the settings file",
+    });
+
+    await useSettingsStore.getState().setAppearance("dark");
+
+    expect(commands.updateSettings).toHaveBeenCalledTimes(1);
+    const dialog = useProblemsStore.getState().dialog;
+    expect(dialog.open).toBe(true);
+    expect(dialog.message).toContain("cannot read the settings file");
+    expect(dialog.message).not.toContain("another window");
+    // The store still holds the copy it had — nothing pretended to refresh.
+    expect(useSettingsStore.getState().settings).toBe(settings);
+    expect(useSettingsStore.getState().base).toBe("old");
+  });
+
   /// Contention that survives the re-read reaches the person as a message,
   /// not as a silent loop — and never as a write of the stale copy.
   it("stops after one retry and tells the person when the file keeps moving", async () => {

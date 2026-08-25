@@ -1,5 +1,7 @@
-//! The app-settings surface: `kendex.settings.toml` reads and writes,
-//! and the project registry kept in it.
+//! The app-settings surface: reads and writes of the app's `settings.toml`
+//! (the machine-local preferences file under the app config dir, distinct
+//! from a project's committed `kendex.settings.toml`), and the project
+//! registry kept in it.
 //!
 //! Two kinds of write, and no third: `settings::mutate` for a targeted
 //! change made server-side in one breath, and the whole-file

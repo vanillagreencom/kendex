@@ -216,7 +216,7 @@ fn an_override_goes_stale_when_the_rule_set_moves() {
         .get_mut("skill:hostile:claude")
         .unwrap();
     entry.ruleset = kendex_core::quality::RULESET_VERSION + 1;
-    manifest::save(&path, &manifest).unwrap();
+    super::fixture::save_manifest(&path, &manifest);
 
     let after = audit(&f.env, &f.scope).unwrap();
     let row = after
@@ -255,7 +255,7 @@ fn an_override_does_not_cover_a_problem_nobody_reviewed() {
         .get_mut("skill:hostile:claude")
         .unwrap();
     entry.review_hash = hash;
-    manifest::save(&path, &manifest).unwrap();
+    super::fixture::save_manifest(&path, &manifest);
 
     let after = audit(&f.env, &f.scope).unwrap();
     let row = after

@@ -18,7 +18,7 @@ use specta::Type;
 
 use super::env;
 use crate::audit::{AuditView, view};
-use crate::whole_file::{WriteRefused, stale_at, targets};
+use crate::whole_file::{WriteRefused, stale_at};
 
 /// A place's manifest and what the file it came from was at that moment.
 /// One value, because a copy without its base cannot be written back
@@ -150,7 +150,8 @@ fn write_manifest(
     // Where this write ends up, which is not always where it was aimed: a
     // rename generation retargets every write planned against the old name,
     // and a refusal from one of those names the file it was retargeted to.
-    let targets = targets(&report.plan, &path);
+    // Core names both, so this cannot drift from how the retargeting works.
+    let targets = manifest::manifest_paths(env, &scope);
     // The bound precondition refuses a file that moved between the check
     // above and the write itself, and that refusal is the same answer the
     // check gives — so it reaches the editor as the same choice.
@@ -225,11 +226,12 @@ mod tests {
             .insert("all".into(), "older edit".into());
 
         // The writer in between — the write refusing exists to protect.
+        // Written raw, the way a hand edit or another process lands.
         let mut newer = manifest::load_for_mutation(&path).unwrap().unwrap();
         newer
             .agent_launch_instructions
             .insert("all".into(), "kept".into());
-        manifest::save(&path, &newer).unwrap();
+        std::fs::write(&path, toml::to_string_pretty(&newer).unwrap()).unwrap();
 
         let Err(refused) = write_manifest(&env, scope, stale, base) else {
             panic!("a stale save must be refused");

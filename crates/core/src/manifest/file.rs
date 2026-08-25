@@ -32,6 +32,16 @@ pub fn manifest_path(env: &Env, scope: &Scope) -> std::path::PathBuf {
     crate::rename::existing_or_new(new, old)
 }
 
+/// Every name this scope's manifest can answer to: the current one, and
+/// the old product name while a scope is still under it. A rename
+/// generation retargets writes planned against the old name, so a refusal
+/// out of an apply can name either — a caller matching refusals against
+/// only the name it read from would misread the retargeted one.
+pub fn manifest_paths(env: &Env, scope: &Scope) -> [std::path::PathBuf; 2] {
+    let (new, old) = crate::rename::manifest_pair(env, scope);
+    [new, old]
+}
+
 pub fn load(path: &Path) -> Result<ManifestFile> {
     crate::rename::refuse_both_generations(path)?;
     let Some(text) = read_if_exists(path)? else {
@@ -88,17 +98,9 @@ pub fn save(path: &Path, manifest: &Manifest) -> Result<()> {
 /// Load for mutation: a legacy file is a hard error, never a write target.
 /// Whatever schema was read, a mutation writes the current one — every
 /// write path upgrades as a side effect of writing at all.
+/// [`read_for_mutation`] with the base dropped, so the two cannot drift.
 pub fn load_for_mutation(path: &Path) -> Result<Option<Manifest>> {
-    match load(path)? {
-        ManifestFile::Absent => Ok(None),
-        ManifestFile::Legacy { .. } => Err(CoreError::LegacyManifest {
-            path: path.to_path_buf(),
-        }),
-        ManifestFile::Current(mut manifest) => {
-            manifest.schema = MANIFEST_SCHEMA;
-            Ok(Some(*manifest))
-        }
-    }
+    Ok(read_for_mutation(path)?.0)
 }
 
 /// A manifest and the base of the file it came from, from one read.

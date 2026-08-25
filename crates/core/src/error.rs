@@ -126,6 +126,9 @@ pub enum CoreError {
     #[error("scope is busy: another apply holds {lock}")]
     ScopeBusy { lock: PathBuf },
 
+    #[error("settings are busy: another kendex process holds {lock}")]
+    SettingsBusy { lock: PathBuf },
+
     #[error("source cache is busy: another download holds {lock}")]
     CacheBusy { lock: PathBuf },
 

@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -9,6 +8,10 @@ use crate::base::Base;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::fs::{atomic_write, read_if_exists};
+
+mod zoom;
+use zoom::bring_zoom_into_range;
+pub use zoom::{ZOOM, ZoomRange, clamp_zoom, zoom_scale};
 
 /// App preferences and the project registry — one settings file, nothing else.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -44,37 +47,6 @@ fn default_zoom() -> u16 {
     ZOOM.default
 }
 
-/// The zoom the app offers, in percent — the number stored is the number on
-/// the slider, so the settings file reads the way the control does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
-pub struct ZoomRange {
-    pub min: u16,
-    pub max: u16,
-    /// What one press of the zoom shortcut moves.
-    pub step: u16,
-    pub default: u16,
-}
-
-pub const ZOOM: ZoomRange = ZoomRange {
-    min: 50,
-    max: 200,
-    step: 10,
-    default: 100,
-};
-
-/// Below the floor the app is unreadable and above the ceiling its controls
-/// stop fitting the window, so neither is offered and neither is honoured: a
-/// hand-edited settings file is the only way a value outside the range gets
-/// this far.
-pub fn clamp_zoom(percent: u16) -> u16 {
-    percent.clamp(ZOOM.min, ZOOM.max)
-}
-
-/// The webview scale factor a stored zoom percent means.
-pub fn zoom_scale(percent: u16) -> f64 {
-    f64::from(clamp_zoom(percent)) / 100.0
-}
-
 impl Default for AppSettings {
     fn default() -> Self {
         AppSettings {
@@ -96,28 +68,6 @@ pub enum Appearance {
     System,
     Light,
     Dark,
-}
-
-/// Bring a hand-edited zoom into range before the document is read as
-/// settings. `zoom` is a percent and a `u16`, so `-1` or `999999` would
-/// fail the field's own type — and the file is one document, so that one
-/// number would cost the person their theme, their projects and their
-/// safety thresholds along with it.
-///
-/// Only a whole number is moved. `zoom = 1.5` is left exactly where it is
-/// and the read refuses it: that is not a size out of range, it is not a
-/// size, and guessing which number was meant is worse than saying the line
-/// is wrong.
-fn bring_zoom_into_range(document: &mut toml::Table) {
-    let Some(toml::Value::Integer(percent)) = document.get("zoom") else {
-        return;
-    };
-    let in_range = match u16::try_from(*percent) {
-        Ok(percent) => clamp_zoom(percent),
-        Err(_) if percent.is_negative() => ZOOM.min,
-        Err(_) => ZOOM.max,
-    };
-    document.insert("zoom".to_owned(), toml::Value::Integer(in_range.into()));
 }
 
 pub fn load(env: &Env) -> Result<AppSettings> {
@@ -156,20 +106,39 @@ fn parse(path: &Path, text: &str) -> Result<AppSettings> {
         })
 }
 
-/// One writer at a time. The app saves settings from a thread pool, so a
-/// zoom commit and an appearance toggle really do overlap; unserialized,
-/// whichever load ran first writes last and puts back what the other one
-/// just changed. Process-wide, not cross-process: a stale copy from
-/// another process is what [`replace`]'s base check refuses.
-static WRITE: Mutex<()> = Mutex::new(());
+/// How long a writer waits for the settings lock before giving up. A
+/// settings write is a parse and one small file, so a holder alive past
+/// this is stuck, and waiting on it forever would hang the caller too.
+const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
-fn write_lock() -> std::sync::MutexGuard<'static, ()> {
-    // A panic under the lock leaves no partial state behind (the write is
-    // atomic), so the poison carries no information — clearing it beats
-    // failing every later save for a wound that already healed.
-    WRITE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+/// One writer at a time, across every kendex process. The app saves
+/// settings from a thread pool, and the CLI registers projects into the
+/// same file from its own process; unserialized, whichever load ran first
+/// writes last and puts back what the other one just changed. An OS file
+/// lock beside the settings file is what both can share — it also holds
+/// [`replace`]'s base check and its write together, so nothing can land
+/// between the two. Distinct fds conflict under the OS lock, so it
+/// serializes this process's threads as well as other processes.
+fn write_lock(env: &Env) -> Result<crate::fs::LockedFile> {
+    let settings = env.settings_file();
+    let parent = settings
+        .parent()
+        .ok_or_else(|| CoreError::io(&settings, std::io::Error::other("path has no parent")))?;
+    std::fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e))?;
+    let mut path = settings.into_os_string();
+    path.push(".lock");
+    let path = PathBuf::from(path);
+    let deadline = std::time::Instant::now() + LOCK_WAIT;
+    loop {
+        match crate::fs::LockedFile::try_exclusive(&path) {
+            Ok(Some(lock)) => return Ok(lock),
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Ok(None) => return Err(CoreError::SettingsBusy { lock: path }),
+            Err(error) => return Err(CoreError::io(&path, error)),
+        }
+    }
 }
 
 fn save(env: &Env, settings: &AppSettings) -> Result<String> {
@@ -181,15 +150,17 @@ fn save(env: &Env, settings: &AppSettings) -> Result<String> {
     Ok(text)
 }
 
-/// Load, change, save — one breath, under the write lock. The targeted
-/// write path: a stale copy cannot reach it because the copy never leaves
-/// this function. Returns what was written and the base of the written
-/// bytes, so a caller holding the result holds a current pair.
+/// Load, change, save — one breath, under the cross-process write lock.
+/// The targeted write path: a stale copy cannot reach it because the copy
+/// never leaves this function, and no other writer — thread or process —
+/// can land between its load and its save. Returns what was written and
+/// the base of the written bytes, so a caller holding the result holds a
+/// current pair.
 pub fn mutate(
     env: &Env,
     change: impl FnOnce(&mut AppSettings) -> Result<()>,
 ) -> Result<(AppSettings, Base)> {
-    let _guard = write_lock();
+    let _guard = write_lock(env)?;
     let mut settings = load(env)?;
     change(&mut settings)?;
     let base = Base::of(&save(env, &settings)?);
@@ -202,7 +173,9 @@ pub fn mutate(
 /// copy. There is no way to write a whole settings object without
 /// presenting the base its copy was read from.
 pub fn replace(env: &Env, settings: &AppSettings, held: &Base) -> Result<Base> {
-    let _guard = write_lock();
+    // The lock spans the check and the write, so the file the base was
+    // verified against is the file the write replaces.
+    let _guard = write_lock(env)?;
     held.verify(&env.settings_file())?;
     Ok(Base::of(&save(env, settings)?))
 }
@@ -240,15 +213,15 @@ pub fn unregister_project(env: &Env, path: &Path) -> Result<(AppSettings, Base)>
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::env::FakeOs;
 
-    fn env_in(dir: &Path) -> Env {
+    pub(crate) fn env_in(dir: &Path) -> Env {
         Env::fake(dir, FakeOs::Linux)
     }
 
-    fn write_settings(env: &Env, text: &str) {
+    pub(crate) fn write_settings(env: &Env, text: &str) {
         let path = env.settings_file();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, text).unwrap();
@@ -276,6 +249,45 @@ mod tests {
         assert_eq!(load(&env).unwrap(), settings);
     }
 
+    /// The lost update the write lock exists to prevent: overlapping
+    /// load-change-save rounds, each writing the whole file. Every writer
+    /// here opens its own lock fd — distinct file descriptions conflict
+    /// under the OS lock exactly the way two processes do, so this is the
+    /// cross-process interleaving, not just the thread-pool one.
+    #[test]
+    fn overlapping_mutates_all_survive() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = env_in(tmp.path());
+        let writers: Vec<_> = (0..8)
+            .map(|n| {
+                let env = env.clone();
+                std::thread::spawn(move || {
+                    mutate(&env, |settings| {
+                        settings.projects.push(PathBuf::from(format!("/p{n}")));
+                        Ok(())
+                    })
+                    .unwrap();
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().unwrap();
+        }
+        assert_eq!(load(&env).unwrap().projects.len(), 8);
+    }
+
+    /// A holder that never lets go turns into a loud refusal, not a hang.
+    #[test]
+    fn a_stuck_lock_holder_is_reported_not_waited_on_forever() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = env_in(tmp.path());
+        let _held = write_lock(&env).unwrap();
+        assert!(matches!(
+            write_lock(&env),
+            Err(CoreError::SettingsBusy { .. })
+        ));
+    }
+
     #[test]
     fn register_rejects_duplicates_and_unregister_removes() {
         let tmp = tempfile::tempdir().unwrap();
@@ -299,69 +311,6 @@ mod tests {
             unregister_project(&env, &project),
             Err(CoreError::ProjectNotRegistered { .. })
         ));
-    }
-
-    #[test]
-    fn a_settings_file_without_zoom_reads_as_full_size() {
-        let tmp = tempfile::tempdir().unwrap();
-        let env = env_in(tmp.path());
-        write_settings(&env, "schema = 1\n");
-        assert_eq!(load(&env).unwrap().zoom, 100);
-    }
-
-    #[test]
-    fn a_hand_edited_zoom_outside_the_range_loads_clamped() {
-        let tmp = tempfile::tempdir().unwrap();
-        let env = env_in(tmp.path());
-        write_settings(&env, "schema = 1\nzoom = 5000\n");
-        assert_eq!(load(&env).unwrap().zoom, ZOOM.max);
-        write_settings(&env, "schema = 1\nzoom = 1\n");
-        assert_eq!(load(&env).unwrap().zoom, ZOOM.min);
-    }
-
-    /// A number the field's own type cannot hold fails the parse, and the
-    /// file is one document, so a mistyped zoom would take the theme, the
-    /// projects and the safety thresholds down with it.
-    #[test]
-    fn a_hand_edited_zoom_too_big_for_a_percent_clamps_without_losing_the_file() {
-        let tmp = tempfile::tempdir().unwrap();
-        let env = env_in(tmp.path());
-        let rest = "schema = 1\nappearance = \"dark\"\n";
-
-        write_settings(&env, &format!("{rest}zoom = 999999\n"));
-        let settings = load(&env).unwrap();
-        assert_eq!(settings.zoom, ZOOM.max);
-        assert_eq!(settings.appearance, Appearance::Dark);
-
-        write_settings(&env, &format!("{rest}zoom = -1\n"));
-        let settings = load(&env).unwrap();
-        assert_eq!(settings.zoom, ZOOM.min);
-        assert_eq!(settings.appearance, Appearance::Dark);
-    }
-
-    /// The line between the two: a number outside the range is a size the
-    /// app will not give you, and anything that is not a whole number is
-    /// not a size at all.
-    #[test]
-    fn a_zoom_that_is_not_a_whole_number_is_refused() {
-        let tmp = tempfile::tempdir().unwrap();
-        let env = env_in(tmp.path());
-        for line in ["zoom = 1.5", "zoom = \"big\"", "zoom = true"] {
-            write_settings(&env, &format!("schema = 1\n{line}\n"));
-            assert!(
-                matches!(load(&env), Err(CoreError::TomlParse { .. })),
-                "expected {line} to be refused as the wrong kind of value"
-            );
-        }
-    }
-
-    #[test]
-    fn zoom_scales_the_webview_by_the_percent_shown() {
-        assert_eq!(zoom_scale(100), 1.0);
-        assert_eq!(zoom_scale(150), 1.5);
-        assert_eq!(zoom_scale(50), 0.5);
-        // Out of range never reaches the window.
-        assert_eq!(zoom_scale(5000), 2.0);
     }
 
     #[test]

@@ -51,7 +51,7 @@ fn accept(env: &Env, scope: &Scope, name: &str) {
         .safety_overrides
         .insert(key, mint(&review_hash, &observed.findings, None));
     fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
-    manifest::save(&manifest_path, &manifest).unwrap();
+    super::fixture::save_manifest(&manifest_path, &manifest);
     assert_eq!(
         row(env, scope, name).override_state,
         OverrideState::Active,
@@ -198,7 +198,7 @@ fn a_decision_with_nothing_to_read_stops_applying() {
         mint(&observed.content_hash, &observed.findings, None),
     );
     fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
-    manifest::save(&manifest_path, &manifest).unwrap();
+    super::fixture::save_manifest(&manifest_path, &manifest);
 
     assert_stale(&f.env, &f.scope, "ghost@mkt");
 }

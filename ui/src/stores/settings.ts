@@ -368,17 +368,27 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
     change: (current: AppSettings) => AppSettings,
   ): Promise<WriteOutcome> => {
     const { settings, base } = get();
-    if (!settings) return { ok: true };
+    // A write with no copy in hand never happened; reporting it saved
+    // would teach a caller to trust a change that was dropped.
+    if (!settings)
+      return { ok: false, message: "Your settings haven't loaded yet." };
     let response = await commands.updateSettings(change(settings), base);
     if (response.status === "error" && response.error.kind === "stale") {
       const fresh = await commands.getSettings();
-      if (fresh.status === "ok") {
-        hold(fresh.data);
-        response = await commands.updateSettings(
-          change(fresh.data.settings),
-          fresh.data.base,
-        );
-      }
+      // The re-read is the way out of a stale refusal. Failing, the fault
+      // to name is the read itself — the contention wording would send
+      // the person retrying a path that cannot progress, and would claim
+      // a refresh that never happened.
+      if (fresh.status === "error")
+        return {
+          ok: false,
+          message: `Couldn't re-read your settings to retry: ${fresh.error}`,
+        };
+      hold(fresh.data);
+      response = await commands.updateSettings(
+        change(fresh.data.settings),
+        fresh.data.base,
+      );
     }
     if (response.status === "ok") {
       hold(response.data);

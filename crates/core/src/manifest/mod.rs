@@ -9,8 +9,13 @@ mod decisions;
 mod file;
 mod validate;
 pub use file::{
-    ManifestFile, load, load_for_mutation, manifest_path, parse_text, read_for_mutation, save, seed,
+    ManifestFile, load, load_for_mutation, manifest_path, manifest_paths, parse_text,
+    read_for_mutation, seed,
 };
+// Crate-only: the apply op is `save`'s one sanctioned caller — it checks
+// its precondition first. Anywhere else, a direct save is a whole-file
+// write with no base check, the exact door `read_for_mutation` closes.
+pub(crate) use file::save;
 pub use validate::{Finding, validate};
 
 /// Current manifest schema. Schema 1 (v0.1) still loads; the first apply

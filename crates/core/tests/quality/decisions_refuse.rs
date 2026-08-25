@@ -169,7 +169,7 @@ fn a_concurrent_manifest_write_makes_the_dismissal_stale() {
     recorded
         .skill_instructions
         .insert("all".to_owned(), "someone else's edit".to_owned());
-    manifest::save(&path, &recorded).unwrap();
+    super::fixture::save_manifest(&path, &recorded);
 
     let executed = apply::execute(&f.env, &planned, None);
     let message = executed

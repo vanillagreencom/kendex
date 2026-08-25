@@ -13,6 +13,15 @@ use kendex_core::manifest;
 use kendex_core::model::Scope;
 use kendex_core::{apply, hash};
 
+/// Writes a manifest the way an editor outside kendex would: raw bytes,
+/// no base, no plan — production writes go through the apply, which is
+/// why `manifest::save` is not public.
+#[allow(clippy::unwrap_used)]
+fn save_manifest(path: &std::path::Path, manifest: &manifest::Manifest) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, toml::to_string_pretty(manifest).unwrap()).unwrap();
+}
+
 struct Fixture {
     _tmp: tempfile::TempDir,
     env: Env,
@@ -153,7 +162,7 @@ fn invariant_1_generated_artifacts_regenerate_but_never_over_an_edit() {
     let mut m = manifest::load_for_mutation(&path).unwrap().unwrap();
     m.skill_instructions
         .insert("gh".into(), "prefer gh cli".into());
-    manifest::save(&path, &m).unwrap();
+    save_manifest(&path, &m);
     apply_now(&f);
     let text = fs::read_to_string(canonical_skill(&f).join("SKILL.md")).unwrap();
     assert!(text.contains("prefer gh cli") && text.contains("Author text."));
@@ -169,7 +178,7 @@ fn invariant_2_never_readd_a_user_removal() {
     let global_path = manifest::manifest_path(&f.env, &Scope::Global);
     let mut stripped = seeded.clone();
     stripped.sources.clear();
-    manifest::save(&global_path, &stripped).unwrap();
+    save_manifest(&global_path, &stripped);
     let reloaded = ops::manifest_for_mutation(&f.env, &Scope::Global).unwrap();
     assert!(reloaded.sources.is_empty());
 
@@ -178,7 +187,7 @@ fn invariant_2_never_readd_a_user_removal() {
     let path = manifest::manifest_path(&f.env, &f.scope);
     let mut m = manifest::load_for_mutation(&path).unwrap().unwrap();
     m.agent_skills.insert("rust".into(), vec![]);
-    manifest::save(&path, &m).unwrap();
+    save_manifest(&path, &m);
     apply_now(&f);
 
     // Upstream gains a prefix-matching skill after the removal.
@@ -205,7 +214,7 @@ fn invariant_3_shared_key_edits_invalidate_dependents() {
     let path = manifest::manifest_path(&f.env, &f.scope);
     let mut m = manifest::load_for_mutation(&path).unwrap().unwrap();
     m.skill_instructions.insert("all".into(), "shared".into());
-    manifest::save(&path, &m).unwrap();
+    save_manifest(&path, &m);
     let drift = drift_states(&f);
     assert!(drift.contains(&("gh".to_owned(), DriftState::Stale)));
 }

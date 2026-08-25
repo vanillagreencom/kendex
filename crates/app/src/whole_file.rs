@@ -1,15 +1,14 @@
 //! The one answer shape for a whole-file write that did not happen.
 //!
 //! Two whole-file surfaces exist — the Customize tab's manifest and the
-//! Settings page's `kendex.settings.toml` — and both refuse a copy of a
+//! Settings page's app-settings file — and both refuse a copy of a
 //! file that is no longer there. The refusal is one type so the pages
 //! render one choice for it, and so the next whole-file surface returns
 //! it too instead of inventing a message the UI would have to recognise
 //! by its words.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use kendex_core::apply::Op;
 use kendex_core::error::CoreError;
 use serde::Serialize;
 use specta::Type;
@@ -51,20 +50,6 @@ pub fn refusal(error: CoreError) -> WriteRefused {
     }
 }
 
-/// Every name this plan's manifest write may answer to: the one the caller
-/// read, and the one a rename generation moves it to. A scope still under
-/// the old product name renames first and retargets every write planned
-/// against the old name, so a refusal from one of them names a file the
-/// caller never asked about.
-pub fn targets(plan: &kendex_core::apply::Plan, read_at: &Path) -> Vec<PathBuf> {
-    let mut targets = vec![read_at.to_path_buf()];
-    targets.extend(plan.ops.iter().filter_map(|planned| match &planned.op {
-        Op::Rename { from, to, .. } if from == read_at => Some(to.clone()),
-        _ => None,
-    }));
-    targets
-}
-
 /// Whether an apply refused because this file moved under it. The write is
 /// bound to the file the copy on screen came from, so a rollback with that
 /// precondition underneath is the same answer the base check gives a
@@ -81,8 +66,6 @@ pub fn stale_at(error: &CoreError, targets: &[PathBuf]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kendex_core::apply::{Plan, PlannedOp, Pre};
-    use kendex_core::model::Scope;
 
     #[test]
     fn a_stale_base_is_the_reload_choice_and_any_other_failure_is_not() {
@@ -118,32 +101,21 @@ mod tests {
         ));
     }
 
-    /// A scope still under the old product name renames its manifest first
-    /// and the write planned against the old name is retargeted with it.
-    /// The refusal then names a file the caller never asked about, and
-    /// matched against only the name it started from it would read as some
-    /// other failure — so the reload would not be offered.
+    /// A scope still under the old product name retargets its manifest
+    /// write to the renamed file, so a refusal can name either of the two
+    /// paths core lists for the scope — and nothing else.
     #[test]
-    fn a_refusal_after_the_rename_is_still_this_file_moving() {
-        let legacy = PathBuf::from("/w/app/vstack.toml");
-        let renamed = PathBuf::from("/w/app/kendex.toml");
-        let plan = Plan {
-            scope: Scope::Project {
-                root: "/w/app".into(),
-            },
-            ops: vec![PlannedOp {
-                description: "Rename vstack.toml to kendex.toml".into(),
-                op: Op::Rename {
-                    from: legacy.clone(),
-                    to: renamed.clone(),
-                    to_pre: Pre::Absent,
-                },
-            }],
-        };
-        let targets = targets(&plan, &legacy);
-
-        assert!(stale_at(&CoreError::PlanStale { path: renamed }, &targets));
-        assert!(stale_at(&CoreError::PlanStale { path: legacy }, &targets));
+    fn a_refusal_matches_either_name_the_scope_manifest_answers_to() {
+        let targets = [
+            PathBuf::from("/w/app/kendex.toml"),
+            PathBuf::from("/w/app/vstack.toml"),
+        ];
+        for name in &targets {
+            assert!(stale_at(
+                &CoreError::PlanStale { path: name.clone() },
+                &targets
+            ));
+        }
         assert!(!stale_at(
             &CoreError::PlanStale {
                 path: "/w/app/.claude/settings.json".into()

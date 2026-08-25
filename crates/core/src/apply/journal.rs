@@ -127,9 +127,29 @@ fn sync_tree(root: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Restore every pre-image. Used both for in-process rollback and for
-/// crash recovery on the next run.
+/// Restore every pre-image. Used both for in-process rollback after a
+/// mid-mutation failure and for crash recovery on the next run, where
+/// nothing can know which ops ran.
 pub fn rollback(dir: &Path) -> Result<()> {
+    rollback_where(dir, |_| true)
+}
+
+/// Restore only the pre-images of paths this transaction actually mutated:
+/// a path in `mutated`, or a journaled directory root above one (the top
+/// of a chain the transaction created). In-process rollback knows exactly
+/// which ops ran; restoring the rest would put the journal's snapshot over
+/// bytes a writer outside the transaction landed after the journal was
+/// taken — the precondition that stopped the apply refused to overwrite
+/// those bytes, so the rollback must not either. A crash between this
+/// restore and the journal clearing still recovers with the full
+/// [`rollback`], which cannot make that distinction.
+pub fn rollback_mutated(dir: &Path, mutated: &[PathBuf]) -> Result<()> {
+    rollback_where(dir, |path| {
+        mutated.iter().any(|m| m == path || m.starts_with(path))
+    })
+}
+
+fn rollback_where(dir: &Path, restore: impl Fn(&Path) -> bool) -> Result<()> {
     let meta_path = dir.join("meta.json");
     let Some(text) = crate::fs::read_if_exists(&meta_path)? else {
         // Mutation never started (no meta written): nothing to restore.
@@ -144,6 +164,9 @@ pub fn rollback(dir: &Path) -> Result<()> {
     };
     let store = dir.join("store");
     for entry in &journal.entries {
+        if !restore(&entry.path) {
+            continue;
+        }
         remove_any(&entry.path)?;
         match &entry.state {
             PreState::Absent => {}
@@ -240,6 +263,53 @@ pub fn make_symlink(target: &Path, link: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The filtered restore is what keeps a refused apply from destroying
+    /// the very bytes the refusal protected: a path whose op never ran
+    /// keeps whatever a writer outside the transaction put there after the
+    /// journal was taken.
+    #[test]
+    fn a_filtered_rollback_leaves_unmutated_paths_as_the_world_left_them() {
+        let tmp = tempfile::tempdir().unwrap();
+        let work = tmp.path().join("work");
+        fs::create_dir_all(&work).unwrap();
+        let a = work.join("a.md");
+        let b = work.join("kendex.toml");
+        fs::write(&a, "a0").unwrap();
+        fs::write(&b, "b0").unwrap();
+
+        let journal_dir = tmp.path().join("journal/global");
+        write(&journal_dir, &[a.clone(), b.clone()]).unwrap();
+        // The transaction mutates `a`; a writer outside it lands on `b`
+        // before `b`'s own op refuses its precondition.
+        fs::write(&a, "a1").unwrap();
+        fs::write(&b, "external edit").unwrap();
+
+        rollback_mutated(&journal_dir, std::slice::from_ref(&a)).unwrap();
+
+        assert_eq!(fs::read_to_string(&a).unwrap(), "a0");
+        assert_eq!(fs::read_to_string(&b).unwrap(), "external edit");
+        assert!(!pending(&journal_dir));
+    }
+
+    /// A journaled directory root above a mutated path is part of the
+    /// transaction's footprint: the chain it created comes down with the
+    /// rollback even though only the leaf is named as mutated.
+    #[test]
+    fn a_filtered_rollback_still_removes_the_chain_above_a_mutated_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("work/.codex");
+        let leaf = root.join("skills/x.md");
+
+        let journal_dir = tmp.path().join("journal/global");
+        write(&journal_dir, &[leaf.clone(), root.clone()]).unwrap();
+        fs::create_dir_all(leaf.parent().unwrap()).unwrap();
+        fs::write(&leaf, "installed").unwrap();
+
+        rollback_mutated(&journal_dir, std::slice::from_ref(&leaf)).unwrap();
+
+        assert!(!root.exists());
+    }
 
     #[test]
     fn rollback_restores_files_dirs_symlinks_and_absence() {
