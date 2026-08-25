@@ -1,6 +1,6 @@
 .github/workflows/review-gate-writer.yml	652
 crates/core/src/error.rs	429
-docs/ARCHITECTURE.md	901
+docs/ARCHITECTURE.md	911
 hooks/block-repo-copy.sh	511
 pi-extensions/pi-agents-tmux/extensions/subagent/browser.ts	650
 pi-extensions/pi-agents-tmux/extensions/subagent/dashboard.ts	431

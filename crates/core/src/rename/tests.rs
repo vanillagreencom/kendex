@@ -93,6 +93,65 @@ fn a_pipe_in_the_local_source_dir_refuses_planning_by_name() {
     );
 }
 
+/// An empty directory added under the old local-source dir after planning
+/// is an entry the plan never saw: the move refuses, so a later rollback
+/// cannot delete it as part of a tree it restores from the snapshot.
+#[test]
+fn an_empty_dir_added_after_planning_refuses_the_local_source_move() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("app");
+    let old_local = root.join(".vstack-local");
+    std::fs::create_dir_all(old_local.join("skills/x")).unwrap();
+    std::fs::write(old_local.join("skills/x/SKILL.md"), "v1").unwrap();
+    std::fs::write(root.join("vstack.toml"), "schema = 5\n").unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let scope = Scope::Project { root: root.clone() };
+
+    let ops = rename_ops(&env, &scope).unwrap();
+    let added = old_local.join("skills/new");
+    std::fs::create_dir(&added).unwrap();
+
+    let error = crate::apply::execute(&env, &Plan { scope, ops }, None).unwrap_err();
+    assert!(
+        matches!(&error, CoreError::RolledBack { cause, .. }
+            if matches!(**cause, CoreError::PlanStale { .. })),
+        "{error:?}"
+    );
+    assert!(added.is_dir());
+    assert!(!root.join(".kendex-local").exists());
+}
+
+/// The manifest rename binds to the file as it sits. A link to the same
+/// bytes put where the file was after planning reads identically but is
+/// not that file: the move refuses, the link stays, nothing lands at the
+/// new name — run anyway, a later rollback would restore the snapshot's
+/// regular file over the link.
+#[cfg(unix)]
+#[test]
+fn a_manifest_swapped_for_a_same_bytes_link_after_planning_refuses_the_rename() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("app");
+    std::fs::create_dir_all(&root).unwrap();
+    let old = root.join("vstack.toml");
+    std::fs::write(&old, "schema = 5\n").unwrap();
+    std::fs::write(tmp.path().join("elsewhere.toml"), "schema = 5\n").unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let scope = Scope::Project { root: root.clone() };
+
+    let ops = rename_ops(&env, &scope).unwrap();
+    std::fs::remove_file(&old).unwrap();
+    std::os::unix::fs::symlink(tmp.path().join("elsewhere.toml"), &old).unwrap();
+
+    let error = crate::apply::execute(&env, &Plan { scope, ops }, None).unwrap_err();
+    assert!(
+        matches!(&error, CoreError::RolledBack { cause, .. }
+            if matches!(**cause, CoreError::PlanStale { .. })),
+        "{error:?}"
+    );
+    assert!(old.is_symlink());
+    assert!(!root.join("kendex.toml").exists());
+}
+
 #[test]
 fn source_catalog_migration_renames_both_definition_and_install_state() {
     let tmp = tempfile::tempdir().unwrap();

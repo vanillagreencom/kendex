@@ -227,6 +227,36 @@ fn clear_takes_meta_down_before_the_sweep() {
     unlock();
 }
 
+/// The persisted set is only persisted once its name is on disk: a
+/// journal directory that cannot be synced makes the persist fail, where
+/// the write itself, file synced and renamed into place, would have
+/// reported success. Pinned with a directory that takes new files but
+/// cannot be opened to sync.
+#[cfg(unix)]
+#[test]
+fn a_restore_set_whose_directory_cannot_be_synced_is_not_persisted() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let tmp = tempfile::tempdir().unwrap();
+    let a = tmp.path().join("work/a.md");
+    fs::create_dir_all(a.parent().unwrap()).unwrap();
+    fs::write(&a, "a0").unwrap();
+    let journal_dir = tmp.path().join("journal/global");
+    write(&journal_dir, std::slice::from_ref(&a)).unwrap();
+
+    fs::set_permissions(&journal_dir, fs::Permissions::from_mode(0o300)).unwrap();
+    let unlock = || fs::set_permissions(&journal_dir, fs::Permissions::from_mode(0o700)).unwrap();
+    if fs::File::open(&journal_dir).is_ok() {
+        // Permissions do not bind this user (root): the sync cannot be
+        // made to fail here.
+        unlock();
+        return;
+    }
+
+    let error = persist_restore_set(&journal_dir, std::slice::from_ref(&a)).unwrap_err();
+    assert!(matches!(error, CoreError::Io { .. }), "{error:?}");
+    unlock();
+}
+
 /// A journaled directory root above a mutated path is part of the
 /// transaction's footprint: the chain it created comes down with the
 /// rollback even though only the leaf is named as mutated.

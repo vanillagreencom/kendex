@@ -179,7 +179,12 @@ fn persist_restore_set(dir: &Path, mutated: &[PathBuf]) -> Result<()> {
         path: path.clone(),
         message: e.to_string(),
     })?;
-    crate::fs::atomic_write_durable(&path, &json)
+    crate::fs::atomic_write_durable(&path, &json)?;
+    // The atomic write syncs the file and only tries the directory: the
+    // set is a crash guard, so its name must be on disk before the first
+    // restore touches anything, and a directory sync that fails is a
+    // persist that failed.
+    sync_dir_durable(dir)
 }
 
 fn rollback_filtered(dir: &Path, mutated: &[PathBuf]) -> Result<()> {

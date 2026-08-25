@@ -302,32 +302,21 @@ lives in one capability table read by core and UI.
   the window has taken (on the window's reply), what the settings object
   holds (when the file does); the first two stay out of the settings
   object. The size reaches the file through its own command carrying only
-  a percent; a whole-settings copy read before a resize fails its base
-  check rather than carrying the older size back. At most one
+  a percent; a copy read before a resize is refused as stale. At most one
   save in flight; asks during it collapse into one follow-up writing
   whatever is on screen. A write waits for the resize before reading what
   to write; a size the file refuses stays on screen. The close is not held
   for an in-flight write.
 - **A whole-file write carries the base of the file its copy came from.**
-  Two surfaces hand a person an entire file and write all of it back — the
-  Customize tab's `kendex.toml` and the Settings page's app `settings.toml`
-  (the machine-local preferences file, not a project's committed
-  `kendex.settings.toml`). Each read pairs content with a `Base`
-  (`kendex_core::base`, the hash of the exact bytes read — one derivation,
-  never taken from a path apart from its bytes); the write presents it, and
-  a file holding different bytes refuses the write as `stale`
-  (`WriteRefused`, one shape for every such surface), which the page
-  renders as a choice: the editor offers Reload, the settings store carries
-  the field-level change onto a fresh copy once and only then asks. The
-  manifest write also binds the base into its plan op's precondition
-  (`PlanOptions::manifest_base`), re-checked by the apply under the scope
-  lock just before the bytes go down. Every settings write — the
-  whole-file `replace` and the targeted `settings::mutate` behind
-  `save_zoom`, project registration, and update mutes — runs under one OS
-  file lock beside the settings file, shared by the app's threads and the
-  CLI's separate process alike, so no two writers interleave and the base
-  check and its write cannot be split. No public path writes the settings
-  file outside those two doors.
+  The Customize tab's `kendex.toml` and the Settings page's app
+  `settings.toml` are read as content plus a `Base` (`kendex_core::base`,
+  the hash of the bytes read) and written back with it; different bytes on
+  disk refuse the write as `stale` (`WriteRefused`), which the page renders
+  as a choice, never a silent overwrite. The manifest write binds the base
+  into its plan op's precondition (`PlanOptions::manifest_base`); every
+  settings write, whole-file or targeted, runs under one OS file lock
+  shared by the app's threads and the CLI, so the check and the write
+  cannot be split.
 - **Every atomic write gets its own temp file.** `write_then_rename` names
   its temp file per write, not per process.
 - GUI + CLI are equal thin shells over `crates/core`; every core operation

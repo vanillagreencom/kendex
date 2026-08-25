@@ -57,7 +57,9 @@ fn hash_into(hasher: &mut Sha256, path: &Path, rel: &Path, depth: usize) -> Resu
 
 /// SHA-256 over a tree as it sits, never following a link: a plain file
 /// by relative path and bytes, a link by relative path and target,
-/// dangling or not. What a directory move binds to — a rename carries
+/// dangling or not, a directory by relative path before its entries, so
+/// an empty one added or removed is a change. What a directory move
+/// binds to — a rename carries
 /// the entries themselves, a dangling link included, so the precondition
 /// names exactly those and never the bytes a link points at. The byte
 /// after the path says which kind wrote the record, so a file whose
@@ -83,6 +85,9 @@ fn hash_as_is_into(hasher: &mut Sha256, path: &Path, rel: &Path) -> Result<()> {
         hasher.update(target.to_string_lossy().as_bytes());
         hasher.update([0]);
     } else if kind.is_dir() {
+        hasher.update(rel.to_string_lossy().as_bytes());
+        hasher.update([2]);
+        hasher.update([0]);
         let mut entries: Vec<_> = fs::read_dir(path)
             .map_err(|e| CoreError::io(path, e))?
             .flatten()
@@ -275,6 +280,13 @@ mod tests {
         assert_ne!(
             resolving, file,
             "a file spelling the target is not the link"
+        );
+
+        std::fs::create_dir(root.join("empty")).unwrap();
+        let with_dir = hash_tree_as_is(&root).unwrap();
+        assert_ne!(
+            file, with_dir,
+            "an empty directory is an entry the move carries"
         );
     }
 

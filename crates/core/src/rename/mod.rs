@@ -206,7 +206,9 @@ fn file_rename_op(
     ops.push(PlannedOp {
         description: format!("{RENAME_PREFIX}: {old_name} becomes {new_name}"),
         op: Op::Rename {
-            from_pre: Pre::observed(&old)?,
+            // As it sits, not as it reads: a link to the same bytes put
+            // where the file was is not the file the plan looked at.
+            from_pre: Pre::tree_as_is(&old)?,
             from: old,
             to: new,
             to_pre: Pre::Absent,
