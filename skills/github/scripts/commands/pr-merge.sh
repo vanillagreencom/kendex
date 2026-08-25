@@ -175,22 +175,29 @@ exit_terminal_state() {
 #    transient: bool,     # true when only TRANSIENT issues are blocking
 #    state,               # PR lifecycle state: OPEN, MERGED, CLOSED, UNKNOWN
 #    merged_at,           # merge timestamp, "" unless state is MERGED
-#    head_runs}           # run ids the CI classification was scoped to —
+#    head_runs,           # run ids the CI classification was scoped to —
 #                         # the authoritative run per workflow after
 #                         # scope_current_run, or the runs custom commit
 #                         # statuses link to when no workflow job carries a
 #                         # run id; [] when no run-correlated checks exist
 #                         # or the fetch failed
+#    checks}              # the raw checks rollup this classification read,
+#                         # validated but unscoped — ci-classify-refusal
+#                         # re-scopes it through the same scope_current_run
+#                         # instead of refetching, so the verdict and its
+#                         # detail lines come from ONE snapshot; [] when the
+#                         # fetch failed or no checks are configured
 run_checks() {
     local pr_num="$1"
     local can_merge=true
     local issues=()
     local warnings=()
     local head_runs_json='[]'
+    local checks_json='[]'
 
     local pr_state pr_merged_at
     if ! load_pr_state_json "$pr_num"; then
-        jq -n --arg issue "$PR_STATE_ERROR" '{can_merge: false, issues: [$issue], warnings: [], mergeable: "UNKNOWN", review: "", transient: false, state: "UNKNOWN", merged_at: "", head_runs: []}'
+        jq -n --arg issue "$PR_STATE_ERROR" '{can_merge: false, issues: [$issue], warnings: [], mergeable: "UNKNOWN", review: "", transient: false, state: "UNKNOWN", merged_at: "", head_runs: [], checks: []}'
         return 0 # Return 0 so JSON is output, caller checks can_merge
     fi
     pr_state=$(jq -r '.state // "UNKNOWN"' <<<"$PR_STATE_JSON")
@@ -200,7 +207,7 @@ run_checks() {
     # check data is meaningless: `mergeable` is permanently UNKNOWN, post-merge
     # CI runs and bot comments are not blockers. Report the state, no issues.
     if [ "$pr_state" = "MERGED" ] || [ "$pr_state" = "CLOSED" ]; then
-        jq -n --arg state "$pr_state" --arg merged_at "$pr_merged_at" '{can_merge: false, issues: [], warnings: [], mergeable: "UNKNOWN", review: "", transient: false, state: $state, merged_at: $merged_at, head_runs: []}'
+        jq -n --arg state "$pr_state" --arg merged_at "$pr_merged_at" '{can_merge: false, issues: [], warnings: [], mergeable: "UNKNOWN", review: "", transient: false, state: $state, merged_at: $merged_at, head_runs: [], checks: []}'
         return 0
     fi
 
@@ -236,6 +243,7 @@ run_checks() {
         # so a prior canceled run can't be reported as a current merge blocker
         #. Mirrors orch ci-wait's pre-classification scoping.
         local scoped_ci_json ci_classification pending failed
+        checks_json=$(echo "$ci_json" | jq -c .)
         scoped_ci_json=$(echo "$ci_json" | scope_current_run)
         head_runs_json=$(echo "$scoped_ci_json" | jq -c "$CI_RUN_JQ_DEFS"'head_runs')
         # Check names are chosen by fork PRs and third-party check apps; the
@@ -332,7 +340,8 @@ run_checks() {
         --arg state "$pr_state" \
         --arg merged_at "$pr_merged_at" \
         --argjson head_runs "$head_runs_json" \
-        '{can_merge: $can_merge, issues: $issues, warnings: $warnings, mergeable: $mergeable, review: $review, transient: $transient, state: $state, merged_at: $merged_at, head_runs: $head_runs}'
+        --argjson checks "$checks_json" \
+        '{can_merge: $can_merge, issues: $issues, warnings: $warnings, mergeable: $mergeable, review: $review, transient: $transient, state: $state, merged_at: $merged_at, head_runs: $head_runs, checks: $checks}'
 }
 
 # Print BLOCKED breakdown to stderr, distinguishing transient vs permanent.

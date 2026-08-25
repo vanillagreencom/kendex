@@ -155,7 +155,7 @@ BLOCKED is classified on stderr as **transient** (mergeable UNKNOWN,
 Callers read the `transient` field from `--check`:
 
 ```json
-{"can_merge": true, "issues": [], "warnings": [], "mergeable": "MERGEABLE", "review": "APPROVED", "transient": false, "state": "OPEN", "merged_at": "", "head_runs": [17234567890]}
+{"can_merge": true, "issues": [], "warnings": [], "mergeable": "MERGEABLE", "review": "APPROVED", "transient": false, "state": "OPEN", "merged_at": "", "head_runs": [17234567890], "checks": [{"name": "Cargo", "state": "SUCCESS", "bucket": "pass", "workflow": "CI", "link": "https://github.com/owner/repo/actions/runs/17234567890/job/1", "startedAt": "…"}]}
 ```
 
 `state` is the PR's lifecycle state (`OPEN`, `MERGED`, `CLOSED`, `UNKNOWN`), and
@@ -165,10 +165,12 @@ Callers read the `transient` field from `--check`:
 run ids the CI classification was scoped to (the authoritative run per
 workflow plus the runs custom commit statuses link to — a mixed head names
 both); `--check` repeats them on stderr as `head-run: <ids>` under the
-one-word verdict (`mergeable`, `blocked`, `merged`, `closed`). To turn a
-refusal into a named cause — including which failing checks are run-correlated
-to the authoritative run and which runs were superseded — run
-`ci-classify-refusal <N>`.
+one-word verdict (`mergeable`, `blocked`, `merged`, `closed`). `checks` is the
+raw rollup that classification read. To turn a refusal into a named cause —
+including which failing checks are run-correlated to the authoritative run and
+which runs were superseded — run `ci-classify-refusal <N>`; it scopes the
+`checks` snapshot embedded in the `--check` JSON rather than refetching, so
+its detail lines and the verdict describe one fetch.
 
 `transient: true` means every blocking issue is recoverable by waiting
 (prefixes `unknown:`, `ci_pending:`, `ci_unconfigured:`, `ci_fetch_failed:`).

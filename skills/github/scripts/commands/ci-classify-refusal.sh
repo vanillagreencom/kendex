@@ -17,9 +17,7 @@
 #   issue: <raw>           every refusal issue, verbatim
 #   head-run: <ids>        (ci_failed/ci_pending only) run ids the CI
 #                          classification was scoped to; "none" when no
-#                          run-correlated checks exist. For ci_failed it is
-#                          recomputed from the same snapshot as the fail:/
-#                          superseded: lines below it
+#                          run-correlated checks exist
 #   fail: ...              (ci_failed only) each failing check with its
 #                          state, workflow, and run id
 #   superseded: ...        (ci_failed only) runs on the head whose checks
@@ -27,6 +25,11 @@
 #                          and older same-name commit statuses (`status=`)
 #                          alike; a failure someone read from raw
 #                          `gh pr checks` output may belong here
+#
+# Every line reads ONE checks snapshot: pr-merge --check embeds the rollup
+# it classified in its JSON (`checks`), and this script scopes that instead
+# of refetching — cause:/issue: and head-run:/fail:/superseded: cannot
+# describe different fetches.
 #
 # `cause: none` means the checks pass now: the refusal was not produced by
 # these gates (or has cleared since) — re-run the refusing command.
@@ -143,24 +146,16 @@ fi
 
 # Correlate each failing check with its run, and name the runs on this head
 # whose checks were dropped as superseded — the run a raw `gh pr checks`
-# failure line usually belongs to when it disagrees with the gate. One fresh
-# snapshot governs the whole detail block, head-run: included, so the run
-# scope and the fail/superseded attribution cannot disagree mid-flux;
-# startedAt must be fetched because scope_current_run orders runs by it (a
-# rerun keeps its original, lower run id).
-ci_json=$(gh pr checks "$pr_num" --json name,state,bucket,link,workflow,startedAt 2>"$check_err") || true
-if ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$ci_json"; then
-    echo "head-run: $(check_head_runs)"
-    echo "detail: could not fetch checks for run correlation — $(tail -1 "$check_err" | tr -d '\r\n')"
-    exit 0
-fi
+# failure line usually belongs to when it disagrees with the gate. ONE
+# snapshot governs the whole classification: the rollup pr-merge --check
+# fetched and classified rides in its JSON as `checks`, and the scoping
+# re-derives here through the same sourced scope_current_run — a rerun
+# starting between two fetches can no longer make cause:/issue: and the
+# fail:/superseded: detail describe different states.
+echo "head-run: $(check_head_runs)"
 
+ci_json=$(jq -c '.checks // []' <<<"$check_json")
 scoped_json=$(echo "$ci_json" | scope_current_run)
-
-echo "$scoped_json" | jq -r "$CI_RUN_JQ_DEFS"'
-    head_runs
-    | "head-run: " + (if length == 0 then "none" else map(tostring) | join(",") end)
-'
 
 echo "$scoped_json" | jq -r "$CI_RUN_JQ_DEFS$SANITIZE_JQ"'
     .[]

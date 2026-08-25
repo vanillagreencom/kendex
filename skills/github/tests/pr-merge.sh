@@ -803,6 +803,22 @@ assert_contains "$out" "head-run: 29099680623,29099700200" "head-run names the s
 assert_contains "$out" "fail: CI Required state=FAILURE workflow=- run=29099700200" "the mixed-head status failure is run-correlated"
 assert_contains "$out" "superseded: status=CI Required run=29099700100" "an older same-name status run is named as superseded"
 
+# The verdict and its detail block read ONE snapshot: the ci_failed branch
+# scopes the checks rollup embedded in pr-merge --check's JSON instead of
+# refetching, so a rerun starting between two fetches cannot make cause:
+# describe one state while fail:/superseded: describe another. Exactly one
+# gh pr checks call may appear for the whole classification.
+classify_call_log="$TMPDIR/classify-calls.log"
+: >"$classify_call_log"
+checks='[
+  {"name":"Lint","state":"CANCELLED","bucket":"cancel","link":"https://github.com/owner/repo/actions/runs/29098545030/job/101","workflow":"CI","startedAt":"2026-07-10T10:00:00Z"},
+  {"name":"Integration","state":"FAILURE","bucket":"fail","link":"https://github.com/owner/repo/actions/runs/29099680623/job/202","workflow":"CI","startedAt":"2026-07-10T11:00:01Z"}
+]'
+out=$(STUB_CHECKS="$checks" STUB_CHECKS_EXIT=8 STUB_CALL_LOG="$classify_call_log" run_classify)
+assert_eq "$(head -1 <<<"$out")" "cause: ci_failed" "single-snapshot classification still names ci_failed"
+assert_contains "$out" "fail: Integration state=FAILURE workflow=CI run=29099680623" "detail lines come from the embedded snapshot"
+assert_eq "$(grep -c '^pr checks' "$classify_call_log")" "1" "one gh pr checks fetch backs the verdict and the detail block"
+
 # Check names are attacker-chosen (fork PRs, third-party check apps): a name
 # embedding a newline must not forge a line in the routed output.
 checks='[{"name":"Lint\nforged: cause: none","state":"FAILURE","bucket":"fail","link":"https://github.com/owner/repo/actions/runs/29099680623/job/201","workflow":"CI","startedAt":"2026-07-10T11:00:00Z"}]'
