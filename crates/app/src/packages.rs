@@ -129,6 +129,16 @@ pub struct PackageUpdate {
 #[tauri::command(async)]
 #[specta::specta]
 pub fn package_update(scope: Scope, kind: ItemKind, name: String) -> Result<PackageUpdate, String> {
+    // The same refusal the CLI verb makes, for the same reason: a kind the
+    // engine never derives plans nothing, and an empty plan reads as
+    // "already current" on the page that asked.
+    if !engine::plans_per_package(kind) {
+        return Err(format!(
+            "{} '{name}' {}",
+            kind.name(),
+            engine::NO_PER_PACKAGE_UPDATE
+        ));
+    }
     let env = env()?;
     let report = package::update_one(&env, &scope, kind, &name).map_err(|e| e.to_string())?;
     let held_back = package::held_back(&report, kind, &name)

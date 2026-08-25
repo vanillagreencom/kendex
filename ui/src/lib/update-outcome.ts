@@ -5,13 +5,15 @@
 // all, and both would otherwise toast success over a package still
 // sitting where it was.
 import { toast } from "sonner";
-import type { HarnessId, PackageUpdate_Serialize } from "@/bindings";
+import type { HarnessId, PackageUpdate_Serialize, UpdateRow } from "@/bindings";
 import { updatedToastLabel } from "@/lib/copy";
 import {
+  nothingMovedToastLabel,
   notUpdatedToastLabel,
   updatedExceptToastLabel,
 } from "@/lib/copy-updates";
 import { harnessName } from "@/lib/labels";
+import { bulkUpdateToast } from "@/lib/update-toasts";
 
 /** The tools named by a set of drift rows, each once, in the order they
  *  came back. */
@@ -35,4 +37,20 @@ export const showUpdateOutcome = (
     return;
   }
   toast.info(notUpdatedToastLabel(name, held));
+};
+
+/** Say what a run over several places did. A place a conflict held back
+ *  needs attention on its own row, exactly like one the pre-filter left
+ *  out, so the two are counted together — and a run that moved nothing
+ *  never claims a success. */
+export const showBulkOutcome = (
+  moved: UpdateRow[],
+  attention: number,
+  remaining: UpdateRow[],
+): void => {
+  if (moved.length === 0) {
+    toast.info(nothingMovedToastLabel(attention));
+    return;
+  }
+  toast.success(bulkUpdateToast(moved, attention, remaining));
 };

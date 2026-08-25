@@ -376,3 +376,45 @@ fn updates_apply_names_what_moved_and_what_was_held_back() {
         "the edited copy survives the run that refused to write over it"
     );
 }
+
+/// The verb takes a kind the engine never derives only to refuse it: a Pi
+/// extension installs through its own path, so planning one here comes
+/// back empty and "nothing to change" would be a success-shaped answer for
+/// work that cannot happen.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn updates_apply_refuses_a_kind_with_no_per_package_update() {
+    let tmp = fixture();
+    let home = tmp.path();
+    let proj = home.join("proj");
+    assert!(
+        kendex(home, &proj, &["add", "--skill", "gh", "-y"])
+            .status
+            .success()
+    );
+
+    let refused = kendex(home, &proj, &["updates", "apply", "pi-extension", "gh"]);
+    let printed = said(&refused);
+    assert!(!refused.status.success(), "{printed}");
+    assert!(
+        printed.contains("has no per-package update"),
+        "the refusal says what it will not do: {printed}"
+    );
+    assert!(
+        printed.contains("kendex update-pi"),
+        "and names the path that does move a Pi extension: {printed}"
+    );
+    assert!(
+        !printed.contains("nothing to change"),
+        "never the already-current answer: {printed}"
+    );
+
+    // The help stops advertising a kind this verb refuses.
+    let help = said(&kendex(home, &proj, &["updates", "apply", "--help"]))
+        + &String::from_utf8_lossy(&kendex(home, &proj, &["updates", "apply", "--help"]).stdout);
+    assert!(help.contains("mcp-server"), "{help}");
+    assert!(
+        !help.contains("| pi-extension"),
+        "pi-extension is no longer offered as a kind: {help}"
+    );
+}

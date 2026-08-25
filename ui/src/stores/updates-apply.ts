@@ -52,15 +52,40 @@ export const applyRow = async (
   return { ok: true, update: response.data };
 };
 
+/** What a run over several places did: the places it wrote, and how many
+ *  a conflict held back. A place held in one tool while another came
+ *  current counts in both — it moved, and it still needs a decision. */
+export type BulkOutcome = {
+  ok: boolean;
+  moved: UpdateRow[];
+  held: number;
+};
+
 /** Bring every place in `rows` current, one package-scoped apply per
- *  place. Returns whether every step landed. */
+ *  place, keeping what each one reported. Reducing this to a boolean is
+ *  how a run counts a package it never moved: the plan holds a rendering
+ *  back rather than writing over it, and only the command it ran can say
+ *  so. */
 export const applyRows = async (
   rows: UpdateRow[],
   report: Report,
-): Promise<boolean> => {
-  let ok = true;
+): Promise<BulkOutcome> => {
+  const outcome: BulkOutcome = { ok: true, moved: [], held: 0 };
   for (const row of rows) {
-    if (!(await applyRow(row, report)).ok) ok = false;
+    const one = await applyRow(row, report);
+    if (!one.ok) {
+      outcome.ok = false;
+      continue;
+    }
+    // A hold move answers with the view alone, so it counts as moved on
+    // the strength of the command succeeding — the same reading this path
+    // has always had.
+    if (!one.update || one.update.heldBack.length === 0) {
+      outcome.moved.push(row);
+      continue;
+    }
+    outcome.held += 1;
+    if (one.update.moved.length > 0) outcome.moved.push(row);
   }
-  return ok;
+  return outcome;
 };

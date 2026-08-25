@@ -54,7 +54,14 @@ export const packageHandlers: Record<string, Handler> = {
     return { rows: updateRows(), warnings: [] };
   },
   package_set_rev: ({ scope }: { scope: Scope }) => view(scope),
-  package_update: ({ scope }: { scope: Scope }) => view(scope),
+  // The single-package apply answers with what it wrote and what a
+  // conflict held back, not the view alone — a mock that returns the bare
+  // view leaves the toast reading `heldBack` off undefined.
+  package_update: ({ scope }: { scope: Scope }) => ({
+    view: view(scope),
+    heldBack: [],
+    moved: [],
+  }),
   package_diff: ({ from, to }: { from: VersionSel; to: VersionSel }) => ({
     files: [
       {

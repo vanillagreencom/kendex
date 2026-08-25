@@ -3,9 +3,11 @@ import type {
   AuditView,
   HarnessId,
   ItemKind,
+  PackageUpdate_Serialize,
   ScanResult,
   SourceRow,
 } from "@/bindings";
+import { showUpdateOutcome } from "@/lib/update-outcome";
 import bindingsSource from "../bindings.ts?raw";
 import { capabilityTable } from "./caps";
 import { ACME } from "./fixtures";
@@ -28,6 +30,23 @@ describe("mock bridge", () => {
     ].map((m) => m[1]);
     expect(names.length).toBeGreaterThan(15);
     expect(Object.keys(handlers).sort()).toEqual([...new Set(names)].sort());
+  });
+
+  // The mock stands in for the real command, so its answer has to be the
+  // shape the callers read. A bare view here left the update toast
+  // mapping over an undefined `heldBack` and threw in the dev harness.
+  it("answers a single-package update with what it wrote and what it held", async () => {
+    const update = (await mockInvoke("package_update", {
+      scope: acme,
+      kind: "skill" as ItemKind,
+      name: "github",
+    })) as PackageUpdate_Serialize;
+    expect(Object.keys(update).sort()).toEqual(["heldBack", "moved", "view"]);
+    expect(Array.isArray(update.heldBack)).toBe(true);
+    expect(Array.isArray(update.moved)).toBe(true);
+    expect(update.view.scope).toEqual(acme);
+    // The reader the shape is for: it must not throw on this answer.
+    expect(() => showUpdateOutcome("github", update)).not.toThrow();
   });
 
   it("rejects unknown commands with a plain string", async () => {

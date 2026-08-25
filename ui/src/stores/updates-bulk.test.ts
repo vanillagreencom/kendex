@@ -254,3 +254,102 @@ describe("updates store: bulk update", () => {
     );
   });
 });
+
+describe("updates store: what a bulk update claims about held-back places", () => {
+  const emptyView = {
+    scope: { scope: "global" } as const,
+    drift: [],
+    plan: [],
+    notes: [],
+    warnings: [],
+    safety: [],
+    adoptable: ADOPTABLE,
+    exits: [],
+    error: null,
+  };
+  // Not a local edit: the Updates page filters those out before it applies.
+  // A revision conflict, or files sitting where a newly targeted tool
+  // installs, reaches the plan and is held back there.
+  const conflict = (name: string) => ({
+    kind: "skill" as const,
+    name,
+    harness: "claude" as const,
+    scope: { scope: "global" } as const,
+    state: "conflict" as const,
+    detail: "files kendex did not write are in the way",
+    cause: "unmanaged-content" as const,
+  });
+  const stale = (name: string) => ({
+    ...conflict(name),
+    state: "stale" as const,
+    cause: "upstream-changed" as const,
+  });
+
+  const answering = (
+    per: Record<string, { heldBack: string[]; moved: string[] }>,
+  ) => {
+    vi.mocked(commands.packageUpdate).mockImplementation(
+      async (_scope, _kind, name) => ({
+        status: "ok",
+        data: {
+          view: emptyView,
+          heldBack: (per[name]?.heldBack ?? []).map(conflict),
+          moved: (per[name]?.moved ?? []).map(stale),
+        },
+      }),
+    );
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [] },
+    });
+    vi.mocked(commands.scanMachine).mockResolvedValue({
+      status: "ok",
+      data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
+    });
+    vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
+  };
+
+  beforeEach(() => {
+    useUpdatesStore.setState({ rows: [], busy: false, loaded: true });
+    vi.clearAllMocks();
+  });
+
+  it("claims nothing when every place it applied was held back", async () => {
+    answering({ gh: { heldBack: ["gh"], moved: [] } });
+
+    await useUpdatesStore.getState().updateRows([row({ name: "gh" })]);
+
+    expect(commands.packageUpdate).toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.info).toHaveBeenCalledWith(
+      "Nothing was updated — 1 place needs attention on its own row",
+    );
+  });
+
+  it("counts only the packages that moved, and names the rest as waiting", async () => {
+    answering({
+      gh: { heldBack: [], moved: ["gh"] },
+      review: { heldBack: ["review"], moved: [] },
+    });
+
+    await useUpdatesStore
+      .getState()
+      .updateRows([row({ name: "gh" }), row({ name: "review" })]);
+
+    expect(toast.info).not.toHaveBeenCalled();
+    expect(toast.success).toHaveBeenCalledWith(
+      "Updated 1 package — 1 place needs attention on its own row",
+    );
+  });
+
+  it("counts a package held in one tool and current in another as both", async () => {
+    answering({ gh: { heldBack: ["gh"], moved: ["gh"] } });
+
+    await useUpdatesStore.getState().updateRows([row({ name: "gh" })]);
+
+    expect(toast.info).not.toHaveBeenCalled();
+    expect(toast.success).toHaveBeenCalledWith(
+      "Updated 1 package — 1 place needs attention on its own row",
+    );
+  });
+});

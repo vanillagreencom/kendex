@@ -191,6 +191,7 @@ fn manifest_text(w: &World) -> String {
 }
 
 /// The one manifest write a plan carries, whichever op shape it took.
+#[allow(clippy::expect_used)]
 fn manifest_op(report: &kendex_core::engine::EngineReport) -> &apply::Op {
     let path = "kendex.toml";
     let op = report

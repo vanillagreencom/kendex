@@ -74,6 +74,8 @@ export const updatedExceptToastLabel = (
   `Updated ${name} — the copy in ${toolList(tools)} needs attention on the package page`;
 export const notUpdatedToastLabel = (name: string, tools: string[]): string =>
   `${name} was not updated — the copy in ${toolList(tools)} needs attention on the package page`;
+export const nothingMovedToastLabel = (held: number): string =>
+  `Nothing was updated — ${held === 1 ? "1 place needs" : `${held} places need`} attention on its own row`;
 export const nothingToUpdateToastLabel = (skipped: number): string =>
   `Nothing to update — ${skipped === 1 ? "1 place needs" : `${skipped} places need`} attention on its own row`;
 

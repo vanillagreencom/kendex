@@ -12,7 +12,8 @@ pub enum UpdatesCommand {
     /// Bring one package current, leaving the scope's other followers at
     /// their installed versions (`--apply` brings the whole scope current)
     Apply {
-        /// agent | skill | hook | command | mcp-server | pi-extension
+        /// agent | skill | hook | command | mcp-server (Pi extensions come
+        /// current through `kendex update-pi`)
         kind: String,
         name: String,
     },
@@ -169,6 +170,17 @@ fn apply_one(
     name: String,
 ) -> CliResult {
     let kind = parse_kind(&kind)?;
+    // Refused before anything is planned: a kind the engine never derives
+    // would come back with no ops, and this verb would answer "nothing to
+    // change" for work it cannot do at all.
+    if !kendex_core::engine::plans_per_package(kind) {
+        return Err(format!(
+            "{} '{name}' {}",
+            kind.name(),
+            kendex_core::engine::NO_PER_PACKAGE_UPDATE
+        )
+        .into());
+    }
     let report = kendex_core::package::update_one(env, scope, kind, &name)?;
     let held = kendex_core::package::held_back(&report, kind, &name);
     let moving = kendex_core::package::moving(&report, kind, &name);

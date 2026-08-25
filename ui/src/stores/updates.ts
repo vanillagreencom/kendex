@@ -11,8 +11,7 @@ import {
   updatablePlaces,
   visibleUpdates,
 } from "@/lib/update-groups";
-import { showUpdateOutcome } from "@/lib/update-outcome";
-import { bulkUpdateToast } from "@/lib/update-toasts";
+import { showBulkOutcome, showUpdateOutcome } from "@/lib/update-outcome";
 import { unsettled } from "@/lib/updates-read-state";
 import { useAuditStore } from "./audit";
 import { useProblemsStore } from "./problems";
@@ -175,20 +174,25 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
         }
         // The whole sequence and its follow-up overview ride the
         // side-effect chain, so nothing older can land on top of them.
-        let ok = true;
+        let outcome = { ok: true, moved: [] as UpdateRow[], held: 0 };
         const error = await get().mutate(async () => {
-          ok = await applyRows(rows, reportUpdate);
+          outcome = await applyRows(rows, reportUpdate);
           return null;
         });
-        // A rejection escapes the sequence without touching ok — only the
-        // applier saw it, and success must not be claimed over it.
+        // A rejection escapes the sequence without touching the outcome —
+        // only the applier saw it, and success must not be claimed over it.
         if (error !== null) {
           showError(UPDATE_ERROR_TITLE, error);
-          ok = false;
+          outcome.ok = false;
         }
-        if (ok)
-          toast.success(
-            bulkUpdateToast(rows, skipped, visibleUpdates(get().rows)),
+        // Counted off what the applies reported, never off the rows the
+        // click covered: a place the plan held back needs attention on its
+        // own row, it is not one more updated.
+        if (outcome.ok)
+          showBulkOutcome(
+            outcome.moved,
+            skipped + outcome.held,
+            visibleUpdates(get().rows),
           );
         await useScanStore.getState().refresh();
         await useAuditStore.getState().refresh({ force: true });
