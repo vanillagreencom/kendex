@@ -9,7 +9,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { clickAsksToOpen, clickEndedSelection } from "@/lib/click-asks-to-open";
+import { clickAsksToOpen } from "@/lib/click-asks-to-open";
 import { bundledWithLabel, FORKED_BADGE_LABEL, vendorHelp } from "@/lib/copy";
 import { STATUS_LABELS } from "@/lib/copy-customize";
 import {
@@ -99,13 +99,12 @@ export function InstalledRow({
               {/* The keyboard's one way into the row: a row is not
                   focusable, so without a real control here the row's
                   default open — and any package without a fork badge or
-                  mark — is mouse-only. Its click fires before the row's
-                  guard, so it declines a selection-ending drag itself. */}
+                  mark — is mouse-only. No selection guard here: a
+                  completed click on a button is always intent, and the
+                  row's own guard declines the drags. */}
               <button
                 type="button"
-                onClick={(event) => {
-                  if (!clickEndedSelection(event)) onOpen();
-                }}
+                onClick={() => onOpen()}
                 className="block min-w-0 truncate text-left hover:underline"
               >
                 {displayName}

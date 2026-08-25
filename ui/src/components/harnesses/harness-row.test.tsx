@@ -64,18 +64,20 @@ describe("the harness row's name", () => {
     expect(nav.libraryFilter?.scope).toBeUndefined();
   });
 
-  it("lets a drag across the name keep its selection", async () => {
+  it("opens on a click while a selection stands elsewhere", async () => {
     const host = mount("/home/u/.claude");
     const name = host.querySelector<HTMLButtonElement>(
       `button[aria-label="${label}"]`,
     );
     if (!name) throw new Error("no show-everything button rendered");
-    // What a copy-drag leaves behind at mouse-up: an uncollapsed selection.
+    // A completed click on the button is intent to open even while text
+    // stands selected somewhere — on WebKit a button click leaves the
+    // selection be, and a guard here made this a dead click.
     vi.spyOn(window, "getSelection").mockReturnValue({
       isCollapsed: false,
     } as Selection);
     await userEvent.click(name);
-    expect(useNavStore.getState().page).toBe("home");
+    expect(useNavStore.getState().page).toBe("library");
   });
 
   it("still opens from the keyboard while a selection stands", async () => {

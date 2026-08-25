@@ -1,4 +1,3 @@
-import { clickEndedSelection } from "@/lib/click-asks-to-open";
 import { showEverythingLabel } from "@/lib/show-everything-label";
 
 /**
@@ -23,11 +22,7 @@ export function ShowEverythingButton({
   return (
     <button
       type="button"
-      // Fires before any surface guard around it, so it declines a
-      // selection-ending drag itself.
-      onClick={(event) => {
-        if (!clickEndedSelection(event)) onOpen();
-      }}
+      onClick={onOpen}
       aria-label={showEverythingLabel(name, path)}
       className="truncate text-sm font-medium hover:underline"
     >

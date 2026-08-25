@@ -146,15 +146,16 @@ describe("opening a package from its Library row", () => {
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
-  it("lets a drag across the name keep its selection", async () => {
+  it("opens from the name while a selection stands elsewhere", async () => {
     const { host, onOpen } = mount();
-    // The name button fires before the row's guard, so it has to decline
-    // the selection-ending click itself, not rely on the row.
+    // A completed click on the button is intent to open even while text
+    // stands selected somewhere — on WebKit a button click leaves the
+    // selection be, and a guard here made this a dead click.
     vi.spyOn(window, "getSelection").mockReturnValue({
       isCollapsed: false,
     } as Selection);
     await userEvent.click(nameButton(host));
-    expect(onOpen).not.toHaveBeenCalled();
+    expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
   it("lets a drag across the row keep its selection", async () => {

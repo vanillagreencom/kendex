@@ -10,25 +10,19 @@ const CONTROLS =
  * Whether a click on a whole-surface shortcut — a project card, a Library
  * row, a marketplace row — is asking to open it. False when a control
  * inside the surface already answered the click, and false when the click
- * ended a text selection: a drag across the name was someone keeping the
- * text, not asking to leave the page. One predicate for every such surface,
- * so the guards cannot drift apart.
+ * ended a text selection: a drag across the surface's text was someone
+ * keeping the text, not asking to leave the page. Keyboard and assistive
+ * activation arrive as clicks with detail 0 and leave any standing
+ * selection untouched, so they always ask. One predicate for every such
+ * surface, so the guards cannot drift apart.
+ *
+ * Surfaces only, never a control inside one: a completed click on a real
+ * button — mousedown and mouseup both on it — is unambiguous intent to
+ * activate, and guarding it turns a standing selection elsewhere into a
+ * dead click on WebKit, where a button click leaves the selection be.
  */
 export function clickAsksToOpen(event: MouseEvent<HTMLElement>): boolean {
   if ((event.target as HTMLElement).closest(CONTROLS)) return false;
-  return !clickEndedSelection(event);
-}
-
-/**
- * Whether the click that just landed ended a text selection. Keyboard and
- * assistive activation arrive as clicks too, with detail 0, and they leave
- * any standing selection untouched — those always ask to open; only a
- * mouse click that left an uncollapsed selection is someone keeping the
- * text. A control inside the surface needs this half of the guard on its
- * own: its click is always its answer, but it fires before the surface's
- * guard can decline.
- */
-export function clickEndedSelection(event: MouseEvent<HTMLElement>): boolean {
-  if (event.detail === 0) return false;
-  return window.getSelection()?.isCollapsed === false;
+  if (event.detail === 0) return true;
+  return window.getSelection()?.isCollapsed !== false;
 }
