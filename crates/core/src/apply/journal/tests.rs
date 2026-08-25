@@ -257,6 +257,30 @@ fn a_restore_set_whose_directory_cannot_be_synced_is_not_persisted() {
     unlock();
 }
 
+/// A directory holding a link back into itself journals and restores:
+/// the snapshot copies the link as a link, and syncing the copy treats it
+/// as a leaf instead of walking the same directory through it again.
+#[cfg(unix)]
+#[test]
+fn a_dir_linking_to_itself_journals_and_restores() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("work/skill");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("SKILL.md"), "v1").unwrap();
+    std::os::unix::fs::symlink(".", dir.join("loop")).unwrap();
+
+    let journal_dir = tmp.path().join("journal/global");
+    write(&journal_dir, std::slice::from_ref(&dir)).unwrap();
+    fs::write(dir.join("SKILL.md"), "v2").unwrap();
+    fs::remove_file(dir.join("loop")).unwrap();
+
+    rollback(&journal_dir).unwrap();
+    assert_eq!(fs::read_to_string(dir.join("SKILL.md")).unwrap(), "v1");
+    assert!(dir.join("loop").is_symlink());
+    assert_eq!(fs::read_link(dir.join("loop")).unwrap().as_os_str(), ".");
+    assert!(!pending(&journal_dir));
+}
+
 /// A journaled directory root above a mutated path is part of the
 /// transaction's footprint: the chain it created comes down with the
 /// rollback even though only the leaf is named as mutated.

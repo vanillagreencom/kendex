@@ -174,8 +174,19 @@ pub(crate) fn sync_dir_durable(path: &Path) -> Result<()> {
     }
 }
 
+/// Sync a tree's files and directories, a link treated as a leaf: the
+/// parent's sync persists the entry itself, and what it points at is not
+/// this tree's — following it would sync files outside the tree, or the
+/// same tree again through a link back into it until the kernel refuses
+/// the path. The same reading of a link as `hash_tree_as_is`.
 pub(crate) fn sync_tree(root: &Path) -> Result<()> {
-    if root.is_file() {
+    let Ok(kind) = fs::symlink_metadata(root).map(|meta| meta.file_type()) else {
+        return Ok(());
+    };
+    if kind.is_symlink() {
+        return Ok(());
+    }
+    if kind.is_file() {
         return sync_file(root);
     }
     if let Ok(entries) = fs::read_dir(root) {
@@ -236,6 +247,38 @@ pub(crate) fn make_symlink(target: &Path, link: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A link is a leaf of the tree it sits in: its parent's sync persists
+    /// the entry, and nothing on the far side is this tree's to touch.
+    /// Pinned with a link to a directory outside the tree holding a file
+    /// nobody may open — followed, the sync would fail on it.
+    #[cfg(unix)]
+    #[test]
+    fn sync_tree_never_follows_a_link() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let tmp = tempfile::tempdir().unwrap();
+        let outside = tmp.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        let sealed = outside.join("sealed");
+        fs::write(&sealed, "x").unwrap();
+        fs::set_permissions(&sealed, fs::Permissions::from_mode(0o000)).unwrap();
+        let unlock = || fs::set_permissions(&sealed, fs::Permissions::from_mode(0o600)).unwrap();
+        if fs::File::open(&sealed).is_ok() {
+            // Permissions do not bind this user (root): following the link
+            // cannot be made to fail here.
+            unlock();
+            return;
+        }
+        let tree = tmp.path().join("tree");
+        fs::create_dir_all(&tree).unwrap();
+        fs::write(tree.join("a"), "a").unwrap();
+        std::os::unix::fs::symlink(&outside, tree.join("out")).unwrap();
+        std::os::unix::fs::symlink(".", tree.join("loop")).unwrap();
+
+        let result = sync_tree(&tree);
+        unlock();
+        result.unwrap();
+    }
 
     /// The app saves settings from a Tokio thread pool, so a slider drag can
     /// put several writes of one file in flight at once. Sharing a temp name
