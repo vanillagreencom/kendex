@@ -17,9 +17,6 @@ an outside contributor.
 - A package's Follow source switch moves at once, on or off, instead of
   freezing the Updates table for the seconds its write takes. Rows in other
   places stay live while it settles; the flipped package's place waits.
-- `kendex adopt` and the app's keep action refuse a name that is not an item
-  name, so an absolute or `../`-shaped one can no longer trash a directory
-  outside the tool's folder. A namespaced skill is kept from `plugin__item`.
 - `kendex adopt` and the app's keep action refuse a path-shaped name and a
   symlinked destination, so neither trashes a directory outside the tool's
   folder. A namespaced skill is kept from the one directory its tool lists.
