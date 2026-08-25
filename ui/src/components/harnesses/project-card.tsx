@@ -3,7 +3,7 @@ import type { ItemKind } from "@/bindings";
 import { KindCountBadges } from "@/components/kind-count-badges";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { showEverythingLabel } from "@/lib/project-card-label";
+import { showEverythingLabel } from "@/lib/show-everything-label";
 
 /**
  * One place a setup applies — Personal, or a project folder. Personal and a

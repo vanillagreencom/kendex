@@ -304,6 +304,11 @@ changes carry a **Breaking** call-out with their migration note inline.
   tile and once in the Library table it opens, so the click landed on a
   smaller total with nothing explaining the gap. Both numbers now come from
   the same count.
+- A harness's name on the Harnesses page now opens the Library showing
+  everything that harness has, the way a project's name already does on
+  the Projects page. The row's count badges each narrow to one kind, so
+  seeing all of one harness used to mean picking a kind you did not want
+  and clearing the filter.
 - Home no longer shows its loading skeletons forever when the first scan of
   the machine fails: the page says the scan failed, shows why, and offers
   Scan again. When a later scan fails, Home still draws what it had, headed

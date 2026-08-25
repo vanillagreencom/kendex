@@ -7,6 +7,7 @@ import { KindCountBadges } from "@/components/kind-count-badges";
 import { Button } from "@/components/ui/button";
 import { HARNESS_FOLDER_HELP, NOT_INSTALLED_LABEL } from "@/lib/copy";
 import { harnessName } from "@/lib/labels";
+import { showEverythingLabel } from "@/lib/show-everything-label";
 import { cn } from "@/lib/utils";
 import { useNavStore } from "@/stores/nav";
 
@@ -41,14 +42,25 @@ export function HarnessRow({
       <div className="flex min-w-0 flex-col gap-1">
         <span className="flex items-center gap-2">
           <HarnessIcon harness={id} muted={!detectedRoot} className="size-5" />
-          <span
-            className={cn(
-              "text-sm font-medium",
-              !detectedRoot && "text-muted-foreground",
-            )}
-          >
-            {name}
-          </span>
+          {/* The name is the row's show-everything control, the same button
+              a project card gives its name: it opens the Library scoped to
+              this harness with no kind picked, because the count badges each
+              narrow to one kind and none of them can answer "all of it". A
+              harness that isn't installed has nothing to show. */}
+          {detectedRoot ? (
+            <button
+              type="button"
+              onClick={() => goToLibrary({ harness: id })}
+              aria-label={showEverythingLabel(name)}
+              className="truncate text-sm font-medium hover:underline"
+            >
+              {name}
+            </button>
+          ) : (
+            <span className="text-sm font-medium text-muted-foreground">
+              {name}
+            </span>
+          )}
           {version ? (
             <span className="font-mono text-xs text-muted-foreground">
               {version}
