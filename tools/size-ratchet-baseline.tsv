@@ -1,12 +1,12 @@
 .github/workflows/review-gate-writer.yml	652
-crates/core/src/engine/adopt.rs	735
+crates/core/src/engine/adopt.rs	763
 crates/core/src/engine/desired_agent.rs	458
 crates/core/src/engine/detach.rs	603
 crates/core/src/engine/ops/add.rs	539
 crates/core/src/engine/pi_hooks_move/migrated.rs	540
 crates/core/src/engine/pi_hooks_move/mod.rs	508
 crates/core/src/engine/pi_hooks_move/preflight.rs	765
-crates/core/src/error.rs	419
+crates/core/src/error.rs	423
 crates/core/src/remote/store.rs	420
 docs/ARCHITECTURE.md	857
 hooks/block-repo-copy.sh	511

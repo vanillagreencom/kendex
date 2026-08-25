@@ -213,6 +213,13 @@ pub enum CoreError {
     #[error("`{name}` can't be your copy's name: {problem}")]
     ForkNameUnusable { name: String, problem: String },
 
+    /// Adoption refused before deriving a single path: every place it
+    /// would write is this name joined onto a root, so a name kendex
+    /// would not install is refused rather than followed out of the
+    /// harness directory and the local source.
+    #[error("`{name}` can't name an item to keep: {problem}")]
+    AdoptNameUnusable { name: String, problem: String },
+
     /// Case 4 of naming a catalog: a qualifier that names no subscription
     /// refuses, listing what is subscribed — never a guess, never a
     /// download.

@@ -43,6 +43,7 @@ pub fn adopt(
     name: &str,
     harnesses: &[HarnessId],
 ) -> Result<Plan> {
+    usable(name)?;
     let mut manifest = manifest_for_mutation(env, scope)?;
     let local_item = local_item_path(env, scope, kind, name)?;
 
@@ -160,10 +161,29 @@ pub fn adopt(
     })
 }
 
-/// Where in the scope's local source the kept content lands. Read wherever
+/// A name adoption may derive a path from. Every place it reads or writes
+/// is this name joined onto a root, so an absolute or `..`-shaped one
+/// leaves both the tool's directory and the local source, and the capture
+/// moves — then trashes — a directory nobody named. Asked at each place a
+/// path is derived, and it admits exactly the names the rest of kendex
+/// installs, so an offer and the capture cannot read different rules.
+fn usable(name: &str) -> Result<()> {
+    match crate::names::item_problem(name) {
+        Some(problem) => Err(CoreError::AdoptNameUnusable {
+            name: name.to_owned(),
+            problem,
+        }),
+        None => Ok(()),
+    }
+}
+
+/// Where in the scope's local source the kept content lands, and the only
+/// place the logical namespace survives: `plugin/item` is the nested
+/// layout the local source lists back under that same name. Read wherever
 /// a surface asks whether adoption could take a position, so the question
 /// and the answer are never two different rules.
 fn local_item_path(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Result<PathBuf> {
+    usable(name)?;
     let local_root = local_source_root(env, scope);
     match kind {
         ItemKind::Skill => Ok(local_root.join("skills").join(name)),
@@ -678,10 +698,18 @@ pub(super) fn position(
     name: &str,
     harness: HarnessId,
 ) -> Option<PathBuf> {
+    // No position for a name no path may be derived from: this answers
+    // "has this tool something to keep", and a name adoption refuses has
+    // nothing anywhere.
+    usable(name).ok()?;
     let dir = native_dir(env, scope, harness, kind)?;
     Some(match kind {
         ItemKind::Agent => dir.join(crate::render::agent::file_name(harness, name)),
-        _ => dir.join(name),
+        // A `/` never survives into an installed artifact: the tool holds
+        // `plugin/item` as one directory, `plugin__item` or
+        // `plugin-item`. Reading nested directories instead would find
+        // nothing, and report a skill plainly there as absent.
+        _ => dir.join(crate::harness::rendered_name(harness, name)),
     })
 }
 

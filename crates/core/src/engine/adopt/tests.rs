@@ -324,3 +324,151 @@ fn an_oversized_target_is_refused_out_loud() {
     let error = read_tree(&dir).unwrap_err();
     assert!(error.to_string().contains("bigger than adopt"), "{error}");
 }
+
+/// An absolute name is not a name. `PathBuf::join` throws away the root it
+/// is joined onto, so the position adoption reads becomes the absolute
+/// path itself — a directory outside every kendex root, captured into the
+/// local source and then trashed. Refused before a path is derived.
+#[test]
+fn an_absolute_name_captures_and_trashes_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let project = tmp.path().join("app");
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    let outside = tmp.path().join("elsewhere/notes");
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(outside.join("SKILL.md"), "somebody else's files").unwrap();
+    fs::create_dir_all(project.join(".claude/skills")).unwrap();
+
+    let refused = adopt(
+        &env,
+        &scope,
+        ItemKind::Skill,
+        outside.to_str().unwrap(),
+        &[HarnessId::Claude],
+    )
+    .unwrap_err();
+
+    assert!(
+        matches!(refused, CoreError::AdoptNameUnusable { .. }),
+        "{refused:?}"
+    );
+    assert!(outside.join("SKILL.md").is_file());
+    assert!(!project.join(".kendex-local").exists());
+    assert!(trash_is_empty(&env));
+    // The offer a surface would draw says the same thing.
+    assert!(!can_keep_for(
+        &env,
+        &scope,
+        ItemKind::Skill,
+        outside.to_str().unwrap(),
+        HarnessId::Claude
+    ));
+}
+
+/// A `..`-shaped name climbs out of the tool's skills directory: the old
+/// join put the position at `.claude/notes`, one step above where skills
+/// live, and the capture would have moved and trashed it.
+#[test]
+fn a_traversal_name_captures_and_trashes_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let project = tmp.path().join("app");
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    let climbed = project.join(".claude/notes");
+    fs::create_dir_all(&climbed).unwrap();
+    fs::write(climbed.join("SKILL.md"), "not an item kendex was given").unwrap();
+    fs::create_dir_all(project.join(".claude/skills")).unwrap();
+
+    let refused = adopt(
+        &env,
+        &scope,
+        ItemKind::Skill,
+        "../notes",
+        &[HarnessId::Claude],
+    )
+    .unwrap_err();
+
+    assert!(
+        matches!(refused, CoreError::AdoptNameUnusable { .. }),
+        "{refused:?}"
+    );
+    assert!(climbed.join("SKILL.md").is_file());
+    assert!(!project.join(".kendex-local").exists());
+    assert!(trash_is_empty(&env));
+    assert!(!can_keep_for(
+        &env,
+        &scope,
+        ItemKind::Skill,
+        "../notes",
+        HarnessId::Claude
+    ));
+}
+
+/// A namespaced skill sits at the tool's rendered spelling — one directory
+/// called `plugin__item`, never nested directories — while the logical
+/// name stays the manifest's and the local source's. Looking under
+/// `.claude/skills/data-science/eda` would find nothing and report a skill
+/// that is plainly there as absent.
+#[test]
+fn a_namespaced_skill_is_adopted_at_its_rendered_position() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let project = tmp.path().join("app");
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    let rendered = project.join(".claude/skills/data-science__eda");
+    fs::create_dir_all(&rendered).unwrap();
+    fs::write(
+        rendered.join("SKILL.md"),
+        "---\nname: eda\ndescription: explore data\n---\nMy content.\n",
+    )
+    .unwrap();
+
+    assert!(can_keep_for(
+        &env,
+        &scope,
+        ItemKind::Skill,
+        "data-science/eda",
+        HarnessId::Claude
+    ));
+    let plan = adopt(
+        &env,
+        &scope,
+        ItemKind::Skill,
+        "data-science/eda",
+        &[HarnessId::Claude],
+    )
+    .unwrap();
+    crate::apply::execute(&env, &plan, None).unwrap();
+
+    // The namespace is a directory only in the local source.
+    assert!(
+        project
+            .join(".kendex-local/skills/data-science/eda/SKILL.md")
+            .is_file()
+    );
+    assert!(!rendered.exists());
+    let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
+    assert!(manifest.contains("data-science/eda"), "{manifest}");
+
+    // The follow-up apply puts it back where the tool reads it, and the
+    // scope is drift-clean.
+    let report = audit(&env, &scope).unwrap();
+    crate::apply::execute(&env, &report.plan, None).unwrap();
+    assert!(rendered.exists(), "the tool reads it at its rendered name");
+    assert!(!project.join(".claude/skills/data-science").exists());
+    let after = audit(&env, &scope).unwrap();
+    assert_eq!(after.drift, vec![]);
+}
+
+/// Nothing has been moved into the trash. Its directory is created on
+/// demand, so an absent one counts.
+fn trash_is_empty(env: &Env) -> bool {
+    fs::read_dir(env.trash_dir()).is_ok_and(|mut d| d.next().is_none()) || !env.trash_dir().exists()
+}
