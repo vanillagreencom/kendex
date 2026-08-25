@@ -240,25 +240,18 @@ lives in one capability table read by core and UI.
   a Customize tab beside Overview — instructions, the skills an agent gets,
   per-tool settings. The Customize page keeps only what is not about one
   package (the `all` row, custom hooks, a project's skills folder) plus an
-  index of everything customized, each row opening its package.
-- Both surfaces edit one draft of one manifest per scope, in
-  `stores/editor.ts`. The Customize page reloads only when nothing is
-  unsaved; `lib/customization.ts` slices that draft per package.
-- A place is customized when its manifest overlay holds something, its
-  installed files were edited by hand, or its copy is a fork.
-  `lib/customized-places.ts::placeStandings` is the one answer to that
-  question. Three readers, no other: the Library row's mark
-  (`lib/library-standings.ts`), the package header's mark
-  (`lib/package-mark.ts`), and the Customize page's index
-  (`customizedHere`, via `lib/customized-here.ts`). Each builds its
-  `PlacesSource` through `placesSource`, never by hand. The index lists
-  every package the Library marks for the place being edited, reading the
-  open draft in place of that place's saved manifest
-  (`manifestsForEditing`) so an unsaved removal leaves the list at once.
-  It says nothing is customized only after the update read has landed
-  (`lib/updates-read-state.ts`, the same three-way answer the Updates
-  page reads): while the read is pending it says it is checking, and
-  after a failure that hand-edited and forked packages may be missing.
+  index of everything customized there, each row opening its package. Both
+  surfaces edit one draft of one manifest per scope (`stores/editor.ts`;
+  the Customize page reloads only when nothing is unsaved), and
+  `lib/customization.ts` slices that draft per package.
+- A place is customized by settings, a hand edit, or a fork, and
+  `lib/customized-places.ts::placeStandings` is the one answer, over a
+  `PlacesSource` that only `placesSource` builds. Its three readers: the
+  Library row's mark (`lib/library-standings.ts`), the package header's
+  (`lib/package-mark.ts`), and the Customize index (`lib/customized-here.ts`),
+  which reads the open draft for its place and says nothing is customized
+  only once the update read has landed (`lib/updates-read-state.ts`:
+  pending says it is checking, failed that packages may be missing).
 - Hook events have one vocabulary — Claude Code's names, in
   `core/hook.rs::EVENTS`; every other harness's map is keyed by it. The
   picker offers that list, the validator rejects anything outside it, the
