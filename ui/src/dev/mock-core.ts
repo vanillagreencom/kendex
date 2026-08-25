@@ -11,6 +11,7 @@ export const coreHandlers: Record<string, Handler> = {
     lastSuccessAt: "2026-08-25T16:00:00Z",
     servedFeedAt: "2026-08-25T16:00:00Z",
     servedFeedAgeSecs: 0,
+    servedFeedInFuture: false,
     lastError: null,
   }),
   capability_table: () => capabilityTable(),

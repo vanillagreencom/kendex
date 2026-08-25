@@ -70,9 +70,8 @@ an outside contributor.
 
 ### Changed
 
-- `kendex update` reads schema 1 feeds (including legacy feeds with no schema),
-  refuses downgrades unless `--force` is explicit, and exits 0 with release
-  notes when the feed has no binary for this target.
+- `kendex update` reads schema 1 feeds (including legacy feeds with no schema). Current stays a no-op; older refuses unless `--force`.
+  A newer feed, or a forced current/older feed, with no target binary exits 0 with release notes and changes nothing.
 - **Breaking:** in `kendex check --json`, a not-yet-evaluated line now has
   `"class": "unevaluated"` where it had `"class": "unknown"`. A parser
   matching that field exhaustively has to accept the new value.

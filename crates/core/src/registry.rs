@@ -131,6 +131,9 @@ impl Fetch for ReleaseFeedFetch {
                 why: "the release feed never accepts credentials".to_owned(),
             });
         }
+        if url.starts_with("file://") {
+            return run_file(url);
+        }
         run_get_args(Self::request_args(url, if_none_match))
     }
 
@@ -144,6 +147,31 @@ impl Fetch for ReleaseFeedFetch {
             why: "the release feed is read-only".to_owned(),
         })
     }
+}
+
+fn run_file(url: &str) -> Result<FetchResponse> {
+    let output = Hardened::curl(&[
+        "-sS",
+        "--proto",
+        "=file",
+        "--max-filesize",
+        "16000000",
+        "--",
+        url,
+    ])
+    .timeout(Duration::from_secs(25))
+    .max_output(MAX_RESPONSE_BYTES)
+    .run()?;
+    if !output.status.success() {
+        return Err(CoreError::RegistryUnavailable {
+            why: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        });
+    }
+    Ok(FetchResponse {
+        status: 200,
+        etag: None,
+        body: output.stdout,
+    })
 }
 
 impl ReleaseFeedFetch {
@@ -342,48 +370,4 @@ fn find_blank_line(raw: &[u8]) -> Option<usize> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn production_release_feed_plan_bounds_https_redirects_and_allows_file_fixtures() {
-        let args = ReleaseFeedFetch::request_args(
-            "https://github.com/example/latest/feed.json",
-            Some("old-etag"),
-        );
-        assert!(args.windows(2).any(|pair| pair == ["--max-redirs", "3"]));
-        assert!(
-            args.windows(2)
-                .any(|pair| pair == ["--proto-redir", "=https"])
-        );
-        assert!(args.iter().any(|arg| arg == "--location"));
-        assert!(
-            args.windows(2)
-                .any(|pair| pair == ["-H", "If-None-Match: old-etag"])
-        );
-
-        let fixture = ReleaseFeedFetch::request_args("file:///fixture/feed.json", None);
-        assert!(
-            fixture
-                .windows(2)
-                .any(|pair| pair == ["--proto", "=https,file"])
-        );
-        assert!(
-            fixture
-                .windows(2)
-                .any(|pair| pair == ["--proto-redir", "=https"])
-        );
-    }
-
-    #[test]
-    fn redirected_headers_yield_the_final_response() {
-        let response = parse_http_response(
-            b"HTTP/1.1 302 Found\r\nLocation: https://example.test/feed\r\n\r\n\
-              HTTP/2 200\r\nETag: final\r\n\r\n{\"schema\":1}",
-        )
-        .unwrap();
-        assert_eq!(response.status, 200);
-        assert_eq!(response.etag.as_deref(), Some("final"));
-        assert_eq!(response.body, br#"{"schema":1}"#);
-    }
-}
+mod tests;

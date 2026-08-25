@@ -105,3 +105,29 @@ fn manual_refresh_fetches_while_automatic_checks_are_off() {
     ));
     assert_eq!(fetch.calls.get(), 1);
 }
+
+#[test]
+fn future_cache_times_are_reported_and_attempted_immediately() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let fetch = Canned::new([feed(200), feed(304)]);
+
+    check_at(&env, &fetch, request(false, true), 20_000).unwrap();
+    let future = check_at(&env, &fetch, request(false, false), 10_000).unwrap();
+    assert_eq!(future.served_feed_age_secs, None);
+    assert!(future.served_feed_in_future);
+    assert_eq!(fetch.calls.get(), 1);
+
+    check_at(&env, &fetch, request(false, true), 10_000).unwrap();
+    assert_eq!(fetch.calls.get(), 2);
+}
+
+#[test]
+fn long_multibyte_errors_truncate_on_a_boundary_within_the_cap() {
+    let message = format!("{}é{}", "a".repeat(508), "界".repeat(10));
+    let stored = update_error(AppUpdateErrorKind::Network, &message).message;
+    assert!(stored.len() <= MAX_ERROR_BYTES);
+    assert!(stored.ends_with("..."));
+    assert!(stored.is_char_boundary(stored.len()));
+    assert_eq!(stored, format!("{}...", "a".repeat(508)));
+}

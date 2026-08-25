@@ -30,6 +30,7 @@ pub struct AppUpdateView {
     pub last_success_at: Option<String>,
     pub served_feed_at: Option<String>,
     pub served_feed_age_secs: Option<u32>,
+    pub served_feed_in_future: bool,
     pub last_error: Option<AppUpdateError>,
 }
 
@@ -127,7 +128,7 @@ fn check_at(
     }
     let due = cached
         .last_attempt_at
-        .is_none_or(|attempt| now.saturating_sub(attempt) >= DEFAULT_TTL_SECS);
+        .is_none_or(|attempt| attempt > now || now - attempt >= DEFAULT_TTL_SECS);
     if (!due || !request.automatic_check_enabled) && !request.refresh {
         return view(
             &cached,
@@ -233,7 +234,9 @@ fn view(
         served_feed_at: cached.fetched_at.map(clock::iso_from_unix),
         served_feed_age_secs: cached
             .fetched_at
-            .map(|at| u32::try_from(now.saturating_sub(at)).unwrap_or(u32::MAX)),
+            .filter(|at| *at <= now)
+            .map(|at| u32::try_from(now - at).unwrap_or(u32::MAX)),
+        served_feed_in_future: cached.fetched_at.is_some_and(|at| at > now),
         last_error: cached.last_error.clone(),
     })
 }
@@ -310,15 +313,19 @@ fn update_lock(env: &Env) -> Result<LockedFile> {
 }
 
 fn update_error(kind: AppUpdateErrorKind, message: &str) -> AppUpdateError {
-    let end = message
-        .char_indices()
-        .map(|(at, _)| at)
-        .take_while(|at| *at <= MAX_ERROR_BYTES)
-        .last()
-        .unwrap_or(0);
     let message = match message.len() <= MAX_ERROR_BYTES {
         true => message.to_owned(),
-        false => format!("{}...", &message[..end]),
+        false => {
+            const MARKER: &str = "...";
+            let content_limit = MAX_ERROR_BYTES - MARKER.len();
+            let end = message
+                .char_indices()
+                .map(|(at, character)| at + character.len_utf8())
+                .take_while(|end| *end <= content_limit)
+                .last()
+                .unwrap_or(0);
+            format!("{}{MARKER}", &message[..end])
+        }
     };
     AppUpdateError { kind, message }
 }

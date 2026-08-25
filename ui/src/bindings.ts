@@ -360,6 +360,7 @@ export type AppUpdateView = {
 	lastSuccessAt: string | null,
 	servedFeedAt: string | null,
 	servedFeedAgeSecs: number | null,
+	servedFeedInFuture: boolean,
 	lastError: AppUpdateError | null,
 };
 
