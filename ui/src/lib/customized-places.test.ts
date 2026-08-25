@@ -98,6 +98,18 @@ describe("placeStandings", () => {
     expect(only.why).toBe("forked");
   });
 
+  // The Library's Forked badge reads `why`, and a fork with an instruction
+  // typed on top is still a fork: settings must not outrank it.
+  it("says forked over settings when both hold", () => {
+    const forkedWithSetting: Draft = {
+      ...withSetting(),
+      forks: { skill: { gh: { source: "local", "forked-at": "2026-01-01" } } },
+    };
+    const s = source({ manifests: { "/work/vg": forkedWithSetting } });
+    const [only] = placeStandings(s, "skill", "gh", [VG]);
+    expect(only.why).toBe("forked");
+  });
+
   // A place the app never read must not be reported as the author wrote
   // it: not knowing and knowing it is clean are different answers.
   it("leaves a place whose manifest was never read unknown", () => {
@@ -226,18 +238,24 @@ describe("customizedHere", () => {
 
   // Before the update read lands, a hand edit is not a fact anyone holds;
   // the list is the manifest's until it does, never a guess.
-  it("holds a hand edit back until the update read has landed", () => {
+  // A row's fork fact is held back the same way: rows kept from before a
+  // failed re-read are last-known, and a fork discarded since would still
+  // be on them.
+  it("holds a hand edit and a row's fork back until the update read has landed", () => {
     const s = source({
       manifests: { "/work/vg": withSetting() },
       rows: [
         row(VG, { blockedByLocalEdit: true }),
         row(VG, { kind: "agent", name: "orch", blockedByLocalEdit: true }),
+        row(VG, { name: "zed", forked: true }),
       ],
       updatesLoaded: false,
     });
     expect(customizedHere(s, VG)).toMatchObject([
       { kind: "skill", name: "gh", edited: false },
     ]);
+    const [zed] = placeStandings(s, "skill", "zed", [VG]);
+    expect(zed.standing).toBe("unknown");
   });
 
   it("orders agents before skills, each by name", () => {
