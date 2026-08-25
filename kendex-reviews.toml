@@ -15,12 +15,12 @@ reason = "intended"
 dismissed-at = "2026-08-25T10:34:52Z"
 
 [reviews."skill:orch"]
-review-hash = "eea2f5ca5074ffd91732efa8860dacab1ec65fe5ecc54f5de5d60fc39febdab5"
+review-hash = "4998dd9c38c641f8102202576a7d93014d04f66a510d37c11fb454c912434310"
 ruleset = 3
 
 [reviews."skill:orch".dismissed.c8e66ac505c95a7a]
 reason = "wrong-call"
-dismissed-at = "2026-08-25T10:36:09Z"
+dismissed-at = "2026-08-25T10:46:26Z"
 
 [reviews."skill:review-gate"]
 review-hash = "ad84d44fcd9bdad9eee80c2df76976be2a0a56c9a2c7ad6fad2e386c26b2d6a8"
