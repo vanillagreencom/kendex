@@ -283,9 +283,9 @@ CLI, and the kendex.ai community ships alongside. Migrate with
 - Gemini's machine-wide MCP switch is never rewritten by a project, hook
   matchers translate into each tool's own tool names, and `kendex verify`
   says why an installation cannot act instead of printing a clean tick.
-- Size-limit splitting works both directions (grow and shrink), splits at
-  any heading, never cuts a code block, and generated command names are
-  stable across applies.
+- **Breaking:** an oversized skill splits into a head plus
+  `references/details.md` instead of truncating (never cutting a code
+  block); generated command names stay stable, and refresh regenerates.
 - A project's identity keys off the canonical path, multiple settings
   changes to one file apply as one write, and a tool refusing a skill no
   longer wedges the project.
