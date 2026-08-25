@@ -1,15 +1,30 @@
 import type { MouseEvent } from "react";
 
+/** What answers a click before the surface may: any real control, plus a
+ *  tooltip popup, which counts wherever the browser draws it because React
+ *  sends its clicks back through the surface that owns it. */
+const CONTROLS =
+  'a, button, input, select, textarea, [role="button"], [data-slot="tooltip-content"]';
+
 /**
  * Whether a click on a whole-surface shortcut — a project card, a Library
- * row — is asking to open it. False when a control inside the surface
- * already answered the click, and false when the click ended a text
- * selection: a drag across the name was someone keeping the text, not
- * asking to leave the page. One predicate for every such surface, so the
- * two guards cannot drift apart.
+ * row, a marketplace row — is asking to open it. False when a control
+ * inside the surface already answered the click, and false when the click
+ * ended a text selection: a drag across the name was someone keeping the
+ * text, not asking to leave the page. One predicate for every such surface,
+ * so the guards cannot drift apart.
  */
 export function clickAsksToOpen(event: MouseEvent<HTMLElement>): boolean {
-  if ((event.target as HTMLElement).closest("button")) return false;
-  if (window.getSelection()?.isCollapsed === false) return false;
-  return true;
+  if ((event.target as HTMLElement).closest(CONTROLS)) return false;
+  return !clickEndedSelection();
+}
+
+/**
+ * Whether the click that just landed ended a text selection. A control
+ * inside the surface needs this half of the guard on its own: its click is
+ * always its answer, but a drag across its label was someone keeping the
+ * text, and the control fires before the surface's guard can decline.
+ */
+export function clickEndedSelection(): boolean {
+  return window.getSelection()?.isCollapsed === false;
 }

@@ -16,6 +16,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { clickAsksToOpen } from "@/lib/click-asks-to-open";
 import { SAFETY_DOT_UNCHECKED, safetyDotWords } from "@/lib/copy-safety";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName } from "@/lib/labels";
@@ -38,13 +39,6 @@ const VERDICT_TONES: Record<Verdict, "good" | "warning" | "critical"> = {
   warn: "warning",
   block: "critical",
 };
-
-/** What a row click means something other than "open this package". A row is
- *  a shortcut to the page, so it carries only what the row itself says; every
- *  control in it has already answered the click with its own meaning. A
- *  tooltip popup counts as one of them wherever the browser draws it, because
- *  React sends its clicks back through the row that owns it. */
-const ROW_CONTROLS = 'a, button, input, [data-slot="tooltip-content"]';
 
 /** The one table of offered packages — the Packages tab across every
  * subscription and a marketplace detail's own list are both this. */
@@ -106,7 +100,7 @@ function PackageRow({
   }, [want, catalog, row.kind, row.name]);
 
   const open = (event: MouseEvent<HTMLTableRowElement>) => {
-    if ((event.target as HTMLElement).closest(ROW_CONTROLS)) return;
+    if (!clickAsksToOpen(event)) return;
     goToAvailablePackage({ catalog, kind: row.kind, name: row.name });
   };
 

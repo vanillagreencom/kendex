@@ -81,7 +81,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const mount = (forkedIn: Scope[] = []) => {
+const mount = (forkedIn: Scope[] = [], mark: PlaceMark | null = null) => {
   const onOpen = vi.fn();
   // A tr needs a table around it for the DOM to keep the row a row.
   const host = document.body.appendChild(document.createElement("table"));
@@ -93,7 +93,7 @@ const mount = (forkedIn: Scope[] = []) => {
         <InstalledRow
           group={group}
           origin={null}
-          mark={null}
+          mark={mark}
           forkedIn={forkedIn}
           onOpen={onOpen}
         />
@@ -134,6 +134,17 @@ describe("opening a package from its Library row", () => {
     expect(onOpen).toHaveBeenCalledWith();
   });
 
+  it("lets a drag across the name keep its selection", async () => {
+    const { host, onOpen } = mount();
+    // The name button fires before the row's guard, so it has to decline
+    // the selection-ending click itself, not rely on the row.
+    vi.spyOn(window, "getSelection").mockReturnValue({
+      isCollapsed: false,
+    } as Selection);
+    await userEvent.click(nameButton(host));
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
   it("lets a drag across the row keep its selection", async () => {
     const { host, onOpen } = mount();
     // What a copy-drag leaves behind at mouse-up: an uncollapsed selection.
@@ -142,6 +153,21 @@ describe("opening a package from its Library row", () => {
     } as Selection);
     await userEvent.click(host.querySelectorAll("td")[1]);
     expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("opens the mark's own place from its button, and only that", async () => {
+    const { host, onOpen } = mount([], {
+      label: "Customized in vg · 1 of 2 places",
+      goTo: VG,
+      why: "settings",
+    });
+    const markButton = Array.from(host.querySelectorAll("button")).find((b) =>
+      b.textContent?.startsWith("Customized"),
+    );
+    if (!markButton) throw new Error("no mark button rendered");
+    await userEvent.click(markButton);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    expect(onOpen).toHaveBeenCalledWith(VG);
   });
 
   it("opens the fork's own place from its badge, and only that", async () => {

@@ -9,7 +9,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { clickAsksToOpen } from "@/lib/click-asks-to-open";
+import { clickAsksToOpen, clickEndedSelection } from "@/lib/click-asks-to-open";
 import { bundledWithLabel, FORKED_BADGE_LABEL, vendorHelp } from "@/lib/copy";
 import { STATUS_LABELS } from "@/lib/copy-customize";
 import {
@@ -97,11 +97,15 @@ export function InstalledRow({
           <span className="min-w-0">
             <span className="flex items-center gap-1.5">
               {/* The keyboard's one way into the row: a row is not
-                  focusable, so without a real control here every package
-                  in the Library is mouse-only. */}
+                  focusable, so without a real control here the row's
+                  default open — and any package without a fork badge or
+                  mark — is mouse-only. Its click fires before the row's
+                  guard, so it declines a selection-ending drag itself. */}
               <button
                 type="button"
-                onClick={() => onOpen()}
+                onClick={() => {
+                  if (!clickEndedSelection()) onOpen();
+                }}
                 className="block min-w-0 truncate text-left hover:underline"
               >
                 {displayName}
