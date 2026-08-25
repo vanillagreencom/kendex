@@ -42,7 +42,8 @@ pub struct AuditView {
     pub plan: Vec<String>,
     pub notes: Vec<String>,
     pub warnings: Vec<ItemWarning>,
-    /// What the safety rules found in the content installed here. Each row
+    /// Every installation here, scored — the clean ones included, so a
+    /// package with nothing found still has a score to show. Each row
     /// carries two scores that are never combined: safety and quality.
     /// Advisory both — nothing acts on either.
     pub safety: Vec<ItemSafety>,
@@ -108,7 +109,7 @@ pub fn view(env: &Env, scope: &Scope) -> AuditView {
         Ok(report) => report,
         Err(e) => return AuditView::failed(scope, &e),
     };
-    let safety = match engine::observed_safety(env, scope) {
+    let safety = match engine::observed_rows(env, scope) {
         Ok(safety) => safety,
         Err(e) => return AuditView::failed(scope, &e),
     };

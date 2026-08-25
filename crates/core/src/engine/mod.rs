@@ -53,7 +53,6 @@ pub use item_source::{ItemSource, item_source};
 pub use observed::{observed_rows, observed_safety};
 pub use planned::{PlannedDeclaration, planned_declarations};
 pub use scoring::ItemSafety;
-pub(crate) use scoring::content_hash;
 
 /// The conservative "cannot prove these bytes are our render" hold.
 pub use removal::edit_holds;
@@ -232,7 +231,7 @@ fn plan_scope_once(
         safety,
     };
     report.notes.extend(moved_notes);
-    unmanaged_rows(env, scope, manifest, lock, &state.items, &mut report.drift);
+    unmanaged_rows(env, scope, manifest, lock, &state.items, &mut report.drift)?;
     takeover::refuse_unsettled_takeover(options, &report.drift)?;
     Ok(report)
 }
@@ -383,6 +382,6 @@ pub fn plan_apply(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<Eng
         version: crate::lock::LOCK_VERSION,
         ..Lock::default()
     });
-    unmanaged_rows(env, scope, &empty, &lock, &[], &mut report.drift);
+    unmanaged_rows(env, scope, &empty, &lock, &[], &mut report.drift)?;
     Ok(report)
 }

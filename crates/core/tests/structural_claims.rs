@@ -151,15 +151,20 @@ fn corrupt_state_fails_closed_instead_of_defaulting() {
     assert!(audit(&w.env, &scope).is_err(), "a corrupt lock must refuse");
     fs::remove_file(w.project.join(".kendex-lock.json")).unwrap();
 
-    // Damaged app settings: the observed scoring pass reads the harness
-    // roots from them, and must refuse rather than scan default locations
-    // the user has pointed elsewhere.
+    // Damaged app settings: the observed scoring pass and the plan's
+    // unmanaged scan both read the harness roots from them, and must
+    // refuse rather than scan default locations the user has pointed
+    // elsewhere.
     let settings = w.env.settings_file();
     fs::create_dir_all(settings.parent().unwrap()).unwrap();
     fs::write(&settings, "not = [valid").unwrap();
     assert!(
         kendex_core::engine::observed_rows(&w.env, &scope).is_err(),
         "corrupt settings must fail the audit closed"
+    );
+    assert!(
+        audit(&w.env, &scope).is_err(),
+        "corrupt settings must fail the plan closed"
     );
     fs::remove_file(&settings).unwrap();
 

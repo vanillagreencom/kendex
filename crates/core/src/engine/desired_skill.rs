@@ -98,7 +98,7 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
     }
     // A skill's `[env]` defaults ride with an installation: a skill no
     // harness here installs seeds nothing, so nothing reaches the settings
-    // file without passing the safety gate the installation passes.
+    // file that no installation here asked for.
     if enabled && matches!(ctx.scope, Scope::Project { .. }) {
         seed_settings_env(ctx, state)?;
     }
@@ -185,7 +185,7 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
 /// The `[env]` defaults this skill ships for the project's settings file.
 /// Catalog content is foreign: a skill still shipping the old template name
 /// keeps seeding, the new name winning when both ship. Both at once is said
-/// out loud — the ignored file may be the one a reviewer read, and only the
+/// out loud — the ignored file may be the one a person read, and only the
 /// catalog author can settle which is meant.
 fn seed_settings_env(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()> {
     let current = ctx

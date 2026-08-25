@@ -36,13 +36,9 @@ pub use secret::{fingerprint_secret, redact};
 pub use text::{Line, Normalization};
 
 /// How much of a hash stands in for the thing it names, wherever that name
-/// reaches a finding's message.
-///
-/// A finding's identity is its rule and its sentence
-/// ([`Finding::fingerprint`]), so a digest inside a sentence decides
-/// identity as surely as the sentence around it. Sixteen hexadecimal
-/// characters is sixty-four bits, the same as a fingerprint collision
-/// costs.
+/// reaches a finding's message. Sixteen hexadecimal characters is
+/// sixty-four bits: two different values a project can choose never print
+/// alike.
 pub(crate) const DIGEST_CHARS: usize = 16;
 
 /// A short, stable name for content a message cannot print — too long, or

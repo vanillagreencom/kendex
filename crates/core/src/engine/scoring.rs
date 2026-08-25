@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::model::{HarnessId, ItemKind, Scope};
-use crate::quality::{AuditInput, Content, QualityScore, SafetyScore, SkippedRule};
+use crate::quality::{QualityScore, SafetyScore, SkippedRule};
 
 use super::desired::DesiredState;
 
@@ -19,8 +19,11 @@ use super::desired::DesiredState;
 /// content is dangerous, the other whether it is any good, and averaging
 /// them would let a well-written attack outscore a clumsy honest skill.
 ///
-/// This is the one advisory shape every surface reads — the plan preview,
-/// the audit, the app and the CLI all speak in these rows.
+/// Planned and installed rows share this shape: the plan preview scores
+/// what it would write, the audit scores what is on disk, and the app and
+/// the CLI read both. Content not yet installed is scored into
+/// `browse::PackageSafety` and `check_catalog::CheckedItem`, which carry
+/// the same score and findings.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ItemSafety {
@@ -61,61 +64,6 @@ pub(super) fn run(scope: &Scope, state: &DesiredState) -> Vec<ItemSafety> {
             }
         })
         .collect()
-}
-
-/// The identity of the bytes the rules read — the cache key browsing scores
-/// under, so a re-read of the same content is answered without re-scoring.
-pub(crate) fn content_hash(input: &AuditInput) -> String {
-    // The location deliberately stays out of the material: the two scoring
-    // paths read the same bytes at different paths — the plan at the
-    // canonical tree, the audit at the harness-native link — and the same
-    // files are the same content wherever they sit.
-    let mut material = format!("{}|", input.kind.name());
-    match &input.content {
-        Content::Document { text } => material.push_str(text),
-        // Sorted, because a plan builds the tree in render order and a scan
-        // reads it back in directory order. The same files are the same
-        // content whichever order they arrived in.
-        Content::SkillTree { files } => {
-            let mut entries: Vec<String> = files
-                .iter()
-                .map(|file| {
-                    format!(
-                        "{}:{}:{}\n",
-                        file.path.display(),
-                        file.bytes,
-                        file.text.as_deref().unwrap_or_default()
-                    )
-                })
-                .collect();
-            entries.sort();
-            material.push_str(&entries.concat());
-        }
-        Content::Hook {
-            event,
-            matcher,
-            command,
-            values,
-            script,
-        } => {
-            material.push_str(&format!(
-                "{event}|{}|{command}|{}",
-                matcher.as_deref().unwrap_or_default(),
-                script.as_deref().unwrap_or_default()
-            ));
-            // Appended, not slotted, so a planned hook — which stores no
-            // values — hashes exactly as it did. Digested first, so a value
-            // carrying the join character cannot move a boundary.
-            if let Some(values) = values {
-                material.push('|');
-                material.push_str(&crate::hash::hash_bytes(values.as_bytes()));
-            }
-        }
-        Content::Mcp(entry) => material.push_str(&format!("{entry:?}")),
-        Content::Plugin(sources) => material.push_str(&format!("{sources:?}")),
-        Content::Unread { why } => material.push_str(why),
-    }
-    crate::hash::hash_bytes(material.as_bytes())
 }
 
 mod input;

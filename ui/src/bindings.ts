@@ -340,7 +340,8 @@ export type AuditView_Deserialize = {
 	notes: string[],
 	warnings: ItemWarning_Deserialize[],
 	/**
-	 *  What the safety rules found in the content installed here. Each row
+	 *  Every installation here, scored — the clean ones included, so a
+	 *  package with nothing found still has a score to show. Each row
 	 *  carries two scores that are never combined: safety and quality.
 	 *  Advisory both — nothing acts on either.
 	 */
@@ -379,7 +380,8 @@ export type AuditView_Serialize = {
 	notes: string[],
 	warnings: ItemWarning_Serialize[],
 	/**
-	 *  What the safety rules found in the content installed here. Each row
+	 *  Every installation here, scored — the clean ones included, so a
+	 *  package with nothing found still has a score to show. Each row
 	 *  carries two scores that are never combined: safety and quality.
 	 *  Advisory both — nothing acts on either.
 	 */
@@ -1126,8 +1128,11 @@ export type ItemKind = "agent" | "skill" | "hook" | "command" | "mcp-server" | "
  *  content is dangerous, the other whether it is any good, and averaging
  *  them would let a well-written attack outscore a clumsy honest skill.
  * 
- *  This is the one advisory shape every surface reads — the plan preview,
- *  the audit, the app and the CLI all speak in these rows.
+ *  Planned and installed rows share this shape: the plan preview scores
+ *  what it would write, the audit scores what is on disk, and the app and
+ *  the CLI read both. Content not yet installed is scored into
+ *  `browse::PackageSafety` and `check_catalog::CheckedItem`, which carry
+ *  the same score and findings.
  */
 export type ItemSafety = {
 	kind: ItemKind,

@@ -221,7 +221,7 @@ fn a_fetch_is_named_by_what_the_line_runs() {
             *runs == DECOY,
             "{line:?} says: {said}"
         );
-        if let Some(other) = prints.insert(fired[0].fingerprint(), line) {
+        if let Some(other) = prints.insert(fired[0].message.clone(), line) {
             panic!("{line:?} and {other:?} run different things and are one finding: {said}");
         }
     }

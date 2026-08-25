@@ -63,10 +63,9 @@ fn every_rule_says_what_it_fired_on() {
         super::rules::mcp(one_server()),
         plugin(one_plugin()),
     ];
-    // Per item, because that is where a fingerprint is read: two items
-    // matching the same thing are one question asked twice, by design. What
-    // must never happen is two *different* matches inside one item reading
-    // as one.
+    // Per item: two items matching the same thing say the same sentence
+    // twice, by design. What must never happen is two *different* matches
+    // inside one item reading as one.
     let mut reached: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
     for item in &items {
         each_match_is_its_own_question(&item.findings, 1);
@@ -187,8 +186,10 @@ fn each_match_is_its_own_question(findings: &[kendex_core::quality::Finding], le
         "the input reaches several rules: {by_rule:?}"
     );
     for (rule, found) in &by_rule {
-        let prints: std::collections::BTreeSet<String> =
-            found.iter().map(|finding| finding.fingerprint()).collect();
+        let prints: std::collections::BTreeSet<&str> = found
+            .iter()
+            .map(|finding| finding.message.as_str())
+            .collect();
         assert_eq!(
             prints.len(),
             found.len(),
@@ -255,9 +256,8 @@ fn a_file_finding_says_what_it_found_not_where() {
         .collect();
     assert_eq!(obfuscated.len(), 2, "{:?}", tree.findings);
     assert_ne!(
-        obfuscated[0].fingerprint(),
-        obfuscated[1].fingerprint(),
-        "different characters are different questions"
+        obfuscated[0].message, obfuscated[1].message,
+        "different characters are different sentences"
     );
     assert!(
         obfuscated
@@ -272,7 +272,7 @@ fn a_file_finding_says_what_it_found_not_where() {
         "and the file is never in the sentence: {obfuscated:?}"
     );
 
-    // The same character in two files is one question.
+    // The same character in two files is one sentence.
     let same = skill(&[
         (
             "SKILL.md",
@@ -284,7 +284,7 @@ fn a_file_finding_says_what_it_found_not_where() {
         .findings
         .iter()
         .filter(|finding| finding.rule == "obfuscated-content")
-        .map(|finding| finding.fingerprint())
+        .map(|finding| finding.message.clone())
         .collect();
     assert_eq!(prints.len(), 1);
 }

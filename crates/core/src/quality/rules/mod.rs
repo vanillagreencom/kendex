@@ -29,15 +29,12 @@
 //! credential in a code block is exactly as leaked as one in prose, so it
 //! never downgrades anywhere.
 //!
-//! Every message says what the rule fired *on*, never where it was found.
-//! A finding's identity is its rule and its sentence
-//! ([`crate::quality::Finding::fingerprint`]), so a sentence that describes
-//! only the kind of problem makes two different problems one decision — and
-//! the surfaces show one of them, so a person settles the other having
-//! never seen it. Where it was found is the finding's location, which is
-//! deliberately not in the identity: rendering moves content between files
-//! and an identity that moved with it would stop being the finding a
-//! decision was made about.
+//! Every message says what the rule fired *on*, never where it was found:
+//! a sentence that describes only the kind of problem makes two different
+//! problems read as one. Where it was found is the finding's location,
+//! kept out of the sentence because rendering moves content between files
+//! and a sentence naming the file would change under a move the author
+//! never made.
 
 use crate::model::ItemKind;
 

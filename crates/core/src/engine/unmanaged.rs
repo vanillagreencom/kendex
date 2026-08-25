@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use crate::env::Env;
+use crate::error::Result;
 use crate::lock::Lock;
 use crate::manifest::{ItemDecl, Manifest};
 use crate::model::{ItemKind, Scope};
@@ -16,15 +17,15 @@ pub(super) fn unmanaged_rows(
     lock: &Lock,
     desired: &[Desired],
     drift: &mut Vec<DriftRow>,
-) {
+) -> Result<()> {
     // A tool the user has pointed at a non-default folder keeps its items
     // there; scanning the defaults would report that whole folder as
     // nothing at all rather than as items waiting to be managed. Read here
     // rather than passed in: where to look is this scan's own question, and
-    // the settings file is a few hundred bytes.
-    let harness_roots = crate::settings::load(env)
-        .map(|settings| settings.harness_roots)
-        .unwrap_or_default();
+    // the settings file is a few hundred bytes. A settings file that will
+    // not read fails the plan: defaulting the roots would scan the wrong
+    // folders and report a relocated tool as having nothing in it.
+    let harness_roots = crate::settings::load(env)?.harness_roots;
     let scan = crate::scan::scan_scopes(env, &harness_roots, std::slice::from_ref(scope));
     let known: BTreeSet<String> = desired
         .iter()
@@ -53,6 +54,7 @@ pub(super) fn unmanaged_rows(
             cause: None,
         });
     }
+    Ok(())
 }
 
 /// Every installation the manifest asks for, by lock key. A declaration
