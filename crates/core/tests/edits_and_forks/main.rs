@@ -36,6 +36,18 @@ fn git(dir: &Path, args: &[&str]) {
     assert!(output.status.success(), "git {args:?}");
 }
 
+/// HEAD's commit id, through the same hardened runner every fixture git
+/// call uses — run from a commit hook, GIT_DIR and friends would point at
+/// the repository being committed to; scrubbed, HEAD is the fixture's.
+#[allow(clippy::unwrap_used)]
+fn head_commit(dir: &Path) -> String {
+    let output = Hardened::git(&["rev-parse", "HEAD"], Some(dir))
+        .run()
+        .unwrap();
+    assert!(output.status.success(), "git rev-parse HEAD");
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
 #[allow(clippy::unwrap_used)]
 fn commit(dir: &Path, message: &str) {
     git(dir, &["add", "-A"]);

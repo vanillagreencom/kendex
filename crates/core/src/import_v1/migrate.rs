@@ -19,9 +19,12 @@ fn err(scope: &Scope, message: impl std::fmt::Display) -> CoreError {
 }
 
 /// Where v1 kept this scope's lock. A project shares the v2 path; the
-/// global scopes differ.
+/// global scopes differ. Off the canonical root, like every scope-path
+/// derivation (`rename::manifest_pair`): `migrate_scope` compares this
+/// against `lock::lock_path` to detect the shared-path case, and two
+/// spellings of one file must not read as two files.
 pub fn v1_lock_path(env: &Env, scope: &Scope) -> PathBuf {
-    match scope {
+    match &scope.canonical() {
         Scope::Global => env.platform_config_dir().join("vstack/.vstack-lock.json"),
         Scope::Project { root } => root.join(".vstack-lock.json"),
     }

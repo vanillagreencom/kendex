@@ -214,3 +214,27 @@ fn contested_settings_seeds_import_legacy_owned() {
         outcome.notes
     );
 }
+
+/// A symlinked project's v1 lock is the shared-path case whatever spelling
+/// the scope arrived under: both lock paths derive from the canonical root,
+/// so the same file can never compare unequal and be refused as a foreign
+/// v1 record sitting at the v2 path (macOS reaches every temp directory
+/// through the `/var` → `/private/var` link).
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_symlinked_project_migrates_its_v1_lock() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = crate::env::Env::fake(tmp.path(), crate::env::FakeOs::Linux);
+    let real = tmp.path().join("dev/app");
+    std::fs::create_dir_all(real.join(".claude")).unwrap();
+    std::fs::write(real.join("vstack.toml"), V1_MANIFEST).unwrap();
+    std::fs::write(real.join(".vstack-lock.json"), V1_LOCK).unwrap();
+    std::os::unix::fs::symlink(tmp.path().join("dev"), tmp.path().join("via")).unwrap();
+    let scope = crate::model::Scope::Project {
+        root: tmp.path().join("via/app"),
+    };
+
+    let migration = super::migrate::migrate_scope(&env, &scope).unwrap();
+    assert!(migration.migrated.is_some(), "{:?}", migration.notes);
+}
