@@ -4,8 +4,7 @@ import type { DriftRow, ItemKind } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { KindHarnessChips } from "@/components/kind-harness-chips";
 import { Button } from "@/components/ui/button";
-import { adoptAll } from "@/lib/adopt-all";
-import { type SharedLink, sharedLinkOf } from "@/lib/adopt-shared";
+import { adoptAll, type SharedLink, sharedLinkOf } from "@/lib/adopt-all";
 import {
   HIDE_ITEMS_LABEL,
   START_MANAGING_LABEL,

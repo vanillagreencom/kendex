@@ -81,13 +81,9 @@ an outside contributor.
   and dialogs ask in the words of the button that opened them.
 
 ### Fixed
-- The Library can now be worked from the keyboard: each row's package name
-  is a real button, so Tab reaches every package and Enter opens it. The
-  rows used to react only to a mouse click. Dragging across a row's
-  description to copy it no longer opens the package and loses the
-  selection — in the Library, in a marketplace's package list, and on the
-  Projects page's cards, which share one guard. A name's own button always
-  opens, mouse or keyboard.
+- Library, marketplace package list, and Projects rows work from the
+  keyboard: Tab reaches each package name and Enter opens it. Dragging
+  across a row's text to copy it no longer opens the package.
 - An apply is no longer refused as "scope is busy" while nothing else
   runs: locks release explicitly when an apply finishes instead of waiting
   on a file a just-launched program still held open. Same fix for downloads.

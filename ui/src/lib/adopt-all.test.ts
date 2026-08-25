@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DriftRow, HarnessId } from "@/bindings";
-import type { SharedLink } from "@/lib/adopt-shared";
-import { adoptAll } from "./adopt-all";
+import { adoptAll, type SharedLink } from "./adopt-all";
 import type { MergedDriftRow } from "./drift-merge";
 
 const group = (name: string, harnesses: HarnessId[]): MergedDriftRow => ({
