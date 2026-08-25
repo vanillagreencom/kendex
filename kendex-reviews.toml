@@ -23,9 +23,9 @@ reason = "wrong-call"
 dismissed-at = "2026-08-25T10:46:26Z"
 
 [reviews."skill:review-gate"]
-review-hash = "f73748b89f64d12169b7d57f32aaf8825cf7bbe00847600cdcbf37e122970fbe"
+review-hash = "97ee95eec702da737dc103447f9865afb06a05fb612f20b59b3f55a4e8bd5d83"
 ruleset = 3
 
 [reviews."skill:review-gate".dismissed.b17398253c9f18fc]
 reason = "wrong-call"
-dismissed-at = "2026-08-25T14:23:42Z"
+dismissed-at = "2026-08-25T14:31:58Z"
