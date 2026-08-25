@@ -1,5 +1,4 @@
 .github/workflows/review-gate-writer.yml	652
-crates/core/src/check_catalog.rs	408
 crates/core/src/engine/adopt.rs	735
 crates/core/src/engine/desired_agent.rs	458
 crates/core/src/engine/detach.rs	616
@@ -8,9 +7,8 @@ crates/core/src/engine/pi_hooks_move/migrated.rs	540
 crates/core/src/engine/pi_hooks_move/mod.rs	508
 crates/core/src/engine/pi_hooks_move/preflight.rs	765
 crates/core/src/error.rs	402
-crates/core/src/quality/author.rs	458
 crates/core/src/remote/store.rs	420
-docs/ARCHITECTURE.md	919
+docs/ARCHITECTURE.md	822
 hooks/block-repo-copy.sh	511
 pi-extensions/pi-agents-tmux/extensions/subagent/browser.ts	650
 pi-extensions/pi-agents-tmux/extensions/subagent/dashboard.ts	431
@@ -139,6 +137,5 @@ skills/size-ratchet/scripts/size-ratchet	1026
 skills/worktree/scripts/worktree	4788
 skills/worktree/scripts/worktree-session-guard	1197
 skills/worktree/tests/worktree_session_guard.sh	1282
-ui/src/stores/audit.ts	292
 ui/src/stores/marketplaces.ts	327
 ui/src/stores/settings.ts	529
