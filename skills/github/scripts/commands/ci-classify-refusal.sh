@@ -22,9 +22,12 @@
 #                          state, workflow, and run id
 #   superseded: ...        (ci_failed only) runs on the head whose checks
 #                          were NOT counted — workflow runs (`workflow=`)
-#                          and older same-name commit statuses (`status=`)
-#                          alike; a failure someone read from raw
-#                          `gh pr checks` output may belong here
+#                          and commit statuses (`status=`) alike. A status
+#                          lands here when a newer same-name status
+#                          replaced it, and also when it is the latest of
+#                          its name but the run it links was retired by the
+#                          stale-status rewrite. A failure someone read
+#                          from raw `gh pr checks` output may belong here
 #
 # Every line reads ONE checks snapshot: pr-merge --check embeds the rollup
 # it classified in its JSON (`checks`), and this script scopes that instead

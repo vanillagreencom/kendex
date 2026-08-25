@@ -125,6 +125,8 @@ checks='[
 ]'
 out=$(STUB_CHECKS="$checks" STUB_CHECKS_EXIT=8 run_classify)
 assert_eq "$(head -1 <<<"$out")" "cause: ci_failed" "the unrelated failure still classifies as ci_failed"
+assert_contains "$out" "issue: ci_pending: CI Required (EXPECTED)" "the stale status was rewritten to EXPECTED"
+assert_not_contains "$out" "fail: CI Required" "the rewritten status is not counted as a failure"
 assert_eq "$(grep '^head-run: ' <<<"$out")" "head-run: 29099700200,29099700300" "the retired run is out of head-run:"
 assert_contains "$out" "superseded: status=CI Required run=29099700100" "the status the rewrite retired names its run as superseded"
 assert_contains "$out" "superseded: workflow=CI run=29099700100" "the retired run's workflow record is named as superseded"
