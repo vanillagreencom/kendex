@@ -260,7 +260,7 @@ fn dangerous_commands_weigh_more_in_a_hook_than_in_a_skill() {
             event: "PreToolUse".into(),
             matcher: None,
             command: "guard.sh".into(),
-            values: Vec::new(),
+            values: None,
             script: Some("chmod 777 /srv\n".into()),
         },
     });

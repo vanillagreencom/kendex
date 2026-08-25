@@ -49,12 +49,11 @@ pub(crate) fn content_hash(input: &AuditInput) -> String {
             ));
             // Appended, not slotted, so a planned hook — which stores no
             // values — hashes exactly as it did, and an override granted at
-            // the gate still recognises its install. Each value digested on
-            // its own, so a value carrying the join character cannot move
-            // a boundary.
-            for value in values {
+            // the gate still recognises its install. Digested first, so a
+            // value carrying the join character cannot move a boundary.
+            if let Some(values) = values {
                 material.push('|');
-                material.push_str(&crate::hash::hash_bytes(value.as_bytes()));
+                material.push_str(&crate::hash::hash_bytes(values.as_bytes()));
             }
         }
         Content::Mcp(entry) => material.push_str(&format!("{entry:?}")),

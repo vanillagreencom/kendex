@@ -391,3 +391,42 @@ fn a_command_looking_value_in_the_entry_is_not_a_command() {
         found.findings
     );
 }
+
+/// The values document is the values and nothing else: no keys, no
+/// braces, no quotes, no matcher or url — one env or header value per
+/// line, which is all the rule about stored values needs and all it gets.
+#[test]
+fn the_values_document_carries_only_the_values() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("guard.json");
+    std::fs::write(
+        &path,
+        r#"{"version":1,"hooks":{"preToolUse":[{"type":"http","url":"https://audit.example/hook","matcher":"mkfs",
+            "headers":{"Authorization":"Bearer abc"},"env":{"REGION":"eu-west-1"}}]}}"#,
+    )
+    .unwrap();
+    let item = ObservedItem {
+        harness: HarnessId::Copilot,
+        ..hook_at(&path, "preToolUse:mkfs:hook")
+    };
+
+    let prepared = crate::quality::text::prepare(input_for(&item));
+
+    let values: Vec<&crate::quality::Doc> = prepared
+        .docs
+        .iter()
+        .filter(|doc| doc.role == crate::quality::DocRole::Values)
+        .collect();
+    assert_eq!(values.len(), 1, "{:?}", prepared.docs);
+    let mut lines: Vec<&str> = values[0].lines.iter().map(|l| l.text.as_str()).collect();
+    lines.sort_unstable();
+    assert_eq!(lines, ["Bearer abc", "eu-west-1"]);
+    let Content::Hook { values, .. } = &prepared.input.content else {
+        panic!("{:?}", prepared.input.content);
+    };
+    let values = values.as_deref().unwrap_or_default();
+    assert!(
+        !values.contains(['{', '}', '"']),
+        "no shape leaks into the values: {values:?}"
+    );
+}

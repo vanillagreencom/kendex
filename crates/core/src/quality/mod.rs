@@ -244,12 +244,13 @@ pub enum Content {
         command: String,
         /// The values a hook read out of a shared config file stores beside
         /// its command and uses as they are: every string under its `env`
-        /// and `headers` maps, one document each ([`DocRole::Values`]). A
+        /// and `headers` maps, one per line, read as one document of stored
+        /// values ([`DocRole::Values`]); `None` when it stores none. A
         /// credential in one is used at run time whether or not the command
         /// spells it, while a command-looking value in one is not something
         /// the hook runs. Keys, matcher, cwd, url and event are the entry's
         /// shape, not text, and reach no rule.
-        values: Vec<String>,
+        values: Option<String>,
         script: Option<String>,
     },
     Mcp(McpEntry),

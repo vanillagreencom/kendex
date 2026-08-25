@@ -256,17 +256,17 @@ fn is_supporting(path: &std::path::Path) -> bool {
     })
 }
 
-/// A hook's documents — its command, each value it stores, and its script
+/// A hook's documents — its command, the values it stores, and its script
 /// — each cleaned and pushed under its own label, handed back in that
 /// order.
 fn hook_docs(
     root: &str,
     command: String,
-    values: Vec<String>,
+    values: Option<String>,
     script: Option<String>,
     clean: &mut impl FnMut(String, &str) -> String,
     docs: &mut Vec<Doc>,
-) -> (String, Vec<String>, Option<String>) {
+) -> (String, Option<String>, Option<String>) {
     let command = clean(format!("{root} (command)"), &command);
     docs.push(Doc {
         location: format!("{root} (command)"),
@@ -274,19 +274,16 @@ fn hook_docs(
         lines: lines(&command),
     });
     // What the harness stores beside the command, not what it runs: one
-    // document per value, for the rules about values.
-    let values = values
-        .into_iter()
-        .map(|value| {
-            let value = clean(format!("{root} (entry)"), &value);
-            docs.push(Doc {
-                location: format!("{root} (entry)"),
-                role: super::DocRole::Values,
-                lines: lines(&value),
-            });
-            value
-        })
-        .collect();
+    // value per line, one document, for the rules about values.
+    let values = values.map(|values| {
+        let values = clean(format!("{root} (entry)"), &values);
+        docs.push(Doc {
+            location: format!("{root} (entry)"),
+            role: super::DocRole::Values,
+            lines: lines(&values),
+        });
+        values
+    });
     let script = script.map(|body| {
         let body = clean(root.to_owned(), &body);
         docs.push(Doc {
