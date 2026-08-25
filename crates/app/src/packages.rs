@@ -150,6 +150,35 @@ pub fn package_fork(
     Ok(view(&env, &scope))
 }
 
+/// Keep an edited install as a local fork under a new name, leave the
+/// original on its source, then render both.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn package_fork_beside(
+    scope: Scope,
+    kind: ItemKind,
+    name: String,
+    harness: HarnessId,
+    new_name: String,
+    rev: Option<String>,
+) -> Result<AuditView, String> {
+    let env = env()?;
+    let plan = engine::fork::fork_beside(
+        &env,
+        &scope,
+        kind,
+        &name,
+        harness,
+        &new_name,
+        rev.as_deref(),
+    )
+    .map_err(|e| e.to_string())?;
+    apply::execute(&env, &plan, None).map_err(|e| e.to_string())?;
+    let report = engine::audit(&env, &scope).map_err(|e| e.to_string())?;
+    apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
+    Ok(view(&env, &scope))
+}
+
 #[tauri::command(async)]
 #[specta::specta]
 pub fn fork_rename(

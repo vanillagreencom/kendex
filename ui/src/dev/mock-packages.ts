@@ -1,11 +1,10 @@
 // Fixture behavior for the package page and Updates page: two versions of
-// everything installed from the mock catalog, one pending update, and a
-// small file tree with a readme.
-import type { ItemKind, Scope, UpdateRow, VersionSel } from "@/bindings";
+// everything installed from the mock catalog, one pending update, one
+// hand-edited install with an update it cannot take, and a small file tree
+// with a readme.
+import type { ItemKind, Scope, VersionSel } from "@/bindings";
+import { NEW, OLD, updateRows } from "./fixture-updates";
 import { type Handler, same, store, view } from "./mock-state";
-
-const OLD = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-const NEW = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
 const SKILL_BODY = [
   "---",
@@ -17,43 +16,6 @@ const SKILL_BODY = [
 ].join("\n");
 
 const README = "# gh\n\nGitHub flows for coding agents.\n";
-
-function installedItems() {
-  return store.state.items.filter(
-    (item) => item.origin !== null && item.origin !== "local",
-  );
-}
-
-function updateRows(): UpdateRow[] {
-  return installedItems().map((item, index) => ({
-    scope: item.scope,
-    kind: item.kind,
-    name: item.name,
-    source: "kendex",
-    repo: item.origin ?? "vanillagreencom/kendex",
-    repoIdentity: item.origin ?? "vanillagreencom/kendex",
-    current: { commit: OLD, label: "v1.0", date: "2026-08-01T10:00:00Z" },
-    latest:
-      index === 0
-        ? { commit: NEW, label: "v1.1", date: "2026-08-14T10:00:00Z" }
-        : { commit: OLD, label: "v1.0", date: "2026-08-01T10:00:00Z" },
-    updateAvailable: index === 0,
-    pinned: false,
-    ignored: store.state.ignored.some(
-      (entry) => entry.kind === item.kind && entry.name === item.name,
-    ),
-    blockedByLocalEdit: false,
-    editedHarnesses: [],
-    forkableHarness: null,
-    canDiscard: true,
-    canTakeLatest: true,
-    holdOwner: null,
-    derived: false,
-    forked: false,
-    mixed: false,
-    removedUpstream: false,
-  }));
-}
 
 export const packageHandlers: Record<string, Handler> = {
   package_versions: ({ name }: { name: string }) => [
@@ -176,6 +138,23 @@ export const packageHandlers: Record<string, Handler> = {
         item.origin = "local";
       }
     }
+    return view(scope);
+  },
+  package_fork_beside: ({
+    scope,
+    name,
+    newName,
+  }: {
+    scope: Scope;
+    name: string;
+    newName: string;
+  }) => {
+    // Refusals cross the bridge as plain strings, the way Tauri's do.
+    if (store.state.items.some((item) => item.name === newName))
+      return Promise.reject(
+        `'${newName}' already installed from this scope's manifest — refusing to rebind to local`,
+      );
+    store.state.keptBeside.push(name);
     return view(scope);
   },
   fork_rename: ({ scope }: { scope: Scope }) => view(scope),

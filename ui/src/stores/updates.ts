@@ -168,10 +168,10 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
       set({ busy: true });
       try {
         // Edited packages are held by the engine and cannot be updated
-        // this way — they need the fork decision first, so they are left
-        // out rather than silently surviving the click. Rows that are news
-        // without an update (gone upstream, mixed installs) have nothing
-        // for this button to do.
+        // this way — their row says so and offers the install beside — so
+        // they are left out rather than silently surviving the click.
+        // Rows that are news without an update (gone upstream, mixed
+        // installs) have nothing for this button to do.
         const rows = updatablePlaces(wanted);
         const skipped = skippedPlaces(wanted).length;
         if (rows.length === 0) {

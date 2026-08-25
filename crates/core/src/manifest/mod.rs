@@ -294,7 +294,8 @@ pub struct Manifest {
     )]
     pub custom_hooks: Vec<CustomHook>,
     /// Forked items by kind and name — `[forks.skill.<name>]`. The name is
-    /// the item's installed name, unchanged by forking.
+    /// the item's installed name: the original's for a fork in place, the
+    /// user's choice for one made beside the original.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub forks: BTreeMap<crate::model::ItemKind, BTreeMap<String, ForkProvenance>>,
 }

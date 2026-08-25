@@ -46,7 +46,8 @@ export const packageCount = (rows: UpdateRow[]): number =>
   new Set(rows.map(groupKey)).size;
 
 /** The places "Update all" can act on: a newer version exists and no local
- *  edit is holding it. Edited places need the fork decision first. */
+ *  edit is holding it. An edited place is never updated over; its row
+ *  offers the install beside it. */
 export const updatablePlaces = (rows: UpdateRow[]): UpdateRow[] =>
   rows.filter(
     (row) =>
@@ -71,8 +72,9 @@ export const switchLockedBy = (
   return null;
 };
 
-/** Places with news that a bulk update has to leave alone — edited ones
- *  waiting on a decision, held derived ones waiting on their owner. */
+/** Places with news that a bulk update has to leave alone — edited ones,
+ *  which no update may overwrite, and held derived ones waiting on their
+ *  owner. */
 export const skippedPlaces = (rows: UpdateRow[]): UpdateRow[] =>
   rows.filter(
     (row) =>

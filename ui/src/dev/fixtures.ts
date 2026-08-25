@@ -42,6 +42,8 @@ export interface MockState {
   provenance: ProvenanceRow[];
   /// Packages whose update notifications the mock user muted.
   ignored: { kind: ItemKind; name: string }[];
+  /// Edited packages whose copy was installed beside the source's version.
+  keptBeside: string[];
 }
 
 export function initialState(): MockState {
@@ -65,5 +67,6 @@ export function initialState(): MockState {
     repoPackages: repoPackages(),
     provenance: provenance(),
     ignored: [],
+    keptBeside: [],
   };
 }

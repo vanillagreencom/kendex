@@ -25,7 +25,6 @@ import {
   UPDATES_UNCHECKED_TITLE,
 } from "@/lib/copy";
 import {
-  FOLLOW_SOURCE_HELP,
   UPDATE_NEEDS_CHECK_NOTE,
   UPDATES_UNCONFIRMED_TITLE,
   updatesSubtitle,
@@ -39,6 +38,7 @@ import {
 } from "@/lib/update-groups";
 import { cn } from "@/lib/utils";
 import { useUpdatesStore } from "@/stores/updates";
+import { useUpdatesView } from "@/stores/updates-view";
 
 /** Which packages have newer versions, what changed, and per-package
  *  control over how loudly to hear about it. */
@@ -53,6 +53,10 @@ export function UpdatesPage() {
     (s) => !s.loaded || s.checking || s.overviewInFlight,
   );
   const load = useUpdatesStore((s) => s.load);
+  // One choice for every table on the page; the `…` menu lives on the
+  // main one.
+  const showVersion = useUpdatesView((s) => s.showVersion);
+  const setShowVersion = useUpdatesView((s) => s.setShowVersion);
   const [showHidden, setShowHidden] = useState(false);
   const [confirmIgnore, setConfirmIgnore] = useState<UpdateRow | null>(null);
 
@@ -81,16 +85,9 @@ export function UpdatesPage() {
         title="Updates"
         wide
         subtitle={
-          visible.length > 0 ? (
-            <>
-              {updatesSubtitle(packageCount(visible), visible.length)}
-              <span className="block text-muted-foreground">
-                {FOLLOW_SOURCE_HELP}
-              </span>
-            </>
-          ) : (
-            FOLLOW_SOURCE_HELP
-          )
+          visible.length > 0
+            ? updatesSubtitle(packageCount(visible), visible.length)
+            : undefined
         }
         action={
           <div className="flex gap-2">
@@ -146,7 +143,12 @@ export function UpdatesPage() {
               </EmptyState>
             ) : null
           ) : (
-            <UpdatesTable rows={visible} onIgnore={setConfirmIgnore} />
+            <UpdatesTable
+              rows={visible}
+              onIgnore={setConfirmIgnore}
+              showVersion={showVersion}
+              onShowVersion={setShowVersion}
+            />
           )}
           {warnings.length > 0 ? (
             <div className="mt-8">
@@ -176,7 +178,7 @@ export function UpdatesPage() {
               </button>
               {showHidden ? (
                 <div className="mt-2 opacity-80">
-                  <UpdatesTable rows={hidden} />
+                  <UpdatesTable rows={hidden} showVersion={showVersion} />
                 </div>
               ) : null}
             </div>

@@ -54,8 +54,9 @@ lives in one capability table read by core and UI.
 1. Generated artifacts are always overwritable — by us. Refresh
    regenerates from scratch and re-merges the manifest, but bytes no
    apply ever wrote are the user's: an edited installation becomes a
-   conflict naming its exits (keep it as a fork, or discard the edits),
-   and no write, sweep, refusal, or re-shape touches it. Discarding is an
+   conflict naming its exits (keep it as a fork, keep it as a fork under
+   a new name beside the source's version, or discard the edits), and no
+   write, sweep, refusal, or re-shape touches it. Discarding is an
    explicit option (`overwrite_edited` / `--discard-edits`). The anchor
    is the lock's rendered hash; a record that cannot prove which bytes
    are whose is one conflict, never one silent loss.
@@ -71,7 +72,9 @@ lives in one capability table read by core and UI.
    both collide. The one sanctioned rebind is a recorded fork: remote to
    `local`, written into `[forks.<kind>.<name>]` by the fork operation the
    user confirmed. A fork keeps the item's installed name, so dependents
-   and bundles keep resolving.
+   and bundles keep resolving; a fork made beside (`fork_beside`) takes a
+   new name the user chose, its frontmatter `name:` rewritten to match,
+   and leaves the original declared from its source.
 5. Enable/disable is non-destructive and lossless: file-backed kinds
    toggle by rename; kinds embedded in shared config files toggle by a
    structured edit that preserves every unrelated key. Uninstalling the
@@ -547,8 +550,11 @@ lives in one capability table read by core and UI.
   timeline listing only commits that touched the package's files,
   tag-decorated, never tag-replaced. Rows are per package per scope, folded
   by package and expanded by place; nothing applies on its own — followers
-  come current on apply or refresh, held ones when their hold moves. Muting
-  a package's update notifications is a machine-local settings entry. Reuse
+  come current on apply or refresh, held ones when their hold moves. An
+  edited place is never updated over: its row says so and offers only the
+  install beside it; the fork-or-discard choice lives on the package
+  page. Commit ids stay behind the table's `…` menu. Muting a package's
+  update notifications is a machine-local settings entry. Reuse
   is verified against a publish receipt outside the checkout: a full
   content hash of the tree. Pre-2.0 clones are read where the new layout
   has nothing yet, never deleted. The store keeps one tree per resolved

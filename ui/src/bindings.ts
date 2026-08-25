@@ -251,6 +251,11 @@ export const commands = {
 	packageDiff: (scope: Scope, kind: ItemKind, name: string, from: VersionSel, to: VersionSel, harness: "claude" | "codex" | "opencode" | "cursor" | "pi" | "gemini" | "copilot" | null) => typedError<PackageDiff, string>(__TAURI_INVOKE("package_diff", { scope, kind, name, from, to, harness })),
 	/**  Keep an edited install as a local fork, then render it in place. */
 	packageFork: (scope: Scope, kind: ItemKind, name: string, harness: HarnessId) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("package_fork", { scope, kind, name, harness })),
+	/**
+	 *  Keep an edited install as a local fork under a new name, leave the
+	 *  original on its source, then render both.
+	 */
+	packageForkBeside: (scope: Scope, kind: ItemKind, name: string, harness: HarnessId, newName: string, rev: string | null) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("package_fork_beside", { scope, kind, name, harness, newName, rev })),
 	forkRename: (scope: Scope, kind: ItemKind, oldName: string, newName: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("fork_rename", { scope, kind, oldName, newName })),
 	/**
 	 *  Apply a scope with one package's edits discarded — the door back to
@@ -1385,7 +1390,8 @@ export type Manifest_Deserialize = {
 	"custom-hooks"?: CustomHook_Deserialize[],
 	/**
 	 *  Forked items by kind and name — `[forks.skill.<name>]`. The name is
-	 *  the item's installed name, unchanged by forking.
+	 *  the item's installed name: the original's for a fork in place, the
+	 *  user's choice for one made beside the original.
 	 */
 	forks?: Partial<{ [key in ItemKind]: { [key in string]: ForkProvenance_Deserialize } }>,
 };
@@ -1434,7 +1440,8 @@ export type Manifest_Serialize = {
 	"custom-hooks"?: CustomHook_Serialize[],
 	/**
 	 *  Forked items by kind and name — `[forks.skill.<name>]`. The name is
-	 *  the item's installed name, unchanged by forking.
+	 *  the item's installed name: the original's for a fork in place, the
+	 *  user's choice for one made beside the original.
 	 */
 	forks?: Partial<{ [key in ItemKind]: { [key in string]: ForkProvenance_Serialize } }>,
 };

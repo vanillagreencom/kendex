@@ -1,9 +1,9 @@
-// Updates page copy: the table, the per-place decisions, and the toasts
-// that say what a bulk update did — kept apart from the rest so the wording
-// is reviewed in one place.
+// Updates page copy: the table, the edited-copy row, and the toasts that
+// say what a bulk update did — kept apart from the rest so the wording is
+// reviewed in one place.
 export const FOLLOW_SOURCE_COLUMN = "Follow source";
 export const FOLLOW_SOURCE_HELP =
-  "Following packages come current when their place refreshes or you press Update, which also brings that place's other followers current. Held ones wait until you choose.";
+  "On, this place takes new versions whenever it refreshes or you press Update; off, it stays on this version until you choose one.";
 export const heldInLabel = (held: number, total: number): string =>
   `Held in ${held} of ${total}`;
 export const followSourceLabel = (name: string, place: string): string =>
@@ -12,24 +12,36 @@ export const UPDATES_NAME_COLUMN = "Package";
 export const UPDATES_TYPE_COLUMN = "Type";
 export const UPDATES_PLACE_COLUMN = "Where";
 export const UPDATES_VERSION_COLUMN = "Version";
+export const TABLE_OPTIONS_LABEL = "Table options";
+export const SHOW_VERSION_LABEL = "Show version";
 export const USER_LEVEL_PLACE = "User level";
 export const placesLabel = (count: number): string =>
   count === 1 ? "1 place" : `${count} places`;
 export const updatesSubtitle = (packages: number, places: number): string =>
   `${packages === 1 ? "1 update" : `${packages} updates`} across ${placesLabel(places)}`;
 export const UPDATE_PACKAGE_EVERYWHERE_LABEL = "Update all";
-export const CUSTOMIZED_HERE_LABEL = "Customized here";
-export const USE_NEW_VERSION_LABEL = "Use new version…";
-export const UNFORKABLE_EDIT_NOTE =
-  "Edited in a tool whose copy can't be kept as your own";
 export const heldBySourceNote = (source: string): string =>
   `Held by the source "${source}" as a whole — release it where that source is declared`;
 export const HELD_BY_OWNER_NOTE =
   "Held by the bundle or package it came with — update or release it from there";
-export const DERIVED_EDIT_NOTE =
-  "Comes with a bundle or another package — settle it on the package page";
-export const MULTI_TOOL_EDIT_NOTE =
-  "Edited in several tools — settle it on the package page";
+
+// An edited copy is the user's work: no update touches it. The newest
+// version can only land beside it, under the name it always had, with the
+// edited copy renamed to one of the user's choosing.
+export const EDITED_TAG_HELP =
+  "You changed this package's files. Updating would overwrite them, so this copy stays as it is; Install as new package puts the newest version beside it.";
+export const EDITED_CANT_UPDATE_NOTE =
+  "Can't be updated — you've edited this copy";
+export const INSTALL_AS_NEW_LABEL = "Install as new package";
+export const installAsNewTitle = (name: string): string =>
+  `Install ${name} as a new package`;
+export const installAsNewBody = (name: string): string =>
+  `The newest version from the source installs as ${name}. Your edited copy stays, as your own package under the name below.`;
+export const OWN_COPY_NAME_LABEL = "Name for your edited copy";
+export const ownCopyDefaultName = (name: string): string => `${name}-edited`;
+export const installedAsNewToastLabel = (name: string, own: string): string =>
+  `Installed ${name} — your edited copy is now ${own}`;
+
 export const updatedWithPlaceToastLabel = (
   name: string,
   place: string,

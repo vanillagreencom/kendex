@@ -12,6 +12,9 @@
 // Every file that imports this carries `// @vitest-environment jsdom` on
 // its first line — the environment is chosen per file before any import
 // runs, so nothing here can choose it.
+//
+// A base-ui menu trigger does not open on `userEvent.click` under jsdom;
+// focus it and press Enter. Tooltips open on focus.
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach } from "vitest";

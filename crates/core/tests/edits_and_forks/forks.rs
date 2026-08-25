@@ -265,3 +265,146 @@ fn forking_a_skill_whose_native_link_was_repointed_reads_the_managed_tree() {
     );
     assert!(foreign.join("secret.md").is_file());
 }
+
+#[allow(clippy::unwrap_used)]
+fn head_commit(dir: &Path) -> String {
+    let output = Hardened::git(&["rev-parse", "HEAD"], Some(dir))
+        .run()
+        .unwrap();
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+/// Installing beside: the edits become the user's own package under the
+/// new name, answering to it, and the original name goes back to its
+/// source — the newest version when the hold moves along.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn fork_beside_keeps_the_edit_under_a_new_name_and_lands_the_source_under_the_old() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "Upstream.");
+    commit(&w.upstream, "one");
+    let one = head_commit(&w.upstream);
+    declare(
+        &w,
+        &format!("[skills.gh]\nsource = \"cat\"\nrev = \"{one}\"\n"),
+    );
+    sync_and_apply(&w);
+    fs::write(
+        skill_file(&w),
+        "---\nname: gh\ndescription: mine\n---\nMy fork.\n",
+    )
+    .unwrap();
+    write_skill(&w.upstream, "gh", "Upstream v2.");
+    commit(&w.upstream, "two");
+    let two = head_commit(&w.upstream);
+    // The edit holds the place through a refresh; the mirror still learns
+    // about the newer commit.
+    sync_and_apply(&w);
+    assert!(
+        fs::read_to_string(skill_file(&w))
+            .unwrap()
+            .contains("My fork.")
+    );
+
+    let plan = fork::fork_beside(
+        &w.env,
+        &w.scope,
+        ItemKind::Skill,
+        "gh",
+        HarnessId::Claude,
+        "gh-edited",
+        Some(&two),
+    )
+    .unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    let report = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &report.plan, None).unwrap();
+
+    // The fork's bytes live in the local source under the new name and say
+    // that name; they render there too.
+    let own =
+        fs::read_to_string(w.home.join("app/.kendex-local/skills/gh-edited/SKILL.md")).unwrap();
+    assert!(
+        own.contains("My fork.") && own.contains("name: gh-edited"),
+        "{own}"
+    );
+    assert!(
+        fs::read_to_string(w.home.join("app/.agents/skills/gh-edited/SKILL.md"))
+            .unwrap()
+            .contains("My fork.")
+    );
+    // The original name carries the source's newest version, held there.
+    assert!(
+        fs::read_to_string(skill_file(&w))
+            .unwrap()
+            .contains("Upstream v2.")
+    );
+    let text = fs::read_to_string(manifest::manifest_path(&w.env, &w.scope)).unwrap();
+    assert!(
+        text.contains("[skills.gh-edited]\nsource = \"local\""),
+        "{text}"
+    );
+    assert!(text.contains("[forks.skill.gh-edited]"), "{text}");
+    assert!(
+        text.contains(&format!("[skills.gh]\nsource = \"cat\"\nrev = \"{two}\"")),
+        "{text}"
+    );
+    assert!(audit(&w.env, &w.scope).unwrap().drift.is_empty());
+
+    let rows = kendex_core::package::updates::updates(&w.env, &w.scope)
+        .unwrap()
+        .rows;
+    let gh = rows.iter().find(|row| row.name == "gh").unwrap();
+    assert!(!gh.blocked_by_local_edit && !gh.update_available, "{gh:?}");
+    let own = rows.iter().find(|row| row.name == "gh-edited").unwrap();
+    assert!(own.forked && !own.update_available, "{own:?}");
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn fork_beside_refuses_a_name_the_scope_already_uses() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "Upstream.");
+    write_skill(&w.upstream, "docs", "Docs.");
+    commit(&w.upstream, "one");
+    declare(
+        &w,
+        "[skills.gh]\nsource = \"cat\"\n\n[skills.docs]\nsource = \"cat\"\n",
+    );
+    sync_and_apply(&w);
+    fs::write(skill_file(&w), "edited").unwrap();
+
+    let beside = |new_name: &str| {
+        fork::fork_beside(
+            &w.env,
+            &w.scope,
+            ItemKind::Skill,
+            "gh",
+            HarnessId::Claude,
+            new_name,
+            None,
+        )
+        .unwrap_err()
+    };
+    let taken = beside("docs");
+    assert!(
+        matches!(taken, CoreError::SourceCollision { .. }),
+        "{taken:?}"
+    );
+
+    let local = w.home.join("app/.kendex-local/skills/mine");
+    fs::create_dir_all(&local).unwrap();
+    fs::write(local.join("SKILL.md"), "---\nname: mine\n---\nTheirs.\n").unwrap();
+    let stranger = beside("mine");
+    assert!(
+        matches!(stranger, CoreError::SourceCollision { .. }),
+        "{stranger:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(local.join("SKILL.md")).unwrap(),
+        "---\nname: mine\n---\nTheirs.\n"
+    );
+
+    let bad = beside("a/b/c");
+    assert!(matches!(bad, CoreError::ItemNotInSource { .. }), "{bad:?}");
+}

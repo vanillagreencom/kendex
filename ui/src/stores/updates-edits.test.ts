@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
@@ -5,7 +6,7 @@ import { ADOPTABLE } from "@/lib/adoptable";
 import { UPDATE_NEEDS_CHECK_NOTE } from "@/lib/copy-updates";
 import { useProblemsStore } from "./problems";
 import { useUpdatesStore } from "./updates";
-import { keepAsOwn, takeNewVersion } from "./updates-edits";
+import { installAsNew, keepAsOwn, takeNewVersion } from "./updates-edits";
 
 vi.mock("@/bindings", () => ({
   commands: {
@@ -16,6 +17,7 @@ vi.mock("@/bindings", () => ({
     applyPlan: vi.fn(),
     applyDiscardEdits: vi.fn(),
     packageFork: vi.fn(),
+    packageForkBeside: vi.fn(),
     scanMachine: vi.fn(),
     auditAll: vi.fn(),
   },
@@ -216,5 +218,99 @@ describe("updates store: edited places", () => {
     );
     expect(busyDuring).toBe(true);
     expect(useUpdatesStore.getState().busy).toBe(false);
+  });
+});
+
+describe("updates store: installing beside an edited place", () => {
+  const edited = {
+    blockedByLocalEdit: true,
+    editedHarnesses: ["claude" as const],
+    forkableHarness: "claude" as const,
+  };
+
+  beforeEach(() => {
+    useUpdatesStore.setState({ rows: [], busy: false, loaded: true });
+    useProblemsStore.setState({
+      dialog: { open: false, title: "", steps: [], actions: [] },
+    });
+    vi.clearAllMocks();
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [] },
+    });
+    vi.mocked(commands.scanMachine).mockResolvedValue({
+      status: "ok",
+      data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
+    });
+    vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
+  });
+
+  it("forks the edited rendering under the chosen name, moving a hold to latest", async () => {
+    vi.mocked(commands.packageForkBeside).mockResolvedValue({
+      status: "ok",
+      data: {
+        scope: { scope: "global" },
+        drift: [],
+        plan: [],
+        notes: [],
+        warnings: [],
+        safety: [],
+        adoptable: ADOPTABLE,
+        exits: [],
+        heldBack: [],
+        queued: [],
+      },
+    });
+
+    expect(
+      await installAsNew(row({ ...edited, pinned: true }), "claude", "gh-mine"),
+    ).toBeNull();
+    expect(commands.packageForkBeside).toHaveBeenLastCalledWith(
+      { scope: "global" },
+      "skill",
+      "gh",
+      "claude",
+      "gh-mine",
+      "b".repeat(40),
+    );
+
+    expect(await installAsNew(row(edited), "claude", "gh-mine")).toBeNull();
+    expect(commands.packageForkBeside).toHaveBeenLastCalledWith(
+      { scope: "global" },
+      "skill",
+      "gh",
+      "claude",
+      "gh-mine",
+      null,
+    );
+    expect(toast.success).toHaveBeenCalledWith(
+      "Installed gh — your edited copy is now gh-mine",
+    );
+    expect(commands.auditAll).toHaveBeenCalled();
+    expect(useUpdatesStore.getState().busy).toBe(false);
+  });
+
+  // The refusal belongs to the dialog that asked for the name, not to a
+  // problems dialog over it.
+  it("hands the engine's refusal back instead of raising a dialog", async () => {
+    vi.mocked(commands.packageForkBeside).mockResolvedValue({
+      status: "error",
+      error: "'docs' already installed",
+    });
+
+    expect(await installAsNew(row(edited), "claude", "docs")).toBe(
+      "'docs' already installed",
+    );
+    expect(useProblemsStore.getState().dialog.open).toBe(false);
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(commands.auditAll).not.toHaveBeenCalled();
+  });
+
+  it("refuses rows a failed check left behind, before any call", async () => {
+    useUpdatesStore.setState({ loaded: false });
+    expect(await installAsNew(row(edited), "claude", "gh-mine")).toBe(
+      UPDATE_NEEDS_CHECK_NOTE,
+    );
+    expect(commands.packageForkBeside).not.toHaveBeenCalled();
   });
 });

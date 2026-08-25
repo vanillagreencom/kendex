@@ -16,9 +16,13 @@ use crate::manifest::{self, ForkProvenance, LOCAL_SOURCE_NAME};
 use crate::model::{HarnessId, ItemKind, Scope};
 use crate::source::local_source_root;
 
+mod beside;
 mod forkable;
+mod rename;
+pub use beside::fork_beside;
 use forkable::{ambiguous_skill_tree, source_form};
 pub use forkable::{forkable_harness, forkable_rendering};
+pub use rename::rename_fork;
 
 /// Turn one edited installation into a local fork. The harness names which
 /// installation's bytes are captured — an agent renders per tool, and the
@@ -44,6 +48,47 @@ pub fn fork(
             name: name.to_owned(),
         });
     };
+    let edited = edited_rendering(env, scope, kind, name, harness)?;
+    let captured = capture(kind, &edited)?;
+    let mut ops = capture_ops(env, scope, kind, name, &edited, captured)?;
+    let provenance = provenance(env, scope, kind, name, &manifest, &decl)?;
+    let entry = manifest
+        .declared_mut(kind)
+        .get_mut(name)
+        .unwrap_or_else(|| unreachable!("declared above"));
+    entry.source = LOCAL_SOURCE_NAME.to_owned();
+    entry.rev = None;
+    manifest
+        .forks
+        .entry(kind)
+        .or_default()
+        .insert(name.to_owned(), provenance);
+
+    let manifest_path = manifest::manifest_path(env, scope);
+    ops.push(PlannedOp {
+        description: format!("record the fork of {name} in kendex.toml"),
+        op: Op::WriteManifest {
+            pre: Pre::observed(&manifest_path)?,
+            path: manifest_path,
+            manifest: Box::new(manifest),
+        },
+    });
+    Ok(Plan {
+        scope: scope.clone(),
+        ops,
+    })
+}
+
+/// The file or tree holding this rendering's edited bytes. Skills capture
+/// the tree every tool's link resolves to; an agent only from a tool whose
+/// rendering round-trips through the source parser.
+fn edited_rendering(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    harness: HarnessId,
+) -> Result<PathBuf> {
     let edited = match kind {
         ItemKind::Skill => {
             let tree = skill_content_path(env, scope, name, harness).ok_or({
@@ -98,10 +143,20 @@ pub fn fork(
             harness,
         });
     }
+    Ok(edited)
+}
 
-    let mut ops = capture_ops(env, scope, kind, name, &edited)?;
-
-    let provenance = ForkProvenance {
+/// Where the original came from, recorded on the fork so the Library can
+/// say what it replaced and which commit the edits were made on.
+fn provenance(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    manifest: &manifest::Manifest,
+    decl: &manifest::ItemDecl,
+) -> Result<ForkProvenance> {
+    Ok(ForkProvenance {
         repo: manifest
             .sources
             .get(&decl.source)
@@ -113,32 +168,33 @@ pub fn fork(
             .filter(|entry| entry.kind == kind && entry.name == name)
             .find_map(|entry| entry.source_commit.clone()),
         forked_at: crate::clock::timestamp(),
-    };
-    let entry = manifest
-        .declared_mut(kind)
-        .get_mut(name)
-        .unwrap_or_else(|| unreachable!("declared above"));
-    entry.source = LOCAL_SOURCE_NAME.to_owned();
-    entry.rev = None;
-    manifest
-        .forks
-        .entry(kind)
-        .or_default()
-        .insert(name.to_owned(), provenance);
-
-    let manifest_path = manifest::manifest_path(env, scope);
-    ops.push(PlannedOp {
-        description: format!("record the fork of {name} in kendex.toml"),
-        op: Op::WriteManifest {
-            pre: Pre::observed(&manifest_path)?,
-            path: manifest_path,
-            manifest: Box::new(manifest),
-        },
-    });
-    Ok(Plan {
-        scope: scope.clone(),
-        ops,
     })
+}
+
+/// The edited bytes in source form: a skill's whole tree, an agent's one
+/// file. A disabled rendering carries its SKILL.md under the `.disabled`
+/// name; the local source holds source form, and the declaration's
+/// `enabled` keeps the fork off when it renders — a tree copied verbatim
+/// would be a skill source discovery cannot see.
+enum Capture {
+    Tree(Vec<(PathBuf, Vec<u8>)>),
+    File(Vec<u8>),
+}
+
+fn capture(kind: ItemKind, edited: &std::path::Path) -> Result<Capture> {
+    Ok(match kind {
+        ItemKind::Skill => Capture::Tree(source_form(super::adopt::read_tree(edited)?)),
+        _ => Capture::File(fs::read(edited).map_err(|e| CoreError::io(edited, e))?),
+    })
+}
+
+/// The local source's path for an item of this kind under `name`.
+fn local_item(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> PathBuf {
+    let local_root = local_source_root(env, scope);
+    match kind {
+        ItemKind::Skill => local_root.join("skills").join(name),
+        _ => local_root.join("agents").join(format!("{name}.md")),
+    }
 }
 
 /// The ops that move the edited bytes into the local source: an earlier
@@ -152,12 +208,9 @@ fn capture_ops(
     kind: ItemKind,
     name: &str,
     edited: &std::path::Path,
+    captured: Capture,
 ) -> Result<Vec<PlannedOp>> {
-    let local_root = local_source_root(env, scope);
-    let local_item = match kind {
-        ItemKind::Skill => local_root.join("skills").join(name),
-        _ => local_root.join("agents").join(format!("{name}.md")),
-    };
+    let local_item = local_item(env, scope, kind, name);
     let mut ops = Vec::new();
     if local_item.exists() {
         ops.push(PlannedOp {
@@ -170,20 +223,15 @@ fn capture_ops(
             },
         });
     }
-    let capture = match kind {
-        ItemKind::Skill => Op::WriteTree {
+    let capture = match captured {
+        Capture::Tree(files) => Op::WriteTree {
             root: local_item,
-            // A disabled rendering carries its SKILL.md under the
-            // `.disabled` name; the local source holds source form, and
-            // the declaration's `enabled` keeps the fork off when it
-            // renders — a tree copied verbatim would be a skill source
-            // discovery cannot see.
-            files: source_form(super::adopt::read_tree(edited)?),
+            files,
             pre: Pre::Absent,
         },
-        _ => Op::WriteFile {
+        Capture::File(bytes) => Op::WriteFile {
             path: local_item,
-            bytes: fs::read(edited).map_err(|e| CoreError::io(edited, e))?,
+            bytes,
             pre: Pre::Absent,
         },
     };
@@ -201,104 +249,6 @@ fn capture_ops(
         },
     });
     Ok(ops)
-}
-
-/// Rename a fork. Only a fork nothing depends on may change its installed
-/// name: dependents and bundles refer to the old one, and a rename that
-/// breaks them is not a rename, it is a removal wearing one's clothes.
-pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &str) -> Result<Plan> {
-    let mut manifest = manifest_for_mutation(env, scope)?;
-    if !manifest
-        .forks
-        .get(&kind)
-        .is_some_and(|forks| forks.contains_key(old))
-    {
-        return Err(CoreError::NotDeclared {
-            kind,
-            name: old.to_owned(),
-        });
-    }
-    if let Some(problem) = crate::names::item_problem(new) {
-        return Err(CoreError::ItemNotInSource {
-            name: problem,
-            source_name: "the new name".to_owned(),
-        });
-    }
-    if manifest.declared(kind).contains_key(new) {
-        return Err(CoreError::SourceCollision {
-            name: new.to_owned(),
-            existing: "this scope's manifest".to_owned(),
-            requested: LOCAL_SOURCE_NAME.to_owned(),
-        });
-    }
-    let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
-    let depended_on = lock
-        .entries
-        .values()
-        .filter(|entry| entry.kind == kind && entry.name == old)
-        .flat_map(|entry| entry.reasons.iter())
-        .any(|reason| !matches!(reason, crate::lock::Reason::Requested));
-    if depended_on {
-        return Err(CoreError::ManifestInvalid {
-            path: manifest::manifest_path(env, scope),
-            findings: vec![format!(
-                "{}.{old}: other items depend on this name — fix: rename what depends on it first, or keep the name",
-                kind.name()
-            )],
-        });
-    }
-
-    let local_root = local_source_root(env, scope);
-    let (from, to) = match kind {
-        ItemKind::Skill => (
-            local_root.join("skills").join(old),
-            local_root.join("skills").join(new),
-        ),
-        _ => (
-            local_root.join("agents").join(format!("{old}.md")),
-            local_root.join("agents").join(format!("{new}.md")),
-        ),
-    };
-    let mut ops = Vec::new();
-    if from.exists() {
-        ops.push(PlannedOp {
-            description: format!("rename the fork's files to {new}"),
-            op: Op::Rename {
-                // The fork moves whole, whatever sits in it: a dangling
-                // link the person left there is carried along, not a
-                // reason to refuse the rename.
-                from_pre: Pre::tree_as_is(&from)?,
-                from,
-                to,
-                to_pre: Pre::Absent,
-            },
-        });
-    }
-    let Some(decl) = manifest.declared_mut(kind).remove(old) else {
-        return Err(CoreError::NotDeclared {
-            kind,
-            name: old.to_owned(),
-        });
-    };
-    manifest.declared_mut(kind).insert(new.to_owned(), decl);
-    if let Some(forks) = manifest.forks.get_mut(&kind)
-        && let Some(provenance) = forks.remove(old)
-    {
-        forks.insert(new.to_owned(), provenance);
-    }
-    let manifest_path = manifest::manifest_path(env, scope);
-    ops.push(PlannedOp {
-        description: format!("record the rename to {new} in kendex.toml"),
-        op: Op::WriteManifest {
-            pre: Pre::observed(&manifest_path)?,
-            path: manifest_path,
-            manifest: Box::new(manifest),
-        },
-    });
-    Ok(Plan {
-        scope: scope.clone(),
-        ops,
-    })
 }
 
 /// The tree that holds a skill's content for one harness: its own native

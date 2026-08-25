@@ -72,6 +72,9 @@ an outside contributor.
 
 - `kendex update` reads schema 1 feeds (including legacy feeds with no schema). Current stays a no-op; older refuses unless `--force`.
   A newer feed, or a forced current/older feed, with no target binary exits 0 with release notes and changes nothing.
+- Updates: a package whose files you edited can't be updated over; its row
+  offers **Install as new package**, which puts the newest version beside
+  your copy under a name you choose. Commit ids hide behind the table's `…`.
 - **Breaking:** in `kendex check --json`, a not-yet-evaluated line now has
   `"class": "unevaluated"` where it had `"class": "unknown"`. A parser
   matching that field exhaustively has to accept the new value.
