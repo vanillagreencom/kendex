@@ -59,11 +59,11 @@ fn hash_into(hasher: &mut Sha256, path: &Path, rel: &Path, depth: usize) -> Resu
 /// by relative path and bytes, a link by relative path and target,
 /// dangling or not, a directory by relative path before its entries, so
 /// an empty one added or removed is a change. What a directory move
-/// binds to — a rename carries
-/// the entries themselves, a dangling link included, so the precondition
-/// names exactly those and never the bytes a link points at. The byte
-/// after the path says which kind wrote the record, so a file whose
-/// bytes spell a target never hashes like a link to it. Anything else (a
+/// binds to — a rename carries the entries themselves, a dangling link
+/// included, so the precondition names exactly those and never the bytes
+/// a link points at. Every record is framed: a kind byte, then each field
+/// as its length and its raw OS bytes, so no file content can spell a
+/// record boundary and no two names collapse into one. Anything else (a
 /// pipe, a socket, a device) is an error naming the entry, as in
 /// `hash_tree`: the journal snapshots a moved directory by copying it,
 /// and a copy of a reader-less pipe never returns.
@@ -73,21 +73,30 @@ pub fn hash_tree_as_is(path: &Path) -> Result<String> {
     Ok(hex(&hasher.finalize()))
 }
 
+const AS_IS_FILE: u8 = 0;
+const AS_IS_LINK: u8 = 1;
+const AS_IS_DIR: u8 = 2;
+
+/// One field of an as-is record: its length, fixed width, then its bytes.
+fn frame(hasher: &mut Sha256, bytes: &[u8]) {
+    hasher.update((bytes.len() as u64).to_le_bytes());
+    hasher.update(bytes);
+}
+
 fn hash_as_is_into(hasher: &mut Sha256, path: &Path, rel: &Path) -> Result<()> {
     let refuse = |why: &str| CoreError::io(path, std::io::Error::other(why.to_owned()));
     let kind = fs::symlink_metadata(path)
         .map_err(|e| CoreError::io(path, e))?
         .file_type();
+    let name = rel.as_os_str().as_encoded_bytes();
     if kind.is_symlink() {
         let target = fs::read_link(path).map_err(|e| CoreError::io(path, e))?;
-        hasher.update(rel.to_string_lossy().as_bytes());
-        hasher.update([1]);
-        hasher.update(target.to_string_lossy().as_bytes());
-        hasher.update([0]);
+        hasher.update([AS_IS_LINK]);
+        frame(hasher, name);
+        frame(hasher, target.as_os_str().as_encoded_bytes());
     } else if kind.is_dir() {
-        hasher.update(rel.to_string_lossy().as_bytes());
-        hasher.update([2]);
-        hasher.update([0]);
+        hasher.update([AS_IS_DIR]);
+        frame(hasher, name);
         let mut entries: Vec<_> = fs::read_dir(path)
             .map_err(|e| CoreError::io(path, e))?
             .flatten()
@@ -102,10 +111,9 @@ fn hash_as_is_into(hasher: &mut Sha256, path: &Path, rel: &Path) -> Result<()> {
         }
     } else if kind.is_file() {
         let bytes = fs::read(path).map_err(|e| CoreError::io(path, e))?;
-        hasher.update(rel.to_string_lossy().as_bytes());
-        hasher.update([0]);
-        hasher.update(&bytes);
-        hasher.update([0]);
+        hasher.update([AS_IS_FILE]);
+        frame(hasher, name);
+        frame(hasher, &bytes);
     } else {
         return Err(refuse("not a regular file, directory or link"));
     }
@@ -240,131 +248,4 @@ pub fn fnv1a_hex(bytes: &[u8]) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::manifest::MANIFEST_SCHEMA;
-
-    #[cfg(unix)]
-    #[test]
-    fn a_link_looping_into_its_own_tree_is_an_error_not_a_crash() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path().join("skill");
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("SKILL.md"), "hello").unwrap();
-        std::os::unix::fs::symlink(&root, root.join("loop")).unwrap();
-        assert!(hash_tree(&root).is_err());
-    }
-
-    /// The as-is hash names the entries a move carries: a dangling link
-    /// is one of them, by its target, where the content hash has nothing
-    /// to read and refuses the tree.
-    #[cfg(unix)]
-    #[test]
-    fn as_is_hash_names_a_link_by_its_target_and_never_follows_it() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path().join("dir");
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("a"), "bytes").unwrap();
-        std::os::unix::fs::symlink("nowhere", root.join("gone")).unwrap();
-        assert!(hash_tree(&root).is_err());
-
-        let dangling = hash_tree_as_is(&root).unwrap();
-        std::fs::remove_file(root.join("gone")).unwrap();
-        std::os::unix::fs::symlink("a", root.join("gone")).unwrap();
-        let resolving = hash_tree_as_is(&root).unwrap();
-        assert_ne!(dangling, resolving, "the target is part of the record");
-
-        std::fs::remove_file(root.join("gone")).unwrap();
-        std::fs::write(root.join("gone"), "a").unwrap();
-        let file = hash_tree_as_is(&root).unwrap();
-        assert_ne!(
-            resolving, file,
-            "a file spelling the target is not the link"
-        );
-
-        std::fs::create_dir(root.join("empty")).unwrap();
-        let with_dir = hash_tree_as_is(&root).unwrap();
-        assert_ne!(
-            file, with_dir,
-            "an empty directory is an entry the move carries"
-        );
-    }
-
-    #[test]
-    fn tree_hash_is_content_and_layout_sensitive() {
-        let tmp = tempfile::tempdir().unwrap();
-        let a = tmp.path().join("a");
-        std::fs::create_dir_all(a.join("sub")).unwrap();
-        std::fs::write(a.join("SKILL.md"), "hello").unwrap();
-        std::fs::write(a.join("sub/x.sh"), "x").unwrap();
-        let first = hash_tree(&a).unwrap();
-        assert_eq!(first, hash_tree(&a).unwrap());
-
-        std::fs::write(a.join("sub/x.sh"), "y").unwrap();
-        assert_ne!(first, hash_tree(&a).unwrap());
-    }
-
-    #[test]
-    fn editing_a_shared_key_invalidates_dependents() {
-        let tmp = tempfile::tempdir().unwrap();
-        let skill = tmp.path().join("skill");
-        std::fs::create_dir_all(&skill).unwrap();
-        std::fs::write(skill.join("SKILL.md"), "content").unwrap();
-
-        let mut manifest = Manifest {
-            schema: MANIFEST_SCHEMA,
-            ..Manifest::default()
-        };
-        let sealed = crate::source_read::SealedSource::open(tmp.path()).unwrap();
-        let skill = sealed.root().join("skill");
-        let before = installation_hash(
-            &sealed,
-            &skill,
-            &manifest,
-            ItemKind::Skill,
-            "github",
-            HarnessId::Claude,
-        )
-        .unwrap();
-
-        manifest
-            .skill_instructions
-            .insert("all".into(), "shared instruction".into());
-        let after = installation_hash(
-            &sealed,
-            &skill,
-            &manifest,
-            ItemKind::Skill,
-            "github",
-            HarnessId::Claude,
-        )
-        .unwrap();
-        assert_ne!(before, after);
-
-        let unrelated = installation_hash(
-            &sealed,
-            &skill,
-            &manifest,
-            ItemKind::Command,
-            "github",
-            HarnessId::Claude,
-        )
-        .unwrap();
-        let unrelated_before = {
-            let clean = Manifest {
-                schema: MANIFEST_SCHEMA,
-                ..Manifest::default()
-            };
-            installation_hash(
-                &sealed,
-                &skill,
-                &clean,
-                ItemKind::Command,
-                "github",
-                HarnessId::Claude,
-            )
-            .unwrap()
-        };
-        assert_eq!(unrelated, unrelated_before);
-    }
-}
+mod tests;
