@@ -138,6 +138,7 @@ mod tests {
             state,
             detail: "you changed this copy".to_owned(),
             cause: None,
+            compared: None,
         }
     }
 
