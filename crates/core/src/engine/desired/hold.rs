@@ -123,10 +123,11 @@ pub(crate) fn planning_manifest<'a>(
 /// declaration that accounts for it, because the owner is what carries a
 /// derived package's revision — reads fresh, while every other unpinned
 /// remote declaration and bundle is pinned at the commit its lock entries
-/// agree on. A declaration the lock cannot place (nothing installed, or
-/// installations disagreeing on their commit) is left to resolve fresh: a
-/// wrong pin would move it somewhere nobody asked for, and fresh is what a
-/// whole-scope apply gives it anyway.
+/// agree on. A declaration the lock cannot place — nothing installed,
+/// installations disagreeing on their commit, or entries recorded against
+/// a source this declaration no longer reads from — is left to resolve
+/// fresh: a wrong pin would move it somewhere nobody asked for, and fresh
+/// is what a whole-scope apply gives it anyway.
 fn held_manifest(
     manifest: &Manifest,
     lock: &Lock,
@@ -151,13 +152,16 @@ fn held_manifest(
             .declared(kind)
             .iter()
             .filter(|(name, decl)| {
-                decl.rev.is_none()
-                    && !exempt.contains(&Owner::Item(kind, (*name).clone()))
-                    && repo_sourced(manifest, &decl.source)
+                decl.rev.is_none() && !exempt.contains(&Owner::Item(kind, (*name).clone()))
             })
-            .filter_map(|(name, _)| {
-                agreed_commit(lock, |entry| entry.kind == kind && entry.name == *name)
-                    .map(|commit| (name.clone(), commit))
+            .filter_map(|(name, decl)| {
+                let repo = source_repo(manifest, &decl.source)?;
+                let commit = agreed_commit(lock, |entry| {
+                    entry.kind == kind
+                        && entry.name == *name
+                        && from_source(entry, &decl.source, repo)
+                })?;
+                Some((name.clone(), commit))
             })
             .collect();
         for (name, commit) in pinnable {
@@ -168,13 +172,15 @@ fn held_manifest(
         }
     }
     for (name, decl) in &mut held.bundles {
-        if decl.rev.is_some()
-            || exempt.contains(&Owner::Bundle(name.clone()))
-            || !repo_sourced(manifest, &decl.source)
-        {
+        if decl.rev.is_some() || exempt.contains(&Owner::Bundle(name.clone())) {
             continue;
         }
-        let Some(commit) = agreed_commit(lock, |entry| member_of(entry, name)) else {
+        let Some(repo) = source_repo(manifest, &decl.source) else {
+            continue;
+        };
+        let Some(commit) = agreed_commit(lock, |entry| {
+            member_of(entry, name) && from_source(entry, &decl.source, repo)
+        }) else {
             continue;
         };
         decl.rev = Some(commit);
@@ -183,14 +189,23 @@ fn held_manifest(
     (held, pins)
 }
 
-/// Whether a source can be read at a pinned commit at all: only a repo
-/// source has revisions, and pinning a path or local source would turn the
-/// whole plan into a typed refusal instead of holding anything.
-fn repo_sourced(manifest: &Manifest, source: &str) -> bool {
-    manifest
-        .sources
-        .get(source)
-        .is_some_and(|decl| decl.repo.is_some())
+/// The repository a declared source reads from, or `None` when it has
+/// none: only a repo source has revisions, and pinning a path or local
+/// source would turn the whole plan into a typed refusal instead of
+/// holding anything.
+fn source_repo<'a>(manifest: &'a Manifest, source: &str) -> Option<&'a str> {
+    manifest.sources.get(source)?.repo.as_deref()
+}
+
+/// Whether this installation came from where the declaration reads now.
+/// An entry recorded under a different source alias, or under a repository
+/// that alias no longer points at, carries a commit out of another
+/// history: pinning at it holds the package at content nobody chose, or at
+/// a sha the source cannot resolve at all. A declaration whose entries
+/// fail this is left to resolve fresh — the same answer the lock's other
+/// cannot-place cases get.
+fn from_source(entry: &crate::lock::LockEntry, source: &str, repo: &str) -> bool {
+    entry.source == source && crate::repo_move::same_repo(&entry.source_repo, repo)
 }
 
 /// The one commit every matching lock entry records, or `None` when there
@@ -219,142 +234,4 @@ fn member_of(entry: &crate::lock::LockEntry, bundle: &str) -> bool {
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
-mod tests {
-    use super::*;
-    use crate::lock::{BundleRef, LockEntry};
-    use crate::manifest::{ItemDecl, SourceDecl};
-    use crate::model::{HarnessId, Scope};
-
-    fn manifest_with(items: &[(&str, Option<&str>)], bundles: &[&str]) -> Manifest {
-        let mut manifest = Manifest::default();
-        manifest.sources.insert(
-            "cat".to_owned(),
-            SourceDecl {
-                repo: Some("owner/catalog".to_owned()),
-                enabled: true,
-                ..SourceDecl::default()
-            },
-        );
-        for (name, rev) in items {
-            let mut decl = ItemDecl::from_source("cat");
-            decl.rev = rev.map(str::to_owned);
-            manifest
-                .declared_mut(ItemKind::Skill)
-                .insert((*name).to_owned(), decl);
-        }
-        for name in bundles {
-            manifest
-                .bundles
-                .insert((*name).to_owned(), ItemDecl::from_source("cat"));
-        }
-        manifest
-    }
-
-    fn entry(name: &str, commit: Option<&str>, reasons: &[Reason]) -> LockEntry {
-        LockEntry {
-            name: name.to_owned(),
-            kind: ItemKind::Skill,
-            harness: HarnessId::Claude,
-            source: "cat".to_owned(),
-            source_repo: "owner/catalog".to_owned(),
-            method: crate::manifest::Method::Copy,
-            installed_at: "2026-01-01T00:00:00Z".to_owned(),
-            source_hash: "x".to_owned(),
-            source_commit: commit.map(str::to_owned),
-            rendered_hash: None,
-            enabled: true,
-            upstream_skills: None,
-            emitted: None,
-            registration: None,
-            left_pi_reserved_name: false,
-            reasons: reasons.iter().cloned().collect(),
-        }
-    }
-
-    fn lock_with(entries: &[(&str, LockEntry)]) -> Lock {
-        let mut lock = Lock::default();
-        for (key, entry) in entries {
-            lock.entries.insert((*key).to_owned(), entry.clone());
-        }
-        lock
-    }
-
-    #[test]
-    fn siblings_pin_at_their_commit_and_the_target_stays_free() {
-        let manifest = manifest_with(&[("a", None), ("b", None), ("held", Some("fff"))], &[]);
-        let lock = lock_with(&[
-            (
-                "skill:a:claude",
-                entry("a", Some("aaa"), &[Reason::Requested]),
-            ),
-            (
-                "skill:b:claude",
-                entry("b", Some("bbb"), &[Reason::Requested]),
-            ),
-        ]);
-
-        let (held, pins) = held_manifest(&manifest, &lock, &(ItemKind::Skill, "a".to_owned()));
-        let rev = |name: &str| held.declared(ItemKind::Skill)[name].rev.clone();
-        assert_eq!(rev("a"), None, "the target resolves fresh");
-        assert_eq!(rev("b"), Some("bbb".to_owned()), "the sibling holds");
-        assert_eq!(rev("held"), Some("fff".to_owned()), "a user pin is kept");
-
-        let mut written = held.clone();
-        pins.unpin(&mut written);
-        assert_eq!(
-            written, manifest,
-            "unpinning restores the manifest exactly — a written manifest never carries a synthetic hold"
-        );
-    }
-
-    #[test]
-    fn a_derived_targets_bundle_is_exempt_and_a_stranger_bundle_holds() {
-        let manifest = manifest_with(&[], &["kit", "other"]);
-        let of = |bundle: &str| Reason::MemberOf {
-            bundle: BundleRef {
-                source: "cat".to_owned(),
-                name: bundle.to_owned(),
-                scope: Scope::Global,
-            },
-        };
-        let lock = lock_with(&[
-            ("skill:m1:claude", entry("m1", Some("aaa"), &[of("kit")])),
-            ("skill:o1:claude", entry("o1", Some("bbb"), &[of("other")])),
-        ]);
-
-        let (held, _) = held_manifest(&manifest, &lock, &(ItemKind::Skill, "m1".to_owned()));
-        assert_eq!(
-            held.bundles["kit"].rev, None,
-            "the bundle carrying the target owns its revision, so it resolves fresh"
-        );
-        assert_eq!(
-            held.bundles["other"].rev,
-            Some("bbb".to_owned()),
-            "a bundle the target has nothing to do with holds at its members' commit"
-        );
-    }
-
-    #[test]
-    fn a_lock_that_cannot_place_a_package_pins_nothing_for_it() {
-        let manifest = manifest_with(&[("a", None), ("fresh", None), ("mixed", None)], &[]);
-        let lock = lock_with(&[
-            (
-                "skill:a:claude",
-                entry("a", Some("aaa"), &[Reason::Requested]),
-            ),
-            (
-                "skill:mixed:claude",
-                entry("mixed", Some("aaa"), &[Reason::Requested]),
-            ),
-            (
-                "skill:mixed:codex",
-                entry("mixed", Some("bbb"), &[Reason::Requested]),
-            ),
-        ]);
-
-        let (held, _) = held_manifest(&manifest, &lock, &(ItemKind::Skill, "a".to_owned()));
-        let rev = |name: &str| held.declared(ItemKind::Skill)[name].rev.clone();
-        assert_eq!(rev("fresh"), None, "nothing installed, nothing to hold at");
-        assert_eq!(rev("mixed"), None, "disagreeing installs invent no pin");
-    }
-}
+mod tests;

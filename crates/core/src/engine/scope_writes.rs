@@ -44,6 +44,53 @@ pub(super) fn manifest_pre(base: Option<&Base>, path: &Path) -> Result<Pre> {
     }
 }
 
+/// The plan's one manifest write, when anything needs it: skills an agent
+/// gained upstream take the full serialized write — or, without that, the
+/// repository move or the schema upgrade lands as a surgical text edit that
+/// keeps the user's comments and formatting. One write whatever put it
+/// there: a second manifest write could never run, its precondition binds
+/// to the bytes the first one replaces. The description names the biggest
+/// cause; the rest ride along in the same bytes.
+///
+/// `declared` is the manifest as the person wrote it (with the repository
+/// move applied), never the pinned copy a single-package update plans
+/// from: both surgical edits fall back to serializing it, and a synthetic
+/// pin in the file reads as a hold the person chose.
+pub(super) fn plan_manifest_write(
+    env: &Env,
+    scope: &Scope,
+    repo_moved: bool,
+    declared: &Manifest,
+    base: Option<&Base>,
+    state: &DesiredState,
+    ops: &mut Vec<PlannedOp>,
+) -> Result<()> {
+    let Some(update) = &state.manifest_update else {
+        if repo_moved {
+            return plan_repo_move_write(env, scope, declared, base, ops);
+        }
+        if declared.schema < crate::manifest::MANIFEST_SCHEMA {
+            plan_schema_upgrade(env, scope, declared, base, ops)?;
+        }
+        return Ok(());
+    };
+    let path = crate::manifest::manifest_path(env, scope);
+    let mut updated = update.clone();
+    updated.schema = crate::manifest::MANIFEST_SCHEMA;
+    ops.push(PlannedOp {
+        description: match repo_moved {
+            true => crate::repo_move::MOVE_DESCRIPTION.into(),
+            false => "Add new catalog skills to kendex.toml".into(),
+        },
+        op: Op::WriteManifest {
+            pre: manifest_pre(base, &path)?,
+            path,
+            manifest: Box::new(updated),
+        },
+    });
+    Ok(())
+}
+
 /// One mutation per config file, whatever asked for it — a single
 /// precondition can hold; per-edit preconditions against the same original
 /// bytes cannot.

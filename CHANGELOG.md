@@ -81,6 +81,9 @@ an outside contributor.
 - Updating one package no longer brings the scope's other following packages
   along — from the Updates page, a package page, or the new
   `kendex updates apply <kind> <name>`. `kendex refresh` still updates everything.
+- Updating or holding one package no longer brings the scope's other following
+  packages along — from the Updates page, a package page, `kendex pin`, or the
+  new `kendex updates apply <kind> <name>`. `kendex refresh` still updates everything.
 - **Breaking:** in `kendex check --json`, a not-yet-evaluated line now has
   `"class": "unevaluated"` where it had `"class": "unknown"`. A parser
   matching that field exhaustively has to accept the new value.

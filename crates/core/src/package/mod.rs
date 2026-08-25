@@ -279,12 +279,22 @@ pub fn update_one(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Resul
     // Derived packages (bundle members, dependencies) have no declaration
     // of their own — their lock entries are what names them here.
     let declared = manifest.declared(kind).contains_key(name);
-    let installed = match crate::lock::load_file(&crate::lock::lock_path(env, scope))? {
+    let lock_path = crate::lock::lock_path(env, scope);
+    let installed = match crate::lock::load_file(&lock_path)? {
         crate::lock::LockFile::Current(lock) => lock
             .entries
             .values()
             .any(|entry| entry.kind == kind && entry.name == name),
-        _ => false,
+        // Nothing recorded yet — a declared package still plans.
+        crate::lock::LockFile::Absent => false,
+        // A v1 lock is refused here for the same reason a v1 manifest is:
+        // read as "not installed", a declared package would fall through
+        // to the whole-scope audit's observation-only posture and this
+        // verb would answer with an empty plan nothing surfaces, while a
+        // derived one would be blamed on the name the caller typed.
+        crate::lock::LockFile::Legacy { .. } => {
+            return Err(CoreError::LegacyLock { path: lock_path });
+        }
     };
     if !declared && !installed {
         return Err(CoreError::NotDeclared {
@@ -295,10 +305,7 @@ pub fn update_one(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Resul
     crate::engine::plan_apply(
         env,
         scope,
-        &crate::engine::PlanOptions {
-            update_only: Some((kind, name.to_owned())),
-            ..Default::default()
-        },
+        &crate::engine::PlanOptions::for_package(kind, name),
     )
 }
 

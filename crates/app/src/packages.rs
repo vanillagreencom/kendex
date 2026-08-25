@@ -135,10 +135,7 @@ pub fn package_set_rev(
         kind,
         &name,
         rev.as_deref(),
-        &engine::PlanOptions {
-            update_only: Some((kind, name.clone())),
-            ..Default::default()
-        },
+        &engine::PlanOptions::for_package(kind, &name),
     )
     .map_err(|e| e.to_string())?;
     apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
@@ -282,11 +279,7 @@ pub fn apply_discard_edits(
             kind,
             &name,
             Some(&rev),
-            &engine::PlanOptions {
-                overwrite_edited_names: Some(vec![(kind, name.clone())]),
-                update_only: Some((kind, name.clone())),
-                ..Default::default()
-            },
+            &engine::PlanOptions::for_package_discarding_edits(kind, &name),
         )
         .map_err(|e| e.to_string())?;
         apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
@@ -302,11 +295,7 @@ pub fn apply_discard_edits(
         &scope,
         &manifest,
         &lock,
-        &engine::PlanOptions {
-            overwrite_edited_names: Some(vec![(kind, name.clone())]),
-            update_only: Some((kind, name)),
-            ..Default::default()
-        },
+        &engine::PlanOptions::for_package_discarding_edits(kind, name),
     )
     .map_err(|e| e.to_string())?;
     apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;

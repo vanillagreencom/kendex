@@ -66,10 +66,28 @@ fn write_skill(dir: &Path, name: &str, frontmatter_extra: &str, body: &str) {
 }
 
 #[allow(clippy::unwrap_used)]
+fn write_agent(dir: &Path, name: &str, body: &str) {
+    let agents = dir.join("agents");
+    fs::create_dir_all(&agents).unwrap();
+    fs::write(
+        agents.join(format!("{name}.md")),
+        format!("---\nname: {name}\ndescription: about {name}\nmodel: opus\n---\n{body}\n"),
+    )
+    .unwrap();
+}
+
+#[allow(clippy::unwrap_used)]
 fn world() -> World {
+    world_at(REPO)
+}
+
+/// A world whose catalog is served under a named repository path — what a
+/// scope that still names the repository kendex moved from needs.
+#[allow(clippy::unwrap_used)]
+fn world_at(repo: &str) -> World {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().to_path_buf();
-    let upstream = home.join("git").join(REPO);
+    let upstream = home.join("git").join(repo);
     fs::create_dir_all(&upstream).unwrap();
     git(&upstream, &["init", "--quiet", "-b", "main"]);
     fs::create_dir_all(home.join(".claude")).unwrap();
@@ -88,15 +106,26 @@ fn world() -> World {
 
 #[allow(clippy::unwrap_used)]
 fn declare(w: &World, body: &str) {
+    declare_from(w, REPO, body);
+}
+
+/// [`declare`] naming an explicit repository, for the scopes whose source
+/// points somewhere other than this file's default catalog.
+#[allow(clippy::unwrap_used)]
+fn declare_from(w: &World, repo: &str, body: &str) {
+    write_manifest(
+        w,
+        &format!(
+            "schema = 6\n\n[sources.cat]\nrepo = \"{repo}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{body}"
+        ),
+    );
+}
+
+#[allow(clippy::unwrap_used)]
+fn write_manifest(w: &World, text: &str) {
     let path = manifest::manifest_path(&w.env, &w.scope);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(
-        &path,
-        format!(
-            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{body}"
-        ),
-    )
-    .unwrap();
+    fs::write(&path, text).unwrap();
 }
 
 #[allow(clippy::unwrap_used)]

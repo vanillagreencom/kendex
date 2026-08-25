@@ -212,6 +212,29 @@ pub struct PlanOptions {
 }
 
 impl PlanOptions {
+    /// A plan scoped to one package: it resolves at its source's tip while
+    /// every other follower in the scope holds at the commit its lock
+    /// records. What every single-package surface asks for — the Updates
+    /// page, the package page, a hold move from the app or the CLI.
+    pub fn for_package(kind: ItemKind, name: impl Into<String>) -> Self {
+        PlanOptions {
+            update_only: Some((kind, name.into())),
+            ..PlanOptions::default()
+        }
+    }
+
+    /// [`PlanOptions::for_package`] that also discards that package's own
+    /// edits. Both fields are set from one pair, so the package whose
+    /// edits go and the package that moves can never be different ones.
+    pub fn for_package_discarding_edits(kind: ItemKind, name: impl Into<String>) -> Self {
+        let target = (kind, name.into());
+        PlanOptions {
+            overwrite_edited_names: Some(vec![target.clone()]),
+            update_only: Some(target),
+            ..PlanOptions::default()
+        }
+    }
+
     /// Whether the caller named this exact installation for removal: an
     /// instruction about this item, never a judgement about what anything
     /// still wants. Every hold that a typed removal releases asks it here,

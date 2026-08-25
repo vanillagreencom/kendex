@@ -50,8 +50,16 @@ pub fn run(env: &Env, args: PinArgs) -> CliResult {
     }
     let filter = ScopeFilter::resolve(args.scope.as_deref(), args.global, ScopeFilter::Project)?;
     let scope = resolve_scopes(env, filter)?.remove(0);
-    let report =
-        kendex_core::package::set_rev(env, &scope, kind, &args.name, args.version.as_deref())?;
+    // Scoped to the package named, exactly as the app's hold move is: the
+    // scope's other followers stay at the commit they are installed from.
+    let report = kendex_core::package::set_rev_with(
+        env,
+        &scope,
+        kind,
+        &args.name,
+        args.version.as_deref(),
+        &kendex_core::engine::PlanOptions::for_package(kind, &args.name),
+    )?;
     print_report(env, &report);
     confirm_and_execute(env, &report, args.yes)?;
     match args.version {

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::apply::{Op, Plan, PlannedOp};
+use crate::apply::{Plan, PlannedOp};
 use crate::env::Env;
 use crate::error::Result;
 use crate::lock::{Lock, LockFile, lock_path};
@@ -71,8 +71,7 @@ pub fn installed_paths(
 use desired::desired_state;
 pub use scope_writes::persists_manifest;
 use scope_writes::{
-    plan_config_edits, plan_lock_write, plan_repo_move_write, plan_schema_upgrade,
-    plan_settings_seed, source_revisions,
+    plan_config_edits, plan_lock_write, plan_manifest_write, plan_settings_seed, source_revisions,
 };
 pub use set_change::{KeptInstall, SetChange, SetDirection};
 use set_change::{kept_members, set_changes};
@@ -115,28 +114,27 @@ fn plan_scope_once(
     let moved_lock = crate::repo_move::migrate_lock(lock);
     let repo_moved = moved_manifest.is_some();
     let disk_lock = lock;
-    let manifest = moved_manifest.as_ref().unwrap_or(manifest);
+    // What the person declared, as this build reads it: the manifest any
+    // write this plan carries is built from.
+    let declared = moved_manifest.as_ref().unwrap_or(manifest);
     let lock = moved_lock.as_ref().unwrap_or(lock);
-    // A single-package update plans from a copy of the manifest with every
+    // A single-package update reads from a copy of the manifest with every
     // other follower pinned at its installed commit — the pins steer this
-    // pass's reads and are stripped from any manifest this plan writes.
-    let (planning, held_pins) = desired::hold::planning_manifest(manifest, lock, options);
-    let manifest = planning.as_ref();
-    let mut state = desired_state(env, scope, manifest, lock)?;
-    if let (Some(pins), Some(update)) = (&held_pins, state.manifest_update.as_mut()) {
-        pins.unpin(update);
-    }
+    // pass and never reach the file.
+    let (manifest, state) = desired_pass(env, scope, declared, lock, options)?;
     // Advisory scoring over what this plan would write, before the ops are
     // planned: the rows ride out on the report beside the plan.
     let safety = scoring::run(scope, &state);
     let mut drift = Vec::new();
     let mut ops: Vec<PlannedOp> = Vec::new();
-    let mut new_lock = fresh_lock(manifest, lock, &state);
+    let mut new_lock = fresh_lock(&manifest, lock, &state);
     let mut written = written::Written::default();
     let mut config_edits = config_edits::ConfigEditPlan::default();
 
     let base = options.manifest_base.as_ref();
-    plan_manifest_write(env, scope, repo_moved, manifest, base, &state, &mut ops)?;
+    // `declared`, never the planning copy: a synthetic pin serialized into
+    // the file is a hold the person never asked for.
+    plan_manifest_write(env, scope, repo_moved, declared, base, &state, &mut ops)?;
 
     // Answered before anything is planned, and read again when the move is
     // planned: a pi hook whose copy under the name pi reserved is not this
@@ -173,7 +171,7 @@ fn plan_scope_once(
     let moved_out = pi_hooks_move::plan_move(
         env,
         scope,
-        manifest,
+        &manifest,
         lock,
         &state,
         &legacy_pi,
@@ -202,7 +200,7 @@ fn plan_scope_once(
     let sweepable = removal::orphans(
         env,
         scope,
-        manifest,
+        &manifest,
         lock,
         &state,
         options,
@@ -239,9 +237,33 @@ fn plan_scope_once(
         safety,
     };
     report.notes.extend(moved_notes);
-    unmanaged_rows(env, scope, manifest, lock, &state.items, &mut report.drift)?;
+    unmanaged_rows(env, scope, &manifest, lock, &state.items, &mut report.drift)?;
     takeover::refuse_unsettled_takeover(options, &report.drift)?;
     Ok(report)
+}
+
+/// The manifest this pass reads from and the state it derives: `declared`
+/// itself, or — under `update_only` — a copy with every other follower
+/// pinned at the commit its lock entries agree on.
+///
+/// The synthetic holds come back out of the manifest this pass computed
+/// before anything can write it: that manifest is a copy of the pinned
+/// one, and no written manifest may carry a pin as if the person had
+/// chosen it. The plan's other manifest writes never see the pinned copy
+/// at all — [`plan_scope_once`] hands `plan_manifest_write` `declared`.
+fn desired_pass<'a>(
+    env: &Env,
+    scope: &Scope,
+    declared: &'a Manifest,
+    lock: &Lock,
+    options: &PlanOptions,
+) -> Result<(std::borrow::Cow<'a, Manifest>, desired::DesiredState)> {
+    let (planning, held_pins) = desired::hold::planning_manifest(declared, lock, options);
+    let mut state = desired_state(env, scope, planning.as_ref(), lock)?;
+    if let (Some(pins), Some(update)) = (&held_pins, state.manifest_update.as_mut()) {
+        pins.unpin(update);
+    }
+    Ok((planning, state))
 }
 
 /// The record this pass will write, before any of it is filled in: the
@@ -258,48 +280,6 @@ fn fresh_lock(manifest: &Manifest, lock: &Lock, state: &desired::DesiredState) -
 
 /// What earlier installs put on disk under another kind's name. A path
 /// one of them wrote is ours to replace, whichever entry holds it now.
-/// The plan's one manifest write, when anything needs it: skills an agent
-/// gained upstream take the full serialized write — or, without that, the
-/// repository move or the schema upgrade lands as a surgical text edit that
-/// keeps the user's comments and formatting. One write whatever put it
-/// there: a second manifest write could never run, its precondition binds
-/// to the bytes the first one replaces. The description names the biggest
-/// cause; the rest ride along in the same bytes.
-fn plan_manifest_write(
-    env: &Env,
-    scope: &Scope,
-    repo_moved: bool,
-    manifest: &Manifest,
-    base: Option<&crate::base::Base>,
-    state: &desired::DesiredState,
-    ops: &mut Vec<PlannedOp>,
-) -> Result<()> {
-    let Some(update) = &state.manifest_update else {
-        if repo_moved {
-            return plan_repo_move_write(env, scope, manifest, base, ops);
-        }
-        if manifest.schema < manifest::MANIFEST_SCHEMA {
-            plan_schema_upgrade(env, scope, manifest, base, ops)?;
-        }
-        return Ok(());
-    };
-    let path = manifest::manifest_path(env, scope);
-    let mut updated = update.clone();
-    updated.schema = manifest::MANIFEST_SCHEMA;
-    ops.push(PlannedOp {
-        description: match repo_moved {
-            true => crate::repo_move::MOVE_DESCRIPTION.into(),
-            false => "Add new catalog skills to kendex.toml".into(),
-        },
-        op: Op::WriteManifest {
-            pre: scope_writes::manifest_pre(base, &path)?,
-            path,
-            manifest: Box::new(updated),
-        },
-    });
-    Ok(())
-}
-
 /// A scope still under the old product name renames first: everything
 /// planned so far read from — and bound its preconditions to — the
 /// old-name files, and a rename preserves bytes, so retargeting the paths

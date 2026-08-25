@@ -44,6 +44,23 @@ fn git(dir: &Path, args: &[&str]) {
     );
 }
 
+/// [`git`] for a command whose output is the answer.
+#[allow(clippy::unwrap_used)]
+fn git_stdout(dir: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_PREFIX")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git {args:?}");
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
 #[allow(clippy::unwrap_used)]
 fn children(dir: &Path) -> Vec<std::path::PathBuf> {
     let mut entries: Vec<std::path::PathBuf> = fs::read_dir(dir)
@@ -214,4 +231,67 @@ fn updates_lines_lead_with_their_place() {
             .any(|line| line.starts_with("global  skill gh")),
         "{said}"
     );
+}
+
+/// `kendex pin` moves one hold and nothing else. Planned whole-scope, it
+/// brings every other follower current as a side effect — an unasked-for
+/// version bump landing on a package the person only wanted left alone.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn pinning_one_package_leaves_the_scopes_followers_where_they_are() {
+    let tmp = fixture();
+    let home = tmp.path();
+    let proj = home.join("proj");
+    let upstream = home.join("git/vanillagreencom/kendex");
+
+    fs::create_dir_all(upstream.join("skills/sib")).unwrap();
+    fs::write(
+        upstream.join("skills/sib/SKILL.md"),
+        "---\nname: sib\ndescription: the neighbour\n---\nSibling v1.\n",
+    )
+    .unwrap();
+    git(&upstream, &["add", "."]);
+    git(&upstream, &["commit", "--quiet", "-m", "two"]);
+
+    let output = kendex(
+        home,
+        &proj,
+        &["add", "--skill", "gh", "--skill", "sib", "-y"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Both packages move upstream; only `gh` is asked to.
+    fs::write(
+        upstream.join("skills/gh/SKILL.md"),
+        "---\nname: gh\ndescription: github flows\n---\nUpstream v2.\n",
+    )
+    .unwrap();
+    fs::write(
+        upstream.join("skills/sib/SKILL.md"),
+        "---\nname: sib\ndescription: the neighbour\n---\nSibling v2.\n",
+    )
+    .unwrap();
+    git(&upstream, &["commit", "--quiet", "-am", "three"]);
+    let tip = git_stdout(&upstream, &["rev-parse", "HEAD"]);
+
+    let output = kendex(home, &proj, &["pin", "skill", "gh", &tip, "-y"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let gh = fs::read_to_string(proj.join(".agents/skills/gh/SKILL.md")).unwrap();
+    assert!(gh.contains("Upstream v2"), "the hold moved: {gh}");
+    let sib = fs::read_to_string(proj.join(".agents/skills/sib/SKILL.md")).unwrap();
+    assert!(
+        sib.contains("Sibling v1"),
+        "holding one package must not bring the scope's other followers current: {sib}"
+    );
+    let manifest = fs::read_to_string(proj.join("kendex.toml")).unwrap();
+    assert!(manifest.contains(&tip), "the hold is recorded: {manifest}");
 }
