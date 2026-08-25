@@ -113,6 +113,7 @@ mod tests {
             "@vanillagreen/pi-hooks",
             "./packages/@vanillagreen/pi-hooks",
             "/abs/path/packages/@vanillagreen/pi-hooks",
+            "./cache/foo@1.2.0/pi-hooks",
             "npm:@vanillagreen/pi-hooks@0.4.0",
             "npm:pi-hooks@1.2.3",
             "./packages/pi-hooks/",
