@@ -4,6 +4,9 @@ crates/core/src/engine/adopt.rs	539
 crates/core/src/engine/desired_agent.rs	525
 crates/core/src/engine/gate.rs	430
 crates/core/src/engine/ops/add.rs	549
+crates/core/src/engine/pi_hooks_move/migrated.rs	540
+crates/core/src/engine/pi_hooks_move/mod.rs	508
+crates/core/src/engine/pi_hooks_move/preflight.rs	765
 crates/core/src/error.rs	429
 crates/core/src/quality/author.rs	458
 crates/core/src/remote/store.rs	420

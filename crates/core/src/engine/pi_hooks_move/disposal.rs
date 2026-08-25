@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use crate::configedit::ConfigEdit;
 use crate::error::Result;
 
-use super::{Found, Identity, Sink, look, trash, unreadable_note};
+use super::migrated::Identity;
+use super::{Found, Sink, look, trash, unreadable_note};
 
 /// The reserved directory, once every file's fate is known: taken whole
 /// when everything in it is kendex's to take, file by file when something

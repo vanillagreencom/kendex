@@ -1,10 +1,15 @@
-//! Has this hook's installation finished moving, and is what runs it
-//! still where kendex put it? Both questions read the new path and the
-//! new registry, and both are answered through one reading of the
-//! registry so they can never disagree about it.
+//! What the record kept of a hook's registration, and what the two
+//! registries say about it: which entry in a document is the one the
+//! record names, whether the installation has finished moving and what
+//! runs it at the new path is still what the record says, and the fact a
+//! pass writes down once the move is over. Every question about the new
+//! registry goes through one reading of it, so no two can disagree.
+
+use std::collections::BTreeSet;
+use std::path::Path;
 
 use super::super::desired::{Artifact, DesiredState};
-use super::{Found, Identity, Registered, legacy_registration, look, registered};
+use super::{Found, LEGACY_DIR, look};
 use crate::configedit::ConfigEdit;
 use crate::env::Env;
 use crate::harness::pi;
@@ -340,4 +345,196 @@ fn rendered_event(state: &DesiredState, name: &str) -> Option<String> {
         ConfigEdit::RemoveHook { event, .. } => event.clone(),
         _ => None,
     })
+}
+
+// Which registration in a document is the one a record names.
+//
+// Every field the lock kept is part of that identity — the command, and
+// the event and matcher where it kept them — never the command alone: an
+// entry found where the record does not point is not this registration,
+// and removing by the recorded identity would take nothing while the one
+// somebody moved kept firing. What the record did not keep is unknown,
+// and unknown is never filled in from what this pass would render: a
+// catalog is free to have changed either since the entry was written.
+
+/// What the identity the lock recorded for one hook's registration
+/// resolves to in a registry.
+///
+/// The first four are what identity matching alone can say. The last is
+/// an answer about what kendex may do with what it found — a shape its
+/// own edits step over — which the caller that reads the document adds.
+pub(super) enum Registered {
+    /// Exactly one registration answers to the recorded identity.
+    Ours,
+    /// The recorded command is nowhere in this document.
+    Absent,
+    /// It is here, but not where the identity the record kept points.
+    Elsewhere,
+    /// More than one registration answers to it; none can be told from
+    /// the others.
+    Ambiguous,
+    /// It is exactly where the record says — and written in a shape
+    /// kendex's own edit cannot reach, so applying that edit would put a
+    /// second entry beside it rather than keep it up to date, or leave it
+    /// running when the pass meant to take it out.
+    Unreachable,
+}
+
+/// What the record kept of one registration — everything the identity has
+/// to go on, and nothing derived from what this pass would write. A field
+/// left `None` is one the record never held: unknown, which is not the
+/// same as "none", and is never compared.
+pub(super) struct Identity {
+    pub(super) event: Option<String>,
+    pub(super) matcher: Option<String>,
+    pub(super) command: String,
+}
+
+/// The registry entry one hook left behind, as the identity that names
+/// it: the event it fires on and the command that runs.
+///
+/// The record carries both for a script-less custom hook, whose command
+/// is the person's own and cannot be re-derived. A script-backed hook
+/// keeps no record of either, so the command is re-derived from the old
+/// layout and the event is left unsaid — because the event the older
+/// kendex registered it under is not knowable here. It is not the event
+/// this pass renders: a catalog is free to change a hook's event, and
+/// then the registration waiting to be migrated sits under the event the
+/// previous version installed. Reading the new event onto the old entry
+/// would call an ordinary catalog change tampering and hold the
+/// installation with nothing the person could do about it.
+///
+/// What keeps that honest is the uniqueness rule the identity applies:
+/// with no event to check, a command carried once in the document is
+/// kendex's own, and a command carried twice is nobody's to take.
+pub(super) fn legacy_registration(entry: &LockEntry, scope: &Scope, root: &Path) -> Identity {
+    match &entry.registration {
+        // A hook with no script of its own is one registry entry and
+        // nothing else — the person's own command, which says nothing
+        // about a path and so reads the same wherever the entry lives.
+        // The record names it under the reserved name as surely as at the
+        // new one.
+        Some(recorded) if entry.rendered_hash.is_none() => Identity {
+            event: Some(recorded.event.clone()),
+            matcher: recorded.matcher.clone(),
+            command: recorded.command.clone(),
+        },
+        // A script-backed hook's record describes the entry at the new
+        // path: its command spells that path, and its event is the one
+        // this install registered there — neither of them evidence about
+        // what an older kendex wrote under the reserved name. So the
+        // command is derived from the old layout and the rest stays
+        // unsaid, which is where it was left when reading the new event
+        // onto the old entry turned a catalog's own change into
+        // tampering.
+        _ => {
+            let file = pi::hook_file(&entry.name);
+            let command = match scope {
+                Scope::Global => {
+                    format!("bash \"{}\"", root.join(LEGACY_DIR).join(&file).display())
+                }
+                Scope::Project { .. } => {
+                    format!("bash \"$(git rev-parse --show-toplevel)/.pi/{LEGACY_DIR}/{file}\"")
+                }
+            };
+            Identity {
+                event: None,
+                matcher: None,
+                command,
+            }
+        }
+    }
+}
+
+pub(super) fn registered(
+    entries: &[crate::scan::hooks::Registration],
+    identity: &Identity,
+) -> Registered {
+    // Everything the record can tell this registration by: its command,
+    // and the event and matcher wherever it kept them. The parts as the
+    // document keys them, never a name taken apart again — the character
+    // that joins those parts for display is legal inside two of them.
+    let answering: Vec<&crate::scan::hooks::Registration> = entries
+        .iter()
+        .filter(|entry| {
+            entry.command == identity.command
+                && identity
+                    .event
+                    .as_deref()
+                    .is_none_or(|event| entry.event == event)
+                && identity
+                    .matcher
+                    .as_deref()
+                    .is_none_or(|matcher| entry.matcher == matcher)
+        })
+        .collect();
+    match answering.len() {
+        // Exactly one thing in the document is what the record describes.
+        1 => Registered::Ours,
+        // More than one, and every field the record kept is the same
+        // across them: kendex cannot tell its own from the others, and
+        // taking one by guess would leave the rest running a script it
+        // had taken away. A record naming an event and a matcher can tell
+        // two such entries apart, and two entries it can tell apart are
+        // two registrations rather than one puzzle.
+        2.. => Registered::Ambiguous,
+        // Nothing answers to the record. Whether that is because there is
+        // nothing of this hook's here at all, or because somebody moved
+        // what is here, is what the command alone can still say.
+        0 => match entries
+            .iter()
+            .any(|entry| entry.command == identity.command)
+        {
+            true => Registered::Elsewhere,
+            false => Registered::Absent,
+        },
+    }
+}
+
+// Writing down that a move is over.
+//
+// A finished move is a fact about the past, and the lock is where facts
+// about the past live. Deriving it from the present is what let an edit
+// to the new copy, or a catalog changing a hook's event, re-open a move
+// that had ended.
+
+/// The one place the record is written, once every entry that will exist
+/// does. A finished move is a fact about the past, so no later pass has to
+/// work it out again from bytes and registrations that have every right to
+/// change afterwards; it rides the same plan as the removals it describes,
+/// so an apply that fails rolls both back.
+pub(crate) fn record_finished(new_lock: &mut crate::lock::Lock, finished: &BTreeSet<String>) {
+    for name in finished {
+        let key = crate::lock::entry_key(ItemKind::Hook, name, HarnessId::Pi);
+        if let Some(entry) = new_lock.entries.get_mut(&key) {
+            entry.left_pi_reserved_name = true;
+        }
+    }
+}
+
+/// Every pi hook this scope knows about, installed or being installed —
+/// what a plan that finds nothing at all under the reserved name may call
+/// finished.
+pub(super) fn every_pi_hook(entries: &[&LockEntry], state: &DesiredState) -> BTreeSet<String> {
+    entries
+        .iter()
+        .map(|entry| entry.name.clone())
+        .chain(desired_pi_hooks(state))
+        .collect()
+}
+
+/// The pi hooks this pass installs that no lock entry names: the ones
+/// with no history under the reserved name to have anything left in.
+pub(super) fn newly_installed(entries: &[&LockEntry], state: &DesiredState) -> BTreeSet<String> {
+    desired_pi_hooks(state)
+        .filter(|name| !entries.iter().any(|entry| &entry.name == name))
+        .collect()
+}
+
+fn desired_pi_hooks(state: &DesiredState) -> impl Iterator<Item = String> + '_ {
+    state
+        .items
+        .iter()
+        .filter(|item| item.kind == ItemKind::Hook && item.harness == HarnessId::Pi)
+        .map(|item| item.name.clone())
 }
