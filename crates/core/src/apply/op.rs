@@ -1,7 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::journal;
 pub use super::pre::Pre;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
@@ -30,6 +29,13 @@ pub enum Op {
     Rename {
         from: PathBuf,
         to: PathBuf,
+        /// Checked against `from`: the bytes the plan proved it may move.
+        /// A writer outside the transaction landing on the source after
+        /// the journal snapshot must abort the move — a completed rename
+        /// puts its paths in the restore set, so a later refusal's
+        /// rollback would delete the moved bytes and restore the old
+        /// snapshot over the source.
+        from_pre: Pre,
         /// Checked against `to`: rename(2) replaces its destination
         /// silently, so a file that appeared since planning must abort.
         to_pre: Pre,
@@ -97,6 +103,10 @@ impl Op {
         }
     }
 
+    /// Contract for every arm: `PlanStale` may only be returned before the
+    /// op has mutated anything, because the in-process rollback takes that
+    /// error as proof the failing op ran nothing and leaves its paths out
+    /// of the restore set (see `mutated_before_failure`).
     pub(super) fn run(&self, env: &Env) -> Result<()> {
         match self {
             Op::WriteFile { path, bytes, pre } => {
@@ -115,9 +125,15 @@ impl Op {
                 if link.is_symlink() {
                     fs::remove_file(link).map_err(|e| CoreError::io(link, e))?;
                 }
-                journal::make_symlink(target, link)
+                crate::fs::make_symlink(target, link)
             }
-            Op::Rename { from, to, to_pre } => {
+            Op::Rename {
+                from,
+                to,
+                from_pre,
+                to_pre,
+            } => {
+                from_pre.check(from)?;
                 to_pre.check(to)?;
                 fs::rename(from, to).map_err(|e| CoreError::io(from, e))
             }
@@ -133,11 +149,11 @@ impl Op {
                 if fs::rename(path, &dest).is_err() {
                     // Cross-device: copy then remove.
                     if path.is_dir() {
-                        journal::copy_tree(path, &dest)?;
+                        crate::fs::copy_tree(path, &dest)?;
                     } else {
                         fs::copy(path, &dest).map_err(|e| CoreError::io(path, e))?;
                     }
-                    journal::remove_any(path)?;
+                    crate::fs::remove_any(path)?;
                 }
                 Ok(())
             }
@@ -193,7 +209,7 @@ impl Op {
 
 fn write_tree(root: &Path, files: &[(PathBuf, Vec<u8>)], pre: &Pre) -> Result<()> {
     pre.check(root)?;
-    journal::remove_any(root)?;
+    crate::fs::remove_any(root)?;
     for (rel, bytes) in files {
         let dest = root.join(rel);
         if let Some(parent) = dest.parent() {

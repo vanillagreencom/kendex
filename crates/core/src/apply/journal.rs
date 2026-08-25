@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, Result};
+use crate::fs::{copy_tree, make_symlink, remove_any, sync_dir, sync_file, sync_tree};
 
 /// Pre-images of everything an apply is about to touch. Restore is
 /// idempotent, so a crash mid-rollback recovers by rolling back again.
@@ -97,40 +98,28 @@ pub fn write(dir: &Path, paths: &[PathBuf]) -> Result<()> {
     Ok(())
 }
 
-fn sync_file(path: &Path) -> Result<()> {
-    fs::File::open(path)
-        .and_then(|f| f.sync_all())
-        .map_err(|e| CoreError::io(path, e))
+/// Where a filtered restore persists its filter before touching anything.
+/// Crash recovery must re-run the same filter, not widen to every
+/// snapshot: the paths the filter excludes hold bytes a writer outside
+/// the transaction landed, the very bytes whose refusal triggered the
+/// restore.
+fn restore_set_path(dir: &Path) -> PathBuf {
+    dir.join("restore.json")
 }
 
-/// Directory fsync is a no-op on platforms where directories cannot be
-/// opened (Windows); rename durability there rides on the volume flush.
-fn sync_dir(path: &Path) {
-    #[cfg(unix)]
-    if let Ok(dir) = fs::File::open(path) {
-        let _ = dir.sync_all();
-    }
-    #[cfg(not(unix))]
-    let _ = path;
-}
-
-fn sync_tree(root: &Path) -> Result<()> {
-    if root.is_file() {
-        return sync_file(root);
-    }
-    if let Ok(entries) = fs::read_dir(root) {
-        for entry in entries.flatten() {
-            sync_tree(&entry.path())?;
-        }
-        sync_dir(root);
-    }
-    Ok(())
-}
-
-/// Restore every pre-image. Used both for in-process rollback after a
-/// mid-mutation failure and for crash recovery on the next run, where
-/// nothing can know which ops ran.
+/// Crash recovery: restore pre-images for a journal an interrupted apply
+/// left behind. An interrupted filtered restore persisted its restore set
+/// first, so recovery re-runs exactly that filter; with no persisted set,
+/// nothing can know which ops ran and every pre-image is restored.
 pub fn rollback(dir: &Path) -> Result<()> {
+    // The set is written atomically, so it is complete or absent; a parse
+    // failure is outside corruption, and the full restore below is the
+    // only set recovery can still justify.
+    if let Some(text) = crate::fs::read_if_exists(&restore_set_path(dir))?
+        && let Ok(mutated) = serde_json::from_str::<Vec<PathBuf>>(&text)
+    {
+        return rollback_filtered(dir, &mutated);
+    }
     rollback_where(dir, |_| true)
 }
 
@@ -140,10 +129,25 @@ pub fn rollback(dir: &Path) -> Result<()> {
 /// which ops ran; restoring the rest would put the journal's snapshot over
 /// bytes a writer outside the transaction landed after the journal was
 /// taken — the precondition that stopped the apply refused to overwrite
-/// those bytes, so the rollback must not either. A crash between this
-/// restore and the journal clearing still recovers with the full
-/// [`rollback`], which cannot make that distinction.
+/// those bytes, so the rollback must not either. The restore set is made
+/// durable before the first path is touched, so a crash mid-restore
+/// recovers with the same filter instead of falling back to a full
+/// restore that would destroy those protected bytes after all.
 pub fn rollback_mutated(dir: &Path, mutated: &[PathBuf]) -> Result<()> {
+    persist_restore_set(dir, mutated)?;
+    rollback_filtered(dir, mutated)
+}
+
+fn persist_restore_set(dir: &Path, mutated: &[PathBuf]) -> Result<()> {
+    let path = restore_set_path(dir);
+    let json = serde_json::to_string_pretty(mutated).map_err(|e| CoreError::JsonParse {
+        path: path.clone(),
+        message: e.to_string(),
+    })?;
+    crate::fs::atomic_write_durable(&path, &json)
+}
+
+fn rollback_filtered(dir: &Path, mutated: &[PathBuf]) -> Result<()> {
     rollback_where(dir, |path| {
         mutated.iter().any(|m| m == path || m.starts_with(path))
     })
@@ -214,52 +218,6 @@ pub fn pending(dir: &Path) -> bool {
     dir.join("meta.json").is_file()
 }
 
-pub fn remove_any(path: &Path) -> Result<()> {
-    if path.is_symlink() || path.is_file() {
-        fs::remove_file(path).map_err(|e| CoreError::io(path, e))?;
-    } else if path.is_dir() {
-        fs::remove_dir_all(path).map_err(|e| CoreError::io(path, e))?;
-    }
-    Ok(())
-}
-
-pub fn copy_tree(from: &Path, to: &Path) -> Result<()> {
-    fs::create_dir_all(to).map_err(|e| CoreError::io(to, e))?;
-    for entry in fs::read_dir(from)
-        .map_err(|e| CoreError::io(from, e))?
-        .flatten()
-    {
-        let source = entry.path();
-        let Some(name) = source.file_name() else {
-            continue;
-        };
-        let dest = to.join(name);
-        if source.is_symlink() {
-            let target = fs::read_link(&source).map_err(|e| CoreError::io(&source, e))?;
-            make_symlink(&target, &dest)?;
-        } else if source.is_dir() {
-            copy_tree(&source, &dest)?;
-        } else {
-            fs::copy(&source, &dest).map_err(|e| CoreError::io(&source, e))?;
-        }
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
-pub fn make_symlink(target: &Path, link: &Path) -> Result<()> {
-    std::os::unix::fs::symlink(target, link).map_err(|e| CoreError::io(link, e))
-}
-
-#[cfg(windows)]
-pub fn make_symlink(target: &Path, link: &Path) -> Result<()> {
-    if target.is_dir() {
-        std::os::windows::fs::symlink_dir(target, link).map_err(|e| CoreError::io(link, e))
-    } else {
-        std::os::windows::fs::symlink_file(target, link).map_err(|e| CoreError::io(link, e))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,6 +244,36 @@ mod tests {
         fs::write(&b, "external edit").unwrap();
 
         rollback_mutated(&journal_dir, std::slice::from_ref(&a)).unwrap();
+
+        assert_eq!(fs::read_to_string(&a).unwrap(), "a0");
+        assert_eq!(fs::read_to_string(&b).unwrap(), "external edit");
+        assert!(!pending(&journal_dir));
+    }
+
+    /// A crash mid filtered restore must not widen the restore set: the
+    /// filter was persisted before the first path was touched, recovery
+    /// re-runs exactly it, and the external bytes it left alone survive
+    /// the second pass too.
+    #[test]
+    fn crash_recovery_honors_the_persisted_restore_filter() {
+        let tmp = tempfile::tempdir().unwrap();
+        let work = tmp.path().join("work");
+        fs::create_dir_all(&work).unwrap();
+        let a = work.join("a.md");
+        let b = work.join("kendex.toml");
+        fs::write(&a, "a0").unwrap();
+        fs::write(&b, "b0").unwrap();
+
+        let journal_dir = tmp.path().join("journal/global");
+        write(&journal_dir, &[a.clone(), b.clone()]).unwrap();
+        fs::write(&a, "a1").unwrap();
+        fs::write(&b, "external edit").unwrap();
+        // The filtered restore persisted its set, then the process died
+        // before restoring anything: the journal is still pending.
+        persist_restore_set(&journal_dir, std::slice::from_ref(&a)).unwrap();
+        assert!(pending(&journal_dir));
+
+        rollback(&journal_dir).unwrap();
 
         assert_eq!(fs::read_to_string(&a).unwrap(), "a0");
         assert_eq!(fs::read_to_string(&b).unwrap(), "external edit");

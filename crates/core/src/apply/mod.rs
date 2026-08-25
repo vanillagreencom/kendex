@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::PathBuf;
 
 use crate::env::Env;
 use crate::error::{CoreError, Result};
@@ -9,9 +8,11 @@ mod common;
 pub mod journal;
 mod op;
 mod pre;
+mod transaction;
 
 pub use common::{common_key, execute_common, recover_common_journals};
 pub use op::{Op, Plan, PlannedOp, Pre, read_git_config};
+use transaction::run_journaled;
 
 /// Filesystem-safe key naming a scope's journal dir and lock file. Keys off
 /// the canonical scope so two spellings of one root can never hold two
@@ -108,131 +109,14 @@ pub fn execute(env: &Env, plan: &Plan, fail_after: Option<usize>) -> Result<Appl
     })
 }
 
-/// The one transaction engine, under a lock the caller already holds for
-/// `key` and after it recovered: journal every pre-image, run the ops in
-/// order, roll back on the first failure. Returns how many ops ran.
-fn run_journaled(
-    env: &Env,
-    ops: &[PlannedOp],
-    key: &str,
-    fail_after: Option<usize>,
-) -> Result<usize> {
-    // Nothing to do leaves nothing behind: an empty journal would read as
-    // an interrupted apply to the next recovery pass.
-    if ops.is_empty() {
-        return Ok(0);
-    }
-    let journal_dir = journal::journal_dir_for(&env.journal_dir(), key);
-    let mut touched: Vec<PathBuf> = ops.iter().flat_map(|p| p.op.touched()).collect();
-    touched.extend(created_dir_roots(&touched));
-    journal::write(&journal_dir, &touched)?;
-
-    for (index, planned) in ops.iter().enumerate() {
-        if fail_after == Some(index) {
-            // The injected fault lands before the op runs, so it mutated
-            // nothing — same restore set as a precondition refusal.
-            let error = CoreError::Injected;
-            journal::rollback_mutated(&journal_dir, &mutated_before_failure(ops, index, &error))?;
-            return Err(CoreError::RolledBack {
-                reason: format!("injected fault before '{}'", planned.description),
-                cause: Box::new(error),
-            });
-        }
-        if let Err(error) = planned.op.run(env) {
-            journal::rollback_mutated(&journal_dir, &mutated_before_failure(ops, index, &error))?;
-            return Err(CoreError::RolledBack {
-                reason: format!("'{}' failed: {error}", planned.description),
-                cause: Box::new(error),
-            });
-        }
-    }
-    journal::clear(&journal_dir)?;
-    Ok(ops.len())
-}
-
-/// The paths this transaction mutated by the time op `index` failed with
-/// `error` — the restore set for the in-process rollback. Every op checks
-/// its precondition before touching anything, so a `PlanStale` failure
-/// (and the test-only injected fault, which fires before the op runs)
-/// means op `index` mutated nothing: restoring its paths anyway would put
-/// the journal's snapshot over the very bytes the refusal protected, when
-/// a writer outside the transaction landed them after the journal was
-/// taken. Any other failure may have left op `index` half-done, so its
-/// paths are restored too.
-fn mutated_before_failure(ops: &[PlannedOp], index: usize, error: &CoreError) -> Vec<PathBuf> {
-    let ran = match error {
-        CoreError::PlanStale { .. } | CoreError::Injected => &ops[..index],
-        _ => &ops[..=index],
-    };
-    ran.iter().flat_map(|p| p.op.touched()).collect()
-}
-
-/// The top of every directory chain the plan's `create_dir_all` calls will
-/// bring into being. Journaled as absent, so rollback deletes the whole
-/// chain — an empty `.codex/` left behind is not cosmetic, it is what
-/// harness and project detection read as "installed here".
-fn created_dir_roots(touched: &[PathBuf]) -> Vec<PathBuf> {
-    let mut roots: Vec<PathBuf> = Vec::new();
-    for path in touched {
-        let mut topmost_missing = None;
-        let mut ancestor = path.parent();
-        while let Some(dir) = ancestor {
-            if dir.as_os_str().is_empty() || dir.exists() {
-                break;
-            }
-            topmost_missing = Some(dir.to_path_buf());
-            ancestor = dir.parent();
-        }
-        if let Some(root) = topmost_missing
-            && !touched.contains(&root)
-            && !roots.contains(&root)
-        {
-            roots.push(root);
-        }
-    }
-    roots
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::env::FakeOs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     fn env_in(dir: &Path) -> Env {
         Env::fake(dir, FakeOs::Linux)
-    }
-
-    /// The restore-set split behind the filtered rollback: a refusal that
-    /// provably mutated nothing keeps its own paths out of the restore, so
-    /// the bytes it refused to overwrite survive the rollback too; a
-    /// failure that may have half-run restores them.
-    #[test]
-    fn a_refusal_keeps_its_own_paths_out_of_the_restore_set() {
-        let a = PathBuf::from("/w/a.md");
-        let b = PathBuf::from("/w/kendex.toml");
-        let op = |path: &PathBuf| PlannedOp {
-            description: "write".into(),
-            op: Op::WriteFile {
-                pre: Pre::Any,
-                path: path.clone(),
-                bytes: Vec::new(),
-            },
-        };
-        let ops = [op(&a), op(&b)];
-
-        let refused = CoreError::PlanStale { path: b.clone() };
-        assert_eq!(
-            mutated_before_failure(&ops, 1, &refused),
-            std::slice::from_ref(&a)
-        );
-        assert_eq!(
-            mutated_before_failure(&ops, 1, &CoreError::Injected),
-            std::slice::from_ref(&a)
-        );
-
-        let half_done = CoreError::io(&b, std::io::Error::other("disk full"));
-        assert_eq!(mutated_before_failure(&ops, 1, &half_done), [a, b]);
     }
 
     fn write_plan(scope: Scope, path: PathBuf, content: &str, pre: Pre) -> Plan {

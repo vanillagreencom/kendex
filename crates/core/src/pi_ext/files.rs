@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use crate::apply::journal::{copy_tree, remove_any};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
+use crate::fs::{copy_tree, remove_any};
 use crate::hash::hash_files;
 
 /// Never copied or hashed: dependency trees and build output are recreated

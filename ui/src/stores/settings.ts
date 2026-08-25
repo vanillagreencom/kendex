@@ -394,12 +394,24 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
       hold(response.data);
       return { ok: true };
     }
+    if (response.error.kind === "failed")
+      return { ok: false, message: response.error.message };
+    // A second stale refusal means the file moved again after the re-read,
+    // so the copy in hand is behind it. One read-only refresh earns the
+    // claim that the latest settings are shown; when even that read fails,
+    // the claim goes with it.
+    const last = await commands.getSettings();
+    if (last.status === "ok") {
+      hold(last.data);
+      return {
+        ok: false,
+        message:
+          "Your settings changed in another window while this was saving. The change wasn't applied — the latest settings are shown now.",
+      };
+    }
     return {
       ok: false,
-      message:
-        response.error.kind === "failed"
-          ? response.error.message
-          : "Your settings changed in another window while this was saving. The change wasn't applied — the latest settings are shown now.",
+      message: `Your settings changed in another window while this was saving. The change wasn't applied, and re-reading the file failed: ${last.error}`,
     };
   };
 

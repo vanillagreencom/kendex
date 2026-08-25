@@ -264,6 +264,9 @@ pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &st
         ops.push(PlannedOp {
             description: format!("rename the fork's files to {new}"),
             op: Op::Rename {
+                from_pre: Pre::HashIs {
+                    hash: crate::hash::hash_tree(&from)?,
+                },
                 from,
                 to,
                 to_pre: Pre::Absent,

@@ -140,6 +140,82 @@ pub fn read_if_exists(path: &Path) -> Result<Option<String>> {
     }
 }
 
+pub(crate) fn sync_file(path: &Path) -> Result<()> {
+    fs::File::open(path)
+        .and_then(|f| f.sync_all())
+        .map_err(|e| CoreError::io(path, e))
+}
+
+/// Directory fsync is a no-op on platforms where directories cannot be
+/// opened (Windows); rename durability there rides on the volume flush.
+pub(crate) fn sync_dir(path: &Path) {
+    #[cfg(unix)]
+    if let Ok(dir) = fs::File::open(path) {
+        let _ = dir.sync_all();
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
+pub(crate) fn sync_tree(root: &Path) -> Result<()> {
+    if root.is_file() {
+        return sync_file(root);
+    }
+    if let Ok(entries) = fs::read_dir(root) {
+        for entry in entries.flatten() {
+            sync_tree(&entry.path())?;
+        }
+        sync_dir(root);
+    }
+    Ok(())
+}
+
+pub(crate) fn remove_any(path: &Path) -> Result<()> {
+    if path.is_symlink() || path.is_file() {
+        fs::remove_file(path).map_err(|e| CoreError::io(path, e))?;
+    } else if path.is_dir() {
+        fs::remove_dir_all(path).map_err(|e| CoreError::io(path, e))?;
+    }
+    Ok(())
+}
+
+pub(crate) fn copy_tree(from: &Path, to: &Path) -> Result<()> {
+    fs::create_dir_all(to).map_err(|e| CoreError::io(to, e))?;
+    for entry in fs::read_dir(from)
+        .map_err(|e| CoreError::io(from, e))?
+        .flatten()
+    {
+        let source = entry.path();
+        let Some(name) = source.file_name() else {
+            continue;
+        };
+        let dest = to.join(name);
+        if source.is_symlink() {
+            let target = fs::read_link(&source).map_err(|e| CoreError::io(&source, e))?;
+            make_symlink(&target, &dest)?;
+        } else if source.is_dir() {
+            copy_tree(&source, &dest)?;
+        } else {
+            fs::copy(&source, &dest).map_err(|e| CoreError::io(&source, e))?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+pub(crate) fn make_symlink(target: &Path, link: &Path) -> Result<()> {
+    std::os::unix::fs::symlink(target, link).map_err(|e| CoreError::io(link, e))
+}
+
+#[cfg(windows)]
+pub(crate) fn make_symlink(target: &Path, link: &Path) -> Result<()> {
+    if target.is_dir() {
+        std::os::windows::fs::symlink_dir(target, link).map_err(|e| CoreError::io(link, e))
+    } else {
+        std::os::windows::fs::symlink_file(target, link).map_err(|e| CoreError::io(link, e))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

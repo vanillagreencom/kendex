@@ -11,10 +11,10 @@ use std::time::Duration;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::apply::journal::make_symlink;
 use crate::configedit::{remove_marker_block, upsert_marker_block};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
+use crate::fs::make_symlink;
 use crate::fs::{atomic_write, read_if_exists};
 use crate::process::Hardened;
 

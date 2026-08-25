@@ -174,6 +174,9 @@ pub fn rename_ops(env: &Env, scope: &Scope) -> Result<Vec<PlannedOp>> {
                 "{RENAME_PREFIX}: {LEGACY_LOCAL_SOURCE_DIR} becomes {LOCAL_SOURCE_DIR}"
             ),
             op: Op::Rename {
+                from_pre: Pre::HashIs {
+                    hash: crate::hash::hash_tree(&old_local)?,
+                },
                 from: old_local,
                 to: root.join(LOCAL_SOURCE_DIR),
                 to_pre: Pre::Absent,
@@ -202,6 +205,7 @@ fn file_rename_op(
     ops.push(PlannedOp {
         description: format!("{RENAME_PREFIX}: {old_name} becomes {new_name}"),
         op: Op::Rename {
+            from_pre: Pre::observed(&old)?,
             from: old,
             to: new,
             to_pre: Pre::Absent,

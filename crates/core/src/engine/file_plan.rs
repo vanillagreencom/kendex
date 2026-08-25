@@ -154,10 +154,15 @@ fn plan_absent_file(
             ops.push(install(env, scope, item, path, bytes, Pre::Absent));
             return Planned::Drift(DriftState::Missing, TAKEN_OVER.into());
         }
+        let hash = match hash_tree(&alternate) {
+            Ok(hash) => hash,
+            Err(error) => return uncomparable(&alternate, &error),
+        };
         let flip = if item.enabled { "on" } else { "off" };
         ops.push(PlannedOp {
             description: format!("Turn {} {flip}", item.name),
             op: Op::Rename {
+                from_pre: Pre::HashIs { hash },
                 from: alternate,
                 to: path.to_path_buf(),
                 to_pre: Pre::Absent,

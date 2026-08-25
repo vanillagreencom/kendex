@@ -152,17 +152,26 @@ describe("settings store", () => {
   });
 
   /// Contention that survives the re-read reaches the person as a message,
-  /// not as a silent loop — and never as a write of the stale copy.
-  it("stops after one retry and tells the person when the file keeps moving", async () => {
+  /// not as a silent loop — and never as a write of the stale copy. The
+  /// claim that the latest settings are shown is earned by one final
+  /// read-only refresh, because the second refusal proved the previous
+  /// re-read is already behind the file.
+  it("stops after one retry, refreshes read-only, and tells the person when the file keeps moving", async () => {
     useSettingsStore.setState({ settings, base: "old" });
+    const moved = { ...settings, zoom: 150 };
     vi.mocked(commands.updateSettings).mockResolvedValue({
       status: "error",
       error: { kind: "stale" },
     });
-    vi.mocked(commands.getSettings).mockResolvedValue({
-      status: "ok",
-      data: { settings, base: "fresh" },
-    });
+    vi.mocked(commands.getSettings)
+      .mockResolvedValueOnce({
+        status: "ok",
+        data: { settings, base: "fresh" },
+      })
+      .mockResolvedValueOnce({
+        status: "ok",
+        data: { settings: moved, base: "moved" },
+      });
 
     await useSettingsStore.getState().setAppearance("dark");
 
@@ -170,6 +179,37 @@ describe("settings store", () => {
     const dialog = useProblemsStore.getState().dialog;
     expect(dialog.open).toBe(true);
     expect(dialog.title).toBe("Couldn't change the appearance");
+    expect(dialog.message).toContain("the latest settings are shown now");
+    // The store holds what the final refresh read, not the copy the second
+    // write was refused over — that is what makes the claim true.
+    expect(useSettingsStore.getState().settings).toEqual(moved);
+    expect(useSettingsStore.getState().base).toBe("moved");
+  });
+
+  /// When the final refresh cannot be read, the message stops claiming the
+  /// displayed settings are current — a claim nothing verified.
+  it("drops the currency claim when the final refresh fails after a second stale refusal", async () => {
+    useSettingsStore.setState({ settings, base: "old" });
+    vi.mocked(commands.updateSettings).mockResolvedValue({
+      status: "error",
+      error: { kind: "stale" },
+    });
+    vi.mocked(commands.getSettings)
+      .mockResolvedValueOnce({
+        status: "ok",
+        data: { settings, base: "fresh" },
+      })
+      .mockResolvedValueOnce({
+        status: "error",
+        error: "cannot read the settings file",
+      });
+
+    await useSettingsStore.getState().setAppearance("dark");
+
+    const dialog = useProblemsStore.getState().dialog;
+    expect(dialog.open).toBe(true);
+    expect(dialog.message).not.toContain("shown now");
+    expect(dialog.message).toContain("cannot read the settings file");
   });
 
   it("toasts success naming the folder when a project is added, and resolves true", async () => {
