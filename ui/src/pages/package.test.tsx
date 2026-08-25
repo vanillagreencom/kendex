@@ -36,15 +36,16 @@ vi.mock("@/bindings", async (importOriginal) => ({
   },
 }));
 
-const VG: Scope = { scope: "project", root: "/work/vg" };
-const HYPR: Scope = { scope: "project", root: "/work/hyprtrade" };
+type Project = Extract<Scope, { scope: "project" }>;
+const VG: Project = { scope: "project", root: "/work/vg" };
+const HYPR: Project = { scope: "project", root: "/work/hyprtrade" };
 
-const installedAt = (scope: Scope): ObservedItem => ({
+const installedAt = (scope: Project): ObservedItem => ({
   kind: "skill",
   name: "gh",
   scope,
   harness: "claude",
-  path: `${scope.scope === "project" ? scope.root : ""}/.claude/skills/gh`,
+  path: `${scope.root}/.claude/skills/gh`,
   fileState: { state: "file" },
   enabled: true,
   origin: null,
@@ -66,8 +67,8 @@ const nothing = { status: "error" as const, error: "not in this test" };
 /** Mount the page about `gh` at `here`, with the package installed in
  *  every place of `installed` and each place's manifest as given. */
 const openPage = async (
-  here: Scope,
-  installed: Scope[],
+  here: Project,
+  installed: Project[],
   manifests: Record<string, Manifest_Serialize>,
 ) => {
   vi.mocked(commands.getManifest).mockImplementation((scope) =>
@@ -98,7 +99,7 @@ const openPage = async (
 
 // What the Customize tab does when its project chip is clicked: the
 // editor's open draft becomes another place's.
-const editElsewhere = (scope: Scope) =>
+const editElsewhere = (scope: Project) =>
   act(() => useEditorStore.getState().setScope(scope));
 
 const title = (host: HTMLElement) => host.querySelector("h1")?.textContent;
@@ -179,6 +180,21 @@ describe("the package page's file actions", () => {
     if (!item) throw new Error(`no "${label}" entry in the open menu`);
     await userEvent.click(item);
   };
+
+  it("leave with the page when this place has no copy", async () => {
+    // Installed elsewhere only. Another place's copy is not a stand-in:
+    // the page describing one place while its buttons work on another is
+    // the fault this page exists to avoid, so it goes back instead.
+    const back = vi.fn();
+    useNavStore.setState({ back });
+    const host = await openPage(VG, [HYPR], {});
+    expect(back).toHaveBeenCalled();
+    expect(
+      Array.from(host.querySelectorAll("button")).some(
+        (button) => button.textContent === OPEN_IN_LABEL,
+      ),
+    ).toBe(false);
+  });
 
   it("open the copy in the place the page names", async () => {
     // hyprtrade's copy is listed first, so a page that took the first

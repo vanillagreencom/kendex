@@ -33,17 +33,24 @@ const mounted: Root[] = [];
 // next one reads: every mount comes down, and the body is emptied, after
 // each test in the importing file.
 afterEach(() => {
-  act(() => {
-    for (const root of mounted) root.unmount();
-  });
-  mounted.length = 0;
-  document.body.replaceChildren();
+  try {
+    act(() => {
+      for (const root of mounted) root.unmount();
+    });
+  } finally {
+    // An unmount that throws must not leave its tree, or the list that
+    // would throw again, for the next test to fail on.
+    mounted.length = 0;
+    document.body.replaceChildren();
+  }
 });
 
 /** Mount a tree into the document and return the element it sits in.
  *
- *  `host` is the element the tree renders into — a `table` for a `tr`,
- *  which the DOM otherwise drops on the floor. */
+ *  `host` is the element the tree renders into. It defaults to a `div`;
+ *  a component that renders a `tr` takes a `table`, so the mounted tree
+ *  is the HTML the component was written for rather than a row sitting
+ *  under a block. */
 export function mount(
   element: ReactNode,
   { host = "div" }: { host?: keyof HTMLElementTagNameMap } = {},

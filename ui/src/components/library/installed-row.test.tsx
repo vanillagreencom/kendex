@@ -76,7 +76,8 @@ afterEach(() => {
 
 const mount = (forkedIn: Scope[] = [], mark: PlaceMark | null = null) => {
   const onOpen = vi.fn();
-  // A tr needs a table around it for the DOM to keep the row a row.
+  // A table host, so the row is mounted inside the structure it renders
+  // for rather than under a div.
   const host = mountTree(
     <tbody>
       <InstalledRow
