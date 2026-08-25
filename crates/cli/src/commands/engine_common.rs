@@ -1,4 +1,4 @@
-pub use super::blocked::{conflict_detail, print_conflicts, print_exits};
+pub use super::blocked::{print_conflicts, print_drift};
 use std::io::{IsTerminal, Write};
 
 use kendex_core::engine::{DriftRow, DriftState, EngineReport};

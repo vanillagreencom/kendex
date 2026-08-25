@@ -657,11 +657,13 @@ fn a_single_file_item_says_how_it_compares() {
     );
 }
 
-/// Asking for more detail must not cost the reader the way out, and the
-/// closing line reads the same either way.
+/// More detail is a superset of less. Every line the collapsed listing
+/// carries about a conflict is here too — the way out, what the files in
+/// the way are against the catalog, what they claim about themselves — and
+/// the run closes on the same ledger.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_verbose_refresh_keeps_the_exits_and_the_ledger() {
+fn a_verbose_refresh_says_everything_the_compact_one_does() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let project = pre_rename_project(home);
@@ -674,6 +676,14 @@ fn a_verbose_refresh_keeps_the_exits_and_the_ledger() {
     assert!(
         printed.contains("to keep those files: kendex adopt skill growth-guards"),
         "the verbose listing dropped the way out: {printed}"
+    );
+    assert!(
+        printed.contains("differs from the catalog in 2 files: SKILL.md, references/rules.md"),
+        "the verbose listing dropped the comparison that decides the exit: {printed}"
+    );
+    assert!(
+        printed.contains("(it carries a source: vstack stamp)"),
+        "the verbose listing dropped what the files claim about themselves: {printed}"
     );
     assert!(
         printed.contains("  skipped — kendex apply --replace-unmanaged"),

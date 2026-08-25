@@ -3,8 +3,7 @@ use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
 
 use super::engine_common::{
-    confirm_and_apply, conflict_detail, print_conflicts, print_exits, print_notes, print_safety,
-    refresh_failures,
+    confirm_and_apply, print_conflicts, print_drift, print_notes, print_safety, refresh_failures,
 };
 use super::ledger::say_ledger;
 use super::{CliResult, resolve_scopes, say};
@@ -31,19 +30,6 @@ pub struct RefreshArgs {
     /// Overwrite installations you edited by hand
     #[arg(long)]
     discard_edits: bool,
-}
-
-fn print_drift(report: &kendex_core::engine::EngineReport) {
-    for row in &report.drift {
-        say(&format!(
-            "{} {} [{}]: {:?} — {}",
-            row.kind.name(),
-            row.name,
-            row.harness.name(),
-            row.state,
-            conflict_detail(row)
-        ));
-    }
 }
 
 /// What this refresh would add to or drop from the installed set — the part
@@ -116,12 +102,7 @@ pub fn run(
         // found before the confirm, the way apply does.
         print_safety(&report);
         let blocked = match verbose {
-            // Every row, and the ways out under the ones that have them:
-            // asking for more detail must not cost the reader the way out.
-            true => {
-                print_drift(&report);
-                print_exits(env, &report)
-            }
+            true => print_drift(env, &report),
             false => print_conflicts(env, &report),
         };
         let lock = load_lock(&lock_path(env, &scope))?;

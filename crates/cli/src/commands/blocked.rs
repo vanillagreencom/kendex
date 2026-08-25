@@ -50,16 +50,29 @@ pub fn print_conflicts(env: &Env, report: &EngineReport) -> Vec<Blocked> {
     blocked
 }
 
-/// The ways out alone, for a surface that has already listed the rows.
-/// Asking for more detail must not cost the reader the way out.
-pub fn print_exits(env: &Env, report: &EngineReport) -> Vec<Blocked> {
+/// Every row on its own line, with what the collapsed listing says about
+/// each one under it. Asking for more detail must not cost the reader the
+/// way out, nor the comparison that decides which way out to take: more
+/// detail is a superset of less, never a different answer.
+pub fn print_drift(env: &Env, report: &EngineReport) -> Vec<Blocked> {
     let rows = conflict_rows(report);
     let blocked = blocked_items(env, &rows);
-    for row in &rows {
+    for row in &report.drift {
         let offer = blocked
             .iter()
             .find(|item| item.is(row))
             .and_then(|item| item.offer.as_ref());
+        say(&format!(
+            "{} {} [{}]: {:?} — {}",
+            row.kind.name(),
+            shown(&row.name),
+            row.harness.name(),
+            row.state,
+            conflict_detail(row)
+        ));
+        if let Some(line) = compared_line(row.compared.as_ref(), offer) {
+            say(&format!("  {line}"));
+        }
         say_offer(&rows, row, offer);
     }
     say_scope_exit(&rows, &blocked);
@@ -218,7 +231,7 @@ fn say_scope_exit(rows: &[&DriftRow], blocked: &[Blocked]) {
 /// What a conflict row says on a terminal. A row whose files were already
 /// there carries the path alone — the cause is what says the rest, and only
 /// a surface knows how to word it — so the sentence is written here.
-pub fn conflict_detail(row: &DriftRow) -> String {
+fn conflict_detail(row: &DriftRow) -> String {
     let detail = shown(&row.detail);
     match row.cause {
         Some(DriftCause::UnmanagedContent | DriftCause::UnmanagedWrongShape) => {
