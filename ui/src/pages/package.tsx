@@ -56,7 +56,7 @@ export function PackagePage() {
   );
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [switching, setSwitching] = useState(false);
-  const mutating = useManifestBusy(switching);
+  const mutating = useManifestBusy(switching, ref?.scope ?? null);
   useEffect(() => {
     if (initialView) clearPackageView();
   }, [initialView, clearPackageView]);

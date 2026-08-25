@@ -18,38 +18,43 @@ import { settled } from "@/lib/settled";
 /** A follow switch moved but not yet answered for: the place it was moved
  *  in, and the position it was moved to. */
 export interface PendingFollow {
+  /** This flip, apart from any other — what retires the right entry once a
+   *  reverting one has been replaced. */
+  id: number;
   scope: Scope;
   kind: ItemKind;
   name: string;
   /** True when the switch went off — the package is held at what is
    *  installed now. */
   pinned: boolean;
+  /** The write came back refused. The flip stops painting onto landings,
+   *  but the rows already wear it, so the entry stays until the read that
+   *  replaces them lands: a row must never wear a position the engine did
+   *  not take while reporting itself settled. */
+  reverting: boolean;
 }
 
-/** `rows` wearing every pending flip. A read that began before a flip
- *  carries the switch's old position; landing it raw would bounce the
- *  switch back under the hand that moved it. */
+let flips = 0;
+
+/** `rows` wearing every pending flip the engine may still take. A read that
+ *  began before a flip carries the switch's old position; landing it raw
+ *  would bounce the switch back under the hand that moved it. A reverting
+ *  flip paints nothing — the landing it is waiting for is the one that puts
+ *  the switch back. */
 export const withPending = (
   rows: UpdateRow[],
   pending: PendingFollow[],
 ): UpdateRow[] => {
-  if (pending.length === 0) return rows;
+  const painting = pending.filter((one) => !one.reverting);
+  if (painting.length === 0) return rows;
   return rows.map((row) => {
-    const flip = pending.find(
+    const flip = painting.find(
       (one) =>
         one.kind === row.kind &&
         one.name === row.name &&
         sameScope(one.scope, row.scope),
     );
-    if (!flip) return row;
-    // A hold the source or a parent owns is not this switch's to move —
-    // those rows never accept a flip, so a pending one is always this
-    // declaration's own.
-    return {
-      ...row,
-      pinned: flip.pinned,
-      holdOwner: flip.pinned ? { kind: "package" as const } : null,
-    };
+    return flip ? { ...row, pinned: flip.pinned } : row;
   });
 };
 
@@ -86,20 +91,31 @@ export function followSwitch({
     // Same refusal as updateOne: the hold would pin a commit captured from
     // rows an in-flight read is about to replace.
     if (refuse(row)) return;
-    const pending: PendingFollow = {
+    flips += 1;
+    const flip: PendingFollow = {
+      id: flips,
       scope: row.scope,
       kind: row.kind,
       name: row.name,
       pinned: !auto,
+      reverting: false,
     };
+    const update = (
+      change: (pending: PendingFollow[]) => PendingFollow[],
+    ): void => set({ pendingFollows: change(get().pendingFollows) });
+    const revert = () =>
+      update((pending) =>
+        pending.map((one) =>
+          one.id === flip.id ? { ...one, reverting: true } : one,
+        ),
+      );
     const retire = () =>
-      set({
-        pendingFollows: get().pendingFollows.filter((one) => one !== pending),
-      });
+      update((pending) => pending.filter((one) => one.id !== flip.id));
     set({
-      rows: withPending(get().rows, [pending]),
-      pendingFollows: [...get().pendingFollows, pending],
+      rows: withPending(get().rows, [flip]),
+      pendingFollows: [...get().pendingFollows, flip],
     });
+    let refused = false;
     try {
       const error = await get().mutate(async () => {
         const response = await settled(
@@ -111,14 +127,18 @@ export function followSwitch({
           ),
         );
         if (response.status === "ok") return null;
-        // Nothing committed, so the read that follows carries the switch's
-        // old position — a flip that never happened must not paint over it.
-        retire();
+        // Nothing committed. The rows still wear a position the engine did
+        // not take, so the scope goes on holding until the read behind this
+        // puts them right — and the refusal is news now, not in the seconds
+        // that read takes.
+        refused = true;
+        revert();
+        report(response.error);
         return response.error;
       }, "settle");
-      if (error !== null) report(error);
+      if (error !== null && !refused) report(error);
     } finally {
-      // The write landed; the read behind it is the truth from here.
+      // The read behind the write has landed; it is the truth from here.
       retire();
     }
   };

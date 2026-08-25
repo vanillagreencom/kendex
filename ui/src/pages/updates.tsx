@@ -36,7 +36,7 @@ import {
   updatablePlaces,
   visibleUpdates,
 } from "@/lib/update-groups";
-import { anyUnsettled } from "@/lib/updates-read-state";
+import { rowUnsettled } from "@/lib/updates-read-state";
 import { cn } from "@/lib/utils";
 import { useUpdatesStore } from "@/stores/updates";
 import { useUpdatesView } from "@/stores/updates-view";
@@ -48,10 +48,13 @@ export function UpdatesPage() {
     useUpdatesStore();
   const loaded = useUpdatesStore((s) => s.loaded);
   const error = useUpdatesStore((s) => s.error);
-  // Anything overview-producing in flight holds Update all, same as the
-  // per-row controls: these rows are about to be replaced. So does a
-  // follow switch still settling anywhere — Update all spans every scope.
-  const unconfirmed = useUpdatesStore(anyUnsettled);
+  // Update all holds on exactly what it would act on, so the button and
+  // updateRows answer to one predicate: any visible row about to be
+  // replaced, by an overview-producing read or by a flip settling in its
+  // scope.
+  const unconfirmed = useUpdatesStore((s) =>
+    visibleUpdates(s.rows).some((row) => rowUnsettled(s, row)),
+  );
   const load = useUpdatesStore((s) => s.load);
   // One choice for every table on the page; the `…` menu lives on the
   // main table, or on the muted one when it is the only table drawn.

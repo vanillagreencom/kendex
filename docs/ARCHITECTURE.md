@@ -566,7 +566,10 @@ lives in one capability table read by core and UI.
   that read lands — every landing wears it, so a read begun earlier cannot
   bounce the switch — and it holds its own scope's rows and no others
   (`lib/updates-read-state.ts::rowUnsettled`), an apply reaching only what
-  is installed there. An edited
+  is installed there. A refused write stops the flip painting and says so at
+  once, but the rows already wear it, so the scope goes on holding until the
+  read that puts them back lands: no row wears a position the engine did not
+  take while reporting itself safe to act on. An edited
   place is never updated over: its row says so and offers the install
   beside it where a newer version the source still carries can land, and a
   link to the package page otherwise; the fork-or-discard choice lives on

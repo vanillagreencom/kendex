@@ -61,7 +61,12 @@ describe("updates store: edited places", () => {
   beforeEach(() => {
     // Rows being acted on imply a read that answered; the stale-refusal
     // test below stages the opposite itself.
-    useUpdatesStore.setState({ rows: [], busy: false, loaded: true });
+    useUpdatesStore.setState({
+      rows: [],
+      busy: false,
+      loaded: true,
+      pendingFollows: [],
+    });
     vi.clearAllMocks();
   });
 
@@ -232,7 +237,12 @@ describe("updates store: installing beside an edited place", () => {
   };
 
   beforeEach(() => {
-    useUpdatesStore.setState({ rows: [], busy: false, loaded: true });
+    useUpdatesStore.setState({
+      rows: [],
+      busy: false,
+      loaded: true,
+      pendingFollows: [],
+    });
     useProblemsStore.setState({
       dialog: { open: false, title: "", steps: [], actions: [] },
     });
@@ -373,5 +383,84 @@ describe("updates store: installing beside an edited place", () => {
       UPDATE_NEEDS_CHECK_NOTE,
     );
     expect(commands.packageForkBeside).not.toHaveBeenCalled();
+  });
+
+  // Both of these send row.latest.commit off a row.pinned the settling flip
+  // may have painted, and stale(row) is their only guard: the scope the
+  // flip is applying holds, and every other scope carries on.
+  it("holds a discard and an install-beside while a flip settles in that scope", async () => {
+    useProblemsStore.setState({
+      dialog: { open: false, title: "", steps: [], actions: [] },
+    });
+    useUpdatesStore.setState({
+      pendingFollows: [
+        {
+          id: 1,
+          scope: { scope: "global" },
+          kind: "skill",
+          name: "other",
+          pinned: true,
+          reverting: false,
+        },
+      ],
+    });
+    const edited = row({
+      blockedByLocalEdit: true,
+      editedHarnesses: ["claude"],
+      forkableHarness: "claude",
+    });
+
+    await takeNewVersion(edited);
+    expect(commands.applyDiscardEdits).not.toHaveBeenCalled();
+    expect(useProblemsStore.getState().dialog.message).toBe(
+      UPDATE_NEEDS_CHECK_NOTE,
+    );
+    expect(await installAsNew(edited, "claude", "gh-mine")).toBe(
+      UPDATE_NEEDS_CHECK_NOTE,
+    );
+    expect(commands.packageForkBeside).not.toHaveBeenCalled();
+  });
+
+  it("lets a discard through while the flip settles in another scope", async () => {
+    useUpdatesStore.setState({
+      pendingFollows: [
+        {
+          id: 1,
+          scope: { scope: "project", root: "/home/me/app" },
+          kind: "skill",
+          name: "gh",
+          pinned: true,
+          reverting: false,
+        },
+      ],
+    });
+    vi.mocked(commands.applyDiscardEdits).mockResolvedValue({
+      status: "ok",
+      data: {
+        scope: { scope: "global" },
+        drift: [],
+        plan: [],
+        notes: [],
+        warnings: [],
+        safety: [],
+        adoptable: ADOPTABLE,
+        exits: [],
+      },
+    });
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [] },
+    });
+    vi.mocked(commands.scanMachine).mockResolvedValue({
+      status: "ok",
+      data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
+    });
+    vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
+
+    await takeNewVersion(
+      row({ blockedByLocalEdit: true, editedHarnesses: ["claude"] }),
+    );
+
+    expect(commands.applyDiscardEdits).toHaveBeenCalled();
   });
 });

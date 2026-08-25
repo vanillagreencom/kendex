@@ -6,6 +6,7 @@ import {
   type PackageDiff,
   type PackageFile,
   type PackageMeta_Serialize,
+  type Scope,
   type VersionRow,
 } from "@/bindings";
 import {
@@ -13,6 +14,7 @@ import {
   updatedToastLabel,
   VERSION_ERROR_TITLE,
 } from "@/lib/copy";
+import { sameScope } from "@/lib/scope";
 import { showUpdateOutcome } from "@/lib/update-outcome";
 import { versionRowLabel } from "@/lib/versions";
 import { useAuditStore } from "@/stores/audit";
@@ -191,10 +193,23 @@ export function packageVersionActions(
 
 /** One gate for every control that rewrites this package's manifest: the
  *  audit store's apply, a version switch in flight, the updates store's
- *  fork or discard, and the editor's save all touch the same file. */
-export function useManifestBusy(switching: boolean): boolean {
+ *  fork or discard, a Follow source flip settling in this scope, and the
+ *  editor's save all touch the same file. The controls here command the
+ *  engine directly rather than through the updates store's chain, and two
+ *  commands that both read the manifest before either applies leave the
+ *  second saving its stale copy over the first — so this gate, not
+ *  ordering, is what keeps them apart. */
+export function useManifestBusy(
+  switching: boolean,
+  scope: Scope | null,
+): boolean {
   const auditBusy = useAuditStore((s) => s.busy);
   const updatesBusy = useUpdatesStore((s) => s.busy);
+  const settling = useUpdatesStore((s) =>
+    scope === null
+      ? false
+      : s.pendingFollows.some((one) => sameScope(one.scope, scope)),
+  );
   const saving = useEditorStore((s) => s.saving);
-  return auditBusy || switching || updatesBusy || saving;
+  return auditBusy || switching || updatesBusy || settling || saving;
 }

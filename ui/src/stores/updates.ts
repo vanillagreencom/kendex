@@ -32,9 +32,13 @@ interface UpdatesState {
   busy: boolean;
   /** True while a mirror fetch is running — the explicit "check". */
   checking: boolean;
-  /** True while ANY overview-producing operation — a plain load, a check,
-   *  a mutation — is in flight: the rows on screen are about to be
-   *  replaced, so no commit-applying action may trust them. */
+  /** True while a plain load, a check, or a mutation is in flight: those
+   *  replace every row on screen, so no commit-applying action anywhere
+   *  may trust them. A settling follow flip is overview-producing too and
+   *  deliberately leaves this down — the apply behind it reaches only its
+   *  own scope, so `pendingFollows` holds that scope's rows and the rest
+   *  of the page stays live. Read `rowUnsettled`, not this field, to ask
+   *  whether one row may be acted on. */
   overviewInFlight: boolean;
   /** Follow switches already moved on screen whose write has not answered.
    *  Their scopes hold; every other row stays live. */

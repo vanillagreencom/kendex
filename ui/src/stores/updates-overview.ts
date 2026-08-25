@@ -49,10 +49,11 @@ export function overviewApplier(
 ) {
   const order = landings();
   let chain: Promise<unknown> = Promise.resolve();
-  // Every operation this applier runs — plain read, refresh, mutation —
-  // is about to replace the rows on screen: the store's overviewInFlight
-  // says so while any is outstanding, and the commit-applying actions
-  // refuse for as long as it is up.
+  // A plain read, a refresh, and a mutation are each about to replace
+  // every row on screen: the store's overviewInFlight says so while any is
+  // outstanding, and the commit-applying actions refuse for as long as it
+  // is up. A settle replaces them too but holds only its own scope, so it
+  // is counted here by the store's pending flips instead.
   let inFlight = 0;
 
   const landOk = (data: Overview) =>

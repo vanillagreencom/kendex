@@ -24,10 +24,11 @@ export function updatesReadState(state: {
   return state.loaded ? "landed" : "pending";
 }
 
-/** Whether the rows on screen are not to be acted on: the first read has
- *  not answered or the last one failed, a check is running, or anything
- *  overview-producing is in flight and about to replace them. One
- *  predicate for every control that holds and every action that refuses. */
+/** Whether the rows on screen are not to be acted on, page-wide: the first
+ *  read has not answered or the last one failed, a check is running, or an
+ *  operation that replaces every row is in flight. A settling follow flip
+ *  is not here — it replaces every row too but holds only its own scope, so
+ *  ask `rowUnsettled` whether a given row may be acted on. */
 export const unsettled = (state: PageState): boolean =>
   !state.loaded || state.checking || state.overviewInFlight;
 
@@ -41,9 +42,3 @@ export const rowUnsettled = (
 ): boolean =>
   unsettled(state) ||
   state.pendingFollows.some((one) => sameScope(one.scope, row.scope));
-
-/** `unsettled` for an action that spans every scope — "Update all" acts on
- *  rows wherever they live, so any settling flip is one of them. */
-export const anyUnsettled = (
-  state: PageState & { pendingFollows: unknown[] },
-): boolean => unsettled(state) || state.pendingFollows.length > 0;

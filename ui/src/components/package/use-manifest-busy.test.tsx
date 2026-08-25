@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import type { Scope } from "@/bindings";
 import { useManifestBusy } from "./use-package-data";
 
 // Static rendering reads each store's initial snapshot, so both store hooks
@@ -8,11 +9,16 @@ const stub = vi.hoisted(() => ({
   audit: false,
   updates: false,
   saving: false,
+  settling: [] as { scope: { scope: string; root?: string } }[],
 }));
 vi.mock("@/stores/updates", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/stores/updates")>();
   const hook = (selector?: (state: unknown) => unknown) => {
-    const state = { ...mod.useUpdatesStore.getState(), busy: stub.updates };
+    const state = {
+      ...mod.useUpdatesStore.getState(),
+      busy: stub.updates,
+      pendingFollows: stub.settling,
+    };
     return selector ? selector(state) : state;
   };
   return { ...mod, useUpdatesStore: Object.assign(hook, mod.useUpdatesStore) };
@@ -35,12 +41,15 @@ vi.mock("@/stores/editor", async (importOriginal) => {
   return { ...mod, useEditorStore: Object.assign(hook, mod.useEditorStore) };
 });
 
-function Probe({ switching }: { switching: boolean }) {
-  return <span>{useManifestBusy(switching) ? "busy" : "idle"}</span>;
+const GLOBAL: Scope = { scope: "global" };
+const PROJECT: Scope = { scope: "project", root: "/home/me/app" };
+
+function Probe({ switching, scope }: { switching: boolean; scope: Scope }) {
+  return <span>{useManifestBusy(switching, scope) ? "busy" : "idle"}</span>;
 }
 
-const render = (switching: boolean) =>
-  renderToStaticMarkup(<Probe switching={switching} />);
+const render = (switching: boolean, scope: Scope = GLOBAL) =>
+  renderToStaticMarkup(<Probe switching={switching} scope={scope} />);
 
 describe("useManifestBusy", () => {
   it("is one gate over the audit apply, a version switch, updates-store work, and a save", () => {
@@ -55,5 +64,16 @@ describe("useManifestBusy", () => {
     stub.saving = true;
     expect(render(false)).toContain("busy");
     stub.saving = false;
+  });
+
+  // These controls command the engine directly, outside the updates store's
+  // chain, and a flip's apply rewrites the same manifest — two commands that
+  // both read it before either applies lose one of the two edits.
+  it("holds while a Follow source flip settles in this package's scope", () => {
+    stub.settling = [{ scope: { scope: "global" } }];
+    expect(render(false, GLOBAL)).toContain("busy");
+    expect(render(false, PROJECT)).toContain("idle");
+    stub.settling = [];
+    expect(render(false, GLOBAL)).toContain("idle");
   });
 });

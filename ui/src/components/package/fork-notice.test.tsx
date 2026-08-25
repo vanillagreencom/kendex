@@ -6,18 +6,32 @@ import { EditedNotice } from "./fork-notice";
 
 // Static rendering reads a zustand store's initial snapshot, so the store
 // hook is wrapped to let each test seed the rows it needs.
-const stub = vi.hoisted(() => ({ rows: [] as unknown[] }));
+const stub = vi.hoisted(() => ({
+  rows: [] as unknown[],
+  settling: [] as { scope: { scope: string; root?: string } }[],
+}));
 vi.mock("@/stores/updates", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/stores/updates")>();
   const hook = (selector?: (state: unknown) => unknown) => {
-    const state = { ...mod.useUpdatesStore.getState(), rows: stub.rows };
+    // A row to act on implies a read that landed; without that every
+    // control here reads as held and the gates under test say nothing.
+    const state = {
+      ...mod.useUpdatesStore.getState(),
+      rows: stub.rows,
+      pendingFollows: stub.settling,
+      loaded: true,
+    };
     return selector ? selector(state) : state;
   };
   return { ...mod, useUpdatesStore: Object.assign(hook, mod.useUpdatesStore) };
 });
 
-const render = (rows: UpdateRow[]) => {
+const render = (
+  rows: UpdateRow[],
+  settling: { scope: { scope: string; root?: string } }[] = [],
+) => {
   stub.rows = rows;
+  stub.settling = settling;
   return renderToStaticMarkup(
     <EditedNotice
       scope={{ scope: "global" }}
@@ -99,5 +113,28 @@ describe("package page edited notice", () => {
     ]);
     expect(html).not.toContain(">Discard edits…<");
     expect(html).toContain(">View changes<");
+  });
+
+  // Discarding applies the row's latest commit off a `pinned` a settling
+  // flip may have painted, so takeNewVersion refuses for that scope. The
+  // button says so rather than inviting a click that only errors.
+  it("holds Discard edits while a flip settles in this scope", () => {
+    const rows = [
+      edited({ editedHarnesses: ["claude"], forkableHarness: "claude" }),
+    ];
+    const discardHeld = (html: string): boolean => {
+      const tag = html.match(/<button[^>]*>Discard edits…<\/button>/)?.[0];
+      if (!tag) throw new Error("no Discard edits button");
+      return tag.includes('disabled=""');
+    };
+    expect(discardHeld(render(rows))).toBe(false);
+    expect(discardHeld(render(rows, [{ scope: { scope: "global" } }]))).toBe(
+      true,
+    );
+    expect(
+      discardHeld(
+        render(rows, [{ scope: { scope: "project", root: "/home/me/app" } }]),
+      ),
+    ).toBe(false);
   });
 });
