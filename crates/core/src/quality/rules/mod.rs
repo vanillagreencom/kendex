@@ -41,7 +41,7 @@
 
 use crate::model::ItemKind;
 
-use super::{AuditRule, Content, Doc, Finding, Line, Outcome, Prepared, Severity};
+use super::{AuditRule, Content, Doc, DocRole, Finding, Line, Outcome, Prepared, Severity};
 
 mod content;
 mod mcp;
@@ -82,12 +82,34 @@ pub(super) fn at(doc: &Doc, line: &Line) -> String {
     format!("{}:{}", doc.location, line.number)
 }
 
-/// Run a line check over every document this input carries. A kind the rule
-/// is not about gets no verdict either way; a kind it *is* about whose bytes
-/// are not in this input says so rather than passing.
+/// Run a line check over every *text* document this input carries — what
+/// the harness executes or the model reads — and never over stored values
+/// (see [`DocRole`]). A kind the rule is not about gets no verdict either
+/// way; a kind it *is* about whose bytes are not in this input says so
+/// rather than passing.
 pub(super) fn scan_docs(
     prepared: &Prepared,
     kinds: &[ItemKind],
+    check: impl FnMut(&Doc, &Line, &mut Vec<Finding>),
+) -> Outcome {
+    scan_docs_where(prepared, kinds, |role| role == DocRole::Text, check)
+}
+
+/// [`scan_docs`] over stored values as well as text, for a rule about what
+/// a value *is* rather than what a line does — a credential is one wherever
+/// it sits.
+pub(super) fn scan_every_doc(
+    prepared: &Prepared,
+    kinds: &[ItemKind],
+    check: impl FnMut(&Doc, &Line, &mut Vec<Finding>),
+) -> Outcome {
+    scan_docs_where(prepared, kinds, |_| true, check)
+}
+
+fn scan_docs_where(
+    prepared: &Prepared,
+    kinds: &[ItemKind],
+    reads: impl Fn(DocRole) -> bool,
     mut check: impl FnMut(&Doc, &Line, &mut Vec<Finding>),
 ) -> Outcome {
     if !kinds.contains(&prepared.input.kind) {
@@ -97,7 +119,7 @@ pub(super) fn scan_docs(
         return Outcome::NotApplicable(why);
     }
     let mut findings = Vec::new();
-    for doc in &prepared.docs {
+    for doc in prepared.docs.iter().filter(|doc| reads(doc.role)) {
         for line in &doc.lines {
             check(doc, line, &mut findings);
         }

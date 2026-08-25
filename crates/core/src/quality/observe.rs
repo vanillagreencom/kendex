@@ -150,10 +150,10 @@ const HOOK_REGISTRY_UNPARSED: &str = "the config file holding this hook's regist
 ///
 /// A hook that is its own file — opencode's instruction carrier — is the
 /// file, and all of it is scored. A hook observed inside a shared config
-/// file is scored on its own registration: the command text and the whole
-/// entry — env, headers, url, every field the harness will use — of every
-/// entry the file holds under this observation's name, and nothing beside
-/// it. Sibling entries and the `permissions.ask`/`permissions.deny` lists are
+/// file is scored on its own registration: the command text of every entry
+/// the file holds under this observation's name, plus the env and header
+/// values those entries store (see [`stored_values`]), and nothing beside
+/// them. Sibling entries and the `permissions.ask`/`permissions.deny` lists are
 /// not this hook's content — an ask-list entry is a guard *against* a
 /// dangerous command, and reading the whole file as every hook's script
 /// turned one `mkfs` guard into a high-severity finding on all fifteen
@@ -172,7 +172,7 @@ fn read_hook(item: &ObservedItem) -> Content {
             event: String::new(),
             matcher: None,
             command: item.path.display().to_string(),
-            entry: None,
+            values: Vec::new(),
             script: Some(text),
         };
     }
@@ -202,27 +202,25 @@ fn read_hook(item: &ObservedItem) -> Content {
             .map(|reg| reg.command.as_str())
             .collect::<Vec<_>>()
             .join("\n"),
-        entry: Some(
-            registrations
-                .iter()
-                .map(entry_beside_command)
-                .collect::<Vec<_>>()
-                .join("\n"),
-        ),
+        values: registrations
+            .iter()
+            .flat_map(|reg| stored_values(&reg.entry))
+            .collect(),
         script: None,
     }
 }
 
-/// The registration entry with the field that supplied its command taken
-/// out. The command is a document of its own above, and scoring the same
-/// text twice would report every finding in it twice; everything else in
-/// the entry — env, headers, cwd, timeout — is scored here, once.
-fn entry_beside_command(reg: &crate::scan::hooks::Registration) -> String {
-    let mut entry = reg.entry.clone();
-    if let Some(fields) = entry.as_object_mut() {
-        fields.retain(|_, value| value.as_str() != Some(reg.command.as_str()));
-    }
-    entry.to_string()
+/// The values a registration stores beside its command and hands to the
+/// harness as they are: every string under its `env` and `headers` maps.
+/// Nothing else of the entry is text a rule reads — the keys, the matcher,
+/// a cwd, a url and the event are its shape, and scoring them as commands
+/// is the false attribution the narrowed reading exists to remove.
+fn stored_values(entry: &serde_json::Value) -> impl Iterator<Item = String> + '_ {
+    ["env", "headers"]
+        .into_iter()
+        .filter_map(move |key| entry.get(key).and_then(serde_json::Value::as_object))
+        .flat_map(|map| map.values().filter_map(serde_json::Value::as_str))
+        .map(str::to_owned)
 }
 
 /// The server entry a harness would launch, dug back out of the config file

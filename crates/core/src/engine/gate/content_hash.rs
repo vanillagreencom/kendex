@@ -39,7 +39,7 @@ pub(crate) fn content_hash(input: &AuditInput) -> String {
             event,
             matcher,
             command,
-            entry,
+            values,
             script,
         } => {
             material.push_str(&format!(
@@ -47,12 +47,14 @@ pub(crate) fn content_hash(input: &AuditInput) -> String {
                 matcher.as_deref().unwrap_or_default(),
                 script.as_deref().unwrap_or_default()
             ));
-            // Appended, not slotted, so a planned hook — which has no entry
-            // — hashes exactly as it did, and an override granted at the
-            // gate still recognises its install.
-            if let Some(entry) = entry {
+            // Appended, not slotted, so a planned hook — which stores no
+            // values — hashes exactly as it did, and an override granted at
+            // the gate still recognises its install. Each value digested on
+            // its own, so a value carrying the join character cannot move
+            // a boundary.
+            for value in values {
                 material.push('|');
-                material.push_str(entry);
+                material.push_str(&crate::hash::hash_bytes(value.as_bytes()));
             }
         }
         Content::Mcp(entry) => material.push_str(&format!("{entry:?}")),

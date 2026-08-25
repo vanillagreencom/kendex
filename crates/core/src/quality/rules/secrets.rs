@@ -7,7 +7,9 @@
 use crate::model::ItemKind;
 
 use super::super::secret::{find_secret, fingerprint_secret};
-use super::{AUTHORED, AuditRule, Content, Finding, Outcome, Prepared, Severity, at, scan_docs};
+use super::{
+    AUTHORED, AuditRule, Content, Finding, Outcome, Prepared, Severity, at, scan_every_doc,
+};
 
 pub(super) fn rules() -> Vec<Box<dyn AuditRule>> {
     vec![Box::new(PlaintextSecrets)]
@@ -75,7 +77,9 @@ impl AuditRule for PlaintextSecrets {
         }
         let mut kinds = AUTHORED.to_vec();
         kinds.push(ItemKind::McpServer);
-        scan_docs(prepared, &kinds, |doc, line, findings| {
+        // A credential is one wherever it sits, a hook entry's env block
+        // included; this is the one rule that reads stored values.
+        scan_every_doc(prepared, &kinds, |doc, line, findings| {
             if let Some(token) = find_secret(&line.text) {
                 findings.push(self.finding(at(doc, line), token, "this line"));
             }

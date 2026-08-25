@@ -21,10 +21,10 @@ pub(crate) struct Registration {
     pub(crate) matcher: String,
     pub(crate) command: String,
     /// The entry object itself, every field of it — timeout, env, cwd,
-    /// headers, whatever the harness lets an entry carry. The audit scores
-    /// it: a field the three columns above do not spell is still content
-    /// the harness will use, and dropping it here would hide a credential
-    /// in an `env` block from the rules.
+    /// headers, whatever the harness lets an entry carry. The audit reads
+    /// the env and header values out of it: a credential in an `env` block
+    /// is content the harness will use whether or not the command spells
+    /// it, and dropping the entry here would hide it from the rules.
     pub(crate) entry: serde_json::Value,
 }
 

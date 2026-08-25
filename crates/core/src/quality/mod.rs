@@ -242,12 +242,14 @@ pub enum Content {
         event: String,
         matcher: Option<String>,
         command: String,
-        /// The registration entry as the config file holds it — env,
-        /// headers, url, timeout, every field — for a hook read out of a
-        /// shared config file. Scored like the command: a credential in an
-        /// `env` block is used at run time whether or not the command
-        /// spells it.
-        entry: Option<String>,
+        /// The values a hook read out of a shared config file stores beside
+        /// its command and uses as they are: every string under its `env`
+        /// and `headers` maps, one document each ([`DocRole::Values`]). A
+        /// credential in one is used at run time whether or not the command
+        /// spells it, while a command-looking value in one is not something
+        /// the hook runs. Keys, matcher, cwd, url and event are the entry's
+        /// shape, not text, and reach no rule.
+        values: Vec<String>,
         script: Option<String>,
     },
     Mcp(McpEntry),
@@ -270,10 +272,26 @@ pub struct AuditInput {
     pub content: Content,
 }
 
+/// What a document is to the rules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocRole {
+    /// Text the harness executes or the model reads: a command line, a
+    /// script, an authored file. Every content rule reads it.
+    Text,
+    /// A value the harness stores and uses without executing or reading
+    /// it as instructions: one of a hook entry's env or header values.
+    /// Only the rules about stored values — a credential sitting in one —
+    /// read it: `mkfs` inside an environment value is not a command the
+    /// hook runs, and scoring it as one would be the false attribution the
+    /// narrowed hook reading exists to remove.
+    Values,
+}
+
 /// One document's normalized lines, ready for the content rules.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Doc {
     pub location: String,
+    pub role: DocRole,
     pub lines: Vec<Line>,
 }
 
