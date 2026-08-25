@@ -51,8 +51,8 @@ jobs:
           # gh-readonly-queue/<base>/pr-<N>-<sha>. The NEWEST matching
           # merge_group run is the current attempt — no status filter, so a
           # still-running or cancelled current attempt is never passed over
-          # for an older historical failure (which would also reuse its
-          # dedupe marker and suppress the new intake issue). Two-step
+          # for an older historical failure (whose run link and hint would
+          # misname the cause in the comment). Two-step
           # paginated capture with a zero-byte guard, per the pagination-read
           # pattern; head_branch is null-guarded (jq test() on a null errors
           # the step under set -e).
