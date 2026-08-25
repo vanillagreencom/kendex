@@ -343,6 +343,37 @@ git -C "$R" add -A
 run_pf
 clean "a Makefile recipe line ending in vitest wires the suite"
 
+# A manager prefix is an invocation: the token directly before the
+# runner name decides.
+seed npxprefix
+printf '{\n  "scripts": { "test": "npx vitest" }\n}\n' >"$R/package.json"
+git -C "$R" add -A
+git -C "$R" commit -qm "vitest behind an npx prefix"
+printf 'export {}\n' >"$R/n.test.ts"
+git -C "$R" add -A
+run_pf
+clean "an npx-prefixed vitest invocation wires the suite"
+
+# So is an exec form.
+seed execform
+printf '{\n  "scripts": { "test": "pnpm exec vitest" }\n}\n' >"$R/package.json"
+git -C "$R" add -A
+git -C "$R" commit -qm "vitest behind pnpm exec"
+printf 'export {}\n' >"$R/e.test.ts"
+git -C "$R" add -A
+run_pf
+clean "a pnpm exec vitest invocation wires the suite"
+
+# And a chained invocation after a shell connector.
+seed chained
+printf '{\n  "scripts": { "test": "node setup.js && vitest run" }\n}\n' >"$R/package.json"
+git -C "$R" add -A
+git -C "$R" commit -qm "vitest chained after a setup command"
+printf 'export {}\n' >"$R/c.test.ts"
+git -C "$R" add -A
+run_pf
+clean "a vitest invocation chained after && wires the suite"
+
 # A comment is not an invocation: a workflow whose only vitest reference
 # is a comment wires nothing.
 seed prosecomment

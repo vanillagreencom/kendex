@@ -719,7 +719,8 @@ build_runner_index() {
     # include glob — no path in the runner ever names the suites it
     # executes. Comment lines are dropped first; on the rest the word must
     # stand at a command position — after line-leading whitespace, a shell
-    # connector (; & | backtick paren), an npx/pnpm/yarn prefix, or a
+    # connector (; & | backtick paren), a directly preceding manager or
+    # exec-form word (npx pnpm yarn exec dlx), or a
     # colon opening a manifest or workflow value with an optional quote —
     # and end at whitespace, a quote, a connector, or the line end. A
     # dependency key ("vitest": "^3"), a package path (@vitest/ui), a
@@ -729,7 +730,7 @@ build_runner_index() {
     # scripts run from the root of the tree that owns them.
     sed '/^[[:space:]]*#/d' -- "$c" >"$TMP/runner.body.one"
     for kind in vitest jest; do
-      LC_ALL=C grep -qE "(^[[:space:]]*|[;&|\`(][[:space:]]*|(npx|pnpm|yarn)[[:space:]]+|:[[:space:]]*[\"']?)$kind([[:space:]\"'\`;&|)]|\$)" "$TMP/runner.body.one" || continue
+      LC_ALL=C grep -qE "(^[[:space:]]*|[;&|\`(][[:space:]]*|(npx|pnpm|yarn|exec|dlx)[[:space:]]+|:[[:space:]]*[\"']?)$kind([[:space:]\"'\`;&|)]|\$)" "$TMP/runner.body.one" || continue
       scope=""
       case "$r" in
         .github/workflows/*) ;;
