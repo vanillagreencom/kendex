@@ -86,6 +86,34 @@ fn world() -> World {
     }
 }
 
+/// [`world`], with every path reaching the home through a symlink — the
+/// spelling macOS hands every test anyway (`/var` → `/private/var` fronts
+/// its temp directories), reproduced here so the one-spelling rule stays
+/// covered on every platform.
+#[allow(clippy::unwrap_used)]
+fn world_via_link() -> World {
+    let tmp = tempfile::tempdir().unwrap();
+    let real = tmp.path().join("real");
+    fs::create_dir_all(&real).unwrap();
+    let home = tmp.path().join("via");
+    std::os::unix::fs::symlink(&real, &home).unwrap();
+    let upstream = home.join("git").join(REPO);
+    fs::create_dir_all(&upstream).unwrap();
+    git(&upstream, &["init", "--quiet", "-b", "main"]);
+    fs::create_dir_all(home.join(".claude")).unwrap();
+    fs::create_dir_all(home.join("app/.claude")).unwrap();
+    let base = format!("file://{}", home.join("git").display());
+    World {
+        env: Env::fake(&home, FakeOs::Linux).with_var("KENDEX_GIT_BASE", &base),
+        scope: Scope::Project {
+            root: home.join("app"),
+        },
+        home,
+        upstream,
+        _tmp: tmp,
+    }
+}
+
 #[allow(clippy::unwrap_used)]
 fn declare(w: &World, body: &str) {
     let path = manifest::manifest_path(&w.env, &w.scope);

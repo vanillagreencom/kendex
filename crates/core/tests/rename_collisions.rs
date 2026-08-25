@@ -22,7 +22,10 @@ struct Fixture {
 #[allow(clippy::unwrap_used)]
 fn fixture() -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path().to_path_buf();
+    // Plan ops speak the canonical spelling; the fixture enters canonical
+    // space once so op paths compare equal to fixture-derived ones (macOS
+    // fronts its temp directories with a `/var` → `/private/var` symlink).
+    let home = tmp.path().canonicalize().unwrap();
     let env = Env::fake(&home, FakeOs::Linux);
     let project = home.join("dev/app");
     fs::create_dir_all(project.join(".claude")).unwrap();

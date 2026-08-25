@@ -149,6 +149,56 @@ fn a_legacy_scope_refusal_names_the_old_file_and_the_writer_survives() {
     assert!(!targets[0].exists(), "nothing may land at the new name");
 }
 
+/// The mid-apply refusal with the scope root reached through a symlink:
+/// the plan speaks the canonical spelling, so the targets a caller matches
+/// the refusal against must speak it too, whatever spelling the scope
+/// arrived under. macOS reaches every temp directory through `/var` →
+/// `/private/var` and runs the tests above this way; the link reproduces
+/// that shape on every platform.
+#[cfg(unix)]
+#[test]
+fn a_refusal_through_a_symlinked_root_is_still_the_stale_choice() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), kendex_core::env::FakeOs::Linux);
+    let real = tmp.path().join("dev/app");
+    std::fs::create_dir_all(real.join(".claude")).unwrap();
+    std::fs::write(
+        real.join("kendex.toml"),
+        "schema = 4\n\n[install]\nharnesses = [\"claude\"]\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(tmp.path().join("dev"), tmp.path().join("via")).unwrap();
+    let scope = Scope::Project {
+        root: tmp.path().join("via/app"),
+    };
+
+    let path = manifest::manifest_path(&env, &scope);
+    let (read, base) = manifest::read_for_mutation(&path).unwrap();
+    let mut editor_copy = read.unwrap();
+    // The old schema keeps the upgrade in the plan — the manifest write
+    // the base binds to, exactly as in the direct-spelling test above.
+    editor_copy.schema = 4;
+    let lock = load_lock(&lock_path(&env, &scope)).unwrap();
+    let options = PlanOptions {
+        manifest_base: Some(base),
+        ..PlanOptions::default()
+    };
+    let report = engine::plan_scope(&env, &scope, &editor_copy, &lock, &options).unwrap();
+
+    // The writer in between, landing through the same link.
+    std::fs::write(
+        &path,
+        "schema = 4\n\n[skill-instructions]\nall = \"kept\"\n",
+    )
+    .unwrap();
+
+    let error = apply::execute(&env, &report.plan, None).unwrap_err();
+    assert!(
+        stale_at(&error, &manifest::manifest_paths(&env, &scope)),
+        "{error:?}"
+    );
+}
+
 #[test]
 fn a_save_carrying_the_base_of_the_file_it_read_lands() {
     let (_tmp, env, scope) = scope_with_manifest();

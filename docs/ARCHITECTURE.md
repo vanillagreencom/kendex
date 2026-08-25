@@ -183,6 +183,18 @@ lives in one capability table read by core and UI.
     process's environment (`process/mod.rs`), so `npm` run for a Pi
     package sees the real home.
 
+17. One spelling per path. A root is canonicalized once, where it enters —
+    a scope's root wherever paths are derived from it (`Scope::canonical`,
+    `rename::manifest_pair`), a source root at `SealedSource::open`, a
+    declared source path at `source::resolve` — and every path derived
+    from it carries that canonical spelling. Nothing re-canonicalizes
+    downstream, and nothing may compare two spellings of one file: under a
+    symlinked root (macOS fronts its temp tree with `/var` →
+    `/private/var`; a user links a project directory) a plan's refusal and
+    the targets a caller derives must already agree, and a path handed to
+    git must speak the same spelling as the repository it is resolved
+    against.
+
 ## Decisions
 
 - Tauri 2 · React 19 · Vite · Tailwind v4 · shadcn/ui · zustand ·

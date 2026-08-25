@@ -68,8 +68,10 @@ fn as_is_hash_cannot_be_forged_by_bytes_that_spell_a_boundary() {
 
 /// Names go in as the bytes the OS holds, so two names that are not
 /// UTF-8 stay two names instead of collapsing into one replacement
-/// character.
-#[cfg(unix)]
+/// character. Only Linux can create such names — APFS refuses filenames
+/// that are not valid UTF-8 — so the case is built there and the property
+/// holds by the same code path everywhere.
+#[cfg(target_os = "linux")]
 #[test]
 fn as_is_hash_keeps_distinct_non_utf8_names_distinct() {
     use std::os::unix::ffi::OsStrExt as _;

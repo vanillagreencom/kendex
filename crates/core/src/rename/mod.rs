@@ -87,8 +87,14 @@ pub fn refuse_both_generations(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Every scope-derived manifest path is born here, off the canonical root
+/// ([`Scope::canonical`]): the engine plans against canonical spellings, so
+/// a caller matching a plan's refusal against paths derived here must hear
+/// the same spelling — under a symlinked root (macOS's `/var` →
+/// `/private/var` temp layout, a linked project directory) the two would
+/// otherwise name one file two ways.
 pub(crate) fn manifest_pair(env: &Env, scope: &Scope) -> (PathBuf, PathBuf) {
-    match scope {
+    match &scope.canonical() {
         Scope::Global => (
             env.global_manifest_file(),
             env.legacy_global_manifest_file(),

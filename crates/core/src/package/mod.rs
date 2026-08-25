@@ -114,13 +114,17 @@ pub(crate) fn package_ref_for(
         let crate::source::SourceState::Ready(ready) = state else {
             return None;
         };
-        let sealed = SealedSource::open(&ready.root).ok()?;
+        let effective = SealedSource::open(&ready.root).ok()?;
         let config =
-            crate::source::source_config(&sealed, crate::source::repo_leaf(&ready.provenance))
+            crate::source::source_config(&effective, crate::source::repo_leaf(&ready.provenance))
                 .ok()?;
-        crate::source::find_item(&sealed, &config, kind, name)
-            .and_then(|path| path.strip_prefix(&ready.root).ok().map(Path::to_path_buf))
-            .map(|rel| root.join(rel))
+        crate::source::find_item(&effective, &config, kind, name)
+            .and_then(|path| {
+                path.strip_prefix(effective.root())
+                    .ok()
+                    .map(Path::to_path_buf)
+            })
+            .map(|rel| sealed.root().join(rel))
     });
     let Some(item_path) = item_path else {
         return Err(CoreError::ItemNotInSource {
@@ -128,10 +132,20 @@ pub(crate) fn package_ref_for(
             source_name,
         });
     };
+    // Both arms above speak the seal's canonical spelling, so the strip is
+    // against `sealed.root()`, never the spelling `published` handed back —
+    // under a symlinked checkout root (macOS's `/var` → `/private/var`) the
+    // two differ, and a miss must refuse rather than hand git an absolute
+    // pathspec it reads as outside the mirror.
     let subtree = item_path
-        .strip_prefix(&root)
+        .strip_prefix(sealed.root())
         .map(Path::to_path_buf)
-        .unwrap_or_else(|_| item_path.clone());
+        .map_err(|_| {
+            CoreError::io(
+                &item_path,
+                std::io::Error::other("item path is not under the sealed checkout root"),
+            )
+        })?;
     Ok(PackageRef {
         repo,
         mirror,

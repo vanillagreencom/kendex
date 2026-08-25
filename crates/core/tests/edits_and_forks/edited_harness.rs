@@ -383,3 +383,36 @@ fn a_source_level_hold_names_the_source_as_owner() {
     let row = report.rows.iter().find(|row| row.name == "gh").unwrap();
     assert_eq!(row.hold_owner, Some(HoldOwner::Package));
 }
+
+/// The updates chain read through a symlinked home: the published checkout
+/// is reached under the link's spelling while the seal speaks the canonical
+/// one, and the package's subtree must still resolve against the mirror —
+/// a mixed spelling hands git an absolute pathspec it refuses, and the row
+/// silently loses its timeline. macOS runs every test this way (`/var` →
+/// `/private/var`); the link makes the same shape hold on every platform.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn updates_still_read_history_under_a_symlinked_home() {
+    let w = world_via_link();
+    write_skill(&w.upstream, "gh", "One.");
+    commit(&w.upstream, "one");
+    declare(&w, "[skills.gh]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    write_skill(&w.upstream, "gh", "Two.");
+    commit(&w.upstream, "two");
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
+
+    let report = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();
+    assert_eq!(report.warnings, Vec::new(), "history must read cleanly");
+    let row = report
+        .rows
+        .iter()
+        .find(|row| row.kind == ItemKind::Skill && row.name == "gh")
+        .unwrap();
+    assert!(row.update_available, "{row:?}");
+    assert!(row.can_take_latest, "{row:?}");
+    assert!(row.latest.is_some(), "{row:?}");
+}

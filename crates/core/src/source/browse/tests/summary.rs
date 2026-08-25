@@ -7,10 +7,15 @@ use super::{cat, project, skill, sources_decl};
 #[test]
 fn a_subscription_summary_answers_with_itself_and_counts_its_offer() {
     let tmp = tempfile::tempdir().unwrap();
-    let catalog = tmp.path().join("catalog");
+    // Provenance speaks the canonical spelling `resolve` fixes where a
+    // declared path enters, so the fixture enters canonical space once —
+    // macOS reaches its temp directories through a `/var` → `/private/var`
+    // symlink, and a declared spelling would compare unequal to it.
+    let root = tmp.path().canonicalize().unwrap();
+    let catalog = root.join("catalog");
     skill(&catalog, "skills", "gh", "body");
     skill(&catalog, "skills", "extra", "body");
-    let (env, scope) = project(tmp.path(), &sources_decl(&catalog));
+    let (env, scope) = project(&root, &sources_decl(&catalog));
 
     let report = summary(&env, &cat(&scope)).unwrap();
     assert_eq!(

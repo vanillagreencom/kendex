@@ -86,6 +86,11 @@ fn an_exit_read_in_the_global_scope_says_so() {
         "---\nname: deploy\ndescription: ship it\n---\nUpstream.\n",
     )
     .unwrap();
+    // The platform config root the binary itself resolves: macOS reads
+    // Library/Application Support and ignores XDG variables entirely.
+    #[cfg(target_os = "macos")]
+    let global = home.join("Library/Application Support/kendex");
+    #[cfg(not(target_os = "macos"))]
     let global = home.join(".config/kendex");
     fs::create_dir_all(&global).unwrap();
     fs::write(
