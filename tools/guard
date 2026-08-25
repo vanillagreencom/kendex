@@ -109,7 +109,7 @@ done <<<"$prose_files"
 if [ -f CHANGELOG.md ]; then
   # An entry is every line from its list marker to the next marker, heading,
   # or blank-then-unindented paragraph, whatever the indentation.
-  long_entries=$(awk '
+  if long_entries=$(awk '
     function flush() { if (n > 3) printf "  line %d: %d lines\n", start, n; n = 0; blank = 0 }
     { sub(/\r$/, "") }
     /^[-*+] / { flush(); n = 1; start = NR; next }
@@ -117,9 +117,12 @@ if [ -f CHANGELOG.md ]; then
     /^[ \t]*$/ { if (n) blank++; next }
     /^[ \t]/ || !blank { if (n) { n += blank + 1; blank = 0 }; next }
     { flush() }
-    END { flush() }' CHANGELOG.md)
-  [ -n "$long_entries" ] && say "CHANGELOG.md entries run past three lines — state the outcome, keep the story out:
+    END { flush() }' CHANGELOG.md 2>/dev/null); then
+    [ -n "$long_entries" ] && say "CHANGELOG.md entries run past three lines — state the outcome, keep the story out:
 $long_entries"
+  else
+    say "CHANGELOG.md is unreadable — the entry-length check could not run"
+  fi
 fi
 
 # The size-ratchet baseline only tightens. Raising a row is a decision, not

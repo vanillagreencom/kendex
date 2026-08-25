@@ -217,6 +217,14 @@ git -C "$R" add -A
 run_guard RATCHET_RAISE=
 [ "$RC" -eq 0 ] && ok "entries of one and three lines pass" \
   || bad "entries of one and three lines pass" "rc=$RC out=$OUT"
+if [ "$(id -u)" -ne 0 ]; then
+  chmod 000 "$R/CHANGELOG.md"
+  run_guard RATCHET_RAISE=
+  chmod 644 "$R/CHANGELOG.md"
+  [ "$RC" -ne 0 ] && case "$OUT" in *"CHANGELOG.md is unreadable"*) true ;; *) false ;; esac \
+    && ok "an unreadable CHANGELOG fails closed, naming the check that could not run" \
+    || bad "an unreadable CHANGELOG fails closed, naming the check that could not run" "rc=$RC out=$OUT"
+fi
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
