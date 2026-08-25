@@ -44,12 +44,12 @@ vi.mock("@/stores/editor", async (importOriginal) => {
 const GLOBAL: Scope = { scope: "global" };
 const PROJECT: Scope = { scope: "project", root: "/home/me/app" };
 
-function Probe({ switching, scope }: { switching: boolean; scope: Scope }) {
-  return <span>{useManifestBusy(switching, scope) ? "busy" : "idle"}</span>;
+function Probe({ switching, scopes }: { switching: boolean; scopes: Scope[] }) {
+  return <span>{useManifestBusy(switching, scopes) ? "busy" : "idle"}</span>;
 }
 
-const render = (switching: boolean, scope: Scope = GLOBAL) =>
-  renderToStaticMarkup(<Probe switching={switching} scope={scope} />);
+const render = (switching: boolean, scopes: Scope[] = [GLOBAL]) =>
+  renderToStaticMarkup(<Probe switching={switching} scopes={scopes} />);
 
 describe("useManifestBusy", () => {
   it("is one gate over the audit apply, a version switch, updates-store work, and a save", () => {
@@ -71,9 +71,20 @@ describe("useManifestBusy", () => {
   // both read it before either applies lose one of the two edits.
   it("holds while a Follow source flip settles in this package's scope", () => {
     stub.settling = [{ scope: { scope: "global" } }];
-    expect(render(false, GLOBAL)).toContain("busy");
-    expect(render(false, PROJECT)).toContain("idle");
+    expect(render(false, [GLOBAL])).toContain("busy");
+    expect(render(false, [PROJECT])).toContain("idle");
     stub.settling = [];
-    expect(render(false, GLOBAL)).toContain("idle");
+    expect(render(false, [GLOBAL])).toContain("idle");
+  });
+
+  // Remove and the enable/disable toggle write every place the package is
+  // installed in, not only the one the page was opened at, and a settling
+  // flip is rewriting one of those manifests.
+  it("holds for a flip in any scope the page's controls write", () => {
+    stub.settling = [{ scope: { scope: "project", root: "/home/me/app" } }];
+    expect(render(false, [GLOBAL])).toContain("idle");
+    expect(render(false, [GLOBAL, PROJECT])).toContain("busy");
+    stub.settling = [];
+    expect(render(false, [GLOBAL, PROJECT])).toContain("idle");
   });
 });

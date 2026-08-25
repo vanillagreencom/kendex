@@ -568,8 +568,9 @@ lives in one capability table read by core and UI.
   (`lib/updates-read-state.ts::rowUnsettled`), an apply reaching only what
   is installed there. A refused write stops the flip painting and says so at
   once, but the rows already wear it, so the scope goes on holding until the
-  read that puts them back lands: no row wears a position the engine did not
-  take while reporting itself safe to act on. An edited
+  read that puts them back lands — and when every read behind it failed too,
+  the flip puts them back itself before letting the scope go. No row wears a
+  position the engine did not take. An edited
   place is never updated over: its row says so and offers the install
   beside it where a newer version the source still carries can land, and a
   link to the package page otherwise; the fork-or-discard choice lives on

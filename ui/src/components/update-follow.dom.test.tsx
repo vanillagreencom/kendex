@@ -8,17 +8,19 @@
 // safe to act on.
 import userEvent from "@testing-library/user-event";
 import { act } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { UPDATE_ALL_LABEL } from "@/lib/copy";
 import {
   followSourceLabel,
   placesLabel,
+  UPDATE_NEEDS_CHECK_NOTE,
   UPDATE_PACKAGE_EVERYWHERE_LABEL,
   USER_LEVEL_PLACE,
 } from "@/lib/copy-updates";
 import { UpdatesPage } from "@/pages/updates";
+import { useProblemsStore } from "@/stores/problems";
 import { useUpdatesStore } from "@/stores/updates";
 import { useUpdatesView } from "@/stores/updates-view";
 import { mount, settle } from "@/test/dom";
@@ -46,16 +48,22 @@ const APP = "/home/me/app";
 // landing's row matching do any work: name alone would identify every row.
 const rows = [row("gh", null), row("gh", APP), row("orch", APP)];
 
-const auditView = {
-  scope: { scope: "global" as const },
-  drift: [],
-  plan: [],
-  notes: [],
-  warnings: [],
-  safety: [],
-  adoptable: ADOPTABLE,
-  exits: [],
+/** What the two held commands answer with: the flip's own apply, and the
+ *  read of the standing that reconciles it. */
+const ok = {
+  status: "ok" as const,
+  data: {
+    scope: { scope: "global" as const },
+    drift: [],
+    plan: [],
+    notes: [],
+    warnings: [],
+    safety: [],
+    adoptable: ADOPTABLE,
+    exits: [],
+  },
 };
+const landed = { status: "ok" as const, data: { rows, warnings: [] as [] } };
 
 /** The table drawn from the store, the way the page draws it: a flip that
  *  only reaches `rows` is a flip nobody sees. */
@@ -101,12 +109,25 @@ const holding = (element: HTMLElement): boolean =>
   element.getAttribute("aria-disabled") === "true" ||
   element.hasAttribute("data-disabled");
 
+const outstanding: (() => void)[] = [];
+
 /** A command that has been called but has not answered, so a test can read
- *  the page mid-write — where the freeze used to be. */
-function pending<T>() {
+ *  the page mid-write — where the freeze used to be. `fallback` answers it
+ *  whatever the test did: the applier's chain and its in-flight count are
+ *  made once with the store module and no reset here can reach them, so a
+ *  command left hanging by a failed assertion fails the tests after it too,
+ *  for a reason that is not theirs. */
+function pending<T>(fallback: T) {
+  let answered = false;
   let answer!: (value: T) => void;
   const promise = new Promise<T>((resolve) => {
-    answer = resolve;
+    answer = (value) => {
+      answered = true;
+      resolve(value);
+    };
+  });
+  outstanding.push(() => {
+    if (!answered) answer(fallback);
   });
   return { promise, answer };
 }
@@ -116,7 +137,17 @@ const openPlaces = async () => {
   await userEvent.click(button(placesLabel(2)));
 };
 
+afterEach(async () => {
+  for (const release of outstanding.splice(0)) release();
+  await act(async () => {});
+});
+
+/** Every failure the page announces, so a test can count them: the dialog
+ *  itself keeps only the last. */
+const showError = vi.fn();
+
 beforeEach(() => {
+  useProblemsStore.setState({ showError });
   useUpdatesStore.setState({
     rows,
     busy: false,
@@ -136,7 +167,7 @@ beforeEach(() => {
 
 describe("the Follow source switch", () => {
   it("moves before the write behind it answers, holding only its scope", async () => {
-    const write = pending<{ status: "ok"; data: typeof auditView }>();
+    const write = pending<typeof ok>(ok);
     vi.mocked(commands.packageSetRev).mockReturnValue(write.promise as never);
     mount(<Live />);
     await openPlaces();
@@ -165,13 +196,13 @@ describe("the Follow source switch", () => {
     expect(holding(followSwitch("gh", "app"))).toBe(false);
     expect(holding(followSwitch("orch", "app"))).toBe(false);
 
-    write.answer({ status: "ok", data: auditView });
+    write.answer(ok);
     await settle();
     expect(commands.updatesOverview).toHaveBeenCalled();
   });
 
   it("keeps its new position under a read that lands mid-write", async () => {
-    const write = pending<{ status: "ok"; data: typeof auditView }>();
+    const write = pending<typeof ok>(ok);
     vi.mocked(commands.packageSetRev).mockReturnValue(write.promise as never);
     mount(<Live />);
     await openPlaces();
@@ -191,7 +222,7 @@ describe("the Follow source switch", () => {
     // The landing carries the flip onto the flipped place alone.
     expect(following(followSwitch("gh", "app"))).toBe(true);
 
-    write.answer({ status: "ok", data: auditView });
+    write.answer(ok);
     await settle();
   });
 
@@ -203,10 +234,7 @@ describe("the Follow source switch", () => {
       status: "error",
       error: "manifest busy",
     });
-    const reread = pending<{
-      status: "ok";
-      data: { rows: typeof rows; warnings: [] };
-    }>();
+    const reread = pending<typeof landed>(landed);
     vi.mocked(commands.updatesOverview).mockReturnValue(
       reread.promise as never,
     );
@@ -218,26 +246,63 @@ describe("the Follow source switch", () => {
     });
     await settle();
 
-    expect(commands.packageSetRev).toHaveBeenCalledTimes(1);
     expect(commands.updatesOverview).toHaveBeenCalledTimes(1);
     expect(holding(followSwitch("gh", USER_LEVEL_PLACE))).toBe(true);
 
     // The refusal is news now, not when the read finishes.
+    expect(showError).toHaveBeenCalledTimes(1);
+    expect(showError.mock.calls[0][0].message).toBe("manifest busy");
+
+    // The reverting flip keeps this scope's commit-applying actions out.
     const store = useUpdatesStore.getState();
     await act(async () => {
       void store.updateOne(store.rows[0]);
     });
-    expect(commands.packageSetRev).toHaveBeenCalledTimes(1);
-    expect(commands.applyPlan).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenLastCalledWith(
+      expect.objectContaining({ message: UPDATE_NEEDS_CHECK_NOTE }),
+    );
 
-    reread.answer({ status: "ok", data: { rows, warnings: [] } });
+    reread.answer(landed);
     await settle();
+    expect(following(followSwitch("gh", USER_LEVEL_PLACE))).toBe(true);
+    expect(useUpdatesStore.getState().pendingFollows).toEqual([]);
+    // And said once. The second announcement arrived when the read
+    // finished, re-opening a dialog the person had already dismissed.
+    expect(
+      showError.mock.calls.filter(
+        (call) => call[0].message === "manifest busy",
+      ),
+    ).toHaveLength(1);
+  });
+
+  // Every read behind a refused write failed, so nothing is coming to
+  // replace the rows the flip painted. The page is held under its own
+  // "couldn't confirm" banner, but the switch must still not sit in a
+  // position the engine never took.
+  it("puts the switch back when nothing lands to replace the flip", async () => {
+    vi.mocked(commands.packageSetRev).mockResolvedValue({
+      status: "error",
+      error: "manifest busy",
+    });
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "error",
+      error: "standing unreadable",
+    });
+    mount(<Live />);
+    await openPlaces();
+
+    await act(async () => {
+      followSwitch("gh", USER_LEVEL_PLACE).click();
+    });
+    await settle();
+
+    expect(useUpdatesStore.getState().loaded).toBe(false);
     expect(following(followSwitch("gh", USER_LEVEL_PLACE))).toBe(true);
     expect(useUpdatesStore.getState().pendingFollows).toEqual([]);
   });
 
   it("refuses a second place in the settling scope, and takes another", async () => {
-    const write = pending<{ status: "ok"; data: typeof auditView }>();
+    const write = pending<typeof ok>(ok);
     vi.mocked(commands.packageSetRev).mockReturnValue(write.promise as never);
     mount(<Live />);
     await openPlaces();
@@ -257,12 +322,12 @@ describe("the Follow source switch", () => {
       useUpdatesStore.getState().pendingFollows.map((one) => one.name),
     ).toEqual(["gh", "orch"]);
 
-    write.answer({ status: "ok", data: auditView });
+    write.answer(ok);
     await settle();
   });
 
   it("holds the package-wide Update for a package whose places include the settling scope", async () => {
-    const write = pending<{ status: "ok"; data: typeof auditView }>();
+    const write = pending<typeof ok>(ok);
     vi.mocked(commands.packageSetRev).mockReturnValue(write.promise as never);
     mount(<Live />);
     await openPlaces();
@@ -275,13 +340,13 @@ describe("the Follow source switch", () => {
     expect(button(UPDATE_PACKAGE_EVERYWHERE_LABEL).disabled).toBe(true);
     expect(holding(followSwitch("orch", "app"))).toBe(false);
 
-    write.answer({ status: "ok", data: auditView });
+    write.answer(ok);
     await settle();
     expect(button(UPDATE_PACKAGE_EVERYWHERE_LABEL).disabled).toBe(false);
   });
 
   it("holds Update all while a flip settles", async () => {
-    const write = pending<{ status: "ok"; data: typeof auditView }>();
+    const write = pending<typeof ok>(ok);
     vi.mocked(commands.packageSetRev).mockReturnValue(write.promise as never);
     mount(<UpdatesPage />);
     await settle();
@@ -296,7 +361,7 @@ describe("the Follow source switch", () => {
     // scope being applied.
     expect(updateAll().disabled).toBe(true);
 
-    write.answer({ status: "ok", data: auditView });
+    write.answer(ok);
     await settle();
     expect(updateAll().disabled).toBe(false);
   });

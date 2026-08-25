@@ -193,22 +193,23 @@ export function packageVersionActions(
 
 /** One gate for every control that rewrites this package's manifest: the
  *  audit store's apply, a version switch in flight, the updates store's
- *  fork or discard, a Follow source flip settling in this scope, and the
- *  editor's save all touch the same file. The controls here command the
- *  engine directly rather than through the updates store's chain, and two
- *  commands that both read the manifest before either applies leave the
- *  second saving its stale copy over the first — so this gate, not
- *  ordering, is what keeps them apart. */
-export function useManifestBusy(
-  switching: boolean,
-  scope: Scope | null,
-): boolean {
+ *  fork or discard, a Follow source flip settling, and the editor's save
+ *  all touch the same file. The controls here command the engine directly
+ *  rather than through the updates store's chain, and two commands that
+ *  both read a manifest before either applies leave the second saving its
+ *  stale copy over the first — so this gate, not ordering, is what keeps
+ *  them apart.
+ *
+ *  `scopes` is every scope the page's controls can write, not only the one
+ *  it was opened at: Remove and the enable/disable toggle run over each
+ *  place the package is installed in. */
+export function useManifestBusy(switching: boolean, scopes: Scope[]): boolean {
   const auditBusy = useAuditStore((s) => s.busy);
   const updatesBusy = useUpdatesStore((s) => s.busy);
   const settling = useUpdatesStore((s) =>
-    scope === null
-      ? false
-      : s.pendingFollows.some((one) => sameScope(one.scope, scope)),
+    s.pendingFollows.some((one) =>
+      scopes.some((scope) => sameScope(one.scope, scope)),
+    ),
   );
   const saving = useEditorStore((s) => s.saving);
   return auditBusy || switching || updatesBusy || settling || saving;

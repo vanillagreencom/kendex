@@ -56,7 +56,6 @@ export function PackagePage() {
   );
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [switching, setSwitching] = useState(false);
-  const mutating = useManifestBusy(switching, ref?.scope ?? null);
   useEffect(() => {
     if (initialView) clearPackageView();
   }, [initialView, clearPackageView]);
@@ -75,6 +74,12 @@ export function PackagePage() {
     return groupItems(matching)[0] ?? null;
   }, [ref, result]);
 
+  // Every manifest this page's controls can write: the place it was opened
+  // at, and each place Remove and the enable/disable toggle reach.
+  const mutating = useManifestBusy(switching, [
+    ...(ref ? [ref.scope] : []),
+    ...(group ? groupScopes(group) : []),
+  ]);
   const { meta, files, versions, load: reload } = usePackageData(ref);
   const diff = usePackageDiff(
     ref,

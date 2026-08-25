@@ -54,13 +54,26 @@ export const withPending = (
         one.name === row.name &&
         sameScope(one.scope, row.scope),
     );
-    return flip ? { ...row, pinned: flip.pinned } : row;
+    if (!flip) return row;
+    // The engine derives one from the other — a row is pinned exactly when
+    // something holds it — so painting `pinned` alone would be a shape no
+    // overview can return. The owner is always this declaration's own: a
+    // hold a source or a parent owns locks the switch, so those rows never
+    // accept a flip.
+    return {
+      ...row,
+      pinned: flip.pinned,
+      holdOwner: flip.pinned ? { kind: "package" as const } : null,
+    };
   });
 };
 
 interface FollowStore {
   rows: UpdateRow[];
   pendingFollows: PendingFollow[];
+  /** False when no read has landed since the flip — the rows still wear it
+   *  and nothing is coming to replace them. */
+  loaded: boolean;
   mutate: (
     work: () => Promise<string | null>,
     kind?: "mutation" | "settle",
@@ -138,7 +151,16 @@ export function followSwitch({
       }, "settle");
       if (error !== null && !refused) report(error);
     } finally {
-      // The read behind the write has landed; it is the truth from here.
+      // A refusal whose reads all failed leaves the rows as the flip
+      // painted them with nothing coming to replace them: put the switch
+      // back where the engine still has it before letting the scope go.
+      if (refused && !get().loaded) {
+        set({
+          rows: withPending(get().rows, [
+            { ...flip, pinned: row.pinned, reverting: false },
+          ]),
+        });
+      }
       retire();
     }
   };
