@@ -83,8 +83,8 @@ sda="$TMP_ROOT/state-artifact"
 "$WS" --state-dir "$sda" append KEN-2 fixed_items \
   "$(jq -n --arg l "$ART_LOC" --arg d "$ART_DESC" '{description: $d, location: $l, commit: "abc123f", source: "pr-review"}')" >/dev/null
 
-"$WS" --state-dir "$sda" update KEN-2 --argjson-file art "$ART" --arg src pr-review \
-  '$art.blockers[0] as $item | .fixed_items = ((.fixed_items // []) | map(select(.location != $item.location or .description != $item.description))) | .escalated_items = ((.escalated_items // []) + [{description: $item.description, location: $item.location, reason: "outstanding at the review cycle cap", outcome: "blocked", source: $src}])' >/dev/null \
+"$WS" --state-dir "$sda" update KEN-2 --slurpfile art "$ART" --arg src pr-review \
+  '$art[0].blockers[0] as $item | .fixed_items = ((.fixed_items // []) | map(select(.location != $item.location or .description != $item.description))) | .escalated_items = ((.escalated_items // []) + [{description: $item.description, location: $item.location, reason: "outstanding at the review cycle cap", outcome: "blocked", source: $src}])' >/dev/null \
   && rc=0 || rc=$?
 [[ "$rc" -eq 0 ]] && ok "the documented artifact-bound write succeeds" \
   || bad "the documented artifact-bound write succeeds" "rc=$rc"
@@ -100,16 +100,16 @@ art_fixed="$("$WS" --state-dir "$sda" get KEN-2 '.fixed_items | length')"
 [[ "$art_fixed" == "0" ]] && ok "the superseded entry is dropped by the artifact-bound write" \
   || bad "the superseded entry is dropped by the artifact-bound write" "len=$art_fixed"
 
-err="$("$WS" --state-dir "$sda" update KEN-2 --argjson-file art "$TMP_ROOT/absent.json" '.cycles = 1' 2>&1 >/dev/null)" && rc=0 || rc=$?
+err="$("$WS" --state-dir "$sda" update KEN-2 --slurpfile art "$TMP_ROOT/absent.json" '.cycles = 1' 2>&1 >/dev/null)" && rc=0 || rc=$?
 [[ "$rc" -ne 0 ]] && [[ "$err" == *"no such file"* ]] \
-  && ok "--argjson-file refuses a missing file" \
-  || bad "--argjson-file refuses a missing file" "rc=$rc err=$err"
+  && ok "--slurpfile refuses a missing file" \
+  || bad "--slurpfile refuses a missing file" "rc=$rc err=$err"
 
 printf 'not json' > "$TMP_ROOT/bad.json"
-err="$("$WS" --state-dir "$sda" update KEN-2 --argjson-file art "$TMP_ROOT/bad.json" '.cycles = 1' 2>&1 >/dev/null)" && rc=0 || rc=$?
+err="$("$WS" --state-dir "$sda" update KEN-2 --slurpfile art "$TMP_ROOT/bad.json" '.cycles = 1' 2>&1 >/dev/null)" && rc=0 || rc=$?
 [[ "$rc" -ne 0 ]] && [[ "$err" == *"exactly one JSON value"* ]] \
-  && ok "--argjson-file refuses a file that is not one JSON value" \
-  || bad "--argjson-file refuses a file that is not one JSON value" "rc=$rc err=$err"
+  && ok "--slurpfile refuses a file that is not one JSON value" \
+  || bad "--slurpfile refuses a file that is not one JSON value" "rc=$rc err=$err"
 
 # --- --argjson binds parsed JSON, and refuses what is not JSON -------------
 "$WS" --state-dir "$sd" update KEN-1 --argjson labels '["needs-review","skills"]' '.qa_labels = $labels' >/dev/null

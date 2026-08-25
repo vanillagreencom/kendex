@@ -10,7 +10,7 @@
 # review-bots.md bans sentence-pinning lints on markdown, and an editorial
 # rephrase must not fail a suite while the contract holds. The contract is
 # carried by tokens that cannot be reworded without changing behaviour —
-# `escalated_items`, `fixed_items`, `outcome`/`blocked`, `--argjson-file`,
+# `escalated_items`, `fixed_items`, `outcome`/`blocked`, `--slurpfile`,
 # `qa-review`, the `At The Cap` heading — plus the relationships between them:
 # one command carries the drop and the record, the cap section precedes Fix
 # Delegation, and every token sits inside the section that owns it.
@@ -134,14 +134,14 @@ fi
 # --- 5: the finding's text is bound from its artifact, never pasted ---------
 # A location like fs.rs::write_all's guard ends a quoted shell word early, so
 # the command breaks before any binding can help.
-if write_has "$REVIEW_PR_WF" '--argjson-file' && write_has "$REVIEW_PR_WF" '--arg src'; then
+if write_has "$REVIEW_PR_WF" '--slurpfile' && write_has "$REVIEW_PR_WF" '--arg src'; then
   if grep -q -e "--arg [a-z]* '\[" <<<"$(cap_write "$REVIEW_PR_WF")"; then
     fail "the cap write pastes a placeholder into a quoted shell word"
   else
     pass "the cap write binds from the artifact file and pastes no finding text"
   fi
 else
-  fail "the cap write lost its --argjson-file or --arg src binding"
+  fail "the cap write lost its --slurpfile or --arg src binding"
 fi
 
 # --- 6: both provenances are named where the rule is stated -----------------
@@ -220,7 +220,7 @@ else
 fi
 
 # Records the item, leaves its stale fixed_items entry: the both-buckets shape.
-if ! plant_pr supersede 's/\$art\.\[ARRAY\].*\.escalated_items = /$art.[ARRAY][[INDEX]] as $item | .escalated_items = /'; then
+if ! plant_pr supersede 's/\$art\[0\]\.\[ARRAY\].*\.escalated_items = /$art[0].[ARRAY][[INDEX]] as $item | .escalated_items = /'; then
   fail "supersede control planted nothing — its sed program matched no text"
 elif write_has "$CTRL" 'fixed_items'; then
   fail "lint MISSED a write that records without dropping the fixed_items entry"
@@ -236,15 +236,15 @@ awk -v q="'" '
     if (i == 0) i = index($0, "))) | .escalated_items")
     if (i > 0 && !done) {
       print substr($0, 1, i + 2) q
-      print ".agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --argjson-file art [ARTIFACT_PATH] --arg src [SOURCE] " \
-            q "$art.[ARRAY][[INDEX]] as $item | .escalated_items = ((.escalated_items // []) + [{description: $item.description, outcome: \"blocked\", source: $src}])" q
+      print ".agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile art [ARTIFACT_PATH] --arg src [SOURCE] " \
+            q "$art[0].[ARRAY][[INDEX]] as $item | .escalated_items = ((.escalated_items // []) + [{description: $item.description, outcome: \"blocked\", source: $src}])" q
       done = 1
       next
     }
     print
   }
 ' "$REVIEW_PR_WF" > "$TWOWRITE"
-if [[ "$(grep -cF -- '--argjson-file art' "$TWOWRITE")" -lt 2 ]]; then
+if [[ "$(grep -cF -- '--slurpfile art' "$TWOWRITE")" -lt 2 ]]; then
   fail "two-write control planted nothing — the command was not split"
 elif write_has "$TWOWRITE" 'fixed_items'; then
   fail "lint credits a drop and a record split across two commands"
@@ -253,7 +253,7 @@ else
 fi
 
 # The pasted-text shape this PR exists to remove.
-if ! plant_pr pasted "s/--argjson-file art '\[ARTIFACT_PATH\]'/--arg loc '[LOC]' --arg desc '[DESC]'/"; then
+if ! plant_pr pasted "s/--slurpfile art '\[ARTIFACT_PATH\]'/--arg loc '[LOC]' --arg desc '[DESC]'/"; then
   fail "pasted-text control planted nothing — its sed program matched no text"
 elif grep -q -e "--arg [a-z]* '\[" <<<"$(cap_write "$CTRL")"; then
   pass "lint flags a placeholder pasted into a quoted shell word"
