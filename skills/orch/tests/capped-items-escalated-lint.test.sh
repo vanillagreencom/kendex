@@ -78,8 +78,9 @@ cap_refusal() { grep -F 'cycles is past the cap' "$1"; }
 # `pipefail` would promote that 141 into a failed check for text that is
 # present. The race grows with the section's length, so it is latent until an
 # edit lengthens § 4.
-sec_has()  { grep -q  "$2" <<<"$(bounded_rereview "$1")"; }
-sec_hasF() { grep -qF "$2" <<<"$(bounded_rereview "$1")"; }
+# -e/-F -e so a pattern that begins with a dash is a pattern, not a flag.
+sec_has()  { grep -q  -e "$2" <<<"$(bounded_rereview "$1")"; }
+sec_hasF() { grep -qF -e "$2" <<<"$(bounded_rereview "$1")"; }
 
 # The one command the cap rule runs per item. It is a single `update` filter,
 # not a drop followed by an append: between two writes the item is in neither
@@ -88,7 +89,7 @@ sec_hasF() { grep -qF "$2" <<<"$(bounded_rereview "$1")"; }
 CAP_WRITE_RE='workflow-state update \[ISSUE_ID\].*escalated_items'
 CAP_WRITE_TXT='workflow-state update [ISSUE_ID]'
 cap_write() { grep -E "$CAP_WRITE_RE" <<<"$(bounded_rereview "$1")"; }
-write_has() { grep -q "$2" <<<"$(cap_write "$1")"; }
+write_has() { grep -q -e "$2" <<<"$(cap_write "$1")"; }
 
 # The schema row for the cap path. POSIX classes only, never \s: BSD grep -E
 # does not know it, and the assertion would go vacuous on macOS rather than
@@ -106,10 +107,20 @@ else
 fi
 
 # --- b: the entry carries the typed outcome so audit maps it to escalated ---
-if write_has "$REVIEW_PR_WF" '"outcome":"blocked"'; then
+if write_has "$REVIEW_PR_WF" 'outcome: "blocked"'; then
   pass "the capped-item entry writes outcome \"blocked\""
 else
   fail "the capped-item entry lost outcome \"blocked\""
+fi
+
+# --- b2: the finding's own text is bound, never interpolated ----------------
+# A location or description carrying an apostrophe or a quote breaks the
+# filter when it is spliced in, and the item goes unrecorded — the failure this
+# rule exists to prevent. --arg hands jq a literal string instead.
+if write_has "$REVIEW_PR_WF" '--arg desc' && write_has "$REVIEW_PR_WF" 'description: \$desc'; then
+  pass "the cap write binds the finding text with --arg and names \$desc"
+else
+  fail "the cap write interpolates the finding text instead of binding it"
 fi
 
 # --- c: the rule states the disposition, not just the mechanics -------------
@@ -213,12 +224,21 @@ else
   pass "lint flags a dropped capped-item escalated_items write"
 fi
 
-if ! plant_pr outcome 's/"outcome":"blocked",//'; then
+if ! plant_pr outcome 's/outcome: "blocked", //'; then
   fail "outcome control planted nothing — its sed program matched no text"
-elif write_has "$CTRL" '"outcome":"blocked"'; then
+elif write_has "$CTRL" 'outcome: "blocked"'; then
   fail "lint MISSED a dropped outcome field on the capped-item entry"
 else
   pass "lint flags a dropped outcome field on the capped-item entry"
+fi
+
+# The pre-fix shape of this command: the finding's text spliced into the filter.
+if ! plant_pr interpolated 's/--arg loc '"'"'\[LOC\]'"'"' --arg desc '"'"'\[DESC\]'"'"' --arg src '"'"'\[SOURCE\]'"'"' //; s/\$loc/"[LOC]"/g; s/\$desc/"[DESC]"/g; s/\$src/"[SOURCE]"/g'; then
+  fail "interpolation control planted nothing — its sed program matched no text"
+elif write_has "$CTRL" '--arg desc' || write_has "$CTRL" 'description: \$desc'; then
+  fail "lint MISSED a cap write that interpolates the finding text"
+else
+  pass "lint flags a cap write that interpolates the finding text"
 fi
 
 if ! plant_pr contract "s/\*\*Capped items are escalated, never dropped\.\*\* Record every blocker.*$/$REPORT_ONLY after that pass and proceed to § 5./"; then

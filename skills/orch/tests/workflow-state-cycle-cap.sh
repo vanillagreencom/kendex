@@ -34,11 +34,19 @@ err="$("$WS" --state-dir "$sd" set KEN-1 rereview_panel "$PANEL" 2>&1 >/dev/null
 [[ "$err" == *"review-pr § 5"* ]] && ok "the refusal names the step that follows" \
   || bad "the refusal names the step that follows" "$err"
 # The refusal is the instruction the orchestrator reads at the moment the cap
-# fires, so it must carry § 4's record-then-route contract. Asserting it on the
-# message the refusal actually prints proves the branch is reachable, which
-# grepping the source for the same text does not.
+# fires, so it must carry the WHOLE § 4 contract. Asserting it on the message
+# the refusal actually prints proves the branch is reachable, which grepping
+# the source for the same text does not.
 [[ "$err" == *escalated_items* ]] && ok "the refusal names the escalated_items recording step" \
   || bad "the refusal names the escalated_items recording step" "$err"
+[[ "$err" == *"review-pr § 4"* ]] && ok "the refusal points at § 4's capped-items procedure" \
+  || bad "the refusal points at § 4's capped-items procedure" "$err"
+# Naming only the escalated half re-creates the both-buckets collision § 4 was
+# rewritten to prevent: a re-blocked finding keeps its stale fixed_items entry
+# and § 8 prints it as FIXED and ESCALATED at once.
+[[ "$err" == *fixed_items* ]] && [[ "$err" == *"same write"* ]] \
+  && ok "the refusal states the fixed_items drop rides the same write" \
+  || bad "the refusal states the fixed_items drop rides the same write" "$err"
 panel="$("$WS" --state-dir "$sd" get KEN-1 .rereview_panel)"
 [[ "$panel" == "null" ]] && ok "a refused write leaves rereview_panel unset" \
   || bad "a refused write leaves rereview_panel unset" "panel=$panel"
@@ -70,6 +78,32 @@ err="$(REVIEW_MAX_CYCLES=2 "$WS" --state-dir "$sd" set KEN-2 rereview_panel "$PA
 [[ "$rc" -ne 0 ]] && [[ "$err" == *"(3 > REVIEW_MAX_CYCLES=2)"* ]] \
   && ok "REVIEW_MAX_CYCLES=2 refuses at cycles=3" \
   || bad "REVIEW_MAX_CYCLES=2 refuses at cycles=3" "rc=$rc err=$err"
+
+# Planted control: a refusal carrying only the escalated half. The assertion
+# above must go red on it, or it is pinning nothing the round-1 wording did not
+# already satisfy.
+echo
+echo "--- planted control ---"
+
+CTRL_SCRIPTS="$TMP_ROOT/scripts"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$CTRL_SCRIPTS"
+sed 's/ and drops its superseded fixed_items entry in the same write//' "$WS" > "$CTRL_SCRIPTS/workflow-state"
+chmod +x "$CTRL_SCRIPTS/workflow-state"
+if cmp -s "$CTRL_SCRIPTS/workflow-state" "$WS"; then
+  bad "supersede control planted nothing — its sed program matched no text"
+else
+  sdc="$TMP_ROOT/state-ctrl"
+  "$CTRL_SCRIPTS/workflow-state" --state-dir "$sdc" init KEN-3 --worktree "$REPO_ROOT" --branch ken-3 >/dev/null
+  "$CTRL_SCRIPTS/workflow-state" --state-dir "$sdc" update KEN-3 '.cycles = 5' >/dev/null
+  cerr="$("$CTRL_SCRIPTS/workflow-state" --state-dir "$sdc" set KEN-3 rereview_panel "$PANEL" 2>&1 >/dev/null)" || true
+  if [[ "$cerr" != *escalated_items* ]]; then
+    bad "the control refusal still prints its escalated half" "$cerr"
+  elif [[ "$cerr" == *fixed_items* ]] && [[ "$cerr" == *"same write"* ]]; then
+    bad "the assertion MISSED a refusal that names only the escalated half" "$cerr"
+  else
+    ok "the assertion flags a refusal that names only the escalated half"
+  fi
+fi
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
