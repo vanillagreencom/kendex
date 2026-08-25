@@ -1,5 +1,5 @@
 import { toast } from "sonner";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands } from "@/bindings";
 import { pickFolder } from "./pick-folder";
 
@@ -12,6 +12,12 @@ vi.mock("sonner", () => ({
 }));
 
 describe("pickFolder", () => {
+  // Two cases assert toast.error was never called, so each one needs the spy
+  // clean regardless of which case ran before it.
+  beforeEach(() => {
+    vi.mocked(toast.error).mockClear();
+  });
+
   it("returns the chosen path without a toast", async () => {
     vi.mocked(commands.pickFolder).mockResolvedValue({
       status: "ok",
