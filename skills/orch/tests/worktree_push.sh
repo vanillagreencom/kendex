@@ -64,7 +64,11 @@ NEW_A2="$(printf 'd%.0s' {1..39})3"
 
 wt="$TMP_ROOT/wt"
 mkdir -p "$wt/tmp"
-SIDECAR="$wt/tmp/worktree-push-pending-map-KEN-1.json"
+
+# The sidecar lives beside the workflow-state record in the resolved state
+# directory — never inside the pushed worktree. reset_state points SIDECAR
+# at the state directory of the work dir it just recreated.
+SIDECAR=""
 
 # Fresh state with recorded fix commits on both surfaces: a short prefix of
 # OLD_A in fixed_items; in pr_comment_review.fixes one prefix of OLD_B
@@ -74,7 +78,7 @@ reset_state() {
   local work="$1"
   rm -rf "$work"
   mkdir -p "$work"
-  rm -f "$SIDECAR"
+  SIDECAR="$work/tmp/worktree-push-pending-map-KEN-1.json"
   (cd "$work" \
     && "$STATE" init KEN-1 --agent generalist --worktree "$wt" --branch ken-1 >/dev/null \
     && "$STATE" append KEN-1 fixed_items "{\"description\":\"fix\",\"commit\":\"${OLD_A:0:7}\",\"source\":\"pr-review\"}" \
@@ -164,10 +168,11 @@ echo "=== a map the wrapper cannot record persists for the retry ==="
 
 # No state file: the push landed, the SHAs are stale, and silence here is the
 # exact failure mode the wrapper exists to close — the map waits in the
-# sidecar and the next run consumes it before pushing.
+# sidecar (beside where the state file will be) and the next run consumes it
+# before pushing.
 work="$TMP_ROOT/work-nostate"
 rm -rf "$work" && mkdir -p "$work"
-rm -f "$SIDECAR"
+SIDECAR="$work/tmp/worktree-push-pending-map-KEN-1.json"
 STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" run_push "$work" --worktree "$wt" --issue KEN-1
 assert_eq "$RUN_RC" "1" "missing state file fails the call"
 assert_contains "$(cat "$run_err")" "NOT recorded" "missing state names the unreconciled-SHA consequence"
@@ -268,26 +273,29 @@ assert_contains "$(cat "$run_out")" "rebase-map: not-a-sha $NEW_A2" "the malform
 [[ ! -f "$SIDECAR" ]] && pass "no sidecar exists on the parse-failure path" || fail "no sidecar exists on the parse-failure path"
 
 echo
-echo "=== a sidecar that cannot be written still gets its map applied ==="
+echo "=== an unwritable state directory loses neither exit code nor map ==="
 
-# The state write is independent of the sidecar; an unwritable tmp/ costs
-# only the retry convenience, never the reconciliation. chmod mode bits do
-# not bind root (CAP_DAC_OVERRIDE writes straight through them), so the
-# denial is probed and the case skipped visibly where it cannot take effect
-# — mirroring the /dev/full gate above.
-work="$TMP_ROOT/work-rotmp"
+# Sidecar and state file share the resolved state directory, so an
+# unwritable directory fails both writes together — the worst case, whose
+# contract is: honest failure, and the transcript's rebase-map lines as the
+# surviving copy. chmod mode bits do not bind root (CAP_DAC_OVERRIDE writes
+# straight through them), so the denial is probed and the case skipped
+# visibly where it cannot take effect — mirroring the /dev/full gate above.
+work="$TMP_ROOT/work-rostate"
 reset_state "$work"
-chmod a-w "$wt/tmp"
-if touch "$wt/tmp/.write-probe" 2>/dev/null; then
-  rm -f "$wt/tmp/.write-probe"
-  chmod u+w "$wt/tmp"
-  printf '  skip  %s\n' "unwritable-sidecar case: chmod a-w does not deny writes here (running as root?)"
+before="$(state_json "$work")"
+chmod a-w "$work/tmp"
+if touch "$work/tmp/.write-probe" 2>/dev/null; then
+  rm -f "$work/tmp/.write-probe"
+  chmod u+w "$work/tmp"
+  printf '  skip  %s\n' "unwritable-state-dir case: chmod a-w does not deny writes here (running as root?)"
 else
   STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" run_push "$work" --worktree "$wt" --issue KEN-1
-  chmod u+w "$wt/tmp"
-  assert_eq "$RUN_RC" "0" "an unwritable sidecar directory does not fail a landed push"
-  assert_eq "$(state_json "$work" | jq -r ".rebase_map[\"$OLD_A\"]")" "$NEW_A" "the map is applied to state despite the unwritable sidecar"
-  assert_contains "$(cat "$run_err")" "the map was still applied to workflow state" "the sidecar failure is named alongside the applied map"
+  chmod u+w "$work/tmp"
+  assert_eq "$RUN_RC" "1" "sidecar and state failing together fails the landed push"
+  assert_contains "$(cat "$run_err")" "AND the map could not be applied" "the double failure is named"
+  assert_contains "$(cat "$run_out")" "rebase-map: $OLD_A $NEW_A" "the transcript keeps the map as the surviving copy"
+  assert_eq "$(state_json "$work")" "$before" "the unwritable state is left untouched"
 fi
 
 echo
@@ -297,54 +305,49 @@ echo "=== the bare-numeric alias binds, not refuses ==="
 # aliased state is this issue's record, and the push must reconcile it.
 work="$TMP_ROOT/work-alias"
 rm -rf "$work" && mkdir -p "$work"
-alias_sidecar="$wt/tmp/worktree-push-pending-map-7.json"
-rm -f "$alias_sidecar"
+# The sidecar is named by the RESOLVED key, so the alias and its issue-N
+# state share one recovery file.
+alias_sidecar="$work/tmp/worktree-push-pending-map-issue-7.json"
 (cd "$work" \
   && "$STATE" init issue-7 --agent generalist --worktree "$wt" --branch issue-7 >/dev/null \
   && "$STATE" append issue-7 fixed_items "{\"description\":\"fix\",\"commit\":\"${OLD_A:0:7}\",\"source\":\"pr-review\"}")
 STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" run_push "$work" --worktree "$wt" --issue 7
 assert_eq "$RUN_RC" "0" "a bare-numeric issue binds to its issue-N state instead of refusing"
 assert_eq "$(jq -r '.fixed_items[0].commit' "$work/tmp/workflow-state-issue-7.json")" "${NEW_A:0:7}" "the aliased record's fix SHA is rewritten"
-rm -f "$alias_sidecar"
+[[ ! -f "$alias_sidecar" ]] && pass "the resolved-key sidecar is consumed after the write" || fail "the resolved-key sidecar is consumed after the write"
 
 echo
-echo "=== a symlinked sidecar path refuses before pushing (CWE-59) ==="
+echo "=== in-tree plants are inert: the sidecar lives outside the tree ==="
 
-# The sidecar path is predictable inside the pushed worktree; a symlink
-# planted there must not become an arbitrary-file read or overwrite. The run
-# refuses before the push and the symlink's target keeps its content.
+# The structural close of the untrusted-sidecar class: recovery state lives
+# beside the workflow-state record, so nothing at the old in-tree path —
+# symlink or plausible tracked map — is ever read or written. The push
+# proceeds, only the real map lands, and the plants sit untouched.
 victim="$TMP_ROOT/victim.json"
 printf '%s\n' '{"untouched":true}' >"$victim"
-work="$TMP_ROOT/work-symlink"
+in_tree="$wt/tmp/worktree-push-pending-map-KEN-1.json"
+work="$TMP_ROOT/work-plants"
 reset_state "$work"
-ln -s "$victim" "$SIDECAR"
-symlink_args_log="$TMP_ROOT/symlink-args.log"
-: >"$symlink_args_log"
-STUB_ARGS_LOG="$symlink_args_log" STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" \
-  run_push "$work" --worktree "$wt" --issue KEN-1
-assert_eq "$RUN_RC" "1" "a symlinked sidecar path fails the call"
-assert_contains "$(cat "$run_err")" "is a symlink" "the refusal names the symlink"
-assert_eq "$(wc -l <"$symlink_args_log")" "0" "the push never runs behind a symlinked sidecar"
+ln -s "$victim" "$in_tree"
+STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" run_push "$work" --worktree "$wt" --issue KEN-1
+assert_eq "$RUN_RC" "0" "a symlink at the old in-tree path does not touch the push"
+assert_eq "$(state_json "$work" | jq -r ".rebase_map[\"$OLD_A\"]")" "$NEW_A" "the real map is recorded"
 assert_eq "$(cat "$victim")" '{"untouched":true}' "the symlink target keeps its content"
-[[ -L "$SIDECAR" ]] && pass "the planted symlink is left for inspection, not deleted" || fail "the planted symlink is left for inspection, not deleted"
-rm -f "$SIDECAR"
+[[ -L "$in_tree" ]] && pass "the planted symlink is never consumed or deleted" || fail "the planted symlink is never consumed or deleted"
+rm -f "$in_tree"
 
-# A symlinked tmp/ directory is the same hole one level up: the staging file
-# would land wherever the link points.
-saved_tmp="$TMP_ROOT/saved-wt-tmp"
-elsewhere="$TMP_ROOT/elsewhere"
-mkdir -p "$elsewhere"
-mv "$wt/tmp" "$saved_tmp"
-ln -s "$elsewhere" "$wt/tmp"
-: >"$symlink_args_log"
-STUB_ARGS_LOG="$symlink_args_log" STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" \
-  run_push "$work" --worktree "$wt" --issue KEN-1
-rm "$wt/tmp"
-mv "$saved_tmp" "$wt/tmp"
-assert_eq "$RUN_RC" "1" "a symlinked tmp directory fails the call"
-assert_contains "$(cat "$run_err")" "is a symlink" "the tmp-directory refusal names the symlink"
-assert_eq "$(wc -l <"$symlink_args_log")" "0" "the push never runs behind a symlinked tmp directory"
-assert_eq "$(find "$elsewhere" -mindepth 1 | wc -l)" "0" "nothing is written through the symlinked directory"
+# A tracked file at the old path carrying a VALID-grammar map must never be
+# consumed as a pending sidecar — it belongs to the tree, not to this tool.
+planted_map="{\"$OLD_B\": \"$NEW_A2\"}"
+printf '%s\n' "$planted_map" >"$in_tree"
+work="$TMP_ROOT/work-plantfile"
+reset_state "$work"
+STUB_PUSH_STDOUT="→ pushed" run_push "$work" --worktree "$wt" --issue KEN-1
+assert_eq "$RUN_RC" "0" "a planted in-tree map file does not fail the push"
+assert_eq "$(state_json "$work" | jq -r '.rebase_map | length')" "0" "the planted map is never merged into workflow state"
+assert_eq "$(state_json "$work" | jq -r '.pr_comment_review.fixes[0].commit')" "${OLD_B:0:8}" "recorded commits are not rewritten by the plant"
+assert_eq "$(cat "$in_tree")" "$planted_map" "the planted file is left exactly as it was"
+rm -f "$in_tree"
 
 echo
 echo "=== an ambiguous state key refuses before pushing ==="
