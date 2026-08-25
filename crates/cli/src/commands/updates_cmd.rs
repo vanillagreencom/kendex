@@ -3,7 +3,7 @@ use clap::{Args, Subcommand};
 use kendex_core::env::Env;
 use kendex_core::model::ItemKind;
 
-use super::engine_common::confirm_and_execute;
+use super::engine_common::{confirm_and_execute, print_report};
 use super::pin::parse_kind;
 use super::{CliResult, resolve_scopes, say};
 use crate::scope::ScopeFilter;
@@ -159,8 +159,13 @@ fn show_version(version: &kendex_core::package::updates::VersionRef) -> String {
     }
 }
 
-/// Bring one package current: the single-package apply, printed op by op
-/// and confirmed before anything is written.
+/// Bring one package current: the single-package apply, reported and
+/// confirmed the way every other writing verb is — the shared printer says
+/// what the plan found and would do, the shared gate asks before any of it
+/// is written, and this verb adds one line of its own about the package it
+/// was asked for. Nothing here restates what the printer already says: a
+/// diagnostic it gains is one this verb gains.
+///
 /// The scope's other followers stay at their installed commits (bar one
 /// the lock cannot place, which resolves fresh either way); a hold on
 /// the package itself still holds, and any conflict the plan raises for it
@@ -187,17 +192,14 @@ fn apply_one(
     let report = kendex_core::package::update_one(env, scope, kind, &name)?;
     let held = kendex_core::package::held_back(&report, kind, &name);
     let moving = kendex_core::package::moving(&report, kind, &name);
-    for row in &held {
-        say(&format!("{}: {}", row.harness.name(), row.detail));
-    }
     let changed = !report.plan.ops.is_empty();
-    for op in &report.plan.ops {
-        say(&op.description);
-    }
-    // The same gate every other writing verb passes: a session with nobody
-    // to ask refuses rather than writing on a mistyped or scripted run.
-    // An empty plan falls straight through, so the nothing-to-change line
-    // below is still what a run with nothing to do says.
+    // Notes, warnings, safety scores, the conflicts and their ways out, and
+    // the plan itself — the same account `apply` and `pin` give.
+    print_report(env, &report);
+    // And the same gate they pass: a session with nobody to ask refuses
+    // rather than writing on a mistyped or scripted run. An empty plan
+    // falls straight through, so the line below is still what a run with
+    // nothing to do says.
     confirm_and_execute(env, &report, yes)?;
     // The deep work just ran; write it down so the next session-start check
     // reads verdicts instead of guesses.

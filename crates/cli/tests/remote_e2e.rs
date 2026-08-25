@@ -339,6 +339,12 @@ fn updates_apply_names_what_moved_and_what_was_held_back() {
         applied.contains("applied — skill gh is current here"),
         "{applied}"
     );
+    // Content this run writes is scored where every other writing verb
+    // scores it — the shared printer's account, not this verb's own.
+    assert!(
+        applied.contains("safety: skill gh for Claude Code scores"),
+        "the apply says what it is about to install: {applied}"
+    );
     let rendered = proj.join(".agents/skills/gh/SKILL.md");
     assert!(
         fs::read_to_string(&rendered)
@@ -377,6 +383,20 @@ fn updates_apply_names_what_moved_and_what_was_held_back() {
     assert!(
         !held.contains("applied —"),
         "a held-back package must never read as applied: {held}"
+    );
+    assert!(
+        !held.contains("nothing to change"),
+        "a refused plan is not an empty one: {held}"
+    );
+    // The conflict and its ways out come from the shared printer, so this
+    // verb says what `apply` and `pin` say about the same row.
+    assert!(
+        held.contains("conflict: skill gh for Claude Code:"),
+        "{held}"
+    );
+    assert!(
+        held.contains("keep your edits as a fork"),
+        "the way out is named, not just the refusal: {held}"
     );
     assert_eq!(
         fs::read_to_string(&rendered).unwrap(),
@@ -487,5 +507,41 @@ fn updates_apply_refuses_to_write_without_a_yes() {
         fs::read_to_string(&rendered)
             .unwrap()
             .contains("Upstream v2")
+    );
+}
+
+/// A note the plan raises reaches the reader. `update_one`'s account of a
+/// target its source no longer offers used to be dropped on the floor
+/// here: the run said what it applied and never said what it had found.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn updates_apply_says_what_the_plan_found() {
+    let tmp = fixture();
+    let home = tmp.path();
+    let proj = home.join("proj");
+    let upstream = home.join("git/vanillagreencom/kendex");
+    assert!(
+        kendex(home, &proj, &["add", "--skill", "gh", "-y"])
+            .status
+            .success()
+    );
+
+    fs::remove_dir_all(upstream.join("skills/gh")).unwrap();
+    git(&upstream, &["add", "-A"]);
+    git(&upstream, &["commit", "--quiet", "-m", "gh withdrawn"]);
+    assert!(
+        kendex(home, &proj, &["updates", "--refresh"])
+            .status
+            .success()
+    );
+
+    let printed = said(&kendex(
+        home,
+        &proj,
+        &["updates", "apply", "skill", "gh", "-y"],
+    ));
+    assert!(
+        printed.contains("note: gh: not found in source"),
+        "the plan's own account of the target reaches the reader: {printed}"
     );
 }
