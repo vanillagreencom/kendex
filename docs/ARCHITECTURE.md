@@ -558,7 +558,15 @@ lives in one capability table read by core and UI.
   timeline listing only commits that touched the package's files,
   tag-decorated, never tag-replaced. Rows are per package per scope, folded
   by package and expanded by place; a row's Update applies that package
-  (`PlanOptions::update_only`), apply and refresh a whole place. An edited
+  (`PlanOptions::update_only`), apply and refresh a whole place.
+  Flipping Follow source is one row's state change and a write that settles
+  behind it (`ui/src/stores/updates-follow.ts`): the switch carries its new
+  position from the click, while the hold, the scope apply, and the read of
+  every scope's standing after them take seconds. The flip is pending until
+  that read lands — every landing wears it, so a read begun earlier cannot
+  bounce the switch — and it holds its own scope's rows and no others
+  (`lib/updates-read-state.ts::rowUnsettled`), an apply reaching only what
+  is installed there. An edited
   place is never updated over: its row says so and offers the install
   beside it where a newer version the source still carries can land, and a
   link to the package page otherwise; the fork-or-discard choice lives on

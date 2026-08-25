@@ -1,6 +1,7 @@
 import { commands, type ItemWarning, type UpdateRow } from "@/bindings";
 import { settled } from "@/lib/settled";
 import { landings } from "./landings";
+import { type PendingFollow, withPending } from "./updates-follow";
 
 type Overview = { rows: UpdateRow[]; warnings: ItemWarning[] };
 type OverviewResult =
@@ -30,6 +31,10 @@ type OverviewResult =
 //   re-read of old mirrors may bury. Only a failed mutation touches
 //   nothing: it re-read nothing, and the rows on screen are still the
 //   last good read's answer.
+//
+// A `settle` is a mutation that holds one scope instead of the page: the
+// Follow source switch has already moved, the store marks that scope as
+// settling, and every other row stays live for as long as the write runs.
 export function overviewApplier(
   set: (partial: {
     rows?: UpdateRow[];
@@ -38,6 +43,9 @@ export function overviewApplier(
     error?: string | null;
     overviewInFlight?: boolean;
   }) => void,
+  /** The follow flips whose writes have not answered — every landing wears
+   *  them, so a read that began before a flip cannot bounce the switch. */
+  pending: () => PendingFollow[],
 ) {
   const order = landings();
   let chain: Promise<unknown> = Promise.resolve();
@@ -49,7 +57,7 @@ export function overviewApplier(
 
   const landOk = (data: Overview) =>
     set({
-      rows: data.rows,
+      rows: withPending(data.rows, pending()),
       warnings: data.warnings,
       loaded: true,
       error: null,
@@ -57,10 +65,16 @@ export function overviewApplier(
 
   return async (
     read: () => Promise<OverviewResult>,
-    kind: "read" | "refresh" | "mutation" = "read",
+    kind: "read" | "refresh" | "mutation" | "settle" = "read",
   ): Promise<string | null> => {
-    inFlight += 1;
-    set({ overviewInFlight: true });
+    // A settle's own scope holds through the store's pending flips; raising
+    // the page-wide flag too would disable every unrelated row for the
+    // whole of the write it is running in the background.
+    const holdsPage = kind !== "settle";
+    if (holdsPage) {
+      inFlight += 1;
+      set({ overviewInFlight: true });
+    }
     try {
       if (kind === "read") {
         const ticket = order.begin();
@@ -101,8 +115,10 @@ export function overviewApplier(
       chain = turn.catch(() => {});
       return await turn;
     } finally {
-      inFlight -= 1;
-      if (inFlight === 0) set({ overviewInFlight: false });
+      if (holdsPage) {
+        inFlight -= 1;
+        if (inFlight === 0) set({ overviewInFlight: false });
+      }
     }
   };
 }

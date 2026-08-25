@@ -30,7 +30,7 @@ import {
 } from "@/lib/copy-updates";
 import { packageDisplayName } from "@/lib/labels";
 import { heldByOwner, placeName, switchLockedBy } from "@/lib/update-groups";
-import { unsettled } from "@/lib/updates-read-state";
+import { rowUnsettled } from "@/lib/updates-read-state";
 import { hasPerPackageUpdate, versionLabel } from "@/lib/versions";
 import { useNavStore } from "@/stores/nav";
 import { useUpdatesStore } from "@/stores/updates";
@@ -52,10 +52,10 @@ export function PlaceCells({
   onIgnore?: (row: UpdateRow) => void;
 }) {
   const { busy, updateOne, setAutoUpdate, setIgnored } = useUpdatesStore();
-  // Anything overview-producing in flight is about to replace these rows;
-  // the store actions refuse regardless, and the controls say so instead
-  // of inviting the click.
-  const held = useUpdatesStore(unsettled);
+  // Anything about to replace this place's row — an overview-producing
+  // read, a follow switch settling in its scope — holds its controls; the
+  // store refuses regardless, and they say so rather than invite a click.
+  const held = useUpdatesStore((s) => rowUnsettled(s, row));
   const showVersion = useUpdatesView((s) => s.showVersion);
   const goToPackage = useNavStore((s) => s.goToPackage);
   const name = packageDisplayName(row);

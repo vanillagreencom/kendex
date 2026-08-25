@@ -14,6 +14,9 @@ an outside contributor.
   longer invalidate the sign-in by rotating the same refresh token twice.
 - Registry refresh timeouts and rate limits no longer sign the machine out;
   the app or CLI keeps the credential and can retry.
+- Switching a package's Follow source off moves the switch at once instead of
+  freezing the Updates table for the seconds its write takes. Rows in other
+  places stay live while it settles; the flipped package's place waits.
 - `kendex check` exits 1, not 2, when packages await re-evaluation, so the
   session-start report no longer opens with "kendex check could not run" after
   a completed run. The drift hook script changed; `kendex drift-hook` reinstalls it.

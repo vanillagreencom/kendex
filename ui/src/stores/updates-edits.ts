@@ -7,7 +7,7 @@ import {
   UPDATE_NEEDS_CHECK_NOTE,
 } from "@/lib/copy-updates";
 import { packageDisplayName } from "@/lib/labels";
-import { unsettled } from "@/lib/updates-read-state";
+import { rowUnsettled } from "@/lib/updates-read-state";
 import { useAuditStore } from "./audit";
 import { useProblemsStore } from "./problems";
 import { useScanStore } from "./scan";
@@ -49,10 +49,12 @@ const report = (outcome: Outcome<unknown>) => {
       .showError({ title: FORK_ERROR_TITLE, message: outcome.error });
 };
 
-/** Rows kept from a failed check, or about to be replaced by a running
- *  one, name a `latest` nobody confirmed — an action that may move a hold
- *  to it stops here, whatever the trigger looked like. */
-const stale = (): boolean => unsettled(useUpdatesStore.getState());
+/** Rows kept from a failed check, about to be replaced by a running one,
+ *  or waiting on a follow switch settling in their scope name a `latest`
+ *  nobody confirmed — an action that may move a hold to it stops here,
+ *  whatever the trigger looked like. */
+const stale = (row: UpdateRow): boolean =>
+  rowUnsettled(useUpdatesStore.getState(), row);
 
 /** Keep an edited place's files as a local fork of its own. Only some
  *  tools' renderings read back as source; the row names the edited one a
@@ -78,7 +80,7 @@ export const keepAsOwn = async (row: UpdateRow): Promise<void> => {
 /** Drop an edited place's edits and take the newest version — moving the
  *  hold along when the place is held, in the same apply. */
 export const takeNewVersion = async (row: UpdateRow): Promise<void> => {
-  if (stale()) {
+  if (stale(row)) {
     report({ error: UPDATE_NEEDS_CHECK_NOTE });
     return;
   }
@@ -115,7 +117,7 @@ export const installAsNew = async (
   harness: HarnessId,
   own: string,
 ): Promise<string | null> => {
-  if (stale()) return UPDATE_NEEDS_CHECK_NOTE;
+  if (stale(row)) return UPDATE_NEEDS_CHECK_NOTE;
   const name = packageDisplayName(row);
   const outcome = await run<string | null>(async () => {
     const response = await commands.packageForkBeside(

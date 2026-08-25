@@ -32,7 +32,7 @@ import {
   type UpdateGroup,
   updatablePlaces,
 } from "@/lib/update-groups";
-import { unsettled } from "@/lib/updates-read-state";
+import { rowUnsettled } from "@/lib/updates-read-state";
 import { useUpdatesStore } from "@/stores/updates";
 import { useUpdatesView } from "@/stores/updates-view";
 
@@ -82,14 +82,17 @@ export function PackageRows({
   const [open, setOpen] = useState(defaultOpen);
   const placesId = useId();
   const busy = useUpdatesStore((s) => s.busy);
-  // Not loaded, mid-check, and mid-load hold Update alike: either way
-  // these rows are not the rows an update would act on.
-  const unconfirmed = useUpdatesStore(unsettled);
+  const places = group.places;
+  // Not loaded, mid-check, mid-load, and a follow switch settling in any of
+  // these places' scopes hold Update alike: either way these are not the
+  // rows an update would act on.
+  const unconfirmed = useUpdatesStore((s) =>
+    places.some((place) => rowUnsettled(s, place)),
+  );
   const showVersion = useUpdatesView((s) => s.showVersion);
   const updateRows = useUpdatesStore((s) => s.updateRows);
   const Icon = kindIcon(group.kind);
   const name = packageDisplayName(group);
-  const places = group.places;
   const scopes = places.map((place) => place.scope);
   const only = places.length === 1 ? places[0] : null;
   const Chevron = open ? ChevronDown : ChevronRight;
