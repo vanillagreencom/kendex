@@ -11,7 +11,7 @@
 # route to § 5, dropping its superseded `fixed_items` entry in the SAME
 # workflow-state update: one finding then sits in neither both buckets nor
 # none, whichever moment a dying session stops at. This lint pins that single
-# write inside the Bounded Re-Review section, its outcome field, the selection
+# write inside § 4's At The Cap section, its outcome field, the selection
 # clause deciding which items it covers, the schema's coverage of the cap path,
 # and the same contract in workflow-state's cap-refusal message — the
 # instruction an orchestrator receives at the instant the cap fires.
@@ -37,12 +37,13 @@ fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 
 echo "=== review-pr capped items escalated lint (KEN-518) ==="
 
-# The cap rule lives in § 4's Bounded Re-Review subsection, before § 5. HTML
-# comment regions are stripped from EVERY line before the section gate runs, so
-# a comment opened above the heading blanks the heading too and the section
-# never opens: a commented-out instruction is not an instruction, wherever the
-# comment starts.
-bounded_rereview() {
+# The cap rule lives in § 4's At The Cap subsection, which must precede Fix
+# Delegation: the cap has to decide before another fix round runs, or the items
+# it escalates predate that round's diff. HTML comment regions are stripped
+# from EVERY line before the section gate runs, so a comment opened above the
+# heading blanks the heading too and the section never opens: a commented-out
+# instruction is not an instruction, wherever the comment starts.
+cap_section() {
   awk '
     {
       line = $0; out = ""
@@ -62,12 +63,17 @@ bounded_rereview() {
       }
       $0 = out
     }
-    /^### Bounded Re-Review/ { on = 1; next }
-    /^## 5\./               { on = 0 }
+    /^### At The Cap/ { on = 1; next }
+    on && /^###? /    { on = 0 }
     !on { next }
     { print }
   ' "$1"
 }
+
+# § 4 whole, for the ordering check. Line number of the first line holding a
+# fixed substring, or 0 — index() so bracketed placeholders need no escaping.
+section_4() { awk '/^## 4\./{on=1;next} /^## 5\./{on=0} on' "$1"; }
+first_line() { awk -v s="$1" 'index($0, s) && !n { n = NR } END { print n + 0 }'; }
 
 # The refusal `workflow-state set … rereview_panel` prints once cycles is
 # past the cap.
@@ -79,8 +85,8 @@ cap_refusal() { grep -F 'cycles is past the cap' "$1"; }
 # present. The race grows with the section's length, so it is latent until an
 # edit lengthens § 4.
 # -e/-F -e so a pattern that begins with a dash is a pattern, not a flag.
-sec_has()  { grep -q  -e "$2" <<<"$(bounded_rereview "$1")"; }
-sec_hasF() { grep -qF -e "$2" <<<"$(bounded_rereview "$1")"; }
+sec_has()  { grep -q  -e "$2" <<<"$(cap_section "$1")"; }
+sec_hasF() { grep -qF -e "$2" <<<"$(cap_section "$1")"; }
 
 # The one command the cap rule runs per item. It is a single `update` filter,
 # not a drop followed by an append: between two writes the item is in neither
@@ -88,7 +94,7 @@ sec_hasF() { grep -qF -e "$2" <<<"$(bounded_rereview "$1")"; }
 # dies in that window re-declines a live blocker.
 CAP_WRITE_RE='workflow-state update \[ISSUE_ID\].*escalated_items'
 CAP_WRITE_TXT='workflow-state update [ISSUE_ID]'
-cap_write() { grep -E "$CAP_WRITE_RE" <<<"$(bounded_rereview "$1")"; }
+cap_write() { grep -E "$CAP_WRITE_RE" <<<"$(cap_section "$1")"; }
 write_has() { grep -q -e "$2" <<<"$(cap_write "$1")"; }
 
 # The schema row for the cap path. POSIX classes only, never \s: BSD grep -E
@@ -99,11 +105,25 @@ SCHEMA_CAP_RE='\|[[:space:]]*`escalated_items`.*cycle cap'
 # The pre-fix instruction: route and report, record nothing.
 REPORT_ONLY='At the cap, report the outstanding items'
 
+# --- ordering: the cap decides before any fix round is delegated ------------
+# With Fix Delegation first, reaching the cap still runs one more fix round,
+# and the items escalated afterwards are the ones the pass BEFORE that round
+# reported: an item the last fix resolved gets recorded as outstanding and the
+# supersede clause drops its newly valid fixed_items entry.
+S4="$(section_4 "$REVIEW_PR_WF")"
+cap_at="$(first_line '### At The Cap' <<<"$S4")"
+fix_at="$(first_line '### Fix Delegation' <<<"$S4")"
+if [[ "$cap_at" -gt 0 ]] && [[ "$fix_at" -gt 0 ]] && [[ "$cap_at" -lt "$fix_at" ]]; then
+  pass "§ 4 runs the cap check before Fix Delegation"
+else
+  fail "§ 4 delegates a fix round before the cap check (cap=$cap_at fix=$fix_at)"
+fi
+
 # --- a: the cap paragraph records outstanding items as escalated ------------
 if [[ -n "$(cap_write "$REVIEW_PR_WF")" ]]; then
-  pass "Bounded Re-Review records capped items in escalated_items before § 5"
+  pass "At The Cap records capped items in escalated_items before § 5"
 else
-  fail "Bounded Re-Review lost the escalated_items write for capped items"
+  fail "At The Cap lost the escalated_items write for capped items"
 fi
 
 # --- b: the entry carries the typed outcome so audit maps it to escalated ---
@@ -127,9 +147,9 @@ fi
 # Without the stated contract, a future edit can keep an append somewhere while
 # reverting to report-only routing at the cap.
 if sec_has "$REVIEW_PR_WF" 'Capped items are escalated, never dropped'; then
-  pass "Bounded Re-Review states the capped-items-are-escalated contract"
+  pass "At The Cap states the capped-items-are-escalated contract"
 else
-  fail "Bounded Re-Review lost the capped-items-are-escalated contract"
+  fail "At The Cap lost the capped-items-are-escalated contract"
 fi
 
 # --- d: a re-found item an earlier round called fixed is still recorded -----
@@ -160,9 +180,9 @@ fi
 
 # --- g: the pre-fix report-only instruction is gone -------------------------
 if sec_hasF "$REVIEW_PR_WF" "$REPORT_ONLY"; then
-  fail "Bounded Re-Review carries the pre-fix report-only instruction again"
+  fail "At The Cap carries the pre-fix report-only instruction again"
 else
-  pass "Bounded Re-Review carries no report-only cap instruction"
+  pass "At The Cap carries no report-only cap instruction"
 fi
 
 # --- h: one write does both, so no window exists ----------------------------
@@ -346,7 +366,7 @@ fi
 # gate is what catches this — gating first would leave `incomment` unset.
 ABOVE="$TMP_ROOT/pr-above.md"
 awk '
-  /^### Bounded Re-Review/ && !opened { print "<!--"; opened = 1 }
+  /^### At The Cap/ && !opened { print "<!--"; opened = 1 }
   /^`\[SOURCE\]` is/ && opened && !closed { print "-->"; closed = 1 }
   { print }
 ' "$REVIEW_PR_WF" > "$ABOVE"
@@ -360,13 +380,36 @@ else
   pass "lint flags a cap rule commented out from above the section heading"
 fi
 
+# Ordering control: the pre-fix arrangement, with the whole At The Cap block
+# moved down behind Fix Delegation.
+REORDERED="$TMP_ROOT/pr-reordered.md"
+awk '
+  /^### At The Cap/ { cap = 1; buf = $0 ORS; next }
+  cap && /^###? /   { cap = 0 }
+  cap               { buf = buf $0 ORS; next }
+  /^### Bounded Re-Review/ && buf != "" { printf "%s", buf; buf = "" }
+  { print }
+' "$REVIEW_PR_WF" > "$REORDERED"
+R4="$(section_4 "$REORDERED")"
+r_cap="$(first_line '### At The Cap' <<<"$R4")"
+r_fix="$(first_line '### Fix Delegation' <<<"$R4")"
+if [[ "$r_cap" -eq 0 ]] || [[ "$r_fix" -eq 0 ]]; then
+  fail "ordering control planted nothing — a heading went missing (cap=$r_cap fix=$r_fix)"
+elif [[ "$r_cap" -lt "$r_fix" ]]; then
+  fail "ordering control planted nothing — the sections did not swap"
+elif ! grep -qF 'Capped items are escalated, never dropped' "$REORDERED"; then
+  fail "ordering control lost the cap rule instead of moving it"
+else
+  pass "lint flags § 4 delegating a fix round ahead of the cap check"
+fi
+
 # Scoping control: an escalated_items write elsewhere (dev-fix's § 6 pattern
 # quoted in another section) must not satisfy check a. Built with awk, not a
 # sed \n replacement: BSD sed emits a literal 'n' there, which would leave the
 # plant welded to the § 5 heading and the control proving nothing.
 CTRL="$TMP_ROOT/pr-scope.md"
 awk -v cap="$CAP_WRITE_TXT" '
-  /^### Bounded Re-Review/ { on = 1 }
+  /^### At The Cap/ { on = 1 }
   /^## 5\. Verdict Pass$/  { on = 0 }
   on && index($0, cap)     { next }
   { print }
@@ -377,11 +420,11 @@ awk -v cap="$CAP_WRITE_TXT" '
   }
 ' "$REVIEW_PR_WF" > "$CTRL"
 if ! grep -qx '.agents/skills/orch/scripts/workflow-state update \[ISSUE_ID\] escalated_items placeholder' "$CTRL"; then
-  fail "scoping fixture planted no append outside Bounded Re-Review — control is vacuous"
+  fail "scoping fixture planted no write outside At The Cap — control is vacuous"
 elif [[ -n "$(cap_write "$CTRL")" ]]; then
-  fail "lint credits an escalated_items write outside Bounded Re-Review"
+  fail "lint credits an escalated_items write outside At The Cap"
 else
-  pass "lint scopes the append check to Bounded Re-Review"
+  pass "lint scopes the write check to At The Cap"
 fi
 
 SCRATCH_SCHEMA="$TMP_ROOT/schema.md"

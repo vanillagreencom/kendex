@@ -126,10 +126,20 @@ fi
 echo
 echo "--- planted controls ---"
 
+# A sed program that matches nothing leaves the fixture identical to the
+# source, and the control then reports a lint miss for a guard that works. Say
+# so instead: the fixture, not the lint, is what broke. These run inside a
+# command substitution, where an increment to FAIL would be lost with the
+# subshell, so the note goes to a file the parent reads back below.
+UNPLANTED="$TMP_ROOT/unplanted"
+: > "$UNPLANTED"
+note_unplanted() { printf 'control %s planted nothing — its sed program matched no text\n' "$1" >> "$UNPLANTED"; }
+
 plant() {
   # $1 = control name, $2 = sed program applied to review.md
   local scratch="$TMP_ROOT/$1.md"
   sed "$2" "$REVIEW_WF" > "$scratch"
+  cmp -s "$scratch" "$REVIEW_WF" && note_unplanted "$1"
   printf '%s' "$scratch"
 }
 
@@ -137,6 +147,7 @@ plant_pr() {
   # $1 = control name, $2 = sed program applied to review-pr.md
   local scratch="$TMP_ROOT/pr-$1.md"
   sed "$2" "$REVIEW_PR_WF" > "$scratch"
+  cmp -s "$scratch" "$REVIEW_PR_WF" && note_unplanted "$1"
   printf '%s' "$scratch"
 }
 
@@ -177,7 +188,7 @@ else
   fail "lint MISSED a decision-mode gate reintroduced in review-pr § 4"
 fi
 
-CTRL="$(plant_pr qa 's/^Follow the § 4 pattern — collect, present, delegate.*$/Follow the § 4 pattern — collect, present, resolve the decision mode, delegate./')"
+CTRL="$(plant_pr qa 's/^Follow the § 4 pattern .*$/Follow the § 4 pattern — resolve the decision mode, then delegate./')"
 if grep -qEi "$MENU_RE" <<<"$(section_7 "$CTRL")"; then
   pass "lint flags a decision-mode gate reintroduced in review-pr § 7"
 else
@@ -213,6 +224,10 @@ if grep -qEi "$MENU_RE" <<<"$(section_4 "$CTRL")"; then
 else
   pass "lint scopes the review-pr menu check to § 4"
 fi
+
+while IFS= read -r unplanted_note; do
+  [[ -n "$unplanted_note" ]] && fail "$unplanted_note"
+done < "$UNPLANTED"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -270,9 +270,33 @@ Omit empty categories. Decline any item that cannot affect real usage with a one
 
 **Disposition is by rule, not by prompt** — never present a selection menu over the findings. Every blocker and `category == "fix"` suggestion that survives declining goes to the fix round below, in EVERY decision mode; `ORCH_DECISION_MODE` does not gate it. The always-ask set in [SKILL.md § The Cycle](../SKILL.md#the-cycle) still applies. Nothing left after declines → § 5.
 
+### At The Cap
+
+The cap decides before any delegation. Read the fix rounds already run:
+
+```bash
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{cycles: (.cycles // 0)}'
+```
+
+```bash
+.agents/skills/orch/scripts/orch-env REVIEW_MAX_CYCLES 4
+```
+
+`cycles` counts completed fix rounds — `dev-fix.md` increments it. Below the cap → Fix Delegation. At or past it the fix loop ends here, with no further fix round, so the items this pass reported are the latest word on the diff.
+
+**Capped items are escalated, never dropped.** Record every blocker and `category == "fix"` suggestion this pass found still outstanding, including one already listed in `fixed_items` whose fix did not hold. Exclude only what is already in `escalated_items` and what § 4 declined; a decline is terminal. Match on (location, description), the § 8 key. An item `fixed_items` already lists has a superseded entry there: its fix did not hold, so the same write drops it. One write per item, before routing to § 5 — the drop and the record land in one command, so the item is never in both buckets and never in neither:
+
+```bash
+.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --arg loc '[LOC]' --arg desc '[DESC]' --arg src '[SOURCE]' '.fixed_items = ((.fixed_items // []) | map(select(.location != $loc or .description != $desc))) | .escalated_items = ((.escalated_items // []) + [{description: $desc, location: $loc, reason: "outstanding at the review cycle cap", outcome: "blocked", source: $src}])'
+```
+
+The finding's own text rides in the `--arg` bindings and the filter names `$loc`, `$desc`, and `$src`. Interpolated into the filter instead, a description carrying an apostrophe or a quote makes jq fail and the item goes unrecorded.
+
+`[SOURCE]` is `pr-review` here and `qa-review` when § 7 applies this rule. § 8 then reports them as escalated instead of re-deriving them as declined, and they reach its filing candidates, taking each item's agent and priority from the `json_paths` artifact it came from. Report the outstanding items and proceed to § 5.
+
 ### Fix Delegation
 
-When a defect class recurs across rounds on the same diff, apply SKILL.md § Review must converge before delegating. Findings that leave `items` are never dropped: declined per [finding-disposition](../references/finding-disposition.md) when a cut removed their surface, recorded in `escalated_items` when a split moved them.
+**Skip if** the cap check above routed to § 5. When a defect class recurs across rounds on the same diff, apply SKILL.md § Review must converge before delegating. Findings that leave `items` are never dropped: declined per [finding-disposition](../references/finding-disposition.md) when a cut removed their surface, recorded in `escalated_items` when a split moved them.
 Never fix as the main agent.
 
 ```bash
@@ -306,15 +330,7 @@ The scoped panel is the union of the reviewers whose domains the round's diff to
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] rereview_skipped '[REASON]'
 ```
 
-**The loop ends** when two consecutive cycles surface no new blocker, or when `cycles` reaches the cap (`orch-env REVIEW_MAX_CYCLES 4`; `workflow-state set … rereview_panel` refuses once `cycles` is past it). The cap bounds NEW cycles, never verification: a fix diff no reviewer has seen gets one focused verification pass — the `rereview_panel` rule above, scoped to exactly that diff — before § 5, cap or no cap. **Capped items are escalated, never dropped.** Record every blocker and `category == "fix"` suggestion the verification pass found still outstanding, including one already listed in `fixed_items` whose fix did not hold. Exclude only what is already in `escalated_items` and what § 4 declined; a decline is terminal. Match on (location, description), the § 8 key. An item `fixed_items` already lists has a superseded entry there: its fix did not hold, so the same write drops it. One write per item, before routing to § 5 — the drop and the record land in one command, so the item is never in both buckets and never in neither:
-
-```bash
-.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --arg loc '[LOC]' --arg desc '[DESC]' --arg src '[SOURCE]' '.fixed_items = ((.fixed_items // []) | map(select(.location != $loc or .description != $desc))) | .escalated_items = ((.escalated_items // []) + [{description: $desc, location: $loc, reason: "outstanding at the review cycle cap", outcome: "blocked", source: $src}])'
-```
-
-The finding's own text rides in the `--arg` bindings and the filter names `$loc`, `$desc`, and `$src`. Interpolated into the filter instead, a description carrying an apostrophe or a quote makes jq fail and the item goes unrecorded.
-
-`[SOURCE]` is `pr-review` here and `qa-review` when § 7 applies this rule. § 8 then reports them as escalated instead of re-deriving them as declined, and they reach its filing candidates, taking each item's agent and priority from the `json_paths` artifact it came from. Report the outstanding items and proceed to § 5. In wave mode the panel replaces `[AGENTS]` for the cycle and wave mechanics apply unchanged.
+**The loop ends** when two consecutive cycles surface no new blocker, or when the At The Cap check above ends it (`workflow-state set … rereview_panel` refuses once `cycles` is past the cap). The cap bounds NEW cycles, never verification: a fix diff no reviewer has seen gets one focused verification pass — the `rereview_panel` rule above, scoped to exactly that diff — before § 5, cap or no cap. That pass's items re-enter § 4, where the cap check escalates them instead of delegating again. In wave mode the panel replaces `[AGENTS]` for the cycle and wave mechanics apply unchanged.
 
 ## 5. Verdict Pass
 
@@ -379,7 +395,7 @@ A `pass` verdict continues to the next QA agent; `action_required` goes to § 7.
 
 **Skip if** every QA verdict is `pass` and no fix suggestions remain → § 8.
 
-Follow the § 4 pattern — collect, present, delegate through `workflows/dev-fix.md`, by rule and with no selection prompt — with these overrides: items come from the QA JSONs excluding anything already fixed or escalated; the table header is `QA Agent` and the title `QA Review Items — [ISSUE_ID]`; `source` is `qa-review` and `qa_agent` carries the agent name. After the fix round, apply the § 4 bounded re-review rule with § 6 as the target instead of § 2 — a focused QA re-check — unless the round's diff reaches beyond QA's own surface, which returns to § 2.
+Follow the § 4 pattern — collect, present, run the At The Cap check, then delegate through `workflows/dev-fix.md`, by rule and with no selection prompt — with these overrides: items come from the QA JSONs excluding anything already fixed or escalated; the table header is `QA Agent` and the title `QA Review Items — [ISSUE_ID]`; `source` is `qa-review` and `qa_agent` carries the agent name. The cap check runs here in the same place it does in § 4, ahead of the delegation: at or past the cap the QA items are escalated with `source` `qa-review` and the round goes to § 8, with no further fix round. After the fix round, apply the § 4 bounded re-review rule with § 6 as the target instead of § 2 — a focused QA re-check — unless the round's diff reaches beyond QA's own surface, which returns to § 2.
 
 ## 8. Summary And Issue Audit
 

@@ -41,6 +41,10 @@ err="$("$WS" --state-dir "$sd" set KEN-1 rereview_panel "$PANEL" 2>&1 >/dev/null
   || bad "the refusal names the escalated_items recording step" "$err"
 [[ "$err" == *"review-pr § 4"* ]] && ok "the refusal points at § 4's capped-items procedure" \
   || bad "the refusal points at § 4's capped-items procedure" "$err"
+# Wording that stops only the re-review cycle reads as licensing one more fix
+# round, and the items escalated after it would predate that round's diff.
+[[ "$err" == *"no further fix round"* ]] && ok "the refusal forbids a further fix round, not just a cycle" \
+  || bad "the refusal forbids a further fix round, not just a cycle" "$err"
 # Naming only the escalated half re-creates the both-buckets collision § 4 was
 # rewritten to prevent: a re-blocked finding keeps its stale fixed_items entry
 # and § 8 prints it as FIXED and ESCALATED at once.
@@ -102,6 +106,26 @@ else
     bad "the assertion MISSED a refusal that names only the escalated half" "$cerr"
   else
     ok "the assertion flags a refusal that names only the escalated half"
+  fi
+fi
+
+# The pre-fix wording: only the re-review cycle is stopped, which leaves a
+# post-cap fix round licensed.
+sed 's/ and no further fix round//' "$WS" > "$CTRL_SCRIPTS/workflow-state"
+chmod +x "$CTRL_SCRIPTS/workflow-state"
+if cmp -s "$CTRL_SCRIPTS/workflow-state" "$WS"; then
+  bad "fix-round control planted nothing — its sed program matched no text"
+else
+  sdf="$TMP_ROOT/state-ctrl-fix"
+  "$CTRL_SCRIPTS/workflow-state" --state-dir "$sdf" init KEN-4 --worktree "$REPO_ROOT" --branch ken-4 >/dev/null
+  "$CTRL_SCRIPTS/workflow-state" --state-dir "$sdf" update KEN-4 '.cycles = 5' >/dev/null
+  ferr="$("$CTRL_SCRIPTS/workflow-state" --state-dir "$sdf" set KEN-4 rereview_panel "$PANEL" 2>&1 >/dev/null)" || true
+  if [[ "$ferr" != *"no further re-review cycle"* ]]; then
+    bad "the control refusal stopped printing at all" "$ferr"
+  elif [[ "$ferr" == *"no further fix round"* ]]; then
+    bad "the assertion MISSED a refusal that stops only the re-review cycle" "$ferr"
+  else
+    ok "the assertion flags a refusal that stops only the re-review cycle"
   fi
 fi
 
