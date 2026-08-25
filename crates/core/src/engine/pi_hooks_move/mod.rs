@@ -387,15 +387,6 @@ fn unreadable_note(path: &Path, error: &str) -> String {
 // Is a replacement coming? Read off the declaration and this pass's own
 // output, never off whatever happens to sit at the new path.
 
-/// Whether this hook's legacy copy may be retired at all — the "is a
-/// replacement coming" question. Nothing asks for it: no replacement is
-/// coming and the plan is already dropping it. Asked for and rendered:
-/// retired against that rendering. Asked for, resolved, and rendered
-/// nothing for pi: the declaration's own answer is that pi gets nothing,
-/// so the old copy goes too. A hook still asked for waits whenever this
-/// pass did not put its replacement in place — the source did not
-/// resolve, or the script or the registration could not be written —
-/// the one case where holding on is repair rather than abandonment.
 /// What the move should do with one hook's copy under the reserved name.
 enum Retire {
     /// Nothing asks for this hook any more: the copy goes, and with it
@@ -407,6 +398,15 @@ enum Retire {
     Wait,
 }
 
+/// Whether this hook's legacy copy may be retired at all — the "is a
+/// replacement coming" question. Nothing asks for it: no replacement is
+/// coming and the plan is already dropping it. Asked for and rendered:
+/// retired against that rendering. Asked for, resolved, and rendered
+/// nothing for pi: the declaration's own answer is that pi gets nothing,
+/// so the old copy goes too. A hook still asked for waits whenever this
+/// pass did not put its replacement in place — the source did not
+/// resolve, or the script or the registration could not be written —
+/// the one case where holding on is repair rather than abandonment.
 fn retirable(
     env: &Env,
     scope: &Scope,

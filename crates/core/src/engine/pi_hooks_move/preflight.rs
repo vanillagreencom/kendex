@@ -504,8 +504,8 @@ fn discardable(path: &std::path::Path) -> bool {
 // take, and why one of them is not its to take.
 //
 // Both gates a deletion passes ask the same question in the same words:
-// `provenance` here, which the move goes through, and the preflight's
-// `discardable`, which decides whether a hold is released. Neither is
+// `provenance` below, which the move goes through, and `discardable`
+// above it, which decides whether a hold is released. Neither is
 // satisfied by anything but a plain file, so they cannot disagree about
 // what a discard covers.
 

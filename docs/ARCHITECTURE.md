@@ -469,7 +469,7 @@ lives in one capability table read by core and UI.
   (`LockEntry::left_pi_reserved_name`), written only where proven; every
   consumer reads that record (`Preflight`), and past it nothing under the
   reserved name is asked about. A deletion asks for a plain file and binds
-  the type it proved with the hash (`claims::provenance`,
+  the type it proved with the hash (`preflight::provenance`,
   `preflight::discardable`, `Pre::PlainHashIs`); every hold reaches the
   conflict row through `Hold::row`. A held hook runs from the old
   registry, so Pi's hook surface list carries that registry too while an
