@@ -286,6 +286,86 @@ run_pf
 fires "a jest script leaves an mjs suite outside its default testMatch" "b.test.mjs:0: [unwired-suite]"
 case "$OUT" in *"a.test.ts"*) bad "a jest script wires the ts suite its default testMatch covers" "$OUT" ;; *) ok "a jest script wires the ts suite its default testMatch covers" ;; esac
 
+# A workflow invoking vitest runs from the repo root, so its default
+# include wires a suite far from .github/workflows.
+seed workflowbare
+mkdir -p "$R/.github/workflows"
+printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: vitest\n' >"$R/.github/workflows/ci.yml"
+git -C "$R" add -A
+git -C "$R" commit -qm "workflow invoking bare vitest"
+printf 'export {}\n' >"$R/w.test.ts"
+git -C "$R" add -A
+run_pf
+clean "a workflow invoking bare vitest wires a root-level suite"
+
+# The same invocation single-quoted is still an invocation.
+seed workflowsq
+mkdir -p "$R/.github/workflows"
+printf "name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: 'vitest'\n" >"$R/.github/workflows/ci.yml"
+git -C "$R" add -A
+git -C "$R" commit -qm "workflow invoking single-quoted vitest"
+printf 'export {}\n' >"$R/wq.test.ts"
+git -C "$R" add -A
+run_pf
+clean "a single-quoted vitest invocation wires the suite"
+
+# A validate script under sub/tools runs from the tree that owns tools/:
+# its default include wires that subtree and nothing outside it.
+seed validatescope
+mkdir -p "$R/sub/tools"
+printf '#!/usr/bin/env bash\nset -euo pipefail\nvitest run\n' >"$R/sub/tools/validate-js"
+git -C "$R" add -A
+git -C "$R" commit -qm "validate script invoking vitest below the root"
+printf 'export {}\n' >"$R/sub/app.test.ts"
+printf 'export {}\n' >"$R/far.test.ts"
+git -C "$R" add -A
+run_pf
+fires "a suite outside the validate script's tree still fires" "far.test.ts:0: [unwired-suite]"
+case "$OUT" in *"sub/app.test.ts"*) bad "the validate script wires the suite in its own tree" "$OUT" ;; *) ok "the validate script wires the suite in its own tree" ;; esac
+
+# A script value that is exactly the runner name, no arguments.
+seed barequote
+printf '{\n  "scripts": { "test": "vitest" }\n}\n' >"$R/package.json"
+git -C "$R" add -A
+git -C "$R" commit -qm "script value of bare vitest with no arguments"
+printf 'export {}\n' >"$R/q.test.ts"
+git -C "$R" add -A
+run_pf
+clean "a script value of exactly vitest wires the suite"
+
+# A Makefile recipe line that ends at the runner name.
+seed makeend
+printf 'test:\n\tvitest\n' >"$R/Makefile"
+git -C "$R" add -A
+git -C "$R" commit -qm "Makefile recipe ending in vitest"
+printf 'export {}\n' >"$R/m.test.ts"
+git -C "$R" add -A
+run_pf
+clean "a Makefile recipe line ending in vitest wires the suite"
+
+# A comment is not an invocation: a workflow whose only vitest reference
+# is a comment wires nothing.
+seed prosecomment
+mkdir -p "$R/.github/workflows"
+printf 'name: ci\non: push\n# TODO(#1): migrate to vitest — run: vitest someday\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash tests/other.test.sh\n' >"$R/.github/workflows/ci.yml"
+git -C "$R" add -A
+git -C "$R" commit -qm "workflow mentioning vitest only in a comment"
+printf 'export {}\n' >"$R/p.test.ts"
+git -C "$R" add -A
+run_pf
+fires "a workflow comment naming vitest wires nothing" "p.test.ts:0: [unwired-suite]"
+
+# Prose fields are not invocations either: a description and a keywords
+# array naming both runners wire nothing.
+seed prosejson
+printf '{\n  "description": "tested with vitest and jest",\n  "keywords": ["vitest", "jest"],\n  "scripts": { "test": "node run-tests.js" }\n}\n' >"$R/package.json"
+git -C "$R" add -A
+git -C "$R" commit -qm "manifest naming the runners only in prose"
+printf 'export {}\n' >"$R/k.test.ts"
+git -C "$R" add -A
+run_pf
+fires "manifest prose naming vitest and jest wires nothing" "k.test.ts:0: [unwired-suite]"
+
 # A vitest runner below the repo root runs from its own directory and says
 # nothing about a suite outside that subtree.
 seed vitestscope

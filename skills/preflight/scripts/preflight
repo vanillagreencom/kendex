@@ -717,14 +717,19 @@ build_runner_index() {
     cat -- "$c" >>"$TMP/runner.bodies"
     # A runner invoking bare vitest or jest runs that runner's own default
     # include glob — no path in the runner ever names the suites it
-    # executes. An invocation is the word at a command position: followed
-    # by arguments, a quote closing a script value, or the line end. A
-    # manifest dependency key ("vitest": "^3") or a package path
-    # (@vitest/ui) is not one. Recorded with the directory the runner runs
+    # executes. Comment lines are dropped first; on the rest the word must
+    # stand at a command position — after line-leading whitespace, a shell
+    # connector (; & | backtick paren), an npx/pnpm/yarn prefix, or a
+    # colon opening a manifest or workflow value with an optional quote —
+    # and end at whitespace, a quote, a connector, or the line end. A
+    # dependency key ("vitest": "^3"), a package path (@vitest/ui), a
+    # path-prefixed binary (node_modules/.bin/vitest), and a prose mention
+    # all fail that shape. Recorded with the directory the runner runs
     # from: manifests run beside themselves; workflows and validate
     # scripts run from the root of the tree that owns them.
+    sed '/^[[:space:]]*#/d' -- "$c" >"$TMP/runner.body.one"
     for kind in vitest jest; do
-      LC_ALL=C grep -qE "(^|[^A-Za-z0-9_@/.-])$kind([[:space:];&|)]|\"([^:]|\$)|\$)" "$c" || continue
+      LC_ALL=C grep -qE "(^[[:space:]]*|[;&|\`(][[:space:]]*|(npx|pnpm|yarn)[[:space:]]+|:[[:space:]]*[\"']?)$kind([[:space:]\"'\`;&|)]|\$)" "$TMP/runner.body.one" || continue
       scope=""
       case "$r" in
         .github/workflows/*) ;;
