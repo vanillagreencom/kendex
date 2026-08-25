@@ -43,10 +43,10 @@ for script in "$REPO_ROOT/skills/orch/scripts/ci-wait" \
 done
 
 # The bucket taxonomy and run-id capture are exported as CI_RUN_JQ_DEFS; a
-# GitHub-skill script inlining its own `def bucket`/`def runid` copy is the
-# same drift one layer down. (orch ci-wait's local copies predate
-# CI_RUN_JQ_DEFS and are exempted from this scan.)
-for script in "$REPO_ROOT"/skills/github/scripts/commands/*.sh; do
+# consumer inlining its own `def bucket`/`def runid` copy is the same drift one
+# layer down. Covers orch `ci-wait` as well as the GitHub commands.
+for script in "$REPO_ROOT/skills/orch/scripts/ci-wait" \
+              "$REPO_ROOT"/skills/github/scripts/commands/*.sh; do
   name="$(basename "$script")"
   if grep -qE 'def (bucket|runid):' "$script"; then
     fail "$name inlines its own def bucket/def runid (prepend CI_RUN_JQ_DEFS from the shared library instead)"

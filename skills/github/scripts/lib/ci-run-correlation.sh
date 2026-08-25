@@ -41,9 +41,9 @@
 # Shared jq preamble: the run-id extraction, the check-bucket taxonomy, and
 # the run-scope reduction, exported as one string so every consumer (this
 # scoping, pr-merge's classification and head_runs, ci-classify-refusal's
-# diagnosis) prepends the SAME definitions — a local `def bucket`/`def runid`
-# copy is the drift this library exists to kill, and
-# ci-run-correlation.test.sh rejects one.
+# diagnosis, ci-wait's failure classification) prepends the SAME definitions —
+# a local `def bucket`/`def runid` copy is the drift this library exists to
+# kill, and ci-run-correlation.test.sh rejects one.
 # `runid` maps a check to its Actions run id (number) or null. `head_runs`
 # (input: a SCOPED check array) names the run ids a classification was scoped
 # to: every run the scoped checks link to — authoritative workflow runs and

@@ -371,16 +371,7 @@ get_failed_run_id() {
   local pr="$1"
   gh pr checks "$pr" --repo "$REPO" --json name,state,bucket,link,startedAt,workflow 2>/dev/null | \
     scope_current_run | \
-    jq -r '
-      def bucket:
-        (.bucket // (
-          if (.state == "SUCCESS") then "pass"
-          elif (.state == "SKIPPED") then "skipping"
-          elif ((.state // "") | IN("PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "EXPECTED")) then "pending"
-          elif (.state == "CANCELLED") then "cancel"
-          else "fail"
-          end
-        ));
+    jq -r "$CI_RUN_JQ_DEFS"'
       .[] | select((bucket != "pass") and (bucket != "skipping") and (bucket != "pending")) | .link
     ' | \
     head -1 | sed -nE 's#.*/actions/runs/([0-9]+)(/.*)?$#\1#p'
@@ -436,11 +427,7 @@ superseding_run_state() {
     echo "terminal"
     return 0
   fi
-  jq -r --argjson runs "$(jq -c '[.workflow_runs[] | {id, event, status, conclusion, workflow_id, run_attempt, updated_at}]' <<<"$runs_json")" '
-    def runid:
-      (.link // "")
-      | ((capture("/actions/runs/(?<r>[0-9]+)")? | .r) // null)
-      | (if . == null then null else tonumber end);
+  jq -r --argjson runs "$(jq -c '[.workflow_runs[] | {id, event, status, conclusion, workflow_id, run_attempt, updated_at}]' <<<"$runs_json")" "$CI_RUN_JQ_DEFS"'
     def substantive:
       ((.event // "") | IN("pull_request", "pull_request_review", "pull_request_review_comment", "merge_group"));
     ([$runs[] | select(substantive and ((.status // "") != "completed"))] | length > 0) as $head_in_flight
@@ -475,16 +462,7 @@ superseding_run_state() {
 }
 
 classify_checks() {
-  jq -c '
-    def bucket:
-      (.bucket // (
-        if (.state == "SUCCESS") then "pass"
-        elif (.state == "SKIPPED") then "skipping"
-        elif ((.state // "") | IN("PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "EXPECTED")) then "pending"
-        elif (.state == "CANCELLED") then "cancel"
-        else "fail"
-        end
-      ));
+  jq -c "$CI_RUN_JQ_DEFS"'
     {
       pending: [.[] | select(bucket == "pending")],
       failed: [.[] | select((bucket != "pass") and (bucket != "skipping") and (bucket != "pending"))],
