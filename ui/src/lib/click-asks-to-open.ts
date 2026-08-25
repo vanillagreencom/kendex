@@ -16,15 +16,19 @@ const CONTROLS =
  */
 export function clickAsksToOpen(event: MouseEvent<HTMLElement>): boolean {
   if ((event.target as HTMLElement).closest(CONTROLS)) return false;
-  return !clickEndedSelection();
+  return !clickEndedSelection(event);
 }
 
 /**
- * Whether the click that just landed ended a text selection. A control
- * inside the surface needs this half of the guard on its own: its click is
- * always its answer, but a drag across its label was someone keeping the
- * text, and the control fires before the surface's guard can decline.
+ * Whether the click that just landed ended a text selection. Keyboard and
+ * assistive activation arrive as clicks too, with detail 0, and they leave
+ * any standing selection untouched — those always ask to open; only a
+ * mouse click that left an uncollapsed selection is someone keeping the
+ * text. A control inside the surface needs this half of the guard on its
+ * own: its click is always its answer, but it fires before the surface's
+ * guard can decline.
  */
-export function clickEndedSelection(): boolean {
+export function clickEndedSelection(event: MouseEvent<HTMLElement>): boolean {
+  if (event.detail === 0) return false;
   return window.getSelection()?.isCollapsed === false;
 }

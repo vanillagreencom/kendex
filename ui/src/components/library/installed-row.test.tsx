@@ -134,6 +134,18 @@ describe("opening a package from its Library row", () => {
     expect(onOpen).toHaveBeenCalledWith();
   });
 
+  it("keeps Enter working while a selection stands elsewhere", async () => {
+    const { host, onOpen } = mount();
+    // Keyboard activation arrives as a click with detail 0 and leaves the
+    // document's selection standing — it is always asking to open.
+    vi.spyOn(window, "getSelection").mockReturnValue({
+      isCollapsed: false,
+    } as Selection);
+    nameButton(host).focus();
+    await userEvent.keyboard("{Enter}");
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
   it("lets a drag across the name keep its selection", async () => {
     const { host, onOpen } = mount();
     // The name button fires before the row's guard, so it has to decline

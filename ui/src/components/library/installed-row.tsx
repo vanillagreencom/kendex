@@ -103,8 +103,8 @@ export function InstalledRow({
                   guard, so it declines a selection-ending drag itself. */}
               <button
                 type="button"
-                onClick={() => {
-                  if (!clickEndedSelection()) onOpen();
+                onClick={(event) => {
+                  if (!clickEndedSelection(event)) onOpen();
                 }}
                 className="block min-w-0 truncate text-left hover:underline"
               >
