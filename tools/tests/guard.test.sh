@@ -205,12 +205,13 @@ run_guard RATCHET_RAISE=
   && ok "a four-line entry fails, naming its line and count" \
   || bad "a four-line entry fails, naming its line and count" "rc=$RC out=$OUT"
 case "$OUT" in *"line 7:"*) bad "the three-line entry is not named" "$OUT" ;; *) ok "the three-line entry is not named" ;; esac
-printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- Four-space continuation\n    second\n    third\n    fourth.\n- Tab continuation\n\tsecond\n\tthird\n\tfourth.\n- Two paragraphs\n\n  second paragraph\n  third line.\n' >"$R/CHANGELOG.md"
+printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- Four-space continuation\n    second\n    third\n    fourth.\n* Tab continuation\n\tsecond\n\tthird\n\tfourth.\n- Two paragraphs\r\n\r\n  second paragraph\r\n  third line.\r\n+ Lazy continuation\nsecond\nthird\nfourth.\n\nA paragraph after the list is not an entry.\n' >"$R/CHANGELOG.md"
 git -C "$R" add -A
 run_guard RATCHET_RAISE=
-[ "$RC" -ne 0 ] && case "$OUT" in *"line 7: 4 lines"*"line 11: 4 lines"*"line 15: 4 lines"*) true ;; *) false ;; esac \
-  && ok "deep-indented, tab-indented, and two-paragraph entries are counted whole" \
-  || bad "deep-indented, tab-indented, and two-paragraph entries are counted whole" "rc=$RC out=$OUT"
+[ "$RC" -ne 0 ] && case "$OUT" in *"line 7: 4 lines"*"line 11: 4 lines"*"line 15: 4 lines"*"line 19: 4 lines"*) true ;; *) false ;; esac \
+  && ok "deep-indented, tab-indented, CRLF two-paragraph, and lazy entries under any marker are counted whole" \
+  || bad "deep-indented, tab-indented, CRLF two-paragraph, and lazy entries under any marker are counted whole" "rc=$RC out=$OUT"
+case "$OUT" in *"line 19: 6 lines"*|*"line 24"*) bad "a paragraph after the list is not counted into the last entry" "$OUT" ;; *) ok "a paragraph after the list is not counted into the last entry" ;; esac
 printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- A three-line entry\n  second line\n  third line.\n- One line.\n' >"$R/CHANGELOG.md"
 git -C "$R" add -A
 run_guard RATCHET_RAISE=
