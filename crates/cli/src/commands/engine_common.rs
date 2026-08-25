@@ -4,7 +4,7 @@ use std::io::{IsTerminal, Write};
 use kendex_core::engine::{DriftRow, DriftState, EngineReport};
 use kendex_core::env::Env;
 use kendex_core::error::CoreError;
-use kendex_core::model::HarnessId;
+use kendex_core::model::{HarnessId, ItemKind};
 
 use super::{CliResult, say};
 
@@ -100,19 +100,28 @@ pub fn print_safety(report: &EngineReport) {
     let mut rows: Vec<&kendex_core::engine::ItemSafety> = report.safety.iter().collect();
     rows.sort_by_key(|row| row.advisory.safety.score);
     for row in rows {
-        print_advisory(&subject(row), &row.advisory);
+        print_advisory(
+            row.kind,
+            &row.name,
+            ScoredAt::Harness(row.harness),
+            &row.advisory,
+        );
     }
 }
 
-/// How a planned or installed row names the package it scored. Read off
-/// a catalog kendex did not write, so the name is printed as what it is.
-fn subject(row: &kendex_core::engine::ItemSafety) -> String {
-    format!(
-        "{} {} for {}",
-        row.kind.name(),
-        kendex_core::names::shown(&row.name),
-        row.harness.display_name()
-    )
+/// Where a scored package sits, as its score line says so: an
+/// installation belongs to a tool, a catalog item to a path inside its
+/// catalog. Naming the two shapes is what keeps the caller from
+/// hand-building a subject string — the printer escapes what it prints,
+/// and a caller passing text it escaped itself would double-escape it,
+/// `shown` not being idempotent.
+pub enum ScoredAt<'a> {
+    /// The tool whose copy of the item was scored.
+    Harness(HarnessId),
+    /// The item's own path within the catalog. Empty for a repository
+    /// that is one skill: its path is the catalog, so there is no segment
+    /// to name and the score line leaves it out.
+    CatalogPath(&'a str),
 }
 
 /// One package's advisory result, in the one shape every verb that scores
@@ -127,13 +136,28 @@ fn subject(row: &kendex_core::engine::ItemSafety) -> String {
 ///
 /// Severity leads the finding as a word, never as a colour: the line has
 /// to carry it for a reader who has no colour, and this printer emits
-/// none. Messages and locations come off files kendex did not write, so
-/// each is printed as what it is rather than as an escape sequence the
-/// terminal would act on; `subject` is escaped by its caller.
-pub fn print_advisory(subject: &str, advisory: &kendex_core::quality::AuditResult) {
+/// none.
+///
+/// Every part that came off a file kendex did not write is escaped here
+/// rather than by the caller — the name, the catalog path, the finding
+/// messages and their locations. A harness's display name is kendex's own
+/// string and is printed as it is.
+pub fn print_advisory(
+    kind: ItemKind,
+    name: &str,
+    at: ScoredAt<'_>,
+    advisory: &kendex_core::quality::AuditResult,
+) {
     use kendex_core::names::shown;
+    let at = match at {
+        ScoredAt::Harness(harness) => format!(" for {}", harness.display_name()),
+        ScoredAt::CatalogPath("") => String::new(),
+        ScoredAt::CatalogPath(path) => format!(" at {}", shown(path)),
+    };
     say(&format!(
-        "safety: {subject} scores {}/100",
+        "safety: {} {}{at} scores {}/100",
+        kind.name(),
+        shown(name),
         advisory.safety.score
     ));
     for finding in &advisory.findings {

@@ -293,13 +293,17 @@ fn no_verb_or_help_line_offers_a_review() {
         .collect();
     assert!(verbs.len() > 10, "no verbs parsed out of: {root_help}");
 
+    // `kendex help <verb>` rather than `<verb> --help`: clap's own `help`
+    // is in the verb list and takes no `--help` of its own.
     let mut pages = vec![("kendex".to_owned(), root_help)];
     for verb in &verbs {
-        let output = kendex(home, home, &[verb, "--help"]);
-        pages.push((
-            verb.clone(),
-            String::from_utf8_lossy(&output.stdout).into_owned(),
-        ));
+        let output = kendex(home, home, &["help", verb]);
+        let page = String::from_utf8_lossy(&output.stdout).into_owned();
+        // A page that stopped rendering would pass every scan below by
+        // having nothing in it to match, so the sweep proves it read one.
+        assert!(output.status.success(), "`help {verb}` failed: {output:?}");
+        assert!(!page.trim().is_empty(), "`help {verb}` printed nothing");
+        pages.push((verb.clone(), page));
     }
     for (verb, page) in &pages {
         let lowered = page.to_lowercase();
@@ -310,4 +314,80 @@ fn no_verb_or_help_line_offers_a_review() {
             );
         }
     }
+}
+
+/// A catalog names its own kind directories, so a control character can
+/// reach the score line's path even when every item name is legal. The
+/// subject line itself has to carry the escape: the printer escapes what
+/// it prints rather than trusting a caller to have done it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_hostile_catalog_path_prints_inert_on_the_score_line() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let catalog = home.join("catalog");
+    let dir = catalog.join("red\u{1b}[31m/deploy");
+    fs::create_dir_all(&dir).unwrap();
+    // The item's own name is plain; only the directory the catalog
+    // declares for its skills carries the escape.
+    fs::write(
+        catalog.join("kendex.toml"),
+        "schema = 6\n\n[catalog]\nskills = [\"red\\u001B[31m\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("SKILL.md"),
+        format!("---\nname: deploy\ndescription: ship it\n---\n{RISKY}"),
+    )
+    .unwrap();
+
+    let checked = kendex(
+        home,
+        home,
+        &["check", "--catalog", catalog.to_str().unwrap()],
+    );
+    assert!(checked.status.success(), "{checked:?}");
+    let printed = String::from_utf8_lossy(&checked.stderr).into_owned();
+    assert!(
+        !printed.contains('\u{1b}'),
+        "an escape byte reached stderr: {printed:?}"
+    );
+    let score = printed
+        .lines()
+        .find(|line| line.starts_with("safety: "))
+        .unwrap_or_else(|| panic!("no score line said: {printed}"));
+    assert_eq!(
+        score, "safety: skill deploy at red\\u{1b}[31m/deploy scores 75/100",
+        "{printed}"
+    );
+}
+
+/// A repository that is one skill has no path inside itself, so the score
+/// line names the package and stops. The old wording left the empty path
+/// in place and printed "deploy at  scores".
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_root_skill_catalog_scores_without_an_empty_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let catalog = home.join("catalog");
+    fs::create_dir_all(&catalog).unwrap();
+    fs::write(
+        catalog.join("SKILL.md"),
+        format!("---\nname: deploy\ndescription: ship it\n---\n{RISKY}"),
+    )
+    .unwrap();
+
+    let checked = kendex(
+        home,
+        home,
+        &["check", "--catalog", catalog.to_str().unwrap()],
+    );
+    assert!(checked.status.success(), "{checked:?}");
+    let printed = String::from_utf8_lossy(&checked.stderr).into_owned();
+    let score = printed
+        .lines()
+        .find(|line| line.starts_with("safety: "))
+        .unwrap_or_else(|| panic!("no score line said: {printed}"));
+    assert_eq!(score, "safety: skill deploy scores 75/100", "{printed}");
 }

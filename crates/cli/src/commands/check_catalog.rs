@@ -11,7 +11,7 @@ use std::path::Path;
 use kendex_core::check_catalog::{CHECK_SCHEMA, CatalogCheck, CheckFinding};
 use kendex_core::source_read::SealedSource;
 
-use super::engine_common::print_advisory;
+use super::engine_common::{ScoredAt, print_advisory};
 use super::{CliResult, out, say};
 
 pub fn run(catalog: &Path, strict: bool, json: bool) -> CliResult {
@@ -80,12 +80,9 @@ fn lines(report: &CatalogCheck) {
             say(&format!("    fix: {}", shown(&finding.fix)));
         }
         print_advisory(
-            &format!(
-                "{} {} at {}",
-                item.kind.name(),
-                shown(&item.name),
-                shown(&item.file)
-            ),
+            item.kind,
+            &item.name,
+            ScoredAt::CatalogPath(&item.file),
             &item.advisory,
         );
     }
