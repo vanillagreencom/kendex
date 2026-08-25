@@ -10,10 +10,10 @@ an outside contributor.
 
 ### Added
 
-- Moving an existing repo onto kendex works now: an item whose files are
-  already on disk offers **Replace them** (old files go to the trash) or
-  **Keep these files**; CLI: `kendex adopt` and `kendex apply --replace-unmanaged`.
-- Catalog authors settle a reviewed safety finding with
+- Moving an existing repo onto kendex works now: files already on disk
+  offer **Replace them** (to the trash) or, where supported, **Keep these
+  files**; CLI: `kendex adopt` and `kendex apply --replace-unmanaged`.
+- Catalog authors settle a reviewed safety finding (hooks excluded) with
   `kendex dismiss --catalog`, committed in `kendex-reviews.toml`; installs
   inherit the decision, and any edit to the item brings the hold back.
 - The app has its own icon — the `x` from the kendex wordmark, at every size
@@ -43,7 +43,7 @@ an outside contributor.
   rust-fmt, rust-clippy, and biome; commands that sidestep the armed hook
   (`--no-verify`, hook-skipping git config) are refused.
 - **Breaking:** `KENDEX_PRE_COMMIT_RUST_CLIPPY` is gone; use
-  `[guards.rust-clippy] enabled = false` in kendex.toml.
+  `[guards.rust-clippy] enabled = false` in `kendex.settings.toml`.
 - The safety check reads every file to its last byte (it used to stop at
   512 KB or 200 files), so large packages can show findings that were
   always there; unreadable ones report "Not fully checked", not a score.
@@ -212,9 +212,9 @@ CLI, and the kendex.ai community ships alongside. Migrate with
 
 ### Changed
 
-- **Breaking:** vstack is **kendex** — app, CLI binary, crates,
-  identifier, and `KENDEX_*` environment variables. A `vstack` alias ships
-  for one release cycle; existing libraries repoint in one previewed step.
+- **Breaking:** vstack is **kendex** — app, CLI binary, crates, and
+  identifier; rename `VSTACK_*` environment variables to `KENDEX_*`. A
+  `vstack` alias ships one cycle; libraries repoint in one previewed step.
 - The coding tools kendex writes to are called **harnesses**.
 - The app is reorganized around what you're doing: six sidebar
   destinations, Home leads with what needs attention, Sync is Review &
