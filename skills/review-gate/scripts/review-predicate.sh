@@ -107,8 +107,13 @@ then built-in defaults — lib/settings.sh; list values pack with ';'):
                                             the same login
   REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS  (a) errored-attestation body
                                             markers, case-insensitive
-                                            substrings; a configured value
-                                            replaces the default list
+                                            substrings matched at the START
+                                            of the body only (first line,
+                                            after trimming whitespace and
+                                            markdown quote markers) — a
+                                            body quoting a pattern in later
+                                            text is evidence; a configured
+                                            value replaces the default list
                                             ('encountered an error and was
                                             unable to review'); never a
                                             blocker — the changes-requested
@@ -445,8 +450,12 @@ cr="$(jq '[.[] | select(.state != "DISMISSED" and .state != "PENDING") | select(
 # its own row toward silence (the fail-closed direction), never to
 # establish trust, so the trust model is unchanged. The markers come from
 # REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS — case-insensitive substrings,
-# ';'-separated, the same shape as the check-run skip patterns; a
-# configured value replaces the default list, and empty disables the filter
+# ';'-separated, the same shape as the check-run skip patterns, but matched
+# at the START of the body only (the first line, after trimming leading
+# whitespace and markdown quote markers): an attestation is the whole body,
+# while a genuine review that quotes a pattern in later text — any PR that
+# edits the setting itself — must stay evidence (KEN-456); a configured
+# value replaces the default list, and empty disables the filter
 # (an explicit choice to count errored rows as evidence). Deliberately NOT
 # applied to the changes-requested reduction above: body text that could
 # erase a standing objection would be a fail-open lever, and an errored row
@@ -467,7 +476,13 @@ got="$(jq --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
       | select(($t | length) == 0 or (.user.login as $l | ($t | index($l)) != null))
       # Bind the body BEFORE testing containment — same rebinding trap as
       # the skip-pattern filter: inside contains(.) the dot would rebind.
-      | select((((.body // "") | ascii_downcase) as $b
+      # Matched at the START of the body only — the first line, after
+      # trimming leading whitespace and markdown quote markers: an
+      # attestation IS the body, while a review that merely quotes a
+      # pattern in later text (any PR editing the setting itself) is
+      # genuine evidence and must not be dropped (KEN-456).
+      | select((((.body // "") | ascii_downcase
+                 | sub("^[\\s>]+"; "") | split("\n") | (.[0] // "")) as $b
                 | [ $mk[] | . as $p | select($b | contains($p)) ] | length) == 0)
     ]
   | if $minstate == "approved" then
@@ -932,7 +947,8 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
     | [ .[]
         | select(.state != "DISMISSED" and .state != "PENDING" and .user.login != $author)
         | select(($t | length) == 0 or (.user.login as $l | ($t | index($l)) != null))
-        | select((((.body // "") | ascii_downcase) as $b
+        | select((((.body // "") | ascii_downcase
+                   | sub("^[\\s>]+"; "") | split("\n") | (.[0] // "")) as $b
                   | [ $mk[] | . as $p | select($b | contains($p)) ] | length) == 0)
         | select($minstate != "approved" or .state == "APPROVED")
         | select((.commit_id // "") != "" and .commit_id != $sha)

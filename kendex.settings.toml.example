@@ -202,7 +202,9 @@ REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = ""
 REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "any"
 
 # Substrings marking a review row's body as the reviewer's own errored-run
-# attestation — such a row is NOT-EVIDENCE, never a blocker.
+# attestation — such a row is NOT-EVIDENCE, never a blocker. Matched at the
+# start of the body only (first line); a review quoting a pattern in later
+# text stays evidence.
 REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS = "encountered an error and was unable to review"
 
 # "enforce" fails closed on unresolved threads CI-side; "off" only where a
