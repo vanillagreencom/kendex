@@ -315,6 +315,50 @@ run_push_args twoargs "$NOREBASE_ROOT/trees/issue-norebase" issue-norebase
 assert_eq "$PUSH_ARGS_RC" "1" "a second positional is a usage error"
 assert_contains "$(cat "$NOREBASE_ROOT/twoargs.err")" "takes a single issue ID or path" "the duplicate positional is reported"
 
+# An EMPTY positional is not "no target": resolution would fall back to $PWD
+# and push the current checkout — the unintended default push this parser
+# exists to prevent, one unset caller variable away. Seen-ness is tracked
+# apart from the value, so an empty first argument still counts against the
+# single-target rule.
+empty_pre_head="$(git -C "$NOREBASE_ROOT/trees/issue-norebase" rev-parse HEAD)"
+run_push_args emptyarg ""
+assert_eq "$PUSH_ARGS_RC" "1" "an empty positional is a usage error, not a fallback to \$PWD"
+assert_contains "$(cat "$NOREBASE_ROOT/emptyarg.err")" "push target is empty" "the empty target is reported"
+
+run_push_args emptythenreal "" "$NOREBASE_ROOT/trees/issue-norebase"
+assert_eq "$PUSH_ARGS_RC" "1" "an empty positional followed by a real one is still refused"
+
+run_push_args realthenempty "$NOREBASE_ROOT/trees/issue-norebase" ""
+assert_eq "$PUSH_ARGS_RC" "1" "a real positional followed by an empty one is a duplicate, not a silent second target"
+assert_contains "$(cat "$NOREBASE_ROOT/realthenempty.err")" "takes a single issue ID or path" "the empty second positional is reported as a duplicate"
+assert_eq "$(git -C "$NOREBASE_ROOT/trees/issue-norebase" rev-parse HEAD)" "$empty_pre_head" "an empty-target refusal pushes and rebases nothing"
+
+# --- KEN-570: --check-args validates without acting ---------------------------
+# orch's worktree-push consumes a pending rebase-map sidecar before it pushes,
+# so it must learn push's verdict on the forwarded argument vector while
+# nothing is consumed yet. --check-args runs THIS loop — the same code path,
+# so a validation run and the real push cannot drift — and stops: no
+# resolution, no rebase, no push.
+check_pre_head="$(git -C "$NOREBASE_ROOT/trees/issue-norebase" rev-parse HEAD)"
+check_pre_remote="$(git --git-dir="$NOREBASE_ROOT/origin.git" rev-parse refs/heads/issue-norebase)"
+run_push_args checkok "$NOREBASE_ROOT/trees/issue-norebase" --no-rebase --check-args
+assert_eq "$PUSH_ARGS_RC" "0" "--check-args accepts a vector push accepts"
+assert_eq "$(cat "$NOREBASE_ROOT/checkok.out")" "" "--check-args prints nothing on acceptance"
+assert_eq "$(git -C "$NOREBASE_ROOT/trees/issue-norebase" rev-parse HEAD)" "$check_pre_head" "--check-args rebases nothing"
+assert_eq "$(git --git-dir="$NOREBASE_ROOT/origin.git" rev-parse refs/heads/issue-norebase)" "$check_pre_remote" "--check-args pushes nothing"
+
+# The transposition a prefix heuristic could never catch. push does not know
+# --sate-dir, so the real parser refuses it; the wrapper needs no guess of its
+# own about which typos of ITS flags exist.
+run_push_args checktransposed "$NOREBASE_ROOT/trees/issue-norebase" --check-args "--sate-dir=/nowhere"
+assert_eq "$PUSH_ARGS_RC" "1" "--check-args refuses a transposed flag push does not know"
+assert_contains "$(cat "$NOREBASE_ROOT/checktransposed.err")" "unknown option '--sate-dir=/nowhere' for push" "the check reports the same diagnostic the real push would"
+
+run_push_args checkempty --check-args ""
+assert_eq "$PUSH_ARGS_RC" "1" "--check-args refuses an empty positional too"
+assert_contains "$(cat "$NOREBASE_ROOT/checkempty.err")" "push target is empty" "the check reports the empty target"
+assert_eq "$(git --git-dir="$NOREBASE_ROOT/origin.git" rev-parse refs/heads/issue-norebase)" "$check_pre_remote" "a refused check pushes nothing"
+
 # --- kendex#728: a commit dropped by the rebase maps to "dropped" --------------
 # The branch carries a commit whose patch main already merged (different SHA,
 # same patch-id) plus its own fix. The rebase drops the duplicated commit, so
