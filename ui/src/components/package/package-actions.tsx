@@ -29,6 +29,7 @@ export function PackageActions({
   name,
   primaryPath,
   updateAvailable,
+  withheldNote,
   busy,
   onUpdate,
   onPreview,
@@ -39,6 +40,9 @@ export function PackageActions({
   name: string;
   primaryPath: string;
   updateAvailable: boolean;
+  /** Why there is no Update here, when the page has news but this kind is
+   *  not brought current one package at a time. */
+  withheldNote?: string | null;
   busy: boolean;
   onUpdate: () => void;
   onPreview: () => void;
@@ -77,6 +81,9 @@ export function PackageActions({
             {PREVIEW_CHANGES_LABEL}
           </Button>
         </>
+      ) : null}
+      {!updateAvailable && withheldNote ? (
+        <p className="text-sm text-muted-foreground">{withheldNote}</p>
       ) : null}
       <DropdownMenu>
         <DropdownMenuTrigger

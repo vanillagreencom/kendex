@@ -326,3 +326,70 @@ fn a_pinned_source_discovers_new_versions_after_fetch_all() {
     assert!(gh.update_available);
     assert_eq!(gh.latest.as_ref().unwrap().commit, second);
 }
+
+#[allow(clippy::unwrap_used)]
+fn write_pi_extension(dir: &Path, name: &str, version: &str) {
+    let ext = dir.join("pi-extensions").join(name);
+    fs::create_dir_all(&ext).unwrap();
+    fs::write(
+        ext.join("package.json"),
+        format!("{{\"name\": \"{name}\", \"version\": \"{version}\"}}\n"),
+    )
+    .unwrap();
+}
+
+/// A declared Pi extension gets an updates row: `planned_declarations`
+/// appends it after the closure walk precisely so its news is heard. The
+/// row is a fact, not an offer — nothing here plans a Pi extension, so the
+/// surfaces that act on a row have to say where its update lives.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_pi_extension_reaches_the_updates_report() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "One.");
+    write_pi_extension(&w.upstream, "pi-hooks", "1.0.0");
+    commit(&w.upstream, "one");
+    declare(
+        &w,
+        "",
+        "[skills.gh]\nsource = \"cat\"\n\n[pi-extensions.pi-hooks]\nsource = \"cat\"\n",
+    );
+    sync_and_apply(&w);
+
+    write_pi_extension(&w.upstream, "pi-hooks", "2.0.0");
+    commit(&w.upstream, "two");
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
+
+    let report = updates::updates(&w.env, &w.scope).unwrap();
+    let row = report
+        .rows
+        .iter()
+        .find(|row| row.kind == ItemKind::PiExtension)
+        .unwrap_or_else(|| panic!("no pi-extension row in {:?}", report.rows));
+    assert_eq!(row.name, "pi-hooks");
+
+    // And it can never be acted on. Nothing records a Pi extension in the
+    // lock — update-pi installs them and writes none — so there is no
+    // installed commit to move from, and every surface that offers Update
+    // asks for one. If a Pi extension ever gains a lock entry this goes
+    // red, and the Update those surfaces would start offering is a plan
+    // that refuses.
+    assert_eq!(row.current, None, "{row:?}");
+    assert!(!row.update_available, "{row:?}");
+    let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&w.env, &w.scope)).unwrap();
+    assert!(
+        !lock
+            .entries
+            .values()
+            .any(|entry| entry.kind == ItemKind::PiExtension),
+        "the lock records no Pi extension"
+    );
+    // The same absence on the package page: no version reads as installed,
+    // so the page has nothing to offer an update from.
+    let versions = package::versions(&w.env, &w.scope, ItemKind::PiExtension, "pi-hooks").unwrap();
+    assert!(!versions.is_empty(), "the timeline still reads");
+    assert!(versions.iter().all(|row| !row.installed), "{versions:?}");
+}

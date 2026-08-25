@@ -301,6 +301,8 @@ export const commands = {
 };
 
 /* Constants */
+export const PER_PACKAGE_UPDATE_KINDS = ["skill","agent","hook","command","mcp-server"] as const;
+
 export const ZOOM = {"min":50,"max":200,"step":10,"default":100} as const;
 
 /* Types */

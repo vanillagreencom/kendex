@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import type { HarnessId, Scope, VersionRow } from "@/bindings";
-import { ItemCustomize } from "@/components/customize/item-customize";
 import { SaveBar } from "@/components/customize/save-bar";
 import { PackageActions } from "@/components/package/package-actions";
 import { PackageBody } from "@/components/package/package-body";
 import { PackageHeader } from "@/components/package/package-header";
+import { PackageTabs } from "@/components/package/package-tabs";
 import { RemoveDialog } from "@/components/package/remove-dialog";
 import {
   diffHarness,
@@ -14,16 +14,18 @@ import {
   usePackageData,
   usePackageDiff,
 } from "@/components/package/use-package-data";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CUSTOMIZE_TAB, OVERVIEW_TAB } from "@/lib/copy-customize";
-import { canCustomize } from "@/lib/customization";
+import { NO_PER_PACKAGE_UPDATE_NOTE } from "@/lib/copy-updates";
 import { groupItems, groupScopes, installationAt } from "@/lib/derive";
 import { packageDisplayName } from "@/lib/labels";
-import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { usePackageMark } from "@/lib/package-mark";
 import { sameScope } from "@/lib/scope";
-import { cn } from "@/lib/utils";
-import { installedRow, latestRow, versionRowLabel } from "@/lib/versions";
+import {
+  canUpdatePackage,
+  hasPerPackageUpdate,
+  installedRow,
+  latestRow,
+  versionRowLabel,
+} from "@/lib/versions";
 import { useAuditStore } from "@/stores/audit";
 import { useEditorStore } from "@/stores/editor";
 import { useNavStore } from "@/stores/nav";
@@ -116,15 +118,22 @@ export function PackagePage() {
   const installed = installedRow(versions);
   const latest = latestRow(versions);
   // Update waits for meta (held vs following) and the updates store
-  // (edited), and is off while edits are held.
-  const canUpdate =
-    latest != null &&
-    !latest.installed &&
-    installed != null &&
-    meta != null &&
-    updatesLoaded &&
-    !edited;
-  const customizable = canCustomize(group.kind);
+  // (edited), is off while edits are held, and is never offered for a kind
+  // the planner does not bring current one package at a time.
+  const canUpdate = canUpdatePackage({
+    kind: group.kind,
+    latest,
+    installed,
+    metaLoaded: meta != null,
+    updatesLoaded,
+    edited,
+  });
+  // Said where the button would be, so a page with news but no way to act
+  // on it here names the way that does.
+  const updateWithheld =
+    latest != null && !latest.installed && !hasPerPackageUpdate(group.kind)
+      ? NO_PER_PACKAGE_UPDATE_NOTE
+      : null;
 
   // Every scope this package sits in, one at a time — each apply takes
   // that scope's writer lock — and stopping at the first that fails.
@@ -192,6 +201,7 @@ export function PackagePage() {
             name={group.name}
             primaryPath={primary.path}
             updateAvailable={canUpdate}
+            withheldNote={updateWithheld}
             busy={mutating}
             onUpdate={() => latest && updateToLatest(latest)}
             onPreview={() => latest && compare(latest)}
@@ -199,31 +209,13 @@ export function PackagePage() {
           />
         }
       />
-      <div className={cn("min-h-0 flex-1 overflow-y-auto", PAGE_GUTTER)}>
-        <div className={cn("pb-8", WIDE_CONTENT_WIDTH)}>
-          {customizable ? (
-            <Tabs defaultValue="overview">
-              <TabsList>
-                <TabsTrigger value="overview">{OVERVIEW_TAB}</TabsTrigger>
-                <TabsTrigger value="customize">{CUSTOMIZE_TAB}</TabsTrigger>
-              </TabsList>
-              <TabsContent value="overview" className="pt-6">
-                {body}
-              </TabsContent>
-              <TabsContent value="customize" className="pt-6">
-                <ItemCustomize
-                  kind={group.kind}
-                  name={group.name}
-                  scopes={groupScopes(group)}
-                  harnesses={group.harnesses as HarnessId[]}
-                />
-              </TabsContent>
-            </Tabs>
-          ) : (
-            body
-          )}
-        </div>
-      </div>
+      <PackageTabs
+        kind={group.kind}
+        name={group.name}
+        scopes={groupScopes(group)}
+        harnesses={group.harnesses as HarnessId[]}
+        body={body}
+      />
       {dirty ? (
         <SaveBar
           saving={saving}
