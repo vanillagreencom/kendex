@@ -86,8 +86,14 @@ sec_hasF() { grep -qF "$2" <<<"$(bounded_rereview "$1")"; }
 # bucket, which is exactly the state § 8 reads as declined, so a session that
 # dies in that window re-declines a live blocker.
 CAP_WRITE_RE='workflow-state update \[ISSUE_ID\].*escalated_items'
+CAP_WRITE_TXT='workflow-state update [ISSUE_ID]'
 cap_write() { grep -E "$CAP_WRITE_RE" <<<"$(bounded_rereview "$1")"; }
 write_has() { grep -q "$2" <<<"$(cap_write "$1")"; }
+
+# The schema row for the cap path. POSIX classes only, never \s: BSD grep -E
+# does not know it, and the assertion would go vacuous on macOS rather than
+# loud.
+SCHEMA_CAP_RE='\|[[:space:]]*`escalated_items`.*cycle cap'
 
 # The pre-fix instruction: route and report, record nothing.
 REPORT_ONLY='At the cap, report the outstanding items'
@@ -168,7 +174,7 @@ else
 fi
 
 # --- j: the schema documents the cap path into escalated_items --------------
-if grep -qE '\|\s*`escalated_items`.*cycle cap' "$STATE_SCHEMA"; then
+if grep -qE "$SCHEMA_CAP_RE" "$STATE_SCHEMA"; then
   pass "workflow-state schema covers the cycle-cap path into escalated_items"
 else
   fail "workflow-state schema lost the cycle-cap path for escalated_items"
@@ -334,14 +340,23 @@ else
   pass "lint flags a cap rule commented out from above the section heading"
 fi
 
-# Scoping control: an escalated_items append elsewhere (dev-fix's § 6 pattern
-# quoted in another section) must not satisfy check a. Two passes, because a
-# single sed program that both plants and deletes collides in the pattern
-# space and removes the plant along with the § 5 heading.
+# Scoping control: an escalated_items write elsewhere (dev-fix's § 6 pattern
+# quoted in another section) must not satisfy check a. Built with awk, not a
+# sed \n replacement: BSD sed emits a literal 'n' there, which would leave the
+# plant welded to the § 5 heading and the control proving nothing.
 CTRL="$TMP_ROOT/pr-scope.md"
-sed "/^### Bounded Re-Review/,/^## 5\./{/$CAP_WRITE_RE/d}" "$REVIEW_PR_WF" \
-  | sed 's|^## 5\. Verdict Pass$|## 5. Verdict Pass\n\n.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] escalated_items placeholder|' > "$CTRL"
-if ! grep -q 'escalated_items placeholder' "$CTRL"; then
+awk -v cap="$CAP_WRITE_TXT" '
+  /^### Bounded Re-Review/ { on = 1 }
+  /^## 5\. Verdict Pass$/  { on = 0 }
+  on && index($0, cap)     { next }
+  { print }
+  /^## 5\. Verdict Pass$/ && !planted {
+    print ""
+    print ".agents/skills/orch/scripts/workflow-state update [ISSUE_ID] escalated_items placeholder"
+    planted = 1
+  }
+' "$REVIEW_PR_WF" > "$CTRL"
+if ! grep -qx '.agents/skills/orch/scripts/workflow-state update \[ISSUE_ID\] escalated_items placeholder' "$CTRL"; then
   fail "scoping fixture planted no append outside Bounded Re-Review — control is vacuous"
 elif [[ -n "$(cap_write "$CTRL")" ]]; then
   fail "lint credits an escalated_items write outside Bounded Re-Review"
@@ -353,7 +368,7 @@ SCRATCH_SCHEMA="$TMP_ROOT/schema.md"
 sed 's/, plus items still outstanding when review-pr'\''s cycle cap ends the fix loop//; s/; the cap path always writes this//' "$STATE_SCHEMA" > "$SCRATCH_SCHEMA"
 if cmp -s "$SCRATCH_SCHEMA" "$STATE_SCHEMA"; then
   fail "schema control planted nothing — its sed program matched no text"
-elif grep -qE '\|\s*`escalated_items`.*cycle cap' "$SCRATCH_SCHEMA"; then
+elif grep -qE "$SCHEMA_CAP_RE" "$SCRATCH_SCHEMA"; then
   fail "lint MISSED a schema that lost the cycle-cap path"
 else
   pass "lint flags a schema that lost the cycle-cap path"
