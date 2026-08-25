@@ -1,12 +1,14 @@
 pub use super::blocked::{print_conflicts, print_drift};
-use std::io::{IsTerminal, Write};
 
 use kendex_core::engine::{DriftRow, DriftState, EngineReport};
 use kendex_core::env::Env;
 use kendex_core::error::CoreError;
 use kendex_core::model::{HarnessId, ItemKind};
 
-use super::{CliResult, say};
+use std::io::IsTerminal;
+
+use super::{CliResult, note, say, warn};
+use crate::ui;
 
 pub fn parse_harnesses(values: &[String]) -> Result<Vec<HarnessId>, String> {
     values
@@ -23,37 +25,51 @@ pub fn parse_harnesses(values: &[String]) -> Result<Vec<HarnessId>, String> {
 /// it left alone and why — so a verb that prints nothing else about the
 /// plan still prints these.
 pub fn print_notes(report: &EngineReport) {
-    for note in &report.notes {
-        say(&format!("note: {note}"));
+    for line in &report.notes {
+        note(&format!("note: {line}"));
     }
 }
 
-pub fn print_report(env: &Env, report: &EngineReport) {
+/// The whole plan on a terminal, and back to the caller the items it
+/// refused — one derivation, so a closing count and the conflict lines it
+/// sends the reader to are one reading of one set of rows.
+pub fn print_report(env: &Env, report: &EngineReport) -> Vec<super::offers::Blocked> {
     print_notes(report);
     for warning in &report.warnings {
         let target = match warning.harness {
             Some(harness) => format!("{} ({})", warning.name, harness.display_name()),
             None => warning.name.clone(),
         };
-        say(&format!("warning: {target}: {}", warning.message));
+        warn(&format!("warning: {target}: {}", warning.message));
         if let Some(fix) = &warning.remediation {
             say(&format!("  fix: {fix}"));
         }
     }
     print_safety(report);
-    let blocked = !print_conflicts(env, report).is_empty();
+    let blocked = print_conflicts(env, report);
     if report.plan.is_empty() {
         // "nothing to do" directly under a conflict reads as "and nothing
         // you can do" — the run has plenty to do, once the reader picks.
-        say(match blocked {
-            true => "nothing to do until you settle the conflicts above",
-            false => "nothing to do",
+        say(match blocked.is_empty() {
+            false => "nothing to do until you settle the conflicts above",
+            true => "nothing to do",
         });
-        return;
+        return blocked;
     }
-    say("plan:");
+    let ops = report.plan.ops.len();
+    // The op list is what the confirm below is an answer to: a reader
+    // asked to approve a count was never shown what it covers.
+    say(&format!("plan: {} change{}", ops, plural(ops)));
     for op in &report.plan.ops {
         say(&format!("  - {}", op.description));
+    }
+    blocked
+}
+
+fn plural(n: usize) -> &'static str {
+    match n {
+        1 => "",
+        _ => "s",
     }
 }
 
@@ -216,10 +232,10 @@ pub fn confirm_and_apply(
         if !std::io::stdin().is_terminal() {
             return Err("refusing to apply without --yes in a non-interactive session".into());
         }
-        let _ = write!(std::io::stderr(), "apply? [y/N] ");
-        let mut answer = String::new();
-        std::io::stdin().read_line(&mut answer)?;
-        if !matches!(answer.trim(), "y" | "Y" | "yes") {
+        // The count is the consequence: an answer given to a bare "apply?"
+        // is an answer to the verb's name rather than to what it writes.
+        let ops = report.plan.ops.len();
+        if !ui::confirm(&format!("apply {ops} change{}?", plural(ops)))? {
             return Err("apply cancelled".into());
         }
     }

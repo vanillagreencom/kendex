@@ -1,12 +1,14 @@
-use std::io::{IsTerminal, Write};
+use std::io::IsTerminal;
 
 use kendex_core::apply::Op;
 use kendex_core::engine::{EngineReport, ops};
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
 
-use super::{CliResult, resolve_scopes, say};
+use super::ledger::wrote;
+use super::{CliResult, note, resolve_scopes, say, warn};
 use crate::scope::ScopeFilter;
+use crate::ui;
 
 /// What a removal does with the declaration.
 #[derive(Clone, Copy)]
@@ -25,6 +27,7 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
         say("usage: kendex remove <name>… [--keep-declaration] [--scope project|global|all]");
         return Ok(());
     }
+    ui::intro("kendex remove");
     let mut removed_any = false;
     for scope in resolve_scopes(env, filter)? {
         let planned = match mode {
@@ -48,14 +51,15 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
         // until the refresh the closing line names; the warning carries no
         // type to tell it from the rest, so it prints with them.
         for warning in &report.warnings {
-            say(&format!("warning: {}: {}", warning.name, warning.message));
+            warn(&format!("warning: {}: {}", warning.name, warning.message));
         }
         if !takes_anything(&report) {
             continue;
         }
         removed_any = true;
         say_split(&report, mode);
-        super::engine_common::apply_report(env, &report)?;
+        let applied = super::engine_common::apply_report(env, &report)?;
+        say("removed:");
         for op in &report.plan.ops {
             say(&format!("  - {}", op.description));
         }
@@ -65,9 +69,15 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
                 scope.label()
             ));
         }
+        // A removal refuses nothing and prints no scores: its ledger is
+        // the count alone, in the one shape every verb closes on.
+        ui::ledger(
+            &format!("{}: {}", scope.label(), wrote("removed", Some(applied), 0)),
+            &[],
+        );
     }
     if !removed_any {
-        say("Nothing removed");
+        ui::ledger("Nothing removed", &[]);
     }
     Ok(())
 }
@@ -94,7 +104,7 @@ fn say_split(report: &EngineReport, mode: Removal) {
                 Removal::Disown { .. } => format!(" — {}", change.reason),
                 Removal::KeepDeclaration => String::new(),
             };
-            say(&format!(
+            note(&format!(
                 "removing {} {} for {}{reason}",
                 change.kind.name(),
                 change.name,
@@ -103,7 +113,7 @@ fn say_split(report: &EngineReport, mode: Removal) {
         }
     }
     for kept in &report.kept {
-        say(&format!(
+        note(&format!(
             "keeping {} {} for {} — {}",
             kept.kind.name(),
             kept.name,
@@ -139,14 +149,11 @@ fn answer(
         )
         .into());
     }
-    let _ = write!(
-        std::io::stderr(),
-        "also remove {}, which nothing needs anymore? [y/N] ",
+    let asked = ui::confirm(&format!(
+        "also remove {}, which nothing needs anymore?",
         leftovers.join(", ")
-    );
-    let mut answer = String::new();
-    std::io::stdin().read_line(&mut answer)?;
-    match matches!(answer.trim(), "y" | "Y" | "yes") {
+    ))?;
+    match asked {
         true => Ok(ops::remove(env, scope, names, None, true)?),
         false => Ok(report),
     }

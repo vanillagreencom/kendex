@@ -5,9 +5,11 @@ use kendex_core::model::Scope;
 
 use kendex_core::manifest::Method;
 
-use super::engine_common::{confirm_and_execute, parse_harnesses, print_report};
-use super::{CliResult, harness_picker, resolve_scopes, say};
+use super::engine_common::{confirm_and_apply, parse_harnesses, print_report};
+use super::ledger::{say_ledger, wrote};
+use super::{CliResult, harness_picker, resolve_scopes, warn};
 use crate::scope::ScopeFilter;
+use crate::ui;
 
 pub struct AddArgs {
     pub source: Option<String>,
@@ -43,6 +45,7 @@ fn split(values: &[String]) -> Vec<String> {
 }
 
 pub fn run(env: &Env, args: AddArgs) -> CliResult {
+    ui::intro("kendex add");
     let filter = if args.global {
         ScopeFilter::Global
     } else {
@@ -138,19 +141,30 @@ pub fn run(env: &Env, args: AddArgs) -> CliResult {
     let report = match ops::add(env, &scope, &request) {
         Err(kendex_core::error::CoreError::SourcePending { .. }) => {
             let manifest = ops::manifest_for_mutation(env, &scope)?;
-            for warning in kendex_core::remote::sync_sources(env, &manifest)? {
-                say(&format!("warning: {warning}"));
+            let synced = {
+                let _reading = ui::spinner("reading sources");
+                kendex_core::remote::sync_sources(env, &manifest)?
+            };
+            for warning in synced {
+                warn(&format!("warning: {warning}"));
             }
             ops::add(env, &scope, &request)?
         }
         other => other?,
     };
-    print_report(env, &report);
-    confirm_and_execute(env, &report, args.yes)?;
+    let blocked = print_report(env, &report);
+    let applied = confirm_and_apply(env, &report, args.yes)?;
     // Disclosed after the write, because the script an effect runs is the
     // one this install just put on disk.
     let shown_to_them = super::repo_effects::disclose(env, &scope, &report.repo_effects)?;
     super::repo_effects::walkthrough(&scope, &shown_to_them, args.allow_repo_effects)?;
-    say("done");
+    // "done" answered whether the process ended, never what it installed.
+    let count = (!report.plan.is_empty()).then_some(applied);
+    say_ledger(
+        &scope,
+        wrote("installed", count, blocked.len()),
+        &blocked,
+        &report,
+    );
     Ok(())
 }

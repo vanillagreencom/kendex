@@ -34,7 +34,6 @@ pub mod updates_cmd;
 pub mod verify;
 pub mod versions;
 
-use std::io::Write;
 use std::path::PathBuf;
 
 use kendex_core::discover;
@@ -43,16 +42,12 @@ use kendex_core::model::Scope;
 
 use crate::scope::ScopeFilter;
 
+// Every human line a command says leaves through the presentation module,
+// which decides between the plain lines a script parses and the framed
+// session a terminal gets. A command never writes to a stream itself.
+pub use crate::ui::{fail, note, out, say, warn};
+
 pub type CliResult = Result<(), Box<dyn std::error::Error>>;
-
-/// v1 prints human tables to stderr; stdout stays clean for composition.
-pub fn say(line: &str) {
-    let _ = writeln!(std::io::stderr(), "{line}");
-}
-
-pub fn out(line: &str) {
-    let _ = writeln!(std::io::stdout(), "{line}");
-}
 
 /// The scopes a filter selects on this machine: the current project (walked
 /// up from CWD, v1 rules) and/or global.

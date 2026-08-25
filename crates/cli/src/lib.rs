@@ -3,8 +3,8 @@ mod dispatch_args;
 use dispatch_args::{check, remove};
 mod flags;
 mod scope;
+mod ui;
 
-use std::io::Write;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
@@ -207,9 +207,15 @@ pub fn main() -> ExitCode {
     // the session hook reads the empty report as a clean machine.
     let machine_check = matches!(&cli.command, Some(Command::Check { catalog: None, .. }));
     match run(cli) {
-        Ok(code) => code,
+        Ok(code) => {
+            ui::finish();
+            code
+        }
         Err(e) => {
-            let _ = writeln!(std::io::stderr(), "Error: {e}");
+            // The last line of the run, and the one that closes the frame
+            // a terminal opened: whatever was still being said is drawn
+            // above it rather than swallowed by the exit.
+            ui::outro_fail(&format!("Error: {e}"));
             match machine_check {
                 true => ExitCode::from(2),
                 false => ExitCode::FAILURE,

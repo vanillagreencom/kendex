@@ -3,9 +3,11 @@ use kendex_core::env::Env;
 use kendex_core::error::CoreError;
 use kendex_core::manifest::{self, ManifestFile};
 
-use super::engine_common::{confirm_and_execute, print_report, print_unmanaged};
-use super::{CliResult, resolve_scopes, say};
+use super::engine_common::{confirm_and_apply, print_report, print_unmanaged};
+use super::ledger::{say_ledger, say_preview, wrote};
+use super::{CliResult, resolve_scopes, say, warn};
 use crate::scope::ScopeFilter;
+use crate::ui;
 
 /// Make disk match declaration — orphan cleanup included, plan shown first.
 /// (Repurposed from v1's theme-pack apply; extras are gone in v2.)
@@ -40,6 +42,7 @@ pub struct ApplyArgs {
 }
 
 pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
+    ui::intro("kendex apply");
     let filter = ScopeFilter::resolve(args.scope.as_deref(), args.global, ScopeFilter::Project)?;
     // Every scope is planned before any of them is written: failing before
     // the first write beats a half-applied run.
@@ -64,25 +67,52 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
             replace_unmanaged: args.replace_unmanaged,
             ..PlanOptions::default()
         };
-        planned.push((scope.clone(), plan_apply(env, &scope, &options)?));
+        let report = {
+            let _planning = ui::spinner(&format!("planning {}", scope.label()));
+            plan_apply(env, &scope, &options)?
+        };
+        planned.push((scope.clone(), report));
     }
     for (scope, report) in planned {
-        say(&format!("{}:", scope.label()));
-        print_report(env, &report);
+        let blocked = print_report(env, &report);
         // Only here and in verify: a report is printed by add and pin too,
         // and an inventory of hand-made content is not what those were
         // asked for.
         print_unmanaged(&report.drift);
-        if !args.plan {
-            confirm_and_execute(env, &report, args.yes)?;
-            // A declaration written by hand installs here, and it gets the
-            // same account and the same separate yes an `add` gives it.
-            let shown_to_them = super::repo_effects::disclose(env, &scope, &report.repo_effects)?;
-            super::repo_effects::walkthrough(&scope, &shown_to_them, args.allow_repo_effects)?;
-            // The deep work just ran; record it for the session-start check.
-            if let Err(error) = kendex_core::drift::snapshot::record(env, &scope) {
-                say(&format!("warning: snapshot not derived ({error})"));
-            }
+        // A preview closes on what it would do, in the shape the run that
+        // does it closes on — the scope named there and nowhere else, so
+        // a multi-scope run is read one ledger at a time.
+        if args.plan {
+            let planned = (!report.plan.is_empty()).then_some(report.plan.ops.len());
+            say_preview(
+                &scope,
+                wrote("planned", planned, blocked.len()),
+                &blocked,
+                &report,
+            );
+            continue;
+        }
+        // The same close as refresh, for the same reason: what this run
+        // wrote is one of its outcomes, and the installs it refused and
+        // the scores it read are the others.
+        let applied = confirm_and_apply(env, &report, args.yes)?;
+        // A declaration written by hand installs here, and it gets the
+        // same account and the same separate yes an `add` gives it.
+        let shown_to_them = super::repo_effects::disclose(env, &scope, &report.repo_effects)?;
+        super::repo_effects::walkthrough(&scope, &shown_to_them, args.allow_repo_effects)?;
+        // `None` where the plan had nothing to do: a scope that wrote
+        // nothing because it had nothing to write is up to date, and one
+        // that wrote nothing because every write was refused is not.
+        let count = (!report.plan.is_empty()).then_some(applied);
+        say_ledger(
+            &scope,
+            wrote("applied", count, blocked.len()),
+            &blocked,
+            &report,
+        );
+        // The deep work just ran; record it for the session-start check.
+        if let Err(error) = kendex_core::drift::snapshot::record(env, &scope) {
+            warn(&format!("warning: snapshot not derived ({error})"));
         }
     }
     Ok(())

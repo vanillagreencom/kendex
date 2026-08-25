@@ -6,9 +6,10 @@ use super::engine_common::{
     apply_report, confirm_and_apply, print_conflicts, print_drift, print_notes, print_safety,
     refresh_failures,
 };
-use super::ledger::say_ledger;
-use super::{CliResult, resolve_scopes, say};
+use super::ledger::{say_ledger, wrote};
+use super::{CliResult, resolve_scopes, say, warn};
 use crate::scope::ScopeFilter;
+use crate::ui;
 
 /// Regenerate every declared installation, and re-derive what those
 /// declarations pull in — a dependency that appeared upstream, one that went
@@ -70,6 +71,7 @@ pub fn run(
     yes: bool,
     discard_edits: bool,
 ) -> CliResult {
+    ui::intro("kendex refresh");
     let mut refreshed_anything = false;
     let mut failures: Vec<String> = Vec::new();
     let scopes = resolve_scopes(env, filter)?;
@@ -82,8 +84,12 @@ pub fn run(
         {
             // An unreachable catalog is reported, not fatal: what came from
             // every other catalog still refreshes.
-            for note in kendex_core::remote::sync_declared_sources(env, &manifest) {
-                say(&format!("warning: {note}"));
+            let notes = {
+                let _reading = ui::spinner(&format!("reading sources for {}", scope.label()));
+                kendex_core::remote::sync_declared_sources(env, &manifest)
+            };
+            for note in notes {
+                warn(&format!("warning: {note}"));
             }
         }
         let options = PlanOptions {
@@ -91,7 +97,11 @@ pub fn run(
             overwrite_edited: discard_edits,
             ..PlanOptions::default()
         };
-        let report = match plan_apply(env, &scope, &options) {
+        let planned = {
+            let _planning = ui::spinner(&format!("planning {}", scope.label()));
+            plan_apply(env, &scope, &options)
+        };
+        let report = match planned {
             Ok(report) => report,
             Err(error) => {
                 failures.push(error.to_string());
@@ -115,7 +125,12 @@ pub fn run(
         refreshed_anything = true;
         failures.extend(refresh_failures(&report));
         if report.plan.is_empty() {
-            say_ledger(&scope, None, &blocked, &report);
+            say_ledger(
+                &scope,
+                wrote("refreshed", None, blocked.len()),
+                &blocked,
+                &report,
+            );
             continue;
         }
         // One closing line for both paths: a run that first asked about
@@ -129,7 +144,12 @@ pub fn run(
             }
         };
         match applied {
-            Ok(applied) => say_ledger(&scope, Some(applied), &blocked, &report),
+            Ok(applied) => say_ledger(
+                &scope,
+                wrote("refreshed", Some(applied), blocked.len()),
+                &blocked,
+                &report,
+            ),
             Err(error) => failures.push(error),
         }
     }
@@ -142,7 +162,7 @@ pub fn run(
             Ok(kendex_core::manifest::ManifestFile::Current(_))
         ) && let Err(error) = kendex_core::drift::snapshot::record(env, scope)
         {
-            say(&format!("warning: snapshot not derived ({error})"));
+            warn(&format!("warning: snapshot not derived ({error})"));
         }
     }
 
@@ -152,7 +172,7 @@ pub fn run(
     }
     if !failures.is_empty() {
         for failure in &failures {
-            say(&format!("failed: {failure}"));
+            super::fail(&format!("failed: {failure}"));
         }
         return Err(format!("failed to refresh {} item/source(s)", failures.len()).into());
     }

@@ -3,8 +3,9 @@ use std::process::ExitCode;
 use kendex_core::drift::report::{self, CheckReport};
 use kendex_core::env::Env;
 
-use super::{out, resolve_scopes, say};
+use super::{out, resolve_scopes};
 use crate::scope::ScopeFilter;
+use crate::ui;
 
 /// The session-start contract: exit 0 clean / 1 drift or not yet
 /// evaluated / 2 could-not-check.
@@ -38,6 +39,7 @@ pub fn run(
     } else {
         render_text(&checked, quiet);
     }
+
     Ok(ExitCode::from(checked.status.exit_code()))
 }
 
@@ -153,16 +155,34 @@ fn installed_here(env: &Env, scope: &kendex_core::model::Scope) -> bool {
     })
 }
 
+/// `--quiet` is the session hook's shape: the bounded report on stdout and
+/// not one line beside it, so the framing and the closing verdict are for
+/// the reader who ran the verb themselves.
 fn render_text(checked: &CheckReport, quiet: bool) {
-    let text = report::render_plain(checked);
-    if text.is_empty() {
-        if !quiet {
-            say("all clear — every install matches its source");
-        }
-        return;
+    if !quiet {
+        ui::intro("kendex check");
     }
+    let text = report::render_plain(checked);
     // The report is agent- and composition-facing content: stdout.
     for line in text.lines() {
         out(line);
     }
+    if quiet {
+        return;
+    }
+    let items: usize = checked
+        .sections
+        .iter()
+        .map(|section| section.lines.len())
+        .sum();
+    // No next step under the count: each line above already carries its
+    // own remedy, and one command named for all of them would settle some.
+    ui::ledger(
+        &match items {
+            0 => "all clear — every install matches its source".to_owned(),
+            1 => "1 item needs attention — its line above says what to run".to_owned(),
+            n => format!("{n} items need attention — each line above says what to run"),
+        },
+        &[],
+    );
 }

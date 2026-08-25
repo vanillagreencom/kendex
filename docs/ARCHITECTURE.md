@@ -642,51 +642,49 @@ lives in one capability table read by core and UI.
   and preflights the local target: a symlink, a case/composition-folding
   sibling, or different bytes there is a refusal (invariants 4 and 6). The
   local source lists a `plugin/item` name beside a plain `plugin`.
-- **The machine seam reads through the same core installing reads
-  through.** `check_catalog.rs` (core) owns the two authoring passes —
-  structural (would each harness's loader hold this item) and safety (the
-  rules an install runs) — behind `kendex check --catalog [--json]`, the
-  indexer's per-package scores, and authoring preflight; the CLI prints
-  lines or a versioned envelope (`schema`, typed findings, counts, `ok`).
-  Structural breakage fails the check; safety findings are advisory
-  everywhere, `--strict` included, and never fail it.
+- **The machine seam reads through the same core installing does.**
+  `check_catalog.rs` (core) owns both authoring passes — structural (would
+  each loader hold this) and safety (the rules an install runs) — behind
+  `kendex check --catalog [--json]`, the indexer's per-package scores and
+  authoring preflight; the CLI prints lines or a versioned envelope
+  (`schema`, typed findings, counts, `ok`). Structural breakage fails the
+  check; safety findings are advisory everywhere, `--strict` included.
   `source/index.rs` emits the per-marketplace summary the community
-  directory consumes (`kendex index [<dir>] --json`, schema 2, plain
-  directory, no network): metadata from the catalog's `[marketplace]` table
+  directory reads (`kendex index [<dir>] --json`, schema 2, plain directory,
+  no network): metadata from the catalog's `[marketplace]` table
   (`source/meta.rs` — read-only, strings capped, control-char-safe),
-  packages from `list_items` (pinned by test), safety scores from the check
-  passes, bundles with members, About rows, findings. Field order in both
-  JSON shapes is the schema — serde structs, no maps. `kendex marketplace
-  check` aliases `check --catalog --strict`, same exit codes.
-  A finding's message says what the rule fired *on*, never where: the
-  location is its own field, and rendering moves content between files
-  (Codex renders a command as a skill tree). A digest standing in for
-  unprintable content is always `DIGEST_CHARS` wide.
+  packages from `list_items` (pinned by test), check-pass safety scores,
+  bundles with members, About rows, findings. Field order in both JSON
+  shapes is the schema: serde structs, no maps. `kendex marketplace check`
+  aliases it with `--strict`, same exit codes. A finding's message says what
+  the rule fired *on*, never where: location is its own field, since
+  rendering moves content between files (Codex renders a command as a skill
+  tree). A digest for unprintable content is `DIGEST_CHARS` wide.
 - **The community directory is read like any remote: strictly, capped,
   honest about staleness.** `index.rs` re-parses the schema-1 payload
   `source/index.rs` feeds kendex.ai under the site's own caps, refusing
-  structural problems whole, dropping only unusable rows. `generation.rs`
-  is the one cache mechanism: an endpoint-keyed generation written
-  atomically under `Env::registry_cache_dir`, a failed refresh serving the
-  last fetch labeled stale. `cache.rs` adds the directory's one-hour TTL;
-  the identity (`me.rs`) has none and is forgotten on sign-in, sign-out,
-  and expiry. All reads go through the `Fetch` trait (curl via `Hardened`,
-  plain http only under `KENDEX_API`); tests inject transports. Bearer
-  calls route through `registry/client.rs`: one named cross-process lock
-  serializes login, logout, and refresh rotation, saving rotations before
-  retry. `skillssh.rs` pins its public wire schema and kill switch
-  (`KENDEX_SKILLSSH=off`); a hit is a lead, never an identity, and installs
-  through the same subscribe path. Collections and deep links arrive with W3/W4.
+  structural problems whole, dropping only unusable rows. `generation.rs` is
+  the one cache mechanism: an endpoint-keyed generation written atomically
+  under `Env::registry_cache_dir`, a failed refresh serving the last fetch
+  labeled stale. `cache.rs` adds the directory's one-hour TTL; the identity
+  (`me.rs`) has none and is forgotten on sign-in, sign-out and expiry. All
+  reads go through the `Fetch` trait (curl via `Hardened`, plain http only
+  under `KENDEX_API`); tests inject transports. Bearer calls route through
+  `registry/client.rs`: one named cross-process lock serializes login,
+  logout and refresh rotation, saving rotations before retry. `skillssh.rs`
+  pins its public wire schema and kill switch (`KENDEX_SKILLSSH=off`); a hit
+  is a lead, never an identity, and installs through the same subscribe
+  path. Collections and deep links arrive with W3/W4.
 - **Intent in the manifest, closure in the plan, edges in the lock.** The
   manifest records choices, never consequences: items asked for, bundles
   installed, optional dependencies taken, what stays removed. A bundle's
   members and a skill's dependencies are derived on every plan. The lock
   caches why each installation exists as typed edges (`requested`,
-  `required-by`, `member-of`); losing the lock loses nothing. Uninstalling
-  a bundle: members whose only edges came from it go; members also
-  requested, required by a survivor, or carried by another installed bundle
-  stay — the preview names both halves and the reason. A member the user
-  removes is a suppression, as a dependency's is: refresh honors it, while
+  `required-by`, `member-of`); losing it loses nothing. Uninstalling a
+  bundle: members whose only edges came from it go; members also requested,
+  required by a survivor, or carried by another installed bundle stay — the
+  preview names both halves and the reason. A member the user removes is a
+  suppression, as a dependency's is: refresh honors it, while
   `--keep-declaration` writes none and refresh puts it back; the audit
   reports the bundle with members held back. Writing it asks the lock and
   the catalogs, recording anything either names. A removal naming an
@@ -694,71 +692,73 @@ lives in one capability table read by core and UI.
   kept. Declaring the item outranks a suppression: it installs, reported.
   Two sets carrying one member and asking for it differently: the tools are
   both, a set switched on installs it switched on, anything else is a
-  finding naming both sets. Authoring lives with the catalog —
-  `[bundles.<name>]` in the source's own `kendex.toml`, or nothing for a
-  plugin-registry-shaped catalog — and a set's members are its own
-  catalog's items.
+  finding naming both. Authoring lives with the catalog — `[bundles.<name>]`
+  in the source's own `kendex.toml`, or nothing for a plugin-registry-shaped
+  catalog — and a set's members are its own catalog's items.
 - **A namespaced name is the identity; the separator is per tool.** Items
   from plugin-registry-shaped catalogs are `<plugin>/<item>` in manifest,
-  lock, and UI. The `/` never reaches disk: the halves are joined — `__` by
+  lock and UI. The `/` never reaches disk: the halves are joined — `__` by
   default, `-` where names must be lower-kebab — by a rule beside the name
-  rule in `harness/caps.rs`, checked against it. Rendered copies carry the
-  installed name (SKILL.md and agent frontmatter rewritten; the catalog
-  keeps what it wrote). Two declarations landing on one file — `a/b`
-  against a literal `a__b`, or two names a filesystem folds (case,
-  trailing dots and spaces, Unicode composition) — install neither, naming
-  both. Only agents, commands and skills may carry a plugin segment; a `/`
-  in a hook or MCP server name is refused. Names that cannot be a path
-  (`..`, device names, trailing dots, overlong components, a stray `/`)
-  are refused in `kendex.toml`. Control characters in a catalog's words are
-  shown, never acted on.
-- **The surface model.** Rendered skills are per-harness variants,
-  deduplicated by content hash. Harnesses reading the same physical
-  directory form a surface group carrying one variant, validated against
-  every member's loader; a variant whose bytes match the shared tree
-  collapses onto it through a relative — committable — link, a divergent
-  one gets its own tree, and the move runs both ways as a removal plus a
-  write. No harness caps a SKILL.md body, and every harness but Claude Code
-  reads a project's `.agents/skills`, so one tree serves them all; a copy
-  delivery writes each harness's own directory. A refusal is per surface.
-  Name rules live in `harness/caps.rs`, never as literals. A surface is
-  one file per item, one directory per item, one structured file, or a
-  directory of structured documents (Copilot loads every `*.json` in its
-  hooks directory); where the entries inside are the items, a document
-  holding none reports none.
+  rule in `harness/caps.rs` and checked against it, and rendered copies
+  carry the installed name (SKILL.md and agent frontmatter rewritten; the
+  catalog keeps what it wrote). Two declarations landing on one file — `a/b`
+  against a literal `a__b`, or two names a filesystem folds (case, trailing
+  dots and spaces, Unicode composition) — install neither, naming both. Only
+  agents, commands and skills may carry a plugin segment; a `/` in a hook or
+  MCP server name is refused. `kendex.toml` refuses any name that cannot be
+  a path (`..`, device names, trailing dots, overlong components, a stray
+  `/`). Control characters in a catalog's words are shown, never acted on.
+- **The surface model.** Rendered skills are per-harness variants
+  deduplicated by content hash. Harnesses reading one physical directory
+  form a surface group carrying one variant, validated against every
+  member's loader; a variant whose bytes match the shared tree collapses
+  onto it through a relative — committable — link, a divergent one gets its
+  own tree, and the move runs both ways as a removal plus a write. No
+  harness caps a SKILL.md body, and every harness but Claude Code reads a
+  project's `.agents/skills`, so one tree serves all; copy delivery writes
+  each harness's own directory. A refusal is per surface; name rules live in
+  `harness/caps.rs`, never literals. A surface is one file per item, one
+  directory per item, one structured file, or a directory of structured
+  documents (Copilot loads every `*.json` in its hooks directory); where
+  entries inside are the items, a document holding none reports none.
 - One model-alias table for every harness: bare tiers resolve per harness,
   `inherit` is expressed in each tool's own dialect, explicit vendor ids
   pass through.
 - **Propagation into consuming repos is local, never a pull request.**
-  kendex informs the agent of drift at session start; the repo is brought
-  current by a local refresh. Opening PRs in consumer repos is a permanent
-  non-goal (invariant 9).
-- **Session start reads a snapshot; the background job earns it.** The
-  drift contract is `kendex check`: exit 0 clean / 1 drift or unevaluated /
-  2 could-not-check (unknown outranks drift), `--quiet` bounded and silent
-  when clean, `--json` for machines. It reads the manifest, the lock, the
-  per-scope drift snapshot (`core/drift/snapshot.rs`), and per-mirror fetch
-  stamps — no source trees materialized, no catalogs hashed, no per-package
-  subprocesses. A declaration with no lock entry and files
-  already where it installs gets its own section, stating only what a stat
-  proves and carrying the plan as its remedy. `updates`, `refresh`,
-  `apply`, and the detached `kendex source refresh --stale` the check
-  spawns (TTL 6h, per-mirror lock, no stdio, never waited on) re-derive the
-  snapshot. A mirror that moved since its last evaluation reads as
-  unevaluated; a fetch failure older than twice the TTL is a report line
-  dated from a monotonic first-failure stamp. Held and ignored packages are
-  silent in the agent report. Held-ness derives from the effective
-  installation graph — own pin, pinned source, pinned bundle, or pinned
-  dependency parent. Every read API under the report says when it cannot
-  answer (typed warnings, never an empty result). The session-start hook
-  relaying the report is first-party content shipped inside the binary,
-  offered at project registration, never fetched from a catalog — and still
-  a declared, user-approved install per scope, rendered and removed like
-  any other hook.
-- Non-interactive is a mode, not a fallback. Every CLI verb completes
-  without a TTY: selection flags suppress prompts, and a verb needing input
-  on a non-TTY fails before its first write, naming the flag. `add` picks
-  harnesses and delivery at a TTY; its flags say the same without one.
+  kendex reports drift to the agent at session start and a local refresh
+  brings the repo current; opening PRs there is a permanent non-goal
+  (invariant 9).
+- **Session start reads a snapshot; the background job earns it.** The drift
+  contract is `kendex check`: exit 0 clean / 1 drift or unevaluated / 2
+  could-not-check (unknown outranks drift), `--quiet` bounded and silent
+  when clean, `--json` for machines. It reads manifest, lock, the per-scope
+  drift snapshot (`core/drift/snapshot.rs`) and per-mirror fetch stamps — no
+  source trees materialized, no catalogs hashed, no per-package
+  subprocesses. A declaration with no lock entry whose files already sit in
+  place gets its own section, stating what a stat proves and carrying the
+  plan as remedy. `updates`, `refresh`, `apply` and the detached `kendex
+  source refresh --stale` it spawns (TTL 6h, per-mirror lock, no stdio,
+  never waited on) re-derive the snapshot. A mirror that moved since its
+  last evaluation is unevaluated; a fetch failure older than twice the TTL
+  is a report line dated from a monotonic first-failure stamp. Held and
+  ignored packages are silent in the agent report, held-ness deriving from
+  the effective installation graph — own pin, pinned source, pinned bundle,
+  pinned dependency parent — and every read API says when it cannot answer
+  (typed warnings, never an empty result). The hook relaying it is
+  first-party, shipped in the binary, offered at project registration, never
+  fetched from a catalog, and still a declared, user-approved per-scope
+  install rendered and removed like any other hook.
+- **One presentation layer, two renderings** (`crates/cli/src/ui.rs`). Every
+  human line leaves through it and stdout stays clean for composition;
+  `ui::intro` arms the framed rendering, so a verb that opened none prints
+  the plain lines scripts parse. Framing needs a terminal on *both* streams;
+  `KENDEX_UI=plain|pretty` overrides. Non-interactive stays a mode, not a
+  fallback: every verb completes without a TTY, selection flags suppress
+  prompts, one needing input fails naming the flag before its first write,
+  and `add` picks harnesses and delivery at a TTY, its flags saying the same
+  without one. A writing run closes on the outcome ledger
+  (`commands/ledger.rs`): wrote, skipped, flagged, a next step under each
+  nonzero part.
 - **Two scores, never averaged; both advisory.** Safety answers "is this
   dangerous"; quality answers "is this well made". Neither holds anything
   back: severity is named in words, never color-only, and install, update
