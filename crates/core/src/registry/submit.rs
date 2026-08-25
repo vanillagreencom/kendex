@@ -1,8 +1,6 @@
 //! The submissions client: submit a repository to the community directory
-//! and read back the caller's rows. Every call is bearer-authenticated
-//! from the keychain credential; a rejected access token is refreshed
-//! once (rotation saved before the retry), and a refresh the server
-//! refuses signs this machine out honestly rather than looping.
+//! and read back the caller's rows. Authentication, refresh rotation, and
+//! the dead-grant sign-out rules belong to [`crate::registry::client`].
 
 use serde::Deserialize;
 

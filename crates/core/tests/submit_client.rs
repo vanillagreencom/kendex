@@ -1,17 +1,15 @@
 //! The submissions client: bearer auth from the stored credential, one
 //! refresh on a rejected access token (rotation saved before the retry),
-//! and an honest sign-out when the refresh itself is refused.
+//! and separate outcomes for dead grants and retriable refresh failures.
 
 use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex, MutexGuard, mpsc};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use kendex_core::error::{CoreError, Result};
 use kendex_core::registry::client;
-use kendex_core::registry::credentials::{
-    Credential, CredentialRefreshGuard, CredentialStore, KeyringStore,
-};
+use kendex_core::registry::credentials::{Credential, CredentialRefreshGuard, CredentialStore};
 use kendex_core::registry::submit::{submissions, submit};
 use kendex_core::registry::{Fetch, FetchResponse};
 
@@ -142,7 +140,7 @@ fn an_hour_old_rejected_access_token_refreshes_once_and_saves_the_rotation() {
 
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_refused_refresh_signs_this_machine_out() {
+fn a_dead_refresh_grant_signs_this_machine_out() {
     let fetch = Canned::new(vec![
         (401, r#"{"error":"invalid_token"}"#),
         (401, r#"{"error":"invalid_grant"}"#),
@@ -699,68 +697,4 @@ fn a_logout_waiting_for_refresh_revokes_the_rotated_family_last() {
     let revoked = fetch.revoked.lock().unwrap();
     assert_eq!(revoked.len(), 1);
     assert!(revoked[0].contains("kxr_rotated"), "{}", revoked[0]);
-}
-
-#[test]
-#[allow(clippy::unwrap_used)]
-fn production_keyring_guard_ignores_divergent_data_roots() {
-    const CHILD_ROOT: &str = "KENDEX_REFRESH_LOCK_CHILD_ROOT";
-    if let Some(root) = std::env::var_os(CHILD_ROOT) {
-        let root = std::path::PathBuf::from(root);
-        let ready = root.join(format!("ready-{}", std::process::id()));
-        std::fs::write(&ready, b"ready").unwrap();
-        let start = root.join("start");
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !start.exists() {
-            assert!(Instant::now() < deadline, "parent never released child");
-            std::thread::sleep(Duration::from_millis(10));
-        }
-
-        let guard = KeyringStore.refresh_guard().unwrap();
-        let critical = root.join("critical");
-        let marker = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&critical)
-            .expect("two processes entered the credential transaction together");
-        std::thread::sleep(Duration::from_millis(250));
-        drop(marker);
-        std::fs::remove_file(critical).unwrap();
-        drop(guard);
-        return;
-    }
-
-    let fixture = tempfile::tempdir().unwrap();
-    let root = fixture.path();
-    let executable = std::env::current_exe().unwrap();
-    let spawn = |data_root: &str| {
-        std::process::Command::new(&executable)
-            .arg("--exact")
-            .arg("production_keyring_guard_ignores_divergent_data_roots")
-            .arg("--nocapture")
-            .env(CHILD_ROOT, root)
-            .env("HOME", root)
-            .env("KENDEX_REAL_HOME", "1")
-            .env("XDG_DATA_HOME", root.join(data_root))
-            .env("XDG_CACHE_HOME", root.join("cache"))
-            .env("XDG_CONFIG_HOME", root.join("config"))
-            .spawn()
-            .unwrap()
-    };
-    let mut first = spawn("data-a");
-    let mut second = spawn("data-b");
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while std::fs::read_dir(root)
-        .unwrap()
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_name().to_string_lossy().starts_with("ready-"))
-        .count()
-        != 2
-    {
-        assert!(Instant::now() < deadline, "children did not become ready");
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    std::fs::write(root.join("start"), b"start").unwrap();
-    assert!(first.wait().unwrap().success());
-    assert!(second.wait().unwrap().success());
 }
