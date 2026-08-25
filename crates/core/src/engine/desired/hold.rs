@@ -124,10 +124,10 @@ pub(crate) fn planning_manifest<'a>(
 /// derived package's revision — reads fresh, while every other unpinned
 /// remote declaration and bundle is pinned at the commit its lock entries
 /// agree on. A declaration the lock cannot place — nothing installed,
-/// installations disagreeing on their commit, or entries recorded against
-/// a source this declaration no longer reads from — is left to resolve
-/// fresh: a wrong pin would move it somewhere nobody asked for, and fresh
-/// is what a whole-scope apply gives it anyway.
+/// installations disagreeing on their commit, or any one of them recorded
+/// against a source this declaration no longer reads from — is left to
+/// resolve fresh: a wrong pin would move it somewhere nobody asked for,
+/// and fresh is what a whole-scope apply gives it anyway.
 fn held_manifest(
     manifest: &Manifest,
     lock: &Lock,
@@ -156,10 +156,8 @@ fn held_manifest(
             })
             .filter_map(|(name, decl)| {
                 let repo = source_repo(manifest, &decl.source)?;
-                let commit = agreed_commit(lock, |entry| {
-                    entry.kind == kind
-                        && entry.name == *name
-                        && from_source(entry, &decl.source, repo)
+                let commit = held_at(lock, &decl.source, repo, |entry| {
+                    entry.kind == kind && entry.name == *name
                 })?;
                 Some((name.clone(), commit))
             })
@@ -178,9 +176,7 @@ fn held_manifest(
         let Some(repo) = source_repo(manifest, &decl.source) else {
             continue;
         };
-        let Some(commit) = agreed_commit(lock, |entry| {
-            member_of(entry, name) && from_source(entry, &decl.source, repo)
-        }) else {
+        let Some(commit) = held_at(lock, &decl.source, repo, |entry| member_of(entry, name)) else {
             continue;
         };
         decl.rev = Some(commit);
@@ -201,19 +197,33 @@ fn source_repo<'a>(manifest: &'a Manifest, source: &str) -> Option<&'a str> {
 /// An entry recorded under a different source alias, or under a repository
 /// that alias no longer points at, carries a commit out of another
 /// history: pinning at it holds the package at content nobody chose, or at
-/// a sha the source cannot resolve at all. A declaration whose entries
-/// fail this is left to resolve fresh — the same answer the lock's other
-/// cannot-place cases get.
-fn from_source(entry: &crate::lock::LockEntry, source: &str, repo: &str) -> bool {
+/// a sha the source cannot resolve at all. One such entry is enough to
+/// leave the declaration to resolve fresh — the same answer the lock's
+/// other cannot-place cases get.
+fn from_source(entry: &LockEntry, source: &str, repo: &str) -> bool {
     entry.source == source && crate::repo_move::same_repo(&entry.source_repo, repo)
 }
 
-/// The one commit every matching lock entry records, or `None` when there
-/// is no entry, an entry has no commit, or two entries disagree — the cases
-/// where holding would have to invent a revision.
-fn agreed_commit(lock: &Lock, matches: impl Fn(&crate::lock::LockEntry) -> bool) -> Option<String> {
+/// The one commit a declaration may be held at, or `None` where holding it
+/// would have to invent a revision: no installation, an installation with
+/// no commit recorded, two that disagree, or one that came from somewhere
+/// this declaration no longer reads.
+///
+/// Every installation `belongs` names is asked, not only the ones that
+/// still match the source. Filtering first reads the survivors as
+/// agreement and pins the declaration on their commit, which moves the
+/// other copy into a history it was never installed from.
+fn held_at(
+    lock: &Lock,
+    source: &str,
+    repo: &str,
+    belongs: impl Fn(&LockEntry) -> bool,
+) -> Option<String> {
     let mut agreed: Option<String> = None;
-    for entry in lock.entries.values().filter(|entry| matches(entry)) {
+    for entry in lock.entries.values().filter(|entry| belongs(entry)) {
+        if !from_source(entry, source, repo) {
+            return None;
+        }
         let commit = entry.source_commit.as_ref()?;
         match &agreed {
             Some(seen) if seen != commit => return None,

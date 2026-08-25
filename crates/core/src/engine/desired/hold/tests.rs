@@ -263,3 +263,73 @@ fn a_source_with_no_repository_is_never_pinned() {
         "and nothing was recorded as a synthetic pin to take back out"
     );
 }
+
+/// A package installed from two places at once — one copy still recorded
+/// against the source it was installed from, another already re-applied
+/// from the one it reads now — has no one commit this source can hold it
+/// at. Deciding over the entries that match and ignoring the rest reads
+/// the survivor as agreement and pins the package there, which moves the
+/// other copy to a commit out of a history it was never installed from.
+#[test]
+fn a_package_installed_from_two_places_pins_nothing() {
+    let mut manifest = manifest_with(&[("a", None), ("mixed", None), ("moved", None)], &[]);
+    manifest.sources.insert(
+        "other".to_owned(),
+        SourceDecl {
+            repo: Some("owner/other".to_owned()),
+            enabled: true,
+            ..SourceDecl::default()
+        },
+    );
+    let lock = lock_with(&[
+        (
+            "skill:a:claude",
+            entry("a", Some("aaa"), &[Reason::Requested]),
+        ),
+        // One copy from the source this declaration reads now, one still
+        // recorded against the alias it was installed under.
+        (
+            "skill:mixed:claude",
+            entry("mixed", Some("bbb"), &[Reason::Requested]),
+        ),
+        (
+            "skill:mixed:codex",
+            entry_from(
+                "mixed",
+                Some("bbb"),
+                &[Reason::Requested],
+                "other",
+                "owner/other",
+            ),
+        ),
+        // The same shape through the repository behind one alias.
+        (
+            "skill:moved:claude",
+            entry("moved", Some("ccc"), &[Reason::Requested]),
+        ),
+        (
+            "skill:moved:codex",
+            entry_from(
+                "moved",
+                Some("ccc"),
+                &[Reason::Requested],
+                "cat",
+                "owner/was-here",
+            ),
+        ),
+    ]);
+
+    let (held, _) = held_manifest(&manifest, &lock, &(ItemKind::Skill, "a".to_owned()));
+    let rev = |name: &str| held.declared(ItemKind::Skill)[name].rev.clone();
+    assert_eq!(
+        rev("mixed"),
+        None,
+        "an installation under another source alias is not this source's to hold"
+    );
+    assert_eq!(
+        rev("moved"),
+        None,
+        "nor one recorded against another repository behind the same alias"
+    );
+    assert_eq!(rev("a"), None, "the target resolves fresh either way");
+}
