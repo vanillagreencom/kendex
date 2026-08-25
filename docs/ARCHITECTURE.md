@@ -150,7 +150,9 @@ lives in one capability table read by core and UI.
     constructor (`SealedSource::collect_skill_tree`) excludes them so
     score, preview, install and catalog-check read the same files. The
     outcome is a function of exactly kind, path and name
-    (`quality::observe::same_reading`); no rule reads the harness. Distinct
+    (`quality::observe::same_reading`), plus the harness for a hook
+    observed inside a shared config file, whose entry is dug out by that
+    harness's own parser; no rule reads the harness. Distinct
     readings run on every core (`core/parallel.rs`) and return in the
     order given; two runs over the same disk produce byte-identical
     output. Phrase matching skips to the next byte that could begin a
