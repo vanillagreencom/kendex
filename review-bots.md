@@ -48,6 +48,17 @@ These are known, deliberate trade-offs. Raising them again is noise:
 - **Threads arriving after merge-queue admission are procedural, not a
   gate defect.** The handling is dequeue → fix → re-arm.
 
+- **No test-coverage asks for instruction markdown or for `tools/guard`
+  rules in a change that adds no guard test lane.** What a test must
+  cover is `.github/instructions/tests.instructions.md`; sentence-pinning
+  lints on markdown are banned.
+- **The PreToolUse commit hook reads git words, not shell expansion.**
+  Quoted flags, `flag=` assignments, aliases, and other spellings the shell
+  would have to expand are outside its contract; the installed git hook is
+  the guarantee in an armed repo.
+- **Windows-only resolution paths (PATHEXT, `.cmd` shims) are out of
+  scope until a Windows report exists.**
+
 ## Trust model (context, not a finding surface)
 
 Review evidence is formal review objects from trusted logins (or the other

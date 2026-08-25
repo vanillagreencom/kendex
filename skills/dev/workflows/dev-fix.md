@@ -36,6 +36,8 @@ Evaluate each item in `Review items:` independently.
 
 Update architecture docs when a fix changes documented behavior. For **UI lifecycle or cache fixes** — cached or mirrored UI state, changed window or event handling — trace every invalidation and event-entry path before returning, prefer extending an existing listener over a parallel subscription for the same event family, and add regression coverage for the non-obvious paths you touched.
 
+Before a fix returns, grep for every other reader of the field, caller of the helper, or surface stating the rule the fix changed, and fix each one; name the sweep in the item reasoning. A fix at one site with its sibling untouched comes back as the next round.
+
 Note anything a fix revealed about deeper problems, and cite the decision ID or rule behind every skip.
 
 ---

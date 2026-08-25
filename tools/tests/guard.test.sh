@@ -197,5 +197,19 @@ run_guard RATCHET_RAISE=
 [ "$RC" -eq 0 ] && ok "a HEAD-baselined test row is grandfathered" \
   || bad "a HEAD-baselined test row is grandfathered" "rc=$RC out=$OUT"
 
+echo "=== a CHANGELOG entry past three lines fails; three passes ==="
+printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- A three-line entry\n  second line\n  third line.\n- A four-line entry\n  second line\n  third line\n  fourth line.\n' >"$R/CHANGELOG.md"
+git -C "$R" add -A
+run_guard RATCHET_RAISE=
+[ "$RC" -ne 0 ] && case "$OUT" in *"CHANGELOG.md entries run past three lines"*"line 10: 4 lines"*) true ;; *) false ;; esac \
+  && ok "a four-line entry fails, naming its line and count" \
+  || bad "a four-line entry fails, naming its line and count" "rc=$RC out=$OUT"
+case "$OUT" in *"line 7:"*) bad "the three-line entry is not named" "$OUT" ;; *) ok "the three-line entry is not named" ;; esac
+printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- A three-line entry\n  second line\n  third line.\n- One line.\n' >"$R/CHANGELOG.md"
+git -C "$R" add -A
+run_guard RATCHET_RAISE=
+[ "$RC" -eq 0 ] && ok "entries of one and three lines pass" \
+  || bad "entries of one and three lines pass" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

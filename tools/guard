@@ -104,6 +104,19 @@ while IFS= read -r f; do
 $(printf '%s\n' "$hits" | head -5 | sed 's/^/  /')"
 done <<<"$prose_files"
 
+# CHANGELOG entries are for consumers: one outcome each, one to three
+# source lines, a Breaking migration inline. Longer is an essay.
+if [ -f CHANGELOG.md ]; then
+  long_entries=$(awk '
+    function flush() { if (n > 3) printf "  line %d: %d lines\n", start, n; n = 0 }
+    /^- / { flush(); n = 1; start = NR; next }
+    /^  [^ ]/ { if (n) n++; next }
+    { flush() }
+    END { flush() }' CHANGELOG.md)
+  [ -n "$long_entries" ] && say "CHANGELOG.md entries run past three lines — state the outcome, keep the story out:
+$long_entries"
+fi
+
 # The size-ratchet baseline only tightens. Raising a row is a decision, not
 # a remedy: RATCHET_RAISE=1 on the commit says so out loud.
 if [ "${RATCHET_RAISE:-}" != "1" ] && git cat-file -e HEAD:tools/size-ratchet-baseline.tsv 2>/dev/null; then
