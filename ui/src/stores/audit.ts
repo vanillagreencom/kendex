@@ -9,8 +9,8 @@ import {
   type Scope,
 } from "@/bindings";
 import { adoptedToastLabel } from "@/lib/copy";
-import { sameScope } from "@/lib/scope";
 import { settled } from "@/lib/settled";
+import { keepUnreadable, replaceView, stampClean } from "./audit-fold";
 import { type ErrorAction, useProblemsStore } from "./problems";
 import { useScanStore } from "./scan";
 
@@ -29,6 +29,10 @@ interface AuditState {
   backgroundFailureAnnounced: boolean;
   /** Unix ms of the last audit that came back clean; null until one has. */
   auditedAt: number | null;
+  /** When each scope's reading on screen was taken, keyed by scope. A scope
+   *  the audit could not read keeps its old entry: what is on screen for it
+   *  is that old, whatever the machine-wide audit did a moment ago. */
+  scopeCheckedAt: Record<string, number>;
   refresh: (opts?: { force?: boolean }) => Promise<void>;
   /** Every action here answers whether it worked. Most callers only need
    *  the state update that comes with it; the ones running several in a
@@ -67,13 +71,6 @@ interface RunOpts {
   steps?: string[];
 }
 
-/** One scope's view, swapped for the fresh one a command handed back. */
-function replaceView(views: AuditView[], fresh: AuditView): AuditView[] {
-  return views.map((view) =>
-    sameScope(view.scope, fresh.scope) ? fresh : view,
-  );
-}
-
 // A row that vanishes with no word said is indistinguishable from a button
 // that did nothing — every outcome here speaks up, success or failure, on
 // top of the state update the page renders from. Failure is a modal, not a
@@ -100,7 +97,11 @@ function auditRunner(
       set({ busy: false });
     }
     if (response.status === "ok") {
-      set({ views: replaceView(get().views, response.data), error: null });
+      const views = get().views;
+      set({
+        views: keepUnreadable(views, replaceView(views, response.data)),
+        error: null,
+      });
       if (opts.successMessage) toast.success(opts.successMessage);
       await useScanStore.getState().refresh();
       return true;
@@ -142,9 +143,11 @@ export const useAuditStore = create<AuditState>((set, get) => {
       // skeleton, the same as the scan.
       const response = await settled(commands.auditAll());
       if (response.status === "ok") {
+        const now = Date.now();
         set({
-          views: response.data,
-          auditedAt: Date.now(),
+          views: keepUnreadable(get().views, response.data),
+          scopeCheckedAt: stampClean(get().scopeCheckedAt, response.data, now),
+          auditedAt: now,
           error: null,
           checkError: null,
           backgroundFailureAnnounced: false,
@@ -172,6 +175,7 @@ export const useAuditStore = create<AuditState>((set, get) => {
   return {
     views: [],
     auditedAt: null,
+    scopeCheckedAt: {},
     auditing: false,
     error: null,
     checkError: null,

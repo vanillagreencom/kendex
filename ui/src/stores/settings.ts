@@ -8,8 +8,8 @@ import {
   type SettingsRead,
   ZOOM,
 } from "@/bindings";
+import { rescanEverything } from "@/lib/rescan";
 import { useProblemsStore } from "./problems";
-import { useScanStore } from "./scan";
 
 interface ZoomFields {
   settings: AppSettings | null;
@@ -245,10 +245,6 @@ function projectActions(
     hold: (read: SettingsRead, at: number) => void;
   },
 ): ProjectsSlice {
-  const rescan = async () => {
-    await useScanStore.getState().refresh();
-  };
-
   return {
     registerProject: async (path) => {
       const before = get().settings?.projects ?? [];
@@ -278,7 +274,7 @@ function projectActions(
                         ? "Drift report installed"
                         : "Drift report added — run kendex apply in that project to install it",
                     );
-                    void rescan();
+                    void rescanEverything();
                   } else {
                     useProblemsStore.getState().showError({
                       title: "Couldn't install the drift report",
@@ -289,7 +285,7 @@ function projectActions(
             },
           },
         });
-        await rescan();
+        await rescanEverything();
         return true;
       }
       useProblemsStore.getState().showError({
@@ -308,7 +304,7 @@ function projectActions(
       const response = await commands.unregisterProject(path);
       if (response.status === "ok") {
         ordered.hold(response.data, at);
-        await rescan();
+        await rescanEverything();
       } else {
         useProblemsStore.getState().showError({
           title: "Couldn't stop tracking the project",
@@ -345,10 +341,6 @@ interface SettingsState extends ZoomSlice, ProjectsSlice {
   load: () => Promise<void>;
   setAppearance: (appearance: Appearance) => Promise<void>;
   setHarnessRoot: (harness: string, root: string) => Promise<void>;
-}
-
-async function rescan() {
-  await useScanStore.getState().refresh();
 }
 
 type WriteOutcome = { ok: true } | { ok: false; message: string };
@@ -507,7 +499,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
         return { ...current, "harness-roots": roots };
       });
       if (result.ok) {
-        await rescan();
+        await rescanEverything();
       } else {
         useProblemsStore.getState().showError({
           title: "Couldn't update the tool folder",

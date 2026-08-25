@@ -29,6 +29,7 @@ beforeEach(() => {
     views: [],
     auditing: false,
     auditedAt: null,
+    scopeCheckedAt: {},
     error: null,
     checkError: null,
   });

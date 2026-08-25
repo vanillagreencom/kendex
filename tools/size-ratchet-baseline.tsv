@@ -136,4 +136,4 @@ skills/worktree/scripts/worktree	4861
 skills/worktree/scripts/worktree-session-guard	1197
 skills/worktree/tests/worktree_session_guard.sh	1282
 ui/src/stores/marketplaces.ts	283
-ui/src/stores/settings.ts	529
+ui/src/stores/settings.ts	521

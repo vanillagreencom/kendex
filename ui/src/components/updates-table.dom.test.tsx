@@ -302,6 +302,7 @@ describe("the findings behind a row's score", () => {
       useAuditStore.setState({
         views: [scoredGh()],
         auditedAt: Date.now(),
+        scopeCheckedAt: {},
         checkError: null,
       });
     });
@@ -325,6 +326,7 @@ describe("the findings behind a row's score", () => {
       useAuditStore.setState({
         views: [{ ...scoredGh(), safety: [] }],
         auditedAt: Date.now(),
+        scopeCheckedAt: {},
         checkError: null,
       });
     });

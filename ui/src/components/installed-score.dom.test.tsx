@@ -81,7 +81,12 @@ const words = () =>
   document.querySelector('[data-slot="tooltip-trigger"]')?.textContent ?? "";
 
 beforeEach(() => {
-  useAuditStore.setState({ views: [], auditedAt: null, checkError: null });
+  useAuditStore.setState({
+    views: [],
+    auditedAt: null,
+    checkError: null,
+    scopeCheckedAt: {},
+  });
 });
 
 describe("a package's installed score in a table row", () => {

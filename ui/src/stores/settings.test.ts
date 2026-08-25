@@ -15,6 +15,8 @@ vi.mock("@/bindings", () => ({
     unregisterProject: vi.fn(),
     discoverProjects: vi.fn(),
     scanMachine: vi.fn(),
+    // Registering or dropping a project re-audits: the scopes changed.
+    auditAll: vi.fn(),
     windowSetZoom: vi.fn(),
     windowZoomState: vi.fn(),
     saveZoom: vi.fn(),

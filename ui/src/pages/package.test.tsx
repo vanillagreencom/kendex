@@ -144,7 +144,12 @@ beforeEach(() => {
     dirty: false,
   });
   useUpdatesStore.setState({ rows: [], loaded: true });
-  useAuditStore.setState({ views: [], auditedAt: null, checkError: null });
+  useAuditStore.setState({
+    views: [],
+    auditedAt: null,
+    checkError: null,
+    scopeCheckedAt: {},
+  });
 });
 
 /** One place's audit view with gh scored 58, one finding to show under it. */
