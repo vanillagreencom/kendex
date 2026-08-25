@@ -10,6 +10,9 @@ an outside contributor.
 
 ### Fixed
 
+- A hook found in a settings file is safety-checked on its own entry, not
+  the whole file: a `permissions.ask` guard naming `mkfs` no longer flags
+  every hook beside it, and a hook whose own entry carries it still scores.
 - A pi-hooks carrier registered through a scoped path such as
   `./packages/@vanillagreen/pi-hooks` no longer draws the false "nothing
   will run it" warning from `kendex apply` and the Review & apply page.

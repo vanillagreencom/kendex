@@ -232,3 +232,81 @@ fn two_names_in_one_file_are_not_one_reading() {
     let two = score(&server("two"), text_hash, |_| None);
     assert_ne!(one.content, two.content);
 }
+
+fn hook_at(path: &Path, name: &str) -> ObservedItem {
+    ObservedItem {
+        kind: ItemKind::Hook,
+        name: name.to_owned(),
+        harness: HarnessId::Claude,
+        scope: Scope::Global,
+        path: path.to_path_buf(),
+        file_state: FileState::ConfigEntry,
+        enabled: None,
+        origin: None,
+        description: None,
+        tags: Vec::new(),
+        modified_at: None,
+        vendor: None,
+    }
+}
+
+/// A `permissions.ask` entry is a guard *against* a dangerous command, and
+/// it is not any hook's content. Reading the whole settings file as each
+/// hook's script turned one `mkfs` guard into a high-severity finding on
+/// every hook in the file (KEN-558); a hook is scored on its own
+/// registration and nothing beside it.
+#[test]
+fn a_permission_ask_guard_is_no_hooks_finding() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("settings.json");
+    std::fs::write(
+        &path,
+        r#"{"permissions":{"ask":["Bash(mkfs:*)","Bash(dd of=/dev/sda:*)","Bash(rm -rf /:*)"]},
+           "hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo ok"}]}]}}"#,
+    )
+    .unwrap();
+
+    let found = crate::quality::audit(input_for(&hook_at(&path, "PreToolUse:Bash:echo")));
+
+    assert!(
+        found.findings.is_empty(),
+        "guards in sibling sections are not this hook's content: {:?}",
+        found.findings
+    );
+}
+
+/// The narrowing must not excuse the guilty spelling: a hook whose own
+/// command carries the dangerous command still scores, once, at the hook
+/// tier, located in the file that carries it — the identical token in the
+/// ask-list adds nothing.
+#[test]
+fn a_hook_command_that_carries_the_danger_still_scores() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("settings.json");
+    std::fs::write(
+        &path,
+        r#"{"permissions":{"ask":["Bash(mkfs:*)"]},
+           "hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"mkfs /dev/sda1"}]}]}}"#,
+    )
+    .unwrap();
+    let name = format!(
+        "PreToolUse:*:{}",
+        crate::hook::command_stem("mkfs /dev/sda1")
+    );
+
+    let found = crate::quality::audit(input_for(&hook_at(&path, &name)));
+
+    let dangerous: Vec<_> = found
+        .findings
+        .iter()
+        .filter(|f| f.rule == "dangerous-commands")
+        .collect();
+    assert_eq!(dangerous.len(), 1, "{:?}", found.findings);
+    assert_eq!(dangerous[0].severity, crate::quality::Severity::High);
+    assert_eq!(
+        dangerous[0].location,
+        format!("{} (command):1", path.display()),
+        "{:?}",
+        found.findings
+    );
+}

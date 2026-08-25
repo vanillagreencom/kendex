@@ -25,7 +25,7 @@ pub(crate) struct Registration {
 impl Registration {
     /// How a scan names this entry. One rendering, in one place, from the
     /// parts — so nothing downstream has to take it apart again.
-    fn name(&self) -> String {
+    pub(crate) fn name(&self) -> String {
         format!(
             "{}:{}:{}",
             self.event,
