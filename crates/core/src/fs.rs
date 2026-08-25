@@ -68,6 +68,70 @@ fn follow_link(path: &Path) -> PathBuf {
     }
 }
 
+/// A file held under the OS's exclusive lock, released on drop. The one
+/// owner of the lock-file ritual: callers hold a `LockedFile` and never
+/// touch fd-lock, `mem::forget`, or the release themselves.
+pub(crate) struct LockedFile {
+    file: fs::File,
+}
+
+impl LockedFile {
+    /// Take the exclusive lock at `path`, creating the file as needed.
+    /// `Ok(None)` is contention — a live holder exists. Any other failure
+    /// is an error: a filesystem that cannot lock at all must say so, or
+    /// every caller would read it as "busy" and wait on nobody.
+    pub(crate) fn try_exclusive(path: &Path) -> std::io::Result<Option<LockedFile>> {
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(path)?;
+        // fd-lock ties its guard lifetime to the RwLock borrow; the OS
+        // lock is really held by the open fd, so forget the guard and
+        // keep the file — Drop below releases explicitly.
+        let mut lock = fd_lock::RwLock::new(file);
+        match lock.try_write() {
+            Ok(guard) => std::mem::forget(guard),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(None),
+            Err(error) => return Err(error),
+        }
+        Ok(Some(LockedFile {
+            file: lock.into_inner(),
+        }))
+    }
+
+    /// Test-only view of the fd, for cloning a description copy.
+    #[cfg(test)]
+    pub(crate) fn file(&self) -> &fs::File {
+        &self.file
+    }
+}
+
+/// Release the OS lock before the fd closes. On unix, close alone is not
+/// release: a child forked by any thread while this fd was open holds a
+/// copy of the open file description until it execs — O_CLOEXEC closes at
+/// exec, not at fork — and the lock stays held until every copy is gone.
+/// That window turns an unlock-by-close into a spurious "busy" for whoever
+/// re-locks the path next, with no holder actually alive. An explicit
+/// unlock frees the description immediately, no matter who still holds a
+/// copy. Windows spawns without fork, so no copy outlives the guard; the
+/// handle's close is the release there, which LockFileEx documents may lag
+/// briefly — accepted, since the safe unlock APIs do not reach Windows and
+/// there is no fork window to defend against.
+impl Drop for LockedFile {
+    fn drop(&mut self) {
+        // Unlocking a valid fd has no failure mode worth surfacing from a
+        // Drop, and the close that follows releases too once stray
+        // description copies are gone; best-effort is honest here.
+        // Solaris has no flock in rustix; fd-lock locks there via fcntl,
+        // so the release mirrors it.
+        #[cfg(all(unix, not(target_os = "solaris")))]
+        let _ = rustix::fs::flock(&self.file, rustix::fs::FlockOperation::Unlock);
+        #[cfg(target_os = "solaris")]
+        let _ = rustix::fs::fcntl_lock(&self.file, rustix::fs::FlockOperation::Unlock);
+    }
+}
+
 pub fn read_if_exists(path: &Path) -> Result<Option<String>> {
     match fs::read_to_string(path) {
         Ok(s) => Ok(Some(s)),

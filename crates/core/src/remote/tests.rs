@@ -342,3 +342,22 @@ fn the_cache_lock_is_released_with_its_guard() {
     drop(guard);
     store::lock_repo(&env, "catalog").expect("the lock releases with its guard");
 }
+
+/// As with the scope lock: a child forked by any thread holds a copy of
+/// this fd's open file description until it execs, so a release relying on
+/// close alone stays held for the length of that spawn window — here paid
+/// as the full LOCK_WAIT and then a false CacheBusy. The try_clone is that
+/// fork copy at the description level: dropping the guard must release the
+/// lock while the copy still exists.
+#[cfg(unix)]
+#[test]
+fn the_cache_lock_releases_while_a_description_copy_exists() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let guard = store::lock_repo(&env, "catalog").unwrap();
+    let copy = guard.file().try_clone().unwrap();
+    drop(guard);
+    let relock = store::lock_repo(&env, "catalog");
+    drop(copy);
+    relock.expect("drop released the lock despite the live description copy");
+}
