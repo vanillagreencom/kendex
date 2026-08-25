@@ -351,7 +351,7 @@ export type AppUpdateError = {
 
 export type AppUpdateErrorKind = "network" | "http" | "invalidFeed";
 
-export type AppUpdateStatus = { kind: "neverChecked" } | { kind: "upToDate"; version: string } | { kind: "updateAvailable"; version: string; releaseNotesUrl: string; assetAvailable: boolean; muted: boolean } | { kind: "feedOlder"; version: string };
+export type AppUpdateStatus = { kind: "neverChecked" } | { kind: "upToDate"; version: string } | { kind: "updateAvailable"; version: string; releaseNotesUrl: string; cliAssetAvailable: boolean; muted: boolean } | { kind: "feedOlder"; version: string };
 
 export type AppUpdateView = {
 	automaticCheckEnabled: boolean,

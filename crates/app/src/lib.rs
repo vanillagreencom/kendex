@@ -146,20 +146,24 @@ fn complete_startup<C: StartupCoordinator>(coordinator: &C) -> Result<(), C::Err
     Ok(())
 }
 
-struct AppStartup<'a> {
-    app: &'a tauri::App,
-    zoom: u16,
+struct AppStartup<Show, Schedule> {
+    show_window: Show,
+    schedule_update_check: Schedule,
 }
 
-impl StartupCoordinator for AppStartup<'_> {
-    type Error = Box<dyn std::error::Error>;
+impl<Show, Schedule, Error> StartupCoordinator for AppStartup<Show, Schedule>
+where
+    Show: Fn() -> Result<(), Error>,
+    Schedule: Fn(),
+{
+    type Error = Error;
 
     fn show_window(&self) -> Result<(), Self::Error> {
-        window::show_at_zoom(self.app, self.zoom)
+        (self.show_window)()
     }
 
     fn schedule_update_check(&self) {
-        app_update::schedule_startup_check();
+        (self.schedule_update_check)();
     }
 }
 
@@ -210,7 +214,12 @@ pub fn run() -> tauri::Result<()> {
         // wired up here is not, because tauri's mock runtime answers for a
         // window it never draws. Deleting the line leaves `zoom` with no
         // reader, which fails `clippy -D warnings`.
-        .setup(move |app| complete_startup(&AppStartup { app, zoom }))
+        .setup(move |app| {
+            complete_startup(&AppStartup {
+                show_window: || window::show_at_zoom(app, zoom),
+                schedule_update_check: app_update::schedule_startup_check,
+            })
+        })
         .run(tauri::generate_context!())
 }
 
@@ -220,37 +229,22 @@ mod tests {
 
     use super::*;
 
-    struct FakeStartup {
-        show_result: Result<(), &'static str>,
-        scheduled: Cell<usize>,
-    }
-
-    impl StartupCoordinator for FakeStartup {
-        type Error = &'static str;
-
-        fn show_window(&self) -> Result<(), Self::Error> {
-            self.show_result
-        }
-
-        fn schedule_update_check(&self) {
-            self.scheduled.set(self.scheduled.get() + 1);
-        }
-    }
-
     #[test]
-    fn startup_schedules_once_only_after_the_window_is_ready() {
-        let ready = FakeStartup {
-            show_result: Ok(()),
-            scheduled: Cell::new(0),
+    fn real_startup_adapter_schedules_once_only_after_the_window_is_ready() {
+        let scheduled = Cell::new(0);
+        let ready = AppStartup {
+            show_window: || Ok::<(), &'static str>(()),
+            schedule_update_check: || scheduled.set(scheduled.get() + 1),
         };
         complete_startup(&ready).unwrap();
-        assert_eq!(ready.scheduled.get(), 1);
+        assert_eq!(scheduled.get(), 1);
 
-        let failed = FakeStartup {
-            show_result: Err("window failed"),
-            scheduled: Cell::new(0),
+        let failed_scheduled = Cell::new(0);
+        let failed = AppStartup {
+            show_window: || Err::<(), _>("window failed"),
+            schedule_update_check: || failed_scheduled.set(failed_scheduled.get() + 1),
         };
         assert_eq!(complete_startup(&failed), Err("window failed"));
-        assert_eq!(failed.scheduled.get(), 0);
+        assert_eq!(failed_scheduled.get(), 0);
     }
 }

@@ -73,22 +73,18 @@ fn request(refresh: bool, automatic: bool) -> CheckRequest<'static> {
 
 #[test]
 fn automatic_check_runs_at_the_ttl_boundary_not_before_it() {
+    const SIX_HOURS: u64 = 21_600;
+    assert_eq!(DEFAULT_TTL_SECS, SIX_HOURS);
     let tmp = tempfile::tempdir().unwrap();
     let env = Env::fake(tmp.path(), FakeOs::Linux);
     let fetch = Canned::new([feed(200), feed(304)]);
     let start = 10_000;
 
     check_at(&env, &fetch, request(false, true), start).unwrap();
-    check_at(
-        &env,
-        &fetch,
-        request(false, true),
-        start + DEFAULT_TTL_SECS - 1,
-    )
-    .unwrap();
+    check_at(&env, &fetch, request(false, true), start + SIX_HOURS - 1).unwrap();
     assert_eq!(fetch.calls.get(), 1);
 
-    check_at(&env, &fetch, request(false, true), start + DEFAULT_TTL_SECS).unwrap();
+    check_at(&env, &fetch, request(false, true), start + SIX_HOURS).unwrap();
     assert_eq!(fetch.calls.get(), 2);
 }
 

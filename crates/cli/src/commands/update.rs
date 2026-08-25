@@ -35,8 +35,19 @@ fn fetch(url: &str) -> Result<Vec<u8>, String> {
     Ok(output.stdout)
 }
 
-fn curl_args(url: &str) -> [&str; 3] {
-    ["-fsSL", "--", url]
+fn curl_args(url: &str) -> [&str; 10] {
+    [
+        "-fsS",
+        "--location",
+        "--max-redirs",
+        "3",
+        "--proto",
+        "=https,file",
+        "--proto-redir",
+        "=https",
+        "--",
+        url,
+    ]
 }
 
 pub fn run(force: bool) -> CliResult {
@@ -44,7 +55,8 @@ pub fn run(force: bool) -> CliResult {
     let feed = ReleaseFeed::parse(&feed_bytes)?;
     let latest = feed.version.as_str();
     let current = env!("CARGO_PKG_VERSION");
-    match feed.relation_to(current)? {
+    let relation = feed.relation_to(current)?;
+    match relation {
         VersionRelation::Current if !force => {
             out(&format!("already up to date ({current})"));
             return Ok(());
@@ -59,10 +71,7 @@ pub fn run(force: bool) -> CliResult {
     }
     let target = target_triple();
     let Some(asset) = feed.asset_for(target) else {
-        out(&format!(
-            "release {latest} is available: {}",
-            release_notes_url(latest)?
-        ));
+        out(&missing_asset_message(relation, latest, current, target)?);
         return Ok(());
     };
 
@@ -82,6 +91,28 @@ pub fn run(force: bool) -> CliResult {
     Ok(())
 }
 
+fn missing_asset_message(
+    relation: VersionRelation,
+    latest: &str,
+    current: &str,
+    target: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let notes = release_notes_url(latest)?;
+    Ok(match relation {
+        VersionRelation::Newer => {
+            format!(
+                "release {latest} is available with no asset for {target}; release notes: {notes}"
+            )
+        }
+        VersionRelation::Current => format!(
+            "release {latest} has no asset for {target}; installed version is unchanged; release notes: {notes}"
+        ),
+        VersionRelation::Older => format!(
+            "release {latest} has no asset for {target}; installed {current} is newer; release notes: {notes}"
+        ),
+    })
+}
+
 fn staged_path(current: &std::path::Path) -> PathBuf {
     let mut name = current
         .file_name()
@@ -99,7 +130,29 @@ mod tests {
     fn fetched_urls_are_always_positional_arguments() {
         assert_eq!(
             curl_args("--output=/tmp/owned"),
-            ["-fsSL", "--", "--output=/tmp/owned"]
+            [
+                "-fsS",
+                "--location",
+                "--max-redirs",
+                "3",
+                "--proto",
+                "=https,file",
+                "--proto-redir",
+                "=https",
+                "--",
+                "--output=/tmp/owned",
+            ]
         );
+    }
+
+    #[test]
+    fn missing_asset_message_never_calls_current_or_older_available() {
+        let current =
+            missing_asset_message(VersionRelation::Current, "5.0.1", "5.0.1", "x").unwrap();
+        let older = missing_asset_message(VersionRelation::Older, "5.0.0", "5.0.1", "x").unwrap();
+        let newer = missing_asset_message(VersionRelation::Newer, "5.1.0", "5.0.1", "x").unwrap();
+        assert!(current.contains("unchanged") && !current.contains("is available"));
+        assert!(older.contains("is newer") && !older.contains("is available"));
+        assert!(newer.contains("is available"));
     }
 }

@@ -22,9 +22,15 @@ const MAX_URL_BYTES: usize = 2 * 1024;
 /// breaking older clients.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReleaseFeed {
+    /// An absent value is the pre-versioned schema 1 shape.
+    #[serde(default = "default_feed_schema")]
     pub schema: u32,
     pub version: String,
     pub assets: BTreeMap<String, String>,
+}
+
+fn default_feed_schema() -> u32 {
+    FEED_SCHEMA
 }
 
 /// How a feed version relates to the running build under SemVer precedence.
@@ -151,6 +157,14 @@ mod tests {
         let parsed = ReleaseFeed::parse(&feed("5.1.0")).unwrap();
         assert_eq!(parsed.schema, FEED_SCHEMA);
         assert_eq!(parsed.version, "5.1.0");
+    }
+
+    #[test]
+    fn parses_the_live_legacy_shape_as_schema_one() {
+        let legacy = br#"{"version":"5.0.1","assets":{"x86_64-unknown-linux-gnu":"https://example.test/kendex"}}"#;
+        let parsed = ReleaseFeed::parse(legacy).unwrap();
+        assert_eq!(parsed.schema, FEED_SCHEMA);
+        assert_eq!(parsed.version, "5.0.1");
     }
 
     #[test]

@@ -48,8 +48,8 @@ an outside contributor.
 
 ### Added
 
-- The app checks for new kendex releases in the background at most once every
-  six hours, remembers the last result, and can turn automatic checks off.
+- The app backend checks for new kendex releases at most once every six hours
+  and stores the last result plus preferences for the upcoming notice controls.
 - Moving an existing repo onto kendex works now: `kendex adopt` keeps files
   already on disk as they are, and `kendex apply --replace-unmanaged`
   installs over them (the old copies go to the trash).
@@ -70,8 +70,9 @@ an outside contributor.
 
 ### Changed
 
-- `kendex update` now requires a schema 1 release feed and refuses a
-  downgrade unless `--force` is explicit.
+- `kendex update` reads schema 1 feeds (including legacy feeds with no schema),
+  refuses downgrades unless `--force` is explicit, and exits 0 with release
+  notes when the feed has no binary for this target.
 - **Breaking:** in `kendex check --json`, a not-yet-evaluated line now has
   `"class": "unevaluated"` where it had `"class": "unknown"`. A parser
   matching that field exhaustively has to accept the new value.

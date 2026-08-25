@@ -266,6 +266,45 @@ fn update_replaces_the_binary_from_a_local_feed() {
     );
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stdout).contains("releases/tag/v99.0.0"));
+
+    fs::write(
+        home.join("feed.json"),
+        format!(
+            r#"{{"version":"{}","assets":{{}}}}"#,
+            env!("CARGO_PKG_VERSION")
+        ),
+    )
+    .unwrap();
+    let output = kendex_in(
+        home,
+        home,
+        &["update", "--force"],
+        &[(
+            "KENDEX_UPDATE_FEED",
+            format!("file://{}/feed.json", home.display()),
+        )],
+    );
+    let current = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success());
+    assert!(current.contains("unchanged") && !current.contains("is available"));
+
+    fs::write(
+        home.join("feed.json"),
+        r#"{"schema":1,"version":"0.1.0","assets":{}}"#,
+    )
+    .unwrap();
+    let output = kendex_in(
+        home,
+        home,
+        &["update", "--force"],
+        &[(
+            "KENDEX_UPDATE_FEED",
+            format!("file://{}/feed.json", home.display()),
+        )],
+    );
+    let older = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success());
+    assert!(older.contains("is newer") && !older.contains("is available"));
 }
 
 #[test]

@@ -131,7 +131,7 @@ impl Fetch for ReleaseFeedFetch {
                 why: "the release feed never accepts credentials".to_owned(),
             });
         }
-        run_get(url, if_none_match, Redirects::Https)
+        run_get_args(Self::request_args(url, if_none_match))
     }
 
     fn post_json_auth(
@@ -146,8 +146,17 @@ impl Fetch for ReleaseFeedFetch {
     }
 }
 
+impl ReleaseFeedFetch {
+    fn request_args(url: &str, if_none_match: Option<&str>) -> Vec<String> {
+        get_args(url, if_none_match, Redirects::Https)
+    }
+}
+
 fn run_get(url: &str, if_none_match: Option<&str>, redirects: Redirects) -> Result<FetchResponse> {
-    let args = get_args(url, if_none_match, redirects);
+    run_get_args(get_args(url, if_none_match, redirects))
+}
+
+fn run_get_args(args: Vec<String>) -> Result<FetchResponse> {
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     // --max-filesize only bounds a body whose length the server declares;
     // the process-level cap holds headers and chunked bodies too.
@@ -164,10 +173,15 @@ fn run_get(url: &str, if_none_match: Option<&str>, redirects: Redirects) -> Resu
 }
 
 fn get_args(url: &str, if_none_match: Option<&str>, redirects: Redirects) -> Vec<String> {
-    let proto = match (url.starts_with("http://"), redirects) {
-        (true, Redirects::None) => "=http",
-        (true, Redirects::Https) => "=http,https",
-        (false, _) => "=https",
+    let proto = match (
+        url.starts_with("http://"),
+        url.starts_with("file://"),
+        redirects,
+    ) {
+        (true, _, Redirects::None) => "=http",
+        (true, _, Redirects::Https) => "=http,https",
+        (_, true, Redirects::Https) => "=https,file",
+        _ => "=https",
     };
     let mut args = vec![
         "-sS".into(),
@@ -332,11 +346,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn release_feed_redirects_are_bounded_and_https_only() {
-        let args = get_args(
+    fn production_release_feed_plan_bounds_https_redirects_and_allows_file_fixtures() {
+        let args = ReleaseFeedFetch::request_args(
             "https://github.com/example/latest/feed.json",
             Some("old-etag"),
-            Redirects::Https,
         );
         assert!(args.windows(2).any(|pair| pair == ["--max-redirs", "3"]));
         assert!(
@@ -347,6 +360,18 @@ mod tests {
         assert!(
             args.windows(2)
                 .any(|pair| pair == ["-H", "If-None-Match: old-etag"])
+        );
+
+        let fixture = ReleaseFeedFetch::request_args("file:///fixture/feed.json", None);
+        assert!(
+            fixture
+                .windows(2)
+                .any(|pair| pair == ["--proto", "=https,file"])
+        );
+        assert!(
+            fixture
+                .windows(2)
+                .any(|pair| pair == ["--proto-redir", "=https"])
         );
     }
 

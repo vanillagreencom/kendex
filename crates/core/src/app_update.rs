@@ -47,7 +47,7 @@ pub enum AppUpdateStatus {
     UpdateAvailable {
         version: String,
         release_notes_url: String,
-        asset_available: bool,
+        cli_asset_available: bool,
         muted: bool,
     },
     FeedOlder {
@@ -216,7 +216,7 @@ fn view(
                 VersionRelation::Newer => {
                     let notes = release_notes_url(&feed.version)?;
                     AppUpdateStatus::UpdateAvailable {
-                        asset_available: feed.asset_for(target).is_some(),
+                        cli_asset_available: feed.asset_for(target).is_some(),
                         muted: muted_version == Some(feed.version.as_str()),
                         version: feed.version,
                         release_notes_url: notes,

@@ -287,7 +287,7 @@ fn rollback_clears_the_notice_and_missing_asset_is_not_an_error() {
     assert!(matches!(
         update.status,
         AppUpdateStatus::UpdateAvailable {
-            asset_available: false,
+            cli_asset_available: false,
             ..
         }
     ));
