@@ -1,7 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::adopt_shared::{SharedTarget, shared_capture_ops, shared_target};
 use super::desired::native_dir;
 use super::ops::manifest_for_mutation;
 use crate::apply::{Op, Plan, PlannedOp, Pre};
@@ -164,12 +163,7 @@ pub fn adopt(
 /// Where in the scope's local source the kept content lands. Read wherever
 /// a surface asks whether adoption could take a position, so the question
 /// and the answer are never two different rules.
-pub(super) fn local_item_path(
-    env: &Env,
-    scope: &Scope,
-    kind: ItemKind,
-    name: &str,
-) -> Result<PathBuf> {
+fn local_item_path(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Result<PathBuf> {
     let local_root = local_source_root(env, scope);
     match kind {
         ItemKind::Skill => Ok(local_root.join("skills").join(name)),
@@ -327,6 +321,199 @@ fn copies_differ(name: &str, first: HarnessId, second: HarnessId) -> CoreError {
     }
 }
 
+// Adopting a shared folder through the link a tool reads it by: the
+// boundary that decides what a link may be adopted through, and the ops
+// that take the folder over without breaking the other tools reading it.
+
+/// A live symlink's resolved target, once it has passed the boundary: the
+/// real folder whose content is being adopted, and every native link (with
+/// the text it was written with) that resolves to it.
+struct SharedTarget {
+    target: PathBuf,
+    /// Link path → the target exactly as the link spells it, so the
+    /// removal's precondition catches a link repointed between plan and
+    /// apply.
+    links: Vec<(PathBuf, PathBuf)>,
+    /// Every tool whose native link reads this folder.
+    harnesses: Vec<HarnessId>,
+}
+
+/// What a live link may be adopted through. The target must be a real
+/// skill folder — the `SKILL.md` marker is what keeps a link at `$HOME` or
+/// `/etc` refused — and must sit outside kendex's own machinery: the
+/// rendered canonical and variant trees, the trash, the source cache, the
+/// journal, and the local source the capture would write into (a managed
+/// tree is already ours, and capturing it under another name would steal
+/// it; capturing the destination would recurse). Everything is compared
+/// canonicalized, so a `..`-laden link cannot dress one side up as the
+/// other. Anything that fails stays what it was: a foreign symlink,
+/// reported as a conflict.
+fn shared_target(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    original: &Path,
+    points_to: PathBuf,
+    local_item: &Path,
+) -> Result<SharedTarget> {
+    let refuse = || CoreError::ForeignSymlink {
+        target: original.to_path_buf(),
+        points_to: points_to.clone(),
+    };
+    // Only a skill directory has the marker that makes the boundary
+    // checkable; an agent's file link stays a conflict.
+    if kind != ItemKind::Skill {
+        return Err(refuse());
+    }
+    let target = fs::canonicalize(original).map_err(|e| CoreError::io(original, e))?;
+    if !target.is_dir() || !target.join("SKILL.md").is_file() {
+        return Err(refuse());
+    }
+    let canon = |path: PathBuf| path.canonicalize().unwrap_or(path);
+    let mut ours = vec![
+        env.rendered_skills_dir(),
+        env.trash_dir(),
+        env.source_cache_dir(),
+        env.journal_dir(),
+        local_source_root(env, scope),
+    ];
+    ours.extend(
+        HarnessId::ALL
+            .iter()
+            .map(|h| env.rendered_skill_variants_dir(h.name())),
+    );
+    if ours.into_iter().any(|root| target.starts_with(canon(root))) {
+        return Err(refuse());
+    }
+    if local_item.starts_with(&target) {
+        return Err(refuse());
+    }
+
+    let mut links = Vec::new();
+    let mut harnesses = Vec::new();
+    for h in HarnessId::ALL {
+        let Some(dir) = native_dir(env, scope, h, ItemKind::Skill) else {
+            continue;
+        };
+        let candidate = dir.join(crate::harness::rendered_name(h, name));
+        let Ok(resolved) = fs::canonicalize(&candidate) else {
+            continue;
+        };
+        if resolved != target {
+            continue;
+        }
+        // The tool whose own place IS the folder reads it too — in the
+        // hand-made layout it is the one holding it, and the rest link at
+        // it. Left out, adoption would settle the others and quietly drop
+        // this one from the declaration, taking the skill away from the
+        // tool that had it all along. It has no link to clear.
+        harnesses.push(h);
+        if candidate.is_symlink() && !links.iter().any(|(path, _)| path == &candidate) {
+            let raw = fs::read_link(&candidate).map_err(|e| CoreError::io(&candidate, e))?;
+            links.push((candidate, raw));
+        }
+    }
+    Ok(SharedTarget {
+        target,
+        links,
+        harnesses,
+    })
+}
+
+/// The folder a link at this position could be adopted through, or nothing
+/// where the link is one adoption would refuse. The planner asks this so a
+/// hand-made sharing layout — one real folder, several tools reading it
+/// through links — is offered the exit that works instead of being called
+/// a dead end, and asks it through the same boundary the adoption itself
+/// applies, so the offer and the action can never drift apart.
+/// Every tool adoption will act on for this position. A folder shared by
+/// hand is read by whoever links at it, declared or not, and taking it
+/// over clears each of those links — so a surface offering the move has to
+/// name them all, or it acts on a tool it never mentioned.
+pub(super) fn shared_tools(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    link: &Path,
+) -> Option<Vec<HarnessId>> {
+    let points_to = fs::read_link(link).ok()?;
+    let local_item = local_item_path(env, scope, kind, name).ok()?;
+    let shared = shared_target(env, scope, kind, name, link, points_to, &local_item).ok()?;
+    Some(shared.harnesses)
+}
+
+pub(super) fn link_target(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    link: &Path,
+) -> Option<PathBuf> {
+    let points_to = fs::read_link(link).ok()?;
+    let local_item = local_item_path(env, scope, kind, name).ok()?;
+    let shared = shared_target(env, scope, kind, name, link, points_to, &local_item).ok()?;
+    Some(shared.target)
+}
+
+/// The ops that take over a shared folder: capture its bytes into the
+/// local source, move the folder itself to the trash — bound to the exact
+/// bytes just captured, so a folder that changed under the plan aborts the
+/// apply (invariant 7) — and clear every link that read it, each bound to
+/// the text it was written with. The follow-up apply re-renders the
+/// canonical tree and the links, which is what restores the sharing.
+fn shared_capture_ops(
+    name: &str,
+    shared: &SharedTarget,
+    local_item: &Path,
+) -> Result<Vec<PlannedOp>> {
+    let mut ops = Vec::new();
+    if local_item.exists() {
+        ops.push(PlannedOp {
+            description: format!("trash the local source's earlier copy of {name}"),
+            op: Op::Trash {
+                path: local_item.to_path_buf(),
+                pre: Pre::HashIs {
+                    hash: crate::hash::hash_tree(local_item)?,
+                },
+            },
+        });
+    }
+    ops.push(PlannedOp {
+        description: format!("move the shared folder's content of {name} into the local source"),
+        op: Op::WriteTree {
+            root: local_item.to_path_buf(),
+            files: read_tree(&shared.target)?,
+            pre: Pre::Absent,
+        },
+    });
+    ops.push(PlannedOp {
+        description: format!(
+            "trash the shared folder at {} (recoverable)",
+            shared.target.display()
+        ),
+        op: Op::Trash {
+            path: shared.target.clone(),
+            pre: Pre::HashIs {
+                hash: crate::hash::hash_tree(&shared.target)?,
+            },
+        },
+    });
+    for (link, raw) in &shared.links {
+        ops.push(PlannedOp {
+            description: format!("clear the link at {}", link.display()),
+            op: Op::Trash {
+                path: link.clone(),
+                pre: Pre::SymlinkTo {
+                    target: raw.clone(),
+                },
+            },
+        });
+    }
+    Ok(ops)
+}
+
 // What a capture may read: the walk that turns a folder on disk into the
 // bytes adoption writes into the local source, and the budget that stops a
 // link at somebody's home directory becoming a memory problem.
@@ -334,8 +521,8 @@ fn copies_differ(name: &str, first: HarnessId, second: HarnessId) -> CoreError {
 /// Far beyond any real skill, but a hard stop before a link at a huge
 /// folder turns a capture into a memory problem. Fail-loud: the error
 /// names the file that broke the budget.
-pub(crate) const MAX_CAPTURE_FILES: usize = 2000;
-pub(crate) const MAX_CAPTURE_BYTES: u64 = 100 * 1024 * 1024;
+const MAX_CAPTURE_FILES: usize = 2000;
+const MAX_CAPTURE_BYTES: u64 = 100 * 1024 * 1024;
 
 pub(crate) fn read_tree(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>> {
     fn walk(

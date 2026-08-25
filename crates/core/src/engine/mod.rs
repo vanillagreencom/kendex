@@ -8,7 +8,6 @@ use crate::manifest::{self, Manifest, ManifestFile};
 use crate::model::Scope;
 
 pub mod adopt;
-mod adopt_shared;
 pub(crate) mod bundles;
 mod catalog;
 mod config_edits;

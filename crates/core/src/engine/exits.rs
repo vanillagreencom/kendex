@@ -70,7 +70,7 @@ fn tools_touched(env: &Env, scope: &Scope, row: &DriftRow) -> Vec<HarnessId> {
     let shared = (row.cause == Some(DriftCause::SharedLink))
         .then(|| super::adopt::position(env, scope, row.kind, &row.name, row.harness))
         .flatten()
-        .and_then(|at| super::adopt_shared::shared_tools(env, scope, row.kind, &row.name, &at));
+        .and_then(|at| super::adopt::shared_tools(env, scope, row.kind, &row.name, &at));
     shared.unwrap_or_else(|| vec![row.harness])
 }
 

@@ -1,8 +1,6 @@
-//! Rebuilding the plan that produced what is on disk.
-//!
-//! Split out of `desired.rs`: this is the audit's question rather than an
-//! apply's, and it is the one place a lock's word chooses anything — which
-//! revision to rebuild from, never what the answer is.
+//! Rebuilding the plan that produced what is on disk: the audit's question
+//! rather than an apply's, and the one place a lock's word chooses anything
+//! — which revision to rebuild from, never what the answer is.
 
 use std::collections::{BTreeMap, BTreeSet};
 

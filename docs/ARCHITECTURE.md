@@ -656,7 +656,7 @@ lives in one capability table read by core and UI.
   while the source cannot be read. **Remove** drops the closure's
   declarations and sweeps their installations (orphan removal filtered to
   exact kind+name pairs); an edited installation is never swept without
-  `--discard-edits`. **Keep** (`detach/keep.rs`) copies each
+  `--discard-edits`. **Keep** (`detach.rs`) copies each
   installation's *source-form* bytes — read through the sealed catalog at
   the exact commit it installed from, a parent skill excluding any nested
   child skill — into the scope's local source, flips the declaration to

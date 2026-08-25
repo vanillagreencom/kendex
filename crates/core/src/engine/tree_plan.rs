@@ -156,7 +156,7 @@ fn collapsed_link(
     }
     if !owned.contains(canonical) {
         return Err(
-            match super::adopt_shared::link_target(env, scope, item.kind, &item.name, canonical) {
+            match super::adopt::link_target(env, scope, item.kind, &item.name, canonical) {
                 Some(target) => unmanaged(DriftCause::SharedLink, &target),
                 None => unmanaged(DriftCause::ForeignLink, canonical),
             },

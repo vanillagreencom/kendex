@@ -1,7 +1,8 @@
 .github/workflows/review-gate-writer.yml	652
 crates/core/src/check_catalog.rs	408
-crates/core/src/engine/adopt.rs	539
+crates/core/src/engine/adopt.rs	726
 crates/core/src/engine/desired_agent.rs	525
+crates/core/src/engine/detach.rs	615
 crates/core/src/engine/gate.rs	430
 crates/core/src/engine/ops/add.rs	549
 crates/core/src/engine/pi_hooks_move/migrated.rs	540
