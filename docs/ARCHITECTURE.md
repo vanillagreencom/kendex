@@ -155,13 +155,11 @@ lives in one capability table read by core and UI.
     core (`core/parallel.rs`), returning in the order given; two runs over
     one disk give byte-identical output. Phrase matching skips to the next
     byte that could begin a match; all-ASCII text takes no normalizing pass.
-
 15. An item says what it is for in its own header, from a closed
     vocabulary (`core/tags.rs`). Kind says what a thing *is*; a tag says
     what job it helps with — the only axis. Tags are never inferred from
     a name: an untagged item is untagged. A word outside the vocabulary
     is a scan warning naming the real one (`tests` for `testing`).
-
 16. A debug build gets its own machine. Every root `core/env.rs` resolves
     hangs off `Env::home`; a build with `debug_assertions` roots that at
     `<data>/kendex-dev`. Inherited vars naming a harness root are dropped
@@ -182,20 +180,13 @@ lives in one capability table read by core and UI.
     absolute path is used as written; a child process inherits this
     process's environment (`process/mod.rs`), so `npm` run for a Pi
     package sees the real home.
-
-17. One spelling per path. A root is canonicalized once, where it enters —
-    a scope's root wherever paths are derived from it (`Scope::canonical`,
-    rebound at each derivation helper: `rename::manifest_pair`,
-    `rename::rename_ops`, `rename::retarget`, `lock::lock_path`, and the
-    engine's plan entry points), a source root at `SealedSource::open`, a
-    declared source path at `source::resolve` — and every path derived
-    from it carries that canonical spelling. Nothing re-canonicalizes
-    downstream, and nothing may compare two spellings of one file: under a
-    symlinked root (macOS fronts its temp tree with `/var` →
-    `/private/var`; a user links a project directory) a plan's refusal and
-    the targets a caller derives must already agree, and a path handed to
-    git must speak the same spelling as the repository it is resolved
-    against.
+17. One spelling per path, fixed once where the root enters: a scope root
+    at each derivation helper (`Scope::canonical` in `manifest_pair`,
+    `rename_ops`, `retarget`, `lock_path`, and the engine's plan entries),
+    a source root at `SealedSource::open`, a declared path at
+    `source::resolve`. Nothing re-canonicalizes downstream, no comparison
+    may meet two spellings of one file (macOS fronts `/var` with
+    `/private/var`), and a path handed to git speaks the repository's own.
 
 ## Decisions
 
@@ -399,39 +390,38 @@ lives in one capability table read by core and UI.
   both repo spellings as kendex-owned.
 - **Commits walk through the guards whatever tool makes them.** The guard
   family (`core/guard/`) — size-ratchet, todo-ban, byte-ceiling,
-  suppression-ban, commit-msg, and the lint lanes rust-fmt, rust-clippy
-  and biome — judges the index git names for the commit
-  (`GIT_INDEX_FILE`, captured once and threaded through a validated
-  context; the one sanctioned redirect past invariant 13). Policy is read
-  from the commit: the `[guards]` tables in `kendex.settings.toml`,
-  baselines, and excludes all resolve from the staged copy — a file staged
-  for deletion, or never staged, governs as absent. The process
-  environment is the only machine-local override; the chain's local
-  extension point is configured machine-locally only, never from a
-  committed file. Unmerged entries and intent-to-add are refused loudly;
-  paths travel NUL-delimited end to end; a name the configuration format
-  cannot carry is a refusal. Every enabled check runs before the verdict;
-  exit 1 (violations) and 2 (could not run) both block. Baseline TSVs read
-  as-is; legacy env-style settings convert once through `guard import-v1`;
-  imported excludes keep v1's legacy-glob dialect, marked as such; a
-  pattern outside the documented dialect is a refusal. The lint lanes
-  take the staged list from that index but run the project's toolchain
-  (cargo, biome — well-known names or the project's untracked
-  `node_modules/.bin`, never a committed command) over the working tree,
-  scoped per staged file's owning `Cargo.toml`, and see none of the git
-  redirects a hook's parent exports. Which repository a commit targets
-  is git's question, answered where the target has an armed hook: the
-  `pre-commit-check` PreToolUse hook only word-matches for a commit,
-  defers to the armed git pre-commit hook of its own working directory,
-  and runs the chain in that directory only where none is armed there;
+  suppression-ban, commit-msg, and the lint lanes rust-fmt, rust-clippy and
+  biome — judges the index git names for the commit (`GIT_INDEX_FILE`,
+  captured once and threaded through a validated context; the one
+  sanctioned redirect past invariant 13). Policy is read from the commit:
+  the `[guards]` tables in `kendex.settings.toml`, baselines, and excludes
+  all resolve from the staged copy — a file staged for deletion, or never
+  staged, governs as absent. The process environment is the only
+  machine-local override; the chain's local extension point is configured
+  machine-locally only, never from a committed file. Unmerged entries and
+  intent-to-add are refused loudly; paths travel NUL-delimited end to end;
+  a name the configuration format cannot carry is a refusal. Every enabled
+  check runs before the verdict; exit 1 (violations) and 2 (could not run)
+  both block. Baseline TSVs read as-is; legacy env-style settings convert
+  once through `guard import-v1`; imported excludes keep v1's legacy-glob
+  dialect, marked as such; a pattern outside the documented dialect is a
+  refusal. The lint lanes take the staged list from that index but run the
+  project's toolchain (cargo, biome — well-known names or the project's
+  untracked `node_modules/.bin`, never a committed command) over the
+  working tree, scoped per staged file's owning `Cargo.toml`, and see none
+  of the git redirects a hook's parent exports. Which repository a commit
+  targets is git's question, answered where the target has an armed hook:
+  the `pre-commit-check` PreToolUse hook only word-matches for a commit,
+  defers to the armed git pre-commit hook of its own working directory, and
+  runs the chain in that directory only where none is armed there;
   sidestepping an armed one (`--no-verify`, `-n`) or injecting git config
   (`-c`, `--config-env`, `GIT_CONFIG_*`) is refused — git would skip
-  commit-msg too, unjudgeable here. It gates its
-  working directory only: a commit aimed elsewhere from an unarmed or
-  non-repository directory is not gated by it (a stderr notice says so),
-  and it never parses the target. A payload whose command the hook
-  cannot read is a refusal, and the chain's own refusals (unconverted v1
-  settings, a lint tool that could not run) block through it.
+  commit-msg too, unjudgeable here. It gates its working directory only: a
+  commit aimed elsewhere from an unarmed or non-repository directory is not
+  gated by it (a stderr notice says so), and it never parses the target. A
+  payload whose command the hook cannot read is a refusal, and the chain's
+  own refusals (unconverted v1 settings, a lint tool that could not run)
+  block through it.
 - **kendex owns its hooks directory — provably.** The guards reach git
   through `<git-common-dir>/kendex-hooks/`, two entrypoints whose call
   surface (`kendex guard run <hook>`) is a stable contract, with
@@ -635,16 +625,16 @@ lives in one capability table read by core and UI.
   names that install. The walk stops at its skill cap. `source/about.rs`
   renders the one typed report the About tab and `kendex index` consume.
 - **Browsing is a read-side join; installed state is derived, never
-  stored.** Every `source/browse.rs` read takes a `Catalog`,
-  `Subscription { scope, source }` or `Repo { repo }`, so a listed
-  marketplace opens before anyone subscribes. Each row's state is joined
-  from the scope's manifest and lock on every call — installed is a lock
-  entry from this subscription, held-back-by-safety is content the gate
-  refuses, "partly installed (2 of 6)" is counted from a bundle's members;
-  with no subscription the join answers Available and judges name clashes
-  against the personal scope. A name another source holds is surfaced on
-  the row (`collision`); the refusal stays in the engine (invariant 4). A
-  bare repository is fetched by `remote::sync` into the store under the
+  stored.** Every `source/browse.rs` read takes a `Catalog`, `Subscription
+  { scope, source }` or `Repo { repo }`, so a listed marketplace opens
+  before anyone subscribes. Each row's state is joined from the scope's
+  manifest and lock on every call — installed is a lock entry from this
+  subscription, held-back-by-safety is content the gate refuses, "partly
+  installed (2 of 6)" is counted from a bundle's members; with no
+  subscription the join answers Available and judges name clashes against
+  the personal scope. A name another source holds is surfaced on the row
+  (`collision`); the refusal stays in the engine (invariant 4). A bare
+  repository is fetched by `remote::sync` into the store under the
   canonical `owner/repo` every GitHub spelling folds to — the key Subscribe
   is prefilled with; only GitHub opens blind (`NotBrowsable` otherwise); a
   root skill's file list and reads are confined to the skill tree.
@@ -652,17 +642,16 @@ lives in one capability table read by core and UI.
   copy) and names an enabled, readable subscription this machine holds;
   `useCatalog` moves the page onto it. Installing needs a subscription;
   `RepoAction` offers the one step: Subscribe when none declares the
-  repository, Turn on when a declared one is off, Refresh when declared
-  but unreadable, neutral until the live list has loaded. Pre-install
-  safety (`browse/safety.rs`) scores catalog bytes with the rules an
-  install runs and caches **findings and scores only**
-  (`<key>/<commit>.safety/…`, never inside the receipt-signed checkout),
-  keyed by content hash plus rule-set, discovery-table and record-format
-  versions, each verified before reuse; the warn/block verdict is derived
-  from current thresholds at read time. Browse is a preview of the
-  verdict, never a second gate. `library.rs` is the same join for the
-  Library table: subscription, local content (with what a fork replaced),
-  or observed-and-unmanaged.
+  repository, Turn on when a declared one is off, Refresh when declared but
+  unreadable, neutral until the live list has loaded. Pre-install safety
+  (`browse/safety.rs`) scores catalog bytes with the rules an install runs
+  and caches **findings and scores only** (`<key>/<commit>.safety/…`, never
+  inside the receipt-signed checkout), keyed by content hash plus rule-set,
+  discovery-table and record-format versions, each verified before reuse;
+  the warn/block verdict is derived from current thresholds at read time.
+  Browse is a preview of the verdict, never a second gate. `library.rs` is
+  the same join for the Library table: subscription, local content (with
+  what a fork replaced), or observed-and-unmanaged.
 - **A subscription's closure is derived by re-expansion; unsubscribing
   removes or keeps exactly it.** `engine/detach.rs` expands the installed
   set with the source present and again with its declarations gone, then
@@ -670,17 +659,16 @@ lives in one capability table read by core and UI.
   while the source cannot be read. **Remove** drops the closure's
   declarations and sweeps their installations (orphan removal filtered to
   exact kind+name pairs); an edited installation is never swept without
-  `--discard-edits`. **Keep** copies each
-  installation's *source-form* bytes — read through the sealed catalog at
-  the exact commit it installed from, a parent skill excluding any nested
-  child skill — into the scope's local source, flips the declaration to
-  `local` with fork provenance, and removes the subscription; local writes
-  are ordered before the manifest flip in one plan (invariant 11). Keep
-  refuses an edited package (fork or discard first; hooks are compared to
-  what apply wrote) and preflights the local target: a symlink, a
-  case/composition-folding sibling, or different bytes there is a refusal
-  (invariants 4 and 6). The local source lists a `plugin/item` name beside
-  a plain `plugin`.
+  `--discard-edits`. **Keep** copies each installation's *source-form*
+  bytes — read through the sealed catalog at the exact commit it installed
+  from, a parent skill excluding any nested child skill — into the scope's
+  local source, flips the declaration to `local` with fork provenance, and
+  removes the subscription; local writes are ordered before the manifest
+  flip in one plan (invariant 11). Keep refuses an edited package (fork or
+  discard first; hooks are compared to what apply wrote) and preflights the
+  local target: a symlink, a case/composition-folding sibling, or different
+  bytes there is a refusal (invariants 4 and 6). The local source lists a
+  `plugin/item` name beside a plain `plugin`.
 - **The machine seam reads through the same core installing reads
   through.** `check_catalog.rs` (core) owns the two authoring passes —
   structural (would each harness's loader hold this item) and safety (the
@@ -694,8 +682,8 @@ lives in one capability table read by core and UI.
   packages from `list_items` (pinned by test), safety scores from the check
   passes, bundles with members, About rows, findings. Field order in both
   JSON shapes is the schema — serde structs, no maps. `kendex marketplace
-  check` aliases `check --catalog --strict`, same exit codes.
-  A maintainer's reviewed findings live in a committed `kendex-reviews.toml`
+  check` aliases `check --catalog --strict`, same exit codes. A
+  maintainer's reviewed findings live in a committed `kendex-reviews.toml`
   at the catalog root (`check_catalog/dismissals.rs`): content-hash-bound
   records keyed `kind:name`, written by `dismiss --catalog` from the tokens
   `check --catalog` prints, for every kind but a hook. The check refuses
@@ -707,39 +695,38 @@ lives in one capability table read by core and UI.
   record binds to bytes — the item's own plus all its rendering reads
   (`SourceConfig::rendering_inputs`); settles the publisher's own
   occurrences only, at the weight the scored artifact gives each; and
-  carries only reasons an author can give — `trusted-source` and
-  timestamps refused on read and write.
-  **The record never travels in a file this project commits.** The lock
-  carries none; the audit rebuilds (`engine::desired::desired_as_installed`)
-  the plan that produced what is on disk, each installation at its lock
-  entry's revision, and reads the record out of *that* catalog. One item
-  can sit at two revisions; an installation answers for itself — one row,
-  one entry, one revision, one record. An item no rebuild covers carries no
-  review; there is no signing scheme. A hook records none: refused where
-  read, and neither `dismiss --catalog` nor `check --catalog` produces one.
-  The audit matches an entry to an observation by kind and name (or those
-  of the artifact it emitted), then by a review hash sealed by what is on
-  disk. Every settled finding is shown with publisher and reason — under
-  the line in the CLI, in its own row on a scope and in the held-back
-  panel, and on a marketplace package's page (via `browse/safety.rs`). Two
-  decisions differing in reason or date stay two rows. A record that
-  settles nothing here is a note, never silence.
-  Finding identity is the rule and the sentence it fired with
+  carries only reasons an author can give — `trusted-source` and timestamps
+  refused on read and write. **The record never travels in a file this
+  project commits.** The lock carries none; the audit rebuilds
+  (`engine::desired::desired_as_installed`) the plan that produced what is
+  on disk, each installation at its lock entry's revision, and reads the
+  record out of *that* catalog. One item can sit at two revisions; an
+  installation answers for itself — one row, one entry, one revision, one
+  record. An item no rebuild covers carries no review; there is no signing
+  scheme. A hook records none: refused where read, and neither `dismiss
+  --catalog` nor `check --catalog` produces one. The audit matches an entry
+  to an observation by kind and name (or those of the artifact it emitted),
+  then by a review hash sealed by what is on disk. Every settled finding is
+  shown with publisher and reason — under the line in the CLI, in its own
+  row on a scope and in the held-back panel, and on a marketplace package's
+  page (via `browse/safety.rs`). Two decisions differing in reason or date
+  stay two rows. A record that settles nothing here is a note, never
+  silence. Finding identity is the rule and the sentence it fired with
   (`Finding::fingerprint`): the message says what the rule fired *on*,
   never where. A digest standing in for unprintable content is always
   `DIGEST_CHARS` wide. Every location a decision covers is listed under it.
   Line, file (Codex renders a command as a skill tree) and severity (one
-  step less in a supporting file) are out of the fingerprint. A fingerprint is read only within one
-  item's records, bound to the content hash and, for a publisher's record,
-  to which occurrences are theirs (`quality::publishers`). **A boundary is
-  carried from the code that drew it, never found again in the finished
-  text**: the renderer hands the tree and its offsets down as one value,
-  and every location is composed rather than matched. For an artifact
-  generated from inputs, a rendering from the publisher's inputs alone is
-  walked beside the real one, both in the one deobfuscated space; prose
-  the project supplied is skipped and asked of the person; a finding
-  naming a whole document is the publisher's only where their own
-  rendering produces it.
+  step less in a supporting file) are out of the fingerprint. A fingerprint
+  is read only within one item's records, bound to the content hash and,
+  for a publisher's record, to which occurrences are theirs
+  (`quality::publishers`). **A boundary is carried from the code that drew
+  it, never found again in the finished text**: the renderer hands the tree
+  and its offsets down as one value, and every location is composed rather
+  than matched. For an artifact generated from inputs, a rendering from the
+  publisher's inputs alone is walked beside the real one, both in the one
+  deobfuscated space; prose the project supplied is skipped and asked of
+  the person; a finding naming a whole document is the publisher's only
+  where their own rendering produces it.
 - **The community directory is read like any remote: strictly, capped,
   honest about staleness.** `registry/` (core) consumes what
   `source/index.rs` producers feed kendex.ai: `index.rs` re-parses the
@@ -898,25 +885,24 @@ lives in one capability table read by core and UI.
   decisions; `kendex decisions` / Recorded decisions reads every record
   against what is installed now — active, stale with the reason, or
   obsolete. An app undo takes back exactly the record it was shown; the
-  CLI's revoke names the record by key.
-  Composition: held-back item → findings never offered for dismissal, shown
-  in full; active acceptance → every finding reads accepted, no dismissal
-  on top; then the person's live dismissal; then the publisher's record (a
-  stale personal dismissal falls through to it); else open. Warning→block
-  by threshold change keeps dismissals and shows the item held back;
-  block→warning keeps the acceptance until withdrawn; withdrawing uncovers
-  the findings and prior dismissals apply again. What still needs a person
-  is one derivation (`lib/reviewable.ts`): held-back items once each, plus
-  open findings once per distinct evidence (same bytes, same finding,
-  several tools = one decision). Every count — sidebar, Home, footer, scope
-  summary, Review page done — reads that number. A dismissal is about
-  installed bytes, never a plan; rows a plan would install with findings
-  travel with the view as `queued`, so the apply preview says how many
-  decisions will be waiting. A concern row collapses one rule across
-  everything it touched; a decision is per piece of evidence — one piece
-  carries the verb on its row, several each get their own, walked one at a
-  time, worst first. No rule-level mute, no time-based snooze, no
-  cross-scope action.
+  CLI's revoke names the record by key. Composition: held-back item →
+  findings never offered for dismissal, shown in full; active acceptance →
+  every finding reads accepted, no dismissal on top; then the person's live
+  dismissal; then the publisher's record (a stale personal dismissal falls
+  through to it); else open. Warning→block by threshold change keeps
+  dismissals and shows the item held back; block→warning keeps the
+  acceptance until withdrawn; withdrawing uncovers the findings and prior
+  dismissals apply again. What still needs a person is one derivation
+  (`lib/reviewable.ts`): held-back items once each, plus open findings once
+  per distinct evidence (same bytes, same finding, several tools = one
+  decision). Every count — sidebar, Home, footer, scope summary, Review
+  page done — reads that number. A dismissal is about installed bytes,
+  never a plan; rows a plan would install with findings travel with the
+  view as `queued`, so the apply preview says how many decisions will be
+  waiting. A concern row collapses one rule across everything it touched; a
+  decision is per piece of evidence — one piece carries the verb on its
+  row, several each get their own, walked one at a time, worst first. No
+  rule-level mute, no time-based snooze, no cross-scope action.
 - **Rule severities are calibrated against real catalogs.** Deobfuscation
   reports only what has no typographic use — invisible and bidirectional
   characters, letters imitating other letters — while normalizing emoji
