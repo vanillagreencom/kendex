@@ -125,8 +125,8 @@ skills/orch/tests/queue_wait.sh	920
 skills/orch/workflows/review-pr.md	452
 skills/preflight/scripts/preflight	1016
 skills/review-gate/scripts/pr-watch.sh	854
-skills/review-gate/scripts/review-predicate-selftest.sh	2607
-skills/review-gate/scripts/review-predicate.sh	1228
+skills/review-gate/scripts/review-predicate-selftest.sh	2638
+skills/review-gate/scripts/review-predicate.sh	1250
 skills/review-gate/templates/review-gate-writer.yml	649
 skills/review-gate/tests/e2e-sandbox.sh	898
 skills/review-gate/tests/pr-watch.test.sh	1158
