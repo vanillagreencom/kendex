@@ -87,7 +87,9 @@ export function overviewApplier(
         // rows on screen may no longer be the truth, so one reconciling
         // read answers either way — success lands whatever actually
         // committed, failure marks the retained rows stale under the
-        // operation's own error.
+        // operation's own error. The handed operation's error returns
+        // either way; a caller whose work ran apart from this read
+        // (`mutate`) owns telling a dead read from a failed work.
         const reread = await settled<Overview>(commands.updatesOverview());
         order.landAuthoritative();
         if (reread.status === "ok") landOk(reread.data);

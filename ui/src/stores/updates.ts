@@ -92,15 +92,22 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     },
 
     mutate: async (work) => {
-      // The applier's own error matters too: work() rejecting in transport
-      // never assigns failure, and only the applier saw the rejection —
-      // dropping it would let callers toast success over an IPC failure.
+      // The work's failure and the applier's are different news. work()
+      // rejecting in transport never assigns failure and only the applier
+      // saw it — but once work has answered, the applier's error is the
+      // follow-up read's, already told through the store (stale marking,
+      // or cleared by a landed reconcile), and returning it would report
+      // a committed change as failed — suppressing the caller's success
+      // toast and its scan/audit refreshes.
       let failure: string | null = null;
+      let answered = false;
       const applierError = await applyOverview(async () => {
         failure = await work();
+        answered = true;
         return commands.updatesOverview();
       }, "mutation");
-      return failure ?? applierError;
+      if (failure !== null) return failure;
+      return answered ? null : applierError;
     },
 
     check: async () => {

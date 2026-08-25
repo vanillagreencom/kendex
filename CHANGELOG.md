@@ -322,7 +322,10 @@ changes carry a **Breaking** call-out with their migration note inline.
   made. A change that fails midway re-reads the standing rather than
   presenting the old rows as current, a change whose call never reached
   the engine reports the failure instead of staying silent or toasting
-  success, and updating waits out anything already re-reading the standing
+  success, a change that landed but whose first re-read failed reports
+  the success once that re-read catches up — with its toast and refreshed
+  tables — instead of calling the change failed, and updating waits out
+  anything already re-reading the standing
   — a running check, a focus-triggered re-read, another change landing —
   rather than applying versions it is about to replace. The status footer stops saying "Up
   to date" beside a failed scan: a failed first scan reads "Couldn't

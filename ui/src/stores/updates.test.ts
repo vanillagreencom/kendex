@@ -509,6 +509,53 @@ describe("updates store", () => {
     expect(commands.packageSetRev).not.toHaveBeenCalled();
   });
 
+  // An update that commits, fails its first overview read, and reconciles
+  // is a success: the rows land current, and reporting the dead first
+  // read as the update's failure would suppress the toast and skip the
+  // scan and audit refreshes over a change that landed.
+  it("an update whose first re-read fails but reconciles reports success", async () => {
+    useProblemsStore.setState({
+      dialog: { open: false, title: "", steps: [], actions: [] },
+    });
+    vi.mocked(commands.applyPlan).mockResolvedValue({
+      status: "ok",
+      data: {
+        scope: { scope: "global" },
+        drift: [],
+        plan: [],
+        notes: [],
+        warnings: [],
+        safety: [],
+        adoptable: ADOPTABLE,
+        exits: [],
+        heldBack: [],
+        queued: [],
+      },
+    });
+    const landed = [row({ updateAvailable: false })];
+    vi.mocked(commands.updatesOverview)
+      .mockRejectedValueOnce(new Error("overview wedged"))
+      .mockResolvedValueOnce({
+        status: "ok",
+        data: { rows: landed, warnings: [] },
+      });
+    vi.mocked(commands.scanMachine).mockResolvedValue({
+      status: "ok",
+      data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
+    });
+    vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
+
+    await useUpdatesStore.getState().updateOne(row({}));
+
+    expect(useProblemsStore.getState().dialog.open).toBe(false);
+    expect(toast.success).toHaveBeenCalled();
+    expect(commands.scanMachine).toHaveBeenCalled();
+    expect(commands.auditAll).toHaveBeenCalled();
+    expect(useUpdatesStore.getState().rows).toEqual(landed);
+    expect(useUpdatesStore.getState().loaded).toBe(true);
+    expect(useUpdatesStore.getState().error).toBeNull();
+  });
+
   // The backend can persist the preference and then fail building its
   // overview: the reconciling read lands what actually committed instead
   // of leaving the old row marked current.
