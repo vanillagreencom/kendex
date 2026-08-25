@@ -53,7 +53,8 @@
 #   push ok      -> 0 when no rebase-map printed, or every mapping was
 #                   recorded and applied
 #   1            -> the push landed (or never ran: usage error, pending
-#                   sidecar, or ambiguous/mismatched state before the push) but
+#                   sidecar, symlinked sidecar path, or ambiguous/mismatched
+#                   state before the push) but
 #                   reconciliation did not (no state file, unparseable map
 #                   line, jq/update failure). The recorded SHAs are NOT
 #                   reconciled — repair state, then re-run to consume the
@@ -208,6 +209,15 @@ if [[ "$state_exists_rc" -eq 0 ]]; then
 	fi
 fi
 
+# The sidecar lives at a predictable path inside the worktree being pushed —
+# a tree agents edit and rebases rewrite. A symlink planted at that path (or
+# a symlinked tmp/) would turn the sidecar read into an arbitrary-file read
+# and the write into an arbitrary-file overwrite (CWE-59), so any symlink on
+# those paths refuses the run here, before the read and before the push.
+for p in "$worktree_abs/tmp" "$sidecar"; do
+	[[ ! -L "$p" ]] || fail "$p is a symlink; refusing to touch the rebase-map sidecar through it — remove the symlink and re-run"
+done
+
 # A sidecar left by an earlier run is a rebase that already happened; its map
 # must land before this run pushes (and possibly rebases again). It is held
 # to the same grammar the writer enforces — a corrupted or planted file must
@@ -275,13 +285,24 @@ fi
 # surviving copy.
 reconciled_without_sidecar=false
 if [[ "$map_json" != '{}' ]]; then
+	# The pre-push symlink refusal covered the tree as it was; the push's
+	# rebase can materialize new tracked entries, so the paths are checked
+	# again before writing. The staging file is mktemp-created (random name,
+	# O_EXCL — never through a planted link) and renamed into place; rename
+	# replaces a symlink rather than following it.
 	sidecar_err=''
-	if ! mkdir -p -- "$worktree_abs/tmp"; then
+	stage=''
+	if [[ -L "$worktree_abs/tmp" || -L "$sidecar" ]]; then
+		sidecar_err="a symlink appeared at $worktree_abs/tmp or $sidecar; refusing to write the rebase-map sidecar through it"
+	elif ! mkdir -p -- "$worktree_abs/tmp"; then
 		sidecar_err="could not create $worktree_abs/tmp for the rebase-map sidecar"
-	elif ! printf '%s\n' "$map_json" >"$sidecar.tmp"; then
-		sidecar_err="could not write the rebase-map sidecar at $sidecar.tmp"
-	elif ! mv -- "$sidecar.tmp" "$sidecar"; then
-		rm -f -- "$sidecar.tmp"
+	elif ! stage=$(mktemp -- "$sidecar.XXXXXX"); then
+		sidecar_err="could not create a staging file for the rebase-map sidecar in $worktree_abs/tmp"
+	elif ! printf '%s\n' "$map_json" >"$stage"; then
+		rm -f -- "$stage"
+		sidecar_err="could not write the rebase-map sidecar staging file at $stage"
+	elif ! mv -- "$stage" "$sidecar"; then
+		rm -f -- "$stage"
 		sidecar_err="could not move the rebase-map sidecar into place at $sidecar"
 	fi
 	if [[ -n "$sidecar_err" ]]; then

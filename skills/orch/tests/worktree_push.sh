@@ -308,6 +308,45 @@ assert_eq "$(jq -r '.fixed_items[0].commit' "$work/tmp/workflow-state-issue-7.js
 rm -f "$alias_sidecar"
 
 echo
+echo "=== a symlinked sidecar path refuses before pushing (CWE-59) ==="
+
+# The sidecar path is predictable inside the pushed worktree; a symlink
+# planted there must not become an arbitrary-file read or overwrite. The run
+# refuses before the push and the symlink's target keeps its content.
+victim="$TMP_ROOT/victim.json"
+printf '%s\n' '{"untouched":true}' >"$victim"
+work="$TMP_ROOT/work-symlink"
+reset_state "$work"
+ln -s "$victim" "$SIDECAR"
+symlink_args_log="$TMP_ROOT/symlink-args.log"
+: >"$symlink_args_log"
+STUB_ARGS_LOG="$symlink_args_log" STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" \
+  run_push "$work" --worktree "$wt" --issue KEN-1
+assert_eq "$RUN_RC" "1" "a symlinked sidecar path fails the call"
+assert_contains "$(cat "$run_err")" "is a symlink" "the refusal names the symlink"
+assert_eq "$(wc -l <"$symlink_args_log")" "0" "the push never runs behind a symlinked sidecar"
+assert_eq "$(cat "$victim")" '{"untouched":true}' "the symlink target keeps its content"
+[[ -L "$SIDECAR" ]] && pass "the planted symlink is left for inspection, not deleted" || fail "the planted symlink is left for inspection, not deleted"
+rm -f "$SIDECAR"
+
+# A symlinked tmp/ directory is the same hole one level up: the staging file
+# would land wherever the link points.
+saved_tmp="$TMP_ROOT/saved-wt-tmp"
+elsewhere="$TMP_ROOT/elsewhere"
+mkdir -p "$elsewhere"
+mv "$wt/tmp" "$saved_tmp"
+ln -s "$elsewhere" "$wt/tmp"
+: >"$symlink_args_log"
+STUB_ARGS_LOG="$symlink_args_log" STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" \
+  run_push "$work" --worktree "$wt" --issue KEN-1
+rm "$wt/tmp"
+mv "$saved_tmp" "$wt/tmp"
+assert_eq "$RUN_RC" "1" "a symlinked tmp directory fails the call"
+assert_contains "$(cat "$run_err")" "is a symlink" "the tmp-directory refusal names the symlink"
+assert_eq "$(wc -l <"$symlink_args_log")" "0" "the push never runs behind a symlinked tmp directory"
+assert_eq "$(find "$elsewhere" -mindepth 1 | wc -l)" "0" "nothing is written through the symlinked directory"
+
+echo
 echo "=== an ambiguous state key refuses before pushing ==="
 
 # Files under BOTH the bare-numeric and the issue-N key make the
