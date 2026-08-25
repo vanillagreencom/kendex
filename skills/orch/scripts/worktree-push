@@ -21,14 +21,14 @@
 #   - prints one `sha-reconcile:` summary line naming what changed.
 #
 # The rebase happens BEFORE the network push, so a rejected push can still
-# have rewritten the branch. The parsed map is persisted to a sidecar file
-# beside the workflow-state record it repairs
-# (<state-dir>/worktree-push-pending-map-<resolved-key>.json) before the
-# state write and deleted only after the write lands; every run consumes a
-# pending sidecar before pushing, so a retry re-applies a map an earlier run
-# could not record. Recovery state never lives inside the pushed tree: tree
-# content is repository-controlled, and a sidecar there could be planted or
-# redirected by it.
+# have rewritten the branch. The parsed map is persisted to a sidecar file in
+# the worktree's own git dir
+# (<git-dir>/worktree-push-pending-map-<canonical-key>.json, the git dir
+# being .git/worktrees/<name>/ for a linked worktree) before the state write
+# and deleted only after the write lands; every run consumes a pending
+# sidecar before pushing, so a retry re-applies a map an earlier run could
+# not record. The git dir is never tracked content, so nothing a branch
+# ships can plant or redirect the sidecar.
 #
 # Artifact-sourced SHAs (for example a perf QA `benchmark_commit`) are not in
 # workflow state; publishers resolve those through `.rebase_map`, following
@@ -136,6 +136,8 @@ command -v jq >/dev/null 2>&1 || fail "jq is required to reconcile rebased SHAs"
 
 worktree_abs="$(cd -P -- "$worktree" 2>/dev/null && pwd -P)" \
 	|| fail "not a directory: $worktree"
+git_dir="$(git -C "$worktree_abs" rev-parse --absolute-git-dir 2>/dev/null)" \
+	|| fail "not a git worktree: $worktree_abs"
 
 state_flags=()
 [[ -z "$state_dir" ]] || state_flags=(--state-dir "$state_dir")
@@ -214,38 +216,28 @@ if [[ "$state_present" == "true" ]]; then
 	fi
 fi
 
-# The sidecar is recovery state for the workflow-state record, so it lives
-# BESIDE that record in the resolved state directory, named by the record it
-# repairs. Never inside the pushed tree: tree content is
-# repository-controlled, and recovery state kept there could be planted (a
-# plausible map in a tracked file) or redirected (a symlink at its path).
-# Location closes that class outright — no per-variant content checks.
-# One canonical key per issue, whatever spelling the caller used: the key of
-# the resolved state file when one exists, and the normalized issue-N key
-# when none does — a missing state resolves to the raw spelling, but
-# GitHub-issue orchestration inits state under issue-N, so a bare-numeric
-# push that strands a map and an issue-N retry that must consume it have to
-# agree on one sidecar name.
-state_dir_resolved="$(dirname -- "$state_file")"
+# The sidecar is recovery state, so it lives in the worktree's own git dir —
+# never tracked content, so nothing a branch ships can plant or redirect it —
+# under ONE canonical key per issue, used for write and lookup alike so every
+# accepted spelling hits the same file: the key of the resolved state file
+# when one exists, and the normalized issue-N key when none does (a missing
+# state resolves to the raw spelling, but GitHub-issue orchestration inits
+# state under issue-N, so a bare-numeric push that strands a map and an
+# issue-N retry that must consume it have to agree on one name).
 state_key="$(basename -- "$state_file")"
 state_key="${state_key#workflow-state-}"
 state_key="${state_key%.json}"
 if [[ "$state_present" != "true" && "$issue" =~ ^[0-9]+$ ]]; then
 	state_key="issue-$issue"
 fi
-sidecar="$state_dir_resolved/worktree-push-pending-map-$state_key.json"
+sidecar="$git_dir/worktree-push-pending-map-$state_key.json"
 
 # A sidecar left by an earlier run is a rebase that already happened; its map
-# must land before this run pushes (and possibly rebases again). It is held
-# to the same grammar the writer enforces — a corrupted or planted file must
-# not merge arbitrary values into the record and then delete itself.
+# must land before this run pushes (and possibly rebases again). Only this
+# tool writes in the git dir, so the content is trusted; a damaged file still
+# fails closed — reconcile_map's fromjson errors and the map is kept.
 if [[ -f "$sidecar" ]]; then
 	pending_map="$(cat -- "$sidecar")" || fail "could not read the pending rebase map at $sidecar"
-	jq -e --arg sha "^[0-9a-f]{40}\$" '
-		type == "object"
-		and (to_entries | all((.key | test($sha)) and ((.value == "dropped") or (.value | test($sha)))))
-	' >/dev/null 2>&1 <<<"$pending_map" \
-		|| fail "the pending rebase map at $sidecar is not a valid old->new SHA map; repair or remove it before pushing"
 	reconcile_map "$pending_map" \
 		|| fail "a pending rebase map from an earlier push could not be applied to $issue's workflow state; recorded SHAs are NOT reconciled (map kept at $sidecar)"
 	rm -f -- "$sidecar"
@@ -306,10 +298,8 @@ if [[ "$map_json" != '{}' ]]; then
 	# a plausible half-map at the sidecar name.
 	sidecar_err=''
 	stage=''
-	if ! mkdir -p -- "$state_dir_resolved"; then
-		sidecar_err="could not create $state_dir_resolved for the rebase-map sidecar"
-	elif ! stage=$(mktemp -- "$sidecar.XXXXXX"); then
-		sidecar_err="could not create a staging file for the rebase-map sidecar in $state_dir_resolved"
+	if ! stage=$(mktemp -- "$sidecar.XXXXXX"); then
+		sidecar_err="could not create a staging file for the rebase-map sidecar in $git_dir"
 	elif ! printf '%s\n' "$map_json" >"$stage"; then
 		rm -f -- "$stage"
 		sidecar_err="could not write the rebase-map sidecar staging file at $stage"
