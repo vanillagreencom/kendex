@@ -363,6 +363,17 @@ git -C "$R" add -A
 run_pf
 clean "a pnpm exec vitest invocation wires the suite"
 
+# Environment assignment words before the runner are part of the
+# invocation, not a different command.
+seed envassign
+printf '{\n  "scripts": { "test": "CI=1 vitest run" }\n}\n' >"$R/package.json"
+git -C "$R" add -A
+git -C "$R" commit -qm "vitest behind an environment assignment"
+printf 'export {}\n' >"$R/v.test.ts"
+git -C "$R" add -A
+run_pf
+clean "an env-assignment-prefixed vitest invocation wires the suite"
+
 # And a chained invocation after a shell connector.
 seed chained
 printf '{\n  "scripts": { "test": "node setup.js && vitest run" }\n}\n' >"$R/package.json"
