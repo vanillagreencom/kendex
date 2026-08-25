@@ -112,6 +112,23 @@ assert_contains "$out" "head-run: 29099680623,29099700200" "head-run names the s
 assert_contains "$out" "fail: CI Required state=FAILURE workflow=- run=29099700200" "the mixed-head status failure is run-correlated"
 assert_contains "$out" "superseded: status=CI Required run=29099700100" "an older same-name status run is named as superseded"
 
+# A run retired by the stale-status rewrite is named as superseded. The
+# aggregate `CI Required` status still links run A, but scoping rewrote it to
+# EXPECTED because run B replaced it — so A is correctly out of head-run:,
+# and must land on a superseded: line instead of appearing on neither. Run C
+# is the unrelated failure that makes this a ci_failed refusal.
+checks='[
+  {"name":"Lint","state":"SUCCESS","bucket":"pass","link":"https://github.com/owner/repo/actions/runs/29099700100/job/101","workflow":"CI","startedAt":"2026-07-10T10:00:00Z"},
+  {"name":"Lint","state":"SUCCESS","bucket":"pass","link":"https://github.com/owner/repo/actions/runs/29099700200/job/201","workflow":"CI","startedAt":"2026-07-10T11:00:00Z"},
+  {"name":"CI Required","state":"FAILURE","bucket":"fail","link":"https://github.com/owner/repo/actions/runs/29099700100","workflow":""},
+  {"name":"Docs Build","state":"FAILURE","bucket":"fail","link":"https://github.com/owner/repo/actions/runs/29099700300/job/301","workflow":"Docs","startedAt":"2026-07-10T11:00:00Z"}
+]'
+out=$(STUB_CHECKS="$checks" STUB_CHECKS_EXIT=8 run_classify)
+assert_eq "$(head -1 <<<"$out")" "cause: ci_failed" "the unrelated failure still classifies as ci_failed"
+assert_eq "$(grep '^head-run: ' <<<"$out")" "head-run: 29099700200,29099700300" "the retired run is out of head-run:"
+assert_contains "$out" "superseded: status=CI Required run=29099700100" "the status the rewrite retired names its run as superseded"
+assert_contains "$out" "superseded: workflow=CI run=29099700100" "the retired run's workflow record is named as superseded"
+
 # The verdict and its detail block read ONE snapshot: the ci_failed branch
 # scopes the checks rollup embedded in pr-merge --check's JSON instead of
 # refetching, so a rerun starting between two fetches cannot make cause:
