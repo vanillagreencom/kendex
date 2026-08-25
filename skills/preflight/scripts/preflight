@@ -717,7 +717,8 @@ build_runner_index() {
     cat -- "$c" >>"$TMP/runner.bodies"
     # A runner invoking bare vitest or jest runs that runner's own default
     # include glob — no path in the runner ever names the suites it
-    # executes. Comment lines are dropped first; on the rest the word must
+    # executes. Comment context is dropped first — whole-line comments and
+    # a trailing comment opened by whitespace-then-# — then the word must
     # stand at a command position — after line-leading whitespace, a shell
     # connector (; & | backtick paren), a directly preceding manager or
     # exec-form word (npx pnpm yarn exec dlx), or a
@@ -725,10 +726,10 @@ build_runner_index() {
     # and end at whitespace, a quote, a connector, or the line end. A
     # dependency key ("vitest": "^3"), a package path (@vitest/ui), a
     # path-prefixed binary (node_modules/.bin/vitest), and a prose mention
-    # all fail that shape. Recorded with the directory the runner runs
+    # all fail that shape. Recorded as the directory the runner runs
     # from: manifests run beside themselves; workflows and validate
     # scripts run from the root of the tree that owns them.
-    sed '/^[[:space:]]*#/d' -- "$c" >"$TMP/runner.body.one"
+    sed -e '/^[[:space:]]*#/d' -e 's/[[:space:]]#.*//' -- "$c" >"$TMP/runner.body.one"
     for kind in vitest jest; do
       LC_ALL=C grep -qE "(^[[:space:]]*|[;&|\`(][[:space:]]*|(npx|pnpm|yarn|exec|dlx)[[:space:]]+|:[[:space:]]*[\"']?)$kind([[:space:]\"'\`;&|)]|\$)" "$TMP/runner.body.one" || continue
       scope=""
@@ -740,7 +741,7 @@ build_runner_index() {
           ;;
         */*) scope="${r%/*}" ;;
       esac
-      printf '%s\t%s\n' "$kind" "$scope" >>"$TMP/runner.defaultglob"
+      printf '%s\n' "$scope" >>"$TMP/runner.defaultglob"
     done
     status=0
     LC_ALL=C tr -cs 'A-Za-z0-9_*./-' '\n' <"$c" | LC_ALL=C grep -e / |
@@ -756,7 +757,7 @@ build_runner_index() {
 # read whole, proves nothing either way — an unproven suite is not an
 # unwired one, so the lane says nothing.
 suite_is_wired() { # SUITE-PATH
-  local p="$1" base dir="" r tok kind scope
+  local p="$1" base dir="" r tok scope
   base="${p##*/}"
   case "$p" in */*) dir="${p%/*}" ;; esac
   build_runner_index
@@ -771,14 +772,14 @@ suite_is_wired() { # SUITE-PATH
     case "$p" in "${r%/*}"/*) return 0 ;; esac
   done <"$TMP/runner.names"
   # A recorded bare vitest/jest invocation wires every suite its runner's
-  # default include glob matches under the directory it runs from:
-  # *.test.ts/js/mjs for vitest, *.test.ts/js for jest, whose default
-  # testMatch stops at js/ts. A config pinning an explicit include or
-  # testMatch is not evaluated — an unproven suite is not an unwired one.
-  while IFS="$TAB" read -r kind scope; do
+  # default include glob matches under the directory it runs from. Both
+  # defaults cover *.test.ts/js/mjs — vitest's include and Jest 30's
+  # testMatch (**/?(*.)+(spec|test).?([mc])[jt]s?(x)) alike. A config
+  # pinning an explicit include or testMatch is not evaluated — an
+  # unproven suite is not an unwired one.
+  while IFS= read -r scope; do
     case "$p" in
-      *.test.ts | *.test.js) ;;
-      *.test.mjs) [ "$kind" = vitest ] || continue ;;
+      *.test.ts | *.test.js | *.test.mjs) ;;
       *) continue ;;
     esac
     if [ -z "$scope" ]; then return 0; fi

@@ -273,8 +273,8 @@ git -C "$R" add -A
 run_pf
 fires "vitest named only as a dependency wires nothing" "orphan.test.ts:0: [unwired-suite]"
 
-# Jest's default testMatch stops at js/ts: a jest script wires the ts
-# suite beside an mjs one it never runs.
+# Jest's default testMatch covers mc-prefixed extensions too, so a jest
+# script wires ts and mjs suites alike.
 seed jestdefault
 printf '{\n  "scripts": { "test": "jest --ci" }\n}\n' >"$R/package.json"
 git -C "$R" add -A
@@ -283,8 +283,7 @@ printf 'export {}\n' >"$R/a.test.ts"
 printf 'export {}\n' >"$R/b.test.mjs"
 git -C "$R" add -A
 run_pf
-fires "a jest script leaves an mjs suite outside its default testMatch" "b.test.mjs:0: [unwired-suite]"
-case "$OUT" in *"a.test.ts"*) bad "a jest script wires the ts suite its default testMatch covers" "$OUT" ;; *) ok "a jest script wires the ts suite its default testMatch covers" ;; esac
+clean "a jest script wires the ts and mjs suites its default testMatch covers"
 
 # A workflow invoking vitest runs from the repo root, so its default
 # include wires a suite far from .github/workflows.
@@ -385,6 +384,18 @@ printf 'export {}\n' >"$R/p.test.ts"
 git -C "$R" add -A
 run_pf
 fires "a workflow comment naming vitest wires nothing" "p.test.ts:0: [unwired-suite]"
+
+# Neither is a trailing comment: a connector and invocation living after
+# a whitespace-opened # wire nothing.
+seed trailingcomment
+mkdir -p "$R/.github/workflows"
+printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok # ; vitest\n' >"$R/.github/workflows/ci.yml"
+git -C "$R" add -A
+git -C "$R" commit -qm "workflow naming vitest only in a trailing comment"
+printf 'export {}\n' >"$R/t.test.ts"
+git -C "$R" add -A
+run_pf
+fires "a trailing comment naming vitest wires nothing" "t.test.ts:0: [unwired-suite]"
 
 # Prose fields are not invocations either: a description and a keywords
 # array naming both runners wire nothing.
