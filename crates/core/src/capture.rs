@@ -2,8 +2,9 @@
 //! directory into the files a plan writes, and the budget that stops a
 //! link at somebody's home directory becoming a memory problem. Adoption
 //! keeps an unmanaged tree with it, a fork keeps an edited one, and the
-//! package diff reads an installed one; none of them needs the others
-//! open to read it.
+//! package diff reads an installed one, so it sits beside them rather
+//! than inside any one of their module trees; none of them needs the
+//! others open to read it.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -54,7 +55,7 @@ pub(crate) fn read_tree(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>> {
             if !shape.is_file() {
                 return Err(CoreError::io(
                     &path,
-                    std::io::Error::other("not a regular file — adopt captures plain files only"),
+                    std::io::Error::other("not a regular file — only plain files can be captured"),
                 ));
             }
             // The budget is spent on what was read, never on what the
@@ -75,7 +76,7 @@ pub(crate) fn read_tree(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>> {
                 return Err(CoreError::io(
                     &path,
                     std::io::Error::other(format!(
-                        "this folder is bigger than adopt will capture (over {MAX_CAPTURE_FILES} files or {} MB)",
+                        "this folder is bigger than kendex will capture (over {MAX_CAPTURE_FILES} files or {} MB)",
                         MAX_CAPTURE_BYTES / (1024 * 1024)
                     )),
                 ));
@@ -105,6 +106,6 @@ mod tests {
             fs::write(dir.join(format!("f{i}")), "x").unwrap();
         }
         let error = read_tree(&dir).unwrap_err();
-        assert!(error.to_string().contains("bigger than adopt"), "{error}");
+        assert!(error.to_string().contains("bigger than kendex"), "{error}");
     }
 }

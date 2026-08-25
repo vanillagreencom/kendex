@@ -55,6 +55,14 @@ fn fork_beside_refuses_a_name_the_scope_already_uses() {
 
     let bad = beside("a/b/c");
     assert!(matches!(bad, CoreError::ForkNameUnusable { .. }), "{bad:?}");
+
+    // The refusal prints the name, so an escape sequence in it reaches a
+    // terminal: shown as its escape rather than run. The multi-slash arm
+    // is the one that formats the whole name, so a clean first segment
+    // is what carries the sequence this far.
+    let said = beside("a/b\u{1b}[31m/c").to_string();
+    assert!(!said.contains('\u{1b}'), "{said:?}");
+    assert!(said.contains("\\u{1b}"), "{said:?}");
 }
 
 /// A derived install — a dependency or bundle member — has a lock entry

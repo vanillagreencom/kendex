@@ -239,7 +239,7 @@ fn installed_tree(
     }
     let mut tree = Tree::new();
     if path.is_dir() {
-        for (rel, bytes) in crate::engine::capture::read_tree(&path)? {
+        for (rel, bytes) in crate::capture::read_tree(&path)? {
             tree.insert(slashed(&rel), bytes);
         }
     } else {

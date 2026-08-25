@@ -99,7 +99,7 @@ pub fn fork_beside(
 fn named(captured: Capture, new_name: &str) -> Result<Capture> {
     let rename = |bytes: Vec<u8>| -> Result<Vec<u8>> {
         let refused = |problem: String| CoreError::ForkNameUnusable {
-            name: new_name.to_owned(),
+            name: crate::names::shown(new_name),
             problem,
         };
         let text =

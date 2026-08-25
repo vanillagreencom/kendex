@@ -35,8 +35,10 @@ pub(super) fn vacant_name(
     decl: &ItemDecl,
     new: &str,
 ) -> Result<()> {
+    // Shown, not raw: the name reaches a terminal in the refusal, and an
+    // escape sequence inside it is printed rather than run.
     let unusable = |problem: String| CoreError::ForkNameUnusable {
-        name: new.to_owned(),
+        name: crate::names::shown(new),
         problem,
     };
     if let Some(problem) = crate::names::item_problem(new) {
@@ -84,7 +86,7 @@ pub(super) fn vacant_name(
     if fs::symlink_metadata(&slot).is_ok() || crate::names::folding_sibling(&slot).is_some() {
         return Err(collision("this scope's local source"));
     }
-    if let Some(problem) = slot_unreachable(env, scope, kind, new, &slot)? {
+    if let Some(problem) = crate::source::slot_unreachable(env, scope, kind, new, &slot)? {
         return Err(unusable(problem));
     }
     // Anything already at a path the fork would render to is not the
@@ -100,51 +102,6 @@ pub(super) fn vacant_name(
         }
     }
     Ok(())
-}
-
-/// Why the local source cannot hold the fork's bytes at `slot`, in words
-/// for the person who typed the name.
-///
-/// Every render destination is one component under its directory — the
-/// separators fold a namespaced name into a single leaf — so the slot is
-/// the one destination whose name spells a path. `plugin/item` is stored
-/// at `<local>/skills/plugin/item`, and the leaf being free says nothing
-/// about what stands above it: the plugin half may be a package of its
-/// own, in which case the capture writes the fork inside that package's
-/// tree, where every later render of it carries the fork's files as its
-/// own content; or a component may be a symlink, which the sealed reader
-/// refuses to look through, so bytes written past one are bytes kendex
-/// can never read back. Both answers come from the reader the rest of the
-/// engine resolves this source with, not from a second spelling of the
-/// local source's layout here.
-fn slot_unreachable(
-    env: &Env,
-    scope: &Scope,
-    kind: ItemKind,
-    new: &str,
-    slot: &std::path::Path,
-) -> Result<Option<String>> {
-    let root = crate::source::local_source_root(env, scope);
-    if !root.is_dir() {
-        return Ok(None);
-    }
-    let sealed = crate::source_read::SealedSource::open(&root)?;
-    if let Err(escape) = sealed.contained(slot) {
-        return Ok(Some(format!(
-            "the local source cannot be written there — {escape}"
-        )));
-    }
-    let config = crate::source::source_config_for(&sealed, LOCAL_SOURCE_NAME)?;
-    let Some((plugin, _)) = crate::names::split(new) else {
-        return Ok(None);
-    };
-    if crate::source::find_item(&sealed, &config, kind, plugin).is_some() {
-        return Ok(Some(format!(
-            "`{}` is a package of its own here, and this name would be stored inside it",
-            crate::names::shown(plugin)
-        )));
-    }
-    Ok(None)
 }
 
 /// Every path an item of this kind under `name` would render to in this

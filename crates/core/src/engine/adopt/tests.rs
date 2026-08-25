@@ -459,18 +459,139 @@ fn trash_is_empty(env: &Env) -> bool {
     fs::read_dir(env.trash_dir()).is_ok_and(|mut d| d.next().is_none()) || !env.trash_dir().exists()
 }
 
-/// Only skills render. A command's position is reachable from a drift
-/// row, and whatever it owes its own renderer is not this fix's to
-/// settle, so its join is the one it always was.
+/// A skill's position is the tool's own spelling of the name, and the
+/// separator is the tool's, not one hard-coded here: Claude joins with
+/// `__`, Copilot's lower-kebab rule with `-`.
 #[test]
-fn only_a_skills_position_takes_the_rendered_spelling() {
+fn a_skills_position_takes_each_tools_own_separator() {
     let tmp = tempfile::tempdir().unwrap();
     let env = Env::fake(tmp.path(), FakeOs::Linux);
     let scope = Scope::Project {
         root: tmp.path().join("app"),
     };
-    let at = |kind| position(&env, &scope, kind, "data-science/eda", HarnessId::Claude).unwrap();
+    let at =
+        |harness| position(&env, &scope, ItemKind::Skill, "data-science/eda", harness).unwrap();
 
-    assert!(at(ItemKind::Skill).ends_with("data-science__eda"));
-    assert!(at(ItemKind::Command).ends_with("data-science/eda"));
+    assert!(at(HarnessId::Claude).ends_with("data-science__eda"));
+    assert!(at(HarnessId::Copilot).ends_with("data-science-eda"));
+}
+
+/// The guard on `position` itself, not on the verb above it. Without it
+/// the rendered join turns `../notes` into `..__notes` and hands back a
+/// position, so every surface reading this would offer a keep for a name
+/// adoption refuses.
+#[test]
+fn a_refused_name_has_no_position_to_offer() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let scope = Scope::Project {
+        root: tmp.path().join("app"),
+    };
+
+    assert!(position(&env, &scope, ItemKind::Skill, "../notes", HarnessId::Claude).is_none());
+}
+
+/// A legal name still spells a path. With `.kendex-local/skills` a link
+/// at somebody else's folder, the destination sits outside the sealed
+/// source, and the capture's trash-then-write pair would land on a tree
+/// adoption was never pointed at.
+#[test]
+fn a_symlinked_local_source_directory_refuses_the_capture() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let project = tmp.path().join("app");
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    let outside = tmp.path().join("elsewhere");
+    fs::create_dir_all(outside.join("handmade")).unwrap();
+    fs::write(outside.join("handmade/keepsake.md"), "somebody else's").unwrap();
+    fs::create_dir_all(project.join(".kendex-local")).unwrap();
+    std::os::unix::fs::symlink(&outside, project.join(".kendex-local/skills")).unwrap();
+    fs::create_dir_all(project.join(".claude/skills/handmade")).unwrap();
+    fs::write(project.join(".claude/skills/handmade/SKILL.md"), "mine").unwrap();
+
+    let refused = adopt(
+        &env,
+        &scope,
+        ItemKind::Skill,
+        "handmade",
+        &[HarnessId::Claude],
+    )
+    .unwrap_err();
+
+    assert!(
+        matches!(refused, CoreError::AdoptNameUnusable { .. }),
+        "{refused:?}"
+    );
+    assert!(outside.join("handmade/keepsake.md").is_file());
+    assert!(project.join(".claude/skills/handmade/SKILL.md").is_file());
+    assert!(trash_is_empty(&env));
+}
+
+/// A namespaced name whose plugin half is already a package here would be
+/// stored inside that package, and every later render of it would carry
+/// the captured files as its own content.
+#[test]
+fn a_namespaced_name_under_an_existing_package_refuses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let project = tmp.path().join("app");
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    let parent = project.join(".kendex-local/skills/data-science");
+    fs::create_dir_all(&parent).unwrap();
+    fs::write(parent.join("SKILL.md"), "a package of its own").unwrap();
+    fs::create_dir_all(project.join(".claude/skills/data-science__eda")).unwrap();
+    fs::write(
+        project.join(".claude/skills/data-science__eda/SKILL.md"),
+        "mine",
+    )
+    .unwrap();
+
+    let refused = adopt(
+        &env,
+        &scope,
+        ItemKind::Skill,
+        "data-science/eda",
+        &[HarnessId::Claude],
+    )
+    .unwrap_err();
+
+    assert!(
+        matches!(refused, CoreError::AdoptNameUnusable { .. }),
+        "{refused:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(parent.join("SKILL.md")).unwrap(),
+        "a package of its own"
+    );
+    assert!(!parent.join("eda").exists());
+    assert!(trash_is_empty(&env));
+}
+
+/// A refused name is printed, not run. The name reaches stderr through
+/// the CLI's `Error: {e}`, so a control sequence inside it would clear
+/// the reader's screen while telling them the name was refused.
+#[test]
+fn a_refusal_prints_the_escape_sequences_it_refuses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let scope = Scope::Project {
+        root: tmp.path().join("app"),
+    };
+
+    let said = adopt(
+        &env,
+        &scope,
+        ItemKind::Skill,
+        "keep\u{1b}[2J",
+        &[HarnessId::Claude],
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(!said.contains('\u{1b}'), "{said:?}");
+    assert!(said.contains("\\u{1b}"), "{said:?}");
 }

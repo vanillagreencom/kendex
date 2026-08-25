@@ -197,7 +197,7 @@ enum Capture {
 
 fn capture(kind: ItemKind, edited: &std::path::Path) -> Result<Capture> {
     Ok(match kind {
-        ItemKind::Skill => Capture::Tree(source_form(super::capture::read_tree(edited)?)),
+        ItemKind::Skill => Capture::Tree(source_form(crate::capture::read_tree(edited)?)),
         _ => Capture::File(fs::read(edited).map_err(|e| CoreError::io(edited, e))?),
     })
 }

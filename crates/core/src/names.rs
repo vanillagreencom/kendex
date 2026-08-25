@@ -140,7 +140,8 @@ pub fn item_problem(name: &str) -> Option<String> {
     let leaf = segments.next()?;
     if segments.next().is_some() {
         return Some(format!(
-            "`{name}` has more than one `/` — a name is either a plain name or `<plugin>/<item>`"
+            "`{}` has more than one `/` — a name is either a plain name or `<plugin>/<item>`",
+            shown(name)
         ));
     }
     segment_problem(leaf)
@@ -269,5 +270,12 @@ mod tests {
         assert!(!said.contains('\u{1b}'), "{said:?}");
         assert!(!said.contains('\0'), "{said:?}");
         assert!(said.contains("\\u{1b}") && said.contains("\\0"), "{said:?}");
+        // The multi-slash arm prints the whole name rather than a
+        // segment, and is the one refusal that never reaches
+        // segment_problem — so its first segment has to be clean for the
+        // escape to arrive here at all.
+        let many = item_problem("a/b\u{1b}[31m/c").unwrap_or_default();
+        assert!(!many.contains('\u{1b}'), "{many:?}");
+        assert!(many.contains("\\u{1b}"), "{many:?}");
     }
 }

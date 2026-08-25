@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::manifest::{LOCAL_SOURCE_NAME, Manifest, SourceDecl};
-use crate::model::Scope;
+use crate::model::{ItemKind, Scope};
 mod about;
 pub mod browse;
 pub mod bundles;
@@ -31,6 +31,52 @@ pub fn repo_leaf(provenance: &str) -> &str {
         .rsplit(['/', '\\'])
         .next()
         .unwrap_or(provenance)
+}
+
+/// Why the local source cannot hold an item's bytes at `slot`, in words
+/// for the person who typed the name. A fork's capture and adoption's
+/// both land here, and both ask this before planning a byte.
+///
+/// Every render destination is one component under its directory — the
+/// separators fold a namespaced name into a single leaf — so the slot is
+/// the one destination whose name spells a path. `plugin/item` is stored
+/// at `<local>/skills/plugin/item`, and the leaf being free says nothing
+/// about what stands above it: the plugin half may be a package of its
+/// own, in which case the capture writes the fork inside that package's
+/// tree, where every later render of it carries the fork's files as its
+/// own content; or a component may be a symlink, which the sealed reader
+/// refuses to look through, so bytes written past one are bytes kendex
+/// can never read back. Both answers come from the reader the rest of the
+/// engine resolves this source with, not from a second spelling of the
+/// local source's layout here.
+pub(crate) fn slot_unreachable(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    slot: &std::path::Path,
+) -> Result<Option<String>> {
+    let root = local_source_root(env, scope);
+    if !root.is_dir() {
+        return Ok(None);
+    }
+    let sealed = crate::source_read::SealedSource::open(&root)?;
+    if let Err(escape) = sealed.contained(slot) {
+        return Ok(Some(format!(
+            "the local source cannot be written there — {escape}"
+        )));
+    }
+    let config = source_config_for(&sealed, LOCAL_SOURCE_NAME)?;
+    let Some((plugin, _)) = crate::names::split(name) else {
+        return Ok(None);
+    };
+    if find_item(&sealed, &config, kind, plugin).is_some() {
+        return Ok(Some(format!(
+            "`{}` is a package of its own here, and this name would be stored inside it",
+            crate::names::shown(plugin)
+        )));
+    }
+    Ok(None)
 }
 
 /// A source the engine can read right now.

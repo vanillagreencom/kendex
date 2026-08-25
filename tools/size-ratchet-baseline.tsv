@@ -1,5 +1,5 @@
 .github/workflows/review-gate-writer.yml	652
-crates/core/src/engine/adopt.rs	683
+crates/core/src/engine/adopt.rs	707
 crates/core/src/engine/desired_agent.rs	458
 crates/core/src/engine/detach.rs	603
 crates/core/src/engine/ops/add.rs	539

@@ -46,6 +46,16 @@ pub fn adopt(
     usable(name)?;
     let mut manifest = manifest_for_mutation(env, scope)?;
     let local_item = local_item_path(env, scope, kind, name)?;
+    // A legal name still spells a path, and the directories above the
+    // destination are not the name's to vouch for: a symlinked
+    // `.kendex-local/skills` puts the capture outside the sealed source,
+    // where trash-then-write lands on an unrelated tree, and a namespaced
+    // destination can sit inside a package already stored here, whose
+    // every later render would carry these files as its own. Both answers
+    // come from the reader a fork's capture asks, not a second rule here.
+    if let Some(problem) = crate::source::slot_unreachable(env, scope, kind, name, &local_item)? {
+        return Err(unusable(name, problem));
+    }
 
     let mut positions: Vec<(HarnessId, PathBuf)> = Vec::new();
     for &harness in harnesses {
@@ -164,16 +174,28 @@ pub fn adopt(
 /// A name adoption may derive a path from. Every place it reads or writes
 /// is this name joined onto a root, so an absolute or `..`-shaped one
 /// leaves both the tool's directory and the local source, and the capture
-/// moves — then trashes — a directory nobody named. Asked at each place a
-/// path is derived, and it admits exactly the names the rest of kendex
-/// installs, so an offer and the capture cannot read different rules.
+/// moves — then trashes — a directory nobody named. It admits exactly the
+/// names the rest of kendex installs, so an offer and the capture cannot
+/// read different rules.
+///
+/// Three calls, three surfaces, not one guard thrice: `adopt` answers the
+/// verb, ahead of the manifest read so a bad name is named as one rather
+/// than as whatever else the scope is missing; `local_item_path` answers
+/// the planner, through `link_target` and `shared_tools`; `position`
+/// answers `can_keep_for` and the exits a page draws from it.
 fn usable(name: &str) -> Result<()> {
     match crate::names::item_problem(name) {
-        Some(problem) => Err(CoreError::AdoptNameUnusable {
-            name: name.to_owned(),
-            problem,
-        }),
+        Some(problem) => Err(unusable(name, problem)),
         None => Ok(()),
+    }
+}
+
+/// A refusal naming the name. A name reaches a terminal as text, so it is
+/// shown: an escape sequence inside it is printed rather than run.
+fn unusable(name: &str, problem: String) -> CoreError {
+    CoreError::AdoptNameUnusable {
+        name: crate::names::shown(name),
+        problem,
     }
 }
 
@@ -298,7 +320,7 @@ fn capture_ops(
     let capture = match kind {
         ItemKind::Skill => Op::WriteTree {
             root: local_item.to_path_buf(),
-            files: super::capture::read_tree(source)?,
+            files: crate::capture::read_tree(source)?,
             pre: Pre::Absent,
         },
         _ => Op::WriteFile {
@@ -513,7 +535,7 @@ fn shared_capture_ops(
         description: format!("move the shared folder's content of {name} into the local source"),
         op: Op::WriteTree {
             root: local_item.to_path_buf(),
-            files: super::capture::read_tree(&shared.target)?,
+            files: crate::capture::read_tree(&shared.target)?,
             pre: Pre::Absent,
         },
     });
@@ -602,11 +624,12 @@ fn declare(
 // reads are answered here together, so an offer never names a position
 // the capture will not find.
 
-/// The place one tool reads this item from — the only place adoption looks
-/// for it. Read wherever a surface asks whether adoption could keep a
-/// tool's copy, so the question and the action are one rule: an offer
-/// naming a tool that has nothing here would error the moment it was
-/// followed.
+/// The place one tool reads an adoptable item from — the only place
+/// adoption looks for it. Answered for the kinds `supports` takes and no
+/// others, so the arms are the whole of what adoption can be asked. Read
+/// wherever a surface asks whether adoption could keep a tool's copy, so
+/// the question and the action are one rule: an offer naming a tool that
+/// has nothing here would error the moment it was followed.
 pub(super) fn position(
     env: &Env,
     scope: &Scope,
@@ -626,10 +649,11 @@ pub(super) fn position(
         // `plugin-item`. Reading nested directories instead would find
         // nothing, and report a skill plainly there as absent.
         ItemKind::Skill => dir.join(crate::harness::rendered_name(harness, name)),
-        // Every other kind keeps the join it had: adoption takes agents
-        // and skills, and what a command's position owes its own
-        // renderer is a question this fix does not answer.
-        _ => dir.join(name),
+        // No other kind reaches here: `supports` gates `can_keep_for`,
+        // and a shared-link row exists only where `link_target` said yes,
+        // which is skills only. Nothing, rather than a guess that would
+        // read as a contract for a renderer this does not speak for.
+        _ => return None,
     })
 }
 

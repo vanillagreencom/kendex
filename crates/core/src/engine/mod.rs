@@ -9,7 +9,6 @@ use crate::model::Scope;
 
 pub mod adopt;
 pub(crate) mod bundles;
-pub(crate) mod capture;
 mod catalog;
 mod config_edits;
 mod copilot;

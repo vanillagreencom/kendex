@@ -2,6 +2,7 @@ pub mod app_update;
 pub mod apply;
 pub mod author;
 pub mod base;
+pub(crate) mod capture;
 pub mod check_catalog;
 pub mod clock;
 pub mod configedit;
