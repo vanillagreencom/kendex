@@ -1,5 +1,5 @@
 use super::*;
-use crate::lock::{BundleRef, LockEntry};
+use crate::lock::{BundleRef, InstallRef, LockEntry};
 use crate::manifest::{ItemDecl, SourceDecl};
 use crate::model::{HarnessId, Scope};
 
@@ -332,4 +332,157 @@ fn a_package_installed_from_two_places_pins_nothing() {
         "nor one recorded against another repository behind the same alias"
     );
     assert_eq!(rev("a"), None, "the target resolves fresh either way");
+}
+
+/// A rebind leaves the lock holding entries from the source a package was
+/// installed from and from the one it reads now. Following those edges by
+/// name alone reaches the wrong parent — a declaration this scope still
+/// reads, exempted from holding on the strength of an installation that
+/// has nothing to do with it, and moved along with everything it carries.
+#[test]
+fn an_edge_recorded_against_another_source_exempts_nothing() {
+    let mut manifest = manifest_with(&[("parent", None), ("dep", None)], &["kit"]);
+    manifest.sources.insert(
+        "old".to_owned(),
+        SourceDecl {
+            repo: Some("owner/old".to_owned()),
+            enabled: true,
+            ..SourceDecl::default()
+        },
+    );
+    // The dependency reads from the catalog it was moved to; the parent
+    // and the set are still the ones this scope declares.
+    manifest
+        .declared_mut(ItemKind::Skill)
+        .get_mut("dep")
+        .unwrap()
+        .source = "old".to_owned();
+
+    let by_old_parent = Reason::RequiredBy {
+        by: InstallRef {
+            source: "old".to_owned(),
+            kind: ItemKind::Skill,
+            name: "parent".to_owned(),
+            harness: HarnessId::Claude,
+            scope: Scope::Global,
+        },
+    };
+    let of_old_kit = Reason::MemberOf {
+        bundle: BundleRef {
+            source: "old".to_owned(),
+            name: "kit".to_owned(),
+            scope: Scope::Global,
+        },
+    };
+    let lock = lock_with(&[
+        (
+            "skill:parent:claude",
+            entry("parent", Some("ppp"), &[Reason::Requested]),
+        ),
+        (
+            "skill:member:claude",
+            entry(
+                "member",
+                Some("mmm"),
+                &[Reason::MemberOf {
+                    bundle: BundleRef {
+                        source: "cat".to_owned(),
+                        name: "kit".to_owned(),
+                        scope: Scope::Global,
+                    },
+                }],
+            ),
+        ),
+        // The target, still recorded under the source it came from, with
+        // edges naming that source's parent and that source's set.
+        (
+            "skill:dep:claude",
+            entry_from(
+                "dep",
+                Some("ddd"),
+                &[by_old_parent, of_old_kit],
+                "old",
+                "owner/old",
+            ),
+        ),
+    ]);
+
+    let (held, _) = held_manifest(&manifest, &lock, &(ItemKind::Skill, "dep".to_owned()));
+    assert_eq!(
+        held.declared(ItemKind::Skill)["parent"].rev,
+        Some("ppp".to_owned()),
+        "a parent this scope reads is not exempted by an edge recorded against another source"
+    );
+    assert_eq!(
+        held.bundles["kit"].rev,
+        Some("mmm".to_owned()),
+        "nor is a set of the same name in another catalog"
+    );
+    assert_eq!(
+        held.declared(ItemKind::Skill)["dep"].rev,
+        None,
+        "and the package asked for still resolves fresh"
+    );
+}
+
+/// The same class from the other end: an installation a rebind left behind
+/// is an installation of a package the declaration no longer is, so the
+/// edges it records are not this update's to follow. Seeding the exemption
+/// off every entry that shares the name walks them anyway and unpins
+/// whatever they lead to.
+#[test]
+fn a_left_behind_installation_of_the_target_exempts_nothing() {
+    let mut manifest = manifest_with(&[("parent", None), ("dep", None)], &[]);
+    manifest.sources.insert(
+        "old".to_owned(),
+        SourceDecl {
+            repo: Some("owner/old".to_owned()),
+            enabled: true,
+            ..SourceDecl::default()
+        },
+    );
+    manifest
+        .declared_mut(ItemKind::Skill)
+        .get_mut("dep")
+        .unwrap()
+        .source = "old".to_owned();
+
+    let by_cat_parent = Reason::RequiredBy {
+        by: InstallRef {
+            source: "cat".to_owned(),
+            kind: ItemKind::Skill,
+            name: "parent".to_owned(),
+            harness: HarnessId::Claude,
+            scope: Scope::Global,
+        },
+    };
+    let lock = lock_with(&[
+        (
+            "skill:parent:claude",
+            entry("parent", Some("ppp"), &[Reason::Requested]),
+        ),
+        // What the declaration reads now.
+        (
+            "skill:dep:claude",
+            entry_from("dep", Some("ddd"), &[Reason::Requested], "old", "owner/old"),
+        ),
+        // And the copy the rebind left, still under the old catalog's
+        // parent.
+        (
+            "skill:dep:codex",
+            entry("dep", Some("ccc"), &[by_cat_parent]),
+        ),
+    ]);
+
+    let (held, _) = held_manifest(&manifest, &lock, &(ItemKind::Skill, "dep".to_owned()));
+    assert_eq!(
+        held.declared(ItemKind::Skill)["parent"].rev,
+        Some("ppp".to_owned()),
+        "the parent of an installation this declaration no longer has stays held"
+    );
+    assert_eq!(
+        held.declared(ItemKind::Skill)["dep"].rev,
+        None,
+        "and the package asked for still resolves fresh"
+    );
 }

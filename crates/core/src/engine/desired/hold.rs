@@ -26,10 +26,25 @@ use super::super::expansion::PLANNED_KINDS;
 /// What a declaration in the manifest answers for, and therefore what
 /// pinning it decides. A bundle is not an installation and has no lock
 /// entry of its own; what it is here for is the members it brought in.
+///
+/// The source is part of the identity, because every reference the lock
+/// records carries one. A rebind leaves entries naming a declaration this
+/// scope no longer reads, and matched by name alone one package's
+/// installations speak for another's: the wrong declaration is exempted
+/// from holding and moves, which is the side effect a single-package
+/// update exists to remove. An owner whose source no longer matches simply
+/// matches no declaration.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Owner {
-    Item(ItemKind, String),
-    Bundle(String),
+    Item {
+        kind: ItemKind,
+        name: String,
+        source: String,
+    },
+    Bundle {
+        name: String,
+        source: String,
+    },
 }
 
 /// The declarations one installation is here under, following a dependency
@@ -38,23 +53,36 @@ enum Owner {
 /// A dependency reads its own bytes from the catalog its parent was read
 /// at, so what has to be pinned to recover it is the declaration that
 /// brought the parent in, not anything of its own. `seen` is the cycle
-/// guard: two skills may require each other on purpose.
+/// guard: two skills may require each other on purpose — and it keys on
+/// the source too, so a package installed from two of them is walked once
+/// per installation rather than once per name.
+///
+/// Every reference is followed by the source it records, never by name
+/// alone: the edge names which parent, and which bundle, this dependency
+/// belongs to.
 fn owners_of(
     lock: &Lock,
     entry: &LockEntry,
-    seen: &mut BTreeSet<(ItemKind, String)>,
+    seen: &mut BTreeSet<(ItemKind, String, String)>,
 ) -> BTreeSet<Owner> {
-    if !seen.insert((entry.kind, entry.name.clone())) {
+    if !seen.insert((entry.kind, entry.name.clone(), entry.source.clone())) {
         return BTreeSet::new();
     }
     let mut owners = BTreeSet::new();
     for reason in &entry.reasons {
         match reason {
             Reason::Requested => {
-                owners.insert(Owner::Item(entry.kind, entry.name.clone()));
+                owners.insert(Owner::Item {
+                    kind: entry.kind,
+                    name: entry.name.clone(),
+                    source: entry.source.clone(),
+                });
             }
             Reason::MemberOf { bundle } => {
-                owners.insert(Owner::Bundle(bundle.name.clone()));
+                owners.insert(Owner::Bundle {
+                    name: bundle.name.clone(),
+                    source: bundle.source.clone(),
+                });
             }
             Reason::RequiredBy { by } => {
                 // A copy of the guard per parent, not one shared between
@@ -64,11 +92,9 @@ fn owners_of(
                 // the first and drops every owner the rest would have
                 // named. The guard is here to stop a cycle, not to visit a
                 // parent once.
-                for parent in lock
-                    .entries
-                    .values()
-                    .filter(|parent| parent.kind == by.kind && parent.name == by.name)
-                {
+                for parent in lock.entries.values().filter(|parent| {
+                    parent.kind == by.kind && parent.name == by.name && parent.source == by.source
+                }) {
                     owners.extend(owners_of(lock, parent, &mut seen.clone()));
                 }
             }
@@ -134,12 +160,33 @@ fn held_manifest(
     target: &(ItemKind, String),
 ) -> (Manifest, HeldPins) {
     let mut exempt: BTreeSet<Owner> = BTreeSet::new();
-    exempt.insert(Owner::Item(target.0, target.1.clone()));
-    for entry in lock
-        .entries
-        .values()
-        .filter(|entry| entry.kind == target.0 && entry.name == target.1)
-    {
+    // The source the named package reads from now, where it is declared at
+    // all. A derived target has no declaration to read one off, and its
+    // identity lives only in the lock.
+    let reads_from = manifest
+        .declared(target.0)
+        .get(&target.1)
+        .map(|decl| decl.source.clone());
+    // The declaration the caller named — never pinned, whatever the lock
+    // still records elsewhere.
+    if let Some(source) = &reads_from {
+        exempt.insert(Owner::Item {
+            kind: target.0,
+            name: target.1.clone(),
+            source: source.clone(),
+        });
+    }
+    // Its installations under that source, and the declarations they came
+    // in under. An entry a rebind left behind is an installation of a
+    // package this declaration no longer is, and its edges lead to
+    // declarations this update has no business unpinning.
+    for entry in lock.entries.values().filter(|entry| {
+        entry.kind == target.0
+            && entry.name == target.1
+            && reads_from
+                .as_ref()
+                .is_none_or(|source| &entry.source == source)
+    }) {
         exempt.extend(owners_of(lock, entry, &mut BTreeSet::new()));
     }
     let mut held = manifest.clone();
@@ -152,7 +199,12 @@ fn held_manifest(
             .declared(kind)
             .iter()
             .filter(|(name, decl)| {
-                decl.rev.is_none() && !exempt.contains(&Owner::Item(kind, (*name).clone()))
+                decl.rev.is_none()
+                    && !exempt.contains(&Owner::Item {
+                        kind,
+                        name: (*name).clone(),
+                        source: decl.source.clone(),
+                    })
             })
             .filter_map(|(name, decl)| {
                 let repo = source_repo(manifest, &decl.source)?;
@@ -170,13 +222,19 @@ fn held_manifest(
         }
     }
     for (name, decl) in &mut held.bundles {
-        if decl.rev.is_some() || exempt.contains(&Owner::Bundle(name.clone())) {
+        let exempted = exempt.contains(&Owner::Bundle {
+            name: name.clone(),
+            source: decl.source.clone(),
+        });
+        if decl.rev.is_some() || exempted {
             continue;
         }
         let Some(repo) = source_repo(manifest, &decl.source) else {
             continue;
         };
-        let Some(commit) = held_at(lock, &decl.source, repo, |entry| member_of(entry, name)) else {
+        let Some(commit) = held_at(lock, &decl.source, repo, |entry| {
+            member_of(entry, name, &decl.source)
+        }) else {
             continue;
         };
         decl.rev = Some(commit);
@@ -234,12 +292,13 @@ fn held_at(
 }
 
 /// Whether this installation is here as a member of the named bundle — the
-/// entries whose recorded commits say where the bundle is held.
-fn member_of(entry: &crate::lock::LockEntry, bundle: &str) -> bool {
-    entry
-        .reasons
-        .iter()
-        .any(|reason| matches!(reason, Reason::MemberOf { bundle: of } if of.name == bundle))
+/// entries whose recorded commits say where the bundle is held. Matched by
+/// source as well as name: a membership recorded against another catalog's
+/// set of the same name is not this declaration's evidence.
+fn member_of(entry: &LockEntry, bundle: &str, source: &str) -> bool {
+    entry.reasons.iter().any(
+        |reason| matches!(reason, Reason::MemberOf { bundle: of } if of.name == bundle && of.source == source),
+    )
 }
 
 #[cfg(test)]
