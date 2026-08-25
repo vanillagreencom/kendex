@@ -38,7 +38,6 @@ export interface PackageEntry {
   row: AvailablePackage;
 }
 
-
 /** The one table of offered packages — the Packages tab across every
  * subscription and a marketplace detail's own list are both this. */
 export function PackagesTable({

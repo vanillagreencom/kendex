@@ -2,7 +2,7 @@
 import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AvailablePackage, Finding, PackageSafety } from "@/bindings";
 import {
   PREINSTALL_SAFETY_CAVEAT,

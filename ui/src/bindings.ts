@@ -55,6 +55,14 @@ export const commands = {
 	toggleItem: (scope: Scope, kind: ItemKind, name: string, enabled: boolean) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("toggle_item", { scope, kind, name, enabled })),
 	removeItem: (scope: Scope, kind: ItemKind, name: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("remove_item", { scope, kind, name })),
 	getManifest: (scope: Scope) => typedError<ManifestRead_Serialize, string>(__TAURI_INVOKE("get_manifest", { scope })),
+	/**
+	 *  Write an edited manifest and reconcile the scope to it.
+	 * 
+	 *  `base` is what the file was when this copy was read. A whole manifest
+	 *  goes back with every save, so a copy read before something else wrote
+	 *  the file would put that back — and the caller cannot be relied on to
+	 *  notice. Refusing here needs no caller to remember anything.
+	 */
 	updateManifest: (scope: Scope, manifest: Manifest_Deserialize, base: string | null) => typedError<AuditView_Serialize, WriteRefused>(__TAURI_INVOKE("update_manifest", { scope, manifest, base })),
 	editorInventory: (scope: Scope) => typedError<EditorInventory, string>(__TAURI_INVOKE("editor_inventory", { scope })),
 	/**

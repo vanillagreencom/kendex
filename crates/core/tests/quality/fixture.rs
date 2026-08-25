@@ -17,16 +17,6 @@ pub struct Fixture {
     pub project: PathBuf,
 }
 
-/// Writes a manifest the way an editor outside kendex would: raw bytes,
-/// no base, no plan. Tests use it to stand in for that outside writer;
-/// production code goes through the apply, which is why
-/// `manifest::save` is not public.
-#[allow(clippy::unwrap_used)]
-pub fn save_manifest(path: &Path, manifest: &kendex_core::manifest::Manifest) {
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(path, toml::to_string_pretty(manifest).unwrap()).unwrap();
-}
-
 #[allow(clippy::unwrap_used)]
 pub fn skill(source: &Path, name: &str, body: &str) {
     let dir = source.join("skills").join(name);
