@@ -96,9 +96,9 @@ lives in one capability table read by core and UI.
      held back (the files in its way stay) and named in the notes with the
      place holding it; the sweep fails, naming those, only when nothing
      settles. One refused at every link is not held: its rows stand,
-     nothing replaced. The CLI offers both exits; the app offers adopt for
-     unmanaged items, and a declared item's conflict has no app exit until
-     KEN-582 attaches one.
+     nothing replaced. The CLI alone names the verb and flag under the
+     row; the app offers adopt for unmanaged items, and a declared item's
+     conflict has no app exit until KEN-582 attaches one.
    The row states which files are in the way and which exits apply; the
    app offers them as buttons, the CLI names the verb and flag. A foreign
    link pointing at a real skill folder several tools read offers keeping

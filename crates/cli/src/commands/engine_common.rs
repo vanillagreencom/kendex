@@ -114,12 +114,16 @@ pub fn print_safety(report: &EngineReport) {
 
 /// One installation's score, each finding with its severity and where it
 /// fired, and the checks that had nothing to read. Shared with `findings`,
-/// so a row reads the same beside a plan and in the listing.
+/// so a row reads the same beside a plan and in the listing. The name, the
+/// location and the message come off files kendex did not write, so each
+/// is printed as what it is, never as an escape sequence the terminal
+/// would act on.
 pub fn print_safety_row(row: &kendex_core::engine::ItemSafety) {
+    use kendex_core::names::shown;
     say(&format!(
         "safety: {} {} for {} scores {}/100",
         row.kind.name(),
-        row.name,
+        shown(&row.name),
         row.harness.display_name(),
         row.safety.score
     ));
@@ -127,8 +131,8 @@ pub fn print_safety_row(row: &kendex_core::engine::ItemSafety) {
         say(&format!(
             "  [{}] {}: {}",
             finding.severity.name(),
-            finding.location,
-            finding.message
+            shown(&finding.location),
+            shown(&finding.message)
         ));
     }
     print_skipped(row);
@@ -142,7 +146,7 @@ fn print_skipped(row: &kendex_core::engine::ItemSafety) {
     say(&format!(
         "  not fully checked: {} rule(s) had nothing to read — {}",
         row.skipped.len(),
-        first.reason
+        kendex_core::names::shown(&first.reason)
     ));
 }
 

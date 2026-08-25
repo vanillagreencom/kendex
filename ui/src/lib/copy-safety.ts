@@ -1,6 +1,7 @@
 // Product prose for the safety surfaces. Split from copy.ts for the file
 // line cap — same house style, same rules (see the top of copy.ts).
-import type { Finding } from "@/bindings";
+import type { Finding, Severity } from "@/bindings";
+import { SEVERITY_LABELS } from "@/lib/labels";
 
 // The check matches patterns over as much of a package as it reads. So every
 // place a score is shown says what was determined and nothing more: a score
@@ -12,16 +13,35 @@ import type { Finding } from "@/bindings";
 // other kind reads whole — so the partial read is named as a skill's.
 export const PREINSTALL_SAFETY_CAVEAT =
   "An automated check for risky patterns, not a review. It can miss things, and a package too large to read is not checked at all.";
+const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low"];
+
+/** The worst finding's severity, in the app's own words — what the dot's
+ * colour stands for, so a tooltip or screen reader says it too. */
+export function worstSeverityLabel(findings: Finding[]): string | null {
+  const worst = SEVERITY_ORDER.find((severity) =>
+    findings.some((finding) => finding.severity === severity),
+  );
+  return worst ? SEVERITY_LABELS[worst] : null;
+}
+
 // A list gives a package one dot and no line of its own, so the dot's words
-// carry the caveat along with the number — worded as the package's own page
-// words it. A row here installs without ever opening that page, and a bare
-// score would be the assurance the check cannot give.
+// carry the worst severity and the caveat along with the number — worded
+// as the package's own page words it. A row here installs without ever
+// opening that page, and a bare score would be the assurance the check
+// cannot give; a bare colour would be a severity nobody can read.
 export const safetyDotWords = (
   score: number,
   skipped: number,
   findings: Finding[],
-): string =>
-  `${findings.length === 0 && skipped > 0 ? "Not fully checked · " : ""}${score}/100. ${PREINSTALL_SAFETY_CAVEAT}`;
+): string => {
+  const severity = worstSeverityLabel(findings);
+  const lead = severity
+    ? `${severity} · `
+    : skipped > 0
+      ? "Not fully checked · "
+      : "";
+  return `${lead}${score}/100. ${PREINSTALL_SAFETY_CAVEAT}`;
+};
 // The same row installs before its score arrives, so the dot's words say
 // there is no result rather than falling silent. A queued read and a failed
 // one look alike from here, so this claims no check is under way — only that

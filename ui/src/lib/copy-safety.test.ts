@@ -50,7 +50,7 @@ describe("what a score is allowed to claim", () => {
     // The list's dot is the whole reading on a row that installs from
     // there, so its words carry the caveat the number cannot.
     expect(safetyDotWords(60, 0, [finding("high")])).toBe(
-      "60/100. An automated check for risky patterns, not a review. It can miss things, and a package too large to read is not checked at all.",
+      "Important · 60/100. An automated check for risky patterns, not a review. It can miss things, and a package too large to read is not checked at all.",
     );
     expect(PREINSTALL_SAFETY_CAVEAT).toBe(
       "An automated check for risky patterns, not a review. It can miss things, and a package too large to read is not checked at all.",
@@ -88,6 +88,18 @@ describe("what a clean score is entitled to claim", () => {
     expect(safetyDotWords(60, 3, [finding("high")])).not.toContain(
       "Not fully checked",
     );
+  });
+});
+
+describe("what the dot's words say about severity", () => {
+  // The dot's colour answers for the worst finding, so its words name that
+  // severity too: never colour alone.
+  it("names the worst finding's severity in the app's own words", () => {
+    expect(
+      safetyDotWords(40, 0, [finding("low"), finding("critical")]),
+    ).toMatch(/^Serious · 40\/100\./);
+    expect(safetyDotWords(90, 0, [finding("low")])).toMatch(/^Minor · /);
+    expect(safetyDotWords(100, 0, [])).not.toContain(" · ");
   });
 });
 

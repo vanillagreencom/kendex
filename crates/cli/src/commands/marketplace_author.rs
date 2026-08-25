@@ -74,7 +74,7 @@ pub fn mine(env: &Env, json: bool) -> CliResult {
     }
     if json {
         out(&serde_json::to_string_pretty(&serde_json::json!({
-            "schema": kendex_core::check_catalog::CHECK_SCHEMA,
+            "schema": kendex_core::author::status::MINE_SCHEMA,
             "marketplaces": rows,
         }))?);
         return Ok(());

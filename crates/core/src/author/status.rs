@@ -41,6 +41,11 @@ pub struct MineRow {
     pub git: GitReadiness,
 }
 
+/// The versioned envelope `marketplace mine --json` wraps its rows in.
+/// Schema 2 counts safety findings as `safetyFindings` per marketplace,
+/// with no verdict beside them.
+pub const MINE_SCHEMA: u32 = 2;
+
 /// One check finding shaped for a screen with an Open button.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]

@@ -111,8 +111,8 @@ pub fn run(
             }
         };
         print_notes(&report);
-        // The one writer that runs unattended still says what the rules
-        // found in what it is about to write.
+        // Refresh plans and writes like apply, so it says what the rules
+        // found before the confirm, the way apply does.
         print_safety(&report);
         match verbose {
             // Every row, and the ways out under the ones that have them:

@@ -15,8 +15,8 @@ use super::say;
 ///
 /// Every conflict is printed. A row is not the safety section said twice:
 /// the score is advisory, and the row carries what actually stops the
-/// write — the copy already installed, moved to the trash or kept because
-/// the user's edits are in it.
+/// write — files in its way kendex did not write, or the user's edits in
+/// the installed copy — with the exits printed under it.
 pub fn print_conflicts(env: &Env, report: &EngineReport) -> bool {
     let rows = conflict_rows(report);
     for row in &rows {

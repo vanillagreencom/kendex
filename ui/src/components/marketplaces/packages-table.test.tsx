@@ -99,6 +99,13 @@ describe("the safety dot in the packages list", () => {
     expect(trigger(html)).toContain(PREINSTALL_SAFETY_CAVEAT);
   });
 
+  it("names the worst severity in words, so the colour is never alone", () => {
+    const html = render(
+      scored(40, [FINDING, { ...FINDING, severity: "critical" }]),
+    );
+    expect(trigger(html)).toContain("Serious · 40/100.");
+  });
+
   it("puts the words where a keyboard reaches them, not on hover alone", () => {
     // A tab stop before Install, and text in the row rather than a native
     // `title` — which a screen reader may skip and a keyboard never lands on.

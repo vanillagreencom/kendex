@@ -159,9 +159,9 @@ function PackageRow({
         ) : (
           // Scores arrive one at a time, and a read that fails leaves a
           // row without one until it mounts again, so a row is offered
-          // before its dot resolves. The plan's gate is what holds a risky
-          // package back, never this button — so the dot's words say a
-          // result is missing instead of the row going quiet.
+          // before its dot resolves. The score is advisory and never holds
+          // an install back, so the dot's words say a result is missing
+          // instead of the row going quiet.
           <Button
             size="sm"
             variant="outline"

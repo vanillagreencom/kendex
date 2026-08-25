@@ -48,8 +48,9 @@ fn a_seeded_bad_catalog_fails_the_check() {
 }
 
 /// `--json` wraps the same findings in the versioned envelope the indexer
-/// consumes: schema, typed findings, the counts, and `ok` — false on
-/// breakage alone, whatever the safety pass found.
+/// consumes: schema, typed findings, the counts, and `ok` — what fails the
+/// run (breakage, plus structural advisories under `--strict`), whatever
+/// the safety pass found.
 #[test]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 fn the_json_envelope_carries_typed_findings_and_the_verdict() {
