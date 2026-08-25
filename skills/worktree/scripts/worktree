@@ -378,6 +378,15 @@ Recovery routing — route by shape, not by whether 'test -L' passes:
   entry: the path holds no tracked content, so the command changes nothing
   while the link stays broken.
 
+Exit status:
+  fix-links judges the RESULT of its pass, not the repair's return codes:
+  'Restored symlinks' and exit 0 only when every configured entry ended
+  healthy. Anything still unhealthy is named and the exit is non-zero — a
+  path the quarantine left in place, or an entry with no such path in the
+  MAIN checkout, which setup skips outright. The errors that name fix-links
+  as their remediation are re-triggered by exactly those paths, so claiming
+  success for one loops the operator on a command that changed nothing.
+
 Symlink entries that shadow tracked content:
   When a configured symlink path is a tracked FILE in the worktree branch,
   setup marks that file assume-unchanged before replacing it so 'git status'
@@ -1610,6 +1619,59 @@ collect_materialized_child_links() {
     fi
   done
   [[ -z "$capped" ]]
+}
+
+# Postcondition for `fix-links` (KEN-464): name every configured entry that is
+# NOT in its healthy shape, one per line. Reporting only — it changes nothing,
+# and is silent when everything is healthy.
+#
+# The repair path's return codes proved too weak to gate the success message:
+# an entry can be skipped before any repair is attempted (no such path in the
+# main checkout), and a quarantined entry is left materialized on purpose.
+# fix-links printed "Restored symlinks" and exited 0 through both, so the sync
+# error naming fix-links as its remediation kept firing and the operator looped
+# on it. Judging the RESULT covers whatever mechanism left a path unrestored,
+# not only the two known ones.
+collect_unrestored_links() {
+  local wt="$1" path="" rel="" child_damage=""
+  [[ -n "$wt" && -d "$wt" ]] || return 0
+  validate_worktree_setup_config >/dev/null 2>&1 || return 0
+
+  split_worktree_config_words "${WORKTREE_SYMLINKS:-}"
+  for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
+    path="$(normalize_worktree_config_path WORKTREE_SYMLINKS "$path" 2>/dev/null)" || continue
+    if [[ ! -e "$PROJECT_ROOT/$path" ]]; then
+      # setup skips this entry entirely, so the link is absent afterwards with
+      # nothing printed. Only the main checkout can resolve it.
+      printf '%s (no such path in the main checkout — create it there, or drop it from WORKTREE_SYMLINKS)\n' "$path"
+      continue
+    fi
+    if [[ -L "$wt/$path" ]]; then
+      [[ "$(readlink "$wt/$path" 2>/dev/null || true)" == "$PROJECT_ROOT/$path" ]] ||
+        printf '%s (a symlink, but not to the main checkout)\n' "$path"
+      continue
+    fi
+    if [[ ! -e "$wt/$path" ]]; then
+      printf '%s (absent)\n' "$path"
+      continue
+    fi
+    # An entry with tracked content underneath is a real directory BY DESIGN
+    # (VST-37); its untracked children are what must be links. Both indexes,
+    # main authoritative, matching how the repair path decides the shape.
+    if [[ -d "$wt/$path" ]] &&
+       { [[ -n "$(git -C "$wt" ls-files -- ":(literal)$path/" 2>/dev/null)" ]] ||
+         [[ -n "$(git -C "$PROJECT_ROOT" ls-files -- ":(literal)$path/" 2>/dev/null || true)" ]]; }; then
+      # `|| true`: a nonzero return means a depth-capped subtree went
+      # uninspected, which the collector already emitted as its own line.
+      child_damage="$(collect_materialized_child_links "$path" "$wt")" || true
+      while IFS= read -r rel; do
+        [[ -n "$rel" ]] || continue
+        printf '%s\n' "$rel"
+      done <<<"$child_damage"
+      continue
+    fi
+    printf '%s (still a real path, not a link)\n' "$path"
+  done
 }
 
 warn_if_links_materialized() {
@@ -4446,10 +4508,31 @@ case "${1:-}" in
     if ! require_non_main_project_worktree "$WT_PATH" "restore links in it"; then
       exit 1
     fi
-    setup_worktree_links "$WT_PATH"
+    # A failed pass must still be REPORTED, not aborted by set -e with no
+    # word about which path is unhealthy — the postcondition below is what
+    # names them, so let the repair run to completion either way.
+    LINKS_SETUP_OK=true
+    setup_worktree_links "$WT_PATH" || LINKS_SETUP_OK=false
     # Re-assert the shared auto-repair hooks too (#1032): a fix-links run is
     # the natural refresh point after upgrading the skill or the config.
     install_worktree_autorepair_hooks
+    # Never claim success for a path this run did not restore (KEN-464): the
+    # sync errors that name fix-links as their remediation are re-triggered by
+    # exactly these paths, so a success message here loops the operator.
+    UNRESTORED="$(collect_unrestored_links "$WT_PATH")"
+    if [[ -n "$UNRESTORED" || "$LINKS_SETUP_OK" != true ]]; then
+      {
+        echo "Error: fix-links did not restore every configured path in $WT_PATH."
+        if [[ -n "$UNRESTORED" ]]; then
+          echo "  Still unhealthy:"
+          sed 's/^/    - /' <<<"$UNRESTORED"
+        fi
+        echo "  Any warning above names why. A path holding data git does not track is"
+        echo "  left in place deliberately: move it into '$PROJECT_ROOT' (or delete it),"
+        echo "  then re-run this command."
+      } >&2
+      exit 1
+    fi
     echo "Restored symlinks in $WT_PATH"
     ;;
 

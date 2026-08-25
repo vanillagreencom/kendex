@@ -54,7 +54,9 @@ Broken `.agents` in a worktree (missing, or a real directory): from the MAIN che
 and never `git checkout -- .agents` (the path holds no tracked content, so the command
 changes nothing while the link stays broken). A genuinely corrupt tracked file is the other
 case: `git checkout -- <path>`, run in the checkout the file really lives in (the main
-checkout when the path sits under a configured symlink).
+checkout when the path sits under a configured symlink). `fix-links` reports success only
+when every configured entry ended healthy; a non-zero exit names the paths it did not
+restore, so read them rather than re-running the same command.
 ```
 
 ## Session guard (ownership leases)

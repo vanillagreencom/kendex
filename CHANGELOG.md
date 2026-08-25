@@ -93,6 +93,9 @@ an outside contributor.
 - The worktree skill's `push` refuses a flag it does not recognize and an
   empty target, rather than pushing the current checkout with default
   behavior nobody asked for. `push --check-args` validates arguments alone.
+- The worktree skill's `fix-links` no longer reports "Restored symlinks" for
+  a path it did not restore: it names every configured entry left unhealthy
+  — including one absent from the main checkout — and exits non-zero.
 - An apply is no longer refused as "scope is busy" while nothing else
   runs: locks release explicitly when an apply finishes instead of waiting
   on a file a just-launched program still held open. Same fix for downloads.
