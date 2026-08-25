@@ -144,19 +144,17 @@ lives in one capability table read by core and UI.
     `--work-tree` on the command line. The raw-`Command` pattern is
     guard-banned.
 14. An item is scored on its own bytes and nothing else. Where one surface
-    lists many items — a plugin cache, a settings file — the scanner
-    records where each item's files actually live. A repo-root skill's
-    `.git`, `node_modules` and build dirs are not its bytes; one
-    constructor (`SealedSource::collect_skill_tree`) excludes them so
-    score, preview, install and catalog-check read the same files. The
-    outcome is a function of exactly kind, path and name
-    (`quality::observe::same_reading`), plus the harness for a hook
-    observed inside a shared config file, whose entry is dug out by that
-    harness's own parser; no rule reads the harness. Distinct
-    readings run on every core (`core/parallel.rs`) and return in the
-    order given; two runs over the same disk produce byte-identical
-    output. Phrase matching skips to the next byte that could begin a
-    match; text that is ASCII end to end takes no normalizing pass.
+    lists many items (a plugin cache, a settings file) the scanner records
+    where each item's files live. A repo-root skill's `.git`, `node_modules`
+    and build dirs are not its bytes; one constructor
+    (`SealedSource::collect_skill_tree`) excludes them so score, preview,
+    install and catalog-check read the same files. The outcome is a function
+    of exactly kind, path and name (`quality::observe::same_reading`), plus
+    the harness for a hook in a shared config file, whose parser is the
+    harness's; no rule reads the harness. Distinct readings run on every
+    core (`core/parallel.rs`), returning in the order given; two runs over
+    one disk give byte-identical output. Phrase matching skips to the next
+    byte that could begin a match; all-ASCII text takes no normalizing pass.
 
 15. An item says what it is for in its own header, from a closed
     vocabulary (`core/tags.rs`). Kind says what a thing *is*; a tag says
