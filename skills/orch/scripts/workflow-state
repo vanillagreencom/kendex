@@ -240,25 +240,6 @@ cmd_increment() {
     state_file=$(resolve_state_file "$issue_id")
     ensure_state_exists "$state_file"
 
-    # The review loop's cycle count is bounded: past REVIEW_MAX_CYCLES the
-    # loop ends (review-pr § 4), so the increment that would start another
-    # cycle refuses instead of letting the count drift on.
-    if [[ "$field" == "cycles" ]]; then
-        local cap report
-        cap=$("$(dirname "${BASH_SOURCE[0]}")/orch-env" REVIEW_MAX_CYCLES 4) || {
-            echo "workflow-state: could not resolve REVIEW_MAX_CYCLES; cycles not incremented" >&2
-            return 1
-        }
-        # Decision and increment in one locked step, so two increments from
-        # cap-1 cannot both pass the check and land at cap+1.
-        report=$(cmd_update_report "$issue_id" "(.cycles // 0) as \$n | if \$n >= $cap then {state: ., report: {refused: true, cycles: \$n}} else {state: (.cycles = \$n + 1), report: {refused: false, cycles: (\$n + 1)}} end") || return 1
-        if [[ "$(jq -r '.refused' <<<"$report")" == "true" ]]; then
-            echo "workflow-state: cycles is at the cap ($(jq -r '.cycles' <<<"$report") of REVIEW_MAX_CYCLES=$cap): no further fix cycle on this issue — end the review loop and move to the calling workflow's verdict or submit step; a larger cap is a deliberate REVIEW_MAX_CYCLES setting, never a retry" >&2
-            return 1
-        fi
-        return 0
-    fi
-
     atomic_update "$state_file" ".${field} += 1"
 }
 
@@ -270,6 +251,25 @@ cmd_set() {
     local state_file
     state_file=$(resolve_state_file "$issue_id")
     ensure_state_exists "$state_file"
+
+    # `rereview_panel` is written exactly when review-pr § 4 re-enters § 2 for
+    # another cycle. Past REVIEW_MAX_CYCLES the loop is over (the pass AT the
+    # cap is the one verification pass the rule allows), so the write refuses
+    # instead of starting a cycle the workflow says cannot exist. The decision
+    # and the write share one locked step.
+    if [[ "$field" == "rereview_panel" && "$value" == "{"* ]]; then
+        local cap report
+        cap=$("$(dirname "${BASH_SOURCE[0]}")/orch-env" REVIEW_MAX_CYCLES 4) || {
+            echo "workflow-state: could not resolve REVIEW_MAX_CYCLES; rereview_panel not set" >&2
+            return 1
+        }
+        report=$(cmd_update_report "$issue_id" "(.cycles // 0) as \$n | if \$n > $cap then {state: ., report: {refused: true, cycles: \$n}} else {state: (.rereview_panel = $value), report: {refused: false}} end") || return 1
+        if [[ "$(jq -r '.refused' <<<"$report")" == "true" ]]; then
+            echo "workflow-state: cycles is past the cap ($(jq -r '.cycles' <<<"$report") > REVIEW_MAX_CYCLES=$cap): the verification pass at the cap already ran — no further re-review cycle; go to review-pr § 5 (verdict pass) and report the outstanding items" >&2
+            return 1
+        fi
+        return 0
+    fi
 
     if [[ "$value" == "{"* ]] || [[ "$value" == "["* ]] || [[ "$value" == "null" ]] || [[ "$value" == "true" ]] || [[ "$value" == "false" ]] || [[ "$value" =~ ^[0-9]+$ ]]; then
         # JSON object, array, null, boolean, or number - use as-is

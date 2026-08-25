@@ -38,8 +38,8 @@ CI_WAIT_NO_CHECKS_GRACE = "180"
 # Max automated ci-fix rounds per PR before a human takes over.
 CI_FIX_MAX_CYCLES = "6"
 
-# Max internal review cycles per issue before the verdict pass; the cycle
-# counter refuses to pass it.
+# Max re-review cycles per issue before the verdict pass; the re-review
+# re-entry refuses once cycles is past it.
 REVIEW_MAX_CYCLES = "4"
 
 # "ask" presents the merge decision; "auto" merges once every gate is green.
