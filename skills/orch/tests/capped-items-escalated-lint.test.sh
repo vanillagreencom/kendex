@@ -69,7 +69,7 @@ slice() {
   '
 }
 
-cap_section() { slice "$1" '### At The Cap' '^###? '; }
+cap_section() { strip_comments "$1" | awk '/orch-env REVIEW_MAX_CYCLES/ { on = 1 } on && /^###? / { on = 0 } !on { next } { print }'; }
 section_4()   { slice "$1" '## 4. Handle Review Items' '^## 5[.]'; }
 section_7()   { slice "$1" '## 7. Handle QA Items' '^## 8[.]'; }
 
@@ -134,7 +134,7 @@ fi
 # --- 5: the finding's text is bound from its artifact, never pasted ---------
 # A location like fs.rs::write_all's guard ends a quoted shell word early, so
 # the command breaks before any binding can help.
-if write_has "$REVIEW_PR_WF" -- '--argjson-file' && write_has "$REVIEW_PR_WF" -- '--arg src'; then
+if write_has "$REVIEW_PR_WF" '--argjson-file' && write_has "$REVIEW_PR_WF" '--arg src'; then
   if grep -q -e "--arg [a-z]* '\[" <<<"$(cap_write "$REVIEW_PR_WF")"; then
     fail "the cap write pastes a placeholder into a quoted shell word"
   else
@@ -253,7 +253,7 @@ else
 fi
 
 # The pasted-text shape this PR exists to remove.
-if ! plant_pr pasted "s/--argjson-file art \[ARTIFACT_PATH\]/--arg loc '[LOC]' --arg desc '[DESC]'/"; then
+if ! plant_pr pasted "s/--argjson-file art '\[ARTIFACT_PATH\]'/--arg loc '[LOC]' --arg desc '[DESC]'/"; then
   fail "pasted-text control planted nothing — its sed program matched no text"
 elif grep -q -e "--arg [a-z]* '\[" <<<"$(cap_write "$CTRL")"; then
   pass "lint flags a placeholder pasted into a quoted shell word"
