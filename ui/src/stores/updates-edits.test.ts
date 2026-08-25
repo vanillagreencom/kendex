@@ -257,8 +257,6 @@ describe("updates store: installing beside an edited place", () => {
         safety: [],
         adoptable: ADOPTABLE,
         exits: [],
-        heldBack: [],
-        queued: [],
       },
     });
 

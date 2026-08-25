@@ -86,8 +86,6 @@ describe("installing beside an edited place, from the row", () => {
         safety: [],
         adoptable: ADOPTABLE,
         exits: [],
-        heldBack: [],
-        queued: [],
       },
     });
     mount(<UpdatesTable rows={[edited]} onIgnore={() => {}} />);
