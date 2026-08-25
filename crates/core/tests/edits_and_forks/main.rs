@@ -79,6 +79,22 @@ fn write_skill(dir: &Path, name: &str, body: &str) {
 }
 
 #[allow(clippy::unwrap_used)]
+fn write_agent(dir: &Path, name: &str, body: &str) {
+    let agents = dir.join("agents");
+    fs::create_dir_all(&agents).unwrap();
+    fs::write(
+        agents.join(format!("{name}.md")),
+        format!("---\nname: {name}\ndescription: agent {name}\n---\n{body}\n"),
+    )
+    .unwrap();
+}
+
+#[allow(clippy::unwrap_used)]
+fn manifest_text(w: &World) -> String {
+    fs::read_to_string(manifest::manifest_path(&w.env, &w.scope)).unwrap()
+}
+
+#[allow(clippy::unwrap_used)]
 fn world() -> World {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().to_path_buf();

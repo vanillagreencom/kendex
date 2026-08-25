@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 use super::local_item;
 use crate::engine::desired::{native_dir, refusal_reason, skill_canonical, target_harnesses};
+use crate::engine::desired_agent::written_at;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::manifest::{ItemDecl, LOCAL_SOURCE_NAME, Manifest};
@@ -99,7 +100,11 @@ pub(super) fn vacant_name(
 
 /// Every path an item of this kind under `name` would render to in this
 /// scope: the shared canonical tree for a skill, plus each target tool's
-/// own file or link.
+/// own file or link. An agent's file answers to the declaration's switch —
+/// a disabled one lands under `.disabled` — so the destination comes from
+/// the renderer's own rule rather than a second spelling of it. A disabled
+/// skill keeps its directory and renames `SKILL.md` inside it, so its
+/// destination is the same either way.
 fn render_targets(
     env: &Env,
     scope: &Scope,
@@ -118,7 +123,7 @@ fn render_targets(
         };
         targets.push(match kind {
             ItemKind::Skill => dir.join(crate::harness::rendered_name(harness, name)),
-            _ => dir.join(crate::render::agent::file_name(harness, name)),
+            _ => written_at(&dir, harness, name, decl.enabled),
         });
     }
     targets

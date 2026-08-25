@@ -232,7 +232,7 @@ pub(super) fn desired_agent(
 
 /// Where this agent's file lands. A disabled installation keeps the
 /// rendered content under the `.disabled` name — the rename is lossless.
-fn written_at(
+pub(super) fn written_at(
     native: &std::path::Path,
     harness: crate::model::HarnessId,
     name: &str,

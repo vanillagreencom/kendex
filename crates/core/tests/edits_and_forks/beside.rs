@@ -259,22 +259,6 @@ fn fork_beside_refuses_a_name_a_target_loader_refuses() {
     assert!(!w.home.join("app/.kendex-local/skills/a..b").exists());
 }
 
-#[allow(clippy::unwrap_used)]
-fn write_agent(dir: &Path, name: &str, body: &str) {
-    let agents = dir.join("agents");
-    fs::create_dir_all(&agents).unwrap();
-    fs::write(
-        agents.join(format!("{name}.md")),
-        format!("---\nname: {name}\ndescription: agent {name}\n---\n{body}\n"),
-    )
-    .unwrap();
-}
-
-#[allow(clippy::unwrap_used)]
-fn manifest_text(w: &World) -> String {
-    fs::read_to_string(manifest::manifest_path(&w.env, &w.scope)).unwrap()
-}
-
 /// A world with `gh` edited on disk and a newer upstream the mirror knows.
 #[allow(clippy::unwrap_used)]
 fn edited_world() -> (World, String, String) {

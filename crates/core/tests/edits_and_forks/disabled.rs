@@ -217,6 +217,89 @@ fn a_disabled_skills_edit_forks_in_source_form() {
     );
 }
 
+/// A world with `rev` declared off and its `.disabled` rendering edited —
+/// the shape whose fork destination carries the `.disabled` name too.
+#[allow(clippy::unwrap_used)]
+fn disabled_edited_agent_world() -> World {
+    let w = world();
+    write_agent(&w.upstream, "rev", "Agent body.");
+    commit(&w.upstream, "one");
+    declare(&w, "[agents.rev]\nsource = \"cat\"\nenabled = false\n");
+    sync_and_apply(&w);
+    let rendered = w.home.join("app/.claude/agents/rev.md.disabled");
+    assert!(rendered.is_file(), "a disabled agent keeps its bytes");
+    fs::write(
+        &rendered,
+        "---\nname: rev\ndescription: mine\n---\nMy agent.\n",
+    )
+    .unwrap();
+    w
+}
+
+fn beside_rev_edited(w: &World) -> Result<apply::Plan, CoreError> {
+    fork::fork_beside(
+        &w.env,
+        &w.scope,
+        ItemKind::Agent,
+        "rev",
+        HarnessId::Claude,
+        "rev-edited",
+        None,
+    )
+}
+
+/// A disabled declaration renders its agent under the `.disabled` name, so
+/// that is the destination the install-beside preflight has to prove
+/// vacant: an unmanaged file there would make the render pass refuse after
+/// the fork was already recorded.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn fork_beside_refuses_an_occupant_of_a_disabled_agents_destination() {
+    let w = disabled_edited_agent_world();
+    let occupied = w.home.join("app/.claude/agents/rev-edited.md.disabled");
+    fs::write(&occupied, "not kendex's").unwrap();
+    let before = manifest_text(&w);
+
+    let refused = beside_rev_edited(&w).unwrap_err();
+    assert!(
+        matches!(refused, CoreError::ForkNameUnusable { .. }),
+        "{refused:?}"
+    );
+    assert_eq!(manifest_text(&w), before);
+    assert_eq!(fs::read_to_string(&occupied).unwrap(), "not kendex's");
+    assert!(
+        !w.home
+            .join("app/.kendex-local/agents/rev-edited.md")
+            .exists()
+    );
+    assert!(
+        fs::read_to_string(w.home.join("app/.claude/agents/rev.md.disabled"))
+            .unwrap()
+            .contains("My agent."),
+        "the edited copy is untouched"
+    );
+}
+
+/// The enabled name is not where a disabled declaration renders, so a
+/// stranger sitting there is no reason to refuse the fork.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn fork_beside_ignores_the_enabled_path_for_a_disabled_agent() {
+    let w = disabled_edited_agent_world();
+    let stray = w.home.join("app/.claude/agents/rev-edited.md");
+    fs::write(&stray, "not in the way").unwrap();
+
+    let plan = beside_rev_edited(&w).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    let own = fs::read_to_string(w.home.join("app/.kendex-local/agents/rev-edited.md")).unwrap();
+    assert!(
+        own.contains("name: rev-edited") && own.contains("My agent."),
+        "{own}"
+    );
+    assert!(manifest_text(&w).contains("[forks.agent.rev-edited]"));
+    assert_eq!(fs::read_to_string(&stray).unwrap(), "not in the way");
+}
+
 /// A tree carrying both `SKILL.md` and `SKILL.md.disabled` has two claims
 /// on one source file: the row offers no fork, and `fork` refuses without
 /// touching anything.
