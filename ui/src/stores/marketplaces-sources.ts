@@ -1,6 +1,6 @@
 // Acting on a source as a whole — switching it on or off, and fetching
-// what every subscription now offers — kept beside the store the way its
-// cached reads are, so the store body stays the subscription lifecycle.
+// what every subscription now offers — kept beside the store so the store
+// body stays the subscription lifecycle.
 import { toast } from "sonner";
 import type {
   Catalog,
