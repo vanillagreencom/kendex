@@ -5,7 +5,10 @@ import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { useUpdatesStore } from "./updates";
 
-vi.mock("@/bindings", () => ({
+vi.mock("@/bindings", async (importOriginal) => ({
+  // The generated constants stay real — the update rules read core's own
+  // kind list through them, and a copy kept here could go stale unseen.
+  ...(await importOriginal<typeof import("@/bindings")>()),
   commands: {
     updatesOverview: vi.fn(),
     updatesRefresh: vi.fn(),

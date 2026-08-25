@@ -1,6 +1,7 @@
 import type { Scope, UpdateRow } from "@/bindings";
 import { USER_LEVEL_PLACE } from "@/lib/copy-updates";
 import { scopeKey } from "@/lib/scope";
+import { hasPerPackageUpdate } from "@/lib/versions";
 
 /** One package with every place it is out of date in. The same skill
  *  installed in three projects is one decision with three places, not
@@ -45,14 +46,21 @@ export function groupUpdates(rows: UpdateRow[]): UpdateGroup[] {
 export const packageCount = (rows: UpdateRow[]): number =>
   new Set(rows.map(groupKey)).size;
 
-/** The places "Update all" can act on: a newer version exists and no local
- *  edit is holding it. An edited place is never updated over; its row
- *  offers the install beside it. */
+/** Whether a bulk update can act on this place at all: the planner brings
+ *  this kind current one package at a time, no edit of the person's is
+ *  holding it, and its hold is not an owner's to move. Said once, because
+ *  the two sets below are the two halves of it — a place this rejects has
+ *  to land in the other set, not in neither. */
+const actionable = (row: UpdateRow): boolean =>
+  hasPerPackageUpdate(row.kind) && !row.blockedByLocalEdit && !heldByOwner(row);
+
+/** The places "Update all" can act on: a newer version exists and nothing
+ *  above stands in the way. An edited place is never updated over; its row
+ *  offers the install beside it. A Pi extension comes current through its
+ *  own command, so an Update offered here could only be refused by the
+ *  plan behind it. */
 export const updatablePlaces = (rows: UpdateRow[]): UpdateRow[] =>
-  rows.filter(
-    (row) =>
-      row.updateAvailable && !row.blockedByLocalEdit && !heldByOwner(row),
-  );
+  rows.filter((row) => row.updateAvailable && actionable(row));
 
 /** A bundle member or dependency held at its owner's revision: the hold
  *  is the owner's to move, so nothing here can update or release it. */
@@ -73,13 +81,12 @@ export const switchLockedBy = (
 };
 
 /** Places with news that a bulk update has to leave alone — edited ones,
- *  which no update may overwrite, and held derived ones waiting on their
- *  owner. */
+ *  which no update may overwrite, held derived ones waiting on their
+ *  owner, and kinds whose update lives elsewhere. The complement of
+ *  [`updatablePlaces`] over the same news, so every place with something
+ *  to say is counted once. */
 export const skippedPlaces = (rows: UpdateRow[]): UpdateRow[] =>
-  rows.filter(
-    (row) =>
-      row.updateAvailable && (row.blockedByLocalEdit || heldByOwner(row)),
-  );
+  rows.filter((row) => row.updateAvailable && !actionable(row));
 
 /** Where a package lives, as a person names it: the project folder, or
  *  "User level" for the install that applies everywhere. Two projects
