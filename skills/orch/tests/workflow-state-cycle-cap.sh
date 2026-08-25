@@ -33,6 +33,12 @@ err="$("$WS" --state-dir "$sd" set KEN-1 rereview_panel "$PANEL" 2>&1 >/dev/null
   || bad "cycles=5 refuses rereview_panel, naming the count and the cap" "rc=$rc err=$err"
 [[ "$err" == *"review-pr § 5"* ]] && ok "the refusal names the step that follows" \
   || bad "the refusal names the step that follows" "$err"
+# The refusal is the instruction the orchestrator reads at the moment the cap
+# fires, so it must carry § 4's record-then-route contract. Asserting it on the
+# message the refusal actually prints proves the branch is reachable, which
+# grepping the source for the same text does not.
+[[ "$err" == *escalated_items* ]] && ok "the refusal names the escalated_items recording step" \
+  || bad "the refusal names the escalated_items recording step" "$err"
 panel="$("$WS" --state-dir "$sd" get KEN-1 .rereview_panel)"
 [[ "$panel" == "null" ]] && ok "a refused write leaves rereview_panel unset" \
   || bad "a refused write leaves rereview_panel unset" "panel=$panel"
