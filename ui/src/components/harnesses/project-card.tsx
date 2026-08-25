@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 import type { ItemKind } from "@/bindings";
+import { ShowEverythingButton } from "@/components/harnesses/show-everything-button";
 import { KindCountBadges } from "@/components/kind-count-badges";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { showEverythingLabel } from "@/lib/show-everything-label";
 
 /**
  * One place a setup applies — Personal, or a project folder. Personal and a
@@ -57,14 +57,7 @@ export function ProjectCard({
       <div className="flex items-start justify-between gap-3 px-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={onOpen}
-              aria-label={showEverythingLabel(name, path)}
-              className="truncate text-sm font-medium hover:underline"
-            >
-              {name}
-            </button>
+            <ShowEverythingButton name={name} path={path} onOpen={onOpen} />
             {badge ? <Badge variant="destructive">{badge}</Badge> : null}
           </div>
           <p className="truncate text-[13px] text-muted-foreground">
