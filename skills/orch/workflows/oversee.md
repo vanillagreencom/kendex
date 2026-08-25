@@ -42,13 +42,48 @@ One blocking command, passed the fleet's start as `--since` (the first lane's `l
 .agents/skills/orch/scripts/oversee-watch --interval 240 --since [FLEET_SINCE] --item [ISSUE_ID]... [LANE_WINDOW...]
 ```
 
-- `merged` → mark the lane done, launch the next unblocked item. When the fleet's LAST item merges and the items live in Linear (a GitHub-item fleet skips it with a note), run `.agents/skills/orch/scripts/reconcile-work-items` before closing out and report its findings with the close-out.
+### Judgement at every event
+
+The overseer owns fleet judgement, not just liveness; every § 4 event is
+handled under these rules:
+
+- **Triage what lanes file.** Read every issue a lane creates — the
+  `heartbeat` triage pass below surfaces them. A hypothetical,
+  an unreproduced edge case, or a feature no issue's Done-when carries is
+  canceled with a comment naming what it failed; genuine defects stay.
+  Cancel only where the fleet brief grants triage authority and the lane's
+  authorship is beyond doubt; any uncertainty means comment the
+  recommendation and leave the issue open — elsewhere the
+  project-management skill's approval gate stays the rule.
+- **Cut scope blowups.** A PR whose diff outgrows its issue's Done-when goes
+  back to the contract: keep the oversized work on a branch, land the
+  contract. Machinery no issue ordered — a new subsystem, scanner, or lexer —
+  is cut, never reviewed into shape.
+- **End spirals.** A round whose finding shares a root cause with one
+  already answered ends the patch sequence: structural fix when it shrinks
+  the diff, else land narrow with `Tracked: [ID]` — for work the diff does
+  not arm only; a defect the diff introduces is fixed, never tracked
+  (SKILL.md § Review must converge). Bots drip-feeding one class get the
+  class exhausted in one audit pass, then dispositions without pushes.
+- **Fix the source.** The same finding class on a third PR is a mechanism
+  gap: file it and route the smallest deterministic check (a guard lane, a
+  preflight rule, a refusing script) or one sentence in the owning skill
+  through a lane as its own item — the overseer still implements nothing.
+  Deterministic beats prose where it stays simple; complex or brittle
+  machinery is worse than either.
+- **Decide without the user.** SKILL.md's ask gates stand unchanged — scope
+  expansion, recorded decisions, and merge autonomy still ask. Any other
+  reversible call takes the option that costs nothing, recorded in the fleet
+  log; destructive actions and product direction wait for a human.
+
+
+- `merged` → mark the lane done, launch the next unblocked item. When the fleet's LAST item merges, run the `heartbeat` triage pass before closing out, whatever the tracker; items living in Linear also get `.agents/skills/orch/scripts/reconcile-work-items` (a GitHub-item fleet skips that with a note). Report both with the close-out.
 - `lane-exited` → the window is alive but the harness under it is gone (its pane tail says why). A lane stopped by a harness session limit ("You've hit your session limit · resets HH:MM") is not dead: resume it under another auth lane (`lanes pick`; a Claude session resumed under a different `CLAUDE_CONFIG_DIR` needs its session files copied there), or wait for the shown reset and send the lane a one-line continuation nudge. Any other exit is the `window-gone` rule below.
 - `usage-limit` → read the pane tail first and confirm the banner is the harness's own, not text the lane printed while working; a lane still working is left alone. Confirmed: move the item to another account lane (kill the window, then re-run the § 3 launch with `--relaunch --lane auto:[HARNESS]` — bare `auto` needs `--harness`), or wait for the reset the banner names and send the lane a one-line continuation nudge. Never launch onto the spent account again until its reset.
 - `idle-after-return` → read its pane tail, then send the next instruction, or — when its PR is merged and its worktree is gone — close the lane and launch the next item.
 - `window-gone`, or any lane whose session ended with no merged PR → inspect its worktree and PR state, re-launch once with the same brief and `open-terminal --relaunch` (without the flag the existing worktree reads as another session's claim and the item is skipped); a second death is surfaced to the user, not retried.
 - `question` → answer it when available evidence already decides it: repo state, the issue body, a stated convention — including scope-narrowing calls and a lane's own well-argued recommendation. Relay to the user only what changes the product for a user or spends the owner's standing (retiring a reviewer, filing outside the repo, closing as won't-do). Either way, send the answer back to the lane. On a surface with neither messaging nor an inspectable pane, prolonged lane silence is itself the needs-attention signal — inspect the session through that surface's own status tools.
-- `pr-watch` → act on its attention lines; `heartbeat` → nothing needs the overseer, re-run.
+- `pr-watch` → act on its attention lines; `heartbeat` → the triage pass: `.agents/skills/linear/scripts/linear.sh issues list --team [TEAM] --created-since [Nd covering the fleet start] --max` (or the tracker's equivalent), drop IDs already recorded in the fleet state's `triaged`, and judge only issues a fleet lane filed — the candidate set is each lane item's created-issue records in workflow state (`audit_issues_created`, `pr_comment_review.issues_created`) plus each lane PR body's Created Issues section; the created-since listing backstops trackers without that state. Anything outside the set is left alone. Record each verdict with `workflow-state append oversee triaged '{"issue": "[ID]", "verdict": "[kept|canceled]", "reason": "[ONE_LINE]"}'`, then re-run.
 
 ## 5. Stop
 
