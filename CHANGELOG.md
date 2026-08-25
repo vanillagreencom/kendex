@@ -50,9 +50,9 @@ an outside contributor.
 - **Breaking:** the default Homebrew formula installs the app; CLI-only
   moved to `kendex-cli`. Migrate with `brew uninstall kendex && brew
   install vanillagreencom/kendex/kendex-cli`.
-- Commit checks moved into the git pre-commit hook, which now also runs
-  rust-fmt, rust-clippy, and biome; commands that sidestep the armed hook
-  (`--no-verify`, hook-skipping git config) are refused.
+- Commit checks moved into the git pre-commit hook, which also runs rust-fmt,
+  rust-clippy, and biome; kendex's harness hook refuses `--no-verify` and
+  hook-skipping git config. v1 guard settings convert with `kendex guard import-v1`.
 - **Breaking:** `KENDEX_PRE_COMMIT_RUST_CLIPPY` is gone. To disable the
   lane, set `enabled = false` under `[guards.rust-clippy]` in
   `kendex.settings.toml`; a custom command moves to `KENDEX_GUARD_PRE_COMMIT_LOCAL`.
