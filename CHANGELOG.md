@@ -40,7 +40,7 @@ an outside contributor.
   are gone: both passed `--no-available`, a flag `kendex check` never had, so
   turning them off broke every session start.
 - **Breaking:** safety is advisory: nothing holds an install or update back.
-  The app's Review & apply page, `kendex dismiss`/`decisions` and
+  The app's Review & apply page, `kendex findings`/`dismiss`/`decisions` and
   `apply --allow-unsafe` are gone; kendex.toml drops recorded decisions.
 - **Breaking:** the `trading-design` skill is no longer offered. Run
   `kendex remove trading-design --scope all` wherever it is installed (or
@@ -75,6 +75,9 @@ an outside contributor.
 - Updates: a package you edited can't be updated over; its row offers
   **Install as new package**, which keeps your edited copy under a name you
   choose and installs the newest version beside it. Commit ids hide behind `…`.
+- `add`, `apply`, `refresh` and `check --catalog` print one safety block: the
+  score, then a line per finding — severity in words, what the rule matched,
+  and where. Every package scores now, findings or not; no fix line under one.
 - **Breaking:** in `kendex check --json`, a not-yet-evaluated line now has
   `"class": "unevaluated"` where it had `"class": "unknown"`. A parser
   matching that field exhaustively has to accept the new value.

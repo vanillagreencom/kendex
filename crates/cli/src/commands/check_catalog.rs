@@ -11,6 +11,7 @@ use std::path::Path;
 use kendex_core::check_catalog::{CHECK_SCHEMA, CatalogCheck, CheckFinding};
 use kendex_core::source_read::SealedSource;
 
+use super::engine_common::print_advisory;
 use super::{CliResult, out, say};
 
 pub fn run(catalog: &Path, strict: bool, json: bool) -> CliResult {
@@ -50,6 +51,11 @@ fn machine(report: &CatalogCheck, ok: bool) -> CliResult {
 /// Every file, name and message here is read off the catalog's own
 /// files, so each is printed as what it is, never as an escape sequence
 /// the terminal would act on — the rule the plan's safety printer follows.
+///
+/// The structural pass prints first and carries a fix line: a loader that
+/// will not hold an item is a thing the author does something about. The
+/// safety pass prints as the advisory block every other verb prints, fix
+/// lines and all left out — the score decides nothing here either.
 fn lines(report: &CatalogCheck) {
     use kendex_core::names::shown;
     for finding in &report.catalog {
@@ -63,37 +69,25 @@ fn lines(report: &CatalogCheck) {
         say(&format!("    fix: {}", shown(&finding.fix)));
     }
     for item in &report.items {
-        for finding in item.rows() {
-            match &finding.rule {
-                None => say(&format!(
-                    "[{}] {}: {}: {}",
-                    finding.severity,
-                    finding.pass,
-                    shown(&finding.file),
-                    shown(&finding.message)
-                )),
-                // Safety findings carry their own severity rather than being
-                // relabelled error/warning: they fail nothing, and a line
-                // that says "error" without failing anything is a line
-                // people learn to scroll past.
-                Some(rule) => say(&format!(
-                    "[{}] safety: {}: {} ({rule})",
-                    finding.severity,
-                    shown(&finding.file),
-                    shown(&finding.message)
-                )),
-            }
+        for finding in &item.structural {
+            say(&format!(
+                "[{}] {}: {}: {}",
+                finding.severity,
+                finding.pass,
+                shown(&finding.file),
+                shown(&finding.message)
+            ));
             say(&format!("    fix: {}", shown(&finding.fix)));
         }
-        if !item.advisory.findings.is_empty() {
-            say(&format!(
-                "safety: {}: {} {} scores {}/100",
-                shown(&item.file),
+        print_advisory(
+            &format!(
+                "{} {} at {}",
                 item.kind.name(),
                 shown(&item.name),
-                item.advisory.safety.score
-            ));
-        }
+                shown(&item.file)
+            ),
+            &item.advisory,
+        );
     }
     let tally = report.tally();
     say(&format!(

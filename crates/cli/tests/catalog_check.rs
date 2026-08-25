@@ -37,22 +37,23 @@ fn a_seeded_bad_catalog_fails_the_check() {
 
     assert!(!output.status.success(), "a broken catalog must not pass");
     let said = String::from_utf8_lossy(&output.stderr).into_owned();
-    // Both passes have to have run: structure and safety.
-    assert!(said.contains("rce"), "{said}");
-    assert!(said.contains("prompt-injection"), "{said}");
-    assert!(said.contains("credential-theft"), "{said}");
-    // The capitalised agent name is a loader problem, not a safety one.
+    // Both passes have to have run. The safety pass found the three things
+    // seeded for it; the capitalised agent name is a loader problem the
+    // structural pass owns, and it is the one that fails the run.
+    assert!(said.contains("set aside the instructions"), "{said}");
+    assert!(said.contains("straight into a shell"), "{said}");
+    assert!(said.contains("`~/.ssh/id_rsa`"), "{said}");
     assert!(said.contains("lowercase letters"), "{said}");
-    // Every finding travels with its fix.
-    assert!(said.contains("    fix: "), "{said}");
-    // An item with anything found against it says what it scored, under
-    // its own catalog path rather than the path of any one finding.
+    // A structural finding travels with its fix; an advisory one does not.
+    assert!(said.contains("    fix: declare it as"), "{said}");
+    // Every item says what it scored, under its own catalog path rather
+    // than the path of any one finding.
     assert!(
-        said.contains("safety: agents/Compromised.md: agent Compromised scores 75/100"),
+        said.contains("safety: agent Compromised at agents/Compromised.md scores 75/100"),
         "{said}"
     );
     assert!(
-        said.contains("safety: skills/exfiltrate: skill exfiltrate scores 50/100"),
+        said.contains("safety: skill exfiltrate at skills/exfiltrate scores 50/100"),
         "{said}"
     );
 }
@@ -116,7 +117,7 @@ fn a_hostile_finding_message_prints_inert() {
     );
     let critical = said
         .lines()
-        .find(|line| line.starts_with("[critical] safety:"))
+        .find(|line| line.starts_with("  [critical] "))
         .unwrap_or_else(|| panic!("no critical safety line said: {said}"));
     assert!(critical.contains("\\u{1b}[31m"), "{said}");
 }
@@ -239,7 +240,15 @@ fn what_init_scaffolds_passes_the_check() {
     assert!(said.contains("3 item(s)"), "{said}");
     assert!(said.contains("0 breakage"), "{said}");
     assert!(said.contains("0 safety finding(s)"), "{said}");
-    // Nothing was found against any of them, so none gets a score line:
-    // a number beside a clean item reads as a grade nobody asked for.
-    assert!(!said.contains("scores"), "{said}");
+    // A clean item still says what it scored — the one advisory block
+    // prints a score beside every package, or "scored 100" and "never
+    // scored" would read alike. No finding lines ride under it.
+    assert!(
+        said.contains("safety: agent reviewer at agents/reviewer.md scores 100/100"),
+        "{said}"
+    );
+    assert!(
+        !said.lines().any(|line| line.starts_with("  [")),
+        "a clean item carries no finding lines: {said}"
+    );
 }

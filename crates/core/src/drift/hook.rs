@@ -37,7 +37,7 @@ pub const HOOK_SCRIPT: &str = r#"#!/bin/sh
 # harnesses: [claude-code, pi]
 # ---
 # kendex drift report — what is stale, gone from its source, broken, or
-# awaiting review, each line naming its fix. Silent when everything is
+# not evaluated yet, each line naming its fix. Silent when everything is
 # current: a clean session starts clean.
 
 [ "${KENDEX_DRIFT_HOOK:-}" = "off" ] && exit 0

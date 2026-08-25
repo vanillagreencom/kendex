@@ -44,7 +44,7 @@ fn render_text(checked: &CheckReport, quiet: bool) {
     let text = report::render_plain(checked);
     if text.is_empty() {
         if !quiet {
-            say("all clear — nothing stale, nothing awaiting review");
+            say("all clear — every install matches its source");
         }
         return;
     }

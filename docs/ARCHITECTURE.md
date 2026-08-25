@@ -813,7 +813,12 @@ lives in one capability table read by core and UI.
   `engine::ItemSafety` for planned and installed rows (`engine/scoring.rs`,
   `engine/observed.rs`), `PackageSafety` (`browse/safety.rs`) and
   `CheckedItem` for what is not installed yet. The two bound shapes flatten
-  it, so the `AuditResult` TS type reads their fields at the top level.
+  it, so the `AuditResult` TS type reads their fields at the top level. The
+  CLI prints one block wherever it scores anything (`add`, `apply`,
+  `refresh`, `check --catalog`): the score line, then a line per finding —
+  severity word, what the rule matched, and its location as subtext. No fix
+  line, no prompt, and a clean package still prints its score, or "scored
+  100" and "never scored" would read alike.
 - **Rules read typed per-kind inputs and say when they cannot read.** A
   skill carries its whole tree, a hook its registration and script, an MCP
   server its command, args, env and headers, a plugin its manifest and

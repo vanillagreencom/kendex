@@ -96,53 +96,70 @@ const UNMANAGED_SHOWN: usize = 10;
 
 /// What the safety rules found in the content this plan would write —
 /// advisory, printed beside the plan.
-///
-/// Every written item's score line prints, a clean one included: the
-/// contract is the score beside every write, and a clean row going silent
-/// would make "scored 100" and "never scored" read the same. Findings and
-/// not-fully-checked lines ride under a row only when there are any.
 pub fn print_safety(report: &EngineReport) {
     let mut rows: Vec<&kendex_core::engine::ItemSafety> = report.safety.iter().collect();
     rows.sort_by_key(|row| row.advisory.safety.score);
     for row in rows {
-        print_safety_row(row);
+        print_advisory(&subject(row), &row.advisory);
     }
 }
 
-/// One installation's score, each finding with its severity and where it
-/// fired, and the checks that had nothing to read. Shared with `findings`,
-/// so a row reads the same beside a plan and in the listing. The name, the
-/// location and the message come off files kendex did not write, so each
-/// is printed as what it is, never as an escape sequence the terminal
-/// would act on.
-pub fn print_safety_row(row: &kendex_core::engine::ItemSafety) {
+/// How a planned or installed row names the package it scored. Read off
+/// a catalog kendex did not write, so the name is printed as what it is.
+fn subject(row: &kendex_core::engine::ItemSafety) -> String {
+    format!(
+        "{} {} for {}",
+        row.kind.name(),
+        kendex_core::names::shown(&row.name),
+        row.harness.display_name()
+    )
+}
+
+/// One package's advisory result, in the one shape every verb that scores
+/// content prints it: the score, then each finding on a line of its own —
+/// severity in words, what the rule matched, and where it fired as
+/// subtext. No fix line and no prompt: the score is advisory, and a
+/// finding says what was matched, not what to do about it.
+///
+/// The score line prints for a clean package too. The contract is a score
+/// beside every package; a clean one going silent would make "scored 100"
+/// and "never scored" read alike.
+///
+/// Severity leads the finding as a word, never as a colour: the line has
+/// to carry it for a reader who has no colour, and this printer emits
+/// none. Messages and locations come off files kendex did not write, so
+/// each is printed as what it is rather than as an escape sequence the
+/// terminal would act on; `subject` is escaped by its caller.
+pub fn print_advisory(subject: &str, advisory: &kendex_core::quality::AuditResult) {
     use kendex_core::names::shown;
     say(&format!(
-        "safety: {} {} for {} scores {}/100",
-        row.kind.name(),
-        shown(&row.name),
-        row.harness.display_name(),
-        row.advisory.safety.score
+        "safety: {subject} scores {}/100",
+        advisory.safety.score
     ));
-    for finding in &row.advisory.findings {
+    for finding in &advisory.findings {
+        // A finding whose rule reads a config entry rather than a file has
+        // no place to name; the claim still prints, without empty parens.
+        let at = match finding.location.is_empty() {
+            true => String::new(),
+            false => format!(" ({})", shown(&finding.location)),
+        };
         say(&format!(
-            "  [{}] {}: {}",
+            "  [{}] {}{at}",
             finding.severity.name(),
-            shown(&finding.location),
             shown(&finding.message)
         ));
     }
-    print_skipped(row);
+    print_skipped(advisory);
 }
 
 /// The rules that apply to this kind and had no bytes to read here.
-fn print_skipped(row: &kendex_core::engine::ItemSafety) {
-    let Some(first) = row.advisory.skipped.first() else {
+fn print_skipped(advisory: &kendex_core::quality::AuditResult) {
+    let Some(first) = advisory.skipped.first() else {
         return;
     };
     say(&format!(
         "  not fully checked: {} rule(s) had nothing to read — {}",
-        row.advisory.skipped.len(),
+        advisory.skipped.len(),
         kendex_core::names::shown(&first.reason)
     ));
 }
