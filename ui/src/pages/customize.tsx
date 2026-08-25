@@ -30,6 +30,7 @@ import {
 } from "@/lib/customization";
 import { useCustomizedHere } from "@/lib/customized-here";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
+import { updatesReadState } from "@/lib/updates-read-state";
 import { cn } from "@/lib/utils";
 import { useEditorStore } from "@/stores/editor";
 import { useSettingsStore } from "@/stores/settings";
@@ -55,10 +56,7 @@ export function CustomizePage() {
   } = useEditorStore();
   const projects = useSettingsStore((s) => s.settings?.projects ?? []);
   const customized = useCustomizedHere(draft, scope);
-  // Rows kept from before a failed re-read are last-known and do not count
-  // as hand-edit facts, so this is the case where the index cannot list
-  // an edited package: nothing landed and the read said why.
-  const updatesFailed = useUpdatesStore((s) => !s.loaded && s.error !== null);
+  const updates = useUpdatesStore(updatesReadState);
 
   // Unsaved edits made on a package's own page live in this same draft;
   // reloading over them here would throw away work with nothing said.
@@ -133,7 +131,7 @@ export function CustomizePage() {
                 <CustomizedIndex
                   items={customized}
                   scope={scope}
-                  updatesFailed={updatesFailed}
+                  updates={updates}
                   onRemove={(kind, name) =>
                     edit((current) =>
                       clearItemCustomization(current, kind, name),

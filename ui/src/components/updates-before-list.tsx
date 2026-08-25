@@ -10,6 +10,7 @@ import {
   UPDATES_EMPTY_BODY,
 } from "@/lib/copy";
 import { UPDATES_CHECKING } from "@/lib/copy-updates";
+import { updatesReadState } from "@/lib/updates-read-state";
 
 /** What the Updates page shows while there is no list to show, or null
  *  once there is one. Three different answers that must never blur: a
@@ -37,7 +38,8 @@ export function updatesBeforeList({
   // Before the first read answers there is nothing to report either way —
   // "Everything is up to date" here would assert an up-to-dateness nobody
   // has checked yet.
-  if (!loaded && error === null) {
+  const state = updatesReadState({ loaded, error });
+  if (state === "pending") {
     return (
       <div className="flex min-h-full items-center justify-center">
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -50,7 +52,7 @@ export function updatesBeforeList({
   // A read that failed with nothing kept from a better one: the page says
   // so and offers the retry — the same claim Home's attention row makes,
   // answered here where the row sends people.
-  if (error !== null && empty) {
+  if (state === "failed" && empty) {
     return (
       <div className="flex min-h-full items-center justify-center">
         <EmptyState

@@ -254,9 +254,11 @@ lives in one capability table read by core and UI.
   `PlacesSource` through `placesSource`, never by hand. The index lists
   every package the Library marks for the place being edited, reading the
   open draft in place of that place's saved manifest
-  (`manifestsForEditing`) so an unsaved removal leaves the list at once;
-  when the update read failed with nothing landed it says hand-edited
-  packages cannot be listed rather than calling the place clean.
+  (`manifestsForEditing`) so an unsaved removal leaves the list at once.
+  It says nothing is customized only after the update read has landed
+  (`lib/updates-read-state.ts`, the same three-way answer the Updates
+  page reads): while the read is pending it says it is checking, and
+  after a failure that hand-edited and forked packages may be missing.
 - Hook events have one vocabulary — Claude Code's names, in
   `core/hook.rs::EVENTS`; every other harness's map is keyed by it. The
   picker offers that list, the validator rejects anything outside it, the

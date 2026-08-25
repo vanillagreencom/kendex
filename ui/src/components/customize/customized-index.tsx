@@ -1,7 +1,9 @@
 import { ChevronRight } from "lucide-react";
 import type { ItemKind, Scope } from "@/bindings";
+import { DotSpinner } from "@/components/loading";
 import { Button } from "@/components/ui/button";
 import {
+  CUSTOMIZED_CHECKING,
   CUSTOMIZED_UPDATES_UNCHECKED,
   customizedLine,
   NOT_INSTALLED_HERE,
@@ -13,6 +15,7 @@ import type { CustomizedHere } from "@/lib/customized-places";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel } from "@/lib/labels";
 import { sameScope } from "@/lib/scope";
+import type { UpdatesReadState } from "@/lib/updates-read-state";
 import { useNavStore } from "@/stores/nav";
 import { useScanStore } from "@/stores/scan";
 
@@ -23,15 +26,17 @@ import { useScanStore } from "@/stores/scan";
 export function CustomizedIndex({
   items,
   scope,
-  updatesFailed,
+  updates,
   onRemove,
 }: {
   items: CustomizedHere[];
   scope: Scope;
-  /** The update read failed with nothing landed. Hand edits are read from
-   *  it, so a package missing here may be missing for that reason, and
-   *  the section says so rather than calling the place clean. */
-  updatesFailed: boolean;
+  /** Hand edits, and forks the manifest does not yet record, are read
+   *  from the update rows. Until that read lands the list is the
+   *  manifest's alone, so "nothing customized" is said only after it has;
+   *  before, the section says it is checking, and after a failure that
+   *  packages may be missing. */
+  updates: UpdatesReadState;
   onRemove: (kind: ItemKind, name: string) => void;
 }) {
   const goToPackage = useNavStore((s) => s.goToPackage);
@@ -39,15 +44,21 @@ export function CustomizedIndex({
   // is a new snapshot every render, and React re-renders until it is not.
   const installed = useScanStore((s) => s.result)?.items ?? [];
 
-  const unchecked = updatesFailed ? (
-    <p className="pt-1 text-sm text-muted-foreground">
-      {CUSTOMIZED_UPDATES_UNCHECKED}
-    </p>
-  ) : null;
+  const note =
+    updates === "pending" ? (
+      <p className="flex items-center gap-2 pt-1 text-sm text-muted-foreground">
+        <DotSpinner />
+        {CUSTOMIZED_CHECKING}
+      </p>
+    ) : updates === "failed" ? (
+      <p className="pt-1 text-sm text-muted-foreground">
+        {CUSTOMIZED_UPDATES_UNCHECKED}
+      </p>
+    ) : null;
 
   if (items.length === 0) {
     return (
-      unchecked ?? (
+      note ?? (
         <p className="pt-1 text-sm text-muted-foreground">
           {NOTHING_CUSTOMIZED}
         </p>
@@ -105,7 +116,7 @@ export function CustomizedIndex({
           </div>
         );
       })}
-      {unchecked}
+      {note}
     </div>
   );
 }

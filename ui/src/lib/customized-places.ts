@@ -72,66 +72,73 @@ export function manifestsForEditing(
   return draft ? { ...saved, [scopeKey(scope)]: draft } : saved;
 }
 
-/** Whether this place's copy is a fork, or null when nobody can say.
- *
- *  Two readers of one fact, and either saying yes is a yes. Preferring
- *  the manifest outright loses a fork this app has just made: the row is
- *  re-read with the write and the saved manifest is not, so the mark goes
- *  missing at the one moment the reader is certain it is theirs. The cost
- *  of taking either is a mark that outlives a discard until the next read
- *  — the mark being late rather than the mark being missing. */
-function forkedAt(
-  manifest: Draft | undefined,
-  row: UpdateRow | undefined,
-  updatesLoaded: boolean,
-  kind: ItemKind,
-  name: string,
-): boolean | null {
-  const inManifest = manifest ? manifest.forks?.[kind]?.[name] != null : null;
-  const inRow = updatesLoaded && row ? row.forked : null;
-  if (inManifest || inRow) return true;
-  return inManifest === null && inRow === null ? null : false;
+/** The three facts about one package at one place, each null when nobody
+ *  can say. Null is a real answer: a manifest that was not read and a
+ *  place with no update row both leave the question open, and reading
+ *  either as false is the mark lying in a new way. */
+export interface PlaceFacts {
+  forked: boolean | null;
+  settings: boolean | null;
+  edited: boolean | null;
 }
 
-/** Whether this place's files were edited by hand, or null when nobody
- *  can say. A place with no row after the read has landed is one the
- *  engine cannot speak about — a local source has no version to compare
- *  against — so its hand-edit state stays unknown rather than false. */
-const editedAt = (
-  row: UpdateRow | undefined,
-  updatesLoaded: boolean,
-): boolean | null => (updatesLoaded && row ? row.blockedByLocalEdit : null);
+export function placeFacts(
+  source: PlacesSource,
+  kind: ItemKind,
+  name: string,
+  scope: Scope,
+): PlaceFacts {
+  const manifest = source.manifests[scopeKey(scope)];
+  const row = source.rows.get(placeKey(kind, name, scope));
+  // Two readers of the fork fact, and either saying yes is a yes.
+  // Preferring the manifest outright loses a fork this app has just made:
+  // the row is re-read with the write and the saved manifest is not, so
+  // the mark goes missing at the one moment the reader is certain it is
+  // theirs. The cost of taking either is a mark that outlives a discard
+  // until the next read — the mark being late rather than missing.
+  const inManifest = manifest ? manifest.forks?.[kind]?.[name] != null : null;
+  const inRow = source.updatesLoaded && row ? row.forked : null;
+  const forked =
+    inManifest || inRow
+      ? true
+      : inManifest === null && inRow === null
+        ? null
+        : false;
+  const settings = manifest
+    ? source.settings.has(`${scopeKey(scope)}|${kind}:${name}`)
+    : null;
+  // A place with no row after the read has landed is one the engine
+  // cannot speak about — a local source has no version to compare
+  // against — so its hand-edit state stays unknown rather than false.
+  const edited = source.updatesLoaded && row ? row.blockedByLocalEdit : null;
+  return { forked, settings, edited };
+}
 
-/** How each place stands, in the order the scopes were given.
- *
- *  One word, three sources: what the person set on the Customize tab, what
- *  they edited in the installed files, and whether the copy is their own
- *  fork. Any of them makes the place theirs — the badge answers "is this
- *  place mine", and all three are ways of saying yes. */
+/** One word from three facts. Any of them makes the place theirs — the
+ *  badge answers "is this place mine", and all three are ways of saying
+ *  yes. The order decides where a click lands when more than one holds. */
+export function standingOf(scope: Scope, facts: PlaceFacts): PlaceStanding {
+  if (facts.forked) return { scope, standing: "customized", why: "forked" };
+  if (facts.settings) return { scope, standing: "customized", why: "settings" };
+  if (facts.edited) return { scope, standing: "customized", why: "edited" };
+  // Every source has to have spoken before a place can be called stock.
+  // One silent source is enough to leave the question open: the mark
+  // that is missing is indistinguishable from the mark that is false.
+  if (facts.settings === null || facts.edited === null || facts.forked === null)
+    return { scope, standing: "unknown", why: null };
+  return { scope, standing: "stock", why: null };
+}
+
+/** How each place stands, in the order the scopes were given. */
 export function placeStandings(
   source: PlacesSource,
   kind: ItemKind,
   name: string,
   scopes: Scope[],
 ): PlaceStanding[] {
-  return scopes.map((scope) => {
-    const manifest = source.manifests[scopeKey(scope)];
-    const row = source.rows.get(placeKey(kind, name, scope));
-    const forked = forkedAt(manifest, row, source.updatesLoaded, kind, name);
-    const settings = manifest
-      ? source.settings.has(`${scopeKey(scope)}|${kind}:${name}`)
-      : null;
-    const edited = editedAt(row, source.updatesLoaded);
-    if (forked) return { scope, standing: "customized", why: "forked" };
-    if (settings) return { scope, standing: "customized", why: "settings" };
-    if (edited) return { scope, standing: "customized", why: "edited" };
-    // Every source has to have spoken before a place can be called stock.
-    // One silent source is enough to leave the question open: the mark
-    // that is missing is indistinguishable from the mark that is false.
-    if (settings === null || edited === null || forked === null)
-      return { scope, standing: "unknown", why: null };
-    return { scope, standing: "stock", why: null };
-  });
+  return scopes.map((scope) =>
+    standingOf(scope, placeFacts(source, kind, name, scope)),
+  );
 }
 
 export function standingIn(
@@ -161,12 +168,11 @@ export function customizedHere(
   source: PlacesSource,
   scope: Scope,
 ): CustomizedHere[] {
-  const manifest = source.manifests[scopeKey(scope)];
+  const manifest = source.manifests[scopeKey(scope)] ?? null;
   const candidates = new Map<string, [ItemKind, string]>();
   const add = (kind: ItemKind, name: string) =>
     candidates.set(`${kind}:${name}`, [kind, name]);
-  for (const item of customizedItems(manifest ?? null))
-    add(item.kind, item.name);
+  for (const item of customizedItems(manifest)) add(item.kind, item.name);
   for (const [kind, byName] of Object.entries(manifest?.forks ?? {}))
     for (const name of Object.keys(byName ?? {})) add(kind as ItemKind, name);
   for (const row of source.rows.values())
@@ -174,16 +180,14 @@ export function customizedHere(
       add(row.kind, row.name);
   const out: CustomizedHere[] = [];
   for (const [kind, name] of candidates.values()) {
-    const [standing] = placeStandings(source, kind, name, [scope]);
-    if (standing.standing !== "customized") continue;
-    const row = source.rows.get(placeKey(kind, name, scope));
+    const facts = placeFacts(source, kind, name, scope);
+    if (standingOf(scope, facts).standing !== "customized") continue;
     out.push({
       kind,
       name,
-      edited: editedAt(row, source.updatesLoaded) === true,
-      forked:
-        forkedAt(manifest, row, source.updatesLoaded, kind, name) === true,
-      customization: itemCustomization(manifest ?? null, kind, name),
+      edited: facts.edited === true,
+      forked: facts.forked === true,
+      customization: itemCustomization(manifest, kind, name),
     });
   }
   return out.sort(

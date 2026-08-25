@@ -101,8 +101,9 @@ export const CUSTOMIZED_SECTION_HELP =
 export const NOTHING_CUSTOMIZED =
   "Nothing yet — open a package from the Library to customize it.";
 export const NOT_INSTALLED_HERE = "Not installed here";
+export const CUSTOMIZED_CHECKING = "Checking for hand edits and forks…";
 export const CUSTOMIZED_UPDATES_UNCHECKED =
-  "Packages edited by hand aren't listed: the check for updates failed. Try it again from Updates.";
+  "Hand-edited and forked packages may be missing: the check for updates failed. Try it again from Updates.";
 export const REMOVE_CUSTOMIZATION = "Remove";
 
 // What a package's row is marked with, in the Library's legend and on it.
