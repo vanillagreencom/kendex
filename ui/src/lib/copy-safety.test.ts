@@ -6,10 +6,10 @@ import {
   SAFETY_CAVEAT,
   SAFETY_CHECK_FAILED,
   SAFETY_DOT_UNCHECKED,
-  SAFETY_STALE_NOTE,
   safetyDotWords,
   safetyHeadline,
   severityTone,
+  staleSafetyNote,
 } from "./copy-safety";
 
 const finding = (severity: Finding["severity"]): Finding => ({
@@ -36,7 +36,7 @@ describe("what a score is allowed to claim", () => {
     installedScoreWords(100, 0, []),
     installedScoreWords(100, 0, [], true),
     SAFETY_CHECK_FAILED,
-    SAFETY_STALE_NOTE,
+    staleSafetyNote,
     SAFETY_DOT_UNCHECKED,
   ];
 

@@ -2,6 +2,7 @@
 // line cap — same house style, same rules (see the top of copy.ts).
 import type { Finding, Severity } from "@/bindings";
 import { SEVERITY_LABELS } from "@/lib/labels";
+import { relativeTime } from "@/lib/relative-time";
 
 // The check matches patterns over as much of a package as it reads. So every
 // place a score is shown says what was determined and nothing more: a score
@@ -84,11 +85,34 @@ export function safetyHeadline(findings: Finding[], skipped: number): string {
 
 // What a kept reading is, wherever a score outlives the check that would
 // have replaced it. Without this the app presents a number as current when
-// nothing current exists. The word "safety" is spelled around throughout
-// this file: it contains "safe", and no copy beside a score may say that.
-export const SAFETY_STALE_LEAD = "The last check couldn't run. Before it:";
-export const SAFETY_STALE_NOTE =
-  "The last check couldn't run. This is the reading before it.";
+// nothing current exists — and without the age, a reader cannot tell a
+// number from a minute ago from one from last week. The word "safety" is
+// spelled around throughout this file: it contains "safe", and no copy
+// beside a score may say that.
+//
+// `checkedAt` is null only where nothing ever answered, which leaves the
+// age genuinely unknown rather than something to guess at.
+export const staleSafetyNote = (
+  checkedAt: number | null,
+  now: number = Date.now(),
+): string =>
+  checkedAt === null
+    ? "The last check couldn't run. This reading is from an earlier one."
+    : `The last check couldn't run. This reading was taken ${relativeTime(
+        checkedAt,
+        now,
+      )}.`;
+/** The same thing in a tooltip, where the score follows it on one line. */
+export const staleSafetyLead = (
+  checkedAt: number | null,
+  now: number = Date.now(),
+): string =>
+  checkedAt === null
+    ? "The last check couldn't run. From an earlier one:"
+    : `The last check couldn't run. From the reading taken ${relativeTime(
+        checkedAt,
+        now,
+      )}:`;
 // No reading at all, and the check is over rather than pending — so this
 // comes with something to press instead of a spinner.
 export const SAFETY_CHECK_FAILED =
@@ -104,10 +128,13 @@ export const installedScoreWords = (
   score: number,
   skipped: number,
   findings: Finding[],
+  /** Set where the check after this reading failed: the number stays, but
+   *  it stops being what the files say now. */
   stale = false,
+  /** When this reading was taken, for the stale wording to date it. */
+  checkedAt: number | null = null,
+  now: number = Date.now(),
 ): string =>
-  `${stale ? SAFETY_STALE_LEAD : "The copy installed now:"} ${safetyDotWords(
-    score,
-    skipped,
-    findings,
-  )}`;
+  `${
+    stale ? staleSafetyLead(checkedAt, now) : "The copy installed now:"
+  } ${safetyDotWords(score, skipped, findings)}`;

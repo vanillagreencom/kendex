@@ -5,7 +5,7 @@ import {
   SAFETY_CAVEAT,
   SAFETY_CHECK_FAILED,
   SAFETY_RETRY_LABEL,
-  SAFETY_STALE_NOTE,
+  staleSafetyNote,
 } from "@/lib/copy-safety";
 import { SEVERITY_LABELS } from "@/lib/labels";
 import { SafetyPanel, SafetyUnavailable } from "./safety-panel";
@@ -81,15 +81,31 @@ describe("the safety block", () => {
   // A reading kept from before a failed check is not what the files say now.
   // Left unlabelled it is a number nothing on screen stands behind.
   it("labels a kept reading rather than presenting it as the current one", () => {
+    const checkedAt = Date.now() - 3 * 60 * 60 * 1000;
     const html = renderToStaticMarkup(
-      <SafetyPanel result={result()} stale onRetry={() => {}} />,
+      <SafetyPanel
+        result={result()}
+        stale
+        checkedAt={checkedAt}
+        onRetry={() => {}}
+      />,
     );
-    expect(html).toContain(esc(SAFETY_STALE_NOTE));
+    // The age is the point: without it a number from a minute ago and one
+    // from last week read exactly alike.
+    expect(html).toContain("3h ago");
+    expect(html).toContain(esc(staleSafetyNote(checkedAt)));
     expect(html).toContain(SAFETY_RETRY_LABEL);
   });
 
+  it("still labels a kept reading whose age nothing recorded", () => {
+    const html = renderToStaticMarkup(
+      <SafetyPanel result={result()} stale onRetry={() => {}} />,
+    );
+    expect(html).toContain(esc(staleSafetyNote(null)));
+  });
+
   it("says nothing about staleness on a reading the check just made", () => {
-    expect(render()).not.toContain(esc(SAFETY_STALE_NOTE));
+    expect(render()).not.toContain("couldn&#x27;t run");
   });
 
   // Nothing on this block asks for an answer: the score is advisory, and a

@@ -21,6 +21,10 @@ export interface InstalledReading {
   /** No audit has answered and none has failed: the reading is still on its
    *  way, which is a wait rather than an outcome. */
   waiting: boolean;
+  /** When the audit behind this reading answered, or null where none has.
+   *  Only the stale wording spends it: a current reading is current, and
+   *  dating it would invite the reader to work out whether to believe it. */
+  checkedAt: number | null;
   retry: () => void;
 }
 
@@ -37,7 +41,7 @@ export function useInstalledReading(
 ): InstalledReading {
   const views = useAuditStore((s) => s.views);
   const failure = useAuditStore((s) => s.checkError);
-  const answered = useAuditStore((s) => s.auditedAt !== null);
+  const checkedAt = useAuditStore((s) => s.auditedAt);
   const refresh = useAuditStore((s) => s.refresh);
   // Merged out of the store's rows on every render rather than inside a
   // selector: the merge builds a fresh object each call, and a selector
@@ -46,7 +50,8 @@ export function useInstalledReading(
   return {
     result,
     failure,
-    waiting: !answered && failure === null,
+    waiting: checkedAt === null && failure === null,
+    checkedAt,
     retry: () => void refresh({ force: true }),
   };
 }
@@ -84,6 +89,7 @@ export function InstalledScore({
         result.skipped.length,
         result.findings,
         failure !== null,
+        reading.checkedAt,
       )
     : failure !== null
       ? SAFETY_CHECK_FAILED

@@ -24,6 +24,7 @@ export function PackageSafety({ reference }: { reference: PackageRef }) {
       <SafetyPanel
         result={reading.result}
         stale={reading.failure !== null}
+        checkedAt={reading.checkedAt}
         onRetry={reading.retry}
       />
     );

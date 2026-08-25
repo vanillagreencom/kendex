@@ -6,9 +6,9 @@ import {
   SAFETY_CAVEAT,
   SAFETY_CHECK_FAILED,
   SAFETY_RETRY_LABEL,
-  SAFETY_STALE_NOTE,
   safetyHeadline,
   severityTone,
+  staleSafetyNote,
 } from "@/lib/copy-safety";
 import { findingKey } from "@/lib/installed-safety";
 import { cn } from "@/lib/utils";
@@ -29,6 +29,7 @@ export function SafetyPanel({
   result,
   notes = [],
   stale = false,
+  checkedAt = null,
   onRetry,
   className,
 }: {
@@ -41,6 +42,8 @@ export function SafetyPanel({
    *  stays, because it is the last thing anything knows, but it stops being
    *  presented as what the files say now. */
   stale?: boolean;
+  /** When this reading was taken, so the stale line can date it. */
+  checkedAt?: number | null;
   onRetry?: () => void;
   className?: string;
 }) {
@@ -62,7 +65,7 @@ export function SafetyPanel({
           <p className="text-sm">{safetyHeadline(findings, skipped.length)}</p>
           {stale ? (
             <div className="flex flex-wrap items-center gap-2 text-sm text-warning">
-              {SAFETY_STALE_NOTE}
+              {staleSafetyNote(checkedAt)}
               {onRetry ? (
                 <Button size="sm" variant="outline" onClick={onRetry}>
                   {SAFETY_RETRY_LABEL}

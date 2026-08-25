@@ -4,7 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuditView, ItemSafety, Scope } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
-import { SAFETY_CHECK_FAILED, SAFETY_RETRY_LABEL } from "@/lib/copy-safety";
+import {
+  SAFETY_CHECK_FAILED,
+  SAFETY_RETRY_LABEL,
+  staleSafetyNote,
+} from "@/lib/copy-safety";
 import { SEVERITY_LABELS } from "@/lib/labels";
 import { useAuditStore } from "@/stores/audit";
 import { refreshDownstream } from "@/stores/marketplaces-shared";
@@ -148,12 +152,22 @@ describe("when the check could not run", () => {
     expect(host.textContent).toContain("58/100");
   });
 
-  it("marks a reading kept from before the failure, never as the current one", async () => {
+  // Without the age a reader cannot tell a number from a minute ago from one
+  // from last week, and both were only ever "before it".
+  it("dates the kept reading rather than only calling it an earlier one", async () => {
+    const checkedAt = Date.now() - 3 * 60 * 60 * 1000;
+    // Three hours is well past the freshness window, so the mount asks for a
+    // new audit — and it is that ask which fails, leaving the old reading on
+    // screen. Exactly the state the words have to be honest about.
+    vi.mocked(commands.auditAll).mockResolvedValue({
+      status: "error",
+      error: "audit crashed",
+    });
     act(() => {
       useAuditStore.setState({
         views: [view([gh])],
-        auditedAt: Date.now(),
-        checkError: "audit crashed",
+        auditedAt: checkedAt,
+        backgroundFailureAnnounced: true,
       });
     });
 
@@ -165,7 +179,8 @@ describe("when the check could not run", () => {
     await settle();
 
     expect(host.textContent).toContain("58/100");
-    expect(host.textContent).toContain("couldn't run");
+    expect(host.textContent).toContain("3h ago");
+    expect(host.textContent).toContain(staleSafetyNote(checkedAt));
     expect(host.textContent).toContain(SAFETY_RETRY_LABEL);
   });
 });

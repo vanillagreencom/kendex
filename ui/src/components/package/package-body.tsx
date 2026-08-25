@@ -17,8 +17,9 @@ import { harnessName } from "@/lib/labels";
 import { versionRowLabel } from "@/lib/versions";
 import type { PackageRef } from "@/stores/nav";
 
-/** What a package is, as installed: its provenance and switches on the
- *  left, the file it is made of — or a comparison — on the right. */
+/** What a package is, as installed: its safety reading over the whole
+ *  thing, then its provenance and switches on the left with the file it is
+ *  made of — or a comparison — on the right. */
 export function PackageBody({
   reference,
   group,
@@ -76,25 +77,27 @@ export function PackageBody({
         }}
         onResolved={onReload}
       />
-      {view.mode === "diff" ? (
-        diff ? (
-          <DiffView
-            diff={diff}
-            fromLabel={view.fromLabel}
-            toLabel={view.toLabel}
-            onClose={() => setView({ mode: "files", file: null })}
-          />
+      <div className="flex flex-col gap-8">
+        {/* The score answers for the whole package, so it stands above what
+            the page happens to be showing — a file, or a comparison of two
+            versions. Closing a diff is not what makes a package's reading
+            true, and a Preview opens this page straight into one. */}
+        <PackageSafety reference={reference} />
+        {view.mode === "diff" ? (
+          diff ? (
+            <DiffView
+              diff={diff}
+              fromLabel={view.fromLabel}
+              toLabel={view.toLabel}
+              onClose={() => setView({ mode: "files", file: null })}
+            />
+          ) : (
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <DotSpinner />
+              Comparing…
+            </p>
+          )
         ) : (
-          <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <DotSpinner />
-            Comparing…
-          </p>
-        )
-      ) : (
-        <div className="flex flex-col gap-8">
-          {/* The score answers for the whole package, so it sits above the
-              split rather than inside a column that is about one file. */}
-          <PackageSafety reference={reference} />
           <div className="flex flex-col gap-8 lg:flex-row">
             <PackageSidebar
               group={group}
@@ -119,8 +122,8 @@ export function PackageBody({
               />
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </>
   );
 }

@@ -168,13 +168,18 @@ describe("which copies a row's score is of", () => {
 // A retained number presented as the current check is a claim nothing has
 // made. The words carry the difference, because the disc cannot.
 describe("when the check itself fails", () => {
-  it("says a kept reading is the one before the failure", () => {
+  it("says a kept reading is the one before the failure, and how old it is", () => {
+    const checkedAt = Date.now() - 3 * 60 * 60 * 1000;
     stage([view([scored(62, [finding("high")])])], {
+      auditedAt: checkedAt,
       checkError: "audit crashed",
     });
     mount(<Row />);
 
     expect(words()).toContain("couldn't run");
+    // Without the age, a number from a minute ago and one from last week
+    // read exactly alike.
+    expect(words()).toContain("3h ago");
     expect(words()).toContain("62/100");
     expect(words()).not.toContain("installed now");
   });
