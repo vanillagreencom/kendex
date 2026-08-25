@@ -8,12 +8,13 @@
 #
 # The fix records each outstanding item in `escalated_items` (outcome
 # "blocked", so the audit builder maps it to origin "escalated") before the
-# route to § 5, dropping the superseded `fixed_items` entry first so one
-# finding never sits in both buckets. This lint pins that pair inside the
-# Bounded Re-Review section, the append's outcome field, the selection clause
-# deciding which items they cover, the schema's coverage of the cap path, and
-# the same contract in workflow-state's cap-refusal message — the instruction
-# an orchestrator receives at the instant the cap fires.
+# route to § 5, dropping its superseded `fixed_items` entry in the SAME
+# workflow-state update: one finding then sits in neither both buckets nor
+# none, whichever moment a dying session stops at. This lint pins that single
+# write inside the Bounded Re-Review section, its outcome field, the selection
+# clause deciding which items it covers, the schema's coverage of the cap path,
+# and the same contract in workflow-state's cap-refusal message — the
+# instruction an orchestrator receives at the instant the cap fires.
 #
 # The section is read with HTML comments stripped, and the pre-fix
 # report-only sentence is rejected outright, so a rule that is present but
@@ -79,34 +80,30 @@ cap_refusal() { grep -F 'cycles is past the cap' "$1"; }
 # edit lengthens § 4.
 sec_has()  { grep -q  "$2" <<<"$(bounded_rereview "$1")"; }
 sec_hasF() { grep -qF "$2" <<<"$(bounded_rereview "$1")"; }
-append_has() {
-  grep -q "$2" <<<"$(grep -E 'workflow-state append \[ISSUE_ID\] escalated_items' <<<"$(bounded_rereview "$1")")"
-}
-# Line number of the first line containing a fixed substring, or 0. Reads
-# stdin, and matches by index() so bracketed placeholders need no escaping.
-first_line() { awk -v s="$1" 'index($0, s) && !n { n = NR } END { print n + 0 }'; }
 
-# Two spellings of each command: an expression for grep and sed, and the plain
-# text for index().
-APPEND_RE='workflow-state append \[ISSUE_ID\] escalated_items'
-APPEND_TXT='workflow-state append [ISSUE_ID] escalated_items'
-SUPERSEDE_RE='workflow-state update .*fixed_items'
-SUPERSEDE_TXT='.fixed_items = ((.fixed_items'
+# The one command the cap rule runs per item. It is a single `update` filter,
+# not a drop followed by an append: between two writes the item is in neither
+# bucket, which is exactly the state § 8 reads as declined, so a session that
+# dies in that window re-declines a live blocker.
+CAP_WRITE_RE='workflow-state update \[ISSUE_ID\].*escalated_items'
+cap_write() { grep -E "$CAP_WRITE_RE" <<<"$(bounded_rereview "$1")"; }
+write_has() { grep -q "$2" <<<"$(cap_write "$1")"; }
+
 # The pre-fix instruction: route and report, record nothing.
 REPORT_ONLY='At the cap, report the outstanding items'
 
 # --- a: the cap paragraph records outstanding items as escalated ------------
-if sec_has "$REVIEW_PR_WF" "$APPEND_RE"; then
-  pass "Bounded Re-Review appends capped items to escalated_items before § 5"
+if [[ -n "$(cap_write "$REVIEW_PR_WF")" ]]; then
+  pass "Bounded Re-Review records capped items in escalated_items before § 5"
 else
-  fail "Bounded Re-Review lost the escalated_items append for capped items"
+  fail "Bounded Re-Review lost the escalated_items write for capped items"
 fi
 
-# --- b: the append carries the typed outcome so audit maps it to escalated --
-if append_has "$REVIEW_PR_WF" '"outcome":"blocked"'; then
-  pass "the capped-item append writes outcome \"blocked\""
+# --- b: the entry carries the typed outcome so audit maps it to escalated ---
+if write_has "$REVIEW_PR_WF" '"outcome":"blocked"'; then
+  pass "the capped-item entry writes outcome \"blocked\""
 else
-  fail "the capped-item append lost outcome \"blocked\""
+  fail "the capped-item entry lost outcome \"blocked\""
 fi
 
 # --- c: the rule states the disposition, not just the mechanics -------------
@@ -151,24 +148,23 @@ else
   pass "Bounded Re-Review carries no report-only cap instruction"
 fi
 
-# --- h: a re-found item is reported once, not from both buckets -------------
-# Appending without dropping the superseded fixed_items entry puts one finding
+# --- h: one write does both, so no window exists ----------------------------
+# Recording without dropping the superseded fixed_items entry puts one finding
 # in both buckets: § 8 renders it under ✅ FIXED with the stale SHA AND under
-# ⚠️ ESCALATED, and post-summary counts it twice.
-SECTION="$(bounded_rereview "$REVIEW_PR_WF")"
-sup_at="$(first_line "$SUPERSEDE_TXT" <<<"$SECTION")"
-app_at="$(first_line "$APPEND_TXT" <<<"$SECTION")"
-if [[ "$sup_at" -gt 0 ]] && [[ "$app_at" -gt 0 ]] && [[ "$sup_at" -lt "$app_at" ]]; then
-  pass "the superseded fixed_items entry is dropped before the escalated_items append"
+# ⚠️ ESCALATED, and post-summary counts it twice. Dropping and recording as two
+# commands is worse — between them the item is in neither bucket, which § 8
+# reads as declined. The drop must therefore ride the same command.
+if write_has "$REVIEW_PR_WF" '\.fixed_items'; then
+  pass "the same command drops the superseded fixed_items entry"
 else
-  fail "the cap rule appends without first dropping the superseded fixed_items entry"
+  fail "the cap rule records the item without dropping its fixed_items entry in the same command"
 fi
 
-# --- i: the rule states the one-bucket outcome the drop exists to produce ---
-if sec_hasF "$REVIEW_PR_WF" 'no item stands in both buckets'; then
-  pass "the cap rule states that no item stands in both buckets"
+# --- i: the rule states the outcome that single write exists to produce -----
+if sec_hasF "$REVIEW_PR_WF" 'never in both buckets and never in neither'; then
+  pass "the cap rule states the never-both, never-neither contract"
 else
-  fail "the cap rule lost the one-bucket contract"
+  fail "the cap rule lost the never-both, never-neither contract"
 fi
 
 # --- j: the schema documents the cap path into escalated_items --------------
@@ -203,20 +199,20 @@ plant_pr() {
 }
 
 # The pre-fix shape: outstanding items reported, never recorded.
-if ! plant_pr append "/$APPEND_RE/d"; then
-  fail "append control planted nothing — its sed program matched no text"
-elif sec_has "$CTRL" "$APPEND_RE"; then
-  fail "lint MISSED a dropped capped-item escalated_items append"
+if ! plant_pr write "/$CAP_WRITE_RE/d"; then
+  fail "write control planted nothing — its sed program matched no text"
+elif [[ -n "$(cap_write "$CTRL")" ]]; then
+  fail "lint MISSED a dropped capped-item escalated_items write"
 else
-  pass "lint flags a dropped capped-item escalated_items append"
+  pass "lint flags a dropped capped-item escalated_items write"
 fi
 
 if ! plant_pr outcome 's/"outcome":"blocked",//'; then
   fail "outcome control planted nothing — its sed program matched no text"
-elif append_has "$CTRL" '"outcome":"blocked"'; then
-  fail "lint MISSED a dropped outcome field on the capped-item append"
+elif write_has "$CTRL" '"outcome":"blocked"'; then
+  fail "lint MISSED a dropped outcome field on the capped-item entry"
 else
-  pass "lint flags a dropped outcome field on the capped-item append"
+  pass "lint flags a dropped outcome field on the capped-item entry"
 fi
 
 if ! plant_pr contract "s/\*\*Capped items are escalated, never dropped\.\*\* Record every blocker.*$/$REPORT_ONLY after that pass and proceed to § 5./"; then
@@ -251,21 +247,45 @@ else
   pass "lint flags a selection clause that drops the match key"
 fi
 
-# The both-buckets regression: append the item, leave its fixed_items entry.
-if ! plant_pr supersede "/$SUPERSEDE_RE/d"; then
+# The both-buckets regression: record the item, leave its fixed_items entry.
+if ! plant_pr supersede "s/'\.fixed_items = .*))) | \.escalated_items/'.escalated_items/"; then
   fail "supersede control planted nothing — its sed program matched no text"
-elif [[ "$(first_line "$SUPERSEDE_TXT" <<<"$(bounded_rereview "$CTRL")")" -gt 0 ]]; then
-  fail "lint MISSED a cap rule that appends without dropping the fixed_items entry"
+elif write_has "$CTRL" '\.fixed_items'; then
+  fail "lint MISSED a cap rule that records without dropping the fixed_items entry"
 else
-  pass "lint flags a cap rule that appends without dropping the fixed_items entry"
+  pass "lint flags a cap rule that records without dropping the fixed_items entry"
 fi
 
-if ! plant_pr onebucket 's/, and no item stands in both buckets[^.]*\.//'; then
-  fail "one-bucket control planted nothing — its sed program matched no text"
-elif sec_hasF "$CTRL" 'no item stands in both buckets'; then
-  fail "lint MISSED a cap rule that drops the one-bucket contract"
+# The neither-bucket regression: the drop and the record split into two
+# commands, leaving a window in which the item is in no bucket at all.
+TWOWRITE="$TMP_ROOT/pr-twowrite.md"
+awk -v q="'" '
+  {
+    i = index($0, "))) | .escalated_items")
+    if (i > 0 && !done) {
+      print substr($0, 1, i + 2) q
+      print ".agents/skills/orch/scripts/workflow-state append [ISSUE_ID] escalated_items " \
+            q "{\"description\":\"[DESC]\",\"location\":\"[LOC]\",\"outcome\":\"blocked\",\"source\":\"[SOURCE]\"}" q
+      done = 1
+      next
+    }
+    print
+  }
+' "$REVIEW_PR_WF" > "$TWOWRITE"
+if ! grep -qF 'workflow-state append [ISSUE_ID] escalated_items' "$TWOWRITE"; then
+  fail "two-write control planted nothing — the command was not split"
+elif write_has "$TWOWRITE" '\.fixed_items'; then
+  fail "lint credits a drop and a record split across two commands"
 else
-  pass "lint flags a cap rule that drops the one-bucket contract"
+  pass "lint flags a drop and a record split across two commands"
+fi
+
+if ! plant_pr neither 's/, so the item is never in both buckets and never in neither//'; then
+  fail "never-both control planted nothing — its sed program matched no text"
+elif sec_hasF "$CTRL" 'never in both buckets and never in neither'; then
+  fail "lint MISSED a cap rule that drops the never-both, never-neither contract"
+else
+  pass "lint flags a cap rule that drops the never-both, never-neither contract"
 fi
 
 # Inverse control: the rule's text is preserved verbatim but made inert — the
@@ -285,8 +305,8 @@ awk -v report_only="$REPORT_ONLY after that pass and proceed to § 5." '
 ' "$REVIEW_PR_WF" > "$INERT"
 if ! grep -qF '<!-- **Capped items are escalated' "$INERT"; then
   fail "inert-rule control planted nothing — the cap rule was not commented out"
-elif sec_has "$INERT" "$APPEND_RE"; then
-  fail "lint credits an escalated_items append that sits inside an HTML comment"
+elif [[ -n "$(cap_write "$INERT")" ]]; then
+  fail "lint credits an escalated_items write that sits inside an HTML comment"
 elif sec_has "$INERT" 'Capped items are escalated, never dropped'; then
   fail "lint credits a contract sentence that sits inside an HTML comment"
 elif ! sec_hasF "$INERT" "$REPORT_ONLY"; then
@@ -306,8 +326,8 @@ awk '
 ' "$REVIEW_PR_WF" > "$ABOVE"
 if ! grep -qF '<!--' "$ABOVE"; then
   fail "above-heading control planted nothing — no comment was opened"
-elif sec_has "$ABOVE" "$APPEND_RE"; then
-  fail "lint credits an append under a comment opened above the section heading"
+elif [[ -n "$(cap_write "$ABOVE")" ]]; then
+  fail "lint credits a write under a comment opened above the section heading"
 elif sec_has "$ABOVE" 'Capped items are escalated, never dropped'; then
   fail "lint credits a contract sentence under a comment opened above the heading"
 else
@@ -319,12 +339,12 @@ fi
 # single sed program that both plants and deletes collides in the pattern
 # space and removes the plant along with the § 5 heading.
 CTRL="$TMP_ROOT/pr-scope.md"
-sed "/^### Bounded Re-Review/,/^## 5\./{/$APPEND_RE/d}" "$REVIEW_PR_WF" \
-  | sed 's|^## 5\. Verdict Pass$|## 5. Verdict Pass\n\n.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] escalated_items placeholder|' > "$CTRL"
+sed "/^### Bounded Re-Review/,/^## 5\./{/$CAP_WRITE_RE/d}" "$REVIEW_PR_WF" \
+  | sed 's|^## 5\. Verdict Pass$|## 5. Verdict Pass\n\n.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] escalated_items placeholder|' > "$CTRL"
 if ! grep -q 'escalated_items placeholder' "$CTRL"; then
   fail "scoping fixture planted no append outside Bounded Re-Review — control is vacuous"
-elif sec_has "$CTRL" "$APPEND_RE"; then
-  fail "lint credits an escalated_items append outside Bounded Re-Review"
+elif [[ -n "$(cap_write "$CTRL")" ]]; then
+  fail "lint credits an escalated_items write outside Bounded Re-Review"
 else
   pass "lint scopes the append check to Bounded Re-Review"
 fi
