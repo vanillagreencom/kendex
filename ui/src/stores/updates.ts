@@ -11,7 +11,11 @@ import {
   updatablePlaces,
   visibleUpdates,
 } from "@/lib/update-groups";
-import { showBulkOutcome, showUpdateOutcome } from "@/lib/update-outcome";
+import {
+  showBulkOutcome,
+  showUpdateOutcome,
+  startBulk,
+} from "@/lib/update-outcome";
 import { unsettled } from "@/lib/updates-read-state";
 import { useAuditStore } from "./audit";
 import { useProblemsStore } from "./problems";
@@ -174,14 +178,9 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
         }
         // The whole sequence and its follow-up overview ride the
         // side-effect chain, so nothing older can land on top of them.
-        let outcome = {
-          ok: true,
-          moved: [] as UpdateRow[],
-          held: 0,
-          removed: 0,
-        };
+        const outcome = startBulk(skipped);
         const error = await get().mutate(async () => {
-          outcome = await applyRows(rows, reportUpdate);
+          await applyRows(rows, reportUpdate, outcome);
           return null;
         });
         // A rejection escapes the sequence without touching the outcome —
@@ -196,7 +195,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
         // Said whether or not a place failed: the error is its own toast,
         // and what the rest of the run did to the person's packages is not
         // the error's to swallow.
-        showBulkOutcome(outcome, skipped, visibleUpdates(get().rows));
+        showBulkOutcome(outcome, visibleUpdates(get().rows));
         await useScanStore.getState().refresh();
         await useAuditStore.getState().refresh({ force: true });
       } finally {

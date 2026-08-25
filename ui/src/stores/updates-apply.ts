@@ -54,14 +54,21 @@ export const applyRow = async (
 };
 
 /** Bring every place in `rows` current, one package-scoped apply per
- *  place, keeping what each one reported. Deciding here what the answers
- *  mean is how this path fell behind the per-row one twice: it reads
- *  `outcomeOf` instead. */
+ *  place, writing each answer into the caller's `outcome` as it comes.
+ *
+ *  Nothing is returned, on purpose: a returned record is one an assignment
+ *  can lose, and a place that rejects at the transport layer would take
+ *  every earlier place's committed result with it. The caller holds the
+ *  record from before the first apply until after the last, and a throw
+ *  leaves it holding everything said up to that point.
+ *
+ *  Deciding here what the answers mean is how this path fell behind the
+ *  per-row one twice: it reads `outcomeOf` instead. */
 export const applyRows = async (
   rows: UpdateRow[],
   report: Report,
-): Promise<BulkOutcome> => {
-  const outcome: BulkOutcome = { ok: true, moved: [], held: 0, removed: 0 };
+  outcome: BulkOutcome,
+): Promise<void> => {
   for (const row of rows) {
     const one = await applyRow(row, report);
     if (!one.ok) {
@@ -75,5 +82,4 @@ export const applyRows = async (
     if (what.held.length > 0) outcome.held += 1;
     if (what.removed.length > 0) outcome.removed += 1;
   }
-  return outcome;
 };

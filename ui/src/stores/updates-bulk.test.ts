@@ -569,3 +569,108 @@ describe("updates store: a run where one place failed", () => {
     expect(toast.error).not.toHaveBeenCalled();
   });
 });
+
+describe("updates store: what a bulk run cannot lose", () => {
+  const emptyView = {
+    scope: { scope: "global" } as const,
+    drift: [],
+    plan: [],
+    notes: [],
+    warnings: [],
+    safety: [],
+    adoptable: ADOPTABLE,
+    exits: [],
+    error: null,
+  };
+  const conflict = (name: string) => ({
+    kind: "skill" as const,
+    name,
+    harness: "claude" as const,
+    scope: { scope: "global" } as const,
+    state: "conflict" as const,
+    detail: "the previous installation will be moved to the trash",
+    cause: null,
+  });
+  const stale = (name: string) => ({
+    ...conflict(name),
+    state: "stale" as const,
+    cause: "upstream-changed" as const,
+  });
+
+  const answering = (
+    per: Record<string, { removed?: string[]; moved?: string[] } | "rejects">,
+    remaining: UpdateRow[] = [],
+  ) => {
+    vi.mocked(commands.packageUpdate).mockImplementation(
+      async (_scope, _kind, name) => {
+        const said = per[name];
+        // A transport rejection, not an answer: the promise throws and the
+        // loop never returns.
+        if (said === "rejects") throw new Error("ipc down");
+        return {
+          status: "ok",
+          data: {
+            view: emptyView,
+            heldBack: [],
+            removed: (said?.removed ?? []).map(conflict),
+            moved: (said?.moved ?? []).map(stale),
+          },
+        };
+      },
+    );
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: remaining, warnings: [] },
+    });
+    vi.mocked(commands.scanMachine).mockResolvedValue({
+      status: "ok",
+      data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
+    });
+    vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
+  };
+
+  beforeEach(() => {
+    useUpdatesStore.setState({ rows: [], busy: false, loaded: true });
+    vi.clearAllMocks();
+  });
+
+  // The first apply committed. A later place throwing does not un-commit
+  // it, so the run cannot go quiet about a copy it took away.
+  it("keeps an earlier removal when a later place rejects outright", async () => {
+    answering({ gh: { removed: ["gh"] }, review: "rejects" });
+
+    await useUpdatesStore
+      .getState()
+      .updateRows([row({ name: "gh" }), row({ name: "review" })]);
+
+    expect(toast.error).toHaveBeenCalledWith(
+      "1 package could not be installed — its copy went to the trash and nothing replaced it",
+    );
+    expect(useProblemsStore.getState().dialog.message).toContain("ipc down");
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("never says everything is up to date over a copy it removed", async () => {
+    answering({ gh: { removed: ["gh"] }, review: { moved: ["review"] } });
+
+    await useUpdatesStore
+      .getState()
+      .updateRows([row({ name: "gh" }), row({ name: "review" })]);
+
+    expect(toast.error).toHaveBeenCalledWith(
+      "1 package could not be installed — its copy went to the trash and nothing replaced it",
+    );
+    expect(toast.success).not.toHaveBeenCalledWith("Everything is up to date");
+    expect(toast.success).toHaveBeenCalledWith("Updated review");
+  });
+
+  // The control: a run that left nothing behind still gets the all-clear.
+  it("still says everything is up to date after a clean run", async () => {
+    answering({ gh: { moved: ["gh"] } });
+
+    await useUpdatesStore.getState().updateRows([row({ name: "gh" })]);
+
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast.success).toHaveBeenCalledWith("Everything is up to date");
+  });
+});
