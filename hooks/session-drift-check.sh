@@ -78,10 +78,20 @@ case "$RC" in
     exit 0
     ;;
   1)
-    # Drift found: stdout is the session-start context channel.
+    # Drift found, or packages awaiting evaluation: stdout is the
+    # session-start context channel.
     printf '%s\n' "$OUTPUT"
     ;;
+  2)
+    # kendex answered, and its answer is that part of the check could not
+    # be made: a "could not check" section, or an Error: line from a
+    # failure before the check could read anything. The output names
+    # which; this line must not call a completed run a crash.
+    printf 'kendex check incomplete (exit 2); some drift status unknown:\n%s\n' "$OUTPUT"
+    ;;
   *)
+    # Anything else is not a kendex verdict: a signal, a timeout, a
+    # binary that could not start.
     printf 'kendex check could not run (exit %s); drift status unknown:\n%s\n' "$RC" "$OUTPUT"
     ;;
 esac

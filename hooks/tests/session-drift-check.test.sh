@@ -2,8 +2,9 @@
 # Tests for the session-drift-check hook.
 #
 # The hook is a thin adapter over `kendex check --quiet`: exit 0 → silence,
-# exit 1 → the report verbatim on stdout, anything else → a "could not run"
-# line plus the output. These cases drive it with a fake `kendex` on PATH that
+# exit 1 → the report verbatim on stdout, exit 2 → an "incomplete" line plus
+# the report, anything else → a "could not run" line plus the output. These
+# cases drive it with a fake `kendex` on PATH that
 # replays a scripted exit code and output, so no real install is consulted.
 #
 # HOOK_UNDER_TEST overrides the script under test so the must-fail controls
@@ -80,6 +81,17 @@ assert_contains() {
   fi
 }
 
+assert_not_contains() {
+  local got="$1" needle="$2" name="$3"
+  if [[ "$got" != *"$needle"* ]]; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        expected not to contain: %s\n        got:      %s\n' "$name" "$needle" "$got"
+  fi
+}
+
 echo "session-drift-check: clean install"
 capture FAKE_RC=0 FAKE_OUT=""
 assert_eq "$rc" 0 "exits 0 on a clean install"
@@ -92,11 +104,23 @@ capture FAKE_RC=1 FAKE_OUT="$REPORT"
 assert_eq "$rc" 0 "exits 0 so drift never blocks the session"
 assert_eq "$out" "$REPORT"$'\n' "relays the report verbatim on stdout"
 
+echo "session-drift-check: packages not yet evaluated"
+UNEVALUATED=$'not yet evaluated:\n  33 package(s) changed upstream and are not yet re-evaluated'
+capture FAKE_RC=1 FAKE_OUT="$UNEVALUATED"
+assert_eq "$out" "$UNEVALUATED"$'\n' "relays a not-yet-evaluated report verbatim, never as a failure"
+
+echo "session-drift-check: could not check"
+capture FAKE_RC=2 FAKE_OUT=$'could not check:\n  manifest: expected a table'
+assert_eq "$rc" 0 "exits 0 when part of the check could not be made"
+assert_contains "$out" "kendex check incomplete (exit 2)" "names the incomplete check and exit code"
+assert_contains "$out" "manifest: expected a table" "carries the check's own diagnostic"
+assert_not_contains "$out" "could not run" "a completed run is never called a crash"
+
 echo "session-drift-check: check failed"
-capture FAKE_RC=2 FAKE_OUT="Error: loading lock file"
+capture FAKE_RC=3 FAKE_OUT="kendex: fatal"
 assert_eq "$rc" 0 "exits 0 when the check itself fails"
-assert_contains "$out" "kendex check could not run (exit 2)" "names the failure and exit code"
-assert_contains "$out" "Error: loading lock file" "carries the check's own diagnostic"
+assert_contains "$out" "kendex check could not run (exit 3)" "names the failure and exit code"
+assert_contains "$out" "kendex: fatal" "carries the failure's own output"
 
 echo "session-drift-check: unreadable stdin"
 # Strict mode must not let a failed payload read abort the session start.

@@ -118,9 +118,9 @@ enum Command {
         #[arg(long)]
         harness: Option<String>,
     },
-    /// Drift status for this machine (exit 0 clean / 1 drift / 2 could not
-    /// check), or authoring validation over a catalog directory with
-    /// --catalog
+    /// Drift status for this machine (exit 0 clean / 1 drift or not yet
+    /// evaluated / 2 could not check), or authoring validation over a
+    /// catalog directory with --catalog
     Check {
         #[arg(short = 'g', long)]
         global: bool,

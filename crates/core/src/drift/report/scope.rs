@@ -200,7 +200,7 @@ impl ScopeCheck<'_> {
                     .any(|source| source.enabled && source.repo.is_some())
             });
             if has_remote {
-                sections.unevaluated.push(unknown(format!(
+                sections.unevaluated.push(unevaluated(format!(
                     "{prefix}packages not yet evaluated against their sources"
                 )));
             }
@@ -208,7 +208,7 @@ impl ScopeCheck<'_> {
         };
         let age = self.now.saturating_sub(snapshot.taken_at);
         *oldest_age = Some(oldest_age.map_or(age, |oldest| oldest.max(age)));
-        let mut unevaluated = 0usize;
+        let mut pending = 0usize;
         for package in &snapshot.packages {
             // A hold or an ignore is a decision already made; re-announcing
             // it every session teaches agents to skim.
@@ -221,14 +221,14 @@ impl ScopeCheck<'_> {
             {
                 // The mirror moved since this verdict was computed: the
                 // honest answer is "maybe", never a guess.
-                unevaluated += 1;
+                pending += 1;
                 continue;
             }
             self.package_line(package, sections);
         }
-        if unevaluated > 0 {
-            sections.unevaluated.push(unknown(format!(
-                "{prefix}{unevaluated} package(s) changed upstream and are not yet re-evaluated"
+        if pending > 0 {
+            sections.unevaluated.push(unevaluated(format!(
+                "{prefix}{pending} package(s) changed upstream and are not yet re-evaluated"
             )));
         }
         for note in &snapshot.unreadable {

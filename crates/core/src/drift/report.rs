@@ -18,9 +18,11 @@ use specta::Type;
 use crate::env::Env;
 use crate::model::{ItemKind, Scope};
 
-/// The check's whole contract: 0 clean, 1 drift, 2 could-not-check. When
-/// both apply, could-not-check wins — an incomplete report must not claim
-/// the completeness that exit 1 implies.
+/// The check's whole contract: 0 clean, 1 drift, 2 could-not-check. A
+/// package awaiting re-evaluation is a state the check determined, so it
+/// exits 1 with the drift it sits alongside; only a line the check could
+/// not produce exits 2. When both apply, could-not-check wins — an
+/// incomplete report must not claim the completeness that exit 1 implies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum CheckStatus {
@@ -39,12 +41,16 @@ impl CheckStatus {
     }
 }
 
-/// A line is either a fact about drift or an admission that something
-/// could not be checked. The distinction is the exit code.
+/// What a line is: a fact about drift, a package whose verdict is not in
+/// yet, or an admission that something could not be checked. The first
+/// two are answers and exit 1; the last is the absence of one and exits 2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum Class {
     Drift,
+    /// The source moved since this package's verdict was computed, or no
+    /// deep pass has run yet. The next background refresh settles it.
+    Unevaluated,
     Unknown,
 }
 
@@ -215,7 +221,7 @@ impl Sections {
             .iter()
             .flat_map(|section| &section.lines)
             .map(|line| match line.class {
-                Class::Drift => CheckStatus::Drift,
+                Class::Drift | Class::Unevaluated => CheckStatus::Drift,
                 Class::Unknown => CheckStatus::Unknown,
             })
             .max()
@@ -244,6 +250,14 @@ fn drift(text: String, remedy: Option<Remedy>) -> Line {
         class: Class::Drift,
         text,
         remedy,
+    }
+}
+
+fn unevaluated(text: String) -> Line {
+    Line {
+        class: Class::Unevaluated,
+        text,
+        remedy: None,
     }
 }
 

@@ -65,13 +65,33 @@ describe("drift-check classification", () => {
 		});
 	});
 
-	test("exit 2 is a failure that names the exit code and keeps the diagnostic", async () => {
-		await withFake("2", "Error: loading lock file", async ({ binary, root }) => {
+	test("exit 1 with packages not yet evaluated is relayed verbatim, never as a failure", async () => {
+		const unevaluated = "not yet evaluated:\n  33 package(s) changed upstream and are not yet re-evaluated";
+		await withFake("1", unevaluated, async ({ binary, root }) => {
+			const result = await runDriftCheck(root, { includeAvailable: true, timeoutMs: 5000, binary });
+			expect(result).toEqual({ kind: "drift", report: unevaluated });
+			expect(driftMessage(result)).toBe(unevaluated);
+		});
+	});
+
+	test("exit 2 is an incomplete check that keeps its diagnostic and is not called a crash", async () => {
+		await withFake("2", "could not check:\n  manifest: expected a table", async ({ binary, root }) => {
+			const result = await runDriftCheck(root, { includeAvailable: true, timeoutMs: 5000, binary });
+			expect(result.kind).toBe("incomplete");
+			const message = driftMessage(result) ?? "";
+			expect(message).toContain("kendex check incomplete (exit 2)");
+			expect(message).toContain("manifest: expected a table");
+			expect(message).not.toContain("could not run");
+		});
+	});
+
+	test("exit 3 is a failure that names the exit code and keeps the output", async () => {
+		await withFake("3", "kendex: fatal", async ({ binary, root }) => {
 			const result = await runDriftCheck(root, { includeAvailable: true, timeoutMs: 5000, binary });
 			expect(result.kind).toBe("failed");
 			const message = driftMessage(result) ?? "";
-			expect(message).toContain("kendex check could not run (exit 2)");
-			expect(message).toContain("Error: loading lock file");
+			expect(message).toContain("kendex check could not run (exit 3)");
+			expect(message).toContain("kendex: fatal");
 		});
 	});
 

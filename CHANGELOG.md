@@ -10,6 +10,10 @@ an outside contributor.
 
 ### Fixed
 
+- `kendex check` exits 1, not 2, when packages are waiting to be re-evaluated,
+  so the session-start drift report no longer opens with "kendex check could
+  not run" after a run that completed. Exit 2 is reserved for "could not check".
+
 - A hook found in a settings file is safety-checked on its own entry, not
   the whole file: a `permissions.ask` guard naming `mkfs` no longer flags
   every hook beside it, and a hook whose own entry carries it still scores.

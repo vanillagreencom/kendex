@@ -7,14 +7,17 @@ import { runCommandAsync } from "./process.js";
  * classify the exit code the same way the shell hook does.
  *
  *   0 → clean (say nothing)
- *   1 → drift (relay the report to the agent verbatim)
- *   2+ → the check itself failed (say so once, with its diagnostic)
+ *   1 → drift, or packages not yet evaluated (relay the report verbatim)
+ *   2 → kendex answered that part of the check could not be made (relay
+ *       the report under an "incomplete" line; never call it a crash)
+ *   3+ → the check itself failed (say so once, with its output)
  *   spawn failure → no kendex binary; one line saying so
  *   unusable cwd → one line naming the directory; never silence
  */
 export type DriftCheckResult =
 	| { kind: "clean" }
 	| { kind: "drift"; report: string }
+	| { kind: "incomplete"; report: string }
 	| { kind: "failed"; exitCode: number; report: string }
 	| { kind: "unavailable" }
 	| { kind: "unusable-cwd"; cwd: string };
@@ -50,6 +53,7 @@ export async function runDriftCheck(cwd: string, options: DriftCheckOptions): Pr
 	const report = `${result.stderr}${result.stdout}`.trim();
 	if (result.exitCode === 0) return { kind: "clean" };
 	if (result.exitCode === 1) return { kind: "drift", report };
+	if (result.exitCode === 2) return { kind: "incomplete", report };
 	// spawn() surfaces ENOENT through the error event as exit -1 with the
 	// error text. The port only runs because kendex installed it, so a
 	// missing binary is almost always a PATH gap worth one line.
@@ -68,6 +72,8 @@ export function driftMessage(result: DriftCheckResult): string | undefined {
 			return `kendex check could not run: project directory ${result.cwd} is not accessible; drift status unknown`;
 		case "drift":
 			return result.report;
+		case "incomplete":
+			return `kendex check incomplete (exit 2); some drift status unknown:\n${result.report}`;
 		case "failed":
 			return `kendex check could not run (exit ${result.exitCode}); drift status unknown:\n${result.report}`;
 	}

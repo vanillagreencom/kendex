@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 0.5.1
+
+- The session-start drift report no longer opens with "kendex check could not run" when kendex ran and answered. Exit 1 (drift, or packages not yet evaluated) is relayed verbatim; exit 2 (kendex reports part of the check could not be made) is relayed under a "kendex check incomplete (exit 2)" line; only exit 3+ and spawn failures read as "could not run". `DriftCheckResult` gains the `incomplete` variant.
+
 ### 0.5.0
 
 - **Breaking**: the settings namespace is renamed from `vstack` to `kendex`, with no compatibility fallback. Configuration previously read from `vstack.extensionManager.config["@vanillagreen/pi-hooks"]` in `.pi/settings.json` is now read from `kendex.extensionManager.config["@vanillagreen/pi-hooks"]`; settings still stored under the old key are ignored and this package silently falls back to its defaults until the key is renamed. The `package.json` block that declares these settings is renamed from `"vstack"` to `"kendex"` to match.

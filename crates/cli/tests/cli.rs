@@ -14,6 +14,7 @@ fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
         .env_clear()
         .env("HOME", home)
         .env("KENDEX_REAL_HOME", "1")
+        .env("KENDEX_BACKGROUND_REFRESH", "off")
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .output()
         .expect("kendex binary runs")
@@ -91,6 +92,38 @@ fn check_is_clean_and_quiet_on_a_scope_with_no_drift() {
     let parsed: serde_json::Value =
         serde_json::from_slice(&json.stdout).expect("check --json is valid JSON");
     assert_eq!(parsed["status"], "clean");
+}
+
+/// A declared remote source with no deep pass behind it is a state the
+/// check determined, not one it failed to: the session hook relays exit 1
+/// verbatim and treats exit 2 as a failure to check.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn check_reports_an_unevaluated_package_as_drift_not_a_failure() {
+    let tmp = fixture_home();
+    let home = tmp.path();
+    let project = home.join("dev/app");
+    fs::write(
+        project.join("kendex.toml"),
+        "schema = 5\n\n[sources.cat]\nrepo = \"owner/repo\"\n",
+    )
+    .unwrap();
+
+    let quiet = kendex(home, &project, &["check", "--quiet", "--scope", "project"]);
+    assert_eq!(quiet.status.code(), Some(1), "{quiet:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&quiet.stdout),
+        "not yet evaluated:\n  packages not yet evaluated against their sources\n"
+    );
+    assert_eq!(String::from_utf8_lossy(&quiet.stderr).trim(), "");
+
+    let json = kendex(home, &project, &["check", "--json", "--scope", "project"]);
+    assert_eq!(json.status.code(), Some(1));
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&json.stdout).expect("check --json is valid JSON");
+    assert_eq!(parsed["status"], "drift");
+    assert_eq!(parsed["sections"][0]["title"], "not yet evaluated");
+    assert_eq!(parsed["sections"][0]["lines"][0]["class"], "unevaluated");
 }
 
 #[test]

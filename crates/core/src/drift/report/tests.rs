@@ -230,12 +230,30 @@ fn a_mirror_that_moved_since_evaluation_reads_as_unevaluated() {
     );
 
     let report = check(&env, std::slice::from_ref(&scope));
-    // The honest "maybe": never a guessed verdict, and unknown beats drift.
+    // The honest "maybe": never a guessed verdict, and never a failure to
+    // check — the check ran and this is its answer.
+    assert_eq!(report.status, CheckStatus::Drift);
+    assert_eq!(report.status.exit_code(), 1);
+    assert_eq!(
+        render_plain(&report),
+        "not yet evaluated:\n  1 package(s) changed upstream and are not yet re-evaluated\n(checked against sources moments ago)\n"
+    );
+}
+
+#[test]
+fn could_not_check_outranks_unevaluated() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = env_in(tmp.path());
+    let scope = project_scope(tmp.path());
+    write_manifest(&env, &scope, &manifest_with_remote());
+    std::fs::write(crate::lock::lock_path(&env, &scope), "{definitely not json").unwrap();
+
+    let report = check(&env, std::slice::from_ref(&scope));
     assert_eq!(report.status, CheckStatus::Unknown);
     assert_eq!(report.status.exit_code(), 2);
     let text = render_plain(&report);
-    assert!(text.contains("not yet evaluated"), "{text}");
-    assert!(!text.contains("stale:"), "{text}");
+    assert!(text.contains("not yet evaluated:"), "{text}");
+    assert!(text.contains("could not check:"), "{text}");
 }
 
 #[test]
@@ -246,8 +264,12 @@ fn a_scope_with_remotes_and_no_snapshot_is_unevaluated() {
     write_manifest(&env, &scope, &manifest_with_remote());
 
     let report = check(&env, std::slice::from_ref(&scope));
-    assert_eq!(report.status, CheckStatus::Unknown);
-    assert!(render_plain(&report).contains("not yet evaluated"));
+    assert_eq!(report.status, CheckStatus::Drift);
+    assert_eq!(report.status.exit_code(), 1);
+    assert_eq!(
+        render_plain(&report),
+        "not yet evaluated:\n  packages not yet evaluated against their sources\n"
+    );
 }
 
 #[test]

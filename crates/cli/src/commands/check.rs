@@ -6,7 +6,8 @@ use kendex_core::env::Env;
 use super::{out, resolve_scopes, say};
 use crate::scope::ScopeFilter;
 
-/// The session-start contract: exit 0 clean / 1 drift / 2 could-not-check.
+/// The session-start contract: exit 0 clean / 1 drift or not yet
+/// evaluated / 2 could-not-check.
 /// The report reads the drift snapshot and the fetch stamps — the deep work
 /// already ran wherever updates, refresh, or apply last did — and spawns
 /// one detached background refresh when any mirror is stale, so the next

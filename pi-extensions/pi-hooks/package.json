@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-hooks",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "First-class Pi port of the kendex safety hooks: bare-cd blocking, pre-commit fmt+clippy, post-edit clippy, end-of-turn lint, session-start kendex drift report. Per-hook toggles via pi-extension-manager.",
   "license": "MIT",
   "keywords": [
