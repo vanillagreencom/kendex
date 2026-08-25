@@ -10,9 +10,9 @@ an outside contributor.
 
 ### Fixed
 
-- `kendex check` exits 1, not 2, when packages are waiting to be re-evaluated,
-  so the session-start drift report no longer opens with "kendex check could
-  not run" after a run that completed. Exit 2 is reserved for "could not check".
+- `kendex check` exits 1, not 2, when packages await re-evaluation, so the
+  session-start report no longer opens with "kendex check could not run" after
+  a completed run. The drift hook script changed; `kendex drift-hook` reinstalls it.
 
 - A hook found in a settings file is safety-checked on its own entry, not
   the whole file: a `permissions.ask` guard naming `mkfs` no longer flags
@@ -31,6 +31,9 @@ an outside contributor.
 
 ### Removed
 
+- `KENDEX_DRIFT_HOOK_AVAILABLE` and the pi-hooks `sessionDriftAvailable` setting
+  are gone: both passed `--no-available`, a flag `kendex check` never had, so
+  turning them off broke every session start.
 - **Breaking:** the `trading-design` skill is no longer offered. Run
   `kendex remove trading-design --scope all` wherever it is installed (or
   drop its `[skills.trading-design]` entries and run `kendex apply --scope all`).

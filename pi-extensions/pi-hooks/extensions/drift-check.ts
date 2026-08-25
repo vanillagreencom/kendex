@@ -8,11 +8,14 @@ import { runCommandAsync } from "./process.js";
  *
  *   0 → clean (say nothing)
  *   1 → drift, or packages not yet evaluated (relay the report verbatim)
- *   2 → kendex answered that part of the check could not be made (relay
- *       the report under an "incomplete" line; never call it a crash)
- *   3+ → the check itself failed (say so once, with its output)
- *   spawn failure → no kendex binary; one line saying so
- *   unusable cwd → one line naming the directory; never silence
+ *   2 → kendex could not check, in part or at all: a report carrying a
+ *       "could not check" section is relayed under an "incomplete" line;
+ *       output opening with kendex's own Error: line or clap's usage
+ *       error: comes from before the check read anything, so it reads as
+ *       could-not-run
+ *   3+ → the check itself failed (could not run, with its output)
+ *   ENOENT spawn failure → no kendex binary; one "skipped" line
+ *   unusable cwd, other spawn error, unexpected throw → could not run
  */
 export type DriftCheckResult =
 	| { kind: "clean" }
@@ -23,18 +26,13 @@ export type DriftCheckResult =
 	| { kind: "unusable-cwd"; cwd: string };
 
 export interface DriftCheckOptions {
-	/** Pass `--no-available` so the report omits not-yet-installed suggestions. */
-	includeAvailable: boolean;
 	timeoutMs: number;
 	/** Binary to run; tests point this at a fake. */
 	binary?: string;
 }
 
-export function driftCheckArgs(options: Pick<DriftCheckOptions, "includeAvailable">): string[] {
-	const args = ["check", "--quiet"];
-	if (!options.includeAvailable) args.push("--no-available");
-	return args;
-}
+/** Output kendex prints before the check reads anything: its own `Error:` line or clap's usage `error:`. */
+const PRECHECK_FAILURE = /^(Error|error):/;
 
 export async function runDriftCheck(cwd: string, options: DriftCheckOptions): Promise<DriftCheckResult> {
 	const binary = options.binary ?? "kendex";
@@ -48,12 +46,13 @@ export async function runDriftCheck(cwd: string, options: DriftCheckOptions): Pr
 	} catch {
 		return { kind: "unusable-cwd", cwd };
 	}
-	const result = await runCommandAsync(binary, driftCheckArgs(options), cwd, options.timeoutMs);
-	// The human report is stderr; stdout is reserved for --json.
+	const result = await runCommandAsync(binary, ["check", "--quiet"], cwd, options.timeoutMs);
+	// The report is on stdout; stderr carries only Error: lines and the
+	// non-quiet all-clear, so both are concatenated, stderr first.
 	const report = `${result.stderr}${result.stdout}`.trim();
 	if (result.exitCode === 0) return { kind: "clean" };
 	if (result.exitCode === 1) return { kind: "drift", report };
-	if (result.exitCode === 2) return { kind: "incomplete", report };
+	if (result.exitCode === 2 && !PRECHECK_FAILURE.test(report)) return { kind: "incomplete", report };
 	// spawn() surfaces ENOENT through the error event as exit -1 with the
 	// error text. The port only runs because kendex installed it, so a
 	// missing binary is almost always a PATH gap worth one line.

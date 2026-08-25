@@ -21,9 +21,13 @@ pub const LEGACY_HOOK_NAME: &str = "vstack-drift";
 
 /// The hook script, in the catalog hook format. The contract lines are the
 /// v1 fleet's: `KENDEX_DRIFT_HOOK=off` kills it, resumed and compacted
-/// sessions are skipped, a missing binary prints one "skipped" line, a
-/// failed check prints one "drift status unknown" line, and it always
-/// exits 0 — a drift report must never block a session.
+/// sessions are skipped, a missing binary prints one "skipped" line, and
+/// it always exits 0 — a drift report must never block a session. Exit
+/// codes classify the way `hooks/session-drift-check.sh` and the pi-hooks
+/// port classify them: 1 is the report verbatim, 2 is the report under an
+/// "incomplete" line — or "could not run" when the output is an Error:
+/// or usage error: line from before the check read anything, or nothing
+/// at all — and any other code is "could not run".
 pub const HOOK_SCRIPT: &str = r#"#!/bin/sh
 # ---
 # name: kendex-drift
@@ -56,12 +60,25 @@ if ! command -v kendex >/dev/null 2>&1; then
   exit 0
 fi
 
-report=$(kendex check --quiet 2>/dev/null)
+report=$(kendex check --quiet 2>&1)
 code=$?
-if [ "$code" -eq 2 ]; then
-  echo "kendex: drift status unknown (the check could not read this machine's state)"
-  exit 0
-fi
+case "$code" in
+  0 | 1) ;;
+  2)
+    case "$report" in
+      "") echo "kendex check could not run (exit 2); drift status unknown" ;;
+      Error:* | error:*)
+        printf 'kendex check could not run (exit 2); drift status unknown:\n%s\n' "$report" ;;
+      *)
+        printf 'kendex check incomplete (exit 2); some drift status unknown:\n%s\n' "$report" ;;
+    esac
+    exit 0
+    ;;
+  *)
+    printf 'kendex check could not run (exit %s); drift status unknown:\n%s\n' "$code" "$report"
+    exit 0
+    ;;
+esac
 if [ -n "$report" ]; then
   printf '%s\n' "$report"
 fi

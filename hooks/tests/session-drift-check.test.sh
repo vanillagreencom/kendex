@@ -3,8 +3,9 @@
 #
 # The hook is a thin adapter over `kendex check --quiet`: exit 0 → silence,
 # exit 1 → the report verbatim on stdout, exit 2 → an "incomplete" line plus
-# the report, anything else → a "could not run" line plus the output. These
-# cases drive it with a fake `kendex` on PATH that
+# the report, or a "could not run" line when the output is an Error:/error:
+# line from before the check ran, anything else → a "could not run" line
+# plus the output. These cases drive it with a fake `kendex` on PATH that
 # replays a scripted exit code and output, so no real install is consulted.
 #
 # HOOK_UNDER_TEST overrides the script under test so the must-fail controls
@@ -45,7 +46,7 @@ run_hook() {
   : >"$ARGS_LOG"
   : >"$CWD_LOG"
   set +e
-  env -u CLAUDE_PROJECT_DIR -u KENDEX_DRIFT_HOOK -u KENDEX_DRIFT_HOOK_AVAILABLE \
+  env -u CLAUDE_PROJECT_DIR -u KENDEX_DRIFT_HOOK \
     PATH="$BIN_DIR:$PATH" FAKE_ARGS_LOG="$ARGS_LOG" FAKE_CWD_LOG="$CWD_LOG" "$@" \
     bash "$HOOK" <<<"{\"session_id\":\"s\",\"hook_event_name\":\"SessionStart\",\"source\":\"${HOOK_SOURCE:-startup}\"}" \
     2>/dev/null
@@ -116,6 +117,16 @@ assert_contains "$out" "kendex check incomplete (exit 2)" "names the incomplete 
 assert_contains "$out" "manifest: expected a table" "carries the check's own diagnostic"
 assert_not_contains "$out" "could not run" "a completed run is never called a crash"
 
+echo "session-drift-check: failed before the check ran"
+capture FAKE_RC=2 FAKE_OUT="Error: loading lock file"
+assert_eq "$rc" 0 "exits 0 when the check fails before reading anything"
+assert_contains "$out" "kendex check could not run (exit 2)" "an Error: line at exit 2 is a failure to run"
+assert_contains "$out" "Error: loading lock file" "carries kendex's own diagnostic"
+assert_not_contains "$out" "incomplete" "nothing checked is never called partial"
+capture FAKE_RC=2 FAKE_OUT=$'error: unexpected argument \'--bogus\' found\n\nUsage: kendex check --quiet'
+assert_contains "$out" "kendex check could not run (exit 2)" "a usage error: at exit 2 is a failure to run"
+assert_not_contains "$out" "incomplete" "a usage error is never called partial"
+
 echo "session-drift-check: check failed"
 capture FAKE_RC=3 FAKE_OUT="kendex: fatal"
 assert_eq "$rc" 0 "exits 0 when the check itself fails"
@@ -131,7 +142,7 @@ mkdir -p "$FAILCAT_BIN"
 printf '#!/usr/bin/env bash\nexit 1\n' >"$FAILCAT_BIN/cat"
 chmod +x "$FAILCAT_BIN/cat"
 set +e
-out="$(env -u CLAUDE_PROJECT_DIR -u KENDEX_DRIFT_HOOK -u KENDEX_DRIFT_HOOK_AVAILABLE \
+out="$(env -u CLAUDE_PROJECT_DIR -u KENDEX_DRIFT_HOOK \
   PATH="$FAILCAT_BIN:$BIN_DIR:$PATH" FAKE_ARGS_LOG="$ARGS_LOG" FAKE_CWD_LOG="$CWD_LOG" \
   FAKE_RC=1 FAKE_OUT="$REPORT" bash "$HOOK" </dev/null 2>/dev/null)"
 rc=$?
@@ -143,8 +154,6 @@ echo "session-drift-check: environment switches"
 capture FAKE_RC=1 FAKE_OUT="$REPORT" KENDEX_DRIFT_HOOK=off
 assert_eq "$out" "" "KENDEX_DRIFT_HOOK=off silences the hook"
 assert_eq "$(cat "$ARGS_LOG")" "" "KENDEX_DRIFT_HOOK=off never invokes kendex"
-capture FAKE_RC=0 KENDEX_DRIFT_HOOK_AVAILABLE=off
-assert_eq "$(cat "$ARGS_LOG")" "check --quiet --no-available" "KENDEX_DRIFT_HOOK_AVAILABLE=off passes --no-available"
 
 echo "session-drift-check: project directory"
 mkdir -p "$TMP_ROOT/proj"
@@ -174,7 +183,7 @@ run_raw() {
   : >"$ARGS_LOG"
   : >"$CWD_LOG"
   set +e
-  out="$(env -u CLAUDE_PROJECT_DIR -u KENDEX_DRIFT_HOOK -u KENDEX_DRIFT_HOOK_AVAILABLE \
+  out="$(env -u CLAUDE_PROJECT_DIR -u KENDEX_DRIFT_HOOK \
     PATH="$1:$PATH" FAKE_ARGS_LOG="$ARGS_LOG" FAKE_CWD_LOG="$CWD_LOG" \
     FAKE_RC=1 FAKE_OUT="$REPORT" bash "$HOOK" <<<"$payload" 2>/dev/null)"
   rc=$?
@@ -227,7 +236,7 @@ mkdir -p "$TMP_ROOT/-dash"
 : >"$ARGS_LOG"
 : >"$CWD_LOG"
 set +e
-out="$(cd "$TMP_ROOT" && env -u KENDEX_DRIFT_HOOK -u KENDEX_DRIFT_HOOK_AVAILABLE \
+out="$(cd "$TMP_ROOT" && env -u KENDEX_DRIFT_HOOK \
   PATH="$BIN_DIR:$PATH" FAKE_ARGS_LOG="$ARGS_LOG" FAKE_CWD_LOG="$CWD_LOG" \
   CLAUDE_PROJECT_DIR=-dash FAKE_RC=0 bash "$HOOK" <<<'{"source":"startup"}' 2>/dev/null)"
 rc=$?
@@ -245,7 +254,7 @@ echo "session-drift-check: unexpected failure"
 BROKEN_HOOK="$TMP_ROOT/broken-hook.sh"
 awk '{ print } /^INPUT=/ { print "false" }' "$HOOK" >"$BROKEN_HOOK"
 set +e
-out="$(env -u CLAUDE_PROJECT_DIR -u KENDEX_DRIFT_HOOK -u KENDEX_DRIFT_HOOK_AVAILABLE \
+out="$(env -u CLAUDE_PROJECT_DIR -u KENDEX_DRIFT_HOOK \
   PATH="$BIN_DIR:$PATH" FAKE_ARGS_LOG="$ARGS_LOG" FAKE_CWD_LOG="$CWD_LOG" \
   FAKE_RC=0 bash "$BROKEN_HOOK" <<<'{"source":"startup"}' 2>/dev/null)"
 rc=$?

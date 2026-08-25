@@ -241,6 +241,24 @@ fn a_mirror_that_moved_since_evaluation_reads_as_unevaluated() {
 }
 
 #[test]
+fn an_unreadable_snapshot_is_could_not_check_not_unevaluated() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = env_in(tmp.path());
+    let scope = project_scope(tmp.path());
+    write_manifest(&env, &scope, &manifest_with_remote());
+    // A directory where the file goes: exists, and no read succeeds.
+    std::fs::create_dir_all(crate::drift::snapshot::snapshot_path(&env, &scope)).unwrap();
+
+    let report = check(&env, std::slice::from_ref(&scope));
+    assert_eq!(report.status, CheckStatus::Unknown);
+    assert_eq!(report.status.exit_code(), 2);
+    let text = render_plain(&report);
+    assert!(text.contains("could not check:"), "{text}");
+    assert!(text.contains("drift snapshot unreadable:"), "{text}");
+    assert!(!text.contains("not yet evaluated"), "{text}");
+}
+
+#[test]
 fn could_not_check_outranks_unevaluated() {
     let tmp = tempfile::tempdir().unwrap();
     let env = env_in(tmp.path());

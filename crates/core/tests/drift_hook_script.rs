@@ -93,10 +93,48 @@ fn the_hook_script_honors_its_contract() {
     assert!(out.contains("skipped"), "{out}");
     assert_eq!(code, 0);
 
-    // A check that cannot run: exactly one "drift status unknown" line.
+    // Exit 2 and nothing said: exactly one "could not run" line.
     let (out, code) = run_hook(dir, "{}", &[], Some("#!/bin/sh\nexit 2\n"));
     assert_eq!(out.lines().count(), 1, "{out}");
-    assert!(out.contains("drift status unknown"), "{out}");
+    assert!(out.contains("could not run (exit 2)"), "{out}");
+    assert_eq!(code, 0);
+
+    // Exit 2 with kendex's own Error: line (stderr): nothing was checked,
+    // so it is a failure to run, and the diagnostic reaches the agent.
+    let (out, code) = run_hook(
+        dir,
+        "{}",
+        &[],
+        Some("#!/bin/sh\necho 'Error: loading lock file' >&2\nexit 2\n"),
+    );
+    assert!(
+        out.starts_with("kendex check could not run (exit 2)"),
+        "{out}"
+    );
+    assert!(out.contains("Error: loading lock file"), "{out}");
+    assert!(!out.contains("incomplete"), "{out}");
+    assert_eq!(code, 0);
+
+    // Exit 2 with a report: the check ran and says what it could not
+    // check, so the report is relayed under an "incomplete" line.
+    let (out, code) = run_hook(
+        dir,
+        "{}",
+        &[],
+        Some("#!/bin/sh\nprintf 'stale:\\n  x\\ncould not check:\\n  lock: bad\\n'\nexit 2\n"),
+    );
+    assert!(out.starts_with("kendex check incomplete (exit 2)"), "{out}");
+    assert!(out.contains("stale:") && out.contains("lock: bad"), "{out}");
+    assert!(!out.contains("could not run"), "{out}");
+    assert_eq!(code, 0);
+
+    // Any other exit code is not a kendex verdict.
+    let (out, code) = run_hook(dir, "{}", &[], Some("#!/bin/sh\necho fatal\nexit 3\n"));
+    assert!(
+        out.starts_with("kendex check could not run (exit 3)"),
+        "{out}"
+    );
+    assert!(out.contains("fatal"), "{out}");
     assert_eq!(code, 0);
 
     // Drift: the report passes through, exit stays 0.

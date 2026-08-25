@@ -192,19 +192,29 @@ impl ScopeCheck<'_> {
         oldest_age: &mut Option<u64>,
     ) {
         let prefix = self.prefix;
-        let Some(snapshot) = crate::drift::snapshot::load(self.env, self.scope) else {
-            let has_remote = manifest.is_some_and(|manifest| {
-                manifest
-                    .sources
-                    .values()
-                    .any(|source| source.enabled && source.repo.is_some())
-            });
-            if has_remote {
-                sections.unevaluated.push(unevaluated(format!(
-                    "{prefix}packages not yet evaluated against their sources"
-                )));
+        let snapshot = match crate::drift::snapshot::load(self.env, self.scope) {
+            crate::drift::snapshot::SnapshotFile::Current(snapshot) => snapshot,
+            crate::drift::snapshot::SnapshotFile::Absent => {
+                let has_remote = manifest.is_some_and(|manifest| {
+                    manifest
+                        .sources
+                        .values()
+                        .any(|source| source.enabled && source.repo.is_some())
+                });
+                if has_remote {
+                    sections.unevaluated.push(unevaluated(format!(
+                        "{prefix}packages not yet evaluated against their sources"
+                    )));
+                }
+                return;
             }
-            return;
+            crate::drift::snapshot::SnapshotFile::Unreadable(reason) => {
+                sections.unknown.push(unknown(format!(
+                    "{prefix}drift snapshot unreadable: {}",
+                    shown(&reason)
+                )));
+                return;
+            }
         };
         let age = self.now.saturating_sub(snapshot.taken_at);
         *oldest_age = Some(oldest_age.map_or(age, |oldest| oldest.max(age)));

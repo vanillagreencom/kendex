@@ -2,7 +2,7 @@
 # ---
 # name: session-drift-check
 # event: SessionStart
-# description: On a fresh session start (not resume or compact), runs `kendex check --quiet` and surfaces kendex drift to the agent — outdated items (`kendex refresh`), items removed upstream (`kendex remove <name>`, `-g` in a global section), unreachable sources — plus, alongside drift, items available in the source but not installed (`kendex add --<kind> <name>`, pending user approval). Prints nothing when the install is current. KENDEX_DRIFT_HOOK=off disables it; KENDEX_DRIFT_HOOK_AVAILABLE=off hides the available-but-not-installed suggestions.
+# description: On a fresh session start (not resume or compact), runs `kendex check --quiet` and surfaces kendex drift to the agent — outdated items (`kendex refresh`), items removed upstream (`kendex remove <name>`, `-g` in a global section), unreachable sources, and packages not yet evaluated against their sources (a background refresh settles them). Prints nothing when the install is current. KENDEX_DRIFT_HOOK=off disables it.
 # safety: Informational only — never installs or removes anything and never touches the project's git state. The check never waits on the network; the only thing it may write is kendex's own cache bookkeeping under ~/.kendex/cache (fetch stamps), and when a source cache there is older than its TTL, a detached background process refreshes it (git fetch + reset, confined to that cache) and this hook does not wait for it. Every suggestion requires user approval before acting.
 # timeout: 30
 # harnesses: [claude-code, codex]
@@ -54,11 +54,6 @@ if ! command -v kendex >/dev/null 2>&1; then
   exit 0
 fi
 
-ARGS=(check --quiet)
-if [ "${KENDEX_DRIFT_HOOK_AVAILABLE:-}" = "off" ]; then
-  ARGS+=(--no-available)
-fi
-
 # Claude Code exports the project root; other harnesses launch the hook in it.
 # Enter it separately so only kendex's own exit code drives classification.
 # `--` so a directory whose name starts with a dash is a path, not an option.
@@ -71,7 +66,7 @@ fi
 # kendex's exit code IS the classification; under errexit a bare failing
 # assignment would abort before `RC=$?` could run.
 RC=0
-OUTPUT=$(kendex "${ARGS[@]}" 2>&1) || RC=$?
+OUTPUT=$(kendex check --quiet 2>&1) || RC=$?
 
 case "$RC" in
   0)
@@ -83,11 +78,20 @@ case "$RC" in
     printf '%s\n' "$OUTPUT"
     ;;
   2)
-    # kendex answered, and its answer is that part of the check could not
-    # be made: a "could not check" section, or an Error: line from a
-    # failure before the check could read anything. The output names
-    # which; this line must not call a completed run a crash.
-    printf 'kendex check incomplete (exit 2); some drift status unknown:\n%s\n' "$OUTPUT"
+    # kendex could not check, in part or at all. A report carrying a
+    # "could not check" section checked everything else and says what it
+    # could not; it is printed as incomplete, never as a crash. Output
+    # that opens with kendex's own Error: line or clap's usage error:
+    # comes from before the check read anything, so nothing was checked
+    # and it reads as could-not-run.
+    case "$OUTPUT" in
+      Error:* | error:*)
+        printf 'kendex check could not run (exit 2); drift status unknown:\n%s\n' "$OUTPUT"
+        ;;
+      *)
+        printf 'kendex check incomplete (exit 2); some drift status unknown:\n%s\n' "$OUTPUT"
+        ;;
+    esac
     ;;
   *)
     # Anything else is not a kendex verdict: a signal, a timeout, a

@@ -85,7 +85,11 @@ pub fn refresh_stale(env: &Env, scopes: &[Scope]) -> Vec<String> {
         // The deep work is legal here: after fetching, re-derive the
         // snapshot so the next session check reads verdicts. Also derived
         // when the scope has never been evaluated at all.
-        if (touched || super::snapshot::load(env, scope).is_none())
+        if (touched
+            || !matches!(
+                super::snapshot::load(env, scope),
+                super::snapshot::SnapshotFile::Current(_)
+            ))
             && let Err(error) = super::snapshot::record(env, scope)
         {
             notes.push(format!("{}: snapshot not derived ({error})", scope.label()));

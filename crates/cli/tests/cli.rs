@@ -126,6 +126,32 @@ fn check_reports_an_unevaluated_package_as_drift_not_a_failure() {
     assert_eq!(parsed["sections"][0]["lines"][0]["class"], "unevaluated");
 }
 
+/// The two shapes exit 2 takes before the check reads anything — clap's
+/// usage error and kendex's own Error: line — which the session hooks must
+/// classify as could-not-run rather than a partial report.
+#[test]
+fn check_failing_before_it_runs_exits_2_with_an_error_line() {
+    let tmp = fixture_home();
+    let home = tmp.path();
+    let project = home.join("dev/app");
+
+    let usage = kendex(home, &project, &["check", "--quiet", "--bogus"]);
+    assert_eq!(usage.status.code(), Some(2), "{usage:?}");
+    assert!(
+        String::from_utf8_lossy(&usage.stderr).starts_with("error:"),
+        "{usage:?}"
+    );
+    assert_eq!(String::from_utf8_lossy(&usage.stdout), "");
+
+    let scope = kendex(home, &project, &["check", "--quiet", "--scope", "bogus"]);
+    assert_eq!(scope.status.code(), Some(2), "{scope:?}");
+    assert!(
+        String::from_utf8_lossy(&scope.stderr).starts_with("Error:"),
+        "{scope:?}"
+    );
+    assert_eq!(String::from_utf8_lossy(&scope.stdout), "");
+}
+
 #[test]
 fn project_registry_round_trips() {
     let tmp = fixture_home();

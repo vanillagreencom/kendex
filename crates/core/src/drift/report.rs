@@ -347,7 +347,10 @@ pub fn wants_background_refresh(env: &Env, scopes: &[Scope]) -> bool {
         if !remotes {
             return false;
         }
-        if super::snapshot::load(env, scope).is_none() {
+        if !matches!(
+            super::snapshot::load(env, scope),
+            super::snapshot::SnapshotFile::Current(_)
+        ) {
             return true;
         }
         manifest.sources.values().any(|decl| {

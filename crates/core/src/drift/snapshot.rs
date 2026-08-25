@@ -68,13 +68,28 @@ pub fn snapshot_path(env: &Env, scope: &Scope) -> PathBuf {
     env.drift_dir().join(format!("{digest}.json"))
 }
 
-/// Absent, corrupt, or another schema all read as no snapshot: the check
-/// reports the scope as not yet evaluated rather than trusting a shape
-/// this build does not know.
-pub fn load(env: &Env, scope: &Scope) -> Option<ScopeSnapshot> {
-    let text = read_if_exists(&snapshot_path(env, scope)).ok()??;
-    let snapshot: ScopeSnapshot = serde_json::from_str(&text).ok()?;
-    (snapshot.schema == SNAPSHOT_SCHEMA).then_some(snapshot)
+/// What the snapshot file holds. A missing, corrupt, or other-schema file
+/// is absent: the next deep pass rewrites it, and until then the scope is
+/// not yet evaluated. A file that exists and cannot be read is a different
+/// thing — no deep pass fixes a permission or a directory in the way — so
+/// it carries its error for the check to report as could-not-check.
+#[derive(Debug)]
+pub enum SnapshotFile {
+    Absent,
+    Unreadable(String),
+    Current(ScopeSnapshot),
+}
+
+pub fn load(env: &Env, scope: &Scope) -> SnapshotFile {
+    let text = match read_if_exists(&snapshot_path(env, scope)) {
+        Ok(Some(text)) => text,
+        Ok(None) => return SnapshotFile::Absent,
+        Err(error) => return SnapshotFile::Unreadable(error.to_string()),
+    };
+    match serde_json::from_str::<ScopeSnapshot>(&text) {
+        Ok(snapshot) if snapshot.schema == SNAPSHOT_SCHEMA => SnapshotFile::Current(snapshot),
+        Ok(_) | Err(_) => SnapshotFile::Absent,
+    }
 }
 
 pub fn store(env: &Env, scope: &Scope, snapshot: &ScopeSnapshot) -> Result<()> {

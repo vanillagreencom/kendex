@@ -41,7 +41,6 @@ export default function piHooks(pi: ExtensionAPI): void {
 
 		void deliverDrift(
 			runDriftCheck(ctx.cwd, {
-				includeAvailable: getBool(cfg, "sessionDriftAvailable"),
 				timeoutMs: getNumber(cfg, "driftCheckTimeoutMs"),
 			}),
 			(message) =>

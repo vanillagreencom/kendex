@@ -214,6 +214,13 @@ jobs:
         working-directory: pi-extensions/pi-output-policy
         run: bun test ./tests
 
+      # pi-hooks imports only types from pi-coding-agent, which bun erases,
+      # so its suite runs with no install.
+      - name: pi-hooks suite
+        if: matrix.shard == 'node'
+        working-directory: pi-extensions/pi-hooks
+        run: bun test ./tests
+
       # Pi 0.84.x is the release the extensions are audited against, so the
       # suites that assert 0.84 wire-format parity install that line rather
       # than the 0.80.5 floor above.

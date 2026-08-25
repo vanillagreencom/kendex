@@ -4,7 +4,8 @@
 
 ### 0.5.1
 
-- The session-start drift report no longer opens with "kendex check could not run" when kendex ran and answered. Exit 1 (drift, or packages not yet evaluated) is relayed verbatim; exit 2 (kendex reports part of the check could not be made) is relayed under a "kendex check incomplete (exit 2)" line; only exit 3+ and spawn failures read as "could not run". `DriftCheckResult` gains the `incomplete` variant.
+- The session-start drift report no longer opens with "kendex check could not run" when kendex ran and answered. Exit 1 (drift, or packages not yet evaluated) is relayed verbatim. Exit 2 means kendex could not check, in part or at all: a report carrying a "could not check" section is relayed under a "kendex check incomplete (exit 2); some drift status unknown:" line, while output opening with kendex's own `Error:` line or a usage `error:` (nothing was checked) keeps the "kendex check could not run (exit 2)" line. Exit 3+, a non-ENOENT spawn error, an inaccessible session directory, or an unexpected throw read as "could not run"; a missing binary (ENOENT) reads as "skipped". `DriftCheckResult` gains the `incomplete` variant.
+- **Breaking**: the `sessionDriftAvailable` setting is removed, along with `driftCheckArgs` and `DriftCheckOptions.includeAvailable`. It passed `--no-available`, a flag `kendex check` has never had, so every session start with it off was a usage error.
 
 ### 0.5.0
 

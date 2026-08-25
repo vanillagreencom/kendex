@@ -21,7 +21,6 @@ export const DEFAULTS = {
 	postEditLint: true,
 	taskCompletedCheck: true,
 	sessionDriftCheck: true,
-	sessionDriftAvailable: true,
 	clippyTimeoutMs: 30000,
 	driftCheckTimeoutMs: 30000,
 } as const;

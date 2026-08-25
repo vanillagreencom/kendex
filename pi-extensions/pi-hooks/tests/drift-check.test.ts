@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { deliverDrift, driftCheckArgs, driftMessage, runDriftCheck } from "../extensions/drift-check.ts";
+import { deliverDrift, driftMessage, runDriftCheck } from "../extensions/drift-check.ts";
 import piHooks from "../extensions/hooks.ts";
 
 type SessionStartHandler = (
@@ -50,7 +50,7 @@ const REPORT = "kendex drift — project scope:\n  1 outdated — run `kendex re
 describe("drift-check classification", () => {
 	test("exit 0 is clean and silent", async () => {
 		await withFake("0", "", async ({ binary, root, argsLog }) => {
-			const result = await runDriftCheck(root, { includeAvailable: true, timeoutMs: 5000, binary });
+			const result = await runDriftCheck(root, { timeoutMs: 5000, binary });
 			expect(result).toEqual({ kind: "clean" });
 			expect(driftMessage(result)).toBeUndefined();
 			expect(Bun.file(argsLog).text()).resolves.toBe("check --quiet\n");
@@ -59,7 +59,7 @@ describe("drift-check classification", () => {
 
 	test("exit 1 relays the report verbatim", async () => {
 		await withFake("1", REPORT, async ({ binary, root }) => {
-			const result = await runDriftCheck(root, { includeAvailable: true, timeoutMs: 5000, binary });
+			const result = await runDriftCheck(root, { timeoutMs: 5000, binary });
 			expect(result).toEqual({ kind: "drift", report: REPORT });
 			expect(driftMessage(result)).toBe(REPORT);
 		});
@@ -68,7 +68,7 @@ describe("drift-check classification", () => {
 	test("exit 1 with packages not yet evaluated is relayed verbatim, never as a failure", async () => {
 		const unevaluated = "not yet evaluated:\n  33 package(s) changed upstream and are not yet re-evaluated";
 		await withFake("1", unevaluated, async ({ binary, root }) => {
-			const result = await runDriftCheck(root, { includeAvailable: true, timeoutMs: 5000, binary });
+			const result = await runDriftCheck(root, { timeoutMs: 5000, binary });
 			expect(result).toEqual({ kind: "drift", report: unevaluated });
 			expect(driftMessage(result)).toBe(unevaluated);
 		});
@@ -76,7 +76,7 @@ describe("drift-check classification", () => {
 
 	test("exit 2 is an incomplete check that keeps its diagnostic and is not called a crash", async () => {
 		await withFake("2", "could not check:\n  manifest: expected a table", async ({ binary, root }) => {
-			const result = await runDriftCheck(root, { includeAvailable: true, timeoutMs: 5000, binary });
+			const result = await runDriftCheck(root, { timeoutMs: 5000, binary });
 			expect(result.kind).toBe("incomplete");
 			const message = driftMessage(result) ?? "";
 			expect(message).toContain("kendex check incomplete (exit 2)");
@@ -85,9 +85,28 @@ describe("drift-check classification", () => {
 		});
 	});
 
+	test("exit 2 with kendex's own Error: line is a failure to run, not a partial answer", async () => {
+		await withFake("2", "Error: loading lock file", async ({ binary, root }) => {
+			const result = await runDriftCheck(root, { timeoutMs: 5000, binary });
+			expect(result).toEqual({ kind: "failed", exitCode: 2, report: "Error: loading lock file" });
+			const message = driftMessage(result) ?? "";
+			expect(message).toContain("kendex check could not run (exit 2)");
+			expect(message).toContain("Error: loading lock file");
+			expect(message).not.toContain("incomplete");
+		});
+	});
+
+	test("exit 2 with a usage error: is a failure to run", async () => {
+		await withFake("2", "error: unexpected argument '--bogus' found\n\nUsage: kendex check --quiet", async ({ binary, root }) => {
+			const result = await runDriftCheck(root, { timeoutMs: 5000, binary });
+			expect(result.kind).toBe("failed");
+			expect(driftMessage(result) ?? "").toContain("kendex check could not run (exit 2)");
+		});
+	});
+
 	test("exit 3 is a failure that names the exit code and keeps the output", async () => {
 		await withFake("3", "kendex: fatal", async ({ binary, root }) => {
-			const result = await runDriftCheck(root, { includeAvailable: true, timeoutMs: 5000, binary });
+			const result = await runDriftCheck(root, { timeoutMs: 5000, binary });
 			expect(result.kind).toBe("failed");
 			const message = driftMessage(result) ?? "";
 			expect(message).toContain("kendex check could not run (exit 3)");
@@ -98,7 +117,7 @@ describe("drift-check classification", () => {
 	test("a missing binary is unavailable and says so in one line", async () => {
 		const root = mkdtempSync(join(tmpdir(), "pi-hooks-drift-missing-"));
 		try {
-			const result = await runDriftCheck(root, { includeAvailable: true, timeoutMs: 5000, binary: join(root, "no-such-kendex") });
+			const result = await runDriftCheck(root, { timeoutMs: 5000, binary: join(root, "no-such-kendex") });
 			expect(result).toEqual({ kind: "unavailable" });
 			expect(driftMessage(result)).toBe("kendex drift check skipped: kendex is not on PATH");
 		} finally {
@@ -110,7 +129,7 @@ describe("drift-check classification", () => {
 		const root = mkdtempSync(join(tmpdir(), "pi-hooks-drift-cwd-"));
 		const missing = join(root, "gone");
 		try {
-			const result = await runDriftCheck(missing, { includeAvailable: true, timeoutMs: 5000, binary: "kendex" });
+			const result = await runDriftCheck(missing, { timeoutMs: 5000, binary: "kendex" });
 			expect(result).toEqual({ kind: "unusable-cwd", cwd: missing });
 			expect(driftMessage(result)).toBe(
 				`kendex check could not run: project directory ${missing} is not accessible; drift status unknown`,
@@ -118,7 +137,7 @@ describe("drift-check classification", () => {
 			// Control: the same call in a real directory reaches the binary,
 			// so the guard is not swallowing every run.
 			await withFake("0", "", async ({ binary, root: real }) => {
-				expect(await runDriftCheck(real, { includeAvailable: true, timeoutMs: 5000, binary })).toEqual({ kind: "clean" });
+				expect(await runDriftCheck(real, { timeoutMs: 5000, binary })).toEqual({ kind: "clean" });
 			});
 		} finally {
 			rmSync(root, { recursive: true, force: true });
@@ -135,7 +154,7 @@ describe("drift-check classification", () => {
 		mkdirSync(locked);
 		chmodSync(locked, 0o000);
 		try {
-			const result = await runDriftCheck(locked, { includeAvailable: true, timeoutMs: 5000, binary: "kendex" });
+			const result = await runDriftCheck(locked, { timeoutMs: 5000, binary: "kendex" });
 			expect(result).toEqual({ kind: "unusable-cwd", cwd: locked });
 			expect(driftMessage(result)).toContain("is not accessible; drift status unknown");
 		} finally {
@@ -144,10 +163,6 @@ describe("drift-check classification", () => {
 		}
 	});
 
-	test("includeAvailable=false passes --no-available", () => {
-		expect(driftCheckArgs({ includeAvailable: false })).toEqual(["check", "--quiet", "--no-available"]);
-		expect(driftCheckArgs({ includeAvailable: true })).toEqual(["check", "--quiet"]);
-	});
 });
 
 describe("drift delivery", () => {
@@ -218,7 +233,7 @@ describe("session_start wiring", () => {
 		mkdirSync(join(home, ".pi", "agent"), { recursive: true });
 		mkdirSync(join(root, ".pi"), { recursive: true });
 		writeFileSync(join(root, ".pi", "settings.json"), JSON.stringify({
-			kendex: { extensionManager: { config: { "@vanillagreen/pi-hooks": { enabled: true, sessionDriftCheck: true, sessionDriftAvailable: true } } } },
+			kendex: { extensionManager: { config: { "@vanillagreen/pi-hooks": { enabled: true, sessionDriftCheck: true } } } },
 		}));
 		const oldHome = process.env.HOME;
 		process.env.HOME = home;
