@@ -146,7 +146,24 @@ fn the_hook_script_honors_its_contract() {
     );
     assert_eq!((out.as_str(), code), ("stale:\n", 0));
 
-    // Clean: silent.
+    // Clean: silent, whatever kendex said on stderr on the way.
     let (out, code) = run_hook(dir, "{}", &[], Some("#!/bin/sh\nexit 0\n"));
     assert_eq!((out.as_str(), code), ("", 0));
+    let (out, code) = run_hook(dir, "{}", &[], Some("#!/bin/sh\necho noise >&2\nexit 0\n"));
+    assert_eq!((out.as_str(), code), ("", 0));
+
+    // #3: an error: line inside a could-not-check line is part of a
+    // completed report, not the pre-check failure shape.
+    let (out, code) = run_hook(
+        dir,
+        "{}",
+        &[],
+        Some(
+            "#!/bin/sh\nprintf 'could not check:\\n  source github.com/x/y unreachable since 2026-08-01: error: cannot lock ref\\n'\nexit 2\n",
+        ),
+    );
+    assert!(out.starts_with("kendex check incomplete (exit 2)"), "{out}");
+    assert!(out.contains("error: cannot lock ref"), "{out}");
+    assert!(!out.contains("could not run"), "{out}");
+    assert_eq!(code, 0);
 }

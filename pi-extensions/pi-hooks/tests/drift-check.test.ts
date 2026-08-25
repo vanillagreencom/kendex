@@ -85,6 +85,25 @@ describe("drift-check classification", () => {
 		});
 	});
 
+	test("exit 2 with an error: inside a report line is still an incomplete report", async () => {
+		const report = "could not check:\n  source github.com/x/y unreachable since 2026-08-01: error: cannot lock ref";
+		await withFake("2", report, async ({ binary, root }) => {
+			const result = await runDriftCheck(root, { timeoutMs: 5000, binary });
+			expect(result).toEqual({ kind: "incomplete", report });
+			const message = driftMessage(result) ?? "";
+			expect(message).toContain("kendex check incomplete (exit 2)");
+			expect(message).not.toContain("could not run");
+		});
+	});
+
+	test("exit 2 with no output is a failure to run, not an empty partial report", async () => {
+		await withFake("2", "", async ({ binary, root }) => {
+			const result = await runDriftCheck(root, { timeoutMs: 5000, binary });
+			expect(result).toEqual({ kind: "failed", exitCode: 2, report: "" });
+			expect(driftMessage(result)).toBe("kendex check could not run (exit 2); drift status unknown");
+		});
+	});
+
 	test("exit 2 with kendex's own Error: line is a failure to run, not a partial answer", async () => {
 		await withFake("2", "Error: loading lock file", async ({ binary, root }) => {
 			const result = await runDriftCheck(root, { timeoutMs: 5000, binary });

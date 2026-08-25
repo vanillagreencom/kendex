@@ -11,8 +11,8 @@ import { runCommandAsync } from "./process.js";
  *   2 → kendex could not check, in part or at all: a report carrying a
  *       "could not check" section is relayed under an "incomplete" line;
  *       output opening with kendex's own Error: line or clap's usage
- *       error: comes from before the check read anything, so it reads as
- *       could-not-run
+ *       error:, or no output at all, comes from before the check read
+ *       anything, so it reads as could-not-run
  *   3+ → the check itself failed (could not run, with its output)
  *   ENOENT spawn failure → no kendex binary; one "skipped" line
  *   unusable cwd, other spawn error, unexpected throw → could not run
@@ -52,7 +52,7 @@ export async function runDriftCheck(cwd: string, options: DriftCheckOptions): Pr
 	const report = `${result.stderr}${result.stdout}`.trim();
 	if (result.exitCode === 0) return { kind: "clean" };
 	if (result.exitCode === 1) return { kind: "drift", report };
-	if (result.exitCode === 2 && !PRECHECK_FAILURE.test(report)) return { kind: "incomplete", report };
+	if (result.exitCode === 2 && report !== "" && !PRECHECK_FAILURE.test(report)) return { kind: "incomplete", report };
 	// spawn() surfaces ENOENT through the error event as exit -1 with the
 	// error text. The port only runs because kendex installed it, so a
 	// missing binary is almost always a PATH gap worth one line.
@@ -74,6 +74,7 @@ export function driftMessage(result: DriftCheckResult): string | undefined {
 		case "incomplete":
 			return `kendex check incomplete (exit 2); some drift status unknown:\n${result.report}`;
 		case "failed":
+			if (result.report === "") return `kendex check could not run (exit ${result.exitCode}); drift status unknown`;
 			return `kendex check could not run (exit ${result.exitCode}); drift status unknown:\n${result.report}`;
 	}
 }

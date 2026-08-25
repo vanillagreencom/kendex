@@ -85,6 +85,9 @@ case "$RC" in
     # comes from before the check read anything, so nothing was checked
     # and it reads as could-not-run.
     case "$OUTPUT" in
+      "")
+        echo "kendex check could not run (exit 2); drift status unknown"
+        ;;
       Error:* | error:*)
         printf 'kendex check could not run (exit 2); drift status unknown:\n%s\n' "$OUTPUT"
         ;;

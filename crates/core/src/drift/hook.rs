@@ -63,7 +63,11 @@ fi
 report=$(kendex check --quiet 2>&1)
 code=$?
 case "$code" in
-  0 | 1) ;;
+  # Clean is silent whatever stderr held: kendex says things there before
+  # every command (a leftover from a directory move), and a clean session
+  # starts clean.
+  0) exit 0 ;;
+  1) ;;
   2)
     case "$report" in
       "") echo "kendex check could not run (exit 2); drift status unknown" ;;
