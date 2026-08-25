@@ -218,6 +218,11 @@ impl Env {
         self.cache_dir.join(APP_DIR).join("registry")
     }
 
+    /// The app release check's last attempt and last valid feed.
+    pub fn app_update_cache_file(&self) -> PathBuf {
+        self.cache_dir.join(APP_DIR).join("app-update.json")
+    }
+
     pub fn trash_dir(&self) -> PathBuf {
         self.data_dir.join(APP_DIR).join("trash")
     }

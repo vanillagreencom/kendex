@@ -281,6 +281,14 @@ lives in one capability table read by core and UI.
   mid-read; a failed read shows its error with a retry, kept figures headed
   as the last kendex could check, never a definite count — least of all
   zero. Startup reads — settings, scan, audit, updates — run side by side.
+- **The app release check is cached discovery, never delivery.** Startup
+  checks GitHub's release feed off the launch path at most once per six
+  hours and remembers the last valid result separately from the last error.
+  Settings can disable that automatic contact entirely; a manual check is
+  explicit. Release app builds always use the fixed GitHub feed, while debug
+  builds may use `KENDEX_UPDATE_FEED` for fixtures. The unsigned feed can
+  announce a SemVer and whether this target has an asset, but the notice
+  links only to release notes and never treats a feed URL as install intent.
 - Commands that touch disk, git, or a subprocess are
   `#[tauri::command(async)]`. Only window operations stay synchronous.
 - No database: manifests, locks, and native dirs are the state; scans are

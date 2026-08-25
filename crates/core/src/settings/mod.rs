@@ -30,6 +30,14 @@ pub struct AppSettings {
     /// repository would silence a whole team.
     #[serde(default)]
     pub ignored_updates: Vec<crate::package::updates::IgnoredUpdate>,
+    /// The app version whose own notice is hidden. A later version does not
+    /// inherit the mute.
+    #[serde(default)]
+    pub muted_app_notice: Option<String>,
+    /// Whether startup may contact the release feed. A manual refresh is a
+    /// separate, explicit request.
+    #[serde(default = "default_true")]
+    pub auto_update_check: bool,
     /// How large the interface draws, as a percent. Machine-local like
     /// everything else in this file: how big text needs to be belongs to
     /// the person and the display in front of them, not to a project.
@@ -41,6 +49,10 @@ fn default_zoom() -> u16 {
     ZOOM.default
 }
 
+fn default_true() -> bool {
+    true
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         AppSettings {
@@ -49,6 +61,8 @@ impl Default for AppSettings {
             harness_roots: BTreeMap::new(),
             appearance: Appearance::System,
             ignored_updates: Vec::new(),
+            muted_app_notice: None,
+            auto_update_check: true,
             zoom: ZOOM.default,
         }
     }
@@ -225,6 +239,16 @@ pub(crate) mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let settings = load(&env_in(tmp.path())).unwrap();
         assert_eq!(settings, AppSettings::default());
+    }
+
+    #[test]
+    fn settings_written_before_update_checks_keep_automatic_checks_on() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = env_in(tmp.path());
+        write_settings(&env, "schema = 1\n");
+        let settings = load(&env).unwrap();
+        assert!(settings.auto_update_check);
+        assert_eq!(settings.muted_app_notice, None);
     }
 
     #[test]

@@ -4,6 +4,15 @@ import { type Handler, label, same, store, view } from "./mock-state";
 
 export const coreHandlers: Record<string, Handler> = {
   app_version: () => "0.1.0",
+  app_update_check: () => ({
+    automaticCheckEnabled: true,
+    status: { kind: "upToDate", version: "0.1.0" },
+    lastAttemptAt: "2026-08-25T16:00:00Z",
+    lastSuccessAt: "2026-08-25T16:00:00Z",
+    servedFeedAt: "2026-08-25T16:00:00Z",
+    servedFeedAgeSecs: 0,
+    lastError: null,
+  }),
   capability_table: () => capabilityTable(),
   // No real window or OS pickers to act on in the mock browser harness.
   window_minimize: () => null,

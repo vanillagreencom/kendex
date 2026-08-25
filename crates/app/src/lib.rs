@@ -1,5 +1,6 @@
 mod account;
 mod app_settings;
+mod app_update;
 pub mod audit;
 mod commands;
 mod community;
@@ -29,6 +30,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         .constant("ZOOM", kendex_core::settings::ZOOM)
         .commands(collect_commands![
             commands::app_version,
+            app_update::app_update_check,
             commands::scan_machine,
             app_settings::get_settings,
             app_settings::update_settings,
@@ -178,6 +180,10 @@ pub fn run() -> tauri::Result<()> {
         // wired up here is not, because tauri's mock runtime answers for a
         // window it never draws. Deleting the line leaves `zoom` with no
         // reader, which fails `clippy -D warnings`.
-        .setup(move |app| window::show_at_zoom(app, zoom))
+        .setup(move |app| {
+            window::show_at_zoom(app, zoom)?;
+            app_update::schedule_startup_check();
+            Ok(())
+        })
         .run(tauri::generate_context!())
 }

@@ -158,6 +158,7 @@ jobs:
           base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
           cat > dist/feed.json << EOF
           {
+            "schema": 1,
             "version": "${version}",
             "assets": {
               "x86_64-unknown-linux-gnu": "${base}/kendex-x86_64-unknown-linux-gnu",

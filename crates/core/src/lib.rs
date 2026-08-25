@@ -1,3 +1,4 @@
+pub mod app_update;
 pub mod apply;
 pub mod author;
 pub mod base;
@@ -42,4 +43,5 @@ pub mod source_ops;
 pub mod source_read;
 pub mod source_ref;
 pub mod tags;
+pub mod update_feed;
 pub mod vendor;

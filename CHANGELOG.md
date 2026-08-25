@@ -48,6 +48,8 @@ an outside contributor.
 
 ### Added
 
+- The app checks for new kendex releases in the background at most once every
+  six hours, remembers the last result, and can turn automatic checks off.
 - Moving an existing repo onto kendex works now: `kendex adopt` keeps files
   already on disk as they are, and `kendex apply --replace-unmanaged`
   installs over them (the old copies go to the trash).

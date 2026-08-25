@@ -2,10 +2,11 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use kendex_core::process::Hardened;
+use kendex_core::update_feed::{ReleaseFeed, VersionRelation, release_notes_url};
 
 use super::{CliResult, out, say};
 
-/// The release feed: `{"version": "1.2.3", "assets": {"<target>": "<url>"}}`.
+/// The release feed is parsed by core so the CLI and app accept one schema.
 /// `KENDEX_UPDATE_FEED` overrides the URL so compat tests run against a
 /// local fixture instead of the network.
 fn feed_url() -> String {
@@ -38,23 +39,30 @@ fn fetch(url: &str) -> Result<Vec<u8>, String> {
 
 pub fn run(force: bool) -> CliResult {
     let feed_bytes = fetch(&feed_url())?;
-    let feed: serde_json::Value =
-        serde_json::from_slice(&feed_bytes).map_err(|e| format!("invalid release feed: {e}"))?;
-    let latest = feed
-        .get("version")
-        .and_then(|v| v.as_str())
-        .ok_or("release feed has no version")?;
+    let feed = ReleaseFeed::parse(&feed_bytes)?;
+    let latest = feed.version.as_str();
     let current = env!("CARGO_PKG_VERSION");
-    if latest == current && !force {
-        out(&format!("already up to date ({current})"));
-        return Ok(());
+    match feed.relation_to(current)? {
+        VersionRelation::Current if !force => {
+            out(&format!("already up to date ({current})"));
+            return Ok(());
+        }
+        VersionRelation::Older if !force => {
+            return Err(format!(
+                "release feed offers {latest}, older than installed {current}; use --force to downgrade"
+            )
+            .into());
+        }
+        VersionRelation::Older | VersionRelation::Current | VersionRelation::Newer => {}
     }
     let target = target_triple();
-    let asset = feed
-        .get("assets")
-        .and_then(|a| a.get(target))
-        .and_then(|u| u.as_str())
-        .ok_or_else(|| format!("release {latest} has no asset for {target}"))?;
+    let Some(asset) = feed.asset_for(target) else {
+        out(&format!(
+            "release {latest} is available: {}",
+            release_notes_url(latest)?
+        ));
+        return Ok(());
+    };
 
     say(&format!("updating {current} → {latest}"));
     let binary = fetch(asset)?;

@@ -17,7 +17,9 @@ Release with:
   dmg, NSIS installer).
 - `feed.json` — the update feed `kendex update` reads from
   `releases/latest/download/feed.json`. Publishing the draft makes the
-  version "latest".
+  version "latest". The feed carries `schema: 1`, a SemVer `version`, and
+  an `assets` map keyed by Rust target triple. Keep those fields when adding
+  data so released clients can continue reading it.
 
 Review the draft, then publish it. That is the release.
 

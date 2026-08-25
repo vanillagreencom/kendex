@@ -192,7 +192,7 @@ fn update_replaces_the_binary_from_a_local_feed() {
     fs::write(
         home.join("feed.json"),
         format!(
-            r#"{{"version": "9.9.9", "assets": {{"{target}": "file://{}/new-binary"}}}}"#,
+            r#"{{"schema": 1, "version": "9.9.9", "assets": {{"{target}": "file://{}/new-binary"}}}}"#,
             home.display()
         ),
     )
@@ -233,6 +233,39 @@ fn update_replaces_the_binary_from_a_local_feed() {
     );
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stdout).contains("already up to date"));
+
+    let older = fs::read_to_string(home.join("feed.json"))
+        .unwrap()
+        .replace(env!("CARGO_PKG_VERSION"), "0.1.0");
+    fs::write(home.join("feed.json"), older).unwrap();
+    let output = kendex_in(
+        home,
+        home,
+        &["update"],
+        &[(
+            "KENDEX_UPDATE_FEED",
+            format!("file://{}/feed.json", home.display()),
+        )],
+    );
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("older than installed"));
+
+    fs::write(
+        home.join("feed.json"),
+        r#"{"schema":1,"version":"99.0.0","assets":{}}"#,
+    )
+    .unwrap();
+    let output = kendex_in(
+        home,
+        home,
+        &["update"],
+        &[(
+            "KENDEX_UPDATE_FEED",
+            format!("file://{}/feed.json", home.display()),
+        )],
+    );
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("releases/tag/v99.0.0"));
 }
 
 #[test]

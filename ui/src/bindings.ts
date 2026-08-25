@@ -6,6 +6,11 @@ import { invoke as __TAURI_INVOKE } from "@tauri-apps/api/core";
 /** Commands */
 export const commands = {
 	appVersion: () => __TAURI_INVOKE<string>("app_version"),
+	/**
+	 *  Read the remembered app release status, refreshing it when requested or
+	 *  when the six-hour automatic interval has elapsed.
+	 */
+	appUpdateCheck: (refresh: boolean) => typedError<AppUpdateView, string>(__TAURI_INVOKE("app_update_check", { refresh })),
 	scanMachine: () => typedError<ScanResult, string>(__TAURI_INVOKE("scan_machine")),
 	getSettings: () => typedError<SettingsRead, string>(__TAURI_INVOKE("get_settings")),
 	/**
@@ -322,11 +327,40 @@ export type AppSettings = {
 	 */
 	"ignored-updates"?: IgnoredUpdate[],
 	/**
+	 *  The app version whose own notice is hidden. A later version does not
+	 *  inherit the mute.
+	 */
+	"muted-app-notice"?: string | null,
+	/**
+	 *  Whether startup may contact the release feed. A manual refresh is a
+	 *  separate, explicit request.
+	 */
+	"auto-update-check"?: boolean,
+	/**
 	 *  How large the interface draws, as a percent. Machine-local like
 	 *  everything else in this file: how big text needs to be belongs to
 	 *  the person and the display in front of them, not to a project.
 	 */
 	zoom?: number,
+};
+
+export type AppUpdateError = {
+	kind: AppUpdateErrorKind,
+	message: string,
+};
+
+export type AppUpdateErrorKind = "network" | "http" | "invalidFeed";
+
+export type AppUpdateStatus = { kind: "neverChecked" } | { kind: "upToDate"; version: string } | { kind: "updateAvailable"; version: string; releaseNotesUrl: string; assetAvailable: boolean; muted: boolean } | { kind: "feedOlder"; version: string };
+
+export type AppUpdateView = {
+	automaticCheckEnabled: boolean,
+	status: AppUpdateStatus,
+	lastAttemptAt: string | null,
+	lastSuccessAt: string | null,
+	servedFeedAt: string | null,
+	servedFeedAgeSecs: number | null,
+	lastError: AppUpdateError | null,
 };
 
 export type Appearance = "system" | "light" | "dark";

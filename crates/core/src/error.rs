@@ -4,6 +4,9 @@ use thiserror::Error;
 
 use crate::model::{HarnessId, ItemKind};
 
+mod result;
+pub use result::Result;
+
 #[derive(Debug, Error)]
 pub enum CoreError {
     #[error("cannot locate the home directory on this system")]
@@ -379,6 +382,11 @@ pub enum CoreError {
     #[error("the community directory answered something this build does not read: {why}")]
     RegistryMalformed { why: String },
 
+    /// A release feed that exceeds its bounds or does not match the pinned
+    /// schema is never partly trusted.
+    #[error("the release feed is not valid for this build: {why}")]
+    UpdateFeedMalformed { why: String },
+
     /// A guard's configuration is wrong or a measurement could not be
     /// taken — the loud exit-2 state, never a silent pass.
     #[error("{check}: {message}")]
@@ -389,14 +397,3 @@ pub enum CoreError {
     #[error("{message}")]
     Authoring { message: String },
 }
-
-impl CoreError {
-    pub fn io(path: impl Into<PathBuf>, source: std::io::Error) -> Self {
-        CoreError::Io {
-            path: path.into(),
-            source,
-        }
-    }
-}
-
-pub type Result<T> = std::result::Result<T, CoreError>;
