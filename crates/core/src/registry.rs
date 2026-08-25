@@ -201,15 +201,10 @@ fn run_get_args(args: Vec<String>) -> Result<FetchResponse> {
 }
 
 fn get_args(url: &str, if_none_match: Option<&str>, redirects: Redirects) -> Vec<String> {
-    let proto = match (
-        url.starts_with("http://"),
-        url.starts_with("file://"),
-        redirects,
-    ) {
-        (true, _, Redirects::None) => "=http",
-        (true, _, Redirects::Https) => "=http,https",
-        (_, true, Redirects::Https) => "=https,file",
-        _ => "=https",
+    let proto = match (url.starts_with("http://"), redirects) {
+        (true, Redirects::None) => "=http",
+        (true, Redirects::Https) => "=http,https",
+        (false, _) => "=https",
     };
     let mut args = vec![
         "-sS".into(),

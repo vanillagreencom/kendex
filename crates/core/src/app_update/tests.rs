@@ -1,6 +1,8 @@
 use std::cell::Cell;
 use std::collections::VecDeque;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::Duration;
 
 use super::*;
 use crate::env::FakeOs;
@@ -130,4 +132,66 @@ fn long_multibyte_errors_truncate_on_a_boundary_within_the_cap() {
     assert!(stored.ends_with("..."));
     assert!(stored.is_char_boundary(stored.len()));
     assert_eq!(stored, format!("{}...", "a".repeat(508)));
+}
+
+struct CountingFetch {
+    calls: AtomicUsize,
+}
+
+impl Fetch for CountingFetch {
+    fn get_auth(
+        &self,
+        _url: &str,
+        _if_none_match: Option<&str>,
+        _bearer: Option<&str>,
+    ) -> Result<FetchResponse> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(feed(200))
+    }
+
+    fn post_json_auth(
+        &self,
+        _url: &str,
+        _body: &str,
+        _bearer: Option<&str>,
+    ) -> Result<FetchResponse> {
+        Err(CoreError::RegistryUnavailable {
+            why: "unexpected POST".to_owned(),
+        })
+    }
+}
+
+#[test]
+fn production_clock_is_sampled_after_the_cache_transaction_lock() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let held = update_lock(&env).unwrap();
+    let fetch = Arc::new(CountingFetch {
+        calls: AtomicUsize::new(0),
+    });
+    let (sampled, observed) = mpsc::channel();
+    let worker_env = env.clone();
+    let worker_fetch = Arc::clone(&fetch);
+    let worker = std::thread::spawn(move || {
+        check_with_clock(
+            &worker_env,
+            worker_fetch.as_ref(),
+            request(false, true),
+            || {
+                sampled.send(()).unwrap();
+                100
+            },
+        )
+        .unwrap()
+    });
+
+    assert!(observed.recv_timeout(Duration::from_millis(100)).is_err());
+    drop(held);
+    let first = worker.join().unwrap();
+    let second = check_with_clock(&env, fetch.as_ref(), request(false, true), || 101).unwrap();
+
+    assert_eq!(fetch.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(first.last_attempt_at, second.last_attempt_at);
+    assert_eq!(first.last_success_at, second.last_success_at);
+    assert_eq!(second.served_feed_age_secs, Some(1));
 }

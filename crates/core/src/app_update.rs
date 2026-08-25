@@ -97,14 +97,24 @@ pub struct CheckRequest<'a> {
 /// caller's transport. `refresh` is the explicit manual-check path and may
 /// fetch while automatic checks are off.
 pub fn check(env: &Env, fetch: &dyn Fetch, request: CheckRequest<'_>) -> Result<AppUpdateView> {
-    check_at(env, fetch, request, clock::unix_now())
+    check_with_clock(env, fetch, request, clock::unix_now)
 }
 
+#[cfg(test)]
 fn check_at(
     env: &Env,
     fetch: &dyn Fetch,
     request: CheckRequest<'_>,
     now: u64,
+) -> Result<AppUpdateView> {
+    check_with_clock(env, fetch, request, || now)
+}
+
+fn check_with_clock(
+    env: &Env,
+    fetch: &dyn Fetch,
+    request: CheckRequest<'_>,
+    clock: impl FnOnce() -> u64,
 ) -> Result<AppUpdateView> {
     // No protected state lives in memory. A prior panic releases the mutex,
     // and the atomic cache file is either the old or new generation.
@@ -113,6 +123,7 @@ fn check_at(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let _process_guard = update_lock(env)?;
+    let now = clock();
     let mut cached = read_cache(env)?.unwrap_or_default();
     let feed_url = request.feed_url.trim();
     if feed_url.is_empty() {

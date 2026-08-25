@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn production_release_feed_plan_bounds_https_redirects_and_allows_file_fixtures() {
+fn production_release_feed_http_plan_bounds_https_redirects() {
     let args = ReleaseFeedFetch::request_args(
         "https://github.com/example/latest/feed.json",
         Some("old-etag"),
@@ -15,18 +15,6 @@ fn production_release_feed_plan_bounds_https_redirects_and_allows_file_fixtures(
     assert!(
         args.windows(2)
             .any(|pair| pair == ["-H", "If-None-Match: old-etag"])
-    );
-
-    let fixture = ReleaseFeedFetch::request_args("file:///fixture/feed.json", None);
-    assert!(
-        fixture
-            .windows(2)
-            .any(|pair| pair == ["--proto", "=https,file"])
-    );
-    assert!(
-        fixture
-            .windows(2)
-            .any(|pair| pair == ["--proto-redir", "=https"])
     );
 }
 
