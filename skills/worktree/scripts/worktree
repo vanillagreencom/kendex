@@ -380,12 +380,15 @@ Recovery routing — route by shape, not by whether 'test -L' passes:
 
 Exit status:
   fix-links judges the RESULT of its pass, not the repair's return codes:
-  'Restored symlinks' and exit 0 only when every configured entry ended
-  healthy. Anything still unhealthy is named and the exit is non-zero — a
-  path the quarantine left in place, or an entry with no such path in the
-  MAIN checkout, which setup skips outright. The errors that name fix-links
-  as their remediation are re-triggered by exactly those paths, so claiming
-  success for one loops the operator on a command that changed nothing.
+  'Restored symlinks' and exit 0 only when every WORKTREE_SYMLINKS and
+  WORKTREE_RELATIVE_SYMLINKS entry ended healthy — present, a symlink, and
+  resolving to the target this command gives it. Anything else is named and
+  the exit is non-zero: a path the quarantine left in place, an entry with
+  no such path in the MAIN checkout (setup skips those outright), a link
+  that never got created, or one pointing somewhere else. The errors that
+  name fix-links as their remediation are re-triggered by exactly those
+  paths, so claiming success for one loops the operator on a command that
+  changed nothing.
 
 Symlink entries that shadow tracked content:
   When a configured symlink path is a tracked FILE in the worktree branch,
@@ -1621,6 +1624,67 @@ collect_materialized_child_links() {
   [[ -z "$capped" ]]
 }
 
+# One expected symlink, judged by its actual SHAPE: it must be a symlink and it
+# must resolve to the target this command would have given it. Absent and
+# wrong-target are unhealthy too — those are exactly the states that re-trigger
+# the sync error naming fix-links as its remediation.
+report_link_health() {
+  local wt="$1" rel="$2" want="$3" actual=""
+  if [[ -L "$wt/$rel" ]]; then
+    actual="$(readlink "$wt/$rel" 2>/dev/null || true)"
+    [[ "$actual" == "$want" ]] && return 0
+    printf '%s (a symlink to %s, expected %s)\n' "$rel" "${actual:-<unreadable>}" "$want"
+    return 0
+  fi
+  if [[ -e "$wt/$rel" ]]; then
+    printf '%s (still a real path, not a link)\n' "$rel"
+  else
+    printf '%s (absent)\n' "$rel"
+  fi
+}
+
+# Health check for the untracked children of a tracked-content WORKTREE_SYMLINKS
+# entry, which VST-37 keeps as a real directory with per-child links. Mirrors
+# link_untracked_children's index classification so this agrees with what the
+# repair path actually creates.
+#
+# collect_materialized_child_links cannot serve here: it is a MATERIALIZATION
+# detector, emitting an untracked child only when one exists as a non-symlink.
+# An absent child and a child linked somewhere wrong both read healthy through
+# it, which is the same false success this postcondition exists to stop.
+collect_unhealthy_child_links() {
+  local path="$1" wt="$2" depth="${3:-0}"
+  local src="$PROJECT_ROOT/$path" child="" name="" rel="" exact="" descendants=""
+  # Depth-capped like link_untracked_children (#846). Reporting the cap rather
+  # than returning silently: an uninspected subtree is not a healthy one.
+  if [[ "$depth" -ge 8 ]]; then
+    printf '%s (nests deeper than 8 levels — not inspected)\n' "$path"
+    return 0
+  fi
+  for child in "$src"/* "$src"/.[!.]* "$src"/..?*; do
+    [[ -e "$child" || -L "$child" ]] || continue
+    name="${child##*/}"
+    rel="$path/$name"
+    # Literal-equal, BOTH indexes — see link_untracked_children (#856, #964).
+    # Classifying differently from the repair path would make this diagnostic
+    # disagree with the shape that path just created.
+    classify_index_entry "$wt" "$rel"
+    exact="$CIE_EXACT"; descendants="$CIE_DESCENDANTS"
+    classify_index_entry "$PROJECT_ROOT" "$rel"
+    [[ -n "$CIE_EXACT" ]] && exact=1
+    [[ -n "$CIE_DESCENDANTS" ]] && descendants=1
+    if [[ -n "$exact" ]]; then
+      # A tracked leaf: git owns it and no link belongs here.
+      continue
+    fi
+    if [[ -n "$descendants" ]]; then
+      collect_unhealthy_child_links "$rel" "$wt" $((depth + 1))
+      continue
+    fi
+    report_link_health "$wt" "$rel" "$PROJECT_ROOT/$rel"
+  done
+}
+
 # Postcondition for `fix-links` (KEN-464): name every configured entry that is
 # NOT in its healthy shape, one per line. Reporting only — it changes nothing,
 # and is silent when everything is healthy.
@@ -1632,8 +1696,12 @@ collect_materialized_child_links() {
 # error naming fix-links as its remediation kept firing and the operator looped
 # on it. Judging the RESULT covers whatever mechanism left a path unrestored,
 # not only the two known ones.
+#
+# Scope: the link shapes this command creates — WORKTREE_SYMLINKS and
+# WORKTREE_RELATIVE_SYMLINKS. WORKTREE_MKDIRS and WORKTREE_COPIES are not link
+# shapes and are left to setup_worktree_links' own (now checked) return.
 collect_unrestored_links() {
-  local wt="$1" path="" rel="" child_damage=""
+  local wt="$1" path="" spec="" target=""
   [[ -n "$wt" && -d "$wt" ]] || return 0
   validate_worktree_setup_config >/dev/null 2>&1 || return 0
 
@@ -1646,31 +1714,30 @@ collect_unrestored_links() {
       printf '%s (no such path in the main checkout — create it there, or drop it from WORKTREE_SYMLINKS)\n' "$path"
       continue
     fi
-    if [[ -L "$wt/$path" ]]; then
-      [[ "$(readlink "$wt/$path" 2>/dev/null || true)" == "$PROJECT_ROOT/$path" ]] ||
-        printf '%s (a symlink, but not to the main checkout)\n' "$path"
-      continue
-    fi
-    if [[ ! -e "$wt/$path" ]]; then
-      printf '%s (absent)\n' "$path"
-      continue
-    fi
     # An entry with tracked content underneath is a real directory BY DESIGN
     # (VST-37); its untracked children are what must be links. Both indexes,
     # main authoritative, matching how the repair path decides the shape.
-    if [[ -d "$wt/$path" ]] &&
+    if [[ ! -L "$wt/$path" && -d "$wt/$path" ]] &&
        { [[ -n "$(git -C "$wt" ls-files -- ":(literal)$path/" 2>/dev/null)" ]] ||
          [[ -n "$(git -C "$PROJECT_ROOT" ls-files -- ":(literal)$path/" 2>/dev/null || true)" ]]; }; then
-      # `|| true`: a nonzero return means a depth-capped subtree went
-      # uninspected, which the collector already emitted as its own line.
-      child_damage="$(collect_materialized_child_links "$path" "$wt")" || true
-      while IFS= read -r rel; do
-        [[ -n "$rel" ]] || continue
-        printf '%s\n' "$rel"
-      done <<<"$child_damage"
+      collect_unhealthy_child_links "$path" "$wt"
       continue
     fi
-    printf '%s (still a real path, not a link)\n' "$path"
+    report_link_health "$wt" "$path" "$PROJECT_ROOT/$path"
+  done
+
+  # Relative-target entries this command also creates. Same postcondition, with
+  # the expected target read from the config verbatim: it resolves from inside
+  # the worktree, not from the main checkout.
+  split_worktree_config_words "${WORKTREE_RELATIVE_SYMLINKS:-}"
+  for spec in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
+    # Malformed entries: setup warns and ignores them, so there is no link to
+    # expect here and nothing for this check to say.
+    [[ "$spec" == *=* ]] || continue
+    path="${spec%%=*}"
+    target="${spec#*=}"
+    path="$(normalize_worktree_config_path WORKTREE_RELATIVE_SYMLINKS "$path" 2>/dev/null)" || continue
+    report_link_health "$wt" "$path" "$target"
   done
 }
 
@@ -2246,8 +2313,15 @@ setup_worktree_links() {
     if [[ -f "$PROJECT_ROOT/$path" ]]; then
       ensure_worktree_path_safe "$wt" "$path" true || return 1
       exclude_from_worktree_index "$wt" "$path"
-      mkdir -p "$(dirname "$wt/$path")"
-      cp "$PROJECT_ROOT/$path" "$wt/$path"
+      # Checked, not left to implicit set -e (KEN-464): fix-links calls this
+      # function on the left of ||, which disables errexit for everything
+      # inside it. An unchecked failure here returned whatever the next
+      # command returned, and the caller read that as a clean pass.
+      if ! mkdir -p "$(dirname "$wt/$path")" 2>/dev/null ||
+         ! cp "$PROJECT_ROOT/$path" "$wt/$path" 2>/dev/null; then
+        echo "Error: could not copy WORKTREE_COPIES entry '$path' into $wt." >&2
+        return 1
+      fi
     fi
   done
 
@@ -2269,13 +2343,27 @@ setup_worktree_links() {
       echo "Error: refusing to replace non-file worktree path '$path' with a relative symlink." >&2
       return 1
     fi
-    mkdir -p "$(dirname "$wt/$path")"
+    # Same reason as WORKTREE_COPIES above (KEN-464). A relative entry nested
+    # below a tracked regular file fails both the mkdir and the ln; unchecked,
+    # the exclude update that follows supplied the function's exit status and
+    # fix-links reported success with the link absent.
+    if ! mkdir -p "$(dirname "$wt/$path")" 2>/dev/null; then
+      echo "Error: could not create the parent directory for relative symlink '$path' in $wt." >&2
+      return 1
+    fi
     if [[ -L "$wt/$path" || -f "$wt/$path" ]]; then
       rm -f "$wt/$path"
     fi
-    ln -s "$target" "$wt/$path"
+    if ! ln -s "$target" "$wt/$path" 2>/dev/null; then
+      echo "Error: could not create relative symlink '$path' -> '$target' in $wt." >&2
+      return 1
+    fi
     exclude_from_worktree_index "$wt" "$path"
   done
+
+  # Explicit: the last loop's trailing command must not decide this function's
+  # exit status — every failure above returns 1 on its own.
+  return 0
 }
 
 configure_worktree_git() {
