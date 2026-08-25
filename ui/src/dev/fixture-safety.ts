@@ -14,6 +14,10 @@ import {
 } from "./fixture-personal";
 import { GLOBAL } from "./fixture-scopes";
 
+// The ruleset version every scored fixture was produced under. One
+// number, so a fixture never claims two different rulesets at once.
+export const FIXTURE_RULESET = 3;
+
 const hookSafety = (name: string): ItemSafety => ({
   kind: "hook",
   name,
@@ -24,7 +28,7 @@ const hookSafety = (name: string): ItemSafety => ({
   quality: null,
   findings: [HOOK_FINDING],
   skipped: [],
-  ruleset: 3,
+  ruleset: FIXTURE_RULESET,
 });
 
 const cleanPluginSafety = (name: string): ItemSafety => ({
@@ -40,7 +44,7 @@ const cleanPluginSafety = (name: string): ItemSafety => ({
     rule,
     reason: CLEAN_SKIP_REASON,
   })),
-  ruleset: 3,
+  ruleset: FIXTURE_RULESET,
 });
 
 export function personalSafety(): ItemSafety[] {

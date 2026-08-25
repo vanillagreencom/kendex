@@ -2,6 +2,7 @@
 // package in the kendex catalog scores with findings, everything else is
 // clean. Installed items are scored elsewhere, in fixture-safety.ts.
 import type { ItemKind, PackageSafety } from "@/bindings";
+import { FIXTURE_RULESET } from "./fixture-safety";
 
 const CLEAN_SAFETY = (kind: ItemKind, name: string): PackageSafety => ({
   kind,
@@ -12,7 +13,7 @@ const CLEAN_SAFETY = (kind: ItemKind, name: string): PackageSafety => ({
   skipped: [],
   notes: [],
   contentHash: "b3a19f04c7d2e851",
-  ruleset: 3,
+  ruleset: FIXTURE_RULESET,
   fromCache: true,
 });
 
@@ -61,7 +62,7 @@ const WEBHOOK_SAFETY: PackageSafety = {
     "this project adds its own instructions to webhook-relay; they are not in this preview and are scored when it installs",
   ],
   contentHash: "e0c574a2918bd63f",
-  ruleset: 3,
+  ruleset: FIXTURE_RULESET,
   fromCache: false,
 };
 

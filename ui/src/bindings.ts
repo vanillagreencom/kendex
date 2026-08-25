@@ -337,6 +337,12 @@ export type Appearance = "system" | "light" | "dark";
  *  `browse::PackageSafety` flatten it into their serialized rows,
  *  `check_catalog::CheckedItem` carries it beside the structural pass — so
  *  a field added here reaches all of them without another hand-copy.
+ * 
+ *  A flattened field lands in its embedder's own key space and nothing
+ *  catches a clash at compile time, so a new field here must avoid the
+ *  keys those embedders already occupy: `kind`, `name`, `harness`,
+ *  `scope`, `location`, `notes`, `contentHash`, `fromCache`, `format` and
+ *  `discovery`.
  */
 export type AuditResult = {
 	findings: Finding[],

@@ -2,6 +2,7 @@
 // skill scored for two tools at once, and a config-entry kind — enough
 // shapes to design a warning list against.
 import type { Finding, HarnessId, ItemSafety } from "@/bindings";
+import { FIXTURE_RULESET } from "./fixture-safety";
 import { ACME, proj } from "./fixture-scopes";
 
 const SCRAPER_FINDINGS: Finding[] = [
@@ -32,7 +33,7 @@ const scraperSafety = (): ItemSafety => ({
   quality: null,
   findings: SCRAPER_FINDINGS,
   skipped: [],
-  ruleset: 3,
+  ruleset: FIXTURE_RULESET,
 });
 
 // kendex keeps the same skill directory symlinked for every harness that
@@ -76,7 +77,7 @@ const visualQaSafety = (harness: HarnessId): ItemSafety => ({
   quality: null,
   findings: VISUAL_QA_FINDINGS,
   skipped: [],
-  ruleset: 3,
+  ruleset: FIXTURE_RULESET,
 });
 
 const METRICS_RELAY_FINDINGS: Finding[] = [
@@ -99,7 +100,7 @@ const metricsRelaySafety = (): ItemSafety => ({
   quality: null,
   findings: METRICS_RELAY_FINDINGS,
   skipped: [],
-  ruleset: 3,
+  ruleset: FIXTURE_RULESET,
 });
 
 export function acmeSafety(): ItemSafety[] {

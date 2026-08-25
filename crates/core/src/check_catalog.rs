@@ -87,6 +87,13 @@ impl CheckFinding {
 }
 
 /// One item with both passes run over it.
+///
+/// `advisory` sits under its own key rather than flattened because nothing
+/// serializes this struct: it derives neither `Serialize` nor `Type`. When
+/// KEN-581 gives it a serialized form, flatten it there so its fields read
+/// at the top-level paths `ItemSafety` and `PackageSafety` already serve,
+/// and leave `structural` under its own key — the two passes answer
+/// different questions and a reader has to be able to tell them apart.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckedItem {
     pub kind: ItemKind,
