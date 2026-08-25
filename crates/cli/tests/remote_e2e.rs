@@ -330,7 +330,11 @@ fn updates_apply_names_what_moved_and_what_was_held_back() {
             .success()
     );
 
-    let applied = said(&kendex(home, &proj, &["updates", "apply", "skill", "gh"]));
+    let applied = said(&kendex(
+        home,
+        &proj,
+        &["updates", "apply", "skill", "gh", "-y"],
+    ));
     assert!(
         applied.contains("applied — skill gh is current here"),
         "{applied}"
@@ -361,7 +365,11 @@ fn updates_apply_names_what_moved_and_what_was_held_back() {
             .success()
     );
 
-    let held = said(&kendex(home, &proj, &["updates", "apply", "skill", "gh"]));
+    let held = said(&kendex(
+        home,
+        &proj,
+        &["updates", "apply", "skill", "gh", "-y"],
+    ));
     assert!(
         held.contains("skill gh is held back by the conflict above — nothing moved for it"),
         "{held}"
@@ -416,5 +424,68 @@ fn updates_apply_refuses_a_kind_with_no_per_package_update() {
     assert!(
         !help.contains("| pi-extension"),
         "pi-extension is no longer offered as a kind: {help}"
+    );
+}
+
+/// A verb that writes managed files asks first. The runs here are not a
+/// terminal, so without `--yes` there is nobody to ask: the apply refuses
+/// and nothing on disk moves, the same contract `add`, `apply`, `pin` and
+/// `refresh` hold to.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn updates_apply_refuses_to_write_without_a_yes() {
+    let tmp = fixture();
+    let home = tmp.path();
+    let proj = home.join("proj");
+    let upstream = home.join("git/vanillagreencom/kendex");
+    assert!(
+        kendex(home, &proj, &["add", "--skill", "gh", "-y"])
+            .status
+            .success()
+    );
+
+    fs::write(
+        upstream.join("skills/gh/SKILL.md"),
+        "---\nname: gh\ndescription: github flows\n---\nUpstream v2.\n",
+    )
+    .unwrap();
+    git(&upstream, &["commit", "--quiet", "-am", "two"]);
+    assert!(
+        kendex(home, &proj, &["updates", "--refresh"])
+            .status
+            .success()
+    );
+
+    let rendered = proj.join(".agents/skills/gh/SKILL.md");
+    let before = fs::read_to_string(&rendered).unwrap();
+
+    let refused = kendex(home, &proj, &["updates", "apply", "skill", "gh"]);
+    let printed = said(&refused);
+    assert!(!refused.status.success(), "{printed}");
+    assert!(
+        printed.contains("refusing to apply without --yes"),
+        "the refusal says what is missing: {printed}"
+    );
+    assert_eq!(
+        fs::read_to_string(&rendered).unwrap(),
+        before,
+        "a run that was never confirmed wrote nothing"
+    );
+
+    // The flag is reachable either side of the subcommand, and the run it
+    // confirms still reports in this verb's own words.
+    let applied = said(&kendex(
+        home,
+        &proj,
+        &["updates", "apply", "skill", "gh", "--yes"],
+    ));
+    assert!(
+        applied.contains("applied — skill gh is current here"),
+        "{applied}"
+    );
+    assert!(
+        fs::read_to_string(&rendered)
+            .unwrap()
+            .contains("Upstream v2")
     );
 }

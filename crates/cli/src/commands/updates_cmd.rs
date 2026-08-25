@@ -3,6 +3,7 @@ use clap::{Args, Subcommand};
 use kendex_core::env::Env;
 use kendex_core::model::ItemKind;
 
+use super::engine_common::confirm_and_execute;
 use super::pin::parse_kind;
 use super::{CliResult, resolve_scopes, say};
 use crate::scope::ScopeFilter;
@@ -47,7 +48,7 @@ pub struct UpdatesArgs {
     #[arg(long)]
     scope: Option<String>,
     /// Skip confirmation prompts
-    #[arg(short = 'y', long)]
+    #[arg(short = 'y', long, global = true)]
     yes: bool,
 }
 
@@ -64,7 +65,7 @@ pub fn run(env: &Env, args: UpdatesArgs) -> CliResult {
     let scope = resolve_scopes(env, filter)?.remove(0);
     match command {
         Some(UpdatesCommand::Apply { kind, name }) => {
-            return apply_one(env, &scope, kind, name);
+            return apply_one(env, &scope, kind, name, yes);
         }
         Some(UpdatesCommand::Ignore { kind, name }) => {
             return set_ignored(env, &scope, kind, name, true);
@@ -158,7 +159,8 @@ fn show_version(version: &kendex_core::package::updates::VersionRef) -> String {
     }
 }
 
-/// Bring one package current: the single-package apply, printed op by op.
+/// Bring one package current: the single-package apply, printed op by op
+/// and confirmed before anything is written.
 /// The scope's other followers stay at their installed commits (bar one
 /// the lock cannot place, which resolves fresh either way); a hold on
 /// the package itself still holds, and any conflict the plan raises for it
@@ -168,6 +170,7 @@ fn apply_one(
     scope: &kendex_core::model::Scope,
     kind: String,
     name: String,
+    yes: bool,
 ) -> CliResult {
     let kind = parse_kind(&kind)?;
     // Refused before anything is planned: a kind the engine never derives
@@ -191,7 +194,11 @@ fn apply_one(
     for op in &report.plan.ops {
         say(&op.description);
     }
-    kendex_core::apply::execute(env, &report.plan, None)?;
+    // The same gate every other writing verb passes: a session with nobody
+    // to ask refuses rather than writing on a mistyped or scripted run.
+    // An empty plan falls straight through, so the nothing-to-change line
+    // below is still what a run with nothing to do says.
+    confirm_and_execute(env, &report, yes)?;
     // The deep work just ran; write it down so the next session-start check
     // reads verdicts instead of guesses.
     if let Err(error) = kendex_core::drift::snapshot::record(env, scope) {
