@@ -37,6 +37,90 @@ fn step<'a>(workflow: &'a str, first_line_marker: &str) -> Vec<&'a str> {
     body
 }
 
+/// The body of a step's `run: |` block, dedented so bash can run it.
+fn run_script(step_lines: &[&str]) -> String {
+    let mut lines = step_lines
+        .iter()
+        .skip_while(|l| l.trim() != "run: |")
+        .skip(1)
+        .peekable();
+    let indent = lines
+        .peek()
+        .map(|l| l.len() - l.trim_start().len())
+        .unwrap_or_else(|| panic!("step has no run: | body"));
+    lines
+        .map(|l| l.get(indent..).unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+const APPLE_SECRETS: [&str; 7] = [
+    "CERT", "CERT_PW", "IDENTITY", "TEAM", "ISSUER", "KEY_ID", "KEY_P8",
+];
+
+/// Runs the macOS signing stage with exactly `set` secrets non-empty and
+/// returns the exit code and what it wrote to GITHUB_ENV.
+#[allow(clippy::unwrap_used)]
+fn stage_signing(set: &[&str]) -> (i32, String) {
+    let dir = tempfile::tempdir().unwrap();
+    let env_file = dir.path().join("github.env");
+    let workflow = workflow();
+    let script = run_script(&step(&workflow, "name: Stage macOS signing environment"));
+    let mut cmd = std::process::Command::new("bash");
+    cmd.arg("-c")
+        .arg(&script)
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("RUNNER_TEMP", dir.path())
+        .env("GITHUB_ENV", &env_file);
+    for name in APPLE_SECRETS {
+        // A wrapped certificate carries newlines; tauri wants it flat.
+        let value = if name == "CERT" { "abc\ndef\n" } else { "v" };
+        cmd.env(name, if set.contains(&name) { value } else { "" });
+    }
+    let status = cmd.status().unwrap();
+    let exported = fs::read_to_string(&env_file).unwrap_or_default();
+    (status.code().unwrap_or(-1), exported)
+}
+
+#[cfg(unix)]
+#[test]
+fn signing_env_is_exported_only_for_a_complete_secret_set() {
+    let (code, exported) = stage_signing(&APPLE_SECRETS);
+    assert_eq!(code, 0, "all seven secrets set must succeed");
+    for var in [
+        "APPLE_CERTIFICATE=abcdef\n",
+        "APPLE_CERTIFICATE_PASSWORD=",
+        "APPLE_SIGNING_IDENTITY=",
+        "APPLE_TEAM_ID=",
+        "APPLE_API_ISSUER=",
+        "APPLE_API_KEY=",
+        "APPLE_API_KEY_PATH=",
+    ] {
+        assert!(exported.contains(var), "{var} missing from:\n{exported}");
+    }
+
+    let (code, exported) = stage_signing(&[]);
+    assert_eq!(code, 0, "no secrets must build unsigned");
+    assert!(
+        exported.is_empty(),
+        "no secrets exported anything:\n{exported}"
+    );
+
+    for missing in APPLE_SECRETS {
+        let set: Vec<&str> = APPLE_SECRETS
+            .into_iter()
+            .filter(|s| *s != missing)
+            .collect();
+        let (code, exported) = stage_signing(&set);
+        assert_ne!(code, 0, "missing {missing} must fail the lane");
+        assert!(
+            exported.is_empty(),
+            "missing {missing} exported:\n{exported}"
+        );
+    }
+}
+
 fn lane_triples(workflow: &str) -> Vec<&str> {
     workflow
         .lines()
