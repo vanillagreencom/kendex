@@ -34,7 +34,7 @@ fn fixture() -> Fixture {
     }
 }
 
-const MANIFEST: &str = "schema = 5\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n";
+const MANIFEST: &str = "schema = 6\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n";
 
 #[test]
 #[allow(clippy::unwrap_used)]
@@ -50,7 +50,7 @@ fn an_old_name_scope_loads_and_its_plan_renames_first() {
     )
     .unwrap();
     let manifest = format!(
-        "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+        "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
         catalog.display()
     );
     fs::write(f.project.join("vstack.toml"), &manifest).unwrap();
@@ -157,7 +157,7 @@ fn an_old_name_opencode_hook_converges_instead_of_duplicating() {
     )
     .unwrap();
     let install = format!(
-        "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"opencode\"]\nmethod = \"copy\"\n",
+        "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"opencode\"]\nmethod = \"copy\"\n",
         catalog.display()
     );
     fs::write(
@@ -292,7 +292,7 @@ fn a_scope_whose_manifest_already_moved_still_renames_the_rest() {
     )
     .unwrap();
     let manifest = format!(
-        "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+        "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
         catalog.display()
     );
     fs::write(f.project.join("kendex.toml"), &manifest).unwrap();

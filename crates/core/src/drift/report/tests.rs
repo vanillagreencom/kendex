@@ -53,7 +53,6 @@ pub(super) fn package(name: &str) -> PackageSnapshot {
         edited: false,
         mixed: false,
         forked: false,
-        open_findings: 0,
     }
 }
 
@@ -76,8 +75,6 @@ pub(super) fn snapshot_aged(
             scope: scope.canonical().label(),
             packages,
             unreadable: Vec::new(),
-            held_back_items: 0,
-            open_evidence: 0,
         },
     )
     .unwrap();

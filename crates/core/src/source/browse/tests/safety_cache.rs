@@ -1,5 +1,5 @@
-//! The pre-install safety cache: written once per resolved commit, verified
-//! before reuse, and never the verdict — thresholds judge at read time.
+//! The pre-install safety cache: written once per resolved commit and
+//! verified before reuse.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -8,7 +8,6 @@ use super::super::{Catalog, PackageSafety, package_safety};
 use crate::env::{Env, FakeOs};
 use crate::model::{ItemKind, Scope};
 use crate::process::Hardened;
-use crate::quality::Verdict;
 
 pub(super) const REPO: &str = "owner/repo";
 
@@ -53,7 +52,7 @@ pub(super) fn fixture() -> (tempfile::TempDir, Env, Scope) {
     fs::create_dir_all(&root).unwrap();
     fs::write(
         root.join("kendex.toml"),
-        format!("schema = 5\n[sources.cat]\nrepo = \"{REPO}\"\n"),
+        format!("schema = 6\n[sources.cat]\nrepo = \"{REPO}\"\n"),
     )
     .unwrap();
     crate::remote::sync(&env, REPO, None).unwrap();
@@ -163,135 +162,6 @@ fn a_version_bump_in_any_key_field_re_scores() {
     }
 }
 
-#[test]
-fn thresholds_move_the_verdict_without_touching_the_cache() {
-    let (_tmp, env, scope) = fixture();
-    let first = score(&env, &scope);
-    assert_eq!(first.verdict, Verdict::Warn);
-    let path = cache_file(&env);
-    let written = fs::read_to_string(&path).unwrap();
-    let modified = fs::metadata(&path).unwrap().modified().unwrap();
-
-    crate::settings::mutate(&env, |settings| {
-        settings.safety.block_below = first.safety.score + 1;
-        Ok(())
-    })
-    .unwrap();
-
-    let judged = score(&env, &scope);
-    assert_eq!(judged.verdict, Verdict::Block);
-    assert!(judged.from_cache);
-    assert_eq!(judged.safety, first.safety);
-    assert_eq!(fs::read_to_string(&path).unwrap(), written);
-    assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), modified);
-}
-
-/// Browse is a preview of the same verdict, never a second gate: a finding
-/// the publisher has already settled stops counting here exactly as it does
-/// at the install gate, and is still shown with their name and reason.
-///
-/// The record is read at read time, beside the thresholds — a cache hit
-/// still applies it, which is why the cache can hold findings and scores
-/// alone.
-#[test]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
-fn a_settled_finding_stops_counting_in_the_preview_too() {
-    let (tmp, env, scope) = fixture();
-    let before = score(&env, &scope);
-    assert_eq!(before.verdict, Verdict::Warn);
-    assert!(before.findings.iter().all(|row| row.settled.is_none()));
-    assert!(before.publisher.is_none());
-
-    // The maintainer records their decision and publishes it.
-    let upstream = tmp.path().join("base/owner/repo");
-    let sealed = crate::source_read::SealedSource::open(&upstream).unwrap();
-    let item = upstream.join("skills/gh");
-    let config = crate::source::source_config(&sealed, "cat").unwrap();
-    let hash = crate::quality::author::content_hash(
-        &sealed,
-        &item,
-        &config.rendering_inputs(&sealed, ItemKind::Skill, "gh"),
-    )
-    .unwrap();
-    let fingerprint = before.findings[0].finding.fingerprint();
-    crate::check_catalog::dismissals::record(
-        &sealed,
-        ItemKind::Skill,
-        "gh",
-        &hash,
-        &[(
-            fingerprint,
-            crate::quality::reviews::DismissReason::Intended,
-        )],
-    )
-    .unwrap();
-    commit(&upstream, "reviewed");
-    crate::remote::sync(&env, REPO, None).unwrap();
-
-    let after = score(&env, &scope);
-    assert_eq!(after.verdict, Verdict::Clean);
-    assert_eq!(after.safety.score, 100);
-    // Reported, not hidden, and it says whose judgement settled it.
-    assert_eq!(
-        after
-            .findings
-            .iter()
-            .map(|row| &row.finding)
-            .collect::<Vec<_>>(),
-        before
-            .findings
-            .iter()
-            .map(|row| &row.finding)
-            .collect::<Vec<_>>()
-    );
-    let settled = after.findings[0]
-        .settled
-        .as_ref()
-        .expect("the record settles it");
-    assert_eq!(
-        settled.reason,
-        crate::quality::reviews::DismissReason::Intended
-    );
-    assert_eq!(after.publisher.as_deref(), Some(REPO));
-
-    // And a cache hit says the same, because the record is applied here and
-    // not baked into what was cached.
-    let cached = score(&env, &scope);
-    assert!(cached.from_cache);
-    assert_eq!(cached.verdict, Verdict::Clean);
-    assert!(cached.findings[0].settled.is_some());
-}
-
-/// A reviews file the catalog cannot parse settles nothing here either, and
-/// the page says so: a preview that quietly showed a package held back over
-/// findings its publisher reviewed would send a person after a problem
-/// somebody already answered.
-#[test]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
-fn a_reviews_file_that_will_not_parse_is_named_on_the_page() {
-    let (tmp, env, scope) = fixture();
-    let upstream = tmp.path().join("base/owner/repo");
-    fs::write(
-        upstream.join("kendex-reviews.toml"),
-        "this is not toml [[[\n",
-    )
-    .unwrap();
-    commit(&upstream, "broken reviews");
-    crate::remote::sync(&env, REPO, None).unwrap();
-
-    let scored = score(&env, &scope);
-    assert_eq!(scored.verdict, Verdict::Warn);
-    assert!(
-        scored
-            .reasons
-            .iter()
-            .any(|reason| reason.contains("kendex-reviews.toml")
-                && reason.contains("could not be read")),
-        "{:?}",
-        scored.reasons
-    );
-}
-
 /// The preview reads catalog bytes, so anything this project adds to the
 /// rendering is missing from the number it shows. It says so — for every
 /// input the rendering counts as the project's, not only the ones that read
@@ -312,11 +182,11 @@ fn a_preview_says_what_this_projects_own_settings_add() {
     let quiet = agent_safety(&env, &scope);
     assert!(
         !quiet
-            .reasons
+            .notes
             .iter()
-            .any(|reason| reason.contains("adds its own instructions")),
+            .any(|note| note.contains("adds its own instructions")),
         "{:?}",
-        quiet.reasons
+        quiet.notes
     );
 
     // Frontmatter alone, which is not an instruction table.
@@ -330,10 +200,10 @@ fn a_preview_says_what_this_projects_own_settings_add() {
 
     let loud = agent_safety(&env, &scope);
     assert!(
-        loud.reasons
+        loud.notes
             .iter()
-            .any(|reason| reason.contains("adds its own instructions")),
+            .any(|note| note.contains("adds its own instructions")),
         "{:?}",
-        loud.reasons
+        loud.notes
     );
 }

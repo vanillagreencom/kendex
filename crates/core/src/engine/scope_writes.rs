@@ -162,10 +162,24 @@ fn rewrite_schema_line(line: &str, from: u32, to: u32) -> Option<String> {
     Some(format!("{indent}schema{key_ws}={eq_ws}{to}{tail}"))
 }
 
+/// Whether this manifest text still carries the retired safety-decision
+/// tables. Schema 6 dropped them, so a surgical edit that would keep their
+/// bytes in place cannot be the migration — those files take the full
+/// rewrite, which writes the manifest without them. Text that will not
+/// parse reads as carrying them: the fallback rewrite is correct either
+/// way, and guessing "clean" over unreadable text is the wrong direction.
+fn carries_retired_tables(text: &str) -> bool {
+    match text.parse::<toml::Table>() {
+        Ok(table) => table.contains_key("safety-overrides") || table.contains_key("safety-reviews"),
+        Err(_) => true,
+    }
+}
+
 /// Upgrade an older-schema manifest through the normal journaled apply.
 /// The bump is a surgical text edit — the schema line changes and nothing
-/// else does (invariant 10); only if no schema assignment can be found
-/// does the plan fall back to a full rewrite.
+/// else does (invariant 10); the plan falls back to a full rewrite when no
+/// schema assignment can be found, or when the file still carries the
+/// retired safety-decision tables the rewrite exists to drop.
 pub(super) fn plan_schema_upgrade(
     env: &Env,
     scope: &Scope,
@@ -179,6 +193,7 @@ pub(super) fn plan_schema_upgrade(
         crate::rename::MANIFEST_FILE
     );
     let current = crate::fs::read_if_exists(&path)?.unwrap_or_default();
+    let retired = carries_retired_tables(&current);
     let mut rewritten = false;
     let upgraded_text: String = current
         .split_inclusive('\n')
@@ -208,7 +223,7 @@ pub(super) fn plan_schema_upgrade(
     if !upgraded_text.is_empty() && !upgraded_text.ends_with('\n') {
         upgraded_text.push('\n');
     }
-    let op = match rewritten {
+    let op = match rewritten && !retired {
         true => Op::WriteFile {
             pre: manifest_pre(base, &path)?,
             path,
@@ -298,7 +313,8 @@ pub(super) fn plan_repo_move_write(
     if !edited.is_empty() && !edited.ends_with('\n') {
         edited.push('\n');
     }
-    let reproduced = toml::from_str::<Manifest>(&edited).is_ok_and(|parsed| parsed == expected);
+    let reproduced = !carries_retired_tables(&current)
+        && toml::from_str::<Manifest>(&edited).is_ok_and(|parsed| parsed == expected);
     let op = match reproduced {
         true => Op::WriteFile {
             pre: manifest_pre(base, &path)?,

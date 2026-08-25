@@ -81,9 +81,6 @@ pub enum Remedy {
         name: String,
         global: bool,
     },
-    Findings {
-        global: bool,
-    },
     /// Show what an apply would do here and why. Where a line names a
     /// state whose right resolution depends on which of two directions the
     /// reader wants, the preview that names both is the remedy: a report
@@ -95,11 +92,11 @@ pub enum Remedy {
 
 impl Remedy {
     /// Whether running this changes anything. Every other remedy settles
-    /// the line it sits on; the plan and the findings list print and
-    /// return, so calling either a fix would promise a person, and an agent
-    /// acting on this report, a resolution they will not get.
+    /// the line it sits on; the plan prints and returns, so calling it a
+    /// fix would promise a person, and an agent acting on this report, a
+    /// resolution they will not get.
     pub fn mutates(&self) -> bool {
-        !matches!(self, Remedy::Plan { .. } | Remedy::Findings { .. })
+        !matches!(self, Remedy::Plan { .. })
     }
 
     /// The pasteable spelling, or `None` when an identifier fails
@@ -121,7 +118,6 @@ impl Remedy {
             Remedy::Fork { kind, name, global } => {
                 format!("kendex fork {} {name}{}", kind.name(), flag(global))
             }
-            Remedy::Findings { global } => format!("kendex findings{}", flag(global)),
             Remedy::Plan { global } => format!("kendex apply --plan{}", flag(global)),
         })
     }
@@ -174,7 +170,6 @@ struct Sections {
     missing: Vec<Line>,
     blocked: Vec<Line>,
     references: Vec<Line>,
-    findings: Vec<Line>,
     unevaluated: Vec<Line>,
     unknown: Vec<Line>,
 }
@@ -189,14 +184,13 @@ impl Sections {
             missing: Vec::new(),
             blocked: Vec::new(),
             references: Vec::new(),
-            findings: Vec::new(),
             unevaluated: Vec::new(),
             unknown: Vec::new(),
         }
     }
 
     /// Drift before suggestions: the sections that name broken state come
-    /// first, findings and the unknowns after.
+    /// first, the unknowns after.
     fn into_report(self, snapshot_age_secs: Option<u64>) -> CheckReport {
         let sections: Vec<Section> = [
             ("stale", self.stale),
@@ -206,7 +200,6 @@ impl Sections {
             ("missing on disk", self.missing),
             ("blocked by files already there", self.blocked),
             ("broken references", self.references),
-            ("safety findings", self.findings),
             ("not yet evaluated", self.unevaluated),
             ("could not check", self.unknown),
         ]

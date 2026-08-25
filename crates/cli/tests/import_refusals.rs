@@ -83,7 +83,7 @@ fn a_stale_v1_lock_never_reimports_over_a_live_v2_record() {
     fs::create_dir_all(&v2_dir).unwrap();
     fs::write(
         v2_dir.join("kendex.toml"),
-        "schema = 5\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
+        "schema = 6\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
     )
     .unwrap();
     let live_lock = r#"{"version":4,"entries":{"skill:current:claude":{"name":"current","kind":"skill","harness":"claude","source":"local","sourceRepo":"local","method":"symlink","installedAt":"t","sourceHash":"bb","enabled":true}}}"#;

@@ -94,8 +94,6 @@ describe("updates store: bulk update", () => {
       safety: [],
       adoptable: ADOPTABLE,
       exits: [],
-      heldBack: [],
-      queued: [],
     };
     vi.mocked(commands.packageSetRev).mockResolvedValue({
       status: "ok",
@@ -158,8 +156,6 @@ describe("updates store: bulk update", () => {
         safety: [],
         adoptable: ADOPTABLE,
         exits: [],
-        heldBack: [],
-        queued: [],
       },
     });
     vi.mocked(commands.updatesOverview).mockResolvedValue({
@@ -220,8 +216,6 @@ describe("updates store: bulk update", () => {
         safety: [],
         adoptable: ADOPTABLE,
         exits: [],
-        heldBack: [],
-        queued: [],
       },
     });
     vi.mocked(commands.updatesOverview).mockResolvedValue({

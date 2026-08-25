@@ -104,14 +104,14 @@ fn a_readable_subscription_to_the_same_repository_is_found_and_an_unfetched_one_
     // nothing has fetched: switching onto it would empty the page.
     fs::write(
         &manifest,
-        "schema = 5\n[sources.tools]\nrepo = \"https://github.com/owner/repo.git\"\n",
+        "schema = 6\n[sources.tools]\nrepo = \"https://github.com/owner/repo.git\"\n",
     )
     .unwrap();
     assert_eq!(summary(&env, &repo()).unwrap().subscription, None);
 
     fs::write(
         &manifest,
-        format!("schema = 5\n[sources.tools]\nrepo = \"{REPO}\"\n"),
+        format!("schema = 6\n[sources.tools]\nrepo = \"{REPO}\"\n"),
     )
     .unwrap();
     let found = summary(&env, &repo()).unwrap().subscription.unwrap();
@@ -126,7 +126,7 @@ fn a_name_installed_from_anywhere_else_is_a_collision_and_never_installed_here()
     fs::create_dir_all(manifest.parent().unwrap()).unwrap();
     fs::write(
         &manifest,
-        "schema = 5\n[sources.other]\npath = \"/elsewhere\"\n[skills.gh]\nsource = \"other\"\n",
+        "schema = 6\n[sources.other]\npath = \"/elsewhere\"\n[skills.gh]\nsource = \"other\"\n",
     )
     .unwrap();
     // Installed too, from that other source: a blind browse owns no
@@ -153,7 +153,7 @@ fn a_subscription_that_is_turned_off_is_passed_over_and_the_repository_still_rea
     fs::create_dir_all(manifest.parent().unwrap()).unwrap();
     fs::write(
         &manifest,
-        format!("schema = 5\n[sources.cat]\nrepo = \"{REPO}\"\nenabled = false\n"),
+        format!("schema = 6\n[sources.cat]\nrepo = \"{REPO}\"\nenabled = false\n"),
     )
     .unwrap();
 
@@ -238,7 +238,7 @@ fn preview_and_safety_read_the_repository_and_the_score_is_shared_with_a_later_s
     fs::create_dir_all(manifest.parent().unwrap()).unwrap();
     fs::write(
         &manifest,
-        format!("schema = 5\n[sources.cat]\nrepo = \"{REPO}\"\n"),
+        format!("schema = 6\n[sources.cat]\nrepo = \"{REPO}\"\n"),
     )
     .unwrap();
     let subscribed = package_safety(
@@ -298,7 +298,7 @@ fn a_ready_subscription_under_another_spelling_answers_offline() {
     fs::create_dir_all(manifest.parent().unwrap()).unwrap();
     fs::write(
         &manifest,
-        format!("schema = 5\n[sources.tools]\nrepo = \"{spelled}\"\n"),
+        format!("schema = 6\n[sources.tools]\nrepo = \"{spelled}\"\n"),
     )
     .unwrap();
     crate::remote::sync(&env, spelled, None).unwrap();
@@ -335,7 +335,7 @@ fn a_subscription_still_naming_the_moved_default_carries_the_browse_of_its_new_r
     fs::write(
         &manifest,
         format!(
-            "schema = 5\n[sources.vstack]\nrepo = \"{}\"\n",
+            "schema = 6\n[sources.vstack]\nrepo = \"{}\"\n",
             crate::manifest::LEGACY_SOURCE_REPO
         ),
     )
@@ -360,7 +360,7 @@ fn a_never_fetched_subscription_under_the_canonical_spelling_is_found_after_the_
     fs::create_dir_all(manifest.parent().unwrap()).unwrap();
     fs::write(
         &manifest,
-        format!("schema = 5\n[sources.tools]\nrepo = \"{REPO}\"\n"),
+        format!("schema = 6\n[sources.tools]\nrepo = \"{REPO}\"\n"),
     )
     .unwrap();
     assert!(crate::remote::cached(&env, REPO, None).unwrap().is_none());

@@ -142,8 +142,6 @@ describe("updates store: edited places", () => {
       safety: [],
       adoptable: ADOPTABLE,
       exits: [],
-      heldBack: [],
-      queued: [],
     };
     vi.mocked(commands.applyDiscardEdits).mockResolvedValue({
       status: "ok",

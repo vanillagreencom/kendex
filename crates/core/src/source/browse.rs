@@ -41,9 +41,6 @@ pub enum InstallState {
     Installed,
     /// Offered, nothing installed.
     Available,
-    /// Asked for — declared, or carried by a declared bundle — but the
-    /// safety gate refuses to install it.
-    HeldBackBySafety,
     /// The bundle names a member the catalog no longer offers — renamed or
     /// removed upstream. A row saying so, never a dead page: the member list
     /// is catalog-authored text and one bad entry cannot break the read.
@@ -113,14 +110,11 @@ pub fn packages(env: &Env, catalog: &Catalog) -> Result<Vec<AvailablePackage>> {
         for name in super::list_items(&browsed.sealed, &browsed.config, kind) {
             let header = item_header(&browsed, kind, &name);
             let carried_bundles = carried.remove(&(kind, name.clone())).unwrap_or_default();
-            let in_declared_bundle = carried_bundles
-                .iter()
-                .any(|bundle| browsed.bundle_declared(bundle));
             // Catalog-authored bundle names are shown with control and
             // deceptive characters escaped rather than acted on.
             let bundles: Vec<String> = carried_bundles.iter().map(|b| names::shown(b)).collect();
             out.push(AvailablePackage {
-                state: browsed.state(env, kind, &name, in_declared_bundle)?,
+                state: browsed.state(kind, &name),
                 collision: browsed.collision(kind, &name),
                 description: header.description.as_deref().map(names::shown),
                 tags: header.tags,
@@ -142,12 +136,10 @@ pub fn bundle(env: &Env, catalog: &Catalog, bundle_name: &str) -> Result<BundleD
             source_name: catalog.label().to_owned(),
         });
     };
-    let declared = browsed.bundle_declared(bundle_name);
     let mut members = Vec::new();
     for member in &found.members {
         // A member the catalog names but no longer carries is a row, not a
-        // hard error: state() reaches the safety scan for a declared member
-        // and returns ItemNotInSource, which must not sink the whole page.
+        // hard error: one bad entry must not sink the whole page.
         let state = if browsed.locked_here(member.kind, &member.name) {
             InstallState::Installed
         } else if browsed.manifest.is_suppressed(member.kind, &member.name) {
@@ -159,7 +151,7 @@ pub fn bundle(env: &Env, catalog: &Catalog, bundle_name: &str) -> Result<BundleD
         {
             InstallState::NotOffered
         } else {
-            browsed.state(env, member.kind, &member.name, declared)?
+            InstallState::Available
         };
         members.push(BundleMemberRow {
             kind: member.kind,

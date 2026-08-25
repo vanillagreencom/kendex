@@ -46,7 +46,7 @@ fn installed_global_skill(f: &Fixture) -> (PathBuf, PathBuf) {
     fs::write(
         config.join("kendex.toml"),
         format!(
-            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
             catalog.display()
         ),
     )

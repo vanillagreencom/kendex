@@ -20,10 +20,9 @@ use super::{
 };
 
 /// One tree's in-memory files as audit input, in the order the observed
-/// walk uses. The gate reads a plan's rendered bytes through this so both
-/// scoring paths hash one construction — an override granted against the
-/// plan must still recognise the install when the audit reads it back off
-/// disk.
+/// walk uses. The plan-time pass reads its rendered bytes through this so
+/// both scoring paths hash one construction and score the same content the
+/// same way.
 ///
 /// Every file, to its last byte. A prefix would score a package on the part
 /// of it a reader happened to reach first, and report the rest as nothing
@@ -86,30 +85,10 @@ pub fn same_reading(item: &ObservedItem) -> (ItemKind, PathBuf, String, Option<H
     (item.kind, item.path.clone(), item.name.clone(), parser)
 }
 
-/// One observation's two hashes and what the rules made of it. The hashes
-/// answer different questions: `content` names the reduced input the
-/// findings came from, `review` names the complete bytes a decision binds
-/// to.
-#[derive(Clone)]
-pub struct Scored {
-    pub content: String,
-    pub review: Option<String>,
-    pub result: AuditResult,
-}
-
 /// Read what this observation points at and score it. Pure over the bytes
 /// on disk, so it can run on any thread and in any order.
-pub fn score(
-    item: &ObservedItem,
-    hash: impl Fn(&AuditInput) -> String,
-    review: impl Fn(&ObservedItem) -> Option<String>,
-) -> Scored {
-    let input = input_for(item);
-    Scored {
-        content: hash(&input),
-        review: review(item),
-        result: super::audit(input),
-    }
+pub fn score(item: &ObservedItem) -> AuditResult {
+    super::audit(input_for(item))
 }
 
 const UNREADABLE_FILE: &str = "the installed file could not be read from disk";

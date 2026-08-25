@@ -75,7 +75,7 @@ fn apply_performs_the_upgrade_the_preview_promised() {
     );
 
     let original = fs::read_to_string(&f.manifest_path).unwrap();
-    apply_scope(&f.env, &f.scope, false, Vec::new()).unwrap();
+    apply_scope(&f.env, &f.scope, false).unwrap();
 
     let migrated = fs::read_to_string(&f.manifest_path).unwrap();
     assert_eq!(
@@ -99,7 +99,7 @@ fn apply_performs_the_upgrade_the_preview_promised() {
 fn applying_without_a_manifest_is_an_error() {
     let f = v01_fixture();
     fs::remove_file(&f.manifest_path).unwrap();
-    let Err(error) = apply_scope(&f.env, &f.scope, false, Vec::new()) else {
+    let Err(error) = apply_scope(&f.env, &f.scope, false) else {
         panic!("applying without a manifest must error");
     };
     assert!(error.contains("no manifest"), "got: {error}");

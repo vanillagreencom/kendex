@@ -55,8 +55,6 @@ export function BundleMemberLine({
       <span className="w-32 text-right text-xs">
         {member.state === "installed" ? (
           <span className="text-muted-foreground">Installed</span>
-        ) : member.state === "held-back-by-safety" ? (
-          <span className="text-warning">Held back</span>
         ) : member.state === "not-offered" ? (
           <span className="text-muted-foreground">No longer offered</span>
         ) : member.state === "removed-by-you" ? (

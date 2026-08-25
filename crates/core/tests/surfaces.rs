@@ -31,7 +31,7 @@ fn codex_and_pi_share_one_project_variant_and_claude_links_while_equal() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\", \"codex\", \"pi\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\", \"codex\", \"pi\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
             source.display()
         ),
     )
@@ -88,7 +88,7 @@ fn a_large_skill_is_one_tree_every_surface_links_to() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\", \"codex\", \"pi\"]\nmethod = \"symlink\"\n\n[skills.big]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\", \"codex\", \"pi\"]\nmethod = \"symlink\"\n\n[skills.big]\nsource = \"cat\"\n",
             source.display()
         ),
     )

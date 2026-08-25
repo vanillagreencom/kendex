@@ -58,18 +58,17 @@ fn a_discovered_layout_indexes_with_descriptions_and_tags() {
     skill(&root, "deploy", "");
 
     let json = index_json(tmp.path(), &root);
-    assert_eq!(json["schema"], 1);
+    assert_eq!(json["schema"], 2);
     assert_eq!(json["name"], "tools");
     assert_eq!(json["counts"]["packages"], 2);
     assert_eq!(json["counts"]["bundles"], 0);
     assert_eq!(json["checked"]["breakage"], 0);
-    assert_eq!(json["checked"]["held_back"], 0);
+    assert_eq!(json["checked"]["findings"], 0);
     let packages = json["packages"].as_array().unwrap();
     let gh = packages.iter().find(|p| p["name"] == "gh").unwrap();
     assert_eq!(gh["kind"], "skill");
     assert_eq!(gh["description"], "about gh");
     assert_eq!(gh["tags"], serde_json::json!(["git"]));
-    assert_eq!(gh["safety"]["verdict"], "clean");
     assert!(gh["safety"]["score"].as_u64().unwrap() <= 100);
     let found = json["found"].as_array().unwrap();
     assert!(

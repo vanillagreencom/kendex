@@ -64,7 +64,7 @@ mod tests {
         fs::create_dir_all(manifest.parent().unwrap()).unwrap();
         fs::write(
             &manifest,
-            "schema = 5\n\
+            "schema = 6\n\
              [sources.https]\nrepo = \"https://github.com/Owner/Repo.git\"\n\
              [sources.ssh]\nrepo = \"git@github.com:owner/repo.git\"\n\
              [sources.elsewhere]\nrepo = \"git@gitlab.com:owner/repo.git\"\n\
@@ -99,7 +99,7 @@ mod tests {
         fs::write(
             &manifest,
             format!(
-                "schema = 5\n[sources.vstack]\nrepo = \"{}\"\n",
+                "schema = 6\n[sources.vstack]\nrepo = \"{}\"\n",
                 crate::manifest::LEGACY_SOURCE_REPO
             ),
         )

@@ -1,19 +1,11 @@
 //! Pre-install safety on catalog bytes: the same rules an install runs,
 //! scored once per resolved commit and cached beside the store receipt.
 //!
-//! The cache holds findings and scores only. The warn/block verdict is
-//! derived from the current thresholds at read time — thresholds in the key
-//! would re-score on every settings change and imply a different analysis
-//! where only the judgment moved. A cached entry is verified before reuse:
-//! the item's content hash is recomputed from the catalog bytes, so a
-//! parser change that moves bytes between items re-scores, and so does any
-//! bump of the rule set, the discovery table, or the record format below.
-//! Browse is a preview of the same verdict, never a second gate — a
-//! held-back item still installs through the normal gate. That means it
-//! reads the publisher's committed review the same way the gate does: the
-//! cache holds what the rules found, and both the thresholds and the
-//! publisher's record are applied at read time, so a review recorded after
-//! the score was cached takes effect without re-scoring anything.
+//! A cached entry is verified before reuse: the item's content hash is
+//! recomputed from the catalog bytes, so a parser change that moves bytes
+//! between items re-scores, and so does any bump of the rule set, the
+//! discovery table, or the record format below. Advisory like every other
+//! reading of the score — a preview, never a gate.
 
 use std::path::PathBuf;
 
@@ -23,8 +15,7 @@ use specta::Type;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::model::ItemKind;
-use crate::quality::author::{AuthorDismissal, AuthorReview};
-use crate::quality::{Finding, QualityScore, RULESET_VERSION, SafetyScore, SkippedRule, Verdict};
+use crate::quality::{Finding, QualityScore, RULESET_VERSION, SafetyScore, SkippedRule};
 use crate::source::DISCOVERY_VERSION;
 
 use super::{Browsed, Catalog};
@@ -35,10 +26,9 @@ use input::input_for;
 /// The shape of one cached record — the scanner/parser half of the cache
 /// key, beside the rule-set and discovery-table versions. Bump it when what
 /// the record holds, or how the input is read into it, changes.
-const CACHE_FORMAT: u32 = 2;
+const CACHE_FORMAT: u32 = 3;
 
-/// What one scoring pass produced, exactly as it is cached: everything but
-/// the verdict, which is a judgment the thresholds pass at read time.
+/// What one scoring pass produced, exactly as it is cached.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CachedScore {
@@ -52,41 +42,27 @@ struct CachedScore {
     skipped: Vec<SkippedRule>,
 }
 
-/// One offered package's scores and the verdict today's thresholds give
-/// them — the dot in the Packages table and the findings on the
-/// available-package page.
+/// One offered package's advisory scores — the number in the Packages
+/// table and the findings on the available-package page.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PackageSafety {
     pub kind: ItemKind,
     pub name: String,
-    /// Every finding, each carrying whatever has already been decided about
-    /// it. One row, not two arrays a reader has to keep in step by index.
-    pub findings: Vec<PackageFinding>,
+    pub findings: Vec<Finding>,
     pub safety: SafetyScore,
-    /// Advisory, never blocking.
+    /// Advisory like the safety score, and absent for kinds with no
+    /// authored prose.
     pub quality: Option<QualityScore>,
     pub skipped: Vec<SkippedRule>,
-    pub verdict: Verdict,
-    pub reasons: Vec<String>,
+    /// What this preview did not read — the number an install would give
+    /// can differ, and the page says why rather than letting its own be
+    /// read as that one.
+    pub notes: Vec<String>,
     pub content_hash: String,
     pub ruleset: u32,
     /// Whether a verified cache entry answered instead of a fresh score.
     pub from_cache: bool,
-    /// Who recorded the settled findings, when this package carries any.
-    pub publisher: Option<String>,
-}
-
-/// One finding on an offered package, with the publisher's record about it
-/// when they have one. A settled finding is reported here and does not
-/// count toward the score or the verdict — the same answer the install
-/// gate gives, which is the only reason this preview is worth showing.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct PackageFinding {
-    #[serde(flatten)]
-    pub finding: Finding,
-    pub settled: Option<AuthorDismissal>,
 }
 
 pub fn package_safety(
@@ -98,114 +74,26 @@ pub fn package_safety(
     let browsed = super::open(env, catalog)?;
     let item = item(&browsed, kind, name)?;
     let (score, from_cache) = scored(env, &browsed, kind, name, &item)?;
-    let read = published(&browsed, kind, name, &item);
-    let review = read.review;
-    let judged = judge(env, &score, review.as_ref())?;
-    let findings = score
-        .findings
-        .into_iter()
-        .zip(judged.settled)
-        .map(|(finding, settled)| PackageFinding {
-            settled: settled
-                .and_then(|fingerprint| review.as_ref()?.dismissed.get(&fingerprint).cloned()),
-            finding,
-        })
-        .collect();
-    let mut reasons = judged.reasons;
     // The preview reads the catalog, and this project adds its own text to
     // what installs. Nobody has scored that combination yet, so the page
-    // says what it did not read rather than letting the number it shows be
-    // read as the one the install will give.
-    if let Some(why) = &read.stale {
-        reasons.push(crate::names::shown(&format!(
-            "this catalog reviewed {name}, but that review no longer applies — {why}"
-        )));
-    }
+    // says what it did not read.
+    let mut notes = Vec::new();
     if injected_here(&browsed.manifest, kind, name) {
-        reasons.push(format!(
+        notes.push(format!(
             "this project adds its own instructions to {name}; they are not in this preview and are scored when it installs"
-        ));
-    }
-    if let Some(problem) = &browsed.reviews_unreadable {
-        reasons.push(format!(
-            "{} could not be read, so nothing this catalog reviewed counts as reviewed — {problem}",
-            crate::check_catalog::dismissals::REVIEWS_FILE
         ));
     }
     Ok(PackageSafety {
         kind,
         name: name.to_owned(),
-        findings,
-        safety: judged.safety,
+        findings: score.findings,
+        safety: score.safety,
         quality: score.quality,
         skipped: score.skipped,
-        verdict: judged.verdict,
-        reasons,
+        notes,
         content_hash: score.content_hash,
         ruleset: score.ruleset,
         from_cache,
-        publisher: review.map(|review| review.publisher),
-    })
-}
-
-/// The verdict alone, for the installed-state join.
-pub(super) fn verdict_for(
-    env: &Env,
-    browsed: &Browsed,
-    kind: ItemKind,
-    name: &str,
-) -> Result<Verdict> {
-    let item = item(browsed, kind, name)?;
-    let (score, _) = scored(env, browsed, kind, name, &item)?;
-    let review = published(browsed, kind, name, &item).review;
-    Ok(judge(env, &score, review.as_ref())?.verdict)
-}
-
-/// What today's thresholds and the publisher's record make of a scored
-/// package. The one derivation the gate, the audit and the authoring check
-/// use, so browse cannot preview a verdict the install will not give.
-struct Judged {
-    verdict: Verdict,
-    reasons: Vec<String>,
-    safety: SafetyScore,
-    /// The fingerprint that settled each finding, in `findings` order.
-    settled: Vec<Option<String>>,
-}
-
-fn judge(env: &Env, score: &CachedScore, review: Option<&AuthorReview>) -> Result<Judged> {
-    let thresholds = crate::settings::load(env)?.safety;
-    // Nothing has been added to these bytes yet — no project instructions,
-    // no split — so every occurrence in them is the publisher's own and
-    // their record speaks for all of them, exactly as it does in the
-    // catalog's own check.
-    let budget = review.map(AuthorReview::whole_budget).unwrap_or_default();
-    // Nothing settled means nothing to re-derive: the cached score is what
-    // the rules found, and it stays the record that answers. Re-deriving it
-    // here would make the cache a set of findings the score is recomputed
-    // from, which is not what the record vouches for.
-    if budget.is_empty() {
-        let (verdict, reasons) =
-            crate::quality::verdict(&score.findings, &score.safety, thresholds);
-        return Ok(Judged {
-            verdict,
-            reasons,
-            safety: score.safety.clone(),
-            settled: vec![None; score.findings.len()],
-        });
-    }
-    let scored = crate::quality::author::score(&score.findings, &budget, None);
-    let (verdict, reasons) = crate::quality::verdict(&scored.counted, &scored.safety, thresholds);
-    let settled = score
-        .findings
-        .iter()
-        .zip(&scored.settled)
-        .map(|(finding, settled)| settled.then(|| finding.fingerprint()))
-        .collect();
-    Ok(Judged {
-        verdict,
-        reasons,
-        safety: scored.safety,
-        settled,
     })
 }
 
@@ -233,28 +121,6 @@ fn injected_here(manifest: &crate::manifest::Manifest, kind: ItemKind, name: &st
         | ItemKind::Plugin
         | ItemKind::PiExtension => false,
     }
-}
-
-/// The publisher's record for this package, re-checked against the catalog
-/// bytes in front of us — the same read the plan does.
-fn published(
-    browsed: &Browsed,
-    kind: ItemKind,
-    name: &str,
-    item: &Item,
-) -> crate::quality::author::Read {
-    crate::quality::author::for_item_read(
-        &browsed.reviews,
-        kind,
-        name,
-        crate::quality::author::content_hash_of(
-            &browsed.sealed,
-            &item.path,
-            item.tree.as_deref(),
-            &browsed.config.rendering_inputs(&browsed.sealed, kind, name),
-        ),
-        &browsed.source.provenance,
-    )
 }
 
 fn scored(
@@ -331,13 +197,9 @@ fn cache_path(env: &Env, browsed: &Browsed, kind: ItemKind, name: &str) -> Optio
     )
 }
 
-/// This item's own path in the catalog, and its whole tree where it has
-/// one. Read once per call and handed to everything that needs those bytes:
-/// scoring, the cache key, and the hash a publisher's record binds to all
-/// answer for the same read.
+/// This item's own path in the catalog.
 struct Item {
     path: PathBuf,
-    tree: Option<Vec<(PathBuf, Vec<u8>)>>,
 }
 
 fn item(browsed: &Browsed, kind: ItemKind, name: &str) -> Result<Item> {
@@ -347,9 +209,5 @@ fn item(browsed: &Browsed, kind: ItemKind, name: &str) -> Result<Item> {
             source_name: browsed.source.name.clone(),
         });
     };
-    let tree = match kind == ItemKind::Skill {
-        true => Some(browsed.sealed.collect_skill_tree(&path)?),
-        false => None,
-    };
-    Ok(Item { path, tree })
+    Ok(Item { path })
 }

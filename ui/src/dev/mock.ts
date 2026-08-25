@@ -6,7 +6,6 @@ import { accountHandlers } from "./mock-account";
 import { auditHandlers } from "./mock-audit";
 import { communityHandlers } from "./mock-community";
 import { coreHandlers } from "./mock-core";
-import { decisionHandlers } from "./mock-decisions";
 import { marketplaceHandlers } from "./mock-marketplaces";
 import { mineHandlers } from "./mock-mine";
 import { packageHandlers } from "./mock-packages";
@@ -16,7 +15,6 @@ import { type Handler, resetState } from "./mock-state";
 export const handlers: Record<string, Handler> = {
   ...coreHandlers,
   ...auditHandlers,
-  ...decisionHandlers,
   ...sourceHandlers,
   ...packageHandlers,
   ...marketplaceHandlers,

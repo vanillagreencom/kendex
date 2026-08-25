@@ -286,7 +286,6 @@ pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &st
     {
         forks.insert(new.to_owned(), provenance);
     }
-    manifest.rename_decisions(kind, old, new);
     let manifest_path = manifest::manifest_path(env, scope);
     ops.push(PlannedOp {
         description: format!("record the rename to {new} in kendex.toml"),

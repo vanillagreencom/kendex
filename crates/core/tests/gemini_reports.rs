@@ -61,7 +61,7 @@ fn fixture(declarations: &str) -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"gemini\"]\nmethod = \"symlink\"\n\n{declarations}",
+            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"gemini\"]\nmethod = \"symlink\"\n\n{declarations}",
             source.display()
         ),
     )

@@ -42,7 +42,7 @@ fn origins_are_read_off_the_lock_manifest_and_scan() {
     .unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 5\n\
+        "schema = 6\n\
          [sources.cat]\n\
          repo = \"owner/repo\"\n\
          [skills.gh]\n\

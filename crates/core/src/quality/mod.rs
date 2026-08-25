@@ -1,6 +1,7 @@
 //! What content says about itself, read before it is installed and again
 //! after. Two independent scores, never averaged: safety answers "is this
-//! dangerous", quality answers "is this well made". Only safety can block.
+//! dangerous", quality answers "is this well made". Both are advisory —
+//! nothing here holds an install back.
 //!
 //! Every rule reads a *typed* input. There is no "content" field that means
 //! a different thing per kind: a skill carries its tree and its byte
@@ -18,24 +19,19 @@ use specta::Type;
 
 use crate::model::{HarnessId, ItemKind};
 
-pub mod author;
-mod authorship;
 pub mod dimensions;
 mod finding;
 mod homoglyph;
 pub mod observe;
-pub mod overrides;
 mod phrase;
-pub mod reviews;
 pub mod rules;
 mod score;
 mod secret;
 mod text;
 
-pub use authorship::{Authored, Injection, Publishers, publishers};
 pub use dimensions::{AntiPattern, DimensionScore, QualityScore};
 pub use finding::Finding;
-pub use score::{Deduction, SafetyScore, Thresholds, Verdict, safety, verdict};
+pub use score::{Deduction, SafetyScore, safety};
 pub use secret::{fingerprint_secret, redact};
 pub use text::{Line, Normalization};
 
@@ -44,13 +40,9 @@ pub use text::{Line, Normalization};
 ///
 /// A finding's identity is its rule and its sentence
 /// ([`Finding::fingerprint`]), so a digest inside a sentence decides
-/// identity as surely as the sentence around it — and every one of them
-/// names something a project can choose. Grind a hidden suffix until the
-/// digest matches, and an injected finding reads as one a publisher already
-/// settled, which is the guarantee this whole feature rests on, defeated by
-/// arithmetic rather than by any of the structural routes. Sixteen
-/// hexadecimal characters is sixty-four bits, the same as a fingerprint
-/// collision costs. Eight was thirty-two, which is an afternoon.
+/// identity as surely as the sentence around it. Sixteen hexadecimal
+/// characters is sixty-four bits, the same as a fingerprint collision
+/// costs.
 pub(crate) const DIGEST_CHARS: usize = 16;
 
 /// A short, stable name for content a message cannot print — too long, or
@@ -64,13 +56,10 @@ fn digest(material: &str) -> String {
         .collect()
 }
 
-/// The rule set findings were produced by. An override binds to it, so any
-/// change to what a finding *is* must bump this and stale every override
-/// granted against the old behaviour — a new rule, a widened pattern, a
-/// re-calibrated severity, and equally a change to how a finding is
-/// identified. Version 3 made [`Finding::fingerprint`] non-positional: the
-/// same problems, under new identities, which without a bump would read as
-/// "different problems were found than the ones that were reviewed".
+/// The rule set findings were produced by. Cached scores are keyed by it,
+/// so any change to what a finding *is* must bump this — a new rule, a
+/// widened pattern, a re-calibrated severity, and equally a change to how a
+/// finding is identified.
 pub const RULESET_VERSION: u32 = 3;
 
 #[derive(
@@ -350,11 +339,8 @@ pub struct SkippedRule {
 pub struct AuditResult {
     pub findings: Vec<Finding>,
     pub skipped: Vec<SkippedRule>,
-    /// What every finding here costs, before anybody's decision is read.
-    /// The score a person is shown comes from [`author::score`], which
-    /// answers for what is still an open question; this is the number the
-    /// rules alone produced, and the two differ wherever a finding has
-    /// been settled.
+    /// What every finding here costs — the advisory number every surface
+    /// shows.
     pub safety: SafetyScore,
     /// Advisory, never blocking, and `None` for kinds that carry no
     /// authored prose to judge — a settings toggle has no writing in it.

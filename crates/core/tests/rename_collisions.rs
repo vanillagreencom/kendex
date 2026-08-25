@@ -37,7 +37,7 @@ fn fixture() -> Fixture {
     }
 }
 
-const MANIFEST: &str = "schema = 5\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n";
+const MANIFEST: &str = "schema = 6\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n";
 
 #[test]
 #[allow(clippy::unwrap_used)]

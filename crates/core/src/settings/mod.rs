@@ -25,15 +25,9 @@ pub struct AppSettings {
     pub harness_roots: BTreeMap<String, PathBuf>,
     #[serde(default)]
     pub appearance: Appearance,
-    /// Where the safety score starts warning and stops installing. These
-    /// live here rather than in a manifest on purpose: a manifest travels
-    /// with the repository it describes, and a catalog able to lower the bar
-    /// it is measured against is not being measured.
-    #[serde(default)]
-    pub safety: crate::quality::Thresholds,
-    /// Packages whose update notifications are off. Here rather than in a
-    /// manifest for the same reason as `safety`: a notification preference
-    /// committed to a shared repository would silence a whole team.
+    /// Packages whose update notifications are off. Machine-local like the
+    /// rest of this file: a notification preference committed to a shared
+    /// repository would silence a whole team.
     #[serde(default)]
     pub ignored_updates: Vec<crate::package::updates::IgnoredUpdate>,
     /// How large the interface draws, as a percent. Machine-local like
@@ -54,7 +48,6 @@ impl Default for AppSettings {
             projects: Vec::new(),
             harness_roots: BTreeMap::new(),
             appearance: Appearance::System,
-            safety: crate::quality::Thresholds::default(),
             ignored_updates: Vec::new(),
             zoom: ZOOM.default,
         }

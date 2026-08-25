@@ -1,12 +1,9 @@
-// The ACME project's blocked items: the held-back rows the Review page's
-// triage design is built against — one plain block, one skill blocked for
-// two tools at once, and two config-entry kinds.
+// The ACME project's scored items: one skill with a critical finding, one
+// skill scored for two tools at once, and a config-entry kind — enough
+// shapes to design a warning list against.
 import type { Finding, HarnessId, ItemSafety } from "@/bindings";
-import { accepted, decisionsFor } from "./fixture-decisions";
 import { ACME, proj } from "./fixture-scopes";
 
-// A skill installed for one tool at a time, one finding, blocked outright —
-// the baseline case the held-back panel handles even without any grouping.
 const SCRAPER_FINDINGS: Finding[] = [
   {
     rule: "credential-theft",
@@ -30,32 +27,18 @@ const scraperSafety = (): ItemSafety => ({
   name: "scraper",
   harness: "claude",
   scope: proj(ACME),
+  location: "",
   safety: { score: 50, deductions: [] },
   quality: null,
   findings: SCRAPER_FINDINGS,
   skipped: [],
-  verdict: "block",
-  reasons: [
-    "A serious finding holds an item back on its own, whatever the score.",
-  ],
-  contentHash: "a1b2c3d4e5f6",
-  reviewHash: "a1b2c3d4e5f6",
-  location: "",
-  provenance: null,
-  decisions: decisionsFor(
-    "skill:scraper:claude",
-    "a1b2c3d4e5f6",
-    SCRAPER_FINDINGS,
-  ),
-  override: { state: "absent" },
 });
 
 // kendex keeps the same skill directory symlinked for every harness that
 // declares it, so a skill installed for both Codex and Pi reads the exact
-// same bytes and trips the exact same findings on both — the case
-// groupBlocked exists to collapse into one entry instead of two verbatim
-// panels. One rule fires at four call sites in the skill's own files, plus
-// one distinct finding, to match how this actually shows up at real scale.
+// same bytes and trips the exact same findings on both. One rule fires at
+// four call sites in the skill's own files, plus one distinct finding, to
+// match how this actually shows up at real scale.
 const VISUAL_QA_PATH = `${ACME}/.claude/skills/visual-qa`;
 const VISUAL_QA_RULE_LOCATIONS = [
   `${VISUAL_QA_PATH}/evals/grade.py:848`,
@@ -87,65 +70,11 @@ const visualQaSafety = (harness: HarnessId): ItemSafety => ({
   name: "visual-qa",
   harness,
   scope: proj(ACME),
+  location: "",
   safety: { score: 30, deductions: [] },
   quality: null,
   findings: VISUAL_QA_FINDINGS,
   skipped: [],
-  verdict: "block",
-  reasons: [
-    "A serious finding holds an item back on its own, whatever the score.",
-  ],
-  contentHash: "visual-qa-shared",
-  reviewHash: "visual-qa-shared",
-  location: "",
-  provenance: null,
-  decisions: decisionsFor(
-    `skill:visual-qa:${harness}`,
-    "visual-qa-shared",
-    VISUAL_QA_FINDINGS,
-  ),
-  override: { state: "absent" },
-});
-
-// You can accept a held-back item's findings and it stays installed, or
-// accept them and have the content change since — both keep rendering
-// inside the "Held back" panel, just with a note instead of a stop sign.
-const LOG_UPLOADER_FINDINGS: Finding[] = [
-  {
-    rule: "credential-theft",
-    severity: "critical",
-    location: "SKILL.md:8",
-    message: "reads an API token and includes it in an outbound request",
-    remediation: "confirm the destination is one you trust before installing",
-  },
-];
-
-const logUploaderSafety = (): ItemSafety => ({
-  kind: "skill",
-  name: "log-uploader",
-  harness: "claude",
-  scope: proj(ACME),
-  safety: { score: 55, deductions: [] },
-  quality: null,
-  findings: LOG_UPLOADER_FINDINGS,
-  skipped: [],
-  verdict: "block",
-  reasons: [
-    "A serious finding holds an item back on its own, whatever the score.",
-  ],
-  contentHash: "log-uploader-v2",
-  reviewHash: "log-uploader-v2",
-  location: "",
-  provenance: null,
-  decisions: decisionsFor(
-    "skill:log-uploader:claude",
-    "log-uploader-v2",
-    LOG_UPLOADER_FINDINGS,
-  ),
-  override: {
-    state: "stale",
-    why: "the skill's content has changed since you accepted it",
-  },
 });
 
 const METRICS_RELAY_FINDINGS: Finding[] = [
@@ -163,25 +92,11 @@ const metricsRelaySafety = (): ItemSafety => ({
   name: "metrics-relay",
   harness: "claude",
   scope: proj(ACME),
+  location: "",
   safety: { score: 58, deductions: [] },
   quality: null,
   findings: METRICS_RELAY_FINDINGS,
   skipped: [],
-  verdict: "block",
-  reasons: [
-    "A serious finding holds an item back on its own, whatever the score.",
-  ],
-  contentHash: "metrics-relay-v1",
-  reviewHash: "metrics-relay-v1",
-  location: "",
-  provenance: null,
-  decisions: decisionsFor(
-    "mcp-server:metrics-relay:claude",
-    "metrics-relay-v1",
-    METRICS_RELAY_FINDINGS,
-    [accepted("2026-08-10T09:12:00Z")],
-  ),
-  override: { state: "active" },
 });
 
 export function acmeSafety(): ItemSafety[] {
@@ -189,56 +104,6 @@ export function acmeSafety(): ItemSafety[] {
     scraperSafety(),
     visualQaSafety("codex"),
     visualQaSafety("pi"),
-    logUploaderSafety(),
     metricsRelaySafety(),
-  ];
-}
-
-// The plan-time refusals: the same blocked items as the observed list (the
-// next apply would rewrite them and the gate stops it again), so the demo
-// shows the accept action on each blocked row.
-export function acmeHeldBack(): ItemSafety[] {
-  return [
-    scraperSafety(),
-    visualQaSafety("codex"),
-    visualQaSafety("pi"),
-    logUploaderSafety(),
-  ];
-}
-
-// What the queued github update would install with: a finding the check
-// noticed but does not hold back, so the apply preview can say it will be
-// waiting once the update lands.
-export function acmeQueued(): ItemSafety[] {
-  const findings: Finding[] = [
-    {
-      rule: "dangerous-commands",
-      severity: "medium",
-      location: "SKILL.md:31",
-      message:
-        "`chmod 777` makes files writable by every account on the machine",
-      remediation:
-        "narrow the command to the exact path it needs, and let the user see it before it runs",
-    },
-  ];
-  return [
-    {
-      kind: "skill",
-      name: "github",
-      harness: "claude",
-      scope: proj(ACME),
-      location: "",
-      safety: { score: 92, deductions: [] },
-      quality: null,
-      findings,
-      skipped: [],
-      verdict: "warn",
-      reasons: [],
-      contentHash: "github-v3",
-      reviewHash: "github-v3",
-      provenance: "vanillagreencom/kendex",
-      override: { state: "absent" },
-      decisions: decisionsFor("skill:github:claude", "github-v3", findings),
-    },
   ];
 }

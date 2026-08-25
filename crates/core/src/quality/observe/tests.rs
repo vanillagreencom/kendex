@@ -3,12 +3,6 @@
 use super::*;
 use crate::model::{FileState, HarnessId, Scope};
 
-/// Stands in for the engine's real content hash: any function of the bytes
-/// will do to tell a cache hit from a fresh read.
-fn text_hash(input: &AuditInput) -> String {
-    format!("{:?}", input.content)
-}
-
 fn agent_at(path: &Path, harness: HarnessId) -> ObservedItem {
     ObservedItem {
         kind: ItemKind::Agent,
@@ -228,9 +222,6 @@ fn two_names_in_one_file_are_not_one_reading() {
     };
 
     assert_ne!(same_reading(&server("one")), same_reading(&server("two")));
-    let one = score(&server("one"), text_hash, |_| None);
-    let two = score(&server("two"), text_hash, |_| None);
-    assert_ne!(one.content, two.content);
 }
 
 fn hook_at(path: &Path, name: &str) -> ObservedItem {

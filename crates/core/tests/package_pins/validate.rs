@@ -9,7 +9,7 @@ const REPO: &str = "owner/catalog";
 #[allow(clippy::unwrap_used)]
 fn an_item_rev_that_is_not_a_commit_id_is_a_finding() {
     let table: toml::Table = format!(
-        "schema = 5\n[sources.cat]\nrepo = \"{REPO}\"\n[skills.gh]\nsource = \"cat\"\nrev = \"v1\"\n"
+        "schema = 6\n[sources.cat]\nrepo = \"{REPO}\"\n[skills.gh]\nsource = \"cat\"\nrev = \"v1\"\n"
     )
     .parse()
     .unwrap();
@@ -22,7 +22,7 @@ fn an_item_rev_that_is_not_a_commit_id_is_a_finding() {
     );
 
     let table: toml::Table = format!(
-        "schema = 5\n[sources.cat]\nrepo = \"{REPO}\"\n[skills.gh]\nsource = \"cat\"\nrev = \"{}\"\n",
+        "schema = 6\n[sources.cat]\nrepo = \"{REPO}\"\n[skills.gh]\nsource = \"cat\"\nrev = \"{}\"\n",
         "a".repeat(40)
     )
     .parse()
@@ -34,7 +34,7 @@ fn an_item_rev_that_is_not_a_commit_id_is_a_finding() {
 #[allow(clippy::unwrap_used)]
 fn a_rev_on_a_path_source_is_a_finding() {
     let table: toml::Table = format!(
-        "schema = 5\n[sources.here]\npath = \"catalog\"\n[skills.gh]\nsource = \"here\"\nrev = \"{}\"\n",
+        "schema = 6\n[sources.here]\npath = \"catalog\"\n[skills.gh]\nsource = \"here\"\nrev = \"{}\"\n",
         "a".repeat(40)
     )
     .parse()

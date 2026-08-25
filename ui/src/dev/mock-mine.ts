@@ -19,9 +19,8 @@ function row(overrides: Partial<MineRow>): MineRow {
     bundles: 1,
     declared: true,
     breakage: 0,
-    heldBack: 0,
-    warned: 0,
     advisory: 0,
+    safetyFindings: 0,
     findings: [],
     git: {
       repository: true,
@@ -46,8 +45,8 @@ let rows: MineListRow[] = [
       counts: { skill: 1 },
       bundles: 0,
       declared: false,
-      warned: 1,
       advisory: 1,
+      safetyFindings: 1,
       findings: [
         {
           file: "skills/gh/SKILL.md",

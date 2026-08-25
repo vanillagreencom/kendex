@@ -5,7 +5,6 @@ use specta::Type;
 
 use crate::model::HarnessId;
 
-mod decisions;
 mod file;
 mod validate;
 pub use file::{
@@ -23,13 +22,12 @@ pub use validate::{Finding, validate};
 /// than this build refuses to load — downgrades must never corrupt.
 /// Schema 3 added per-item `rev` and `[forks]`; an older build saving a
 /// schema-3 manifest would silently drop them, which is what the refusal
-/// protects. Schema 4 binds a recorded acceptance to the complete bytes
-/// that were reviewed rather than to the audit's reduced reading of them —
-/// an older build would read the new record as covering content nobody
-/// looked at. Schema 5 added `[safety-reviews]`, the dismissed findings —
-/// dropped by an older build's next write, which is what the refusal
-/// protects.
-pub const MANIFEST_SCHEMA: u32 = 5;
+/// protects. Schemas 4 and 5 carried `[safety-overrides]` and
+/// `[safety-reviews]`, the recorded safety decisions; schema 6 retires
+/// both — the safety score is advisory, so the records decide nothing.
+/// Reading an older file drops them, and the next write makes that drop
+/// durable.
+pub const MANIFEST_SCHEMA: u32 = 6;
 pub const OLDEST_READABLE_SCHEMA: u32 = 1;
 pub const DEFAULT_SOURCE_NAME: &str = "kendex";
 pub const DEFAULT_SOURCE_REPO: &str = "vanillagreencom/kendex";
@@ -278,25 +276,6 @@ pub struct Manifest {
         rename = "optional-dependencies"
     )]
     pub optional_dependencies: BTreeMap<String, Vec<String>>,
-    /// Reviews of content the safety gate blocked, keyed by installation.
-    /// Each one binds to the content, the rule set and the findings it was
-    /// granted against, so it stops applying the moment any of them moves.
-    #[serde(
-        default,
-        skip_serializing_if = "BTreeMap::is_empty",
-        rename = "safety-overrides"
-    )]
-    pub safety_overrides: BTreeMap<String, crate::quality::overrides::SafetyOverride>,
-    /// Findings judged not to be problems, keyed by installation, one
-    /// snapshot of the reviewed content per installation with each
-    /// dismissal beneath it. A dismissal settles a question and never
-    /// unblocks anything.
-    #[serde(
-        default,
-        skip_serializing_if = "BTreeMap::is_empty",
-        rename = "safety-reviews"
-    )]
-    pub safety_reviews: BTreeMap<String, crate::quality::reviews::SafetyReview>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub agent_skills: BTreeMap<String, Vec<String>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

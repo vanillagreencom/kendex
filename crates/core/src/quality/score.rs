@@ -1,4 +1,4 @@
-//! Safety scoring and the gate it feeds.
+//! The advisory safety score.
 //!
 //! `100 − Σ deductions`, floor 0. The first finding from a rule costs its
 //! full severity; every repeat of that rule costs one point, so a file with
@@ -8,14 +8,11 @@
 //!
 //! Repeats stop counting once they have cost as much as the first hit did.
 //! Past that point they have said all they can say — that the pattern is
-//! pervasive rather than incidental — and the real catalog is what settled
-//! it: the kendex `github` skill reads `.env.local` on forty lines because
-//! that is the skill's entire job, and an uncapped tail turned a Medium
-//! finding into a blocked install.
+//! pervasive rather than incidental: the kendex `github` skill reads
+//! `.env.local` on forty lines because that is the skill's entire job.
 //!
-//! The aggregate warns; it does not decide alone. Threshold arithmetic on
-//! its own lets one Critical finding through at 75, which is why any
-//! Critical blocks by itself regardless of what the total says.
+//! The score and its findings inform; nothing anywhere refuses an install
+//! over them.
 
 use std::collections::BTreeMap;
 
@@ -41,37 +38,6 @@ pub struct Deduction {
 pub struct SafetyScore {
     pub score: u32,
     pub deductions: Vec<Deduction>,
-}
-
-/// Where warning starts and where installing stops. Configured in app
-/// settings rather than in a manifest: a manifest travels with the
-/// repository it describes, and a catalog that could lower the bar it is
-/// measured against is not being measured.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(rename_all = "kebab-case")]
-pub struct Thresholds {
-    pub warn_below: u32,
-    pub block_below: u32,
-}
-
-impl Default for Thresholds {
-    fn default() -> Thresholds {
-        Thresholds {
-            warn_below: 80,
-            block_below: 60,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(rename_all = "kebab-case")]
-pub enum Verdict {
-    /// Nothing found worth saying.
-    Clean,
-    /// Findings worth reading before installing; the install proceeds.
-    Warn,
-    /// Nothing installs until a person reviews it.
-    Block,
 }
 
 pub fn safety(findings: &[Finding]) -> SafetyScore {
@@ -105,51 +71,5 @@ pub fn safety(findings: &[Finding]) -> SafetyScore {
     SafetyScore {
         score: score.max(0).unsigned_abs() as u32,
         deductions,
-    }
-}
-
-/// The verdict and the sentences that justify it. A Critical finding blocks
-/// on its own; the aggregate blocks below its threshold and warns below the
-/// higher one.
-pub fn verdict(
-    findings: &[Finding],
-    score: &SafetyScore,
-    thresholds: Thresholds,
-) -> (Verdict, Vec<String>) {
-    let mut reasons = Vec::new();
-    for finding in findings.iter().filter(|f| f.severity == Severity::Critical) {
-        reasons.push(format!(
-            "{} at {} — {}",
-            finding.rule, finding.location, finding.message
-        ));
-    }
-    let blocked_by_score = score.score < thresholds.block_below;
-    if blocked_by_score {
-        reasons.push(format!(
-            "safety score {} is below {}",
-            score.score, thresholds.block_below
-        ));
-    }
-    if !reasons.is_empty() {
-        return (Verdict::Block, reasons);
-    }
-    if score.score < thresholds.warn_below {
-        return (
-            Verdict::Warn,
-            vec![format!(
-                "safety score {} is below {}",
-                score.score, thresholds.warn_below
-            )],
-        );
-    }
-    match findings.is_empty() {
-        true => (Verdict::Clean, Vec::new()),
-        false => (
-            Verdict::Warn,
-            findings
-                .iter()
-                .map(|f| format!("{} at {} — {}", f.rule, f.location, f.message))
-                .collect(),
-        ),
     }
 }

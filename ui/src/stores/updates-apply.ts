@@ -23,7 +23,7 @@ export const applyRow = async (
           row.name,
           row.latest.commit,
         )
-      : await commands.applyPlan(row.scope, false, []);
+      : await commands.applyPlan(row.scope, false);
   if (response.status === "error") {
     report(response.error);
     return false;
@@ -51,7 +51,7 @@ export const applyRows = async (
       .map((row) => [scopeKey(row.scope), row] as const),
   );
   for (const row of scopes.values()) {
-    const response = await commands.applyPlan(row.scope, false, []);
+    const response = await commands.applyPlan(row.scope, false);
     if (response.status === "error") {
       report(response.error);
       ok = false;

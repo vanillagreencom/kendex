@@ -62,7 +62,7 @@ pub fn submit_preflight(path: &std::path::Path, fetch: &dyn Fetch) -> Result<Sub
     let row = super::status::status(path)?;
     let mut checks = Vec::new();
     checks.push(check(
-        row.breakage == 0 && row.held_back == 0,
+        row.breakage == 0,
         "Passes the check",
         "fix the findings on this row first",
     ));

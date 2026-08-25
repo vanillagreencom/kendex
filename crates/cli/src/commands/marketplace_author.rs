@@ -83,10 +83,7 @@ pub fn mine(env: &Env, json: bool) -> CliResult {
         let packages: u32 = row.counts.values().sum();
         out(&format!(
             "{}  {packages} package(s), {} bundle(s), {} problem(s)  {}",
-            row.name,
-            row.bundles,
-            row.breakage + row.held_back,
-            row.path,
+            row.name, row.bundles, row.breakage, row.path,
         ));
     }
     Ok(())
@@ -252,8 +249,8 @@ fn list_candidates(candidates: &[author::ImportCandidate], json: bool) -> CliRes
 fn summarize(row: &author::MineRow) {
     let packages: u32 = row.counts.values().sum();
     say(&format!(
-        "{}: {packages} package(s), {} bundle(s); check: {} breakage, {} held back, {} warned",
-        row.name, row.bundles, row.breakage, row.held_back, row.warned
+        "{}: {packages} package(s), {} bundle(s); check: {} breakage, {} safety finding(s)",
+        row.name, row.bundles, row.breakage, row.safety_findings
     ));
     match (&row.git.repository, &row.git.candidate) {
         (false, _) => say("git: not a repository yet"),

@@ -8,7 +8,6 @@ import type {
   Scope,
   Severity,
   Tag,
-  Verdict,
 } from "@/bindings";
 import type { Page } from "@/stores/nav";
 
@@ -90,13 +89,6 @@ export const SEVERITY_LABELS: Record<Severity, string> = {
   low: "Minor",
 };
 
-// What the safety check decided to do about an item.
-export const VERDICT_LABELS: Record<Verdict, string> = {
-  block: "Held back",
-  warn: "Installs, with a warning",
-  clean: "Nothing found",
-};
-
 // A collapsed row's dot: high and critical share the most urgent tone since
 // both mean "worth stopping for"; low fades toward an already-checked item.
 export const SEVERITY_DOT_TONE: Record<
@@ -133,13 +125,6 @@ export const SEVERITY_BADGES: Record<Severity, BadgeVariant> = {
   high: "warning",
   medium: "info",
   low: "secondary",
-};
-
-// What the safety check decided, at a glance.
-export const VERDICT_BADGES: Record<Verdict, BadgeVariant> = {
-  block: "critical",
-  warn: "warning",
-  clean: "good",
 };
 
 // "Personal" (Claude Code convention) lives in the home folder and applies everywhere; project items travel with the repo.
@@ -187,12 +172,8 @@ export function skipReasonShort(reason: string): string {
   return SKIP_REASON_SHORT[reason] ?? "nothing here could be read";
 }
 
-// Affected-item disclosure copy — collapsed so a finding on 21 plugins isn't a wall of text.
-export const moreItemsLabel = (hiddenCount: number): string =>
-  `+${hiddenCount} more`;
 export const PAGE_LABELS: Record<Page, string> = {
   home: "Home",
-  review: "Review & apply",
   library: "My Library",
   marketplaces: "Marketplaces",
   updates: "Updates",

@@ -16,7 +16,6 @@ import {
   scopeName,
   scopePath,
   skipReasonShort,
-  VERDICT_BADGES,
 } from "./labels";
 
 describe("labels", () => {
@@ -63,12 +62,6 @@ describe("labels", () => {
     expect(SEVERITY_BADGES.high).toBe("warning");
     expect(SEVERITY_BADGES.medium).toBe("info");
     expect(SEVERITY_BADGES.low).toBe("secondary");
-  });
-
-  it("maps a safety verdict to the badge tone that matches its outcome", () => {
-    expect(VERDICT_BADGES.block).toBe("critical");
-    expect(VERDICT_BADGES.warn).toBe("warning");
-    expect(VERDICT_BADGES.clean).toBe("good");
   });
 
   it("shows a hook's trailing name and falls back to the whole id", () => {

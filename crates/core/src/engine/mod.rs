@@ -12,7 +12,6 @@ pub(crate) mod bundles;
 mod catalog;
 mod config_edits;
 mod copilot;
-pub mod decisions;
 pub mod deps;
 pub mod desired;
 mod desired_agent;
@@ -28,7 +27,6 @@ pub mod exits;
 mod expansion;
 mod file_plan;
 pub mod fork;
-mod gate;
 mod gemini;
 mod holds;
 mod item_plan;
@@ -41,9 +39,8 @@ pub(crate) mod pi_hooks_move;
 mod plan_pass;
 mod planned;
 mod removal;
-mod review_hash;
-pub mod reviewable;
 mod scope_writes;
+mod scoring;
 mod set_change;
 mod takeover;
 mod targets;
@@ -52,11 +49,11 @@ mod unmanaged;
 mod written;
 
 pub(crate) use desired_agent::contributes_to_agent;
-pub(crate) use gate::content_hash;
-pub use gate::{ItemSafety, allow_unsafe_flag, refuse_unmatched_grants};
 pub use item_source::{ItemSource, item_source};
 pub use observed::{observed_rows, observed_safety};
 pub use planned::{PlannedDeclaration, planned_declarations};
+pub use scoring::ItemSafety;
+pub(crate) use scoring::content_hash;
 
 /// The conservative "cannot prove these bytes are our render" hold.
 pub use removal::edit_holds;
@@ -121,12 +118,10 @@ fn plan_scope_once(
     let disk_lock = lock;
     let manifest = moved_manifest.as_ref().unwrap_or(manifest);
     let lock = moved_lock.as_ref().unwrap_or(lock);
-    let mut state = desired_state(env, scope, manifest, lock)?;
-    // The gate runs before anything is planned for these items: a blocked
-    // rendering must never reach the op list, and an override it grants has
-    // to ride out on the manifest write this same plan performs.
-    let safety = gate::pass(env, scope, manifest, options, &mut state)?;
-    let state = state;
+    let state = desired_state(env, scope, manifest, lock)?;
+    // Advisory scoring over what this plan would write, before the ops are
+    // planned: the rows ride out on the report beside the plan.
+    let safety = scoring::run(scope, &state);
     let mut drift = Vec::new();
     let mut ops: Vec<PlannedOp> = Vec::new();
     let mut new_lock = fresh_lock(manifest, lock, &state);
@@ -257,13 +252,12 @@ fn fresh_lock(manifest: &Manifest, lock: &Lock, state: &desired::DesiredState) -
 /// What earlier installs put on disk under another kind's name. A path
 /// one of them wrote is ours to replace, whichever entry holds it now.
 /// The plan's one manifest write, when anything needs it: skills an agent
-/// gained upstream or a review of findings this run was asked to record
-/// take the full serialized write — or, with neither, the repository move
-/// or the schema upgrade lands as a surgical text edit that keeps the
-/// user's comments and formatting. One write whatever put it there: a
-/// second manifest write could never run, its precondition binds to the
-/// bytes the first one replaces. The description names the biggest cause;
-/// the rest ride along in the same bytes.
+/// gained upstream take the full serialized write — or, without that, the
+/// repository move or the schema upgrade lands as a surgical text edit that
+/// keeps the user's comments and formatting. One write whatever put it
+/// there: a second manifest write could never run, its precondition binds
+/// to the bytes the first one replaces. The description names the biggest
+/// cause; the rest ride along in the same bytes.
 fn plan_manifest_write(
     env: &Env,
     scope: &Scope,
@@ -285,12 +279,10 @@ fn plan_manifest_write(
     let path = manifest::manifest_path(env, scope);
     let mut updated = update.clone();
     updated.schema = manifest::MANIFEST_SCHEMA;
-    let granted = updated.safety_overrides != manifest.safety_overrides;
     ops.push(PlannedOp {
-        description: match (repo_moved, granted) {
-            (true, _) => crate::repo_move::MOVE_DESCRIPTION.into(),
-            (false, true) => "Update kendex.toml with the safety findings you accepted".into(),
-            (false, false) => "Add new catalog skills to kendex.toml".into(),
+        description: match repo_moved {
+            true => crate::repo_move::MOVE_DESCRIPTION.into(),
+            false => "Add new catalog skills to kendex.toml".into(),
         },
         op: Op::WriteManifest {
             pre: scope_writes::manifest_pre(base, &path)?,

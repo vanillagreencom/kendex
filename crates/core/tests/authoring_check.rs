@@ -135,22 +135,8 @@ fn check_and_index_agree_on_the_offered_set() {
             .iter()
             .find(|package| package.name == item.name && package.kind == item.kind.name())
             .unwrap();
-        assert_eq!(package.safety.verdict, item.verdict);
         assert_eq!(package.safety.score, item.score);
     }
-}
-
-/// Tokens parse only in their printed shape.
-#[test]
-fn authoring_tokens_parse_in_their_printed_shape() {
-    use kendex_core::check_catalog::dismissals::parse_token;
-    assert_eq!(
-        parse_token("skill:guardy#abc123"),
-        Some((ItemKind::Skill, "guardy", "abc123"))
-    );
-    assert_eq!(parse_token("skill:guardy"), None);
-    assert_eq!(parse_token("skill:#abc"), None);
-    assert_eq!(parse_token("nonsense:guardy#abc"), None);
 }
 
 /// A kind dir's support directories (tests, fixtures) hold suites about the
@@ -202,52 +188,11 @@ fn repo_root_exclusions_hold_under_the_given_spelling() {
     );
 }
 
-/// The one this repository is: the default marketplace. Everyone who
-/// installs from it inherits whatever its safety pass still finds, so
-/// nothing may ship undismissed — a finding is fixed, or the maintainer
-/// records why it is not a problem, before it reaches anybody.
+/// A safety finding is reported and counted, and fails nothing — not even
+/// under `--strict`. The score is advisory in a catalog's own CI too.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn the_default_catalog_ships_nothing_undismissed() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_owned();
-    let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "kendex").unwrap();
-    // The clean assertions below are only worth something if the check read
-    // the catalog at all: a moved declaration or a widened exclusion would
-    // otherwise pass this test green over an empty item set.
-    assert!(
-        report.tally().items >= 30,
-        "the default catalog's own check read {} items — discovery has narrowed",
-        report.tally().items
-    );
-    let open: Vec<String> = report
-        .findings()
-        .filter(|finding| finding.rule.is_some() && !finding.dismissed)
-        .map(|finding| format!("{}: {}", finding.file, finding.message))
-        .collect();
-    assert!(
-        open.is_empty(),
-        "fix these or record why they are intended with `kendex dismiss --catalog .`:\n{}",
-        open.join("\n")
-    );
-    assert_eq!(
-        report.failing(true),
-        0,
-        "the catalog's own check must be clean under --strict"
-    );
-}
-
-/// The control for the check above: a catalog with a finding nobody has
-/// recorded a decision on reports it as open, so the assertion is answering
-/// the content and not an empty iterator.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn an_undismissed_finding_is_reported_as_open() {
+fn a_safety_finding_is_reported_and_fails_nothing() {
     let (_tmp, root) = repo();
     let dir = root.join("skills").join("risky");
     fs::create_dir_all(&dir).unwrap();
@@ -258,10 +203,12 @@ fn an_undismissed_finding_is_reported_as_open() {
     .unwrap();
     let sealed = SealedSource::open(&root).unwrap();
     let report = check(&sealed, "repo").unwrap();
-    let open = report
+    let found = report
         .findings()
-        .filter(|finding| finding.rule.is_some() && !finding.dismissed)
+        .filter(|finding| finding.rule.is_some())
         .count();
-    assert!(open > 0);
-    assert!(report.failing(true) > 0);
+    assert!(found > 0);
+    assert_eq!(report.tally().findings, found);
+    assert_eq!(report.failing(false), 0);
+    assert_eq!(report.failing(true), 0, "advisory under --strict too");
 }

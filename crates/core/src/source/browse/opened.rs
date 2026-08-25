@@ -13,8 +13,7 @@ use crate::source_read::SealedSource;
 
 use super::super::{ResolvedSource, SourceConfig, require_ready, source_config_for};
 use super::catalog::browsable;
-use super::{Catalog, InstallState, safety};
-use crate::quality::Verdict;
+use super::{Catalog, InstallState};
 
 /// One catalog opened for reading, with the scope records the
 /// installed-state join needs.
@@ -26,12 +25,6 @@ pub(crate) struct Browsed {
     pub(crate) config: SourceConfig,
     /// The subscription's name when there is one — see [`Browsed::owned_here`].
     subscription: Option<String>,
-    /// The source's committed reviews, parsed once for this browse. A file
-    /// that will not parse settles nothing and says so through
-    /// `reviews_unreadable` — browsing a catalog whose review file is
-    /// broken still shows the catalog.
-    pub(crate) reviews: std::collections::BTreeMap<String, crate::quality::reviews::SafetyReview>,
-    pub(crate) reviews_unreadable: Option<String>,
 }
 
 /// The scope records the join reads. Browsing observes: a scope whose
@@ -97,16 +90,6 @@ fn browsed(
 ) -> Result<Browsed> {
     let sealed = SealedSource::open(&source.root)?;
     let config = source_config_for(&sealed, &source.provenance)?;
-    let (reviews, reviews_unreadable) = match crate::check_catalog::dismissals::load(&sealed) {
-        Ok(reviews) => (reviews, None),
-        // The parse error quotes the offending line of a downloaded file;
-        // it is captured escaped so every reader of it is safe, rather than
-        // each of them remembering.
-        Err(error) => (
-            Default::default(),
-            Some(crate::names::shown(&error.to_string())),
-        ),
-    };
     Ok(Browsed {
         manifest,
         lock,
@@ -114,8 +97,6 @@ fn browsed(
         sealed,
         config,
         subscription,
-        reviews,
-        reviews_unreadable,
     })
 }
 
@@ -134,41 +115,12 @@ impl Browsed {
             .any(|entry| entry.kind == kind && entry.name == name && self.owned_here(&entry.source))
     }
 
-    fn declared_here(&self, kind: ItemKind, name: &str) -> bool {
-        self.manifest
-            .declared(kind)
-            .get(name)
-            .is_some_and(|decl| self.owned_here(&decl.source))
-    }
-
-    pub(super) fn bundle_declared(&self, name: &str) -> bool {
-        self.manifest
-            .bundles
-            .get(name)
-            .is_some_and(|decl| self.owned_here(&decl.source))
-    }
-
-    /// The lock+manifest join behind every state column. `asked_for` says a
-    /// declared bundle carries the item even where it is not declared by
-    /// name — either way, asked-for content with no installation is either
-    /// waiting for an apply or held back, and the same verdict the gate
-    /// derives says which.
-    pub(super) fn state(
-        &self,
-        env: &Env,
-        kind: ItemKind,
-        name: &str,
-        carried_by_declared_bundle: bool,
-    ) -> Result<InstallState> {
-        if self.locked_here(kind, name) {
-            return Ok(InstallState::Installed);
-        }
-        if !self.declared_here(kind, name) && !carried_by_declared_bundle {
-            return Ok(InstallState::Available);
-        }
-        match safety::verdict_for(env, self, kind, name)? {
-            Verdict::Block => Ok(InstallState::HeldBackBySafety),
-            _ => Ok(InstallState::Available),
+    /// The lock+manifest join behind every state column: an installation
+    /// recorded from here, or the package on offer.
+    pub(super) fn state(&self, kind: ItemKind, name: &str) -> InstallState {
+        match self.locked_here(kind, name) {
+            true => InstallState::Installed,
+            false => InstallState::Available,
         }
     }
 

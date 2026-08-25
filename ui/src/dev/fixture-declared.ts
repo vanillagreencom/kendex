@@ -8,7 +8,7 @@ import type {
 import { IN_THE_WAY_EXITS, inTheWayDrift } from "@/dev/fixture-in-the-way";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { personalDrift, personalSafety } from "./fixture-safety";
-import { acmeHeldBack, acmeQueued, acmeSafety } from "./fixture-safety-acme";
+import { acmeSafety } from "./fixture-safety-acme";
 import { ACME, API, GLOBAL, proj } from "./fixture-scopes";
 
 export function views(): AuditView[] {
@@ -23,8 +23,6 @@ export function views(): AuditView[] {
       safety: personalSafety(),
       adoptable: ADOPTABLE,
       exits: [],
-      heldBack: [],
-      queued: [],
     },
     {
       scope: acme,
@@ -76,8 +74,6 @@ export function views(): AuditView[] {
       // at Claude Code's own place and Codex reads it through a shortcut,
       // so only one of that pair is here — and one Keep covers both.
       exits: IN_THE_WAY_EXITS,
-      heldBack: acmeHeldBack(),
-      queued: acmeQueued(),
     },
     {
       scope: proj(API),
@@ -88,8 +84,6 @@ export function views(): AuditView[] {
       safety: [],
       adoptable: ADOPTABLE,
       exits: [],
-      heldBack: [],
-      queued: [],
       // Demoes the "scope couldn't be read" path: the review card and
       // Problems page both need a real error to render, not just an empty
       // clean scope, or the modal/footer/page have nothing to show.

@@ -231,13 +231,13 @@ fn a_claimed_copy_that_became_a_link_before_the_apply_is_not_taken() {
     );
 }
 
-/// A rendering the safety check refuses leaves the installed copy where
-/// it is, and here that copy is one the move is holding for a reason no
-/// discard can settle. The row has to carry both halves: why nothing new
-/// was written, and what is actually in the way.
+/// A held copy is one the move is holding for a reason no discard can
+/// settle — even when the fresh rendering carries safety findings, those
+/// are advisory and the row is about the hold. It says what is actually
+/// in the way, and the findings ride on the safety rows instead.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_refused_rendering_over_a_held_copy_says_what_is_in_the_way() {
+fn a_held_copy_says_what_is_in_the_way() {
     let w = regressed();
     let registry = w.dot().join("hooks.json");
     let theirs = w.home.join("their-hooks.json");
@@ -256,16 +256,18 @@ fn a_refused_rendering_over_a_held_copy_says_what_is_in_the_way() {
         .drift
         .iter()
         .find(|row| row.name == "guard")
-        .unwrap_or_else(|| panic!("the refusal has to be reported: {:?}", report.drift));
-    assert!(
-        row.detail.contains("safety check"),
-        "the row says why nothing new was written: {}",
-        row.detail
-    );
+        .unwrap_or_else(|| panic!("the hold has to be reported: {:?}", report.drift));
     assert!(
         row.detail.contains("registration") && !row.detail.contains("edited on disk"),
-        "and what is in the way, which is not an edit: {}",
+        "the row says what is in the way, which is not an edit: {}",
         row.detail
     );
     assert!(row.cause.is_none(), "nor a cause for one: {:?}", row.cause);
+    assert!(
+        report
+            .safety
+            .iter()
+            .any(|item| item.name == "guard" && !item.findings.is_empty()),
+        "the findings are still reported, on the safety rows"
+    );
 }

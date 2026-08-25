@@ -129,7 +129,7 @@ fn scoped(manifest: &str) -> (tempfile::TempDir, Env, Scope) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fresh_scope_subscribes_each_repo_at_the_snapshot() {
-    let (_tmp, env, scope) = scoped("schema = 5\n");
+    let (_tmp, env, scope) = scoped("schema = 6\n");
     let collection = Collection {
         id: "i".to_owned(),
         name: "starter".to_owned(),
@@ -173,7 +173,7 @@ fn a_fresh_scope_subscribes_each_repo_at_the_snapshot() {
 #[allow(clippy::unwrap_used)]
 fn an_existing_subscription_is_reused_when_its_pin_matches() {
     let (_tmp, env, scope) = scoped(
-        "schema = 5\n[sources.kit]\nrepo = \"acme/kit\"\nrev = \"ab12cd34ef12345678901234567890123456abcd\"\n",
+        "schema = 6\n[sources.kit]\nrepo = \"acme/kit\"\nrev = \"ab12cd34ef12345678901234567890123456abcd\"\n",
     );
     let collection = Collection {
         id: "i".to_owned(),
@@ -197,7 +197,7 @@ fn an_existing_subscription_is_reused_when_its_pin_matches() {
 #[allow(clippy::unwrap_used)]
 fn a_mismatched_pin_refuses_naming_both_halves() {
     let (_tmp, env, scope) =
-        scoped("schema = 5\n[sources.kit]\nrepo = \"acme/kit\"\nrev = \"1111111111\"\n");
+        scoped("schema = 6\n[sources.kit]\nrepo = \"acme/kit\"\nrev = \"1111111111\"\n");
     let collection = Collection {
         id: "i".to_owned(),
         name: "starter".to_owned(),
@@ -222,7 +222,7 @@ fn a_mismatched_pin_refuses_naming_both_halves() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn one_repo_pinned_at_two_commits_is_not_a_snapshot() {
-    let (_tmp, env, scope) = scoped("schema = 5\n");
+    let (_tmp, env, scope) = scoped("schema = 6\n");
     let collection = Collection {
         id: "i".to_owned(),
         name: "starter".to_owned(),

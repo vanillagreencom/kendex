@@ -42,7 +42,7 @@ fn declare(world: &World, hook_lines: &str) {
     fs::write(
         world.project.join("kendex.toml"),
         format!(
-            "schema = 5\n\n[install]\nharnesses = [\"codex\"]\n\n[[custom-hooks]]\n{hook_lines}"
+            "schema = 6\n\n[install]\nharnesses = [\"codex\"]\n\n[[custom-hooks]]\n{hook_lines}"
         ),
     )
     .unwrap();
@@ -79,7 +79,7 @@ fn an_every_agent_hook_registers_on_codex_and_removal_reverses_it() {
     // Removing the entry removes the registration, like any owned artifact.
     fs::write(
         w.project.join("kendex.toml"),
-        "schema = 5\n\n[install]\nharnesses = [\"codex\"]\n",
+        "schema = 6\n\n[install]\nharnesses = [\"codex\"]\n",
     )
     .unwrap();
     let removal = plan_apply(
@@ -152,7 +152,7 @@ fn an_every_agent_hook_on_claude_lives_in_settings_not_agent_files() {
     fs::create_dir_all(w.project.join(".claude")).unwrap();
     fs::write(
         w.project.join("kendex.toml"),
-        "schema = 5\n\n[install]\nharnesses = [\"claude\"]\n\n[[custom-hooks]]\nname = \"guard-pretooluse\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./scripts/guard.sh\"\nagents = \"all\"\n",
+        "schema = 6\n\n[install]\nharnesses = [\"claude\"]\n\n[[custom-hooks]]\nname = \"guard-pretooluse\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./scripts/guard.sh\"\nagents = \"all\"\n",
     )
     .unwrap();
 
@@ -170,7 +170,7 @@ fn an_every_agent_hook_on_claude_lives_in_settings_not_agent_files() {
 
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_dangerous_command_is_held_back_like_a_dangerous_catalog_script() {
+fn a_dangerous_command_is_scored_like_a_dangerous_catalog_script() {
     let w = world();
     declare(
         &w,
@@ -184,13 +184,13 @@ fn a_dangerous_command_is_held_back_like_a_dangerous_catalog_script() {
         .find(|row| row.name == "fetch-and-run")
         .expect("a custom hook is scored as a hook");
     assert!(
-        row.blocked(),
-        "curl-pipe-sh in a custom hook command blocks exactly as it does in a catalog script: {:?}",
-        row.reasons
+        row.findings.iter().any(|finding| finding.rule == "rce"),
+        "curl-pipe-sh in a custom hook command is scored exactly as it is in a catalog script: {:?}",
+        row.findings
     );
     kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
     assert!(
-        !w.project.join(".codex/hooks.json").exists(),
-        "a held-back hook registers nothing"
+        w.project.join(".codex/hooks.json").exists(),
+        "advisory: the hook registers, and the findings ride on the plan"
     );
 }

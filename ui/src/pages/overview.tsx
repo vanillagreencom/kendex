@@ -119,7 +119,6 @@ export function OverviewPage() {
     result,
     updatesError,
     auditError,
-    onReview: () => setPage("review"),
     onUnmanaged: () => goTo("unmanaged"),
     onProjects: () => goTo("projects"),
     onUpdates: () => setPage("updates"),

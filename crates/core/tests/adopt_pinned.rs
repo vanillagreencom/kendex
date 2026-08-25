@@ -68,7 +68,7 @@ fn keeping_a_pinned_item_leaves_the_scope_plannable() {
     fs::write(
         manifest::manifest_path(&env, &scope),
         format!(
-            "schema = 5\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\nrev = \"{pinned}\"\n"
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\nrev = \"{pinned}\"\n"
         ),
     )
     .unwrap();

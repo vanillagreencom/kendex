@@ -58,7 +58,7 @@ fn declare(w: &World, scope: &Scope, body: &str) {
     put(
         &manifest::manifest_path(&w.env, scope),
         &format!(
-            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{body}",
+            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{body}",
             w.source.display()
         ),
     );

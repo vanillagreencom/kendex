@@ -80,7 +80,7 @@ fn declare(w: &World, method: &str, harnesses: &str, body: &str) {
     fs::write(
         w.home.join("app/kendex.toml"),
         format!(
-            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = {harnesses}\nmethod = \"{method}\"\n\n{body}",
+            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = {harnesses}\nmethod = \"{method}\"\n\n{body}",
             w.home.join("catalog").display()
         ),
     )
@@ -101,12 +101,11 @@ fn report(w: &World) -> String {
     ))
 }
 
-/// Two different problems with two different fixes. Collapsed into one
-/// count, a reader who ran `kendex findings` found nothing to review and
-/// no reason the install was not happening.
+/// Files in the way are their own problem, named as such — never folded
+/// into anything that reads as a safety question.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn it_is_told_apart_from_a_safety_hold() {
+fn it_is_named_as_files_in_the_way() {
     let w = world();
     write_at(
         w.home.join("app/.claude/skills/deploy/SKILL.md"),
@@ -125,7 +124,7 @@ fn it_is_told_apart_from_a_safety_hold() {
     );
     assert!(
         !text.contains("held back"),
-        "nothing here is waiting on a safety review: {text}"
+        "nothing here reads as a safety hold: {text}"
     );
 }
 

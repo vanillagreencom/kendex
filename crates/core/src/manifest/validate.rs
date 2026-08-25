@@ -30,6 +30,8 @@ const TOP_LEVEL: &[&str] = &[
     "pi-extensions",
     "bundles",
     "suppressed",
+    // Retired by schema 6: read-accepted so an older file loads, dropped by
+    // the deserializer, and gone for good on the next write.
     "safety-overrides",
     "safety-reviews",
     "optional-dependencies",

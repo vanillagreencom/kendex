@@ -25,7 +25,7 @@ fn an_edited_agent_names_the_rendering_that_was_edited() {
     fs::write(
         &path,
         format!(
-            "schema = 5\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\", \"opencode\"]\nmethod = \"symlink\"\n\n[agents.rev]\nsource = \"cat\"\n"
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\", \"opencode\"]\nmethod = \"symlink\"\n\n[agents.rev]\nsource = \"cat\"\n"
         ),
     )
     .unwrap();
@@ -209,7 +209,7 @@ fn a_skill_shared_by_symlink_counts_as_one_edited_rendering() {
     fs::write(
         &path,
         format!(
-            "schema = 5\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\", \"opencode\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n"
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\", \"opencode\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n"
         ),
     )
     .unwrap();
@@ -309,7 +309,7 @@ fn a_source_level_hold_names_the_source_as_owner() {
     fs::write(
         &path,
         format!(
-            "schema = 5\n\n[sources.cat]\nrepo = \"{REPO}\"\nrev = \"{one}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n"
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\nrev = \"{one}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n"
         ),
     )
     .unwrap();

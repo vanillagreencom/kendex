@@ -50,7 +50,6 @@ export function initialState(): MockState {
       schema: 1,
       projects: [ACME, API],
       appearance: "system",
-      safety: { "warn-below": 80, "block-below": 60 },
       zoom: 100,
     },
     harnesses: harnesses(),

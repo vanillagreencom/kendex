@@ -3,7 +3,6 @@ mod app_settings;
 pub mod audit;
 mod commands;
 mod community;
-pub mod decisions;
 mod editor;
 // Nothing outside Linux reaches this: the fixes it decides are for GTK
 // and for how the Linux app is packaged.
@@ -46,10 +45,6 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             audit::replace_unmanaged_item,
             audit::toggle_item,
             audit::remove_item,
-            decisions::list_decisions,
-            decisions::dismiss_findings,
-            decisions::revoke_dismissal,
-            decisions::revoke_safety_override,
             editor::get_manifest,
             editor::update_manifest,
             editor::editor_inventory,

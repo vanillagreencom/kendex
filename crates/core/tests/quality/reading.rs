@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use kendex_core::model::ItemKind;
-use kendex_core::quality::{AuditInput, Content, Severity, Thresholds, TreeFile, Verdict, audit};
+use kendex_core::quality::{AuditInput, Content, Severity, TreeFile, audit};
 
 use super::rules::{document, rules_hit, severity_of, skill};
 
@@ -49,11 +49,13 @@ fn one_byte_that_is_not_text_does_not_hide_a_file() {
         "{:?}",
         result.findings
     );
-    assert_eq!(
-        verdict(&result).0,
-        Verdict::Block,
+    assert!(
+        result
+            .findings
+            .iter()
+            .any(|finding| finding.severity == Severity::Critical),
         "{:?}",
-        result.safety.score
+        result.findings
     );
 }
 
@@ -188,8 +190,4 @@ fn an_mcp_server_with_no_readable_entry_reports_its_rules_as_skipped() {
     let result = audit(input);
     assert!(result.findings.is_empty());
     assert!(!result.skipped.is_empty(), "an unread entry is not a pass");
-}
-
-fn verdict(result: &kendex_core::quality::AuditResult) -> (Verdict, Vec<String>) {
-    kendex_core::quality::verdict(&result.findings, &result.safety, Thresholds::default())
 }

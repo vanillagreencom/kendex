@@ -356,33 +356,6 @@ pub enum CoreError {
     #[error("pi package {name}: {message}")]
     PiPackage { name: String, message: String },
 
-    #[error("no accepted findings recorded under '{key}' in this scope")]
-    OverrideNotFound { key: String },
-
-    #[error("no dismissed finding {fingerprint} recorded under '{key}' in this scope")]
-    DismissalNotFound { key: String, fingerprint: String },
-
-    #[error(
-        "the dismissal of {fingerprint} on '{key}' was replaced by a newer one — nothing was changed"
-    )]
-    DecisionReplaced { key: String, fingerprint: String },
-
-    #[error(
-        "'{token}' is not a decision token — expected kind:name:harness#fingerprint@hash, as printed beside the finding"
-    )]
-    DecisionToken { token: String },
-
-    #[error("'{key}' does not name an installation — expected kind:name:harness")]
-    DecisionKey { key: String },
-
-    #[error("--allow-unsafe {flag} does not name anything this run would install{fix}")]
-    GrantMatchesNothing { flag: String, fix: String },
-
-    #[error(
-        "'{token}' no longer names what is installed: {why} — nothing was changed; read the current findings and decide again"
-    )]
-    DecisionStale { token: String, why: String },
-
     #[error("no {} named '{name}' found for {} in this scope", kind.name(), harness.name())]
     ItemNotFound {
         kind: ItemKind,

@@ -2,8 +2,8 @@
 import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
-import type { AvailablePackage, PackageSafety, Verdict } from "@/bindings";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AvailablePackage, Finding, PackageSafety } from "@/bindings";
 import {
   PREINSTALL_SAFETY_CAVEAT,
   SAFETY_DOT_UNCHECKED,
@@ -16,7 +16,7 @@ import { mount as mountTree } from "@/test/dom";
 import { PackagesTable } from "./packages-table";
 
 // Static rendering reads a zustand store's initial snapshot, so the score
-// store's hook is wrapped to let each test seed the row's verdict.
+// store's hook is wrapped to let each test seed the row's score.
 const stub = vi.hoisted(() => ({ scores: {} as Record<string, unknown> }));
 vi.mock("@/stores/preinstall-safety", async (importOriginal) => {
   const mod =
@@ -49,19 +49,25 @@ const row: AvailablePackage = {
   collision: null,
 };
 
-const scored = (verdict: Verdict, score: number): PackageSafety => ({
+const FINDING: Finding = {
+  rule: "dangerous-commands",
+  severity: "high",
+  location: "SKILL.md:3",
+  message: "runs a shell command that deletes files without asking",
+  remediation: "scope the command to a specific path, or drop it",
+};
+
+const scored = (score: number, findings: Finding[] = []): PackageSafety => ({
   kind: "skill",
   name: "gh",
-  findings: [],
+  findings,
   safety: { score, deductions: [] },
   quality: null,
   skipped: [],
-  verdict,
-  reasons: [],
+  notes: [],
   contentHash: "abc",
   ruleset: 1,
   fromCache: false,
-  publisher: null,
 });
 
 const render = (safety: PackageSafety | null) => {
@@ -81,35 +87,35 @@ const trigger = (html: string): string =>
 
 describe("the safety dot in the packages list", () => {
   it("carries the caveat beside the number, since this row installs here", () => {
-    const html = render(scored("clean", 100));
+    const html = render(scored(100));
     expect(html).toContain(">Install<");
-    expect(trigger(html)).toContain("Nothing found · 100/100.");
+    expect(trigger(html)).toContain("100/100.");
     expect(trigger(html)).toContain(PREINSTALL_SAFETY_CAVEAT);
   });
 
-  it("says the same for a verdict that is not clean", () => {
-    const html = render(scored("warn", 60));
-    expect(trigger(html)).toContain("Installs, with a warning");
+  it("says the same for a score with findings behind it", () => {
+    const html = render(scored(60, [FINDING]));
+    expect(trigger(html)).toContain("60/100.");
     expect(trigger(html)).toContain(PREINSTALL_SAFETY_CAVEAT);
   });
 
   it("puts the words where a keyboard reaches them, not on hover alone", () => {
     // A tab stop before Install, and text in the row rather than a native
     // `title` — which a screen reader may skip and a keyboard never lands on.
-    const html = render(scored("clean", 100));
+    const html = render(scored(100));
     expect(trigger(html)).toContain(
-      `<span class="sr-only">${safetyDotWords("clean", 100, 0)}</span>`,
+      `<span class="sr-only">${safetyDotWords(100, 0, [])}</span>`,
     );
     expect(html.indexOf(PREINSTALL_SAFETY_CAVEAT)).toBeLessThan(
       html.indexOf(">Install<"),
     );
-    expect(html).not.toContain(`title="${safetyDotWords("clean", 100, 0)}`);
+    expect(html).not.toContain(`title="${safetyDotWords(100, 0, [])}`);
   });
 
   it("says no result has landed, and still claims nothing either way", () => {
     // Scores queue one at a time and a failed read leaves a row without
     // one, so this state is what an installable row often looks like. The
-    // caveat has to reach the reader here too, and no verdict may.
+    // caveat has to reach the reader here too, and no score may.
     const html = render(null);
     expect(html).toContain(">Install<");
     expect(trigger(html)).toContain("Not checked yet.");
@@ -140,7 +146,7 @@ const mount = (safety: PackageSafety | null) => {
 
 describe("reading the safety dot", () => {
   it("does not open the package page on a click", async () => {
-    const { dot, goToAvailablePackage } = mount(scored("warn", 60));
+    const { dot, goToAvailablePackage } = mount(scored(60, [FINDING]));
     await userEvent.click(dot);
     expect(goToAvailablePackage).not.toHaveBeenCalled();
   });
@@ -148,7 +154,7 @@ describe("reading the safety dot", () => {
   it("does not open the package page on Enter or Space", async () => {
     // The browser turns both into a click on the button, which is the path
     // the row would otherwise navigate on.
-    const { dot, goToAvailablePackage } = mount(scored("warn", 60));
+    const { dot, goToAvailablePackage } = mount(scored(60, [FINDING]));
     dot.focus();
     await userEvent.keyboard("{Enter}");
     await userEvent.keyboard(" ");
@@ -166,7 +172,7 @@ describe("reading the safety dot", () => {
   it("still shows the words when the trigger takes focus", () => {
     // The popup is portalled out of the row, so it is the document's to find
     // — and the trigger's own sr-only copy must not stand in for it.
-    const { dot } = mount(scored("warn", 60));
+    const { dot } = mount(scored(60, [FINDING]));
     expect(document.querySelector('[data-slot="tooltip-content"]')).toBeNull();
     act(() => dot.focus());
     expect(
@@ -177,7 +183,7 @@ describe("reading the safety dot", () => {
   it("does not open the package page from the popup's own words", async () => {
     // The popup is drawn outside the row, but React still routes its clicks
     // through the row, so reading the caveat there must stay a read.
-    const { dot, goToAvailablePackage } = mount(scored("warn", 60));
+    const { dot, goToAvailablePackage } = mount(scored(60, [FINDING]));
     act(() => dot.focus());
     const popup = document.querySelector<HTMLElement>(
       '[data-slot="tooltip-content"]',
@@ -188,7 +194,7 @@ describe("reading the safety dot", () => {
   });
 
   it("still opens the package page from the rest of the row", async () => {
-    const { host, goToAvailablePackage } = mount(scored("warn", 60));
+    const { host, goToAvailablePackage } = mount(scored(60, [FINDING]));
     const name = host.querySelector("td");
     if (!name) throw new Error("no row cell rendered");
     await userEvent.click(name);

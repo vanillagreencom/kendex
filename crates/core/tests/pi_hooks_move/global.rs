@@ -35,7 +35,7 @@ fn global(body: &str) -> Global {
     fs::write(
         &manifest,
         format!(
-            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"pi\"]\n\n{body}",
+            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"pi\"]\n\n{body}",
             catalog.display()
         ),
     )

@@ -76,7 +76,7 @@ export function MineRowCard({
   const acceptWorkflow = useMineStore((s) => s.acceptWorkflow);
   const acceptManifest = useMineStore((s) => s.acceptManifest);
   const [showFindings, setShowFindings] = useState(false);
-  const problems = row.breakage + row.heldBack;
+  const problems = row.breakage;
 
   return (
     <div className="rounded-lg border border-border p-4">
@@ -88,8 +88,11 @@ export function MineRowCard({
               <Badge variant="destructive">
                 {problems} problem{problems === 1 ? "" : "s"}
               </Badge>
-            ) : row.warned > 0 ? (
-              <Badge variant="secondary">{row.warned} warned</Badge>
+            ) : row.safetyFindings > 0 ? (
+              <Badge variant="secondary">
+                {row.safetyFindings} finding
+                {row.safetyFindings === 1 ? "" : "s"}
+              </Badge>
             ) : (
               <Badge variant="secondary">check passes</Badge>
             )}

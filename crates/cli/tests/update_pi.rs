@@ -33,7 +33,7 @@ fn fixture() -> tempfile::TempDir {
     let project = tmp.path().join("dev/app");
     write(
         &project.join("kendex.toml"),
-        "schema = 5\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+        "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
     );
     let package = "{\n  \"name\": \"pi-widgets\",\n  \"version\": \"2.0.0\",\n  \"pi\": { \"extensions\": [\"index.js\"] }\n}\n";
     write(
@@ -165,7 +165,7 @@ fn a_legacy_named_package_at_the_other_scope_blocks_the_scoped_name() {
     let project = tmp.path().join("dev/app");
     write(
         &project.join("kendex.toml"),
-        "schema = 5\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.\"@vanillagreen/pi-hooks\"]\nsource = \"cat\"\n",
+        "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.\"@vanillagreen/pi-hooks\"]\nsource = \"cat\"\n",
     );
     write(
         &project.join("catalog/pi-extensions/@vanillagreen/pi-hooks/package.json"),
@@ -213,7 +213,7 @@ fn a_scoped_name_resolves_a_short_directory_by_package_name() {
     let project = tmp.path().join("dev/app");
     write(
         &project.join("kendex.toml"),
-        "schema = 5\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.\"@vanillagreen/pi-hooks\"]\nsource = \"cat\"\n",
+        "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.\"@vanillagreen/pi-hooks\"]\nsource = \"cat\"\n",
     );
     write(
         &project.join("catalog/pi-extensions/pi-hooks/package.json"),

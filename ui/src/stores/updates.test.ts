@@ -528,8 +528,6 @@ describe("updates store", () => {
         safety: [],
         adoptable: ADOPTABLE,
         exits: [],
-        heldBack: [],
-        queued: [],
       },
     });
     const landed = [row({ updateAvailable: false })];
@@ -628,8 +626,6 @@ describe("updates store", () => {
         safety: [],
         adoptable: ADOPTABLE,
         exits: [],
-        heldBack: [],
-        queued: [],
       },
     });
     vi.mocked(commands.updatesOverview).mockResolvedValue({
@@ -665,8 +661,6 @@ describe("updates store", () => {
         safety: [],
         adoptable: ADOPTABLE,
         exits: [],
-        heldBack: [],
-        queued: [],
       },
     });
     vi.mocked(commands.updatesOverview).mockResolvedValue({
@@ -681,11 +675,7 @@ describe("updates store", () => {
 
     await useUpdatesStore.getState().updateOne(row({}));
 
-    expect(commands.applyPlan).toHaveBeenCalledWith(
-      { scope: "global" },
-      false,
-      [],
-    );
+    expect(commands.applyPlan).toHaveBeenCalledWith({ scope: "global" }, false);
     expect(commands.packageSetRev).not.toHaveBeenCalled();
   });
 });

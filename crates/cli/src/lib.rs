@@ -78,14 +78,6 @@ enum Command {
     },
     /// Make disk match declaration, orphan cleanup included
     Apply(commands::apply_cmd::ApplyArgs),
-    /// What the safety check found in installed content, with the token
-    /// each finding is dismissed by
-    Findings(commands::findings::FindingsArgs),
-    /// Record that a finding is not a problem, by its token
-    Dismiss(commands::decisions_cmd::DismissArgs),
-    /// Every recorded safety decision — acceptances and dismissals — and
-    /// whether each still applies; take one back with --revoke
-    Decisions(commands::decisions_cmd::DecisionsArgs),
     /// Record an observed item into the manifest (content moves to the
     /// local source)
     Adopt {
@@ -289,9 +281,6 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             return commands::verify::run(&env, names, filter);
         }
         Command::Apply(args) => commands::apply_cmd::run(&env, args)?,
-        Command::Findings(args) => commands::findings::findings(&env, args)?,
-        Command::Dismiss(args) => commands::decisions_cmd::dismiss_cmd(&env, args)?,
-        Command::Decisions(args) => commands::decisions_cmd::decisions(&env, args)?,
         Command::Adopt {
             kind,
             name,

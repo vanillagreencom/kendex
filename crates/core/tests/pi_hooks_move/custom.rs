@@ -71,7 +71,7 @@ fn a_command_bodied_hook_leaves_the_reserved_registry_behind() {
     };
     fs::write(
         w.project.join("kendex.toml"),
-        format!("schema = 5\n\n[install]\nharnesses = [\"pi\"]\n\n{DECLARATION}"),
+        format!("schema = 6\n\n[install]\nharnesses = [\"pi\"]\n\n{DECLARATION}"),
     )
     .unwrap();
     apply(&w.env, &scope);
@@ -106,7 +106,7 @@ fn a_command_bodied_global_hook_leaves_the_reserved_registry_behind() {
     fs::create_dir_all(manifest.parent().unwrap()).unwrap();
     fs::write(
         &manifest,
-        format!("schema = 5\n\n[install]\nharnesses = [\"pi\"]\n\n{DECLARATION}"),
+        format!("schema = 6\n\n[install]\nharnesses = [\"pi\"]\n\n{DECLARATION}"),
     )
     .unwrap();
     apply(&w.env, &Scope::Global);
@@ -135,7 +135,7 @@ fn a_declared_custom_hook_is_not_read_as_one_nobody_declares() {
     };
     fs::write(
         w.project.join("kendex.toml"),
-        format!("schema = 5\n\n[install]\nharnesses = [\"pi\"]\n\n{DECLARATION}"),
+        format!("schema = 6\n\n[install]\nharnesses = [\"pi\"]\n\n{DECLARATION}"),
     )
     .unwrap();
     apply(&w.env, &scope);
@@ -169,7 +169,7 @@ fn a_command_bodied_hook_is_held_by_a_registry_that_cannot_give_it_up() {
         };
         fs::write(
             w.project.join("kendex.toml"),
-            format!("schema = 5\n\n[install]\nharnesses = [\"pi\"]\n\n{DECLARATION}"),
+            format!("schema = 6\n\n[install]\nharnesses = [\"pi\"]\n\n{DECLARATION}"),
         )
         .unwrap();
         apply(&w.env, &scope);
@@ -211,7 +211,7 @@ fn a_registration_moved_to_another_event_holds_rather_than_migrating() {
     };
     fs::write(
         w.project.join("kendex.toml"),
-        format!("schema = 5\n\n[install]\nharnesses = [\"pi\"]\n\n{DECLARATION}"),
+        format!("schema = 6\n\n[install]\nharnesses = [\"pi\"]\n\n{DECLARATION}"),
     )
     .unwrap();
     apply(&w.env, &scope);

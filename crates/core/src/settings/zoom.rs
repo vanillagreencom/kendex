@@ -39,8 +39,8 @@ pub fn zoom_scale(percent: u16) -> f64 {
 /// Bring a hand-edited zoom into range before the document is read as
 /// settings. `zoom` is a percent and a `u16`, so `-1` or `999999` would
 /// fail the field's own type — and the file is one document, so that one
-/// number would cost the person their theme, their projects and their
-/// safety thresholds along with it.
+/// number would cost the person their theme and their projects along with
+/// it.
 ///
 /// Only a whole number is moved. `zoom = 1.5` is left exactly where it is
 /// and the read refuses it: that is not a size out of range, it is not a
@@ -84,8 +84,8 @@ mod tests {
     }
 
     /// A number the field's own type cannot hold fails the parse, and the
-    /// file is one document, so a mistyped zoom would take the theme, the
-    /// projects and the safety thresholds down with it.
+    /// file is one document, so a mistyped zoom would take the theme and
+    /// the projects down with it.
     #[test]
     fn a_hand_edited_zoom_too_big_for_a_percent_clamps_without_losing_the_file() {
         let tmp = tempfile::tempdir().unwrap();

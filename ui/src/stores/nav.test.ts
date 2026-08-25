@@ -191,10 +191,10 @@ describe("nav store", () => {
   });
 
   it("goTo pushes history like the other cross-page helpers", () => {
-    useNavStore.getState().goTo("review");
+    useNavStore.getState().goTo("updates");
 
     const state = useNavStore.getState();
-    expect(state.page).toBe("review");
+    expect(state.page).toBe("updates");
     expect(state.history).toEqual([
       {
         page: "home",
@@ -209,7 +209,7 @@ describe("nav store", () => {
 
   it("back() after goTo restores the page it was called from", () => {
     useNavStore.getState().goTo("projects");
-    useNavStore.getState().goTo("review");
+    useNavStore.getState().goTo("updates");
     useNavStore.getState().back();
 
     expect(useNavStore.getState().page).toBe("projects");

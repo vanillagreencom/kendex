@@ -83,7 +83,7 @@ fn world_declaring(body: &str) -> World {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"pi\"]\nmethod = \"symlink\"\n\n{body}",
+            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"pi\"]\nmethod = \"symlink\"\n\n{body}",
             catalog.display()
         ),
     )

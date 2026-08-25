@@ -29,7 +29,6 @@ vi.mock("sonner", () => ({
 const settings: AppSettings = {
   schema: 1,
   appearance: "system",
-  safety: { "warn-below": 80, "block-below": 60 },
   "harness-roots": {},
   projects: [],
   zoom: 100,

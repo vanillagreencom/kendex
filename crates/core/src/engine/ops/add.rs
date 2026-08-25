@@ -430,15 +430,6 @@ fn shaped_by_user(
     if decl.enabled != bundle_decl.enabled {
         return Some("you toggled it yourself".to_owned());
     }
-    let about_item = |key: &String| {
-        crate::lock::parse_entry_key(key)
-            .is_some_and(|(key_kind, key_name, _)| key_kind == kind && key_name == name)
-    };
-    if manifest.safety_overrides.keys().any(about_item)
-        || manifest.safety_reviews.keys().any(about_item)
-    {
-        return Some("it carries safety decisions you accepted".to_owned());
-    }
     if kind == ItemKind::Agent
         && manifest
             .agent_frontmatter

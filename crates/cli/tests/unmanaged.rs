@@ -42,7 +42,7 @@ fn migrating_project(home: &Path) -> PathBuf {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
             catalog.display()
         ),
     )
@@ -202,7 +202,7 @@ fn an_unplannable_scope_with_nothing_installed_does_not_fail_the_run() {
     #[cfg(not(target_os = "macos"))]
     let config = home.join(".config/kendex");
     fs::create_dir_all(&config).unwrap();
-    fs::write(config.join("kendex.toml"), "schema = 5\n[skills.\n").unwrap();
+    fs::write(config.join("kendex.toml"), "schema = 6\n[skills.\n").unwrap();
 
     let verified = kendex(home, &project, &["verify", "--scope", "all"]);
     let printed = said(&verified);
@@ -324,7 +324,7 @@ fn the_shared_way_out_is_said_once_however_many_items_are_blocked() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n{declarations}",
+            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n{declarations}",
             catalog.display()
         ),
     )

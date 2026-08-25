@@ -35,8 +35,6 @@ const emptyView: AuditView = {
   safety: [],
   adoptable: ADOPTABLE,
   exits: [],
-  heldBack: [],
-  queued: [],
 };
 
 describe("audit store refresh", () => {
@@ -238,30 +236,24 @@ describe("applyPlan", () => {
     vi.clearAllMocks();
   });
 
-  it("passes the accepted-findings tokens through to the backend", async () => {
+  it("passes the scope and the orphan choice through to the backend", async () => {
     vi.mocked(commands.applyPlan).mockResolvedValue({
       status: "ok",
       data: emptyView,
     });
 
-    await useAuditStore
-      .getState()
-      .applyPlan(globalScope, false, ["scraper@a1b2c3d4e5f6"]);
+    await useAuditStore.getState().applyPlan(globalScope, true);
 
-    expect(commands.applyPlan).toHaveBeenCalledWith(globalScope, false, [
-      "scraper@a1b2c3d4e5f6",
-    ]);
+    expect(commands.applyPlan).toHaveBeenCalledWith(globalScope, true);
   });
 
-  it("a rejected acceptance surfaces as an error, never a silent success", async () => {
+  it("a refused apply surfaces as an error, never a silent success", async () => {
     vi.mocked(commands.applyPlan).mockResolvedValue({
       status: "error",
-      error: "'scraper' changed since its findings were read",
+      error: "'scraper' changed since the plan was read",
     });
 
-    await useAuditStore
-      .getState()
-      .applyPlan(globalScope, false, ["scraper@a1b2c3d4e5f6"]);
+    await useAuditStore.getState().applyPlan(globalScope, false);
 
     expect(useProblemsStore.getState().dialog.open).toBe(true);
     expect(useProblemsStore.getState().dialog.message).toContain(

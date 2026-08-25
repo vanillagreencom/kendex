@@ -64,7 +64,7 @@ fn seeded() -> (tempfile::TempDir, Env, Scope) {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 5\n[sources.cat]\npath = \"{}\"\n[skills.gh]\nsource = \"cat\"\n",
+            "schema = 6\n[sources.cat]\npath = \"{}\"\n[skills.gh]\nsource = \"cat\"\n",
             catalog.display()
         ),
     )

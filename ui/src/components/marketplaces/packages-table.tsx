@@ -1,5 +1,5 @@
 import { type ComponentProps, type MouseEvent, useEffect } from "react";
-import type { AvailablePackage, Catalog, Verdict } from "@/bindings";
+import type { AvailablePackage, Catalog } from "@/bindings";
 import { StatusDot } from "@/components/status-dot";
 import { TagBadges } from "@/components/tag-badge";
 import { Button } from "@/components/ui/button";
@@ -17,7 +17,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { clickAsksToOpen } from "@/lib/click-asks-to-open";
-import { SAFETY_DOT_UNCHECKED, safetyDotWords } from "@/lib/copy-safety";
+import {
+  SAFETY_DOT_UNCHECKED,
+  safetyDotWords,
+  severityTone,
+} from "@/lib/copy-safety";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName } from "@/lib/labels";
 import {
@@ -34,11 +38,6 @@ export interface PackageEntry {
   row: AvailablePackage;
 }
 
-const VERDICT_TONES: Record<Verdict, "good" | "warning" | "critical"> = {
-  clean: "good",
-  warn: "warning",
-  block: "critical",
-};
 
 /** The one table of offered packages — the Packages tab across every
  * subscription and a marketplace detail's own list are both this. */
@@ -135,11 +134,11 @@ function PackageRow({
       <TableCell>
         {safety ? (
           <SafetyDot
-            tone={VERDICT_TONES[safety.verdict]}
+            tone={severityTone(safety.findings)}
             words={safetyDotWords(
-              safety.verdict,
               safety.safety.score,
               safety.skipped.length,
+              safety.findings,
             )}
           />
         ) : (
@@ -149,8 +148,6 @@ function PackageRow({
       <TableCell className="text-right">
         {row.state === "installed" ? (
           <span className="text-xs text-muted-foreground">Installed</span>
-        ) : row.state === "held-back-by-safety" ? (
-          <span className="text-xs text-warning">Held back</span>
         ) : row.state === "not-offered" ? (
           <span className="text-xs text-muted-foreground">
             No longer offered

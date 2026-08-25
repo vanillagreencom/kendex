@@ -8,13 +8,12 @@ use crate::hash::{hash_bytes, hash_files};
 use crate::lock::Lock;
 use crate::manifest::{ItemDecl, Manifest, Method};
 use crate::model::{HarnessId, ItemKind, Scope};
-use crate::quality::author::AuthorReview;
 use crate::source::{SourceState, find_item};
 use crate::source_read::SealedSource;
 
 use super::desired_item::{build, no_harness_note};
 use super::desired_kinds;
-use super::desired_source::{published_review, read_catalog, resolve_source};
+use super::desired_source::{read_catalog, resolve_source};
 
 /// One installation as declaration says it should exist on disk.
 #[derive(Debug, Clone, PartialEq)]
@@ -42,19 +41,6 @@ pub struct Desired {
     pub emitted: Option<crate::lock::EmittedArtifact>,
     /// Every reason this installation is wanted, derived fresh each pass.
     pub reasons: BTreeSet<crate::lock::Reason>,
-    /// What this item's publisher already settled about it, re-checked
-    /// against the bytes this pass fetched. The gate stops counting those
-    /// findings and the lock records the review; every one is still
-    /// reported, named as the publisher's.
-    pub author_review: Option<AuthorReview>,
-    /// How much of this artifact its publisher wrote: where the project's
-    /// block landed in it, or their own rendering of it beside the real
-    /// one. Present only where a publisher's record needs measuring
-    /// against it. The builder that rendered the artifact owes this beside
-    /// it: a kind that can carry project text and does not answer settles
-    /// nothing at all, which is the direction a mistake here has to fail
-    /// in.
-    pub authored: Option<crate::quality::Authored>,
     pub artifact: Artifact,
 }
 
@@ -241,8 +227,8 @@ pub(crate) fn harnesses_for(
         .collect()
 }
 
-mod rebuild;
-pub use rebuild::desired_as_installed;
+mod artifact;
+pub use artifact::{artifact_disk_hash, artifact_paths};
 
 /// The desired world, computed against the manifest that will be on disk
 /// once this plan applies. An upstream skill merge rewrites the manifest,
@@ -272,12 +258,6 @@ fn compute(env: &Env, scope: &Scope, manifest: &Manifest, lock: &Lock) -> Result
     // installed bundles carry, and what those skills require — while the
     // manifest keeps holding only what was chosen.
     let expansion = super::expansion::expand(env, scope, manifest, &mut state);
-    // One parse of each catalog root's reviews file per pass: it is one
-    // file, and every item that root carries would otherwise re-read it.
-    // Keyed by root, since one declared source resolves to several when
-    // its items pin different revisions.
-    let mut reviews: BTreeMap<PathBuf, BTreeMap<String, crate::quality::reviews::SafetyReview>> =
-        BTreeMap::new();
     let collisions = super::catalog::Collisions::find(&expansion, &mut state);
 
     for kind in super::expansion::PLANNED_KINDS {
@@ -301,17 +281,6 @@ fn compute(env: &Env, scope: &Scope, manifest: &Manifest, lock: &Lock) -> Result
                 continue;
             };
             state.processed.insert((kind, name.clone()));
-            let author_review = published_review(
-                &sealed,
-                &decl.source,
-                &provenance,
-                &config,
-                kind,
-                name,
-                &item_path,
-                &mut reviews,
-                &mut state,
-            )?;
             let mut harnesses = planned.harnesses.clone();
             if harnesses.is_empty() {
                 no_harness_note(kind, name, decl, manifest, &mut state);
@@ -332,7 +301,6 @@ fn compute(env: &Env, scope: &Scope, manifest: &Manifest, lock: &Lock) -> Result
                 source_commit: source_commit.as_deref(),
                 harnesses,
                 reasons: &reasons,
-                author_review,
             };
             build(
                 kind,
@@ -379,7 +347,6 @@ pub(super) struct ItemCtx<'a> {
     pub(super) source_commit: Option<&'a str>,
     pub(super) harnesses: Vec<HarnessId>,
     reasons: &'a BTreeMap<HarnessId, BTreeSet<crate::lock::Reason>>,
-    pub(super) author_review: Option<AuthorReview>,
 }
 
 impl ItemCtx<'_> {

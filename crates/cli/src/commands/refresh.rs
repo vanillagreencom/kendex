@@ -3,8 +3,8 @@ use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
 
 use super::engine_common::{
-    confirm_and_execute, conflict_detail, print_conflicts, print_exits, print_held_back,
-    print_notes, refresh_failures,
+    confirm_and_execute, conflict_detail, print_conflicts, print_exits, print_notes,
+    refresh_failures,
 };
 use super::{CliResult, resolve_scopes, say};
 use crate::scope::ScopeFilter;
@@ -110,11 +110,6 @@ pub fn run(
                 continue;
             }
         };
-        // What this refresh will not write comes first, and comes before
-        // the shortcut below: a scope with nothing installed and nothing to
-        // do is not worth a line, but a scope whose only reason for having
-        // nothing to do is that the gate refused its content is.
-        print_held_back(&report);
         print_notes(&report);
         match verbose {
             // Every row, and the ways out under the ones that have them:

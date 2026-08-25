@@ -22,14 +22,10 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::model::{HarnessId, ItemKind};
-use crate::quality::author::review_key;
-use crate::quality::reviews::SafetyReview;
-use crate::quality::{self, AuditInput, Content, Verdict};
+use crate::quality::{self, AuditInput, Content};
 use crate::render::validate;
 use crate::source::{CatalogMode, SourceConfig};
 use crate::source_read::SealedSource;
-
-pub mod dismissals;
 
 /// The versioned envelope `check --catalog --json` wraps this report in.
 pub const CHECK_SCHEMA: u32 = 1;
@@ -69,13 +65,6 @@ pub struct CheckFinding {
     pub rule: Option<String>,
     pub message: String,
     pub fix: String,
-    /// For safety findings, the token `dismiss --catalog` takes.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub token: Option<String>,
-    /// A committed review record says this finding is not a problem; it is
-    /// reported but no longer counts toward the verdict or the score.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub dismissed: bool,
 }
 
 impl CheckFinding {
@@ -102,7 +91,6 @@ pub struct CheckedItem {
     pub file: String,
     /// Structural findings first, then safety, in report order.
     pub findings: Vec<CheckFinding>,
-    pub verdict: Verdict,
     pub score: u32,
 }
 
@@ -121,8 +109,9 @@ pub struct CheckTally {
     pub items: usize,
     pub breakage: usize,
     pub advisory: usize,
-    pub held_back: usize,
-    pub warned: usize,
+    /// Safety findings across every item. Advisory everywhere — they fail
+    /// nothing, under any flag.
+    pub findings: usize,
 }
 
 impl CatalogCheck {
@@ -147,26 +136,22 @@ impl CatalogCheck {
                 ) {
                     (true, false, true) => tally.breakage += 1,
                     (true, false, false) => tally.advisory += 1,
+                    (false, _, _) => tally.findings += 1,
                     _ => {}
                 }
-            }
-            match item.verdict {
-                Verdict::Block => tally.held_back += 1,
-                Verdict::Warn => tally.warned += 1,
-                Verdict::Clean => {}
             }
         }
         tally
     }
 
-    /// How many problems fail the run: breakage and blocked items always,
-    /// advisories and warnings only under `strict`.
+    /// How many problems fail the run: breakage always, structural
+    /// advisories only under `strict`. Safety findings fail nothing — the
+    /// score is advisory end to end, in a catalog's own CI included.
     pub fn failing(&self, strict: bool) -> usize {
         let tally = self.tally();
         tally.breakage
-            + tally.held_back
             + match strict {
-                true => tally.advisory + tally.warned,
+                true => tally.advisory,
                 false => 0,
             }
     }
@@ -209,28 +194,16 @@ pub fn check_with(
             rule: None,
             message: finding.problem.clone(),
             fix: finding.fix.clone(),
-            token: None,
-            dismissed: false,
         })
         .collect();
     let mut report = CatalogCheck {
         catalog,
         items: Vec::new(),
     };
-    // The maintainer's committed decisions about their own findings. This
-    // pass judges the bytes they were made against, so each covers every
-    // occurrence in them; an install re-checks the same records against
-    // what it fetched (quality::author).
-    let reviews = dismissals::load(sealed)?;
     for kind in CHECKED_KINDS {
         for name in crate::source::list_items(sealed, config, kind) {
             match crate::source::find_item(sealed, config, kind, &name) {
-                Some(path) => {
-                    let review = reviews.get(&review_key(kind, &name));
-                    report
-                        .items
-                        .push(check_item(sealed, config, kind, &name, &path, review)?)
-                }
+                Some(path) => report.items.push(check_item(sealed, kind, &name, &path)?),
                 // A listed name every lookup refuses (an illegal spelling,
                 // say) is a catalog problem, not content to score.
                 None => report.catalog.push(CheckFinding {
@@ -243,8 +216,6 @@ pub fn check_with(
                     message: format!("this {} is listed but cannot be read", kind.name()),
                     fix: "give it a plain installable name at the path the catalog declares"
                         .to_owned(),
-                    token: None,
-                    dismissed: false,
                 }),
             }
         }
@@ -253,57 +224,47 @@ pub fn check_with(
 }
 
 /// Both passes over one item at its catalog path — the unit the indexer
-/// scores packages with. `review` is the catalog's committed record for
-/// this item, if it carries one.
+/// scores packages with.
 pub fn check_item(
     sealed: &SealedSource,
-    config: &crate::source::SourceConfig,
     kind: ItemKind,
     name: &str,
     path: &Path,
-    review: Option<&SafetyReview>,
 ) -> Result<CheckedItem> {
-    let content = quality::author::content(sealed, kind, path)?;
+    let content = content(sealed, kind, path)?;
     let file = path
         .strip_prefix(sealed.root())
         .unwrap_or(path)
         .display()
         .to_string();
-    let hash =
-        quality::author::content_hash(sealed, path, &config.rendering_inputs(sealed, kind, name));
-    let dismissed = dismissals::active(kind, review, hash.as_deref());
     let mut findings = structural(kind, name, &file, &content);
-    // A record an install would refuse is one this check refuses too, said
-    // where the maintainer is reading rather than discovered by their
-    // consumers being held back over it.
-    for fingerprint in dismissals::refused(kind, review, hash.as_deref()) {
-        findings.push(CheckFinding {
-            file: file.clone(),
-            kind: kind.name(),
-            name: name.to_owned(),
-            pass: CATALOG_PASS.to_owned(),
-            severity: "error",
-            rule: None,
-            message: format!(
-                "the review recorded for {fingerprint} is not one an install will honour"
-            ),
-            fix: match kind {
-                ItemKind::Hook => "remove it: a hook's review cannot travel to an install — it is scored from its script here and from the harness's settings file once installed".to_owned(),
-                _ => "record it with `kendex dismiss --catalog`, whose reasons are the ones that travel — wrong-call or intended".to_owned(),
-            },
-            token: None,
-            dismissed: false,
-        });
-    }
-    let (verdict, score) = safety(kind, name, &file, content, &dismissed, &mut findings);
+    let score = safety(kind, name, &file, content, &mut findings);
     Ok(CheckedItem {
         kind,
         name: name.to_owned(),
         file,
         findings,
-        verdict,
         score,
     })
+}
+
+/// A skill's whole tree; anything else is one file. Read through the same
+/// constructor every install-side reading uses, over the same whole tree,
+/// so this check scores the content the install-side passes read back.
+fn content(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Result<Content> {
+    if kind != ItemKind::Skill {
+        return Ok(Content::Document {
+            text: sealed.read_to_string(path)?,
+        });
+    }
+    if !sealed.is_dir(path) {
+        return Ok(Content::Unread {
+            why: "a skill is a directory holding SKILL.md",
+        });
+    }
+    Ok(quality::observe::tree_content_from_bytes(
+        &sealed.collect_skill_tree(path)?,
+    ))
 }
 
 /// Would each harness's loader accept this?
@@ -350,25 +311,21 @@ fn structural(kind: ItemKind, name: &str, file: &str, content: &Content) -> Vec<
             rule: None,
             message: finding.message,
             fix: finding.remediation,
-            token: None,
-            dismissed: false,
         }));
     }
     out
 }
 
 // The safety half of the authoring check: the same rules an install runs,
-// over the same content, with the maintainer's own decisions read the way
-// an install reads them.
+// over the same content.
 
 fn safety(
     kind: ItemKind,
     name: &str,
     file: &str,
     content: Content,
-    dismissed: &quality::author::Budget,
     findings: &mut Vec<CheckFinding>,
-) -> (Verdict, u32) {
+) -> u32 {
     let result = quality::audit(AuditInput {
         kind,
         name: name.to_owned(),
@@ -376,23 +333,8 @@ fn safety(
         location: file.to_owned(),
         content,
     });
-    // A dismissed finding is reported but no longer counted: the verdict
-    // and the score answer for what is still an open question.
-    let scored = quality::author::score(&result.findings, dismissed, None);
-    let (verdict, _) = quality::verdict(
-        &scored.counted,
-        &scored.safety,
-        quality::Thresholds::default(),
-    );
-    let score = scored.safety.score;
-    for (finding, was_dismissed) in result.findings.into_iter().zip(scored.settled) {
+    for finding in result.findings {
         findings.push(CheckFinding {
-            // A hook's review cannot travel to an install, so there is no
-            // token to offer: printing one and then refusing it when the
-            // maintainer pastes it back is a round trip the printer can
-            // save them.
-            token: (kind != ItemKind::Hook)
-                .then(|| dismissals::token(kind, name, &dismissals::fingerprint(&finding))),
             file: finding.location,
             kind: kind.name(),
             name: name.to_owned(),
@@ -401,8 +343,7 @@ fn safety(
             rule: Some(finding.rule),
             message: finding.message,
             fix: finding.remediation,
-            dismissed: was_dismissed,
         });
     }
-    (verdict, score)
+    result.safety.score
 }

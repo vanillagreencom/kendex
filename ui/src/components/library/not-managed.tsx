@@ -19,8 +19,7 @@ const INLINE_LIMIT = 5;
 /**
  * Items on this machine that kendex was never asked to look after, with the
  * offer to take them on. This lives on the Library's Installed tab because
- * that is where a person looks at what is on the machine; the Review page
- * is for what needs deciding or applying, and adopting is neither — it is
+ * that is where a person looks at what is on the machine, and adopting is
  * an offer, taken up when the person wants it. Follows the app-wide scope
  * like everything else on the tab.
  */

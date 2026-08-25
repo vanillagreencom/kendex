@@ -18,7 +18,6 @@ import { OverviewPage } from "@/pages/overview";
 import { PackagePage } from "@/pages/package";
 import { ProblemsPage } from "@/pages/problems";
 import { ProjectsPage } from "@/pages/projects";
-import { ReviewPage } from "@/pages/review";
 import { SettingsPage } from "@/pages/settings";
 import { UnmanagedPage } from "@/pages/unmanaged";
 import { UpdatesPage } from "@/pages/updates";
@@ -184,7 +183,6 @@ export default function App() {
                 {page === "harnesses" && <HarnessesPage />}
                 {page === "projects" && <ProjectsPage />}
                 {page === "unmanaged" && <UnmanagedPage />}
-                {page === "review" && <ReviewPage />}
                 {page === "customize" && <CustomizePage />}
                 {page === "settings" && <SettingsPage />}
                 {page === "problems" && <ProblemsPage />}

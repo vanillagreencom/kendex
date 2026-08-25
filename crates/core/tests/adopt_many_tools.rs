@@ -29,7 +29,7 @@ fn every_tool_the_item_sits_at_is_kept_in_one_pass() {
     fs::create_dir_all(&project).unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 5\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n",
+        "schema = 6\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n",
     )
     .unwrap();
     let body = "---\nname: handmade\ndescription: mine\n---\nMy content.\n";
@@ -87,7 +87,7 @@ fn one_folder_read_through_a_link_is_not_two_different_copies() {
     fs::create_dir_all(&project).unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 5\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"symlink\"\n",
+        "schema = 6\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"symlink\"\n",
     )
     .unwrap();
     let folder = project.join(".claude/skills/handmade");
@@ -145,7 +145,7 @@ fn a_harness_list_already_there_is_extended_not_replaced() {
     fs::create_dir_all(&project).unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 5\n\n[install]\nharnesses = [\"claude\", \"opencode\"]\nmethod = \"copy\"\n\n[skills.handmade]\nsource = \"local\"\nharnesses = [\"claude\"]\n",
+        "schema = 6\n\n[install]\nharnesses = [\"claude\", \"opencode\"]\nmethod = \"copy\"\n\n[skills.handmade]\nsource = \"local\"\nharnesses = [\"claude\"]\n",
     )
     .unwrap();
     fs::create_dir_all(project.join(".opencode/skills/handmade")).unwrap();
@@ -189,7 +189,7 @@ fn tools_holding_different_files_are_a_choice_not_a_merge() {
     fs::create_dir_all(&project).unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 5\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n",
+        "schema = 6\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n",
     )
     .unwrap();
     for (dir, text) in [
@@ -246,7 +246,7 @@ fn the_tool_holding_a_shared_folder_stays_declared() {
     fs::create_dir_all(&project).unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 5\n\n[install]\nharnesses = [\"claude\", \"codex\", \"opencode\"]\nmethod = \"symlink\"\n",
+        "schema = 6\n\n[install]\nharnesses = [\"claude\", \"codex\", \"opencode\"]\nmethod = \"symlink\"\n",
     )
     .unwrap();
     let folder = project.join(".claude/skills/handmade");
@@ -293,7 +293,7 @@ fn both_spellings_are_refused_by_the_verb_too() {
     fs::create_dir_all(&project).unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 5\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n",
+        "schema = 6\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n",
     )
     .unwrap();
     let dir = project.join(".claude/agents");

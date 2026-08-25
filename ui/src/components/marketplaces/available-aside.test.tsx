@@ -25,12 +25,10 @@ const checked: PackageView = {
     safety: { score: 100, deductions: [] },
     quality: null,
     skipped: [],
-    verdict: "clean",
-    reasons: [],
+    notes: [],
     contentHash: "abc",
     ruleset: 1,
     fromCache: false,
-    publisher: null,
   },
 };
 
@@ -48,9 +46,9 @@ const render = (view: PackageView | null) =>
 describe("the available package's Safety column", () => {
   it("puts the caveat under the score, on the page that installs it", () => {
     const html = render(checked);
-    expect(html).toContain("Nothing found");
+    expect(html).toContain("100/100");
     expect(html).toContain(PREINSTALL_SAFETY_CAVEAT);
-    expect(html.indexOf("Nothing found")).toBeLessThan(
+    expect(html.indexOf("100/100")).toBeLessThan(
       html.indexOf(PREINSTALL_SAFETY_CAVEAT),
     );
   });

@@ -42,7 +42,7 @@ fn fixture(enabled: bool) -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.review]\nsource = \"cat\"\nenabled = {enabled}\n",
+            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.review]\nsource = \"cat\"\nenabled = {enabled}\n",
             source.display()
         ),
     )
@@ -198,9 +198,13 @@ fn a_revised_template_refreshes_an_unedited_comment_through_a_real_apply() {
 /// A skill the safety gate holds back on every harness has no say over
 /// the project's settings file: nothing it ships is seeded, and nothing
 /// it ships may refresh what another skill wrote.
+///
+/// The safety score is advisory: a skill with critical findings installs
+/// and seeds its settings like any other, and the plan's rows say what was
+/// found.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_gate_blocked_skill_does_not_seed() {
+fn a_skill_with_findings_installs_and_seeds_like_any_other() {
     let f = fixture(true);
     let hostile = f
         .project
@@ -233,18 +237,18 @@ fn a_gate_blocked_skill_does_not_seed() {
         report
             .safety
             .iter()
-            .any(|row| row.name == "hostile" && row.blocked()),
-        "the fixture's hostile skill is held back"
+            .any(|row| row.name == "hostile" && !row.findings.is_empty()),
+        "the hostile skill is scored, and the findings ride on the plan"
     );
     apply::execute(&f.env, &report.plan, None).unwrap();
     let settings = fs::read_to_string(f.project.join("kendex.settings.toml")).unwrap();
     assert!(settings.contains("REVIEWERS"), "the clean skill seeds");
     assert!(
-        !settings.contains("HOSTILE_KEY"),
-        "the blocked skill seeds nothing: {settings}"
+        settings.contains("HOSTILE_KEY"),
+        "advisory means it installs and seeds: {settings}"
     );
     let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap();
-    assert!(!lock.settings_seeds.contains_key("HOSTILE_KEY"));
+    assert!(lock.settings_seeds.contains_key("HOSTILE_KEY"));
 }
 
 /// A skill no harness here installs is not an installation: nothing of

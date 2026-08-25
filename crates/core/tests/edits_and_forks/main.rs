@@ -126,7 +126,7 @@ fn declare(w: &World, body: &str) {
     fs::write(
         &path,
         format!(
-            "schema = 5\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{body}"
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{body}"
         ),
     )
     .unwrap();
@@ -339,7 +339,7 @@ fn updates_survives_a_source_that_cannot_resolve() {
     let path = manifest::manifest_path(&w.env, &w.scope);
     fs::write(
         &path,
-        "schema = 5\n\n[sources.cat]\nrepo = \"owner/gone\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+        "schema = 6\n\n[sources.cat]\nrepo = \"owner/gone\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
     )
     .unwrap();
     let rows = kendex_core::package::updates::updates(&w.env, &w.scope);

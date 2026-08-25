@@ -174,7 +174,7 @@ fn an_ambiguous_tree_ref_is_refused_naming_both_and_writes_nothing() {
 #[allow(clippy::unwrap_used)]
 fn an_offline_tree_url_is_refused_before_any_write() {
     let (_tmp, env, scope, project) = fixture();
-    let existing = "schema = 5\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n";
+    let existing = "schema = 6\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n";
     fs::write(project.join("kendex.toml"), existing).unwrap();
 
     let error = source_ops::subscribe(
@@ -302,7 +302,7 @@ fn a_default_add_lands_on_the_subscription_with_the_default_repo() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 5\n\n[sources.market]\nrepo = \"{DEFAULT_SOURCE_REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n"
+            "schema = 6\n\n[sources.market]\nrepo = \"{DEFAULT_SOURCE_REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n"
         ),
     )
     .unwrap();
@@ -326,7 +326,7 @@ fn two_default_repo_subscriptions_prefer_the_seeded_name() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 5\n\n[sources.kendex]\nrepo = \"{DEFAULT_SOURCE_REPO}\"\n\n[sources.vstack]\nrepo = \"{LEGACY_SOURCE_REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n"
+            "schema = 6\n\n[sources.kendex]\nrepo = \"{DEFAULT_SOURCE_REPO}\"\n\n[sources.vstack]\nrepo = \"{LEGACY_SOURCE_REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n"
         ),
     )
     .unwrap();
@@ -346,7 +346,7 @@ fn two_default_repo_subscriptions_neither_seeded_refuse_naming_both() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 5\n\n[sources.alpha]\nrepo = \"{DEFAULT_SOURCE_REPO}\"\n\n[sources.beta]\nrepo = \"{LEGACY_SOURCE_REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n"
+            "schema = 6\n\n[sources.alpha]\nrepo = \"{DEFAULT_SOURCE_REPO}\"\n\n[sources.beta]\nrepo = \"{LEGACY_SOURCE_REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n"
         ),
     )
     .unwrap();
@@ -373,7 +373,7 @@ fn no_default_subscription_is_a_typed_error_never_a_guess() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 5\n\n[sources.other]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
+            "schema = 6\n\n[sources.other]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
             other.display()
         ),
     )

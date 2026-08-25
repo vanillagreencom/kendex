@@ -15,7 +15,7 @@ use crate::model::{ItemKind, Scope};
 
 /// Bumped when the shape changes; an older or newer snapshot reads as
 /// absent, which the check reports as not-yet-evaluated.
-pub const SNAPSHOT_SCHEMA: u32 = 1;
+pub const SNAPSHOT_SCHEMA: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -30,10 +30,6 @@ pub struct ScopeSnapshot {
     /// failed, a source that refused. The check reports these as
     /// could-not-check lines, never as silence.
     pub unreadable: Vec<String>,
-    /// Installs the safety gate is holding back, scope-wide.
-    pub held_back_items: usize,
-    /// Open findings awaiting a person, counted once per distinct evidence.
-    pub open_evidence: usize,
 }
 
 /// One package's standing at derivation time.
@@ -58,8 +54,6 @@ pub struct PackageSnapshot {
     pub edited: bool,
     pub mixed: bool,
     pub forked: bool,
-    /// Open findings on this package's installed content.
-    pub open_findings: usize,
 }
 
 pub fn snapshot_path(env: &Env, scope: &Scope) -> PathBuf {
@@ -127,10 +121,6 @@ pub fn record_with(
     scope: &Scope,
     report: &crate::package::updates::UpdatesReport,
 ) -> Result<ScopeSnapshot> {
-    let scored = crate::engine::observed_rows(env, scope)?;
-    let summary = crate::engine::reviewable::review_summary(&scored);
-    let open = crate::engine::reviewable::open_by_package(&scored);
-
     let mut refs_by_repo: std::collections::BTreeMap<String, Option<String>> = Default::default();
     let mut packages = Vec::new();
     for row in &report.rows {
@@ -157,10 +147,6 @@ pub fn record_with(
             edited: row.blocked_by_local_edit,
             mixed: row.mixed,
             forked: row.forked,
-            open_findings: open
-                .get(&(row.kind, row.name.clone()))
-                .copied()
-                .unwrap_or(0),
         });
     }
     let snapshot = ScopeSnapshot {
@@ -180,8 +166,6 @@ pub fn record_with(
                 )
             })
             .collect(),
-        held_back_items: summary.held_back,
-        open_evidence: summary.open_evidence,
     };
     store(env, scope, &snapshot)?;
     Ok(snapshot)

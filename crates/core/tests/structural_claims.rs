@@ -65,7 +65,7 @@ fn refresh_reads_each_installs_own_recorded_source_across_scopes() {
     fs::write(
         w.env.global_manifest_file(),
         format!(
-            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
             w.home.join("catA").display()
         ),
     )
@@ -73,7 +73,7 @@ fn refresh_reads_each_installs_own_recorded_source_across_scopes() {
     fs::write(
         w.project.join("kendex.toml"),
         format!(
-            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
             w.home.join("catB").display()
         ),
     )
@@ -142,7 +142,7 @@ fn corrupt_state_fails_closed_instead_of_defaulting() {
     };
     fs::write(
         w.project.join("kendex.toml"),
-        "schema = 5\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
+        "schema = 6\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
     )
     .unwrap();
 
@@ -151,14 +151,15 @@ fn corrupt_state_fails_closed_instead_of_defaulting() {
     assert!(audit(&w.env, &scope).is_err(), "a corrupt lock must refuse");
     fs::remove_file(w.project.join(".kendex-lock.json")).unwrap();
 
-    // Damaged app settings: the safety gate must not fall back to default
-    // thresholds the user may have set stricter.
+    // Damaged app settings: the observed scoring pass reads the harness
+    // roots from them, and must refuse rather than scan default locations
+    // the user has pointed elsewhere.
     let settings = w.env.settings_file();
     fs::create_dir_all(settings.parent().unwrap()).unwrap();
     fs::write(&settings, "not = [valid").unwrap();
     assert!(
-        audit(&w.env, &scope).is_err(),
-        "corrupt settings must fail the plan closed"
+        kendex_core::engine::observed_rows(&w.env, &scope).is_err(),
+        "corrupt settings must fail the audit closed"
     );
     fs::remove_file(&settings).unwrap();
 
@@ -176,7 +177,7 @@ fn add_writes_nothing_before_validation_and_confirmation() {
     let w = world();
     write_catalog(&w.home.join("cat"), "Body.");
     let manifest_text = format!(
-        "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
+        "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
         w.home.join("cat").display()
     );
     fs::write(w.project.join("kendex.toml"), &manifest_text).unwrap();

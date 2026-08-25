@@ -104,7 +104,7 @@ fn a_plugin_registry_plugin_installs_as_a_bundle() {
         &f.project,
         "kendex.toml",
         &format!(
-            "schema = 5\n\n[sources.market]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[bundles.\"data-science\"]\nsource = \"market\"\n",
+            "schema = 6\n\n[sources.market]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[bundles.\"data-science\"]\nsource = \"market\"\n",
             market.display()
         ),
     );

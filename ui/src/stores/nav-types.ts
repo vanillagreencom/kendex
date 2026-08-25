@@ -5,20 +5,18 @@ import type { ScopeSelection } from "@/lib/derive";
 
 export type Page =
   | "home"
-  | "review"
   | "library"
   | "marketplaces"
   | "harnesses"
   | "projects"
   | "customize"
-  // Reached from Home's attention list and the Review card's footnote —
-  // adopting is an offer, not a sidebar destination.
+  // Reached from Home's attention list — adopting is an offer, not a
+  // sidebar destination.
   | "unmanaged"
   | "settings"
   | "updates"
-  // Reached only from the status footer's problems segment or a review
-  // card's "See all problems" — not in the sidebar, since it isn't a place
-  // you'd navigate to when nothing is wrong.
+  // Reached only from the status footer's problems segment — not in the
+  // sidebar, since it isn't a place you'd navigate to when nothing is wrong.
   | "problems"
   // Reached only by opening a package from a list — which package is open
   // lives in `packageRef`, so the page is never a sidebar destination.

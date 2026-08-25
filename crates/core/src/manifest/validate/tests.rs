@@ -87,7 +87,7 @@ harness = "copilot"
 fn only_the_kinds_a_catalog_offers_may_carry_a_plugin_segment() {
     let table = parse(
         r#"
-schema = 5
+schema = 6
 [sources.market]
 repo = "owner/market"
 [skills."tools/eda"]
@@ -104,7 +104,7 @@ source = "market"
 
     let table = parse(
         r#"
-schema = 5
+schema = 6
 [sources.market]
 repo = "owner/market"
 [hooks."tools/guard"]
@@ -136,7 +136,7 @@ source = "market"
 fn a_source_revision_is_a_string_on_a_repo_and_stray_keys_are_findings() {
     let table = parse(
         r#"
-schema = 5
+schema = 6
 [sources.pinned]
 repo = "owner/repo"
 rev = "v1.2.0"
@@ -146,7 +146,7 @@ rev = "v1.2.0"
 
     let table = parse(
         r#"
-schema = 5
+schema = 6
 [sources.local-path]
 path = "../catalog"
 rev = "v1.2.0"

@@ -8,58 +8,16 @@ import { harnessName } from "@/lib/labels";
 //   - Say what happened or what will happen, not what the code calls it.
 //   - Name the thing the person is looking at, not the internal concept.
 //   - Never claim a state the app has not checked.
-export const FEWER_ITEMS_LABEL = "Show less";
 export const morePlacesLabel = (count: number): string =>
   `+${count} more place${count === 1 ? "" : "s"}`;
 export const AFFECTS_LABEL = "Affects";
 
-// Review & apply page copy: what "managing" an item buys you, said once
-// here so "Start managing" doesn't need to explain itself on every row.
-export const ALL_IN_SYNC_TITLE = "Everything is in sync";
-export const ALL_IN_SYNC_BODY =
-  "Changes from Customize or your catalogs show up here.";
-// Says what you get, not what the app calls the state you'd be leaving.
+// What "managing" an item buys you, said once here so "Start managing"
+// doesn't need to explain itself on every row. Says what you get, not what
+// the app calls the state you'd be leaving.
 export const UNMANAGED_SECTION_EXPLAINER =
   "Hand one over and kendex keeps it updated, checked and copied to every harness.";
 export const START_MANAGING_LABEL = "Start managing";
-// The apply flow, said as what will happen rather than as what the engine
-// calls it. "Orphan" is a word for whoever wrote the planner; the person
-// reading this wants to know something will be deleted and what it is.
-export const APPLY_DIALOG_TITLE = "Apply these changes?";
-export const APPLY_DIALOG_BODY =
-  "kendex will update the files it manages. Nothing else on your machine is touched.";
-export const APPLY_CONFIRM_LABEL = "Apply changes";
-export const APPLY_BUTTON_LABEL = "Apply changes…";
-export const NOTHING_TO_DO_HERE = "Nothing to do here";
-// Every attention row leads to the same page, so they all say so the same
-// way. Four different verbs for one destination read as four destinations.
-export const REVIEW_ACTION_LABEL = "Review & apply";
-
-// A project's one-line summary, so a closed panel still says what is inside
-// it. Written as counted nouns rather than jargon: "2 changes ready" beats
-// "2 drift rows", and a person can decide whether to open it from this line
-// alone.
-export function scopeSummaryLabel(counts: {
-  changes: number;
-  decide: number;
-  blocked: number;
-  open: number;
-  unmanaged: number;
-}): string | null {
-  const parts: string[] = [];
-  if (counts.blocked > 0) {
-    parts.push(`${counts.blocked} problem${counts.blocked === 1 ? "" : "s"}`);
-  }
-  // Counted apart from the changes: Apply cannot move these, and a summary
-  // that folded them in said "2 to apply" on a card with no Apply button.
-  if (counts.decide > 0) parts.push(`${counts.decide} to decide`);
-  if (counts.changes > 0) parts.push(`${counts.changes} to apply`);
-  if (counts.open > 0) {
-    parts.push(`${counts.open} finding${counts.open === 1 ? "" : "s"}`);
-  }
-  if (counts.unmanaged > 0) parts.push(`${counts.unmanaged} unmanaged`);
-  return parts.length > 0 ? parts.join(" · ") : null;
-}
 export const UNMANAGED_PAGE_SUBTITLE =
   "On your machine, but kendex didn't put them there";
 export const ALL_MANAGED_TITLE = "Everything is managed";
@@ -81,10 +39,6 @@ export const harnessFolderTitle = (harness: string): string =>
 export const HARNESS_FOLDER_BODY =
   "Only worth setting if you moved the harness. Leave it empty to let kendex find it.";
 export const NOT_INSTALLED_LABEL = "Not installed";
-export const removeLeftBehindLabel = (count: number): string =>
-  count === 1
-    ? "Also delete 1 item nothing asks for any more"
-    : `Also delete ${count} items nothing asks for any more`;
 export const startManagingAllLabel = (count: number): string =>
   `Start managing all ${count}`;
 export const showAllItemsLabel = (count: number): string => `Show all ${count}`;

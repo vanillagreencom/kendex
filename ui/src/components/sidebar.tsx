@@ -1,6 +1,5 @@
 import {
   ArrowUpCircle,
-  CircleCheck,
   FolderGit2,
   Home,
   Library,
@@ -13,12 +12,10 @@ import {
 import { useEffect } from "react";
 import { commands } from "@/bindings";
 import { Button } from "@/components/ui/button";
-import { auditCounts, needsReviewCount } from "@/lib/audit-counts";
 import { UPDATES_ATTENTION_TITLE } from "@/lib/copy";
 import { isSearchShortcutKey } from "@/lib/search-shortcut";
 import { visibleUpdateCount } from "@/lib/update-groups";
 import { cn } from "@/lib/utils";
-import { useAuditStore } from "@/stores/audit";
 import { type Page, useNavStore } from "@/stores/nav";
 import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
@@ -32,7 +29,6 @@ const NAV_ROW =
 
 const NAV: { page: Page; label: string; icon: typeof Home }[] = [
   { page: "home", label: "Home", icon: Home },
-  { page: "review", label: "Review & apply", icon: CircleCheck },
   { page: "library", label: "My Library", icon: Library },
   { page: "marketplaces", label: "Marketplaces", icon: Store },
   { page: "updates", label: "Updates", icon: ArrowUpCircle },
@@ -45,9 +41,6 @@ const NAV: { page: Page; label: string; icon: typeof Home }[] = [
 export function Sidebar() {
   const { page, setPage, focusSearch } = useNavStore();
   const { scanning, refresh } = useScanStore();
-  const driftCount = useAuditStore((s) =>
-    needsReviewCount(auditCounts(s.views)),
-  );
   const updateCount = useUpdatesStore((s) => visibleUpdateCount(s.rows));
   // A failed check keeps the last rows, so any count shown is last-known;
   // the badge wears the warning tone for it. With no rows at all, "?" is
@@ -113,11 +106,6 @@ export function Sidebar() {
               )}
             />
             <span className="flex-1 text-left">{label}</span>
-            {target === "review" && driftCount > 0 ? (
-              <span className="rounded bg-foreground/[0.09] px-1.5 py-0.5 text-[11px] font-medium tabular-nums">
-                {driftCount}
-              </span>
-            ) : null}
             {target === "updates" && (updateCount > 0 || updatesUnchecked) ? (
               <span
                 title={updatesUnchecked ? UPDATES_ATTENTION_TITLE : undefined}

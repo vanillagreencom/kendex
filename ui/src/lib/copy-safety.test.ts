@@ -1,69 +1,39 @@
 import { describe, expect, it } from "vitest";
+import type { Finding } from "@/bindings";
 import {
   CATALOG_LAYOUT_CLEAN,
   PREINSTALL_SAFETY_CAVEAT,
-  publisherSettledLabel,
-  publisherSettledNote,
   SAFETY_DOT_UNCHECKED,
   SAFETY_SECTION_EXPLAINER,
   safetyDotWords,
-  settledSummaryLead,
-  verdictRead,
+  severityTone,
 } from "./copy-safety";
-import { VERDICT_LABELS } from "./labels";
 
-describe("settledSummaryLead", () => {
-  // The second argument is optional, so a caller that forgets it drops the
-  // publisher clause with nothing else to catch it. Both spellings pinned.
-  it("names the publisher's share only when there is one", () => {
-    expect(settledSummaryLead(3)).toBe("3 findings already decided");
-    expect(settledSummaryLead(1)).toBe("1 finding already decided");
-    expect(settledSummaryLead(3, 2)).toBe(
-      "3 findings already decided (2 by the publisher)",
-    );
-    expect(settledSummaryLead(3, 0)).toBe("3 findings already decided");
-  });
+const finding = (severity: Finding["severity"]): Finding => ({
+  rule: "dangerous-commands",
+  severity,
+  location: "SKILL.md:3",
+  message: "runs a shell command that deletes files without asking",
+  remediation: "scope the command to a specific path, or drop it",
 });
 
-describe("the publisher's own decisions", () => {
-  it("says whose call it was, and never lets it read as the reader's", () => {
-    expect(publisherSettledLabel(1)).toBe(
-      "1 finding the publisher already reviewed",
-    );
-    expect(publisherSettledLabel(4)).toBe(
-      "4 findings the publisher already reviewed",
-    );
-    const note = publisherSettledNote(
-      "vanillagreencom/kendex",
-      "intended",
-      "2 days ago",
-    );
-    expect(note).toBe(
-      "vanillagreencom/kendex reviewed this 2 days ago — does this on purpose",
-    );
-    expect(publisherSettledNote("owner/repo", "wrong-call", null)).toBe(
-      "owner/repo reviewed this — not actually a problem",
-    );
-  });
-});
-
-describe("what a verdict is allowed to claim", () => {
-  // Everything a person reads where a verdict belongs, the words that stand
-  // in before one arrives included. A pass means "nothing was matched in what
-  // we read", so none of these may promise more. The banned words are matched
-  // as plain substrings, which the copy affords by never reaching for them —
-  // not even in a negated form.
-  const besideAVerdict = [
-    ...Object.values(VERDICT_LABELS),
+describe("what a score is allowed to claim", () => {
+  // Everything a person reads where a score belongs, the words that stand
+  // in before one arrives included. A clean read means "nothing was matched
+  // in what we read", so none of these may promise more. The banned words
+  // are matched as plain substrings, which the copy affords by never
+  // reaching for them — not even in a negated form.
+  const besideAScore = [
     PREINSTALL_SAFETY_CAVEAT,
     SAFETY_SECTION_EXPLAINER,
     CATALOG_LAYOUT_CLEAN,
-    safetyDotWords("clean", 100, 0),
+    safetyDotWords(100, 0, []),
+    safetyDotWords(100, 3, []),
     SAFETY_DOT_UNCHECKED,
   ];
 
   it("never claims more than the check established", () => {
-    const copy = besideAVerdict.join(" ").toLowerCase();
+    const copy = besideAScore.join(" ").toLowerCase();
     for (const banned of [
       "safe",
       "verified",
@@ -78,30 +48,27 @@ describe("what a verdict is allowed to claim", () => {
     }
   });
 
-  it("discloses that the read is partial wherever it shows a verdict", () => {
-    // The list's dot is the whole verdict on a row that installs from
+  it("discloses that the read is partial wherever it shows a score", () => {
+    // The list's dot is the whole reading on a row that installs from
     // there, so its words carry the caveat the number cannot.
-    expect(safetyDotWords("warn", 60, 0)).toBe(
-      "Installs, with a warning · 60/100. An automated check for risky patterns, not a review. It can miss things, and a package too large to read is not checked at all.",
+    expect(safetyDotWords(60, 0, [finding("high")])).toBe(
+      "60/100. An automated check for risky patterns, not a review. It can miss things, and a package too large to read is not checked at all.",
     );
     expect(PREINSTALL_SAFETY_CAVEAT).toBe(
       "An automated check for risky patterns, not a review. It can miss things, and a package too large to read is not checked at all.",
     );
     expect(SAFETY_SECTION_EXPLAINER).toBe(
-      "kendex looks for risky patterns in each package before it installs. It is an automated check rather than a review. It can miss things, and a package too large to read is not checked at all.",
+      "kendex looks for risky patterns in each package. It is an automated check rather than a review, it can miss things, and a package too large to read is not checked at all. Nothing is held back over it.",
     );
   });
 
   it("carries the caveat before any result has landed, claiming neither way", () => {
     // The row installs whether or not its score has arrived, so the words
     // that stand in for one say the check has not answered and repeat what
-    // the check is worth — without borrowing a verdict's language.
+    // the check is worth — without a number that reads as a result.
     expect(SAFETY_DOT_UNCHECKED).toBe(
       "Not checked yet. An automated check for risky patterns, not a review. It can miss things, and a package too large to read is not checked at all.",
     );
-    for (const label of Object.values(VERDICT_LABELS)) {
-      expect(SAFETY_DOT_UNCHECKED).not.toContain(label);
-    }
     expect(SAFETY_DOT_UNCHECKED).not.toMatch(/\d+\/100/);
   });
 
@@ -112,23 +79,31 @@ describe("what a verdict is allowed to claim", () => {
   });
 });
 
-describe("what a verdict is entitled to claim", () => {
-  it("does not say nothing was found when a rule was given nothing to read", () => {
-    expect(verdictRead("clean", 1)).toBe("Not fully checked");
-    expect(verdictRead("clean", 12)).toBe("Not fully checked");
+describe("what a clean score is entitled to claim", () => {
+  it("says the read was partial when a rule was given nothing to read", () => {
+    expect(safetyDotWords(100, 1, [])).toContain("Not fully checked");
+    expect(safetyDotWords(100, 12, [])).toContain("Not fully checked");
   });
 
-  it("says nothing was found only when every rule read something", () => {
-    expect(verdictRead("clean", 0)).toBe("Nothing found");
+  it("stands on the number alone when every rule read something", () => {
+    expect(safetyDotWords(100, 0, [])).not.toContain("Not fully checked");
   });
 
-  it("leaves a verdict that already carries findings alone", () => {
-    expect(verdictRead("block", 3)).toBe(VERDICT_LABELS.block);
-    expect(verdictRead("warn", 3)).toBe(VERDICT_LABELS.warn);
+  it("lets findings speak for themselves over a partial read", () => {
+    expect(safetyDotWords(60, 3, [finding("high")])).not.toContain(
+      "Not fully checked",
+    );
   });
+});
 
-  it("carries the same reading into a list row's dot", () => {
-    expect(safetyDotWords("clean", 100, 7)).toContain("Not fully checked");
-    expect(safetyDotWords("clean", 100, 0)).toContain("Nothing found");
+describe("severityTone", () => {
+  // The dot's colour is never the only signal — the words beside it carry
+  // the number — but the colour still has to answer for the worst finding.
+  it("is critical for any critical finding, warning for the rest, good for none", () => {
+    expect(severityTone([finding("low"), finding("critical")])).toBe(
+      "critical",
+    );
+    expect(severityTone([finding("low"), finding("high")])).toBe("warning");
+    expect(severityTone([])).toBe("good");
   });
 });

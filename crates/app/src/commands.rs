@@ -32,7 +32,7 @@ pub fn scan_machine() -> Result<ScanResult, String> {
 /// Returns whether the hook was fully rendered. The user approved the hook
 /// and nothing else, so the rendering apply runs only when the scope had no
 /// other pending work; otherwise the declaration lands and `false` says the
-/// Review page's ordinary preview-and-apply finishes the job.
+/// scope's next apply finishes the job.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn install_drift_hook(scope: kendex_core::model::Scope) -> Result<bool, String> {

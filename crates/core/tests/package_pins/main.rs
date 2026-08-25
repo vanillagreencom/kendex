@@ -93,7 +93,7 @@ fn declare(w: &World, body: &str) {
     fs::write(
         &path,
         format!(
-            "schema = 5\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{body}"
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{body}"
         ),
     )
     .unwrap();
@@ -360,9 +360,6 @@ fn two_parents_pinning_different_revs_of_one_dependency_change_nothing() {
     assert!(installed_body(&w, "helper").contains("Helper one."));
 }
 
-mod derived;
-mod rebuilt;
-mod reviews;
 mod validate;
 
 #[test]

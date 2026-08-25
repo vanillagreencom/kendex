@@ -1,46 +1,14 @@
-// Product prose for the safety surfaces: the decision zone, the held-back
-// panel, accepting findings, and taking over a shared folder. Split from copy.ts for the file line cap — same house style,
-// same rules (see the top of copy.ts).
-import type { DismissReason, Verdict } from "@/bindings";
-import { REASON_LABELS } from "@/lib/copy-decisions";
-import { VERDICT_LABELS } from "@/lib/labels";
-
-// The zone only a person can clear: held-back installs first, then the
-// findings nobody has ruled on. Its caption counts both halves.
-export const DECISION_ZONE_TITLE = "Needs your decision";
-export const cleanSummaryLead = (total: number): string =>
-  `${total} item${total === 1 ? "" : "s"}, nothing to report`;
-export const settledSummaryLead = (count: number, byAuthor = 0): string => {
-  const noun = `${count} finding${count === 1 ? "" : "s"} already decided`;
-  return byAuthor > 0 ? `${noun} (${byAuthor} by the publisher)` : noun;
-};
-
-// What a package's publisher already ruled on. Named as theirs every time:
-// the person reading this did not make these calls, and a line that let
-// them read as their own would be the one dishonest thing on the page.
-export const publisherSettledLabel = (count: number): string =>
-  `${count} finding${count === 1 ? "" : "s"} the publisher already reviewed`;
-export const publisherSettledExplainer =
-  "Recorded by whoever publishes these items, against exactly these bytes. Reported here and not counted toward the score — edit the item and they come back.";
-export const publisherSettledNote = (
-  publisher: string,
-  reason: DismissReason,
-  when: string | null,
-): string =>
-  `${publisher} reviewed this${when ? ` ${when}` : ""} — ${REASON_LABELS[
-    reason
-  ].toLowerCase()}`;
-
-export const SAFETY_HELP =
-  "Strict catches more, and flags more things that turn out fine. Lenient stops only the riskiest.";
+// Product prose for the safety surfaces. Split from copy.ts for the file
+// line cap — same house style, same rules (see the top of copy.ts).
+import type { Finding } from "@/bindings";
 
 // The check matches patterns over as much of a package as it reads. So every
-// place a verdict is shown says what was determined and nothing more: a
-// verdict with nothing in it means nothing was matched, never that the
-// package is safe to run.
+// place a score is shown says what was determined and nothing more: a score
+// with nothing behind it means nothing was matched, never that the package
+// is safe to run.
 export const SAFETY_SECTION_EXPLAINER =
-  "kendex looks for risky patterns in each package before it installs. It is an automated check rather than a review. It can miss things, and a package too large to read is not checked at all.";
-// Sits under the verdict on the page where somebody decides to install.
+  "kendex looks for risky patterns in each package. It is an automated check rather than a review, it can miss things, and a package too large to read is not checked at all. Nothing is held back over it.";
+// Sits under the score on the page where somebody decides to install.
 // It describes what the check did, never who wrote the package: this repo
 // publishes a catalog of its own, so a claim about provenance is false for
 // the items in it. Only a skill tree is read to a budget — every other kind
@@ -52,22 +20,11 @@ export const PREINSTALL_SAFETY_CAVEAT =
 // words it. A row here installs without ever opening that page, and a bare
 // score would be the assurance the check cannot give.
 export const safetyDotWords = (
-  verdict: Verdict,
   score: number,
   skipped: number,
+  findings: Finding[],
 ): string =>
-  `${verdictRead(verdict, skipped)} · ${score}/100. ${PREINSTALL_SAFETY_CAVEAT}`;
-
-// What the check is entitled to say it found. A rule that was given nothing
-// to read found nothing because it looked at nothing, so a clean verdict
-// standing beside one is not the same claim as a clean verdict standing
-// alone — and a package kendex could not read at all reaches here with every
-// rule skipped and no finding, which is the case that must never read as
-// "Nothing found".
-export const verdictRead = (verdict: Verdict, skipped: number): string =>
-  verdict === "clean" && skipped > 0
-    ? "Not fully checked"
-    : VERDICT_LABELS[verdict];
+  `${findings.length === 0 && skipped > 0 ? "Not fully checked · " : ""}${score}/100. ${PREINSTALL_SAFETY_CAVEAT}`;
 // The same row installs before its score arrives, so the dot's words say
 // there is no result rather than falling silent. A queued read and a failed
 // one look alike from here, so this claims no check is under way — only that
@@ -78,31 +35,13 @@ export const SAFETY_DOT_UNCHECKED = `Not checked yet. ${PREINSTALL_SAFETY_CAVEAT
 export const CATALOG_LAYOUT_CLEAN =
   "Nothing wrong with how this catalog is put together.";
 
-// This list scores what is on disk right now, not what a plan would write —
-// so every row here is a thing the harnesses will load the next time they start.
-// "Held back" describes what kendex refuses to do with it, and must never be
-// read as "this isn't on your machine".
-export const BLOCKED_SECTION_EXPLAINER =
-  "Not installed or updated until you accept what was found. Copies already on your machine keep running.";
-// The row for an install the gate stopped before it ever reached disk.
-export const HELD_BACK_NOT_ON_DISK_NOTE =
-  "Not installed — kendex stopped this one before it landed.";
-
-// Accepting a held-back item. The action is reading the findings and
-// choosing to install anyway; the record lands in a manifest, and *which*
-// manifest decides who inherits the decision — so the dialog words the
-// consequence per scope and claims nothing else.
-export const ACCEPT_BLOCKED_LABEL = "Accept and install…";
-// A held-back row the next apply would not write — an item already on the
-// machine that kendex does not install. There is nothing to let through.
-export const NOTHING_TO_ACCEPT =
-  "Nothing to accept — kendex isn't installing this one. Remove it from the Library if you don't want it.";
-export const ACCEPT_BLOCKED_TITLE = "Accept these findings?";
-export const acceptBlockedBody = (projectScope: boolean): string =>
-  projectScope
-    ? "Saved into this project's kendex.toml, so anyone using the repository inherits it. It covers this version only — if the file changes, the block comes back."
-    : "Saved in your personal manifest on this machine. It covers this version only — if the file changes, the block comes back.";
-export const ACCEPT_BLOCKED_CONFIRM = "Accept and install";
-
-// Withdrawing an acceptance, from the recorded-decisions list.
-export const WITHDRAW_LABEL = "Withdraw";
+/** The dot's tone from what was found: severity is never color-only — the
+ * words beside it carry the number and the caveat. */
+export function severityTone(
+  findings: Finding[],
+): "good" | "warning" | "critical" {
+  if (findings.some((finding) => finding.severity === "critical")) {
+    return "critical";
+  }
+  return findings.length > 0 ? "warning" : "good";
+}

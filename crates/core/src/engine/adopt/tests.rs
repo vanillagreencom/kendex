@@ -96,7 +96,7 @@ fn adoption_binds_only_the_harnesses_that_had_the_item() {
     fs::create_dir_all(&project).unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 5\n\n[install]\nharnesses = [\"claude\", \"opencode\"]\nmethod = \"symlink\"\n",
+        "schema = 6\n\n[install]\nharnesses = [\"claude\", \"opencode\"]\nmethod = \"symlink\"\n",
     )
     .unwrap();
     fs::create_dir_all(project.join(".claude/skills/handmade")).unwrap();

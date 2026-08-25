@@ -66,7 +66,7 @@ fn the_summary_keeps_its_published_field_order() {
             "findings"
         ]
     );
-    assert_eq!(json["schema"], 1);
+    assert_eq!(json["schema"], 2);
 }
 
 /// `[marketplace]` is the catalog speaking about itself: read where present,

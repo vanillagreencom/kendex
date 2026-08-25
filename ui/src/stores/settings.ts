@@ -272,11 +272,11 @@ function projectActions(
                 .then((result) => {
                   if (result.status === "ok") {
                     // False: the scope had other pending changes, so only the
-                    // declaration landed — nothing is applied unreviewed.
+                    // declaration landed — nothing is applied unseen.
                     toast.success(
                       result.data
                         ? "Drift report installed"
-                        : "Drift report added — finish by applying changes in Review",
+                        : "Drift report added — it installs with the project's next apply",
                     );
                     void rescan();
                   } else {
@@ -344,7 +344,6 @@ interface SettingsState extends ZoomSlice, ProjectsSlice {
   capabilities: CapabilityRow[];
   load: () => Promise<void>;
   setAppearance: (appearance: Appearance) => Promise<void>;
-  setSafety: (warnBelow: number, blockBelow: number) => Promise<void>;
   setHarnessRoot: (harness: string, root: string) => Promise<void>;
 }
 
@@ -481,7 +480,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
       }
     },
 
-    // Theme, safety threshold, and tool folder saves are instant and their
+    // Theme and tool folder saves are instant and their
     // effect is visible immediately on screen — a toast on top would just be
     // noise, so success here stays silent and only failure speaks up.
     setAppearance: async (appearance) => {
@@ -495,25 +494,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
             {
               label: "Retry",
               onClick: () => void get().setAppearance(appearance),
-            },
-          ],
-        });
-    },
-
-    setSafety: async (warnBelow, blockBelow) => {
-      const result = await write((current) => ({
-        ...current,
-        safety: { "warn-below": warnBelow, "block-below": blockBelow },
-      }));
-      if (!result.ok)
-        useProblemsStore.getState().showError({
-          title: "Couldn't update safety settings",
-          message: result.message,
-          steps: ["Try again"],
-          actions: [
-            {
-              label: "Retry",
-              onClick: () => void get().setSafety(warnBelow, blockBelow),
             },
           ],
         });

@@ -77,7 +77,7 @@ fn cat(scope: &Scope) -> Catalog {
 
 fn sources_decl(catalog: &Path) -> String {
     format!(
-        "schema = 5\n[sources.cat]\npath = \"{}\"\n",
+        "schema = 6\n[sources.cat]\npath = \"{}\"\n",
         catalog.display()
     )
 }
@@ -270,8 +270,10 @@ fn a_member_the_user_removed_shows_removed_by_you() {
     assert_ne!(state_of("gh"), InstallState::RemovedByYou);
 }
 
+/// A declared package with findings is still on offer: nothing anywhere
+/// refuses or holds an install on safety grounds.
 #[test]
-fn a_declared_package_the_gate_refuses_shows_held_back() {
+fn a_declared_package_with_findings_shows_available() {
     let tmp = tempfile::tempdir().unwrap();
     let catalog = tmp.path().join("catalog");
     skill(
@@ -289,7 +291,7 @@ fn a_declared_package_the_gate_refuses_shows_held_back() {
 
     let rows = packages(&env, &cat(&scope)).unwrap();
     let state = |name: &str| rows.iter().find(|row| row.name == name).unwrap().state;
-    assert_eq!(state("risky"), InstallState::HeldBackBySafety);
+    assert_eq!(state("risky"), InstallState::Available);
     assert_eq!(state("gh"), InstallState::Available);
 }
 

@@ -59,8 +59,6 @@ const view = {
   safety: [],
   adoptable: ADOPTABLE,
   exits: [],
-  heldBack: [],
-  queued: [],
 };
 
 const ready = (remaining: UpdateRow[]) => {

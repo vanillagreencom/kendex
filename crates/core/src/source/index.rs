@@ -13,14 +13,13 @@ use serde::Serialize;
 use crate::check_catalog;
 use crate::error::Result;
 use crate::model::ItemKind;
-use crate::quality::Verdict;
 use crate::source_read::SealedSource;
 use crate::tags::Tag;
 
 use super::bundles;
 use super::meta::safe_text;
 
-pub const INDEX_SCHEMA: u32 = 1;
+pub const INDEX_SCHEMA: u32 = 2;
 
 const MAX_TEXT: usize = 200;
 const MAX_DESCRIPTION: usize = 500;
@@ -49,13 +48,13 @@ pub struct IndexCounts {
     pub bundles: usize,
 }
 
-/// The check verdicts over everything offered, the numbers a directory row
-/// shows beside the counts.
+/// The check's counts over everything offered, the numbers a directory row
+/// shows beside the package count.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct IndexChecked {
     pub breakage: usize,
-    pub held_back: usize,
-    pub warned: usize,
+    /// Safety findings across every package — advisory, never a refusal.
+    pub findings: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -70,7 +69,6 @@ pub struct IndexPackage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct IndexSafety {
     pub score: u32,
-    pub verdict: Verdict,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -124,8 +122,7 @@ pub fn index(sealed: &SealedSource, display: &str) -> Result<MarketplaceIndex> {
     let tally = report.tally();
     let checked = IndexChecked {
         breakage: tally.breakage,
-        held_back: tally.held_back,
-        warned: tally.warned,
+        findings: tally.findings,
     };
     let mut packages = Vec::new();
     for item in &report.items {
@@ -136,10 +133,7 @@ pub fn index(sealed: &SealedSource, display: &str) -> Result<MarketplaceIndex> {
             name: safe_text(&item.name, MAX_TEXT),
             description,
             tags,
-            safety: IndexSafety {
-                score: item.score,
-                verdict: item.verdict,
-            },
+            safety: IndexSafety { score: item.score },
         });
     }
     let bundles = bundle_rows(sealed, &config)?;

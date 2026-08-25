@@ -34,7 +34,7 @@ export const commands = {
 	 *  Returns whether the hook was fully rendered. The user approved the hook
 	 *  and nothing else, so the rendering apply runs only when the scope had no
 	 *  other pending work; otherwise the declaration lands and `false` says the
-	 *  Review page's ordinary preview-and-apply finishes the job.
+	 *  scope's next apply finishes the job.
 	 */
 	installDriftHook: (scope: Scope) => typedError<boolean, string>(__TAURI_INVOKE("install_drift_hook", { scope })),
 	discoverProjects: (root: string) => typedError<string[], string>(__TAURI_INVOKE("discover_projects", { root })),
@@ -49,38 +49,12 @@ export const commands = {
 	 */
 	reportRoute: (scope: Scope, name: string, kind: "agent" | "skill" | "hook" | "command" | "mcp-server" | "plugin" | "pi-extension" | null) => typedError<ReportRouteView, string>(__TAURI_INVOKE("report_route", { scope, name, kind })),
 	auditAll: () => typedError<AuditView_Serialize[], string>(__TAURI_INVOKE("audit_all")),
-	applyPlan: (scope: Scope, removeOrphans: boolean, allowUnsafe: string[]) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("apply_plan", { scope, removeOrphans, allowUnsafe })),
+	applyPlan: (scope: Scope, removeOrphans: boolean) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("apply_plan", { scope, removeOrphans })),
 	adoptItem: (scope: Scope, kind: ItemKind, name: string, harnesses: HarnessId[]) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("adopt_item", { scope, kind, name, harnesses })),
 	replaceUnmanagedItem: (scope: Scope, kind: ItemKind, name: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("replace_unmanaged_item", { scope, kind, name })),
 	toggleItem: (scope: Scope, kind: ItemKind, name: string, enabled: boolean) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("toggle_item", { scope, kind, name, enabled })),
 	removeItem: (scope: Scope, kind: ItemKind, name: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("remove_item", { scope, kind, name })),
-	/**
-	 *  Every recorded decision across every scope, each read against what is
-	 *  installed there now.
-	 */
-	listDecisions: () => typedError<DecisionsView_Serialize, string>(__TAURI_INVOKE("list_decisions")),
-	/**
-	 *  Dismiss the findings these tokens name, for one reason, in one scope.
-	 *  The tokens are re-read against a fresh audit before anything is written;
-	 *  one that no longer names what is installed stops the whole call.
-	 */
-	dismissFindings: (scope: Scope, tokens: string[], reason: DismissReason) => typedError<Dismissed_Serialize, string>(__TAURI_INVOKE("dismiss_findings", { scope, tokens, reason })),
-	/**
-	 *  Take a dismissal back. `dismissed_at` pins the exact record: a stale undo
-	 *  finding a newer dismissal at the same key refuses rather than deleting
-	 *  somebody's later decision.
-	 */
-	revokeDismissal: (scope: Scope, key: string, fingerprint: string, dismissedAt: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("revoke_dismissal", { scope, key, fingerprint, dismissedAt })),
-	revokeSafetyOverride: (scope: Scope, key: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("revoke_safety_override", { scope, key })),
 	getManifest: (scope: Scope) => typedError<ManifestRead_Serialize, string>(__TAURI_INVOKE("get_manifest", { scope })),
-	/**
-	 *  Write an edited manifest and reconcile the scope to it.
-	 * 
-	 *  `base` is what the file was when this copy was read. A whole manifest
-	 *  goes back with every save, so a copy read before something else wrote
-	 *  the file would put that back — and the caller cannot be relied on to
-	 *  notice. Refusing here needs no caller to remember anything.
-	 */
 	updateManifest: (scope: Scope, manifest: Manifest_Deserialize, base: string | null) => typedError<AuditView_Serialize, WriteRefused>(__TAURI_INVOKE("update_manifest", { scope, manifest, base })),
 	editorInventory: (scope: Scope) => typedError<EditorInventory, string>(__TAURI_INVOKE("editor_inventory", { scope })),
 	/**
@@ -334,16 +308,9 @@ export type AppSettings = {
 	"harness-roots"?: { [key in string]: string },
 	appearance?: Appearance,
 	/**
-	 *  Where the safety score starts warning and stops installing. These
-	 *  live here rather than in a manifest on purpose: a manifest travels
-	 *  with the repository it describes, and a catalog able to lower the bar
-	 *  it is measured against is not being measured.
-	 */
-	safety?: Thresholds,
-	/**
-	 *  Packages whose update notifications are off. Here rather than in a
-	 *  manifest for the same reason as `safety`: a notification preference
-	 *  committed to a shared repository would silence a whole team.
+	 *  Packages whose update notifications are off. Machine-local like the
+	 *  rest of this file: a notification preference committed to a shared
+	 *  repository would silence a whole team.
 	 */
 	"ignored-updates"?: IgnoredUpdate[],
 	/**
@@ -374,10 +341,10 @@ export type AuditView_Deserialize = {
 	warnings: ItemWarning_Deserialize[],
 	/**
 	 *  What the safety rules found in the content installed here. Each row
-	 *  carries two scores that are never combined: safety, which can hold an
-	 *  install back, and quality, which only ever informs.
+	 *  carries two scores that are never combined: safety and quality.
+	 *  Advisory both — nothing acts on either.
 	 */
-	safety: ItemSafety_Deserialize[],
+	safety: ItemSafety[],
 	/**
 	 *  The kinds "keep these files" can be offered for. Adoption needs
 	 *  somewhere in the local source to put the content, and only these
@@ -392,21 +359,6 @@ export type AuditView_Deserialize = {
 	 *  ends up offering an action the plan rejects.
 	 */
 	exits: RowExits[],
-	/**
-	 *  Installations the plan would write but the safety gate holds back.
-	 *  Kept apart from `safety` (which scores what is on disk) because the
-	 *  two describe different bytes: an accept has to name the hash of what
-	 *  apply would write, and only these rows carry it.
-	 */
-	heldBack: ItemSafety_Deserialize[],
-	/**
-	 *  Installations the plan would write that install with findings. The
-	 *  same bytes as `safety` where an item is already installed unchanged;
-	 *  for content that is new or changing, the findings that will need a
-	 *  decision after apply — said before the write, since a dismissal is
-	 *  about installed bytes and cannot be made on a plan.
-	 */
-	queued: ItemSafety_Deserialize[],
 	/**
 	 *  Set when this one scope couldn't be read at all — a corrupt or
 	 *  future-version lock or manifest. Carried as data so one scope's
@@ -428,10 +380,10 @@ export type AuditView_Serialize = {
 	warnings: ItemWarning_Serialize[],
 	/**
 	 *  What the safety rules found in the content installed here. Each row
-	 *  carries two scores that are never combined: safety, which can hold an
-	 *  install back, and quality, which only ever informs.
+	 *  carries two scores that are never combined: safety and quality.
+	 *  Advisory both — nothing acts on either.
 	 */
-	safety: ItemSafety_Serialize[],
+	safety: ItemSafety[],
 	/**
 	 *  The kinds "keep these files" can be offered for. Adoption needs
 	 *  somewhere in the local source to put the content, and only these
@@ -447,33 +399,12 @@ export type AuditView_Serialize = {
 	 */
 	exits: RowExits[],
 	/**
-	 *  Installations the plan would write but the safety gate holds back.
-	 *  Kept apart from `safety` (which scores what is on disk) because the
-	 *  two describe different bytes: an accept has to name the hash of what
-	 *  apply would write, and only these rows carry it.
-	 */
-	heldBack: ItemSafety_Serialize[],
-	/**
-	 *  Installations the plan would write that install with findings. The
-	 *  same bytes as `safety` where an item is already installed unchanged;
-	 *  for content that is new or changing, the findings that will need a
-	 *  decision after apply — said before the write, since a dismissal is
-	 *  about installed bytes and cannot be made on a plan.
-	 */
-	queued: ItemSafety_Serialize[],
-	/**
 	 *  Set when this one scope couldn't be read at all — a corrupt or
 	 *  future-version lock or manifest. Carried as data so one scope's
 	 *  failure never blanks every other scope's audit (drift/plan/notes/
 	 *  warnings/safety are empty alongside it).
 	 */
 	error?: ScopeError | null,
-};
-
-/**  One finding the publisher settled. */
-export type AuthorDismissal = {
-	reason: DismissReason,
-	dismissedAt: string,
 };
 
 /**  One package a subscription offers, as the Packages table lists it. */
@@ -697,109 +628,6 @@ export type CustomHook_Serialize = {
 	agents: HookAgents,
 };
 
-/**  What one record decided. */
-export type DecisionRecord = DecisionRecord_Serialize | DecisionRecord_Deserialize;
-
-/**  What one record decided. */
-export type DecisionRecord_Deserialize = 
-/**  A whole item's findings, read and accepted. */
-({ kind: "accepted"; findings: number; grantedAt: string }) & { dismissedAt?: never; finding?: never; fingerprint?: never; reason?: never } | 
-/**
- *  One finding, judged not to be a problem. `finding` is the current
- *  text of what it dismissed, present while that finding is still there.
- */
-({ kind: "dismissed"; fingerprint: string; reason: DismissReason; dismissedAt: string; finding: Finding | null }) & { findings?: never; grantedAt?: never };
-
-/**  What one record decided. */
-export type DecisionRecord_Serialize = 
-/**  A whole item's findings, read and accepted. */
-({ kind: "accepted"; findings: number; grantedAt: string }) & { dismissedAt?: never; finding?: never; fingerprint?: never; reason?: never } | 
-/**
- *  One finding, judged not to be a problem. `finding` is the current
- *  text of what it dismissed, present while that finding is still there.
- */
-({ kind: "dismissed"; fingerprint: string; reason: DismissReason; dismissedAt: string; finding?: Finding | null }) & { findings?: never; grantedAt?: never };
-
-/**
- *  What is recorded about one finding, read against the content in front
- *  of us now.
- */
-export type DecisionState = DecisionState_Serialize | DecisionState_Deserialize;
-
-/**
- *  What is recorded about one finding, read against the content in front
- *  of us now.
- */
-export type DecisionState_Deserialize = 
-/**
- *  Nobody has ruled on this finding for this content. `earlier` says why
- *  a previous ruling no longer applies, when there was one.
- */
-({ state: "open"; earlier: string | null }) & { dismissedAt?: never; grantedAt?: never; publisher?: never; reason?: never } | 
-/**  Judged not to be a problem, for exactly this content. */
-({ state: "dismissed"; reason: DismissReason; dismissedAt: string }) & { earlier?: never; grantedAt?: never; publisher?: never } | 
-/**
- *  The catalog that publishes this content committed a review saying
- *  this finding is not a problem, and that review still describes the
- *  exact bytes we fetched. It is reported, not hidden: `publisher` is
- *  the source the record was read from, recorded when it was read, so a
- *  person can weigh whose judgement this is.
- */
-({ state: "author-dismissed"; reason: DismissReason; dismissedAt: string; publisher: string }) & { earlier?: never; grantedAt?: never } | 
-/**
- *  Covered by an acceptance of the whole item: every finding on it was
- *  read and the item installed anyway.
- */
-({ state: "accepted"; grantedAt: string }) & { dismissedAt?: never; earlier?: never; publisher?: never; reason?: never };
-
-/**
- *  What is recorded about one finding, read against the content in front
- *  of us now.
- */
-export type DecisionState_Serialize = 
-/**
- *  Nobody has ruled on this finding for this content. `earlier` says why
- *  a previous ruling no longer applies, when there was one.
- */
-({ state: "open"; earlier?: string | null }) & { dismissedAt?: never; grantedAt?: never; publisher?: never; reason?: never } | 
-/**  Judged not to be a problem, for exactly this content. */
-({ state: "dismissed"; reason: DismissReason; dismissedAt: string }) & { earlier?: never; grantedAt?: never; publisher?: never } | 
-/**
- *  The catalog that publishes this content committed a review saying
- *  this finding is not a problem, and that review still describes the
- *  exact bytes we fetched. It is reported, not hidden: `publisher` is
- *  the source the record was read from, recorded when it was read, so a
- *  person can weigh whose judgement this is.
- */
-({ state: "author-dismissed"; reason: DismissReason; dismissedAt: string; publisher: string }) & { earlier?: never; grantedAt?: never } | 
-/**
- *  Covered by an acceptance of the whole item: every finding on it was
- *  read and the item installed anyway.
- */
-({ state: "accepted"; grantedAt: string }) & { dismissedAt?: never; earlier?: never; publisher?: never; reason?: never };
-
-/**
- *  A scope whose decisions could not be read, carried as data beside the
- *  ones that could. A view promising every decision must say which
- *  scopes it is not speaking for, never silently skip them.
- */
-export type DecisionsScopeError = {
-	scope: Scope,
-	error: ScopeError,
-};
-
-export type DecisionsView = DecisionsView_Serialize | DecisionsView_Deserialize;
-
-export type DecisionsView_Deserialize = {
-	decisions: RecordedDecision_Deserialize[],
-	errors: DecisionsScopeError[],
-};
-
-export type DecisionsView_Serialize = {
-	decisions: RecordedDecision_Serialize[],
-	errors: DecisionsScopeError[],
-};
-
 /**  One rule firing once, and what it cost. */
 export type Deduction = {
 	rule: string,
@@ -863,95 +691,6 @@ export type DirectoryView = {
 	 */
 	fetchedAt: string,
 	stale: boolean,
-};
-
-/**
- *  Why a finding was dismissed. Every reason is a claim about the content
- *  — a project's dismissals travel with the repository, so a reason must
- *  mean the same thing to whoever reads it next, and none of them may be
- *  one person's tolerance for risk.
- */
-export type DismissReason = 
-/**  The rule misread this: nothing here does what the finding says. */
-"wrong-call" | 
-/**  The flagged behaviour is what this item is for. */
-"intended" | 
-/**
- *  The content is from a source the reviewer trusts. Bound to that
- *  source's identity: the same bytes from somewhere else are a
- *  different question.
- */
-"trusted-source";
-
-/**
- *  One dismissed finding, keyed in its snapshot by the finding's
- *  fingerprint.
- */
-export type Dismissal = Dismissal_Serialize | Dismissal_Deserialize;
-
-/**
- *  One dismissed finding, keyed in its snapshot by the finding's
- *  fingerprint.
- */
-export type Dismissal_Deserialize = {
-	reason: DismissReason,
-	"dismissed-at": string,
-	/**
-	 *  The source identity a `TrustedSource` dismissal trusted — the
-	 *  resolved provenance the lock records, or the git origin of an
-	 *  unmanaged item's files. Absent for the other reasons.
-	 */
-	source?: string | null,
-};
-
-/**
- *  One dismissed finding, keyed in its snapshot by the finding's
- *  fingerprint.
- */
-export type Dismissal_Serialize = {
-	reason: DismissReason,
-	"dismissed-at": string,
-	/**
-	 *  The source identity a `TrustedSource` dismissal trusted — the
-	 *  resolved provenance the lock records, or the git origin of an
-	 *  unmanaged item's files. Absent for the other reasons.
-	 */
-	source?: string | null,
-};
-
-/**
- *  What a dismissal came back with: the scope's fresh view, and exactly
- *  what was written.
- */
-export type Dismissed = Dismissed_Serialize | Dismissed_Deserialize;
-
-/**
- *  One record a dismissal wrote, as an undo names it: the same key and
- *  fingerprint the registry uses, and the timestamp that pins this exact
- *  record so an old undo cannot delete a newer decision at the same key.
- */
-export type DismissedRecord = {
-	key: string,
-	fingerprint: string,
-	dismissedAt: string,
-};
-
-/**
- *  What a dismissal came back with: the scope's fresh view, and exactly
- *  what was written.
- */
-export type Dismissed_Deserialize = {
-	view: AuditView_Deserialize,
-	records: DismissedRecord[],
-};
-
-/**
- *  What a dismissal came back with: the scope's fresh view, and exactly
- *  what was written.
- */
-export type Dismissed_Serialize = {
-	view: AuditView_Serialize,
-	records: DismissedRecord[],
 };
 
 /**
@@ -1094,54 +833,6 @@ export type Finding = {
 	location: string,
 	message: string,
 	remediation: string,
-};
-
-/**
- *  One finding as a thing a person can rule on. Sits beside the finding it
- *  is about — `ItemSafety.decisions[i]` speaks for `ItemSafety.findings[i]`.
- */
-export type FindingDecision = FindingDecision_Serialize | FindingDecision_Deserialize;
-
-/**
- *  One finding as a thing a person can rule on. Sits beside the finding it
- *  is about — `ItemSafety.decisions[i]` speaks for `ItemSafety.findings[i]`.
- */
-export type FindingDecision_Deserialize = {
-	/**
-	 *  This finding's identity within its item — what a recorded decision
-	 *  is keyed by, and what tells one occurrence of a finding from another
-	 *  when the same bytes are read through several tools.
-	 */
-	fingerprint: string,
-	/**
-	 *  Names exactly this finding on exactly this content. Opaque to the
-	 *  UI; the only thing a dismiss command accepts. Absent where the
-	 *  content cannot be read here — there is nothing exact to bind a
-	 *  decision to, so none can be made.
-	 */
-	token: string | null,
-	state: DecisionState_Deserialize,
-};
-
-/**
- *  One finding as a thing a person can rule on. Sits beside the finding it
- *  is about — `ItemSafety.decisions[i]` speaks for `ItemSafety.findings[i]`.
- */
-export type FindingDecision_Serialize = {
-	/**
-	 *  This finding's identity within its item — what a recorded decision
-	 *  is keyed by, and what tells one occurrence of a finding from another
-	 *  when the same bytes are read through several tools.
-	 */
-	fingerprint: string,
-	/**
-	 *  Names exactly this finding on exactly this content. Opaque to the
-	 *  UI; the only thing a dismiss command accepts. Absent where the
-	 *  content cannot be read here — there is nothing exact to bind a
-	 *  decision to, so none can be made.
-	 */
-	token: string | null,
-	state: DecisionState_Serialize,
 };
 
 /**
@@ -1380,11 +1071,6 @@ export type InstallState =
 /**  Offered, nothing installed. */
 "available" | 
 /**
- *  Asked for — declared, or carried by a declared bundle — but the
- *  safety gate refuses to install it.
- */
-"held-back-by-safety" | 
-/**
  *  The bundle names a member the catalog no longer offers — renamed or
  *  removed upstream. A row saying so, never a dead page: the member list
  *  is catalog-authored text and one bad entry cannot break the read.
@@ -1439,16 +1125,11 @@ export type ItemKind = "agent" | "skill" | "hook" | "command" | "mcp-server" | "
  *  quality sit side by side and are never combined: one answers whether the
  *  content is dangerous, the other whether it is any good, and averaging
  *  them would let a well-written attack outscore a clumsy honest skill.
+ * 
+ *  This is the one advisory shape every surface reads — the plan preview,
+ *  the audit, the app and the CLI all speak in these rows.
  */
-export type ItemSafety = ItemSafety_Serialize | ItemSafety_Deserialize;
-
-/**
- *  One installation's two scores and everything behind them. Safety and
- *  quality sit side by side and are never combined: one answers whether the
- *  content is dangerous, the other whether it is any good, and averaging
- *  them would let a well-written attack outscore a clumsy honest skill.
- */
-export type ItemSafety_Deserialize = {
+export type ItemSafety = {
 	kind: ItemKind,
 	name: string,
 	harness: HarnessId,
@@ -1459,85 +1140,11 @@ export type ItemSafety_Deserialize = {
 	 */
 	location: string,
 	safety: SafetyScore,
-	/**  Advisory only, and absent for kinds with no authored prose. */
+	/**  Advisory too, and absent for kinds with no authored prose. */
 	quality: QualityScore | null,
 	findings: Finding[],
 	/**  Rules that apply to this kind but had no bytes to read here. */
 	skipped: SkippedRule[],
-	verdict: Verdict,
-	/**  Why the verdict is what it is, in sentences. */
-	reasons: string[],
-	/**
-	 *  The identity of the bytes the rules read — the reduced input the
-	 *  findings came out of, budgets and lossy decoding included.
-	 */
-	contentHash: string,
-	/**
-	 *  The identity of the complete bytes, or of the exact config entry. A
-	 *  decision binds to this and the flag that grants one carries it, so it
-	 *  is what a reviewer is accepting. `None` where the bytes cannot be
-	 *  reached from here at all.
-	 */
-	reviewHash: string | null,
-	/**
-	 *  Where the bytes came from, as kendex itself resolved and recorded it.
-	 *  What a trusted-source dismissal binds to. `None` for anything kendex
-	 *  did not install — a remote url found near the files is not a source
-	 *  to trust by, since the files could have written it.
-	 */
-	provenance: string | null,
-	override: OverrideState,
-	/**  What has been decided about each finding, in the findings' order. */
-	decisions: FindingDecision_Deserialize[],
-};
-
-/**
- *  One installation's two scores and everything behind them. Safety and
- *  quality sit side by side and are never combined: one answers whether the
- *  content is dangerous, the other whether it is any good, and averaging
- *  them would let a well-written attack outscore a clumsy honest skill.
- */
-export type ItemSafety_Serialize = {
-	kind: ItemKind,
-	name: string,
-	harness: HarnessId,
-	scope: Scope,
-	/**
-	 *  The artifact's path, or the config file holding the entry — what
-	 *  every finding's location is relative to.
-	 */
-	location: string,
-	safety: SafetyScore,
-	/**  Advisory only, and absent for kinds with no authored prose. */
-	quality: QualityScore | null,
-	findings: Finding[],
-	/**  Rules that apply to this kind but had no bytes to read here. */
-	skipped: SkippedRule[],
-	verdict: Verdict,
-	/**  Why the verdict is what it is, in sentences. */
-	reasons: string[],
-	/**
-	 *  The identity of the bytes the rules read — the reduced input the
-	 *  findings came out of, budgets and lossy decoding included.
-	 */
-	contentHash: string,
-	/**
-	 *  The identity of the complete bytes, or of the exact config entry. A
-	 *  decision binds to this and the flag that grants one carries it, so it
-	 *  is what a reviewer is accepting. `None` where the bytes cannot be
-	 *  reached from here at all.
-	 */
-	reviewHash: string | null,
-	/**
-	 *  Where the bytes came from, as kendex itself resolved and recorded it.
-	 *  What a trusted-source dismissal binds to. `None` for anything kendex
-	 *  did not install — a remote url found near the files is not a source
-	 *  to trust by, since the files could have written it.
-	 */
-	provenance: string | null,
-	override: OverrideState,
-	/**  What has been decided about each finding, in the findings' order. */
-	decisions: FindingDecision_Serialize[],
 };
 
 export type ItemSource = {
@@ -1697,19 +1304,6 @@ export type Manifest_Deserialize = {
 	 *  and other machines; what those choices pull in does not.
 	 */
 	"optional-dependencies"?: { [key in string]: string[] },
-	/**
-	 *  Reviews of content the safety gate blocked, keyed by installation.
-	 *  Each one binds to the content, the rule set and the findings it was
-	 *  granted against, so it stops applying the moment any of them moves.
-	 */
-	"safety-overrides"?: { [key in string]: SafetyOverride_Deserialize },
-	/**
-	 *  Findings judged not to be problems, keyed by installation, one
-	 *  snapshot of the reviewed content per installation with each
-	 *  dismissal beneath it. A dismissal settles a question and never
-	 *  unblocks anything.
-	 */
-	"safety-reviews"?: { [key in string]: SafetyReview_Deserialize },
 	"agent-skills"?: { [key in string]: string[] },
 	"agent-launch-instructions"?: { [key in string]: string },
 	"agent-additional-instructions"?: { [key in string]: string },
@@ -1759,19 +1353,6 @@ export type Manifest_Serialize = {
 	 *  and other machines; what those choices pull in does not.
 	 */
 	"optional-dependencies"?: { [key in string]: string[] },
-	/**
-	 *  Reviews of content the safety gate blocked, keyed by installation.
-	 *  Each one binds to the content, the rule set and the findings it was
-	 *  granted against, so it stops applying the moment any of them moves.
-	 */
-	"safety-overrides"?: { [key in string]: SafetyOverride_Serialize },
-	/**
-	 *  Findings judged not to be problems, keyed by installation, one
-	 *  snapshot of the reviewed content per installation with each
-	 *  dismissal beneath it. A dismissal settles a question and never
-	 *  unblocks anything.
-	 */
-	"safety-reviews"?: { [key in string]: SafetyReview_Serialize },
 	"agent-skills"?: { [key in string]: string[] },
 	"agent-launch-instructions"?: { [key in string]: string },
 	"agent-additional-instructions"?: { [key in string]: string },
@@ -1849,9 +1430,9 @@ export type MineRow = {
 	 */
 	declared: boolean,
 	breakage: number,
-	heldBack: number,
-	warned: number,
 	advisory: number,
+	/**  Safety findings across every package — advisory, never a refusal. */
+	safetyFindings: number,
 	/**  Every check finding, file-first, so the app can open each one. */
 	findings: StatusFinding[],
 	git: GitReadiness,
@@ -1925,15 +1506,6 @@ export type Origin =
 /**  On disk and observed, managed by nothing. */
 { origin: "unmanaged" };
 
-/**  Whether a recorded override still speaks for what is in front of us. */
-export type OverrideState = 
-/**  Nothing recorded for this installation. */
-{ state: "absent" } | 
-/**  Recorded, and still describing exactly this. */
-{ state: "active" } | 
-/**  Recorded, but what it was granted against has changed since. */
-{ state: "stale"; why: string };
-
 export type PackageDiff = {
 	files: FileDiff[],
 	totalAdditions: number,
@@ -1951,16 +1523,6 @@ export type PackageFile = {
 	size: number,
 	isReadme: boolean,
 };
-
-/**
- *  One finding on an offered package, with the publisher's record about it
- *  when they have one. A settled finding is reported here and does not
- *  count toward the score or the verdict — the same answer the install
- *  gate gives, which is the only reason this preview is worth showing.
- */
-export type PackageFinding = {
-	settled: AuthorDismissal | null,
-} & Finding;
 
 export type PackageMeta = PackageMeta_Serialize | PackageMeta_Deserialize;
 
@@ -2023,35 +1585,35 @@ export type PackageRef = {
 };
 
 /**
- *  One offered package's scores and the verdict today's thresholds give
- *  them — the dot in the Packages table and the findings on the
- *  available-package page.
+ *  One offered package's advisory scores — the number in the Packages
+ *  table and the findings on the available-package page.
  */
 export type PackageSafety = {
 	kind: ItemKind,
 	name: string,
-	/**
-	 *  Every finding, each carrying whatever has already been decided about
-	 *  it. One row, not two arrays a reader has to keep in step by index.
-	 */
-	findings: PackageFinding[],
+	findings: Finding[],
 	safety: SafetyScore,
-	/**  Advisory, never blocking. */
+	/**
+	 *  Advisory like the safety score, and absent for kinds with no
+	 *  authored prose.
+	 */
 	quality: QualityScore | null,
 	skipped: SkippedRule[],
-	verdict: Verdict,
-	reasons: string[],
+	/**
+	 *  What this preview did not read — the number an install would give
+	 *  can differ, and the page says why rather than letting its own be
+	 *  read as that one.
+	 */
+	notes: string[],
 	contentHash: string,
 	ruleset: number,
 	/**  Whether a verified cache entry answered instead of a fresh score. */
 	fromCache: boolean,
-	/**  Who recorded the settled findings, when this package carries any. */
-	publisher: string | null,
 };
 
 /**
  *  The available-package page's one payload: the preview beside the safety
- *  verdict the same content would face at install.
+ *  score the same content would earn at install.
  */
 export type PackageView = {
 	preview: PackagePreview,
@@ -2103,55 +1665,6 @@ export type QualityScore = {
 	 *  replace it.
 	 */
 	penaltyPercent: number,
-};
-
-/**  Whether a recorded decision still speaks for anything. */
-export type RecordState = 
-/**  Describing exactly what is installed now. */
-{ state: "active" } | 
-/**  Recorded, but what it was made against has changed since. */
-{ state: "stale"; why: string } | 
-/**  The item it was about is no longer installed here. */
-{ state: "obsolete" };
-
-/**
- *  One recorded decision, as the registry lists it. `key` is the manifest's
- *  own spelling and is what revoke takes back, so even an entry a hand edit
- *  mangled can still be withdrawn; the typed fields are parsed from it for
- *  display and absent where it does not parse.
- */
-export type RecordedDecision = RecordedDecision_Serialize | RecordedDecision_Deserialize;
-
-/**
- *  One recorded decision, as the registry lists it. `key` is the manifest's
- *  own spelling and is what revoke takes back, so even an entry a hand edit
- *  mangled can still be withdrawn; the typed fields are parsed from it for
- *  display and absent where it does not parse.
- */
-export type RecordedDecision_Deserialize = {
-	scope: Scope,
-	key: string,
-	kind: ItemKind | null,
-	name: string,
-	harness: HarnessId | null,
-	record: DecisionRecord_Deserialize,
-	state: RecordState,
-};
-
-/**
- *  One recorded decision, as the registry lists it. `key` is the manifest's
- *  own spelling and is what revoke takes back, so even an entry a hand edit
- *  mangled can still be withdrawn; the typed fields are parsed from it for
- *  display and absent where it does not parse.
- */
-export type RecordedDecision_Serialize = {
-	scope: Scope,
-	key: string,
-	kind: ItemKind | null,
-	name: string,
-	harness: HarnessId | null,
-	record: DecisionRecord_Serialize,
-	state: RecordState,
 };
 
 export type ReportRouteView = {
@@ -2208,78 +1721,6 @@ export type RowExits = {
 	 *  on screen would act on a tool it never mentioned.
 	 */
 	tools: HarnessId[],
-};
-
-/**
- *  One recorded review. The key it is stored under is the installation:
- *  kind, name and harness, inside the scope whose manifest holds it.
- */
-export type SafetyOverride = SafetyOverride_Serialize | SafetyOverride_Deserialize;
-
-/**
- *  One recorded review. The key it is stored under is the installation:
- *  kind, name and harness, inside the scope whose manifest holds it.
- */
-export type SafetyOverride_Deserialize = {
-	/**
-	 *  Hash of the complete bytes that were reviewed. Empty on a record
-	 *  written before decisions bound to those bytes: such a record proves
-	 *  nothing about what is installed now, so it reads as stale and the
-	 *  content has to be reviewed again.
-	 */
-	"review-hash"?: string,
-	/**  The rule set that produced the findings below. */
-	ruleset: number,
-	/**  Fingerprints of the exact findings that were reviewed, sorted. */
-	findings: string[],
-	"granted-at": string,
-	note?: string | null,
-};
-
-/**
- *  One recorded review. The key it is stored under is the installation:
- *  kind, name and harness, inside the scope whose manifest holds it.
- */
-export type SafetyOverride_Serialize = {
-	/**
-	 *  Hash of the complete bytes that were reviewed. Empty on a record
-	 *  written before decisions bound to those bytes: such a record proves
-	 *  nothing about what is installed now, so it reads as stale and the
-	 *  content has to be reviewed again.
-	 */
-	"review-hash": string,
-	/**  The rule set that produced the findings below. */
-	ruleset: number,
-	/**  Fingerprints of the exact findings that were reviewed, sorted. */
-	findings: string[],
-	"granted-at": string,
-	note?: string | null,
-};
-
-/**
- *  Every dismissal for one installation, and the content they were made
- *  against. Stored under the installation's key: kind, name and harness.
- */
-export type SafetyReview = SafetyReview_Serialize | SafetyReview_Deserialize;
-
-/**
- *  Every dismissal for one installation, and the content they were made
- *  against. Stored under the installation's key: kind, name and harness.
- */
-export type SafetyReview_Deserialize = {
-	"review-hash": string,
-	ruleset: number,
-	dismissed?: { [key in string]: Dismissal_Deserialize },
-};
-
-/**
- *  Every dismissal for one installation, and the content they were made
- *  against. Stored under the installation's key: kind, name and harness.
- */
-export type SafetyReview_Serialize = {
-	"review-hash": string,
-	ruleset: number,
-	dismissed?: { [key in string]: Dismissal_Serialize },
 };
 
 export type SafetyScore = {
@@ -2481,17 +1922,6 @@ export type Tag =
 "automation";
 
 /**
- *  Where warning starts and where installing stops. Configured in app
- *  settings rather than in a manifest: a manifest travels with the
- *  repository it describes, and a catalog that could lower the bar it is
- *  measured against is not being measured.
- */
-export type Thresholds = {
-	"warn-below": number,
-	"block-below": number,
-};
-
-/**
  *  What unsubscribing from a marketplace would do: the packages that can be
  *  removed or kept as-is, the ones the user edited (which must be forked or
  *  discarded first), and the curated sets that leave with the source.
@@ -2605,14 +2035,6 @@ export type UpdatesReport_Serialize = {
 	rows: UpdateRow[],
 	warnings: ItemWarning_Serialize[],
 };
-
-export type Verdict = 
-/**  Nothing found worth saying. */
-"clean" | 
-/**  Findings worth reading before installing; the install proceeds. */
-"warn" | 
-/**  Nothing installs until a person reviews it. */
-"block";
 
 /**  One version a row points at. */
 export type VersionRef = {

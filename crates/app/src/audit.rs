@@ -43,8 +43,8 @@ pub struct AuditView {
     pub notes: Vec<String>,
     pub warnings: Vec<ItemWarning>,
     /// What the safety rules found in the content installed here. Each row
-    /// carries two scores that are never combined: safety, which can hold an
-    /// install back, and quality, which only ever informs.
+    /// carries two scores that are never combined: safety and quality.
+    /// Advisory both — nothing acts on either.
     pub safety: Vec<ItemSafety>,
     /// The kinds "keep these files" can be offered for. Adoption needs
     /// somewhere in the local source to put the content, and only these
@@ -56,17 +56,6 @@ pub struct AuditView {
     /// it never works them out from the cause, which is how one surface
     /// ends up offering an action the plan rejects.
     pub exits: Vec<engine::exits::RowExits>,
-    /// Installations the plan would write but the safety gate holds back.
-    /// Kept apart from `safety` (which scores what is on disk) because the
-    /// two describe different bytes: an accept has to name the hash of what
-    /// apply would write, and only these rows carry it.
-    pub held_back: Vec<ItemSafety>,
-    /// Installations the plan would write that install with findings. The
-    /// same bytes as `safety` where an item is already installed unchanged;
-    /// for content that is new or changing, the findings that will need a
-    /// decision after apply — said before the write, since a dismissal is
-    /// about installed bytes and cannot be made on a plan.
-    pub queued: Vec<ItemSafety>,
     /// Set when this one scope couldn't be read at all — a corrupt or
     /// future-version lock or manifest. Carried as data so one scope's
     /// failure never blanks every other scope's audit (drift/plan/notes/
@@ -101,8 +90,6 @@ impl AuditView {
             safety: Vec::new(),
             adoptable: adoptable(),
             exits: Vec::new(),
-            held_back: Vec::new(),
-            queued: Vec::new(),
             error: Some(ScopeError::from(error)),
         }
     }
@@ -125,8 +112,6 @@ pub fn view(env: &Env, scope: &Scope) -> AuditView {
         Ok(safety) => safety,
         Err(e) => return AuditView::failed(scope, &e),
     };
-    let (held_back, queued): (Vec<ItemSafety>, Vec<ItemSafety>) =
-        report.safety.into_iter().partition(ItemSafety::blocked);
     AuditView {
         scope: scope.clone(),
         exits: engine::exits::for_rows(env, scope, &report.drift),
@@ -141,11 +126,6 @@ pub fn view(env: &Env, scope: &Scope) -> AuditView {
         warnings: report.warnings,
         safety,
         adoptable: adoptable(),
-        held_back,
-        queued: queued
-            .into_iter()
-            .filter(|row| !row.findings.is_empty())
-            .collect(),
         error: None,
     }
 }
@@ -172,12 +152,7 @@ pub fn audit_all() -> Result<Vec<AuditView>, String> {
 /// the listed plan is what executes — including the schema upgrade a v0.1
 /// manifest is owed on its first apply. (Orphan removal is the one opt-in
 /// extra; the dialog lists each left-behind item beside its checkbox.)
-pub fn apply_scope(
-    env: &Env,
-    scope: &Scope,
-    remove_orphans: bool,
-    allow_unsafe: Vec<String>,
-) -> Result<AuditView, String> {
+pub fn apply_scope(env: &Env, scope: &Scope, remove_orphans: bool) -> Result<AuditView, String> {
     // A manifest that vanished or turned legacy since the preview must be
     // said out loud, not answered with a silent empty apply.
     let path = manifest::manifest_path(env, scope);
@@ -191,41 +166,17 @@ pub fn apply_scope(
     let options = PlanOptions {
         remove_orphans,
         removal_filter: None,
-        allow_unsafe,
         ..PlanOptions::default()
     };
-    // This apply is one scope, so that scope's rows are the whole run.
     let report = engine::plan_apply(env, scope, &options).map_err(|e| e.to_string())?;
-    let rows: Vec<&engine::ItemSafety> = report.safety.iter().collect();
-    engine::refuse_unmatched_grants(&options, &rows).map_err(|e| e.to_string())?;
-    // The partial grant is the other half: one harness renders an item
-    // differently from another, so a flag can name the content one of them
-    // would get and none of the rest. A button that says "accept and
-    // install" must not install some of them and hold back the others.
-    for token in &options.allow_unsafe {
-        let name = token.rsplit_once('@').map_or(token.as_str(), |(n, _)| n);
-        if report
-            .safety
-            .iter()
-            .any(|row| row.name == name && row.blocked())
-        {
-            return Err(format!(
-                "'{name}' reads differently for another tool than the content you accepted — nothing was changed; review the findings again and accept each"
-            ));
-        }
-    }
     apply::execute(env, &report.plan, None).map_err(|e| e.to_string())?;
     Ok(view(env, scope))
 }
 
 #[tauri::command(async)]
 #[specta::specta]
-pub fn apply_plan(
-    scope: Scope,
-    remove_orphans: bool,
-    allow_unsafe: Vec<String>,
-) -> Result<AuditView, String> {
-    apply_scope(&env()?, &scope, remove_orphans, allow_unsafe)
+pub fn apply_plan(scope: Scope, remove_orphans: bool) -> Result<AuditView, String> {
+    apply_scope(&env()?, &scope, remove_orphans)
 }
 
 #[tauri::command(async)]

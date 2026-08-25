@@ -32,8 +32,6 @@ export function view(scope: Scope): AuditView {
     safety: [],
     adoptable: ADOPTABLE,
     exits: [],
-    heldBack: [],
-    queued: [],
   };
   store.state.views.push(fresh);
   return fresh;

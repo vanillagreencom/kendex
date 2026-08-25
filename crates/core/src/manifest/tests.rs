@@ -68,6 +68,51 @@ github = "prefer gh cli"
     assert_eq!(reloaded, manifest);
 }
 
+/// A schema-5 manifest still carries `[safety-overrides]` and
+/// `[safety-reviews]`. Loading accepts and drops them, and the next
+/// mutation write makes the drop durable at the current schema — the whole
+/// migration, with no record left behind.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn safety_decision_tables_load_silently_and_die_on_the_next_write() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("kendex.toml");
+    let recorded = r#"
+schema = 5
+
+[sources.cat]
+repo = "owner/repo"
+
+[skills.deploy]
+source = "cat"
+
+[safety-overrides."skill:deploy:claude"]
+review-hash = "abc"
+ruleset = 3
+findings = ["f1"]
+granted-at = "2026-01-01T00:00:00Z"
+
+[safety-reviews."skill:deploy:claude"]
+review-hash = "abc"
+ruleset = 3
+
+[safety-reviews."skill:deploy:claude".dismissed.f2]
+reason = "intended"
+dismissed-at = "2026-01-01T00:00:00Z"
+"#;
+    std::fs::write(&path, recorded).unwrap();
+
+    let manifest = load_for_mutation(&path).unwrap().unwrap();
+    assert_eq!(manifest.schema, MANIFEST_SCHEMA);
+    assert!(manifest.skills.contains_key("deploy"));
+
+    save(&path, &manifest).unwrap();
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(!written.contains("safety-overrides"), "{written}");
+    assert!(!written.contains("safety-reviews"), "{written}");
+    assert!(written.contains(&format!("schema = {MANIFEST_SCHEMA}")));
+}
+
 #[test]
 fn schema_less_file_is_legacy_and_never_a_mutation_target() {
     let tmp = tempfile::tempdir().unwrap();

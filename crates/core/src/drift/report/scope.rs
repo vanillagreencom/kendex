@@ -246,23 +246,6 @@ impl ScopeCheck<'_> {
                 .unknown
                 .push(unknown(format!("{prefix}{}", shown(note))));
         }
-        let open = snapshot.open_evidence;
-        let held = snapshot.held_back_items;
-        if open > 0 || held > 0 {
-            let mut parts = Vec::new();
-            if held > 0 {
-                parts.push(format!("{held} install(s) held back by the safety check"));
-            }
-            if open > 0 {
-                parts.push(format!("{open} finding(s) awaiting review"));
-            }
-            sections.findings.push(drift(
-                format!("{prefix}{}", parts.join(", ")),
-                Some(Remedy::Findings {
-                    global: self.global,
-                }),
-            ));
-        }
     }
 
     /// One package's dominant classification. An edited package's update is

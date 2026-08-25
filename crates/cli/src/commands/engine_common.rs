@@ -1,7 +1,6 @@
 pub use super::blocked::{conflict_detail, print_conflicts, print_exits};
 use std::io::{IsTerminal, Write};
 
-use kendex_core::engine::decisions::DecisionState;
 use kendex_core::engine::{DriftRow, DriftState, EngineReport};
 use kendex_core::env::Env;
 use kendex_core::error::CoreError;
@@ -95,87 +94,36 @@ pub fn print_unmanaged(drift: &[DriftRow]) {
 /// Enough to recognise what is there without burying the plan above it.
 const UNMANAGED_SHOWN: usize = 10;
 
-/// What the safety rules found in the content this plan would write. Held
-/// back items come first: they are the ones nothing will install.
+/// What the safety rules found in the content this plan would write —
+/// advisory, printed beside the plan.
 ///
 /// A row with no findings is still printed when some rule could not run,
 /// because "nothing was found" and "nothing could be looked at" are
 /// different answers and only one of them is a pass.
 pub fn print_safety(report: &EngineReport) {
-    print_safety_rows(report, |row| {
-        !row.findings.is_empty() || !row.skipped.is_empty()
-    });
-}
-
-/// Only what nothing will install. A refresh regenerates what is declared
-/// and says nothing about advisory findings, but an item it silently
-/// declines to write is a different thing and has to be said.
-pub fn print_held_back(report: &EngineReport) {
-    print_safety_rows(report, |row| row.blocked());
-}
-
-fn print_safety_rows(
-    report: &EngineReport,
-    wanted: impl Fn(&kendex_core::engine::ItemSafety) -> bool,
-) {
-    let mut rows: Vec<&kendex_core::engine::ItemSafety> =
-        report.safety.iter().filter(|row| wanted(row)).collect();
-    rows.sort_by_key(|row| (!row.blocked(), row.safety.score));
+    let mut rows: Vec<&kendex_core::engine::ItemSafety> = report
+        .safety
+        .iter()
+        .filter(|row| !row.findings.is_empty() || !row.skipped.is_empty())
+        .collect();
+    rows.sort_by_key(|row| row.safety.score);
     for row in rows {
-        let held = match row.blocked() {
-            true => " — held back, nothing will be installed",
-            false => "",
-        };
         say(&format!(
-            "safety: {} {} for {} scores {}/100{held}",
+            "safety: {} {} for {} scores {}/100",
             row.kind.name(),
             row.name,
             row.harness.display_name(),
             row.safety.score
         ));
-        for (index, finding) in row.findings.iter().enumerate() {
+        for finding in &row.findings {
             say(&format!(
                 "  [{}] {}: {}",
                 finding.severity.name(),
                 finding.location,
                 finding.message
             ));
-            // A finding the publisher already ruled on is still printed, and
-            // has to say so: a score of 100 beside seven findings with no
-            // word about who settled them reads as a bug in the checker.
-            //
-            // `decisions[i]` speaks for `findings[i]`. If it does not, that
-            // is a defect in the engine and this is the one surface whose
-            // whole job is to show every finding — so it says so out loud
-            // rather than dropping the line, which is what zipping the two
-            // would have done.
-            match row.decisions.get(index).map(|decision| &decision.state) {
-                Some(DecisionState::AuthorDismissed {
-                    reason,
-                    dismissed_at,
-                    publisher,
-                }) => say(&format!(
-                    "    {} reviewed this {} and recorded it as {} — it is reported, and does not count",
-                    kendex_core::names::shown(publisher),
-                    kendex_core::names::shown(dismissed_at),
-                    reason.name()
-                )),
-                Some(_) => say(&format!("    fix: {}", finding.remediation)),
-                None => say(&format!(
-                    "    fix: {} (no decision recorded beside this finding — please report this)",
-                    finding.remediation
-                )),
-            }
         }
         print_skipped(row);
-        if let Some(review_hash) = &row.review_hash
-            && row.blocked()
-        {
-            say(&format!(
-                "    to install it anyway, review the findings above and re-run with --allow-unsafe {}",
-                kendex_core::engine::allow_unsafe_flag(&row.name, review_hash)
-            ));
-        }
     }
 }
 

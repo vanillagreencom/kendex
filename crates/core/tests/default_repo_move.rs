@@ -85,7 +85,7 @@ fn pre_move_fixture() -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 5\n\n[sources.vstack]\nrepo = \"{LEGACY_SOURCE_REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"vstack\"\n\n[forks.skill.zed]\nsource = \"vstack\"\nrepo = \"{LEGACY_SOURCE_REPO}\"\nforked-at = \"2026-01-01T00:00:00Z\"\n"
+            "schema = 6\n\n[sources.vstack]\nrepo = \"{LEGACY_SOURCE_REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"vstack\"\n\n[forks.skill.zed]\nsource = \"vstack\"\nrepo = \"{LEGACY_SOURCE_REPO}\"\nforked-at = \"2026-01-01T00:00:00Z\"\n"
         ),
     )
     .unwrap();
@@ -222,7 +222,7 @@ fn the_old_spelling_resolves_from_the_adopted_cache() {
 fn the_migration_write_keeps_every_byte_except_the_repo_strings() {
     let f = pre_move_fixture();
     let commented = format!(
-        "# my notes live here\nschema = 5\n\n[sources.vstack]\nrepo   =   \"{LEGACY_SOURCE_REPO}\"   # pinned by hand\n\n[install]\nharnesses = [\"claude\"] # claude only\nmethod = \"symlink\"\n\n\n[skills.gh]\nsource = \"vstack\"\n# trailing thoughts\n\n[forks.skill.zed]\nsource = \"vstack\"\nrepo = \"{LEGACY_SOURCE_REPO}\"\nforked-at = \"2026-01-01T00:00:00Z\"\n"
+        "# my notes live here\nschema = 6\n\n[sources.vstack]\nrepo   =   \"{LEGACY_SOURCE_REPO}\"   # pinned by hand\n\n[install]\nharnesses = [\"claude\"] # claude only\nmethod = \"symlink\"\n\n\n[skills.gh]\nsource = \"vstack\"\n# trailing thoughts\n\n[forks.skill.zed]\nsource = \"vstack\"\nrepo = \"{LEGACY_SOURCE_REPO}\"\nforked-at = \"2026-01-01T00:00:00Z\"\n"
     );
     fs::write(f.project.join("kendex.toml"), &commented).unwrap();
 
@@ -299,7 +299,7 @@ fn a_default_add_finds_the_default_subscription_by_repo() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 5\n\n[sources.another]\npath = \"{}\"\n\n[sources.vstack]\nrepo = \"{LEGACY_SOURCE_REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
+            "schema = 6\n\n[sources.another]\npath = \"{}\"\n\n[sources.vstack]\nrepo = \"{LEGACY_SOURCE_REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
             another.display()
         ),
     )
@@ -337,7 +337,7 @@ fn an_old_name_scope_with_the_old_repo_renames_first_then_moves() {
     fs::write(
         project.join("vstack.toml"),
         format!(
-            "schema = 5\n\n[sources.vstack]\nrepo = \"{LEGACY_SOURCE_REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n"
+            "schema = 6\n\n[sources.vstack]\nrepo = \"{LEGACY_SOURCE_REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n"
         ),
     )
     .unwrap();

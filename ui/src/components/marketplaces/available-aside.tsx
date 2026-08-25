@@ -1,6 +1,6 @@
 import type { Catalog, PackageView } from "@/bindings";
 import { FileList } from "@/components/package/file-list";
-import { PREINSTALL_SAFETY_CAVEAT, verdictRead } from "@/lib/copy-safety";
+import { PREINSTALL_SAFETY_CAVEAT } from "@/lib/copy-safety";
 import { catalogLabel } from "@/stores/marketplaces";
 
 /** The available-package page's facts column: where it comes from, its
@@ -41,11 +41,13 @@ export function AvailableAside({
             Safety
           </h3>
           <p>
-            {verdictRead(view.safety.verdict, view.safety.skipped.length)} ·{" "}
+            {view.safety.skipped.length > 0 && view.safety.findings.length === 0
+              ? "Not fully checked · "
+              : ""}
             {view.safety.safety.score}/100
           </p>
           {/* What the number is a reading of. Under a heading called
-              Safety, a verdict alone reads as an assurance; the check can
+              Safety, a score alone reads as an assurance; the check can
               establish only that nothing matched in what it read. */}
           <p className="mt-1 text-xs text-foreground/70">
             {PREINSTALL_SAFETY_CAVEAT}
@@ -53,9 +55,9 @@ export function AvailableAside({
           {/* What this reading did not account for. A preview that showed a
               number without its caveat would be the page a person reads
               right before the install disagrees with it. */}
-          {view.safety.reasons.map((reason) => (
-            <p key={reason} className="mt-1 text-xs text-foreground/70">
-              {reason}
+          {view.safety.notes.map((note) => (
+            <p key={note} className="mt-1 text-xs text-foreground/70">
+              {note}
             </p>
           ))}
         </section>

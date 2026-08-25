@@ -38,7 +38,7 @@ fn fixture() -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 5\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n\n[skills.lint]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n\n[skills.lint]\nsource = \"cat\"\n",
             source.display()
         ),
     )
@@ -150,7 +150,7 @@ fn an_older_schema_is_brought_forward_by_the_same_apply() {
     let f = fixture();
     let path = f.project.join("kendex.toml");
     let older = fs::read_to_string(&path).unwrap().replace(
-        "schema = 5",
+        "schema = 6",
         &format!("schema = {}", kendex_core::manifest::MANIFEST_SCHEMA - 1),
     );
     fs::write(&path, older).unwrap();

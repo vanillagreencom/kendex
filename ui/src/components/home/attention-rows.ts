@@ -6,7 +6,6 @@ import {
   AUDIT_ATTENTION_TITLE,
   FORKED_ATTENTION_DETAIL,
   forkedAttentionTitle,
-  REVIEW_ACTION_LABEL,
   TRY_AGAIN_LABEL,
   UPDATES_ATTENTION_DETAIL,
   UPDATES_ATTENTION_TITLE,
@@ -27,7 +26,6 @@ export interface AttentionSource {
    *  audit that could not finish, so what needs attention may be missing
    *  from this very list. */
   auditError: string | null;
-  onReview: () => void;
   onUnmanaged: () => void;
   onProjects: () => void;
   onUpdates: () => void;
@@ -37,13 +35,7 @@ export interface AttentionSource {
 }
 
 export function attentionRows(source: AttentionSource): AttentionRow[] {
-  const {
-    changes: actionableCount,
-    inTheWay,
-    unmanaged: unmanagedCount,
-    blocked,
-    open,
-  } = auditCounts(source.views);
+  const { unmanaged: unmanagedCount } = auditCounts(source.views);
   const { editedPackages, result, updatesError, auditError } = source;
   const missing = result?.missingProjects ?? [];
 
@@ -59,47 +51,6 @@ export function attentionRows(source: AttentionSource): AttentionRow[] {
         editedPackages.length === 1 && first
           ? { label: first.name, onClick: () => source.onPackage(first) }
           : { label: "Library", onClick: source.onLibrary },
-    });
-  }
-  if (blocked > 0) {
-    rows.push({
-      key: "safety",
-      tone: "critical",
-      title: blocked === 1 ? "1 problem found" : `${blocked} problems found`,
-      detail: "Held back until you accept them.",
-      action: { label: REVIEW_ACTION_LABEL, onClick: source.onReview },
-    });
-  }
-  if (open > 0) {
-    rows.push({
-      key: "decisions",
-      tone: "warning",
-      title: open === 1 ? "1 finding to review" : `${open} findings to review`,
-      detail: "In content already installed.",
-      action: { label: REVIEW_ACTION_LABEL, onClick: source.onReview },
-    });
-  }
-  if (inTheWay > 0) {
-    rows.push({
-      key: "in-the-way",
-      tone: "warning",
-      title:
-        inTheWay === 1
-          ? "1 item needs your decision"
-          : `${inTheWay} items need your decision`,
-      detail: "Files are already where they go.",
-      action: { label: REVIEW_ACTION_LABEL, onClick: source.onReview },
-    });
-  }
-  if (actionableCount > 0) {
-    rows.push({
-      key: "drift",
-      tone: "info",
-      title:
-        actionableCount === 1
-          ? "1 change ready to apply"
-          : `${actionableCount} changes ready to apply`,
-      action: { label: REVIEW_ACTION_LABEL, onClick: source.onReview },
     });
   }
   if (unmanagedCount > 0) {

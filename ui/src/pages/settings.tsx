@@ -4,7 +4,6 @@ import type { Appearance } from "@/bindings";
 import { commands, ZOOM } from "@/bindings";
 import { AccountSection } from "@/components/account-section";
 import { PageHeader } from "@/components/page-header";
-import { RecordedDecisions } from "@/components/recorded-decisions";
 import { Section, SettingRow } from "@/components/section";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,21 +13,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { SAFETY_HELP, SAFETY_SECTION_EXPLAINER } from "@/lib/copy-safety";
 import { SETTINGS_SUBTITLE } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import { useSettingsStore } from "@/stores/settings";
 import { zoom } from "@/stores/zoom";
-
-// How cautious the safety check is, said without numbers on the dial.
-const SAFETY_LEVELS = {
-  strict: { "warn-below": 90, "block-below": 75 },
-  balanced: { "warn-below": 80, "block-below": 60 },
-  lenient: { "warn-below": 65, "block-below": 40 },
-} as const;
-
-type SafetyLevel = keyof typeof SAFETY_LEVELS;
 
 const THEME_LABELS: Record<Appearance, string> = {
   system: "System",
@@ -36,22 +25,8 @@ const THEME_LABELS: Record<Appearance, string> = {
   dark: "Dark",
 };
 
-const SAFETY_LABELS: Record<SafetyLevel, string> = {
-  strict: "Strict",
-  balanced: "Balanced",
-  lenient: "Lenient",
-};
-
-function safetyLevelOf(warn: number, block: number): SafetyLevel | "custom" {
-  for (const [name, t] of Object.entries(SAFETY_LEVELS)) {
-    if (t["warn-below"] === warn && t["block-below"] === block)
-      return name as SafetyLevel;
-  }
-  return "custom";
-}
-
 export function SettingsPage() {
-  const { settings, onScreen, setAppearance, setSafety } = useSettingsStore();
+  const { settings, onScreen, setAppearance } = useSettingsStore();
   const [version, setVersion] = useState<string | null>(null);
 
   useEffect(() => {
@@ -59,8 +34,6 @@ export function SettingsPage() {
   }, []);
 
   const percent = onScreen();
-  const safety = settings?.safety ?? SAFETY_LEVELS.balanced;
-  const level = safetyLevelOf(safety["warn-below"], safety["block-below"]);
 
   return (
     <div>
@@ -120,32 +93,7 @@ export function SettingsPage() {
             </SettingRow>
           </Section>
 
-          <Section title="Safety check" description={SAFETY_SECTION_EXPLAINER}>
-            <SettingRow label="How cautious" description={SAFETY_HELP}>
-              <Select
-                value={level === "custom" ? "balanced" : level}
-                onValueChange={(value) => {
-                  const t = SAFETY_LEVELS[value as SafetyLevel];
-                  void setSafety(t["warn-below"], t["block-below"]);
-                }}
-              >
-                <SelectTrigger className="w-40">
-                  <SelectValue>
-                    {(value: SafetyLevel) => SAFETY_LABELS[value]}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="strict">Strict</SelectItem>
-                  <SelectItem value="balanced">Balanced</SelectItem>
-                  <SelectItem value="lenient">Lenient</SelectItem>
-                </SelectContent>
-              </Select>
-            </SettingRow>
-          </Section>
-
           <AccountSection />
-
-          <RecordedDecisions />
 
           <Section title="About">
             <SettingRow

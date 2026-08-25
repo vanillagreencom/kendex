@@ -1,7 +1,6 @@
-//! `kendex check --catalog` as a CI gate: it must fail on content that
-//! would not install, and it must pass on what `kendex init` writes.
-//! HarnessKit's equivalent always exited 0, which made it unusable for
-//! exactly this.
+//! `kendex check --catalog` as a CI gate: it must fail on structural
+//! breakage, report safety findings without failing on them, and pass on
+//! what `kendex init` writes.
 #![cfg(unix)]
 
 use std::path::Path;
@@ -39,7 +38,6 @@ fn a_seeded_bad_catalog_fails_the_check() {
     assert!(!output.status.success(), "a broken catalog must not pass");
     let said = String::from_utf8_lossy(&output.stderr).into_owned();
     // Both passes have to have run: structure and safety.
-    assert!(said.contains("[error] safety:"), "{said}");
     assert!(said.contains("rce"), "{said}");
     assert!(said.contains("prompt-injection"), "{said}");
     assert!(said.contains("credential-theft"), "{said}");
@@ -85,8 +83,7 @@ fn the_json_envelope_carries_typed_findings_and_the_verdict() {
     assert_eq!(json["schema"], 1);
     assert_eq!(json["ok"], false);
     assert!(json["breakage"].as_u64().unwrap() >= 1, "{json}");
-    assert_eq!(json["warned"], 1, "{json}");
-    assert_eq!(json["held_back"], 0, "{json}");
+    assert_eq!(json["safety_findings"], 1, "{json}");
     let findings = json["findings"].as_array().unwrap();
     let name_breakage = findings
         .iter()
@@ -136,5 +133,5 @@ fn what_init_scaffolds_passes_the_check() {
     assert!(output.status.success(), "{said}");
     assert!(said.contains("3 item(s)"), "{said}");
     assert!(said.contains("0 breakage"), "{said}");
-    assert!(said.contains("0 held back"), "{said}");
+    assert!(said.contains("0 safety finding(s)"), "{said}");
 }

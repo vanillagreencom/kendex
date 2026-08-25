@@ -40,11 +40,9 @@ export const auditHandlers: Record<string, Handler> = {
   apply_plan: ({
     scope,
     removeOrphans,
-    allowUnsafe,
   }: {
     scope: Scope;
     removeOrphans: boolean;
-    allowUnsafe: string[];
   }) => {
     const v = view(scope);
     v.drift = v.drift.filter(
@@ -53,13 +51,6 @@ export const auditHandlers: Record<string, Handler> = {
         (row.state === "orphaned" && !removeOrphans),
     );
     v.plan = [];
-    const accepted = new Set(allowUnsafe.map((token) => token.split("@")[0]));
-    if (accepted.size > 0) {
-      v.heldBack = v.heldBack.filter((row) => !accepted.has(row.name));
-      for (const row of v.safety) {
-        if (accepted.has(row.name)) row.override = { state: "active" };
-      }
-    }
     return v;
   },
   adopt_item: (args: {

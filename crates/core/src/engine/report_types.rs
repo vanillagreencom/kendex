@@ -7,7 +7,7 @@ use specta::Type;
 use crate::apply::Plan;
 use crate::model::{HarnessId, ItemKind, Scope};
 
-use super::gate::ItemSafety;
+use super::scoring::ItemSafety;
 use super::set_change::{KeptInstall, SetChange};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -142,8 +142,7 @@ pub struct EngineReport {
     /// for them — the other half of the preview a bundle removal shows.
     pub kept: Vec<KeptInstall>,
     /// What the safety rules found in the content this plan would write.
-    /// Blocked rows also appear as conflicts in `drift`; the rest install
-    /// and are worth reading first.
+    /// Advisory: everything installs, and the rows are worth reading.
     pub safety: Vec<ItemSafety>,
 }
 
@@ -166,10 +165,6 @@ pub struct PlanOptions {
     /// the preview with what keeps them, so an uninstall says both halves:
     /// what goes, and what stays.
     pub uninstalled_bundles: Vec<String>,
-    /// Items whose safety findings the user has read and accepted. Each one
-    /// is recorded in the manifest by the same plan that installs it, bound
-    /// to the content, rule set and findings that were reviewed.
-    pub allow_unsafe: Vec<String>,
     /// Overwrite installations the user edited by hand. Off, an edited
     /// artifact becomes a conflict and no write touches it; this is the
     /// explicit "discard my edits" everything destructive has to go

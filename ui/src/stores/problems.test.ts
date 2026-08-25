@@ -16,8 +16,6 @@ function view(overrides: Partial<AuditView>): AuditView {
     safety: [],
     adoptable: ADOPTABLE,
     exits: [],
-    heldBack: [],
-    queued: [],
     error: null,
     ...overrides,
   };

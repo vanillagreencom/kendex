@@ -1,17 +1,13 @@
 import { RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { StatusDot } from "@/components/status-dot";
-import { auditCounts, decisionsPendingCount } from "@/lib/audit-counts";
 import {
-  decisionsFooterLabel,
-  pendingChangesLabel,
   SCANNING_LABEL,
   scanFailedStatusLabel,
   scanStatusLabel,
 } from "@/lib/copy-footer";
 import { problemsFooterLabel } from "@/lib/error-copy";
 import { relativeTime } from "@/lib/relative-time";
-import { useAuditStore } from "@/stores/audit";
 import { useNavStore } from "@/stores/nav";
 import { useProblems } from "@/stores/problems";
 import { useScanStore } from "@/stores/scan";
@@ -19,13 +15,12 @@ import { useScanStore } from "@/stores/scan";
 const AGE_TICK_MS = 30_000;
 
 // A persistent strip across the whole window, not just the content pane —
-// scan freshness and pending-changes counts apply regardless of which page
-// you're looking at.
+// scan freshness and problems apply regardless of which page you're looking
+// at.
 export function StatusFooter() {
   const scanning = useScanStore((s) => s.scanning);
   const lastScanAt = useScanStore((s) => s.lastScanAt);
   const scanError = useScanStore((s) => s.error);
-  const views = useAuditStore((s) => s.views);
   const problems = useProblems();
   const goTo = useNavStore((s) => s.goTo);
 
@@ -37,12 +32,8 @@ export function StatusFooter() {
     return () => clearInterval(id);
   }, []);
 
-  const counts = auditCounts(views);
-  const pending = counts.changes;
-  const decisions = decisionsPendingCount(counts);
-
   return (
-    <footer className="flex h-7 shrink-0 items-center justify-between border-t bg-background px-4 text-xs text-muted-foreground">
+    <footer className="flex h-7 shrink-0 items-center border-t bg-background px-4 text-xs text-muted-foreground">
       <span className="flex items-center gap-3">
         {problems.length > 0 ? (
           <button
@@ -73,26 +64,6 @@ export function StatusFooter() {
             scanStatusLabel(lastScanAt ? relativeTime(lastScanAt, now) : null)
           )}
         </span>
-      </span>
-      <span className="flex items-center gap-3">
-        {pending > 0 ? (
-          <button
-            type="button"
-            className="hover:text-foreground"
-            onClick={() => goTo("review")}
-          >
-            {pendingChangesLabel(pending)}
-          </button>
-        ) : null}
-        {decisions > 0 ? (
-          <button
-            type="button"
-            className="hover:text-foreground"
-            onClick={() => goTo("review")}
-          >
-            {decisionsFooterLabel(decisions)}
-          </button>
-        ) : null}
       </span>
     </footer>
   );

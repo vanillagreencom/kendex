@@ -1,6 +1,6 @@
 //! The Marketplaces pages' commands: every subscription with what its
 //! catalog says about itself, one catalog's packages and curated sets, a
-//! package's preview beside its safety verdict, installing, subscribing, and
+//! package's preview beside its safety score, installing, subscribing, and
 //! the Library's From column — thin shells over core, like every other
 //! command here. Reads take a [`Catalog`]: a subscription, or a repository
 //! opened from the Community tab before subscribing.
@@ -154,7 +154,7 @@ pub fn marketplace_bundle(catalog: Catalog, name: String) -> Result<BundleDetail
 }
 
 /// The available-package page's one payload: the preview beside the safety
-/// verdict the same content would face at install.
+/// score the same content would earn at install.
 #[derive(Debug, Clone, PartialEq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PackageView {
