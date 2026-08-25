@@ -23,8 +23,9 @@
 #
 # `kendex check --catalog` exits non-zero on anything that would not
 # install: a name a harness's loader will not accept, a SKILL.md that
-# disagrees with its own directory, a body past the tightest cap, or
-# content the safety rules hold back. Every finding prints its fix.
+# disagrees with its own directory. With `strict`, structural advisories
+# fail it too. Safety findings print with their fix and fail nothing,
+# under either setting.
 name: catalog-check
 
 on:
@@ -73,9 +74,9 @@ jobs:
         run: cargo build --release --locked -p kendex-cli
         working-directory: kendex
       # The caller's own answer, honoured as given. This repository asks
-      # for `strict: true` from own-catalog.yml, because everyone who
-      # installs from the default marketplace inherits whatever its safety
-      # pass still finds.
+      # for `strict: true` from own-catalog.yml: the default marketplace
+      # carries no structural advisories either. Safety findings print
+      # here and fail nothing.
       - name: Validate the catalog
         run: |
           kendex/target/release/kendex check \

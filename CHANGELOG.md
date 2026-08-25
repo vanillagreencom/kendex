@@ -38,7 +38,7 @@ an outside contributor.
   are gone: both passed `--no-available`, a flag `kendex check` never had, so
   turning them off broke every session start.
 - **Breaking:** safety is advisory: nothing holds an install or update back.
-  The app's Review & apply page, `kendex findings`/`dismiss`/`decisions` and
+  The app's Review & apply page, `kendex dismiss`/`decisions` and
   `apply --allow-unsafe` are gone; kendex.toml drops recorded decisions.
 - **Breaking:** the `trading-design` skill is no longer offered. Run
   `kendex remove trading-design --scope all` wherever it is installed (or
@@ -70,6 +70,9 @@ an outside contributor.
   `"class": "unevaluated"` where it had `"class": "unknown"`. A parser
   matching that field exhaustively has to accept the new value.
 - orch: the internal re-review loop stops at `REVIEW_MAX_CYCLES` (default 4) — `workflow-state set … rereview_panel` refuses once `cycles` is past it, so a review cannot run on for ten cycles before the PR is opened.
+- `kendex check --catalog` prints safety findings and never fails on them,
+  `--strict` included; its `--json` and `marketplace mine --json` envelopes
+  are schema 2 (`safety_findings` counts), and `kendex index --json` is schema 2.
 - **Breaking:** the install record's format moves to version 5. Older files
   upgrade in place on the first apply; if two kendex versions share a
   project, update both.

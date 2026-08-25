@@ -108,23 +108,30 @@ pub fn print_safety(report: &EngineReport) {
         .collect();
     rows.sort_by_key(|row| row.safety.score);
     for row in rows {
-        say(&format!(
-            "safety: {} {} for {} scores {}/100",
-            row.kind.name(),
-            row.name,
-            row.harness.display_name(),
-            row.safety.score
-        ));
-        for finding in &row.findings {
-            say(&format!(
-                "  [{}] {}: {}",
-                finding.severity.name(),
-                finding.location,
-                finding.message
-            ));
-        }
-        print_skipped(row);
+        print_safety_row(row);
     }
+}
+
+/// One installation's score, each finding with its severity and where it
+/// fired, and the checks that had nothing to read. Shared with `findings`,
+/// so a row reads the same beside a plan and in the listing.
+pub fn print_safety_row(row: &kendex_core::engine::ItemSafety) {
+    say(&format!(
+        "safety: {} {} for {} scores {}/100",
+        row.kind.name(),
+        row.name,
+        row.harness.display_name(),
+        row.safety.score
+    ));
+    for finding in &row.findings {
+        say(&format!(
+            "  [{}] {}: {}",
+            finding.severity.name(),
+            finding.location,
+            finding.message
+        ));
+    }
+    print_skipped(row);
 }
 
 /// The rules that apply to this kind and had no bytes to read here.

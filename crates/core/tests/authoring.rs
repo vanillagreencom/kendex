@@ -210,6 +210,7 @@ fn the_preflight_stays_local_until_a_remote_exists() {
             .ok
     };
     assert_eq!(row("Passes the check"), Some(true));
+    assert_eq!(row("No safety findings"), Some(true));
     assert_eq!(row("Has a licence"), Some(true));
     assert_eq!(row("Has a GitHub remote"), Some(false));
     assert_eq!(row("Repository is public"), None);

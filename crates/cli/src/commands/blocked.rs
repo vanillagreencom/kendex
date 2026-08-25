@@ -13,10 +13,10 @@ use super::say;
 /// without this the run ends on "nothing to do" while the thing the user
 /// asked for sits blocked with the reason never printed.
 ///
-/// Every conflict is printed, held-back items included. Their rows are not
-/// the safety section said twice: they carry what happens to the copy
-/// already installed — moved to the trash, or kept because the user's
-/// edits are in it and still standing in the way of the accepted content.
+/// Every conflict is printed. A row is not the safety section said twice:
+/// the score is advisory, and the row carries what actually stops the
+/// write — the copy already installed, moved to the trash or kept because
+/// the user's edits are in it.
 pub fn print_conflicts(env: &Env, report: &EngineReport) -> bool {
     let rows = conflict_rows(report);
     for row in &rows {

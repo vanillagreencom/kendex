@@ -3,7 +3,7 @@ use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
 
 use super::engine_common::{
-    confirm_and_execute, conflict_detail, print_conflicts, print_exits, print_notes,
+    confirm_and_execute, conflict_detail, print_conflicts, print_exits, print_notes, print_safety,
     refresh_failures,
 };
 use super::{CliResult, resolve_scopes, say};
@@ -111,6 +111,9 @@ pub fn run(
             }
         };
         print_notes(&report);
+        // The one writer that runs unattended still says what the rules
+        // found in what it is about to write.
+        print_safety(&report);
         match verbose {
             // Every row, and the ways out under the ones that have them:
             // asking for more detail must not cost the reader the way out.

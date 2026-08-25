@@ -1,4 +1,4 @@
-//! `kendex check --catalog` as a CI gate: it must fail on structural
+//! `kendex check --catalog` as a CI step: it must fail on structural
 //! breakage, report safety findings without failing on them, and pass on
 //! what `kendex init` writes.
 #![cfg(unix)]
@@ -48,7 +48,8 @@ fn a_seeded_bad_catalog_fails_the_check() {
 }
 
 /// `--json` wraps the same findings in the versioned envelope the indexer
-/// consumes: schema, typed findings, the counts, and one `ok` verdict.
+/// consumes: schema, typed findings, the counts, and `ok` — false on
+/// breakage alone, whatever the safety pass found.
 #[test]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 fn the_json_envelope_carries_typed_findings_and_the_verdict() {
@@ -63,8 +64,8 @@ fn the_json_envelope_carries_typed_findings_and_the_verdict() {
         "---\ndescription: helps\n---\nBody.\n",
     )
     .unwrap();
-    // Naming a credential file is a warning-grade safety finding, so this
-    // skill warns without being held back.
+    // Naming a credential file is a safety finding: reported, counted,
+    // and never a reason for the check to fail.
     std::fs::create_dir_all(catalog.join("skills/gh")).unwrap();
     std::fs::write(
         catalog.join("skills/gh/SKILL.md"),
@@ -80,7 +81,7 @@ fn the_json_envelope_carries_typed_findings_and_the_verdict() {
     assert!(!output.status.success());
     let json: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("stdout is the JSON envelope");
-    assert_eq!(json["schema"], 1);
+    assert_eq!(json["schema"], 2);
     assert_eq!(json["ok"], false);
     assert!(json["breakage"].as_u64().unwrap() >= 1, "{json}");
     assert_eq!(json["safety_findings"], 1, "{json}");
@@ -101,8 +102,8 @@ fn the_json_envelope_carries_typed_findings_and_the_verdict() {
     assert_eq!(safety["name"], "gh");
 }
 
-/// The scaffolding kendex writes must survive kendex's own gate. A starting
-/// point that fails the check on its first run teaches people to ignore it.
+/// The scaffolding kendex writes must pass kendex's own check. A starting
+/// point that fails it on its first run teaches people to ignore it.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn what_init_scaffolds_passes_the_check() {

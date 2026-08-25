@@ -66,6 +66,17 @@ pub fn submit_preflight(path: &std::path::Path, fetch: &dyn Fetch) -> Result<Sub
         "Passes the check",
         "fix the findings on this row first",
     ));
+    // Said, never refused over: the score is advisory on every surface,
+    // and a submit preflight that hid the count would be the one place a
+    // publisher never sees what installers will.
+    checks.push(check(
+        true,
+        &match row.safety_findings {
+            0 => "No safety findings".to_owned(),
+            count => format!("{count} safety finding(s), advisory"),
+        },
+        "",
+    ));
     let described = !row.name.is_empty() && row.description.is_some();
     checks.push(check(
         described,

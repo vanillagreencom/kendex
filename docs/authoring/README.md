@@ -96,11 +96,12 @@ from the author, never inferred from names.
 kendex marketplace check
 ```
 
-This validates every package the way installing validates it: names each
-harness's loader would refuse, skill trees that disagree with themselves, and
-the same safety rules an install runs. Problems surface in your CI, not in
-someone else's install preview. The scaffolded workflow runs it on each push
-and pull request.
+This validates every package the way installing validates it. Names each
+harness's loader would refuse and skill trees that disagree with themselves
+fail the check. The same safety rules an install runs print their findings
+and the package's score, and fail nothing: the score is advisory wherever it
+is shown. Breakage surfaces in your CI, not in someone else's install
+preview. The scaffolded workflow runs it on each push and pull request.
 
 ## Publishing
 

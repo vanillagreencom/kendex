@@ -67,6 +67,9 @@ enum Command {
     },
     /// Regenerate every declared installation from its source
     Refresh(commands::refresh::RefreshArgs),
+    /// What the safety check found in installed content: a score and its
+    /// findings per item, advisory
+    Findings(commands::findings::FindingsArgs),
     /// Check installs against the lock; non-zero exit on drift
     Verify {
         names: Vec<String>,
@@ -272,6 +275,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             no_sweep,
         } => remove(&env, names, global, scope, sweep, no_sweep)?,
         Command::Refresh(args) => commands::refresh::run_args(&env, args)?,
+        Command::Findings(args) => commands::findings::findings(&env, args)?,
         Command::Verify {
             names,
             global,

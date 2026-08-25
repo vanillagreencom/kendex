@@ -13,7 +13,7 @@
 //! would send people to fix something that is not broken.
 //!
 //! This lives in core because the CLI's `check --catalog`, the indexer's
-//! per-package verdicts, and authoring preflight all ask the same two
+//! per-package scores, and authoring preflight all ask the same two
 //! questions of the same bytes — one implementation, one answer.
 
 use std::path::{Path, PathBuf};
@@ -27,8 +27,11 @@ use crate::render::validate;
 use crate::source::{CatalogMode, SourceConfig};
 use crate::source_read::SealedSource;
 
-/// The versioned envelope `check --catalog --json` wraps this report in.
-pub const CHECK_SCHEMA: u32 = 1;
+/// The versioned envelope `check --catalog --json` and `marketplace mine
+/// --json` wrap their reports in. Schema 2 counts safety findings as
+/// `safety_findings`, carries no per-finding token, and answers `ok` on
+/// breakage alone.
+pub const CHECK_SCHEMA: u32 = 2;
 
 /// The `pass` a safety finding carries; structural findings carry the
 /// harness whose loader complained.
