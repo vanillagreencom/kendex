@@ -32,8 +32,13 @@ revisit Intel support then.
   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repo secrets): without them the
   desktop bundles build unsigned and no Tauri updater artifacts are
   produced. CLI self-update is unaffected.
-- **macOS notarization / Windows code signing**: not configured; add
-  certificates before distributing outside GitHub Releases.
+- **macOS signing + notarization** (the seven `APPLE_*` repo secrets:
+  certificate p12 + password, signing identity, team id, and the App
+  Store Connect API issuer/key-id/key): with them set, the two mac lanes
+  Developer-ID-sign and notarize the bundles; unset, they build unsigned.
+  Material and gotchas are recorded in the owner's dotfiles AGENTS.md.
+- **Windows code signing**: not configured; add a certificate before
+  distributing outside GitHub Releases.
 
 ## Local packaging
 

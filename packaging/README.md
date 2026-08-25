@@ -62,9 +62,10 @@ build time from the cloned commit.
 
 ## Caveats
 
-- The macOS `.app` is not yet notarized, so Gatekeeper calls it "damaged" on
-  first launch until signing is added to the release. The cask's caveat tells
-  users to clear the quarantine flag once: `xattr -cr /Applications/kendex.app`.
+- Releases through v5.0.1 predate Apple notarization, so Gatekeeper calls
+  those "damaged" on first launch; the cask's caveat gives the one-time fix
+  (`xattr -cr /Applications/kendex.app`). Later releases are Developer ID
+  signed and notarized by the release workflow.
 - The Linux AppImage needs FUSE (`fuse2`) to run.
 - The release workflow publishes as a **draft**, and `install.sh` resolves
   `--version latest` through GitHub's latest-release API, which skips drafts.

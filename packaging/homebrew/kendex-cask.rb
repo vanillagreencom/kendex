@@ -23,12 +23,14 @@ cask "kendex" do
   app "kendex.app"
 
   caveats <<~EOS
-    kendex is not notarized by Apple yet, so macOS may say the app is
-    "damaged" on first launch. Clear the quarantine flag once:
+    Releases through v5.0.1 predate Apple notarization; on those, macOS
+    may say the app is "damaged" on first launch. Clear the quarantine
+    flag once:
 
       xattr -cr /Applications/kendex.app
 
-    The kendex command is installed by the formula and is unaffected.
+    Later releases are signed and notarized, and the kendex command is
+    unaffected either way.
   EOS
 
   zap trash: [
