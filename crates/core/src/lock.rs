@@ -231,7 +231,10 @@ pub fn parse_entry_key(key: &str) -> Option<(ItemKind, &str, HarnessId)> {
 /// when only it exists — the rename op moves it (the global lock is
 /// `lock.json` in both generations, so only projects have two spellings).
 pub fn lock_path(env: &Env, scope: &Scope) -> PathBuf {
-    match scope {
+    // Off the canonical root, like every scope-path derivation
+    // (`rename::manifest_pair`): the path must compare equal to the ones
+    // the engine's plan speaks, whatever spelling the scope arrived under.
+    match &scope.canonical() {
         Scope::Global => env.global_lock_file(),
         Scope::Project { root } => crate::rename::existing_or_new(
             Env::project_lock_file(root),

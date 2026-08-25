@@ -185,7 +185,9 @@ lives in one capability table read by core and UI.
 
 17. One spelling per path. A root is canonicalized once, where it enters —
     a scope's root wherever paths are derived from it (`Scope::canonical`,
-    `rename::manifest_pair`), a source root at `SealedSource::open`, a
+    rebound at each derivation helper: `rename::manifest_pair`,
+    `rename::rename_ops`, `rename::retarget`, `lock::lock_path`, and the
+    engine's plan entry points), a source root at `SealedSource::open`, a
     declared source path at `source::resolve` — and every path derived
     from it carries that canonical spelling. Nothing re-canonicalizes
     downstream, and nothing may compare two spellings of one file: under a

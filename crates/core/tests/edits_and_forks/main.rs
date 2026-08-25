@@ -69,21 +69,7 @@ fn write_skill(dir: &Path, name: &str, body: &str) {
 fn world() -> World {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().to_path_buf();
-    let upstream = home.join("git").join(REPO);
-    fs::create_dir_all(&upstream).unwrap();
-    git(&upstream, &["init", "--quiet", "-b", "main"]);
-    fs::create_dir_all(home.join(".claude")).unwrap();
-    fs::create_dir_all(home.join("app/.claude")).unwrap();
-    let base = format!("file://{}", home.join("git").display());
-    World {
-        env: Env::fake(&home, FakeOs::Linux).with_var("KENDEX_GIT_BASE", &base),
-        scope: Scope::Project {
-            root: home.join("app"),
-        },
-        home,
-        upstream,
-        _tmp: tmp,
-    }
+    world_at(tmp, home)
 }
 
 /// [`world`], with every path reaching the home through a symlink — the
@@ -97,6 +83,13 @@ fn world_via_link() -> World {
     fs::create_dir_all(&real).unwrap();
     let home = tmp.path().join("via");
     std::os::unix::fs::symlink(&real, &home).unwrap();
+    world_at(tmp, home)
+}
+
+/// The fixture body both worlds share; `home` is the spelling every path
+/// in the World speaks.
+#[allow(clippy::unwrap_used)]
+fn world_at(tmp: tempfile::TempDir, home: PathBuf) -> World {
     let upstream = home.join("git").join(REPO);
     fs::create_dir_all(&upstream).unwrap();
     git(&upstream, &["init", "--quiet", "-b", "main"]);

@@ -117,6 +117,9 @@ pub(crate) fn manifest_pair(env: &Env, scope: &Scope) -> (PathBuf, PathBuf) {
 /// `.gitignore` line and the local-source directory ride along because
 /// kendex wrote both under the old name.
 pub fn rename_ops(env: &Env, scope: &Scope) -> Result<Vec<PlannedOp>> {
+    // Ops speak the canonical spelling whatever the caller's scope holds,
+    // like every scope-path derivation here (see `manifest_pair`).
+    let scope = &scope.canonical();
     let mut ops = Vec::new();
     // For a source catalog `manifest_pair` names the sibling install file;
     // its kendex.toml is the definition, which moves on its own op below.
@@ -257,6 +260,10 @@ pub fn rename_prefix_len(ops: &[PlannedOp]) -> usize {
 /// observed at the old path still holds at the new one — and an on-disk
 /// symlink keeps its old target until the op itself relinks it.
 pub fn retarget(env: &Env, scope: &Scope, ops: &mut [PlannedOp]) {
+    // The remapped pairs must speak the spelling the ops carry — canonical,
+    // like every scope-path derivation here (see `manifest_pair`) — or a
+    // strip miss would leave an op silently pointed at the old name.
+    let scope = &scope.canonical();
     let (new_manifest, old_manifest) = manifest_pair(env, scope);
     let mut pairs = vec![(old_manifest, new_manifest)];
     if let Scope::Project { root } = scope {

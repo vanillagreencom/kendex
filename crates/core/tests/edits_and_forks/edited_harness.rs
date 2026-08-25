@@ -416,3 +416,56 @@ fn updates_still_read_history_under_a_symlinked_home() {
     assert!(row.can_take_latest, "{row:?}");
     assert!(row.latest.is_some(), "{row:?}");
 }
+
+/// The fallback that binds a package the tip no longer offers: the pin's
+/// own revision still carries it, and the rel that revision yields must
+/// land under the tip seal's spelling — through a symlinked home the
+/// published roots and the seals disagree, and a strip against the wrong
+/// one silently reads the package as removed upstream, timeline and all.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_pinned_package_gone_at_tip_keeps_its_timeline_under_a_symlinked_home() {
+    let w = world_via_link();
+    write_skill(&w.upstream, "gh", "One.");
+    commit(&w.upstream, "one");
+    let one = String::from_utf8(
+        std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&w.upstream)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_OBJECT_DIRECTORY")
+            .env_remove("GIT_PREFIX")
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    declare(
+        &w,
+        &format!("[skills.gh]\nsource = \"cat\"\nrev = \"{}\"\n", one.trim()),
+    );
+    sync_and_apply(&w);
+    fs::remove_dir_all(w.upstream.join("skills/gh")).unwrap();
+    commit(&w.upstream, "two");
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
+
+    let report = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();
+    assert_eq!(
+        report.warnings,
+        Vec::new(),
+        "the fallback must bind cleanly"
+    );
+    let row = report
+        .rows
+        .iter()
+        .find(|row| row.kind == ItemKind::Skill && row.name == "gh")
+        .unwrap();
+    assert!(!row.removed_upstream, "{row:?}");
+    assert!(row.current.is_some(), "{row:?}");
+    assert!(row.latest.is_some(), "{row:?}");
+}
