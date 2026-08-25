@@ -74,6 +74,14 @@ export const updatedExceptToastLabel = (
   tools: string[],
 ): string =>
   `Updated ${name} — the copy in ${toolList(tools)} needs attention on the package page`;
+// A refusal with nothing of the person's in the files does not leave the
+// old copy alone: it goes to the trash and nothing is written back. Said
+// plainly, because it is the one outcome that took something away.
+export const removedNotReplacedToastLabel = (
+  name: string,
+  tools: string[],
+): string =>
+  `${name} could not be installed — the copy in ${toolList(tools)} went to the trash and nothing replaced it`;
 export const notUpdatedToastLabel = (name: string, tools: string[]): string =>
   `${name} was not updated — the copy in ${toolList(tools)} needs attention on the package page`;
 export const nothingMovedToastLabel = (held: number): string =>

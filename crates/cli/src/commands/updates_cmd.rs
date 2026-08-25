@@ -191,6 +191,7 @@ fn apply_one(
     }
     let report = kendex_core::package::update_one(env, scope, kind, &name)?;
     let held = kendex_core::package::held_back(&report, kind, &name);
+    let removed = kendex_core::package::removed(&report, kind, &name);
     let moving = kendex_core::package::moving(&report, kind, &name);
     let changed = !report.plan.ops.is_empty();
     // Notes, warnings, safety scores, the conflicts and their ways out, and
@@ -206,18 +207,23 @@ fn apply_one(
     if let Err(error) = kendex_core::drift::snapshot::record(env, scope) {
         say(&format!("warning: snapshot not derived ({error})"));
     }
-    say(&outcome_line(kind, &name, &held, &moving, changed));
+    say(&outcome_line(
+        kind, &name, &held, &removed, &moving, changed,
+    ));
     Ok(())
 }
 
 /// What the run just did to the package it named, in one line. Conflicts
-/// are per rendering: a copy held back in one tool while another comes
-/// current is a partial move, and calling that "nothing moved" states a
-/// wrong fact about work the same run performed.
+/// are per rendering, and a refused one is not one outcome: a copy with
+/// the person's work in it is kept where it is, while one with nothing of
+/// theirs goes to the trash with nothing written in its place. Calling
+/// either "nothing moved" states a wrong fact — about work the same run
+/// performed, or about a copy it just took away.
 fn outcome_line(
     kind: ItemKind,
     name: &str,
     held: &[&kendex_core::engine::DriftRow],
+    removed: &[&kendex_core::engine::DriftRow],
     moving: &[&kendex_core::engine::DriftRow],
     changed: bool,
 ) -> String {
@@ -227,20 +233,38 @@ fn outcome_line(
         names.dedup();
         names.join(", ")
     };
-    match (held.is_empty(), moving.is_empty(), changed) {
-        (false, false, _) => format!(
-            "{} {name} moved in {} — its copy in {} is held back by the conflict above",
-            kind.name(),
-            tools(moving),
-            tools(held)
-        ),
-        (false, true, _) => format!(
+    // Nothing of the package was refused: the two answers a run with
+    // nothing standing in its way can give.
+    if held.is_empty() && removed.is_empty() {
+        return match changed {
+            true => format!("applied — {} {name} is current here", kind.name()),
+            false => format!("nothing to change for {} {name}", kind.name()),
+        };
+    }
+    // Refused everywhere, with every copy kept: the run really did nothing.
+    if removed.is_empty() && moving.is_empty() {
+        return format!(
             "{} {name} is held back by the conflict above — nothing moved for it",
             kind.name()
-        ),
-        (true, _, true) => format!("applied — {} {name} is current here", kind.name()),
-        (true, _, false) => format!("nothing to change for {} {name}", kind.name()),
+        );
     }
+    let mut said = Vec::new();
+    if !moving.is_empty() {
+        said.push(format!("moved in {}", tools(moving)));
+    }
+    if !removed.is_empty() {
+        said.push(format!(
+            "its copy in {} went to the trash with nothing written in its place",
+            tools(removed)
+        ));
+    }
+    if !held.is_empty() {
+        said.push(format!(
+            "its copy in {} is held back by the conflict above",
+            tools(held)
+        ));
+    }
+    format!("{} {name}: {}", kind.name(), said.join(" — "))
 }
 
 fn set_ignored(
@@ -294,7 +318,7 @@ mod tests {
     fn a_package_held_in_one_tool_and_current_in_another_says_both_halves() {
         let held = row(HarnessId::Claude, DriftState::Conflict);
         let moved = row(HarnessId::Codex, DriftState::Stale);
-        let line = outcome_line(ItemKind::Skill, "gh", &[&held], &[&moved], true);
+        let line = outcome_line(ItemKind::Skill, "gh", &[&held], &[], &[&moved], true);
         assert!(line.contains("moved in codex"), "{line}");
         assert!(line.contains("copy in claude is held back"), "{line}");
         assert!(
@@ -308,7 +332,7 @@ mod tests {
         let held = row(HarnessId::Claude, DriftState::Conflict);
         // The plan still carries ops — a sibling's lock entry, the manifest
         // — so the whole plan is the wrong thing to read this off.
-        let line = outcome_line(ItemKind::Skill, "gh", &[&held], &[], true);
+        let line = outcome_line(ItemKind::Skill, "gh", &[&held], &[], &[], true);
         assert!(
             line.contains("is held back by the conflict above"),
             "{line}"
@@ -316,15 +340,36 @@ mod tests {
         assert!(line.contains("nothing moved for it"), "{line}");
     }
 
+    // A refusal with nothing of the person's in the files takes the old
+    // copy to the trash and writes nothing back. Reported as a hold, the
+    // run says nothing happened over the one outcome that took something
+    // away.
+    #[test]
+    fn a_refused_copy_that_went_to_the_trash_is_never_reported_as_held() {
+        let gone = row(HarnessId::Claude, DriftState::Conflict);
+        let line = outcome_line(ItemKind::Skill, "gh", &[], &[&gone], &[], true);
+        assert!(line.contains("went to the trash"), "{line}");
+        assert!(
+            !line.contains("nothing moved") && !line.contains("held back"),
+            "a copy that was taken away is not a copy that stayed: {line}"
+        );
+
+        // And beside a copy that did move, both halves are said.
+        let moved = row(HarnessId::Codex, DriftState::Stale);
+        let both = outcome_line(ItemKind::Skill, "gh", &[], &[&gone], &[&moved], true);
+        assert!(both.contains("moved in codex"), "{both}");
+        assert!(both.contains("copy in claude went to the trash"), "{both}");
+    }
+
     #[test]
     fn an_unheld_package_reports_what_the_plan_did() {
         let moved = row(HarnessId::Claude, DriftState::Stale);
         assert!(
-            outcome_line(ItemKind::Skill, "gh", &[], &[&moved], true).starts_with("applied"),
+            outcome_line(ItemKind::Skill, "gh", &[], &[], &[&moved], true).starts_with("applied"),
             "a plan with work to do applied it"
         );
         assert_eq!(
-            outcome_line(ItemKind::Skill, "gh", &[], &[], false),
+            outcome_line(ItemKind::Skill, "gh", &[], &[], &[], false),
             "nothing to change for skill gh"
         );
     }

@@ -60,6 +60,7 @@ export const packageHandlers: Record<string, Handler> = {
   package_update: ({ scope }: { scope: Scope }) => ({
     view: view(scope),
     heldBack: [],
+    removed: [],
     moved: [],
   }),
   package_diff: ({ from, to }: { from: VersionSel; to: VersionSel }) => ({

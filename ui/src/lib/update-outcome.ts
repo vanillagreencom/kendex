@@ -10,6 +10,7 @@ import { updatedToastLabel } from "@/lib/copy";
 import {
   nothingMovedToastLabel,
   notUpdatedToastLabel,
+  removedNotReplacedToastLabel,
   updatedExceptToastLabel,
 } from "@/lib/copy-updates";
 import { harnessName } from "@/lib/labels";
@@ -27,6 +28,14 @@ export const showUpdateOutcome = (
   name: string,
   update: PackageUpdate_Serialize,
 ): void => {
+  // Said first and said as an error: a refusal with nothing of the
+  // person's to keep takes the copy away and writes nothing back, and no
+  // other half of the outcome outranks that.
+  const gone = toolsOf(update.removed);
+  if (gone.length > 0) {
+    toast.error(removedNotReplacedToastLabel(name, gone));
+    return;
+  }
   const held = toolsOf(update.heldBack);
   if (held.length === 0) {
     toast.success(updatedToastLabel(name));

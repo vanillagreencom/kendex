@@ -534,6 +534,7 @@ describe("updates store", () => {
           exits: [],
         },
         heldBack: [],
+        removed: [],
         moved: [],
       },
     });
@@ -671,6 +672,7 @@ describe("updates store", () => {
           exits: [],
         },
         heldBack: [],
+        removed: [],
         moved: [],
       },
     });

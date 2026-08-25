@@ -104,7 +104,7 @@ describe("updates store: bulk update", () => {
     });
     vi.mocked(commands.packageUpdate).mockResolvedValue({
       status: "ok",
-      data: { view: view, heldBack: [], moved: [] },
+      data: { view: view, heldBack: [], removed: [], moved: [] },
     });
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
@@ -164,6 +164,7 @@ describe("updates store: bulk update", () => {
           exits: [],
         },
         heldBack: [],
+        removed: [],
         moved: [],
       },
     });
@@ -228,6 +229,7 @@ describe("updates store: bulk update", () => {
           exits: [],
         },
         heldBack: [],
+        removed: [],
         moved: [],
       },
     });
@@ -297,6 +299,7 @@ describe("updates store: what a bulk update claims about held-back places", () =
         data: {
           view: emptyView,
           heldBack: (per[name]?.heldBack ?? []).map(conflict),
+          removed: [],
           moved: (per[name]?.moved ?? []).map(stale),
         },
       }),

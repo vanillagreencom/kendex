@@ -67,7 +67,7 @@ const view = {
 const ready = (remaining: UpdateRow[]) => {
   vi.mocked(commands.packageUpdate).mockResolvedValue({
     status: "ok",
-    data: { view: view, heldBack: [], moved: [] },
+    data: { view: view, heldBack: [], removed: [], moved: [] },
   });
   vi.mocked(commands.updatesOverview).mockResolvedValue({
     status: "ok",
@@ -131,12 +131,13 @@ describe("updates store: a package the plan held back", () => {
 
   const held = (update: {
     heldBack: ReturnType<typeof conflict>[];
+    removed?: ReturnType<typeof conflict>[];
     moved: ReturnType<typeof stale>[];
   }) => {
     ready([]);
     vi.mocked(commands.packageUpdate).mockResolvedValue({
       status: "ok",
-      data: { view, ...update },
+      data: { view, removed: [], ...update },
     });
   };
 
@@ -166,5 +167,40 @@ describe("updates store: a package the plan held back", () => {
     held({ heldBack: [], moved: [stale("claude")] });
     await useUpdatesStore.getState().updateOne(row({ name: "gh" }));
     expect(toast.success).toHaveBeenCalledWith("Updated gh");
+  });
+});
+
+describe("updates store: a copy the run took away", () => {
+  const conflict = (harness: "claude" | "codex") => ({
+    kind: "skill" as const,
+    name: "gh",
+    harness,
+    scope: { scope: "global" } as const,
+    state: "conflict" as const,
+    // The refusal's own words: nothing of the person's was in the files,
+    // so the old copy goes and nothing is written back.
+    detail: "the previous installation will be moved to the trash",
+    cause: null,
+  });
+
+  beforeEach(() => {
+    useUpdatesStore.setState({ rows: [], busy: false, loaded: true });
+    vi.clearAllMocks();
+  });
+
+  it("says the copy went to the trash instead of calling it held", async () => {
+    ready([]);
+    vi.mocked(commands.packageUpdate).mockResolvedValue({
+      status: "ok",
+      data: { view, heldBack: [], removed: [conflict("claude")], moved: [] },
+    });
+
+    await useUpdatesStore.getState().updateOne(row({ name: "gh" }));
+
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.info).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      "gh could not be installed — the copy in Claude Code went to the trash and nothing replaced it",
+    );
   });
 });

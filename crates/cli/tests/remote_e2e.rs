@@ -545,3 +545,57 @@ fn updates_apply_says_what_the_plan_found() {
         "the plan's own account of the target reaches the reader: {printed}"
     );
 }
+
+/// A refusal is not always a hold. An installation with nothing of the
+/// person's in it goes to the trash and nothing is written back — the
+/// conflict's own detail says so — and reporting that as held back said
+/// nothing happened over the one outcome that took something away.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn updates_apply_says_when_a_copy_went_to_the_trash() {
+    let tmp = fixture();
+    let home = tmp.path();
+    let proj = home.join("proj");
+    let upstream = home.join("git/vanillagreencom/kendex");
+    assert!(
+        kendex(home, &proj, &["add", "--skill", "gh", "-y"])
+            .status
+            .success()
+    );
+    let rendered = proj.join(".agents/skills/gh/SKILL.md");
+    assert!(rendered.is_file());
+
+    // The catalog starts shipping both names for one skill: nothing can be
+    // rendered from it, and the copy on disk is nobody's edit to keep.
+    fs::write(
+        upstream.join("skills/gh/SKILL.md.disabled"),
+        "---\nname: gh\ndescription: github flows\n---\nOff.\n",
+    )
+    .unwrap();
+    git(&upstream, &["add", "-A"]);
+    git(&upstream, &["commit", "--quiet", "-m", "both names"]);
+    assert!(
+        kendex(home, &proj, &["updates", "--refresh"])
+            .status
+            .success()
+    );
+
+    let printed = said(&kendex(
+        home,
+        &proj,
+        &["updates", "apply", "skill", "gh", "-y"],
+    ));
+    assert!(
+        printed.contains("went to the trash"),
+        "the run says what it took away: {printed}"
+    );
+    assert!(
+        !printed.contains("nothing moved for it"),
+        "a copy that was removed is not one that stayed: {printed}"
+    );
+    assert!(
+        !printed.contains("applied —"),
+        "and it is not an apply either: {printed}"
+    );
+    assert!(!rendered.exists(), "the copy really is gone");
+}

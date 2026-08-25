@@ -41,8 +41,14 @@ describe("mock bridge", () => {
       kind: "skill" as ItemKind,
       name: "github",
     })) as PackageUpdate_Serialize;
-    expect(Object.keys(update).sort()).toEqual(["heldBack", "moved", "view"]);
+    expect(Object.keys(update).sort()).toEqual([
+      "heldBack",
+      "moved",
+      "removed",
+      "view",
+    ]);
     expect(Array.isArray(update.heldBack)).toBe(true);
+    expect(Array.isArray(update.removed)).toBe(true);
     expect(Array.isArray(update.moved)).toBe(true);
     expect(update.view.scope).toEqual(acme);
     // The reader the shape is for: it must not throw on this answer.

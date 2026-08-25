@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::engine::{DriftRow, DriftState, EngineReport};
+use crate::engine::EngineReport;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::manifest::Manifest;
@@ -15,6 +15,8 @@ use crate::source_read::SealedSource;
 pub mod detail;
 pub mod diff;
 pub(crate) mod item_file;
+mod outcome;
+pub use outcome::{held_back, moving, removed};
 mod timeline;
 pub mod updates;
 pub use timeline::{VersionRow, resolve_version, versions};
@@ -211,38 +213,6 @@ pub fn update_one(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Resul
         scope,
         &crate::engine::PlanOptions::for_package(kind, name),
     )
-}
-
-/// The installations of one package a plan holds back rather than writing
-/// over: a copy somebody edited, files kendex never put there, a
-/// provenance clash. A conflict belongs to one rendering, so a package
-/// that comes current in one tool while its copy in another is held
-/// answers with the held one alone — read off the whole plan instead, and
-/// the same run reports "nothing moved" over work it just did.
-pub fn held_back<'a>(report: &'a EngineReport, kind: ItemKind, name: &str) -> Vec<&'a DriftRow> {
-    package_rows(report, kind, name, |state| state == DriftState::Conflict)
-}
-
-/// The installations of one package a plan writes: what is not there yet,
-/// and what no longer matches its source. Every other row for it is either
-/// held back or nothing this plan acts on.
-pub fn moving<'a>(report: &'a EngineReport, kind: ItemKind, name: &str) -> Vec<&'a DriftRow> {
-    package_rows(report, kind, name, |state| {
-        matches!(state, DriftState::Missing | DriftState::Stale)
-    })
-}
-
-fn package_rows<'a>(
-    report: &'a EngineReport,
-    kind: ItemKind,
-    name: &str,
-    wanted: impl Fn(DriftState) -> bool,
-) -> Vec<&'a DriftRow> {
-    report
-        .drift
-        .iter()
-        .filter(|row| row.kind == kind && row.name == name && wanted(row.state))
-        .collect()
 }
 
 /// Hold an item at a version, or let it follow its source again.

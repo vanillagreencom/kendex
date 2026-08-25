@@ -86,6 +86,7 @@ describe("packageVersionActions", () => {
           error: null,
         },
         heldBack: [],
+        removed: [],
         moved: [],
       },
     });
@@ -113,6 +114,7 @@ describe("packageVersionActions", () => {
           exits: [],
           error: null,
         },
+        removed: [],
         heldBack: [
           {
             kind: "skill",

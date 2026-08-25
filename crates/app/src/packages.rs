@@ -111,9 +111,12 @@ pub fn update_set_ignored(
 #[serde(rename_all = "camelCase")]
 pub struct PackageUpdate {
     pub view: AuditView,
-    /// Renderings the plan refused to write over. Empty when the package
-    /// moved everywhere it is installed.
+    /// Renderings the plan refused to write over and left exactly as they
+    /// are. Empty when the package moved everywhere it is installed.
     pub held_back: Vec<engine::DriftRow>,
+    /// Renderings the plan took to the trash with nothing written back —
+    /// refused, and with nothing of the person's in the files to keep.
+    pub removed: Vec<engine::DriftRow>,
     /// Renderings this apply wrote. Non-empty beside `held_back` is the
     /// partial case: current in one tool, held in another.
     pub moved: Vec<engine::DriftRow>,
@@ -145,6 +148,10 @@ pub fn package_update(scope: Scope, kind: ItemKind, name: String) -> Result<Pack
         .into_iter()
         .cloned()
         .collect();
+    let removed = package::removed(&report, kind, &name)
+        .into_iter()
+        .cloned()
+        .collect();
     let moved = package::moving(&report, kind, &name)
         .into_iter()
         .cloned()
@@ -153,6 +160,7 @@ pub fn package_update(scope: Scope, kind: ItemKind, name: String) -> Result<Pack
     Ok(PackageUpdate {
         view: view(&env, &scope),
         held_back,
+        removed,
         moved,
     })
 }

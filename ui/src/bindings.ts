@@ -1729,10 +1729,15 @@ export type PackageUpdate = PackageUpdate_Serialize | PackageUpdate_Deserialize;
 export type PackageUpdate_Deserialize = {
 	view: AuditView_Deserialize,
 	/**
-	 *  Renderings the plan refused to write over. Empty when the package
-	 *  moved everywhere it is installed.
+	 *  Renderings the plan refused to write over and left exactly as they
+	 *  are. Empty when the package moved everywhere it is installed.
 	 */
 	heldBack: DriftRow_Deserialize[],
+	/**
+	 *  Renderings the plan took to the trash with nothing written back —
+	 *  refused, and with nothing of the person's in the files to keep.
+	 */
+	removed: DriftRow_Deserialize[],
 	/**
 	 *  Renderings this apply wrote. Non-empty beside `held_back` is the
 	 *  partial case: current in one tool, held in another.
@@ -1750,10 +1755,15 @@ export type PackageUpdate_Deserialize = {
 export type PackageUpdate_Serialize = {
 	view: AuditView_Serialize,
 	/**
-	 *  Renderings the plan refused to write over. Empty when the package
-	 *  moved everywhere it is installed.
+	 *  Renderings the plan refused to write over and left exactly as they
+	 *  are. Empty when the package moved everywhere it is installed.
 	 */
 	heldBack: DriftRow_Serialize[],
+	/**
+	 *  Renderings the plan took to the trash with nothing written back —
+	 *  refused, and with nothing of the person's in the files to keep.
+	 */
+	removed: DriftRow_Serialize[],
 	/**
 	 *  Renderings this apply wrote. Non-empty beside `held_back` is the
 	 *  partial case: current in one tool, held in another.
