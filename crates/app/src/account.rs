@@ -6,7 +6,8 @@
 use std::path::PathBuf;
 
 use kendex_core::author::{self, SubmitPreflight};
-use kendex_core::registry::credentials::{Credential, CredentialStore, KeyringStore};
+use kendex_core::registry::client;
+use kendex_core::registry::credentials::{Credential, KeyringStore};
 use kendex_core::registry::login::{self, Poll};
 use kendex_core::registry::submit::{self, SubmissionRow};
 use kendex_core::registry::{CurlFetch, base_url};
@@ -60,14 +61,16 @@ pub fn account_login_poll(device_code: String) -> Result<String, String> {
         Poll::Pending => Ok("pending".to_owned()),
         Poll::SlowDown => Ok("slow-down".to_owned()),
         Poll::Signed(pair) => {
-            KeyringStore
-                .save(&Credential {
+            client::commit_login(
+                &KeyringStore,
+                &Credential {
                     endpoint: base_url(),
                     access_token: pair.access_token,
                     refresh_token: pair.refresh_token,
                     capabilities: pair.capabilities,
-                })
-                .map_err(|e| e.to_string())?;
+                },
+            )
+            .map_err(|e| e.to_string())?;
             Ok("signed".to_owned())
         }
     }
@@ -76,14 +79,9 @@ pub fn account_login_poll(device_code: String) -> Result<String, String> {
 #[tauri::command(async)]
 #[specta::specta]
 pub fn account_logout() -> Result<(), String> {
-    let store = KeyringStore;
-    let Some(credential) = store.load().map_err(|e| e.to_string())? else {
-        return Ok(());
-    };
-    // Server first: if revocation cannot be recorded, the local copy stays
-    // so a retry still has something to revoke.
-    login::revoke(&CurlFetch, &credential.refresh_token).map_err(|e| e.to_string())?;
-    store.clear().map_err(|e| e.to_string())
+    client::logout(&CurlFetch, &KeyringStore)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]

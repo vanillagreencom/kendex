@@ -714,7 +714,7 @@ lives in one capability table read by core and UI.
   its real fetch time. All reads go through the `Fetch` trait (curl via
   `Hardened`, plain http only under `KENDEX_API`); tests inject transports.
   Bearer calls route through `registry/client.rs`: one cross-process lock
-  serializes refresh rotation, saving the rotated pair before retry.
+  serializes login, logout, and refresh rotation, saving rotations before retry.
   `skillssh.rs` pins its public wire schema and kill switch
   (`KENDEX_SKILLSSH=off`); a hit is a lead, never an identity, and installs
   through the same subscribe path. Collections and deep links arrive with W3/W4.

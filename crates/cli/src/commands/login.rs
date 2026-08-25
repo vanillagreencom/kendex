@@ -3,7 +3,8 @@
 //! and the credential lives in the OS keychain or nowhere.
 
 use super::say;
-use kendex_core::error::{CoreError, Result};
+use kendex_core::error::Result;
+use kendex_core::registry::client;
 use kendex_core::registry::credentials::{Credential, CredentialStore, KeyringStore};
 use kendex_core::registry::login::{self, Poll};
 use kendex_core::registry::{CurlFetch, base_url};
@@ -37,12 +38,15 @@ pub fn login() -> Result<()> {
             Poll::Pending => {}
             Poll::SlowDown => interval += 5,
             Poll::Signed(pair) => {
-                store.save(&Credential {
-                    endpoint: base_url(),
-                    access_token: pair.access_token,
-                    refresh_token: pair.refresh_token,
-                    capabilities: pair.capabilities,
-                })?;
+                client::commit_login(
+                    &store,
+                    &Credential {
+                        endpoint: base_url(),
+                        access_token: pair.access_token,
+                        refresh_token: pair.refresh_token,
+                        capabilities: pair.capabilities,
+                    },
+                )?;
                 say("Signed in. The credential is in your system keychain.");
                 return Ok(());
             }
@@ -51,19 +55,10 @@ pub fn login() -> Result<()> {
 }
 
 pub fn logout() -> Result<()> {
-    let store = KeyringStore;
-    let Some(credential) = store.load()? else {
+    if !client::logout(&CurlFetch, &KeyringStore)? {
         say("Not signed in.");
         return Ok(());
-    };
-    // Server first: if revocation cannot be recorded, the local copy
-    // stays so a retry still has something to revoke.
-    login::revoke(&CurlFetch, &credential.refresh_token).map_err(|error| {
-        CoreError::RegistryUnavailable {
-            why: format!("{error} — the local credential was kept so you can retry"),
-        }
-    })?;
-    store.clear()?;
+    }
     say("Signed out — every device credential in that sign-in is now dead.");
     Ok(())
 }
