@@ -139,6 +139,13 @@ capture FAKE_RC=3 FAKE_OUT="kendex: fatal"
 assert_eq "$rc" 0 "exits 0 when the check itself fails"
 assert_contains "$out" "kendex check could not run (exit 3)" "names the failure and exit code"
 assert_contains "$out" "kendex: fatal" "carries the failure's own output"
+# A signal or a timeout kills the check before it says anything. The
+# empty-output arm belongs to exit 2 alone, so this keeps the colon over a
+# blank line — the same text the embedded and Pi hooks print.
+capture FAKE_RC=3 FAKE_OUT=""
+assert_eq "$rc" 0 "exits 0 when the check dies saying nothing"
+assert_eq "$out" $'kendex check could not run (exit 3); drift status unknown:\n\n' \
+  "exit 3 with no output keeps the shape every rendering prints"
 
 echo "session-drift-check: unreadable stdin"
 # Strict mode must not let a failed payload read abort the session start.

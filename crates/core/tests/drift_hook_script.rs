@@ -137,6 +137,18 @@ fn the_hook_script_honors_its_contract() {
     assert!(out.contains("fatal"), "{out}");
     assert_eq!(code, 0);
 
+    // A signal or a timeout kills the check before it says anything. The
+    // empty-output arm belongs to exit 2 alone, so this keeps the colon
+    // over a blank line — the same text the shell and Pi hooks print.
+    let (out, code) = run_hook(dir, "{}", &[], Some("#!/bin/sh\nexit 3\n"));
+    assert_eq!(
+        (out.as_str(), code),
+        (
+            "kendex check could not run (exit 3); drift status unknown:\n\n",
+            0
+        )
+    );
+
     // Drift: the report passes through, exit stays 0.
     let (out, code) = run_hook(
         dir,

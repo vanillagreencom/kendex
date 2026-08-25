@@ -74,7 +74,12 @@ export function driftMessage(result: DriftCheckResult): string | undefined {
 		case "incomplete":
 			return `kendex check incomplete (exit 2); some drift status unknown:\n${result.report}`;
 		case "failed":
-			if (result.report === "") return `kendex check could not run (exit ${result.exitCode}); drift status unknown`;
+			// Only exit 2 drops the colon: kendex chose that code and said
+			// nothing, so there is no report coming. A code >= 3 is a signal
+			// or a timeout, where the colon over a blank line is what both
+			// shell renderings print — this arm has to match them.
+			if (result.exitCode === 2 && result.report === "")
+				return `kendex check could not run (exit ${result.exitCode}); drift status unknown`;
 			return `kendex check could not run (exit ${result.exitCode}); drift status unknown:\n${result.report}`;
 	}
 }

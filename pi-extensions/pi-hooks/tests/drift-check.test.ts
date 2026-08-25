@@ -133,6 +133,17 @@ describe("drift-check classification", () => {
 		});
 	});
 
+	test("exit 3 with no output keeps the shape every rendering prints", async () => {
+		// A signal or a timeout kills the check before it says anything. The
+		// empty-output arm belongs to exit 2 alone, so this keeps the colon
+		// over a blank line — the same text both shell hooks print.
+		await withFake("3", "", async ({ binary, root }) => {
+			const result = await runDriftCheck(root, { timeoutMs: 5000, binary });
+			expect(result).toEqual({ kind: "failed", exitCode: 3, report: "" });
+			expect(driftMessage(result)).toBe("kendex check could not run (exit 3); drift status unknown:\n");
+		});
+	});
+
 	test("a missing binary is unavailable and says so in one line", async () => {
 		const root = mkdtempSync(join(tmpdir(), "pi-hooks-drift-missing-"));
 		try {
