@@ -8,7 +8,7 @@ crates/core/src/engine/pi_hooks_move/mod.rs	508
 crates/core/src/engine/pi_hooks_move/preflight.rs	765
 crates/core/src/error.rs	419
 crates/core/src/remote/store.rs	420
-docs/ARCHITECTURE.md	842
+docs/ARCHITECTURE.md	845
 hooks/block-repo-copy.sh	511
 pi-extensions/pi-agents-tmux/extensions/subagent/browser.ts	650
 pi-extensions/pi-agents-tmux/extensions/subagent/dashboard.ts	431

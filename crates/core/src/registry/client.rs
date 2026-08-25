@@ -158,6 +158,8 @@ fn refresh(fetch: &dyn Fetch, refresh_token: &str) -> std::result::Result<TokenP
     let response = fetch
         .post_json(&format!("{}/api/v1/device/token", base_url()), &body)
         .map_err(Refused::Transient)?;
+    // Only these statuses prove the refresh grant is dead. Timeouts, rate
+    // limits, and server failures keep the credential available for retry.
     if matches!(response.status, 400 | 401 | 403) {
         return Err(Refused::Definitive(server_message(&response)));
     }
