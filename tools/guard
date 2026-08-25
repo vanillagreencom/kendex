@@ -107,10 +107,13 @@ done <<<"$prose_files"
 # CHANGELOG entries are for consumers: one outcome each, one to three
 # source lines, a Breaking migration inline. Longer is an essay.
 if [ -f CHANGELOG.md ]; then
+  # An entry runs from its `- ` to the next column-0 line; every indented
+  # line and every blank line with more entry after it counts.
   long_entries=$(awk '
-    function flush() { if (n > 3) printf "  line %d: %d lines\n", start, n; n = 0 }
+    function flush() { if (n > 3) printf "  line %d: %d lines\n", start, n; n = 0; blank = 0 }
     /^- / { flush(); n = 1; start = NR; next }
-    /^  [^ ]/ { if (n) n++; next }
+    /^[ \t]*$/ { if (n) blank++; next }
+    /^[ \t]/ { if (n) { n += blank + 1; blank = 0 }; next }
     { flush() }
     END { flush() }' CHANGELOG.md)
   [ -n "$long_entries" ] && say "CHANGELOG.md entries run past three lines — state the outcome, keep the story out:
