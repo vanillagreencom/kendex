@@ -97,15 +97,12 @@ const UNMANAGED_SHOWN: usize = 10;
 /// What the safety rules found in the content this plan would write —
 /// advisory, printed beside the plan.
 ///
-/// A row with no findings is still printed when some rule could not run,
-/// because "nothing was found" and "nothing could be looked at" are
-/// different answers and only one of them is a pass.
+/// Every written item's score line prints, a clean one included: the
+/// contract is the score beside every write, and a clean row going silent
+/// would make "scored 100" and "never scored" read the same. Findings and
+/// not-fully-checked lines ride under a row only when there are any.
 pub fn print_safety(report: &EngineReport) {
-    let mut rows: Vec<&kendex_core::engine::ItemSafety> = report
-        .safety
-        .iter()
-        .filter(|row| !row.findings.is_empty() || !row.skipped.is_empty())
-        .collect();
+    let mut rows: Vec<&kendex_core::engine::ItemSafety> = report.safety.iter().collect();
     rows.sort_by_key(|row| row.safety.score);
     for row in rows {
         print_safety_row(row);

@@ -322,6 +322,29 @@ fn an_edit_is_named_beside_the_safety_findings() {
     );
 }
 
+/// A clean write still says its score. The contract is the score beside
+/// every write; a clean row going silent would make "scored 100" and
+/// "never scored" read the same. No finding lines ride under it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_clean_write_prints_its_score_line() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let project = declared(home, "Read the plan, then the diff.\n");
+
+    let applied = kendex(home, &project, &["apply", "-y"]);
+    assert!(applied.status.success(), "{applied:?}");
+    let printed = String::from_utf8_lossy(&applied.stderr).into_owned();
+    assert!(
+        printed.contains("safety: skill deploy for Claude Code scores 100/100"),
+        "{printed}"
+    );
+    assert!(
+        !printed.lines().any(|line| line.starts_with("  [")),
+        "a clean row carries no finding lines: {printed}"
+    );
+}
+
 /// The score never gates: a declaration whose content carries a critical
 /// finding refreshes onto disk like any other.
 #[test]

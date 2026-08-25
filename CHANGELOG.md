@@ -13,7 +13,6 @@ an outside contributor.
 - `kendex check` exits 1, not 2, when packages await re-evaluation, so the
   session-start report no longer opens with "kendex check could not run" after
   a completed run. The drift hook script changed; `kendex drift-hook` reinstalls it.
-
 - A hook found in a settings file is safety-checked on its own entry, not
   the whole file: a `permissions.ask` guard naming `mkfs` no longer flags
   every hook beside it, and a hook whose own entry carries it still scores.
