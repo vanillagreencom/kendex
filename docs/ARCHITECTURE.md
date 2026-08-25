@@ -802,23 +802,18 @@ lives in one capability table read by core and UI.
   no pickers.
 - **Two scores, never averaged; both advisory.** Safety answers "is this
   dangerous"; quality answers "is this well made". Neither holds anything
-  back: every surface shows the score and its findings — severity is
-  Critical / High / Medium / Low, never color-only — and install, update
-  and apply proceed regardless. Safety is `100 − Σ deductions` (Critical
-  25 / High 15 / Medium 8 / Low 3), first hit per rule at full weight and
-  repeats at a point each until they have cost as much again. Quality is
-  wshobson's weighted-dimension model, static layer only: no LLM judge, no
-  simulation, no letter grades. `quality::AuditResult` (safety, quality,
-  findings, skipped, ruleset) is the one payload every scored shape embeds:
-  `engine::ItemSafety` for planned and installed rows (`engine/scoring.rs`,
-  `engine/observed.rs`), `PackageSafety` (`browse/safety.rs`) and
-  `CheckedItem` for what is not installed yet. The two bound shapes flatten
-  it, so the `AuditResult` TS type reads their fields at the top level. The
-  CLI prints one block wherever it scores anything (`add`, `apply`,
-  `refresh`, `check --catalog`): the score line, then a line per finding —
-  severity word, what the rule matched, and its location as subtext. No fix
-  line, no prompt, and a clean package still prints its score, or "scored
-  100" and "never scored" would read alike.
+  back: severity is named in words, never color-only, and install, update
+  and apply proceed regardless. Every surface shows the score with its
+  findings; the CLI prints a score line then one per finding, no fix line.
+  Safety is `100 − Σ deductions` (Critical 25 / High 15 / Medium 8 / Low
+  3), first hit per rule at full weight, repeats a point each up to as much
+  again. Quality is wshobson's weighted-dimension model, static layer only:
+  no LLM judge, no simulation, no letter grades. `quality::AuditResult`
+  (safety, quality, findings, skipped, ruleset) is what every scored shape
+  embeds: `engine::ItemSafety` for planned and installed rows
+  (`engine/scoring.rs`, `engine/observed.rs`), `PackageSafety`
+  (`browse/safety.rs`) and `CheckedItem` for what is not installed; the
+  bound shapes flatten it, so TS reads their fields at top level.
 - **Rules read typed per-kind inputs and say when they cannot read.** A
   skill carries its whole tree, a hook its registration and script, an MCP
   server its command, args, env and headers, a plugin its manifest and
