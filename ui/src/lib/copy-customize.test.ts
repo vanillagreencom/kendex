@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { HookDelivery } from "@/bindings";
-import { hookDeliverySummary } from "@/lib/copy-customize";
+import { customizedLine, hookDeliverySummary } from "@/lib/copy-customize";
+import type { ItemCustomization } from "@/lib/customization";
 
 // The line under a hook is built from delivery rows the engine computed —
 // these tests pin the composition, so no string literal in the UI can
@@ -36,5 +37,31 @@ describe("hookDeliverySummary", () => {
 
   it("says nothing for an empty set", () => {
     expect(hookDeliverySummary([])).toBe("");
+  });
+});
+
+describe("customizedLine", () => {
+  const nothing: ItemCustomization = {
+    launch: null,
+    additional: null,
+    instructions: null,
+    skills: null,
+    frontmatter: [],
+  };
+
+  it("names a hand edit on its own", () => {
+    expect(customizedLine("edited", nothing)).toBe("Edited by you");
+  });
+
+  it("names a fork and the settings set on top of it", () => {
+    expect(customizedLine("forked", { ...nothing, instructions: "x" })).toBe(
+      "Forked · Extra instructions",
+    );
+  });
+
+  it("lists only the settings for a settings row", () => {
+    expect(customizedLine("settings", { ...nothing, launch: "x" })).toBe(
+      "Launch instructions",
+    );
   });
 });

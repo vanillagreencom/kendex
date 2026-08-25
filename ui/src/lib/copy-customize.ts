@@ -1,5 +1,7 @@
 import type { HookDelivery } from "@/bindings";
+import { EDITED_UPDATE_TAG, FORKED_BADGE_LABEL } from "@/lib/copy";
 import type { ItemCustomization } from "@/lib/customization";
+import type { Why } from "@/lib/customized-places";
 import type { GroupStatus } from "@/lib/derive";
 import { harnessName } from "@/lib/labels";
 
@@ -124,5 +126,17 @@ export function customizationSummary(one: ItemCustomization): string {
   for (const [harness] of one.frontmatter) {
     parts.push(`${harnessName(harness)} settings`);
   }
+  return parts.join(" · ");
+}
+
+/** The line under an index row: how this place made the package its own.
+ *  A hand edit or a fork is named as such, with any settings set on top of
+ *  it after; a settings-only row lists just those. */
+export function customizedLine(why: Why, one: ItemCustomization): string {
+  const parts: string[] = [];
+  if (why === "edited") parts.push(EDITED_UPDATE_TAG);
+  if (why === "forked") parts.push(FORKED_BADGE_LABEL);
+  const settings = customizationSummary(one);
+  if (settings) parts.push(settings);
   return parts.join(" · ");
 }

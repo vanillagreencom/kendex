@@ -26,9 +26,9 @@ import {
 } from "@/lib/copy-customize";
 import {
   clearItemCustomization,
-  customizedItems,
   sharedCustomization,
 } from "@/lib/customization";
+import { useCustomizedHere } from "@/lib/customized-here";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import { useEditorStore } from "@/stores/editor";
@@ -53,6 +53,7 @@ export function CustomizePage() {
     save,
   } = useEditorStore();
   const projects = useSettingsStore((s) => s.settings?.projects ?? []);
+  const customized = useCustomizedHere(draft, scope);
 
   // Unsaved edits made on a package's own page live in this same draft;
   // reloading over them here would throw away work with nothing said.
@@ -125,7 +126,7 @@ export function CustomizePage() {
                 description={CUSTOMIZED_SECTION_HELP}
               >
                 <CustomizedIndex
-                  items={customizedItems(draft)}
+                  items={customized}
                   scope={scope}
                   onRemove={(kind, name) =>
                     edit((current) =>

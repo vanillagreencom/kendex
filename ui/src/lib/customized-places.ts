@@ -1,7 +1,11 @@
 import type { ItemKind, Scope, UpdateRow } from "@/bindings";
-import { customizedItems } from "@/lib/customization";
+import {
+  customizedItems,
+  type ItemCustomization,
+  itemCustomization,
+} from "@/lib/customization";
 import type { Draft } from "@/lib/editor-draft";
-import { scopeKey } from "@/lib/scope";
+import { sameScope, scopeKey } from "@/lib/scope";
 
 /** What one place holds for one package.
  *
@@ -115,4 +119,50 @@ export function standingIn(
 ): PlaceStanding | undefined {
   const key = scopeKey(scope);
   return standings.find((s) => scopeKey(s.scope) === key);
+}
+
+/** One row of the Customize page's index: a package this place holds
+ *  something for, why it counts, and what its overlay sets. */
+export interface CustomizedHere {
+  kind: ItemKind;
+  name: string;
+  why: Why;
+  customization: ItemCustomization;
+}
+
+/** Every package customized at one place, by the rule the Library's mark
+ *  reads. Candidates come from wherever each fact is recorded (the
+ *  manifest's overlay and forks tables, and this place's update rows),
+ *  and each is put to {@link placeStandings}, so this list and the mark
+ *  on a Library row cannot answer differently about the same package. */
+export function customizedHere(
+  source: PlacesSource,
+  scope: Scope,
+): CustomizedHere[] {
+  const manifest = source.manifests[scopeKey(scope)] ?? null;
+  const candidates = new Map<string, [ItemKind, string]>();
+  const add = (kind: ItemKind, name: string) =>
+    candidates.set(`${kind}:${name}`, [kind, name]);
+  for (const item of customizedItems(manifest)) add(item.kind, item.name);
+  for (const [kind, byName] of Object.entries(manifest?.forks ?? {}))
+    for (const name of Object.keys(byName ?? {})) add(kind as ItemKind, name);
+  for (const row of source.rows.values())
+    if (sameScope(row.scope, scope) && (row.blockedByLocalEdit || row.forked))
+      add(row.kind, row.name);
+  const out: CustomizedHere[] = [];
+  for (const [kind, name] of candidates.values()) {
+    const [standing] = placeStandings(source, kind, name, [scope]);
+    if (standing.standing !== "customized") continue;
+    if (standing.why === null)
+      throw new Error(`customized place ${kind}:${name} names no reason`);
+    out.push({
+      kind,
+      name,
+      why: standing.why,
+      customization: itemCustomization(manifest, kind, name),
+    });
+  }
+  return out.sort(
+    (a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name),
+  );
 }

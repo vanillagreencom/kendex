@@ -244,6 +244,16 @@ lives in one capability table read by core and UI.
 - Both surfaces edit one draft of one manifest per scope, in
   `stores/editor.ts`. The Customize page reloads only when nothing is
   unsaved; `lib/customization.ts` slices that draft per package.
+- A place is customized when its manifest overlay holds something, its
+  installed files were edited by hand, or its copy is a fork.
+  `lib/customized-places.ts::placeStandings` is the one answer to that
+  question. Three readers, no other: the Library row's mark
+  (`lib/library-standings.ts`), the package header's mark
+  (`lib/package-mark.ts`), and the Customize page's index
+  (`customizedHere`, via `lib/customized-here.ts`). The index lists every
+  package the Library marks for the place being edited, reading the open
+  draft in place of that place's saved manifest so an unsaved removal
+  leaves the list at once.
 - Hook events have one vocabulary — Claude Code's names, in
   `core/hook.rs::EVENTS`; every other harness's map is keyed by it. The
   picker offers that list, the validator rejects anything outside it, the
