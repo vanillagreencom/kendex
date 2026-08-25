@@ -9,6 +9,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { clickAsksToOpen } from "@/lib/click-asks-to-open";
 import { bundledWithLabel, FORKED_BADGE_LABEL, vendorHelp } from "@/lib/copy";
 import { STATUS_LABELS } from "@/lib/copy-customize";
 import {
@@ -69,7 +70,15 @@ export function InstalledRow({
     .join(", ");
 
   return (
-    <TableRow onClick={() => onOpen()} className="cursor-pointer">
+    <TableRow
+      // A shortcut for the mouse, on top of the name's own button: the row
+      // reads as one target, so clicking any of its cells should open the
+      // package.
+      onClick={(event) => {
+        if (clickAsksToOpen(event)) onOpen();
+      }}
+      className="cursor-pointer"
+    >
       {/* Cells are nowrap by default; the description is the one column that
           wants to wrap rather than run out of the row and get cut mid-word. */}
       <TableCell className="max-w-[22rem] font-medium whitespace-normal">
@@ -87,7 +96,16 @@ export function InstalledRow({
           </span>
           <span className="min-w-0">
             <span className="flex items-center gap-1.5">
-              <span className="block truncate">{displayName}</span>
+              {/* The keyboard's one way into the row: a row is not
+                  focusable, so without a real control here every package
+                  in the Library is mouse-only. */}
+              <button
+                type="button"
+                onClick={() => onOpen()}
+                className="block min-w-0 truncate text-left hover:underline"
+              >
+                {displayName}
+              </button>
               {/* One badge per place. A single "Forked" over several tells
                   the reader it happened and not where, and leaves nothing
                   to open — a fork belongs to the place it was made in. */}
@@ -97,13 +115,7 @@ export function InstalledRow({
                   variant="outline"
                   className="cursor-pointer"
                   render={
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onOpen(where);
-                      }}
-                    >
+                    <button type="button" onClick={() => onOpen(where)}>
                       {`${FORKED_BADGE_LABEL} in ${placeName(where, scopes)}`}
                     </button>
                   }
@@ -122,10 +134,7 @@ export function InstalledRow({
             {mark?.goTo ? (
               <button
                 type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onOpen(mark.goTo ?? undefined);
-                }}
+                onClick={() => onOpen(mark.goTo ?? undefined)}
                 className="mt-0.5 block text-left text-xs text-customized hover:underline"
               >
                 {mark.label}

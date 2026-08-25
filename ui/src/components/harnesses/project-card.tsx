@@ -4,6 +4,7 @@ import { ShowEverythingButton } from "@/components/harnesses/show-everything-but
 import { KindCountBadges } from "@/components/kind-count-badges";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { clickAsksToOpen } from "@/lib/click-asks-to-open";
 
 /**
  * One place a setup applies — Personal, or a project folder. Personal and a
@@ -44,13 +45,9 @@ export function ProjectCard({
     <Card
       // A shortcut for the mouse, on top of the name's own button: the card
       // reads as one target, so clicking its empty space should do what the
-      // card is for. Every control inside it means something else and has
-      // already answered the click; a drag that ends here was someone
-      // keeping the path, not asking to leave the page.
+      // card is for.
       onClick={(event) => {
-        if ((event.target as HTMLElement).closest("button")) return;
-        if (window.getSelection()?.isCollapsed === false) return;
-        onOpen();
+        if (clickAsksToOpen(event)) onOpen();
       }}
       className="cursor-pointer gap-3 py-4 hover:bg-accent/40"
     >
