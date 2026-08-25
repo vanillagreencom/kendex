@@ -60,6 +60,20 @@ export const updatedSomeToastLabel = (
   `Updated ${updated === 1 ? "1 package" : `${updated} packages`} — ${skipped === 1 ? "1 place needs" : `${skipped} places need`} attention on its own row`;
 export const updatedCountToastLabel = (updated: number): string =>
   `Updated ${updated === 1 ? "1 package" : `${updated} packages`}`;
+// What a single-package Update did when a conflict stopped part of it —
+// a copy changed by hand, files kendex never put there. The tool is named
+// because that is where the person goes to settle it.
+const toolList = (tools: string[]): string =>
+  tools.length > 1
+    ? `${tools.slice(0, -1).join(", ")} and ${tools[tools.length - 1]}`
+    : (tools[0] ?? "");
+export const updatedExceptToastLabel = (
+  name: string,
+  tools: string[],
+): string =>
+  `Updated ${name} — the copy in ${toolList(tools)} needs attention on the package page`;
+export const notUpdatedToastLabel = (name: string, tools: string[]): string =>
+  `${name} was not updated — the copy in ${toolList(tools)} needs attention on the package page`;
 export const nothingToUpdateToastLabel = (skipped: number): string =>
   `Nothing to update — ${skipped === 1 ? "1 place needs" : `${skipped} places need`} attention on its own row`;
 

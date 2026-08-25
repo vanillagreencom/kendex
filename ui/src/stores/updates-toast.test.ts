@@ -64,7 +64,7 @@ const view = {
 const ready = (remaining: UpdateRow[]) => {
   vi.mocked(commands.packageUpdate).mockResolvedValue({
     status: "ok",
-    data: view,
+    data: { view: view, heldBack: [], moved: [] },
   });
   vi.mocked(commands.updatesOverview).mockResolvedValue({
     status: "ok",
@@ -107,5 +107,61 @@ describe("updates store: what the success toast claims", () => {
       .getState()
       .updateRows([row({ name: "gh" }), row({ name: "review" }), gone]);
     expect(toast.success).toHaveBeenCalledWith("Updated 2 packages");
+  });
+});
+
+describe("updates store: a package the plan held back", () => {
+  const conflict = (harness: "claude" | "codex") => ({
+    kind: "skill" as const,
+    name: "gh",
+    harness,
+    scope: { scope: "global" } as const,
+    state: "conflict" as const,
+    detail: "you changed this copy",
+    cause: "local-edit" as const,
+  });
+  const stale = (harness: "claude" | "codex") => ({
+    ...conflict(harness),
+    state: "stale" as const,
+    cause: "upstream-changed" as const,
+  });
+
+  const held = (update: {
+    heldBack: ReturnType<typeof conflict>[];
+    moved: ReturnType<typeof stale>[];
+  }) => {
+    ready([]);
+    vi.mocked(commands.packageUpdate).mockResolvedValue({
+      status: "ok",
+      data: { view, ...update },
+    });
+  };
+
+  beforeEach(() => {
+    useUpdatesStore.setState({ rows: [], busy: false, loaded: true });
+    vi.clearAllMocks();
+  });
+
+  it("never claims a package was updated when nothing moved for it", async () => {
+    held({ heldBack: [conflict("claude")], moved: [] });
+    await useUpdatesStore.getState().updateOne(row({ name: "gh" }));
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.info).toHaveBeenCalledWith(
+      "gh was not updated — the copy in Claude Code needs attention on the package page",
+    );
+  });
+
+  it("names the tool still holding it when the other copies moved", async () => {
+    held({ heldBack: [conflict("codex")], moved: [stale("claude")] });
+    await useUpdatesStore.getState().updateOne(row({ name: "gh" }));
+    expect(toast.success).toHaveBeenCalledWith(
+      "Updated gh — the copy in Codex needs attention on the package page",
+    );
+  });
+
+  it("says the plain line when the package moved everywhere", async () => {
+    held({ heldBack: [], moved: [stale("claude")] });
+    await useUpdatesStore.getState().updateOne(row({ name: "gh" }));
+    expect(toast.success).toHaveBeenCalledWith("Updated gh");
   });
 });

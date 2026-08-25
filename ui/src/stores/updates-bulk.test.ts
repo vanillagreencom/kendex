@@ -101,7 +101,7 @@ describe("updates store: bulk update", () => {
     });
     vi.mocked(commands.packageUpdate).mockResolvedValue({
       status: "ok",
-      data: view,
+      data: { view: view, heldBack: [], moved: [] },
     });
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
@@ -150,14 +150,18 @@ describe("updates store: bulk update", () => {
     vi.mocked(commands.packageUpdate).mockResolvedValue({
       status: "ok",
       data: {
-        scope: acme,
-        drift: [],
-        plan: [],
-        notes: [],
-        warnings: [],
-        safety: [],
-        adoptable: ADOPTABLE,
-        exits: [],
+        view: {
+          scope: acme,
+          drift: [],
+          plan: [],
+          notes: [],
+          warnings: [],
+          safety: [],
+          adoptable: ADOPTABLE,
+          exits: [],
+        },
+        heldBack: [],
+        moved: [],
       },
     });
     vi.mocked(commands.updatesOverview).mockResolvedValue({
@@ -210,14 +214,18 @@ describe("updates store: bulk update", () => {
     vi.mocked(commands.packageUpdate).mockResolvedValue({
       status: "ok",
       data: {
-        scope: acme,
-        drift: [],
-        plan: [],
-        notes: [],
-        warnings: [],
-        safety: [],
-        adoptable: ADOPTABLE,
-        exits: [],
+        view: {
+          scope: acme,
+          drift: [],
+          plan: [],
+          notes: [],
+          warnings: [],
+          safety: [],
+          adoptable: ADOPTABLE,
+          exits: [],
+        },
+        heldBack: [],
+        moved: [],
       },
     });
     vi.mocked(commands.updatesOverview).mockResolvedValue({

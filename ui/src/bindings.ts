@@ -230,11 +230,13 @@ export const commands = {
 	/**
 	 *  Bring one package current and apply — the Updates page's per-package
 	 *  and per-place Update, and the package page's. The scope's other
-	 *  followers stay at the commits their lock records; `refresh` is what
-	 *  brings a whole place current, and `Update all` reaches the same end by
+	 *  followers stay at the commits their lock records, except one the lock
+	 *  cannot place, which resolves fresh the way a whole-scope apply gives it
+	 *  anyway. `kendex refresh` and the whole-scope apply are the plans that
+	 *  bring a whole place current; `Update all` reaches the same end by
 	 *  running this command once per row.
 	 */
-	packageUpdate: (scope: Scope, kind: ItemKind, name: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("package_update", { scope, kind, name })),
+	packageUpdate: (scope: Scope, kind: ItemKind, name: string) => typedError<PackageUpdate_Serialize, string>(__TAURI_INVOKE("package_update", { scope, kind, name })),
 	/**
 	 *  Every scope's update standing in one query — the sidebar badge, the
 	 *  Updates page, and the Library's fork/edited flags all read this. Rows
@@ -252,8 +254,10 @@ export const commands = {
 	/**
 	 *  Hold a package at a version (or let it follow again) and apply the
 	 *  change, scoped to the package: every other follower in the scope reads
-	 *  the commit its lock records, so moving one hold never brings the
-	 *  neighbours current.
+	 *  the commit its lock records, so moving one hold does not bring the
+	 *  neighbours current. The exception is a follower the lock cannot place
+	 *  — never installed, or installations disagreeing — which resolves fresh
+	 *  here as it would under a whole-scope apply.
 	 */
 	packageSetRev: (scope: Scope, kind: ItemKind, name: string, rev: string | null) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("package_set_rev", { scope, kind, name, rev })),
 	packageDiff: (scope: Scope, kind: ItemKind, name: string, from: VersionSel, to: VersionSel, harness: "claude" | "codex" | "opencode" | "cursor" | "pi" | "gemini" | "copilot" | null) => typedError<PackageDiff, string>(__TAURI_INVOKE("package_diff", { scope, kind, name, from, to, harness })),
@@ -269,7 +273,8 @@ export const commands = {
 	 *  Discard one package's edits and re-render it — the door back to "the
 	 *  catalog's version wins". Scoped to the package the user named twice
 	 *  over: a neighbour's edits are never taken along, and the scope's other
-	 *  followers stay at their installed commits.
+	 *  followers stay at their installed commits — bar one the lock cannot
+	 *  place, which resolves fresh here as under a whole-scope apply.
 	 */
 	applyDiscardEdits: (scope: Scope, kind: ItemKind, name: string, rev: string | null) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("apply_discard_edits", { scope, kind, name, rev })),
 	packageFiles: (scope: Scope, kind: ItemKind, name: string) => typedError<PackageFile[], string>(__TAURI_INVOKE("package_files", { scope, kind, name })),
@@ -1702,6 +1707,57 @@ export type PackageSafety = {
 	/**  Whether a verified cache entry answered instead of a fresh score. */
 	fromCache: boolean,
 } & AuditResult;
+
+/**
+ *  What a single-package apply did to the package it named, beside the
+ *  scope's view afterwards. The plan holds a rendering back rather than
+ *  writing over a copy somebody changed, and the view alone cannot say
+ *  which of the two happened — a caller reading only the view says
+ *  "Updated" over a package that never moved.
+ */
+export type PackageUpdate = PackageUpdate_Serialize | PackageUpdate_Deserialize;
+
+/**
+ *  What a single-package apply did to the package it named, beside the
+ *  scope's view afterwards. The plan holds a rendering back rather than
+ *  writing over a copy somebody changed, and the view alone cannot say
+ *  which of the two happened — a caller reading only the view says
+ *  "Updated" over a package that never moved.
+ */
+export type PackageUpdate_Deserialize = {
+	view: AuditView_Deserialize,
+	/**
+	 *  Renderings the plan refused to write over. Empty when the package
+	 *  moved everywhere it is installed.
+	 */
+	heldBack: DriftRow_Deserialize[],
+	/**
+	 *  Renderings this apply wrote. Non-empty beside `held_back` is the
+	 *  partial case: current in one tool, held in another.
+	 */
+	moved: DriftRow_Deserialize[],
+};
+
+/**
+ *  What a single-package apply did to the package it named, beside the
+ *  scope's view afterwards. The plan holds a rendering back rather than
+ *  writing over a copy somebody changed, and the view alone cannot say
+ *  which of the two happened — a caller reading only the view says
+ *  "Updated" over a package that never moved.
+ */
+export type PackageUpdate_Serialize = {
+	view: AuditView_Serialize,
+	/**
+	 *  Renderings the plan refused to write over. Empty when the package
+	 *  moved everywhere it is installed.
+	 */
+	heldBack: DriftRow_Serialize[],
+	/**
+	 *  Renderings this apply wrote. Non-empty beside `held_back` is the
+	 *  partial case: current in one tool, held in another.
+	 */
+	moved: DriftRow_Serialize[],
+};
 
 /**
  *  The available-package page's one payload: the preview beside the safety

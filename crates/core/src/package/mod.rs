@@ -1,25 +1,23 @@
-//! One installed package, seen through its versions: which revision it is
-//! held at, what its source's history offers, and what has changed. The
-//! manifest holds the choice (`ItemDecl.rev`), the mirror holds the history,
-//! and everything here is a projection over the two.
+//! One installed package: where it reads from, what a plan just did to it,
+//! and the two verbs that move it — bring it current, or hold it at a
+//! version. The manifest holds the choice (`ItemDecl.rev`), the mirror
+//! holds the history, and [`timeline`] is the projection over the two.
 
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
-use specta::Type;
-
-use crate::engine::EngineReport;
+use crate::engine::{DriftRow, DriftState, EngineReport};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::manifest::Manifest;
 use crate::model::{ItemKind, Scope};
-use crate::remote::history;
 use crate::source_read::SealedSource;
 
 pub mod detail;
 pub mod diff;
 pub(crate) mod item_file;
+mod timeline;
 pub mod updates;
+pub use timeline::{VersionRow, resolve_version, versions};
 
 /// One declared package bound to its repository coordinates: where its
 /// mirror lives and which directory inside the tree is the package.
@@ -155,107 +153,13 @@ pub(crate) fn package_ref_for(
     })
 }
 
-/// One version of a package: a commit that changed its files, wearing any
-/// tag names that point at it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct VersionRow {
-    /// Full commit id.
-    pub id: String,
-    /// The release name, when a tag points at this commit.
-    pub label: Option<String>,
-    /// ISO-8601 committer date.
-    pub date: String,
-    pub summary: String,
-    /// This is the content revision the installed package holds.
-    pub installed: bool,
-    pub newer_than_installed: bool,
-}
-
-/// The package's timeline, newest first: every commit that changed its
-/// files up to the source's tracked tip. Tags decorate the timeline, they
-/// never replace it — a repository's tags may live far from this package.
-/// The installed marker lands on the newest content commit at-or-before
-/// the locked source commit, because an installed commit that changed
-/// other files is not itself on this package's timeline.
-pub fn versions(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Result<Vec<VersionRow>> {
-    let manifest = crate::engine::ops::manifest_for_mutation(env, scope)?;
-    let package = package_ref(env, scope, &manifest, kind, name)?;
-    let log = history::subtree_log(&package.mirror, &package.tip, &package.subtree)?;
-    let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
-    // The mirror just proved readable; a lock commit that still cannot be
-    // mapped (v1-imported, hand-edited) costs the installed marker, never
-    // the timeline the mirror can perfectly well render.
-    let installed_commit = installed_commit(&lock, kind, name).and_then(|commit| {
-        history::last_content_commit(&package.mirror, &commit, &package.subtree)
-            .ok()
-            .flatten()
-    });
-    let installed_at = log
-        .iter()
-        .position(|row| Some(&row.commit) == installed_commit.as_ref());
-    Ok(log
-        .into_iter()
-        .enumerate()
-        .map(|(index, row)| VersionRow {
-            installed: Some(index) == installed_at,
-            newer_than_installed: installed_at.is_some_and(|installed| index < installed),
-            id: row.commit,
-            label: row.tags.first().cloned(),
-            date: row.date,
-            summary: row.summary,
-        })
-        .collect())
-}
-
-/// The source commit this package's installations were produced from —
-/// `None` when no harness has it installed yet or the lock predates the
-/// record. Installations that disagree (mid-apply, or a partial refresh)
-/// answer with the newest record's value, and the updates projection flags
-/// the disagreement separately.
-fn installed_commit(lock: &crate::lock::Lock, kind: ItemKind, name: &str) -> Option<String> {
-    lock.entries
-        .values()
-        .filter(|entry| entry.kind == kind && entry.name == name)
-        .filter(|entry| entry.source_commit.is_some())
-        .max_by(|a, b| a.installed_at.cmp(&b.installed_at))
-        .and_then(|entry| entry.source_commit.clone())
-}
-
-/// A version selector as a commit id: whatever the repository can name —
-/// tag, branch, commit — resolved against this item's source. The cache
-/// answers first; the network fills in what it cannot.
-pub fn resolve_version(
-    env: &Env,
-    scope: &Scope,
-    kind: ItemKind,
-    name: &str,
-    selector: &str,
-) -> Result<String> {
-    let manifest = crate::engine::ops::manifest_for_mutation(env, scope)?;
-    let Some(decl) = manifest.declared(kind).get(name) else {
-        return Err(CoreError::NotDeclared {
-            kind,
-            name: name.to_owned(),
-        });
-    };
-    let Some(repo) = manifest
-        .sources
-        .get(&decl.source)
-        .and_then(|s| s.repo.clone())
-    else {
-        return Err(CoreError::ItemRevUnsupported {
-            source_name: decl.source.clone(),
-        });
-    };
-    Ok(resolve_selector(env, &repo, selector)?.commit)
-}
-
 /// Bring one package current and leave the rest of the scope where it is:
 /// the plan resolves this package — and, for a derived one, the
 /// declarations that carry it, since the owner is what holds its revision —
 /// at the source's tip, while every other follower reads the commit its
-/// lock entries record. A hold still holds: a package pinned by its own
+/// lock entries record — bar one the lock cannot place, which resolves
+/// fresh as a whole-scope apply would give it anyway. A hold still holds:
+/// a package pinned by its own
 /// `rev`, its source, or a parent moves only when that hold moves. The
 /// whole-scope apply and `refresh` are unchanged and bring every follower
 /// current at once.
@@ -307,6 +211,38 @@ pub fn update_one(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Resul
         scope,
         &crate::engine::PlanOptions::for_package(kind, name),
     )
+}
+
+/// The installations of one package a plan holds back rather than writing
+/// over: a copy somebody edited, files kendex never put there, a
+/// provenance clash. A conflict belongs to one rendering, so a package
+/// that comes current in one tool while its copy in another is held
+/// answers with the held one alone — read off the whole plan instead, and
+/// the same run reports "nothing moved" over work it just did.
+pub fn held_back<'a>(report: &'a EngineReport, kind: ItemKind, name: &str) -> Vec<&'a DriftRow> {
+    package_rows(report, kind, name, |state| state == DriftState::Conflict)
+}
+
+/// The installations of one package a plan writes: what is not there yet,
+/// and what no longer matches its source. Every other row for it is either
+/// held back or nothing this plan acts on.
+pub fn moving<'a>(report: &'a EngineReport, kind: ItemKind, name: &str) -> Vec<&'a DriftRow> {
+    package_rows(report, kind, name, |state| {
+        matches!(state, DriftState::Missing | DriftState::Stale)
+    })
+}
+
+fn package_rows<'a>(
+    report: &'a EngineReport,
+    kind: ItemKind,
+    name: &str,
+    wanted: impl Fn(DriftState) -> bool,
+) -> Vec<&'a DriftRow> {
+    report
+        .drift
+        .iter()
+        .filter(|row| row.kind == kind && row.name == name && wanted(row.state))
+        .collect()
 }
 
 /// Hold an item at a version, or let it follow its source again.

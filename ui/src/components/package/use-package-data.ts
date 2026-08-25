@@ -13,6 +13,7 @@ import {
   updatedToastLabel,
   VERSION_ERROR_TITLE,
 } from "@/lib/copy";
+import { showUpdateOutcome } from "@/lib/update-outcome";
 import { versionRowLabel } from "@/lib/versions";
 import { useAuditStore } from "@/stores/audit";
 import { useEditorStore } from "@/stores/editor";
@@ -158,14 +159,26 @@ export function packageVersionActions(
 
   // A held package moves its hold to the latest; a follower is brought
   // current by the single-package apply — Update never silently pins a
-  // follower, and never moves the scope's other followers along.
-  const updateToLatest = (latest: VersionRow) =>
-    held
-      ? switchTo(latest)
-      : run(
-          commands.packageUpdate(ref.scope, ref.kind, ref.name),
-          updatedToastLabel(displayName),
-        );
+  // follower, and does not move the scope's other followers along.
+  //
+  // The follower's toast comes from what the apply reports, not from the
+  // click: this page has no edited-row filter of its own, so a hand-edited
+  // copy the plan held back reaches here and must not be called updated.
+  const updateToLatest = (latest: VersionRow) => {
+    if (held) return switchTo(latest);
+    setBusy(true);
+    void commands
+      .packageUpdate(ref.scope, ref.kind, ref.name)
+      .then((response) => {
+        setBusy(false);
+        if (response.status === "error") {
+          showError(response.error);
+          return;
+        }
+        showUpdateOutcome(displayName, response.data);
+        afterChange();
+      });
+  };
 
   const follow = () =>
     run(

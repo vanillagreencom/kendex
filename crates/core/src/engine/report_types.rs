@@ -195,7 +195,7 @@ pub struct PlanOptions {
     /// declaration that accounts for it, since the owner is what carries
     /// its revision — resolves at the source's tip; every other unpinned
     /// remote declaration and bundle is read at the commit its lock
-    /// entries record, so a sibling follower never moves as a side
+    /// entries record, so a sibling follower does not move as a side
     /// effect. A package the lock cannot place (never installed, or
     /// installations disagreeing on their commit) resolves fresh, which
     /// is what a whole-scope apply does for it anyway. Refresh and the

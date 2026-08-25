@@ -520,14 +520,18 @@ describe("updates store", () => {
     vi.mocked(commands.packageUpdate).mockResolvedValue({
       status: "ok",
       data: {
-        scope: { scope: "global" },
-        drift: [],
-        plan: [],
-        notes: [],
-        warnings: [],
-        safety: [],
-        adoptable: ADOPTABLE,
-        exits: [],
+        view: {
+          scope: { scope: "global" },
+          drift: [],
+          plan: [],
+          notes: [],
+          warnings: [],
+          safety: [],
+          adoptable: ADOPTABLE,
+          exits: [],
+        },
+        heldBack: [],
+        moved: [],
       },
     });
     const landed = [row({ updateAvailable: false })];
@@ -653,14 +657,18 @@ describe("updates store", () => {
     vi.mocked(commands.packageUpdate).mockResolvedValue({
       status: "ok",
       data: {
-        scope: { scope: "global" },
-        drift: [],
-        plan: [],
-        notes: [],
-        warnings: [],
-        safety: [],
-        adoptable: ADOPTABLE,
-        exits: [],
+        view: {
+          scope: { scope: "global" },
+          drift: [],
+          plan: [],
+          notes: [],
+          warnings: [],
+          safety: [],
+          adoptable: ADOPTABLE,
+          exits: [],
+        },
+        heldBack: [],
+        moved: [],
       },
     });
     vi.mocked(commands.updatesOverview).mockResolvedValue({

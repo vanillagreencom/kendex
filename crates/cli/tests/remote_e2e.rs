@@ -44,6 +44,10 @@ fn git(dir: &Path, args: &[&str]) {
     );
 }
 
+fn said(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
 /// [`git`] for a command whose output is the answer.
 #[allow(clippy::unwrap_used)]
 fn git_stdout(dir: &Path, args: &[&str]) -> String {
@@ -294,4 +298,81 @@ fn pinning_one_package_leaves_the_scopes_followers_where_they_are() {
     );
     let manifest = fs::read_to_string(proj.join("kendex.toml")).unwrap();
     assert!(manifest.contains(&tip), "the hold is recorded: {manifest}");
+}
+
+/// `kendex updates apply <kind> <name>` says what it did, and a copy the
+/// person changed by hand is said about rather than written over — the one
+/// verdict that must never read as "applied" when nothing moved.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn updates_apply_names_what_moved_and_what_was_held_back() {
+    let tmp = fixture();
+    let home = tmp.path();
+    let proj = home.join("proj");
+    let upstream = home.join("git/vanillagreencom/kendex");
+
+    let output = kendex(home, &proj, &["add", "--skill", "gh", "-y"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::write(
+        upstream.join("skills/gh/SKILL.md"),
+        "---\nname: gh\ndescription: github flows\n---\nUpstream v2.\n",
+    )
+    .unwrap();
+    git(&upstream, &["commit", "--quiet", "-am", "two"]);
+    assert!(
+        kendex(home, &proj, &["updates", "--refresh"])
+            .status
+            .success()
+    );
+
+    let applied = said(&kendex(home, &proj, &["updates", "apply", "skill", "gh"]));
+    assert!(
+        applied.contains("applied — skill gh is current here"),
+        "{applied}"
+    );
+    let rendered = proj.join(".agents/skills/gh/SKILL.md");
+    assert!(
+        fs::read_to_string(&rendered)
+            .unwrap()
+            .contains("Upstream v2")
+    );
+
+    // Now the person edits their copy and upstream moves again: the plan
+    // holds the edited rendering back, and the run has to say so.
+    fs::write(
+        &rendered,
+        "---\nname: gh\ndescription: mine\n---\nMy own words.\n",
+    )
+    .unwrap();
+    fs::write(
+        upstream.join("skills/gh/SKILL.md"),
+        "---\nname: gh\ndescription: github flows\n---\nUpstream v3.\n",
+    )
+    .unwrap();
+    git(&upstream, &["commit", "--quiet", "-am", "three"]);
+    assert!(
+        kendex(home, &proj, &["updates", "--refresh"])
+            .status
+            .success()
+    );
+
+    let held = said(&kendex(home, &proj, &["updates", "apply", "skill", "gh"]));
+    assert!(
+        held.contains("skill gh is held back by the conflict above — nothing moved for it"),
+        "{held}"
+    );
+    assert!(
+        !held.contains("applied —"),
+        "a held-back package must never read as applied: {held}"
+    );
+    assert_eq!(
+        fs::read_to_string(&rendered).unwrap(),
+        "---\nname: gh\ndescription: mine\n---\nMy own words.\n",
+        "the edited copy survives the run that refused to write over it"
+    );
 }

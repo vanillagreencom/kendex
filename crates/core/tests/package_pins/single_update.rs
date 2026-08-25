@@ -450,3 +450,65 @@ fn a_v1_manifest_refuses_a_single_package_update() {
     let error = package::update_one(&w.env, &w.scope, ItemKind::Skill, "a").unwrap_err();
     assert!(matches!(error, CoreError::LegacyManifest { .. }), "{error}");
 }
+
+/// The package page's discard: the catalog's version wins for this package
+/// and nothing else. Both halves are scoped to the one package — the edits
+/// discarded and the version brought current — so a neighbour keeps its
+/// edits and the scope's other followers keep their commits.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn discarding_one_packages_edits_moves_that_package_alone() {
+    let w = world();
+    write_skill(&w.upstream, "a", "", "a version one.");
+    write_skill(&w.upstream, "b", "", "b version one.");
+    let first = commit(&w.upstream, "one");
+    declare(
+        &w,
+        "[skills.a]\nsource = \"cat\"\n\n[skills.b]\nsource = \"cat\"\n",
+    );
+    sync_and_apply(&w);
+
+    let installed = |name: &str| {
+        w.home
+            .join("app/.agents/skills")
+            .join(name)
+            .join("SKILL.md")
+    };
+    fs::write(installed("a"), "my own a.").unwrap();
+    fs::write(installed("b"), "my own b.").unwrap();
+
+    write_skill(&w.upstream, "a", "", "a version two.");
+    write_skill(&w.upstream, "b", "", "b version two.");
+    let second = commit(&w.upstream, "two");
+    fetch_mirrors(&w);
+
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    let lock = load_lock(&lock_path(&w.env, &w.scope)).unwrap();
+    let report = kendex_core::engine::plan_scope(
+        &w.env,
+        &w.scope,
+        &loaded,
+        &lock,
+        &PlanOptions::for_package_discarding_edits(ItemKind::Skill, "a"),
+    )
+    .unwrap();
+    apply::execute(&w.env, &report.plan, None).unwrap();
+
+    assert!(
+        installed_body(&w, "a").contains("a version two."),
+        "the target's edits are discarded and it comes current"
+    );
+    assert_eq!(
+        fs::read_to_string(installed("b")).unwrap(),
+        "my own b.",
+        "a neighbour's edits are not discarded along with the target's"
+    );
+    assert_eq!(locked_commit(&w, "a"), second);
+    assert_eq!(
+        locked_commit(&w, "b"),
+        first,
+        "and the scope's other followers stay at their installed commits"
+    );
+}

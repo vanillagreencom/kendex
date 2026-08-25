@@ -11,12 +11,13 @@ import {
   updatablePlaces,
   visibleUpdates,
 } from "@/lib/update-groups";
+import { showUpdateOutcome } from "@/lib/update-outcome";
 import { bulkUpdateToast } from "@/lib/update-toasts";
 import { unsettled } from "@/lib/updates-read-state";
 import { useAuditStore } from "./audit";
 import { useProblemsStore } from "./problems";
 import { useScanStore } from "./scan";
-import { applyRow, applyRows } from "./updates-apply";
+import { type ApplyOutcome, applyRow, applyRows } from "./updates-apply";
 import { overviewApplier } from "./updates-overview";
 
 interface UpdatesState {
@@ -134,15 +135,19 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
       try {
         // The commit and its follow-up overview ride the side-effect
         // chain, so nothing older can land on top of them.
-        let applied = false;
+        let outcome: ApplyOutcome = { ok: false, update: null };
         const error = await get().mutate(async () => {
-          applied = await applyRow(row, reportUpdate);
+          outcome = await applyRow(row, reportUpdate);
           return null;
         });
         if (error !== null) {
           showError(UPDATE_ERROR_TITLE, error);
-        } else if (applied) {
-          toast.success(updatedToastLabel(row.name));
+        } else if (outcome.ok) {
+          // A following package can come back held: the plan refuses to
+          // write over a copy somebody changed, and saying "Updated" over
+          // that is the whole point of asking the command what it did.
+          if (outcome.update) showUpdateOutcome(row.name, outcome.update);
+          else toast.success(updatedToastLabel(row.name));
           await useScanStore.getState().refresh();
           await useAuditStore.getState().refresh({ force: true });
         }

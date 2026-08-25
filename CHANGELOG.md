@@ -81,6 +81,9 @@ an outside contributor.
 - Updating one package no longer brings the scope's other following packages
   along — from the Updates page, a package page, or the new
   `kendex updates apply <kind> <name>`. `kendex refresh` still updates everything.
+- A package an update could not touch — a copy you edited by hand, files in the
+  way — is now named as held back instead of reported as updated, in the app and
+  in `kendex updates apply`.
 - Updating or holding one package no longer brings the scope's other following
   packages along — from the Updates page, a package page, `kendex pin`, or the
   new `kendex updates apply <kind> <name>`. `kendex refresh` still updates everything.

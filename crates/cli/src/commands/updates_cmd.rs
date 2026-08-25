@@ -1,6 +1,7 @@
 use clap::{Args, Subcommand};
 
 use kendex_core::env::Env;
+use kendex_core::model::ItemKind;
 
 use super::pin::parse_kind;
 use super::{CliResult, resolve_scopes, say};
@@ -157,7 +158,8 @@ fn show_version(version: &kendex_core::package::updates::VersionRef) -> String {
 }
 
 /// Bring one package current: the single-package apply, printed op by op.
-/// The scope's other followers stay at their installed commits; a hold on
+/// The scope's other followers stay at their installed commits (bar one
+/// the lock cannot place, which resolves fresh either way); a hold on
 /// the package itself still holds, and any conflict the plan raises for it
 /// (a hand-edited copy, files in the way) is said instead of applied over.
 fn apply_one(
@@ -168,16 +170,9 @@ fn apply_one(
 ) -> CliResult {
     let kind = parse_kind(&kind)?;
     let report = kendex_core::package::update_one(env, scope, kind, &name)?;
-    let conflicts: Vec<&kendex_core::engine::DriftRow> = report
-        .drift
-        .iter()
-        .filter(|row| {
-            row.kind == kind
-                && row.name == name
-                && row.state == kendex_core::engine::DriftState::Conflict
-        })
-        .collect();
-    for row in &conflicts {
+    let held = kendex_core::package::held_back(&report, kind, &name);
+    let moving = kendex_core::package::moving(&report, kind, &name);
+    for row in &held {
         say(&format!("{}: {}", row.harness.name(), row.detail));
     }
     let changed = !report.plan.ops.is_empty();
@@ -190,15 +185,41 @@ fn apply_one(
     if let Err(error) = kendex_core::drift::snapshot::record(env, scope) {
         say(&format!("warning: snapshot not derived ({error})"));
     }
-    match (conflicts.is_empty(), changed) {
-        (false, _) => say(&format!(
+    say(&outcome_line(kind, &name, &held, &moving, changed));
+    Ok(())
+}
+
+/// What the run just did to the package it named, in one line. Conflicts
+/// are per rendering: a copy held back in one tool while another comes
+/// current is a partial move, and calling that "nothing moved" states a
+/// wrong fact about work the same run performed.
+fn outcome_line(
+    kind: ItemKind,
+    name: &str,
+    held: &[&kendex_core::engine::DriftRow],
+    moving: &[&kendex_core::engine::DriftRow],
+    changed: bool,
+) -> String {
+    let tools = |rows: &[&kendex_core::engine::DriftRow]| {
+        let mut names: Vec<&str> = rows.iter().map(|row| row.harness.name()).collect();
+        names.sort_unstable();
+        names.dedup();
+        names.join(", ")
+    };
+    match (held.is_empty(), moving.is_empty(), changed) {
+        (false, false, _) => format!(
+            "{} {name} moved in {} — its copy in {} is held back by the conflict above",
+            kind.name(),
+            tools(moving),
+            tools(held)
+        ),
+        (false, true, _) => format!(
             "{} {name} is held back by the conflict above — nothing moved for it",
             kind.name()
-        )),
-        (true, true) => say(&format!("applied — {} {name} is current here", kind.name())),
-        (true, false) => say(&format!("nothing to change for {} {name}", kind.name())),
+        ),
+        (true, _, true) => format!("applied — {} {name} is current here", kind.name()),
+        (true, _, false) => format!("nothing to change for {} {name}", kind.name()),
     }
-    Ok(())
 }
 
 fn set_ignored(
@@ -226,4 +247,64 @@ fn set_ignored(
         false => say(&format!("updates for {name} notify again")),
     }
     Ok(())
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use kendex_core::engine::{DriftRow, DriftState};
+    use kendex_core::model::{HarnessId, ItemKind, Scope};
+
+    use super::outcome_line;
+
+    fn row(harness: HarnessId, state: DriftState) -> DriftRow {
+        DriftRow {
+            kind: ItemKind::Skill,
+            name: "gh".to_owned(),
+            harness,
+            scope: Scope::Global,
+            state,
+            detail: "you changed this copy".to_owned(),
+            cause: None,
+        }
+    }
+
+    #[test]
+    fn a_package_held_in_one_tool_and_current_in_another_says_both_halves() {
+        let held = row(HarnessId::Claude, DriftState::Conflict);
+        let moved = row(HarnessId::Codex, DriftState::Stale);
+        let line = outcome_line(ItemKind::Skill, "gh", &[&held], &[&moved], true);
+        assert!(line.contains("moved in codex"), "{line}");
+        assert!(line.contains("copy in claude is held back"), "{line}");
+        assert!(
+            !line.contains("nothing moved"),
+            "the run wrote one of the two copies: {line}"
+        );
+    }
+
+    #[test]
+    fn a_package_held_everywhere_says_nothing_moved() {
+        let held = row(HarnessId::Claude, DriftState::Conflict);
+        // The plan still carries ops — a sibling's lock entry, the manifest
+        // — so the whole plan is the wrong thing to read this off.
+        let line = outcome_line(ItemKind::Skill, "gh", &[&held], &[], true);
+        assert!(
+            line.contains("is held back by the conflict above"),
+            "{line}"
+        );
+        assert!(line.contains("nothing moved for it"), "{line}");
+    }
+
+    #[test]
+    fn an_unheld_package_reports_what_the_plan_did() {
+        let moved = row(HarnessId::Claude, DriftState::Stale);
+        assert!(
+            outcome_line(ItemKind::Skill, "gh", &[], &[&moved], true).starts_with("applied"),
+            "a plan with work to do applied it"
+        );
+        assert_eq!(
+            outcome_line(ItemKind::Skill, "gh", &[], &[], false),
+            "nothing to change for skill gh"
+        );
+    }
 }
