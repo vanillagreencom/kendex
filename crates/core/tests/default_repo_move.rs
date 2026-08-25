@@ -187,6 +187,56 @@ fn a_pre_move_scope_gets_one_migration_write_per_file_and_no_conflicts() {
     );
 }
 
+/// A pre-move scope still on schema 5 carries the retired safety tables
+/// too. The one migration write does all of it — repository, schema line,
+/// retired tables cut out — and keeps every other byte, comments and the
+/// tables after the retired ones included.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_move_cuts_the_retired_tables_and_keeps_every_other_byte() {
+    let f = pre_move_fixture();
+    let path = f.project.join("kendex.toml");
+    let head = format!(
+        "# pinned before the move\nschema = 5\n\n[sources.vstack]\nrepo = \"{LEGACY_SOURCE_REPO}\"  # the old home\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"vstack\"\n"
+    );
+    // The blank line above a retired table introduces it and goes with it;
+    // the comment above the fork introduces the fork and stays.
+    let retired = "\n[safety-reviews.\"skill:gh:claude\"]\nreview-hash = \"abc\"\nruleset = 3\n\n[safety-reviews.\"skill:gh:claude\".dismissed.f2]\nreason = \"intended\"\ndismissed-at = \"2026-01-01T00:00:00Z\"\n";
+    let tail = format!(
+        "\n# the fork stays\n[forks.skill.zed]\nsource = \"vstack\"\nrepo = \"{LEGACY_SOURCE_REPO}\"\nforked-at = \"2026-01-01T00:00:00Z\"\n"
+    );
+    fs::write(&path, format!("{head}{retired}{tail}")).unwrap();
+
+    let report = audit(&f.env, &f.scope).unwrap();
+    let moves = report
+        .plan
+        .ops
+        .iter()
+        .filter(|op| op.description == MOVE_DESCRIPTION)
+        .count();
+    assert_eq!(moves, 1, "{:?}", report.plan.ops);
+    apply::execute(&f.env, &report.plan, None).unwrap();
+
+    let after = fs::read_to_string(&path).unwrap();
+    let expected = format!("{head}{tail}")
+        .replacen(
+            "schema = 5",
+            &format!("schema = {}", kendex_core::manifest::MANIFEST_SCHEMA),
+            1,
+        )
+        .replace(
+            LEGACY_SOURCE_REPO,
+            kendex_core::manifest::DEFAULT_SOURCE_REPO,
+        );
+    assert_eq!(after, expected, "one surgical write: {after}");
+    assert!(after.contains("# the old home"), "{after}");
+    assert!(
+        after.contains("# the fork stays\n[forks.skill.zed]"),
+        "{after}"
+    );
+    assert!(audit(&f.env, &f.scope).unwrap().plan.ops.is_empty());
+}
+
 /// Planning migrates in memory and resolves the new spelling, which adopts
 /// the old spelling's cache — but nothing has been applied, so the
 /// manifest on disk still says the old repository. Every surface reading

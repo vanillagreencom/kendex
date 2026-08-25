@@ -10,12 +10,15 @@ use crate::base::Base;
 use crate::env::Env;
 use crate::error::Result;
 use crate::lock::{Lock, SourceRev, lock_path};
-use crate::manifest::{self, Manifest};
+use crate::manifest::Manifest;
 use crate::model::{HarnessId, ItemKind, Scope};
 use crate::source::SourceState;
 
 use super::desired::DesiredState;
 use super::{DriftRow, DriftState, config_edits};
+
+mod manifest_text;
+pub(super) use manifest_text::{plan_repo_move_write, plan_schema_upgrade};
 
 /// Whether a plan already persists the manifest — the full serialized
 /// write, or the repository move's surgical text edit. A caller about to
@@ -134,202 +137,6 @@ pub(super) fn plan_lock_write(
             path,
             lock: Box::new(new_lock),
         },
-    });
-    Ok(())
-}
-
-/// The schema assignment on one line, rewritten to the new value with every
-/// other byte — indentation, spacing style, trailing comment — kept. None
-/// when the line is not a plain `schema = <from>` integer assignment; a
-/// comment that merely mentions the text must never match.
-fn rewrite_schema_line(line: &str, from: u32, to: u32) -> Option<String> {
-    let body = line.trim_start();
-    let indent = &line[..line.len() - body.len()];
-    let body = body.strip_prefix("schema")?;
-    let after_key = body.trim_start();
-    let key_ws = &body[..body.len() - after_key.len()];
-    let after_eq = after_key.strip_prefix('=')?;
-    let value = after_eq.trim_start();
-    let eq_ws = &after_eq[..after_eq.len() - value.len()];
-    let digits = value.len() - value.trim_start_matches(|c: char| c.is_ascii_digit()).len();
-    let (number, tail) = value.split_at(digits);
-    if number != from.to_string() {
-        return None;
-    }
-    if !(tail.trim_start().is_empty() || tail.trim_start().starts_with('#')) {
-        return None;
-    }
-    Some(format!("{indent}schema{key_ws}={eq_ws}{to}{tail}"))
-}
-
-/// Whether this manifest text still carries the retired safety-decision
-/// tables. Schema 6 dropped them, so a surgical edit that would keep their
-/// bytes in place cannot be the migration — those files take the full
-/// rewrite, which writes the manifest without them. Text that will not
-/// parse reads as carrying them: the fallback rewrite is correct either
-/// way, and guessing "clean" over unreadable text is the wrong direction.
-fn carries_retired_tables(text: &str) -> bool {
-    match text.parse::<toml::Table>() {
-        Ok(table) => table.contains_key("safety-overrides") || table.contains_key("safety-reviews"),
-        Err(_) => true,
-    }
-}
-
-/// Upgrade an older-schema manifest through the normal journaled apply.
-/// The bump is a surgical text edit — the schema line changes and nothing
-/// else does (invariant 10); the plan falls back to a full rewrite when no
-/// schema assignment can be found, or when the file still carries the
-/// retired safety-decision tables the rewrite exists to drop.
-pub(super) fn plan_schema_upgrade(
-    env: &Env,
-    scope: &Scope,
-    manifest: &Manifest,
-    base: Option<&Base>,
-    ops: &mut Vec<PlannedOp>,
-) -> Result<()> {
-    let path = manifest::manifest_path(env, scope);
-    let description = format!(
-        "Upgrade {} to the current format",
-        crate::rename::MANIFEST_FILE
-    );
-    let current = crate::fs::read_if_exists(&path)?.unwrap_or_default();
-    let retired = carries_retired_tables(&current);
-    let mut rewritten = false;
-    let upgraded_text: String = current
-        .split_inclusive('\n')
-        .map(|line| {
-            let (body, newline) = match line.strip_suffix('\n') {
-                Some(body) => (body, "\n"),
-                None => (line, ""),
-            };
-            match rewritten {
-                false => {
-                    match rewrite_schema_line(body, manifest.schema, manifest::MANIFEST_SCHEMA) {
-                        Some(new_body) => {
-                            rewritten = true;
-                            format!("{new_body}{newline}")
-                        }
-                        None => line.to_owned(),
-                    }
-                }
-                true => line.to_owned(),
-            }
-        })
-        .collect();
-    // The one terminator repair a managed write makes (the #1308 class):
-    // a file missing its final newline gains one, once, and every later
-    // write is byte-stable.
-    let mut upgraded_text = upgraded_text;
-    if !upgraded_text.is_empty() && !upgraded_text.ends_with('\n') {
-        upgraded_text.push('\n');
-    }
-    let op = match rewritten && !retired {
-        true => Op::WriteFile {
-            pre: manifest_pre(base, &path)?,
-            path,
-            bytes: upgraded_text.into_bytes(),
-        },
-        false => {
-            let mut upgraded = manifest.clone();
-            upgraded.schema = manifest::MANIFEST_SCHEMA;
-            Op::WriteManifest {
-                pre: manifest_pre(base, &path)?,
-                path,
-                manifest: Box::new(upgraded),
-            }
-        }
-    };
-    ops.push(PlannedOp { description, op });
-    Ok(())
-}
-
-/// A `repo = "<old default>"` assignment rewritten to point at the new
-/// repository with every other byte — indentation, spacing style, trailing
-/// comment — kept. `None` for any other line, and for a value carrying
-/// escapes: rewriting one safely is not worth it when the caller's
-/// fallback write is still correct.
-fn rewrite_repo_line(line: &str) -> Option<String> {
-    let body = line.trim_start();
-    let indent = &line[..line.len() - body.len()];
-    let body = body.strip_prefix("repo")?;
-    let after_key = body.trim_start();
-    let key_ws = &body[..body.len() - after_key.len()];
-    let after_eq = after_key.strip_prefix('=')?;
-    let value = after_eq.trim_start();
-    let eq_ws = &after_eq[..after_eq.len() - value.len()];
-    let inner = value.strip_prefix('"')?;
-    let (content, tail) = inner.split_once('"')?;
-    if content.contains('\\') || !crate::repo_move::names_old_default(content) {
-        return None;
-    }
-    Some(format!(
-        "{indent}repo{key_ws}={eq_ws}\"{}\"{tail}",
-        manifest::DEFAULT_SOURCE_REPO
-    ))
-}
-
-/// The repository move as a surgical text edit: the file's bytes change
-/// only where the old repository sits in a repo value position — and on
-/// the schema line when the format is old — so comments, ordering, and
-/// formatting survive (invariant 10). The edit must reproduce exactly the
-/// manifest the plan computed; when it cannot — an inline table, a string
-/// with escapes, another mutation riding the same plan — the full rewrite
-/// is the fallback that keeps the plan correct at the cost of formatting.
-pub(super) fn plan_repo_move_write(
-    env: &Env,
-    scope: &Scope,
-    migrated: &Manifest,
-    base: Option<&Base>,
-    ops: &mut Vec<PlannedOp>,
-) -> Result<()> {
-    let path = manifest::manifest_path(env, scope);
-    let mut expected = migrated.clone();
-    expected.schema = manifest::MANIFEST_SCHEMA;
-    let current = crate::fs::read_if_exists(&path)?.unwrap_or_default();
-    let mut schema_done = migrated.schema == manifest::MANIFEST_SCHEMA;
-    let mut edited: String = current
-        .split_inclusive('\n')
-        .map(|line| {
-            let (body, newline) = match line.strip_suffix('\n') {
-                Some(body) => (body, "\n"),
-                None => (line, ""),
-            };
-            if !schema_done
-                && let Some(new_body) =
-                    rewrite_schema_line(body, migrated.schema, manifest::MANIFEST_SCHEMA)
-            {
-                schema_done = true;
-                return format!("{new_body}{newline}");
-            }
-            match rewrite_repo_line(body) {
-                Some(new_body) => format!("{new_body}{newline}"),
-                None => line.to_owned(),
-            }
-        })
-        .collect();
-    // The one terminator repair a managed write makes (the #1308 class):
-    // a file missing its final newline gains one, once, and every later
-    // write is byte-stable.
-    if !edited.is_empty() && !edited.ends_with('\n') {
-        edited.push('\n');
-    }
-    let reproduced = !carries_retired_tables(&current)
-        && toml::from_str::<Manifest>(&edited).is_ok_and(|parsed| parsed == expected);
-    let op = match reproduced {
-        true => Op::WriteFile {
-            pre: manifest_pre(base, &path)?,
-            path,
-            bytes: edited.into_bytes(),
-        },
-        false => Op::WriteManifest {
-            pre: manifest_pre(base, &path)?,
-            path,
-            manifest: Box::new(expected),
-        },
-    };
-    ops.push(PlannedOp {
-        description: crate::repo_move::MOVE_DESCRIPTION.into(),
-        op,
     });
     Ok(())
 }

@@ -30,10 +30,6 @@ const TOP_LEVEL: &[&str] = &[
     "pi-extensions",
     "bundles",
     "suppressed",
-    // Retired by schema 6: read-accepted so an older file loads, dropped by
-    // the deserializer, and gone for good on the next write.
-    "safety-overrides",
-    "safety-reviews",
     "optional-dependencies",
     "agent-skills",
     "agent-launch-instructions",
@@ -43,6 +39,13 @@ const TOP_LEVEL: &[&str] = &[
     "custom-hooks",
     "forks",
 ];
+
+/// The tables schema 6 retired. An older file still carrying them loads —
+/// the deserializer drops them and the next write makes that durable — but
+/// on a current file they are stray keys like any other, so a record
+/// somebody put back by hand is named rather than silently dropped.
+const RETIRED_TABLES: &[&str] = &["safety-overrides", "safety-reviews"];
+const RETIRED_TABLES_LAST_SCHEMA: i64 = 5;
 
 /// What one `[sources.<name>]` table may hold. `rev` names the revision of
 /// a remote to read — a commit id pins, a tag or branch tracks.
@@ -96,8 +99,11 @@ pub fn validate(table: &Table) -> Vec<Finding> {
             fix: format!("set schema = {}", super::MANIFEST_SCHEMA),
         });
     }
+    let retired_still_read = schema.is_some_and(|s| s <= RETIRED_TABLES_LAST_SCHEMA);
     for key in table.keys() {
-        if !TOP_LEVEL.contains(&key.as_str()) {
+        let known = TOP_LEVEL.contains(&key.as_str())
+            || (retired_still_read && RETIRED_TABLES.contains(&key.as_str()));
+        if !known {
             findings.push(Finding {
                 location: key.clone(),
                 problem: "unknown table or key".into(),
