@@ -5,10 +5,12 @@ import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
+import { UPDATE_LABEL } from "@/lib/copy";
 import {
   EDITED_TAG_HELP,
   FOLLOW_SOURCE_HELP,
   INSTALL_AS_NEW_LABEL,
+  NO_PER_PACKAGE_UPDATE_NOTE,
   OWN_COPY_NAME_LABEL,
   SHOW_VERSION_LABEL,
   TABLE_OPTIONS_LABEL,
@@ -20,7 +22,10 @@ import { mount, settle } from "@/test/dom";
 import { UpdatesTable } from "./updates-table";
 import { updateRow as row } from "./updates-test-rows";
 
-vi.mock("@/bindings", () => ({
+vi.mock("@/bindings", async (importOriginal) => ({
+  // The generated constants stay real — the update rules read core's own
+  // kind list through them, and a copy kept here could go stale unseen.
+  ...(await importOriginal<typeof import("@/bindings")>()),
   commands: {
     updatesOverview: vi.fn(),
     packageForkBeside: vi.fn(),
@@ -265,5 +270,35 @@ describe("the explanations on the header and the tag", () => {
     expect(
       document.querySelector('[data-slot="tooltip-content"]')?.textContent,
     ).toBe(EDITED_TAG_HELP);
+  });
+});
+
+// Every Update surface reads one rule from core's own list. This is the
+// per-row one; the package page and both Update-all buttons ask the same
+// question through canUpdatePackage and updatablePlaces.
+describe("a row of a kind the planner never brings current", () => {
+  it("offers no Update, and says where the update does live", async () => {
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: {
+        rows: [
+          row("pi-hooks", null, { kind: "pi-extension" }),
+          row("gh", null),
+        ],
+        warnings: [],
+      },
+    });
+    mount(<UpdatesPage />);
+    await settle();
+
+    const updates = [...document.querySelectorAll("button")].filter(
+      (b) => b.textContent === UPDATE_LABEL,
+    );
+    expect(updates).toHaveLength(2);
+    const [pi, skill] = updates;
+    expect(pi?.disabled).toBe(true);
+    expect(pi?.getAttribute("title")).toBe(NO_PER_PACKAGE_UPDATE_NOTE);
+    // The control: a kind the planner does handle is still offered.
+    expect(skill?.disabled).toBe(false);
   });
 });

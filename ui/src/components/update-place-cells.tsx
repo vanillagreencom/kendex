@@ -1,7 +1,9 @@
 import { MoreHorizontal } from "lucide-react";
-import { useState } from "react";
 import type { Scope, UpdateRow } from "@/bindings";
-import { InstallAsNewDialog } from "@/components/install-as-new-dialog";
+import {
+  InstallAsNew,
+  installableBeside,
+} from "@/components/install-as-new-button";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -22,14 +24,14 @@ import {
   followSourceLabel,
   HELD_BY_OWNER_NOTE,
   heldBySourceNote,
-  INSTALL_AS_NEW_LABEL,
+  NO_PER_PACKAGE_UPDATE_NOTE,
   OPEN_PACKAGE_LABEL,
   UPDATE_NEEDS_CHECK_NOTE,
 } from "@/lib/copy-updates";
 import { packageDisplayName } from "@/lib/labels";
 import { heldByOwner, placeName, switchLockedBy } from "@/lib/update-groups";
 import { unsettled } from "@/lib/updates-read-state";
-import { versionLabel } from "@/lib/versions";
+import { hasPerPackageUpdate, versionLabel } from "@/lib/versions";
 import { useNavStore } from "@/stores/nav";
 import { useUpdatesStore } from "@/stores/updates";
 import { useUpdatesView } from "@/stores/updates-view";
@@ -157,14 +159,23 @@ export function PlaceCells({
                     size="sm"
                     variant="outline"
                     disabled={
-                      busy || held || !row.updateAvailable || heldByOwner(row)
+                      busy ||
+                      held ||
+                      !row.updateAvailable ||
+                      heldByOwner(row) ||
+                      !hasPerPackageUpdate(row.kind)
                     }
+                    // The kind comes first: the others are reasons this
+                    // row cannot be updated right now, and that one is why
+                    // it never can be here.
                     title={
-                      heldByOwner(row)
-                        ? HELD_BY_OWNER_NOTE
-                        : held
-                          ? UPDATE_NEEDS_CHECK_NOTE
-                          : undefined
+                      !hasPerPackageUpdate(row.kind)
+                        ? NO_PER_PACKAGE_UPDATE_NOTE
+                        : heldByOwner(row)
+                          ? HELD_BY_OWNER_NOTE
+                          : held
+                            ? UPDATE_NEEDS_CHECK_NOTE
+                            : undefined
                     }
                     onClick={() => void updateOne(row)}
                   >
@@ -196,54 +207,6 @@ export function PlaceCells({
           </TableCell>
         </>
       )}
-    </>
-  );
-}
-
-/** Whether an edited place has something to install beside its edits: a
- *  newer version the source still carries, and a rendering the engine can
- *  keep. A package gone from its source, one already at the newest, a
- *  bundle member, an edit spread over several tools, or a tool whose
- *  format cannot be read back settles on the package page instead. */
-const installableBeside = (row: UpdateRow): boolean =>
-  row.forkableHarness !== null &&
-  row.updateAvailable &&
-  !row.removedUpstream &&
-  row.canDiscard;
-
-/** The edited place's one way to a newer version: beside the edits, never
- *  over them. The install may move a hold to the row's `latest`, so it
- *  waits for a check the same as Update. */
-function InstallAsNew({
-  row,
-  busy,
-  held,
-}: {
-  row: UpdateRow;
-  busy: boolean;
-  held: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const harness = row.forkableHarness;
-  if (!harness) return null;
-  return (
-    <>
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={busy || held}
-        title={held ? UPDATE_NEEDS_CHECK_NOTE : undefined}
-        onClick={() => setOpen(true)}
-      >
-        {INSTALL_AS_NEW_LABEL}
-      </Button>
-      {open ? (
-        <InstallAsNewDialog
-          row={row}
-          harness={harness}
-          onOpenChange={setOpen}
-        />
-      ) : null}
     </>
   );
 }
