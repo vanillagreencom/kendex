@@ -240,6 +240,11 @@ impl Env {
         self.data_dir.join(APP_DIR).join("locks")
     }
 
+    /// Cross-process lock for one credential refresh and token rotation.
+    pub fn credential_refresh_lock_file(&self) -> PathBuf {
+        self.scope_locks_dir().join("credential-refresh.lock")
+    }
+
     /// Per-scope drift snapshots — derived, machine-local, rebuildable. The
     /// session-start check reads these instead of doing the deep work.
     pub fn drift_dir(&self) -> PathBuf {

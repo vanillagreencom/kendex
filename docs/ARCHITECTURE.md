@@ -712,12 +712,12 @@ lives in one capability table read by core and UI.
   meta line on disk (`Env::registry_cache_dir`) behind an ETag and a
   one-hour TTL; a failed refresh serves the last fetch labeled stale with
   its real fetch time. All reads go through the `Fetch` trait (curl via
-  `Hardened`, plain http only under an explicit `KENDEX_API` override);
-  tests inject canned transports. `skillssh.rs` is the versioned adapter
-  over their public search: pinned wire schema refused on mismatch,
-  capped, kill-switched (`KENDEX_SKILLSSH=off`); a hit is a lead, never an
-  identity, installing through the same subscribe path. Sign-in,
-  collections and deep links arrive with W3/W4.
+  `Hardened`, plain http only under `KENDEX_API`); tests inject transports.
+  Bearer calls route through `registry/client.rs`: one cross-process lock
+  serializes refresh rotation, saving the rotated pair before retry.
+  `skillssh.rs` pins its public wire schema and kill switch
+  (`KENDEX_SKILLSSH=off`); a hit is a lead, never an identity, and installs
+  through the same subscribe path. Collections and deep links arrive with W3/W4.
 - **Intent in the manifest, closure in the plan, edges in the lock.** The
   manifest records choices, never consequences: items asked for, bundles
   installed, optional dependencies taken, what stays removed. A bundle's

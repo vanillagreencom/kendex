@@ -10,6 +10,8 @@ an outside contributor.
 
 ### Fixed
 
+- Simultaneous app and CLI account calls share one token refresh, so they no
+  longer invalidate the sign-in by rotating the same refresh token twice.
 - `kendex check` exits 1, not 2, when packages await re-evaluation, so the
   session-start report no longer opens with "kendex check could not run" after
   a completed run. The drift hook script changed; `kendex drift-hook` reinstalls it.

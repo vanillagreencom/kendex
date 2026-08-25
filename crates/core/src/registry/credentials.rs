@@ -7,6 +7,7 @@
 //! says so and offers session-only auth.
 
 use crate::error::{CoreError, Result};
+use crate::fs::LockedFile;
 use crate::registry::base_url;
 use serde::{Deserialize, Serialize};
 
@@ -38,7 +39,13 @@ pub trait CredentialStore {
     fn save(&self, credential: &Credential) -> Result<()>;
     fn load(&self) -> Result<Option<Credential>>;
     fn clear(&self) -> Result<()>;
+    fn refresh_guard(&self) -> Result<Box<dyn CredentialRefreshGuard + '_>>;
 }
+
+/// Held for the load-refresh-save credential transaction; dropping releases it.
+pub trait CredentialRefreshGuard {}
+
+impl CredentialRefreshGuard for LockedFile {}
 
 pub struct KeyringStore;
 
@@ -99,6 +106,26 @@ impl CredentialStore for KeyringStore {
             Err(error) => Err(CoreError::RegistryUnavailable {
                 why: format!("the credential store refused the removal: {error}"),
             }),
+        }
+    }
+
+    fn refresh_guard(&self) -> Result<Box<dyn CredentialRefreshGuard + '_>> {
+        let env = crate::env::Env::detect()?;
+        let path = env.credential_refresh_lock_file();
+        let parent = path
+            .parent()
+            .ok_or_else(|| CoreError::io(&path, std::io::Error::other("path has no parent")))?;
+        std::fs::create_dir_all(parent).map_err(|error| CoreError::io(parent, error))?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            match LockedFile::try_exclusive_no_follow(&path) {
+                Ok(Some(lock)) => return Ok(Box::new(lock)),
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Ok(None) => return Err(CoreError::CredentialRefreshBusy { lock: path }),
+                Err(error) => return Err(CoreError::io(&path, error)),
+            }
         }
     }
 }

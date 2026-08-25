@@ -7,8 +7,8 @@
 use serde::Deserialize;
 
 use crate::error::{CoreError, Result};
-use crate::registry::credentials::{Credential, CredentialStore};
-use crate::registry::login::TokenPair;
+use crate::registry::client::{server_message, with_access};
+use crate::registry::credentials::CredentialStore;
 use crate::registry::{Fetch, FetchResponse, base_url};
 
 /// What POST /api/v1/submissions answered.
@@ -27,11 +27,6 @@ pub struct SubmissionRow {
     pub status_reason: Option<String>,
     pub head_commit: Option<String>,
     pub indexed_at: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct WireError {
-    error: String,
 }
 
 #[derive(Deserialize)]
@@ -75,112 +70,6 @@ pub fn submissions(fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result<Vec
 /// surfaces ask before offering submit.
 pub fn signed_in(store: &dyn CredentialStore) -> Result<bool> {
     Ok(store.load()?.is_some())
-}
-
-/// Run one authenticated call, refreshing a rejected access token once.
-/// The rotated pair is saved before the retry, so a crash between the two
-/// still leaves the newest credential in the keychain.
-fn with_access(
-    fetch: &dyn Fetch,
-    store: &dyn CredentialStore,
-    call: impl Fn(&str) -> Result<FetchResponse>,
-) -> Result<FetchResponse> {
-    let credential = store.load()?.ok_or_else(|| CoreError::Authoring {
-        message: "not signed in — run `kendex login` first".to_owned(),
-    })?;
-    let first = call(&credential.access_token)?;
-    if first.status != 401 {
-        return Ok(first);
-    }
-    // Another kendex process may have refreshed meanwhile — a rotation is
-    // one-use, so presenting the old refresh token would burn the family.
-    // Reload and prefer any newer credential before refreshing ourselves.
-    if let Some(newer) = store.load()?
-        && newer.access_token != credential.access_token
-    {
-        let retried = call(&newer.access_token)?;
-        if retried.status != 401 {
-            return Ok(retried);
-        }
-    }
-    let pair = match refresh(fetch, &credential.refresh_token) {
-        Ok(pair) => pair,
-        // Only the server definitively refusing (a 4xx) means the sign-in
-        // is over — a network failure or a 5xx is transient and must not
-        // sign the machine out. The definitive case clears the stale
-        // credential so the next attempt asks for a fresh login instead of
-        // retrying a dead one forever, and only while it is still the token
-        // we presented — a concurrent process's fresh rotation must survive.
-        Err(Refused::Definitive(why)) => {
-            let ours = store
-                .load()
-                .ok()
-                .flatten()
-                .is_none_or(|kept| kept.refresh_token == credential.refresh_token);
-            if ours {
-                let _ = store.clear();
-            }
-            return Err(CoreError::Authoring {
-                message: format!("your sign-in has expired ({why}) — run `kendex login` again"),
-            });
-        }
-        Err(Refused::Transient(error)) => return Err(error),
-    };
-    let rotated = Credential {
-        endpoint: base_url(),
-        access_token: pair.access_token,
-        refresh_token: pair.refresh_token,
-        capabilities: pair.capabilities,
-    };
-    store.save(&rotated)?;
-    let second = call(&rotated.access_token)?;
-    if second.status == 401 {
-        return Err(CoreError::Authoring {
-            message: "the server does not accept this sign-in — run `kendex login` again"
-                .to_owned(),
-        });
-    }
-    Ok(second)
-}
-
-/// Why a refresh did not yield a token — the two cases the caller must
-/// treat differently.
-enum Refused {
-    /// The server refused this token (4xx): the sign-in is over.
-    Definitive(String),
-    /// Network away, or a 5xx: retry later, keep the credential.
-    Transient(CoreError),
-}
-
-fn refresh(fetch: &dyn Fetch, refresh_token: &str) -> std::result::Result<TokenPair, Refused> {
-    let body = serde_json::json!({
-        "grant_type": "refresh_token",
-        "refresh_token": refresh_token,
-    })
-    .to_string();
-    let response = fetch
-        .post_json(&format!("{}/api/v1/device/token", base_url()), &body)
-        .map_err(Refused::Transient)?;
-    if (400..500).contains(&response.status) {
-        return Err(Refused::Definitive(server_message(&response)));
-    }
-    if response.status != 200 {
-        return Err(Refused::Transient(CoreError::RegistryUnavailable {
-            why: server_message(&response),
-        }));
-    }
-    serde_json::from_slice(&response.body).map_err(|error| {
-        Refused::Transient(CoreError::RegistryMalformed {
-            why: error.to_string(),
-        })
-    })
-}
-
-/// The server's own `error` sentence when it wrote one, else the status.
-fn server_message(response: &FetchResponse) -> String {
-    serde_json::from_slice::<WireError>(&response.body)
-        .map(|wire| wire.error)
-        .unwrap_or_else(|_| format!("status {}", response.status))
 }
 
 fn server_said(response: &FetchResponse) -> CoreError {

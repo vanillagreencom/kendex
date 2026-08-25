@@ -3,6 +3,7 @@
 //! with an ETag, and honest about staleness when the network is away.
 
 pub mod cache;
+pub mod client;
 pub mod collections;
 pub mod credentials;
 pub mod index;
