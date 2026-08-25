@@ -42,8 +42,9 @@ an outside contributor.
 - Commit checks moved into the git pre-commit hook, which now also runs
   rust-fmt, rust-clippy, and biome; commands that sidestep the armed hook
   (`--no-verify`, hook-skipping git config) are refused.
-- **Breaking:** `KENDEX_PRE_COMMIT_RUST_CLIPPY` is gone; use
-  `[guards.rust-clippy] enabled = false` in `kendex.settings.toml`.
+- **Breaking:** `KENDEX_PRE_COMMIT_RUST_CLIPPY` is gone. To disable the
+  lane, set `enabled = false` under `[guards.rust-clippy]` in
+  `kendex.settings.toml`; a custom command moves to `KENDEX_GUARD_PRE_COMMIT_LOCAL`.
 - The safety check reads every file to its last byte (it used to stop at
   512 KB or 200 files), so large packages can show findings that were
   always there; unreadable ones report "Not fully checked", not a score.
@@ -89,8 +90,8 @@ an outside contributor.
   hooks moved out of Pi's reserved `hooks/` directory, and refresh migrates
   an existing install — moving only what kendex provably wrote.
 - Accepting a held-back update actually installs it: `kendex findings`
-  prints the token `--allow-unsafe` takes, and a stale acceptance stops
-  the run out loud instead of being ignored.
+  prints the token `--allow-unsafe` takes, labels installed copy and
+  held-back update separately, and a stale acceptance stops the run out loud.
 - `kendex apply` and `kendex refresh` print what they cannot change and
   why, instead of "nothing to do".
 - The Linux app draws at the right size on HiDPI Wayland (native Wayland
@@ -209,12 +210,18 @@ CLI, and the kendex.ai community ships alongside. Migrate with
 - **Breaking:** commands install on Codex as generated skills (Codex
   retired its prompt directory); collisions install as `<name>__command`.
   Existing installs: run `kendex refresh` to generate them.
+- **Breaking:** installed skills follow the surface model: tools reading
+  the same folder share one rendered copy, others get their own. Refresh
+  regenerates; the journaled apply moves anything that needs to move.
 
 ### Changed
 
 - **Breaking:** vstack is **kendex** — app, CLI binary, crates, and
-  identifier; rename `VSTACK_*` environment variables to `KENDEX_*`. A
-  `vstack` alias ships one cycle; libraries repoint in one previewed step.
+  identifier. A `vstack` alias ships one cycle; existing libraries
+  repoint in one previewed step.
+- **Breaking:** rename `VSTACK_*` environment variables to `KENDEX_*` or
+  they stop working (a disabled drift hook comes back); only the guard
+  variables (`VSTACK_GUARDS_*`, `VSTACK_GUARD_PRE_COMMIT_LOCAL`) fall back.
 - The coding tools kendex writes to are called **harnesses**.
 - The app is reorganized around what you're doing: six sidebar
   destinations, Home leads with what needs attention, Sync is Review &
@@ -235,9 +242,11 @@ CLI, and the kendex.ai community ships alongside. Migrate with
   large project) with findings unchanged byte for byte.
 - Loading states are the shape of what is coming, and the app never
   claims "Nothing installed yet" while still reading.
-- **Breaking:** agent tool permissions are typed intent, never widened: a
-  missing `role:` no longer renders Codex full access, and `tools:`
-  allowlists render or refuse per harness honestly. Refresh regenerates.
+- **Breaking:** agent tool permissions are typed intent, never widened:
+  `tools:` allowlists render or refuse per harness honestly, and a missing
+  `role:` no longer renders Codex full access. Refresh regenerates.
+- A role-less Codex agent that relied on implicit full access keeps it by
+  declaring `role: engineer` explicitly.
 - **Breaking:** model aliases resolve through one per-harness table;
   `inherit` survives every harness. Refresh regenerates.
 - **Breaking:** the manifest schema and install-record version move to 2.
