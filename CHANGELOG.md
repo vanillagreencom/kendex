@@ -20,6 +20,9 @@ an outside contributor.
 - A project reached through a symlinked path no longer misreports an
   editor save conflict as a plain failure or loses package update
   timelines to a "history could not be read" warning.
+- The preflight skill's `unwired-suite` lane no longer flags new test files
+  that a bare `vitest`/`jest` script runs through the runner's default
+  include glob.
 - A pi-hooks carrier registered through a scoped path such as
   `./packages/@vanillagreen/pi-hooks` no longer draws the false "nothing
   will run it" warning from `kendex apply` and the Review & apply page.

@@ -242,6 +242,62 @@ git -C "$R" add -A
 run_pf
 fires "a suite outside every manifest subtree is still unwired" "tests/far.test.sh:0: [unwired-suite]"
 
+echo "=== a bare vitest/jest invocation wires its default include glob ==="
+# A root manifest scripting `vitest run` names no path and carries no glob,
+# yet the runner's own default include executes every *.test.ts it matches.
+seed vitestdefault
+printf '{\n  "scripts": { "test": "vitest run" },\n  "devDependencies": { "vitest": "^3.0.0" }\n}\n' >"$R/package.json"
+git -C "$R" add -A
+git -C "$R" commit -qm "vitest runner with no explicit include"
+mkdir -p "$R/src/__tests__"
+printf 'export {}\n' >"$R/src/__tests__/session.test.ts"
+printf 'export {}\n' >"$R/src/__tests__/session.test.mjs"
+git -C "$R" add -A
+run_pf
+clean "a bare vitest run script wires the ts and mjs suites its default include matches"
+
+# The default include reaches no shell suite, so the lane still runs red
+# in the same fixture.
+printf '#!/usr/bin/env bash\nset -euo pipefail\necho orphan\n' >"$R/tests/orphan.test.sh"
+git -C "$R" add -A
+run_pf
+fires "the vitest default include does not reach a shell suite" "tests/orphan.test.sh:0: [unwired-suite]"
+
+# The same word as a dependency key is not an invocation: nothing runs.
+seed vitestdep
+printf '{\n  "scripts": { "test": "node run-tests.js" },\n  "devDependencies": { "vitest": "^3.0.0" }\n}\n' >"$R/package.json"
+git -C "$R" add -A
+git -C "$R" commit -qm "vitest as a dependency, never invoked"
+printf 'export {}\n' >"$R/orphan.test.ts"
+git -C "$R" add -A
+run_pf
+fires "vitest named only as a dependency wires nothing" "orphan.test.ts:0: [unwired-suite]"
+
+# Jest's default testMatch stops at js/ts: a jest script wires the ts
+# suite beside an mjs one it never runs.
+seed jestdefault
+printf '{\n  "scripts": { "test": "jest --ci" }\n}\n' >"$R/package.json"
+git -C "$R" add -A
+git -C "$R" commit -qm "jest runner with no explicit testMatch"
+printf 'export {}\n' >"$R/a.test.ts"
+printf 'export {}\n' >"$R/b.test.mjs"
+git -C "$R" add -A
+run_pf
+fires "a jest script leaves an mjs suite outside its default testMatch" "b.test.mjs:0: [unwired-suite]"
+case "$OUT" in *"a.test.ts"*) bad "a jest script wires the ts suite its default testMatch covers" "$OUT" ;; *) ok "a jest script wires the ts suite its default testMatch covers" ;; esac
+
+# A vitest runner below the repo root runs from its own directory and says
+# nothing about a suite outside that subtree.
+seed vitestscope
+mkdir -p "$R/pkg"
+printf '{\n  "scripts": { "test": "vitest run" }\n}\n' >"$R/pkg/package.json"
+git -C "$R" add -A
+git -C "$R" commit -qm "vitest runner below the repo root"
+printf 'export {}\n' >"$R/far.test.ts"
+git -C "$R" add -A
+run_pf
+fires "a sub-package vitest runner wires nothing outside its subtree" "far.test.ts:0: [unwired-suite]"
+
 echo "=== inert trap text arms nothing; quoted command text swallows nothing; an untracked runner wires ==="
 seed inert
 mkdir -p "$R/.github/workflows"

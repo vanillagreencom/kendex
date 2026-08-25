@@ -699,7 +699,7 @@ is_suite_path() { # PATH
 # worktree edit that is not part of this change.
 RUNNERS_READ_WHOLE=1
 build_runner_index() {
-  local r c k=0 status
+  local r c k=0 status kind scope
   [ ! -f "$TMP/runner.toks" ] || return 0
   # Untracked runners are in scope exactly when untracked suites are: a
   # workflow added beside its suite wires it before either is committed.
@@ -710,10 +710,32 @@ build_runner_index() {
   ' | LC_ALL=C sort -u >"$TMP/runner.names"
   : >"$TMP/runner.bodies"
   : >"$TMP/runner.toks.raw"
+  : >"$TMP/runner.defaultglob"
   while IFS= read -r r; do
     k=$((k + 1))
     c="$(content_of "r$k" "$r")" || { RUNNERS_READ_WHOLE=0; continue; }
     cat -- "$c" >>"$TMP/runner.bodies"
+    # A runner invoking bare vitest or jest runs that runner's own default
+    # include glob — no path in the runner ever names the suites it
+    # executes. An invocation is the word at a command position: followed
+    # by arguments, a quote closing a script value, or the line end. A
+    # manifest dependency key ("vitest": "^3") or a package path
+    # (@vitest/ui) is not one. Recorded with the directory the runner runs
+    # from: manifests run beside themselves; workflows and validate
+    # scripts run from the root of the tree that owns them.
+    for kind in vitest jest; do
+      LC_ALL=C grep -qE "(^|[^A-Za-z0-9_@/.-])$kind([[:space:];&|)]|\"([^:]|\$)|\$)" "$c" || continue
+      scope=""
+      case "$r" in
+        .github/workflows/*) ;;
+        */validate*)
+          scope="${r%/*}"
+          case "$scope" in tools | scripts) scope="" ;; */tools | */scripts) scope="${scope%/*}" ;; esac
+          ;;
+        */*) scope="${r%/*}" ;;
+      esac
+      printf '%s\t%s\n' "$kind" "$scope" >>"$TMP/runner.defaultglob"
+    done
     status=0
     LC_ALL=C tr -cs 'A-Za-z0-9_*./-' '\n' <"$c" | LC_ALL=C grep -e / |
       RN="$r" awk 'BEGIN { p = ENVIRON["RN"] } { print p "\t" $0 }' >>"$TMP/runner.toks.raw" || status=$?
@@ -728,7 +750,7 @@ build_runner_index() {
 # read whole, proves nothing either way — an unproven suite is not an
 # unwired one, so the lane says nothing.
 suite_is_wired() { # SUITE-PATH
-  local p="$1" base dir="" r tok
+  local p="$1" base dir="" r tok kind scope
   base="${p##*/}"
   case "$p" in */*) dir="${p%/*}" ;; esac
   build_runner_index
@@ -742,6 +764,20 @@ suite_is_wired() { # SUITE-PATH
     case "$r" in */*) ;; *) continue ;; esac
     case "$p" in "${r%/*}"/*) return 0 ;; esac
   done <"$TMP/runner.names"
+  # A recorded bare vitest/jest invocation wires every suite its runner's
+  # default include glob matches under the directory it runs from:
+  # *.test.ts/js/mjs for vitest, *.test.ts/js for jest, whose default
+  # testMatch stops at js/ts. A config pinning an explicit include or
+  # testMatch is not evaluated — an unproven suite is not an unwired one.
+  while IFS="$TAB" read -r kind scope; do
+    case "$p" in
+      *.test.ts | *.test.js) ;;
+      *.test.mjs) [ "$kind" = vitest ] || continue ;;
+      *) continue ;;
+    esac
+    if [ -z "$scope" ]; then return 0; fi
+    case "$p" in "$scope"/*) return 0 ;; esac
+  done <"$TMP/runner.defaultglob"
   while IFS="$TAB" read -r r tok; do
     [ "$r" != "$p" ] || continue
     case "$tok" in
