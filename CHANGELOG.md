@@ -47,6 +47,7 @@ an outside contributor.
 
 ### Changed
 
+- orch: the internal review loop stops at `REVIEW_MAX_CYCLES` (default 4) — `workflow-state increment … cycles` refuses past it, so a review cannot run on for ten cycles before the PR is opened.
 - **Breaking:** the install record's format moves to version 5. Older files
   upgrade in place on the first apply; if two kendex versions share a
   project, update both.
