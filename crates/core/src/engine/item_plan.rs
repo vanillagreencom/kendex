@@ -192,31 +192,28 @@ pub(super) enum Planned {
 /// A `DriftState::Unmanaged` row's detail is a bare path for the same
 /// reason; these two are read by the same surfaces.
 ///
-/// The path is shown, not printed: these bytes were written by something
-/// that is not kendex, and a folder name carrying an escape sequence must
-/// reach a terminal as its own characters.
+/// The path is stored as it is, never as its rendering. A detail like this
+/// is an identity — two rows are the same place when their paths match —
+/// and escaping first would let two different places compare, and print,
+/// as one. Escaping is each surface's own last step (`names::shown`);
+/// these bytes were written by something that is not kendex, so a folder
+/// name carrying an escape sequence must reach a terminal as its own
+/// characters and never as the sequence.
 pub(super) fn unmanaged(cause: DriftCause, path: &std::path::Path) -> Planned {
-    Planned::Unmanaged(
-        cause,
-        crate::names::shown(&path.display().to_string()),
-        None,
-    )
+    Planned::Unmanaged(cause, path.display().to_string(), None)
 }
 
 /// The same refusal, carrying what the plan measured the files in the way
 /// against: the bytes it was about to write. Only the passes that hold both
 /// sides can answer, and where a position cannot be read as content at all
-/// — a link kendex will not follow — there is nothing to compare.
+/// — a link kendex will not follow — there is nothing to compare. The path
+/// is stored as it is, for the reason `unmanaged` gives.
 pub(super) fn unmanaged_compared(
     cause: DriftCause,
     path: &std::path::Path,
     compared: Option<Comparison>,
 ) -> Planned {
-    Planned::Unmanaged(
-        cause,
-        crate::names::shown(&path.display().to_string()),
-        compared,
-    )
+    Planned::Unmanaged(cause, path.display().to_string(), compared)
 }
 
 /// A registration is in sync when its backing file matches and re-applying

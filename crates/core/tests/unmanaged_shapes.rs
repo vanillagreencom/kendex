@@ -281,3 +281,59 @@ fn a_tree_write_says_which_tool_it_is_for() {
         report.plan.ops
     );
 }
+
+/// A row's detail is the place, not a rendering of it. Escaped here, two
+/// positions differing only by a real control character and its literal
+/// escape spelling would arrive at a surface as one string — and the one
+/// surface that deduplicates positions would print a single place where
+/// there are two. Every surface escapes at the moment it prints instead.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_position_reaches_the_row_as_the_path_it_is() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().canonicalize().unwrap();
+    let catalog = home.join("catalog");
+    fs::create_dir_all(catalog.join("skills/deploy")).unwrap();
+    fs::write(
+        catalog.join("skills/deploy/SKILL.md"),
+        "---\nname: deploy\ndescription: ship it\n---\nUpstream.\n",
+    )
+    .unwrap();
+    // A directory a person may legally make, whose name a terminal would
+    // act on. The item name cannot carry one — names refuse control
+    // characters — so the project holding it is where one reaches a row.
+    let project = home.join("we\u{1b}[31mird");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        format!(
+            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+            catalog.display()
+        ),
+    )
+    .unwrap();
+    let position = project.join(".claude/skills/deploy");
+    fs::create_dir_all(&position).unwrap();
+    fs::write(position.join("SKILL.md"), BEFORE).unwrap();
+
+    let env = Env::fake(&home, FakeOs::Linux);
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    let report = audit(&env, &scope).unwrap();
+    let row = report
+        .drift
+        .iter()
+        .find(|row| row.name == "deploy" && row.state == DriftState::Conflict)
+        .unwrap();
+    assert_eq!(row.cause, Some(DriftCause::UnmanagedContent), "{row:?}");
+    assert_eq!(
+        row.detail,
+        position.display().to_string(),
+        "the row carries a rendering of the place instead of the place"
+    );
+    assert!(
+        row.detail.contains('\u{1b}'),
+        "the fixture stopped exercising a control character: {row:?}"
+    );
+}
