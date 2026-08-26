@@ -313,7 +313,6 @@ harnesses = [
 ]
 enabled = true
 
-
 [skills.worktree]
 source = "."
 harnesses = [
@@ -352,65 +351,8 @@ enabled = true
 
 [hooks.task-completed-check]
 source = "."
-harnesses = [
-    "claude",
-]
+harnesses = ["claude"]
 enabled = true
-
-
-[agent-frontmatter.claude]
-generalist = { color = "green", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = false }
-iced = { color = "cyan", model = "inherit", effort = "max", deny-tools = ["Agent", "AskUserQuestion"], background = false }
-planner = { color = "blue", model = "inherit", effort = "max", deny-tools = ["Agent"], background = false }
-researcher = { color = "purple", model = "inherit", effort = "max", deny-tools = ["Agent", "AskUserQuestion"], background = true }
-reviewer-arch = { color = "yellow", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
-reviewer-correctness = { color = "red", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
-reviewer-doc = { color = "yellow", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
-reviewer-error = { color = "orange", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
-reviewer-perf = { color = "red", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
-reviewer-quality = { color = "purple", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
-reviewer-safety = { color = "red", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
-reviewer-security = { color = "red", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
-reviewer-test = { color = "blue", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
-rust = { color = "orange", model = "inherit", effort = "max", deny-tools = ["Agent", "AskUserQuestion"], background = false }
-scout = { color = "cyan", model = "sonnet", effort = "high", deny-tools = ["Agent", "AskUserQuestion"], background = true }
-tpm = { color = "blue", model = "inherit", effort = "high", deny-tools = ["Agent", "AskUserQuestion"], background = true }
-
-[agent-frontmatter.codex]
-generalist = { model = "gpt-5.5", sandbox-mode = "danger-full-access", model-reasoning-effort = "high", nickname-candidates = ["Generalist-Atlas", "Generalist-Delta", "Generalist-Echo", "Generalist-Nova", "Generalist-Orion", "Generalist-Vector"] }
-iced = { model = "gpt-5.5", sandbox-mode = "danger-full-access", model-reasoning-effort = "high", nickname-candidates = ["Iced-Atlas", "Iced-Delta", "Iced-Echo", "Iced-Nova", "Iced-Orion", "Iced-Vector"] }
-planner = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "high", nickname-candidates = ["Planner-Atlas", "Planner-Delta", "Planner-Echo", "Planner-Nova", "Planner-Orion", "Planner-Vector"] }
-researcher = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "high", nickname-candidates = ["Researcher-Atlas", "Researcher-Delta", "Researcher-Echo", "Researcher-Nova", "Researcher-Orion", "Researcher-Vector"] }
-reviewer-arch = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "high", nickname-candidates = ["Reviewer-Arch-Atlas", "Reviewer-Arch-Delta", "Reviewer-Arch-Echo", "Reviewer-Arch-Nova", "Reviewer-Arch-Orion", "Reviewer-Arch-Vector"] }
-reviewer-correctness = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "high", nickname-candidates = ["Reviewer-Correctness-Atlas", "Reviewer-Correctness-Delta", "Reviewer-Correctness-Echo", "Reviewer-Correctness-Nova", "Reviewer-Correctness-Orion", "Reviewer-Correctness-Vector"] }
-reviewer-doc = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "high", nickname-candidates = ["Reviewer-Doc-Atlas", "Reviewer-Doc-Delta", "Reviewer-Doc-Echo", "Reviewer-Doc-Nova", "Reviewer-Doc-Orion", "Reviewer-Doc-Vector"] }
-reviewer-error = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "high", nickname-candidates = ["Reviewer-Error-Atlas", "Reviewer-Error-Delta", "Reviewer-Error-Echo", "Reviewer-Error-Nova", "Reviewer-Error-Orion", "Reviewer-Error-Vector"] }
-reviewer-perf = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "high", nickname-candidates = ["Reviewer-Perf-Atlas", "Reviewer-Perf-Delta", "Reviewer-Perf-Echo", "Reviewer-Perf-Nova", "Reviewer-Perf-Orion", "Reviewer-Perf-Vector"] }
-reviewer-quality = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "high", nickname-candidates = ["Reviewer-Quality-Atlas", "Reviewer-Quality-Delta", "Reviewer-Quality-Echo", "Reviewer-Quality-Nova", "Reviewer-Quality-Orion", "Reviewer-Quality-Vector"] }
-reviewer-safety = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "high", nickname-candidates = ["Reviewer-Safety-Atlas", "Reviewer-Safety-Delta", "Reviewer-Safety-Echo", "Reviewer-Safety-Nova", "Reviewer-Safety-Orion", "Reviewer-Safety-Vector"] }
-reviewer-security = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "high", nickname-candidates = ["Reviewer-Security-Atlas", "Reviewer-Security-Delta", "Reviewer-Security-Echo", "Reviewer-Security-Nova", "Reviewer-Security-Orion", "Reviewer-Security-Vector"] }
-reviewer-test = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "high", nickname-candidates = ["Reviewer-Test-Atlas", "Reviewer-Test-Delta", "Reviewer-Test-Echo", "Reviewer-Test-Nova", "Reviewer-Test-Orion", "Reviewer-Test-Vector"] }
-rust = { model = "gpt-5.5", sandbox-mode = "danger-full-access", model-reasoning-effort = "high", nickname-candidates = ["Rust-Atlas", "Rust-Delta", "Rust-Echo", "Rust-Nova", "Rust-Orion", "Rust-Vector"] }
-scout = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "medium", nickname-candidates = ["Scout-Atlas", "Scout-Delta", "Scout-Echo", "Scout-Nova", "Scout-Orion", "Scout-Vector"] }
-tpm = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "high", nickname-candidates = ["TPM-Atlas", "TPM-Delta", "TPM-Echo", "TPM-Nova", "TPM-Orion", "TPM-Vector"] }
-
-[agent-frontmatter.pi]
-generalist = { color = "green", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "question"], allowed-subagents = ["scout"], pane = true }
-iced = { color = "cyan", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "question"], allowed-subagents = ["scout"], pane = true }
-planner = { color = "blue", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent"], allowed-subagents = [], pane = true }
-researcher = { color = "purple", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question"], allowed-subagents = [], pane = false }
-reviewer-arch = { color = "yellow", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
-reviewer-correctness = { color = "red", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
-reviewer-doc = { color = "yellow", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
-reviewer-error = { color = "orange", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
-reviewer-perf = { color = "red", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
-reviewer-quality = { color = "purple", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
-reviewer-safety = { color = "red", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
-reviewer-security = { color = "red", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
-reviewer-test = { color = "blue", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
-rust = { color = "orange", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "question"], allowed-subagents = ["scout"], pane = true }
-scout = { color = "cyan", model = "openai-codex/gpt-5.5", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question"], allowed-subagents = [], pane = false }
-tpm = { color = "blue", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question"], allowed-subagents = [], pane = false }
 
 [skill-instructions]
 orch = """
@@ -420,3 +362,597 @@ The orch-drill ablation rig (`bmethod/orch-drill`; checked out at `~/dev/orch-dr
 changes: launch a drill per its README and compare wall clock and phase
 timings against the recorded baselines before shipping a workflow change.
 """
+
+[agent-frontmatter.claude.generalist]
+color = "green"
+model = "inherit"
+deny-tools = [
+    "Agent",
+    "AskUserQuestion",
+]
+background = false
+effort = "xhigh"
+
+[agent-frontmatter.claude.iced]
+color = "cyan"
+model = "inherit"
+deny-tools = [
+    "Agent",
+    "AskUserQuestion",
+]
+background = false
+effort = "max"
+
+[agent-frontmatter.claude.planner]
+color = "blue"
+model = "inherit"
+deny-tools = ["Agent"]
+background = false
+effort = "max"
+
+[agent-frontmatter.claude.researcher]
+color = "purple"
+model = "inherit"
+deny-tools = [
+    "Agent",
+    "AskUserQuestion",
+]
+background = true
+effort = "max"
+
+[agent-frontmatter.claude.reviewer-arch]
+color = "yellow"
+model = "inherit"
+deny-tools = [
+    "Agent",
+    "AskUserQuestion",
+]
+background = true
+effort = "xhigh"
+
+[agent-frontmatter.claude.reviewer-correctness]
+color = "red"
+model = "inherit"
+deny-tools = [
+    "Agent",
+    "AskUserQuestion",
+]
+background = true
+effort = "xhigh"
+
+[agent-frontmatter.claude.reviewer-doc]
+color = "yellow"
+model = "inherit"
+deny-tools = [
+    "Agent",
+    "AskUserQuestion",
+]
+background = true
+effort = "xhigh"
+
+[agent-frontmatter.claude.reviewer-error]
+color = "orange"
+model = "inherit"
+deny-tools = [
+    "Agent",
+    "AskUserQuestion",
+]
+background = true
+effort = "xhigh"
+
+[agent-frontmatter.claude.reviewer-perf]
+color = "red"
+model = "inherit"
+deny-tools = [
+    "Agent",
+    "AskUserQuestion",
+]
+background = true
+effort = "xhigh"
+
+[agent-frontmatter.claude.reviewer-quality]
+color = "purple"
+model = "inherit"
+deny-tools = [
+    "Agent",
+    "AskUserQuestion",
+]
+background = true
+effort = "xhigh"
+
+[agent-frontmatter.claude.reviewer-safety]
+color = "red"
+model = "inherit"
+deny-tools = [
+    "Agent",
+    "AskUserQuestion",
+]
+background = true
+effort = "xhigh"
+
+[agent-frontmatter.claude.reviewer-security]
+color = "red"
+model = "inherit"
+deny-tools = [
+    "Agent",
+    "AskUserQuestion",
+]
+background = true
+effort = "xhigh"
+
+[agent-frontmatter.claude.reviewer-test]
+color = "blue"
+model = "inherit"
+deny-tools = [
+    "Agent",
+    "AskUserQuestion",
+]
+background = true
+effort = "xhigh"
+
+[agent-frontmatter.claude.rust]
+color = "orange"
+model = "inherit"
+deny-tools = [
+    "Agent",
+    "AskUserQuestion",
+]
+background = false
+effort = "max"
+
+[agent-frontmatter.claude.scout]
+color = "cyan"
+model = "sonnet"
+deny-tools = [
+    "Agent",
+    "AskUserQuestion",
+]
+background = true
+effort = "high"
+
+[agent-frontmatter.claude.tpm]
+color = "blue"
+model = "inherit"
+deny-tools = [
+    "Agent",
+    "AskUserQuestion",
+]
+background = true
+effort = "high"
+
+[agent-frontmatter.codex.generalist]
+model = "gpt-5.5"
+sandbox-mode = "danger-full-access"
+model-reasoning-effort = "high"
+nickname-candidates = [
+    "Generalist-Atlas",
+    "Generalist-Delta",
+    "Generalist-Echo",
+    "Generalist-Nova",
+    "Generalist-Orion",
+    "Generalist-Vector",
+]
+
+[agent-frontmatter.codex.iced]
+model = "gpt-5.5"
+sandbox-mode = "danger-full-access"
+model-reasoning-effort = "high"
+nickname-candidates = [
+    "Iced-Atlas",
+    "Iced-Delta",
+    "Iced-Echo",
+    "Iced-Nova",
+    "Iced-Orion",
+    "Iced-Vector",
+]
+
+[agent-frontmatter.codex.planner]
+model = "gpt-5.5"
+sandbox-mode = "workspace-write"
+model-reasoning-effort = "high"
+nickname-candidates = [
+    "Planner-Atlas",
+    "Planner-Delta",
+    "Planner-Echo",
+    "Planner-Nova",
+    "Planner-Orion",
+    "Planner-Vector",
+]
+
+[agent-frontmatter.codex.researcher]
+model = "gpt-5.5"
+sandbox-mode = "workspace-write"
+model-reasoning-effort = "high"
+nickname-candidates = [
+    "Researcher-Atlas",
+    "Researcher-Delta",
+    "Researcher-Echo",
+    "Researcher-Nova",
+    "Researcher-Orion",
+    "Researcher-Vector",
+]
+
+[agent-frontmatter.codex.reviewer-arch]
+model = "gpt-5.5"
+sandbox-mode = "workspace-write"
+model-reasoning-effort = "high"
+nickname-candidates = [
+    "Reviewer-Arch-Atlas",
+    "Reviewer-Arch-Delta",
+    "Reviewer-Arch-Echo",
+    "Reviewer-Arch-Nova",
+    "Reviewer-Arch-Orion",
+    "Reviewer-Arch-Vector",
+]
+
+[agent-frontmatter.codex.reviewer-correctness]
+model = "gpt-5.5"
+sandbox-mode = "workspace-write"
+model-reasoning-effort = "high"
+nickname-candidates = [
+    "Reviewer-Correctness-Atlas",
+    "Reviewer-Correctness-Delta",
+    "Reviewer-Correctness-Echo",
+    "Reviewer-Correctness-Nova",
+    "Reviewer-Correctness-Orion",
+    "Reviewer-Correctness-Vector",
+]
+
+[agent-frontmatter.codex.reviewer-doc]
+model = "gpt-5.5"
+sandbox-mode = "workspace-write"
+model-reasoning-effort = "high"
+nickname-candidates = [
+    "Reviewer-Doc-Atlas",
+    "Reviewer-Doc-Delta",
+    "Reviewer-Doc-Echo",
+    "Reviewer-Doc-Nova",
+    "Reviewer-Doc-Orion",
+    "Reviewer-Doc-Vector",
+]
+
+[agent-frontmatter.codex.reviewer-error]
+model = "gpt-5.5"
+sandbox-mode = "workspace-write"
+model-reasoning-effort = "high"
+nickname-candidates = [
+    "Reviewer-Error-Atlas",
+    "Reviewer-Error-Delta",
+    "Reviewer-Error-Echo",
+    "Reviewer-Error-Nova",
+    "Reviewer-Error-Orion",
+    "Reviewer-Error-Vector",
+]
+
+[agent-frontmatter.codex.reviewer-perf]
+model = "gpt-5.5"
+sandbox-mode = "workspace-write"
+model-reasoning-effort = "high"
+nickname-candidates = [
+    "Reviewer-Perf-Atlas",
+    "Reviewer-Perf-Delta",
+    "Reviewer-Perf-Echo",
+    "Reviewer-Perf-Nova",
+    "Reviewer-Perf-Orion",
+    "Reviewer-Perf-Vector",
+]
+
+[agent-frontmatter.codex.reviewer-quality]
+model = "gpt-5.5"
+sandbox-mode = "workspace-write"
+model-reasoning-effort = "high"
+nickname-candidates = [
+    "Reviewer-Quality-Atlas",
+    "Reviewer-Quality-Delta",
+    "Reviewer-Quality-Echo",
+    "Reviewer-Quality-Nova",
+    "Reviewer-Quality-Orion",
+    "Reviewer-Quality-Vector",
+]
+
+[agent-frontmatter.codex.reviewer-safety]
+model = "gpt-5.5"
+sandbox-mode = "workspace-write"
+model-reasoning-effort = "high"
+nickname-candidates = [
+    "Reviewer-Safety-Atlas",
+    "Reviewer-Safety-Delta",
+    "Reviewer-Safety-Echo",
+    "Reviewer-Safety-Nova",
+    "Reviewer-Safety-Orion",
+    "Reviewer-Safety-Vector",
+]
+
+[agent-frontmatter.codex.reviewer-security]
+model = "gpt-5.5"
+sandbox-mode = "workspace-write"
+model-reasoning-effort = "high"
+nickname-candidates = [
+    "Reviewer-Security-Atlas",
+    "Reviewer-Security-Delta",
+    "Reviewer-Security-Echo",
+    "Reviewer-Security-Nova",
+    "Reviewer-Security-Orion",
+    "Reviewer-Security-Vector",
+]
+
+[agent-frontmatter.codex.reviewer-test]
+model = "gpt-5.5"
+sandbox-mode = "workspace-write"
+model-reasoning-effort = "high"
+nickname-candidates = [
+    "Reviewer-Test-Atlas",
+    "Reviewer-Test-Delta",
+    "Reviewer-Test-Echo",
+    "Reviewer-Test-Nova",
+    "Reviewer-Test-Orion",
+    "Reviewer-Test-Vector",
+]
+
+[agent-frontmatter.codex.rust]
+model = "gpt-5.5"
+sandbox-mode = "danger-full-access"
+model-reasoning-effort = "high"
+nickname-candidates = [
+    "Rust-Atlas",
+    "Rust-Delta",
+    "Rust-Echo",
+    "Rust-Nova",
+    "Rust-Orion",
+    "Rust-Vector",
+]
+
+[agent-frontmatter.codex.scout]
+model = "gpt-5.5"
+sandbox-mode = "workspace-write"
+model-reasoning-effort = "medium"
+nickname-candidates = [
+    "Scout-Atlas",
+    "Scout-Delta",
+    "Scout-Echo",
+    "Scout-Nova",
+    "Scout-Orion",
+    "Scout-Vector",
+]
+
+[agent-frontmatter.codex.tpm]
+model = "gpt-5.5"
+sandbox-mode = "workspace-write"
+model-reasoning-effort = "high"
+nickname-candidates = [
+    "TPM-Atlas",
+    "TPM-Delta",
+    "TPM-Echo",
+    "TPM-Nova",
+    "TPM-Orion",
+    "TPM-Vector",
+]
+
+[agent-frontmatter.pi.generalist]
+color = "green"
+model = "inherit"
+deny-tools = [
+    "subagent",
+    "get_subagent_result",
+    "steer_subagent",
+    "stop_subagent",
+    "question",
+]
+allowed-subagents = ["scout"]
+pane = true
+
+[agent-frontmatter.pi.iced]
+color = "cyan"
+model = "inherit"
+deny-tools = [
+    "subagent",
+    "get_subagent_result",
+    "steer_subagent",
+    "stop_subagent",
+    "question",
+]
+allowed-subagents = ["scout"]
+pane = true
+
+[agent-frontmatter.pi.planner]
+color = "blue"
+model = "inherit"
+deny-tools = [
+    "subagent",
+    "get_subagent_result",
+    "steer_subagent",
+    "stop_subagent",
+    "delegate_subagent",
+]
+allowed-subagents = []
+pane = true
+
+[agent-frontmatter.pi.researcher]
+color = "purple"
+model = "inherit"
+deny-tools = [
+    "subagent",
+    "get_subagent_result",
+    "steer_subagent",
+    "stop_subagent",
+    "delegate_subagent",
+    "question",
+]
+allowed-subagents = []
+pane = false
+
+[agent-frontmatter.pi.reviewer-arch]
+color = "yellow"
+model = "inherit"
+deny-tools = [
+    "subagent",
+    "get_subagent_result",
+    "steer_subagent",
+    "stop_subagent",
+    "delegate_subagent",
+    "question",
+    "tasks_write",
+]
+allowed-subagents = []
+pane = false
+
+[agent-frontmatter.pi.reviewer-correctness]
+color = "red"
+model = "inherit"
+deny-tools = [
+    "subagent",
+    "get_subagent_result",
+    "steer_subagent",
+    "stop_subagent",
+    "delegate_subagent",
+    "question",
+    "tasks_write",
+]
+allowed-subagents = []
+pane = false
+
+[agent-frontmatter.pi.reviewer-doc]
+color = "yellow"
+model = "inherit"
+deny-tools = [
+    "subagent",
+    "get_subagent_result",
+    "steer_subagent",
+    "stop_subagent",
+    "delegate_subagent",
+    "question",
+    "tasks_write",
+]
+allowed-subagents = []
+pane = false
+
+[agent-frontmatter.pi.reviewer-error]
+color = "orange"
+model = "inherit"
+deny-tools = [
+    "subagent",
+    "get_subagent_result",
+    "steer_subagent",
+    "stop_subagent",
+    "delegate_subagent",
+    "question",
+    "tasks_write",
+]
+allowed-subagents = []
+pane = false
+
+[agent-frontmatter.pi.reviewer-perf]
+color = "red"
+model = "inherit"
+deny-tools = [
+    "subagent",
+    "get_subagent_result",
+    "steer_subagent",
+    "stop_subagent",
+    "delegate_subagent",
+    "question",
+    "tasks_write",
+]
+allowed-subagents = []
+pane = false
+
+[agent-frontmatter.pi.reviewer-quality]
+color = "purple"
+model = "inherit"
+deny-tools = [
+    "subagent",
+    "get_subagent_result",
+    "steer_subagent",
+    "stop_subagent",
+    "delegate_subagent",
+    "question",
+    "tasks_write",
+]
+allowed-subagents = []
+pane = false
+
+[agent-frontmatter.pi.reviewer-safety]
+color = "red"
+model = "inherit"
+deny-tools = [
+    "subagent",
+    "get_subagent_result",
+    "steer_subagent",
+    "stop_subagent",
+    "delegate_subagent",
+    "question",
+    "tasks_write",
+]
+allowed-subagents = []
+pane = false
+
+[agent-frontmatter.pi.reviewer-security]
+color = "red"
+model = "inherit"
+deny-tools = [
+    "subagent",
+    "get_subagent_result",
+    "steer_subagent",
+    "stop_subagent",
+    "delegate_subagent",
+    "question",
+    "tasks_write",
+]
+allowed-subagents = []
+pane = false
+
+[agent-frontmatter.pi.reviewer-test]
+color = "blue"
+model = "inherit"
+deny-tools = [
+    "subagent",
+    "get_subagent_result",
+    "steer_subagent",
+    "stop_subagent",
+    "delegate_subagent",
+    "question",
+    "tasks_write",
+]
+allowed-subagents = []
+pane = false
+
+[agent-frontmatter.pi.rust]
+color = "orange"
+model = "inherit"
+deny-tools = [
+    "subagent",
+    "get_subagent_result",
+    "steer_subagent",
+    "stop_subagent",
+    "question",
+]
+allowed-subagents = ["scout"]
+pane = true
+
+[agent-frontmatter.pi.scout]
+color = "cyan"
+model = "openai-codex/gpt-5.5"
+deny-tools = [
+    "subagent",
+    "get_subagent_result",
+    "steer_subagent",
+    "stop_subagent",
+    "delegate_subagent",
+    "question",
+]
+allowed-subagents = []
+pane = false
+
+[agent-frontmatter.pi.tpm]
+color = "blue"
+model = "inherit"
+deny-tools = [
+    "subagent",
+    "get_subagent_result",
+    "steer_subagent",
+    "stop_subagent",
+    "delegate_subagent",
+    "question",
+]
+allowed-subagents = []
+pane = false
