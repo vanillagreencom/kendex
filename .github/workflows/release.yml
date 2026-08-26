@@ -124,8 +124,6 @@ jobs:
           [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
           out="target/${{ matrix.target }}/release"
           cp "${out}/kendex${ext}" "dist/kendex-${{ matrix.target }}${ext}"
-          # Alias binary: consuming repos' git hooks still call `vstack`.
-          cp "${out}/vstack${ext}" "dist/vstack-${{ matrix.target }}${ext}"
           find "${out}/bundle" -type f \
             \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \
                -o -name '*.dmg' -o -name '*-setup.exe' -o -name '*.msi' \) \

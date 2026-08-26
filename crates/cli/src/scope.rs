@@ -1,6 +1,6 @@
 use std::fmt;
 
-/// v1 scope-flag semantics: `--scope` beats `--global`, `--global` alone
+/// Scope-flag semantics: `--scope` beats `--global`, `--global` alone
 /// means global, otherwise the per-command default applies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScopeFilter {
@@ -22,9 +22,9 @@ impl fmt::Display for ScopeFilter {
 impl ScopeFilter {
     pub fn parse(value: &str) -> Result<Self, String> {
         match value {
-            "project" | "p" | "local" => Ok(ScopeFilter::Project),
-            "global" | "g" | "user" => Ok(ScopeFilter::Global),
-            "all" | "both" | "*" => Ok(ScopeFilter::All),
+            "project" => Ok(ScopeFilter::Project),
+            "global" => Ok(ScopeFilter::Global),
+            "all" => Ok(ScopeFilter::All),
             other => Err(format!(
                 "unknown scope '{other}' (expected project, global, or all)"
             )),
@@ -49,7 +49,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scope_beats_global_and_aliases_parse() {
+    fn scope_beats_global_and_only_the_three_names_parse() {
         assert_eq!(
             ScopeFilter::resolve(Some("project"), true, ScopeFilter::All).unwrap(),
             ScopeFilter::Project
@@ -62,15 +62,17 @@ mod tests {
             ScopeFilter::resolve(None, false, ScopeFilter::All).unwrap(),
             ScopeFilter::All
         );
-        for (alias, want) in [
-            ("p", ScopeFilter::Project),
-            ("local", ScopeFilter::Project),
-            ("user", ScopeFilter::Global),
-            ("both", ScopeFilter::All),
-            ("*", ScopeFilter::All),
+        for (name, want) in [
+            ("project", ScopeFilter::Project),
+            ("global", ScopeFilter::Global),
+            ("all", ScopeFilter::All),
         ] {
-            assert_eq!(ScopeFilter::parse(alias).unwrap(), want);
+            assert_eq!(ScopeFilter::parse(name).unwrap(), want);
         }
-        assert!(ScopeFilter::parse("everywhere").is_err());
+        // The v1 aliases are gone: an unknown scope names the three that
+        // are left rather than resolving to one of them silently.
+        for gone in ["p", "local", "g", "user", "both", "*", "everywhere"] {
+            assert!(ScopeFilter::parse(gone).is_err(), "{gone}");
+        }
     }
 }

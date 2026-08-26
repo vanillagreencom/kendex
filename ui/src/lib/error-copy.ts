@@ -16,7 +16,7 @@ export const PROBLEM_HEADLINES: Record<ProblemKind, string> = {
 export const PROBLEM_STEPS: Record<ProblemKind, string[]> = {
   "lock-corrupt": [
     "Rescan to retry",
-    "If it keeps failing, the file is from an older format — reinstall its items through kendex",
+    "If it keeps failing, the file's contents are damaged — move it aside and apply again to write a fresh one",
   ],
   "schema-too-new": [
     "Update kendex to the latest version",

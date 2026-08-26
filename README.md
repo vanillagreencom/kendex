@@ -185,8 +185,7 @@ then `kendex guard install`.
 | `report` | file an issue, routed to the asset's owner |
 | `update`, `update-pi`, `init` | self-update, Pi packages, catalog scaffolding |
 
-Scopes: `--scope project|global|all` (v1 aliases `p/local`, `g/user`,
-`both/*`), `-g` as a shortcut for global.
+Scopes: `--scope project|global|all`, `-g` as a shortcut for global.
 
 ## Marketplaces and the community
 

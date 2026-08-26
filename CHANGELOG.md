@@ -156,6 +156,9 @@ an outside contributor.
 - **Breaking:** nothing reads the old vstack names any more — the files, the
   `vstack2` app directories, the repository redirect, the alias binary, and
   `kendex import`. Rename them to `kendex`, or reinstall the scope fresh.
+- **Breaking:** `--scope` takes `project`, `global` or `all` only; the v1
+  aliases `p`/`local`, `g`/`user` and `both`/`*` are gone. `-g` still means
+  global.
 
 ### Added
 

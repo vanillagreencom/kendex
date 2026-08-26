@@ -138,13 +138,6 @@ impl Env {
         &self.real_home
     }
 
-    /// The platform config root itself, resolved the same way the app
-    /// dirs are (`dirs::config_dir()`) — where the v1 importer looks for
-    /// state this product never wrote.
-    pub fn platform_config_dir(&self) -> &Path {
-        &self.config_dir
-    }
-
     fn app_config_dir(&self) -> PathBuf {
         self.config_dir.join(APP_DIR)
     }
