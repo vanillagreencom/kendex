@@ -496,8 +496,26 @@ uninstall_hook() { # HOOK — drop our line; drop the file when only ours was in
 #
 # Returns 0 with the surviving scripts directory on stdout, 1 when there is
 # none, 2 when the question could not be answered.
+# Whether a path is content the work tree at $1 tracks — the test for "this
+# is the same install, checked out again" rather than a separate one.
+#
+# Fails closed: a git that cannot answer returns 2, which the caller turns
+# into "could not enumerate" and leaves the shims alone. Guessing either way
+# disarms a repository that still needs the gate, or strands one that does
+# not.
+tracked_here() { # ROOT PATH -> 0 tracked, 1 not tracked, 2 unknown
+  local root="$1" path="$2" status=0
+  git -C "$root" ls-files --error-unmatch -- "$path" >/dev/null 2>&1 || status=$?
+  case "$status" in
+    0) return 0 ;;
+    1) return 1 ;;
+    *) return 2 ;;
+  esac
+}
+
 other_worktree_still_installed() {
   local repo_phys="" main_root="" gitdir="" root="" root_phys="" base="" dir="" phys="" entry=""
+  local tracked_status=0
   local own_gitdir="" own_phys="" common_phys="" guess_gitdir="" guess_phys="" parent=""
   local roots=()
   repo_phys="$(cd "$REPO_ABS" 2>/dev/null && pwd -P)" || return 2
@@ -580,6 +598,19 @@ other_worktree_still_installed() {
       phys="$(cd "$dir" 2>/dev/null && pwd -P)" || continue
       case "$phys" in
         "$repo_phys" | "$repo_phys"/*) continue ;;
+      esac
+      # A copy git tracks is this repository's own content, checked out
+      # again. Every work tree of a repository that commits its skills
+      # carries one, so treating those as separate installs would find a
+      # survivor in every sibling and keep the shims armed forever — a
+      # repository nobody could ever disarm. One repository, one install:
+      # only a copy the repository does not track is somebody else's.
+      tracked_status=0
+      tracked_here "$root" "$dir/pre-commit" || tracked_status=$?
+      case "$tracked_status" in
+        0) continue ;;
+        1) ;;
+        *) return 2 ;;
       esac
       printf '%s\n' "$dir"
       return 0
@@ -1073,7 +1104,7 @@ if [ "$MODE" = "uninstall" ]; then
       echo "growth-guards git hooks: kept for $other, but the helper could not be retargeted to it"
       exit 1
     fi
-    echo "growth-guards git hooks: kept — retargeted to $other, which another work tree still has installed"
+    echo "growth-guards git hooks: kept — retargeted to $other, a separate install this repository does not track"
     exit 0
   fi
   REMOVED=""

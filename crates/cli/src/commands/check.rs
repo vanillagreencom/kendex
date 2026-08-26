@@ -47,10 +47,12 @@ pub fn run(
 /// whose shims drifted looks identical on disk to one that never armed any.
 ///
 /// Asking the installer means running a script out of the checkout, so it is
-/// asked only where this project's own manifest declares the package —
-/// where someone installed it on purpose. In any other repository the shims
-/// are inspected as files and reported as unmanaged: cloning a repository
-/// and reading its status must not run code the clone happens to carry.
+/// asked only where this machine's install record carries the package. Not
+/// the manifest: a repository that commits its harness render ships both
+/// the scripts and the declaration, so a clone would satisfy any gate its
+/// author could also write. The install record is the one artifact a clone
+/// cannot bring with it. Everywhere else the shims are inspected as files:
+/// cloning a repository and reading its status must not run its code.
 ///
 /// Only project scopes have a work tree to ask about, and a scope with
 /// nothing of the package's in it gets no line at all — no shim can fire
@@ -63,10 +65,7 @@ fn fold_commit_hooks(env: &Env, checked: &mut CheckReport, scopes: &[kendex_core
         let Scope::Project { root } = scope.canonical() else {
             continue;
         };
-        let consent = match declares_guards(env, scope) {
-            true => kendex_core::guard::Consent::Recorded,
-            false => kendex_core::guard::Consent::Unrecorded,
-        };
+        let consent = consent_here(env, scope);
         let (class, text) = match kendex_core::guard::armed(&root, consent) {
             Ok(None) => continue,
             Ok(Some(verdict)) if verdict.code == 0 => continue,
@@ -83,21 +82,34 @@ fn fold_commit_hooks(env: &Env, checked: &mut CheckReport, scopes: &[kendex_core
     }
 }
 
-/// Whether this scope's manifest declares the guard package, enabled.
+/// What this machine says about the guard package in this scope.
 ///
-/// The manifest, not the lock: what the person wrote down is the consent,
-/// and a declaration whose install has not landed yet is still a
-/// declaration. A manifest that cannot be read is not consent.
-fn declares_guards(env: &Env, scope: &kendex_core::model::Scope) -> bool {
-    let path = kendex_core::manifest::manifest_path(env, scope);
-    matches!(
-        kendex_core::manifest::load(&path),
+/// The lock decides, because it is the artifact a clone cannot bring: it is
+/// gitignored by the committed posture and written only where an install
+/// actually ran. The manifest is consulted for the wording alone — telling
+/// "declared here, never installed on this machine" from "nothing claims
+/// this package" is worth a different sentence, and neither is consent.
+/// A file that cannot be read says nothing.
+fn consent_here(env: &Env, scope: &kendex_core::model::Scope) -> kendex_core::guard::Consent {
+    use kendex_core::guard::Consent;
+    let installed =
+        kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope)).is_ok_and(|lock| {
+            lock.entries
+                .values()
+                .any(|entry| entry.name == kendex_core::guard::SKILL)
+        });
+    if installed {
+        return Consent::Installed;
+    }
+    let declared = matches!(
+        kendex_core::manifest::load(&kendex_core::manifest::manifest_path(env, scope)),
         Ok(kendex_core::manifest::ManifestFile::Current(manifest))
-            if manifest
-                .skills
-                .get(kendex_core::guard::SKILL)
-                .is_some_and(|decl| decl.enabled)
-    )
+            if manifest.skills.contains_key(kendex_core::guard::SKILL)
+    );
+    match declared {
+        true => Consent::DeclaredOnly,
+        false => Consent::Unrecorded,
+    }
 }
 
 fn render_text(checked: &CheckReport, quiet: bool) {

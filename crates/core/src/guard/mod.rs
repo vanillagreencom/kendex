@@ -281,16 +281,25 @@ pub fn uninstall(env: &Env, dir: &Path) -> Result<GuardReport> {
 /// package is not installed here, so no shim can fire and none is expected.
 /// A package that IS installed and whose installer cannot be run is an
 /// error, never a quiet pass — that is a broken install, not a clean one.
-/// Whether this scope opted into the package, which decides whether a read
-/// verb may run its scripts.
+/// Whether someone installed this package **on this machine**, which is
+/// what decides whether a read verb may run its scripts.
+///
+/// Machine-local is the whole point. A repository that commits its harness
+/// render carries the package's files and a manifest declaring them, so a
+/// clone of a hostile repository arrives with both — and a gate satisfied
+/// by committed content is a gate its author can write for themselves. The
+/// install record is not committed: it is written where a `kendex add` or
+/// `apply` actually ran, which is the only artifact a clone cannot forge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Consent {
-    /// The project's own manifest records the package as installed. The
-    /// person asked for it, so asking it to report on itself is running
-    /// what they installed.
-    Recorded,
-    /// A copy in the checkout that nothing here declared. Reading a report
-    /// out of a repository must not execute code it happens to carry.
+    /// This machine's install record carries the package for this project.
+    /// Someone ran an install here, so running what they installed is doing
+    /// what they asked for.
+    Installed,
+    /// The repository declares the package and nothing installed it here —
+    /// an ordinary state for a fresh clone, and not consent.
+    DeclaredOnly,
+    /// Nothing here claims the package at all.
     Unrecorded,
 }
 
@@ -302,21 +311,28 @@ pub fn armed(dir: &Path, consent: Consent) -> Result<Option<GuardReport>> {
     let Some(repo) = crate::githooks::Repo::probe(dir)? else {
         return Ok(None);
     };
-    // A checkout is other people's data until someone installs from it. A
-    // clone carries `.agents/skills`, so an undeclared copy of this package
-    // is ordinary content — and `kendex check` is a read: running a script
-    // out of it would mean cloning a repository and reading its status
-    // executed code its author chose. The shims are inspected instead, as
-    // files, and what is found is reported as unmanaged.
+    // A checkout is other people's data until someone installs from it here.
+    // `kendex check` is a read, and running a script out of the checkout
+    // would mean that cloning a repository and reading its status executed
+    // code its author chose — including one that commits its own harness
+    // render, where the files and the declaration both arrive with the
+    // clone. The shims are inspected as files instead.
     //
     // The armed git hooks are a different matter and stay a different
     // matter: those run because someone armed them here, which is consent
     // in the only form that counts.
-    if consent == Consent::Unrecorded {
+    if consent != Consent::Installed {
+        // The advice leads: a reader needs to know why kendex did not ask
+        // the package before they need the path, and the report bounds how
+        // long a line may be.
+        let advice = match consent {
+            Consent::DeclaredOnly => {
+                format!("{SKILL} is declared but not installed on this machine (`kendex refresh`)")
+            }
+            _ => format!("no {SKILL} package is installed here (`kendex add {SKILL}`)"),
+        };
         return Ok(stale_shims(&repo)?.map(|line| GuardReport {
-            lines: vec![format!(
-                "{line} — no {SKILL} package is declared in this project, so kendex did not run its checker; `kendex add {SKILL}` adopts it, `kendex guard uninstall` removes the shims"
-            )],
+            lines: vec![format!("{advice}; kendex did not run its checker. {line}")],
             code: 2,
         }));
     }

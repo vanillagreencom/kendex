@@ -99,11 +99,54 @@ fn install_package(root: &Path, skills: &[&str]) {
             &root.join(".agents/skills").join(skill),
         );
     }
-    // A project that installed the package declares it, and that
-    // declaration is what lets a read verb run the package's own checker.
-    // Copying the files without it would be an undeclared copy — a
-    // different scenario, covered on its own.
+    // A project that installed the package declares it and carries the
+    // machine-local record of the install, which together are what let a
+    // read verb run the package's own checker. Copying the files without
+    // them is a clone that never installed anything — a different
+    // scenario, covered on its own.
     declare(root, skills);
+    record_install(root, skills);
+}
+
+/// The install record a `kendex add` would have written on this machine.
+/// Gitignored by the committed posture, so it is the one thing a clone
+/// cannot arrive carrying — which is what makes it the consent.
+#[allow(clippy::unwrap_used)]
+pub fn record_install(root: &Path, skills: &[&str]) {
+    let path = root.join(".kendex-lock.json");
+    let mut entries: Vec<String> = Vec::new();
+    if let Ok(existing) = std::fs::read_to_string(&path) {
+        for line in existing.lines() {
+            if let Some(rest) = line.trim().strip_prefix("\"skill:")
+                && let Some(name) = rest.split(':').next()
+                && !skills.contains(&name)
+            {
+                // Keep what an earlier call recorded.
+                entries.push(name.to_owned());
+            }
+        }
+    }
+    for skill in skills {
+        entries.push((*skill).to_owned());
+    }
+    entries.sort();
+    entries.dedup();
+    let rows: Vec<String> = entries
+        .iter()
+        .map(|name| {
+            format!(
+                "    \"skill:{name}:claude\": {{\n      \"name\": \"{name}\",\n      \"kind\": \"skill\",\n      \"harness\": \"claude\",\n      \"source\": \"local\",\n      \"sourceRepo\": \"local\",\n      \"method\": \"copy\",\n      \"installedAt\": \"2026-01-01T00:00:00Z\",\n      \"sourceHash\": \"0\",\n      \"renderedHash\": \"0\",\n      \"enabled\": true,\n      \"reasons\": [{{ \"reason\": \"requested\" }}]\n    }}"
+            )
+        })
+        .collect();
+    std::fs::write(
+        &path,
+        format!(
+            "{{\n  \"version\": 1,\n  \"entries\": {{\n{}\n  }}\n}}\n",
+            rows.join(",\n")
+        ),
+    )
+    .unwrap();
 }
 
 /// The manifest a `kendex add` of these skills would have written.

@@ -10,7 +10,7 @@ use std::path::Path;
 
 use crate::error::Result;
 
-use super::{LANES, SKILL};
+use super::LANES;
 
 /// The helper the package's installer writes, and the marker it puts on the
 /// delegating line — the two ways a repository can still be armed after the
@@ -34,7 +34,7 @@ pub(super) fn stale_shims(repo: &crate::githooks::Repo) -> Result<Option<String>
     let mut said = Vec::new();
     if let Some(found) = shims_in(&live)? {
         said.push(format!(
-            "{} still carries the package's shims ({found}) with no {SKILL} skill to run them — every commit here is blocked until they are removed or the package is reinstalled",
+            "{} carries the package's shims ({found}) with nothing here to run them — commits are blocked until they go",
             live.display()
         ));
     }
@@ -44,7 +44,7 @@ pub(super) fn stale_shims(repo: &crate::githooks::Repo) -> Result<Option<String>
         && let Some(found) = shims_in(&default)?
     {
         said.push(format!(
-                "{} carries dormant shims ({found}) that git does not read while core.hooksPath redirects it — they block every commit the moment that redirect goes",
+                "{} carries dormant shims ({found}) git does not read while core.hooksPath redirects it — they block commits the moment it goes",
                 default.display()
             ));
     }

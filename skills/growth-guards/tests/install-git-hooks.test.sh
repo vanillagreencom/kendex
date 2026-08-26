@@ -659,6 +659,35 @@ OUT=""; RC=0; OUT="$(git -C "$TMP/wt4" commit -m "feat: from the surviving workt
 [ "$RC" -eq 0 ] && ok "the surviving work tree still commits through the retargeted helper" \
   || bad "surviving worktree commits" "rc=$RC out=$OUT"
 
+echo "=== a repository that commits its skills is ONE install ==="
+# Under the committed posture every work tree checks the package out from
+# git, so a sibling always physically carries it. Counting that as a
+# separate install would find a survivor in every sibling and keep the shims
+# armed forever — a repository nobody could disarm. Tracked content is this
+# repository's own, however many places it is checked out.
+R18T="$(new_repo shared-tracked)"
+# Committed before the shims are armed: the chain would otherwise judge the
+# skill's own fixtures, which carry the shapes it bans on purpose.
+git -C "$R18T" add -A .agents
+commit_in "$R18T" "feat: commit the harness render"
+[ "$RC" -eq 0 ] || bad "the render commit landed" "rc=$RC out=$OUT"
+install_in "$R18T"
+git -C "$R18T" worktree add -q "$TMP/wt-tracked" -b wt-tracked-b
+[ -x "$TMP/wt-tracked/.agents/skills/growth-guards/scripts/pre-commit" ] \
+  && ok "the linked work tree carries the package from git" \
+  || bad "linked work tree carries the tracked package"
+OUT=""; RC=0
+OUT="$("$R18T/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$R18T" --uninstall 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "uninstalling a tracked-package repository exits 0" \
+  || bad "tracked uninstall exits 0" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"kept —"*) bad "a tracked sibling was mistaken for a separate install" "out=$OUT" ;;
+  *) ok "the shims are removed rather than retargeted at a sibling work tree" ;;
+esac
+[ -f "$R18T/.git/hooks/kendex-guards" ] \
+  && bad "the helper survived a disarm it should have taken" \
+  || ok "the helper is gone, so the repository is disarmed"
+
 R18B="$(new_repo shared-linked)"
 install_in "$R18B"
 printf 'hello\n' >"$R18B/a.txt"

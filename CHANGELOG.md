@@ -13,6 +13,9 @@ an outside contributor.
 - The `harness-ci` wiring guide covers a lane that reads a path family beside
   the render verdict; the single-gate condition it shipped skipped that lane
   whenever the classifying job died.
+- `kendex check` no longer runs a repository's own guard scripts unless this
+  machine installed that package: cloning a repo and reading its status runs
+  none of its code. An uninstalled clone reports the shims read-only.
 - Agents no longer promise a `{{KENDEX_FAILURE_REF}}` that nothing defines:
   the failure-routing line now points at `kendex report --help`.
 - OpenCode, Gemini, and Copilot agent renders list required skills at

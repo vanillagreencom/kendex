@@ -174,7 +174,11 @@ fn check_names_shims_left_without_a_package() {
     let out = run(home, &root, "kendex", &["check"]);
     assert_eq!(out.status.code(), Some(2), "{}", said(&out));
     assert!(said(&out).contains("commit hooks"), "{}", said(&out));
-    assert!(said(&out).contains("still carries"), "{}", said(&out));
+    assert!(
+        said(&out).contains("carries the package's shims"),
+        "{}",
+        said(&out)
+    );
 }
 
 /// Outside any repository there is no verdict to give. A git that could not
@@ -357,24 +361,23 @@ fn staging_under_a_redirect_reports_dormant_not_armed() {
     assert!(root.join(".git/hooks/kendex-guards").is_file(), "staged");
 }
 
-/// Reading a repository's status must not run code the repository carries.
+/// Reading a repository's status must not run code the repository carries,
+/// and the committed posture is what makes that sharp.
 ///
-/// A clone brings `.agents/skills` with it, so an undeclared copy of the
-/// package is ordinary content until someone installs from it. `kendex
-/// check` inspects the shims as files there and says the state is
-/// unmanaged; the checker script is never executed. The armed git hooks are
-/// a different matter, and stay one: those run because someone armed them.
+/// A repository that commits its harness render ships the package's scripts
+/// AND a manifest declaring them, so any gate a clone can satisfy is one
+/// its author could write for themselves. The machine-local install record
+/// is the one artifact a clone cannot bring, so it is the gate. Everywhere
+/// else the shims are read as files.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn check_does_not_run_an_undeclared_packages_checker() {
+fn check_does_not_run_the_checker_of_a_package_this_machine_never_installed() {
     use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = armed_repo(home);
 
-    // Undeclare the package, leaving its files and its shims exactly as
-    // they are, and make the checker prove whether it was run.
-    std::fs::remove_file(root.join("kendex.toml")).unwrap();
+    // Make the checker prove whether it was run.
     let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
     let marker = home.join("checker-ran");
     std::fs::write(
@@ -384,23 +387,51 @@ fn check_does_not_run_an_undeclared_packages_checker() {
     .unwrap();
     std::fs::set_permissions(&installer, std::fs::Permissions::from_mode(0o755)).unwrap();
 
+    // Exactly a fresh clone of a repository that commits its render: the
+    // files are here, the declaration is here, nothing installed them here.
+    std::fs::remove_file(root.join(".kendex-lock.json")).unwrap();
+    assert!(
+        root.join("kendex.toml").is_file(),
+        "the declaration remains"
+    );
+
     let out = run(home, &root, "kendex", &["check"]);
     assert!(
         !marker.exists(),
-        "the undeclared checker was executed: {}",
+        "a declaration alone ran the checker: {}",
         said(&out)
     );
     assert!(said(&out).contains("commit hooks"), "{}", said(&out));
     assert!(
-        said(&out).contains("no growth-guards package is declared"),
+        said(&out).contains("not installed on this machine"),
         "{}",
         said(&out)
     );
 
-    // Declaring it is the consent, and then the checker does run.
-    crate::declare(&root, &["growth-guards"]);
+    // An install record on this machine is the consent, and then it runs.
+    crate::record_install(&root, &["growth-guards"]);
     run(home, &root, "kendex", &["check"]);
-    assert!(marker.exists(), "a declared package's checker runs");
+    assert!(marker.exists(), "an installed package's checker runs");
+}
+
+/// Neither declared nor installed: the shims are still read as files and
+/// reported, in the wording for a package nothing here claims.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn check_reports_shims_from_a_package_nothing_here_claims() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = armed_repo(home);
+    std::fs::remove_file(root.join(".kendex-lock.json")).unwrap();
+    std::fs::remove_file(root.join("kendex.toml")).unwrap();
+
+    let out = run(home, &root, "kendex", &["check"]);
+    assert_eq!(out.status.code(), Some(2), "{}", said(&out));
+    assert!(
+        said(&out).contains("no growth-guards package is installed here"),
+        "{}",
+        said(&out)
+    );
 }
 
 /// A repository with nothing of the package's in it says nothing, declared
