@@ -65,8 +65,8 @@ fn fold_commit_hooks(env: &Env, checked: &mut CheckReport, scopes: &[kendex_core
         let Scope::Project { root } = scope.canonical() else {
             continue;
         };
-        let consent = consent_here(env, scope);
-        let (class, text) = match kendex_core::guard::armed(&root, consent) {
+        let claimed = claimed_here(env, scope);
+        let (class, text) = match kendex_core::guard::armed(env, &root, claimed) {
             Ok(None) => continue,
             Ok(Some(verdict)) if verdict.code == 0 => continue,
             Ok(Some(verdict)) => (
@@ -82,31 +82,21 @@ fn fold_commit_hooks(env: &Env, checked: &mut CheckReport, scopes: &[kendex_core
     }
 }
 
-/// What this machine says about the guard package in this scope.
+/// What the repository *claims* about the guard package — for the wording
+/// alone, never for permission.
 ///
-/// The lock decides, because it is the artifact a clone cannot bring: it is
-/// gitignored by the committed posture and written only where an install
-/// actually ran. The manifest is consulted for the wording alone — telling
-/// "declared here, never installed on this machine" from "nothing claims
-/// this package" is worth a different sentence, and neither is consent.
-/// A file that cannot be read says nothing.
-fn consent_here(env: &Env, scope: &kendex_core::model::Scope) -> kendex_core::guard::Consent {
+/// Whether anything may be executed is settled by the machine-scoped
+/// record, which `guard::armed` checks against the script itself. This only
+/// separates "the repository claims this package" from "nothing here claims
+/// it", because those deserve different sentences. Both are read-only.
+fn claimed_here(env: &Env, scope: &kendex_core::model::Scope) -> kendex_core::guard::Consent {
     use kendex_core::guard::Consent;
-    let installed =
-        kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope)).is_ok_and(|lock| {
-            lock.entries
-                .values()
-                .any(|entry| entry.name == kendex_core::guard::SKILL)
-        });
-    if installed {
-        return Consent::Installed;
-    }
-    let declared = matches!(
+    let claimed = matches!(
         kendex_core::manifest::load(&kendex_core::manifest::manifest_path(env, scope)),
         Ok(kendex_core::manifest::ManifestFile::Current(manifest))
             if manifest.skills.contains_key(kendex_core::guard::SKILL)
     );
-    match declared {
+    match claimed {
         true => Consent::DeclaredOnly,
         false => Consent::Unrecorded,
     }

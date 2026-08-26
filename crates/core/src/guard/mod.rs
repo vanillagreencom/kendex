@@ -23,6 +23,7 @@ use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::process::Hardened;
 
+pub mod consent;
 mod resolve;
 pub(super) mod shims;
 pub use resolve::Installed;
@@ -209,10 +210,6 @@ pub fn install(env: &Env, dir: &Path) -> Result<GuardReport> {
             return Ok(GuardReport { lines, code: 2 });
         }
         let taken = crate::githooks::uninstall(env, dir)?;
-        lines.push(
-            "took back the retired kendex-hooks directory; the package's shims are now live"
-                .to_owned(),
-        );
         lines.extend(taken.lines);
         // Removal is lease-counted: a receipt another worktree still holds
         // releases this worktree's lease and leaves the redirect standing,
@@ -224,6 +221,13 @@ pub fn install(env: &Env, dir: &Path) -> Result<GuardReport> {
             ));
             return Ok(GuardReport { lines, code: 2 });
         }
+        // Said only here, after the effective value has been read back: a
+        // line claiming the shims went live has to come after the check
+        // that can contradict it, or the two disagree in one report.
+        lines.push(
+            "took back the retired kendex-hooks directory; the package's shims are now live"
+                .to_owned(),
+        );
     }
 
     // The installer's own verdict, asked once git reads where the shims
@@ -284,26 +288,24 @@ pub fn uninstall(env: &Env, dir: &Path) -> Result<GuardReport> {
 /// Whether someone installed this package **on this machine**, which is
 /// what decides whether a read verb may run its scripts.
 ///
-/// Machine-local is the whole point. A repository that commits its harness
-/// render carries the package's files and a manifest declaring them, so a
-/// clone of a hostile repository arrives with both — and a gate satisfied
-/// by committed content is a gate its author can write for themselves. The
-/// install record is not committed: it is written where a `kendex add` or
-/// `apply` actually ran, which is the only artifact a clone cannot forge.
+/// Nothing inside the repository can answer this. A repository that commits
+/// its harness render ships the scripts and the manifest declaring them,
+/// and a `.kendex-lock.json` can be force-added past its ignore rule and
+/// travel with a clone too — anything a `git clone` carries, a hostile
+/// author can write. The answer comes from [`consent`], kept under kendex's
+/// own data directory and keyed by canonical project path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Consent {
-    /// This machine's install record carries the package for this project.
-    /// Someone ran an install here, so running what they installed is doing
-    /// what they asked for.
+    /// This machine's record vouches for the exact script about to run.
     Installed,
-    /// The repository declares the package and nothing installed it here —
-    /// an ordinary state for a fresh clone, and not consent.
+    /// The repository claims the package and this machine has no record of
+    /// installing it — an ordinary state for a fresh clone, and not consent.
     DeclaredOnly,
     /// Nothing here claims the package at all.
     Unrecorded,
 }
 
-pub fn armed(dir: &Path, consent: Consent) -> Result<Option<GuardReport>> {
+pub fn armed(env: &Env, dir: &Path, claimed: Consent) -> Result<Option<GuardReport>> {
     // Only "this is not a work tree" is a missing verdict. Anything else —
     // git absent, metadata unreadable, a probe that failed — is a check
     // that could not be taken, and reporting it as "nothing to say" would
@@ -311,48 +313,23 @@ pub fn armed(dir: &Path, consent: Consent) -> Result<Option<GuardReport>> {
     let Some(repo) = crate::githooks::Repo::probe(dir)? else {
         return Ok(None);
     };
-    // A checkout is other people's data until someone installs from it here.
-    // `kendex check` is a read, and running a script out of the checkout
-    // would mean that cloning a repository and reading its status executed
-    // code its author chose — including one that commits its own harness
-    // render, where the files and the declaration both arrive with the
-    // clone. The shims are inspected as files instead.
-    //
-    // The armed git hooks are a different matter and stay a different
-    // matter: those run because someone armed them here, which is consent
-    // in the only form that counts.
-    if consent != Consent::Installed {
-        // The advice leads: a reader needs to know why kendex did not ask
-        // the package before they need the path, and the report bounds how
-        // long a line may be.
-        let advice = match consent {
-            Consent::DeclaredOnly => {
-                format!("{SKILL} is declared but not installed on this machine (`kendex refresh`)")
-            }
-            _ => format!("no {SKILL} package is installed here (`kendex add {SKILL}`)"),
-        };
-        return Ok(stale_shims(&repo)?.map(|line| GuardReport {
-            lines: vec![format!("{advice}; kendex did not run its checker. {line}")],
-            code: 2,
-        }));
-    }
+
+    // Everything below the execution gate is file inspection, so it runs
+    // whatever the consent: reading what is on disk is what a read verb is
+    // for, and these states have to be reported from any repository.
     let Some(installed) = Installed::resolve(&repo, INSTALLER) else {
-        // Nothing here can answer for the shims. Three different states
-        // arrive at this line and only one of them is silence.
-        let stale = stale_shims(&repo)?;
-        // Shims with no installer: they are armed and failing closed on
-        // every commit, which is the loudest of the three.
-        if let Some(line) = stale {
+        // Shims with no installer are armed and failing closed on every
+        // commit — the loudest of these states.
+        if let Some(line) = stale_shims(&repo)? {
             return Ok(Some(GuardReport {
                 lines: vec![line],
                 code: 2,
             }));
         }
-        // A package that is here but whose installer is missing or not
-        // executable is a broken install. Nothing is armed yet, so nothing
-        // is blocked — but the next `guard install` cannot run either, and
-        // a clean verdict would send a reader off believing the gate is a
-        // command away.
+        // A package that is here but carries no runnable installer is a
+        // broken install. Nothing is armed, so nothing is blocked — but the
+        // next `guard install` cannot run either, and a clean verdict would
+        // send a reader off believing the gate is a command away.
         if let Some(dir) = Installed::present(&repo) {
             return Ok(Some(GuardReport {
                 lines: vec![format!(
@@ -365,6 +342,31 @@ pub fn armed(dir: &Path, consent: Consent) -> Result<Option<GuardReport>> {
         // No package and no shims: no gate is expected here.
         return Ok(None);
     };
+
+    // Running the package's own checker is the one thing that needs
+    // permission, and nothing inside the repository can grant it. The
+    // machine-scoped record is checked against the very script that would
+    // run — its kind, that it was enabled, and its bytes' hash — so a
+    // package swapped after the fact or a script edited since is not
+    // vouched for.
+    //
+    // The armed git hooks stay a different matter: those run because
+    // someone armed them here, which is consent in the only form that
+    // counts.
+    if !consent::vouches_for(env, &repo.worktree, &installed.script) {
+        let advice = match claimed {
+            Consent::Unrecorded => {
+                format!("no {SKILL} package is installed here (`kendex add {SKILL}`)")
+            }
+            _ => format!(
+                "{SKILL} is claimed here but this machine has no record of installing it (`kendex refresh`)"
+            ),
+        };
+        return Ok(stale_shims(&repo)?.map(|line| GuardReport {
+            lines: vec![format!("{advice}; kendex did not run its checker. {line}")],
+            code: 2,
+        }));
+    }
     installer(&repo, &installed, &["--check"]).map(Some)
 }
 

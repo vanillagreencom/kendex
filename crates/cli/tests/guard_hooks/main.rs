@@ -83,102 +83,51 @@ fn said(output: &Output) -> String {
     text
 }
 
-/// This repository's own growth-guards and size-ratchet, copied into the
-/// fixture where a consumer's install would put them. Copied rather than
-/// linked so the scripts resolve their siblings through the fixture's own
-/// tree, exactly as a committed `.agents/skills` does.
+/// Install this repository's own copy of a package the way a person would:
+/// offered from a catalog under the fixture home, then installed with
+/// `kendex add`.
+///
+/// A real install, not a copy: it is what writes the machine-scoped record
+/// that lets a read verb run the package's scripts, and hand-forging that
+/// record would test the forgery rather than the product.
 #[allow(clippy::unwrap_used)]
-fn install_package(root: &Path, skills: &[&str]) {
-    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+pub fn install_package(home: &Path, root: &Path, skills: &[&str]) {
+    let catalog = home.join("catalog");
+    let source = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../skills")
         .canonicalize()
         .unwrap();
     for skill in skills {
-        copy_tree(
-            &source.join(skill),
-            &root.join(".agents/skills").join(skill),
+        let offered = catalog.join("skills").join(skill);
+        // Seeded once: a test that patched the offer before installing gets
+        // the package it wrote, not a fresh copy over the top of it.
+        if !offered.exists() {
+            copy_tree(&source.join(skill), &offered);
+        }
+    }
+    let manifest = root.join("kendex.toml");
+    if !manifest.is_file() {
+        std::fs::write(
+            &manifest,
+            format!(
+                "schema = 6\n\n[sources.cat]\npath = \"{}\"\n",
+                catalog.display()
+            ),
+        )
+        .unwrap();
+    }
+    for skill in skills {
+        let out = run_at(home, root, &["add", "cat", "--skill", skill, "-y"]);
+        assert!(
+            root.join(".agents/skills").join(skill).is_dir(),
+            "installing {skill} left no tree: {out}"
         );
     }
-    // A project that installed the package declares it and carries the
-    // machine-local record of the install, which together are what let a
-    // read verb run the package's own checker. Copying the files without
-    // them is a clone that never installed anything — a different
-    // scenario, covered on its own.
-    declare(root, skills);
-    record_install(root, skills);
 }
 
-/// The install record a `kendex add` would have written on this machine.
-/// Gitignored by the committed posture, so it is the one thing a clone
-/// cannot arrive carrying — which is what makes it the consent.
-#[allow(clippy::unwrap_used)]
-pub fn record_install(root: &Path, skills: &[&str]) {
-    let path = root.join(".kendex-lock.json");
-    let mut entries: Vec<String> = Vec::new();
-    if let Ok(existing) = std::fs::read_to_string(&path) {
-        for line in existing.lines() {
-            if let Some(rest) = line.trim().strip_prefix("\"skill:")
-                && let Some(name) = rest.split(':').next()
-                && !skills.contains(&name)
-            {
-                // Keep what an earlier call recorded.
-                entries.push(name.to_owned());
-            }
-        }
-    }
-    for skill in skills {
-        entries.push((*skill).to_owned());
-    }
-    entries.sort();
-    entries.dedup();
-    let rows: Vec<String> = entries
-        .iter()
-        .map(|name| {
-            format!(
-                "    \"skill:{name}:claude\": {{\n      \"name\": \"{name}\",\n      \"kind\": \"skill\",\n      \"harness\": \"claude\",\n      \"source\": \"local\",\n      \"sourceRepo\": \"local\",\n      \"method\": \"copy\",\n      \"installedAt\": \"2026-01-01T00:00:00Z\",\n      \"sourceHash\": \"0\",\n      \"renderedHash\": \"0\",\n      \"enabled\": true,\n      \"reasons\": [{{ \"reason\": \"requested\" }}]\n    }}"
-            )
-        })
-        .collect();
-    std::fs::write(
-        &path,
-        format!(
-            "{{\n  \"version\": 1,\n  \"entries\": {{\n{}\n  }}\n}}\n",
-            rows.join(",\n")
-        ),
-    )
-    .unwrap();
-}
-
-/// The manifest a `kendex add` of these skills would have written.
-#[allow(clippy::unwrap_used)]
-pub fn declare(root: &Path, skills: &[&str]) {
-    let mut text = String::from("schema = 6\n\n[sources.local]\npath = \".\"\n");
-    for skill in skills {
-        text.push_str(&format!(
-            "\n[skills.{skill}]\nsource = \"local\"\nenabled = true\n"
-        ));
-    }
-    let path = root.join("kendex.toml");
-    let existing = std::fs::read_to_string(&path).unwrap_or_default();
-    match existing.is_empty() {
-        true => std::fs::write(&path, text).unwrap(),
-        // A second call adds its skills to what the first wrote.
-        false => {
-            let mut merged = existing;
-            for skill in skills {
-                if !merged.contains(&format!("[skills.{skill}]")) {
-                    merged.push_str(&format!(
-                        "\n[skills.{skill}]\nsource = \"local\"\nenabled = true\n"
-                    ));
-                }
-            }
-            std::fs::write(&path, merged).unwrap();
-        }
-    }
-}
-
-/// The same files with nothing declaring them — a copy that arrived with a
-/// clone rather than through an install.
+/// The same files with nothing installing them — a copy that arrived with a
+/// clone rather than through an install. The declaration comes along too,
+/// because a repository that commits its render ships one.
 #[allow(clippy::unwrap_used)]
 pub fn install_package_undeclared(root: &Path, skills: &[&str]) {
     let source = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -191,6 +140,14 @@ pub fn install_package_undeclared(root: &Path, skills: &[&str]) {
             &root.join(".agents/skills").join(skill),
         );
     }
+}
+
+/// `kendex` in the fixture home, asserted to succeed.
+#[allow(clippy::unwrap_used)]
+pub fn run_at(home: &Path, cwd: &Path, args: &[&str]) -> String {
+    let out = run(home, cwd, "kendex", args);
+    assert!(out.status.success(), "kendex {args:?}: {}", said(&out));
+    said(&out)
 }
 
 #[allow(clippy::unwrap_used)]
@@ -211,8 +168,13 @@ fn copy_tree(from: &Path, to: &Path) {
 
 #[allow(clippy::unwrap_used)]
 fn repo(home: &Path) -> PathBuf {
+    // Detection reads this: without a tool directory an install has nowhere
+    // to fan out to.
+    std::fs::create_dir_all(home.join(".claude")).unwrap();
     let root = home.join("proj");
-    std::fs::create_dir_all(&root).unwrap();
+    // `.agents` is the project marker a repository adopting the shared
+    // convention already has before kendex ever runs.
+    std::fs::create_dir_all(root.join(".agents")).unwrap();
     git_ok(home, &root, &["init", "--quiet", "-b", "main"]);
     git_ok(home, &root, &["config", "user.email", "t@t"]);
     git_ok(home, &root, &["config", "user.name", "t"]);
@@ -263,8 +225,53 @@ fn retire_with_leases(home: &Path, root: &Path, leases: &[&Path]) -> PathBuf {
 #[allow(clippy::unwrap_used)]
 fn armed_repo(home: &Path) -> PathBuf {
     let root = repo(home);
-    install_package(&root, &["growth-guards"]);
+    install_package(home, &root, &["growth-guards"]);
     let install = run(home, &root, "kendex", &["guard", "install"]);
     assert!(install.status.success(), "{}", said(&install));
     root
+}
+
+/// Erase this machine's memory of every install — what a fresh clone's
+/// machine looks like, and the only thing that separates one from a
+/// checkout somebody actually installed into.
+#[allow(clippy::unwrap_used)]
+pub fn forget_installs(home: &Path) {
+    let mut stack = vec![home.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() || path.is_symlink() {
+                continue;
+            }
+            match entry.file_name() == "guard-consent" {
+                true => std::fs::remove_dir_all(&path).unwrap(),
+                false => stack.push(path),
+            }
+        }
+    }
+}
+
+/// The catalog this fixture home offers packages from, for a test that
+/// wants to change what an install would put on disk.
+pub fn catalog(home: &Path) -> PathBuf {
+    home.join("catalog")
+}
+
+/// Put this repository's copy of a package into the fixture catalog without
+/// installing it — for a test that patches the offer first.
+#[allow(clippy::unwrap_used)]
+pub fn seed_catalog(home: &Path, skills: &[&str]) {
+    let source = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../skills")
+        .canonicalize()
+        .unwrap();
+    for skill in skills {
+        copy_tree(
+            &source.join(skill),
+            &catalog(home).join("skills").join(skill),
+        );
+    }
 }

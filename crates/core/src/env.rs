@@ -246,6 +246,12 @@ impl Env {
         self.data_dir.join(APP_DIR).join("drift")
     }
 
+    /// Where the machine's proof of a guard install lives — outside every
+    /// repository on purpose, so nothing a clone carries can forge it.
+    pub fn guard_consent_dir(&self) -> PathBuf {
+        self.data_dir.join(APP_DIR).join("guard-consent")
+    }
+
     pub fn global_local_source_dir(&self) -> PathBuf {
         self.data_dir.join(APP_DIR).join("local-source")
     }

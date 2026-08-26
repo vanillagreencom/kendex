@@ -81,7 +81,7 @@ fn an_existing_hook_keeps_its_content_and_its_verdict() {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-    install_package(&root, &["growth-guards"]);
+    install_package(home, &root, &["growth-guards"]);
     let install = run(home, &root, "kendex", &["guard", "install"]);
     assert!(install.status.success(), "{}", said(&install));
 
@@ -128,7 +128,7 @@ fn the_stand_in_gate_runs_the_same_chain_the_shim_would() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    install_package(&root, &["growth-guards"]);
+    install_package(home, &root, &["growth-guards"]);
     std::fs::write(root.join("b.rs"), "// TODO: not yet\n").unwrap();
     git_ok(home, &root, &["add", "-A"]);
 
@@ -145,7 +145,7 @@ fn sibling_gates_join_the_chain_and_absent_ones_announce_themselves() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    install_package(&root, &["growth-guards"]);
+    install_package(home, &root, &["growth-guards"]);
 
     let without = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
     assert!(
@@ -154,7 +154,7 @@ fn sibling_gates_join_the_chain_and_absent_ones_announce_themselves() {
         said(&without)
     );
 
-    install_package(&root, &["size-ratchet"]);
+    install_package(home, &root, &["size-ratchet"]);
     let with = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
     assert!(
         said(&with).contains("=== pre-commit: size-ratchet"),
@@ -177,7 +177,7 @@ fn the_message_lane_resolves_a_relative_path_against_the_caller() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    install_package(&root, &["growth-guards"]);
+    install_package(home, &root, &["growth-guards"]);
     let sub = root.join("sub");
     std::fs::create_dir_all(&sub).unwrap();
     std::fs::write(sub.join("MSG"), "not conventional at all\n").unwrap();
@@ -196,7 +196,7 @@ fn the_message_lane_reads_a_piped_message() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    install_package(&root, &["growth-guards"]);
+    install_package(home, &root, &["growth-guards"]);
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_kendex"))
         .args(["guard", "run", "commit-msg"])
@@ -263,7 +263,7 @@ fn a_broken_copy_does_not_shadow_a_working_one() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    install_package(&root, &["growth-guards"]);
+    install_package(home, &root, &["growth-guards"]);
     // `.agents/skills` is searched before `skills`, so put the broken copy
     // there and the working one after it.
     std::fs::rename(
@@ -338,14 +338,15 @@ fn a_path_with_an_apostrophe_resolves_the_same_on_both_sides() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = home.join("o'brien/proj");
-    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(root.join(".agents")).unwrap();
+    std::fs::create_dir_all(home.join(".claude")).unwrap();
     git_ok(home, &root, &["init", "--quiet", "-b", "main"]);
     git_ok(home, &root, &["config", "user.email", "t@t"]);
     git_ok(home, &root, &["config", "user.name", "t"]);
     std::fs::write(root.join("a.txt"), "hi\n").unwrap();
     git_ok(home, &root, &["add", "-A"]);
     git_ok(home, &root, &["commit", "--quiet", "-m", "feat: base"]);
-    install_package(&root, &["growth-guards"]);
+    install_package(home, &root, &["growth-guards"]);
     let armed = run(home, &root, "kendex", &["guard", "install"]);
     assert!(armed.status.success(), "{}", said(&armed));
 

@@ -19,7 +19,7 @@ fn disarming_leaves_a_pre_existing_hook_behind() {
     std::fs::write(&existing, "#!/bin/sh\necho theirs ran\n").unwrap();
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o755)).unwrap();
-    install_package(&root, &["growth-guards"]);
+    install_package(home, &root, &["growth-guards"]);
     run(home, &root, "kendex", &["guard", "install"]);
 
     let out = run(home, &root, "kendex", &["guard", "uninstall"]);
@@ -41,7 +41,7 @@ fn arming_takes_back_the_retired_hooks_directory_first() {
     let root = repo(home);
     let retired = retire(home, &root);
 
-    install_package(&root, &["growth-guards"]);
+    install_package(home, &root, &["growth-guards"]);
     let install = run(home, &root, "kendex", &["guard", "install"]);
     assert!(install.status.success(), "{}", said(&install));
     assert!(said(&install).contains("took back"), "{}", said(&install));
@@ -60,7 +60,7 @@ fn check_reports_whether_the_shims_are_armed() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    install_package(&root, &["growth-guards"]);
+    install_package(home, &root, &["growth-guards"]);
 
     let unarmed = run(home, &root, "kendex", &["check"]);
     assert_eq!(unarmed.status.code(), Some(1), "{}", said(&unarmed));
@@ -100,7 +100,7 @@ fn arming_without_a_working_package_leaves_the_old_gate_standing() {
     );
 
     // A package whose installer cannot run is the same answer.
-    install_package(&root, &["growth-guards"]);
+    install_package(home, &root, &["growth-guards"]);
     let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
     std::fs::write(&installer, "#!/nonexistent/interpreter\n").unwrap();
     let out = run(home, &root, "kendex", &["guard", "install"]);
@@ -124,7 +124,7 @@ fn arming_refuses_while_another_worktrees_lease_holds_the_old_install() {
     git_ok(home, &root, &["worktree", "add", "--quiet", "../linked"]);
     let linked = home.join("linked");
     let retired = retire_with_leases(home, &root, &[&root, &linked]);
-    install_package(&root, &["growth-guards"]);
+    install_package(home, &root, &["growth-guards"]);
 
     let out = run(home, &root, "kendex", &["guard", "install"]);
     assert_eq!(out.status.code(), Some(2), "{}", said(&out));
@@ -208,7 +208,7 @@ fn the_migration_never_leaves_the_repository_ungated() {
     let home = tmp.path();
     let root = repo(home);
     let retired = retire(home, &root);
-    install_package(&root, &["growth-guards"]);
+    install_package(home, &root, &["growth-guards"]);
 
     let out = run(home, &root, "kendex", &["guard", "install"]);
     assert!(out.status.success(), "{}", said(&out));
@@ -233,7 +233,7 @@ fn a_broken_installer_fails_before_the_old_gate_is_touched() {
     let home = tmp.path();
     let root = repo(home);
     let retired = retire(home, &root);
-    install_package(&root, &["growth-guards"]);
+    install_package(home, &root, &["growth-guards"]);
     // A syntax error: the file is executable and its interpreter runs, so
     // only actually running it catches this.
     let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
@@ -262,7 +262,7 @@ fn a_repository_git_refuses_is_could_not_check_not_silence() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    install_package(&root, &["growth-guards"]);
+    install_package(home, &root, &["growth-guards"]);
     // A config git cannot parse: exit 128 with a complaint that is not
     // "not a git repository".
     std::fs::write(root.join(".git/config"), "[core\nbroken\n").unwrap();
@@ -308,7 +308,7 @@ fn check_names_a_package_whose_installer_cannot_run() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    install_package(&root, &["growth-guards"]);
+    install_package(home, &root, &["growth-guards"]);
     let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
     std::fs::set_permissions(&installer, std::fs::Permissions::from_mode(0o644)).unwrap();
 
@@ -333,7 +333,7 @@ fn staging_under_a_redirect_reports_dormant_not_armed() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    install_package(&root, &["growth-guards"]);
+    install_package(home, &root, &["growth-guards"]);
     let elsewhere = home.join("their-hooks");
     std::fs::create_dir_all(&elsewhere).unwrap();
     git_ok(
@@ -365,21 +365,81 @@ fn staging_under_a_redirect_reports_dormant_not_armed() {
 /// and the committed posture is what makes that sharp.
 ///
 /// A repository that commits its harness render ships the package's scripts
-/// AND a manifest declaring them, so any gate a clone can satisfy is one
-/// its author could write for themselves. The machine-local install record
-/// is the one artifact a clone cannot bring, so it is the gate. Everywhere
-/// else the shims are read as files.
+/// AND a manifest declaring them; even the in-repo install record can be
+/// force-added past its ignore rule and cloned along. Anything a `git clone`
+/// carries, a hostile author can write. So the proof lives outside the
+/// repository, and without it nothing is executed.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn check_does_not_run_the_checker_of_a_package_this_machine_never_installed() {
     use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
+    let root = repo(home);
+
+    // The package this machine installs has a checker that proves whether
+    // it ran. It is the real installed article, not an edit after the fact.
+    let marker = home.join("checker-ran");
+    let offered = crate::catalog(home).join("skills/growth-guards");
+    crate::seed_catalog(home, &["growth-guards"]);
+    let installer = offered.join("scripts/install-git-hooks");
+    std::fs::write(
+        &installer,
+        format!("#!/usr/bin/env bash\ntouch {}\nexit 0\n", marker.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&installer, std::fs::Permissions::from_mode(0o755)).unwrap();
+    install_package(home, &root, &["growth-guards"]);
+    run(home, &root, "kendex", &["guard", "install"]);
+
+    // Installed here: the record vouches for that script, and it runs.
+    run(home, &root, "kendex", &["check"]);
+    assert!(marker.exists(), "an installed package's checker runs");
+
+    // Now exactly a fresh clone of a committed-posture repository: the
+    // files are here, the declaration is here, and this machine has no
+    // memory of installing anything.
+    std::fs::remove_file(&marker).unwrap();
+    crate::forget_installs(home);
+    assert!(
+        root.join("kendex.toml").is_file(),
+        "the declaration remains"
+    );
+    // Shims for the report to have something to say about: the stub
+    // installer above writes none, and silence about a repository with
+    // nothing armed is the right answer rather than the one under test.
+    std::fs::write(
+        root.join(".git/hooks/kendex-guards"),
+        "# kendex growth-guards git hooks\n",
+    )
+    .unwrap();
+
+    let out = run(home, &root, "kendex", &["check"]);
+    assert!(
+        !marker.exists(),
+        "a cloned declaration ran the checker: {}",
+        said(&out)
+    );
+    assert!(
+        said(&out).contains("no record of installing it"),
+        "{}",
+        said(&out)
+    );
+}
+
+/// The record describes the exact script, so one edited after the install
+/// stops being vouched for. A package swapped for another under a name this
+/// machine once approved is not the package it approved.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn check_does_not_run_a_checker_edited_since_the_install() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
     let root = armed_repo(home);
 
-    // Make the checker prove whether it was run.
-    let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
     let marker = home.join("checker-ran");
+    let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
     std::fs::write(
         &installer,
         format!("#!/usr/bin/env bash\ntouch {}\nexit 0\n", marker.display()),
@@ -387,31 +447,12 @@ fn check_does_not_run_the_checker_of_a_package_this_machine_never_installed() {
     .unwrap();
     std::fs::set_permissions(&installer, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-    // Exactly a fresh clone of a repository that commits its render: the
-    // files are here, the declaration is here, nothing installed them here.
-    std::fs::remove_file(root.join(".kendex-lock.json")).unwrap();
-    assert!(
-        root.join("kendex.toml").is_file(),
-        "the declaration remains"
-    );
-
     let out = run(home, &root, "kendex", &["check"]);
     assert!(
         !marker.exists(),
-        "a declaration alone ran the checker: {}",
+        "an edited checker ran on an old record: {}",
         said(&out)
     );
-    assert!(said(&out).contains("commit hooks"), "{}", said(&out));
-    assert!(
-        said(&out).contains("not installed on this machine"),
-        "{}",
-        said(&out)
-    );
-
-    // An install record on this machine is the consent, and then it runs.
-    crate::record_install(&root, &["growth-guards"]);
-    run(home, &root, "kendex", &["check"]);
-    assert!(marker.exists(), "an installed package's checker runs");
 }
 
 /// Neither declared nor installed: the shims are still read as files and
@@ -422,8 +463,8 @@ fn check_reports_shims_from_a_package_nothing_here_claims() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = armed_repo(home);
-    std::fs::remove_file(root.join(".kendex-lock.json")).unwrap();
     std::fs::remove_file(root.join("kendex.toml")).unwrap();
+    crate::forget_installs(home);
 
     let out = run(home, &root, "kendex", &["check"]);
     assert_eq!(out.status.code(), Some(2), "{}", said(&out));
@@ -459,7 +500,7 @@ fn arming_refuses_when_a_hooks_path_would_surface_from_outside() {
     let home = tmp.path();
     let root = repo(home);
     let retired = retire(home, &root);
-    install_package(&root, &["growth-guards"]);
+    install_package(home, &root, &["growth-guards"]);
     // A global value, which outlives any takeback of this repository's own.
     let theirs = home.join("global-hooks");
     std::fs::create_dir_all(&theirs).unwrap();
@@ -503,7 +544,7 @@ fn a_foreign_hook_in_the_retired_directory_refuses_the_takeback() {
     let retired = retire(home, &root);
     std::fs::remove_file(retired.join("receipt.json")).unwrap();
     std::fs::write(retired.join("post-commit"), "#!/bin/sh\necho theirs\n").unwrap();
-    install_package(&root, &["growth-guards"]);
+    install_package(home, &root, &["growth-guards"]);
 
     let out = run(home, &root, "kendex", &["guard", "install"]);
     assert_eq!(out.status.code(), Some(2), "{}", said(&out));

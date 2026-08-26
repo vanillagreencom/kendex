@@ -76,7 +76,20 @@ pub(super) fn plan(repo: &Repo) -> Result<(Vec<PlannedOp>, Vec<String>)> {
 
     refusals::check_uninstall(repo, &receipt)?;
     let hooks_dir = repo.hooks_dir()?;
-    let mut ops = vec![PlannedOp {
+    // Order matters, and this is the only safe one. Between the two writes
+    // a commit can land, and it resolves its hooks through whatever
+    // `core.hooksPath` says at that instant. Unsetting first hands git back
+    // the repository's own hooks directory — where the replacement shims
+    // are already staged — so the window is gated. Removing the directory
+    // first would leave the value pointing at nothing, and git runs no hook
+    // at all for a directory that is not there: an ungated commit, silently.
+    let mut ops = Vec::new();
+    let current = crate::apply::read_git_config(&repo.config_file(), "core.hooksPath")?;
+    let ours = current.as_deref() == Some(receipt.hooks_path.as_str());
+    if ours {
+        ops.push(unset_hooks_path(repo, current.clone()));
+    }
+    ops.push(PlannedOp {
         description: "remove the owned hooks directory".into(),
         op: Op::Trash {
             pre: Pre::HashIs {
@@ -84,17 +97,13 @@ pub(super) fn plan(repo: &Repo) -> Result<(Vec<PlannedOp>, Vec<String>)> {
             },
             path: hooks_dir,
         },
-    }];
-    let current = crate::apply::read_git_config(&repo.config_file(), "core.hooksPath")?;
-    if current.as_deref() == Some(receipt.hooks_path.as_str()) {
-        ops.push(unset_hooks_path(repo, current));
-        lines.push("commit checks removed; core.hooksPath unset".into());
-    } else {
-        lines.push(format!(
-            "commit checks removed; core.hooksPath was changed by hand (now {:?}) and was left alone",
-            current
-        ));
-    }
+    });
+    lines.push(match ours {
+        true => "core.hooksPath unset, then the commit checks removed".to_owned(),
+        false => format!(
+            "commit checks removed; core.hooksPath was changed by hand (now {current:?}) and was left alone"
+        ),
+    });
     Ok((ops, lines))
 }
 
@@ -216,4 +225,75 @@ fn plan_orphan_cleanup(repo: &Repo) -> Result<(Vec<PlannedOp>, Vec<String>)> {
         None => {}
     }
     Ok((ops, lines))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::apply::Op;
+
+    /// The op order is the safety property, and the end state looks
+    /// identical either way — so it is the plan that gets asserted, not what
+    /// is on disk afterwards.
+    ///
+    /// A commit landing between the two writes resolves its hooks through
+    /// whatever `core.hooksPath` says at that instant. Unset first and it
+    /// finds the repository's own hooks directory, where the replacement
+    /// shims are already staged. Remove the directory first and the value
+    /// points at nothing, which is not an error to git — it runs no hook at
+    /// all, and the commit goes through ungated.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn the_takeback_clears_the_redirect_before_it_removes_the_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().canonicalize().unwrap();
+        let root = home.join("proj");
+        std::fs::create_dir_all(&root).unwrap();
+        let git = |args: &[&str]| {
+            let out = crate::process::Hardened::git(args, Some(&root))
+                .run()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}");
+        };
+        git(&["init", "--quiet", "-b", "main"]);
+
+        let hooks_dir = root.join(".git/kendex-hooks");
+        std::fs::create_dir_all(&hooks_dir).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        for hook in HOOKS {
+            let path = hooks_dir.join(hook);
+            std::fs::write(&path, entrypoint(hook)).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let receipt = Receipt {
+            schema: 1,
+            hooks_path: hooks_dir.display().to_string(),
+            files: HOOKS
+                .iter()
+                .map(|name| (*name).to_owned())
+                .chain(std::iter::once(super::super::RECEIPT_FILE.to_owned()))
+                .collect(),
+            leases: [root.display().to_string()].into(),
+        };
+        let mut text = serde_json::to_string_pretty(&receipt).unwrap();
+        text.push('\n');
+        std::fs::write(hooks_dir.join("receipt.json"), text).unwrap();
+        git(&["config", "core.hooksPath", &hooks_dir.display().to_string()]);
+
+        let repo = Repo::at(&root).unwrap();
+        let (ops, _) = plan(&repo).unwrap();
+        let shapes: Vec<&str> = ops
+            .iter()
+            .map(|planned| match planned.op {
+                Op::GitConfigSwap { .. } => "unset",
+                Op::Trash { .. } => "remove",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(
+            shapes,
+            ["unset", "remove"],
+            "the redirect is cleared before the directory goes"
+        );
+    }
 }
