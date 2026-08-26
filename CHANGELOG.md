@@ -24,6 +24,9 @@ an outside contributor.
   not armed, or cannot tell over both documented hook shapes, and never guesses.
 - The guard verbs find the package under the project's own root, so a kendex
   project below the git top level is no longer reported as having none.
+- `kendex check` reports an empty `core.hooksPath` as hooks switched off,
+  naming the unset that fixes it, instead of reading the repository root as
+  a hooks directory.
 - **Breaking:** the `pre-commit-check` hook refuses a commit where no git
   hook is armed, naming `kendex guard install`, instead of running the
   repository's own guard scripts — arm the hooks to keep commits gated.

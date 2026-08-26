@@ -135,6 +135,34 @@ impl Repo {
         self.common_dir.join("hooks")
     }
 
+    /// Whether `core.hooksPath` is set to an empty value, which turns hooks
+    /// off outright.
+    ///
+    /// Asked separately because git's own answer is misleading here:
+    /// `rev-parse --git-path hooks` reports `./` for an empty value, so the
+    /// directory resolves to the repository root while git runs no hook at
+    /// all. Reading that root as a hooks directory would call a repository
+    /// unarmed for the wrong reason — and if it happened to hold files named
+    /// `pre-commit` and `commit-msg` in the right shape, armed, for a
+    /// repository whose commits nothing gates.
+    pub fn hooks_disabled(&self) -> Result<bool> {
+        let output =
+            Hardened::git(&["config", "--get", "core.hooksPath"], Some(&self.worktree)).run()?;
+        match output.status.code() {
+            Some(0) => Ok(String::from_utf8_lossy(&output.stdout).trim().is_empty()),
+            // Not set at all: git reads the repository's own hooks.
+            Some(1) => Ok(false),
+            other => Err(guard_err(
+                "hooks",
+                format!(
+                    "could not read core.hooksPath in {} (git exited {other:?}): {}",
+                    self.worktree.display(),
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+            )),
+        }
+    }
+
     /// The hooks directory git actually reads, its own answer. Under a
     /// `core.hooksPath` redirect this is the redirected directory; without
     /// one it is the default. Asked rather than derived, because telling

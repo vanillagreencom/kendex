@@ -215,6 +215,20 @@ pub fn armed(dir: &Path, installed_here: bool) -> Result<Option<GuardReport>> {
     let Some(repo) = repo::Repo::probe(dir)? else {
         return Ok(None);
     };
+    // Asked before any directory is read. An empty `core.hooksPath` turns
+    // hooks off outright, and git reports the repository root for it — so
+    // reading that as a hooks directory answers about the wrong place, and
+    // arming would not help: the installer stands down under any value at
+    // all, empty included. The remedy is to unset it.
+    if repo.hooks_disabled()? {
+        return Ok(installed_here.then(|| GuardReport {
+            lines: vec![format!(
+                "commit hooks are switched off in {}: core.hooksPath is set to an empty value, so git runs no hook at all — `git config --unset core.hooksPath`, then `kendex guard install`",
+                repo.worktree.display()
+            )],
+            code: 1,
+        }));
+    }
     let live = repo.effective_hooks_dir()?;
 
     // Without the package there is nothing to compare the helper's bytes

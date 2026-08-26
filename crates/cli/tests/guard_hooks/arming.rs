@@ -2,7 +2,9 @@
 //! verbs, the migration off the retired arming, and what `kendex check`
 //! says about a repository in each state.
 
-use crate::{armed_repo, git_ok, install_package, install_package_undeclared, repo, run, said};
+use crate::{
+    armed_repo, git, git_ok, install_package, install_package_undeclared, repo, run, said,
+};
 
 /// Disarming removes only the helper and the package's own marked line;
 /// the hook someone else wrote survives it.
@@ -491,4 +493,57 @@ fn a_carriage_return_is_not_eaten_before_the_checks() {
     let out = run(home, &root, "kendex", &["check"]);
     assert_ne!(out.status.code(), Some(0), "{}", said(&out));
     assert!(said(&out).contains("commit hooks"), "{}", said(&out));
+}
+
+/// An empty `core.hooksPath` switches hooks off outright, and git's own
+/// answer about it is misleading: `rev-parse --git-path hooks` reports the
+/// repository root while git runs no hook at all.
+///
+/// Reading that root as a hooks directory would answer about the wrong
+/// place — and where the root happens to hold files with the right names
+/// and shapes, it would answer **armed** for a repository whose commits
+/// nothing gates.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_empty_hooks_path_is_hooks_switched_off() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    install_package(home, &root, &["growth-guards"]);
+    arm_by_hand(&root);
+
+    // Armed, and then switched off without touching a single shim.
+    let out = run(home, &root, "kendex", &["check"]);
+    assert!(!said(&out).contains("commit hooks"), "{}", said(&out));
+
+    git_ok(home, &root, &["config", "core.hooksPath", ""]);
+
+    // The repository root now carries copies of everything a hooks
+    // directory would: the trap this closes.
+    for name in ["kendex-guards", "pre-commit", "commit-msg"] {
+        let from = root.join(".git/hooks").join(name);
+        let to = root.join(name);
+        std::fs::copy(&from, &to).unwrap();
+        std::fs::set_permissions(&to, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let out = run(home, &root, "kendex", &["check"]);
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    assert!(
+        said(&out).contains("switched off"),
+        "the diagnosis is the empty value, not a missing shim: {}",
+        said(&out)
+    );
+    assert!(
+        said(&out).contains("unset core.hooksPath"),
+        "{}",
+        said(&out)
+    );
+
+    // And a real commit confirms it: git runs nothing, so the marker lands.
+    std::fs::write(root.join("b.rs"), "// TODO: not yet\n").unwrap();
+    git_ok(home, &root, &["add", "-A"]);
+    let out = git(home, &root, &["commit", "-m", "feat: ungated"]);
+    assert!(out.status.success(), "git runs no hook: {}", said(&out));
 }
