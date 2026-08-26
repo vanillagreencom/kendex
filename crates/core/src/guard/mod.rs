@@ -250,7 +250,7 @@ pub fn armed(dir: &Path, installed_here: bool) -> Result<Option<GuardReport>> {
     // clean one.
     let scripts = package.dir.join("scripts");
     let is_default_dir = live == repo.default_hooks_dir();
-    let (shape, reasons) = shims::directory_shape(&live, &scripts, is_default_dir);
+    let (shape, reasons) = shims::directory_shape(&live, &scripts, &repo.worktree, is_default_dir);
     Ok(match shape {
         shims::Shape::Armed => None,
         shims::Shape::Unknown => Some(GuardReport {

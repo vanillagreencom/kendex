@@ -17,12 +17,12 @@
 //! — a scan that accepted the entry point anywhere executable-looking kept
 //! finding new ways to report `armed` for a repository git does not gate.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::shims::Shape;
 
 /// Whether one hook file is a hand-wired call to `scripts_dir/hook`.
-pub(super) fn shape(path: &Path, hook: &str, scripts_dir: &Path) -> Shape {
+pub(super) fn shape(path: &Path, hook: &str, scripts_dir: &Path, worktree: &Path) -> Shape {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Shape::Unknown;
     };
@@ -31,7 +31,12 @@ pub(super) fn shape(path: &Path, hook: &str, scripts_dir: &Path) -> Shape {
     };
     let (mut seen, mut matched, mut named, mut opaque) = (0usize, false, false, false);
 
-    for line in text.lines() {
+    // Split on newlines alone, never `lines()`: that strips a carriage
+    // return, and the shell does not. A CR is part of the word, so
+    // `exec\r` is a command named `exec\r` and `#!/bin/sh\r` names an
+    // interpreter that is not there — both have to stay visible to the
+    // checks below or a CRLF hook reads as one this understands.
+    for line in text.split('\n') {
         // Blanks, not all whitespace: the shell separates tokens on blanks,
         // so a line starting with CR runs a command named `\rexec`.
         let body = line.trim_start_matches([' ', '\t']);
@@ -96,7 +101,16 @@ pub(super) fn shape(path: &Path, hook: &str, scripts_dir: &Path) -> Shape {
         if Path::new(cmd).file_name().is_none_or(|name| name != hook) {
             continue;
         }
-        let candidate = Path::new(cmd);
+        // git runs a hook from the work tree's top level, so a relative
+        // command word resolves against THAT — never against wherever this
+        // check happens to be running. Judging it from the process's own
+        // directory answers a question about a different file, and in a
+        // nested project it is reliably the wrong one.
+        let candidate = match Path::new(cmd).is_absolute() {
+            true => PathBuf::from(cmd),
+            false => worktree.join(cmd),
+        };
+        let candidate = candidate.as_path();
         if !candidate.is_file() || !super::shims::is_executable(candidate) {
             continue;
         }

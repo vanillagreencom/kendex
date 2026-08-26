@@ -411,3 +411,84 @@ fn arm_by_hand(root: &std::path::Path) {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+/// A hand-wired hook may name the scripts relatively, and git runs hooks
+/// from the work tree's top level — so that is what a relative command
+/// resolves against, never wherever the check happens to be running.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_relative_command_resolves_against_the_work_tree() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    install_package(home, &root, &["growth-guards"]);
+
+    let elsewhere = home.join("their-hooks");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    git_ok(
+        home,
+        &root,
+        &["config", "core.hooksPath", &elsewhere.display().to_string()],
+    );
+    for (lane, tail) in [("pre-commit", ""), ("commit-msg", " \"$1\"")] {
+        let path = elsewhere.join(lane);
+        std::fs::write(
+            &path,
+            format!("#!/bin/sh\nexec \".agents/skills/growth-guards/scripts/{lane}\"{tail}\n"),
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let out = run(home, &root, "kendex", &["check"]);
+    assert!(
+        !said(&out).contains("commit hooks"),
+        "a relative command is resolved from the work tree: {}",
+        said(&out)
+    );
+}
+
+/// A carriage return is part of the word as far as the shell is concerned,
+/// so it must survive to the checks rather than being eaten by a
+/// line-splitter that treats CRLF as a line ending.
+///
+/// In a shebang it names an interpreter that is not there, which git cannot
+/// exec: unarmed. In a body line it makes the command unreadable, which is
+/// cannot-tell.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_carriage_return_is_not_eaten_before_the_checks() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    install_package(home, &root, &["growth-guards"]);
+    arm_by_hand(&root);
+
+    let hook = root.join(".git/hooks/pre-commit");
+    let armed = std::fs::read_to_string(&hook).unwrap();
+    let lines: Vec<&str> = armed.lines().collect();
+
+    // A CR on the shebang: git cannot exec `/bin/sh\r`.
+    std::fs::write(
+        &hook,
+        format!("{}\r\n{}\n", lines[0], lines[1..].join("\n")),
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let out = run(home, &root, "kendex", &["check"]);
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    assert!(said(&out).contains("control character"), "{}", said(&out));
+
+    // A CR on the delegating line: not the line the installer writes.
+    std::fs::write(
+        &hook,
+        format!("{}\n{}\r\n{}\n", lines[0], lines[1], lines[2..].join("\n")),
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let out = run(home, &root, "kendex", &["check"]);
+    assert_ne!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(said(&out).contains("commit hooks"), "{}", said(&out));
+}

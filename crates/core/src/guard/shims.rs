@@ -138,6 +138,7 @@ pub(super) fn lane_shape(
     hooks: &Path,
     lane: &str,
     scripts_dir: &Path,
+    worktree: &Path,
     is_default_dir: bool,
 ) -> (Finding, bool) {
     let path = hooks.join(lane);
@@ -158,7 +159,11 @@ pub(super) fn lane_shape(
             true,
         );
     };
-    let shebang = text.lines().next().unwrap_or_default();
+    // Never `lines()`: it strips a carriage return the shell keeps. A
+    // shebang ending in one names an interpreter that does not exist, and
+    // it has to stay visible to the control-character check below.
+    let mut raw = text.split('\n');
+    let shebang = raw.next().unwrap_or_default();
     if shebang.chars().any(char::is_control) {
         return (
             finding(
@@ -200,7 +205,7 @@ pub(super) fn lane_shape(
 
     // First shape: the delegating line the installer writes, at line 2.
     let expected = call_line(lane);
-    if text.lines().nth(1).unwrap_or_default() == expected {
+    if raw.next().unwrap_or_default() == expected {
         return (finding(Shape::Armed, format!("{lane} is armed")), true);
     }
 
@@ -210,7 +215,7 @@ pub(super) fn lane_shape(
     // written its line, so its absence there is drift rather than another
     // arrangement.
     if !is_default_dir {
-        let shape = super::entrypoint::shape(&path, lane, scripts_dir);
+        let shape = super::entrypoint::shape(&path, lane, scripts_dir, worktree);
         let reason = match shape {
             Shape::Armed => format!("{lane} runs this install's {lane} directly"),
             Shape::Unarmed => format!("{lane} does not run this install's {lane}"),
@@ -224,7 +229,7 @@ pub(super) fn lane_shape(
     // The line may be further down and gating perfectly well. Where exactly
     // is beyond what a data-only read establishes, so this is unverifiable
     // rather than a "not gated" verdict about a repository that is gated.
-    let found_elsewhere = text.lines().any(|line| line == expected);
+    let found_elsewhere = text.split('\n').any(|line| line == expected);
     (
         match found_elsewhere {
             true => finding(
@@ -291,11 +296,12 @@ pub(super) fn helper_shape(hooks: &Path, scripts_dir: &Path) -> Finding {
 pub(super) fn directory_shape(
     hooks: &Path,
     scripts_dir: &Path,
+    worktree: &Path,
     is_default_dir: bool,
 ) -> (Shape, String) {
     let lanes: Vec<(Finding, bool)> = LANES
         .iter()
-        .map(|lane| lane_shape(hooks, lane, scripts_dir, is_default_dir))
+        .map(|lane| lane_shape(hooks, lane, scripts_dir, worktree, is_default_dir))
         .collect();
     // The helper matters only where some lane reaches for it. Hooks that run
     // the entry point directly need none, and demanding one would call a

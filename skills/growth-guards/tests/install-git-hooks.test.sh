@@ -515,6 +515,27 @@ install_in "$R14"
   || bad "cleared exec bit repaired"
 [ "$RC" -eq 0 ] && ok "the repair install exits 0" || bad "repair install exits 0" "rc=$RC out=$OUT"
 
+echo "=== a line that only mentions the marker is not ours ==="
+# Ownership is the marker CLOSING a line. A consumer's own line that merely
+# mentions it mid-sentence is theirs, and neither a repair nor a removal may
+# eat it — the failure that costs somebody their hook is worse than the one
+# that leaves a stale line of ours behind.
+R21M="$(new_repo mentions-marker)"
+printf '#!/bin/sh\necho "see # %s for details"\necho mine\n' "kendex-guards-hook" \
+  >"$R21M/.git/hooks/pre-commit"
+chmod +x "$R21M/.git/hooks/pre-commit"
+MENTION_BEFORE="$(cat "$R21M/.git/hooks/pre-commit")"
+install_in "$R21M"
+grep -qF 'for details' "$R21M/.git/hooks/pre-commit" \
+  && ok "a repair keeps a line that only mentions the marker" \
+  || bad "repair kept the mention" "got: $(cat "$R21M/.git/hooks/pre-commit")"
+OUT=""; RC=0
+OUT="$("$R21M/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$R21M" --uninstall 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "the removal exits 0" || bad "mention uninstall exits 0" "rc=$RC out=$OUT"
+[ "$MENTION_BEFORE" = "$(cat "$R21M/.git/hooks/pre-commit")" ] \
+  && ok "and it restores that hook byte-for-byte" \
+  || bad "removal kept the mention" "got: $(cat "$R21M/.git/hooks/pre-commit")"
+
 echo "=== a disabled delegate is not an install ==="
 R20="$(new_repo tampered)"
 install_in "$R20"

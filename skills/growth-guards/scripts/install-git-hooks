@@ -247,6 +247,29 @@ write_helper() { # PATH
 # re-armed. The remedy the line names is left alone for that reason while
 # `kendex refresh` is wired to this installer (KEN-663 part 2), rather than
 # churned to another spelling and back.
+# Lines this installer owns, as an ERE — for the repair and the removal,
+# which must agree about what is ours.
+#
+# Byte equality alone is too narrow: a delegate from an older spelling, or
+# one someone commented out to disable it, is still ours and still has to go
+# — leaving it behind stacks a second guard line under the current one, or
+# strands a disabled one that reads as tampering forever. Matching the
+# marker ANYWHERE is too wide: it deletes a consumer's own line that merely
+# mentions it, a comment quoting it among them, and eating somebody else's
+# line is the worse failure of the two.
+#
+# So ownership is the marker CLOSING the line, which is the one thing every
+# spelling this installer has ever written has in common, plus the marker
+# comment it leaves in a file it created. A line that only mentions the
+# marker mid-sentence keeps it and stays.
+#
+# A consumer's own line deliberately ending in this marker is inadvertently
+# claimed, and nothing short of a shell parser could tell the two apart —
+# which is the trade this installer has always made by stamping it.
+gg_owned_lines_re() {
+  printf '%s' '.*'"$HOOK_SENTINEL"'$|^'"$CREATED_MARKER"'$'
+}
+
 call_line() { # HOOK
   local hook="$1" args=""
   [ "$hook" = "pre-commit" ] || args=' "$@"'
@@ -340,15 +363,16 @@ install_hook() { # HOOK
   # a repair must not turn a hook we created into one that looks foreign.
   local created=0
   grep -qF -- "$CREATED_MARKER" "$path" 2>/dev/null && created=1
-  # Everything but the shebang and any stale delegate of ours, kept in a FILE:
-  # a command substitution would strip a missing final newline, and the
-  # foreign bytes must come back exactly as they were. grep -v exits 1 when it
-  # prints nothing; only >= 2 is a read failure.
+  # Everything but the shebang and our own lines, kept in a FILE: a command
+  # substitution would strip a missing final newline, and the foreign bytes
+  # must come back exactly as they were.
   rest="$(mktemp "$path.rest.XXXXXX")" || {
     hook_warn "could not create a temporary file beside $path — the $hook guard is NOT installed"
     return 0
   }
-  tail -n +2 "$path" | grep -vF -- "$HOOK_SENTINEL" >"$rest" || status=$?
+  # Ours, by shape — see gg_owned_lines_re. grep -v exits 1 when it prints
+  # nothing; only >= 2 is a read failure.
+  tail -n +2 "$path" | grep -vE "$(gg_owned_lines_re)" >"$rest" || status=$?
   if [ "$status" -gt 1 ]; then
     rm -f -- "$rest"
     hook_warn "could not read $path — the $hook guard is NOT installed"
@@ -417,7 +441,7 @@ uninstall_hook() { # HOOK — drop our line; drop the file when only ours was in
   # managed hook whose content is unknown must not be assumed clean — left
   # behind with the helper gone it blocks every commit.
   sentinel_status=0
-  grep -qxF -- "$line" "$path" 2>/dev/null || sentinel_status=$?
+  grep -qE "$(gg_owned_lines_re)" "$path" 2>/dev/null || sentinel_status=$?
   if [ "$sentinel_status" -gt 1 ]; then
     hook_warn "could not read $path to check for the guard line; it was left in place"
     return 0
@@ -430,14 +454,10 @@ uninstall_hook() { # HOOK — drop our line; drop the file when only ours was in
     hook_warn "could not create a temporary file beside $path; its guard line was left in place"
     return 0
   }
-  # The BYTE-EXACT line this installer writes, and no other. Filtering on
-  # the sentinel alone deletes a consumer's own line that happens to carry
-  # it — a comment quoting it, a hook of their own ending in the same
-  # marker — and a removal that eats somebody else's line is worse than one
-  # that leaves ours behind. grep -v exits 1 when it prints nothing; only
-  # >= 2 means the read failed. Both of ours go: the delegating line and,
-  # where this installer created the file, the marker it left beside it.
-  grep -vxF -e "$line" -e "$CREATED_MARKER" "$path" >"$tmp" || status=$?
+  # Ours, by shape — the same rule the repair uses, so the two cannot
+  # disagree about what belongs to this installer. grep -v exits 1 when it
+  # prints nothing; only >= 2 means the read failed.
+  grep -vE "$(gg_owned_lines_re)" "$path" >"$tmp" || status=$?
   if [ "$status" -gt 1 ]; then
     rm -f -- "$tmp"
     hook_warn "could not read $path; its guard line was left in place"
