@@ -20,6 +20,8 @@ use crate::error::Result;
 use crate::hash::hash_tree;
 use crate::model::Scope;
 
+mod link;
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn plan_tree(
     env: &Env,
@@ -102,8 +104,9 @@ pub(super) fn plan_tree(
     let Some(link) = link else {
         return Ok(result);
     };
-    let linked = plan_link(
+    let linked = link::plan_link(
         env,
+        scope,
         item,
         link,
         canonical,
@@ -129,7 +132,7 @@ pub(super) fn plan_tree(
 /// in the local source, so a folder there is something it can take and
 /// anything else is not — said as the cause, because a surface that
 /// offered to keep the wrong shape would fail on the click.
-fn in_the_way(path: &Path, files: &[(PathBuf, Vec<u8>)]) -> Planned {
+pub(super) fn in_the_way(path: &Path, files: &[(PathBuf, Vec<u8>)]) -> Planned {
     match path.is_dir() {
         // A folder against the folder that would replace it. The wrong
         // shape has no per-file answer — one file where a tree goes is
@@ -230,127 +233,9 @@ fn write_ops(
 /// The harness-native position pointing at the tree. A directory sitting
 /// there is the copy this installation had while it diverged: it goes to the
 /// trash and the link takes its place.
-#[allow(clippy::too_many_arguments)]
-fn plan_link(
-    env: &Env,
-    item: &Desired,
-    link: &Path,
-    canonical: &Path,
-    files: &[(PathBuf, Vec<u8>)],
-    replace_unmanaged: bool,
-    owned: &BTreeSet<PathBuf>,
-    written: &mut Written,
-    ops: &mut Vec<PlannedOp>,
-    result: &Planned,
-) -> Result<Planned> {
-    if link.is_symlink() {
-        let points_to = std::fs::read_link(link).unwrap_or_default();
-        if points_to == canonical {
-            return Ok(result.clone());
-        }
-        // A target that is the canonical tree under its pre-rename spelling
-        // is our own: only kendex ever pointed links there, so the position
-        // is ours to replace (invariant 6). The first-launch move carries
-        // the trees but cannot rewrite links scattered across harness dirs
-        // — this relink is what reconnects them.
-        if env.legacy_app_path(canonical).as_deref() != Some(points_to.as_path()) {
-            return Ok(Planned::Conflict(format!(
-                "{} links somewhere kendex does not own ({})",
-                link.display(),
-                points_to.display()
-            )));
-        }
-        if written.claim_link(link) {
-            ops.push(PlannedOp {
-                description: format!(
-                    "Drop {}'s link to the app's old folder",
-                    item.harness.display_name()
-                ),
-                op: Op::Trash {
-                    path: link.to_path_buf(),
-                    pre: Pre::SymlinkTo { target: points_to },
-                },
-            });
-            ops.push(PlannedOp {
-                description: format!(
-                    "Connect {} to {} {}",
-                    item.harness.display_name(),
-                    item.kind.name(),
-                    item.name
-                ),
-                op: Op::Symlink {
-                    link: link.to_path_buf(),
-                    target: canonical.to_path_buf(),
-                    pre: Pre::Absent,
-                },
-            });
-        }
-        return Ok(Planned::Drift(
-            DriftState::Stale,
-            format!(
-                "{} still reads the app's old folder",
-                item.harness.display_name()
-            ),
-        ));
-    }
-    let diverged = link.exists();
-    let unowned = diverged && !owned.contains(link);
-    if unowned && !replace_unmanaged {
-        return Ok(in_the_way(link, files));
-    }
-    let first = written.claim_link(link);
-    if diverged && first {
-        let hash = match hash_tree(link) {
-            Ok(hash) => hash,
-            Err(error) => return Ok(uncomparable(link, &error)),
-        };
-        ops.push(match unowned {
-            true => set_aside(link, Pre::HashIs { hash }),
-            false => PlannedOp {
-                description: format!(
-                    "Put {} back on the shared {} {}",
-                    item.harness.display_name(),
-                    item.kind.name(),
-                    item.name
-                ),
-                op: Op::Trash {
-                    path: link.to_path_buf(),
-                    pre: Pre::HashIs { hash },
-                },
-            },
-        });
-    }
-    if first {
-        ops.push(PlannedOp {
-            description: format!(
-                "Connect {} to {} {}",
-                item.harness.display_name(),
-                item.kind.name(),
-                item.name
-            ),
-            op: Op::Symlink {
-                link: link.to_path_buf(),
-                target: canonical.to_path_buf(),
-                pre: Pre::Absent,
-            },
-        });
-    }
-    let tool = item.harness.display_name();
-    Ok(match (diverged, unowned) {
-        (_, true) => Planned::Drift(DriftState::Missing, TAKEN_OVER.into()),
-        (true, false) => Planned::Drift(
-            DriftState::Stale,
-            format!("{tool}'s own copy is no longer needed"),
-        ),
-        (false, false) => {
-            Planned::Drift(DriftState::Missing, format!("{tool} is not connected yet"))
-        }
-    })
-}
-
 /// An artifact we cannot hash is reported uncompared (invariant 12) — a read
 /// error must never read as passing, and must not kill the scope.
-fn uncomparable(path: &Path, error: &crate::error::CoreError) -> Planned {
+pub(super) fn uncomparable(path: &Path, error: &crate::error::CoreError) -> Planned {
     Planned::Conflict(format!(
         "{} cannot be compared ({error}) — fix its permissions or remove it",
         path.display()

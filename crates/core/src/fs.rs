@@ -5,7 +5,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::error::{CoreError, Result};
 
+mod links;
 mod lock;
+pub(crate) use links::{points_at, spelling};
 pub(crate) use lock::{LockedFile, open_read_no_follow};
 
 /// Write via a sibling temp file + rename so readers never see a torn file.

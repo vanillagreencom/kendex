@@ -38,6 +38,7 @@ mod owned;
 pub(crate) mod pi_hooks_move;
 mod plan_pass;
 mod planned;
+pub mod posture;
 mod removal;
 mod scope_writes;
 mod scoring;
@@ -46,6 +47,7 @@ mod takeover;
 mod targets;
 mod tree_plan;
 mod unmanaged;
+pub use unmanaged::unmanaged_here;
 mod written;
 
 pub(crate) use desired_agent::contributes_to_agent;
@@ -223,8 +225,7 @@ fn plan_scope_once(
     let set_changes = set_changes(scope, lock, &new_lock);
     let kept = kept_members(scope, lock, &new_lock, &options.uninstalled_bundles);
     plan_lock_write(env, scope, disk_lock, new_lock, &mut ops)?;
-
-    prepend_rename_generation(env, scope, &mut ops)?;
+    moved_notes.extend(scope_wide(env, scope, &mut ops)?);
 
     let mut report = EngineReport {
         drift,
@@ -243,6 +244,16 @@ fn plan_scope_once(
     unmanaged_rows(env, scope, &manifest, lock, &state.items, &mut report.drift)?;
     takeover::refuse_unsettled_takeover(options, &report.drift)?;
     Ok(report)
+}
+
+/// The writes a pass owes the scope as a whole rather than any one item:
+/// the git posture, and the generation stamp the rename migration reads.
+/// Both run after every item is planned, so they see the finished op list.
+fn scope_wide(env: &Env, scope: &Scope, ops: &mut Vec<PlannedOp>) -> Result<Vec<String>> {
+    let mut notes = Vec::new();
+    posture::plan_posture(scope, ops, &mut notes)?;
+    prepend_rename_generation(env, scope, ops)?;
+    Ok(notes)
 }
 
 /// The manifest this pass reads from and the state it derives: `declared`

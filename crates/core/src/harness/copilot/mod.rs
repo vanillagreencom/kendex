@@ -139,6 +139,12 @@ impl HarnessAdapter for Copilot {
                 surfaces
             }
             ItemKind::Plugin => repo_settings(Reader::CopilotPlugins).collect(),
+            // Copilot reads the project's shared tree as well as
+            // `.github/skills`, so an install is the shared one and its own
+            // directory is what a per-tool copy writes (matrix §2).
+            ItemKind::Skill => {
+                super::shared_first(Some(&project.join(".agents/skills")), github.join("skills"))
+            }
             other => self.global_surfaces(other, &github, env),
         }
     }

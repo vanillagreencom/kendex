@@ -137,29 +137,44 @@ fn an_agent_installs_in_geminis_own_format_and_toggles_by_rename() {
     assert!(!file.exists() && !parked.exists());
 }
 
-/// Gemini's skills directory is a folder per skill holding a SKILL.md, the
-/// same shape Claude Code's takes, so the shared renderer serves it.
+/// Gemini reads the project's shared `.agents/skills` tree, so a skill goes
+/// there rather than into a second copy under `.gemini`.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_skill_installs_into_geminis_own_skills_directory() {
+fn a_skill_installs_into_the_shared_tree_gemini_reads() {
     let f = fixture("[skills.deploy]\nsource = \"cat\"\n");
     apply_now(&f);
 
-    let marker = f.project.join(".gemini/skills/deploy/SKILL.md");
+    let marker = f.project.join(".agents/skills/deploy/SKILL.md");
     assert!(fs::read_to_string(&marker).unwrap().contains("Steps."));
+    assert!(!f.project.join(".gemini/skills").exists());
     assert!(is_clean(&f));
 
     toggle(&f, "deploy", false);
     assert!(!marker.exists());
     assert!(
         f.project
-            .join(".gemini/skills/deploy/SKILL.md.disabled")
+            .join(".agents/skills/deploy/SKILL.md.disabled")
             .exists()
     );
     assert!(is_clean(&f));
 
     remove(&f, "deploy");
-    assert!(!f.project.join(".gemini/skills/deploy").exists());
+    assert!(!f.project.join(".agents/skills/deploy").exists());
+}
+
+/// A copy delivery is a tree only this tool reads, so it goes in Gemini's
+/// own directory — the escape hatch for a Gemini too old to read the
+/// shared one.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_copy_delivery_writes_geminis_own_skills_directory() {
+    let f = fixture("[skills.deploy]\nsource = \"cat\"\nmethod = \"copy\"\n");
+    apply_now(&f);
+
+    let marker = f.project.join(".gemini/skills/deploy/SKILL.md");
+    assert!(fs::read_to_string(&marker).unwrap().contains("Steps."));
+    assert!(is_clean(&f));
 }
 
 #[test]

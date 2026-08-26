@@ -4,7 +4,7 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use kendex_core::engine::{DriftState, audit, ops};
 use kendex_core::env::{Env, FakeOs};
@@ -105,7 +105,13 @@ fn declare_apply_drift_clean_round_trips() {
     assert!(agent_file(&f).is_file());
     assert!(canonical_skill(&f).join("SKILL.md").is_file());
     let link = f.project.join(".claude/skills/gh");
-    assert_eq!(fs::read_link(&link).unwrap(), canonical_skill(&f));
+    // Relative, so the pair is committable: the same two files in a
+    // teammate's checkout still point at each other.
+    assert_eq!(
+        fs::read_link(&link).unwrap(),
+        Path::new("../../.agents/skills/gh")
+    );
+    assert_eq!(link.canonicalize().unwrap(), canonical_skill(&f));
     assert_eq!(drift_states(&f), vec![]);
 }
 #[test]

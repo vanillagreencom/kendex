@@ -82,10 +82,17 @@ does not claim these paths; the reach is reported as a note on the plan
 
 ## Skill placement
 
-A project's shared skill tree is `.agents/skills/<name>`, and Claude's own
-`.claude/skills/<name>` collapses onto it through a link when the bytes
-match. Global variants live under the app data dir
-(`rendered_skills_dir`, `crates/core/src/env.rs`).
+A project's shared skill tree is `.agents/skills/<name>` — every harness but
+Claude Code reads it directly — and Claude's own `.claude/skills/<name>`
+collapses onto it through a link when the bytes match. Inside a project that
+link is written relative (`../../.agents/skills/<name>`), so the pair is
+committed once and resolves in every clone; an absolute one from an older
+install is reported as drift and rewritten on the next apply. Claude Code
+documents following a symlinked skill entry. On Windows, checking a
+committed symlink out needs Developer Mode; without it git writes a text
+file holding the link path, and `method = "copy"` is the supported way out.
+Global variants live under the app data dir (`rendered_skills_dir`,
+`crates/core/src/env.rs`).
 
 ## Validation
 

@@ -50,7 +50,14 @@ fn codex_and_pi_share_one_project_variant_and_claude_links_while_equal() {
     // Claude's variant currently matches, so it deduplicates onto the
     // shared tree through a link rather than a second copy.
     let claude = project.join(".claude/skills/gh");
-    assert_eq!(fs::read_link(&claude).unwrap(), shared);
+    assert_eq!(
+        fs::read_link(&claude).unwrap(),
+        std::path::Path::new("../../.agents/skills/gh")
+    );
+    assert_eq!(
+        claude.canonicalize().unwrap(),
+        shared.canonicalize().unwrap()
+    );
 
     let lock: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(project.join(".kendex-lock.json")).unwrap())

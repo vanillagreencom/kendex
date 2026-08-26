@@ -22,7 +22,7 @@ root. `gemini-extension.json` is *not* a marker. Owner:
 | Kind | Global | Project | Caps |
 |---|---|---|---|
 | agent | `~/.gemini/agents/*.md` | `.gemini/agents/*.md` | managed, both |
-| skill | `~/.gemini/skills/<name>/SKILL.md` | `.gemini/skills/<name>/SKILL.md` | managed, both |
+| skill | `~/.gemini/skills/<name>/SKILL.md` | `.agents/skills/<name>/SKILL.md`, or `.gemini/skills/<name>/SKILL.md` for a copy delivery | managed, both |
 | command | `~/.gemini/commands/**/*.toml` | `.gemini/commands/**/*.toml` | managed, both |
 | hook | `~/.gemini/settings.json` → `hooks` | `.gemini/settings.json` → `hooks` | managed, both, **enforced** |
 | mcp-server | `~/.gemini/settings.json` → `mcpServers` | `.gemini/settings.json` → `mcpServers` | install/remove/refresh both, **toggle global only** |
@@ -128,9 +128,14 @@ failure against its own path.
 
 ## Cross-reads
 
-Gemini reads `.agents/skills`, the shared tree Codex and Pi own. The adapter
-does not claim it — the reach is reported as a note
-(`cross_read_note`, `crates/core/src/engine/desired_skill.rs`).
+Gemini reads `.agents/skills`, so at project scope that shared tree is where
+its skills are installed — the adapter claims it, alongside `.gemini/skills`,
+which stays on the surface list so an older install there is still seen and
+so a copy delivery has a per-tool place to write. A skill installed for
+another tool is already visible to Gemini through the same tree; the reach is
+reported as a note (`cross_read_note`,
+`crates/core/src/engine/desired_skill.rs`), never counted as a second
+installation.
 
 ## Shipped behavior
 

@@ -7,13 +7,16 @@ use crate::manifest::Method;
 use crate::model::{HarnessId, ItemKind, Scope};
 use crate::render::skill::render_skill;
 
-use super::desired::{Artifact, Desired, DesiredState, ItemCtx, native_dir, skill_canonical};
+use super::desired::{
+    Artifact, Desired, DesiredState, ItemCtx, native_dir, own_dir, skill_canonical,
+};
 
-/// One physical skill surface and the harnesses that read it. Codex and Pi
-/// both consume `.agents/skills` in a project, so they form one group and
-/// carry exactly one variant; every other pairing today reads its own
-/// directory. Variants render to the group's combined constraints, and a
-/// variant whose bytes match the base tree deduplicates onto it.
+/// One physical skill surface and the harnesses that read it. Every tool but
+/// Claude Code consumes `.agents/skills` in a project, so they form one group
+/// and carry exactly one variant; a copy delivery splits them back into the
+/// directories they each read alone. Variants render to the group's combined
+/// constraints, and a variant whose bytes match the base tree deduplicates
+/// onto it.
 struct SurfaceGroup {
     native: PathBuf,
     /// The name every member of this group lists the skill under — the
@@ -33,46 +36,57 @@ struct Variant {
     refused: bool,
 }
 
-/// The tools that read a skill directory another tool owns, and what each
-/// one reaches into. One file on disk is then a definition several tools
-/// see; it is still one installation — counting it twice would offer a
-/// removal that takes another tool's copy away — and the note is how the
-/// duplicate reaches the user (matrix §R6).
-fn cross_read_note(ctx: &ItemCtx, state: &mut DesiredState) {
-    if !matches!(ctx.scope, Scope::Project { .. }) {
+/// The tools that will read this skill without being installed to. Every
+/// harness but Claude Code reads a project's `.agents/skills` tree, so a
+/// skill written there is loaded by tools the person never named — one
+/// definition, counted once, and said out loud so a reader is not surprised
+/// by a tool that has it (matrix §R6).
+fn cross_read_note(ctx: &ItemCtx, method: Method, state: &mut DesiredState) {
+    if !matches!(ctx.scope, Scope::Project { .. }) || method == Method::Copy {
         return;
     }
-    let readers: Vec<String> = [
-        (HarnessId::Gemini, "`.agents/skills`"),
-        (HarnessId::Copilot, "`.agents/skills` and `.claude/skills`"),
-    ]
-    .into_iter()
-    .filter(|(harness, _)| {
-        let adapter = crate::harness::adapter(*harness);
-        adapter
-            .detect(ctx.env, &adapter.default_global_root(ctx.env))
-            .is_some()
-    })
-    .map(|(harness, dirs)| format!("{} reads {dirs}", harness.display_name()))
-    .collect();
+    let shared = skill_canonical(ctx.env, ctx.scope, ctx.name);
+    let readers: Vec<String> = HarnessId::ALL
+        .into_iter()
+        .filter(|harness| !ctx.harnesses.contains(harness))
+        .filter(|harness| {
+            native_dir(ctx.env, ctx.scope, *harness, ItemKind::Skill)
+                .is_some_and(|dir| shared.starts_with(dir))
+        })
+        .filter(|harness| {
+            let adapter = crate::harness::adapter(*harness);
+            adapter
+                .detect(ctx.env, &adapter.default_global_root(ctx.env))
+                .is_some()
+        })
+        .map(|harness| harness.display_name().to_owned())
+        .collect();
     if readers.is_empty() {
         return;
     }
-    // The reach is a fact about the directories, not about any one skill,
-    // so it is said once however many skills a scope installs.
+    // The reach is a fact about the directory, not about any one skill, so
+    // it is said once however many skills a scope installs.
     let note = format!(
-        "skills: {}, as well as their own directories, so the skills installed here are already visible to them — one definition, counted once",
-        readers.join(", and ")
+        "skills: {} read `.agents/skills` too, so what is installed here is already visible to them — one definition, counted once",
+        readers.join(", ")
     );
     if !state.notes.contains(&note) {
         state.notes.push(note);
     }
 }
 
-fn surface_groups(ctx: &ItemCtx) -> Vec<SurfaceGroup> {
+fn surface_groups(ctx: &ItemCtx, method: Method) -> Vec<SurfaceGroup> {
     let mut groups: Vec<SurfaceGroup> = Vec::new();
     for harness in &ctx.harnesses {
-        let Some(dir) = native_dir(ctx.env, ctx.scope, *harness, ItemKind::Skill) else {
+        // A copy is a tree only this tool reads, so it goes in this tool's
+        // own directory where it has one — several tools copying into the
+        // shared tree would be one tree with several owners, which is the
+        // shape the shared read already covers.
+        let dir = match method {
+            Method::Copy => own_dir(ctx.env, ctx.scope, *harness, ItemKind::Skill),
+            Method::Symlink => native_dir(ctx.env, ctx.scope, *harness, ItemKind::Skill),
+        };
+        let Some(dir) = dir else {
             continue;
         };
         let installed = crate::harness::rendered_name(*harness, ctx.name);
@@ -92,7 +106,7 @@ fn surface_groups(ctx: &ItemCtx) -> Vec<SurfaceGroup> {
 pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()> {
     let enabled = ctx.decl.enabled;
     let method = ctx.decl.method.unwrap_or(ctx.manifest.install.method);
-    let groups = surface_groups(ctx);
+    let groups = surface_groups(ctx, method);
     if groups.is_empty() {
         return Ok(());
     }
@@ -102,10 +116,7 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
     if enabled && matches!(ctx.scope, Scope::Project { .. }) {
         seed_settings_env(ctx, state)?;
     }
-    // Gemini and Copilot read the skill directories other tools own, so one
-    // tree can be a definition they see too — said out loud, never counted
-    // twice.
-    cross_read_note(ctx, state);
+    cross_read_note(ctx, method, state);
     if ctx.harnesses.contains(&HarnessId::Copilot) {
         super::copilot::switched_off_elsewhere(ctx, ItemKind::Skill, state);
     }

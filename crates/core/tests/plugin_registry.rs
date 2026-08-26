@@ -158,7 +158,9 @@ fn every_tool_lists_a_plugin_registry_item_under_its_plugin() {
         shared.starts_with("---\nname: data-science__eda\n"),
         "{shared}"
     );
-    let opencode = read(&f, ".opencode/skills/data-science-eda/SKILL.md");
+    // OpenCode will not load an underscore, so its spelling is a directory
+    // of its own inside the shared tree rather than a copy under .opencode.
+    let opencode = read(&f, ".agents/skills/data-science-eda/SKILL.md");
     assert!(
         opencode.starts_with("---\nname: data-science-eda\n"),
         "{opencode}"
@@ -315,7 +317,8 @@ fn a_plain_catalog_installs_exactly_where_it_always_did() {
     .unwrap();
     assert_eq!(read(&f, ".agents/skills/gh/SKILL.md"), source);
     assert!(f.project.join(".claude/skills/gh").is_symlink());
-    assert!(f.project.join(".opencode/skills/gh").is_symlink());
+    // OpenCode reads the shared tree itself, so it holds no second copy.
+    assert!(!f.project.join(".opencode/skills/gh").exists());
     assert!(is_clean(&f));
 }
 

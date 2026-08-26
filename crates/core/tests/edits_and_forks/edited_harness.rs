@@ -214,8 +214,10 @@ fn a_skill_shared_by_symlink_counts_as_one_edited_rendering() {
     )
     .unwrap();
     sync_and_apply(&w);
+    // Claude Code links at the shared tree; opencode reads it directly.
     assert!(w.home.join("app/.claude/skills/gh").is_symlink());
-    assert!(w.home.join("app/.opencode/skills/gh").is_symlink());
+    assert!(w.home.join("app/.agents/skills/gh").is_dir());
+    assert!(!w.home.join("app/.opencode/skills/gh").exists());
 
     fs::write(skill_file(&w), "my edited version").unwrap();
     let report = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();

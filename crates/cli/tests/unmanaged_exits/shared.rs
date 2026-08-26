@@ -37,7 +37,8 @@ fn a_folder_shared_by_hand_is_kept_by_the_offer_it_prints() {
     assert!(!planned.contains("--replace-unmanaged"), "{planned}");
     assert_eq!(
         offer(&planned),
-        "kendex adopt skill deploy --harness claude --harness codex --harness pi"
+        "kendex adopt skill deploy --harness claude --harness codex --harness opencode \
+         --harness cursor --harness pi --harness gemini --harness copilot"
     );
 
     follow(home, &project, &planned);
@@ -69,12 +70,13 @@ fn a_folder_outside_every_tool_is_kept_through_the_tool_that_links_at_it() {
     link_at(&project.join(".agents/skills/deploy"), &elsewhere);
 
     let planned = plan(home, &project);
-    // Pi reads the same directory Codex does, so keeping the folder clears
-    // its link too — the command says so rather than touching a tool it
-    // never mentioned.
+    // Every tool but Claude Code reads the same directory Codex does, so
+    // keeping the folder clears its link too — the command says so rather
+    // than touching a tool it never mentioned.
     assert_eq!(
         offer(&planned),
-        "kendex adopt skill deploy --harness codex --harness pi"
+        "kendex adopt skill deploy --harness codex --harness opencode --harness cursor \
+         --harness pi --harness gemini --harness copilot"
     );
 
     follow(home, &project, &planned);

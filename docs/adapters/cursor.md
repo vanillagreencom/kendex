@@ -1,7 +1,8 @@
 # Cursor
 
-The narrowest adapter. Cursor has rules only: an agent installs as a rule
-file, skills are unsupported, and nothing about a rule is enforced.
+A narrow adapter. Cursor has rules and the shared skills tree: an agent
+installs as a rule file, a project skill goes to `.agents/skills` like every
+other tool that reads it, and nothing about a rule is enforced.
 
 ## Roots
 
@@ -18,15 +19,18 @@ Project marker: a `.cursor/` directory. Owner:
 | Kind | Global | Project | Caps |
 |---|---|---|---|
 | agent | — no global rules dir | `.cursor/rules/*.mdc` | managed, project only |
-| skill | — | — | unsupported |
+| skill | — no documented global skills dir | `.agents/skills/<name>/SKILL.md` | managed, project only |
 | hook | `~/.cursor/hooks.json` | `.cursor/hooks.json` | observe both; install/toggle/remove/refresh project only; **advisory** |
 | command | `~/.cursor/commands/*.md` | `.cursor/commands/*.md` | observe only, both |
 | mcp-server | `~/.cursor/mcp.json` | `.cursor/mcp.json` | observe only, both |
 | plugin | `~/.cursor/plugins/{local,cache}` with `.cursor-plugin/plugin.json` | — | observe only, global |
 | pi-extension | — | — | unsupported |
 
-**Skills are unsupported.** They share the rules directory with agents and
-cannot be told apart; kendex does not guess.
+**Skills go in the shared tree.** Cursor's own project directory cannot
+tell a skill from a rule, so kendex never writes one there; it writes the
+`.agents/skills` tree Cursor reads along with Codex, Pi, OpenCode, Gemini
+and Copilot. There is no documented global skills path, so global stays
+unsupported.
 
 **Cursor is managed project-only.** The global agent surface is empty; the
 global command, MCP and plugin surfaces are scanned.

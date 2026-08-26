@@ -23,7 +23,7 @@ marker. Owner:
 | Kind | Global | Project | Caps |
 |---|---|---|---|
 | agent | `~/.copilot/agents/*.agent.md` | `.github/agents/*.agent.md` | managed, both |
-| skill | `~/.copilot/skills/<name>/SKILL.md` | `.github/skills/<name>/SKILL.md` | managed, both |
+| skill | `~/.copilot/skills/<name>/SKILL.md` | `.agents/skills/<name>/SKILL.md`, or `.github/skills/<name>/SKILL.md` for a copy delivery | managed, both |
 | hook | `~/.copilot/hooks/*.json` (each file a document), plus `~/.copilot/settings.json` → `hooks` | `.github/hooks/*.json`, plus `.github/copilot/settings.json` and `settings.local.json` → `hooks` | managed, both, **enforced** |
 | mcp-server | `~/.copilot/mcp-config.json` | `.github/mcp.json` | managed, both |
 | plugin | `~/.copilot/settings.json` → `enabledPlugins` | `.github/copilot/settings.json` + `settings.local.json` → `enabledPlugins` | observe + toggle, both |
@@ -127,8 +127,9 @@ with that reason.
 
 ## Cross-reads — Copilot reads other tools' files
 
-Copilot CLI discovers skills from `.claude/skills` and `.agents/skills`, VS
-Code discovers agents from `.claude/agents`, and the CLI reads
+Copilot CLI discovers skills from `.claude/skills` and `.agents/skills` —
+the second is where kendex installs a project skill for it, so that one is
+claimed. VS Code discovers agents from `.claude/agents`, and the CLI reads
 `.claude/settings.json` and `.claude/settings.local.json` for
 `companyAnnouncements`, `disableAllHooks`, `enabledPlugins`,
 `extraKnownMarketplaces` and `hooks`.

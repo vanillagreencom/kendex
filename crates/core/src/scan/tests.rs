@@ -109,12 +109,14 @@ fn scans_a_realistic_machine() {
     );
     assert_eq!(find(ItemKind::PiExtension, "pi-tmux").len(), 1);
 
-    // The shared .agents/skills tree surfaces once per harness, same path.
+    // The shared .agents/skills tree surfaces once per harness that reads
+    // it — every one but Claude Code — always at the same path.
     let deploy = find(ItemKind::Skill, "deploy");
-    assert_eq!(deploy.len(), 2);
-    assert_eq!(deploy[0].path, deploy[1].path);
+    assert_eq!(deploy.len(), 6);
+    assert!(deploy.iter().all(|item| item.path == deploy[0].path));
     let harnesses: Vec<_> = deploy.iter().map(|i| i.harness).collect();
     assert!(harnesses.contains(&HarnessId::Codex) && harnesses.contains(&HarnessId::Pi));
+    assert!(!harnesses.contains(&HarnessId::Claude));
 }
 
 /// Gemini and Copilot installations are read the same way as everyone

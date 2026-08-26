@@ -135,6 +135,14 @@ impl Op {
             } => {
                 from_pre.check(from)?;
                 to_pre.check(to)?;
+                // The destination's parent may not exist yet — a move into
+                // a tree this scope has not written to before. Created the
+                // way every other writing op creates its parent, and after
+                // both preconditions, so a stale plan never leaves a
+                // directory behind.
+                if let Some(parent) = to.parent() {
+                    fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e))?;
+                }
                 fs::rename(from, to).map_err(|e| CoreError::io(from, e))
             }
             Op::Trash { path, pre } => {
@@ -299,7 +307,11 @@ fn unique_in(dir: &Path, base: &str) -> PathBuf {
     let stamp = crate::clock::timestamp().replace(':', "-");
     let mut candidate = dir.join(format!("{stamp}-{base}"));
     let mut counter = 1;
-    while candidate.exists() {
+    // A link, not what it points at: a relative link lands in the trash
+    // pointing nowhere, and `exists` on a broken link says the name is
+    // free. The rename onto it then fails, and one apply's rollback takes
+    // the whole removal with it.
+    while candidate.exists() || candidate.is_symlink() {
         candidate = dir.join(format!("{stamp}-{counter}-{base}"));
         counter += 1;
     }

@@ -3,7 +3,6 @@ use std::path::PathBuf;
 
 use crate::env::Env;
 use crate::error::Result;
-use crate::harness::{Surface, adapter};
 use crate::hash::{hash_bytes, hash_files};
 use crate::lock::Lock;
 use crate::manifest::{ItemDecl, Manifest, Method};
@@ -85,6 +84,23 @@ impl Artifact {
                 script.iter().map(|(path, _)| path.clone()).collect()
             }
         }
+    }
+
+    /// The command this artifact registers, if it registers one. What makes
+    /// a hook entry ours is the command it runs — the registration edits
+    /// own it by that exact string, so anything asking "did kendex write
+    /// this entry" asks about the command.
+    pub fn registered_command(&self) -> Option<String> {
+        let Artifact::Registration { edits, .. } = self else {
+            return None;
+        };
+        edits.iter().find_map(|(_, edit)| match edit {
+            crate::configedit::ConfigEdit::UpsertHook { command, .. }
+            | crate::configedit::ConfigEdit::UpsertCopilotHook { command, .. } => {
+                Some(command.clone())
+            }
+            _ => None,
+        })
     }
 
     /// The on-disk hash the artifact will have — for clean/dirty
@@ -173,62 +189,11 @@ pub(super) fn refusal_reason(findings: &[crate::render::validate::Finding]) -> O
     }
 }
 
-/// The dir a harness natively reads `kind` from at this scope, taken from
-/// the same adapter surface declarations the scanner uses.
-pub fn native_dir(env: &Env, scope: &Scope, harness: HarnessId, kind: ItemKind) -> Option<PathBuf> {
-    let a = adapter(harness);
-    let surfaces = match scope {
-        Scope::Global => a.global_surfaces(kind, &a.default_global_root(env), env),
-        Scope::Project { root } => a.project_surfaces(kind, root, env),
-    };
-    surfaces.into_iter().find_map(|surface| match surface {
-        Surface::FileDir { dir, .. } | Surface::SubdirPerItem { dir, .. } => Some(dir),
-        // A structured surface holds entries, not one file per item, so
-        // there is no directory an item of this kind is written into.
-        Surface::Structured { .. } | Surface::StructuredDir { .. } => None,
-    })
-}
-
-/// The shared tree several tools read one skill from. Its name holds the
-/// plugin a plugin-registry catalog put the skill in, joined the way the
-/// directory itself spells it.
-pub fn skill_canonical(env: &Env, scope: &Scope, name: &str) -> PathBuf {
-    let name = crate::harness::canonical_name(name);
-    match scope {
-        Scope::Global => env.rendered_skills_dir().join(name),
-        Scope::Project { root } => root.join(".agents/skills").join(name),
-    }
-}
-
-pub(crate) fn target_harnesses(
-    decl: &ItemDecl,
-    manifest: &Manifest,
-    kind: ItemKind,
-    scope: &Scope,
-) -> Vec<HarnessId> {
-    harnesses_for(decl.harnesses.as_deref(), manifest, kind, scope)
-}
-
-/// The same from a declaration's `harnesses` list alone, so a reading with
-/// no declaration to hand — nothing here has asked for this item yet — gets
-/// its answer from this derivation rather than from a second spelling of
-/// it.
-pub(crate) fn harnesses_for(
-    requested: Option<&[HarnessId]>,
-    manifest: &Manifest,
-    kind: ItemKind,
-    scope: &Scope,
-) -> Vec<HarnessId> {
-    requested
-        .map(<[HarnessId]>::to_vec)
-        .unwrap_or_else(|| manifest.install.harnesses.clone())
-        .into_iter()
-        .filter(|harness| crate::harness::installs_here(*harness, kind, scope))
-        .collect()
-}
-
 mod artifact;
+mod places;
 pub use artifact::{artifact_disk_hash, artifact_paths};
+pub(crate) use places::{harnesses_for, target_harnesses};
+pub use places::{native_dir, own_dir, read_dirs, skill_canonical};
 pub(super) mod hold;
 
 /// The desired world, computed against the manifest that will be on disk

@@ -60,7 +60,17 @@ fn a_name_opencode_cannot_load_blocks_there_while_claude_still_installs() {
     );
 
     apply::execute(&env, &report.plan, None).unwrap();
-    assert!(project.join(".agents/skills/My_Skill/SKILL.md").is_file());
-    assert!(project.join(".claude/skills/My_Skill").is_symlink());
+    // OpenCode reads the shared tree, so a name it cannot load keeps the
+    // shared tree empty — writing it there would put the rejected file
+    // exactly where OpenCode looks. Claude Code, whose loader accepts the
+    // name, gets a real directory of its own instead of a link.
+    assert!(!project.join(".agents/skills/My_Skill").exists());
+    let claude = project.join(".claude/skills/My_Skill");
+    assert!(claude.is_dir() && !claude.is_symlink());
+    assert!(
+        fs::read_to_string(claude.join("SKILL.md"))
+            .unwrap()
+            .contains("Body.")
+    );
     assert!(!project.join(".opencode/skills/My_Skill").exists());
 }

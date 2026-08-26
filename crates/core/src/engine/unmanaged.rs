@@ -10,6 +10,25 @@ use crate::model::{ItemKind, Scope};
 use super::desired::{self, Desired};
 use super::{DriftRow, DriftState};
 
+/// What this scope holds that nothing here manages: the skills, agents and
+/// hooks already on disk that no declaration and no lock claims.
+///
+/// The same rows an audit reports — asked on its own so registering a
+/// project can say what it found instead of leaving it to be discovered on
+/// a later visit. A scope kendex cannot plan yet has nothing to offer,
+/// which is an empty answer, never an error on the registration itself.
+pub fn unmanaged_here(env: &Env, scope: &Scope) -> Vec<DriftRow> {
+    super::audit(env, scope)
+        .map(|report| {
+            report
+                .drift
+                .into_iter()
+                .filter(|row| row.state == DriftState::Unmanaged)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub(super) fn unmanaged_rows(
     env: &Env,
     scope: &Scope,
@@ -35,9 +54,21 @@ pub(super) fn unmanaged_rows(
     let declared_keys = declared_installation_keys(manifest, scope);
     let mut owned: BTreeSet<PathBuf> = desired.iter().flat_map(|d| d.artifact.paths()).collect();
     owned.extend(declared_artifact_paths(env, scope, manifest));
+    // A hook is an entry inside a file, not a file of its own, so what
+    // makes it ours is the command it runs — the same key the registration
+    // edits own it by. Read once for the whole pass.
+    let registered = registered_commands(manifest, lock, desired);
     let mut seen: BTreeSet<String> = BTreeSet::new();
     for item in &scan.items {
-        if !matches!(item.kind, ItemKind::Agent | ItemKind::Skill) || owned.contains(&item.path) {
+        let ours = match item.kind {
+            ItemKind::Agent | ItemKind::Skill => owned.contains(&item.path),
+            ItemKind::Hook => item
+                .description
+                .as_ref()
+                .is_none_or(|command| registered.contains(command)),
+            _ => continue,
+        };
+        if ours {
             continue;
         }
         let key = crate::lock::entry_key(item.kind, &item.name, item.harness);
@@ -56,6 +87,33 @@ pub(super) fn unmanaged_rows(
         });
     }
     Ok(())
+}
+
+/// Every hook command this scope registers, whether the entry is already on
+/// disk (the lock) or about to be (the plan). An entry running one of these
+/// is kendex's, wherever a person has since moved it.
+fn registered_commands(manifest: &Manifest, lock: &Lock, desired: &[Desired]) -> BTreeSet<String> {
+    let mut commands: BTreeSet<String> = lock
+        .entries
+        .values()
+        .filter_map(|entry| entry.registration.as_ref())
+        .map(|held| held.command.clone())
+        .collect();
+    commands.extend(
+        desired
+            .iter()
+            .filter_map(|item| item.artifact.registered_command()),
+    );
+    // A declaration whose plan could not be computed this pass still speaks
+    // for its command: read from the manifest, so a source that failed to
+    // resolve does not turn an installed hook into somebody else's.
+    commands.extend(
+        manifest
+            .custom_hooks
+            .iter()
+            .map(|hook| hook.command.clone()),
+    );
+    commands
 }
 
 /// Every installation the manifest asks for, by lock key. A declaration
@@ -111,15 +169,21 @@ fn installation_paths(
             .unwrap_or_default(),
         // Copy keeps every tool's own directory; only the shared method
         // puts a tree where several tools read one copy, and the plan binds
-        // to both that tree and the position pointing at it.
+        // to both that tree and the position pointing at it. The two methods
+        // write to different directories for a tool that reads both, so the
+        // question is asked the same way the install answers it.
         ItemKind::Skill => {
+            let copies =
+                decl.method.unwrap_or(manifest.install.method) == crate::manifest::Method::Copy;
             let mut paths = Vec::new();
-            if decl.method.unwrap_or(manifest.install.method) != crate::manifest::Method::Copy {
+            if !copies {
                 paths.push(desired::skill_canonical(env, scope, name));
             }
-            paths.extend(
-                native(kind).map(|dir| dir.join(crate::harness::rendered_name(harness, name))),
-            );
+            let dir = match copies {
+                true => desired::own_dir(env, scope, harness, kind),
+                false => native(kind),
+            };
+            paths.extend(dir.map(|dir| dir.join(crate::harness::rendered_name(harness, name))));
             paths
         }
         // A tool with no command surface of its own takes commands as

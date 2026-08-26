@@ -83,6 +83,13 @@ an outside contributor.
 
 ### Changed
 
+- A project's skills work on clone: every tool but Claude Code reads
+  `.agents/skills` directly, and Claude's link into it is now relative, so
+  both commit. Existing installs converge on the next `kendex refresh`.
+- Committed symlinks need Developer Mode on Windows; without it, install with
+  `--method copy`, which gives every tool a real tree of its own.
+- kendex keeps `.kendex-lock.json` out of git — the one line it writes to a
+  project's `.gitignore` — and says so when your own rules ignore `.agents`.
 - `kendex update` reads schema 1 feeds (including legacy feeds with no schema). Current stays a no-op; older refuses unless `--force`.
   A newer feed, or a forced current/older feed, with no target binary exits 0 with release notes and changes nothing.
 - Updates: a package you edited can't be updated over; its row offers

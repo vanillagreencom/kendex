@@ -160,7 +160,7 @@ fn a_skill_a_personal_setting_holds_down_cannot_be_switched_back_on_here() {
     );
     // The skill still installs — what is refused is the pretence that a
     // repository can lift a personal switch.
-    assert!(f.project.join(".github/skills/deploy/SKILL.md").is_file());
+    assert!(f.project.join(".agents/skills/deploy/SKILL.md").is_file());
 }
 
 /// One tree, two readers. Copilot sees a skill installed for Claude Code,
@@ -171,9 +171,12 @@ fn a_skill_installed_for_another_tool_is_noted_as_visible_to_copilot() {
     let f = fixture("\"claude\"", "[skills.deploy]\nsource = \"cat\"\n");
     let report = apply_now(&f);
     assert!(
-        report.notes.iter().any(|note| note
-            .contains("Copilot reads `.agents/skills` and `.claude/skills`")
-            && note.contains("one definition, counted once")),
+        report
+            .notes
+            .iter()
+            .any(|note| note.contains("GitHub Copilot")
+                && note.contains("read `.agents/skills` too")
+                && note.contains("one definition, counted once")),
         "{:?}",
         report.notes
     );

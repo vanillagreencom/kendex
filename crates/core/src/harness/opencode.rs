@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use super::{HarnessAdapter, ProjectMarker, Reader, Surface};
+use super::{HarnessAdapter, ProjectMarker, Reader, Surface, shared_first};
 use crate::env::Env;
 use crate::model::{DetectedHarness, HarnessId, ItemKind, Scope};
 
@@ -76,22 +76,24 @@ impl HarnessAdapter for Opencode {
 
     fn global_surfaces(&self, kind: ItemKind, root: &Path, env: &Env) -> Vec<Surface> {
         let config = global_config_file(root, env);
-        surfaces(kind, root, config)
+        surfaces(kind, root, config, None)
     }
 
     fn project_surfaces(&self, kind: ItemKind, project: &Path, _env: &Env) -> Vec<Surface> {
         let config = project_config_file(project);
-        surfaces(kind, &project.join(".opencode"), config)
+        let shared = project.join(".agents/skills");
+        surfaces(kind, &project.join(".opencode"), config, Some(&shared))
     }
 }
 
-fn surfaces(kind: ItemKind, base: &Path, config: PathBuf) -> Vec<Surface> {
+fn surfaces(kind: ItemKind, base: &Path, config: PathBuf, shared: Option<&Path>) -> Vec<Surface> {
     match kind {
         ItemKind::Agent => vec![Surface::files(base.join("agents"), &["md"])],
-        ItemKind::Skill => vec![Surface::SubdirPerItem {
-            dir: base.join("skills"),
-            marker: "SKILL.md",
-        }],
+        // opencode's skill search covers `.agents/skills` as well as its own
+        // directory, so in a project the shared tree is where a skill goes
+        // by default and its own directory is what a per-tool copy writes
+        // (matrix §2). Both are read either way.
+        ItemKind::Skill => shared_first(shared, base.join("skills")),
         // opencode has no native hook surface; only the instruction files the
         // engine itself renders are observable.
         ItemKind::Hook => vec![Surface::FileDir {

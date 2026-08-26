@@ -324,7 +324,8 @@ fn a_folder_shared_by_hand_is_kept_whichever_method_is_declared() {
     let planned = plan(home, &project);
     assert_eq!(
         offer(&planned),
-        "kendex adopt skill deploy --harness claude --harness codex --harness pi",
+        "kendex adopt skill deploy --harness claude --harness codex --harness opencode \
+         --harness cursor --harness pi --harness gemini --harness copilot",
         "{planned}"
     );
 

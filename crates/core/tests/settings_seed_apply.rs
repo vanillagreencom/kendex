@@ -260,7 +260,9 @@ fn a_skill_installed_on_no_harness_seeds_nothing() {
     let f = fixture(true);
     let manifest = f.project.join("kendex.toml");
     let text = fs::read_to_string(&manifest).unwrap();
-    fs::write(&manifest, text.replace("[\"claude\"]", "[\"cursor\"]")).unwrap();
+    // Cursor reads the shared skills tree now, so "a tool that cannot take
+    // it" is no longer a tool — it is a scope that targets none.
+    fs::write(&manifest, text.replace("[\"claude\"]", "[]")).unwrap();
     let report = audit(&f.env, &f.scope).unwrap();
     assert!(
         !report

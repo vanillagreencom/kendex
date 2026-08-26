@@ -261,11 +261,9 @@ fn a_skill_installed_for_another_tool_is_noted_as_visible_to_gemini() {
     let f = fixture("[skills.deploy]\nsource = \"cat\"\nharnesses = [\"claude\"]\n");
     let report = apply_now(&f);
     assert!(
-        report
-            .notes
-            .iter()
-            .any(|note| note.contains("Gemini CLI reads `.agents/skills`")
-                && note.contains("one definition, counted once")),
+        report.notes.iter().any(|note| note.contains("Gemini CLI")
+            && note.contains("read `.agents/skills` too")
+            && note.contains("one definition, counted once")),
         "{:?}",
         report.notes
     );

@@ -20,12 +20,15 @@ Owner: `crates/core/src/harness/opencode.rs`.
 ## Surfaces
 
 `<base>` is `~/.config/opencode` at global scope and `<project>/.opencode` at
-project scope; the layout is identical under each.
+project scope; the layout is identical under each. Skills are the exception:
+opencode's own search covers `.agents/skills` too, so a project skill is
+installed to the shared tree and `<base>/skills` stays on the surface list
+for what is already there and for a copy delivery.
 
 | Kind | Path | Caps |
 |---|---|---|
 | agent | `<base>/agents/*.md` | managed, both |
-| skill | `<base>/skills/<name>/SKILL.md` | managed, both |
+| skill | `.agents/skills/<name>/SKILL.md` in a project (`<base>/skills/<name>/SKILL.md` globally, and for a copy delivery) | managed, both |
 | hook | `<base>/instructions/kendex-hook-<name>.md` | managed, both, **advisory** |
 | command | `<base>/commands/*.md` and `<base>/command/*.md` (legacy singular) | observe only, both |
 | mcp-server | config `mcp` key — jsonc tolerated, per-entry `enabled` | observe only, both |

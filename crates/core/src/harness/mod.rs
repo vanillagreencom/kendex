@@ -80,6 +80,28 @@ impl Surface {
             prefixes: &[],
         }
     }
+
+    /// One skill per subdirectory, the shape every harness stores skills in.
+    pub fn skills(dir: PathBuf) -> Surface {
+        Surface::SubdirPerItem {
+            dir,
+            marker: "SKILL.md",
+        }
+    }
+}
+
+/// The skill surfaces for a harness that reads the project's shared
+/// `.agents/skills` tree as well as one of its own. The shared tree leads,
+/// because that is where an install goes: it is one definition every such
+/// tool sees, and `native_dir` reads the first entry. The tool's own
+/// directory stays on the list so a skill an older install (or a person)
+/// left there is still seen, and so a copy delivery has somewhere per-tool
+/// to write.
+pub(crate) fn shared_first(shared: Option<&Path>, own: PathBuf) -> Vec<Surface> {
+    match shared {
+        Some(shared) => vec![Surface::skills(shared.to_path_buf()), Surface::skills(own)],
+        None => vec![Surface::skills(own)],
+    }
 }
 
 /// Harness-specific structured formats. One variant per real on-disk format;

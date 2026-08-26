@@ -132,27 +132,43 @@ fn an_agent_installs_with_copilots_double_extension_and_toggles_by_rename() {
     assert!(!file.exists() && !parked.exists());
 }
 
+/// Copilot reads the project's shared `.agents/skills` tree, so a skill goes
+/// there rather than into a second copy under `.github`.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_skill_installs_into_copilots_own_skills_directory() {
+fn a_skill_installs_into_the_shared_tree_copilot_reads() {
     let f = fixture("[skills.deploy]\nsource = \"cat\"\n");
     apply_now(&f);
 
-    let marker = f.project.join(".github/skills/deploy/SKILL.md");
+    let marker = f.project.join(".agents/skills/deploy/SKILL.md");
     assert!(fs::read_to_string(&marker).unwrap().contains("Steps."));
+    assert!(!f.project.join(".github/skills").exists());
     assert!(is_clean(&f));
 
     toggle(&f, "deploy", false);
     assert!(!marker.exists());
     assert!(
         f.project
-            .join(".github/skills/deploy/SKILL.md.disabled")
+            .join(".agents/skills/deploy/SKILL.md.disabled")
             .exists()
     );
     assert!(is_clean(&f));
 
     remove(&f, "deploy");
-    assert!(!f.project.join(".github/skills/deploy").exists());
+    assert!(!f.project.join(".agents/skills/deploy").exists());
+}
+
+/// A copy delivery is a tree only this tool reads, so it goes in Copilot's
+/// own directory.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_copy_delivery_writes_copilots_own_skills_directory() {
+    let f = fixture("[skills.deploy]\nsource = \"cat\"\nmethod = \"copy\"\n");
+    apply_now(&f);
+
+    let marker = f.project.join(".github/skills/deploy/SKILL.md");
+    assert!(fs::read_to_string(&marker).unwrap().contains("Steps."));
+    assert!(is_clean(&f));
 }
 
 /// Copilot globs `*.json` out of its hooks directory, so each hook gets a

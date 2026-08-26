@@ -45,13 +45,13 @@ pub fn hook_for(hook: &HookSpec) -> Option<Registration> {
 
 /// Both scopes hold the same layout under their own root, which is why the
 /// surface lists below differ only in where they start (matrix §1).
-fn surfaces(kind: ItemKind, root: &Path) -> Vec<Surface> {
+fn surfaces(kind: ItemKind, root: &Path, shared: Option<&Path>) -> Vec<Surface> {
     match kind {
         ItemKind::Agent => vec![Surface::files(root.join("agents"), &["md"])],
-        ItemKind::Skill => vec![Surface::SubdirPerItem {
-            dir: root.join("skills"),
-            marker: "SKILL.md",
-        }],
+        // Gemini reads the project's shared tree as well as its own
+        // directory, so a project install is the shared one and its own
+        // directory is what a per-tool copy writes (matrix §2).
+        ItemKind::Skill => super::shared_first(shared, root.join("skills")),
         // Only `.toml` loads; a subdirectory becomes a `:` namespace.
         ItemKind::Command => vec![Surface::files(root.join("commands"), &["toml"])],
         // Gemini's hook entries carry the same matcher-plus-handlers shape
@@ -95,12 +95,13 @@ impl HarnessAdapter for Gemini {
                 dir: root.join("extensions"),
                 marker: "gemini-extension.json",
             }],
-            other => surfaces(other, root),
+            other => surfaces(other, root, None),
         }
     }
 
     fn project_surfaces(&self, kind: ItemKind, project: &Path, _env: &Env) -> Vec<Surface> {
-        surfaces(kind, &project.join(".gemini"))
+        let shared = project.join(".agents/skills");
+        surfaces(kind, &project.join(".gemini"), Some(&shared))
     }
 }
 
