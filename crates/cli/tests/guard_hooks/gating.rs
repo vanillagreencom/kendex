@@ -365,3 +365,56 @@ fn a_path_with_an_apostrophe_resolves_the_same_on_both_sides() {
     assert_eq!(out.status.code(), Some(1), "{}", said(&out));
     assert!(said(&out).contains("todo-ban"), "{}", said(&out));
 }
+
+/// A kendex project can sit below the git top level, and the package
+/// renders under the PROJECT's root.
+///
+/// A repository holding several projects renders each under its own root, so
+/// a resolver that looked only at the git top level would find none of them
+/// and call a properly installed project unarmed. The manifest is what says
+/// where the project is, so that is where the search starts.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_project_below_the_git_toplevel_is_found_where_it_renders() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    // The git repository, with no project at its root.
+    // Detection reads this: without a tool directory an install has nowhere
+    // to fan out to.
+    std::fs::create_dir_all(home.join(".claude")).unwrap();
+    let outer = home.join("monorepo");
+    std::fs::create_dir_all(&outer).unwrap();
+    git_ok(home, &outer, &["init", "--quiet", "-b", "main"]);
+    git_ok(home, &outer, &["config", "user.email", "t@t"]);
+    git_ok(home, &outer, &["config", "user.name", "t"]);
+    std::fs::write(outer.join("README.md"), "the monorepo\n").unwrap();
+    git_ok(home, &outer, &["add", "-A"]);
+    git_ok(home, &outer, &["commit", "--quiet", "-m", "feat: base"]);
+
+    // The project, two levels down, installed there.
+    let project = outer.join("apps/web");
+    std::fs::create_dir_all(project.join(".agents")).unwrap();
+    install_package(home, &project, &["growth-guards"]);
+    assert!(
+        project.join(".agents/skills/growth-guards").is_dir(),
+        "the render lands under the project root"
+    );
+    assert!(
+        !outer.join(".agents/skills/growth-guards").exists(),
+        "and not at the git top level"
+    );
+
+    // The chain runs from there, resolved through the project's manifest.
+    std::fs::write(project.join("b.rs"), "// TODO: not yet\n").unwrap();
+    git_ok(home, &outer, &["add", "-A"]);
+    let out = run(home, &project, "kendex", &["guard", "run", "pre-commit"]);
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    assert!(said(&out).contains("todo-ban"), "{}", said(&out));
+
+    // And arming from there gates a real commit.
+    let armed = run(home, &project, "kendex", &["guard", "install"]);
+    assert!(armed.status.success(), "{}", said(&armed));
+    let blocked = git(home, &project, &["commit", "-m", "feat: adds a marker"]);
+    assert!(!blocked.status.success(), "{}", said(&blocked));
+    assert!(said(&blocked).contains("todo-ban"), "{}", said(&blocked));
+}

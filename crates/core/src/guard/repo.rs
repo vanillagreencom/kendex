@@ -25,6 +25,11 @@ const NOT_A_REPOSITORY: [&str; 2] = ["not a git repository", "not a working tree
 pub struct Repo {
     pub worktree: PathBuf,
     pub common_dir: PathBuf,
+    /// Where the verb was invoked, canonical. A kendex project can sit
+    /// below the git top level, and the package renders under *its* root —
+    /// so finding the render means starting where the caller stood, not
+    /// where git's repository begins.
+    pub started_at: PathBuf,
 }
 
 impl Repo {
@@ -66,9 +71,11 @@ impl Repo {
         let common_dir = common_dir
             .canonicalize()
             .map_err(|e| CoreError::io(&common_dir, e))?;
+        let started_at = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
         Ok(Repo {
             worktree,
             common_dir,
+            started_at,
         })
     }
 

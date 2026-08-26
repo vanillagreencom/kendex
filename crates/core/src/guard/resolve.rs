@@ -109,18 +109,54 @@ fn unquote(quoted: &str) -> String {
     quoted.replace("'\\''", "'")
 }
 
-/// The roots the helper searches, in its order: the main checkout, then this
-/// work tree. They are the same directory in an ordinary clone, and the
-/// duplicate costs one `is_executable` call.
+/// Where a copy of the package can be, in the order that finds the one this
+/// project actually installed.
+///
+/// The project root comes first, because that is where `kendex add` renders
+/// and a kendex project does not have to be the git top level: a repository
+/// holding several projects renders each under its own root, and searching
+/// only the top level finds none of them. Then the helper's own two roots —
+/// the main checkout, because linked worktrees share a hooks directory and
+/// need not carry their own skills, and then this work tree.
+///
+/// Duplicates are dropped rather than avoided: in an ordinary single-project
+/// clone all three are the same directory.
 fn search_roots(repo: &super::Repo) -> Vec<PathBuf> {
     let main = repo
         .common_dir
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| repo.worktree.clone());
-    match main == repo.worktree {
-        true => vec![main],
-        false => vec![main, repo.worktree.clone()],
+    let mut roots = Vec::new();
+    if let Some(project) = project_root(repo) {
+        roots.push(project);
+    }
+    for root in [main, repo.worktree.clone()] {
+        if !roots.contains(&root) {
+            roots.push(root);
+        }
+    }
+    roots
+}
+
+/// The kendex project the caller is standing in: the nearest manifest at or
+/// above where the verb was invoked, bounded by the git work tree.
+///
+/// Bounded there on purpose. Above the work tree is somebody else's
+/// repository, and a manifest found up there describes a project this
+/// commit has nothing to do with.
+fn project_root(repo: &super::Repo) -> Option<PathBuf> {
+    let mut dir = repo.started_at.as_path();
+    loop {
+        let manifest = dir.join(crate::rename::MANIFEST_FILE).is_file()
+            || dir.join(crate::rename::LEGACY_MANIFEST_FILE).is_file();
+        if manifest {
+            return Some(dir.to_path_buf());
+        }
+        if dir == repo.worktree {
+            return None;
+        }
+        dir = dir.parent()?;
     }
 }
 
