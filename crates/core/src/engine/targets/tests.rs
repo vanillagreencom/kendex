@@ -105,38 +105,6 @@ fn instruction_references_are_scope_relative_and_cursor_is_project_only() {
     );
 }
 
-/// An instruction file present under the old product name is the target —
-/// a kendex-named twin beside it would be the same hook installed twice.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn an_old_name_opencode_instruction_stays_the_target_while_only_it_exists() {
-    let tmp = tempfile::tempdir().unwrap();
-    let env = Env::fake(tmp.path(), FakeOs::Linux);
-    let root = tmp.path().join("p");
-    let dir = root.join(".opencode/instructions");
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("vstack-hook-guard.md"), "prose").unwrap();
-    let scope = Scope::Project { root };
-
-    let Some(HookTarget::Instruction {
-        path, reference, ..
-    }) = hook_target(&env, &scope, HarnessId::Opencode, "guard")
-    else {
-        panic!("opencode hooks are instruction targets");
-    };
-    assert_eq!(path, dir.join("vstack-hook-guard.md"));
-    assert_eq!(reference, ".opencode/instructions/vstack-hook-guard.md");
-
-    // Once the new spelling exists, it wins — old leftovers no longer steer.
-    std::fs::write(dir.join("kendex-hook-guard.md"), "prose").unwrap();
-    let Some(HookTarget::Instruction { path, .. }) =
-        hook_target(&env, &scope, HarnessId::Opencode, "guard")
-    else {
-        panic!("opencode hooks are instruction targets");
-    };
-    assert_eq!(path, dir.join("kendex-hook-guard.md"));
-}
-
 /// Copilot's hook file and the script it runs sit side by side, and the
 /// file is the one its loader globs for.
 #[test]

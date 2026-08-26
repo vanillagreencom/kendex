@@ -172,14 +172,10 @@ fn the_untrusted_validator_is_github_only() {
 }
 
 #[test]
-fn repo_identity_folds_git_suffix_case_and_the_moved_default() {
+fn repo_identity_folds_git_suffix_and_case() {
     let id = repo_identity("owner/repo");
     assert_eq!(repo_identity("https://github.com/Owner/Repo.git"), id);
     assert_eq!(repo_identity("git@github.com:owner/repo"), id);
-    assert_eq!(
-        repo_identity("vanillagreencom/vstack"),
-        repo_identity("vanillagreencom/kendex")
-    );
     assert_ne!(repo_identity("owner/other"), id);
     assert_ne!(repo_identity("https://gitlab.com/owner/repo"), id);
     assert_eq!(

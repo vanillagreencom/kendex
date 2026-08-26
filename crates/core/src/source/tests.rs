@@ -18,18 +18,18 @@ fn remote_without_cache_is_pending_not_an_error() {
     let tmp = tempfile::tempdir().unwrap();
     let env = Env::fake(tmp.path(), FakeOs::Linux);
     let manifest = manifest_with(
-        "vstack",
+        "kendex",
         SourceDecl {
-            repo: Some("vanillagreencom/vstack".into()),
+            repo: Some("vanillagreencom/kendex".into()),
             path: None,
             rev: None,
             enabled: true,
         },
     );
-    let state = resolve(&env, &Scope::Global, "vstack", &manifest).unwrap();
+    let state = resolve(&env, &Scope::Global, "kendex", &manifest).unwrap();
     assert!(matches!(state, SourceState::Pending { .. }));
     assert!(matches!(
-        require_ready(&env, &Scope::Global, "vstack", &manifest),
+        require_ready(&env, &Scope::Global, "kendex", &manifest),
         Err(CoreError::SourcePending { .. })
     ));
 }
@@ -233,94 +233,6 @@ fn nested_and_plain_names_coexist_in_a_declared_layout() {
     assert_eq!(
         find_item(&sealed, &config, ItemKind::Agent, "team/dev"),
         Some(root.join("agents/team/dev.md"))
-    );
-}
-
-#[test]
-fn a_catalog_still_naming_its_config_vstack_toml_is_read() {
-    let tmp = tempfile::tempdir().unwrap();
-    std::fs::write(
-        tmp.path().join("vstack.toml"),
-        "[catalog]\nskills = [\"old-skills\"]\n",
-    )
-    .unwrap();
-    let config = source_config(&SealedSource::open(tmp.path()).unwrap(), "cat").unwrap();
-    assert_eq!(config.skill_dirs, ["old-skills"]);
-}
-
-#[test]
-fn a_catalog_carrying_both_config_names_agreeing_is_served_from_kendex_toml() {
-    let tmp = tempfile::tempdir().unwrap();
-    let body = "[catalog]\nskills = [\"new-skills\"]\n";
-    std::fs::write(tmp.path().join("kendex.toml"), body).unwrap();
-    // Formatting may differ; what must agree is what the files say.
-    std::fs::write(
-        tmp.path().join("vstack.toml"),
-        "[catalog]\nskills = [ \"new-skills\" ]\n",
-    )
-    .unwrap();
-    let config = source_config(&SealedSource::open(tmp.path()).unwrap(), "cat").unwrap();
-    assert_eq!(config.skill_dirs, ["new-skills"]);
-}
-
-#[test]
-fn both_config_generations_disagreeing_are_an_ambiguity_error_naming_both() {
-    let tmp = tempfile::tempdir().unwrap();
-    std::fs::write(
-        tmp.path().join("kendex.toml"),
-        "[catalog]\nskills = [\"new-skills\"]\n",
-    )
-    .unwrap();
-    std::fs::write(
-        tmp.path().join("vstack.toml"),
-        "[catalog]\nskills = [\"old-skills\"]\n",
-    )
-    .unwrap();
-    match source_config(&SealedSource::open(tmp.path()).unwrap(), "cat") {
-        Err(CoreError::CatalogAmbiguous { new, old }) => {
-            assert!(new.ends_with("kendex.toml"), "{new:?}");
-            assert!(old.ends_with("vstack.toml"), "{old:?}");
-        }
-        other => panic!("expected the ambiguity error, got {other:?}"),
-    }
-}
-
-#[test]
-fn a_broken_old_generation_beside_a_readable_new_one_is_not_ambiguous() {
-    let tmp = tempfile::tempdir().unwrap();
-    std::fs::write(
-        tmp.path().join("kendex.toml"),
-        "[catalog]\nskills = [\"new-skills\"]\n",
-    )
-    .unwrap();
-    std::fs::write(tmp.path().join("vstack.toml"), "not = = toml").unwrap();
-    let config = source_config(&SealedSource::open(tmp.path()).unwrap(), "cat").unwrap();
-    assert_eq!(config.skill_dirs, ["new-skills"]);
-}
-
-#[test]
-fn a_local_source_left_under_the_old_name_still_reads() {
-    let tmp = tempfile::tempdir().unwrap();
-    let env = Env::fake(tmp.path(), FakeOs::Linux);
-    let project = tmp.path().join("proj");
-    std::fs::create_dir_all(project.join(".vstack-local/skills/handmade")).unwrap();
-    let scope = Scope::Project {
-        root: project.clone(),
-    };
-    assert_eq!(
-        local_source_root(&env, &scope),
-        project.join(".vstack-local")
-    );
-    let state = resolve(&env, &scope, LOCAL_SOURCE_NAME, &Manifest::default()).unwrap();
-    match state {
-        SourceState::Ready(ready) => assert_eq!(ready.root, project.join(".vstack-local")),
-        other => panic!("expected the old-name local source to read: {other:?}"),
-    }
-    // The new name wins the moment it exists — the rename op created it.
-    std::fs::create_dir_all(project.join(".kendex-local")).unwrap();
-    assert_eq!(
-        local_source_root(&env, &scope),
-        project.join(".kendex-local")
     );
 }
 

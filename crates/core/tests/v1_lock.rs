@@ -1,5 +1,5 @@
 //! A v1 lock (bare-name keys, `harnesses` array, no singular `harness`) must
-//! not crash the audit with a raw serde error, and one scope's damaged or
+//! not crash the audit with a raw serde error, and a damaged or
 //! future-version lock must not take down the rest of a multi-scope audit —
 //! the caller sees it as data (a note, or a distinctly typed error) instead.
 #![cfg(unix)]
@@ -26,15 +26,13 @@ fn fixture() -> Fixture {
     let project = home.join("dev/app");
     fs::create_dir_all(project.join(".claude")).unwrap();
 
-    // v0.1 manifest, matching the real-world case: a project that never
-    // touched v2 at all.
     fs::write(
-        project.join("vstack.toml"),
+        project.join("kendex.toml"),
         "schema = 1\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
     )
     .unwrap();
 
-    let lock_path = project.join(".vstack-lock.json");
+    let lock_path = project.join(".kendex-lock.json");
     Fixture {
         env,
         scope: Scope::Project { root: project },
@@ -51,8 +49,8 @@ const V1_LOCK: &str = r#"{
     "block-bare-cd": {
       "name": "block-bare-cd",
       "kind": "hook",
-      "source": "vanillagreencom/vstack",
-      "source_repo": "vanillagreencom/vstack",
+      "source": "vanillagreencom/kendex",
+      "source_repo": "vanillagreencom/kendex",
       "harnesses": ["claude-code", "codex"],
       "method": "symlink",
       "installed_at": "2026-08-14T09:26:55Z",

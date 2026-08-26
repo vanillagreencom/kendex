@@ -18,8 +18,8 @@ fn lock_round_trips_and_missing_file_is_empty() {
             name: "github".into(),
             kind: ItemKind::Skill,
             harness: HarnessId::Claude,
-            source: "vstack".into(),
-            source_repo: "vanillagreencom/vstack".into(),
+            source: "kendex".into(),
+            source_repo: "vanillagreencom/kendex".into(),
             method: Method::Symlink,
             installed_at: crate::clock::timestamp(),
             source_hash: "abc".into(),
@@ -32,7 +32,7 @@ fn lock_round_trips_and_missing_file_is_empty() {
                 Reason::Requested,
                 Reason::RequiredBy {
                     by: InstallRef {
-                        source: "vstack".into(),
+                        source: "kendex".into(),
                         kind: ItemKind::Skill,
                         name: "dev".into(),
                         harness: HarnessId::Claude,
@@ -41,7 +41,7 @@ fn lock_round_trips_and_missing_file_is_empty() {
                 },
                 Reason::MemberOf {
                     bundle: BundleRef {
-                        source: "vstack".into(),
+                        source: "kendex".into(),
                         name: "starter".into(),
                         scope: Scope::Global,
                     },
@@ -62,7 +62,7 @@ fn entries_without_reasons_read_as_requested() {
     let path = tmp.path().join(".kendex-lock.json");
     std::fs::write(
         &path,
-        r#"{"version":2,"entries":{"skill:gh:claude":{"name":"gh","kind":"skill","harness":"claude","source":"vstack","sourceRepo":"vanillagreencom/vstack","method":"symlink","installedAt":"2026-01-01T00:00:00Z","sourceHash":"abc","enabled":true}}}"#,
+        r#"{"version":2,"entries":{"skill:gh:claude":{"name":"gh","kind":"skill","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"symlink","installedAt":"2026-01-01T00:00:00Z","sourceHash":"abc","enabled":true}}}"#,
     )
     .unwrap();
     let lock = load(&path).unwrap();
@@ -87,7 +87,7 @@ fn a_v1_lock_reads_as_legacy_not_a_parse_error() {
     let path = tmp.path().join(".kendex-lock.json");
     std::fs::write(
         &path,
-        r#"{"version":1,"entries":{"gh":{"name":"gh","kind":"skill","source":"vstack","source_repo":"vanillagreencom/vstack","harnesses":["claude-code"],"method":"symlink","installed_at":"2026-01-01T00:00:00Z","source_hash":"abc"}}}"#,
+        r#"{"version":1,"entries":{"gh":{"name":"gh","kind":"skill","source":"kendex","source_repo":"vanillagreencom/kendex","harnesses":["claude-code"],"method":"symlink","installed_at":"2026-01-01T00:00:00Z","source_hash":"abc"}}}"#,
     )
     .unwrap();
     assert!(matches!(load_file(&path).unwrap(), LockFile::Legacy { .. }));
@@ -123,29 +123,6 @@ fn a_newer_lock_refuses_to_load() {
         load(&path),
         Err(CoreError::SchemaTooNew { found: 99, .. })
     ));
-}
-
-/// Both spellings of the lock in one root refuse to load — whichever one
-/// is asked for — and the error names both files.
-#[test]
-fn both_lock_spellings_in_one_root_refuse_to_load_naming_both() {
-    let tmp = tempfile::tempdir().unwrap();
-    let new = tmp.path().join(".kendex-lock.json");
-    let old = tmp.path().join(".vstack-lock.json");
-    std::fs::write(&new, r#"{"version":4,"entries":{}}"#).unwrap();
-    std::fs::write(&old, r#"{"version":4,"entries":{}}"#).unwrap();
-    for path in [&new, &old] {
-        let error = load_file(path).unwrap_err();
-        assert!(
-            matches!(error, CoreError::BothGenerations { .. }),
-            "{error}"
-        );
-        let text = error.to_string();
-        assert!(
-            text.contains(".kendex-lock.json") && text.contains(".vstack-lock.json"),
-            "{text}"
-        );
-    }
 }
 
 /// An empty `entries` map is indistinguishable between v1 and v2 — it

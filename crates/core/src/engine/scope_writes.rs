@@ -18,18 +18,14 @@ use super::desired::DesiredState;
 use super::{DriftRow, DriftState, config_edits};
 
 mod manifest_text;
-pub(super) use manifest_text::{plan_repo_move_write, plan_schema_upgrade};
+pub(super) use manifest_text::plan_schema_upgrade;
 
-/// Whether a plan already persists the manifest — the full serialized
-/// write, or the repository move's surgical text edit. A caller about to
-/// insert its own save must count both: a second write to the same file
-/// binds to bytes the first one replaces and could never run.
+/// Whether a plan already persists the manifest. A caller about to insert
+/// its own save must know: a second write to the same file binds to bytes
+/// the first one replaces and could never run.
 pub fn persists_manifest(ops: &[PlannedOp]) -> bool {
-    ops.iter().any(|op| {
-        matches!(op.op, Op::WriteManifest { .. })
-            || (op.description == crate::repo_move::MOVE_DESCRIPTION
-                && matches!(op.op, Op::WriteFile { .. }))
-    })
+    ops.iter()
+        .any(|op| matches!(op.op, Op::WriteManifest { .. }))
 }
 
 /// The precondition the plan's one manifest write binds to: the base of
@@ -46,29 +42,24 @@ pub(super) fn manifest_pre(base: Option<&Base>, path: &Path) -> Result<Pre> {
 
 /// The plan's one manifest write, when anything needs it: skills an agent
 /// gained upstream take the full serialized write — or, without that, the
-/// repository move or the schema upgrade lands as a surgical text edit that
-/// keeps the user's comments and formatting. One write whatever put it
-/// there: a second manifest write could never run, its precondition binds
-/// to the bytes the first one replaces. The description names the biggest
-/// cause; the rest ride along in the same bytes.
+/// schema upgrade lands as a surgical text edit that keeps the user's
+/// comments and formatting. One write whatever put it there: a second
+/// manifest write could never run, its precondition binds to the bytes the
+/// first one replaces.
 ///
-/// `declared` is the manifest as the person wrote it (with the repository
-/// move applied), never the pinned copy a single-package update plans
-/// from: both surgical edits fall back to serializing it, and a synthetic
-/// pin in the file reads as a hold the person chose.
+/// `declared` is the manifest as the person wrote it, never the pinned
+/// copy a single-package update plans from: the surgical edit falls back
+/// to serializing it, and a synthetic pin in the file reads as a hold the
+/// person chose.
 pub(super) fn plan_manifest_write(
     env: &Env,
     scope: &Scope,
-    repo_moved: bool,
     declared: &Manifest,
     base: Option<&Base>,
     state: &DesiredState,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<()> {
     let Some(update) = &state.manifest_update else {
-        if repo_moved {
-            return plan_repo_move_write(env, scope, declared, base, ops);
-        }
         if declared.schema < crate::manifest::MANIFEST_SCHEMA {
             plan_schema_upgrade(env, scope, declared, base, ops)?;
         }
@@ -78,10 +69,7 @@ pub(super) fn plan_manifest_write(
     let mut updated = update.clone();
     updated.schema = crate::manifest::MANIFEST_SCHEMA;
     ops.push(PlannedOp {
-        description: match repo_moved {
-            true => crate::repo_move::MOVE_DESCRIPTION.into(),
-            false => "Add new catalog skills to kendex.toml".into(),
-        },
+        description: "Add new catalog skills to kendex.toml".into(),
         op: Op::WriteManifest {
             pre: manifest_pre(base, &path)?,
             path,

@@ -18,7 +18,7 @@ pub enum Catalog {
         scope: Scope,
         source: String,
     },
-    /// A GitHub repository, in any spelling `repo_move::owner_repo` folds
+    /// A GitHub repository, in any spelling `crate::source_ref::owner_repo` folds
     /// to the canonical `owner/repo` everything is keyed by.
     Repo {
         repo: String,
@@ -41,7 +41,7 @@ impl Catalog {
 /// — and the listing never picks the transport: an `ssh://` or `http://`
 /// spelling is folded to the shorthand, which fetches over https.
 pub(crate) fn browsable(repo: &str) -> Result<String> {
-    crate::repo_move::owner_repo(repo).ok_or_else(|| CoreError::NotBrowsable {
+    crate::source_ref::owner_repo(repo).ok_or_else(|| CoreError::NotBrowsable {
         reference: repo.to_owned(),
     })
 }

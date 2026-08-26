@@ -93,7 +93,7 @@ pub fn summary(env: &Env, catalog: &Catalog) -> Result<CatalogSummary> {
         }
     }
     Ok(CatalogSummary {
-        repo_key: crate::repo_move::owner_repo(&browsed.source.provenance),
+        repo_key: crate::source_ref::owner_repo(&browsed.source.provenance),
         provenance: browsed.source.provenance.clone(),
         commit: browsed.source.commit.clone(),
         meta: browsed.config.marketplace.clone(),

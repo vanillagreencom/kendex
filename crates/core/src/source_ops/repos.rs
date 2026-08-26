@@ -43,7 +43,7 @@ pub fn repo_subscriptions(env: &Env) -> Vec<RepoSubscription> {
             out.push(RepoSubscription {
                 scope: scope.clone(),
                 name: name.clone(),
-                repo_key: crate::repo_move::owner_repo(repo),
+                repo_key: crate::source_ref::owner_repo(repo),
             });
         }
     }
@@ -99,15 +99,15 @@ mod tests {
         fs::write(
             &manifest,
             format!(
-                "schema = 6\n[sources.vstack]\nrepo = \"{}\"\n",
-                crate::manifest::LEGACY_SOURCE_REPO
+                "schema = 6\n[sources.kendex]\nrepo = \"{}\"\n",
+                crate::manifest::DEFAULT_SOURCE_REPO
             ),
         )
         .unwrap();
 
         let rows = repo_subscriptions(&env);
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].name, "vstack");
+        assert_eq!(rows[0].name, "kendex");
         assert_eq!(
             rows[0].repo_key.as_deref(),
             Some(crate::manifest::DEFAULT_SOURCE_REPO)

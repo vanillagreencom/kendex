@@ -107,7 +107,7 @@ pub fn marketplaces_overview() -> Result<Vec<MarketplaceRow>, String> {
                 repo_key: row
                     .repo
                     .as_deref()
-                    .and_then(kendex_core::repo_move::owner_repo),
+                    .and_then(kendex_core::source_ref::owner_repo),
                 repo: row.repo,
                 path: row.path,
                 rev: row.rev,

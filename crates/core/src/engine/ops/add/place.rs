@@ -179,16 +179,16 @@ fn search(
         if !decl.enabled {
             continue;
         }
-        // A subscription whose catalog bytes cannot be read — a symlinked or
-        // ambiguous control file, an oversized directory, a repo built to fail
-        // on open — must not sink the search: skipped and remembered, it can no
+        // A subscription whose catalog bytes cannot be read — a symlinked
+        // control file, an oversized directory, a repo built to fail on
+        // open — must not sink the search: skipped and remembered, it can no
         // longer block installing by bare name from every other marketplace,
         // and is only reported if the name turned up nowhere readable. A source
         // that is merely not fetched yet, disabled, or missing keeps its own
         // signal so the caller can fetch or report it.
         let opened = match open(env, scope, manifest, cache, alias) {
             Ok(opened) => opened,
-            Err(CoreError::CatalogAmbiguous { .. } | CoreError::SourceEscape { .. }) => {
+            Err(CoreError::SourceEscape { .. }) => {
                 unreadable.push(alias.clone());
                 continue;
             }

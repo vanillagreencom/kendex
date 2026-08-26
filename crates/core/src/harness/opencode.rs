@@ -99,9 +99,7 @@ fn surfaces(kind: ItemKind, base: &Path, config: PathBuf, shared: Option<&Path>)
         ItemKind::Hook => vec![Surface::FileDir {
             dir: base.join("instructions"),
             exts: &["md"],
-            // New renders use the kendex prefix; instruction files written
-            // under the old product name must stay observed as ours.
-            prefixes: &["kendex-hook-", "vstack-hook-"],
+            prefixes: &["kendex-hook-"],
         }],
         ItemKind::Command => vec![
             Surface::files(base.join("commands"), &["md"]),

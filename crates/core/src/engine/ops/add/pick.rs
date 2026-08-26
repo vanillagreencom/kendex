@@ -114,9 +114,8 @@ pub(super) fn default_source(manifest: &Manifest) -> Result<String> {
         }),
         [one] => Ok((*one).clone()),
         many => {
-            // The pre-rename migration can leave one repository subscribed
-            // twice; the seeded name wins, anything else is a refusal
-            // naming both.
+            // One repository can be subscribed twice under two spellings;
+            // the seeded name wins, anything else is a refusal naming both.
             if many.iter().any(|name| *name == DEFAULT_SOURCE_NAME) {
                 return Ok(DEFAULT_SOURCE_NAME.to_owned());
             }

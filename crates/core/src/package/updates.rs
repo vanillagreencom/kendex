@@ -303,7 +303,7 @@ pub fn set_ignored(
             existing.scope != entry.scope
                 || existing.kind != entry.kind
                 || existing.name != entry.name
-                || !crate::repo_move::same_repo(&existing.repo, &entry.repo)
+                || existing.repo != entry.repo
         });
         if ignored {
             current.ignored_updates.push(entry);

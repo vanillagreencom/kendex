@@ -64,12 +64,10 @@ fn report_dry_run_routes_by_ownership_and_rejects_scope_all() {
     let tmp = sandbox_with_catalog();
     let home = tmp.path();
     let proj = home.join("proj");
-    // A locked agent from the canonical upstream routes to it — the
-    // pre-move repo spelling in the entry included, since installed content
-    // predating the repository move still records it.
+    // A locked agent from the canonical upstream routes to it.
     fs::write(
-        proj.join(".vstack-lock.json"),
-        r#"{"version":1,"entries":{"agent:orch:claude":{"name":"orch","kind":"agent","harness":"claude","source":"vstack","sourceRepo":"vanillagreencom/vstack","method":"copy","installedAt":"2026-01-01T00:00:00Z","sourceHash":"x","enabled":true}}}"#,
+        proj.join(".kendex-lock.json"),
+        r#"{"version":1,"entries":{"agent:orch:claude":{"name":"orch","kind":"agent","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"copy","installedAt":"2026-01-01T00:00:00Z","sourceHash":"x","enabled":true}}}"#,
     )
     .unwrap();
 
@@ -129,8 +127,8 @@ fn report_files_through_a_stubbed_gh() {
     let home = tmp.path();
     let proj = home.join("proj");
     fs::write(
-        proj.join(".vstack-lock.json"),
-        r#"{"version":1,"entries":{"hook:guard:claude":{"name":"guard","kind":"hook","harness":"claude","source":"vstack","sourceRepo":"vanillagreencom/vstack","method":"copy","installedAt":"2026-01-01T00:00:00Z","sourceHash":"x","enabled":true}}}"#,
+        proj.join(".kendex-lock.json"),
+        r#"{"version":1,"entries":{"hook:guard:claude":{"name":"guard","kind":"hook","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"copy","installedAt":"2026-01-01T00:00:00Z","sourceHash":"x","enabled":true}}}"#,
     )
     .unwrap();
 
@@ -181,7 +179,7 @@ fn update_replaces_the_binary_from_a_local_feed() {
     let home = tmp.path();
     let bin = home.join("bin");
     fs::create_dir_all(&bin).unwrap();
-    let me = bin.join("vstack");
+    let me = bin.join("kendex");
     fs::copy(env!("CARGO_BIN_EXE_kendex"), &me).unwrap();
     fs::set_permissions(&me, fs::Permissions::from_mode(0o755)).unwrap();
 

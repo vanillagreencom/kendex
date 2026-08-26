@@ -34,7 +34,6 @@ pub fn refresh_stale(env: &Env, scopes: &[Scope]) -> Vec<String> {
             let Some(repo) = decl.repo.as_deref().filter(|_| decl.enabled) else {
                 continue;
             };
-            let repo = crate::repo_move::canonical(repo);
             let url = crate::remote::clone_url(env, repo);
             let key = crate::remote::cache_key(env, repo);
             if fetched.contains(&key) {

@@ -182,15 +182,6 @@ mod tests {
         );
     }
 
-    /// The pre-rename line ignores a file that is no longer the ledger, so
-    /// it is not coverage — the current one is still added under it.
-    #[test]
-    fn the_old_spelling_is_not_coverage() {
-        let out = with_lock_ignored("/.vstack-lock.json\n").expect("added");
-        assert!(out.contains(LOCK_LINE), "{out}");
-        assert!(out.contains("/.vstack-lock.json"), "{out}");
-    }
-
     #[test]
     fn ignoring_the_shared_tree_is_reported() {
         assert_eq!(ignores_committed(".agents/\nnode_modules\n"), [".agents"]);

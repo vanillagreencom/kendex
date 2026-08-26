@@ -15,14 +15,12 @@ use crate::engine::desired::Desired;
 use crate::engine::file_plan::{TAKEN_OVER, set_aside};
 use crate::engine::item_plan::Planned;
 use crate::engine::written::Written;
-use crate::env::Env;
 use crate::error::Result;
 use crate::hash::hash_tree;
 use crate::model::Scope;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn plan_link(
-    env: &Env,
     scope: &Scope,
     item: &Desired,
     link: &Path,
@@ -38,7 +36,7 @@ pub(super) fn plan_link(
     // so the pair is committed once and resolves in every clone of it.
     let spelled = crate::fs::spelling(project_root(scope), canonical, link);
     if link.is_symlink() {
-        return relink(env, item, link, canonical, spelled, written, ops, result);
+        return relink(item, link, canonical, spelled, written, ops, result);
     }
     let diverged = link.exists();
     let unowned = diverged && !owned.contains(link);
@@ -101,7 +99,6 @@ pub(super) fn plan_link(
 /// somewhere kendex never wrote, which stays the person's.
 #[allow(clippy::too_many_arguments)]
 fn relink(
-    env: &Env,
     item: &Desired,
     link: &Path,
     canonical: &Path,
@@ -139,32 +136,11 @@ fn relink(
             format!("{tool}'s link names this machine, so a clone of the project cannot follow it"),
         ));
     }
-    // A target that is the canonical tree under its pre-rename spelling is
-    // our own: only kendex ever pointed links there, so the position is ours
-    // to replace (invariant 6). The first-launch move carries the trees but
-    // cannot rewrite links scattered across harness dirs — this relink is
-    // what reconnects them.
-    if env.legacy_app_path(canonical).as_deref() != Some(points_to.as_path()) {
-        return Ok(Planned::Conflict(format!(
-            "{} links somewhere kendex does not own ({})",
-            link.display(),
-            points_to.display()
-        )));
-    }
-    if written.claim_link(link) {
-        respell(
-            item,
-            link,
-            format!("Drop {tool}'s link to the app's old folder"),
-            points_to,
-            spelled,
-            ops,
-        );
-    }
-    Ok(Planned::Drift(
-        DriftState::Stale,
-        format!("{tool} still reads the app's old folder"),
-    ))
+    Ok(Planned::Conflict(format!(
+        "{} links somewhere kendex does not own ({})",
+        link.display(),
+        points_to.display()
+    )))
 }
 
 /// Swap a link's text for one a checkout elsewhere can follow. The old text

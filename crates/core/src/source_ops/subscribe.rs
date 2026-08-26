@@ -294,7 +294,6 @@ fn normalize_tree(
     repo: &str,
     ref_and_path: &str,
 ) -> Result<crate::source_ref::TreeSplit> {
-    let repo = crate::repo_move::canonical(repo);
     let url = crate::remote::clone_url(env, repo);
     let key = crate::remote::cache_key(env, repo);
     let mirror = crate::remote::store::mirror_dir(env, &key);

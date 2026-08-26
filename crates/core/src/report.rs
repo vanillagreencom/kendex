@@ -63,27 +63,19 @@ fn is_kendex_owned(
     frontmatter_repo: Option<&str>,
     upstream: &str,
 ) -> bool {
-    // Catalog content of both product-name generations opts in.
-    if matches!(frontmatter_source, Some("kendex" | "vstack"))
-        || frontmatter_repo.is_some_and(is_default_repo)
-    {
+    if frontmatter_source == Some("kendex") || frontmatter_repo.is_some_and(is_default_repo) {
         return true;
     }
     lock.entries.values().any(|entry| {
         entry.name == name
             && kind.is_none_or(|k| k == entry.kind)
             && entry.kind != ItemKind::Skill
-            // Canonical comparison, so an entry recorded before the
-            // repository move claims the new upstream — and a report routed
-            // by the old spelling still claims a migrated entry.
-            && crate::repo_move::same_repo(&entry.source_repo, upstream)
+            && entry.source_repo == upstream
     })
 }
 
-/// Both spellings of the default repository claim it: installed content
-/// that predates the repository move still records the old one.
 fn is_default_repo(repo: &str) -> bool {
-    crate::repo_move::same_repo(repo, DEFAULT_UPSTREAM)
+    repo == DEFAULT_UPSTREAM
 }
 
 /// `source:`/`repository:` from the installed skill's frontmatter — the one
@@ -113,25 +105,23 @@ fn installed_frontmatter(env: &Env, scope: &Scope, name: &str) -> (Option<String
 mod tests {
     use super::*;
 
-    /// A skill's frontmatter opts into upstream routing under either
-    /// product-name token: catalogs rendered before the rename say
-    /// `source: vstack` and must keep filing upstream.
+    /// A skill's frontmatter is the one place it can claim kendex
+    /// ownership itself.
     #[test]
-    fn both_source_tokens_claim_ownership() {
+    fn the_source_token_claims_ownership() {
         let lock = Lock::default();
         let owned = |source: Option<&str>| {
             is_kendex_owned(&lock, "s", None, source, None, DEFAULT_UPSTREAM)
         };
         assert!(owned(Some("kendex")));
-        assert!(owned(Some("vstack")));
         assert!(!owned(Some("someone-else")));
         assert!(!owned(None));
     }
 
-    /// An item installed before the repository move records the old repo in
-    /// its lock entry; it is still kendex's and routes to the new upstream.
+    /// A lock entry recorded from the default repository claims the
+    /// upstream a report routes to.
     #[test]
-    fn both_repo_spellings_claim_ownership() {
+    fn a_default_repo_entry_claims_ownership() {
         let mut lock = Lock::default();
         lock.entries.insert(
             "hook:guard:claude".to_owned(),
@@ -139,8 +129,8 @@ mod tests {
                 name: "guard".to_owned(),
                 kind: ItemKind::Hook,
                 harness: crate::model::HarnessId::Claude,
-                source: "vstack".to_owned(),
-                source_repo: crate::manifest::LEGACY_SOURCE_REPO.to_owned(),
+                source: "kendex".to_owned(),
+                source_repo: DEFAULT_UPSTREAM.to_owned(),
                 method: crate::manifest::Method::Copy,
                 installed_at: "2026-01-01T00:00:00Z".to_owned(),
                 source_hash: "x".to_owned(),
@@ -170,42 +160,6 @@ mod tests {
             None,
             None,
             "someone/else"
-        ));
-    }
-
-    /// The other direction: an entry the migration already rewrote must
-    /// still be claimed by a report routed via the old spelling.
-    #[test]
-    fn an_old_spelling_upstream_claims_a_migrated_entry() {
-        let mut lock = Lock::default();
-        lock.entries.insert(
-            "hook:guard:claude".to_owned(),
-            crate::lock::LockEntry {
-                name: "guard".to_owned(),
-                kind: ItemKind::Hook,
-                harness: crate::model::HarnessId::Claude,
-                source: "kendex".to_owned(),
-                source_repo: DEFAULT_UPSTREAM.to_owned(),
-                method: crate::manifest::Method::Copy,
-                installed_at: "2026-01-01T00:00:00Z".to_owned(),
-                source_hash: "x".to_owned(),
-                source_commit: None,
-                rendered_hash: None,
-                enabled: true,
-                upstream_skills: None,
-                emitted: None,
-                registration: None,
-                left_pi_reserved_name: false,
-                reasons: std::collections::BTreeSet::from([crate::lock::Reason::Requested]),
-            },
-        );
-        assert!(is_kendex_owned(
-            &lock,
-            "guard",
-            Some(ItemKind::Hook),
-            None,
-            None,
-            "https://github.com/vanillagreencom/vstack"
         ));
     }
 }

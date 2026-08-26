@@ -10,9 +10,6 @@ use sandbox::{dev_home, real_home_opt_in, sandbox_vars};
 
 /// The one spelling of the app's directory segment under config/cache/data.
 const APP_DIR: &str = "kendex";
-/// Where those directories lived before the product rename — read only by
-/// the first-launch move ([`crate::rename::migrate_global_dirs`]).
-const LEGACY_APP_DIR: &str = "vstack2";
 
 /// Process env vars that relocate harness roots.
 const HARNESS_VARS: [&str; 7] = [
@@ -141,8 +138,9 @@ impl Env {
         &self.real_home
     }
 
-    /// The platform config root itself — v1 kept its `vstack` state
-    /// directly under it, resolved the same way (`dirs::config_dir()`).
+    /// The platform config root itself, resolved the same way the app
+    /// dirs are (`dirs::config_dir()`) — where the v1 importer looks for
+    /// state this product never wrote.
     pub fn platform_config_dir(&self) -> &Path {
         &self.config_dir
     }
@@ -151,57 +149,12 @@ impl Env {
         self.config_dir.join(APP_DIR)
     }
 
-    /// `(old, new)` per base directory, for the one-shot move off the old
-    /// product name. Order matters: data first, so the scope-lock dir the
-    /// move itself runs under is settled before anything else migrates.
-    pub(crate) fn app_dir_pairs(&self) -> [(PathBuf, PathBuf); 3] {
-        [
-            (
-                self.data_dir.join(LEGACY_APP_DIR),
-                self.data_dir.join(APP_DIR),
-            ),
-            (
-                self.config_dir.join(LEGACY_APP_DIR),
-                self.config_dir.join(APP_DIR),
-            ),
-            (
-                self.cache_dir.join(LEGACY_APP_DIR),
-                self.cache_dir.join(APP_DIR),
-            ),
-        ]
-    }
-
-    /// The pre-rename spelling of a path under one of the app dirs — what a
-    /// symlink written before the first-launch move still records as its
-    /// target. Purely lexical: by the time a link is compared against it,
-    /// the move has already emptied the old spelling, so nothing there
-    /// resolves. `None` for a path outside the app dirs.
-    pub fn legacy_app_path(&self, path: &Path) -> Option<PathBuf> {
-        self.app_dir_pairs().iter().find_map(|(old, new)| {
-            let rest = path.strip_prefix(new).ok()?;
-            // Joining an empty rest would leave a trailing separator, which
-            // compares unequal to the bare directory path.
-            Some(match rest.as_os_str().is_empty() {
-                true => old.clone(),
-                false => old.join(rest),
-            })
-        })
-    }
-
     pub fn settings_file(&self) -> PathBuf {
         self.app_config_dir().join("settings.toml")
     }
 
     pub fn global_manifest_file(&self) -> PathBuf {
-        self.app_config_dir().join(crate::rename::MANIFEST_FILE)
-    }
-
-    /// Where the global manifest sat before the rename — same directory,
-    /// old file name. The dir move keeps the file's own name, so a migrated
-    /// machine holds `vstack.toml` here until its rename op runs.
-    pub fn legacy_global_manifest_file(&self) -> PathBuf {
-        self.app_config_dir()
-            .join(crate::rename::LEGACY_MANIFEST_FILE)
+        self.app_config_dir().join(crate::manifest::MANIFEST_FILE)
     }
 
     pub fn global_lock_file(&self) -> PathBuf {
@@ -267,11 +220,11 @@ impl Env {
     }
 
     pub fn project_manifest_file(project_root: &Path) -> PathBuf {
-        project_root.join(crate::rename::MANIFEST_FILE)
+        project_root.join(crate::manifest::MANIFEST_FILE)
     }
 
     pub fn project_lock_file(project_root: &Path) -> PathBuf {
-        project_root.join(crate::rename::LOCK_FILE)
+        project_root.join(crate::lock::LOCK_FILE)
     }
 }
 

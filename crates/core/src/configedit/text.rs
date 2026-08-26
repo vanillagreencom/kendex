@@ -57,16 +57,6 @@ fn marker_bounds(name: &str) -> (String, String) {
     )
 }
 
-/// Blocks written before the product rename carry this spelling; removal
-/// finds them too, so an upsert replaces an old block instead of stacking a
-/// second one under the new markers.
-fn legacy_marker_bounds(name: &str) -> (String, String) {
-    (
-        format!("<!-- vstack:append-system {name} begin -->"),
-        format!("<!-- vstack:append-system {name} end -->"),
-    )
-}
-
 pub fn upsert_marker_block(current: &str, name: &str, block: &str) -> String {
     let stripped = remove_marker_block(current, name);
     let (begin, end) = marker_bounds(name);
@@ -80,9 +70,7 @@ pub fn upsert_marker_block(current: &str, name: &str, block: &str) -> String {
 
 pub fn remove_marker_block(current: &str, name: &str) -> String {
     let (begin, end) = marker_bounds(name);
-    let removed = remove_between(current, &begin, &end);
-    let (begin, end) = legacy_marker_bounds(name);
-    remove_between(&removed, &begin, &end)
+    remove_between(current, &begin, &end)
 }
 
 fn remove_between(current: &str, begin: &str, end: &str) -> String {

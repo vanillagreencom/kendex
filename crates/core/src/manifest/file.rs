@@ -24,26 +24,34 @@ pub enum ManifestFile {
     Current(Box<Manifest>),
 }
 
-/// Where this scope's manifest lives right now: the new name, or the old
-/// one when only it exists — an old-name scope keeps loading until its
-/// rename op runs (the read-as-import posture, not a second format).
-pub fn manifest_path(env: &Env, scope: &Scope) -> std::path::PathBuf {
-    let (new, old) = crate::rename::manifest_pair(env, scope);
-    crate::rename::existing_or_new(new, old)
+/// Whether a project root's kendex.toml marks itself the canonical catalog
+/// (`is_source_catalog = true`), so install state routes to the sibling.
+pub fn is_source_catalog(root: &Path) -> bool {
+    std::fs::read_to_string(root.join(super::MANIFEST_FILE))
+        .ok()
+        .and_then(|text| text.parse::<toml::Table>().ok())
+        .and_then(|table| {
+            table
+                .get("is_source_catalog")
+                .and_then(toml::Value::as_bool)
+        })
+        .unwrap_or(false)
 }
 
-/// Every name this scope's manifest can answer to: the current one, and
-/// the old product name while a scope is still under it. A rename
-/// generation retargets writes planned against the old name, so a refusal
-/// out of an apply can name either — a caller matching refusals against
-/// only the name it read from would misread the retargeted one.
-pub fn manifest_paths(env: &Env, scope: &Scope) -> [std::path::PathBuf; 2] {
-    let (new, old) = crate::rename::manifest_pair(env, scope);
-    [new, old]
+/// Where this scope's manifest lives. Off the canonical root, like every
+/// scope-path derivation: the path must compare equal to the ones the
+/// engine's plan speaks, whatever spelling the scope arrived under.
+pub fn manifest_path(env: &Env, scope: &Scope) -> std::path::PathBuf {
+    match &scope.canonical() {
+        Scope::Global => env.global_manifest_file(),
+        // A source catalog's own kendex.toml is the definition it
+        // publishes; its install state goes to the sibling file.
+        Scope::Project { root } if is_source_catalog(root) => root.join(super::LOCAL_MANIFEST_FILE),
+        Scope::Project { root } => Env::project_manifest_file(root),
+    }
 }
 
 pub fn load(path: &Path) -> Result<ManifestFile> {
-    crate::rename::refuse_both_generations(path)?;
     let Some(text) = read_if_exists(path)? else {
         return Ok(ManifestFile::Absent);
     };
@@ -111,7 +119,6 @@ pub fn load_for_mutation(path: &Path) -> Result<Option<Manifest>> {
 /// writer — the one thing a base exists to prevent. So the text is read
 /// once and both answers come from it.
 pub fn read_for_mutation(path: &Path) -> Result<(Option<Manifest>, Base)> {
-    crate::rename::refuse_both_generations(path)?;
     let Some(text) = read_if_exists(path)? else {
         return Ok((None, Base::absent()));
     };

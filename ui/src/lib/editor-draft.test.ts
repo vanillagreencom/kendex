@@ -25,15 +25,15 @@ describe("toDraft", () => {
     const widened = toDraft({
       schema: 1,
       install: {},
-      sources: { vstack: { repo: "owner/repo", enabled: true } },
-      agents: { orch: { source: "vstack", enabled: true } },
+      sources: { kendex: { repo: "owner/repo", enabled: true } },
+      agents: { orch: { source: "kendex", enabled: true } },
       "agent-frontmatter": { claude: { orch: { model: "opus" } } },
       "custom-hooks": [
         { event: "PreToolUse", command: "./g.sh", agents: "all" },
       ],
     });
 
-    expect(widened.sources?.vstack).toEqual({
+    expect(widened.sources?.kendex).toEqual({
       repo: "owner/repo",
       path: null,
       rev: null,

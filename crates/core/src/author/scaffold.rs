@@ -152,9 +152,8 @@ fn build_in(staging: &Path, files: &[(String, String)]) -> Result<()> {
 /// previewed write; an existing file is a refusal naming it, never a merge
 /// or an overwrite.
 pub fn offer_manifest(dir: &Path, name: &str, description: &str, author: &str) -> Result<String> {
-    let target = dir.join(crate::rename::MANIFEST_FILE);
-    let legacy = dir.join(crate::rename::LEGACY_MANIFEST_FILE);
-    if target.exists() || legacy.exists() {
+    let target = dir.join(crate::manifest::MANIFEST_FILE);
+    if target.exists() {
         return Err(CoreError::Authoring {
             message: format!(
                 "{} already has a catalog config — edit it directly instead",
@@ -195,7 +194,7 @@ pub fn accept_manifest_offer(
 ) -> Result<()> {
     let dir = require_registered(env, dir)?;
     let bytes = offer_manifest(&dir, name, description, author)?;
-    write_offer(&dir, crate::rename::MANIFEST_FILE, &bytes)
+    write_offer(&dir, crate::manifest::MANIFEST_FILE, &bytes)
 }
 
 /// Accept the workflow offer — same contract as the manifest offer.

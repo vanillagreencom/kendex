@@ -31,7 +31,7 @@ function row(overrides: Partial<UpdateRow>): UpdateRow {
     scope: { scope: "global" },
     kind: "skill",
     name: "gh",
-    source: "vstack",
+    source: "kendex",
     repo: "owner/catalog",
     repoIdentity: "owner/catalog",
     current: { commit: "a".repeat(40), label: "v1", date: null },

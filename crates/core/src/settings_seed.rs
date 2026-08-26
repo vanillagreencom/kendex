@@ -1,8 +1,8 @@
 //! `kendex.settings.toml` seeding — skills ship a
 //! `kendex.settings.toml.example` and their `[env]` entries merge into the
-//! project's settings file, write-if-absent per key (v1 semantics kept
-//! line-for-line: comment blocks travel with their key, and uniqueness is
-//! file-wide because the shell-side reader is not TOML-table-aware).
+//! project's settings file, write-if-absent per key: comment blocks travel
+//! with their key, and uniqueness is file-wide because the shell-side
+//! reader is not TOML-table-aware.
 //!
 //! Seeded comments stay current ([`refresh`]): the lock keeps, per key, the
 //! FNV-1a hash of the comment block last written by seeding, and a key's
@@ -22,21 +22,9 @@ pub use refresh::refresh_comments;
 
 pub const SETTINGS_FILE: &str = "kendex.settings.toml";
 pub const SETTINGS_TEMPLATE: &str = "kendex.settings.toml.example";
-/// Pre-rename spellings, still read: a project seeded before the rename
-/// keeps its file, and catalogs shipping old-name templates keep working.
-pub const LEGACY_SETTINGS_FILE: &str = "vstack.settings.toml";
-pub const LEGACY_SETTINGS_TEMPLATE: &str = "vstack.settings.toml.example";
-
-/// The settings file seeding targets in this project: the new name, or
-/// the old one when only it exists — a key the user set there must keep
-/// counting as set.
+/// The settings file seeding targets in this project.
 pub fn settings_file_path(project_root: &std::path::Path) -> std::path::PathBuf {
-    let new = project_root.join(SETTINGS_FILE);
-    let old = project_root.join(LEGACY_SETTINGS_FILE);
-    if !new.is_file() && old.is_file() {
-        return old;
-    }
-    new
+    project_root.join(SETTINGS_FILE)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,8 +61,8 @@ impl SeededEnv {
     }
 }
 
-/// v1's hash, kept bit-for-bit so imported ledgers verify without
-/// re-guessing: 64-bit FNV-1a over the block's lines joined with `\n`.
+/// The seeded comment block's hash: 64-bit FNV-1a over the block's lines
+/// joined with `\n`.
 pub fn comment_hash(lines: &[String]) -> String {
     crate::hash::fnv1a_hex(lines.join("\n").as_bytes())
 }

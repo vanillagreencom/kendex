@@ -11,12 +11,6 @@ name = "kendex_cli"
 name = "kendex"
 path = "src/bin/kendex.rs"
 
-# Alias for one release cycle: consuming repos' git-hook entrypoints
-# hard-code `vstack guard run <hook>` and fail closed without it.
-[[bin]]
-name = "vstack"
-path = "src/bin/vstack.rs"
-
 [dependencies]
 kendex-core.workspace = true
 clap.workspace = true

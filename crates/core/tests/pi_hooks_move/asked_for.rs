@@ -92,42 +92,6 @@ fn a_bundle_member_whose_catalog_is_offline_keeps_its_old_copy() {
     );
 }
 
-/// The legacy spelling of the drift hook standing beside the new one is
-/// dropped before it ever resolves, so waiting for a write is waiting
-/// forever: the declaration has been answered.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_superseded_declaration_is_answered_not_awaited() {
-    let w = regressed();
-    let manifest = w.project.join("kendex.toml");
-    let text = fs::read_to_string(&manifest).unwrap();
-    fs::write(
-        &manifest,
-        text.replace(
-            "[hooks.guard]",
-            "[hooks.kendex-drift]\nsource = \"cat\"\n\n[hooks.vstack-drift]",
-        ),
-    )
-    .unwrap();
-    // The lock still holds the legacy spelling's install, under the name
-    // the reserved directory carries.
-    let lock = w.project.join(".kendex-lock.json");
-    let text = fs::read_to_string(&lock).unwrap();
-    fs::write(&lock, text.replace("\"guard\"", "\"vstack-drift\"")).unwrap();
-    let path = w.dot().join("hooks");
-    fs::rename(path.join("guard.sh"), path.join("vstack-drift.sh")).unwrap();
-
-    let report = audit(&w.env, &w.scope()).unwrap();
-    assert!(
-        !report
-            .notes
-            .iter()
-            .any(|note| note.contains("vstack-drift") && note.contains("stays until it is")),
-        "a promise nothing can keep: {:?}",
-        report.notes
-    );
-}
-
 /// A bundle member the manifest never keys is still a hook something asks
 /// for, so the readiness gate has to run for it exactly as for a keyed
 /// declaration — here its rendering is held back and the old copy stays.

@@ -62,16 +62,16 @@ fn a_clean_manifest_validates_empty() {
     let table = parse(
         r#"
 schema = 1
-[sources.vstack]
-repo = "vanillagreencom/vstack"
+[sources.kendex]
+repo = "vanillagreencom/kendex"
 [skills.github]
-source = "vstack"
+source = "kendex"
 [agents.local-one]
 source = "local"
 [hooks.guard]
-source = "vstack"
+source = "kendex"
 [mcp-servers.gh]
-source = "vstack"
+source = "kendex"
 [plugins."fmt@main"]
 enabled = false
 harness = "copilot"

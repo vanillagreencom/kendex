@@ -187,9 +187,7 @@ fn main_checkout(repo: &super::Repo) -> Option<PathBuf> {
 fn project_root(repo: &super::Repo) -> Option<PathBuf> {
     let mut dir = repo.started_at.as_path();
     loop {
-        let manifest = dir.join(crate::rename::MANIFEST_FILE).is_file()
-            || dir.join(crate::rename::LEGACY_MANIFEST_FILE).is_file();
-        if manifest {
+        if dir.join(crate::manifest::MANIFEST_FILE).is_file() {
             return Some(dir.to_path_buf());
         }
         if dir == repo.worktree {

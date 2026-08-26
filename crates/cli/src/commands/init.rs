@@ -58,11 +58,10 @@ pub fn run(name: Option<String>, kind: Option<String>) -> CliResult {
 /// Executable kinds install only from a catalog that declared kendex's
 /// layout — a bare `hooks/` folder is repository tooling. Scaffolding
 /// therefore declares the folder, once, and never touches a declaration
-/// that already exists under either file generation.
+/// that already exists.
 fn declare_catalog(cwd: &Path) -> CliResult {
-    let control = cwd.join(kendex_core::rename::MANIFEST_FILE);
-    let legacy = cwd.join(kendex_core::rename::LEGACY_MANIFEST_FILE);
-    if control.exists() || legacy.exists() {
+    let control = cwd.join(kendex_core::manifest::MANIFEST_FILE);
+    if control.exists() {
         return Ok(());
     }
     fs::write(

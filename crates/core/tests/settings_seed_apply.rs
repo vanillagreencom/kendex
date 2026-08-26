@@ -324,21 +324,3 @@ fn an_adoption_only_ledger_change_is_written_to_the_lock() {
         "the adopted record persisted"
     );
 }
-
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_settings_file_seeded_under_the_old_name_keeps_receiving_seeds() {
-    let f = fixture(true);
-    // A key set in the pre-rename file must keep counting as set, and new
-    // keys must land beside it — never in a second file under the new name.
-    fs::write(
-        f.project.join("vstack.settings.toml"),
-        "[env]\nREVIEWERS = \"mine\"\n",
-    )
-    .unwrap();
-    apply_now(&f);
-    let old = fs::read_to_string(f.project.join("vstack.settings.toml")).unwrap();
-    assert!(old.contains("REVIEWERS = \"mine\""), "{old}");
-    assert!(old.contains("DEPTH = \"2\""), "{old}");
-    assert!(!f.project.join("kendex.settings.toml").exists());
-}

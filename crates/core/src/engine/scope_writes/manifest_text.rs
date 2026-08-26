@@ -188,57 +188,9 @@ pub(in crate::engine) fn plan_schema_upgrade(
 ) -> Result<()> {
     let description = format!(
         "Upgrade {} to the current format",
-        crate::rename::MANIFEST_FILE
+        crate::manifest::MANIFEST_FILE
     );
     surgical_manifest_write(env, scope, manifest, base, |_| None, description, ops)
-}
-
-/// A `repo = "<old default>"` assignment rewritten to point at the new
-/// repository with every other byte — indentation, spacing style, trailing
-/// comment — kept. `None` for any other line, and for a value carrying
-/// escapes: rewriting one safely is not worth it when the caller's
-/// fallback write is still correct.
-fn rewrite_repo_line(line: &str) -> Option<String> {
-    let body = line.trim_start();
-    let indent = &line[..line.len() - body.len()];
-    let body = body.strip_prefix("repo")?;
-    let after_key = body.trim_start();
-    let key_ws = &body[..body.len() - after_key.len()];
-    let after_eq = after_key.strip_prefix('=')?;
-    let value = after_eq.trim_start();
-    let eq_ws = &after_eq[..after_eq.len() - value.len()];
-    let inner = value.strip_prefix('"')?;
-    let (content, tail) = inner.split_once('"')?;
-    if content.contains('\\') || !crate::repo_move::names_old_default(content) {
-        return None;
-    }
-    Some(format!(
-        "{indent}repo{key_ws}={eq_ws}\"{}\"{tail}",
-        manifest::DEFAULT_SOURCE_REPO
-    ))
-}
-
-/// The repository move: the file's bytes change only where the old
-/// repository sits in a repo value position — and on the schema line, with
-/// the retired tables cut, when the format is old. An inline table or a
-/// string with escapes is what the edit cannot reproduce, and takes the
-/// full rewrite.
-pub(in crate::engine) fn plan_repo_move_write(
-    env: &Env,
-    scope: &Scope,
-    migrated: &Manifest,
-    base: Option<&Base>,
-    ops: &mut Vec<PlannedOp>,
-) -> Result<()> {
-    surgical_manifest_write(
-        env,
-        scope,
-        migrated,
-        base,
-        rewrite_repo_line,
-        crate::repo_move::MOVE_DESCRIPTION.into(),
-        ops,
-    )
 }
 
 #[cfg(test)]

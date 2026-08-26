@@ -221,21 +221,21 @@ mod tests {
     /// written under the old product name must keep counting as ours: a
     /// scan that dropped them would strand every existing install.
     #[test]
-    fn a_prefix_restricted_scan_accepts_every_listed_generation() {
+    fn a_prefix_restricted_scan_accepts_every_listed_prefix() {
         let tmp = tempfile::tempdir().unwrap();
         fs::write(tmp.path().join("kendex-hook-a.md"), "").unwrap();
-        fs::write(tmp.path().join("vstack-hook-b.md"), "").unwrap();
+        fs::write(tmp.path().join("kendex-rule-b.md"), "").unwrap();
         fs::write(tmp.path().join("unrelated.md"), "").unwrap();
 
         let mut warnings = Vec::new();
         let found = scan_file_dir(
             tmp.path(),
             &["md"],
-            &["kendex-hook-", "vstack-hook-"],
+            &["kendex-hook-", "kendex-rule-"],
             &mut warnings,
         );
         let names: Vec<_> = found.iter().map(|f| f.name.as_str()).collect();
-        assert_eq!(names, ["kendex-hook-a", "vstack-hook-b"]);
+        assert_eq!(names, ["kendex-hook-a", "kendex-rule-b"]);
         assert!(warnings.is_empty());
     }
 

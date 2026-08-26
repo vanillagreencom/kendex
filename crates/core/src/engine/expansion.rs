@@ -290,28 +290,6 @@ pub(super) fn expand(
     let mut expansion = Expansion::default();
     for kind in PLANNED_KINDS {
         for (name, decl) in manifest.declared(kind) {
-            // The drift hook under both its names is one hook declared
-            // twice: the new declaration installs, and the legacy one is
-            // reported as superseded rather than installing a second copy
-            // of the same session-start report.
-            if kind == ItemKind::Hook && crate::drift::hook::superseded(manifest, name) {
-                state.warnings.push(super::ItemWarning {
-                    kind,
-                    name: name.clone(),
-                    harness: None,
-                    message: format!(
-                        "`{}` and `{}` are the same drift hook — the declaration under `{}` installs, this one is superseded",
-                        crate::drift::hook::LEGACY_HOOK_NAME,
-                        crate::drift::hook::HOOK_NAME,
-                        crate::drift::hook::HOOK_NAME,
-                    ),
-                    remediation: Some(format!(
-                        "drop `[hooks.{}]` from kendex.toml",
-                        crate::drift::hook::LEGACY_HOOK_NAME
-                    )),
-                });
-                continue;
-            }
             let harnesses = target_harnesses(decl, manifest, kind, scope);
             expansion.declared(kind, name, decl, harnesses);
             // A removal is recorded so that nothing derives the item back on

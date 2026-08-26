@@ -1,6 +1,5 @@
-//! A catalog's own configuration — `kendex.toml` (or the pre-rename
-//! `vstack.toml`) plus a Claude plugin registry where one exists — and the
-//! item lookups that read it.
+//! A catalog's own configuration — `kendex.toml` plus a Claude plugin
+//! registry where one exists — and the item lookups that read it.
 //!
 //! Presence selects the mode and breakage never falls through to a
 //! different one: a control file that exists but cannot be read makes the
@@ -10,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use crate::error::{CoreError, Result};
+use crate::error::Result;
 use crate::model::ItemKind;
 use crate::source_read::SealedSource;
 
@@ -138,33 +137,11 @@ pub fn source_config_for(sealed: &SealedSource, provenance: &str) -> Result<Sour
     Ok(config)
 }
 
-/// Which of the two file generations governs. Catalogs are foreign repos we
-/// cannot rename: `kendex.toml` is preferred while the two agree, or while
-/// only it parses — but two files that would each govern differently are an
-/// ambiguity error naming both, never an arbitration.
+/// The file that governs a catalog, when it carries one.
 fn control_file(sealed: &SealedSource) -> Result<Control> {
-    let root = sealed.root();
-    let new = sealed.read_if_exists(&root.join(crate::rename::MANIFEST_FILE))?;
-    let old = sealed.read_if_exists(&root.join(crate::rename::LEGACY_MANIFEST_FILE))?;
-    let (file, text) = match (new, old) {
-        (None, None) => return Ok(Control::None),
-        (Some(text), None) => (crate::rename::MANIFEST_FILE, text),
-        (None, Some(text)) => (crate::rename::LEGACY_MANIFEST_FILE, text),
-        (Some(new), Some(old)) => {
-            let agree = new == old
-                || match (new.parse::<toml::Table>(), old.parse::<toml::Table>()) {
-                    (Ok(new), Ok(old)) => new == old,
-                    (Ok(_), Err(_)) => true,
-                    _ => false,
-                };
-            if !agree {
-                return Err(CoreError::CatalogAmbiguous {
-                    new: root.join(crate::rename::MANIFEST_FILE),
-                    old: root.join(crate::rename::LEGACY_MANIFEST_FILE),
-                });
-            }
-            (crate::rename::MANIFEST_FILE, new)
-        }
+    let file = crate::manifest::MANIFEST_FILE;
+    let Some(text) = sealed.read_if_exists(&sealed.root().join(file))? else {
+        return Ok(Control::None);
     };
     match text.parse::<toml::Table>() {
         Ok(table) => Ok(Control::Parsed { table }),
@@ -185,7 +162,7 @@ fn read_tables(config: &mut SourceConfig, table: &toml::Table) {
                 };
                 let Some(list) = string_list(Some(value)) else {
                     config.unusable(
-                        crate::rename::MANIFEST_FILE,
+                        crate::manifest::MANIFEST_FILE,
                         format!("`[catalog] {key}` is not a list of directory names"),
                         "write it as an array of strings, or remove the key",
                     );
@@ -199,7 +176,7 @@ fn read_tables(config: &mut SourceConfig, table: &toml::Table) {
         }
         Some(_) => {
             config.unusable(
-                crate::rename::MANIFEST_FILE,
+                crate::manifest::MANIFEST_FILE,
                 "`catalog` is not a table".to_owned(),
                 "write `[catalog]` with `skills`/`agents` arrays, or remove it",
             );
@@ -213,7 +190,7 @@ fn read_tables(config: &mut SourceConfig, table: &toml::Table) {
             // Metadata never gates installs, so bad metadata is a finding
             // and the catalog keeps working without it.
             Err(problem) => config.config_findings.push(CatalogFinding::new(
-                crate::rename::MANIFEST_FILE,
+                crate::manifest::MANIFEST_FILE,
                 format!("`[marketplace]` could not be read — {problem}"),
                 "write string fields (name, description, author, license, homepage) and a string list `tags`",
             )),

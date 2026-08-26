@@ -20,8 +20,6 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use crate::frontmatter::{Map, Value};
-
 /// How the content in the way compares with the install it blocks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -39,11 +37,6 @@ pub struct Comparison {
     pub differing: Vec<String>,
     /// How many differ in all. Zero means the two are byte-identical.
     pub differing_total: u32,
-    /// The item's own marker file carries a `source: vstack` stamp. That
-    /// is what the frontmatter says about itself, not proof of when the
-    /// bytes were written — a catalog still named `vstack` stamps the same
-    /// token today.
-    pub vstack_stamped: bool,
 }
 
 /// Enough for a surface to show what changed without carrying a directory
@@ -74,9 +67,6 @@ pub(super) fn of_file(path: &Path, bytes: &[u8]) -> Option<Comparison> {
             false => Vec::new(),
         },
         differing_total: u32::from(differs),
-        // A one-file item is its own marker: these bytes are what the
-        // tool loads, and nothing else speaks for the item.
-        vstack_stamped: stamped_bytes(&disk),
     })
 }
 
@@ -120,17 +110,14 @@ pub(super) fn of_tree(root: &Path, files: &[(PathBuf, Vec<u8>)]) -> Option<Compa
     Some(Comparison {
         differing,
         differing_total,
-        vstack_stamped: disk.stamped,
     })
 }
 
 /// A tree read for comparison: one hash per file rather than the bytes, so
-/// a directory somebody parked in the way is never held in memory whole,
-/// and whether the item's own marker carries the stamp.
+/// a directory somebody parked in the way is never held in memory whole.
 #[derive(Default)]
 struct Walked {
     files: BTreeMap<PathBuf, String>,
-    stamped: bool,
     /// Every entry visited, directories included — what the fanout bound
     /// counts, so a tree wide in folders is bounded like one wide in files.
     visited: usize,
@@ -140,11 +127,6 @@ struct Walked {
     /// plain refresh.
     read: u64,
 }
-
-/// The file a tool loads a skill tree through, and the only one that speaks
-/// for the item: a reference file deep inside a folder is content, not
-/// provenance.
-const MARKER: &str = "SKILL.md";
 
 /// What the comparison will read before it gives up. A rendered item is far
 /// under both; a position somebody else owns is not ours to read without
@@ -174,9 +156,6 @@ fn collect(path: &Path, rel: &Path, depth: usize, found: &mut Walked) -> bool {
         found.read += u64::try_from(bytes.len()).unwrap_or(u64::MAX);
         if found.read > MAX_TOTAL_BYTES {
             return false;
-        }
-        if rel == Path::new(MARKER) {
-            found.stamped = stamped_bytes(&bytes);
         }
         found
             .files
@@ -236,28 +215,6 @@ fn open_no_follow(path: &Path) -> Option<std::fs::File> {
 #[cfg(not(unix))]
 fn open_no_follow(path: &Path) -> Option<std::fs::File> {
     std::fs::File::open(path).ok()
-}
-
-/// Whether this marker file claims `vstack` as its source. v1 wrote the
-/// token under `metadata:`; a top-level `source:` counts too, since the
-/// renderers that wrote one wrote the same token.
-fn stamped_bytes(bytes: &[u8]) -> bool {
-    let Ok(text) = std::str::from_utf8(bytes) else {
-        return false;
-    };
-    let Ok((yaml, _)) = crate::frontmatter::split(text) else {
-        return false;
-    };
-    let Ok(parsed) = crate::frontmatter::parse_tolerant(yaml) else {
-        return false;
-    };
-    stamped(&parsed.map)
-}
-
-fn stamped(map: &Map) -> bool {
-    let vstack = |value: Option<&Value>| value.and_then(Value::as_str) == Some("vstack");
-    vstack(map.get("source"))
-        || matches!(map.get("metadata"), Some(Value::Map(inner)) if vstack(inner.get("source")))
 }
 
 #[cfg(test)]

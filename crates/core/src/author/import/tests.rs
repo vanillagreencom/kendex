@@ -57,7 +57,7 @@ fn seeded() -> (tempfile::TempDir, Env, Scope) {
     let project = tmp.path().join("app");
     skill(&project.join(".claude/skills"), "stray", "unmanaged bytes");
     skill(
-        &project.join(crate::rename::LOCAL_SOURCE_DIR).join("skills"),
+        &project.join(crate::source::LOCAL_SOURCE_DIR).join("skills"),
         "mine",
         "my own bytes",
     );
@@ -234,7 +234,7 @@ fn a_stale_hash_refuses_instead_of_copying_moved_bytes() {
         unreachable!()
     };
     fs::write(
-        root.join(crate::rename::LOCAL_SOURCE_DIR)
+        root.join(crate::source::LOCAL_SOURCE_DIR)
             .join("skills/mine/SKILL.md"),
         "---\nname: mine\ndescription: about mine\n---\nedited since preview\n",
     )

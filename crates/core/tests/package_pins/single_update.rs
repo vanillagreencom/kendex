@@ -14,8 +14,8 @@ use kendex_core::model::{HarnessId, ItemKind};
 use kendex_core::{package, remote};
 
 use super::{
-    REPO, World, commit, declare, declare_from, installed_body, sync_and_apply, world, world_at,
-    write_agent, write_manifest, write_skill,
+    REPO, World, commit, declare, installed_body, sync_and_apply, world, write_agent,
+    write_manifest, write_skill,
 };
 
 #[allow(clippy::unwrap_used)]
@@ -207,45 +207,46 @@ fn manifest_op(report: &kendex_core::engine::EngineReport) -> &apply::Op {
     &op.op
 }
 
-/// A scope that still names the repository kendex moved from writes the
-/// move as a surgical text edit. That edit is compared against the
-/// manifest the plan computed — so a plan carrying synthetic holds could
-/// never reproduce it, fell back to a full serialize, and wrote every
-/// sibling's hold into the file as if the person had chosen it.
+/// A schema line the surgical rewriter can touch writes the upgrade as a
+/// text edit. That edit is compared against the manifest the plan computed
+/// — so a plan carrying synthetic holds could never reproduce it, fell
+/// back to a full serialize, and wrote every sibling's hold into the file
+/// as if the person had chosen it.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_repository_move_writes_no_synthetic_hold() {
-    let w = world_at(manifest::DEFAULT_SOURCE_REPO);
+fn a_surgical_schema_upgrade_writes_no_synthetic_hold() {
+    let w = world();
     write_skill(&w.upstream, "a", "", "a version one.");
     write_skill(&w.upstream, "b", "", "b version one.");
     let first = commit(&w.upstream, "one");
-    let body = "# The note this person wrote.\n[skills.a]\nsource = \"cat\"\n\n[skills.b]\nsource = \"cat\"\n";
-    declare_from(&w, manifest::DEFAULT_SOURCE_REPO, body);
+    let body = "[skills.a]\nsource = \"cat\"\n\n[skills.b]\nsource = \"cat\"\n";
+    declare(&w, body);
     sync_and_apply(&w);
 
     write_skill(&w.upstream, "a", "", "a version two.");
     let second = commit(&w.upstream, "two");
     fetch_mirrors(&w);
 
-    // Back to the old repository name: where every scope that has not
-    // applied since the move still sits.
-    declare_from(&w, manifest::LEGACY_SOURCE_REPO, body);
+    // A plain schema assignment, which `rewrite_schema_line` rewrites in
+    // place — and the note beside it proves only those bytes changed.
+    write_manifest(
+        &w,
+        &format!(
+            "# The note this person wrote.\nschema = 4\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{body}"
+        ),
+    );
 
     let report = package::update_one(&w.env, &w.scope, ItemKind::Skill, "a").unwrap();
     assert!(
         matches!(manifest_op(&report), apply::Op::WriteFile { .. }),
-        "the move is a surgical edit; a full serialize means the plan could not reproduce it"
+        "the upgrade is a surgical edit; a full serialize means the plan could not reproduce it"
     );
     apply::execute(&w.env, &report.plan, None).unwrap();
 
     let text = manifest_text(&w);
     assert!(
-        text.contains(manifest::DEFAULT_SOURCE_REPO),
-        "the move landed: {text}"
-    );
-    assert!(
         text.contains("# The note this person wrote."),
-        "and only the bytes it was about changed: {text}"
+        "only the bytes it was about changed: {text}"
     );
     assert_eq!(
         declared_rev(&w, "b"),

@@ -7,8 +7,8 @@ fn round_trips_the_binding_skeleton() {
     let text = r#"
 schema = 1
 
-[sources.vstack]
-repo = "vanillagreencom/vstack"
+[sources.kendex]
+repo = "vanillagreencom/kendex"
 enabled = true
 
 [install]
@@ -16,10 +16,10 @@ harnesses = ["claude", "pi"]
 method = "symlink"
 
 [agents.orch]
-source = "vstack"
+source = "kendex"
 
 [skills.github]
-source = "vstack"
+source = "kendex"
 method = "copy"
 enabled = false
 
@@ -46,8 +46,8 @@ github = "prefer gh cli"
         panic!("expected current manifest");
     };
     assert_eq!(
-        manifest.sources["vstack"].repo.as_deref(),
-        Some("vanillagreencom/vstack")
+        manifest.sources["kendex"].repo.as_deref(),
+        Some("vanillagreencom/kendex")
     );
     assert_eq!(
         manifest.install.harnesses,
@@ -168,7 +168,7 @@ fn source_catalog_routes_install_state_to_a_sibling() {
         "is_source_catalog = true\n[marketplace]\nname = \"c\"\n",
     )
     .unwrap();
-    assert!(crate::rename::is_source_catalog(root));
+    assert!(crate::manifest::is_source_catalog(root));
     assert_eq!(
         crate::manifest::manifest_path(&env, &scope)
             .file_name()
@@ -178,7 +178,7 @@ fn source_catalog_routes_install_state_to_a_sibling() {
 
     // The flag off is not a catalog: back to the project's own kendex.toml.
     std::fs::write(root.join("kendex.toml"), "is_source_catalog = false\n").unwrap();
-    assert!(!crate::rename::is_source_catalog(root));
+    assert!(!crate::manifest::is_source_catalog(root));
     assert_eq!(
         crate::manifest::manifest_path(&env, &scope)
             .file_name()

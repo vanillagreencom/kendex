@@ -44,7 +44,7 @@ fn a_v1_lock_scope_audits_successfully_with_a_note() {
     let f = fixture("app");
     fs::write(
         &f.lock_path,
-        r#"{"version":1,"entries":{"gh":{"name":"gh","kind":"skill","source":"vstack","source_repo":"vanillagreencom/vstack","harnesses":["claude-code"],"method":"symlink","installed_at":"2026-01-01T00:00:00Z","source_hash":"abc"}}}"#,
+        r#"{"version":1,"entries":{"gh":{"name":"gh","kind":"skill","source":"kendex","source_repo":"vanillagreencom/kendex","harnesses":["claude-code"],"method":"symlink","installed_at":"2026-01-01T00:00:00Z","source_hash":"abc"}}}"#,
     )
     .unwrap();
 

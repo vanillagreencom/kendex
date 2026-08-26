@@ -120,7 +120,7 @@ fn v1_manifest_reads_as_could_not_check() {
     let manifest_path = crate::manifest::manifest_path(&env, &scope);
     std::fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
     // No schema key: the v1 shape.
-    std::fs::write(&manifest_path, "[agents.orch]\nsource = \"vstack\"\n").unwrap();
+    std::fs::write(&manifest_path, "[agents.orch]\nsource = \"kendex\"\n").unwrap();
 
     let report = check(&env, std::slice::from_ref(&scope));
     assert_eq!(report.status, CheckStatus::Unknown);

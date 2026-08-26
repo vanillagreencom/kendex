@@ -101,15 +101,11 @@ mod tests {
         ));
     }
 
-    /// A scope still under the old product name retargets its manifest
-    /// write to the renamed file, so a refusal can name either of the two
-    /// paths core lists for the scope — and nothing else.
+    /// A refusal can name only the path core lists for the scope — and
+    /// nothing else.
     #[test]
-    fn a_refusal_matches_either_name_the_scope_manifest_answers_to() {
-        let targets = [
-            PathBuf::from("/w/app/kendex.toml"),
-            PathBuf::from("/w/app/vstack.toml"),
-        ];
+    fn a_refusal_matches_the_name_the_scope_manifest_answers_to() {
+        let targets = [PathBuf::from("/w/app/kendex.toml")];
         for name in &targets {
             assert!(stale_at(
                 &CoreError::PlanStale { path: name.clone() },

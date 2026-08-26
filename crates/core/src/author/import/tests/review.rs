@@ -21,7 +21,7 @@ fn identical_bytes_merge_under_the_strictest_provenance() {
     // The same gh bytes, in the local source, installed for a second
     // harness from `local`.
     skill(
-        &root.join(crate::rename::LOCAL_SOURCE_DIR).join("skills"),
+        &root.join(crate::source::LOCAL_SOURCE_DIR).join("skills"),
         "gh",
         "market bytes",
     );

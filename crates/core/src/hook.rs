@@ -323,7 +323,7 @@ mod tests {
         // key has the same shape a custom hook's would.
         manifest.hooks.insert(
             "guard-pretooluse".to_owned(),
-            crate::manifest::ItemDecl::from_source("vstack"),
+            crate::manifest::ItemDecl::from_source("kendex"),
         );
         assert_eq!(
             custom_hook_names(&manifest),

@@ -193,8 +193,8 @@ lives in one capability table read by core and UI.
     process's environment (`process/mod.rs`), so `npm` run for a Pi
     package sees the real home.
 17. One spelling per path, fixed once where the root enters: a scope root
-    at each derivation helper (`Scope::canonical` in `manifest_pair`,
-    `rename_ops`, `retarget`, `lock_path`, and the engine's plan entries),
+    at each derivation helper (`Scope::canonical` in `manifest_path`,
+    `lock_path`, and the engine's plan entries),
     a source root at `SealedSource::open`, a declared path at
     `source::resolve`. Nothing re-canonicalizes downstream, no comparison
     may meet two spellings of one file (macOS fronts `/var` with
@@ -367,41 +367,17 @@ lives in one capability table read by core and UI.
   installation.
 - Fresh manifest schema, no importer and no compat shims: a v1 manifest or
   lock is refused, moved aside by hand, and the install starts fresh.
-- **Old product names read as an import, not a second format**
-  (`crates/core/src/rename.rs`) — the one amendment to "no compat shims".
-  New scopes write `kendex.toml` / `.kendex-lock.json` / `.kendex-local`. A
-  scope found only under `vstack.toml`, `.vstack-lock.json`,
-  `.vstack-local/`, `vstack.settings.toml` loads read-only; its next engine
-  plan leads with a journaled "Rename to kendex" prefix — the file renames
-  and the `.gitignore` line kendex wrote for the local source, nothing else
-  — with the rest of the plan retargeted to the renamed paths
-  (observed-hash preconditions carry over). Each artifact earns its op on
-  its own evidence. Both spellings of one file (or of the local-source dir)
-  in one scope root is a hard error naming both, at plan time. A catalog's
-  `kendex.toml` outranks its `vstack.toml` while the two agree or only the
-  new one parses; two that govern differently are an ambiguity error
-  naming both. Old-name settings files and templates keep being read.
-  Managed-block markers, report tags and the opencode hook-file prefix
-  write the new spelling and read both. Env vars are `KENDEX_*`; the
-  guard's are the growth-guards package's own (`GROWTH_GUARDS_*`,
-  `SIZE_RATCHET_*`), read by the scripts rather than by this binary. An
-  install made under the old name is not migrated: it is reinstalled.
-  Old-name fallback reads are read-only and stay. The global
-  `vstack2` config/cache/data dirs move under `kendex` once, on first
-  launch of either shell, under a scope-style lock, never overwriting what
-  the new dirs hold and never following symlinks; a collision is reported;
-  a failed move stops the launch of either shell.
-- **The default catalog's repository is `vanillagreencom/kendex`** (GitHub
-  redirects `vanillagreencom/vstack`). Fresh scopes seed source `kendex` at
-  it. A scope naming the old repo plans as if it named the new one
-  (`repo_move`) and records the move — "Point kendex at its new
-  repository" — rewriting every place the string lives in one write per
-  file: the source's `repo` and `[forks.*].repo` in the manifest,
-  `sources.*.repo` and every entry's `sourceRepo` in the lock. Source
-  *names* keep: `[sources.vstack]` stays `vstack` and is still the default
-  (found by repo). The remote store renames the old spelling's cache under
-  the new key once (mirror, checkouts, fetch stamp); report routing accepts
-  both repo spellings as kendex-owned.
+- **One spelling per artifact.** A scope is `kendex.toml`,
+  `.kendex-lock.json`, `.kendex-local/`, `kendex.settings.toml`; env vars
+  are `KENDEX_*`; managed-block markers, report tags and the opencode
+  hook-file prefix write and read that one spelling. No older product
+  name is read anywhere, and nothing converts one.
+- **The default catalog's repository is `vanillagreencom/kendex`.** Fresh
+  scopes seed source `kendex` at it. Subscriptions are matched by what a
+  declaration names, never by literal spelling
+  (`source_ref::owner_repo`/`repo_identity`, which fold `.git`, case and
+  URL shape); the remote store keys its cache off the clone URL instead,
+  so two hosts serving one `owner/repo` never share a mirror.
 - **Commits walk through the guards whatever tool makes them.** The checks
   are the growth-guards package's shell scripts, committed under
   `.agents/skills` — size-ratchet, todo-ban, byte-ceiling, suppression-ban,

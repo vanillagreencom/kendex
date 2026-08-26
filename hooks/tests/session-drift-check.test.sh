@@ -278,14 +278,14 @@ assert_contains "$out" "kendex check could not run:" "an unexpected failure is r
 assert_contains "$out" "drift status unknown" "an unexpected failure says drift status is unknown"
 
 echo "session-drift-check: no kendex on PATH"
-NOVSTACK_BIN="$TMP_ROOT/nokendex"
-mkdir -p "$NOVSTACK_BIN"
+NOKENDEX_BIN="$TMP_ROOT/nokendex"
+mkdir -p "$NOKENDEX_BIN"
 for tool in bash cat command printf grep sed head; do
   real="$(command -v "$tool" 2>/dev/null || true)"
-  [ -n "$real" ] && [ -f "$real" ] && ln -sf "$real" "$NOVSTACK_BIN/$tool"
+  [ -n "$real" ] && [ -f "$real" ] && ln -sf "$real" "$NOKENDEX_BIN/$tool"
 done
 set +e
-out="$(env -i HOME="$HOME" PATH="$NOVSTACK_BIN" "$(command -v bash)" "$HOOK" <<<'{}' 2>/dev/null)"
+out="$(env -i HOME="$HOME" PATH="$NOKENDEX_BIN" "$(command -v bash)" "$HOOK" <<<'{}' 2>/dev/null)"
 rc=$?
 set -e
 assert_eq "$rc" 0 "exits 0 without a kendex binary"

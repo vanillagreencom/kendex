@@ -14,38 +14,24 @@ const SKILL_FILE: &str = "SKILL.md";
 pub const INSTRUCTIONS_START: &str = "<!-- kendex:project-instructions:start -->";
 pub const INSTRUCTIONS_END: &str = "<!-- kendex:project-instructions:end -->";
 
-// Files rendered before the product rename carry these markers; readers
-// accept both generations so an old block is refreshed in place instead of
-// reading as a hand edit.
-const LEGACY_INSTRUCTIONS_START: &str = "<!-- vstack:project-instructions:start -->";
-const LEGACY_INSTRUCTIONS_END: &str = "<!-- vstack:project-instructions:end -->";
-
 /// Byte range of a block already written into a file kendex rendered
-/// earlier, either marker generation: from the start marker through the end
-/// marker and its trailing newline. `None` when there is no block — or when
-/// a start marker has no matching end, which is user damage we leave in
-/// place rather than guess at.
+/// earlier: from the start marker through the end marker and its trailing
+/// newline. `None` when there is no block — or when a start marker has no
+/// matching end, which is user damage we leave in place rather than guess
+/// at.
 ///
 /// Only [`strip_block`] asks this, and only of a file kendex wrote before,
 /// so that re-rendering replaces that block instead of stacking another on
 /// top of it. Nothing decides who wrote what by asking: the answer is
 /// whatever the text says, and half of the text is the project's.
 fn instructions_block_range(text: &str) -> Option<(usize, usize)> {
-    for (start_marker, end_marker) in [
-        (INSTRUCTIONS_START, INSTRUCTIONS_END),
-        (LEGACY_INSTRUCTIONS_START, LEGACY_INSTRUCTIONS_END),
-    ] {
-        let Some(start) = text.find(start_marker) else {
-            continue;
-        };
-        let end = text[start..].find(end_marker)?;
-        let mut end = start + end + end_marker.len();
-        if text.as_bytes().get(end) == Some(&b'\n') {
-            end += 1;
-        }
-        return Some((start, end));
+    let start = text.find(INSTRUCTIONS_START)?;
+    let end = text[start..].find(INSTRUCTIONS_END)?;
+    let mut end = start + end + INSTRUCTIONS_END.len();
+    if text.as_bytes().get(end) == Some(&b'\n') {
+        end += 1;
     }
-    None
+    Some((start, end))
 }
 
 /// The rendered skill: every file of the source tree — read through the
@@ -281,27 +267,6 @@ mod tests {
 
         let removed = inject_instructions(&once, None);
         assert_eq!(removed, SKILL);
-    }
-
-    /// A skill rendered before the product rename carries the old marker
-    /// spelling; re-rendering replaces that block in place under the new
-    /// markers instead of treating it as the author's text.
-    #[test]
-    fn an_old_generation_block_is_replaced_not_kept() {
-        let old = format!(
-            "---\nname: github\n---\n\n{LEGACY_INSTRUCTIONS_START}\n## Project Instructions\n\nold text\n{LEGACY_INSTRUCTIONS_END}\n\nAuthor text.\n"
-        );
-        let refreshed = inject_instructions(&old, Some("new text"));
-        assert!(refreshed.contains(INSTRUCTIONS_START), "{refreshed}");
-        assert!(
-            !refreshed.contains(LEGACY_INSTRUCTIONS_START),
-            "{refreshed}"
-        );
-        assert!(refreshed.contains("new text") && !refreshed.contains("old text"));
-
-        let removed = inject_instructions(&old, None);
-        assert!(!removed.contains("Project Instructions"), "{removed}");
-        assert!(removed.contains("Author text."));
     }
 
     #[test]

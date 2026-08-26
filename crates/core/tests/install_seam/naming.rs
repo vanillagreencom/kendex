@@ -35,10 +35,11 @@ fn a_bare_name_one_subscription_offers_installs_from_it() {
     assert!(f.project.join(".claude/skills/gh").exists());
 }
 
-/// A hostile or broken subscription must not sink the bare-name search:
-/// a repo with two disagreeing control-file generations cannot be read, but
-/// installing `gh` from a healthy sibling still works. Without the skip, the
-/// unreadable catalog's error propagated and blocked every marketplace.
+/// A hostile or broken subscription must not sink the bare-name search: a
+/// repo whose control file is a symlink out of the catalog cannot be read,
+/// but installing `gh` from a healthy sibling still works. Without the
+/// skip, the unreadable catalog's error propagated and blocked every
+/// marketplace.
 #[test]
 fn a_broken_subscription_does_not_block_bare_name_installs_from_others() {
     let f = world();
@@ -46,8 +47,8 @@ fn a_broken_subscription_does_not_block_bare_name_installs_from_others() {
     skill(&good, "gh");
     let bad = f.home.join("bad");
     skill(&bad, "other");
-    fs::write(bad.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
-    fs::write(bad.join("vstack.toml"), "is_source_catalog = false\n").unwrap();
+    fs::write(f.home.join("elsewhere.toml"), "is_source_catalog = true\n").unwrap();
+    std::os::unix::fs::symlink(f.home.join("elsewhere.toml"), bad.join("kendex.toml")).unwrap();
     manifest_with(&f, &[("good", &good), ("bad", &bad)], "");
 
     add_and_apply(

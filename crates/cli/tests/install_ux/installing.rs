@@ -246,20 +246,6 @@ fn a_negation_below_the_ignore_is_not_coverage() {
     assert_eq!(rules.last(), Some(&"/.kendex-lock.json"), "{ignore}");
 }
 
-/// The pre-rename line ignores a file that is no longer the ledger, so it
-/// is not coverage — the current one is written under it.
-#[test]
-fn the_old_lock_line_does_not_count_as_ignoring_the_new_one() {
-    let world = World::new(&["claude"]);
-    crate::write(&world.at(".gitignore"), "/.vstack-lock.json\n");
-    world.declare_catalog();
-    world.run(&["add", "cat", "--skill", "deploy", "-y"]);
-
-    let ignore = read(&world.at(".gitignore"));
-    assert!(ignore.contains("/.vstack-lock.json"), "{ignore}");
-    assert!(ignore.contains("/.kendex-lock.json"), "{ignore}");
-}
-
 /// An install that cannot be shared is worth saying out loud rather than
 /// discovering on a teammate's first clone.
 #[test]

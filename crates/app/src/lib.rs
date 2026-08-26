@@ -129,19 +129,10 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         ])
 }
 
-/// Everything that must settle before the window opens: the old-name dirs
-/// move first so recovery — and everything after it — reads the new ones.
-/// A failed move is fatal to the launch, same as in the CLI: opening
-/// anyway would write fresh state beside the stranded old files, and the
-/// next launch would find both generations of the global scope and refuse
-/// it forever.
-pub fn prepare_launch(
-    env: &kendex_core::env::Env,
-) -> Result<Vec<String>, kendex_core::error::CoreError> {
-    let moved = kendex_core::rename::migrate_global_dirs(env)?;
-    let mut messages = moved.leftovers;
-    messages.extend(recovery::recover_on_launch(env));
-    Ok(messages)
+/// Everything that must settle before the window opens: an apply the last
+/// run left half-done is rolled back, and what that took is said out loud.
+pub fn prepare_launch(env: &kendex_core::env::Env) -> Vec<String> {
+    recovery::recover_on_launch(env)
 }
 
 trait StartupCoordinator {
@@ -186,23 +177,9 @@ pub fn run() -> tauri::Result<()> {
     let mut zoom = kendex_core::settings::ZOOM.default;
     match kendex_core::env::Env::detect() {
         Ok(env) => {
-            match prepare_launch(&env) {
-                Ok(messages) => {
-                    for message in messages {
-                        let _ = writeln!(stderr, "launch: {message}");
-                    }
-                }
-                // Opening with the move half-done would fork the library in
-                // two, so the launch stops loudly instead of showing an app
-                // whose state is about to become unrecoverable.
-                Err(error) => panic!(
-                    "kendex cannot start: moving your data from vstack2 to kendex failed ({error}). \
-                     Starting anyway would split your library between the old and new locations. \
-                     Fix the reported problem and launch again."
-                ),
+            for message in prepare_launch(&env) {
+                let _ = writeln!(stderr, "launch: {message}");
             }
-            // Read after the migration, so the zoom comes from the settings
-            // file the app is about to use rather than the one it replaced.
             match kendex_core::settings::load(&env) {
                 Ok(settings) => zoom = settings.zoom,
                 Err(error) => {

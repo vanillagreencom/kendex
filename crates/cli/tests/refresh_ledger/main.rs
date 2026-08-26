@@ -64,10 +64,8 @@ fn manifest(project: &Path, catalog: &Path, tools: &str, method: &str, declarati
     .unwrap();
 }
 
-/// The frontmatter v1 actually wrote: the stamp nests under `metadata:`,
-/// never at column 0. A fixture spelling it flat would prove the test, not
-/// the code.
-const V1_SKILL: &str = "---\nname: growth-guards\ndescription: keep it small\nlicense: MIT\nmetadata:\n  author: vanillagreen\n  source: vstack\n  repository: \"https://github.com/vanillagreencom/vstack\"\n---\nThe copy v1 wrote.\n";
+/// A hand-placed copy sitting where a catalog skill renders.
+const UNMANAGED_SKILL: &str = "---\nname: growth-guards\ndescription: keep it small\nlicense: MIT\nmetadata:\n  author: vanillagreen\n---\nThe copy already there.\n";
 
 /// Every item a safety block reports a finding against.
 fn flagged_items(listed: &str) -> BTreeSet<String> {
@@ -113,7 +111,7 @@ fn pre_rename_project(home: &Path) -> PathBuf {
     for tool in [".claude", ".agents"] {
         let at = project.join(tool).join("skills/growth-guards/references");
         fs::create_dir_all(&at).unwrap();
-        fs::write(at.parent().unwrap().join("SKILL.md"), V1_SKILL).unwrap();
+        fs::write(at.parent().unwrap().join("SKILL.md"), UNMANAGED_SKILL).unwrap();
         fs::write(at.join("rules.md"), "the older rules\n").unwrap();
     }
     project
@@ -160,11 +158,6 @@ fn a_blocked_refresh_ends_on_a_ledger_naming_every_outcome_and_its_next_step() {
         printed.contains("differs from the catalog in 2 files: SKILL.md, references/rules.md"),
         "the conflict says how the files in the way compare: {printed}"
     );
-    assert!(
-        printed.contains("(it carries a source: vstack stamp)"),
-        "what the files in the way claim about themselves is named: {printed}"
-    );
-
     // The ledger: every outcome of the run, and the next step for each.
     assert_eq!(
         ledger(&printed),
@@ -551,10 +544,6 @@ fn a_verbose_refresh_says_everything_the_compact_one_does() {
     assert!(
         printed.contains("differs from the catalog in 2 files: SKILL.md, references/rules.md"),
         "the verbose listing dropped the comparison that decides the exit: {printed}"
-    );
-    assert!(
-        printed.contains("(it carries a source: vstack stamp)"),
-        "the verbose listing dropped what the files claim about themselves: {printed}"
     );
     assert!(
         printed.contains("  skipped — kendex apply --replace-unmanaged"),

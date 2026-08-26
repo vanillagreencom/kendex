@@ -152,11 +152,11 @@ GH_ISSUE_PATTERN = "[A-Z]+-[0-9]+"
 GH_VERIFY_CMD = "make verify"
 
 # Timeouts (seconds) for 1Password token resolution, auth preflight, pr-view.
-VSTACK_GITHUB_OP_TIMEOUT = "10"
+KENDEX_GITHUB_OP_TIMEOUT = "10"
 
-VSTACK_GITHUB_AUTH_TIMEOUT = "10"
+KENDEX_GITHUB_AUTH_TIMEOUT = "10"
 
-VSTACK_GITHUB_PR_VIEW_TIMEOUT = "30"
+KENDEX_GITHUB_PR_VIEW_TIMEOUT = "30"
 
 # REVIEW GATE (shared CI merge-gate engine)
 # Keys resolve environment-first, then this file, then the built-in default.

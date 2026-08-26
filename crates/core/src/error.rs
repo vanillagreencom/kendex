@@ -42,13 +42,8 @@ pub enum CoreError {
     )]
     LegacyManifest { path: PathBuf },
 
-    #[error("{path} is a v1 vstack lock — no importer exists; move it aside or delete it")]
+    #[error("{path} is a v1 lock — no importer exists; move it aside or delete it")]
     LegacyLock { path: PathBuf },
-
-    #[error(
-        "both {new} and {old} exist — {old} was renamed to {new}, and both are here; keep the contents you mean, delete the other, and run again"
-    )]
-    BothGenerations { new: PathBuf, old: PathBuf },
 
     #[error("{path}: this lock file is damaged and could not be read — {message}")]
     LockCorrupt { path: PathBuf, message: String },
@@ -60,11 +55,6 @@ pub enum CoreError {
 
     #[error("{path}: refused catalog read — {reason}")]
     SourceEscape { path: PathBuf, reason: String },
-
-    #[error(
-        "the catalog carries both {new} and {old} with different content — it must say one thing; ask its author to remove one, or pin a commit where they agree"
-    )]
-    CatalogAmbiguous { new: PathBuf, old: PathBuf },
 
     #[error("'{name}' already installed from {existing} — refusing to rebind to {requested}")]
     SourceCollision {

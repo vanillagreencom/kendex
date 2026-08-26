@@ -150,14 +150,17 @@ kendex apply --plan                                     # preview the full recon
 ```
 
 Coming from v1: nothing is migrated, and no importer arrives — install
-kendex fresh and retire the old artifacts by hand. A v1 `vstack.toml` (no
-`schema` key) or `.vstack-lock.json` left in a scope is found and refused
-by every command that would write there, so those two go first: rename them
-aside to keep them, or delete them. Then remove the `vstack-hooks`
-directory and v1 guard settings. A `kendex-hooks` directory is from an
-earlier kendex 5.x, not from v1 — remove it the same way. Either leaves a
-`core.hooksPath` pointing at it, which has to be unset before the new hooks
-can arm: `git config --unset core.hooksPath`, then `kendex guard install`.
+kendex fresh and retire the old artifacts by hand. Old-name files are not
+read at all: delete `vstack.toml`, `.vstack-lock.json`, `.vstack-local/`
+and `vstack.settings.toml`, and declare what you want again in a fresh
+`kendex.toml`. A file that is v1 in shape under a current name — a
+`kendex.toml` with no `schema` key, a `.kendex-lock.json` keyed by bare
+name — is refused by every command that would write there, so it has to
+go first. Then remove the `vstack-hooks` directory. A `kendex-hooks`
+directory is from an earlier kendex 5.x, not from v1 — remove it the same
+way. Either leaves a `core.hooksPath` pointing at it, which has to be
+unset before the new hooks can arm: `git config --unset core.hooksPath`,
+then `kendex guard install`.
 
 ## Engine rules
 

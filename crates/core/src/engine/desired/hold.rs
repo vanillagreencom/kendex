@@ -259,7 +259,7 @@ fn source_repo<'a>(manifest: &'a Manifest, source: &str) -> Option<&'a str> {
 /// leave the declaration to resolve fresh — the same answer the lock's
 /// other cannot-place cases get.
 fn from_source(entry: &LockEntry, source: &str, repo: &str) -> bool {
-    entry.source == source && crate::repo_move::same_repo(&entry.source_repo, repo)
+    entry.source == source && entry.source_repo == repo
 }
 
 /// The one commit a declaration may be held at, or `None` where holding it

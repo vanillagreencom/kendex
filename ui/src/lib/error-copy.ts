@@ -16,14 +16,14 @@ export const PROBLEM_HEADLINES: Record<ProblemKind, string> = {
 export const PROBLEM_STEPS: Record<ProblemKind, string[]> = {
   "lock-corrupt": [
     "Rescan to retry",
-    "If it keeps failing, the file may be from vstack v1 — reinstall its items through kendex",
+    "If it keeps failing, the file is from an older format — reinstall its items through kendex",
   ],
   "schema-too-new": [
     "Update kendex to the latest version",
     "Rescan once you're up to date",
   ],
   "manifest-invalid": [
-    "Open the project's manifest (kendex.toml, or vstack.toml before the rename) and check its syntax",
+    "Open the project's kendex.toml and check its syntax",
     "Rescan once it's fixed",
   ],
   other: [

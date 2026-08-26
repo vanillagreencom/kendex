@@ -237,7 +237,7 @@ pub(crate) fn persist_and_plan_with(
     let mut report = plan_scope(env, scope, &manifest, &lock, options)?;
     let has_write = crate::engine::persists_manifest(&report.plan.ops);
     if !has_write {
-        crate::rename::insert_manifest_save(env, scope, &mut report.plan, manifest)?;
+        crate::engine::ops::insert_manifest_save(env, scope, &mut report.plan, manifest)?;
     }
     Ok(report)
 }

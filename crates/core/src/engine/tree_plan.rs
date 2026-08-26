@@ -105,7 +105,6 @@ pub(super) fn plan_tree(
         return Ok(result);
     };
     let linked = link::plan_link(
-        env,
         scope,
         item,
         link,

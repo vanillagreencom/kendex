@@ -215,18 +215,6 @@ pub fn main() -> ExitCode {
     }
 }
 
-/// Before any command reads the new-name dirs: running against absent
-/// dirs while the old ones still hold the state would fork it in two, so
-/// a failed move stops the command here. What could not move is said out
-/// loud instead of sitting silently forever.
-fn move_global_dirs(env: &Env) -> Result<(), Box<dyn std::error::Error>> {
-    let moved = kendex_core::rename::migrate_global_dirs(env)?;
-    for line in &moved.leftovers {
-        let _ = writeln!(std::io::stderr(), "{line}");
-    }
-    Ok(())
-}
-
 /// The bare form: `kendex <source> [flags]` maps to `add`.
 fn bare_add(
     env: &Env,
@@ -242,7 +230,6 @@ fn bare_add(
 
 fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     let env = Env::detect()?;
-    move_global_dirs(&env)?;
     let Some(command) = cli.command else {
         return bare_add(&env, cli.source, cli.add_flags);
     };

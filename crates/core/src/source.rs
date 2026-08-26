@@ -22,6 +22,10 @@ pub use index::{INDEX_SCHEMA, MarketplaceIndex};
 pub use meta::MarketplaceMeta;
 pub use plugin_registry::{CatalogFinding, PluginEntry, Registry};
 
+/// The directory a project scope adopts content into — catalog-shaped,
+/// and the source `local` reads from.
+pub const LOCAL_SOURCE_DIR: &str = ".kendex-local";
+
 /// The last path segment of a provenance — `owner/repo`, a filesystem path,
 /// or `local` — which is what names a one-skill repo whose SKILL.md does
 /// not name itself.
@@ -127,20 +131,11 @@ pub enum SourceState {
     },
 }
 
-/// Where adopted content lives for a scope — always catalog-shaped. New
-/// content lands under the new name; a scope whose local source exists
-/// only under the old name keeps reading it until the rename op moves it.
+/// Where adopted content lives for a scope — always catalog-shaped.
 pub fn local_source_root(env: &Env, scope: &Scope) -> PathBuf {
     match scope {
         Scope::Global => env.global_local_source_dir(),
-        Scope::Project { root } => {
-            let new = root.join(crate::rename::LOCAL_SOURCE_DIR);
-            let old = root.join(crate::rename::LEGACY_LOCAL_SOURCE_DIR);
-            if !new.is_dir() && old.is_dir() {
-                return old;
-            }
-            new
-        }
+        Scope::Project { root } => root.join(LOCAL_SOURCE_DIR),
     }
 }
 
@@ -282,7 +277,7 @@ fn last_resolved(
     // The lock read here is the on-disk one: during the repository move it
     // still spells the old repository while the manifest being planned
     // spells the new — the same repository, so the record still counts.
-    if !crate::repo_move::same_repo(&recorded.repo, repo) || recorded.rev != decl.rev {
+    if recorded.repo != repo || recorded.rev != decl.rev {
         return None;
     }
     let key = crate::remote::cache_key(env, &recorded.repo);

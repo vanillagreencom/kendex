@@ -86,7 +86,7 @@ describe("update groups", () => {
 
   it("keeps two spellings of one repository as one package", () => {
     const groups = groupUpdates([
-      row("gh", "/a", { repo: "vanillagreencom/vstack" }),
+      row("gh", "/a", { repo: "vanillagreencom/kendex" }),
       row("gh", "/b", { repo: "https://github.com/vanillagreencom/kendex" }),
     ]);
     expect(groups).toHaveLength(1);

@@ -8,7 +8,7 @@ use crate::model::HarnessId;
 mod file;
 mod validate;
 pub use file::{
-    ManifestFile, load, load_for_mutation, manifest_path, manifest_paths, parse_text,
+    ManifestFile, is_source_catalog, load, load_for_mutation, manifest_path, parse_text,
     read_for_mutation, seed,
 };
 // Crate-only: the apply op is `save`'s one sanctioned caller — it checks
@@ -31,11 +31,6 @@ pub const MANIFEST_SCHEMA: u32 = 6;
 pub const OLDEST_READABLE_SCHEMA: u32 = 1;
 pub const DEFAULT_SOURCE_NAME: &str = "kendex";
 pub const DEFAULT_SOURCE_REPO: &str = "vanillagreencom/kendex";
-/// What the default source was called before the product rename. Read-side
-/// only: pre-rename scopes and v1 files still say these, and they must keep
-/// resolving; nothing writes them anymore.
-pub const LEGACY_SOURCE_NAME: &str = "vstack";
-pub const LEGACY_SOURCE_REPO: &str = "vanillagreencom/vstack";
 /// The reserved source name for content adopted into this scope.
 pub const LOCAL_SOURCE_NAME: &str = "local";
 /// The reserved source name for content whose record of truth is the shared
@@ -46,6 +41,11 @@ pub const LOCAL_SOURCE_NAME: &str = "local";
 pub const INPLACE_SOURCE_NAME: &str = "in-place";
 /// The directory that source reads, inside a project.
 pub const INPLACE_SOURCE_DIR: &str = ".agents";
+/// The manifest file a scope carries.
+pub const MANIFEST_FILE: &str = "kendex.toml";
+/// The manifest a source catalog keeps its own install state in, so the
+/// file it publishes stays the definition and nothing else.
+pub const LOCAL_MANIFEST_FILE: &str = "kendex-local.toml";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
 #[serde(rename_all = "kebab-case")]

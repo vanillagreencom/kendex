@@ -13,13 +13,9 @@ const MARKER_DIRS: [&str; 7] = [
     ".agents",
     ".gemini",
 ];
-const MARKER_FILES: [&str; 8] = [
-    // Both generations of kendex's own markers: a project last touched
-    // before the rename is still a project.
+const MARKER_FILES: [&str; 6] = [
     "kendex.toml",
     ".kendex-lock.json",
-    "vstack.toml",
-    ".vstack-lock.json",
     ".mcp.json",
     "opencode.json",
     "opencode.jsonc",
@@ -43,18 +39,15 @@ pub fn is_project(dir: &Path) -> bool {
         || MARKER_FILES.iter().any(|m| dir.join(m).is_file())
 }
 
-/// v1's current-project resolution: walk up from `start`; a
-/// `.kendex-lock.json` — or its old spelling — wins even at the home
-/// directory, otherwise the first directory carrying a harness marker —
-/// refusing home itself.
+/// Current-project resolution: walk up from `start`; a `.kendex-lock.json`
+/// wins even at the home directory, otherwise the first directory carrying
+/// a harness marker — refusing home itself.
 pub fn project_root_from(start: &Path, home: &Path) -> Option<PathBuf> {
     let start = start.canonicalize().ok()?;
     let home = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
     let mut current = Some(start.as_path());
     while let Some(dir) = current {
-        if dir.join(crate::rename::LOCK_FILE).is_file()
-            || dir.join(crate::rename::LEGACY_LOCK_FILE).is_file()
-        {
+        if dir.join(crate::lock::LOCK_FILE).is_file() {
             return Some(dir.to_path_buf());
         }
         if dir != home && MARKER_DIRS.iter().any(|m| dir.join(m).is_dir()) {
@@ -117,7 +110,7 @@ mod tests {
         let root = tmp.path();
         fs::create_dir_all(root.join("a/.claude")).unwrap();
         fs::create_dir_all(root.join("b/sub")).unwrap();
-        fs::write(root.join("b/sub/vstack.toml"), "").unwrap();
+        fs::write(root.join("b/sub/kendex.toml"), "").unwrap();
         fs::create_dir_all(root.join("node_modules/fake/.claude")).unwrap();
         fs::create_dir_all(root.join("plain")).unwrap();
 
@@ -176,7 +169,7 @@ mod tests {
         assert_eq!(project_root_from(&home.join("dev"), home), None);
 
         // …but a lock file there does.
-        fs::write(home.join(".vstack-lock.json"), "{}").unwrap();
+        fs::write(home.join(".kendex-lock.json"), "{}").unwrap();
         assert_eq!(
             project_root_from(&home.join("dev"), home).unwrap(),
             home.canonicalize().unwrap()

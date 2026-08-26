@@ -632,7 +632,7 @@ export type CapabilityRow = {
  */
 export type Catalog = { by: "subscription"; scope: Scope; source: string } | 
 /**
- *  A GitHub repository, in any spelling `repo_move::owner_repo` folds
+ *  A GitHub repository, in any spelling `crate::source_ref::owner_repo` folds
  *  to the canonical `owner/repo` everything is keyed by.
  */
 { by: "repo"; repo: string };
@@ -707,13 +707,6 @@ export type Comparison = {
 	differing: string[],
 	/**  How many differ in all. Zero means the two are byte-identical. */
 	differingTotal: number,
-	/**
-	 *  The item's own marker file carries a `source: vstack` stamp. That
-	 *  is what the frontmatter says about itself, not proof of when the
-	 *  bytes were written — a catalog still named `vstack` stamps the same
-	 *  token today.
-	 */
-	vstackStamped: boolean,
 };
 
 export type CreateRequest = {

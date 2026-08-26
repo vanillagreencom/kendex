@@ -144,11 +144,12 @@ mod tests {
     fn a_rename_source_edited_after_journal_capture_refuses_before_moving() {
         let tmp = tempfile::tempdir().unwrap();
         let env = Env::fake(tmp.path(), FakeOs::Linux);
-        let old = tmp.path().join("vstack.toml");
-        let new = tmp.path().join("kendex.toml");
+        let old = tmp.path().join("agents/orch.md");
+        let new = tmp.path().join("agents/lead.md");
+        fs::create_dir_all(old.parent().unwrap()).unwrap();
         fs::write(&old, "planned bytes").unwrap();
         let ops = [PlannedOp {
-            description: "Rename to kendex: vstack.toml becomes kendex.toml".into(),
+            description: "Rename orch.md to lead.md".into(),
             op: Op::Rename {
                 from_pre: Pre::observed(&old).unwrap(),
                 from: old.clone(),

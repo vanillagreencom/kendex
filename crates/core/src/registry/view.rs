@@ -8,7 +8,6 @@ use crate::env::Env;
 use crate::error::Result;
 use crate::registry::index::{DirectoryBundle, DirectoryPackage};
 use crate::registry::{Fetch, cache};
-use crate::repo_move;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -49,7 +48,7 @@ pub fn directory(env: &Env, fetch: &dyn Fetch, force_refresh: bool) -> Result<Di
         .into_iter()
         .map(|market| {
             let name = market.name.clone().unwrap_or_else(|| leaf_of(&market.repo));
-            let repo_key = repo_move::owner_repo(&market.repo);
+            let repo_key = crate::source_ref::owner_repo(&market.repo);
             let is_subscribed = repo_key
                 .as_ref()
                 .is_some_and(|key| subscribed.contains(key));

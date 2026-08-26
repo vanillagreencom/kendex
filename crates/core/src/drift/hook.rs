@@ -14,13 +14,8 @@ use crate::model::{HarnessId, Scope};
 
 pub const HOOK_NAME: &str = "kendex-drift";
 
-/// The name existing manifests declare the hook under; a scope installed
-/// before the product rename keeps resolving to first-party content and
-/// stays removable under it.
-pub const LEGACY_HOOK_NAME: &str = "vstack-drift";
-
-/// The hook script, in the catalog hook format. The contract lines are the
-/// v1 fleet's: `KENDEX_DRIFT_HOOK=off` kills it, resumed and compacted
+/// The hook script, in the catalog hook format. The contract lines:
+/// `KENDEX_DRIFT_HOOK=off` kills it, resumed and compacted
 /// sessions are skipped, a missing binary prints one "skipped" line, and
 /// it always exits 0 — a drift report must never block a session. Exit
 /// codes classify the way `hooks/session-drift-check.sh` and the pi-hooks
@@ -89,41 +84,11 @@ fi
 exit 0
 "#;
 
-/// The name this scope declares the hook under, when it does: the current
-/// name, or the one it was installed under before the rename. A catalog
-/// hook resolves to `hooks/<declared name>.sh`, so every path below has to
-/// follow the declaration.
-fn declared_name(manifest: &crate::manifest::Manifest) -> Option<&'static str> {
-    [HOOK_NAME, LEGACY_HOOK_NAME]
-        .into_iter()
-        .find(|name| manifest.hooks.contains_key(*name))
-}
-
-/// Whether this declaration is the drift hook's legacy spelling standing
-/// beside the new one in the same manifest. The pair is one hook: planning
-/// installs the new declaration and reports this one as superseded — never
-/// two copies of the same session-start report.
-pub fn superseded(manifest: &crate::manifest::Manifest, name: &str) -> bool {
-    name == LEGACY_HOOK_NAME && manifest.hooks.contains_key(HOOK_NAME)
-}
-
-/// The script as installed under `name`: the frontmatter carries the
-/// declared name, so a legacy-declared scope's artifact agrees with its own
-/// file name and manifest entry.
-pub fn script_for(name: &str) -> String {
-    let own = format!("# name: {HOOK_NAME}");
-    assert!(
-        HOOK_SCRIPT.contains(&own),
-        "the embedded script must name itself for the declared name to replace"
-    );
-    HOOK_SCRIPT.replacen(&own, &format!("# name: {name}"), 1)
-}
-
 /// The relative catalog location the script installs to.
-fn script_path(env: &Env, scope: &Scope, name: &str) -> std::path::PathBuf {
+fn script_path(env: &Env, scope: &Scope) -> std::path::PathBuf {
     crate::source::local_source_root(env, scope)
         .join("hooks")
-        .join(format!("{name}.sh"))
+        .join(format!("{HOOK_NAME}.sh"))
 }
 
 /// Whether the scope's installed script is this binary's copy — `None`
@@ -136,13 +101,12 @@ pub fn script_current(
     scope: &Scope,
     manifest: &crate::manifest::Manifest,
 ) -> Option<bool> {
-    let name = declared_name(manifest)?;
-    let decl = manifest.hooks.get(name)?;
+    let decl = manifest.hooks.get(HOOK_NAME)?;
     if decl.source != LOCAL_SOURCE_NAME {
         return None;
     }
-    let text = crate::fs::read_if_exists(&script_path(env, &scope.canonical(), name)).ok()??;
-    Some(text == script_for(name))
+    let text = crate::fs::read_if_exists(&script_path(env, &scope.canonical())).ok()??;
+    Some(text == HOOK_SCRIPT)
 }
 
 /// The plan that installs (or repairs) the drift hook declaration in one
@@ -155,13 +119,8 @@ pub fn install_plan(env: &Env, scope: &Scope) -> Result<Plan> {
     let mut ops = Vec::new();
 
     let mut manifest = crate::engine::ops::manifest_for_mutation(env, &scope)?;
-    // A scope declared under the legacy name keeps that declaration and its
-    // script file: repair means refreshing the content it already resolves,
-    // never stacking a second declaration beside it.
-    let name = declared_name(&manifest).unwrap_or(HOOK_NAME);
-
-    let script = script_path(env, &scope, name);
-    let wanted = script_for(name);
+    let script = script_path(env, &scope);
+    let wanted = HOOK_SCRIPT.to_owned();
     let current = crate::fs::read_if_exists(&script)?;
     if current.as_deref() != Some(wanted.as_str()) {
         ops.push(PlannedOp {
@@ -174,8 +133,7 @@ pub fn install_plan(env: &Env, scope: &Scope) -> Result<Plan> {
         });
     }
 
-    let declared = manifest.hooks.get(name);
-    if declared.is_none() {
+    if !manifest.hooks.contains_key(HOOK_NAME) {
         manifest.hooks.insert(
             HOOK_NAME.to_owned(),
             ItemDecl {

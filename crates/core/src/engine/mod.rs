@@ -110,19 +110,10 @@ fn plan_scope_once(
 ) -> Result<EngineReport> {
     // Identity first: derived paths and the scope lock key off canonical.
     let scope = &scope.canonical();
-    // The default catalog moved repositories: everything plans against the
-    // moved strings, so the move never reads as a per-package source rebind
-    // (a conflict per installed item). Only the lock write still compares
-    // against the on-disk record — that difference is what makes the plan
-    // carry the rewritten lock even when nothing else changed.
-    let moved_manifest = crate::repo_move::migrate_manifest(manifest);
-    let moved_lock = crate::repo_move::migrate_lock(lock);
-    let repo_moved = moved_manifest.is_some();
     let disk_lock = lock;
     // What the person declared, as this build reads it: the manifest any
     // write this plan carries is built from.
-    let declared = moved_manifest.as_ref().unwrap_or(manifest);
-    let lock = moved_lock.as_ref().unwrap_or(lock);
+    let declared = manifest;
     // A single-package update reads from a copy of the manifest with every
     // other follower pinned at its installed commit — the pins steer this
     // pass and never reach the file.
@@ -139,7 +130,7 @@ fn plan_scope_once(
     let base = options.manifest_base.as_ref();
     // `declared`, never the planning copy: a synthetic pin serialized into
     // the file is a hold the person never asked for.
-    plan_manifest_write(env, scope, repo_moved, declared, base, &state, &mut ops)?;
+    plan_manifest_write(env, scope, declared, base, &state, &mut ops)?;
 
     // Answered before anything is planned, and read again when the move is
     // planned: a pi hook whose copy under the name pi reserved is not this
@@ -225,7 +216,7 @@ fn plan_scope_once(
     let set_changes = set_changes(scope, lock, &new_lock);
     let kept = kept_members(scope, lock, &new_lock, &options.uninstalled_bundles);
     plan_lock_write(env, scope, disk_lock, new_lock, &mut ops)?;
-    moved_notes.extend(scope_wide(env, scope, &mut ops)?);
+    moved_notes.extend(scope_wide(scope, &mut ops)?);
 
     let mut report = EngineReport {
         drift,
@@ -247,12 +238,11 @@ fn plan_scope_once(
 }
 
 /// The writes a pass owes the scope as a whole rather than any one item:
-/// the git posture, and the generation stamp the rename migration reads.
-/// Both run after every item is planned, so they see the finished op list.
-fn scope_wide(env: &Env, scope: &Scope, ops: &mut Vec<PlannedOp>) -> Result<Vec<String>> {
+/// the git posture. It runs after every item is planned, so it sees the
+/// finished op list.
+fn scope_wide(scope: &Scope, ops: &mut Vec<PlannedOp>) -> Result<Vec<String>> {
     let mut notes = Vec::new();
     posture::plan_posture(scope, ops, &mut notes)?;
-    prepend_rename_generation(env, scope, ops)?;
     Ok(notes)
 }
 
@@ -290,21 +280,6 @@ fn fresh_lock(manifest: &Manifest, lock: &Lock, state: &desired::DesiredState) -
         sources: source_revisions(manifest, lock, state),
         settings_seeds: lock.settings_seeds.clone(),
     }
-}
-
-/// What earlier installs put on disk under another kind's name. A path
-/// one of them wrote is ours to replace, whichever entry holds it now.
-/// A scope still under the old product name renames first: everything
-/// planned so far read from — and bound its preconditions to — the
-/// old-name files, and a rename preserves bytes, so retargeting the paths
-/// is all the rest of the plan needs to run after the move.
-fn prepend_rename_generation(env: &Env, scope: &Scope, ops: &mut Vec<PlannedOp>) -> Result<()> {
-    let renames = crate::rename::rename_ops(env, scope)?;
-    if !renames.is_empty() {
-        crate::rename::retarget(env, scope, ops);
-        ops.splice(0..0, renames);
-    }
-    Ok(())
 }
 
 /// Read-only audit for a scope. A legacy or absent manifest still reports
@@ -375,7 +350,7 @@ pub fn plan_apply(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<Eng
         || matches!(lock_file, LockFile::Legacy { .. })
     {
         report.notes.push(
-            "This scope's vstack files are from version 1 — kendex reads them and writes nothing here until they are moved aside or deleted"
+            "This scope's files are from version 1 — kendex reads them and writes nothing here until they are moved aside or deleted"
                 .into(),
         );
     }

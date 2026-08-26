@@ -128,32 +128,19 @@ fn write_manifest(
     };
     let mut report =
         engine::plan_scope(env, &scope, &manifest, &lock, &options).map_err(|e| e.to_string())?;
-    // Where this write ends up, which is not always where it was aimed: a
-    // rename generation retargets every write planned against the old name,
-    // and a refusal from one of those names the file it was retargeted to.
-    // Core names both, so this cannot drift from how the retargeting works.
-    let targets = manifest::manifest_paths(env, &scope);
+    let targets = [path.clone()];
     let persisted = engine::persists_manifest(&report.plan.ops);
     if !persisted {
-        // After any rename-generation prefix, at the name the prefix
-        // leaves the file under. Planned before the rename this write
-        // would change the old file and stale the rename's own source
-        // precondition; planned at the old name after it, it would
-        // recreate the old file. The base still holds across the move —
-        // a rename preserves bytes, so the file at the new name is the
-        // one the copy was read from.
-        let index = kendex_core::rename::rename_prefix_len(&report.plan.ops);
-        let write_path = match index {
-            0 => path.clone(),
-            _ => targets[0].clone(),
-        };
+        // Leading the plan: every later op was planned against the manifest
+        // this write makes durable, and the base still holds — the file is
+        // the one the copy on screen was read from.
         report.plan.ops.insert(
-            index,
+            0,
             PlannedOp {
                 description: "Save kendex.toml".into(),
                 op: Op::WriteManifest {
                     pre: Pre::from(&claimed),
-                    path: write_path,
+                    path: path.clone(),
                     manifest: Box::new(manifest),
                 },
             },

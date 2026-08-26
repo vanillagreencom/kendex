@@ -11,7 +11,7 @@ use std::process::Command;
 use kendex_core::engine::ops;
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::error::CoreError;
-use kendex_core::manifest::{DEFAULT_SOURCE_REPO, LEGACY_SOURCE_REPO};
+use kendex_core::manifest::DEFAULT_SOURCE_REPO;
 use kendex_core::model::Scope;
 use kendex_core::{apply, remote, source_ops};
 
@@ -314,7 +314,7 @@ fn a_default_add_lands_on_the_subscription_with_the_default_repo() {
     assert!(manifest.contains("source = \"market\""), "{manifest}");
 }
 
-/// The migration can leave one repository subscribed twice; the seeded
+/// One repository can be subscribed twice under two spellings; the seeded
 /// name wins the tie. A bare item name would search both and refuse the
 /// duplicate, so the tie-break is exercised through `--all`.
 #[test]
@@ -326,7 +326,7 @@ fn two_default_repo_subscriptions_prefer_the_seeded_name() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.kendex]\nrepo = \"{DEFAULT_SOURCE_REPO}\"\n\n[sources.vstack]\nrepo = \"{LEGACY_SOURCE_REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n"
+            "schema = 6\n\n[sources.kendex]\nrepo = \"{DEFAULT_SOURCE_REPO}\"\n\n[sources.other]\nrepo = \"https://github.com/{DEFAULT_SOURCE_REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n"
         ),
     )
     .unwrap();
@@ -346,7 +346,7 @@ fn two_default_repo_subscriptions_neither_seeded_refuse_naming_both() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.alpha]\nrepo = \"{DEFAULT_SOURCE_REPO}\"\n\n[sources.beta]\nrepo = \"{LEGACY_SOURCE_REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n"
+            "schema = 6\n\n[sources.alpha]\nrepo = \"{DEFAULT_SOURCE_REPO}\"\n\n[sources.beta]\nrepo = \"https://github.com/{DEFAULT_SOURCE_REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n"
         ),
     )
     .unwrap();

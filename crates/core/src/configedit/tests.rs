@@ -90,27 +90,6 @@ fn marker_blocks_upsert_and_strip_cleanly() {
     assert_eq!(remove_marker_block(&once, "pi-hooks"), base);
 }
 
-/// A block written before the product rename is replaced under the new
-/// markers, never left to stack beside a second copy — and removal finds it.
-#[test]
-fn an_old_generation_marker_block_upserts_and_removes_cleanly() {
-    let base = "# My notes\n";
-    let old = format!(
-        "{base}\n<!-- vstack:append-system pi-hooks begin -->\nold text\n<!-- vstack:append-system pi-hooks end -->\n"
-    );
-    let refreshed = upsert_marker_block(&old, "pi-hooks", "new text");
-    assert!(!refreshed.contains("vstack:append-system"), "{refreshed}");
-    assert!(!refreshed.contains("old text"), "{refreshed}");
-    assert_eq!(
-        refreshed
-            .matches("kendex:append-system pi-hooks begin")
-            .count(),
-        1,
-        "{refreshed}"
-    );
-    assert_eq!(remove_marker_block(&old, "pi-hooks"), base);
-}
-
 /// A document quoting the markers inside a code fence keeps every byte of
 /// the quote and its surroundings: only the real block — a marker alone on
 /// its line, outside any fence — is replaced or removed.
@@ -118,7 +97,7 @@ fn an_old_generation_marker_block_upserts_and_removes_cleanly() {
 fn a_marker_quoted_in_a_code_fence_is_prose_not_a_block() {
     for (open, close) in [("```markdown", "```"), ("~~~", "~~~")] {
         let user = format!(
-            "# Notes\n\nAn example of what kendex writes:\n\n{open}\n<!-- kendex:append-system pi-hooks begin -->\nexample body\n<!-- kendex:append-system pi-hooks end -->\n<!-- vstack:append-system pi-hooks begin -->\nold example\n<!-- vstack:append-system pi-hooks end -->\n{close}\n\nA paragraph the user wrote after the example.\n"
+            "# Notes\n\nAn example of what kendex writes:\n\n{open}\n<!-- kendex:append-system pi-hooks begin -->\nexample body\n<!-- kendex:append-system pi-hooks end -->\n{close}\n\nA paragraph the user wrote after the example.\n"
         );
         let with_block = format!(
             "{user}\n<!-- kendex:append-system pi-hooks begin -->\nreal body\n<!-- kendex:append-system pi-hooks end -->\n"

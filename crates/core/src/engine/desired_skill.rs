@@ -194,37 +194,11 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
 }
 
 /// The `[env]` defaults this skill ships for the project's settings file.
-/// Catalog content is foreign: a skill still shipping the old template name
-/// keeps seeding, the new name winning when both ship. Both at once is said
-/// out loud — the ignored file may be the one a person read, and only the
-/// catalog author can settle which is meant.
 fn seed_settings_env(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()> {
     let current = ctx
         .sealed
         .read_if_exists(&ctx.item_path.join(crate::settings_seed::SETTINGS_TEMPLATE))?;
-    let legacy = ctx.sealed.read_if_exists(
-        &ctx.item_path
-            .join(crate::settings_seed::LEGACY_SETTINGS_TEMPLATE),
-    )?;
-    if current.is_some() && legacy.is_some() {
-        state.warnings.push(super::ItemWarning {
-            kind: ItemKind::Skill,
-            name: ctx.name.to_owned(),
-            harness: None,
-            message: format!(
-                "ships both `{}` and `{}` — settings defaults seed from `{}` only, and the other file is ignored",
-                crate::settings_seed::SETTINGS_TEMPLATE,
-                crate::settings_seed::LEGACY_SETTINGS_TEMPLATE,
-                crate::settings_seed::SETTINGS_TEMPLATE,
-            ),
-            remediation: Some(format!(
-                "keep one template in the skill — fold anything still wanted from `{}` into `{}` and delete it",
-                crate::settings_seed::LEGACY_SETTINGS_TEMPLATE,
-                crate::settings_seed::SETTINGS_TEMPLATE,
-            )),
-        });
-    }
-    if let Some(text) = current.or(legacy) {
+    if let Some(text) = current {
         for entry in crate::settings_seed::extract_env_entries(&text) {
             state.settings_env.push(crate::settings_seed::SeededEnv {
                 entry,

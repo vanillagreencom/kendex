@@ -450,12 +450,6 @@ fn asked_for(
     manifest: &crate::manifest::Manifest,
     state: &DesiredState,
 ) -> bool {
-    // A declaration the expansion deliberately drops has been answered,
-    // not deferred: the legacy drift-hook spelling standing beside the new
-    // one is superseded, and no pass will ever render it.
-    if crate::drift::hook::superseded(manifest, &entry.name) {
-        return false;
-    }
     manifest.hooks.contains_key(&entry.name)
         || state
             .processed

@@ -1,5 +1,7 @@
 use std::collections::BTreeSet;
 
+use crate::apply::{Op, PlannedOp, Pre};
+
 use super::{EngineReport, PlanOptions, plan_scope};
 use crate::env::Env;
 use crate::error::Result;
@@ -325,5 +327,33 @@ fn ensure_manifest_persisted(
     if already {
         return Ok(());
     }
-    crate::rename::insert_manifest_save(env, scope, &mut report.plan, manifest.clone())
+    insert_manifest_save(env, scope, &mut report.plan, manifest.clone())
+}
+
+/// Insert the "persist the manifest" write a plan is missing, bound to the
+/// bytes the file holds now. It leads the plan: every later op was planned
+/// against the manifest this write makes durable.
+pub(crate) fn insert_manifest_save(
+    env: &Env,
+    scope: &Scope,
+    plan: &mut crate::apply::Plan,
+    manifest: Manifest,
+) -> Result<()> {
+    let path = crate::manifest::manifest_path(env, scope);
+    let file = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+    plan.ops.insert(
+        0,
+        PlannedOp {
+            description: format!("Save {file}"),
+            op: Op::WriteManifest {
+                pre: Pre::observed(&path)?,
+                path,
+                manifest: Box::new(manifest),
+            },
+        },
+    );
+    Ok(())
 }

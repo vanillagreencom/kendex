@@ -20,54 +20,6 @@ fn scope_with_manifest() -> (tempfile::TempDir, Env, Scope) {
     (tmp, env, Scope::Project { root: project })
 }
 
-/// A scope still under the old product name, with its manifest at
-/// `vstack.toml`. The rename generation is planned into the same save
-/// that edits it.
-fn legacy_scope() -> (tempfile::TempDir, Env, Scope) {
-    let tmp = tempfile::tempdir().unwrap();
-    let env = Env::fake(tmp.path(), kendex_core::env::FakeOs::Linux);
-    let project = tmp.path().join("dev/app");
-    std::fs::create_dir_all(project.join(".claude")).unwrap();
-    std::fs::write(
-        project.join("vstack.toml"),
-        "schema = 5\n\n[install]\nharnesses = [\"claude\"]\n",
-    )
-    .unwrap();
-    (tmp, env, Scope::Project { root: project })
-}
-
-/// A save on a legacy-named scope rides the rename generation: the
-/// rename moves the old file's bytes to the new name, and the save —
-/// planned after it, bound to the base the copy was read from — lands
-/// at the new name. Planned before the rename it would change the old
-/// file and stale the rename's own source precondition, so no legacy
-/// scope could ever save.
-#[test]
-fn a_save_on_a_legacy_named_scope_lands_at_the_new_name() {
-    let (_tmp, env, scope) = legacy_scope();
-    let path = manifest::manifest_path(&env, &scope);
-    assert!(path.ends_with("vstack.toml"), "{path:?}");
-    let (read, base) = manifest::read_for_mutation(&path).unwrap();
-
-    let mut edited = read.unwrap();
-    edited
-        .skill_instructions
-        .insert("all".into(), "read the plan".into());
-    write_manifest(&env, scope.clone(), edited, base).unwrap();
-
-    let renamed = manifest::manifest_path(&env, &scope);
-    assert!(renamed.ends_with("kendex.toml"), "{renamed:?}");
-    let (saved, _) = manifest::read_for_mutation(&renamed).unwrap();
-    assert_eq!(
-        saved
-            .unwrap()
-            .skill_instructions
-            .get("all")
-            .map(String::as_str),
-        Some("read the plan")
-    );
-}
-
 /// The chain that turns a mid-apply refusal into the stale choice,
 /// exercised whole: the plan's own manifest write binds to the editor
 /// copy's base (`PlanOptions::manifest_base`), a writer lands after
@@ -112,41 +64,14 @@ fn a_writer_landing_after_the_editor_read_is_refused_mid_apply() {
 
     let error = apply::execute(&env, &report.plan, None).unwrap_err();
     assert!(
-        stale_at(&error, &manifest::manifest_paths(&env, &scope)),
+        stale_at(
+            &error,
+            std::slice::from_ref(&manifest::manifest_path(&env, &scope))
+        ),
         "{error:?}"
     );
     let kept = std::fs::read_to_string(&path).unwrap();
     assert!(kept.contains("all = \"kept\""), "{kept}");
-}
-
-/// The legacy variant pins the two names a refusal can arrive under:
-/// the writer lands on vstack.toml after the plan bound the rename to
-/// its bytes, the rename refuses at the old name, and `stale_at` must
-/// match it — a target list knowing only the new name would misread
-/// this as a plain failure. The refused rename also proves the writer
-/// survives: nothing moved, nothing was restored over it.
-#[test]
-fn a_legacy_scope_refusal_names_the_old_file_and_the_writer_survives() {
-    let (_tmp, env, scope) = legacy_scope();
-    let path = manifest::manifest_path(&env, &scope);
-    let (read, base) = manifest::read_for_mutation(&path).unwrap();
-    let editor_copy = read.unwrap();
-    let lock = load_lock(&lock_path(&env, &scope)).unwrap();
-    let options = PlanOptions {
-        manifest_base: Some(base),
-        ..PlanOptions::default()
-    };
-    let report = engine::plan_scope(&env, &scope, &editor_copy, &lock, &options).unwrap();
-
-    // The writer in between: lands after the plan observed the old
-    // file, before the apply moves it.
-    std::fs::write(&path, "external edit").unwrap();
-
-    let error = apply::execute(&env, &report.plan, None).unwrap_err();
-    let targets = manifest::manifest_paths(&env, &scope);
-    assert!(stale_at(&error, &targets), "{error:?}");
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), "external edit");
-    assert!(!targets[0].exists(), "nothing may land at the new name");
 }
 
 /// The mid-apply refusal with the scope root reached through a symlink:
@@ -194,7 +119,10 @@ fn a_refusal_through_a_symlinked_root_is_still_the_stale_choice() {
 
     let error = apply::execute(&env, &report.plan, None).unwrap_err();
     assert!(
-        stale_at(&error, &manifest::manifest_paths(&env, &scope)),
+        stale_at(
+            &error,
+            std::slice::from_ref(&manifest::manifest_path(&env, &scope))
+        ),
         "{error:?}"
     );
 }

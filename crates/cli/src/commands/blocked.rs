@@ -172,18 +172,12 @@ fn also_at(first: &DriftRow, rest: &[&DriftRow]) -> Vec<String> {
 /// hand, calling adoption safe names a command that was never offered.
 fn compared_line(compared: Option<&Comparison>, offer: Option<&Offer>) -> Option<String> {
     let compared = compared?;
-    // What the frontmatter claims about itself, said as that: a catalog
-    // still named vstack stamps the same token today.
-    let origin = match compared.vstack_stamped {
-        true => " (it carries a source: vstack stamp)",
-        false => "",
-    };
     if compared.identical() {
         let safe = match offer.is_some_and(|offer| offer.adopt) {
             true => " — adopt is safe",
             false => "",
         };
-        return Some(format!("identical to the catalog{safe}{origin}"));
+        return Some(format!("identical to the catalog{safe}"));
     }
     let named: Vec<String> = compared
         .differing
@@ -197,7 +191,7 @@ fn compared_line(compared: Option<&Comparison>, offer: Option<&Offer>) -> Option
         n => format!(", and {n} more"),
     };
     Some(format!(
-        "differs from the catalog in {total} file{}: {}{more}{origin}",
+        "differs from the catalog in {total} file{}: {}{more}",
         plural(total),
         named.join(", ")
     ))
