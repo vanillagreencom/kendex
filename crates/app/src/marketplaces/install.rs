@@ -1,0 +1,141 @@
+//! Installing from a subscription: the picker's rows, and the install
+//! itself.
+//!
+//! Which tools an install lands on is a choice made here rather than taken
+//! from the scope's manifest — detection is re-read at install time, so a
+//! tool added since the scope was set up is offerable and one removed since
+//! does not read as present.
+
+use kendex_core::apply;
+use kendex_core::engine::ops::{self as engine_ops, AddRequest};
+use kendex_core::manifest::Method;
+use kendex_core::model::{HarnessId, ItemKind, Scope};
+use kendex_core::source_ops;
+use serde::{Deserialize, Serialize};
+use specta::Type;
+
+use super::{AvailablePackage, env, marketplace_packages};
+use kendex_core::source::browse::Catalog;
+
+/// One row of the install picker: a tool the scope can install to, whether
+/// this machine has it, and whether it reads the shared `.agents` tree
+/// rather than a directory of its own.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallTarget {
+    pub harness: HarnessId,
+    pub detected: bool,
+    pub shares_the_universal_tree: bool,
+}
+
+/// Where an install could land, for the picker the install flow draws.
+/// Detection is read now rather than taken from the scope's manifest: a
+/// tool added since the scope was set up has to be offerable, and one
+/// removed since must not read as present.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn install_targets(scope: Scope) -> Result<Vec<InstallTarget>, String> {
+    let env = env()?;
+    let detected = kendex_core::engine::ops::detected_harnesses(&env);
+    Ok(HarnessId::ALL
+        .into_iter()
+        .filter(|harness| {
+            kendex_core::harness::installable(*harness)
+                && ItemKind::ALL
+                    .iter()
+                    .any(|kind| kendex_core::harness::installs_here(*harness, *kind, &scope))
+        })
+        .map(|harness| InstallTarget {
+            harness,
+            detected: detected.contains(&harness),
+            shares_the_universal_tree: kendex_core::engine::desired::native_dir(
+                &env,
+                &scope,
+                harness,
+                ItemKind::Skill,
+            )
+            .is_some_and(|dir| dir.ends_with(".agents/skills")),
+        })
+        .collect())
+}
+
+/// One selected package, by the kind and name the catalog offers it under.
+#[derive(Debug, Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallItem {
+    pub kind: ItemKind,
+    pub name: String,
+}
+
+/// Install packages or a curated set from one subscription. `destination`
+/// redirects the install from the scope being browsed into a project: the
+/// project gains the personal subscription first (§4.1), then the add runs
+/// there — every write lands in exactly one scope. `harnesses` and `method`
+/// carry the picker's answer; absent, the scope's own install defaults
+/// decide, brought up to date against this machine by the add itself.
+#[tauri::command(async)]
+#[specta::specta]
+#[allow(clippy::too_many_arguments)]
+pub fn marketplace_install(
+    scope: Scope,
+    source: String,
+    items: Vec<InstallItem>,
+    bundle: Option<String>,
+    destination: Option<Scope>,
+    hold: bool,
+    harnesses: Option<Vec<HarnessId>>,
+    method: Option<Method>,
+) -> Result<Vec<AvailablePackage>, String> {
+    if items.is_empty() && bundle.is_none() {
+        return Err("nothing selected to install".to_owned());
+    }
+    let env = env()?;
+    let target = destination.unwrap_or_else(|| scope.clone());
+    let redirected = target != scope;
+    if redirected {
+        if !matches!(&target, Scope::Project { .. }) {
+            return Err("an install can only be redirected into a project".to_owned());
+        }
+        if scope != Scope::Global {
+            return Err("only a personal subscription can install into a project".to_owned());
+        }
+    }
+    let mut request = AddRequest {
+        source: Some(source.clone()),
+        hold,
+        harnesses,
+        method,
+        ..AddRequest::default()
+    };
+    request.bundles.extend(bundle);
+    for item in items {
+        match item.kind {
+            ItemKind::Agent => request.agents.push(item.name),
+            ItemKind::Skill => request.skills.push(item.name),
+            ItemKind::Hook => request.hooks.push(item.name),
+            ItemKind::Command => request.commands.push(item.name),
+            ItemKind::McpServer => request.mcp_servers.push(item.name),
+            // A plugin is its registry's curated set, so it installs as one.
+            ItemKind::Plugin => request.bundles.push(item.name),
+            // Passed through so the engine's uniform refusal answers it.
+            ItemKind::PiExtension => request.pi_extensions.push(item.name),
+        }
+    }
+    // A whole set carries its own members; expanding agents' skills on top
+    // would install beyond what the set declares.
+    request.no_auto_skills = !request.bundles.is_empty();
+    // Redirected into a project, the subscription and the packages are one
+    // plan: a refused install leaves the project subscribed to nothing.
+    let report = match &target {
+        Scope::Project { root } if redirected => {
+            source_ops::install_project_from_personal(&env, root, &source, &request)
+        }
+        _ => engine_ops::add(&env, &target, &request),
+    }
+    .map_err(|e| e.to_string())?;
+    apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
+    marketplace_packages(Catalog::Subscription {
+        scope: target,
+        source,
+    })
+}

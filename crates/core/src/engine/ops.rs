@@ -24,7 +24,7 @@ const DECLARED_KINDS: [ItemKind; 6] = [
 /// The tools on this machine a fresh manifest should install to — a tool
 /// kendex can only read is detected and listed, never seeded as a target
 /// whose every install would silently do nothing.
-fn detected_harnesses(env: &Env) -> Vec<HarnessId> {
+pub fn detected_harnesses(env: &Env) -> Vec<HarnessId> {
     crate::harness::all_adapters()
         .iter()
         .filter_map(|a| {
@@ -33,6 +33,32 @@ fn detected_harnesses(env: &Env) -> Vec<HarnessId> {
         })
         .filter(|harness| crate::harness::installable(*harness))
         .collect()
+}
+
+/// Bring a manifest's install targets up to date with the machine, and say
+/// which tools that added. Detection is re-read at install time rather than
+/// trusted from the manifest seed: a tool installed after the scope was set
+/// up would otherwise never receive anything, and nothing would say why.
+///
+/// Only additive. A tool the list already names keeps whatever it has, even
+/// if its directory has since gone — narrowing here would leave installed
+/// files with nothing declaring them.
+pub(crate) fn adopt_detected(env: &Env, manifest: &mut Manifest) -> Option<String> {
+    let gained: Vec<HarnessId> = detected_harnesses(env)
+        .into_iter()
+        .filter(|harness| !manifest.install.harnesses.contains(harness))
+        .collect();
+    if gained.is_empty() {
+        return None;
+    }
+    manifest.install.harnesses.extend(gained.iter().copied());
+    Some(
+        gained
+            .iter()
+            .map(|harness| harness.display_name().to_owned())
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
 }
 
 /// Load the scope's manifest for mutation, seeding a fresh one (with the

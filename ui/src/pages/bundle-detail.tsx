@@ -5,6 +5,10 @@ import {
   memberKey,
 } from "@/components/marketplaces/bundle-member-row";
 import { DestinationSelect } from "@/components/marketplaces/destination-select";
+import {
+  type Choice,
+  HarnessSelect,
+} from "@/components/marketplaces/harness-select";
 import { RepoAction } from "@/components/marketplaces/repo-action";
 import { useCatalog } from "@/components/marketplaces/use-catalog";
 import { PageHeader } from "@/components/page-header";
@@ -44,6 +48,10 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
   const busy = useMarketplacesStore((s) => s.busy);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [destination, setDestination] = useState<Scope | null>(null);
+  const [choice, setChoice] = useState<Choice>({
+    harnesses: null,
+    method: "symlink",
+  });
 
   useEffect(() => {
     if (ready) void loadBundle(catalog, bundle);
@@ -78,6 +86,7 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
       items: items.map((m) => ({ kind: m.kind, name: m.name })),
       bundle: items.length === 0 ? bundle : null,
       destination: redirected,
+      delivery: choice,
     }).then((ok) => {
       if (ok) {
         setSelected(new Set());
@@ -163,6 +172,11 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
                       browsing={scope}
                       value={target}
                       onChange={setDestination}
+                    />
+                    <HarnessSelect
+                      scope={target}
+                      value={choice}
+                      onChange={setChoice}
                     />
                     <Button
                       variant="outline"

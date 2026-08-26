@@ -16,6 +16,9 @@ pub struct AddFlags {
     /// Target harnesses (comma-separated)
     #[arg(long)]
     harness: Vec<String>,
+    /// Target every harness kendex can install to at this scope
+    #[arg(long, conflicts_with = "harness")]
+    all_harnesses: bool,
     /// Install specific agents (comma-separated)
     #[arg(short = 'a', long)]
     agent: Vec<String>,
@@ -41,8 +44,11 @@ pub struct AddFlags {
     #[arg(long, visible_alias = "pi-package")]
     pi_extension: Vec<String>,
     /// Copy instead of symlink
-    #[arg(long)]
+    #[arg(long, conflicts_with = "method")]
     copy: bool,
+    /// Delivery: symlink (one shared tree) or copy (a tree per harness)
+    #[arg(long, value_parser = ["symlink", "copy"])]
+    method: Option<String>,
     /// Skip confirmation prompts
     #[arg(short = 'y', long)]
     yes: bool,
@@ -74,7 +80,9 @@ impl AddFlags {
             command: self.command,
             mcp_server: self.mcp_server,
             pi_extension: self.pi_extension,
+            all_harnesses: self.all_harnesses,
             copy: self.copy,
+            method: self.method,
             yes: self.yes,
             all: self.all,
             clobber: self.clobber,

@@ -4,6 +4,10 @@ import { MarkdownView } from "@/components/markdown-view";
 import { AvailableAside } from "@/components/marketplaces/available-aside";
 import { CatalogFilePreview } from "@/components/marketplaces/catalog-file-preview";
 import { DestinationSelect } from "@/components/marketplaces/destination-select";
+import {
+  type Choice,
+  HarnessSelect,
+} from "@/components/marketplaces/harness-select";
 import { RepoAction } from "@/components/marketplaces/repo-action";
 import { useCatalog } from "@/components/marketplaces/use-catalog";
 import { PageHeader } from "@/components/page-header";
@@ -43,6 +47,10 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
   const [view, setView] = useState<PackageView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [destination, setDestination] = useState<Scope | null>(null);
+  const [choice, setChoice] = useState<Choice>({
+    harnesses: null,
+    method: "symlink",
+  });
 
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   // The address can change under an in-flight read — a repository page
@@ -92,6 +100,7 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
       source,
       items: [{ kind, name }],
       destination: target !== scope ? target : null,
+      delivery: choice,
     }).then((ok) => {
       // Installed, the same page carries on in its installed mode — the
       // address gains the scope it landed in.
@@ -133,6 +142,11 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
                 browsing={scope}
                 value={target}
                 onChange={setDestination}
+              />
+              <HarnessSelect
+                scope={target}
+                value={choice}
+                onChange={setChoice}
               />
               <Button disabled={busy || !view} onClick={doInstall}>
                 {busy ? "Installing…" : "Install"}

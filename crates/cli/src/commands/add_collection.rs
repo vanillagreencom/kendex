@@ -126,7 +126,7 @@ fn install_step(
             pi_extensions: Vec::new(),
             all: false,
             harnesses: None,
-            copy: false,
+            method: None,
             no_auto_skills: false,
             optional: Vec::new(),
             bundles: Vec::new(),

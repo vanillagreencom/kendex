@@ -6,7 +6,6 @@
 //! opened from the Community tab before subscribing.
 
 use kendex_core::apply;
-use kendex_core::engine::ops::{self as engine_ops, AddRequest};
 use kendex_core::env::Env;
 use kendex_core::library::{self, ProvenanceRow};
 use kendex_core::manifest::{Manifest, ManifestFile, manifest_path};
@@ -17,8 +16,10 @@ use kendex_core::source::browse::{
 use kendex_core::source::{CatalogFinding, CatalogMode, MarketplaceMeta, SourceConfig};
 use kendex_core::source_ops;
 use kendex_core::source_read::SealedSource;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use specta::Type;
+
+pub mod install;
 
 fn env() -> Result<Env, String> {
     Env::detect().map_err(|e| e.to_string())
@@ -188,80 +189,6 @@ pub fn marketplace_package_file(
 ) -> Result<kendex_core::engine::ItemSource, String> {
     let env = env()?;
     browse::package_file(&env, &catalog, kind, &name, &path).map_err(|e| e.to_string())
-}
-
-/// One selected package, by the kind and name the catalog offers it under.
-#[derive(Debug, Clone, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct InstallItem {
-    pub kind: ItemKind,
-    pub name: String,
-}
-
-/// Install packages or a curated set from one subscription. `destination`
-/// redirects the install from the scope being browsed into a project: the
-/// project gains the personal subscription first (§4.1), then the add runs
-/// there — every write lands in exactly one scope.
-#[tauri::command(async)]
-#[specta::specta]
-pub fn marketplace_install(
-    scope: Scope,
-    source: String,
-    items: Vec<InstallItem>,
-    bundle: Option<String>,
-    destination: Option<Scope>,
-    hold: bool,
-) -> Result<Vec<AvailablePackage>, String> {
-    if items.is_empty() && bundle.is_none() {
-        return Err("nothing selected to install".to_owned());
-    }
-    let env = env()?;
-    let target = destination.unwrap_or_else(|| scope.clone());
-    let redirected = target != scope;
-    if redirected {
-        if !matches!(&target, Scope::Project { .. }) {
-            return Err("an install can only be redirected into a project".to_owned());
-        }
-        if scope != Scope::Global {
-            return Err("only a personal subscription can install into a project".to_owned());
-        }
-    }
-    let mut request = AddRequest {
-        source: Some(source.clone()),
-        hold,
-        ..AddRequest::default()
-    };
-    request.bundles.extend(bundle);
-    for item in items {
-        match item.kind {
-            ItemKind::Agent => request.agents.push(item.name),
-            ItemKind::Skill => request.skills.push(item.name),
-            ItemKind::Hook => request.hooks.push(item.name),
-            ItemKind::Command => request.commands.push(item.name),
-            ItemKind::McpServer => request.mcp_servers.push(item.name),
-            // A plugin is its registry's curated set, so it installs as one.
-            ItemKind::Plugin => request.bundles.push(item.name),
-            // Passed through so the engine's uniform refusal answers it.
-            ItemKind::PiExtension => request.pi_extensions.push(item.name),
-        }
-    }
-    // A whole set carries its own members; expanding agents' skills on top
-    // would install beyond what the set declares.
-    request.no_auto_skills = !request.bundles.is_empty();
-    // Redirected into a project, the subscription and the packages are one
-    // plan: a refused install leaves the project subscribed to nothing.
-    let report = match &target {
-        Scope::Project { root } if redirected => {
-            source_ops::install_project_from_personal(&env, root, &source, &request)
-        }
-        _ => engine_ops::add(&env, &target, &request),
-    }
-    .map_err(|e| e.to_string())?;
-    apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
-    marketplace_packages(Catalog::Subscription {
-        scope: target,
-        source,
-    })
 }
 
 /// What subscribing declared, after the plan ran.

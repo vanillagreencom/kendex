@@ -7,13 +7,13 @@ import {
   type Catalog,
   type CatalogSummary,
   commands,
-  type InstallItem,
   type MarketplaceRow,
   type Scope,
 } from "@/bindings";
 import { MARKETPLACES_NEEDS_CHECK_NOTE } from "@/lib/copy-marketplaces";
 import { settled } from "@/lib/settled";
 import { landings } from "./landings";
+import { type InstallRequest, installActions } from "./marketplaces-install";
 import {
   bundleKey,
   catalogKey,
@@ -23,7 +23,6 @@ import {
   readErrorKey,
   readGeneration,
   refreshDownstream,
-  subscription,
   without,
 } from "./marketplaces-shared";
 import { sourceActions } from "./marketplaces-sources";
@@ -161,13 +160,7 @@ interface MarketplacesState {
   ) => Promise<boolean>;
   toggle: (scope: Scope, source: string, enabled: boolean) => Promise<void>;
   checkForUpdates: () => Promise<void>;
-  install: (opts: {
-    scope: Scope;
-    source: string;
-    items: InstallItem[];
-    bundle?: string | null;
-    destination?: Scope | null;
-  }) => Promise<boolean>;
+  install: (request: InstallRequest) => Promise<boolean>;
 }
 
 // Overview reads overlap — Home's mount-time load against the page's own,
@@ -286,42 +279,5 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
   },
 
   ...sourceActions(set, get),
-
-  install: async ({ scope, source, items, bundle = null, destination }) => {
-    set({ busy: true });
-    let response: Awaited<ReturnType<typeof commands.marketplaceInstall>>;
-    try {
-      response = await commands.marketplaceInstall(
-        scope,
-        source,
-        items,
-        bundle,
-        destination ?? null,
-        false,
-      );
-    } finally {
-      set({ busy: false });
-    }
-    if (response.status === "error") {
-      toast.error(response.error);
-      return false;
-    }
-    // The command answers with the refreshed package list for this
-    // subscription, so the table flips to Installed without a second query.
-    const key = catalogKey(subscription(destination ?? scope, source));
-    set((state) => ({
-      packages: { ...state.packages, [key]: response.data },
-      // Member states in every open set moved with this install.
-      bundles: {},
-      error: null,
-    }));
-    const what = bundle
-      ? `the ${bundle} bundle`
-      : items.length === 1
-        ? items[0].name
-        : `${items.length} packages`;
-    toast.success(`Installed ${what}`);
-    await refreshDownstream();
-    return true;
-  },
+  ...installActions(set),
 }));

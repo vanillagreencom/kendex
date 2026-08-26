@@ -61,6 +61,9 @@ an outside contributor.
 
 ### Added
 
+- Installing asks where it goes: the app and `kendex add` at a terminal offer
+  every supported tool with the ones you have pre-checked, plus symlink or
+  copy delivery. `--harness`, `--all-harnesses`, `--method` do it flag-only.
 - The app backend checks for new kendex releases at most once every six hours
   and stores the last result plus preferences for the upcoming notice controls.
 - Moving an existing repo onto kendex works now: `kendex adopt` keeps files

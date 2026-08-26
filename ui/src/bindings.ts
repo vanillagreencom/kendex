@@ -32,6 +32,13 @@ export const commands = {
 	registerProject: (path: string) => typedError<SettingsRead, string>(__TAURI_INVOKE("register_project", { path })),
 	unregisterProject: (path: string) => typedError<SettingsRead, string>(__TAURI_INVOKE("unregister_project", { path })),
 	/**
+	 *  What a project already holds that nothing manages, for the offer the
+	 *  registration flow puts on screen. Read after the project is registered
+	 *  rather than folded into that call: registering must not fail because a
+	 *  scan did, and the offer is a second step the person answers.
+	 */
+	projectOffers: (root: string) => typedError<DriftRow_Serialize[], string>(__TAURI_INVOKE("project_offers", { root })),
+	/**
 	 *  Install the session-start drift report hook for a scope: script into the
 	 *  scope's local source, declaration into its manifest, then the ordinary
 	 *  apply renders it. The offer surface (project registration) calls this
@@ -158,9 +165,18 @@ export const commands = {
 	 *  Install packages or a curated set from one subscription. `destination`
 	 *  redirects the install from the scope being browsed into a project: the
 	 *  project gains the personal subscription first (§4.1), then the add runs
-	 *  there — every write lands in exactly one scope.
+	 *  there — every write lands in exactly one scope. `harnesses` and `method`
+	 *  carry the picker's answer; absent, the scope's own install defaults
+	 *  decide, brought up to date against this machine by the add itself.
 	 */
-	marketplaceInstall: (scope: Scope, source: string, items: InstallItem[], bundle: string | null, destination: { scope: "global" } | { scope: "project"; root: string } | null, hold: boolean) => typedError<AvailablePackage[], string>(__TAURI_INVOKE("marketplace_install", { scope, source, items, bundle, destination, hold })),
+	marketplaceInstall: (scope: Scope, source: string, items: InstallItem[], bundle: string | null, destination: { scope: "global" } | { scope: "project"; root: string } | null, hold: boolean, harnesses: HarnessId[] | null, method: "symlink" | "copy" | null) => typedError<AvailablePackage[], string>(__TAURI_INVOKE("marketplace_install", { scope, source, items, bundle, destination, hold, harnesses, method })),
+	/**
+	 *  Where an install could land, for the picker the install flow draws.
+	 *  Detection is read now rather than taken from the scope's manifest: a
+	 *  tool added since the scope was set up has to be offerable, and one
+	 *  removed since must not read as present.
+	 */
+	installTargets: (scope: Scope) => typedError<InstallTarget[], string>(__TAURI_INVOKE("install_targets", { scope })),
 	/**
 	 *  Subscribe a scope to a marketplace: `owner/repo[@rev]`, a git URL, a
 	 *  GitHub tree URL, a skills.sh package URL, or a local folder.
@@ -1228,6 +1244,17 @@ export type InstallState =
  *  installing it again clears the record (invariant 2 stays intact).
  */
 "removed-by-you";
+
+/**
+ *  One row of the install picker: a tool the scope can install to, whether
+ *  this machine has it, and whether it reads the shared `.agents` tree
+ *  rather than a directory of its own.
+ */
+export type InstallTarget = {
+	harness: HarnessId,
+	detected: boolean,
+	sharesTheUniversalTree: boolean,
+};
 
 /**  One declared item: `[agents.<name>]` / `[skills.<name>]`. */
 export type ItemDecl = ItemDecl_Serialize | ItemDecl_Deserialize;

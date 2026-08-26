@@ -3,14 +3,17 @@ use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
 use kendex_core::model::Scope;
 
+use kendex_core::manifest::Method;
+
 use super::engine_common::{confirm_and_execute, parse_harnesses, print_report};
-use super::{CliResult, resolve_scopes, say};
+use super::{CliResult, harness_picker, resolve_scopes, say};
 use crate::scope::ScopeFilter;
 
 pub struct AddArgs {
     pub source: Option<String>,
     pub global: bool,
     pub harness: Vec<String>,
+    pub all_harnesses: bool,
     pub agent: Vec<String>,
     pub skill: Vec<String>,
     pub bundle: Vec<String>,
@@ -20,6 +23,7 @@ pub struct AddArgs {
     pub mcp_server: Vec<String>,
     pub pi_extension: Vec<String>,
     pub copy: bool,
+    pub method: Option<String>,
     pub yes: bool,
     pub all: bool,
     pub clobber: bool,
@@ -89,6 +93,22 @@ pub fn run(env: &Env, args: AddArgs) -> CliResult {
         }
     }
 
+    // Flags settle it where they were given; otherwise a terminal is asked
+    // and a session without one keeps the scope's own defaults.
+    let mut harnesses = match (args.all_harnesses, args.harness.is_empty()) {
+        (true, _) => Some(harness_picker::installable_at(&scope)),
+        (false, false) => Some(parse_harnesses(&args.harness)?),
+        (false, true) => None,
+    };
+    let mut method = match (args.copy, args.method.as_deref()) {
+        (true, _) | (_, Some("copy")) => Some(Method::Copy),
+        (_, Some("symlink")) => Some(Method::Symlink),
+        _ => None,
+    };
+    let chosen = harness_picker::ask(env, &scope, harnesses.is_some(), method, args.yes)?;
+    harnesses = harnesses.or(chosen.harnesses);
+    method = chosen.method;
+
     let request = AddRequest {
         source: args.source,
         agents,
@@ -98,12 +118,8 @@ pub fn run(env: &Env, args: AddArgs) -> CliResult {
         mcp_servers,
         pi_extensions,
         all: args.all,
-        harnesses: if args.harness.is_empty() {
-            None
-        } else {
-            Some(parse_harnesses(&args.harness)?)
-        },
-        copy: args.copy,
+        harnesses,
+        method,
         no_auto_skills: args.no_auto_skills,
         optional: split(&args.optional),
         bundles,
