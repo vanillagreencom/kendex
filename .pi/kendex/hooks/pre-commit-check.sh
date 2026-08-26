@@ -3,9 +3,9 @@
 # name: pre-commit-check
 # event: PreToolUse
 # matcher: Bash
-# description: On a git commit, defer to the working directory's armed git pre-commit hook (kendex guard install arms one); where none is armed there, run the growth-guards package's own pre-commit chain from the working directory as the fallback gate — the same script the armed shim runs, found the same way. Where one is armed, a command that sidesteps it with git's no-verify flag, -n, or a core.hooksPath override is refused: git would skip the commit-msg hook too, and no fallback here can check the message. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
-# safety: Prevents committing unchecked code from the working directory when it has no armed git pre-commit hook, and refuses a command that bypasses an armed hook (no-verify, -n) or injects git configuration that could (any -c, --config-env, or GIT_CONFIG_* word — core.hooksPath and include.path among them) rather than half-checking it; a commit aimed at another repository is that repository's armed hook's to gate.
-# timeout: 1800
+# description: On a git commit, defer to the working directory's armed git pre-commit hook (kendex guard install arms one). Where none is armed there, the commit is refused naming that command: arming is the local act that says a person wants this repository's committed scripts run on their commits, and this hook never runs them on their behalf. Where one is armed, a command that sidesteps it with git's no-verify flag, -n, or a core.hooksPath override is refused: git would skip the commit-msg hook too, and nothing here can check the message. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
+# safety: Refuses a commit from a working directory with no armed git pre-commit hook rather than running that repository's own scripts to check it, and refuses a command that bypasses an armed hook (no-verify, -n) or injects git configuration that could (any -c, --config-env, or GIT_CONFIG_* word — core.hooksPath and include.path among them); a commit aimed at another repository is that repository's armed hook's to gate.
+# timeout: 60
 # ---
 
 set -euo pipefail
@@ -15,8 +15,8 @@ INPUT=$(cat)
 # Word-order detection, no shell parsing: the authoritative check is the
 # repository's own git pre-commit hook, which git runs in the right repo
 # whatever the command's quoting, substitutions, or directory hops. This
-# lane only decides whether to consult the fallback, so a miss here skips
-# feedback, never a check — and `git log --grep=commit` merely pays for a
+# lane only decides whether the commit is deferred or refused, so a miss
+# here skips a refusal, never a check — and `git log --grep=commit` merely pays for a
 # guard run it did not need.
 #
 # The payload is JSON, where a string never spans lines: joining the
@@ -52,7 +52,7 @@ elsewhere_notice() {
 # is refused, not covered: git's no-verify flag — spelled out or cut to
 # any unique prefix, as git allows, or `-n` alone or inside a short-flag
 # cluster — tells git to skip the commit-msg hook as well, and the
-# message is not knowable here, so no fallback could stand in; and any
+# message is not knowable here, so nothing could stand in; and any
 # configuration injected on the command line — a `-c` word, a
 # `--config-env` word, a `GIT_CONFIG_*` assignment — can point git at
 # hooks this lane did not inspect, by `core.hooksPath` directly or by an
@@ -76,66 +76,13 @@ if [ -x "$HOOKS_DIR/pre-commit" ]; then
 fi
 elsewhere_notice
 
-# The chain is the growth-guards package's own script, found the way the
-# armed shim finds it: the MAIN checkout first, then this work tree. Linked
-# worktrees share one hooks directory but need not carry their own copy of
-# the skills, so a linked worktree with no copy is gated by the main
-# checkout's — and searching only this tree would find nothing and refuse a
-# commit the armed shim would have checked. No binary is consulted: the
-# scripts are committed with the repository, so this lane gates a checkout
-# on a machine that never installed kendex, exactly as the shim does.
-COMMON=$(git rev-parse --git-common-dir 2>/dev/null) || COMMON=""
-case "$COMMON" in "") ;; /*) ;; *) COMMON="$PWD/$COMMON" ;; esac
-MAIN="${COMMON%/*}"
-TOP=$(git rev-parse --show-toplevel 2>/dev/null) || TOP=""
-CHAIN_SCRIPT=""
-# The helper's own first choice, before any search: the scripts directory
-# baked into it by whichever install armed this repository. That copy need
-# not be one the roots below reach, and it is the one an armed shim runs, so
-# a fallback that skipped it could judge a commit by a different copy than
-# the hook would.
-HELPER=$(git rev-parse --git-path hooks 2>/dev/null)/kendex-guards
-if [ -r "$HELPER" ]; then
-  BAKED=$(sed -n "s/^installed_scripts='\(.*\)'$/\1/p" "$HELPER" | head -1)
-  # The installer writes a POSIX single-quote escape for an apostrophe in
-  # the path; decode it the same way it was built.
-  SQ="'"
-  ENC="$SQ\\$SQ$SQ"
-  # The pattern is quoted: unquoted, bash reads its backslash as a glob
-  # escape and the replacement silently matches nothing.
-  BAKED="${BAKED//"$ENC"/$SQ}"
-  [ -n "$BAKED" ] && [ -x "$BAKED/pre-commit" ] && CHAIN_SCRIPT="$BAKED/pre-commit"
-fi
-if [ -z "$CHAIN_SCRIPT" ]; then
-  for root in "$MAIN" "$TOP"; do
-    [ -n "$root" ] || continue
-    for base in .agents/skills .claude/skills .cursor/rules .opencode/skills skills; do
-      if [ -x "$root/$base/growth-guards/scripts/pre-commit" ]; then
-        CHAIN_SCRIPT="$root/$base/growth-guards/scripts/pre-commit"
-        break 2
-      fi
-    done
-  done
-fi
-if [ -z "$CHAIN_SCRIPT" ]; then
-  echo "pre-commit-check: no git pre-commit hook will run for this commit and no growth-guards skill is installed under $PWD, so nothing can check it — install it (kendex add --skill growth-guards) and arm the hooks (kendex guard install), or remove this hook" >&2
-  exit 2
-fi
-# The frontmatter timeout budgets a cold clippy build on top of the other
-# lanes; the harness cancelling this hook at that budget is the one way
-# left past the gate, so the budget stays above what the chain can take.
-CHAIN=$("$CHAIN_SCRIPT" 2>&1) || {
-  printf '%s\n' "$CHAIN" >&2
-  echo "pre-commit-check: commit blocked by the failures above (no git pre-commit hook runs for this commit; kendex guard install arms one, which git runs unless the command bypasses it)" >&2
-  exit 2
-}
-# A lane that skipped itself said so for a reason; a clean verdict must
-# not swallow it. grep's 1 is "nothing skipped"; anything else is grep
-# itself failing, which no clean verdict may paper over.
-status=0
-printf '%s\n' "$CHAIN" | grep -F 'skipped' >&2 || status=$?
-[ "$status" -le 1 ] || {
-  echo "pre-commit-check: could not scan the chain report for skipped lanes (grep exited $status)" >&2
-  exit 2
-}
-exit 0
+# Nothing is armed here, and this lane does not stand in.
+#
+# Arming is the one act that says a person wants this repository's committed
+# scripts to run on their commits, and it is local: git clones no hooks, so
+# a fresh checkout of anything has no execution behind it. A fallback that
+# ran the repository's own script would put that execution back — on the
+# first commit an agent attempts, out of a checkout nobody armed. So the
+# commit is refused, and the refusal names the one command that fixes it.
+echo "pre-commit-check: no git pre-commit hook is armed in $PWD, so nothing checks this commit — arm them with 'kendex guard install' (this hook does not run a repository's own scripts on its behalf), or remove this hook" >&2
+exit 2

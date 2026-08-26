@@ -18,6 +18,9 @@ an outside contributor.
   installed: reading a clone's status runs none of its code.
 - `kendex check` reads a repository's hook files itself instead of running
   its guard scripts, so reading a clone's status executes none of its code.
+- **Breaking:** the `pre-commit-check` hook refuses a commit where no git
+  hook is armed, naming `kendex guard install`, instead of running the
+  repository's own guard scripts — arm the hooks to keep commits gated.
 - Agents no longer promise a `{{KENDEX_FAILURE_REF}}` that nothing defines:
   the failure-routing line now points at `kendex report --help`.
 - OpenCode, Gemini, and Copilot agent renders list required skills at

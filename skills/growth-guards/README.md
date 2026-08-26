@@ -69,19 +69,20 @@ checkout, because reading a repository's status must not execute its code.
 kendex implements no check of its own; the verdicts a commit is judged by
 are all this skill's.
 
-**The `pre-commit-check` harness hook is a stand-in, not a second opinion.**
-Where a git pre-commit hook is armed, it steps aside: git will run the gate
-itself, and validating twice would only double the wait. It does two things
-the git hook cannot. It refuses a command that would sidestep an armed hook
-(`--` + `no-verify`, `-n`, or injected git configuration), because git would
-skip the message gate too and no fallback can check a message it never sees.
-And where nothing is armed, it runs this skill's `scripts/pre-commit` itself,
-found the same way the shim finds it, so an unarmed repository is not an
-ungated one. It gates its own working directory and no other.
+**The `pre-commit-check` harness hook never stands in.** Where a git
+pre-commit hook is armed, it steps aside: git runs the gate itself, and
+validating twice would only double the wait. It does one thing the git hook
+cannot — refuse a command that would sidestep an armed hook (`--no-verify`, the
+short flag, or injected git configuration), because git would skip the
+message gate too and nothing can check a message it never sees. And where
+nothing is armed it refuses the commit, naming `kendex guard install`. It
+runs no script of the repository's on anyone's behalf: arming is the local
+act that asks for that, and a fresh clone has no hooks and so no execution
+behind it. It gates its own working directory and no other.
 
-Order, then: git hooks where they exist, the harness hook standing in where
-they do not, and a refusal where neither can judge. No layer ever passes a
-commit another layer would have blocked.
+Order, then: git hooks where they exist, and a refusal where they do not. No
+layer ever passes a commit another layer would have blocked, and no layer
+runs a repository's code that nobody armed.
 
 ## todo-ban
 

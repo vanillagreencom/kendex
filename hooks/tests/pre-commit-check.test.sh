@@ -3,7 +3,7 @@
 # git commit with no shell parsing; deference to the repository's own armed
 # git pre-commit hook (never a second validation) unless the command
 # sidesteps it; the growth-guards package's own pre-commit script as the
-# fallback gate where nothing will run; fail-closed when neither an armed
+# refusal where nothing is armed; fail-closed when neither an armed
 # hook nor that package exists, and when the payload names a command the
 # hook cannot read. Shell forms the old parser refused — `$(…)`, backticks,
 # `cd "$dir"`, unexpanded variables — must pass through without a refusal of
@@ -23,40 +23,10 @@ FAIL=0
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-CHAIN_LOG="$TMP_ROOT/chain.log"
 ERR_FILE="$TMP_ROOT/stderr"
-
-# --- the package's pre-commit script, stubbed --------------------------------
-# Written where the hook looks for it: under the repository's own
-# `.agents/skills`, the first root in the search list. CHAIN_EXIT=1 plays a
-# lane violation, CHAIN_EXIT=2 a guard that could not run, both in the
-# chain's real wording.
-install_stub_chain() {
-  local scripts="$1/.agents/skills/growth-guards/scripts"
-  mkdir -p "$scripts"
-  cat >"$scripts/pre-commit" <<'EOF'
-#!/usr/bin/env bash
-echo "chain ran" >>"$CHAIN_LOG"
-echo "=== pre-commit: growth-guards all"
-echo "growth-guards: OK — enabled checks clean"
-case "${CHAIN_EXIT:-0}" in
-  1)
-    echo "=== growth-guards: todo-ban"
-    echo "todo-ban FAIL work marker: src/a.rs:3:the marker line"
-    echo "pre-commit: violations — commit blocked; see the failures above"
-    ;;
-  2)
-    echo "pre-commit: step 'growth-guards all' did not complete (exit 2)"
-    echo "pre-commit: a guard could not complete — commit blocked; fix the errors above (bypass only with git commit --no-verify)"
-    ;;
-esac
-if [ "${CHAIN_SKIP:-0}" != "0" ]; then
-  echo "=== pre-commit: preflight not installed — skipped (no preflight skill)"
-fi
-exit "${CHAIN_EXIT:-0}"
-EOF
-  chmod +x "$scripts/pre-commit"
-}
+# Anything a fixture's own script writes when something runs it. Nothing
+# should ever run one: this hook defers or refuses, and never stands in.
+RAN_LOG="$TMP_ROOT/ran.log"
 
 # A PATH holding the tools the hook needs and nothing named kendex. Every
 # run uses it: no lane of this hook may depend on the binary any more.
@@ -72,14 +42,13 @@ done
 run_hook() {
   local dir="$1" payload="$2"
   shift 2
-  : >"$CHAIN_LOG"
   set +e
-  (cd "$dir" && env PATH="$NO_KENDEX_BIN" CHAIN_LOG="$CHAIN_LOG" "$@" \
+  (cd "$dir" && env PATH="$NO_KENDEX_BIN" "$@" \
     bash "$HOOK" <<<"$payload") >/dev/null 2>"$ERR_FILE"
   rc=$?
   set -e
   err="$(cat "$ERR_FILE")"
-  log="$(cat "$CHAIN_LOG" 2>/dev/null || true)"
+  log="$(cat "$RAN_LOG" 2>/dev/null || true)"
 }
 
 payload() {
@@ -155,27 +124,32 @@ git -C "$DISARMED_BY_PATH" config core.hooksPath "$TMP_ROOT/disarmed-hooks"
 NOT_A_REPO="$TMP_ROOT/plain"
 mkdir -p "$NOT_A_REPO"
 
+# Every fixture carries a package whose script would announce itself if
+# anything ran it. Nothing may: this hook defers to an armed hook or
+# refuses, and never runs a repository's own scripts on its behalf.
 for fixture in "$UNARMED" "$ARMED" "$ARMED_BY_PATH" "$DISARMED" "$DISARMED_BY_PATH"; do
-  install_stub_chain "$fixture"
+  scripts="$fixture/.agents/skills/growth-guards/scripts"
+  mkdir -p "$scripts"
+  {
+    echo "#!/usr/bin/env bash"
+    echo "echo 'the repository script ran' >>\"$RAN_LOG\""
+    echo "exit \${CHAIN_EXIT:-0}"
+  } >"$scripts/pre-commit"
+  chmod +x "$scripts/pre-commit"
 done
-
-# The one repository without the package, for the fail-closed case.
-NO_PACKAGE="$TMP_ROOT/no-package"
-mkdir -p "$NO_PACKAGE"
-git -C "$NO_PACKAGE" init -q
 
 echo "detection"
 
 run_hook "$UNARMED" "$(payload 'ls -la')"
 assert_eq "$rc" "0" "a non-commit command is left alone"
-assert_not_contains "$log" "chain ran" "no guard run for a non-commit command"
+assert_eq "$log" "" "no guard run for a non-commit command"
 
 run_hook "$UNARMED" '{"note":"about to commit with git"}'
 assert_eq "$rc" "0" "a payload with no command field is left alone"
 
 run_hook "$UNARMED" "$(payload 'git commit -m test')" CHAIN_EXIT=1
-assert_eq "$rc" "2" "a plain git commit reaches the fallback gate"
-assert_contains "$log" "chain ran" "the fallback is the guard chain"
+assert_eq "$rc" "2" "a plain git commit in an unarmed repo is refused"
+assert_eq "$log" "" "nothing in the repository was run"
 
 run_hook "$UNARMED" "$(payload 'git -C /somewhere/else commit -m test')" CHAIN_EXIT=1
 assert_eq "$rc" "2" "git and commit separated by options are still a commit"
@@ -190,8 +164,8 @@ for form in \
   'cd sub\tgit commit -m x' \
   'cargo fmt\r\ngit commit -m x'; do
   run_hook "$UNARMED" "$(payload "$form")" CHAIN_EXIT=1
-  assert_eq "$rc" "2" "the commit after an escape reaches the fallback gate: $form"
-  assert_contains "$log" "chain ran" "the chain ran for: $form"
+  assert_eq "$rc" "2" "the commit after an escape is still refused: $form"
+  assert_eq "$log" "" "nothing was run for: $form"
 done
 
 echo
@@ -200,22 +174,22 @@ echo "unreadable payload"
 run_hook "$UNARMED" '{"tool_input":{"command":123}}' CHAIN_EXIT=1
 assert_eq "$rc" "2" "a command key whose value cannot be read is refused"
 assert_contains "$err" "could not read the command" "the refusal names the unreadable payload"
-assert_not_contains "$log" "chain ran" "no guard run on a payload the hook could not read"
+assert_eq "$log" "" "no guard run on a payload the hook could not read"
 
 run_hook "$UNARMED" $'{"tool_input":{"command":\n"git commit -m x"}}' CHAIN_EXIT=1
-assert_eq "$rc" "2" "a key and value on separate lines still reach the fallback gate"
-assert_contains "$log" "chain ran" "the chain ran for the split-line payload"
+assert_eq "$rc" "2" "a key and value on separate lines are still refused"
+assert_eq "$log" "" "nothing was run for the split-line payload"
 
 echo
 echo "deference to an armed git hook"
 
 run_hook "$ARMED" "$(payload 'git commit -m test')" CHAIN_EXIT=1
 assert_eq "$rc" "0" "an armed .git/hooks/pre-commit gates the commit itself"
-assert_not_contains "$log" "chain ran" "no second validation beside an armed hook"
+assert_eq "$log" "" "no second validation beside an armed hook"
 
 run_hook "$ARMED_BY_PATH" "$(payload 'git commit -m test')" CHAIN_EXIT=1
 assert_eq "$rc" "0" "a core.hooksPath hook counts as armed"
-assert_not_contains "$log" "chain ran" "no second validation beside a hooksPath hook"
+assert_eq "$log" "" "no second validation beside a hooksPath hook"
 
 run_hook "$ARMED" "$(payload 'git commit -am test')" CHAIN_EXIT=1
 assert_eq "$rc" "0" "a short-flag cluster without n still defers"
@@ -225,16 +199,16 @@ echo "a hook file git will not run is not armed"
 
 run_hook "$DISARMED" "$(payload 'git commit -m test')" CHAIN_EXIT=1
 assert_eq "$rc" "2" "a pre-commit without the execute bit falls back to the chain"
-assert_contains "$log" "chain ran" "the chain ran beside the non-executable hook"
+assert_eq "$log" "" "nothing was run beside the non-executable hook"
 
 run_hook "$DISARMED_BY_PATH" "$(payload 'git commit -m test')" CHAIN_EXIT=1
 assert_eq "$rc" "2" "a non-executable core.hooksPath pre-commit falls back to the chain"
-assert_contains "$log" "chain ran" "the chain ran beside the non-executable hooksPath hook"
+assert_eq "$log" "" "nothing was run beside the non-executable hooksPath hook"
 
 echo
 echo "bypassing the armed hook is refused, not half-checked"
 
-# The fallback chain cannot stand in for git's hooks here: the same flag
+# Nothing can stand in for git's hooks here: the same flag
 # skips commit-msg, whose gate this hook cannot judge at PreToolUse time.
 for form in \
   'git commit --no-verify -m x' \
@@ -251,7 +225,7 @@ for form in \
   'git config --local --type path --includes --show-scope core.hooksPath /dev/null && git commit -m x'; do
   run_hook "$ARMED" "$(payload "$form")" CHAIN_EXIT=0
   assert_eq "$rc" "2" "refused: $form"
-  assert_not_contains "$log" "chain ran" "no chain run stands in for the bypassed hooks: $form"
+  assert_eq "$log" "" "nothing stands in for the bypassed hooks: $form"
   assert_contains "$err" "bypasses this repository's armed git hooks" "the refusal names the bypass: $form"
 done
 
@@ -260,7 +234,7 @@ assert_contains "$err" "'--no-verify' bypasses" "the refusal names the flag it s
 
 run_hook "$ARMED_BY_PATH" "$(payload 'git commit --no-verify -m x')" CHAIN_EXIT=0
 assert_eq "$rc" "2" "--no-verify beside a hooksPath hook is refused too"
-assert_not_contains "$log" "chain ran" "and runs no chain there either"
+assert_eq "$log" "" "and runs no chain there either"
 
 echo
 echo "the hook gates its working directory only"
@@ -271,11 +245,11 @@ echo "the hook gates its working directory only"
 # the target; from an unarmed one it judges itself and says so.
 run_hook "$ARMED" "$(payload "git -C $UNARMED commit -m x")" CHAIN_EXIT=1
 assert_eq "$rc" "0" "an armed cwd defers even when the commit is aimed at an unarmed repository"
-assert_not_contains "$log" "chain ran" "the unarmed target gets no chain from here — its own hook is its gate"
+assert_eq "$log" "" "the unarmed target gets no chain from here — its own hook is its gate"
 
 run_hook "$UNARMED" "$(payload "git -C $ARMED commit -m x")" CHAIN_EXIT=1
 assert_eq "$rc" "2" "an unarmed cwd runs the chain for itself whatever the target"
-assert_contains "$log" "chain ran" "the chain ran in the unarmed cwd"
+assert_eq "$log" "" "nothing was run in the unarmed cwd"
 assert_contains "$err" "judged $UNARMED only" "the notice names the directory that was judged"
 
 # The quotes arrive JSON-escaped, as the harness sends them.
@@ -289,29 +263,6 @@ assert_not_contains "$err" "moves repositories" "no notice for a commit in place
 run_hook "$NOT_A_REPO" "$(payload "git -C $UNARMED commit -m x")" CHAIN_EXIT=1
 assert_eq "$rc" "0" "a non-repository cwd gates nothing"
 assert_contains "$err" "moves repositories" "and says the target is elsewhere"
-
-echo
-echo "fallback verdicts"
-
-run_hook "$UNARMED" "$(payload 'git commit -m test')" CHAIN_EXIT=0
-assert_eq "$rc" "0" "a clean chain lets the commit proceed"
-assert_eq "$err" "" "a clean chain with nothing skipped is silent"
-
-run_hook "$UNARMED" "$(payload 'git commit -m test')" CHAIN_EXIT=0 CHAIN_SKIP=1
-assert_eq "$rc" "0" "a clean chain with a skipped lane still lets the commit proceed"
-assert_contains "$err" "preflight not installed" "the skipped lane's own line reaches stderr"
-assert_not_contains "$err" "growth-guards: OK" "only the skip line is forwarded, not the whole report"
-
-run_hook "$UNARMED" "$(payload 'git commit -m test')" CHAIN_EXIT=1
-assert_contains "$err" "todo-ban FAIL" "the chain's own output reaches stderr"
-assert_contains "$err" "kendex guard install" "the block names the durable fix"
-
-run_hook "$UNARMED" "$(payload 'git commit -m test')" CHAIN_EXIT=2
-assert_eq "$rc" "2" "a chain that could not complete blocks"
-assert_contains "$err" "did not complete" "the block carries the chain's own reason"
-
-run_hook "$NOT_A_REPO" "$(payload 'git commit -m test')" CHAIN_EXIT=1
-assert_eq "$rc" "0" "outside a repository there is nothing to gate here"
 
 echo
 echo "shell forms the old parser refused"
@@ -335,90 +286,34 @@ run_hook "$ARMED" '{"tool_input":{"command":"git -C \"/tmp/my repo\" commit -m x
 assert_eq "$rc" "0" "a quoted path with a space is not a refusal"
 
 run_hook "$UNARMED" '{"tool_input":{"command":"git -C \"/tmp/my repo\" commit -m x"}}' CHAIN_EXIT=1
-assert_eq "$rc" "2" "the quoted-path commit still reaches the fallback gate"
+assert_eq "$rc" "2" "the quoted-path commit is still refused"
 
 echo
-echo "a linked worktree is gated by the main checkout's copy"
+echo "an unarmed repository is refused, never stood in for"
 
-# Linked worktrees share one hooks directory but need not carry their own
-# skills, so the shim searches the MAIN checkout first. A fallback that
-# looked only at this work tree would find nothing and refuse a commit the
-# armed shim would have checked.
-LINKED_MAIN="$TMP_ROOT/linked-main"
-mkdir -p "$LINKED_MAIN"
-git -C "$LINKED_MAIN" init -q
-git -C "$LINKED_MAIN" -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
-install_stub_chain "$LINKED_MAIN"
-git -C "$LINKED_MAIN" worktree add -q "$TMP_ROOT/linked-wt" 2>/dev/null
-# The linked work tree carries no copy of its own.
-rm -rf "$TMP_ROOT/linked-wt/.agents"
+# Arming is the local act that says a person wants this repository's
+# committed scripts run on their commits, and git clones no hooks — so a
+# fresh checkout has no execution behind it and this hook adds none. The
+# fixtures all carry a script that would announce itself if anything ran it.
+run_hook "$UNARMED" "$(payload 'git commit -m test')"
+assert_eq "$rc" "2" "an unarmed repository refuses the commit"
+assert_contains "$err" "no git pre-commit hook is armed" "the refusal says what is wrong"
+assert_contains "$err" "kendex guard install" "and names the one command that fixes it"
+assert_eq "$log" "" "and the repository's own script was not run"
 
-run_hook "$TMP_ROOT/linked-wt" "$(payload 'git commit -m test')" CHAIN_EXIT=1
-assert_eq "$rc" "2" "the linked worktree reaches the main checkout's chain"
-assert_contains "$log" "chain ran" "and it is the main checkout's script that ran"
-
-# A linked work tree with its own copy uses that one, not the main
-# checkout's: a re-vendored copy gates the tree it sits in.
-install_stub_chain "$TMP_ROOT/linked-wt"
-run_hook "$TMP_ROOT/linked-wt" "$(payload 'git commit -m test')" CHAIN_EXIT=1
-assert_eq "$rc" "2" "a work tree carrying its own copy still runs a chain"
-
-echo
-echo "the helper's baked scripts directory comes first"
-
-# The helper the installer writes execs its baked installed_scripts before
-# searching anywhere, so this lane tries it first too. Otherwise a repository
-# armed from a layout the search cannot reach would be judged by one copy at
-# commit time and another here. The path carries an apostrophe, which the
-# installer writes shell-escaped and this lane has to decode.
-SQ="'"
-BAKED_ROOT="$TMP_ROOT/baked${SQ}quote"
-mkdir -p "$BAKED_ROOT"
-git -C "$BAKED_ROOT" init -q
-mkdir -p "$BAKED_ROOT/vendor/gg/scripts"
-cat >"$BAKED_ROOT/vendor/gg/scripts/pre-commit" <<'EOF'
-#!/usr/bin/env bash
-echo "baked chain ran" >>"$CHAIN_LOG"
-echo "chain ran" >>"$CHAIN_LOG"
-exit "${CHAIN_EXIT:-0}"
-EOF
-chmod +x "$BAKED_ROOT/vendor/gg/scripts/pre-commit"
-# A helper with no delegating lines beside it: the repository is unarmed, so
-# the fallback runs, and the helper is there only to name the copy. Escaped
-# exactly as the installer escapes it.
-ESCAPED="${BAKED_ROOT//$SQ/$SQ\\$SQ$SQ}"
-{
-  echo "#!/bin/sh"
-  echo "installed_scripts=${SQ}${ESCAPED}/vendor/gg/scripts${SQ}"
-} >"$BAKED_ROOT/.git/hooks/kendex-guards"
-chmod +x "$BAKED_ROOT/.git/hooks/kendex-guards"
-
-run_hook "$BAKED_ROOT" "$(payload 'git commit -m test')" CHAIN_EXIT=1
-assert_eq "$rc" "2" "the baked copy gates the commit"
-assert_contains "$log" "baked chain ran" "and it is the baked copy that ran"
-
-echo
-echo "fail closed without the package"
-
-run_hook "$NO_PACKAGE" "$(payload 'git commit -m test')"
-assert_eq "$rc" "2" "no armed hook and no package refuses the commit"
-assert_contains "$err" "no growth-guards skill is installed" \
-  "the refusal names what is missing"
-assert_contains "$err" "kendex add --skill growth-guards" "and how to get it"
+run_hook "$DISARMED" "$(payload 'git commit -m test')"
+assert_eq "$rc" "2" "a hook git will not execute is unarmed too"
+assert_eq "$log" "" "and nothing was run beside it"
 
 echo
 echo "no kendex binary anywhere"
 
-# Every run above already used a PATH with no kendex on it. These name the
-# property directly: the armed hook and the fallback both work without it,
-# which is what lets a clone gate commits on a machine that never installed
-# kendex.
+# Every run above already used a PATH with no kendex on it. The armed hook
+# is what gates a commit, and git runs it with no binary involved; the
+# refusal for an unarmed one needs none either.
 run_hook "$ARMED" "$(payload 'git commit -m test')"
 assert_eq "$rc" "0" "an armed hook needs no kendex binary"
-
-run_hook "$UNARMED" "$(payload 'git commit -m test')" CHAIN_EXIT=1
-assert_eq "$rc" "2" "and the fallback chain runs and blocks without one"
-assert_contains "$log" "chain ran" "the package's own script is what ran"
+assert_eq "$log" "" "and this hook ran nothing of its own beside it"
 
 run_hook "$ARMED" "$(payload 'git commit --no-verify -m test')"
 assert_eq "$rc" "2" "bypassing the armed hook is refused with or without a binary"
