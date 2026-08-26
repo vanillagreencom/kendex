@@ -1,0 +1,3376 @@
+#!/bin/bash
+# Linear GraphQL API - Issue Operations
+# Usage: issues.sh <action> [options]
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Help is answered before the libraries load: common.sh sources the repo's
+# .env files as shell code and resolves API auth, and help needs neither.
+show_help() {
+    cat <<'EOF'
+Issue Operations
+
+Usage: issues.sh <action> [options]
+
+Actions:
+  list           List issues with filters
+  get            Get a single issue by ID (--with-bundle for recursive children + pending_count)
+  bulk-get       Get multiple issues with full relations in one query
+  bulk-update    Update multiple issues with the same changes
+  create         Create a new issue
+  update         Update an existing issue
+  archive        Archive an issue (soft delete, restorable via UI)
+  trash          Move issue to trash (recoverable for 30 days)
+  delete         Alias for trash
+  children       List sub-issues of a parent issue (--recursive for nested, --pending to filter)
+  list-relations List issue relations (blocking/blocked-by)
+  add-relation   Create a relation between issues
+  remove-relation Delete an issue relation
+
+Workflow Actions (composite operations for dev):
+  activate       Claim issue: set "In Progress" (--agent applies agent:<name> label)
+  block          Block issue: add label + relation + comment
+  unblock        Unblock issue: remove label + comment
+  complete       Complete issue: post optional summary comment, then set "Done"
+  validate-completion  Pre-merge check: state + summary comment
+                 (--include-children-of <ID> for bundles; --container when the
+                 target is a container parent closing after its children)
+
+Output Formats (all query commands):
+  --format=safe         Flat, null-safe array (DEFAULT)
+  --format=compact      Minimal fields for workflow routing (no description/url/timestamps)
+  --format=ids          Newline-separated identifiers only
+  --format=table        Human-readable table
+  --format=raw          Original GraphQL structure
+
+List Options:
+  --label <name>        Filter by label (e.g., "backend")
+  --state <name>        Filter by state (e.g., "Todo", "In Progress,Todo")
+  --project <name>      Filter by project name
+  --project-id <uuid>   Filter by project ID
+  --team <name>         Filter by team name (no default; omit = all teams)
+  --assignee <name|me>  Filter by assignee
+  --updated-since <Nd>  Filter by updated date (e.g., "7d")
+  --created-since <Nd>  Filter by created date
+  --limit <n>           Max results per page (default: 75)
+  --max                 Fetch ALL results (auto-paginates, up to 15000)
+  --search <terms>      Filter by title/description substring, server-side and
+                        case-insensitive; pipe-separated terms are OR'd.
+                        Not a regex (the cache's --search is; see cache --help)
+  --include-archived    Include archived issues
+  --with-relations      Include blocking info (use --format=raw for analyzed output)
+
+Get:
+  issues.sh get <id>    Get by UUID or identifier (PROJ-42)
+
+Bulk Get:
+  issues.sh bulk-get <id1> <id2> ...   Get multiple issues with relations
+  issues.sh bulk-get --stdin           Read identifiers from stdin (one per line)
+
+Bulk Update:
+  issues.sh bulk-update <id1> <id2> ... [update-options]
+  issues.sh bulk-update --stdin [update-options]
+  (Same update options as 'update' action, applied to all issues)
+
+Create Options:
+  --title <text>        Issue title (required)
+  --team <name>         Team name (default: $LINEAR_TEAM; required when unset)
+  --description <text>  Issue description
+  --description-file <path>  Read description from file (preferred for markdown)
+  --label(s) <a,b,c>    Comma-separated label names
+  --project <name|uuid> Project (name or UUID, auto-resolved)
+  --state <name>        Initial state (case-sensitive, fails with available list)
+  --priority <0-4>      Priority: 0=None, 1=Urgent, 2=High, 3=Normal, 4=Low
+  --estimate <1-5>      Effort estimate (points)
+  --assignee <name|me>  Assignee
+  --parent <id>         Parent issue ID (creates sub-issue)
+  --milestone <name|uuid> Project milestone (name or UUID)
+  --cycle <id>          Cycle (sprint) ID
+  --attach <path>       Upload a file to Linear and attach it (repeatable).
+                        Images (png/jpg/jpeg/gif/webp/svg) embed into the
+                        description as ![name](assetUrl); other files become
+                        Linear attachments (attachmentCreate) on the created
+                        issue. Composes with --description/--description-file.
+                        Missing/unreadable paths refuse before any API call;
+                        an attachment failure after the create reports the
+                        created identifier and exits non-zero.
+  --format=ids          Print ONLY the created issue identifier (for capture;
+                        default output is the full JSON create response)
+  --no-agent-label      Permit a deliberate bare create (e.g. intake
+                        mirroring) in a project that declares its agent-label
+                        taxonomy. When LINEAR_AGENT_LABELS is set in
+                        kendex.settings.toml [env], create refuses without an
+                        agent:* label from that set: an unlabeled issue is
+                        invisible to agent routing. Route normal issue
+                        creation through the TPM pipeline (project-management
+                        skill), which owns labels, project, priority, and
+                        relations — do not create tracked issues directly.
+
+Update Options:
+  --state <name>        New state
+  --label(s) <a,b,c>    Replace labels (comma-separated)
+  --title <text>        New title
+  --description <text>  New description
+  --description-file <path>  Read new description from file (preferred for markdown)
+  --project <name|uuid> Move to project (name or UUID, auto-resolved)
+  --priority <0-4>      Priority: 0=None, 1=Urgent, 2=High, 3=Normal, 4=Low
+  --estimate <0-5>      Effort estimate (points); 0 clears the estimate (unset)
+  --clear-estimate      Clear the estimate (unset; e.g. coordination parents = no estimate)
+  --assignee <name|me>  Change assignee
+  --parent <id>         Set parent issue (convert to sub-issue)
+  --remove-parent       Remove parent (convert to top-level issue)
+  --milestone <name|uuid> Set project milestone (name or UUID)
+  --cycle <id>          Set cycle (sprint) ID
+  --clear-cycle         Remove cycle assignment
+  --attach <path>       Upload a file to Linear and attach it (repeatable).
+                        Images embed as ![name](assetUrl) appended to the
+                        description being written (with no --description on
+                        this update, appended to the existing description);
+                        other files become Linear attachments. --attach alone
+                        is a valid update. Partial failures after the update
+                        report the identifier and exit non-zero.
+  --sort-order <float>  Manual sort position (lower = higher; parent/standalone only)
+  --format <fmt>        Output format for the updated issue: safe | compact | ids |
+                        raw. When omitted, emits the mutation summary
+                        ({success, identifier, url, data}) as before.
+
+Relation Options (add-relation):
+  --blocks <id>         This issue blocks another
+  --blocked-by <id>     This issue is blocked by another
+  --related <id>        Mark as related
+  --duplicate <id>      Mark as duplicate
+
+Activate Options:
+  --agent <name>        Apply the exclusive agent:<name> issue label together
+                        with the "In Progress" transition (replaces any existing
+                        agent:* label, preserves other labels). Fails without
+                        changing state when the label does not exist.
+
+Complete Options:
+  --summary <text>       Post a completion summary comment, then set "Done"
+  --summary-file <path>  Read the summary from a file (preferred for markdown)
+  The comment is posted BEFORE the state transition; if posting fails the issue
+  state is unchanged. Text lacking a "Completion Summary"/"Bundle Complete"
+  marker is prefixed with a "## Completion Summary" heading so
+  validate-completion detects it.
+
+Validate-Completion:
+  Pre-merge validation. Session-root issues (positional targets) are expected
+  in "In Progress" or "In Review" — "Done" fails state_ok because managed
+  session roots stay pre-merge until PR merge. This pre-merge state rule applies
+  ONLY to the session root, not to expanded bundle children.
+  Bundle children expanded via --include-children-of are expected in "Done":
+  every completed child IS included and validates as Done/pass (a still-pending
+  child fails state_ok). Canceled children are excluded from the expansion —
+  abandoned work can never be "Done" and is not a pending gap. Each validated
+  issue must also have a comment containing "Completion Summary" or
+  "Bundle Complete".
+  --container marks the positional target as a CONTAINER parent — a bundle
+  whose children are each worked as their own PR unit, with the container
+  closing LAST. The container's own state passes for any live state (canceled
+  fails closed) and needs no pre-posted summary: `issues complete --summary`
+  posts it at completion time. The expanded children still gate as above, so
+  all_ok answers "may this container complete now?". The flag fails closed:
+  it requires exactly one issue ID plus --include-children-of naming that
+  same issue, and errors (exit 1) when the bundle has no non-canceled
+  children — a leaf cannot validate as a container. A child of a container
+  validates alone as its own session root. Use it only for containers;
+  explicit single-PR bundles keep the default children-Done-first contract.
+
+Examples:
+  # Basic operations
+  issues.sh list --label "backend" --state "Todo"
+  issues.sh get PROJ-42
+  issues.sh create --title "New task" --labels "backend,priority:high"
+  issues.sh create --title "Bundle" --project "Phase 2" --format=ids  # Print only the new identifier
+  issues.sh update PROJ-42 --state "In Progress"
+  issues.sh archive PROJ-42
+
+  # Parent/sub-issues
+  issues.sh create --title "Sub-task" --parent PROJ-42
+  issues.sh children PROJ-42                    # Direct children only
+  issues.sh children PROJ-42 --recursive        # All descendants (3 levels deep)
+  issues.sh children PROJ-42 --recursive --pending  # Pending only (excludes completed/canceled)
+  issues.sh update PROJ-43 --parent PROJ-42
+  issues.sh update PROJ-43 --remove-parent
+
+  # Issue relations
+  issues.sh list-relations PROJ-42
+  issues.sh add-relation PROJ-42 --blocks PROJ-43
+  issues.sh add-relation PROJ-42 --blocked-by PROJ-41
+  issues.sh remove-relation PROJ-42 --blocks PROJ-43      # By issue + flag (mirrors add-relation)
+  issues.sh remove-relation <relation-uuid>             # By UUID
+
+  # Cycle (sprint) assignment
+  issues.sh update PROJ-42 --cycle 864d7ea0-2347-4048-80cd-5be977d904e4
+  issues.sh update PROJ-42 --clear-cycle
+
+  # Estimate (1-5 real points; clear for coordination-only parents)
+  issues.sh update PROJ-42 --estimate 3
+  issues.sh update PROJ-42 --clear-estimate      # Unset estimate (coordination parent)
+  issues.sh update PROJ-42 --estimate 0          # Alias for --clear-estimate
+
+  # Bulk operations (reduces API calls)
+  issues.sh list --project-id <uuid> --with-relations   # Single query with all relations
+  issues.sh bulk-get PROJ-184 PROJ-185 PROJ-186 PROJ-187    # Multiple issues with full details
+
+  # Workflow actions (dev shortcuts)
+  issues.sh activate PROJ-42 --agent rust        # In Progress + agent:rust label
+  issues.sh block PROJ-42 --by PROJ-41 --reason "Need market data types first"
+  issues.sh unblock PROJ-42                      # Resume after blocker resolved
+  issues.sh complete PROJ-42                     # Mark done
+  issues.sh complete PROJ-42 --summary-file tmp/completion-summary-PROJ-42.md  # Summary comment, then done
+  issues.sh validate-completion PROJ-42 --include-children-of PROJ-42  # Single-PR bundle validation
+  issues.sh validate-completion PROJ-42 --include-children-of PROJ-42 --container  # May the container close?
+
+  # Bundle operations (single API call)
+  issues.sh get PROJ-42 --with-bundle            # Issue + recursive children + pending_count
+
+  # Search/filter
+  issues.sh list --state Todo --search "market_data|order_book"  # Title/description contains either term (server-side)
+EOF
+}
+
+case "${1:-help}" in
+    help|--help|-h) show_help; exit 0 ;;
+esac
+
+# The help scan covers every argv position — enumerating positions is how
+# this class leaks — but skips the value an option consumes, so a --title
+# or --summary of '--help' stays data.
+_help_takes_value() {
+    case "$1" in
+        --agent | --assignee | --attach | --blocked-by | --blocks | --by | \
+            --cycle | --description | --description-file | --duplicate | \
+            --estimate | --format | --include-children-of | --label | \
+            --labels | --limit | --milestone | --parent | --priority | \
+            --project | --reason | --related | --search | --sort-order | \
+            --state | --status | --summary | --summary-file | --team | \
+            --title) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+_want_help=""
+_skip_value=""
+for _arg in "$@"; do
+    if [ -n "$_skip_value" ]; then
+        _skip_value=""
+        continue
+    fi
+    case "$_arg" in
+        --help | -h) _want_help=1; break ;;
+        --*) if _help_takes_value "$_arg"; then _skip_value=1; fi ;;
+    esac
+done
+if [ -n "$_want_help" ]; then
+    show_help
+    exit 0
+fi
+unset _want_help _skip_value _arg
+
+source "$SCRIPT_DIR/../lib/common.sh"
+source "$SCRIPT_DIR/../lib/cache.sh"
+source "$SCRIPT_DIR/../lib/attachments.sh"
+source "$SCRIPT_DIR/../lib/issue-validation.sh"
+
+# Shared issue fields for mutation responses — matches list query for cache parity
+ISSUE_RETURN_FIELDS='
+    id
+    identifier
+    title
+    description
+    state { name type }
+    assignee { name }
+    project { id name }
+    projectMilestone { id name }
+    cycle { id name number }
+    parent { id identifier title }
+    team { name }
+    labels { nodes { name } }
+    priority
+    estimate
+    sortOrder
+    url
+    createdAt
+    updatedAt
+    archivedAt
+    trashed
+    relations { nodes { id type relatedIssue { id identifier title state { name type } } } }
+    inverseRelations { nodes { id type issue { id identifier title state { name type } } } }
+'
+
+linear_mutation_success() {
+    local normalized="$1"
+    [ "$(echo "$normalized" | jq -r '.success // false' 2>/dev/null || echo false)" = "true" ]
+}
+
+emit_linear_issue_activity() { return 0; }
+
+emit_linear_relation_activity() { return 0; }
+
+read_description_file() {
+    local description_file="$1"
+    if [[ -z "$description_file" ]]; then
+        echo '{"error": "--description-file requires a non-empty path argument"}' >&2
+        return 1
+    fi
+    if [[ ! -r "$description_file" ]]; then
+        echo "{\"error\": \"--description-file path not readable: $description_file\"}" >&2
+        return 1
+    fi
+    description=$(<"$description_file")
+}
+
+linear_update_activity_type() {
+    local normalized="$1"
+    local state state_type
+    # An unparseable response classifies as the generic update: the activity
+    # type is presentation, never a gate.
+    state=$(echo "$normalized" | jq -r '.data.issue.state.name // empty' 2>/dev/null) || state=""
+    state_type=$(echo "$normalized" | jq -r '.data.issue.state.type // empty' 2>/dev/null) || state_type=""
+    case "$(printf '%s' "$state_type:$state" | tr '[:upper:]' '[:lower:]')" in
+        completed:*|*:done|*:complete|*:completed) printf 'linear.issue_finished success\n' ;;
+        canceled:*|cancelled:*|*:canceled|*:cancelled|*:canceled*|*:cancelled*) printf 'linear.issue_cancelled warning\n' ;;
+        *) printf 'linear.issue_updated info\n' ;;
+    esac
+}
+
+
+list_issues() {
+    local with_relations="false"
+    local paginate_all="false"
+    local search_pattern=""
+    local search_given="false"
+    local args=()
+    FORMAT="${DEFAULT_FORMAT}"
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        --with-relations)
+            with_relations="true"
+            ;;
+        --max)
+            paginate_all="true"
+            ;;
+        --format)
+            # A following option token is a missing value, not a format:
+            # otherwise `--format --search x` eats --search as the format
+            # and silently drops the filter.
+            if [ $# -lt 2 ] || [ "${2#--}" != "$2" ]; then
+                echo '{"error": "--format requires a value"}' >&2
+                return 1
+            fi
+            FORMAT="$2"
+            shift
+            ;;
+        --format=*)
+            FORMAT="${1#--format=}"
+            ;;
+        --search)
+            # A following option token is a missing value, not a term:
+            # `--search --state Todo` must refuse, not search for
+            # "--state" and drop the state filter. An intentional
+            # option-like term can still use --search='--like-this'.
+            if [ $# -lt 2 ] || [ "${2#--}" != "$2" ]; then
+                echo '{"error": "--search requires a value"}' >&2
+                return 1
+            fi
+            search_given="true"
+            search_pattern="$2"
+            shift
+            ;;
+        --search=*)
+            search_given="true"
+            search_pattern="${1#--search=}"
+            ;;
+        *)
+            args+=("$1")
+            ;;
+        esac
+        shift
+    done
+
+    # A given-but-empty pattern must refuse, not degrade to an unfiltered
+    # list: the dedupe preflight reads "rows came back" as "search ran".
+    # Emptiness is judged by the SAME jq normalization that builds the
+    # filter below — tr sees bytes, so a multibyte Unicode space (U+00A0)
+    # would pass a tr check and then normalize into an empty or-clause.
+    if [ "$search_given" = "true" ]; then
+        term_count=$(jq -rn --arg pattern "$search_pattern" '
+            $pattern | split("|")
+                | map(gsub("^[[:space:]]+|[[:space:]]+$"; ""))
+                | map(select(length > 0)) | length')
+        if [ "$term_count" = "0" ]; then
+            echo '{"error": "--search requires a non-empty value"}' >&2
+            return 1
+        fi
+    fi
+
+    parse_filter ${args[@]+"${args[@]}"}
+
+    # Server-side search: pipe-separated terms, each matched as a
+    # case-insensitive substring of title or description via Linear's
+    # IssueFilter. Top-level filter fields AND with the or-clause, so
+    # --state/--project/... still narrow the result.
+    if [ -n "$search_pattern" ]; then
+        # Terms are trimmed so "a | b" matches "a"/"b", not " b" — and
+        # whitespace-only fragments are dropped, never matched broadly.
+        FILTER_JSON=$(jq -cn --arg pattern "$search_pattern" --argjson base "$FILTER_JSON" '
+            ($pattern | split("|")
+                | map(gsub("^[[:space:]]+|[[:space:]]+$"; ""))
+                | map(select(length > 0))) as $terms |
+            $base + {or: [$terms[] |
+                {title: {containsIgnoreCase: .}},
+                {description: {containsIgnoreCase: .}}]}')
+    fi
+
+    local query
+    # Both queries now include full fields for cache compatibility
+    # Added: project.id, projectMilestone, cycle, parent, archivedAt, trashed
+    query='
+    query ListIssues($filter: IssueFilter, $first: Int, $includeArchived: Boolean, $after: String) {
+        issues(filter: $filter, first: $first, includeArchived: $includeArchived, after: $after) {
+            pageInfo { hasNextPage endCursor }
+            nodes {
+                id
+                identifier
+                title
+                description
+                state { name type }
+                assignee { name }
+                project { id name }
+                projectMilestone { id name }
+                cycle { id name number }
+                parent { id identifier title }
+                labels { nodes { name } }
+                priority
+                estimate
+                sortOrder
+                url
+                createdAt
+                updatedAt
+                archivedAt
+                trashed
+                relations { nodes { id type relatedIssue { id identifier title state { name } } } }
+                inverseRelations { nodes { id type issue { id identifier title state { name } } } }
+            }
+        }
+    }'
+
+    local result
+    local all_nodes="[]"
+    local cursor="null"
+    local page_count=0
+    local max_pages=200 # Safety limit: 200 pages * 75 = 15000 issues max
+
+    if [ "$paginate_all" = "true" ]; then
+        # Pagination mode: fetch all pages
+        while true; do
+            local variables="{\"filter\": $FILTER_JSON, \"first\": $FIRST_JSON, \"includeArchived\": $INCLUDE_ARCHIVED_JSON, \"after\": $cursor}"
+            result=$(graphql_query "$query" "$variables")
+
+            # Extract nodes and merge
+            local nodes
+            nodes=$(echo "$result" | jq '.issues.nodes')
+            all_nodes=$(echo "$all_nodes" "$nodes" | jq -s 'add')
+
+            # Check for next page
+            local has_next
+            has_next=$(echo "$result" | jq -r '.issues.pageInfo.hasNextPage')
+
+            page_count=$((page_count + 1))
+
+            if [ "$has_next" = "true" ] && [ $page_count -ge $max_pages ]; then
+                echo "⚠️  --max stopped at the $max_pages-page safety cap with more pages remaining — results are truncated." >&2
+            fi
+            if [ "$has_next" != "true" ] || [ $page_count -ge $max_pages ]; then
+                break
+            fi
+
+            cursor=$(echo "$result" | jq '.issues.pageInfo.endCursor')
+        done
+
+        # Reconstruct result structure with all nodes
+        result=$(echo "$all_nodes" | jq '{issues: {nodes: .}}')
+    else
+        # Single query mode (default)
+        local variables="{\"filter\": $FILTER_JSON, \"first\": $FIRST_JSON, \"includeArchived\": $INCLUDE_ARCHIVED_JSON, \"after\": null}"
+        result=$(graphql_query "$query" "$variables")
+
+        # Check for truncation and warn if results may be incomplete
+        local result_count
+        result_count=$(echo "$result" | jq '.issues.nodes | length')
+        if [ "$result_count" -ge "$FIRST_JSON" ]; then
+            echo "⚠️  Returned $result_count issues (limit: $FIRST_JSON). Results may be truncated. Use --max for all results." >&2
+        fi
+    fi
+
+    # Apply output format
+    case "$FORMAT" in
+    compact)
+        format_issues_list_compact "$result"
+        ;;
+    raw)
+        # --with-relations with raw outputs analyzed format (legacy behavior)
+        if [ "$with_relations" = "true" ]; then
+            echo "$result" | jq '{
+                    unblocked: [.issues.nodes[] |
+                        select([.inverseRelations.nodes[] | select(.type == "blocks" and .issue.state.name != "Done")] | length == 0) |
+                        {id: .identifier, title, agent: ([.labels.nodes[].name | select(startswith("agent:"))] | first // "none"), priority}
+                    ],
+                    blocked: [.issues.nodes[] |
+                        select([.inverseRelations.nodes[] | select(.type == "blocks" and .issue.state.name != "Done")] | length > 0) |
+                        {id: .identifier, title, agent: ([.labels.nodes[].name | select(startswith("agent:"))] | first // "none"), priority,
+                         blocked_by: [.inverseRelations.nodes[] | select(.type == "blocks" and .issue.state.name != "Done") | .issue.identifier]}
+                    ]
+                }'
+        else
+            echo "$result"
+        fi
+        ;;
+    ids)
+        format_issues_ids "$result"
+        ;;
+    table)
+        format_issues_table "$result"
+        ;;
+    safe | *)
+        format_issues_list "$result"
+        ;;
+    esac
+}
+
+bulk_get_issues() {
+    local identifiers=()
+    local from_stdin="false"
+    FORMAT="${DEFAULT_FORMAT}"
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --stdin)
+            from_stdin="true"
+            shift
+            ;;
+        --format)
+            FORMAT="$2"
+            shift 2
+            ;;
+        --format=*)
+            FORMAT="${1#--format=}"
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "{\"error\": \"Unknown option: $1. Run --help for valid options.\"}" >&2
+            return 1
+            ;;
+        *)
+            identifiers+=("$1")
+            shift
+            ;;
+        esac
+    done
+
+    # Read from stdin if requested
+    if [ "$from_stdin" = "true" ]; then
+        while IFS= read -r line; do
+            [ -n "$line" ] && identifiers+=("$line")
+        done
+    fi
+
+    if [ ${#identifiers[@]} -eq 0 ]; then
+        echo '{"error": "No issue identifiers provided"}' >&2
+        return 1
+    fi
+
+    # Resolve identifiers to UUIDs (Linear API requires UUIDs for filtering)
+    local uuids=()
+    for id in "${identifiers[@]}"; do
+        local uuid
+        uuid=$(resolve_issue_id "$id")
+        if [ -n "$uuid" ]; then
+            uuids+=("\"$uuid\"")
+        fi
+    done
+
+    if [ ${#uuids[@]} -eq 0 ]; then
+        echo '{"error": "No valid issues found"}' >&2
+        return 1
+    fi
+
+    # Build filter with id IN clause
+    local id_list
+    id_list=$(
+        IFS=,
+        echo "[${uuids[*]}]"
+    )
+
+    local query='
+    query BulkGetIssues($filter: IssueFilter!) {
+        issues(filter: $filter, first: 50) {
+            nodes {
+                id
+                identifier
+                title
+                description
+                state { name type }
+                assignee { name email }
+                project { id name }
+                projectMilestone { id name }
+                cycle { id name number }
+                team { name }
+                labels { nodes { name } }
+                priority
+                estimate
+                sortOrder
+                url
+                createdAt
+                updatedAt
+                archivedAt
+                trashed
+                parent { id identifier title }
+                children { nodes { id identifier title state { name } } }
+                relations { nodes { id type relatedIssue { id identifier title state { name } } } }
+                inverseRelations { nodes { id type issue { id identifier title state { name } } } }
+            }
+        }
+    }'
+
+    local variables="{\"filter\": {\"id\": {\"in\": $id_list}}}"
+    local result
+    result=$(graphql_query "$query" "$variables")
+
+    # Apply output format
+    case "$FORMAT" in
+    raw)
+        echo "$result"
+        ;;
+    ids)
+        format_issues_ids "$result"
+        ;;
+    safe | *)
+        format_issues_list "$result"
+        ;;
+    esac
+}
+
+bulk_update_issues() {
+    local identifiers=()
+    local from_stdin="false"
+    local update_args=()
+
+    # Separate issue IDs from update options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --stdin)
+            from_stdin="true"
+            shift
+            ;;
+        --state | --status | --labels | --label | --title | --description | --project | --parent | --milestone | --priority | --estimate | --assignee | --cycle | --sort-order | --attach)
+            # These are update options - collect with their values
+            # (--attach re-uploads per issue: Linear assets are issue-agnostic
+            # but each issue gets its own embed/attachment)
+            update_args+=("$1" "$2")
+            shift 2
+            ;;
+        --state=* | --status=* | --labels=* | --label=* | --title=* | --description=* | --project=* | --parent=* | --milestone=* | --priority=* | --estimate=* | --assignee=* | --cycle=* | --sort-order=* | --attach=*)
+            # Support --key=value syntax (AI agents often use this)
+            local _key="${1%%=*}" _val="${1#*=}"
+            update_args+=("$_key" "$_val")
+            shift
+            ;;
+        --remove-parent | --clear-cycle | --clear-estimate)
+            update_args+=("$1")
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "{\"error\": \"Unknown option: $1. Run --help for valid options.\"}" >&2
+            return 1
+            ;;
+        *)
+            identifiers+=("$1")
+            shift
+            ;;
+        esac
+    done
+
+    # Read from stdin if requested
+    if [ "$from_stdin" = "true" ]; then
+        while IFS= read -r line; do
+            [ -n "$line" ] && identifiers+=("$line")
+        done
+    fi
+
+    if [ ${#identifiers[@]} -eq 0 ]; then
+        echo '{"error": "No issue identifiers provided"}' >&2
+        return 1
+    fi
+
+    if [ ${#update_args[@]} -eq 0 ]; then
+        echo '{"error": "No update options provided. Example: bulk-update PROJ-1 PROJ-2 --state \"Backlog\""}' >&2
+        return 1
+    fi
+
+    # Process each issue
+    local results=()
+    local success_count=0
+    local fail_count=0
+
+    # update_issue writes advisory warnings to stderr on its success path (the
+    # sub-issue sort-order note, a skipped label). Merging those into the
+    # captured stdout would break the .success parse and report a committed
+    # update as a failure, so stderr is captured aside: relayed as a warning
+    # when the update succeeded, folded into the error report when it did not.
+    local stderr_file
+    stderr_file=$(mktemp)
+
+    for id in "${identifiers[@]}"; do
+        local result
+        local update_rc=0
+        : >"$stderr_file"
+        if result=$(update_issue "$id" "${update_args[@]}" 2>"$stderr_file"); then
+            update_rc=0
+        else
+            update_rc=$?
+        fi
+
+        local stderr_text
+        stderr_text=$(cat "$stderr_file")
+
+        local success
+        success=$(echo "$result" | jq -r '.success // false' 2>/dev/null || echo "false")
+
+        if [ "$update_rc" -eq 0 ] && [ "$success" = "true" ]; then
+            ((++success_count))
+            [ -n "$stderr_text" ] && printf '%s\n' "$stderr_text" >&2
+            results+=("$(echo "$result" | jq -c '{identifier, success: true}')")
+        else
+            ((++fail_count))
+            local detail="$result"
+            if [ -n "$stderr_text" ]; then
+                detail="${detail:+$detail
+}$stderr_text"
+            fi
+            if [ -z "$detail" ]; then
+                detail="update_issue exited with status $update_rc without output"
+            fi
+            results+=("$(jq -cn --arg identifier "$id" --arg error "$detail" --argjson exit_code "$update_rc" \
+                '{identifier: $identifier, success: false, exit_code: $exit_code, error: $error}')")
+        fi
+    done
+    rm -f "$stderr_file"
+
+    # Output summary
+    rm -f "$stderr_file"
+
+    local results_json
+    results_json=$(printf '%s\n' "${results[@]}" | jq -s '.')
+    jq -n \
+        --argjson success "$([ "$fail_count" -eq 0 ] && echo true || echo false)" \
+        --argjson partial "$([ "$success_count" -gt 0 ] && [ "$fail_count" -gt 0 ] && echo true || echo false)" \
+        --argjson updated "$success_count" \
+        --argjson failed "$fail_count" \
+        --argjson results "$results_json" \
+        '{success: $success, partial: $partial, updated: $updated, failed: $failed, results: $results}'
+
+    if [ "$fail_count" -gt 0 ]; then
+        return 1
+    fi
+}
+
+get_issue() {
+    local issue_id=""
+    local with_bundle="false"
+    local extra_args=()
+    FORMAT="${DEFAULT_FORMAT}"
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --format)
+            FORMAT="$2"
+            shift 2
+            ;;
+        --format=*)
+            FORMAT="${1#--format=}"
+            shift
+            ;;
+        --with-bundle)
+            with_bundle="true"
+            shift
+            ;;
+        *)
+            if [ -z "$issue_id" ]; then
+                issue_id="$1"
+            else
+                extra_args+=("$1")
+            fi
+            shift
+            ;;
+        esac
+    done
+
+    if [ -z "$issue_id" ]; then
+        echo '{"error": "Issue ID required"}' >&2
+        return 1
+    fi
+
+    linear_require_format "$FORMAT" safe raw compact || return 1
+
+    # Warn about extra arguments (common mistake: use bulk-get for multiple)
+    if [ ${#extra_args[@]} -gt 0 ]; then
+        echo "Warning: 'get' accepts only one issue. Ignored: ${extra_args[*]}" >&2
+        echo "Hint: Use 'bulk-get' for multiple issues: linear.sh issues bulk-get ${issue_id} ${extra_args[*]}" >&2
+    fi
+
+    local query
+    if [ "$with_bundle" = "true" ]; then
+        # Extended query with 3-level recursive children for bundle analysis
+        query='
+        query GetIssueWithBundle($id: String!) {
+            issue(id: $id) {
+                id
+                identifier
+                title
+                description
+                state { name type }
+                assignee { name email }
+                project { id name }
+                projectMilestone { id name }
+                cycle { id name number }
+                team { name }
+                labels { nodes { name } }
+                priority
+                estimate
+                sortOrder
+                url
+                branchName
+                createdAt
+                updatedAt
+                archivedAt
+                trashed
+                parent { id identifier title }
+                relations { nodes { id type relatedIssue { id identifier title state { name } } } }
+                inverseRelations { nodes { id type issue { id identifier title state { name } } } }
+                children {
+                    nodes {
+                        id identifier title description
+                        state { name type }
+                        assignee { name }
+                        labels { nodes { name } }
+                        priority estimate
+                        parent { identifier }
+                        relations { nodes { type relatedIssue { identifier } } }
+                        inverseRelations { nodes { type issue { identifier } } }
+                        children {
+                            nodes {
+                                id identifier title description
+                                state { name type }
+                                assignee { name }
+                                labels { nodes { name } }
+                                priority estimate
+                                parent { identifier }
+                                relations { nodes { type relatedIssue { identifier } } }
+                                inverseRelations { nodes { type issue { identifier } } }
+                                children {
+                                    nodes {
+                                        id identifier title description
+                                        state { name type }
+                                        assignee { name }
+                                        labels { nodes { name } }
+                                        priority estimate
+                                        parent { identifier }
+                                        relations { nodes { type relatedIssue { identifier } } }
+                                        inverseRelations { nodes { type issue { identifier } } }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }'
+    else
+        query='
+        query GetIssue($id: String!) {
+            issue(id: $id) {
+                id
+                identifier
+                title
+                description
+                state { name type }
+                assignee { name email }
+                project { id name }
+                projectMilestone { id name }
+                cycle { id name number }
+                team { name }
+                labels { nodes { name } }
+                priority
+                estimate
+                sortOrder
+                url
+                branchName
+                createdAt
+                updatedAt
+                archivedAt
+                trashed
+                parent { id identifier title }
+                children { nodes { id identifier title state { name } } }
+                relations { nodes { id type relatedIssue { id identifier title state { name } } } }
+                inverseRelations { nodes { id type issue { id identifier title state { name } } } }
+            }
+        }'
+    fi
+
+    local variables="{\"id\": \"$issue_id\"}"
+    local result
+    result=$(graphql_query "$query" "$variables")
+
+    # Apply output format
+    case "$FORMAT" in
+    raw)
+        echo "$result"
+        ;;
+    compact)
+        if [ "$with_bundle" = "true" ]; then
+            format_issue_with_bundle_compact "$result"
+        else
+            format_issue_compact "$result"
+        fi
+        ;;
+    safe)
+        if [ "$with_bundle" = "true" ]; then
+            format_issue_with_bundle "$result"
+        else
+            format_issue_single "$result"
+        fi
+        ;;
+    esac
+}
+
+# Agent-routing guard (VST-147). A create with no agent:* label lands
+# invisible to agent routing — no labels, project, or routing — while the CLI
+# prints a URL that looks like success. When the project declares its
+# agent-label set (LINEAR_AGENT_LABELS in kendex.settings.toml [env],
+# comma- or space-separated), refuse a bare create before any API call.
+# An undeclared/empty set keeps the guard off; --no-agent-label opts a
+# single deliberate bare create out (e.g. intake mirroring).
+require_agent_routing_label() {
+    local labels="$1" opt_out="$2"
+    local declared="${LINEAR_AGENT_LABELS:-}"
+    [ -n "$declared" ] || return 0
+    [ "$opt_out" = "1" ] && return 0
+
+    local declared_names=()
+    IFS=', ' read -ra declared_names <<<"$declared"
+
+    # Supplied labels split on commas only — label names may contain spaces.
+    local supplied_names=()
+    [ -n "$labels" ] && IFS=',' read -ra supplied_names <<<"$labels"
+
+    local supplied declared_name agent_matched=0 unknown_agent=""
+    for supplied in ${supplied_names[@]+"${supplied_names[@]}"}; do
+        supplied="$(kendex_trim "$supplied")"
+        [ -n "$supplied" ] || continue
+        local is_declared=0
+        for declared_name in ${declared_names[@]+"${declared_names[@]}"}; do
+            if [ "$supplied" = "$declared_name" ]; then
+                is_declared=1
+                break
+            fi
+        done
+        if [ "$is_declared" = "1" ]; then
+            agent_matched=1
+        elif [[ "$supplied" == agent:* ]]; then
+            unknown_agent="${unknown_agent:+$unknown_agent, }$supplied"
+        fi
+    done
+
+    # A typoed agent label would otherwise be warn-and-skipped by
+    # resolve_label_id, creating an unrouted issue that looks routed.
+    if [ -n "$unknown_agent" ]; then
+        jq -cn --arg unknown "$unknown_agent" --arg declared "$declared" \
+            '{error: ("Unknown agent label(s): " + $unknown + " - not in this project declared agent-label set (LINEAR_AGENT_LABELS in kendex.settings.toml [env]): " + $declared + ". Label resolution silently skips unknown names, so this would create an issue that is invisible to agent routing. Fix the label name, or pass --no-agent-label for a deliberate bare create.")}' >&2
+        return 1
+    fi
+    if [ "$agent_matched" != "1" ]; then
+        jq -cn --arg declared "$declared" \
+            '{error: ("Refusing to create an unrouted issue: this project declares an agent-label taxonomy (LINEAR_AGENT_LABELS in kendex.settings.toml [env]) and no agent:* label was supplied. An issue created without one gets no agent routing - the create would print a URL and look like success while the issue sits invisible to every agent. Route tracked issue creation through the TPM pipeline (project-management skill), which owns labels, project, priority, and relations. Direct create is for exceptions only: pass --labels with one of [" + $declared + "], or --no-agent-label for a deliberate bare create (e.g. intake mirroring).")}' >&2
+        return 1
+    fi
+    return 0
+}
+
+# Create pending non-image attachments on an issue that already exists.
+# Entries are "assetUrl<TAB>title" strings from the upload loop. A failure
+# here is a partial write: the issue mutation succeeded but an attachment is
+# missing, so each failure emits a JSON error naming the issue with
+# partial: true (same posture as bulk-update), and the caller must exit
+# non-zero. Usage: apply_pending_attachments <uuid> <identifier> <entry>...
+apply_pending_attachments() {
+    local issue_uuid="$1" issue_identifier="$2"
+    shift 2
+    local failed=0 entry
+    for entry in "$@"; do
+        local pending_url="${entry%%$'\t'*}"
+        local pending_name="${entry#*$'\t'}"
+        if [[ -z "$issue_uuid" ]] ||
+            ! attach_create_issue_attachment "$issue_uuid" "$pending_url" "$pending_name"; then
+            jq -cn --arg id "${issue_identifier:-$issue_uuid}" --arg name "$pending_name" --arg url "$pending_url" \
+                '{error: ("attachmentCreate failed for " + $name + " on issue " + $id + " - the issue write succeeded but this attachment is missing (uploaded asset: " + $url + ")"), identifier: $id, partial: true}' >&2
+            failed=1
+        fi
+    done
+    return "$failed"
+}
+
+# Upload every --attach path, embedding images into the description variable
+# of the caller and queueing non-images for apply_pending_attachments.
+# Usage: upload_attach_paths <path>...
+# Caller contract: `description` and `attach_pending` are the CALLER's
+# variables (description grows ![name](assetUrl) embeds; attach_pending grows
+# "assetUrl<TAB>filename" entries). Returns 1 on any upload failure.
+upload_attach_paths() {
+    local attach_path attach_info
+    local attach_sep=$'\n\n'
+    for attach_path in "$@"; do
+        attach_info=$(attach_upload_file "$attach_path") || return 1
+        local attach_url attach_name attach_type
+        attach_url=$(echo "$attach_info" | jq -r '.assetUrl')
+        attach_name=$(echo "$attach_info" | jq -r '.filename')
+        attach_type=$(echo "$attach_info" | jq -r '.contentType')
+        if [[ "$attach_type" == image/* ]]; then
+            local attach_label
+            attach_label="$(attach_markdown_label "$attach_name")"
+            description="${description:+${description}${attach_sep}}![${attach_label}](${attach_url})"
+        else
+            attach_pending+=("${attach_url}"$'\t'"${attach_name}")
+        fi
+    done
+}
+
+create_issue() {
+    if cache_test_isolation_violation; then
+        cache_test_isolation_refusal
+        exit 1
+    fi
+    local title=""
+    local team=""
+    local description=""
+    local description_file=""
+    local labels=""
+    local project=""
+    local state=""
+    local priority=""
+    local assignee=""
+    local parent=""
+    local milestone=""
+    local cycle=""
+    local estimate=""
+    local requested_parent_id=""
+    local output_format=""
+    local no_agent_label=0
+    local attach_paths=()
+    local attach_pending=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --title)
+            title="$2"
+            shift 2
+            ;;
+        --attach)
+            if [ -z "${2-}" ]; then
+                echo '{"error": "--attach requires a path argument"}' >&2
+                return 1
+            fi
+            attach_paths+=("$2")
+            shift 2
+            ;;
+        --attach=*)
+            attach_paths+=("${1#*=}")
+            shift
+            ;;
+        --format)
+            output_format="$2"
+            shift 2
+            ;;
+        --format=*)
+            output_format="${1#--format=}"
+            shift
+            ;;
+        --team)
+            team="$2"
+            shift 2
+            ;;
+        --description)
+            description="$2"
+            shift 2
+            ;;
+        --description-file)
+            description_file="$2"
+            shift 2
+            ;;
+        --labels | --label)
+            labels="${labels:+$labels,}$2"
+            shift 2
+            ;;
+        --project)
+            project="$2"
+            shift 2
+            ;;
+        --state | --status)
+            state="$2"
+            shift 2
+            ;;
+        --priority)
+            priority="$2"
+            shift 2
+            ;;
+        --estimate)
+            estimate="$2"
+            shift 2
+            ;;
+        --assignee)
+            assignee="$2"
+            shift 2
+            ;;
+        --parent)
+            parent="$2"
+            shift 2
+            ;;
+        --parent=*)
+            parent="${1#*=}"
+            shift
+            ;;
+        --milestone)
+            milestone="$2"
+            shift 2
+            ;;
+        --cycle)
+            cycle="$2"
+            shift 2
+            ;;
+        --no-agent-label)
+            no_agent_label=1
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "{\"error\": \"Unknown option: $1. Run --help for valid options.\"}" >&2
+            return 1
+            ;;
+        *) break ;;
+        esac
+    done
+
+    if [[ -n "$description" && -n "$description_file" ]]; then
+        echo '{"error": "--description and --description-file are mutually exclusive"}' >&2
+        return 1
+    fi
+    if [[ -n "$description_file" ]]; then
+        read_description_file "$description_file"
+    fi
+
+    # Resolve the team target; creating an issue without one is refused here,
+    # before any API call.
+    linear_set_team_target "$team"
+    linear_require_team_target || return 1
+    team="$LINEAR_TEAM_TARGET"
+
+    if [ -z "$title" ]; then
+        echo '{"error": "Required: --title"}' >&2
+        return 1
+    fi
+
+    # Normalize the label list ONCE, before the guard: split on commas, trim
+    # each name, drop empties, rejoin. The guard and the resolver below must
+    # see identical tokens — the guard trimming a copy while the resolver got
+    # the raw " agent:rust" made the natural "bug, agent:rust" input pass the
+    # guard and then be warn-skipped by resolution: an unrouted create that
+    # looked routed.
+    if [ -n "$labels" ]; then
+        local normalized_labels="" raw_label_name
+        local raw_label_names=()
+        IFS=',' read -ra raw_label_names <<<"$labels"
+        for raw_label_name in "${raw_label_names[@]}"; do
+            raw_label_name="$(kendex_trim "$raw_label_name")"
+            [ -n "$raw_label_name" ] || continue
+            normalized_labels="${normalized_labels:+$normalized_labels,}$raw_label_name"
+        done
+        labels="$normalized_labels"
+    fi
+
+    require_agent_routing_label "$labels" "$no_agent_label" || return 1
+
+    # --attach: refuse unreadable paths before any API call, then upload
+    # (uploads run only after the routing guard above has passed). Images
+    # embed into the description; other files become Linear attachments on
+    # the created issue after the create (attachmentCreate needs its id).
+    if [ ${#attach_paths[@]} -gt 0 ]; then
+        attach_preflight_files "${attach_paths[@]}" || return 1
+        # Resolve declared agent labels BEFORE uploading: under a declared
+        # taxonomy an unresolvable agent label refuses the create later
+        # (routed-or-refused), and uploads done first would strand orphaned
+        # assets in Linear storage.
+        if [ -n "$labels" ] && [ -n "${LINEAR_AGENT_LABELS:-}" ]; then
+            local pre_label_names=() pre_label_name
+            IFS=',' read -ra pre_label_names <<<"$labels"
+            for pre_label_name in "${pre_label_names[@]}"; do
+                case "$pre_label_name" in
+                agent:*)
+                    if ! resolve_label_id "$pre_label_name" >/dev/null; then
+                        jq -cn --arg label "$pre_label_name" \
+                            '{error: ("Agent label failed to resolve in Linear: " + $label + " - refusing before uploading attachments (the create would be refused as unrouted). Create the label in Linear (or fix LINEAR_AGENT_LABELS), then retry.")}' >&2
+                        return 1
+                    fi
+                    ;;
+                esac
+            done
+        fi
+        upload_attach_paths "${attach_paths[@]}" || return 1
+    fi
+
+    # Build input object - use jq for proper JSON escaping
+    # printf, not `echo -n`: `echo -n "-n"` prints nothing, so a title or
+    # description of exactly -n/-e/-E became an empty string server-side.
+    local escaped_title
+    escaped_title=$(printf '%s' "$title" | jq -Rs '.')
+    local input_parts=("\"title\": $escaped_title")
+
+    # Shared resolver: it passes a team UUID straight through and tells an API
+    # failure apart from a genuine miss, neither of which an inline copy did.
+    local team_id
+    team_id=$(resolve_team_id "$team") || return 1
+    input_parts+=("\"teamId\": \"$team_id\"")
+
+    if [ -n "$description" ]; then
+        local escaped_desc
+        escaped_desc=$(printf '%s' "$description" | jq -Rs '.')
+        input_parts+=("\"description\": $escaped_desc")
+    fi
+    if [ -n "$priority" ]; then
+        linear_require_pattern --priority "$priority" '^[0-4]$' "an integer 0-4" || return 1
+        input_parts+=("\"priority\": $priority")
+    fi
+    if [ -n "$estimate" ]; then
+        linear_require_pattern --estimate "$estimate" '^[0-9]+(\.[0-9]+)?$' "a non-negative number" || return 1
+        input_parts+=("\"estimate\": $estimate")
+    fi
+
+    # Handle labels (warn + skip on miss per label — EXCEPT agent:* labels:
+    # the routing guard's promise is routed-or-refused, so an agent label
+    # that fails to resolve, e.g. one declared in LINEAR_AGENT_LABELS but
+    # since deleted in Linear, must fail the create rather than silently
+    # produce an unrouted issue that already passed the guard)
+    if [ -n "$labels" ]; then
+        IFS=',' read -ra label_names <<<"$labels"
+        local label_ids=()
+        for label_name in "${label_names[@]}"; do
+            local label_id label_rc=0
+            if label_id=$(resolve_label_id "$label_name"); then
+                label_ids+=("\"$label_id\"")
+            elif label_rc=$?; [ "$label_rc" = "2" ]; then
+                # The lookup failed, so whether the label exists is unknown.
+                # Skipping it here is the warn-and-skip path for a label proved
+                # absent, which this is not.
+                jq -cn --arg label "$label_name" \
+                    '{error: ("Label lookup failed for " + $label + " - refusing the create rather than dropping a label that may well exist")}' >&2
+                return 1
+            elif [[ "$label_name" == agent:* ]] && [ -n "${LINEAR_AGENT_LABELS:-}" ]; then
+                # Hard-fail only under a declared taxonomy — undeclared repos
+                # keep the historical warn-and-skip for every label.
+                jq -cn --arg label "$label_name" \
+                    '{error: ("Agent label failed to resolve in Linear: " + $label + " - refusing to create an issue that would look routed but is not. Create the label in Linear (or fix LINEAR_AGENT_LABELS), then retry.")}' >&2
+                return 1
+            else
+                echo "Skipped label '$label_name' — not found; the create proceeds without it" >&2
+            fi
+        done
+        if [ ${#label_ids[@]} -gt 0 ]; then
+            local label_json
+            label_json=$(
+                IFS=,
+                echo "[${label_ids[*]}]"
+            )
+            input_parts+=("\"labelIds\": $label_json")
+        fi
+    fi
+
+    # Handle project (auto-resolves name or UUID)
+    if [ -n "$project" ]; then
+        local project_id
+        project_id=$(resolve_project_id "$project")
+        if [ -z "$project_id" ]; then
+            return 1
+        fi
+        input_parts+=("\"projectId\": \"$project_id\"")
+    fi
+
+    # Handle state (fail fast with available states on miss)
+    if [ -n "$state" ]; then
+        local state_id
+        state_id=$(resolve_state_id "$state" "$team_id")
+        if [ -z "$state_id" ]; then
+            return 1
+        fi
+        input_parts+=("\"stateId\": \"$state_id\"")
+    fi
+
+    # Handle assignee. Every other resolver here fails closed; dropping the
+    # field on an unresolvable name reported success with the issue unassigned.
+    if [ -n "$assignee" ]; then
+        local assignee_id
+        if [ "$assignee" = "me" ]; then
+            local me_query='query { viewer { id } }'
+            local me_result
+            me_result=$(graphql_query "$me_query" "{}")
+            assignee_id=$(echo "$me_result" | jq -r '.viewer.id // empty')
+        else
+            local user_query='query GetUser($name: String!) { users(filter: {name: {containsIgnoreCase: $name}}) { nodes { id } } }'
+            local user_vars user_result
+            user_vars=$(jq -cn --arg name "$assignee" '{name: $name}')
+            user_result=$(graphql_query "$user_query" "$user_vars")
+            assignee_id=$(echo "$user_result" | jq -r '.users.nodes[0].id // empty')
+        fi
+        if [ -z "$assignee_id" ]; then
+            jq -cn --arg who "$assignee" '{error: ("Assignee not found: " + $who)}' >&2
+            return 1
+        fi
+        input_parts+=("\"assigneeId\": \"$assignee_id\"")
+    fi
+
+    # Handle parent (for sub-issues) - resolve identifier to UUID
+    if [ -n "$parent" ]; then
+        local parent_id
+        if ! parent_id=$(resolve_issue_id "$parent") || [ -z "$parent_id" ]; then
+            echo "{\"error\": \"Parent issue not found: $parent\"}" >&2
+            return 1
+        fi
+        requested_parent_id="$parent_id"
+        input_parts+=("\"parentId\": \"$requested_parent_id\"")
+    fi
+
+    # Handle milestone (auto-resolves name or UUID, fail fast on miss)
+    if [ -n "$milestone" ]; then
+        local milestone_id
+        milestone_id=$(resolve_milestone_id "$milestone")
+        if [ -z "$milestone_id" ]; then
+            return 1
+        fi
+        input_parts+=("\"projectMilestoneId\": \"$milestone_id\"")
+    fi
+
+    # Handle cycle (sprint)
+    if [ -n "$cycle" ]; then
+        linear_require_pattern --cycle "$cycle" "$LINEAR_UUID_PATTERN" "a cycle UUID" || return 1
+        input_parts+=("\"cycleId\": \"$cycle\"")
+    fi
+
+    local input_json
+    input_json=$(
+        IFS=,
+        echo "{${input_parts[*]}}"
+    )
+
+    local mutation="
+    mutation CreateIssue(\$input: IssueCreateInput!) {
+        issueCreate(input: \$input) {
+            success
+            issue {
+                $ISSUE_RETURN_FIELDS
+            }
+        }
+    }"
+
+    local result
+    result=$(graphql_query "$mutation" "{\"input\": $input_json}")
+    # graphql_query treats any HTTP-200 payload as a completed request — a
+    # payload-level rejection (issueCreate.success == false) must fail HERE,
+    # before anything downstream claims a created issue or attaches uploads
+    # to whatever object a failed payload happened to include.
+    if [ "$(echo "$result" | jq -r '.issueCreate.success // false')" != "true" ]; then
+        echo "$result" | jq -c '{error: "issueCreate was rejected (success != true) - no issue was created; uploaded files (if any) were not attached", data: (.issueCreate // {})}' >&2
+        return 1
+    fi
+    # Write-through: upsert new issue into cache
+    local created_issue
+    created_issue=$(echo "$result" | jq '.issueCreate.issue // empty')
+    if [[ -n "$requested_parent_id" ]]; then
+        if [[ -z "$created_issue" || "$created_issue" = "null" ]]; then
+            jq -nc --arg parent "$parent" \
+                '{error: "Issue created but response omitted issue object; cannot verify requested parent " + $parent}' >&2
+            return 1
+        fi
+
+        local created_parent_id
+        created_parent_id=$(echo "$created_issue" | jq -r '.parent.id // empty')
+        if [ "$created_parent_id" != "$requested_parent_id" ]; then
+            local child_issue_id
+            child_issue_id=$(echo "$created_issue" | jq -r '.id // empty')
+            if [ -z "$child_issue_id" ]; then
+                jq -nc --arg parent "$parent" \
+                    '{error: "Issue created but response omitted child id; cannot verify requested parent " + $parent}' >&2
+                return 1
+            fi
+
+            local parent_fix_mutation="
+            mutation EnsureIssueParent(\$id: String!, \$input: IssueUpdateInput!) {
+                issueUpdate(id: \$id, input: \$input) {
+                    success
+                    issue {
+                        $ISSUE_RETURN_FIELDS
+                    }
+                }
+            }"
+            local parent_fix_variables
+            parent_fix_variables=$(jq -cn --arg id "$child_issue_id" --arg parentId "$requested_parent_id" \
+                '{id: $id, input: {parentId: $parentId}}')
+            local parent_fix_result
+            if ! parent_fix_result=$(graphql_query "$parent_fix_mutation" "$parent_fix_variables"); then
+                jq -nc --arg child "$child_issue_id" --arg parent "$parent" \
+                    '{error: "Issue " + $child + " was created, but Linear did not attach parent " + $parent + " during create and the follow-up repair failed"}' >&2
+                return 1
+            fi
+
+            local updated_issue
+            updated_issue=$(echo "$parent_fix_result" | jq '.issueUpdate.issue // empty')
+            local updated_parent_id
+            updated_parent_id=$(echo "$updated_issue" | jq -r '.parent.id // empty')
+            if [ "$updated_parent_id" != "$requested_parent_id" ]; then
+                jq -nc --arg child "$child_issue_id" --arg parent "$parent" \
+                    '{error: "Issue " + $child + " was created, but parent " + $parent + " could not be verified after follow-up repair"}' >&2
+                return 1
+            fi
+
+            result=$(echo "$parent_fix_result" | jq -c '{issueCreate: {success: (.issueUpdate.success // false), issue: .issueUpdate.issue}}')
+            created_issue="$updated_issue"
+        fi
+    fi
+    [[ -n "$created_issue" && "$created_issue" != "null" ]] && cache_upsert_issue "$created_issue" 2>/dev/null || true
+    [[ -n "$created_issue" && "$created_issue" != "null" ]] && cache_patch_relation_snapshots "$created_issue" 2>/dev/null || true
+    # Download any attachments in the new issue description
+    if [[ -n "$created_issue" && "$created_issue" != "null" ]]; then
+        local _id _desc
+        _id=$(echo "$created_issue" | jq -r '.identifier // empty')
+        _desc=$(echo "$created_issue" | jq -r '.description // empty')
+        attach_download_from_text "$_desc" "$_id" "description" &
+    fi
+    # Non-image --attach files: attachmentCreate against the created issue.
+    # The issue already exists here, so a failure must surface the created
+    # identifier AND exit non-zero — never a zero exit with a silent gap.
+    local attach_failed=0
+    if [ ${#attach_pending[@]} -gt 0 ]; then
+        if [[ -n "$created_issue" && "$created_issue" != "null" ]]; then
+            local created_uuid created_identifier
+            created_uuid=$(echo "$created_issue" | jq -r '.id // empty')
+            created_identifier=$(echo "$created_issue" | jq -r '.identifier // empty')
+            apply_pending_attachments "$created_uuid" "$created_identifier" \
+                "${attach_pending[@]}" || attach_failed=1
+        else
+            echo '{"error": "Issue was created but the response omitted the issue object; uploaded files could not be attached", "partial": true}' >&2
+            attach_failed=1
+        fi
+    fi
+    local normalized
+    normalized=$(normalize_mutation_response "$result" "issueCreate" "issue")
+    emit_linear_issue_activity "linear.issue_created" "info" "$normalized"
+    # --format=ids mirrors the query-command contract: print ONLY the created
+    # identifier (one per line, nothing else) so workflows can capture it
+    # deterministically. Any other/absent format keeps the default JSON output.
+    if [ "$output_format" = "ids" ]; then
+        echo "$normalized" | jq -r '.identifier // empty'
+    else
+        echo "$normalized"
+    fi
+    if [ "$attach_failed" = "1" ]; then
+        return 1
+    fi
+}
+
+update_issue() {
+    if cache_test_isolation_violation; then
+        cache_test_isolation_refusal
+        exit 1
+    fi
+    local issue_id="$1"
+    shift
+
+    local state=""
+    local labels=""
+    local title=""
+    local description=""
+    local description_file=""
+    local project=""
+    local priority=""
+    local assignee=""
+    local parent=""
+    local remove_parent="false"
+    local milestone=""
+    local cycle=""
+    local clear_cycle="false"
+    local estimate=""
+    local clear_estimate="false"
+    local clear_labels="false"
+    local sort_order=""
+    local output_format=""
+    local attach_paths=()
+    local attach_pending=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --attach)
+            if [ -z "${2-}" ]; then
+                echo '{"error": "--attach requires a path argument"}' >&2
+                return 1
+            fi
+            attach_paths+=("$2")
+            shift 2
+            ;;
+        --attach=*)
+            attach_paths+=("${1#*=}")
+            shift
+            ;;
+        --format)
+            output_format="$2"
+            shift 2
+            ;;
+        --format=*)
+            output_format="${1#--format=}"
+            shift
+            ;;
+        --state | --status)
+            state="$2"
+            shift 2
+            ;;
+        --state=* | --status=*)
+            state="${1#*=}"
+            shift
+            ;;
+        --labels | --label)
+            labels="${labels:+$labels,}$2"
+            shift 2
+            ;;
+        --labels=* | --label=*)
+            labels="${labels:+$labels,}${1#*=}"
+            shift
+            ;;
+        --title)
+            title="$2"
+            shift 2
+            ;;
+        --title=*)
+            title="${1#*=}"
+            shift
+            ;;
+        --description)
+            description="$2"
+            shift 2
+            ;;
+        --description=*)
+            description="${1#*=}"
+            shift
+            ;;
+        --description-file)
+            description_file="$2"
+            shift 2
+            ;;
+        --description-file=*)
+            description_file="${1#*=}"
+            shift
+            ;;
+        --project)
+            project="$2"
+            shift 2
+            ;;
+        --project=*)
+            project="${1#*=}"
+            shift
+            ;;
+        --parent)
+            parent="$2"
+            shift 2
+            ;;
+        --parent=*)
+            parent="${1#*=}"
+            shift
+            ;;
+        --remove-parent)
+            remove_parent="true"
+            shift
+            ;;
+        --milestone)
+            milestone="$2"
+            shift 2
+            ;;
+        --milestone=*)
+            milestone="${1#*=}"
+            shift
+            ;;
+        --priority)
+            priority="$2"
+            shift 2
+            ;;
+        --priority=*)
+            priority="${1#*=}"
+            shift
+            ;;
+        --estimate)
+            estimate="$2"
+            shift 2
+            ;;
+        --estimate=*)
+            estimate="${1#*=}"
+            shift
+            ;;
+        --clear-estimate)
+            clear_estimate="true"
+            shift
+            ;;
+        --clear-labels)
+            clear_labels="true"
+            shift
+            ;;
+        --assignee)
+            assignee="$2"
+            shift 2
+            ;;
+        --assignee=*)
+            assignee="${1#*=}"
+            shift
+            ;;
+        --cycle)
+            cycle="$2"
+            shift 2
+            ;;
+        --cycle=*)
+            cycle="${1#*=}"
+            shift
+            ;;
+        --clear-cycle)
+            clear_cycle="true"
+            shift
+            ;;
+        --sort-order)
+            sort_order="$2"
+            shift 2
+            ;;
+        --sort-order=*)
+            sort_order="${1#*=}"
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "{\"error\": \"Unknown option: $1. Run --help for valid options.\"}" >&2
+            return 1
+            ;;
+        *) break ;;
+        esac
+    done
+
+    if [[ -n "$description" && -n "$description_file" ]]; then
+        echo '{"error": "--description and --description-file are mutually exclusive"}' >&2
+        return 1
+    fi
+    if [[ -n "$description_file" ]]; then
+        read_description_file "$description_file"
+    fi
+
+    # --attach: refuse unreadable paths before any API call.
+    if [ ${#attach_paths[@]} -gt 0 ]; then
+        attach_preflight_files "${attach_paths[@]}" || return 1
+    fi
+
+    local input_parts=()
+
+    # Get issue to find team ID (needed for state lookup) - use raw format
+    local issue_result
+    issue_result=$(get_issue "$issue_id" --format=raw)
+    local team_name
+    team_name=$(echo "$issue_result" | jq -r '.issue.team.name // empty')
+
+    # Same rule as the label resolution below, applied to the pure argument
+    # check: a combination that can only be refused must be refused before any
+    # upload, or the refusal strands the uploaded asset in Linear storage.
+    if [ "$clear_labels" = "true" ] && [ -n "$labels" ]; then
+        echo '{"error": "Use either --labels <names> or --clear-labels, not both"}' >&2
+        return 1
+    fi
+
+    # Resolve --labels BEFORE any attachment upload: an unresolvable label
+    # refuses the whole update below, and an upload done first would strand
+    # orphaned assets in Linear storage (the create path pre-resolves its
+    # refusal-capable labels for the same reason).
+    local resolved_label_json=""
+    if [ "$clear_labels" != "true" ] && [ -n "$labels" ]; then
+        IFS=',' read -ra label_names <<<"$labels"
+        local label_ids=() label_rc=0
+        for label_name in "${label_names[@]}"; do
+            local label_id
+            label_rc=0
+            label_id=$(resolve_label_id "$label_name") && label_ids+=("\"$label_id\"") || label_rc=$?
+            if [ "$label_rc" = "2" ]; then
+                jq -cn --arg label "$label_name" \
+                    '{error: ("Label lookup failed for " + $label + " - refusing the update: --labels replaces the label set, so proceeding would strip labels this lookup could not confirm")}' >&2
+                return 1
+            fi
+            # A label that resolves to nothing (rc=1) must refuse too: --labels
+            # replaces the whole set, so silently dropping one requested name
+            # ships a partial set — the same wipe class as the lookup failure.
+            if [ "$label_rc" != "0" ]; then
+                jq -cn --arg label "$label_name" \
+                    '{error: ("Unknown label " + $label + " - refusing the update: --labels replaces the label set, so a dropped name would ship a partial set. Fix the name or remove it from --labels")}' >&2
+                return 1
+            fi
+        done
+        if [ ${#label_ids[@]} -eq 0 ]; then
+            jq -cn --arg labels "$labels" \
+                '{error: ("No requested label resolved (" + $labels + ") - refusing to send an empty label set, which would clear every label on the issue. Use --clear-labels to do that deliberately.")}' >&2
+            return 1
+        fi
+        resolved_label_json=$(
+            IFS=,
+            echo "[${label_ids[*]}]"
+        )
+    fi
+
+    # Upload --attach files. Image embeds append to the description being
+    # written; when this update does not itself rewrite the description,
+    # seed it from the issue's current one so the embed is an append, not a
+    # wipe. Non-images queue for attachmentCreate after the update.
+    if [ ${#attach_paths[@]} -gt 0 ]; then
+        if [[ -z "$description" && -z "$description_file" ]]; then
+            local has_image_attach=0 attach_probe
+            for attach_probe in "${attach_paths[@]}"; do
+                case "$(attach_upload_content_type "$attach_probe")" in
+                image/*) has_image_attach=1 ;;
+                esac
+            done
+            if [ "$has_image_attach" = "1" ]; then
+                description=$(echo "$issue_result" | jq -r '.issue.description // empty')
+            fi
+        fi
+        upload_attach_paths "${attach_paths[@]}" || return 1
+    fi
+
+    if [ -n "$title" ]; then
+        local escaped_title
+        escaped_title=$(printf '%s' "$title" | jq -Rs '.')
+        input_parts+=("\"title\": $escaped_title")
+    fi
+    if [ -n "$description" ]; then
+        local escaped_desc
+        escaped_desc=$(printf '%s' "$description" | jq -Rs '.')
+        input_parts+=("\"description\": $escaped_desc")
+    fi
+    if [ -n "$priority" ]; then
+        linear_require_pattern --priority "$priority" '^[0-4]$' "an integer 0-4" || return 1
+        input_parts+=("\"priority\": $priority")
+    fi
+
+    # Handle estimate. Real estimates are 1-5; Linear represents "no estimate" as
+    # null. Clear the estimate via --clear-estimate or the --estimate 0 alias
+    # (used to bring coordination-only parents into the estimate-0 format).
+    if [ "$clear_estimate" = "true" ] && [ -n "$estimate" ] && [ "$estimate" != "0" ]; then
+        echo '{"error": "Use either --estimate <1-5> or --clear-estimate, not both"}' >&2
+        return 1
+    elif [ "$clear_estimate" = "true" ] || [ "$estimate" = "0" ]; then
+        input_parts+=("\"estimate\": null")
+    elif [ -n "$estimate" ]; then
+        if [[ "$estimate" =~ ^[1-5]$ ]]; then
+            input_parts+=("\"estimate\": $estimate")
+        else
+            echo '{"error": "Invalid --estimate: must be an integer 1-5 (use 0 or --clear-estimate to unset)"}' >&2
+            return 1
+        fi
+    fi
+
+    # Sort order only meaningful on parent/standalone issues (sub-issues render under parent)
+    if [ -n "$sort_order" ]; then
+        local parent_id
+        parent_id=$(echo "$issue_result" | jq -r '.issue.parent.identifier // empty')
+        if [ -n "$parent_id" ]; then
+            echo "WARN: $issue_id is a sub-issue of $parent_id — sort order has no effect on sub-issues" >&2
+        fi
+        linear_require_pattern --sort-order "$sort_order" '^-?[0-9]+(\.[0-9]+)?$' "a number" || return 1
+        input_parts+=("\"sortOrder\": $sort_order")
+    fi
+
+    # Handle state (fail fast with available states on miss)
+    if [ -n "$state" ]; then
+        local state_id
+        state_id=$(resolve_state_id "$state" "$team_name")
+        if [ -z "$state_id" ]; then
+            return 1
+        fi
+        input_parts+=("\"stateId\": \"$state_id\"")
+    fi
+
+    # --labels REPLACES the issue's label set, so a name that does not become an
+    # id is not a skipped label — it is a label removed from the issue. A failed
+    # lookup (rc 2) leaves that unknowable, and resolving nothing at all would
+    # send an empty array, stripping every label while reporting success.
+    # --clear-labels is the only way to ask for that.
+    if [ "$clear_labels" = "true" ]; then
+        # The --labels conflict was refused before the upload, above.
+        input_parts+=("\"labelIds\": []")
+    elif [ -n "$labels" ]; then
+        # Resolved (or refused) above, before the attachment upload.
+        input_parts+=("\"labelIds\": $resolved_label_json")
+    fi
+
+    # Handle project (auto-resolves name or UUID)
+    if [ -n "$project" ]; then
+        local project_id
+        project_id=$(resolve_project_id "$project")
+        if [ -z "$project_id" ]; then
+            return 1
+        fi
+        input_parts+=("\"projectId\": \"$project_id\"")
+    fi
+
+    # Handle assignee. Every other resolver here fails closed; dropping the
+    # field on an unresolvable name reported success with the issue unassigned.
+    if [ -n "$assignee" ]; then
+        local assignee_id
+        if [ "$assignee" = "me" ]; then
+            local me_query='query { viewer { id } }'
+            local me_result
+            me_result=$(graphql_query "$me_query" "{}")
+            assignee_id=$(echo "$me_result" | jq -r '.viewer.id // empty')
+        else
+            local user_query='query GetUser($name: String!) { users(filter: {name: {containsIgnoreCase: $name}}) { nodes { id } } }'
+            local user_vars user_result
+            user_vars=$(jq -cn --arg name "$assignee" '{name: $name}')
+            user_result=$(graphql_query "$user_query" "$user_vars")
+            assignee_id=$(echo "$user_result" | jq -r '.users.nodes[0].id // empty')
+        fi
+        if [ -z "$assignee_id" ]; then
+            jq -cn --arg who "$assignee" '{error: ("Assignee not found: " + $who)}' >&2
+            return 1
+        fi
+        input_parts+=("\"assigneeId\": \"$assignee_id\"")
+    fi
+
+    # Handle parent (set or remove) - resolve identifier to UUID
+    if [ "$remove_parent" = "true" ]; then
+        input_parts+=("\"parentId\": null")
+    elif [ -n "$parent" ]; then
+        local parent_id
+        parent_id=$(resolve_issue_id "$parent")
+        if [ -z "$parent_id" ]; then
+            echo "{\"error\": \"Parent issue not found: $parent\"}" >&2
+            return 1
+        fi
+        input_parts+=("\"parentId\": \"$parent_id\"")
+    fi
+
+    # Handle milestone (auto-resolves name or UUID, fail fast on miss)
+    if [ -n "$milestone" ]; then
+        local milestone_id
+        milestone_id=$(resolve_milestone_id "$milestone")
+        if [ -z "$milestone_id" ]; then
+            return 1
+        fi
+        input_parts+=("\"projectMilestoneId\": \"$milestone_id\"")
+    fi
+
+    # Handle cycle (sprint)
+    if [ "$clear_cycle" = "true" ] && [ -n "$cycle" ]; then
+        echo '{"error": "Use either --cycle or --clear-cycle, not both"}' >&2
+        return 1
+    elif [ "$clear_cycle" = "true" ]; then
+        input_parts+=("\"cycleId\": null")
+    elif [ -n "$cycle" ]; then
+        linear_require_pattern --cycle "$cycle" "$LINEAR_UUID_PATTERN" "a cycle UUID" || return 1
+        input_parts+=("\"cycleId\": \"$cycle\"")
+    fi
+
+    if [ ${#input_parts[@]} -eq 0 ] && [ ${#attach_pending[@]} -eq 0 ]; then
+        echo '{"error": "No update options provided"}' >&2
+        return 1
+    fi
+
+    # Attach-only update (non-image --attach, no field changes): there is
+    # nothing to send through issueUpdate, so skip the mutation and only
+    # create the attachments against the resolved issue.
+    if [ ${#input_parts[@]} -eq 0 ]; then
+        local attach_only_uuid attach_only_identifier attach_only_url
+        attach_only_uuid=$(echo "$issue_result" | jq -r '.issue.id // empty')
+        attach_only_identifier=$(echo "$issue_result" | jq -r '.issue.identifier // empty')
+        attach_only_url=$(echo "$issue_result" | jq -r '.issue.url // empty')
+        if [[ -z "$attach_only_uuid" ]]; then
+            jq -cn --arg id "$issue_id" '{error: ("Issue not found: " + $id)}' >&2
+            return 1
+        fi
+        local attach_only_failed=0
+        apply_pending_attachments "$attach_only_uuid" "$attach_only_identifier" \
+            "${attach_pending[@]}" || attach_only_failed=1
+        jq -cn --arg identifier "$attach_only_identifier" --arg url "$attach_only_url" \
+            --argjson ok "$([ "$attach_only_failed" = "0" ] && echo true || echo false)" \
+            --argjson count "${#attach_pending[@]}" \
+            '{success: $ok, identifier: $identifier, url: (if $url == "" then null else $url end), attachments_requested: $count}'
+        if [ "$attach_only_failed" = "1" ]; then
+            return 1
+        fi
+        return 0
+    fi
+
+    local input_json
+    input_json=$(
+        IFS=,
+        echo "{${input_parts[*]}}"
+    )
+
+    local mutation="
+    mutation UpdateIssue(\$id: String!, \$input: IssueUpdateInput!) {
+        issueUpdate(id: \$id, input: \$input) {
+            success
+            issue {
+                $ISSUE_RETURN_FIELDS
+            }
+        }
+    }"
+
+    local result
+    result=$(graphql_query "$mutation" "{\"id\": \"$issue_id\", \"input\": $input_json}")
+    # Payload-level rejection (issueUpdate.success == false) must fail HERE —
+    # falling through would report the pre-update issue and still attach
+    # queued uploads to an issue the rejected update never touched.
+    if [ "$(echo "$result" | jq -r '.issueUpdate.success // false')" != "true" ]; then
+        echo "$result" | jq -c --arg id "$issue_id" '{error: ("issueUpdate was rejected (success != true) for " + $id + " - nothing was updated; uploaded files (if any) were not attached"), data: (.issueUpdate // {})}' >&2
+        return 1
+    fi
+    # Write-through: upsert updated issue into cache
+    local updated_issue
+    updated_issue=$(echo "$result" | jq '.issueUpdate.issue // empty')
+    [[ -n "$updated_issue" && "$updated_issue" != "null" ]] && cache_upsert_issue "$updated_issue" 2>/dev/null || true
+    [[ -n "$updated_issue" && "$updated_issue" != "null" ]] && cache_patch_relation_snapshots "$updated_issue" 2>/dev/null || true
+    # Download any attachments in the updated description
+    if [[ -n "$updated_issue" && "$updated_issue" != "null" ]]; then
+        local _id _desc
+        _id=$(echo "$updated_issue" | jq -r '.identifier // empty')
+        _desc=$(echo "$updated_issue" | jq -r '.description // empty')
+        attach_download_from_text "$_desc" "$_id" "description" &
+    fi
+    local normalized
+    normalized=$(normalize_mutation_response "$result" "issueUpdate" "issue")
+    if [ -n "$state" ]; then
+        local activity_type activity_severity
+        read -r activity_type activity_severity < <(linear_update_activity_type "$normalized")
+        emit_linear_issue_activity "$activity_type" "$activity_severity" "$normalized"
+    fi
+
+    # Output format. Default (no --format) preserves the historical mutation
+    # summary so existing callers that parse .success/.identifier/.data keep
+    # working. When --format is passed explicitly, emit the updated issue in the
+    # documented read format (safe is the README default), consistent with the
+    # query actions. `safe`/`compact` reuse the shared formatters by wrapping the
+    # mutation's issue in {issue: ...}; a response that omitted the issue object
+    # falls back to the mutation summary.
+    local wrapped_issue=""
+    if [[ -n "$updated_issue" && "$updated_issue" != "null" ]]; then
+        wrapped_issue=$(jq -n --argjson i "$updated_issue" '{issue: $i}')
+    fi
+    case "$output_format" in
+    safe)
+        if [[ -n "$wrapped_issue" ]]; then
+            format_issue_single "$wrapped_issue"
+        else
+            echo "$normalized"
+        fi
+        ;;
+    compact)
+        if [[ -n "$wrapped_issue" ]]; then
+            format_issue_compact "$wrapped_issue"
+        else
+            echo "$normalized"
+        fi
+        ;;
+    ids)
+        echo "$normalized" | jq -r '.identifier // empty'
+        ;;
+    raw)
+        echo "$result"
+        ;;
+    "" | *)
+        echo "$normalized"
+        ;;
+    esac
+
+    # Non-image --attach files: attachmentCreate after the update. The update
+    # itself succeeded (and was reported above), so a failure here must name
+    # the issue and exit non-zero — never a zero exit with a silent gap.
+    if [ ${#attach_pending[@]} -gt 0 ]; then
+        local attach_target_uuid attach_target_identifier
+        if [[ -n "$updated_issue" && "$updated_issue" != "null" ]]; then
+            attach_target_uuid=$(echo "$updated_issue" | jq -r '.id // empty')
+            attach_target_identifier=$(echo "$updated_issue" | jq -r '.identifier // empty')
+        else
+            attach_target_uuid=$(echo "$issue_result" | jq -r '.issue.id // empty')
+            attach_target_identifier=$(echo "$issue_result" | jq -r '.issue.identifier // empty')
+        fi
+        apply_pending_attachments "$attach_target_uuid" "$attach_target_identifier" \
+            "${attach_pending[@]}" || return 1
+    fi
+}
+
+# IssueArchivePayload.success reports the request was processed, not that the
+# entity mutated — Linear answers success=true even when the archive/trash
+# no-ops server-side (#930). Trust only the returned entity: require the
+# marker field on it, touch the cache only after confirmation, and fail with
+# a nonzero exit otherwise so a silent no-op can never look like success.
+confirm_archive_mutation() {
+    local result="$1"
+    local operation="$2"
+    local marker_filter="$3"
+    local action="$4"
+    local issue_ref="$5"
+    local issue_id="$6"
+
+    if ! echo "$result" | jq -e --arg op "$operation" \
+        '.[$op].success == true and .[$op].entity != null and (.[$op].entity | '"$marker_filter"')' >/dev/null 2>&1; then
+        echo "$result" | jq -c --arg op "$operation" --arg action "$action" --arg ref "$issue_ref" --arg id "$issue_id" \
+            '{error: ($action + " not confirmed for " + $ref + " (resolved id: " + $id + "): " + $op + " returned success=\(.[$op].success // false) but the response entity does not confirm it — treat the issue as still active"), data: (.[$op] // {})}' >&2
+        return 1
+    fi
+
+    # Write-through: remove the issue from cache now that the server confirmed
+    cache_remove_issue "$issue_id" 2>/dev/null || true
+    normalize_mutation_response "$result" "$operation" "entity"
+}
+
+archive_issue() {
+    local issue_ref="$1"
+    shift || true
+
+    # Resolve identifier to UUID (required for archive mutation)
+    local issue_id
+    issue_id=$(resolve_issue_id "$issue_ref")
+    if [ -z "$issue_id" ]; then
+        echo "{\"error\": \"Issue not found: $issue_ref\"}" >&2
+        return 1
+    fi
+
+    local mutation='
+    mutation ArchiveIssue($id: String!) {
+        issueArchive(id: $id) {
+            success
+            entity { id identifier url archivedAt trashed }
+        }
+    }'
+    local result
+    result=$(graphql_query "$mutation" "{\"id\": \"$issue_id\"}")
+    confirm_archive_mutation "$result" "issueArchive" '.archivedAt != null' "archive" "$issue_ref" "$issue_id"
+}
+
+trash_issue() {
+    local issue_ref="$1"
+    shift || true
+
+    # Resolve identifier to UUID (required for delete mutation)
+    local issue_id
+    issue_id=$(resolve_issue_id "$issue_ref")
+    if [ -z "$issue_id" ]; then
+        echo "{\"error\": \"Issue not found: $issue_ref\"}" >&2
+        return 1
+    fi
+
+    # Linear's issueDelete moves to trash (recoverable for 30 days)
+    local mutation='
+    mutation TrashIssue($id: String!) {
+        issueDelete(id: $id) {
+            success
+            entity { id identifier url archivedAt trashed }
+        }
+    }'
+    local result
+    result=$(graphql_query "$mutation" "{\"id\": \"$issue_id\"}")
+    confirm_archive_mutation "$result" "issueDelete" '.trashed == true' "trash" "$issue_ref" "$issue_id"
+}
+
+list_children() {
+    local issue_id=""
+    local recursive="false"
+    local pending_only="false"
+    FORMAT="${DEFAULT_FORMAT}"
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --format)
+            FORMAT="$2"
+            shift 2
+            ;;
+        --format=*)
+            FORMAT="${1#--format=}"
+            shift
+            ;;
+        --recursive | -r)
+            recursive="true"
+            shift
+            ;;
+        --pending)
+            pending_only="true"
+            shift
+            ;;
+        *)
+            issue_id="$1"
+            shift
+            ;;
+        esac
+    done
+
+    if [ -z "$issue_id" ]; then
+        echo '{"error": "Issue ID required"}' >&2
+        return 1
+    fi
+
+    linear_require_format "$FORMAT" safe raw || return 1
+
+    local query
+    if [ "$recursive" = "true" ]; then
+        # Fetch 3 levels deep (covers nearly all real-world nesting)
+        # Includes relations for blocking info between sub-issues
+        query='
+        query GetChildrenRecursive($id: String!) {
+            issue(id: $id) {
+                identifier
+                title
+                children {
+                    nodes {
+                        id
+                        identifier
+                        title
+                        state { name type }
+                        assignee { name }
+                        labels { nodes { name } }
+                        priority
+                        estimate
+                        parent { identifier }
+                        relations { nodes { type relatedIssue { identifier } } }
+                        inverseRelations { nodes { type issue { identifier } } }
+                        children {
+                            nodes {
+                                id
+                                identifier
+                                title
+                                state { name type }
+                                assignee { name }
+                                labels { nodes { name } }
+                                priority
+                                estimate
+                                parent { identifier }
+                                relations { nodes { type relatedIssue { identifier } } }
+                                inverseRelations { nodes { type issue { identifier } } }
+                                children {
+                                    nodes {
+                                        id
+                                        identifier
+                                        title
+                                        state { name type }
+                                        assignee { name }
+                                        labels { nodes { name } }
+                                        priority
+                                        estimate
+                                        parent { identifier }
+                                        relations { nodes { type relatedIssue { identifier } } }
+                                        inverseRelations { nodes { type issue { identifier } } }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }'
+    else
+        query='
+        query GetChildren($id: String!) {
+            issue(id: $id) {
+                identifier
+                title
+                children {
+                    nodes {
+                        id
+                        identifier
+                        title
+                        state { name type }
+                        assignee { name }
+                        priority
+                        estimate
+                        createdAt
+                    }
+                }
+            }
+        }'
+    fi
+
+    local variables="{\"id\": \"$issue_id\"}"
+    local result
+    result=$(graphql_query "$query" "$variables")
+
+    # Apply pending filter if requested (filter out completed/canceled)
+    if [ "$pending_only" = "true" ]; then
+        if [ "$recursive" = "true" ]; then
+            # Filter recursively through nested children
+            result=$(echo "$result" | jq '
+                def filter_pending:
+                    if . == null then null
+                    elif type == "array" then [.[] | filter_pending]
+                    elif type == "object" and has("state") then
+                        if .state.type == "completed" or .state.type == "canceled" then empty
+                        else . + (if has("children") then {children: {nodes: ([.children.nodes[]? | filter_pending])}} else {} end)
+                        end
+                    else .
+                    end;
+                .issue.children.nodes = [.issue.children.nodes[]? | filter_pending]
+            ')
+        else
+            # Simple filter for non-recursive
+            result=$(echo "$result" | jq '.issue.children.nodes = [.issue.children.nodes[] | select(.state.type != "completed" and .state.type != "canceled")]')
+        fi
+    fi
+
+    # Apply output format
+    case "$FORMAT" in
+    raw)
+        echo "$result"
+        ;;
+    safe)
+        if [ "$recursive" = "true" ]; then
+            format_children_recursive "$result"
+        else
+            format_children_list "$result"
+        fi
+        ;;
+    esac
+}
+
+list_relations() {
+    local issue_id=""
+    FORMAT="${DEFAULT_FORMAT}"
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --format)
+            FORMAT="$2"
+            shift 2
+            ;;
+        --format=*)
+            FORMAT="${1#--format=}"
+            shift
+            ;;
+        *)
+            issue_id="$1"
+            shift
+            ;;
+        esac
+    done
+
+    if [ -z "$issue_id" ]; then
+        echo '{"error": "Issue ID required"}' >&2
+        return 1
+    fi
+
+    linear_require_format "$FORMAT" safe raw || return 1
+
+    local query='
+    query GetRelations($id: String!) {
+        issue(id: $id) {
+            identifier
+            title
+            relations {
+                nodes {
+                    id
+                    type
+                    relatedIssue {
+                        id
+                        identifier
+                        title
+                        state { name }
+                    }
+                }
+            }
+            inverseRelations {
+                nodes {
+                    id
+                    type
+                    issue {
+                        id
+                        identifier
+                        title
+                        state { name }
+                    }
+                }
+            }
+        }
+    }'
+
+    local variables="{\"id\": \"$issue_id\"}"
+    local result
+    result=$(graphql_query "$query" "$variables")
+
+    # Apply output format
+    case "$FORMAT" in
+    raw)
+        echo "$result"
+        ;;
+    safe)
+        format_relations_list "$result"
+        ;;
+    esac
+}
+
+# Parent levels selected per ancestor query. A chain that comes back with
+# exactly this many parents may be cut off by the query depth rather than
+# rooted; extend_ancestor_chain keeps fetching until a short chunk proves a
+# true root (null parent).
+ANCESTOR_FETCH_DEPTH=5
+ANCESTOR_FETCH_MAX_CHUNKS=20
+
+# build_parent_selection DEPTH — nested GraphQL parent selection, DEPTH levels
+build_parent_selection() {
+    local depth="$1" selection="" i
+    for ((i = 0; i < depth; i++)); do
+        selection="parent { id identifier $selection }"
+    done
+    printf '%s' "$selection"
+}
+
+# extend_ancestor_chain IDENTIFIER_CHAIN ID_CHAIN
+# Complete a possibly-truncated ancestor chain (newline-separated identifiers,
+# self first). A chain shorter than ANCESTOR_FETCH_DEPTH+1 entries already
+# ends at a true root; a full-length chain may instead be cut off by the
+# query depth, so follow up with chunked ancestor queries for the deepest
+# entry until a chunk comes back short. Prints the completed chain. Fails
+# (error on stderr) when the hierarchy exceeds the chunk bound or a lookup
+# misbehaves — callers must treat failure as "do not derive remediation",
+# never as "chain is complete".
+extend_ancestor_chain() {
+    local chain="$1"
+    local id_chain="$2"
+    local full=$((ANCESTOR_FETCH_DEPTH + 1))
+    local chunks=0
+    local segment="$chain"
+    local deepest deepest_id chunk_result rest segment_ids rest_ids
+
+    while [ "$(printf '%s\n' "$segment" | grep -c '')" -ge "$full" ]; do
+        chunks=$((chunks + 1))
+        if [ "$chunks" -gt "$ANCESTOR_FETCH_MAX_CHUNKS" ]; then
+            echo "{\"error\": \"Hierarchy too deep to validate: no root issue within $((ANCESTOR_FETCH_DEPTH + ANCESTOR_FETCH_MAX_CHUNKS * ANCESTOR_FETCH_DEPTH)) ancestor levels. Refusing to validate the blocking relation against a truncated ancestor chain.\"}" >&2
+            return 1
+        fi
+        deepest=$(printf '%s\n' "$chain" | tail -n 1)
+        deepest_id=$(printf '%s\n' "$id_chain" | tail -n 1)
+        local chunk_query="
+        query AncestorChunk(\$id: String!) {
+            issue(id: \$id) { id identifier $(build_parent_selection "$ANCESTOR_FETCH_DEPTH") }
+        }"
+        chunk_result=$(graphql_query "$chunk_query" "{\"id\": \"$deepest\"}") || return 1
+        local chunk_issue
+        chunk_issue=$(echo "$chunk_result" | jq -c '.issue')
+        validate_parent_chain_shape "$chunk_issue" "$ANCESTOR_FETCH_DEPTH" "$deepest" || return 1
+        segment=$(echo "$chunk_result" | jq -r '.issue | recurse(.parent; . != null) | .identifier')
+        segment_ids=$(echo "$chunk_result" | jq -r '.issue | recurse(.parent; . != null) | .id')
+        if [ "$(printf '%s\n' "$segment" | sed -n '1p')" != "$deepest" ] \
+            || [ "$(printf '%s\n' "$segment_ids" | sed -n '1p')" != "$deepest_id" ]; then
+            echo "{\"error\": \"Ancestor lookup for $deepest returned an unexpected issue; refusing to validate the blocking relation against an incomplete ancestor chain.\"}" >&2
+            return 1
+        fi
+        rest=$(printf '%s\n' "$segment" | tail -n +2)
+        rest_ids=$(printf '%s\n' "$segment_ids" | tail -n +2)
+        if hierarchy_chains_overlap "$rest" "$chain" \
+            || hierarchy_chains_overlap "$rest_ids" "$id_chain"; then
+            echo "{\"error\": \"Hierarchy validation failed closed: parent cycle detected while extending '$deepest'.\"}" >&2
+            return 1
+        fi
+        if [ -n "$rest" ]; then
+            chain="$chain
+$rest"
+            id_chain="$id_chain
+$rest_ids"
+        fi
+    done
+
+    printf '%s\n' "$chain"
+}
+
+add_relation() {
+    local issue_ref="$1"
+    shift
+
+    local blocks=""
+    local blocked_by=""
+    local related=""
+    local duplicate=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --blocks)
+            blocks="$2"
+            shift 2
+            ;;
+        --blocked-by)
+            blocked_by="$2"
+            shift 2
+            ;;
+        --related)
+            related="$2"
+            shift 2
+            ;;
+        --duplicate)
+            duplicate="$2"
+            shift 2
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "{\"error\": \"Unknown option: $1. Run --help for valid options.\"}" >&2
+            return 1
+            ;;
+        *) break ;;
+        esac
+    done
+
+    # Resolve the main issue ID
+    local issue_id
+    issue_id=$(resolve_issue_id "$issue_ref")
+    if [ -z "$issue_id" ]; then
+        echo "{\"error\": \"Issue not found: $issue_ref\"}" >&2
+        return 1
+    fi
+
+    local relation_type=""
+    local related_issue_uuid=""
+    local other_ref=""
+
+    if [ -n "$blocks" ]; then
+        # This issue blocks another: create relation type "blocks" with this as issueId
+        relation_type="blocks"
+        other_ref="$blocks"
+    elif [ -n "$blocked_by" ]; then
+        # This issue is blocked by another: create relation type "blocks" with other as issueId
+        # Swap: the blocker is the issueId, this issue is relatedIssueId
+        relation_type="blocks"
+        other_ref="$blocked_by"
+        # Will swap after resolving
+    elif [ -n "$related" ]; then
+        relation_type="related"
+        other_ref="$related"
+    elif [ -n "$duplicate" ]; then
+        relation_type="duplicate"
+        other_ref="$duplicate"
+    else
+        echo '{"error": "Required: --blocks, --blocked-by, --related, or --duplicate"}' >&2
+        return 1
+    fi
+
+    # Resolve the other issue ID
+    related_issue_uuid=$(resolve_issue_id "$other_ref")
+    if [ -z "$related_issue_uuid" ]; then
+        echo "{\"error\": \"Issue not found: $other_ref\"}" >&2
+        return 1
+    fi
+
+    # For blocked-by, swap the IDs (blocker becomes issueId)
+    if [ -n "$blocked_by" ]; then
+        local temp="$issue_id"
+        issue_id="$related_issue_uuid"
+        related_issue_uuid="$temp"
+    fi
+
+    # Validation for blocking relations: the blocking-level rule
+    # (blocking relations connect peers of one bundle — see issue-validation.sh)
+    if [ "$relation_type" = "blocks" ]; then
+        # The parent chain is fetched ANCESTOR_FETCH_DEPTH levels per query and
+        # extended chunk-by-chunk to a proven root when remediation needs it.
+        local ancestor_selection
+        ancestor_selection=$(build_parent_selection "$ANCESTOR_FETCH_DEPTH")
+        local validation_query="
+        query ValidateBlocking(\$id1: String!, \$id2: String!) {
+            issue1: issue(id: \$id1) { id identifier $ancestor_selection }
+            issue2: issue(id: \$id2) { id identifier $ancestor_selection }
+        }"
+        local validation_result
+        validation_result=$(graphql_query "$validation_query" "{\"id1\": \"$issue_id\", \"id2\": \"$related_issue_uuid\"}")
+
+        local issue1_json issue2_json
+        issue1_json=$(echo "$validation_result" | jq -c '.issue1')
+        issue2_json=$(echo "$validation_result" | jq -c '.issue2')
+        validate_parent_chain_shape "$issue1_json" "$ANCESTOR_FETCH_DEPTH" "$issue_id" || return 1
+        validate_parent_chain_shape "$issue2_json" "$ANCESTOR_FETCH_DEPTH" "$related_issue_uuid" || return 1
+
+        local issue1_id issue2_id
+        issue1_id=$(echo "$validation_result" | jq -r '.issue1.identifier')
+        issue2_id=$(echo "$validation_result" | jq -r '.issue2.identifier')
+
+        # Blocking-level rule — a blocking relation connects peers of
+        # one bundle: same direct parent, or both top-level. The rejection
+        # message derives its remediation from the same predicate
+        # (blocking_level_ok), so a prescribed command is never itself rejected.
+        # issue1 = blocker (from), issue2 = blocked (to)
+        local chain1 chain2 id_chain1 id_chain2 parent1_id parent2_id
+        chain1=$(echo "$validation_result" | jq -r '.issue1 | recurse(.parent; . != null) | .identifier')
+        chain2=$(echo "$validation_result" | jq -r '.issue2 | recurse(.parent; . != null) | .identifier')
+        id_chain1=$(echo "$validation_result" | jq -r '.issue1 | recurse(.parent; . != null) | .id')
+        id_chain2=$(echo "$validation_result" | jq -r '.issue2 | recurse(.parent; . != null) | .id')
+
+        # A full eager selection may hide one more parent edge. Prove both
+        # chains terminate at explicit validated roots before any same-parent
+        # shortcut can accept the relation. Shallow chains return unchanged.
+        chain1=$(extend_ancestor_chain "$chain1" "$id_chain1") || return 1
+        chain2=$(extend_ancestor_chain "$chain2" "$id_chain2") || return 1
+        parent1_id=$(sed -n '2p' <<<"$chain1")
+        parent2_id=$(sed -n '2p' <<<"$chain2")
+
+        if ! blocking_level_ok "$parent1_id" "$parent2_id"; then
+            local violation_message
+            violation_message=$(blocking_level_violation_message "$issue1_id" "$issue2_id" "$chain1" "$chain2")
+            echo "{\"error\": \"$violation_message\"}" >&2
+            return 1
+        fi
+    fi
+
+    local mutation='
+    mutation CreateRelation($input: IssueRelationCreateInput!) {
+        issueRelationCreate(input: $input) {
+            success
+            issueRelation {
+                id
+                type
+                issue { identifier title }
+                relatedIssue { identifier title }
+            }
+        }
+    }'
+
+    local input="{\"issueId\": \"$issue_id\", \"relatedIssueId\": \"$related_issue_uuid\", \"type\": \"$relation_type\"}"
+    local result
+    local query_rc=0
+    result=$(graphql_query "$mutation" "{\"input\": $input}") || query_rc=$?
+    # Linear already holding this relation is idempotent success, not a
+    # rejection — graphql_query reports it as already_exists.
+    if [ "$(echo "$result" | jq -r '.already_exists // false' 2>/dev/null)" = "true" ]; then
+        echo '{"success": true, "already_exists": true}'
+        return 0
+    fi
+    # A payload-level rejection must fail here. Printing the normalized
+    # {success: false} object and returning 0 let callers — block_issue among
+    # them — report a blocked issue that carries no blocking relation.
+    if [ "$(echo "$result" | jq -r '.issueRelationCreate.success // false' 2>/dev/null)" != "true" ]; then
+        # Every graphql_query failure path reports on stderr and leaves stdout
+        # empty. Piping that into jq would emit a parse error and no rejection
+        # message at all, so the two causes are reported separately.
+        local payload
+        payload=$(echo "$result" | jq -c '.issueRelationCreate // {}' 2>/dev/null) || payload=""
+        if [ -z "$result" ] || [ -z "$payload" ]; then
+            jq -cn --arg type "$relation_type" --argjson rc "$query_rc" --arg raw "$result" \
+                '{error: ("issueRelationCreate returned no usable response (graphql_query exit " + ($rc | tostring) + ") - no " + $type + " relation was created; see the preceding error"), raw: $raw}' >&2
+            return 1
+        fi
+        jq -cn --argjson data "$payload" \
+            '{error: "issueRelationCreate was rejected (success != true) - no relation was created", data: $data}' >&2
+        return 1
+    fi
+    # Write-through: re-fetch both issues to get updated relations
+    cache_refresh_issues "$issue_id" "$related_issue_uuid" 2>/dev/null || true
+    local normalized
+    normalized=$(normalize_mutation_response "$result" "issueRelationCreate" "issueRelation")
+    emit_linear_relation_activity "$normalized"
+    echo "$normalized"
+}
+
+remove_relation() {
+    local first_arg="$1"
+    shift || true
+
+    # Check if first arg is a UUID (direct relation ID) or issue reference
+    if [[ "$first_arg" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+        # Direct UUID: delete by relation ID
+        local relation_id="$first_arg"
+        local mutation='
+        mutation DeleteRelation($id: String!) {
+            issueRelationDelete(id: $id) {
+                success
+            }
+        }'
+        local result
+        result=$(graphql_query "$mutation" "{\"id\": \"$relation_id\"}")
+        normalize_mutation_response "$result" "issueRelationDelete" "issueRelation"
+        return
+    fi
+
+    # Issue reference with flags: find and delete the matching relation
+    local issue_ref="$first_arg"
+    local blocks=""
+    local blocked_by=""
+    local related=""
+    local duplicate=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --blocks)
+            blocks="$2"
+            shift 2
+            ;;
+        --blocked-by)
+            blocked_by="$2"
+            shift 2
+            ;;
+        --related)
+            related="$2"
+            shift 2
+            ;;
+        --duplicate)
+            duplicate="$2"
+            shift 2
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "{\"error\": \"Unknown option: $1. Run --help for valid options.\"}" >&2
+            return 1
+            ;;
+        *) break ;;
+        esac
+    done
+
+    # Resolve the main issue ID
+    local issue_id
+    issue_id=$(resolve_issue_id "$issue_ref")
+    if [ -z "$issue_id" ]; then
+        echo "{\"error\": \"Issue not found: $issue_ref\"}" >&2
+        return 1
+    fi
+
+    local relation_type=""
+    local other_ref=""
+    local search_inverse="false"
+
+    if [ -n "$blocks" ]; then
+        relation_type="blocks"
+        other_ref="$blocks"
+    elif [ -n "$blocked_by" ]; then
+        relation_type="blocks"
+        other_ref="$blocked_by"
+        search_inverse="true" # Look in inverseRelations
+    elif [ -n "$related" ]; then
+        relation_type="related"
+        other_ref="$related"
+    elif [ -n "$duplicate" ]; then
+        relation_type="duplicate"
+        other_ref="$duplicate"
+    else
+        echo '{"error": "Required: UUID or --blocks, --blocked-by, --related, or --duplicate"}' >&2
+        return 1
+    fi
+
+    # Resolve the other issue identifier
+    local other_identifier
+    other_identifier=$(echo "$other_ref" | tr '[:lower:]' '[:upper:]')
+
+    # Query relations to find the matching one
+    local query='
+    query GetRelations($id: String!) {
+        issue(id: $id) {
+            relations { nodes { id type relatedIssue { identifier } } }
+            inverseRelations { nodes { id type issue { identifier } } }
+        }
+    }'
+    local result
+    result=$(graphql_query "$query" "{\"id\": \"$issue_id\"}")
+
+    # Find the relation ID
+    local relation_id=""
+    if [ "$search_inverse" = "true" ]; then
+        # Search in inverseRelations (other issue blocks this one)
+        relation_id=$(echo "$result" | jq -r --arg type "$relation_type" --arg other "$other_identifier" '
+            .issue.inverseRelations.nodes[] | select(.type == $type and .issue.identifier == $other) | .id' | head -n1)
+    else
+        # Search in relations (this issue blocks/relates to other)
+        relation_id=$(echo "$result" | jq -r --arg type "$relation_type" --arg other "$other_identifier" '
+            .issue.relations.nodes[] | select(.type == $type and .relatedIssue.identifier == $other) | .id' | head -n1)
+    fi
+
+    if [ -z "$relation_id" ] || [ "$relation_id" = "null" ]; then
+        echo "{\"error\": \"Relation not found: $issue_ref ${relation_type} $other_ref\"}" >&2
+        return 1
+    fi
+
+    # Delete the relation
+    local mutation='
+    mutation DeleteRelation($id: String!) {
+        issueRelationDelete(id: $id) {
+            success
+        }
+    }'
+    result=$(graphql_query "$mutation" "{\"id\": \"$relation_id\"}")
+    # Write-through: re-fetch both issues to update cached relations
+    local other_uuid
+    other_uuid=$(resolve_issue_id "$other_ref" 2>/dev/null || true)
+    cache_refresh_issues "$issue_id" ${other_uuid:+"$other_uuid"} 2>/dev/null || true
+    normalize_mutation_response "$result" "issueRelationDelete" "issueRelation"
+}
+
+# =============================================================================
+# COMPOSITE ACTIONS - Workflow shortcuts combining multiple operations
+# =============================================================================
+
+# Activate an issue: set state to "In Progress"
+# Usage: activate_issue CC-XXX [--agent <name>]
+# --agent applies the exclusive agent:<name> issue label in the same
+# issueUpdate mutation as the state change. The label is validated before any
+# mutation, so an unknown agent fails without touching issue state.
+activate_issue() {
+    local issue_id="$1"
+    shift
+
+    local agent=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --agent)
+            if [[ -n "${2:-}" && ! "$2" =~ ^- ]]; then
+                agent="$2"
+                shift 2
+            else
+                echo "{\"error\": \"--agent requires a value (e.g., --agent iced)\"}" >&2
+                return 1
+            fi
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "{\"error\": \"Unknown option: $1. Run --help for valid options.\"}" >&2
+            return 1
+            ;;
+        *) break ;;
+        esac
+    done
+
+    local final_labels=""
+    if [ -n "$agent" ]; then
+        local agent_label="agent:$agent"
+        # Fail before the state change when the agent label doesn't resolve —
+        # update_issue's own label handling is warn+skip, which would silently
+        # activate without the label.
+        local agent_label_id
+        if ! agent_label_id=$(resolve_label_id "$agent_label") || [ -z "$agent_label_id" ]; then
+            echo "{\"error\": \"Agent label not found: '$agent_label'. Issue state unchanged. Verify agent labels with 'linear.sh cache labels list --format=safe'.\"}" >&2
+            return 1
+        fi
+
+        # Agent labels are exclusive: replace any existing agent:* label and
+        # preserve all other labels (--labels replaces the full set).
+        local issue_result
+        issue_result=$(get_issue "$issue_id" --format=raw)
+        final_labels=$(echo "$issue_result" | jq -r --arg agent_label "$agent_label" \
+            '[.issue.labels.nodes[].name | select(startswith("agent:") | not)] + [$agent_label] | join(",")')
+    fi
+
+    # Update state to In Progress (single mutation carries the label set too)
+    local update_result
+    if [ -n "$agent" ]; then
+        update_result=$(update_issue "$issue_id" --state "In Progress" --labels "$final_labels")
+    else
+        update_result=$(update_issue "$issue_id" --state "In Progress")
+    fi
+    local update_success
+    update_success=$(echo "$update_result" | jq -r '.success // false')
+
+    if [ "$update_success" != "true" ]; then
+        echo "$update_result"
+        return 1
+    fi
+
+    local identifier
+    identifier=$(echo "$update_result" | jq -r '.identifier // empty')
+    if [ -n "$agent" ]; then
+        echo "{\"success\": true, \"identifier\": \"$identifier\", \"action\": \"activated\", \"agent\": \"$agent\"}"
+    else
+        echo "{\"success\": true, \"identifier\": \"$identifier\", \"action\": \"activated\"}"
+    fi
+}
+
+# Block an issue: add blocked label, create blocked-by relation, post comment
+# Usage: block_issue CC-XXX --by CC-YYY [--reason "text"]
+block_issue() {
+    local issue_id="$1"
+    shift
+
+    local blocker=""
+    local reason=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --by)
+            blocker="$2"
+            shift 2
+            ;;
+        --reason)
+            reason="$2"
+            shift 2
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "{\"error\": \"Unknown option: $1. Run --help for valid options.\"}" >&2
+            return 1
+            ;;
+        *) break ;;
+        esac
+    done
+
+    if [ -z "$blocker" ]; then
+        echo '{"error": "Required: --by <blocker-issue>"}' >&2
+        return 1
+    fi
+
+    # Get current labels and add "blocked"
+    local issue_result
+    issue_result=$(get_issue "$issue_id" --format=raw)
+    local current_labels
+    current_labels=$(echo "$issue_result" | jq -r '[.issue.labels.nodes[].name] | join(",")')
+
+    # Exact membership: a substring test skipped the label whenever the issue
+    # already carried an unrelated name containing it (`unblocked`,
+    # `blocked-by-design`), and `block` then reported success having applied none.
+    local has_blocked_label="false" existing_label
+    IFS=',' read -ra _existing_labels <<<"$current_labels"
+    for existing_label in ${_existing_labels[@]+"${_existing_labels[@]}"}; do
+        [ "$existing_label" = "blocked" ] && has_blocked_label="true"
+    done
+    if [ "$has_blocked_label" != "true" ]; then
+        if [ -n "$current_labels" ]; then
+            current_labels="${current_labels},blocked"
+        else
+            current_labels="blocked"
+        fi
+    fi
+
+    # Update labels
+    local update_result
+    update_result=$(update_issue "$issue_id" --labels "$current_labels")
+    local update_success
+    update_success=$(echo "$update_result" | jq -r '.success // false')
+
+    if [ "$update_success" != "true" ]; then
+        echo "$update_result"
+        return 1
+    fi
+
+    # Add blocked-by relation. The label and comment are cosmetic; this is the
+    # relation that actually blocks, so its rejection cannot be reported as a
+    # successful block.
+    local relation_result
+    if ! relation_result=$(add_relation "$issue_id" --blocked-by "$blocker"); then
+        jq -cn --arg id "$issue_id" --arg blocker "$blocker" \
+            '{error: ("Blocking relation could not be created between " + $id + " and " + $blocker + " - the blocked label was applied but the issue is NOT blocked")}' >&2
+        return 1
+    fi
+    if [ "$(echo "$relation_result" | jq -r '.success // .already_exists // false')" != "true" ]; then
+        echo "$relation_result" | jq -c '{error: "Blocking relation was rejected - the blocked label was applied but the issue is NOT blocked", data: .}' >&2
+        return 1
+    fi
+
+    # Post blocking comment
+    local comment_body="BLOCKED: Waiting for $blocker."
+    [ -n "$reason" ] && comment_body="BLOCKED: Waiting for $blocker. $reason"
+
+    local comment_mutation='
+    mutation CreateComment($input: CommentCreateInput!) {
+        commentCreate(input: $input) {
+            success
+            comment { id }
+        }
+    }'
+
+    local escaped_body
+    escaped_body=$(echo "$comment_body" | jq -Rs '.')
+    local comment_input="{\"issueId\": \"$issue_id\", \"body\": $escaped_body}"
+
+    # Comment is secondary - don't fail the whole operation if it fails
+    set +e
+    graphql_query "$comment_mutation" "{\"input\": $comment_input}" >/dev/null 2>&1
+    set -e
+
+    # Return combined result
+    local identifier
+    identifier=$(echo "$update_result" | jq -r '.identifier // empty')
+    echo "{\"success\": true, \"identifier\": \"$identifier\", \"action\": \"blocked\", \"blocked_by\": \"$blocker\"}"
+}
+
+# Unblock an issue: remove blocked label, post comment
+# Usage: unblock_issue CC-XXX
+unblock_issue() {
+    local issue_id="$1"
+
+    # Get current labels and remove "blocked"
+    local issue_result
+    issue_result=$(get_issue "$issue_id" --format=raw)
+    local current_labels
+    current_labels=$(echo "$issue_result" | jq -r '[.issue.labels.nodes[].name | select(. != "blocked")] | join(",")')
+
+    # Update labels (removing blocked)
+    local update_result
+    if [ -n "$current_labels" ]; then
+        update_result=$(update_issue "$issue_id" --labels "$current_labels")
+    else
+        # `blocked` was the only label: ask for the set to be emptied outright.
+        update_result=$(update_issue "$issue_id" --clear-labels)
+    fi
+
+    local update_success
+    update_success=$(echo "$update_result" | jq -r '.success // false')
+
+    if [ "$update_success" != "true" ]; then
+        echo "$update_result"
+        return 1
+    fi
+
+    # Post unblocked comment
+    local comment_body="Unblocked. Resuming work."
+
+    local comment_mutation='
+    mutation CreateComment($input: CommentCreateInput!) {
+        commentCreate(input: $input) {
+            success
+            comment { id }
+        }
+    }'
+
+    local escaped_body
+    escaped_body=$(echo "$comment_body" | jq -Rs '.')
+    local comment_input="{\"issueId\": \"$issue_id\", \"body\": $escaped_body}"
+
+    # Comment is secondary - don't fail the whole operation if it fails
+    set +e
+    graphql_query "$comment_mutation" "{\"input\": $comment_input}" >/dev/null 2>&1
+    set -e
+
+    # Return combined result
+    local identifier
+    identifier=$(echo "$update_result" | jq -r '.identifier // empty')
+    echo "{\"success\": true, \"identifier\": \"$identifier\", \"action\": \"unblocked\"}"
+}
+
+# Complete an issue: set state to "Done"
+# Usage: complete_issue CC-XXX [--summary <text> | --summary-file <path>]
+# The summary comment is posted BEFORE the state transition so a failed post
+# never yields a Done issue without a completion summary. Unknown or trailing
+# arguments are rejected before any mutation.
+complete_issue() {
+    local issue_id="$1"
+    shift
+
+    local summary=""
+    local summary_file=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --summary)
+            if [[ -n "${2:-}" && ! "$2" =~ ^- ]]; then
+                summary="$2"
+                shift 2
+            else
+                echo '{"error": "--summary requires a text value"}' >&2
+                return 1
+            fi
+            ;;
+        --summary=*)
+            summary="${1#*=}"
+            if [ -z "$summary" ]; then
+                echo '{"error": "--summary requires a text value"}' >&2
+                return 1
+            fi
+            shift
+            ;;
+        --summary-file)
+            if [[ -n "${2:-}" && ! "$2" =~ ^- ]]; then
+                summary_file="$2"
+                shift 2
+            else
+                echo '{"error": "--summary-file requires a path argument"}' >&2
+                return 1
+            fi
+            ;;
+        --summary-file=*)
+            summary_file="${1#*=}"
+            if [ -z "$summary_file" ]; then
+                echo '{"error": "--summary-file requires a path argument"}' >&2
+                return 1
+            fi
+            shift
+            ;;
+        -*)
+            echo "{\"error\": \"Unknown option: $1. Usage: issues.sh complete <issue-id> [--summary <text> | --summary-file <path>]\"}" >&2
+            return 1
+            ;;
+        *)
+            echo "{\"error\": \"Unexpected argument: $1. Usage: issues.sh complete <issue-id> [--summary <text> | --summary-file <path>]\"}" >&2
+            return 1
+            ;;
+        esac
+    done
+
+    if [[ -n "$summary" && -n "$summary_file" ]]; then
+        echo '{"error": "--summary and --summary-file are mutually exclusive"}' >&2
+        return 1
+    fi
+    if [[ -n "$summary_file" ]]; then
+        if [[ ! -r "$summary_file" ]]; then
+            echo "{\"error\": \"--summary-file path not readable: $summary_file\"}" >&2
+            return 1
+        fi
+        summary=$(<"$summary_file")
+        if [ -z "$summary" ]; then
+            echo "{\"error\": \"--summary-file is empty: $summary_file\"}" >&2
+            return 1
+        fi
+    fi
+
+    if [ -n "$summary" ]; then
+        # validate-completion detects the summary by these markers; prefix the
+        # canonical heading when the caller's text carries neither.
+        if [[ "$summary" != *"Completion Summary"* && "$summary" != *"Bundle Complete"* ]]; then
+            summary="## Completion Summary"$'\n\n'"$summary"
+        fi
+
+        # Post the comment first: a posting failure must leave state unchanged
+        local comment_result=""
+        local comment_rc=0
+        set +e
+        comment_result=$("$SCRIPT_DIR/comments.sh" create "$issue_id" --body "$summary")
+        comment_rc=$?
+        set -e
+        if [ "$comment_rc" -ne 0 ] || [ "$(echo "$comment_result" | jq -r '.success // false')" != "true" ]; then
+            echo "{\"error\": \"Completion summary comment failed for $issue_id. Issue state unchanged.\"}" >&2
+            return 1
+        fi
+    fi
+
+    local update_result
+    local update_rc=0
+    set +e
+    update_result=$(update_issue "$issue_id" --state "Done")
+    update_rc=$?
+    set -e
+
+    local update_success
+    update_success=$(echo "$update_result" | jq -r '.success // false')
+
+    if [ "$update_rc" -ne 0 ] || [ "$update_success" != "true" ]; then
+        if [ -n "$summary" ]; then
+            echo "{\"error\": \"State transition to Done failed after the summary comment was posted. Rerun 'issues.sh complete $issue_id' without summary flags to avoid a duplicate comment.\"}" >&2
+        fi
+        if [ -n "$update_result" ]; then
+            echo "$update_result"
+        fi
+        return 1
+    fi
+
+    # Return result
+    local identifier
+    identifier=$(echo "$update_result" | jq -r '.identifier // empty')
+    if [ -n "$summary" ]; then
+        echo "{\"success\": true, \"identifier\": \"$identifier\", \"action\": \"completed\", \"summary_posted\": true}"
+    else
+        echo "{\"success\": true, \"identifier\": \"$identifier\", \"action\": \"completed\"}"
+    fi
+}
+
+# Validate issue completion: check state is "In Progress" and has Completion Summary comment
+# Usage: validate_completion CC-XXX [CC-YYY ...]
+#        validate_completion CC-XXX --include-children-of CC-XXX
+#        validate_completion CC-XXX --include-children-of CC-XXX --container
+# Supports multiple issues for bundle validation. With --container the
+# positional targets are container parents (each child is its own PR unit and
+# the container closes LAST): any live state passes, canceled fails closed,
+# and no pre-posted summary is required.
+validate_completion() {
+    local issue_ids=()
+    # Roles parallel issue_ids: positional targets are managed session roots
+    # (container parents under --container); bundle-expanded children (below)
+    # are bundle sub-issues.
+    local roles=()
+    local include_children_of=""
+    local container_mode="false"
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --include-children-of)
+            include_children_of="$2"
+            shift 2
+            ;;
+        --include-children-of=*)
+            include_children_of="${1#--include-children-of=}"
+            shift
+            ;;
+        --container)
+            container_mode="true"
+            shift
+            ;;
+        *)
+            issue_ids+=("$1")
+            roles+=("session-root")
+            shift
+            ;;
+        esac
+    done
+
+    if [ ${#issue_ids[@]} -eq 0 ]; then
+        echo '{"error": "At least one issue ID required"}' >&2
+        return 1
+    fi
+
+    # --container asserts "this bundle may complete now", so it fails CLOSED
+    # on any invocation that cannot prove it: exactly one positional target,
+    # a paired --include-children-of naming that same target, and (checked
+    # after expansion below) at least one non-canceled child. The flag may
+    # appear after the positionals, so the role is assigned post-parse.
+    if [ "$container_mode" = "true" ]; then
+        if [ ${#issue_ids[@]} -ne 1 ]; then
+            echo '{"error": "--container requires exactly one issue ID"}' >&2
+            return 1
+        fi
+        if [ -z "$include_children_of" ] || [ "$include_children_of" != "${issue_ids[0]}" ]; then
+            echo "{\"error\": \"--container requires --include-children-of naming the same issue (got target '${issue_ids[0]}', expansion '${include_children_of:-none}')\"}" >&2
+            return 1
+        fi
+        roles[0]="container"
+    fi
+
+    # If --include-children-of specified, fetch the bundle and expand its
+    # children as bundle-child validation targets. Per the documented bundle
+    # contract each child is expected to be "Done", so COMPLETED children must
+    # be INCLUDED (they are exactly what validates as Done) — not dropped.
+    # Only CANCELED children are excluded: abandoned work can never be "Done",
+    # is not a pending gap, and including it would permanently fail any bundle
+    # that legitimately canceled a sub-issue. This mirrors the `children
+    # --pending` filter, which likewise treats completed vs canceled distinctly
+    # from still-pending work.
+    if [ -n "$include_children_of" ]; then
+        local bundle
+        if ! bundle=$(get_issue "$include_children_of" --with-bundle); then
+            echo "{\"error\": \"Failed to fetch bundle for: $include_children_of\"}" >&2
+            return 1
+        fi
+        if [ -z "$bundle" ]; then
+            echo "{\"error\": \"Failed to fetch bundle for: $include_children_of\"}" >&2
+            return 1
+        fi
+        # Container fail-closed, part 1b: an explicit single-PR bundle is
+        # the OPPOSITE contract — its (one PR) marker always wins, and
+        # validating it under the permissive container role would skip the
+        # session root's pre-merge state and summary checks. Reject the
+        # marker instead of silently reclassifying.
+        if [ "$container_mode" = "true" ]; then
+            local bundle_title
+            bundle_title=$(echo "$bundle" | jq -r '.title // ""')
+            if printf '%s' "$bundle_title" | grep -qi '(one PR)'; then
+                echo "{\"error\": \"--container fail-closed: $include_children_of carries the (one PR) marker — an explicit single-PR bundle validates with plain validate-completion, never as a container\"}" >&2
+                return 1
+            fi
+        fi
+        local child_ids
+        child_ids=$(echo "$bundle" | jq -r '[.children[] | select(.state_type != "canceled") | .id] | .[]' 2>/dev/null)
+        for child_id in $child_ids; do
+            issue_ids+=("$child_id")
+            roles+=("bundle-child")
+        done
+    fi
+
+    # Container fail-closed, part 2: a bundle that expanded to zero
+    # non-canceled children proves nothing about "children all Done" — a
+    # leaf mistakenly validated as a container must error, not pass.
+    if [ "$container_mode" = "true" ] && [ ${#issue_ids[@]} -le 1 ]; then
+        echo "{\"error\": \"--container fail-closed: no non-canceled children found under $include_children_of\"}" >&2
+        return 1
+    fi
+
+    local results="[]"
+    local all_ok="true"
+
+    local i
+    for i in "${!issue_ids[@]}"; do
+        local issue_id="${issue_ids[$i]}"
+        local role="${roles[$i]}"
+        # Get issue state
+        local issue
+        issue=$(get_issue "$issue_id")
+        local state
+        state=$(echo "$issue" | jq -r '.state // ""')
+        local state_type
+        state_type=$(echo "$issue" | jq -r '.state_type // ""')
+        local parent_id
+        parent_id=$(echo "$issue" | jq -r '.parent_id // ""')
+
+        # Check for Completion Summary comment
+        local comments
+        comments=$(json_or_default '[]' array "$SCRIPT_DIR/comments.sh" list "$issue_id")
+        local has_summary
+        has_summary=$(echo "$comments" | jq 'any(.[]; .body | (contains("Completion Summary") or contains("Bundle Complete")))')
+
+        local result
+        result=$(build_completion_validation_result "$issue_id" "$state" "$parent_id" "$has_summary" "$role" "$state_type")
+
+        if [ "$(echo "$result" | jq -r '.ok')" != "true" ]; then
+            all_ok="false"
+        fi
+
+        # Append to results
+        results=$(echo "$results" | jq --argjson result "$result" '. + [$result]')
+    done
+
+    echo "$results" | jq --argjson all_ok "$all_ok" '{results: ., all_ok: $all_ok}'
+}
+
+# `<action> --help` prints usage and exits 0. A MISSING identifier is a caller
+# bug, not a help request: printing usage and exiting 0 for it reported success
+# for a write that never ran, so an unset shell variable in a caller's
+# `issues complete "$ID"` read as a completed issue.
+require_issue_ref() {
+    local action="$1" first="${2:-}"
+    case "$first" in
+    --help | -h)
+        show_help
+        exit 0
+        ;;
+    esac
+    if [ -z "$first" ]; then
+        jq -cn --arg action "$action" \
+            '{error: ("issues " + $action + " requires an issue identifier (e.g. PROJ-42)")}' >&2
+        exit 1
+    fi
+}
+
+main() {
+    # Main routing
+    action="${1:-help}"
+    shift || true
+
+    # Fail closed: a write needs a resolved team target before any API call.
+    linear_guard_write_action "$action" \
+        "update archive trash delete bulk-update add-relation remove-relation activate block unblock complete" \
+        "$@" || exit 1
+
+    case "$action" in
+    list)
+        list_issues "$@"
+        ;;
+    get)
+        require_issue_ref get "${1:-}"
+        get_issue "$@"
+        ;;
+    bulk-get)
+        bulk_get_issues "$@"
+        ;;
+    bulk-update)
+        require_issue_ref bulk-update "${1:-}"
+        bulk_update_issues "$@"
+        ;;
+    create)
+        create_issue "$@"
+        ;;
+    update)
+        require_issue_ref update "${1:-}"
+        update_issue "$@"
+        ;;
+    archive)
+        require_issue_ref archive "${1:-}"
+        archive_issue "$@"
+        ;;
+    trash | delete)
+        require_issue_ref trash "${1:-}"
+        trash_issue "$@"
+        ;;
+    children)
+        require_issue_ref children "${1:-}"
+        list_children "$@"
+        ;;
+    list-relations | relations)
+        require_issue_ref list-relations "${1:-}"
+        list_relations "$@"
+        ;;
+    add-relation)
+        require_issue_ref add-relation "${1:-}"
+        add_relation "$@"
+        ;;
+    remove-relation)
+        require_issue_ref remove-relation "${1:-}"
+        remove_relation "$@"
+        ;;
+    # Composite workflow actions
+    activate)
+        require_issue_ref activate "${1:-}"
+        activate_issue "$@"
+        ;;
+    block)
+        require_issue_ref block "${1:-}"
+        block_issue "$@"
+        ;;
+    unblock)
+        require_issue_ref unblock "${1:-}"
+        unblock_issue "$@"
+        ;;
+    complete)
+        require_issue_ref complete "${1:-}"
+        complete_issue "$@"
+        ;;
+    validate-completion)
+        require_issue_ref validate-completion "${1:-}"
+        validate_completion "$@"
+        ;;
+    move)
+        echo "Error: 'move' is not an action. To move an issue to a different project:" >&2
+        echo "  linear.sh issues update [ISSUE_ID] --project \"Target Project\"" >&2
+        exit 1
+        ;;
+    comment)
+        echo "Error: Comments are a separate resource. Use:" >&2
+        echo "  linear.sh comments create [ISSUE_ID] --body \"Your comment\"" >&2
+        echo "  linear.sh cache comments list [ISSUE_ID]" >&2
+        exit 1
+        ;;
+    view | show)
+        echo "Error: Unknown action '$action' — supported issue lookups:" >&2
+        echo "  linear.sh issues get [ISSUE_ID]" >&2
+        echo "  linear.sh issues bulk-get [ISSUE_ID_1] [ISSUE_ID_2]   # live state (post-mutation verification)" >&2
+        echo "  linear.sh cache issues get [ISSUE_ID]                 # cache read" >&2
+        exit 1
+        ;;
+    *)
+        echo "Error: Unknown action '$action'" >&2
+        echo "Run 'issues.sh --help' for usage." >&2
+        exit 1
+        ;;
+    esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

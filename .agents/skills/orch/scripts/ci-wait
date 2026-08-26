@@ -1,0 +1,671 @@
+#!/usr/bin/env bash
+# Wait for CI checks to complete on a PR. The authoritative contract —
+# verdicts, stale-check handling, JSON output, environment, auth, exit
+# codes — is print_usage below: run with --help.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+# shellcheck source=lib/gh-auth.sh
+source "$SCRIPT_DIR/lib/gh-auth.sh"
+
+print_usage() {
+  cat <<'USAGE'
+Usage: ci-wait <PR#> [poll_interval] [max_wait] [--json]
+
+Wait for CI checks to complete on a PR. Every exit path emits a final
+result on stdout — a "CI passed"/"CI failed"/"CI timeout"/"CI error" line,
+or a JSON object with --json — so callers can route pass vs fail
+deterministically (kendex#454). Auto-retries transient infrastructure
+failures (max 1 retry).
+
+  <PR#>          pull request number (required)
+  poll_interval  seconds between polls (default 15)
+  max_wait       total budget in seconds (default 600)
+  --json         emit the machine-readable result object on stdout
+
+Verdicts (JSON "verdict"):
+  pass     every current-head check settled green
+  fail     a settled current-head failure — current-run failures are
+           terminal
+  pending  checks still running or not yet registered; at the deadline the
+           result is status "timeout", never silent success
+  none     (with status "complete") the repo has no CI to wait for: no
+           active workflows, no branch protection, and no required-check
+           rules on the PR's base branch, each probe answering
+           affirmatively — a probe failure falls through to the normal
+           no-checks grace path instead. Treat "none" as the no-CI route,
+           never as a failure needing an override.
+
+Stale-check handling (kendex#650, kendex#699): the current-head substantive
+run is selected ignoring later all-skipped dispatches, and an aggregate
+status still linked to an older run is treated as pending while a newer
+substantive run has no failures. A settled failure attributable only to
+superseded runs is correlated against the head's Actions run list before it
+can terminate the wait: any queued or in-progress substantive-event run on
+the head — including a rerun attempt of an older run, which keeps its
+original run id — keeps the verdict pending; a newest same-workflow run
+that completed successfully discards the stale failures; a failed newest
+run, or a cancelled run with no newer or fresher sibling, stays terminal.
+A missing replacement reaches the timeout rather than passing.
+
+JSON output (always when --json):
+  {
+    "status": "complete" | "timeout" | "error",
+    "verdict": "pass" | "fail" | "pending" | "none",
+    "elapsed_seconds": <int>,
+    "error": <string>,            # only when status == "error"
+    "pending_checks": [ {name,state} ... ],
+    "failed_checks":  [ {name,state} ... ],
+    "passed_checks":  [ {name,state} ... ]
+  }
+
+Environment:
+  GIT_HOST_CLI  (optional) path to a git host CLI script for enriched
+                output
+  CI_WAIT_NO_CHECKS_GRACE
+                seconds to keep polling before failing when no checks have
+                registered yet (default 180). ci-wait runs after the
+                submit-pr approval gate; approval-gated repos dispatch CI
+                from the pull_request_review event, so check registration
+                can lag. Within the grace window the result stays verdict
+                "pending"; past it, the explicit "no checks registered"
+                diagnostic fires.
+
+Auth: resolved through lib/gh-auth.sh, shared with approval-wait and
+queue-wait (kendex#19) — env-first: already-resolved GH_TOKEN /
+GITHUB_TOKEN / GH_BOT_TOKEN values from the parent process win before
+local files are read, `op read` runs only for the final selected op://
+reference, each candidate source is probed at most once, and a selected
+env token is validated with `gh api user`. Full ladder: orch
+DEVELOPMENT.md.
+
+Exit codes:
+  0  CI complete and passing
+  1  CI failed, timed out with checks still pending, or a non-auth error
+     (no checks registered, merge conflicts, repo/API failure)
+  2  usage error: unknown flag or non-integer argument (matches
+     queue-wait)
+  3  GitHub auth/CLI error (matches approval-wait and queue-wait)
+USAGE
+}
+
+# --- arg parse (before auth so error paths can honor --json) ---
+JSON_OUTPUT=false
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) print_usage; exit 0 ;;
+    --json) JSON_OUTPUT=true; shift ;;
+    -*)
+      # An unrecognized flag must never fall through into a positional slot:
+      # under `set -u` it dies later as an unbound-variable abort naming a
+      # variable the caller never typed, and a backgrounded wrapper then exits
+      # 0 while the wait silently never happened (kendex#981).
+      echo "ci-wait: unknown option '$1'" >&2
+      print_usage >&2
+      exit 2
+      ;;
+    *) POSITIONAL+=("$1"); shift ;;
+  esac
+done
+
+if [ "${#POSITIONAL[@]}" -lt 1 ]; then
+  echo "ci-wait: missing required <PR#> argument" >&2
+  print_usage >&2
+  exit 2
+fi
+
+PR_NUM="${POSITIONAL[0]}"
+POLL_INTERVAL="${POSITIONAL[1]:-15}"
+MAX_WAIT="${POSITIONAL[2]:-600}"
+
+if ! [[ "$PR_NUM" =~ ^[0-9]+$ ]] || [ "$PR_NUM" -lt 1 ]; then
+  echo "ci-wait: PR number must be a positive integer (got '$PR_NUM')" >&2
+  print_usage >&2
+  exit 2
+fi
+
+if ! [[ "$POLL_INTERVAL" =~ ^[0-9]+$ ]] || [ "$POLL_INTERVAL" -lt 1 ]; then
+  echo "ci-wait: poll_interval must be a positive integer (got '$POLL_INTERVAL')" >&2
+  print_usage >&2
+  exit 2
+fi
+
+if ! [[ "$MAX_WAIT" =~ ^[0-9]+$ ]] || [ "$MAX_WAIT" -lt 1 ]; then
+  echo "ci-wait: max_wait must be a positive integer (got '$MAX_WAIT')" >&2
+  print_usage >&2
+  exit 2
+fi
+
+START_TIME="$(date +%s)"
+elapsed=0
+
+update_elapsed() {
+  local now
+  now="$(date +%s)"
+  elapsed=$((now - START_TIME))
+}
+
+EMPTY_CLASSES='{"pending":[],"failed":[],"passed":[]}'
+# Last classification seen by the poll loop, so timeout/error results can
+# report the checks that were still outstanding.
+last_check_classes="$EMPTY_CLASSES"
+
+# Emit the final machine-readable result on stdout. Every exit path routes
+# through here (or emit_error) so the script can never finish silently.
+#   status: complete | timeout | error
+#   verdict derives from the classes: pending > fail > pass.
+emit_result() {
+  local status="$1" classes="$2" error_msg="${3:-}"
+  update_elapsed
+  local verdict
+  verdict=$(jq -r '
+    if (.pending | length) > 0 then "pending"
+    elif (.failed | length) > 0 then "fail"
+    elif (.passed | length) > 0 then "pass"
+    else "pending" end' <<<"$classes")
+  if $JSON_OUTPUT; then
+    jq -n \
+      --arg s "$status" \
+      --arg v "$verdict" \
+      --argjson elapsed "$elapsed" \
+      --arg error "$error_msg" \
+      --argjson classes "$(jq -c 'map_values(map({name, state: (.state // .bucket // "UNKNOWN")}))' <<<"$classes")" \
+      '{
+        status: $s,
+        verdict: $v,
+        elapsed_seconds: $elapsed,
+        pending_checks: $classes.pending,
+        failed_checks: $classes.failed,
+        passed_checks: $classes.passed
+      } + (if $error == "" then {} else {error: $error} end)'
+    return 0
+  fi
+  case "$status" in
+    complete)
+      if [[ "$verdict" == "pass" ]]; then
+        echo "CI passed"
+      else
+        echo "CI failed:"
+        jq -r '.failed[] | "  \(.name): \(.state // .bucket // "FAILED")"' <<<"$classes"
+      fi
+      ;;
+    timeout)
+      echo "CI timeout after ${elapsed}s (verdict: $verdict)"
+      jq -r '.pending[]? | "  pending: \(.name)"' <<<"$classes"
+      ;;
+    error)
+      echo "CI error: $error_msg"
+      ;;
+  esac
+}
+
+emit_error() {
+  emit_result "error" "$last_check_classes" "$1"
+}
+
+if ! command -v gh >/dev/null 2>&1; then
+  emit_error "gh CLI not found on PATH"
+  echo "ci-wait: gh CLI not found on PATH" >&2
+  exit 3
+fi
+
+AUTH_READY=false
+KEYRING_PROBED=false
+
+if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
+  auth_status=0
+  if orch_github_auth_status; then
+    AUTH_READY=true
+  else
+    auth_status=$?
+    if [[ "$auth_status" -ne 124 && "${KENDEX_GITHUB_SELECTED_TOKEN_SOURCE:-}" != "GH_BOT_TOKEN" ]]; then
+      KEYRING_PROBED=true
+      if orch_github_keyring_auth_status; then
+        echo "Warning: GH_TOKEN/GITHUB_TOKEN failed gh auth; unsetting them and using gh keyring auth." >&2
+        unset GH_TOKEN GITHUB_TOKEN
+        export KENDEX_GITHUB_AUTH_FALLBACK="keyring"
+        AUTH_READY=true
+      else
+        unset GH_TOKEN GITHUB_TOKEN
+      fi
+    else
+      unset GH_TOKEN GITHUB_TOKEN
+    fi
+  fi
+fi
+
+if [[ "$AUTH_READY" != "true" && -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
+  orch_load_env_bot_token "$PROJECT_ROOT" || true
+fi
+
+if [[ "$AUTH_READY" != "true" ]]; then
+  if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
+    if orch_github_auth_status; then
+      AUTH_READY=true
+    fi
+  elif [[ "$KEYRING_PROBED" != "true" ]]; then
+    KEYRING_PROBED=true
+    if orch_github_auth_status; then
+      export KENDEX_GITHUB_AUTH_FALLBACK="keyring"
+      AUTH_READY=true
+    fi
+  fi
+fi
+
+if [[ "$AUTH_READY" != "true" ]]; then
+  emit_error "no working GitHub auth path"
+  {
+    echo "ci-wait: no working GitHub auth path."
+    echo "Tried: env GH_TOKEN/GITHUB_TOKEN, gh keyring, project GH_BOT_TOKEN."
+    echo "Run: gh auth login   (or set a valid GH_BOT_TOKEN in .env.local)."
+  } >&2
+  exit 3
+fi
+
+# --- Resolve repo explicitly so gh calls don't depend on local auth/inference ---
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)
+if [ -z "$REPO" ]; then
+  origin_url=$(git -C "$PROJECT_ROOT" remote get-url origin 2>/dev/null || true)
+  # Capture owner/repo greedily, then strip a trailing ".git" explicitly. GNU
+  # sed / POSIX ERE has no non-greedy quantifier, so a `[^/]+?(\.git)?$` pattern
+  # would greedily swallow ".git" into the slug (kendex#476). Do the suffix
+  # strip with bash parameter expansion instead — portable for both SSH
+  # (git@github.com:owner/repo.git) and HTTPS origins, with or without ".git",
+  # and safe for repo names that merely contain the substring "git".
+  REPO=$(echo "$origin_url" | sed -nE 's#^.*github\.com[:/]+([^/]+/[^/]+)$#\1#p')
+  REPO="${REPO%.git}"
+fi
+if [ -z "$REPO" ]; then
+  emit_error "could not resolve GitHub repo (gh repo view and git remote both failed)"
+  echo "Could not resolve GitHub repo (gh repo view and git remote both failed)" >&2
+  exit 1
+fi
+
+# --- Pre-flight: check PR is mergeable (CI won't trigger if conflicting) ---
+merge_state=$(gh pr view "$PR_NUM" --repo "$REPO" --json mergeStateStatus --jq '.mergeStateStatus' 2>/dev/null || echo "UNKNOWN")
+case "$merge_state" in
+  DIRTY|CONFLICTING)
+    emit_error "PR #$PR_NUM has merge conflicts (state: $merge_state); CI will not trigger until conflicts are resolved"
+    echo "PR #$PR_NUM has merge conflicts (state: $merge_state)" >&2
+    echo "CI will not trigger until conflicts are resolved." >&2
+    echo "Rebase onto the default branch and force-push to fix." >&2
+    exit 1
+    ;;
+  UNKNOWN)
+    echo "Could not determine merge state, continuing..." >&2
+    ;;
+esac
+
+# Patterns indicating transient infrastructure failures (safe to retry)
+TRANSIENT_PATTERNS=(
+  "another process is currently installing"
+  "Could not install"
+  "Installation failed"
+  "network timeout"
+  "runner error"
+  "ETIMEDOUT"
+  "ECONNRESET"
+  "rate limit"
+)
+
+retries=0
+max_retries=1
+no_checks_count=0
+# Grace window for check registration, in seconds. Approval-gated repos start
+# CI only after a review approval lands (pull_request_review dispatch), so
+# checks can take minutes to register after the approval gate clears. Within
+# the window the loop keeps polling (verdict stays "pending"); past it, the
+# explicit no-checks diagnostic below fires.
+NO_CHECKS_GRACE="${CI_WAIT_NO_CHECKS_GRACE:-180}"
+if ! [[ "$NO_CHECKS_GRACE" =~ ^[0-9]+$ ]]; then
+  NO_CHECKS_GRACE=180
+fi
+max_no_checks=$(((NO_CHECKS_GRACE + POLL_INTERVAL - 1) / POLL_INTERVAL))
+if [ "$max_no_checks" -lt 1 ]; then
+  max_no_checks=1
+fi
+
+# Guard against stale-check race condition: when a fresh run was just
+# triggered (new push, review-approval dispatch), checks from an old run
+# (SUCCESS/SKIPPED) may be the only ones visible.
+# Only declare "passed" after we've seen at least one check go through
+# IN_PROGRESS/PENDING, proving a fresh run was observed.
+seen_in_progress=false
+stale_count=0
+max_stale=6  # ~90s of only completed/skipped before assuming genuinely done
+
+is_transient_failure() {
+  local run_id="$1"
+  local logs
+  logs=$(gh run view "$run_id" --repo "$REPO" --log-failed 2>/dev/null | head -200) || return 1
+
+  for pattern in "${TRANSIENT_PATTERNS[@]}"; do
+    if echo "$logs" | grep -qi "$pattern"; then
+      echo "Detected transient failure: $pattern" >&2
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Scope a `gh pr checks` array to the current authoritative substantive run per
+# workflow. Shared with github `pr-merge.sh` so the waiter and the merge gate
+# cannot disagree about which run is current (kendex#876) — see the library for
+# the full rationale.
+CI_RUN_CORRELATION_LIB="$SCRIPT_DIR/../../github/scripts/lib/ci-run-correlation.sh"
+if [[ ! -f "$CI_RUN_CORRELATION_LIB" ]]; then
+  echo "ci-wait: missing required library $CI_RUN_CORRELATION_LIB (github skill not installed?)" >&2
+  exit 1
+fi
+# shellcheck source=../../github/scripts/lib/ci-run-correlation.sh
+source "$CI_RUN_CORRELATION_LIB"
+
+# Failure check `link` is `https://github.com/owner/repo/actions/runs/<RUN_ID>/job/<JOB_ID>` —
+# extract RUN_ID, not the trailing JOB_ID (which `gh run rerun` won't accept as a workflow run).
+# Scope to the current run first so a rerun never targets a superseded/canceled
+# run (kendex#492).
+get_failed_run_id() {
+  local pr="$1"
+  gh pr checks "$pr" --repo "$REPO" --json name,state,bucket,link,startedAt,workflow 2>/dev/null | \
+    scope_current_run | \
+    jq -r "$CI_RUN_JQ_DEFS"'
+      .[] | select((bucket != "pass") and (bucket != "skipping") and (bucket != "pending")) | .link
+    ' | \
+    head -1 | sed -nE 's#.*/actions/runs/([0-9]+)(/.*)?$#\1#p'
+}
+
+# Decide whether a settled failure verdict is genuinely terminal (kendex#650).
+# `gh pr checks` builds on the head commit's check-suite rollup, and GitHub
+# omits some dispatch events' suites from that rollup entirely — observed on a
+# pull_request_review_comment run whose same-second pull_request_review sibling
+# was cancelled by concurrency: only the cancelled sibling's checks and the
+# stale `CI Required` status pointing at it stayed visible, while the newer
+# substantive run never appeared. Correlate the failing checks' runs against
+# the Actions run list for the current head instead:
+#   active     - the failing run is re-running, or ANY substantive-event run
+#                on this head is queued or in progress; the failure is
+#                provisional, keep waiting.
+#   superseded - the newest completed same-workflow substantive run — one with
+#                a strictly newer run id, or a later rerun attempt of an older
+#                run whose latest activity postdates the failing run's —
+#                ended in success; the stale failures will never update, drop
+#                them and let the surviving statuses decide.
+#   terminal   - no such newer run, the newest one itself failed or was
+#                cancelled, or a failure cannot be attributed to a run.
+# Substantive events are the PR-driving dispatches: pull_request,
+# pull_request_review, pull_request_review_comment, merge_group. Anything
+# unattributable stays terminal so the waiter still fails closed, and a
+# cancelled run with no newer sibling remains a terminal failure as before.
+#
+# Run-id order is not event order: a rerun starts a new attempt under the
+# ORIGINAL run id and creation time, and that attempt's results overwrite the
+# run's check runs when they land — observed as attempt 2 of an older
+# pull_request run executing while a newer review-event run sat cancelled
+# (kendex#699). The active test is therefore deliberately NOT scoped to the
+# failing run's workflow or to run-id order: any in-flight substantive run on
+# the head is replacement current-head work, and holding the verdict pending
+# is bounded by the waiter timeout while a wrong terminal fail is not
+# recoverable (matches the kendex#656 contract — an aggregate failure stays
+# pending while a newer substantive run has no failures). It also makes the
+# in-flight-$newest case unreachable below. Discarding failures stays
+# stricter: superseded still requires a completed-success run of the SAME
+# workflow, and a rerun attempt of an older run only counts when its
+# updated_at postdates the failing run's settlement — proof its results
+# overwrote the frozen ones rather than preceding them.
+superseding_run_state() {
+  local classes="$1" head_sha runs_json
+  head_sha=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid --jq '.headRefOid' 2>/dev/null || true)
+  if ! [[ "$head_sha" =~ ^[0-9a-fA-F]{6,64}$ ]]; then
+    echo "terminal"
+    return 0
+  fi
+  runs_json=$(gh api "repos/$REPO/actions/runs?head_sha=$head_sha&per_page=100" 2>/dev/null || true)
+  if ! jq -e '(.workflow_runs? | type) == "array"' >/dev/null 2>&1 <<<"$runs_json"; then
+    echo "terminal"
+    return 0
+  fi
+  jq -r --argjson runs "$(jq -c '[.workflow_runs[] | {id, event, status, conclusion, workflow_id, run_attempt, updated_at}]' <<<"$runs_json")" "$CI_RUN_JQ_DEFS"'
+    def substantive:
+      ((.event // "") | IN("pull_request", "pull_request_review", "pull_request_review_comment", "merge_group"));
+    ([$runs[] | select(substantive and ((.status // "") != "completed"))] | length > 0) as $head_in_flight
+    | [ .failed[]
+      | runid as $rid
+      | if $rid == null then "terminal"
+        else
+          ([$runs[] | select(.id == $rid)] | .[0]) as $own
+          | if $own == null then "terminal"
+            elif ($own.status // "") != "completed" then "active"
+            elif $head_in_flight then "active"
+            else
+              ([$runs[]
+                | select(substantive
+                         and .workflow_id == $own.workflow_id
+                         and (.id > $rid
+                              or ((.run_attempt // 1) > 1
+                                  and ((.updated_at // "") > ($own.updated_at // "")))))]
+               | max_by([(.updated_at // ""), .id])) as $newest
+              | if $newest == null then "terminal"
+                elif ($newest.conclusion // "") == "success" then "superseded"
+                else "terminal"
+                end
+            end
+        end
+    ]
+    | if any(.[]; . == "terminal") then "terminal"
+      elif any(.[]; . == "active") then "active"
+      else "superseded"
+      end
+  ' <<<"$classes"
+}
+
+classify_checks() {
+  jq -c "$CI_RUN_JQ_DEFS"'
+    {
+      pending: [.[] | select(bucket == "pending")],
+      failed: [.[] | select((bucket != "pass") and (bucket != "skipping") and (bucket != "pending"))],
+      passed: [.[] | select(bucket == "pass")]
+    }
+  '
+}
+
+checks_stderr=$(mktemp)
+trap 'rm -f "$checks_stderr"' EXIT
+
+update_elapsed
+while [ "$elapsed" -lt "$MAX_WAIT" ]; do
+  # Capture stderr so we can distinguish auth/repo failures from "no checks yet".
+  checks_status=0
+  set +e
+  checks_json=$(gh pr checks "$PR_NUM" --repo "$REPO" --json name,state,bucket,link,startedAt,workflow 2>"$checks_stderr")
+  checks_status=$?
+  set -e
+  if [ "$checks_status" -ne 0 ] && ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$checks_json"; then
+    emit_error "gh pr checks failed for PR #$PR_NUM in $REPO"
+    echo "gh pr checks failed for PR #$PR_NUM in $REPO:" >&2
+    cat "$checks_stderr" >&2
+    exit 1
+  fi
+
+  # Handle no checks / empty response (only reached when gh succeeded)
+  if [ -z "$checks_json" ] || [ "$checks_json" = "[]" ] || [ "$checks_json" = "null" ]; then
+    no_checks_count=$((no_checks_count + 1))
+    # One-time probe: a repo with no active workflows AND no required checks
+    # on the PR's base branch has no CI to wait for — report that as its own
+    # terminal state instead of burning the dispatch grace and exiting 1.
+    # Every probe must answer affirmatively; any probe failure falls through
+    # to the grace path (fail closed toward waiting, never toward skipping).
+    # Second empty poll (or the last one the grace allows, whichever is
+    # sooner): a first-poll shortcut races checks that register a beat after
+    # PR creation. One extra interval is cheap; the race is not.
+    probe_at=2
+    [ "$max_no_checks" -lt 2 ] && probe_at="$max_no_checks"
+    if [ "${ci_probe_done:-}" != "true" ] && [ "$no_checks_count" -ge "$probe_at" ]; then
+      ci_probe_done=true
+      wf_count=$(gh api "repos/$REPO/actions/workflows" --jq '[.workflows[] | select(.state == "active")] | length' 2>/dev/null) || wf_count="probe_failed"
+      base_branch=$(gh pr view "$PR_NUM" --repo "$REPO" --json baseRefName --jq '.baseRefName' 2>/dev/null) || base_branch=""
+      # Distinct from probe_failed: these probes need the PR's base branch or
+      # head sha, and when THAT lookup failed they were never attempted. Both
+      # are inconclusive, but naming a skipped probe as a failed one points the
+      # operator at the wrong lookup.
+      protected="probe_unattempted"; rule_checks="probe_unattempted"; ext_statuses="probe_unattempted"
+      if [ -n "$base_branch" ]; then
+        protected=$(gh api "repos/$REPO/branches/$base_branch" --jq '.protected' 2>/dev/null) || protected="probe_failed"
+        rule_checks=$(gh api "repos/$REPO/rules/branches/$base_branch" --jq '[.[] | select(.type == "required_status_checks")] | length' 2>/dev/null) || rule_checks="probe_failed"
+      fi
+      # External (non-Actions) CI posts commit statuses without any workflow or
+      # required check existing — a head that carries even one status has CI.
+      head_sha=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid --jq '.headRefOid' 2>/dev/null) || head_sha=""
+      if [ -n "$head_sha" ]; then
+        ext_statuses=$(gh api "repos/$REPO/commits/$head_sha/status" --jq '.total_count' 2>/dev/null) || ext_statuses="probe_failed"
+      fi
+      # An inconclusive probe falls through to the grace path; say so, or the
+      # eventual grace-exhausted error steers the operator at the wrong cause.
+      for probe_result in "workflows:$wf_count" "protection:$protected" "rules:$rule_checks" "statuses:$ext_statuses"; do
+        probe_name="${probe_result%%:*}"
+        case "${probe_result#*:}" in
+          probe_failed)
+            echo "no-CI probe inconclusive ($probe_name lookup failed); continuing to wait for checks" >&2
+            ;;
+          probe_unattempted)
+            if [ "$probe_name" = "statuses" ]; then probe_input="head-sha"; else probe_input="base-branch"; fi
+            echo "no-CI probe inconclusive ($probe_name not probed: the PR's $probe_input lookup failed); continuing to wait for checks" >&2
+            ;;
+        esac
+      done
+      if [ "$wf_count" = "0" ] && [ "$protected" = "false" ] && [ "$rule_checks" = "0" ] && [ "$ext_statuses" = "0" ]; then
+        update_elapsed
+        if $JSON_OUTPUT; then
+          jq -n --argjson elapsed "$elapsed" --arg base "$base_branch" \
+            '{status: "complete", verdict: "none", elapsed_seconds: $elapsed,
+              reason: ("no CI configured: no active workflows and no required checks on " + $base),
+              pending_checks: [], failed_checks: [], passed_checks: []}'
+        else
+          echo "CI: none configured (no active workflows, no required checks on $base_branch)"
+        fi
+        exit 0
+      fi
+    fi
+    if [ $no_checks_count -ge $max_no_checks ]; then
+      emit_error "no CI checks registered on PR #$PR_NUM after ${elapsed}s (merge conflicts, draft status, approval-gated CI not yet dispatched, or webhook delay)"
+      echo "No CI checks after ${elapsed}s (grace ${NO_CHECKS_GRACE}s)" >&2
+      echo "Possible causes: merge conflicts, draft status, approval-gated CI not yet dispatched, or webhook delay." >&2
+      echo "Raise CI_WAIT_NO_CHECKS_GRACE if this repo's CI dispatch is slower." >&2
+      merge_state=$(gh pr view "$PR_NUM" --repo "$REPO" --json mergeStateStatus --jq '.mergeStateStatus' 2>/dev/null || echo "UNKNOWN")
+      if [ "$merge_state" = "DIRTY" ] || [ "$merge_state" = "CONFLICTING" ]; then
+        echo "PR has merge conflicts (state: $merge_state) — CI will not trigger." >&2
+      fi
+      exit 1
+    fi
+    sleep "$POLL_INTERVAL"
+    update_elapsed
+    continue
+  fi
+
+  # Reset no-checks counter once we see checks
+  no_checks_count=0
+
+  # Drop checks belonging to superseded workflow runs before classifying, so a
+  # prior canceled run can't be reported as a current failure (kendex#492).
+  checks_json=$(echo "$checks_json" | scope_current_run)
+
+  # Count checks by GitHub's bucket classifier, with state fallbacks for older
+  # gh output. This must stay aligned with github pr-merge --check.
+  check_classes=$(echo "$checks_json" | classify_checks)
+  last_check_classes="$check_classes"
+  pending_count=$(echo "$check_classes" | jq '.pending | length')
+  failed_count=$(echo "$check_classes" | jq '.failed | length')
+  success_count=$(echo "$check_classes" | jq '.passed | length')
+
+  # Track if we've observed a fresh run (guards against stale-check race)
+  if [ "$pending_count" -gt 0 ]; then
+    seen_in_progress=true
+    stale_count=0
+  fi
+
+  # Check for failure (only when all checks have settled). Before declaring
+  # the failure terminal, correlate it with the head's Actions runs: a verdict
+  # built entirely from superseded runs must wait for the newest substantive
+  # run instead (kendex#650). The correlation only runs when every failed
+  # check links to an Actions run; anything unattributable fails closed.
+  if [ "$failed_count" -gt 0 ] && [ "$pending_count" -eq 0 ]; then
+    supersede_state="terminal"
+    if jq -e 'all(.failed[]; (.link // "") | test("/actions/runs/[0-9]+"))' >/dev/null 2>&1 <<<"$check_classes"; then
+      supersede_state=$(superseding_run_state "$check_classes" || echo "terminal")
+    fi
+    case "$supersede_state" in
+      active)
+        # A newer same-head substantive run is still executing (or the failing
+        # run is re-running); its outcome — not the superseded failure — must
+        # decide the wait. Report the stale failures as EXPECTED/pending, the
+        # same shape scope_current_run gives a stale aggregate status.
+        check_classes=$(jq -c '.pending += (.failed | map(.state = "EXPECTED" | .bucket = "pending")) | .failed = []' <<<"$check_classes")
+        last_check_classes="$check_classes"
+        seen_in_progress=true
+        stale_count=0
+        sleep "$POLL_INTERVAL"
+        update_elapsed
+        continue
+        ;;
+      superseded)
+        # The newest substantive run succeeded. The stale failures will never
+        # update (their check suites are frozen); drop them and let the
+        # surviving checks/statuses drive the normal completion logic below.
+        check_classes=$(jq -c '.failed = []' <<<"$check_classes")
+        last_check_classes="$check_classes"
+        ;;
+      *)
+        # `gh pr checks` exits nonzero when checks have failed; without the
+        # guard the pipefail status escapes the substitution and errexit kills
+        # the script before any result is emitted (silent-exit class of
+        # kendex#454).
+        failed_run=$(get_failed_run_id "$PR_NUM" || true)
+
+        # Try auto-retry for transient failures
+        if [ -n "$failed_run" ] && [ $retries -lt $max_retries ] && is_transient_failure "$failed_run"; then
+          echo "Retrying transient failure (attempt $((retries + 1))/$max_retries)..." >&2
+          gh run rerun "$failed_run" --repo "$REPO" --failed 2>/dev/null || true
+          retries=$((retries + 1))
+          seen_in_progress=false  # Reset — rerun will produce new checks
+          sleep 10
+          update_elapsed
+          continue
+        fi
+
+        emit_result "complete" "$check_classes"
+        exit 1
+        ;;
+    esac
+  fi
+
+  # Check if all complete (no pending)
+  if [ "$pending_count" -eq 0 ] && [ "$success_count" -gt 0 ]; then
+    if [ "$seen_in_progress" = true ]; then
+      # We watched checks go from in-progress to complete — reliable
+      emit_result "complete" "$check_classes"
+      exit 0
+    fi
+    # Only seeing completed/skipped checks but never saw in-progress.
+    # Could be stale checks from prior run, or CI already completed before
+    # we started watching. Use stale counter to distinguish.
+    stale_count=$((stale_count + 1))
+    if [ "$stale_count" -ge "$max_stale" ]; then
+      # Waited long enough for new checks to appear — genuinely complete
+      emit_result "complete" "$check_classes"
+      exit 0
+    fi
+  fi
+
+  sleep "$POLL_INTERVAL"
+  update_elapsed
+done
+
+# Deadline reached with checks still outstanding — report timeout, not
+# success, so callers never mistake in-progress CI for a pass.
+emit_result "timeout" "$last_check_classes"
+if ! $JSON_OUTPUT; then
+  gh pr checks "$PR_NUM" --repo "$REPO" >&2 || true
+fi
+exit 1

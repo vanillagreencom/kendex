@@ -1,0 +1,29 @@
+[
+  {
+    "isResolved": false,
+    "isOutdated": false,
+    "comments": {
+      "nodes": [
+        {"author": {"login": "chatgpt-codex-connector[bot]"}}
+      ]
+    }
+  },
+  {
+    "isResolved": true,
+    "isOutdated": false,
+    "comments": {
+      "nodes": [
+        {"author": {"login": "chatgpt-codex-connector[bot]"}}
+      ]
+    }
+  },
+  {
+    "isResolved": false,
+    "isOutdated": true,
+    "comments": {
+      "nodes": [
+        {"author": {"login": "chatgpt-codex-connector[bot]"}}
+      ]
+    }
+  }
+]

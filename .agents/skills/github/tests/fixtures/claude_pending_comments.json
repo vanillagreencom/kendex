@@ -1,0 +1,9 @@
+[
+  {
+    "id": 1001,
+    "user": {"login": "review-bot[bot]"},
+    "body": "View job\n\n## Reviewing PR\n\n- [ ] Read diff\n- [ ] Run analysis\n- [ ] Post findings\n",
+    "created_at": "2026-04-26T12:00:00Z",
+    "updated_at": "2026-04-26T12:01:00Z"
+  }
+]

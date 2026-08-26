@@ -36,6 +36,8 @@ while IFS= read -r f; do
   case "$f" in
     *.lock | package-lock.json) : ;;
     agents/* | skills/* | hooks/* | pi-extensions/* | skill-templates/*) : ;; # catalog content, not app source
+    .agents/* | .claude/skills/* | .claude/agents/* | .claude/hooks/* | \
+      .codex/agents/* | .codex/hooks/* | .pi/agents/* | .pi/kendex/hooks/*) : ;; # kendex's render of the catalog content above
     docs/img/*) : ;; # README screenshots and the tour gif
     *) [ "$(wc -c <"$f")" -gt 204800 ] &&
       say "$f is over 200 KB — assets and binaries don't belong here" ;;
@@ -46,6 +48,8 @@ while IFS= read -r f; do
   case "$f" in
     *.md | *.lock | *.json | *.svg | *.png | *.ico | *.icns) continue ;;
     agents/* | skills/* | hooks/* | pi-extensions/* | skill-templates/*) continue ;; # catalog content
+    .agents/* | .claude/skills/* | .claude/agents/* | .claude/hooks/* | \
+      .codex/agents/* | .codex/hooks/* | .pi/agents/* | .pi/kendex/hooks/*) continue ;; # its render
     docs/img/*) continue ;; # binary images
     ui/src/components/ui/* | ui/src/bindings.ts) continue ;; # generated: shadcn, tauri-specta
     kendex-local.toml) continue ;; # kendex writes it, one table per declared item — the CLI owns its shape, so it cannot be split
@@ -73,6 +77,8 @@ scan() {
     case "$f" in
       tools/* | ui/src/components/ui/* | ui/src/bindings.ts) continue ;;
       agents/* | skills/* | hooks/* | pi-extensions/* | skill-templates/*) continue ;; # catalog content
+      .agents/* | .claude/skills/* | .claude/agents/* | .claude/hooks/* | \
+        .codex/agents/* | .codex/hooks/* | .pi/agents/* | .pi/kendex/hooks/*) continue ;; # its render
       *.md | *.lock | *.json | *.svg) continue ;;
     esac
     [[ "$f" =~ $filter ]] || continue

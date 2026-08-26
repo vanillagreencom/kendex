@@ -1,0 +1,45 @@
+[env]
+
+# SECOND OPINION — cross-model review (second-opinion skill).
+# One reviewer by default: the highest-priority roster entry that is
+# AVAILABLE and is NOT the model this session runs. Full semantics: second-opinion SKILL.md.
+
+# Priority-ordered roster, space/comma separated. Per entry:
+# SECOND_OPINION_<NAME>_CMD (claude and codex have defaults) and
+# SECOND_OPINION_<NAME>_MODEL (identity, when the CLI fronts another model).
+SECOND_OPINION_MODELS = "claude codex"
+
+# Opinions a review collects; 2+ unions distinct models on one diff.
+SECOND_OPINION_COUNT = "1"
+
+# The model THIS session runs — needed only where the harness cannot be
+# detected (Pi, OpenCode, Cursor, plain shells); "none" = no session model.
+# SESSION-SCOPED: leave it commented here and export it in the session — a
+# project-file value describes no single session and is refused.
+# SECOND_OPINION_CURRENT_MODEL = "claude"
+
+# Roster commands (identities claude / codex).
+SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
+
+SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.6-sol -s read-only -c model_reasoning_effort=xhigh --ephemeral"
+
+# Example extra roster entry: add "pi-deepseek" to SECOND_OPINION_MODELS,
+# give it a command, declare the model it fronts.
+# SECOND_OPINION_PI_DEEPSEEK_CMD = "pi -p --model deepseek/deepseek-v4-pro"
+# SECOND_OPINION_PI_DEEPSEEK_MODEL = "deepseek"
+
+# Seconds to wait for the external CLI.
+SECOND_OPINION_TIMEOUT = "1080"
+
+# Home for review/audit records written without --output; a directory the
+# script CREATES is seeded with a "*" .gitignore (a pre-existing one is
+# left alone — ignore it yourself).
+SECOND_OPINION_ARTIFACT_DIR = "tmp/second-opinion"
+
+# Repo instruction files appended to the review prompt (repo-rule lens).
+# Empty disables.
+SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md review-bots.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
+
+# Force one target instead of walking the roster; a target running this
+# session's model is refused.
+# SECOND_OPINION_TARGET = "claude"

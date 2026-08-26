@@ -1,0 +1,70 @@
+---
+name: dev
+description: "Dev-agent workflows for issue implementation and review-fix delegation, invoked by orch or specialist agents."
+license: MIT
+user-invocable: true
+dependencies:
+  required: [orch, github, decider]
+  optional: [linear]
+metadata:
+  author: vanillagreen
+  source: kendex
+  repository: "https://github.com/vanillagreencom/kendex"
+  bugs: "https://github.com/vanillagreencom/kendex/issues"
+  version: "2.0.0"
+tags: [automation]
+---
+
+# Dev Workflows
+
+> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
+
+orch is the caller and runtime: it owns delegation format, round acceptance, and every shell-shape rule.
+
+| Workflow | Purpose |
+|----------|---------|
+| `workflows/dev-implement.md` | Implementation: activate → plan → implement → validate → commit → QA labels → summary → artifact → return (§ 1-11) |
+| `workflows/dev-fix.md` | Review fixes: evaluate → apply or skip → validate → commit → artifact → return |
+
+Review and QA-review belong to the reviewer skill: [`../reviewer/workflows/review.md`](../reviewer/workflows/review.md), [`../reviewer/workflows/qa-review.md`](../reviewer/workflows/qa-review.md). Command shapes, literal format tags, and round mechanics are orch's: [`../orch/SKILL.md`](../orch/SKILL.md) § Harness-Safe Shell, § Format Tags Are Literal, § Round Closure.
+
+## Engineering Rules
+
+- Scope is the reported symptom. Every behavioral surface a change touches must trace to a line in the report — if you cannot name that line, keep it out of this change. Two exceptions: mechanical enablers of landing it (locks, changelog, baselines, dismissal renewals) ride without a line, and a defect the change introduces or arms is in scope by definition.
+- Prefer deleting code to abstracting it. Three similar lines beat a premature abstraction. A new dependency needs a one-line justification in its commit message.
+- Every behavior change ships with a test that fails without it.
+- An `else` that "shouldn't happen" is a bug: assert or return an error, never continue silently.
+- Plain words over jargon: name things by what they do. Comments say why, never what or when — no temporal markers, no references to the change that wrote them. Commit bodies explain intent, never narrate the diff.
+- Delete unused code completely — no compat shims, no `_renamed` vars, no "removed" comments.
+- Stale docs are bugs: contradicting a committed doc means updating it in the same change.
+
+## Round Contract
+
+Execute workflow sections in order; a "**Skip if**" condition is the workflow's decision, never your own scope assessment. Never push and never open a PR — the orchestrator does that after review passes.
+
+**The completion artifact is the round.** `dev-return-write` writes it after the commit; never hand-author the JSON (schema: orch [`schemas/dev-return.md`](../orch/schemas/dev-return.md)).
+
+- `--issue` is the delegation's `Artifact Key:` line — the normalized workflow-state key (`issue-N` for GitHub, `PROJ-123` for Linear), never the tracker-native `OWNER/REPO#N` or a bare number — and `--round-id` its `Round ID:` line.
+- `--kind` always matches what was delegated: an investigate-and-recommend round is `--kind analysis`. `--validate` matches your commit message and return; a pass that needed a re-run is still `pass`, with the caveat in `--validate-note`. Flag constraints and value shapes: `dev-return-write --help`.
+
+**Acceptance is that artifact plus git state, never your message.** Write the artifact, then return exactly once over the harness's agent-to-agent channel — Claude Code `SendMessage`, Codex `send_input`, OpenCode a resume on the stored `task_id`, Pi background the final assistant message. A disk write is not a return. Send the `**Return exactly**` body once and go idle: in a Pi persistent pane follow it with `complete_subagent` (background agents must not call it); on Codex the `send_input` MESSAGE is the durable return and the runtime's `FINAL_ANSWER` echo of it is expected, not a separate return to author or expand.
+
+## Validation
+
+Deterministic gate findings are fixed here, never carried into review. Fix what is simple and related and re-run; when a failure is complex or unrelated, commit anyway and report it; after the same failure three times, stop looping. Every unresolved failure is reported three times over — in the commit message, in `--validate`, and in your return.
+
+### Long-Running Validation
+
+**Invariant, every harness:** the completion tail (commit → QA labels → summary → artifact → return) is never dropped, and an interrupted run is never success — re-check its real outcome and resume the tail. How you wait is your harness's:
+
+- **Claude Code** — background the BARE command with output redirected to a log via `run_in_background`, never piped or chained; the log's `END OF OUTPUT — exit status: N` block is the authoritative verdict. Then end your turn. **Idling after backgrounding is normal, not a stall** — the orchestrator's watchdog closes the round. Never poll.
+- **Codex** — foreground and block.
+- **Pi** — run it in the foreground.
+
+## Reflect
+
+**Skip if** nothing recurred and nothing surprised you. Otherwise put the lesson where it will be read again — architecture docs when patterns, APIs, or documented behavior changed, or the managing project's kendex config (`kendex.toml` at the kendex project root, `kendex-local.toml` in a source-catalog checkout) under `[skill-instructions]`, `[agent-additional-instructions]`, or `[agent-launch-instructions]`, followed by `kendex refresh`. Bar: would this save 5+ minutes in a future session? One surgical addition per lesson, no verbose examples. What you cannot update yourself goes in your return as `[process]` discovered work.
+
+## Configuration
+
+Agent-type placeholders are project-configurable: `[AGENT_TYPE]` (dev agents receiving implementation delegations), `[REVIEW_AGENT]`, `[QA_AGENT]`. Commit format: `[PREFIX]([ISSUE_ID]): [DESCRIPTION]`. `DEV_VALIDATE_CMD` (`kendex.settings.toml` `[env]`) names the project's validation command for the Validate step; unset → the project's documented build/test/lint command.

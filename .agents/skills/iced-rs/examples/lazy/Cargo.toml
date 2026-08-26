@@ -1,0 +1,10 @@
+[package]
+name = "lazy"
+version = "0.1.0"
+authors = ["Nick Senger <dev@nsenger.com>"]
+edition = "2024"
+publish = false
+
+[dependencies]
+iced.workspace = true
+iced.features = ["debug", "lazy"]

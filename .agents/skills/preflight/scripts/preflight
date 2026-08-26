@@ -1,0 +1,1061 @@
+#!/usr/bin/env bash
+# preflight — diff-scoped, fail-only checks: fail-open bash, new suites no
+# runner invokes, scratch directories no EXIT trap removes, directories
+# created at literal absolute temp paths, docs citing repo paths that do
+# not exist, source files citing docs that do not exist, work markers with
+# no issue behind them, reviewer-bot attributions in durable prose,
+# malformed JSON/TOML, workflow run: blocks their shell cannot parse.
+#
+# Precision before coverage: a lane that cannot decide says nothing. The
+# line-scoped lanes report only on lines this diff ADDED, so a pre-existing
+# violation on an untouched line never fails somebody else's change. A
+# missing optional tool (shellcheck, jq, taplo, python3, PyYAML) skips its lane
+# silently — the run never fails because a tool is absent, and a lane never
+# degrades into a warning: it fails or it says nothing.
+#
+# Exit codes: 0 clean; 1 findings; 2 usage/environment error.
+set -euo pipefail
+
+TAB="$(printf '\t')"
+NL='
+'
+
+usage() {
+  cat <<'EOF'
+usage: preflight [--staged | --base REF | --all] [--repo PATH]
+
+Diff-scoped deterministic checks. Default scope is the merge base of HEAD
+and the default branch (origin/HEAD, else origin/main, else main), plus
+non-ignored untracked files; --staged sees only the index.
+
+  --staged      staged changes only (pre-commit scope)
+  --base REF    changes since the merge base of HEAD and REF, plus every
+                non-ignored untracked file (a new file, every line added)
+  --all         every tracked file, every line treated as added
+  --repo PATH   run against the repository containing PATH (default: cwd)
+
+Lanes: shell-syntax, shellcheck-errors, masked-returns, fail-open,
+unwired-suite, mktemp-trap, hardcoded-temp-path, docs-cited-paths,
+todo-links, reviewer-attribution, data-syntax, workflow-run-syntax.
+
+Exit codes: 0 clean; 1 findings; 2 usage/environment error.
+EOF
+}
+
+env_error() {
+  echo "preflight: $*" >&2
+  exit 2
+}
+
+MODE="base"
+BASE_REF=""
+REPO_OPT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --staged) MODE="staged" ;;
+    --all) MODE="all" ;;
+    --base) [ $# -ge 2 ] || env_error "--base requires a ref"; shift; MODE="base"; BASE_REF="$1" ;;
+    --base=*) MODE="base"; BASE_REF="${1#--base=}" ;;
+    --repo) [ $# -ge 2 ] || env_error "--repo requires a path"; shift; REPO_OPT="$1" ;;
+    --repo=*) REPO_OPT="${1#--repo=}" ;;
+    -h | --help) usage; exit 0 ;;
+    *) env_error "unknown argument '$1' (see --help)" ;;
+  esac
+  shift
+done
+
+if [ -n "$REPO_OPT" ]; then
+  cd -- "$REPO_OPT" 2>/dev/null || env_error "--repo path is not a directory: $REPO_OPT"
+fi
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || env_error "not inside a git repository"
+cd "$REPO_ROOT"
+
+TMP="$(mktemp -d)" || env_error "could not create a temporary directory"
+# cleanup re-exits with the status it interrupted: under errexit a failing rm
+# would otherwise replace the contract exit code with its own.
+cleanup() {
+  cleanup_status=$?
+  rm -rf -- "$TMP" || :
+  exit "$cleanup_status"
+}
+trap cleanup EXIT
+: >"$TMP/findings.tsv"
+: >"$TMP/added.tsv"
+: >"$TMP/newfiles.list"
+
+emit() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >>"$TMP/findings.tsv"; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# --- change set --------------------------------------------------------------
+# Diff config is pinned, not inherited: a repo setting noprefix, a mnemonic
+# prefix, quotePath, an external differ or a textconv filter would each
+# reshape the patch this parser reads.
+git_diff() { git -c core.quotePath=false -c diff.noprefix=false -c diff.mnemonicPrefix=false diff --no-ext-diff --no-textconv "$@"; }
+
+resolve_base() { # -> merge-base commit on stdout
+  local cand base
+  if [ -n "$BASE_REF" ]; then
+    git rev-parse --verify --quiet "$BASE_REF^{commit}" >/dev/null || env_error "--base ref does not resolve to a commit: $BASE_REF"
+    base="$(git merge-base HEAD "$BASE_REF" 2>/dev/null)" || env_error "no merge base between HEAD and $BASE_REF"
+    printf '%s' "$base"
+    return 0
+  fi
+  cand="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+  for cand in "$cand" origin/main main; do
+    [ -n "$cand" ] || continue
+    git rev-parse --verify --quiet "$cand^{commit}" >/dev/null || continue
+    base="$(git merge-base HEAD "$cand" 2>/dev/null)" || continue
+    printf '%s' "$base"
+    return 0
+  done
+  env_error "could not resolve a default diff base (tried origin/HEAD, origin/main, main) — pass --base REF or --all"
+}
+
+case "$MODE" in
+  all)
+    git ls-files -z >"$TMP/files.z" || env_error "git ls-files failed"
+    ;;
+  staged)
+    git rev-parse --verify --quiet HEAD >/dev/null || env_error "the repository has no commits yet — nothing to diff --staged against"
+    git_diff --cached --name-only --diff-filter=d -z >"$TMP/files.z" || env_error "git diff --cached failed"
+    git_diff --cached --unified=0 --no-color --no-renames --diff-filter=d >"$TMP/patch" || env_error "git diff --cached failed"
+    git_diff --cached --name-only --no-renames --diff-filter=A >"$TMP/newfiles.list" || env_error "git diff --cached failed"
+    ;;
+  base)
+    git rev-parse --verify --quiet HEAD >/dev/null || env_error "the repository has no commits yet — pass --all"
+    BASE="$(resolve_base)"
+    git_diff --name-only --diff-filter=d -z "$BASE" -- >"$TMP/files.z" || env_error "git diff against $BASE failed"
+    git_diff --unified=0 --no-color --no-renames --diff-filter=d "$BASE" -- >"$TMP/patch" || env_error "git diff against $BASE failed"
+    git_diff --name-only --no-renames --diff-filter=A "$BASE" -- >"$TMP/newfiles.list" || env_error "git diff against $BASE failed"
+    # A file never added is invisible to `git diff` yet is part of the change
+    # the author is about to commit: every non-ignored untracked file is a new
+    # file with every line added, exactly what it will be at the PR.
+    git -c core.quotePath=false ls-files --others --exclude-standard -z >"$TMP/untracked.z" || env_error "git ls-files --others failed"
+    ;;
+esac
+[ -f "$TMP/untracked.z" ] || : >"$TMP/untracked.z"
+
+# Newline- and tab-free paths are a precondition for every record below, and
+# for the positional map that pairs a path with its added lines. Refuse the
+# pathological path loudly rather than letting it desync the map.
+while IFS= read -r -d '' f; do
+  case "$f" in
+    *"$TAB"* | *"$NL"*) env_error "changed path contains a tab or newline, unrepresentable in this tool's records: '$f'" ;;
+  esac
+  printf '%s\n' "$f"
+done <"$TMP/files.z" >"$TMP/files.list"
+
+if [ "$MODE" = "all" ]; then
+  # Every line counts as added. Binary and empty files carry no inspectable
+  # lines (grep -I reports no match for either), so they contribute none.
+  while IFS= read -r f; do
+    [ -f "$f" ] && [ ! -h "$f" ] || continue
+    grep -Iq . -- "$f" 2>/dev/null || continue
+    PF="$f" awk 'BEGIN { p = ENVIRON["PF"] } { print p "\t" FNR "\t" $0 }' "./$f" >>"$TMP/added.tsv"
+  done <"$TMP/files.list"
+else
+  awk -v out="$TMP/added.tsv" '
+    /^\+\+\+ / {
+      rest = substr($0, 5)
+      cur = ""
+      if (rest == "/dev/null") next
+      # A path git had to quote (embedded quote or control character) cannot
+      # be recovered verbatim from the header; whole-file lanes still see it
+      # through the -z name list, the line-scoped ones skip it.
+      if (substr(rest, 1, 1) == "\"") next
+      sub(/^b\//, "", rest)
+      cur = rest
+      next
+    }
+    /^@@ / {
+      ln = 0
+      if (cur == "") next
+      h = $3
+      sub(/^\+/, "", h)
+      i = index(h, ",")
+      if (i > 0) { start = substr(h, 1, i - 1) + 0; cnt = substr(h, i + 1) + 0 } else { start = h + 0; cnt = 1 }
+      if (cnt > 0) ln = start
+      next
+    }
+    /^\+/ {
+      if (cur == "" || ln == 0) next
+      print cur "\t" ln "\t" substr($0, 2) >out
+      ln++
+    }
+  ' "$TMP/patch"
+  while IFS= read -r -d '' f; do
+    case "$f" in
+      *"$TAB"* | *"$NL"*) env_error "untracked path contains a tab or newline, unrepresentable in this tool's records: '$f'" ;;
+    esac
+    printf '%s\n' "$f" >>"$TMP/files.list"
+    printf '%s\n' "$f" >>"$TMP/newfiles.list"
+    [ -f "$f" ] && [ ! -h "$f" ] || continue
+    grep -Iq . -- "$f" 2>/dev/null || continue
+    PF="$f" awk 'BEGIN { p = ENVIRON["PF"] } { print p "\t" FNR "\t" $0 }' "./$f" >>"$TMP/added.tsv"
+  done <"$TMP/untracked.z"
+fi
+
+# Split the added lines into one `line<TAB>content` file per changed file,
+# named by that file's position in files.list. Both producers group their
+# records by path, so one output file is open at a time.
+awk -F'\t' -v dir="$TMP" -v listfile="$TMP/files.list" '
+  FILENAME == listfile { idx[$0] = FNR; next }
+  {
+    if (!($1 in idx)) next
+    if ($1 != cur) { if (out != "") close(out); cur = $1; out = dir "/rec." idx[$1] }
+    s = $2
+    for (i = 3; i <= NF; i++) s = s "\t" $i
+    print s >out
+  }
+' "$TMP/files.list" "$TMP/added.tsv"
+
+git ls-files >"$TMP/tracked.list" || env_error "git ls-files failed"
+# Every directory that holds tracked files, at every depth — plus the
+# directories of the untracked files in scope, so a new doc under a new
+# directory is judged as it will be once committed.
+{ cat "$TMP/tracked.list"; tr '\0' '\n' <"$TMP/untracked.z"; } | awk -F/ '{ p = ""; for (i = 1; i < NF; i++) { p = (i == 1 ? $i : p "/" $i); print p } }' | LC_ALL=C sort -u >"$TMP/trackeddirs"
+
+# --- shared helpers ----------------------------------------------------------
+content_of() { # IDX PATH -> inspectable content path on stdout; nonzero if unavailable
+  local out
+  if [ "$MODE" = "staged" ]; then
+    # Staged scope judges staged bytes: a worktree copy carrying unstaged
+    # edits would put the diff line numbers and the content out of sync.
+    out="$TMP/blob.$1"
+    if [ ! -f "$out" ]; then
+      git show ":$2" >"$out.part" 2>/dev/null || { rm -f "$out.part"; return 1; }
+      mv -- "$out.part" "$out" || return 1
+    fi
+    printf '%s' "$out"
+  else
+    [ -f "$2" ] && [ ! -h "$2" ] || return 1
+    printf '%s' "$2"
+  fi
+}
+
+added_lines_of() { # IDX -> path to that file's added line numbers
+  local out="$TMP/lines.$1"
+  [ -f "$out" ] || cut -f1 -- "$TMP/rec.$1" >"$out"
+  printf '%s' "$out"
+}
+
+has_shebang() { head -n 1 -- "$1" 2>/dev/null | grep -q '^#!'; }
+is_shell_path() { # PATH CONTENT-PATH — extension, else a sh/bash shebang
+  case "$1" in
+    *.sh | *.bash) return 0 ;;
+  esac
+  head -n 1 -- "$2" 2>/dev/null | grep -Eq '^#!.*(^|[/ ])(ba)?sh([[:space:]]|$)'
+}
+
+# A `set` line enabling the option. Deliberately generous: reading an option
+# as enabled can only cost a finding, while missing one would invent a
+# fail-open report against a script that is in fact strict.
+ERREXIT_RE='^[[:space:]]*set[[:space:]].*(-[a-zA-Z]*e|-o[[:space:]]+errexit)'
+NOUNSET_RE='^[[:space:]]*set[[:space:]].*(-[a-zA-Z]*u|-o[[:space:]]+nounset)'
+PIPEFAIL_RE='^[[:space:]]*set[[:space:]].*pipefail'
+file_matches() { grep -Eq -- "$2" "$1" 2>/dev/null; }
+
+GCC_LINE=0
+GCC_SEV=""
+GCC_CODE=""
+GCC_MSG=""
+parse_gcc() { # RAW PATH-PREFIX — splits `path:line:col: level: message [SCxxxx]`
+  local raw="$1" rest
+  GCC_LINE=0
+  GCC_SEV=""
+  GCC_CODE=""
+  GCC_MSG="$raw"
+  rest="${raw#"$2":}"
+  [ "$rest" != "$raw" ] || return 0
+  GCC_LINE="${rest%%:*}"
+  case "$GCC_LINE" in "" | *[!0-9]*) GCC_LINE=0 ;; esac
+  rest="${rest#*:}"  # past the line number
+  rest="${rest#*: }" # past the column
+  GCC_SEV="${rest%%:*}"
+  rest="${rest#*: }" # past the severity word
+  while :; do
+    case "$rest" in ' '*) rest="${rest# }" ;; *) break ;; esac
+  done
+  case "$rest" in
+    *"[SC"*"]")
+      GCC_CODE="${rest##*\[}"
+      GCC_CODE="${GCC_CODE%\]}"
+      rest="${rest% \[*}"
+      ;;
+  esac
+  GCC_MSG="${GCC_CODE:+$GCC_CODE: }$rest"
+}
+
+# One shellcheck pass feeds two lanes: severity `error` findings are near-
+# certain bugs and stand for the whole file, while the masked-return codes
+# are line-scoped. SC2312 is deliberately NOT among them — it fires on every
+# idiomatic `f "$(g)"` (252 hits across this repo's own scripts against 2 for
+# SC2155), which is an opinion, not a defect, and nothing to hard-fail on.
+is_masked_code() {
+  case "$1" in
+    SC2155 | SC2311) return 0 ;;
+  esac
+  return 1
+}
+run_shellcheck() { # CONTENT-PATH — gcc-format output on stdout
+  # --shell=bash only fills in for a missing shebang: a `#!/bin/sh` file must
+  # be judged as sh, and a materialized index blob has no telling extension.
+  if has_shebang "$1"; then
+    shellcheck --enable=check-extra-masked-returns --format=gcc -- "$1" 2>/dev/null || true
+  else
+    shellcheck --enable=check-extra-masked-returns --format=gcc --shell=bash -- "$1" 2>/dev/null || true
+  fi
+}
+
+line_hint() { # TEXT -> the line number a tool mentions, else 0
+  local n
+  n="$(printf '%s' "$1" | awk 'match($0, /line [0-9]+/) { print substr($0, RSTART + 5, RLENGTH - 5); exit }')"
+  case "$n" in "" | *[!0-9]*) printf '0' ;; *) printf '%s' "$n" ;; esac
+}
+first_line() { printf '%s' "$1" | awk 'NF { print; exit }'; }
+
+TOML_PY='import sys, tomllib
+try:
+    with open(sys.argv[1], "rb") as fh:
+        tomllib.load(fh)
+except Exception as exc:
+    sys.stdout.write(str(exc) + "\n")
+    sys.exit(1)
+'
+# Workflow `run:` blocks are shell that no shell lane sees: bash -n each block
+# (GitHub expressions replaced by a placeholder, non-shell `shell:` steps
+# skipped) and report file line numbers, mapped through the block scalar's
+# position. Output: TAB-separated `line<TAB>message` per finding.
+WORKFLOW_PY='import re, subprocess, sys, tempfile, os
+import yaml
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as fh:
+    text = fh.read()
+try:
+    root = yaml.compose(text)
+except yaml.YAMLError as exc:
+    mark = getattr(exc, "problem_mark", None)
+    line = mark.line + 1 if mark is not None else 1
+    problem = getattr(exc, "problem", None) or str(exc).splitlines()[0]
+    sys.stdout.write("%d\tworkflow YAML did not parse: %s\n" % (line, problem))
+    sys.exit(0)
+def mapping(node):
+    if not isinstance(node, yaml.MappingNode):
+        return {}
+    out = {}
+    for k, v in node.value:
+        if isinstance(k, yaml.ScalarNode):
+            out[k.value] = v
+    return out
+def scalar(node):
+    return node.value if isinstance(node, yaml.ScalarNode) else None
+def shell_of(node):
+    m = mapping(node)
+    s = scalar(m.get("shell"))
+    return s
+# The interpreter that will parse the block: bash or sh, given as a bare name
+# or an executable path (`/bin/bash {0}`); anything else is out of scope.
+def interpreter_of(shell):
+    m = re.match(r"^(?:.*/)?(bash|sh)(?:\s|$)", shell.strip())
+    return m.group(1) if m else None
+# GitHub expressions are replaced by a placeholder before parsing. Their
+# string literals are single-quoted with a doubled quote as the escape, so a
+# closing brace pair inside a literal (format with braces) does not end the
+# expression; a naive shortest-match regex would leave the tail of the
+# literal behind as shell text.
+def strip_expressions(text):
+    out = []
+    i = 0
+    n = len(text)
+    while i < n:
+        j = text.find("${{", i)
+        if j < 0:
+            out.append(text[i:])
+            break
+        out.append(text[i:j])
+        k = j + 3
+        while k < n:
+            c = text[k]
+            if c == "\x27":
+                k += 1
+                while k < n:
+                    if text[k] == "\x27":
+                        if k + 1 < n and text[k + 1] == "\x27":
+                            k += 2
+                            continue
+                        break
+                    k += 1
+                k += 1
+                continue
+            if text.startswith("}}", k):
+                k += 2
+                break
+            k += 1
+        out.append("X")
+        i = k
+    return "".join(out)
+# The line (1-based, within the block) of the first `${{` that never
+# closes, else 0. Detected separately so the placeholder pass stays simple.
+def unterminated_expression_line(text):
+    i = 0
+    n = len(text)
+    while i < n:
+        j = text.find("${{", i)
+        if j < 0:
+            return 0
+        k = j + 3
+        closed = False
+        while k < n:
+            c = text[k]
+            if c == "\x27":
+                k += 1
+                while k < n:
+                    if text[k] == "\x27":
+                        if k + 1 < n and text[k + 1] == "\x27":
+                            k += 2
+                            continue
+                        break
+                    k += 1
+                k += 1
+                continue
+            if text.startswith("}}", k):
+                closed = True
+                k += 2
+                break
+            k += 1
+        if not closed:
+            return text.count("\n", 0, j) + 1
+        i = k
+    return 0
+# With no shell declared anywhere, GitHub runs bash on Linux/macOS runners and
+# PowerShell on Windows ones. An implicit shell is bash only when every
+# runs-on label is a plain ubuntu-* or macos-* label; an expression, a
+# Windows label, or a custom/self-hosted label leaves the default unresolved
+# and the step is skipped.
+def implicit_shell_is_bash(jm):
+    ro = jm.get("runs-on")
+    labels = []
+    if isinstance(ro, yaml.ScalarNode):
+        labels = [ro.value]
+    elif isinstance(ro, yaml.SequenceNode):
+        labels = [n.value for n in ro.value if isinstance(n, yaml.ScalarNode)]
+    elif isinstance(ro, yaml.MappingNode):
+        lab = mapping(ro).get("labels")
+        if isinstance(lab, yaml.ScalarNode):
+            labels = [lab.value]
+        elif isinstance(lab, yaml.SequenceNode):
+            labels = [n.value for n in lab.value if isinstance(n, yaml.ScalarNode)]
+    if not labels:
+        return False
+    for label in labels:
+        if "${{" in label or not re.match(r"^(ubuntu|macos)([-_]|$)", label.lower()):
+            return False
+    return True
+top = mapping(root)
+default_shell = shell_of(mapping(top.get("defaults")).get("run")) if "defaults" in top else None
+jobs = mapping(top.get("jobs"))
+for _, job in jobs.items():
+    jm = mapping(job)
+    job_shell = (shell_of(mapping(jm.get("defaults")).get("run")) or default_shell) if "defaults" in jm else default_shell
+    steps = jm.get("steps")
+    if not isinstance(steps, yaml.SequenceNode):
+        continue
+    for step in steps.value:
+        sm = mapping(step)
+        run = sm.get("run")
+        if not isinstance(run, yaml.ScalarNode):
+            continue
+        shell = scalar(sm.get("shell"))
+        effective = shell if shell is not None else job_shell
+        if effective is None:
+            if not implicit_shell_is_bash(jm):
+                continue
+            interp = "bash"
+        else:
+            interp = interpreter_of(effective)
+            if interp is None:
+                continue
+        # Block scalars (| >) start their content on the line after the key;
+        # flow/plain scalars start on the key line itself. A folded scalar
+        # (>) has had its newlines collapsed before bash sees it, so its
+        # diagnostics cannot be mapped to a source line: they land on the
+        # first line of the block. (No apostrophes here: this Python lives in
+        # a single-quoted bash string.)
+        first = run.start_mark.line + 1
+        if run.style in ("|", ">"):
+            first += 1
+        folded = run.style == ">"
+        bad = unterminated_expression_line(run.value)
+        if bad:
+            at = first if folded else first + bad - 1
+            sys.stdout.write("%d\tunterminated GitHub expression: ${{ without a closing }}\n" % at)
+            continue
+        body = strip_expressions(run.value)
+        with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as t:
+            t.write(body)
+            tmp = t.name
+        try:
+            res = subprocess.run([interp, "-n", tmp], capture_output=True, text=True)
+        finally:
+            os.unlink(tmp)
+        if res.returncode == 0:
+            continue
+        for raw in res.stderr.splitlines():
+            m = re.match(r"^.*?: line (\d+): (.*)$", raw)
+            if m:
+                at = first if folded else first + int(m.group(1)) - 1
+                sys.stdout.write("%d\t%s\n" % (at, m.group(2)))
+            elif raw.strip():
+                sys.stdout.write("%d\t%s\n" % (first, raw.strip()))
+'
+HAVE_WORKFLOW_PY=0
+have python3 && python3 -c 'import sys, yaml; sys.exit(0 if sys.version_info >= (3, 7) else 1)' >/dev/null 2>&1 && HAVE_WORKFLOW_PY=1
+HAVE_SHELLCHECK=0
+have shellcheck && HAVE_SHELLCHECK=1
+HAVE_TOML=none
+if have taplo; then
+  HAVE_TOML=taplo
+elif have python3 && python3 -c 'import tomllib' >/dev/null 2>&1; then
+  HAVE_TOML=python
+fi
+check_toml() { # CONTENT-PATH — parser diagnostics on stdout, nonzero when invalid
+  case "$HAVE_TOML" in
+    taplo) taplo check -- "$1" 2>&1 ;;
+    python) python3 -c "$TOML_PY" "$1" 2>&1 ;;
+    *) return 0 ;;
+  esac
+}
+
+MKTEMP_ASSIGN="=[\"']?\\\$\\(mktemp"
+# An mktemp INVOCATION: the word at a command position — line start, or
+# after a substitution, pipe, list or group operator. The word inside a
+# message string or a usage line names the tool, it does not run it.
+MKTEMP_CALL_RE='(^[[:space:]]*|[;|&(`{][[:space:]]*)mktemp([^A-Za-z0-9_.-]|$)'
+# An EXIT-time trap in either of its portable spellings, at a command
+# position on a non-comment line — the word inside a message or a comment
+# arms nothing.
+TRAP_EXIT_RE='(^[[:space:]]*|[;|&(`{][[:space:]]*)trap[[:space:]].*[[:space:]](EXIT|0)([[:space:]]|;|$)'
+has_exit_trap() { # FILE
+  grep -Ev -- '^[[:space:]]*#' "$1" 2>/dev/null | grep -Eq -- "$TRAP_EXIT_RE"
+}
+# A directory-CREATING call taking a literal absolute temp path (/tmp,
+# /var/tmp) as (part of) its first argument: mkdtemp/mkdir and their Sync
+# variants (JS/TS), mkdtemp/makedirs/mkdir (Python), create_dir_all (Rust),
+# plus a shell mkdir -p at a command position. The same literal as a VALUE
+# — a config field, a fixture string, a path nothing creates — is not the
+# shape: repos carry fixture literals by the hundred against a handful of
+# real creation sites, and a lane that flags the fixtures is noise that
+# buries the finding.
+TMPPATH_CREATE_RE='(mkdtemp|mkdtempSync|mkdir|mkdirSync|makedirs|create_dir_all)[[:space:]]*\([^,)]*["'\''`]/(var/)?tmp/'
+# The mkdtemp family ALWAYS creates, so a bare quoted temp root anywhere in
+# its arguments is the same leak (tempfile.mkdtemp(dir="/tmp")) — or worse,
+# a root-level sibling (mkdtempSync("/tmp") makes /tmpXXXXXX). Plain mkdir
+# of the bare root stays out: creating /tmp itself is a no-op.
+TMPPATH_CREATE_RE="$TMPPATH_CREATE_RE"'|(mkdtemp|mkdtempSync)[[:space:]]*\([^)]*["'\''`]/(var/)?tmp["'\''`]'
+TMPPATH_CREATE_RE="$TMPPATH_CREATE_RE"'|(^[[:space:]]*|[;|&(`{][[:space:]]*)mkdir[[:space:]]+-p[[:space:]]+["'\'']?/(var/)?tmp/'
+
+# The marker form only: the word immediately followed by a colon or by an
+# owner in parentheses. Prose that merely uses the word ("TODO hygiene is
+# preflight's job") and scaffolding placeholders ("description: TODO —
+# describe this agent") are not untracked work items, and a gate that fails
+# on them is a gate people route around.
+TODO_RE='(^|[^A-Za-z0-9_])(TODO|FIXME)[(:]'
+ISSUE_RE='(#[0-9]+|[A-Z][A-Z0-9]+-[0-9]+|http)'
+
+# The attribution shape only: a review-fleet bot name coupled to a PR/review
+# reference — a parenthetical credit, a per-bot review credit, a bot review
+# of #N. A bot pass is not a rationale: the credit rots as PRs renumber,
+# while prose that merely names a bot (reviewer docs, gate config) is
+# describing behavior and stays clean, so the reference word must end at a
+# word boundary — an account named after the reviewing is not a credit.
+# CHANGELOG.md is where rationale belongs and is exempt.
+BOT_ALT="$(printf '%s' "${PREFLIGHT_BOT_NAMES:-qodo copilot coderabbit codex devin}" | LC_ALL=C tr -cs 'A-Za-z0-9_-' '|')"
+BOT_ALT="${BOT_ALT#|}"
+BOT_ALT="${BOT_ALT%|}"
+[ -n "$BOT_ALT" ] || BOT_ALT='qodo|copilot|coderabbit|codex|devin'
+BOT_ATTR_RE="\\(($BOT_ALT)([^A-Za-z0-9_)-][^)]*)?((pr ?)?#[0-9]+|[^A-Za-z0-9_]r[0-9]{6,})([^A-Za-z0-9_)][^)]*)?\\)"
+BOT_ATTR_RE="$BOT_ATTR_RE|(^|[^A-Za-z0-9_-])per +((the|a) +)?($BOT_ALT)('s)? +(review|pass|feedback|suggestion|comment|finding)s?[[:punct:]]*[[:space:]]*\$"
+BOT_ATTR_RE="$BOT_ATTR_RE|(^|[^A-Za-z0-9_-])($BOT_ALT)('s)? +review +of +(pr ?)?#[0-9]+"
+: >"$TMP/tok.ok"
+: >"$TMP/tok.bad"
+
+doc_token_is_dead() { # TOKEN DOC-SUBTREE — 0 when the token names a path that does not exist
+  local tok="$1" subtree="$2" parent hit
+  case "$tok" in
+    */*) ;;
+    *) return 1 ;;
+  esac
+  # Only a repo-relative, placeholder-free, literal file path is decidable.
+  # The charset alone rejects URLs (`:`), globs, and `<name>` stand-ins; the
+  # leading forms name something outside this repo root; a trailing slash
+  # names a location the docs are describing, not a file they point at.
+  case "$tok" in
+    /* | ~* | -* | .* | */) return 1 ;;
+    *[!A-Za-z0-9_./-]*) return 1 ;;
+    *//* | */./* | */../*) return 1 ;;
+  esac
+  # A doc owns the paths in its own subtree; a root-level doc owns the repo.
+  # Cross-subtree citations are how docs describe somewhere else — a skill
+  # naming the hook file it installs into a consumer's checkout, a settings
+  # table naming a Sphinx layout — and reading those as this repo's own
+  # files is where this lane would earn its false positives.
+  if [ -n "$subtree" ] && [ "${tok%%/*}" != "$subtree" ]; then return 1; fi
+  # The token's own parent directory must already hold tracked files. A doc
+  # describing where a consuming repo will keep something (`docs/plans/<file>.md`
+  # in a repo with no docs/plans) is prose about elsewhere; only a path
+  # inside a directory this repo really has is this repo's claim to keep true.
+  parent="${tok%/*}"
+  if ! grep -qxF -- "$parent" "$TMP/trackeddirs"; then return 1; fi
+  if grep -qxF -- "$tok" "$TMP/tok.ok"; then return 1; fi
+  if grep -qxF -- "$tok" "$TMP/tok.bad"; then return 0; fi
+  if [ -e "$tok" ]; then
+    printf '%s\n' "$tok" >>"$TMP/tok.ok"
+    return 1
+  fi
+  # Tracked as a file, or as the directory prefix of tracked files.
+  hit="$(TOKEN="$tok" awk 'BEGIN { p = ENVIRON["TOKEN"]; q = p "/"; n = length(q) } $0 == p || substr($0, 1, n) == q { print "1"; exit }' "$TMP/tracked.list")"
+  if [ -n "$hit" ]; then
+    printf '%s\n' "$tok" >>"$TMP/tok.ok"
+    return 1
+  fi
+  printf '%s\n' "$tok" >>"$TMP/tok.bad"
+  return 0
+}
+
+# Candidate doc citations on a source line: maximal path-charset runs ending
+# in `.md`, one per output line. Quoted spans (either kind) and URL spans go
+# first — a quoted path is a program's working data or an example string, and
+# a GitHub URL containing /docs/x.md names a web page, not a repo path — and a
+# sentence-final dot is punctuation, not part of the name. Placeholders,
+# globs and interpolations never survive: their delimiters sit outside the
+# charset, so they arrive as fragments the shared guards in
+# doc_token_is_dead already reject.
+md_tokens_of() { # LINE -> candidate tokens on stdout
+  printf '%s\n' "$1" | LC_ALL=C awk -v q="'" '{
+    gsub(/"([^"\\]|\\.)*"/, " ")
+    gsub(q "[^" q "]*" q, " ")
+    gsub(/[A-Za-z][A-Za-z0-9+.-]*:\/\/[^ \t]*/, " ")
+    # A repo-qualified citation (`kendex:docs/x.md`) names a sibling repo
+    # this checkout cannot resolve; splitting it at the colon would judge
+    # the bare path as this repo. The markdown branch already skips the
+    # qualified form by charset — the code branch has to match it. The
+    # qualifier needs a boundary before it and a `/` after the colon, so a
+    # line-suffixed local citation (`docs/<x>.md:42`) is untouched.
+    gsub(/(^|[^A-Za-z0-9_.\/-])[A-Za-z][A-Za-z0-9_-]*:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.\/-]*/, " ")
+    while (match($0, /[A-Za-z0-9_.\/-]+/)) {
+      tok = substr($0, RSTART, RLENGTH)
+      $0 = substr($0, RSTART + RLENGTH)
+      sub(/\.+$/, "", tok)
+      if (tok ~ /\.md$/) print tok
+    }
+  }'
+}
+
+is_comment_line() { # LINE — leading-whitespace-then-# only; a trailing comment is still code
+  case "${1#"${1%%[![:space:]]*}"}" in '#'*) return 0 ;; esac
+  return 1
+}
+
+# The `|| true` shape on a command whose exit 2 means "could not read" or
+# "invoked wrong": true erases that status and the caller reads the empty
+# result as a clean answer. The command must stand at a command position, so
+# the same text quoted inside a message is not a finding. Prints the
+# swallowed command, nothing when the shape is absent — a status-capturing
+# `|| status=$?` is a different line.
+swallowed_cmd() { # LINE -> command name on stdout
+  printf '%s\n' "$1" | LC_ALL=C awk '
+    # Blank quoted spans that carry no substitution: text in a message runs
+    # nothing, but "$(git … || true)" is a command inside quotes.
+    {
+      out = ""; rest = $0
+      while (match(rest, /"[^"]*"|\047[^\047]*\047/)) {
+        seg = substr(rest, RSTART, RLENGTH)
+        out = out substr(rest, 1, RSTART - 1) (index(seg, "$(") ? seg : substr(seg, 1, 1) substr(seg, 1, 1))
+        rest = substr(rest, RSTART + RLENGTH)
+      }
+      $0 = out rest
+    }
+    match($0, /(^[[:space:]]*|[;|&(`{][[:space:]]*)(grep|find|git|jq|diff|cmp)([[:space:]][^|]*)?\|\|[[:space:]]*(true|:)([^A-Za-z0-9_.-]|$)/) {
+      s = substr($0, RSTART, RLENGTH)
+      if (match(s, /(grep|find|git|jq|diff|cmp)/)) print substr(s, RSTART, RLENGTH)
+      exit
+    }'
+}
+
+# A file whose only purpose is to be run by a runner. Fixtures are material
+# a suite reads, never a suite themselves.
+is_suite_path() { # PATH
+  case "/$1" in
+    */fixtures/*) return 1 ;;
+  esac
+  case "/$1" in
+    */tests/*.test.sh | */tests/test-*.sh | *.test.ts | *.test.js | *.test.mjs) return 0 ;;
+  esac
+  return 1
+}
+
+# The tracked runners and their path-shaped tokens, collected once. Read
+# through content_of, so staged scope judges the staged runner rather than a
+# worktree edit that is not part of this change.
+RUNNERS_READ_WHOLE=1
+build_runner_index() {
+  local r c k=0 status kind scope
+  [ ! -f "$TMP/runner.toks" ] || return 0
+  # Untracked runners are in scope exactly when untracked suites are: a
+  # workflow added beside its suite wires it before either is committed.
+  { cat "$TMP/tracked.list"; tr '\0' '\n' <"$TMP/untracked.z"; } | LC_ALL=C awk '
+    /^\.github\/workflows\/[^\/]+\.(yml|yaml)$/ { print; next }
+    /(^|\/)(tools|scripts)\/validate[^\/]*$/ { print; next }
+    /(^|\/)(package\.json|Makefile|justfile|run-all\.sh)$/ { print }
+  ' | LC_ALL=C sort -u >"$TMP/runner.names"
+  : >"$TMP/runner.bodies"
+  : >"$TMP/runner.toks.raw"
+  : >"$TMP/runner.defaultglob"
+  while IFS= read -r r; do
+    k=$((k + 1))
+    c="$(content_of "r$k" "$r")" || { RUNNERS_READ_WHOLE=0; continue; }
+    cat -- "$c" >>"$TMP/runner.bodies"
+    # A runner invoking bare vitest or jest runs that runner's own default
+    # include glob — no path in the runner ever names the suites it
+    # executes. Comment context is dropped first — whole-line comments and
+    # a trailing comment opened by whitespace-then-# — then the word must
+    # stand at a command position — after line-leading whitespace, a shell
+    # connector (; & | backtick paren), a directly preceding manager or
+    # exec-form word (npx pnpm yarn exec dlx), or a
+    # colon opening a manifest or workflow value with an optional quote —
+    # allowing NAME=value assignment words, their values plain or
+    # quoted, between that opener and the word — and end at whitespace,
+    # a quote, a connector, or the line end. A
+    # dependency key ("vitest": "^3"), a package path (@vitest/ui), a
+    # path-prefixed binary (node_modules/.bin/vitest), and a prose mention
+    # all fail that shape. Recorded as the directory the runner runs
+    # from: manifests run beside themselves; workflows and validate
+    # scripts run from the root of the tree that owns them.
+    sed -e '/^[[:space:]]*#/d' -e 's/[[:space:]]#.*//' -- "$c" >"$TMP/runner.body.one"
+    for kind in vitest jest; do
+      LC_ALL=C grep -qE "(^[[:space:]]*|[;&|\`(][[:space:]]*|(npx|pnpm|yarn|exec|dlx)[[:space:]]+|:[[:space:]]*[\"']?)([A-Za-z_][A-Za-z0-9_]*=([^[:space:]'\"]|'[^']*'|\"[^\"]*\")*[[:space:]]+)*$kind([[:space:]\"'\`;&|)]|\$)" "$TMP/runner.body.one" || continue
+      scope=""
+      case "$r" in
+        .github/workflows/*) ;;
+        */validate*)
+          scope="${r%/*}"
+          case "$scope" in tools | scripts) scope="" ;; */tools | */scripts) scope="${scope%/*}" ;; esac
+          ;;
+        */*) scope="${r%/*}" ;;
+      esac
+      printf '%s\n' "$scope" >>"$TMP/runner.defaultglob"
+    done
+    status=0
+    LC_ALL=C tr -cs 'A-Za-z0-9_*./-' '\n' <"$c" | LC_ALL=C grep -e / |
+      RN="$r" awk 'BEGIN { p = ENVIRON["RN"] } { print p "\t" $0 }' >>"$TMP/runner.toks.raw" || status=$?
+    [ "$status" -le 1 ] || env_error "unwired-suite lane could not read the runner $r"
+  done <"$TMP/runner.names"
+  LC_ALL=C sort -u "$TMP/runner.toks.raw" >"$TMP/runner.toks"
+}
+
+# Wiring evidence for one suite: a runner naming it, a path-shaped glob its
+# path satisfies, a directory it lives under, or a runner beside it globbing
+# its own directory. A runner set that is empty, or that this tool could not
+# read whole, proves nothing either way — an unproven suite is not an
+# unwired one, so the lane says nothing.
+suite_is_wired() { # SUITE-PATH
+  local p="$1" base dir="" r tok scope
+  base="${p##*/}"
+  case "$p" in */*) dir="${p%/*}" ;; esac
+  build_runner_index
+  if [ "$RUNNERS_READ_WHOLE" = 0 ] || [ ! -s "$TMP/runner.names" ]; then return 0; fi
+  grep -qFe "$base" -- "$TMP/runner.bodies" && return 0
+  # A package or build manifest below the repo root runs what lives beside
+  # it, whether or not any path in it names the suite. A root manifest owns
+  # the whole tree and so distinguishes nothing.
+  while IFS= read -r r; do
+    case "${r##*/}" in package.json | Makefile | justfile | run-all.sh) ;; *) continue ;; esac
+    case "$r" in */*) ;; *) continue ;; esac
+    case "$p" in "${r%/*}"/*) return 0 ;; esac
+  done <"$TMP/runner.names"
+  # A recorded bare vitest/jest invocation wires every suite its runner's
+  # default include glob matches under the directory it runs from. Both
+  # defaults cover *.test.ts/js/mjs — vitest's include and Jest 30's
+  # testMatch (**/?(*.)+(spec|test).?([mc])[jt]s?(x)) alike. A config
+  # pinning an explicit include or testMatch is not evaluated — an
+  # unproven suite is not an unwired one.
+  while IFS= read -r scope; do
+    case "$p" in
+      *.test.ts | *.test.js | *.test.mjs) ;;
+      *) continue ;;
+    esac
+    if [ -z "$scope" ]; then return 0; fi
+    case "$p" in "$scope"/*) return 0 ;; esac
+  done <"$TMP/runner.defaultglob"
+  while IFS="$TAB" read -r r tok; do
+    [ "$r" != "$p" ] || continue
+    case "$tok" in
+      *"*"*)
+        # Only a glob naming a file shape is wiring. A path filter spelled
+        # `*/*` matches every suite in the repo and invokes none of them.
+        case "${tok##*/}" in *.*) ;; *) continue ;; esac
+        case "$p" in $tok) return 0 ;; esac
+        if [ "${r%/*}" = "$dir" ]; then
+          case "$base" in ${tok##*/}) return 0 ;; esac
+        fi
+        ;;
+      *)
+        tok="${tok#./}"
+        tok="${tok%/}"
+        [ -n "$tok" ] || continue
+        case "$p" in "$tok"/*) return 0 ;; esac
+        ;;
+    esac
+  done <"$TMP/runner.toks"
+  return 1
+}
+
+# --- lanes, one changed file at a time ---------------------------------------
+FILE_COUNT=0
+IDX=0
+while IFS= read -r f; do
+  FILE_COUNT=$((FILE_COUNT + 1))
+  IDX=$((IDX + 1))
+  REC="$TMP/rec.$IDX"
+  [ -f "$REC" ] || : >"$REC"
+  cpath="$(content_of "$IDX" "$f")" || continue
+
+  is_sh=0
+  has_ee=0
+  has_trap=0
+  mktemp_reported=0
+  is_shell_path "$f" "$cpath" && is_sh=1
+  own_rules=0
+  case "/$f" in
+    */tests/* | */fixtures/*) own_rules=1 ;;
+  esac
+  is_new=0
+  if [ "$MODE" = "all" ] || grep -qxF -- "$f" "$TMP/newfiles.list"; then is_new=1; fi
+  # Installed-artifact subtrees hold vendored tooling a refresh rewrites
+  # wholesale: the prose is upstream's claims and the code its authoring
+  # choices, so the citation lane and the lanes judging how a file is
+  # written skip them — what those bytes DO here still fails. Authored
+  # files elsewhere under the harness dirs keep every lane; a mirror's
+  # markdown needs no gate (its own tokens are dot-leading).
+  vendored_mirror=0
+  case "$f" in
+    .agents/* | .claude/skills/* | .claude/agents/* | .claude/hooks/* | \
+      .cursor/rules/* | .opencode/skills/* | .opencode/agents/* | .opencode/instructions/* | \
+      .codex/agents/* | .codex/hooks/* | .pi/agents/* | .pi/packages/* | .pi/kendex/*)
+      vendored_mirror=1
+      ;;
+  esac
+  is_md=0
+  subtree=""
+  case "$f" in
+    *.md)
+      is_md=1
+      case "$f" in */*) subtree="${f%%/*}" ;; esac
+      ;;
+  esac
+  # Source files whose doc citations are worth judging. Data formats cite
+  # paths as configuration values and carry generated example comments, and
+  # test-named files plant fixture paths on purpose — either would be a
+  # false positive, not a dead pointer.
+  is_testname=0
+  case "${f##*/}" in
+    tests.rs | *_test.* | *_tests.* | *.test.* | *.spec.* | test_*) is_testname=1 ;;
+  esac
+  cites_docs=0
+  if [ "$is_md" = 0 ] && [ "$own_rules" = 0 ] && [ "$is_testname" = 0 ] \
+    && [ "$vendored_mirror" = 0 ]; then
+    case "$f" in
+      *.json | *.toml | *.yml | *.yaml | *.lock) ;;
+      *) cites_docs=1 ;;
+    esac
+  fi
+  is_changelog=0
+  case "$f" in
+    CHANGELOG.md | */CHANGELOG.md) is_changelog=1 ;;
+  esac
+
+  if [ "$is_sh" = 1 ]; then
+    file_matches "$cpath" "$ERREXIT_RE" && has_ee=1
+    has_exit_trap "$cpath" && has_trap=1
+
+    if ! syntax="$(bash -n -- "$cpath" 2>&1)"; then
+      while IFS= read -r raw; do
+        [ -n "$raw" ] || continue
+        # bash reports `<path>: line N: <message>`.
+        n=0
+        msg="$raw"
+        rest="${raw#*: line }"
+        num="${rest%%:*}"
+        if [ "$rest" != "$raw" ] && [ -n "$num" ] && case "$num" in *[!0-9]*) false ;; *) true ;; esac; then
+          n="$num"
+          msg="${rest#*: }"
+        fi
+        emit "$f" "$n" shell-syntax "$msg"
+      done <<<"$syntax"
+    elif [ "$HAVE_SHELLCHECK" = 1 ]; then
+      # Only reached for a file bash can parse — a syntax error has already
+      # spoken for the file, and shellcheck would only restate it.
+      while IFS= read -r raw; do
+        [ -n "$raw" ] || continue
+        parse_gcc "$raw" "$cpath"
+        if [ "$GCC_SEV" = "error" ]; then
+          emit "$f" "$GCC_LINE" shellcheck-errors "$GCC_MSG"
+        elif [ "$GCC_LINE" != 0 ] && [ "$vendored_mirror" = 0 ] && is_masked_code "$GCC_CODE"; then
+          if [ "$MODE" = "all" ] || grep -qxF -- "$GCC_LINE" "$(added_lines_of "$IDX")"; then
+            emit "$f" "$GCC_LINE" masked-returns "$GCC_MSG"
+          fi
+        fi
+      done <<<"$(run_shellcheck "$cpath")"
+    fi
+
+    # A brand-new script that never turns on errexit, nounset and pipefail
+    # fails open at its first unchecked command. Test trees and fixtures set
+    # their own rules.
+    if [ "$own_rules" = 0 ] && [ "$vendored_mirror" = 0 ] && [ "$is_new" = 1 ]; then
+      if [ "$has_ee" = 0 ] || ! file_matches "$cpath" "$NOUNSET_RE" || ! file_matches "$cpath" "$PIPEFAIL_RE"; then
+        emit "$f" 0 fail-open "new shell file without strict mode (set -euo pipefail)"
+      fi
+    fi
+  fi
+
+  if [ "$is_new" = 1 ] && [ "$vendored_mirror" = 0 ] && is_suite_path "$f" && ! suite_is_wired "$f"; then
+    emit "$f" 0 unwired-suite "new suite is not invoked by any runner"
+  fi
+
+  case "$f" in
+    *.json)
+      # JSON-with-comments is a real and widespread dialect; jq is right to
+      # reject those files and preflight would be wrong to report them.
+      case "$f" in
+        tsconfig*.json | jsconfig*.json | */tsconfig*.json | */jsconfig*.json | .vscode/* | */.vscode/* | .devcontainer/* | */.devcontainer/*) ;;
+        *)
+          if have jq && ! out="$(jq empty -- "$cpath" 2>&1)"; then
+            msg="$(first_line "$out")"
+            emit "$f" "$(line_hint "$out")" data-syntax "invalid JSON: ${msg#jq: }"
+          fi
+          ;;
+      esac
+      ;;
+    *.toml)
+      if ! out="$(check_toml "$cpath")"; then
+        emit "$f" "$(line_hint "$out")" data-syntax "invalid TOML: $(first_line "$out")"
+      fi
+      ;;
+    .github/workflows/*.yml | .github/workflows/*.yaml)
+      if [ "$HAVE_WORKFLOW_PY" = 1 ]; then
+        # The tool is present, so a crash is an environment error, never an
+        # empty (clean-looking) result.
+        wf_out="$(python3 -c "$WORKFLOW_PY" "$cpath" 2>"$TMP/wf.err")" || env_error "workflow-run-syntax lane failed on $f: $(first_line "$(cat "$TMP/wf.err")")"
+        while IFS="$TAB" read -r n msg; do
+          [ -n "$msg" ] || continue
+          emit "$f" "$n" workflow-run-syntax "$msg"
+        done <<<"$wf_out"
+      fi
+      ;;
+  esac
+
+  # --- lanes scoped to the lines this diff added ---
+  while IFS= read -r rec; do
+    n="${rec%%"$TAB"*}"
+    content="${rec#*"$TAB"}"
+
+    if [ "$is_sh" = 1 ] && [ "$vendored_mirror" = 0 ] && [ "$has_ee" = 0 ] && printf '%s' "$content" | grep -Eq -- "$MKTEMP_ASSIGN"; then
+      emit "$f" "$n" fail-open "unchecked mktemp in a file without errexit — a failed mktemp leaves the variable empty and the script runs on"
+    fi
+
+    # The literal prefilters keep the regex passes off the lines that cannot
+    # carry either shape — most of them.
+    if [ "$is_sh" = 1 ] && [ "$own_rules" = 0 ] && [ "$vendored_mirror" = 0 ] && [ "$is_new" = 1 ] && [ "$has_trap" = 0 ] && [ "$mktemp_reported" = 0 ]; then
+      case "$content" in
+        *mktemp*)
+          if ! is_comment_line "$content" && printf '%s' "$content" | grep -Eq -- "$MKTEMP_CALL_RE"; then
+            mktemp_reported=1
+            emit "$f" "$n" mktemp-trap "mktemp without an EXIT trap — scratch is never removed"
+          fi
+          ;;
+      esac
+    fi
+
+    # Creation at a literal absolute temp path escapes a TMPDIR redirect by
+    # construction, so the directory outlives every run that makes one — and
+    # leaks silently, because the code works. Only a creation call whose
+    # first argument opens the literal fires; a commented-out call runs
+    # nothing.
+    if [ "$is_md" = 0 ]; then
+      case "$content" in
+        *"/tmp"*)
+          case "${content#"${content%%[![:space:]]*}"}" in
+            '#'* | '//'* | '/*'* | '*'*) ;;
+            *)
+              if printf '%s' "$content" | grep -Eq -- "$TMPPATH_CREATE_RE"; then
+                emit "$f" "$n" hardcoded-temp-path "directory creation at a literal absolute temp path — it escapes TMPDIR redirection and leaks past the run"
+              fi
+              ;;
+          esac
+          ;;
+      esac
+    fi
+
+    if [ "$is_sh" = 1 ] && [ "$own_rules" = 0 ] && [ "$vendored_mirror" = 0 ] && [ "$is_testname" = 0 ]; then
+      case "$content" in
+        *"||"*)
+          if ! is_comment_line "$content"; then
+            swallowed="$(swallowed_cmd "$content")"
+            if [ -n "$swallowed" ]; then
+              emit "$f" "$n" fail-open "$swallowed || true swallows exit 2 (unreadable input, broken invocation) — capture the status and treat >1 as failure"
+            fi
+          fi
+          ;;
+      esac
+    fi
+
+    if [ "$is_md" = 1 ]; then
+      s="$content"
+      while :; do
+        case "$s" in *'`'*) ;; *) break ;; esac
+        s="${s#*\`}"
+        case "$s" in *'`'*) ;; *) break ;; esac
+        tok="${s%%\`*}"
+        s="${s#*\`}"
+        if doc_token_is_dead "$tok" "$subtree"; then
+          emit "$f" "$n" docs-cited-paths "cites a path that does not exist: $tok"
+        fi
+      done
+    elif [ "$cites_docs" = 1 ]; then
+      # The reverse pointer: a source line naming a `.md` file is a citation
+      # whose only job is to be followed, so one a doc reorganization left
+      # dead actively misleads. Only doc targets are judged — other path-like
+      # strings in code are working material — and code cites docs from
+      # anywhere in the tree, so its subtree is the repo itself.
+      case "$content" in
+        *".md"*)
+          while IFS= read -r tok; do
+            [ -n "$tok" ] || continue
+            if doc_token_is_dead "$tok" ""; then
+              emit "$f" "$n" docs-cited-paths "cites a path that does not exist: $tok"
+            fi
+          done <<<"$(md_tokens_of "$content")"
+          ;;
+      esac
+    fi
+
+    if [ "$own_rules" = 0 ] && [ "$vendored_mirror" = 0 ] && printf '%s' "$content" | grep -Eq -- "$TODO_RE" && ! printf '%s' "$content" | grep -Eq -- "$ISSUE_RE"; then
+      emit "$f" "$n" todo-links "TODO:/FIXME( marker without an issue reference (#123, ABC-123, or a URL)"
+    fi
+
+    if [ "$own_rules" = 0 ] && [ "$is_changelog" = 0 ] && [ "$is_testname" = 0 ] && printf '%s' "$content" | LC_ALL=C grep -Eiq -- "$BOT_ATTR_RE"; then
+      emit "$f" "$n" reviewer-attribution "credits a transient reviewer pass — state the rationale, drop the reviewer credit"
+    fi
+  done <"$REC"
+done <"$TMP/files.list"
+
+# --- verdict -----------------------------------------------------------------
+COUNT="$(awk 'END { print NR }' "$TMP/findings.tsv")"
+if [ "$COUNT" -gt 0 ]; then
+  LC_ALL=C sort -t"$TAB" -k1,1 -k2,2n "$TMP/findings.tsv" | while IFS="$TAB" read -r p n lane msg; do
+    printf '%s:%s: [%s] %s\n' "$p" "$n" "$lane" "$msg"
+  done
+  printf 'preflight: %s finding(s) across %s changed file(s)\n' "$COUNT" "$FILE_COUNT"
+  exit 1
+fi
+printf 'preflight: clean (%s changed file(s))\n' "$FILE_COUNT"

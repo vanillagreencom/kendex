@@ -1,0 +1,413 @@
+#!/usr/bin/env bash
+# Deterministically validate a reviewer's on-disk JSON artifact for review-pr
+# acceptance. A reviewer completion is only real when
+# [WORKTREE]/tmp/review-[AGENT]-*.json exists, is newer than the delegation
+# timestamp, and satisfies `jq -e '.verdict'` — return-message prose alone
+# never counts.
+
+set -euo pipefail
+
+# The per-harness backgrounding paragraph under --wait is an intentional twin
+# of dev-artifact-check's: each --help is self-contained, so edit both.
+usage() {
+  cat << 'EOF'
+Usage:
+  review-artifact-check <worktree_path> <agent_name> <delegated_at_epoch> \
+    [--wait SECS] [--interval SECS]
+  review-artifact-check --file <json_path> [delegated_at_epoch]
+  review-artifact-check --path <worktree_path> <agent_name>
+
+--wait SECS (glob mode): blocking — poll every --interval seconds (default 5)
+until a FRESH artifact lands (valid returns immediately; a fresh rejection is
+confirmed once after one interval, then returned) or SECS elapse. "missing"
+and "stale" both keep polling: a prior round's artifact on disk is the normal
+state while the current reviewer works. A deadline return (missing/stale) is
+the escalation trigger. Arm it in the background at delegation and the caller
+wakes the moment the reviewer writes, independent of any return-message
+delivery. Backgrounding per harness: Claude Code runs it as a background shell
+(the exit wake IS the event); Pi runs it under bg_task, which emits no exit
+wake, so pair it with the per-wake check; Codex and OpenCode run it via
+scheduled re-entry, or fall back to the per-wake check alone.
+
+Path mode (--path): prints the canonical artifact path for the agent with a
+real UTC timestamp ([WORKTREE]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json) and
+creates the tmp/ directory. Reviewers write their artifact to exactly this
+path instead of hand-formatting the timestamp.
+
+Glob mode: checks [WORKTREE]/tmp/review-[AGENT]-*.json newest-first.
+File mode (--file): checks one explicit JSON file, for artifacts written to a
+known path such as the external review output. Validates existence + verdict;
+when the optional delegated_at_epoch is supplied it ALSO applies glob mode's
+freshness gate against filesystem mtime.
+
+Both modes print JSON:
+  {ok: bool, path: string|null, reason: <see below>}
+
+reason when ok=true:
+  valid              accepted
+  valid_undermeasured accepted, but the artifact declares an instrument that
+             produced nothing (see `measurement_failed` below). Distinct on
+             purpose: a caller branching on reason cannot record an
+             undermeasured domain as a clean one.
+
+reason meanings when ok=false:
+  missing    no matching artifact found (glob) / file does not exist (--file)
+  stale      artifact mtime < delegated_at_epoch (glob mode, or --file when the
+             optional boundary is supplied)
+  invalid    artifact fails `jq -e '.verdict'`, OR a content gate could not
+             run at all (a torn read of a non-atomically written artifact, a
+             broken jq) — `detail` carries jq's own diagnostic. A gate that
+             could not answer is never reported as "nothing found".
+  no_review  artifact self-reports that no review was performed
+             (qa_metadata.review_performed == false, or qa_metadata.reason is a
+             no-scope/no-review admission) — rejected regardless of verdict.
+             Artifacts without qa_metadata are unaffected.
+  incomplete artifact declares the qa/second-opinion shape (a qa_metadata
+             object is present) but its findings are unusable — either
+             blockers[]/suggestions[] are absent or not arrays, OR a present
+             item is missing a required review-finding field — including
+             category ("fix" or "issue") on suggestions — so the
+             orchestrator cannot route it. `detail` names the array and what it
+             was, or the first offending item and field. Artifacts without
+             qa_metadata are unaffected.
+
+  zero_sample artifact reports a measurement that produced no samples — a
+             mutation/stability citation whose SAMPLE COUNT (denominator) or
+             thread count is zero, or a perf_qa payload whose percentiles carry
+             no numeric value above zero. A zero RESULT is not a zero sample:
+             `stability: 0/10` is ten measured runs that all failed and stays
+             valid. Only `.summary` and `.qa_metadata` are scanned — see
+             CARRIERS below. `detail` names the offending citation.
+  invalid_declaration
+             a top-level `measurement_failed` is present but says nothing a
+             reader could act on (wrong type, blank, a null token such as n/a
+             or none, bare punctuation, or too short/too few words). `detail`
+             names what a declaration has to contain.
+
+`measurement_suppressed`: what the declaration silenced, when it silenced
+something. One declaration covers whatever the measurement gate would have said
+— including a perf payload the named instrument has nothing to do with — so the
+finding is recorded rather than dropped. Silencing a measurement is allowed;
+silencing it invisibly is not.
+
+`measurement_failed`: a TOP-LEVEL string declaring an instrument that produced
+nothing, naming the instrument and what it did. The zero_sample gate still runs
+for that artifact; what changes is the outcome — anything it finds is recorded
+as `measurement_suppressed` instead of rejecting, so the reviewer keeps its
+numbers as evidence instead of deleting them to get past a rejection. The
+result's reason becomes `valid_undermeasured` and the declaration is echoed as
+an additive `measurement_failed` field.
+Top-level rather than inside qa_metadata for two reasons: reaching it must not
+require adopting the qa shape and its finding-array contract, and it must stay
+outside the citation scan so a declaration naming the zeros it observed cannot
+trip the gate it exists to release.
+
+CARRIERS: the zero_sample scan reads `.summary` and `.qa_metadata` only — where
+an artifact states its OWN measurements. blockers[]/suggestions[]/questions[]
+describe the code under review, so a reviewer quoting a fixture, a log line, or
+another tool's zeroed run puts it there and the gate stays out of its way.
+
+WHEN AN OLDER SIBLING MAY ANSWER (glob mode): a rejection that is the
+artifact's SELF-REPORT ABOUT THIS RUN ends the search — no earlier file answers
+"did this review happen, did it measure anything, are these findings routable",
+and the prescribed self-check boundary of 0 makes every prior artifact fresh.
+Only a rejection that could be a TORN OR TRUNCATED WRITE falls back, and after
+measurement the single content rejection on that side is a gate that could not
+run: a truncated JSON object is not a JSON object, so every torn or partial
+write fails the `.verdict` parse before any content gate sees it. Each gate
+states its own disposition, and an unset one is treated as terminal so a gate
+added later fails closed; see lib/review-artifact-gates.sh. `stale` and a
+missing `.verdict` describe one write and fall back.
+
+Every ok=false result carries a `detail` naming its cause — including `missing`
+(the glob or path that matched nothing) and `stale` (the artifact mtime against
+the boundary), which are the two an agent reads BEFORE it knows what it did
+wrong. A reason with no cause is a dead end for the agent that has to fix it,
+and review-pr.md § 3.1 spends its one permitted re-delegation relaying that
+text. The {ok, path,
+reason} fields are always present; `detail`, `measurement_failed` and
+`measurement_suppressed` are additive.
+
+When the check cannot run at all — jq missing or broken, or mktemp unable to
+create the gates' error channel — every mode still prints a parseable rejection
+({"ok":false,...,"reason":"invalid"}) rather than exiting empty. Exit 1 is the
+status a legitimate rejection uses, so an empty stdout beside it would read as
+"artifact rejected" to a caller checking only the status.
+
+Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error.
+EOF
+}
+
+# A declared instrument failure rides along on every result the artifact is
+# ACCEPTED on, which is what `valid_undermeasured` names — the orchestrator has
+# to see that the review it is about to record ran on a broken instrument. A
+# rejected artifact carries no declaration: the gates reset the field and only
+# populate it on the accepting path, and a rejection sends the reviewer back to
+# rewrite the artifact anyway.
+emit() {
+  local ok="$1" path="$2" reason="$3" detail="${4:-}"
+  local measurement_failed="${review_artifact_measurement_failed:-}" out
+  local measurement_suppressed="${review_artifact_measurement_suppressed:-}"
+  if out="$(jq -n --argjson ok "$ok" --arg path "$path" --arg reason "$reason" \
+    --arg detail "$detail" --arg measurement_failed "$measurement_failed" \
+    --arg measurement_suppressed "$measurement_suppressed" \
+    '{ok: $ok, path: (if $path == "" then null else $path end), reason: $reason}
+     + (if $detail == "" then {} else {detail: $detail} end)
+     + (if $measurement_failed == "" then {}
+        else {measurement_failed: $measurement_failed} end)
+     + (if $measurement_suppressed == "" then {}
+        else {measurement_suppressed: $measurement_suppressed} end)' 2>/dev/null)"; then
+    printf '%s\n' "$out"
+    return 0
+  fi
+  # The result could not be formatted, so what lands on stdout is a rejection,
+  # not the answer the caller asked for. Say so in the status: an accept path
+  # that printed a refusal must not also report success — that is this issue's
+  # own defect class, and every caller that branches on exit status (orch's
+  # waiters, review-pr.md § 3.1, submit-pr.md § 1, the reviewer self-check)
+  # would read the 0 as "artifact accepted".
+  emit_unavailable "review-artifact-check could not run jq, so no artifact could be validated"
+  return 1
+}
+
+file_mtime() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"
+}
+
+# Help must not depend on the gates lib: its source-time mktemp can fail
+# (unwritable TMPDIR) and --help still has to print the contract.
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/review-artifact-gates.sh
+source "$SCRIPT_DIR/lib/review-artifact-gates.sh"
+
+# --- Path mode: print the canonical artifact path for an agent ---
+if [[ "${1:-}" == "--path" ]]; then
+  if [[ $# -ne 3 || -z "${2:-}" || -z "${3:-}" ]]; then
+    usage >&2
+    exit 2
+  fi
+  wt="$2"
+  agent="$3"
+  if [[ ! -d "$wt" ]]; then
+    echo "Error: worktree path does not exist: $wt" >&2
+    exit 2
+  fi
+  if [[ ! "$agent" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "Error: agent name contains path-unsafe characters: $agent" >&2
+    exit 2
+  fi
+  mkdir -p -- "$wt/tmp"
+  printf '%s/tmp/review-%s-%s.json\n' "$wt" "$agent" "$(date -u +%Y%m%d-%H%M%S)"
+  exit 0
+fi
+
+# --- File mode: validate one explicit JSON path deterministically ---
+if [[ "${1:-}" == "--file" ]]; then
+  # Accept an OPTIONAL trailing delegated_at_epoch. When present, apply the same
+  # freshness gate as glob mode (artifact mtime < delegated_at → stale); when
+  # omitted, keep the existence + verdict behavior so existing callers do not
+  # break.
+  if [[ $# -lt 2 || $# -gt 3 ]]; then
+    usage >&2
+    exit 2
+  fi
+  file="$2"
+  delegated_at="${3:-}"
+  if [[ -z "$file" ]]; then
+    echo "Error: --file requires a non-empty path" >&2
+    exit 2
+  fi
+  if [[ -n "$delegated_at" ]] && ! [[ "$delegated_at" =~ ^[0-9]+$ ]]; then
+    echo "Error: delegated_at_epoch must be epoch seconds, got '$delegated_at'" >&2
+    exit 2
+  fi
+  if [[ ! -f "$file" ]]; then
+    emit false "" "missing" "no file at $file"
+    exit 1
+  fi
+  if [[ -n "$delegated_at" ]]; then
+    mtime="$(file_mtime "$file")"
+    if (( mtime < delegated_at )); then
+      emit false "$file" "stale" "artifact mtime $mtime predates the boundary $delegated_at, so it is an earlier round's file"
+      exit 1
+    fi
+  fi
+  verdict_rc=0
+  jq -e '.verdict' "$file" >/dev/null 2>"$review_artifact_gate_err" || verdict_rc=$?
+  if [[ "$verdict_rc" -ne 0 ]]; then
+    review_artifact_measurement_failed=""
+    review_artifact_measurement_suppressed=""
+    if [[ "$verdict_rc" -eq 1 ]]; then
+      emit false "$file" "invalid" "the artifact has no .verdict field (or it is null) — every review artifact must carry verdict: pass or action_required"
+    else
+      emit false "$file" "invalid" "$(gate_failure_detail "$verdict_rc")"
+    fi
+    exit 1
+  fi
+  if artifact_content_gates "$file"; then
+    # An acceptance that could not be emitted is not an acceptance. Written
+    # explicitly rather than left to errexit: the status is the contract every
+    # caller branches on, and it must not depend on a shell option that a later
+    # refactor into a masking context (a command substitution, an `if`) would
+    # quietly suspend — which is exactly why --wait needs its own output guard.
+    emit true "$file" "$review_artifact_reason" || exit 1
+    exit 0
+  fi
+  emit false "$file" "$review_artifact_reason" "$review_artifact_detail"
+  exit 1
+fi
+
+wait_secs=0
+interval=5
+if (( $# >= 3 )); then
+  worktree="$1"
+  agent="$2"
+  delegated_at="$3"
+  shift 3
+  while (( $# > 0 )); do
+    case "$1" in
+      --wait)     [[ -n "${2:-}" ]] || { echo "Error: --wait requires a value" >&2; exit 2; }; wait_secs="$2"; shift 2 ;;
+      --interval) [[ -n "${2:-}" ]] || { echo "Error: --interval requires a value" >&2; exit 2; }; interval="$2"; shift 2 ;;
+      *) usage >&2; exit 2 ;;
+    esac
+  done
+else
+  usage >&2
+  exit 2
+fi
+[[ "$wait_secs" =~ ^[0-9]+$ ]] || { echo "Error: --wait must be a non-negative integer (seconds), got '$wait_secs'" >&2; exit 2; }
+[[ "$interval" =~ ^[1-9][0-9]*$ ]] || { echo "Error: --interval must be a positive integer (seconds), got '$interval'" >&2; exit 2; }
+
+if [[ ! -d "$worktree" ]]; then
+  echo "Error: worktree path '$worktree' is not a directory" >&2
+  exit 2
+fi
+if [[ -z "$agent" ]]; then
+  echo "Error: agent_name must be non-empty" >&2
+  exit 2
+fi
+if ! [[ "$delegated_at" =~ ^[0-9]+$ ]]; then
+  echo "Error: delegated_at_epoch must be epoch seconds, got '$delegated_at'" >&2
+  exit 2
+fi
+
+# Whether an older sibling may answer a rejection is decided by the gate that
+# rejected, not by this loop matching reason names — see the disposition rule in
+# lib/review-artifact-gates.sh. Anything a gate did not mark `torn_write` stops
+# the search here. `stale` and a missing `.verdict` are judged below and are
+# per-file by nature: they describe THIS write, and an intact sibling is a
+# legitimate answer to them.
+glob_check() {
+reason="missing"
+fail_path=""
+fail_detail="no artifact matched $worktree/tmp/review-$agent-*.json"
+
+while IFS= read -r file; do
+  [[ -n "$file" ]] || continue
+  mtime="$(file_mtime "$file")"
+  if (( mtime < delegated_at )); then
+    if [[ -z "$fail_path" ]]; then
+      fail_path="$file"
+      reason="stale"
+      fail_detail="artifact mtime $mtime predates the boundary $delegated_at, so it is an earlier round's file"
+    fi
+    continue
+  fi
+  verdict_rc=0
+  jq -e '.verdict' "$file" >/dev/null 2>"$review_artifact_gate_err" || verdict_rc=$?
+  if [[ "$verdict_rc" -ne 0 ]]; then
+    if [[ -z "$fail_path" ]]; then
+      fail_path="$file"
+      reason="invalid"
+      if [[ "$verdict_rc" -eq 1 ]]; then
+        fail_detail="the artifact has no .verdict field (or it is null) — every review artifact must carry verdict: pass or action_required"
+      else
+        fail_detail="$(gate_failure_detail "$verdict_rc")"
+      fi
+    fi
+    continue
+  fi
+  if artifact_content_gates "$file"; then
+    # Same rule as --file mode, and the reason this one is explicit is visible
+    # two callers up: --wait reads this function through a command substitution,
+    # where errexit is suspended for the outer command.
+    emit true "$file" "$review_artifact_reason" || return 1
+    return 0
+  fi
+  if ! disposition_allows_fallback; then
+    emit false "$file" "$review_artifact_reason" "$review_artifact_detail"
+    return 1
+  fi
+  if [[ -z "$fail_path" ]]; then
+    fail_path="$file"
+    reason="$review_artifact_reason"
+    fail_detail="$review_artifact_detail"
+  fi
+done < <(ls -1t "$worktree/tmp/review-$agent-"*.json 2>/dev/null)
+
+# No artifact was accepted, so no artifact's declaration is being reported on.
+review_artifact_measurement_failed=""
+review_artifact_measurement_suppressed=""
+emit false "$fail_path" "$reason" "$fail_detail"
+return 1
+}
+
+if (( wait_secs > 0 )); then
+  # Blocking watchdog: "missing" AND "stale" both mean "no fresh artifact yet"
+  # — re-review cycles reuse agent names in the same worktree, so a prior
+  # round's artifact (older than delegated_at) is the normal on-disk state
+  # while the current reviewer works. Any FRESH artifact — valid or rejected —
+  # returns immediately, so an armed background invocation wakes the caller
+  # the moment the reviewer writes, independent of any return-message
+  # delivery. Reviewer artifacts are written non-atomically, so a fresh
+  # failure is confirmed once after one interval before it is returned (a
+  # torn mid-write read must not become a false rejection). A deadline
+  # return carries missing/stale and is the escalation trigger.
+  deadline=$(( $(date +%s) + wait_secs ))
+  confirming=false
+  while :; do
+    rc=0
+    out="$(glob_check)" || rc=$?
+    # Capturing glob_check's stdout suspends errexit for its whole body, so a
+    # path that failed part-way still returns with unusable output. BOTH
+    # directions are covered: an accept is only an accept when a well-formed
+    # ok=true came with it, and a rejection still has to be a parseable result
+    # rather than whatever happened to be on stdout.
+    if ! jq -e 'has("ok")' <<<"$out" >/dev/null 2>&1 \
+       || { [[ "$rc" == "0" ]] && ! jq -e '.ok == true' <<<"$out" >/dev/null 2>&1; }; then
+      review_artifact_measurement_failed=""
+      review_artifact_measurement_suppressed=""
+      emit false "" "invalid" "the artifact check produced no usable result: $(printf '%s' "$out" | tr '\n\t' '  ')"
+      exit 1
+    fi
+    landed_reason="$(jq -r '.reason // ""' <<<"$out" 2>/dev/null || printf '')"
+    if [[ "$rc" == "0" ]]; then
+      printf '%s\n' "$out"
+      exit 0
+    fi
+    if [[ "$landed_reason" != "missing" && "$landed_reason" != "stale" ]]; then
+      if [[ "$confirming" == "true" ]] || (( $(date +%s) >= deadline )); then
+        printf '%s\n' "$out"
+        exit "$rc"
+      fi
+      confirming=true
+    else
+      confirming=false
+      if (( $(date +%s) >= deadline )); then
+        printf '%s\n' "$out"
+        exit "$rc"
+      fi
+    fi
+    remaining=$(( deadline - $(date +%s) ))
+    sleep_for="$interval"
+    if (( remaining < interval )); then sleep_for="$remaining"; fi
+    if (( sleep_for < 1 )); then sleep_for=1; fi
+    sleep "$sleep_for"
+  done
+fi
+glob_check

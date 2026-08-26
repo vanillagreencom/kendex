@@ -1,0 +1,2602 @@
+#!/usr/bin/env bash
+# Cross-model second opinion — never ask a model to second-guess its own work.
+#
+# Usage:
+#   second-opinion review  [--range <ref..ref>] [--cwd <path>] [--output <path>]
+#   second-opinion challenge --prompt <file>    [--cwd <path>]
+#   second-opinion audit     --prompt <file>    [--cwd <path>] [--output <path>]
+#   second-opinion quick     --prompt <file>    [--cwd <path>]
+#   second-opinion detect
+#
+# Environment:
+#   SECOND_OPINION_MODELS        Priority-ordered target roster (default: "claude codex")
+#   SECOND_OPINION_COUNT         Opinions to collect in review mode (default: 1)
+#   SECOND_OPINION_CURRENT_MODEL Declared model identity of THIS session (overrides detection)
+#   SECOND_OPINION_<NAME>_MODEL  Declared model identity of target <NAME> (default: <NAME>)
+#   SECOND_OPINION_<NAME>_CMD    Full command for target <NAME> (claude/codex have defaults)
+#   SECOND_OPINION_TARGET        Force one target (still subject to self-exclusion)
+#   SECOND_OPINION_TIMEOUT       Timeout in seconds (default: 1080)
+#   SECOND_OPINION_ARTIFACT_DIR  Home for artifacts not anchored by --output
+#                                (default: tmp/second-opinion under --cwd)
+#   SECOND_OPINION_REVIEW_INSTRUCTIONS  Repo instruction-file globs for review
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+
+# Whether SECOND_OPINION_CURRENT_MODEL arrived from the CALLER'S OWN
+# environment rather than a project settings file. Captured here because this
+# is the only moment the two can be told apart — project loading exports the
+# file's value into the same variable, and its own parent-env snapshot is
+# unset when it returns.
+#
+# The distinction decides how far the declaration is trusted. A value in the
+# session environment was set for THIS session and outranks detection. A value
+# in kendex.settings.toml or .env.local was set for the REPO: it reaches every
+# session run there, including the Claude Code and Codex sessions whose model
+# the script can detect for itself.
+#
+# Non-empty, the same test resolve_current_model applies: an EMPTY value is not
+# a declaration, so it is neither an identity nor session-scoped, and takes the
+# undeclared path exactly like an unset one. (A set-but-empty caller value still
+# does its job through kendex_load_project_env, which re-asserts it over any
+# project file — which is precisely why nothing is declared afterwards.)
+CURRENT_MODEL_IS_SESSION_SCOPED=false
+[[ -z "${SECOND_OPINION_CURRENT_MODEL:-}" ]] || CURRENT_MODEL_IS_SESSION_SCOPED=true
+
+# Present in the caller's environment AT ALL — set-but-EMPTY included. A
+# different question from the one above, and both are needed:
+#   IS_SESSION_SCOPED  is there a non-empty DECLARATION, and is it this
+#                      session's? An empty value declares nothing.
+#   IN_CALLER_ENV      did the caller put this variable in the environment? An
+#                      exported empty value is not a declaration but IS an
+#                      instruction — kendex_load_project_env re-asserts it over
+#                      every project file, which is exactly how an operator
+#                      suppresses a committed declaration for one session.
+# Only the second may decide what a lane child inherits: dropping an empty
+# override would let the child re-read the very project value the parent
+# suppressed.
+CURRENT_MODEL_IN_CALLER_ENV=false
+[[ -z "${SECOND_OPINION_CURRENT_MODEL+x}" ]] || CURRENT_MODEL_IN_CALLER_ENV=true
+
+show_help() {
+  cat <<'HELP'
+Cross-model second opinion via external AI CLI.
+
+Usage:
+  second-opinion review    [--range <ref..ref>] [--cwd <path>] [--output <path>]
+  second-opinion challenge [--prompt <file> | "text"]  [--cwd <path>]
+  second-opinion audit     [--prompt <file> | "text"]  [--cwd <path>] [--output <path>]
+  second-opinion quick     [--prompt <file> | "text"]  [--cwd <path>]
+  second-opinion detect
+
+Modes:
+  review     Code review of pending changes — outputs review-finding JSON
+  challenge  Adversarial analysis — accepts prompt, returns text critique
+  audit      Deep code examination — accepts prompt, returns review-finding JSON
+  quick      Question to alternate model — accepts prompt, returns text
+  detect     Print the target(s) a review would run and exit
+
+Options:
+  --prompt <file>   Prompt file (or pass text as positional arg, or pipe stdin)
+  --output <path>   Write result to file (default: stdout)
+  --target <name>   Force one target (refused when it is this session's model)
+  --range <ref>     Git diff range for review (default: origin/BASE...HEAD)
+  --cwd <path>      Working directory for external CLI (default: .)
+  --timeout <secs>  CLI timeout (default: 1080, env: SECOND_OPINION_TIMEOUT)
+  -h, --help        Show this help
+
+Target selection: every mode walks SECOND_OPINION_MODELS in order and takes the
+first target that is available AND runs a different model from this session —
+the model this session runs is never dispatched to, in any mode, forced or not.
+When no eligible target remains the run refuses (exit 1) and says why.
+Review mode collects up to SECOND_OPINION_COUNT opinions (default 1; a
+shortfall is stated and stamped as degraded coverage); with 2 or more,
+the lanes run in parallel on the same derived scope and one union artifact is
+written — findings deduplicated by normalized location, per-lane provenance in
+each finding's `sources` and in qa_metadata.lanes, lane artifacts kept beside
+it as <output>.<target>.json. A failed lane is recorded in the artifact
+(qa_metadata.coverage="degraded"); when every lane fails there is no artifact
+and the run exits 4/5.
+
+Environment. Every key below belongs in kendex.settings.toml [env] (or
+.env.local) EXCEPT SECOND_OPINION_CURRENT_MODEL, which is session-scoped —
+export it in the environment of the session that needs it:
+  SECOND_OPINION_MODELS      Priority-ordered target roster, space/comma
+                             separated (default: "claude codex"); set empty and
+                             the run refuses rather than using the default
+  SECOND_OPINION_COUNT       Opinions to collect in review mode (default: 1)
+  SECOND_OPINION_CURRENT_MODEL
+                             Model identity of THIS session. A positively
+                             detected single-model harness (claude, codex)
+                             outranks it: an agreeing declaration is not used,
+                             a contradicting one is refused naming both values
+                             and where the declaration came from. Required in
+                             a multi-model front end (Pi, OpenCode, Cursor) or
+                             an undetected shell — refused until set; "none" =
+                             no session model. Model ids normalize, provider
+                             prefix included (opus, anthropic/claude-* ->
+                             claude; gpt-*, openai-codex/gpt-* -> codex);
+                             a DECLARED identity the roster does not spell is
+                             refused, while a DETECTED identity the roster
+                             does not name excludes nothing.
+                             EXPORT IT IN THE SESSION, do not commit it to a
+                             project settings file: those are read by every
+                             session in the repo, so a value from one is not a
+                             declaration for any of them and is refused
+  SECOND_OPINION_<NAME>_MODEL
+                             Model identity of target <NAME> (default: <NAME>)
+  SECOND_OPINION_<NAME>_CMD  Full command for target <NAME> (name uppercased,
+                             hyphens become underscores); claude and codex
+                             have defaults (below)
+  SECOND_OPINION_TARGET      Force one target; still subject to self-exclusion
+  SECOND_OPINION_TIMEOUT     Timeout in seconds (default: 1080), per
+                             invocation: review/audit's one retry on a
+                             malformed response gets a fresh window, so a lane
+                             can run up to twice this. The default exceeds the
+                             ~600s ceiling most agent harnesses put on a
+                             foreground shell call — run the script in the
+                             background, or pass --timeout at or below that
+                             ceiling
+  SECOND_OPINION_ARTIFACT_DIR
+                             Home for review/audit records written without
+                             --output (preserved raw, failed, and rejected
+                             responses), and for a multi-lane stdout run's
+                             per-lane review artifacts (default:
+                             tmp/second-opinion under --cwd; ~/... and
+                             absolute paths taken as given). Created
+                             owner-only when absent, seeded with a '*'
+                             .gitignore; a relative home that is a symlink or
+                             resolves outside --cwd, or one that cannot be
+                             created, falls back to a temp file, loudly,
+                             without changing the exit code. --output is the
+                             explicit override for the artifact itself
+  SECOND_OPINION_REVIEW_INSTRUCTIONS
+                             Repo instruction-file globs appended to the review
+                             prompt, resolved inside --cwd (default:
+                             "AGENTS.md review-bots.md
+                             .github/instructions/*.instructions.md
+                             .github/copilot-instructions.md"; set empty to
+                             disable). When the list carries the literal
+                             AGENTS.md entry, nested AGENTS.md files governing
+                             the changed paths are collected too
+                             (ancestor-directory walk, same containment and
+                             dedupe). Matches must be regular files physically
+                             inside the reviewed repo: a committed symlink
+                             (the file or a parent directory) pointing outside
+                             --cwd is skipped loudly, never followed
+
+Review scope (review mode only):
+  The wrapper derives the review scope from the worktree before invoking the
+  external CLI — current branch, diff range (--range or origin/BASE...HEAD),
+  diffstat, and the changed-file list are embedded in the prompt. audit
+  derives no scope: it reads only its supplied --prompt file and ignores
+  --range. review stamps qa_metadata.reviewed_head — the reviewed range's
+  endpoint commit, captured when the scope is derived (before the model
+  runs); a multi-lane union also stamps
+  qa_metadata.requested_count/selected_count.
+
+Response handling and stamping (review and audit modes):
+  A first response that is unparseable, or structurally incomplete, gets one
+  retry resending the full original request (scope block included for
+  review) alongside the captured response; unusable responses never become
+  the artifact. The wrapper overwrites the JSON timestamp field with its own
+  UTC wall clock (date -u) after the model responds, and overwrites agent
+  with external-<target> for a lane or external-union(...) for a union.
+
+Default commands:
+  claude: claude -p --no-session-persistence --model opus --effort max
+            --allowedTools Bash(read-only:true),Read,Glob,Grep
+  codex:  codex exec -m gpt-5.6-sol -s read-only -c model_reasoning_effort=xhigh
+            --ephemeral
+
+Output clearing and ownership:
+  No exit leaves a previous run's output behind. Every mode that writes
+  --output (review, audit, challenge, quick) clears that path as soon as the
+  arguments are read — ahead of a bad-flag error, the jq check, the mode
+  check, --timeout validation, target selection, or any CLI run — together
+  with the sidecar records that mode can produce: review and audit add
+  .raw.txt, .retry.txt, .failed.json, .noreview.json and .incomplete.json;
+  challenge and quick clear their output path alone. --help and detect clear
+  nothing.
+  One rule governs every deletion: a path is removed unconditionally only
+  when THIS run will write it (--output itself, and each <output>.<lane>.json
+  a multi-lane run is about to write); anything else must first prove the
+  skill wrote it — the review schema PLUS the external-... agent marker. That
+  applies to roster-named siblings too: at the default SECOND_OPINION_COUNT=1
+  a run writes no lane file, so an <output>.codex.json holding your data
+  survives. The ownership check requires jq: without it the designated output
+  is still cleared, but sibling lane artifacts are left alone and the run
+  says so on stderr before exiting on the missing dependency. A sibling
+  sharing only the name shape (<output>.notes.json), or sharing the schema
+  under another agent (an internal reviewer-* artifact), is never touched.
+
+Option syntax: options take their value in either form, --opt VALUE or
+--opt=VALUE; the split form refuses a value that begins with '-', so a
+dash-leading path is passed as --output=-report.json.
+
+Errors: runtime failures emit a JSON error object on stderr
+({"error": "...", "target": "..."}); pre-flight configuration errors —
+unknown flag, an option missing its value, missing mode, non-integer
+--timeout or SECOND_OPINION_COUNT, missing jq, a directory or an uncreatable
+parent at --output, a missing --cwd — are plain 'Error:' lines on stderr
+with exit 1.
+
+Exit codes:
+  0  success
+  1  config failure (bad target, missing jq), no eligible cross-model target
+     (refused — never a same-model review), any challenge/quick CLI failure
+     including timeout, or an unrecoverable non-JSON response that survived
+     the one-shot retry (review/audit)
+  3  review: derived diff scope is empty or invalid — nothing to review
+  4  review/audit: model self-reported no review was performed
+     (qa_metadata.review_performed=false) or omitted the required qa_metadata
+     object entirely (response kept as <output>.noreview.json); or the response
+     was still structurally incomplete after the one-shot retry — missing
+     verdict or the blockers/suggestions/questions arrays (response kept as
+     <output>.incomplete.json)
+  5  review/audit: the external CLI failed to produce any review — it exited
+     non-zero (quota/auth/network), timed out, or returned an empty response on
+     a zero exit. No external verdict; whatever partial output existed is kept
+     as <output>.failed.json and the CLI's own error text is echoed on stderr
+HELP
+}
+
+# Help is answered before project configuration is read: sourcing a repo's
+# .env under --help would execute repository-controlled shell code. The
+# option parser treats -h/--help at any position as help, so the same scan
+# decides here.
+for _arg in "$@"; do
+  case "$_arg" in
+    -h|--help) show_help; exit 0 ;;
+  esac
+done
+unset _arg
+
+# Resolved only after help is answered: help must not require a git
+# checkout around the installed script.
+PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
+
+# Source project config/secrets. .env.local overrides public settings; the
+# caller's own environment (set or set-but-empty) outranks every project file —
+# kendex_load_project_env snapshots and re-asserts it.
+# shellcheck source=lib/kendex-env.sh
+source "$SCRIPT_DIR/lib/kendex-env.sh"
+kendex_load_project_env "$PROJECT_ROOT"
+
+# Portability: macOS lacks timeout, try gtimeout fallback
+if ! command -v timeout >/dev/null 2>&1; then
+  if command -v gtimeout >/dev/null 2>&1; then
+    timeout() { gtimeout "$@"; }
+  else
+    # No timeout available — warn once and run without a limit. The shim
+    # drops this script's fixed `-k 30 SECS` arguments.
+    echo "Warning: no timeout or gtimeout on PATH — external CLI calls will run without a time limit" >&2
+    timeout() { shift 3; "$@"; }
+  fi
+fi
+
+# --- Defaults -----------------------------------------------------------------
+
+MODE=""
+PROMPT_FILE=""
+INLINE_PROMPT=""
+OUTPUT_PATH=""
+TARGET=""
+TIMEOUT="${SECOND_OPINION_TIMEOUT:-1080}"
+CWD="."
+RANGE=""
+
+# Distinct exit codes (kendex#652) so callers can tell "there was nothing to
+# review" and "the model reported it performed no review" apart from generic
+# failures (1). A response missing the required qa_metadata object (kendex#672)
+# or still structurally incomplete after the one-shot retry (kendex#678) is
+# rejected the same way. None of these paths writes the --output artifact.
+#
+# EXIT_CLI_FAILED (kendex#809): the external CLI failed to produce ANY review at
+# all — it exited non-zero (quota/auth/network), timed out, or returned nothing
+# usable on a zero exit. That yields no external verdict, so like exits 3/4 it
+# must never be a silent exit-0 success; it joins the no-verdict class. It is
+# kept DISTINCT from EXIT_NO_REVIEW (4) on purpose: 4 is a response-level defect
+# (the model answered, but the answer is unusable), whereas 5 is a lane-level
+# failure (the model never answered) — an operator retries a down lane but reads
+# a code-4 as a real signal about the review. Only review/audit modes (the ones
+# with the no-verdict contract) use it; challenge/quick keep the generic 1.
+EXIT_NO_SCOPE=3
+EXIT_NO_REVIEW=4
+EXIT_CLI_FAILED=5
+
+# WHERE `--` IS USED IN THIS FILE, and why it is not used everywhere.
+#
+# The macOS/Bash 3.2 support target ships BSD utilities, and they do not agree
+# with GNU about the end-of-options marker: BSD sed reads `--` as a FILE
+# operand, and BSD dirname can reject it outright. So `--` appears only with
+# the shell builtins (cd, printf, set) and with `rm` and `mkdir`, which take it
+# on both. Everywhere else the operand is made safe instead of marked safe:
+#   * caller input reaches a utility through a REDIRECTION (`cat < "$f"`,
+#     `jq … < "$f"`), which has no option parsing at all;
+#   * $CWD is canonicalized to an absolute path once (see its validation), so
+#     every path built from it starts with '/' and can never look like a flag;
+#   * dirname and basename are replaced by parameter expansion — path_dir below
+#     and `${BASH_SOURCE[0]##*/}` — needing no utility and no marker.
+# Adding `--` to sed/head/stat/cat/basename here would buy nothing and break
+# the BSD path; this note exists because a sweep already did it once.
+#
+# The containing directory of a path, without `dirname`. --output is caller
+# input and may legitimately begin with '-', which dirname parses as options.
+# Parameter expansion has no such problem. Mirrors dirname for the cases that
+# reach it: no slash yields ".", a root-level path yields "/".
+path_dir() {
+  local path="$1" dir="${1%/*}"
+  if [[ "$dir" == "$path" ]]; then
+    printf '%s' "."
+  elif [[ -z "$dir" ]]; then
+    printf '%s' "/"
+  else
+    printf '%s' "$dir"
+  fi
+}
+
+# --- Help ---------------------------------------------------------------------
+
+
+# --- Argument parsing ---------------------------------------------------------
+# A malformed argument does not exit here: it records PARSE_ERROR and stops the
+# loop, so the stale-output clearing below still runs on whatever --output was
+# already parsed. Reported the moment clearing is done. `--help` is the one
+# in-loop exit — a help request must never delete anything.
+
+PARSE_ERROR=""
+# The mode of a file belongs to whoever writes it. --scratch-output marks the
+# output path as one the tool owns rather than the caller — the lane artifact a
+# multi-lane parent hands this child — so that artifact and the sidecar records
+# beside it are created owner-only whatever the caller's umask: the model's raw
+# review of the reviewed repository is never left readable by every local user.
+# A caller's own --output keeps the caller's umask.
+SCRATCH_OUTPUT=false
+# A split-form option must be followed by a VALUE, not the next flag.
+# `review --timeout --output report.json` otherwise takes `--output` as the
+# timeout and the designated output is silently lost: never written, never
+# cleared, and the failure surfaces as an unrelated timeout complaint. Callers
+# here are agents assembling flags programmatically, so a swallowed option is
+# the worst possible shape. A value that genuinely begins with `-` is passed
+# with the `=` form, which every one of these options also accepts.
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    review|challenge|audit|quick|detect)
+      MODE="$1"; shift ;;
+    --prompt)    [[ $# -ge 2 && "$2" != -* ]] || { PARSE_ERROR="--prompt requires a value (use --prompt=VALUE for a value beginning with '-')"; break; }; PROMPT_FILE="$2"; shift 2 ;;
+    --prompt=*)  PROMPT_FILE="${1#--prompt=}"; shift ;;
+    --output)    [[ $# -ge 2 && "$2" != -* ]] || { PARSE_ERROR="--output requires a value (use --output=VALUE for a value beginning with '-')"; break; }; OUTPUT_PATH="$2"; shift 2 ;;
+    --output=*)  OUTPUT_PATH="${1#--output=}"; shift ;;
+    --target|--provider)  [[ $# -ge 2 && "$2" != -* ]] || { PARSE_ERROR="$1 requires a value (use $1=VALUE for a value beginning with '-')"; break; }; TARGET="$2"; shift 2 ;;
+    --target=*)  TARGET="${1#--target=}"; shift ;;
+    --provider=*) TARGET="${1#--provider=}"; shift ;;
+    --range)     [[ $# -ge 2 && "$2" != -* ]] || { PARSE_ERROR="--range requires a value (use --range=VALUE for a value beginning with '-')"; break; }; RANGE="$2"; shift 2 ;;
+    --range=*)   RANGE="${1#--range=}"; shift ;;
+    --cwd)       [[ $# -ge 2 && "$2" != -* ]] || { PARSE_ERROR="--cwd requires a value (use --cwd=VALUE for a value beginning with '-')"; break; }; CWD="$2"; shift 2 ;;
+    --cwd=*)     CWD="${1#--cwd=}"; shift ;;
+    --timeout)   [[ $# -ge 2 && "$2" != -* ]] || { PARSE_ERROR="--timeout requires a value (use --timeout=VALUE for a value beginning with '-')"; break; }; TIMEOUT="$2"; shift 2 ;;
+    --timeout=*) TIMEOUT="${1#--timeout=}"; shift ;;
+    # The multi-lane parent's word to its own children, and the reason it is a
+    # flag rather than an environment variable: a project settings file's [env]
+    # table names any variable it likes, and whether an output path belongs to
+    # the caller is not something ambient configuration may decide.
+    --scratch-output) SCRATCH_OUTPUT=true; shift ;;
+    --*)
+      PARSE_ERROR="unknown flag: $1"
+      # Keep parsing: a later --output still names an artifact this run must not
+      # leave standing as a stale pass.
+      shift ;;
+    *)
+      # Non-flag arg after mode → treat as inline prompt text
+      if [[ -n "$MODE" && -z "$PROMPT_FILE" ]]; then
+        INLINE_PROMPT="$1"; shift
+      else
+        PARSE_ERROR="unknown argument: $1"; shift
+      fi
+      ;;
+  esac
+done
+
+# --- Stale designated output ---------------------------------------------------
+# Every no-verdict path — a target refusal, a timeout, a CLI failure, an
+# unusable response — leaves OUTPUT_PATH unwritten and returns non-zero. External
+# review is advisory, so callers are told to continue past that non-zero; a
+# PREVIOUS run's artifact still sitting at the same path is then read as THIS
+# run's pass. Clear every artifact this script can write under the designated
+# path before target selection and before any invocation, so the single-lane
+# path has the same guarantee the union artifact already had.
+#
+# This runs FIRST among the post-parse checks — ahead of the deferred parse
+# error, the jq dependency check, the mode check and the --timeout validation —
+# so exit 1 does not split into clearing and non-clearing halves: no exit past
+# the argument loop leaves a previous run's artifact behind. `detect` is the one
+# deliberate exclusion: it writes nothing and takes no --output.
+
+DEFAULT_MODELS="claude codex"
+FORCED_TARGET="${TARGET:-${SECOND_OPINION_TARGET:-}}"
+
+# The roster, one entry per line, split with globbing off: an entry is a name,
+# never a pattern.
+roster_entries() {
+  local raw t
+  # `-` not `:-`: an explicitly EMPTY roster is a statement that there are no
+  # targets, and must land in the refusal path. Falling back to the default
+  # roster there would dispatch to models the operator just removed.
+  raw="${SECOND_OPINION_MODELS-$DEFAULT_MODELS}"
+  raw="${raw//,/ }"
+  set -f
+  for t in $raw; do printf '%s\n' "$t"; done
+  set +f
+}
+
+# One artifact and the five sidecar suffixes this script writes beside it.
+# Enumerated rather than globbed because the path is the CALLER's —
+# `"$1".*` would take anything else of theirs under the same prefix. Keep in
+# step with preserve_cli_failure_and_fail, preserve_raw_response,
+# preserve_raw_and_fail and preserve_no_review_and_fail, the only writers.
+# `--` marks the end of options: --output is caller input and may begin with
+# '-', which rm would otherwise parse as flags.
+#
+# A removal that fails — read-only filesystem, a directory that denies write, an
+# immutable file — must not abort under set -e with a bare `rm: cannot remove`
+# and no context: that is the wrong-cause shape already fixed twice here, for
+# the artifact home and the record writers. rm's own text is the actionable
+# part (which path, which errno), so it is captured and reported INSIDE a named
+# cause rather than discarded or left to stand alone.
+# Is $1 a review artifact THIS SKILL wrote? Content only — a filename proves
+# nothing about authorship. Two things must hold, and the second is the one that
+# makes it provenance rather than a guess:
+#
+#   shape   verdict plus the three finding arrays and a qa_metadata object —
+#           what response_incomplete_schema and response_missing_qa_metadata
+#           already require of anything allowed to become an artifact here.
+#   marker  an `agent` naming THIS skill. The shape alone is a PUBLIC contract:
+#           skills/reviewer/schemas/review-finding.md is the same structure with
+#           its own agent name, so every internal reviewer artifact — and any
+#           other tool implementing the finding schema — would otherwise be read
+#           as ours and deleted. The prompt this skill sends instructs
+#           `external-<target>`, and it builds `external-union(...)` itself, so
+#           an `external-` agent is a value only this skill's own pipeline
+#           produces. Anything else is somebody else's file.
+#
+# The PREFIX is the whole test. The writer stamps `external-<target>` over
+# whatever the provider returned, so a current artifact's suffix does track its
+# lane — but a union carries `external-union(...)`, and an artifact written by
+# an earlier version carries whatever the model chose, so matching the suffix
+# against the filename would strand both. The prefix accepts every shape this
+# skill has ever produced and nothing another tool produces.
+#
+# Read through a redirection, never a path operand: the name is built from the
+# caller's --output and may begin with '-'.
+#
+# jq is what parses, and the dependency check below deliberately runs AFTER the
+# clearing (so a missing-jq exit still clears). Without jq nothing is swept:
+# such a run cannot produce a review at all, and the paths the guarantee rests
+# on — the designated output and the roster's own lane names — are cleared
+# unconditionally either way.
+is_own_review_artifact() {
+  command -v jq >/dev/null 2>&1 || return 1
+  jq -e '
+    type == "object"
+    and (.verdict | type) == "string"
+    and (.blockers | type) == "array"
+    and (.suggestions | type) == "array"
+    and (.questions | type) == "array"
+    and ((.qa_metadata | type) == "object")
+    and ((.agent | type) == "string")
+    and (.agent | startswith("external-"))
+  ' >/dev/null 2>&1 < "$1"
+}
+
+# Every sidecar record this skill can write beside an artifact. Enumerated in
+# ONE place: the call sites pass the subset that applies, so a mode cannot
+# inherit a suffix it never produces by copying a list. Keep in step with
+# preserve_cli_failure_and_fail, preserve_raw_response, preserve_raw_and_fail
+# and preserve_no_review_and_fail — the only writers.
+ALL_RECORD_SUFFIXES=(.raw.txt .retry.txt .failed.json .noreview.json .incomplete.json)
+
+# The subset THIS mode can produce, derived from capability rather than listed
+# at the call site. Only review and audit carry the no-verdict contract that
+# preserves a raw, retried, failed, no-review or incomplete response; challenge
+# and quick write their answer and nothing else, so beside THEIR --output those
+# five names are user files by construction.
+MODE_RECORD_SUFFIXES=()
+case "$MODE" in
+  review|audit) MODE_RECORD_SUFFIXES=("${ALL_RECORD_SUFFIXES[@]}") ;;
+esac
+
+# clear_output_family <base> [suffix...] — the base path plus exactly the
+# suffixes the caller states this run may have written there.
+clear_output_family() {
+  local base="$1"; shift
+  local err suffix
+  local -a targets=("$base")
+  for suffix in "$@"; do targets+=("$base$suffix"); done
+  if ! err=$(rm -f -- "${targets[@]}" 2>&1); then
+    echo "Error: cannot clear a previous run's artifact at $base: ${err:-rm failed without a message}" >&2
+    exit 1
+  fi
+}
+
+# THE DELETION RULE, for every path this script removes in caller space:
+#
+#   a path is deleted UNCONDITIONALLY only when THIS run will write it.
+#   anything else must first prove WE wrote it — the review schema plus this
+#   skill's own `external-…` agent marker (is_own_review_artifact).
+#
+# Exactly two places satisfy the first half, and nothing else in this file
+# deletes a path the caller could own:
+#
+#   1. <output> and its managed sidecars — here, for every mode that reaches the
+#      output tail (review, audit, challenge, quick). That path is the slot the
+#      caller designated for THIS run's output, so leaving it means a caller who
+#      continues past the advisory non-zero exit reads the previous run's result
+#      as this one's. detect and a mode-less run never write, so they clear
+#      nothing.
+#   2. <output>.<lane>.json — in the multi-lane spawn loop, per lane, once that
+#      lane is selected and about to be written (see the umask note there).
+#
+# Everything else under the prefix, roster-named or not, goes through the
+# marker-verified sweep below. The roster is NOT a licence: at the default
+# SECOND_OPINION_COUNT=1 a run writes no lane file at all, so deleting
+# <output>.codex.json because "codex is in the roster" removes a path this run
+# was never going to write — the mistake this rule exists to prevent.
+CLEAR_ARTIFACT=false
+case "$MODE" in
+  review|audit|challenge|quick) CLEAR_ARTIFACT=true ;;
+esac
+
+# Validation, not deletion, so it covers every mode that could write there: a
+# directory can never become the artifact, and rm/printf would report it as a
+# bare "Is a directory" from inside the clearing or the final write.
+if [[ -n "$OUTPUT_PATH" && "$MODE" != "detect" && -d "$OUTPUT_PATH" ]]; then
+  echo "Error: --output is a directory, not a file path: $OUTPUT_PATH" >&2
+  exit 1
+fi
+
+if [[ -n "$OUTPUT_PATH" ]] && $CLEAR_ARTIFACT; then
+  # path_dir stands in for dirname, which cannot take the `--` marker portably.
+  # mkdir's own message carries the errno, so it is folded into the named cause
+  # rather than sent to /dev/null — a named error the operator cannot act on is
+  # only half the fix.
+  if ! mkdir_err=$(mkdir -p -- "$(path_dir "$OUTPUT_PATH")" 2>&1); then
+    echo "Error: cannot create the --output parent directory: $(path_dir "$OUTPUT_PATH"): ${mkdir_err:-mkdir failed without a message}" >&2
+    exit 1
+  fi
+  # This mode's own subset: challenge and quick can produce no sidecar, so
+  # beside their --output those names are the caller's files.
+  clear_output_family "$OUTPUT_PATH" ${MODE_RECORD_SUFFIXES[@]+"${MODE_RECORD_SUFFIXES[@]}"}
+  # Every OTHER path under the prefix — a lane this run will not write, a lane
+  # whose target was renamed out of the roster, anything a caller put there.
+  # None is a path this run writes, so none may be deleted on the strength of
+  # its name: `report.json.codex.json` is a roster-shaped name AND an ordinary
+  # user file, and destroying something the skill never wrote is worse than the
+  # stale-lane gap the sweep exists to close. Each must prove WE wrote it.
+  #
+  # "$OUTPUT_PATH". is quoted, so glob metacharacters IN THE CALLER'S PATH
+  # (report[1].json) match literally; only the trailing * is a pattern. The name
+  # test is a cheap pre-filter that keeps jq off every sibling — it carries no
+  # safety role and no test covers it alone, because the content check is the
+  # only thing authorizing a deletion. Removing it changes no outcome.
+  # Ownership is proven by parsing the candidate, so the sweep needs jq. The
+  # dependency check deliberately runs AFTER this block — the clear-what-we-
+  # write rule must hold on every parsed invocation — which leaves a window
+  # where the sweep can do nothing at all. Say so rather than let an operator
+  # infer it from siblings that are still there: the designated output was
+  # cleared regardless, but a previous run's lane artifacts survive.
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "→ jq not found — the designated output was cleared, but sibling lane artifacts cannot be checked for ownership and are left as they are" >&2
+  fi
+  for clear_candidate in "$OUTPUT_PATH".*; do
+    [[ -f "$clear_candidate" ]] || continue        # nothing matched, or not a file
+    clear_name="${clear_candidate#"$OUTPUT_PATH".}"
+    [[ "$clear_name" == *.json ]] || continue
+    clear_name="${clear_name%.json}"
+    [[ "$clear_name" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]] || continue
+    is_own_review_artifact "$clear_candidate" || continue
+    # The artifact proved ours, so its whole family is ours by construction —
+    # a review wrote it, whatever mode is clearing up after it now.
+    clear_output_family "$clear_candidate" "${ALL_RECORD_SUFFIXES[@]}"
+  done
+fi
+
+[[ -z "$PARSE_ERROR" ]] || { echo "Error: $PARSE_ERROR" >&2; exit 1; }
+
+# Dependency check
+command -v jq >/dev/null 2>&1 || { echo "Error: jq is required but not found" >&2; exit 1; }
+
+[[ -n "$MODE" ]] || { echo "Error: mode required (review|challenge|audit|quick|detect)" >&2; exit 1; }
+[[ "$TIMEOUT" =~ ^0*[1-9][0-9]*$ ]] || { echo "Error: --timeout must be a positive integer" >&2; exit 1; } # 0 means "no limit" to GNU timeout
+
+# --- Harness detection --------------------------------------------------------
+
+detect_current_harness() {
+  # Nearest harness ancestor wins: environment markers are inherited by every
+  # descendant, so a Codex session spawned under Claude Code carries CLAUDECODE
+  # while its own process is the innermost harness — the process tree is the
+  # authoritative signal and the markers are the fallback for when it cannot
+  # be read. Bash tool PPID is the shell, not the harness, so walk upward.
+  #
+  # Names match EXACTLY. Each of these launchers has a stable argv0, so a prefix
+  # match buys nothing and costs precision: `cursor*` claims the Cursor editor
+  # itself, making every plain shell in its integrated terminal a multi-model
+  # harness that refuses until an identity is declared, and `codex*`/`claude*`
+  # claim any wrapper script or monitor that happens to share the prefix. The
+  # Cursor agent's own binary is `cursor-agent`.
+  #
+  # Exact matching makes the padding some `ps` implementations add (macOS among
+  # them) load-bearing, so the name is trimmed before it is compared: untrimmed,
+  # a padded "  claude  " matches nothing, falls through to `unknown`, and turns
+  # a formatting quirk into a hard refusal on that platform.
+  local pid=$$
+  local ancestor_cmd
+  while pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ') && [[ -n "$pid" && "$pid" != "0" && "$pid" != "1" ]]; do
+    ancestor_cmd=$(ps -o comm= -p "$pid" 2>/dev/null || echo "")
+    ancestor_cmd="$(kendex_trim "$ancestor_cmd")"
+    ancestor_cmd="${ancestor_cmd##*/}"
+    case "$ancestor_cmd" in
+      claude)       echo "claude"; return ;;
+      codex)        echo "codex"; return ;;
+      pi)           echo "pi"; return ;;
+      opencode)     echo "opencode"; return ;;
+      cursor-agent) echo "cursor"; return ;;
+    esac
+  done
+  # Codex's own runtime markers are checked BEFORE the Claude ones: a sandboxed
+  # Codex tool process can have no visible Codex ancestor while still carrying
+  # Claude markers INHERITED from an outer session, and the innermost harness is
+  # the one that owns this process. CODEX_SANDBOX names the sandbox on macOS;
+  # the Linux landlock path sets only CODEX_SANDBOX_NETWORK_DISABLED.
+  if [[ -n "${CODEX_SANDBOX:-}" ]] || [[ -n "${CODEX_SANDBOX_NETWORK_DISABLED:-}" ]]; then
+    echo "codex"
+    return
+  fi
+  if [[ -n "${CLAUDECODE:-}" ]] || [[ -n "${CLAUDE_CODE:-}" ]] || [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
+    echo "claude"
+    return
+  fi
+  if [[ -n "${PI_CODING_AGENT_DIR:-}" ]]; then
+    echo "pi"
+    return
+  fi
+  if [[ -n "${OPENCODE:-}" ]]; then
+    echo "opencode"
+    return
+  fi
+  if [[ -n "${CURSOR_AGENT:-}" ]] || [[ -n "${CURSOR_TRACE_ID:-}" ]]; then
+    echo "cursor"
+    return
+  fi
+  echo "unknown"
+}
+
+# --- Model identity -----------------------------------------------------------
+# The guarantee is cross-MODEL, and a CLI is not a model: Pi, OpenCode and
+# Cursor front whichever model the session selected, and a session cannot be
+# probed for it from outside. Identity is therefore DECLARED and compared: the
+# current session's identity is SECOND_OPINION_CURRENT_MODEL when set, else the
+# model the detected harness is known to run (claude, codex). Anything else —
+# a multi-model front end with no declaration, or a harness that was not
+# detected at all — has NO identity, and the run refuses rather than guess;
+# SECOND_OPINION_CURRENT_MODEL=none is the operator's statement that there is
+# no session model (CI, a plain terminal) and every roster entry is
+# cross-model. A target's identity is SECOND_OPINION_<NAME>_MODEL, defaulting
+# to the target name. Identities are lowercase tokens canonicalized from the
+# obvious model-id forms — a Claude model id (claude-*, opus, sonnet, haiku) is
+# "claude", an OpenAI one (gpt-*, o3, codex) is "codex" — so the natural value
+# of the one mandatory key compares equal to the built-in roster identities.
+
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+canon_identity() {
+  local id
+  # Trim FIRST. Identities arrive from settings files where a stray space is
+  # invisible, and the prefix patterns below anchor on the first character: a
+  # leading space makes ` claude` match no arm, fall through as itself, compare
+  # unequal to the session's `claude`, and leave the session's OWN model
+  # eligible — the cross-model guarantee silently off. (A trailing space is
+  # absorbed by the patterns' `*`, so untrimmed the failure looks arbitrary
+  # rather than absent.) Every identity passes through here — declared,
+  # detected, per-target and roster-derived — so trimming once covers them all.
+  id=$(kendex_trim "$1")
+  id=$(lower "$id")
+  # Provider-qualified ids — openai-codex/gpt-5.6-sol, openai/gpt-5.6-sol,
+  # anthropic/claude-opus-4 — are exactly what Pi and OpenCode show an operator,
+  # and those are the operators REQUIRED to declare an identity. Canonicalize on
+  # the component after the final slash so the value their harness shows them
+  # is the value that works.
+  id="${id##*/}"
+  case "$id" in
+    claude*|opus*|sonnet*|haiku*) printf 'claude' ;;
+    gpt*|o[0-9]*|codex*)          printf 'codex' ;;
+    *)                            printf '%s' "$id" ;;
+  esac
+}
+
+CURRENT_HARNESS=""
+CURRENT_MODEL=""
+# Where the identity came from — the basis for how far it is trusted:
+#   detected  the model a positively detected single-model harness runs.
+#   session   declared in the CALLER's own environment, in a session detection
+#             cannot arbitrate. A statement about THIS session.
+#   project   declared in a project settings file, likewise. Set for the REPO,
+#             so it is not a statement about any one session in it.
+#   ""        no identity at all.
+# Only a declared value can carry a typo, so only a declared value is held to
+# the roster-spelling check.
+CURRENT_MODEL_SOURCE=""
+# A declaration that contradicts a positively detected harness, held for the
+# refusal that names both values. Empty when there is no such conflict.
+CURRENT_MODEL_CONFLICT=""
+
+resolve_current_model() {
+  CURRENT_HARNESS=$(detect_current_harness)
+
+  local harness_model="" declared=""
+  case "$CURRENT_HARNESS" in claude|codex) harness_model="$CURRENT_HARNESS" ;; esac
+  [[ -z "${SECOND_OPINION_CURRENT_MODEL:-}" ]] || declared=$(canon_identity "$SECOND_OPINION_CURRENT_MODEL")
+
+  if [[ -n "$harness_model" ]]; then
+    # ONE rule for a harness that can be identified: detection wins, whatever
+    # the declaration's source. A single-model harness is direct evidence about
+    # THIS process; a declaration is a variable, and a variable is inherited —
+    # a Claude session that exports one and then starts a nested Codex session
+    # leaks it there, where trusting it would dispatch to the nested session's
+    # own model. An AGREEING declaration adds nothing and is simply not used
+    # (it is not "declared", so no roster-spelling requirement follows from it);
+    # a CONTRADICTING one is refused naming both values, because one of the two
+    # is wrong and guessing which is how a same-model review gets published.
+    CURRENT_MODEL="$harness_model"
+    CURRENT_MODEL_SOURCE="detected"
+    [[ -z "$declared" || "$declared" == "$harness_model" ]] || CURRENT_MODEL_CONFLICT="$declared"
+    return
+  fi
+
+  # Detection cannot arbitrate (Pi, OpenCode, Cursor, undetected): the
+  # declaration is the only identity available, and this is the one place its
+  # SOURCE still decides anything — a project file is read by every session in
+  # the repo, so only a caller-scoped value is a statement about this one.
+  if [[ -n "$declared" ]]; then
+    CURRENT_MODEL="$declared"
+    if $CURRENT_MODEL_IS_SESSION_SCOPED; then
+      CURRENT_MODEL_SOURCE="session"
+    else
+      CURRENT_MODEL_SOURCE="project"
+    fi
+  fi
+}
+
+# Does $1 declare SECOND_OPINION_CURRENT_MODEL the way the LOADER would read it?
+# $2 is `toml` for a settings file, `env` for a shell env file. Naming a file
+# that did not actually supply the value sends the operator to edit the wrong
+# line, so this mirrors kendex_load_settings_file rather than grepping the whole
+# file: comments are skipped, and in a settings file only the [env] table counts
+# — kendex_load_settings_file reads no other table, so a same-named key under
+# one never became this value.
+file_declares_current_model() {
+  local file="$1" kind="$2" line trimmed in_env=1
+  [[ "$kind" != "toml" ]] || in_env=0
+  # `|| [[ -n "$line" ]]` so a final line with no trailing newline is still read.
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    trimmed="$(kendex_trim "$line")"
+    # Blank and comment lines. No test covers the comment arm on its own: the
+    # anchored match below already rejects anything starting with `#`, so this
+    # is the guard that keeps that true if the match ever loosens.
+    case "$trimmed" in ""|\#*) continue ;; esac
+    if [[ "$kind" == "toml" && "$trimmed" == \[*\] ]]; then
+      if [[ "$trimmed" == "[env]" ]]; then in_env=1; else in_env=0; fi
+      continue
+    fi
+    [[ $in_env -eq 1 ]] || continue
+    trimmed="${trimmed#export }"
+    trimmed="$(kendex_trim "$trimmed")"
+    case "$trimmed" in
+      SECOND_OPINION_CURRENT_MODEL=*|SECOND_OPINION_CURRENT_MODEL[[:space:]]*=*) return 0 ;;
+    esac
+  done < "$file"
+  return 1
+}
+
+# The project settings file(s) that define SECOND_OPINION_CURRENT_MODEL, for the
+# refusal message — an operator cannot remove a value whose file they were not
+# told. Same set kendex_load_project_env reads, in its load order. Only ever
+# called on a refusal path.
+declaring_project_files() {
+  local f kind found=""
+  for f in "$PROJECT_ROOT/.env" "$PROJECT_ROOT/kendex.settings.toml" \
+           "$PROJECT_ROOT/.kendex/settings.toml" "$PROJECT_ROOT/.env.local"; do
+    [[ -f "$f" ]] || continue
+    case "$f" in *.toml) kind="toml" ;; *) kind="env" ;; esac
+    if file_declares_current_model "$f" "$kind"; then
+      found="${found:+$found, }$f"
+    fi
+  done
+  printf '%s' "$found"
+}
+
+# Env var naming for a target's settings: name uppercased, hyphens as
+# underscores (Bash 3.2: no ${var^^}).
+target_var() {
+  printf 'SECOND_OPINION_%s_%s' "$(printf '%s' "$1" | tr '[:lower:]-' '[:upper:]_')" "$2"
+}
+target_cmd_var() { target_var "$1" CMD; }
+
+# Declared model identity of a target: SECOND_OPINION_<NAME>_MODEL, else the
+# target's own name.
+target_model() {
+  local var
+  var="$(target_var "$1" MODEL)"
+  if [[ -n "${!var:-}" ]]; then canon_identity "${!var}"; else canon_identity "$1"; fi
+}
+
+# --- Pluggable target commands ------------------------------------------------
+# A target is a NAME plus a full command line. claude and codex carry built-in
+# default commands; any other name resolves ONLY through its
+# SECOND_OPINION_<NAME>_CMD variable, so another local model CLI is a settings
+# entry, not new code.
+
+DEFAULT_CLAUDE_CMD="claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
+DEFAULT_CODEX_CMD="codex exec -m gpt-5.6-sol -s read-only -c model_reasoning_effort=xhigh --ephemeral"
+
+# Full command line for a target: its env override, else the built-in default.
+# Empty output = unconfigured target.
+target_cmd() {
+  local target="$1" var
+  var="$(target_cmd_var "$target")"
+  if [[ -n "${!var:-}" ]]; then
+    printf '%s' "${!var}"
+    return
+  fi
+  case "$target" in
+    claude) printf '%s' "$DEFAULT_CLAUDE_CMD" ;;
+    codex)  printf '%s' "$DEFAULT_CODEX_CMD" ;;
+  esac
+}
+
+# A target is available when it has a configured command whose executable (the
+# command's first word) resolves — the first word is what actually gets exec'd,
+# and an env override may point it away from the target's own name.
+target_available() {
+  local cmd
+  cmd="$(target_cmd "$1")"
+  [[ -n "$cmd" ]] || return 1
+  # shellcheck disable=SC2086
+  set -- $cmd
+  command -v "$1" >/dev/null 2>&1
+}
+
+# --- Target selection ---------------------------------------------------------
+# One path for every mode. The roster SECOND_OPINION_MODELS is walked in
+# priority order and a target is taken when it is available and its declared
+# model differs from this session's — the model this session runs is never
+# dispatched to, and multi-lane cannot bypass that because it is the same walk
+# taken further: review mode takes up to SECOND_OPINION_COUNT distinct models
+# (default 1), every other mode exactly one. A forced target (--target /
+# SECOND_OPINION_TARGET) skips the walk but not the exclusion. When nothing
+# eligible remains the run refuses and says why: a same-model review presented
+# as a second opinion is worse than no review.
+
+[[ -n "${SECOND_OPINION_REVIEW_TARGETS:-}" ]] \
+  && echo "→ SECOND_OPINION_REVIEW_TARGETS is not read; the roster is SECOND_OPINION_MODELS" >&2
+
+# Validated only where it is consulted. review/detect are the modes that read a
+# count; failing challenge or quick over a value they never look at rejects a
+# working invocation for a setting that has no bearing on it.
+COUNT="${SECOND_OPINION_COUNT:-1}"
+WANT=1
+if [[ "$MODE" == "review" || "$MODE" == "detect" ]]; then
+  [[ "$COUNT" =~ ^[1-9][0-9]*$ ]] || { echo "Error: SECOND_OPINION_COUNT must be a positive integer" >&2; exit 1; }
+  WANT="$COUNT"
+fi
+
+resolve_current_model
+
+REVIEW_LANES=()
+SELECTED_MODELS=()
+# Env-var namespaces already considered: `my-model` and `my_model` are distinct
+# names but one SECOND_OPINION_MY_MODEL_* configuration, so the second is the
+# first again.
+SEEN_NAMESPACES=()
+# Whether any roster entry carries the session's identity — the check that a
+# DECLARED identity is spelled the way the roster spells it. A full pass over
+# valid names, independent of where the walk stops.
+roster_has_current() {
+  local t
+  while IFS= read -r t; do
+    [[ "$t" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]] || continue
+    [[ "$(target_model "$t")" == "$CURRENT_MODEL" ]] && return 0
+  done < <(roster_entries)
+  return 1
+}
+# One "target: reason" line per roster entry that was NOT taken — the refusal
+# body, and stderr detail on every run. The two flags separate the refusal's
+# CAUSE: a roster nobody can run is fixed by installing a CLI or naming its
+# command, and telling that operator to check their model identity sends them
+# at the wrong setting entirely.
+SKIP_REASONS=()
+SKIPPED_UNAVAILABLE=false
+SKIPPED_SAME_MODEL=false
+skip_target() {
+  SKIP_REASONS+=("$1: $2")
+  echo "→ skipping $1: $2" >&2
+}
+
+# Take a target if eligible. Returns 0 when taken. Dedupe is by MODEL: a
+# repeated name is a repeated model (the identity defaults to the name), and
+# two names fronting one model are one opinion — either way a second child on
+# the same lane would race on its artifact paths and duplicate its provenance.
+consider_target() {
+  local t="$1" model existing ns
+  if [[ ! "$t" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]]; then
+    # An arbitrary token would otherwise reach indirect variable expansion and
+    # per-lane file paths.
+    skip_target "$t" "invalid target name"
+    return 1
+  fi
+  ns="$(target_var "$t" "")"
+  for existing in ${SEEN_NAMESPACES[@]+"${SEEN_NAMESPACES[@]}"}; do
+    [[ "$existing" == "$ns" ]] && { skip_target "$t" "same configuration namespace (${ns}CMD) as an earlier entry"; return 1; }
+  done
+  SEEN_NAMESPACES+=("$ns")
+  model="$(target_model "$t")"
+  if [[ "$model" == "$CURRENT_MODEL" ]]; then
+    SKIPPED_SAME_MODEL=true
+    skip_target "$t" "runs the same model as this session ($model) — a second opinion must be cross-model"
+    return 1
+  fi
+  for existing in ${SELECTED_MODELS[@]+"${SELECTED_MODELS[@]}"}; do
+    [[ "$existing" == "$model" ]] && { skip_target "$t" "model $model already selected"; return 1; }
+  done
+  if ! target_available "$t"; then
+    SKIPPED_UNAVAILABLE=true
+    skip_target "$t" "CLI not found — install it or configure $(target_cmd_var "$t")"
+    return 1
+  fi
+  REVIEW_LANES+=("$t")
+  SELECTED_MODELS+=("$model")
+  return 0
+}
+
+# Walk the roster, taking up to $1 targets.
+walk_roster() {
+  local want="$1" t
+  while IFS= read -r t; do
+    [[ ${#REVIEW_LANES[@]} -lt "$want" ]] || break
+    consider_target "$t" || true
+  done < <(roster_entries)
+}
+
+# Set when the session's own identity is what refused, undeclared or unspelled.
+# The forced-target hint below is then wrong advice: the roster's pick cannot be
+# trusted while the identity that excludes from it is not trustworthy.
+SESSION_REFUSED=false
+
+# --- Is this session's identity usable? ---------------------------------------
+# One rule, applied the same way to every harness: a declaration is a statement
+# about THIS SESSION only when it arrives in the session's own environment. A
+# project settings file is read by every session in the repo, so its value is a
+# statement about the repo — and cannot be a declaration for any one session in
+# it. What that means per harness:
+#
+#   claude/codex   detection already knows the model. A project value that
+#                  agrees changes nothing; one that contradicts is refused,
+#                  because trusting it would mark this session's own model
+#                  cross-model with no skip line and no degraded stamp.
+#   pi/opencode/   detection CANNOT arbitrate — these front a selectable model,
+#   cursor/unknown which is exactly why the key exists. A project value here has
+#                  nothing to check it against, so a stale or committed one is
+#                  believed outright: the same silent same-model review, with no
+#                  detection to catch it. Refused, naming the file it came from.
+#
+# The reason is computed first and acted on once, because the agreeing
+# claude/codex case must fall through to normal selection rather than refuse.
+SESSION_SKIP_REASON=""
+# Where the declaration came from, in the refusal's own words — an operator
+# cannot remove a value whose home they were not told. A caller-scoped value is
+# named as such; otherwise the project files are scanned for the one that really
+# supplied it, and when none can be shown, the message says so rather than
+# naming a file on suspicion.
+SESSION_DECLARED_IN=""
+if $CURRENT_MODEL_IS_SESSION_SCOPED; then
+  SESSION_DECLARED_IN="this session's own environment"
+else
+  SESSION_DECLARING_FILES="$(declaring_project_files)"
+  if [[ -n "$SESSION_DECLARING_FILES" ]]; then
+    SESSION_DECLARED_IN="project settings ($SESSION_DECLARING_FILES)"
+  else
+    SESSION_DECLARED_IN="outside this session's environment (no project settings file was found to declare it)"
+  fi
+fi
+if [[ -n "$CURRENT_MODEL_CONFLICT" ]]; then
+  # A declaration that contradicts a positively detected single-model harness.
+  # Source is irrelevant here: an exported value is inherited by every nested
+  # session, so "the caller set it" is not evidence about THIS process, while
+  # the harness is. One of the two is wrong and the operator has to say which.
+  SESSION_SKIP_REASON="declared model $CURRENT_MODEL_CONFLICT contradicts this session's detected $CURRENT_HARNESS harness (declared in $SESSION_DECLARED_IN) — a detected single-model harness is the stronger evidence, so this refuses rather than pick one; clear SECOND_OPINION_CURRENT_MODEL for this session, or run the review from the session whose model you meant"
+elif [[ -z "$CURRENT_MODEL" ]]; then
+  # No identity to compare against: no target can be shown to be a different
+  # model, so none can be taken.
+  if [[ "$CURRENT_HARNESS" == "unknown" ]]; then
+    SESSION_SKIP_REASON="harness not detected and model undeclared — set SECOND_OPINION_CURRENT_MODEL to the model this session runs, or to none when there is no session model (CI, plain terminal)"
+  else
+    SESSION_SKIP_REASON="model undeclared — $CURRENT_HARNESS fronts a selectable model; set SECOND_OPINION_CURRENT_MODEL to the model this session runs"
+  fi
+elif [[ "$CURRENT_MODEL_SOURCE" == "project" ]]; then
+  # Reachable only when detection could NOT arbitrate — a detected harness
+  # always resolves to "detected" above. So this is the one case the source
+  # distinction still decides: nothing here can check a stale repo-wide value.
+  SESSION_SKIP_REASON="model $CURRENT_MODEL is declared in $SESSION_DECLARED_IN rather than in this session, and $CURRENT_HARNESS fronts a selectable model that detection cannot check it against — remove it there and export SECOND_OPINION_CURRENT_MODEL in this session's environment"
+fi
+if [[ -z "$SESSION_SKIP_REASON" && "$CURRENT_MODEL_SOURCE" != "detected" \
+      && -n "$CURRENT_MODEL" && "$CURRENT_MODEL" != "none" ]] && ! roster_has_current; then
+  # A DECLARED identity the roster does not spell excludes nothing, which is
+  # what a typo in SECOND_OPINION_CURRENT_MODEL looks like — and what a session
+  # running a model the roster does not know looks like. Either way the operator
+  # decides: name the model in SECOND_OPINION_MODELS (a command is optional; it
+  # is then a known identity and excluded) or fix the declaration. `none` is the
+  # declared absence of a session model and matches nothing by design.
+  #
+  # Declared only. A DETECTED identity was never typed, so it cannot be a typo,
+  # and the roster is the priority list of review TARGETS — naming just the
+  # cross-model one is the most natural configuration there is. It excludes
+  # nothing and the walk proceeds.
+  #
+  # Checked BEFORE the force branch, not inside the roster walk: a misspelled
+  # identity and a --target naming the very model that identity misspells is
+  # exactly the case the guard exists for, and a force must not be the way past
+  # it. Nothing has been selected at this point, so there is nothing to undo.
+  SESSION_SKIP_REASON="model $CURRENT_MODEL matches no roster identity — add it to SECOND_OPINION_MODELS (a command is optional) or fix SECOND_OPINION_CURRENT_MODEL; none declares that this session has no model"
+fi
+
+if [[ -n "$SESSION_SKIP_REASON" ]]; then
+  SESSION_REFUSED=true
+  skip_target "session" "$SESSION_SKIP_REASON"
+elif [[ -n "$FORCED_TARGET" ]]; then
+  # A force asks for exactly one opinion.
+  WANT=1
+  consider_target "$FORCED_TARGET" || true
+else
+  walk_roster "$WANT"
+  # A roster set to the empty string names no targets at all. Say so once —
+  # otherwise the refusal below lists no candidates and reads as a bug.
+  [[ -n "$(roster_entries)" ]] \
+    || skip_target "roster" "SECOND_OPINION_MODELS is set but empty — no targets to consider"
+fi
+
+if [[ ${#REVIEW_LANES[@]} -eq 0 ]]; then
+  # No eligible different model. Refuse — never emit a same-model review as a
+  # second opinion, never skip silently. Every candidate and why it was not
+  # taken is in the error, so the fix is one settings edit away.
+  reasons_json=$(printf '%s\n' ${SKIP_REASONS[@]+"${SKIP_REASONS[@]}"} | jq -R 'select(length > 0)' | jq -s .)
+  jq -n --arg current "${CURRENT_MODEL:-undeclared}" --argjson candidates "$reasons_json" \
+    '{error: "no eligible cross-model target — refusing to run a second opinion", current_model: $current, candidates: $candidates}' >&2
+  # Name the CAUSE, not just the candidates. A roster whose entries were all
+  # skipped for availability is an install/configuration problem; sending that
+  # operator to check SECOND_OPINION_CURRENT_MODEL points at a setting that is
+  # not wrong. Only when nothing was excluded for identity, or the whole thing
+  # reads as an identity problem again.
+  if $SKIPPED_UNAVAILABLE && ! $SKIPPED_SAME_MODEL && ! $SESSION_REFUSED; then
+    echo "→ every candidate was skipped for availability, not identity — install the CLI or set its SECOND_OPINION_<NAME>_CMD; SECOND_OPINION_CURRENT_MODEL is not the setting to change here" >&2
+  fi
+  # A force from project settings rather than the command line is a repo-wide
+  # value, not a choice made for this invocation: name what the roster would
+  # have picked so the settings fix is one edit. Only when the force is what refused — a
+  # session whose own identity is undeclared or unspelled is fixed by a
+  # different key, and the pick this walk would name is computed from that same
+  # untrustworthy identity.
+  if ! $SESSION_REFUSED && [[ -z "$TARGET" && -n "${SECOND_OPINION_TARGET:-}" ]]; then
+    SKIP_REASONS=()
+    walk_roster 1 2>/dev/null
+    if [[ ${#REVIEW_LANES[@]} -gt 0 ]]; then
+      echo "→ SECOND_OPINION_TARGET=$SECOND_OPINION_TARGET forced this; without it the roster would select ${REVIEW_LANES[0]} — unset the key (project settings or environment)" >&2
+    fi
+  fi
+  if [[ "$MODE" == "detect" ]]; then echo "none"; fi
+  exit 1
+fi
+
+# Requested breadth the roster could not supply is recorded, never implied
+# away: the run proceeds with what is eligible, says so, and stamps the counts
+# into the artifact (see the qa_metadata writers) so a single-lane review that
+# was asked to be two reads as degraded, not as a run that never asked.
+REQUESTED_COUNT="$WANT"
+SELECTED_COUNT="${#REVIEW_LANES[@]}"
+if [[ "$SELECTED_COUNT" -lt "$REQUESTED_COUNT" ]]; then
+  echo "→ requested $REQUESTED_COUNT opinions, selected $SELECTED_COUNT — the roster has no further eligible model (coverage degraded)" >&2
+fi
+
+if [[ "$MODE" == "detect" ]]; then
+  echo "${REVIEW_LANES[*]}"
+  exit 0
+fi
+
+TARGET_CLI=""
+MULTI_LANE=false
+if [[ ${#REVIEW_LANES[@]} -ge 2 ]]; then
+  MULTI_LANE=true
+else
+  TARGET_CLI="${REVIEW_LANES[0]}"
+fi
+
+# Validate CWD, then canonicalize it to an ABSOLUTE path. --cwd is caller input
+# and may legitimately begin with '-', and it is the prefix of nearly every
+# other path this script builds (instruction files, the artifact home, the
+# lane scratch templates) — so a leading dash there would be re-parsed as
+# options by every command those paths reach. Fixing it once at the source
+# closes the class, rather than adding `--` to each consumer and waiting for
+# the next one. `pwd`, not `pwd -P`: a symlinked --cwd stays the path the
+# caller named, which the artifact-home containment rule resolves separately.
+[[ -d "$CWD" ]] || { echo "Error: --cwd directory not found: $CWD" >&2; exit 1; }
+CWD="$(cd -- "$CWD" && pwd)" || { echo "Error: --cwd is not usable: $CWD" >&2; exit 1; }
+
+if $MULTI_LANE; then
+  echo "→ second-opinion: targets=$(IFS=+; echo "${REVIEW_LANES[*]}") mode=$MODE (multi-lane) current=$CURRENT_MODEL cwd=$CWD timeout=${TIMEOUT}s" >&2
+else
+  echo "→ second-opinion: target=$TARGET_CLI mode=$MODE current=$CURRENT_MODEL cwd=$CWD timeout=${TIMEOUT}s" >&2
+fi
+
+# --- Artifact home ------------------------------------------------------------
+# Records this run writes that are not anchored by --output — the preserved
+# raw/failed/rejected responses of a stdout-mode review or audit — live under
+# SECOND_OPINION_ARTIFACT_DIR (default tmp/second-opinion inside the reviewed
+# project), not in shared system temp. Placement can never change the run's
+# outcome: when the home cannot be created, or a relative home does not
+# resolve to exactly <physical --cwd>/<setting> — a `.`/`..` component, a
+# symlink anywhere along it, anything that leaves the reviewed checkout, which
+# is untrusted here as it is for its instruction files (an absolute setting is
+# the operator's own and exempt) — the record falls back to a plain temp file
+# and the fallback is named on stderr; the exit code and the diagnostic the
+# record exists to carry survive. Nothing is created before the path is known
+# to be safe: the pre-checks refuse a symlink component or an escaping name
+# BEFORE mkdir, and the one rule after mkdir is the physical equality. Sets
+# ARTIFACT_PATH; never exits.
+ARTIFACT_PATH=""
+
+# Canonical spelling of a relative home, so the vet and the physical-equality
+# rule both work on one form. `tmp/second-opinion/`, `./tmp/second-opinion` and
+# `.//tmp/second-opinion` all name the same directory as `tmp/second-opinion`
+# and must land in it — the raw setting would otherwise be rejected for an empty
+# or `.` component and every record would silently fall back to system temp.
+# The empty result is the reviewed repo root itself (`.`, `./`), which gets its
+# own accurate message rather than an escape reason.
+#
+# Order is load-bearing: repeated slashes collapse FIRST, or `.//x` strips its
+# leading `./` into the absolute-looking `/x`. Purely lexical — a `..` that
+# survives is still the vet's to refuse.
+normalize_relative_home() {
+  local rel="$1"
+  while [[ "$rel" == *//* ]]; do rel="${rel//\/\//\/}"; done
+  while [[ "$rel" == ./* ]]; do rel="${rel#./}"; done
+  while [[ "$rel" == */./* ]]; do rel="${rel//\/.\//\/}"; done
+  while [[ "$rel" == */. ]]; do rel="${rel%/.}"; done
+  while [[ "$rel" == */ ]]; do rel="${rel%/}"; done
+  if [[ "$rel" == "." ]]; then rel=""; fi
+  printf '%s' "$rel"
+}
+
+# Relative-home vetting, before anything is created. Prints the rejection
+# reason and returns 1; silent 0 when the path is safe to create.
+vet_relative_home() {
+  local rel="$1" rest comp prefix="$CWD"
+  local -a comps=()
+  # Lexical: no empty, `.` or `..` components — the name must stay under --cwd
+  # by construction, not by luck.
+  rest="$rel"
+  while :; do
+    comp="${rest%%/*}"
+    case "$comp" in
+      ""|.|..) printf 'escapes the reviewed repo (component "%s")' "$comp"; return 1 ;;
+    esac
+    comps+=("$comp")
+    [[ "$rest" == */* ]] || break
+    rest="${rest#*/}"
+  done
+  # Symlink walk over the components that exist: the first symlink is the
+  # first place mkdir -p would leave the checkout.
+  for comp in "${comps[@]}"; do
+    prefix="$prefix/$comp"
+    [[ -e "$prefix" || -L "$prefix" ]] || break
+    [[ -L "$prefix" ]] && { printf 'symlink inside the reviewed repo at %s' "$prefix"; return 1; }
+  done
+  return 0
+}
+
+# The default home is under the reviewed checkout, so a failed review must not
+# leave untracked files in the user's working tree — that trips "working tree
+# must be clean" gates and gets swept into a `git add -A`. A `*` ignore file
+# inside the home makes it invisible to git with no action from the consumer.
+# Written only when absent, and never allowed to fail the run.
+#
+# RELATIVE homes only, and only a directory THIS RUN created. Both limits are
+# load-bearing, not tidiness:
+#
+#  - An absolute or `~/…` home is a location the operator named deliberately,
+#    outside the checkout by intent; `SECOND_OPINION_ARTIFACT_DIR="~"` would
+#    otherwise seed $HOME/.gitignore with `*`.
+#  - A directory that already existed is the operator's, and may be a TRACKED
+#    directory holding a curated .gitignore — `SECOND_OPINION_ARTIFACT_DIR=docs`
+#    must not make every future file under docs/ invisible to git status and
+#    `git add -A`. A directory this run just created can hold nothing at all,
+#    which also removes the symlink vector: an existence test cannot be used to
+#    decide, because `-e` follows symlinks and reads false for a DANGLING one,
+#    so a committed `.gitignore -> /somewhere/outside` in the reviewed checkout
+#    would have turned this into an arbitrary-file-create primitive.
+#
+# The write closes the residual race on its own: noclobber opens with O_EXCL,
+# which refuses an existing file AND refuses to follow a symlink. That layer is
+# unreachable while the created-only gate holds, so no test exercises it alone;
+# the pre-existing-home fixtures prove the PAIR — remove both and they go red,
+# remove either one and the other still refuses. Failure is always tolerated —
+# an ignore file is a courtesy, never worth failing a run.
+seed_artifact_home_ignore() {
+  ( set -C; printf '*\n' > "$1/.gitignore" ) 2>/dev/null || true
+}
+
+# Resolved at most once per run: the home is a property of the run, not of an
+# individual record, so a rejection is stated once and every consumer — the
+# record writers and a multi-lane run's stdout-mode lane artifacts — lands in
+# the same place. Sets ARTIFACT_HOME to an absolute directory, empty when there
+# is none; never exits.
+ARTIFACT_HOME=""
+ARTIFACT_HOME_RESOLVED=false
+
+artifact_home() {
+  local dir rel reason phys_root phys_dir home_created=false
+  if $ARTIFACT_HOME_RESOLVED; then return 0; fi
+  ARTIFACT_HOME_RESOLVED=true
+  dir="${SECOND_OPINION_ARTIFACT_DIR:-tmp/second-opinion}"
+  # `~/...` is the spelling kendex's other path settings accept (WORKTREE_BASE_DIR
+  # among them), and a settings file is not shell input, so nothing expanded it.
+  # Expand before the absolute test, or the tilde passes the component vet and a
+  # directory literally named `~` appears inside the reviewed checkout.
+  # shellcheck disable=SC2088  # the literal, unexpanded tilde IS the input here
+  if [[ "$dir" == "~" ]]; then
+    dir="${HOME:-}"
+    [[ -n "$dir" ]] || echo "→ artifact home rejected (~ used but HOME is not set)" >&2
+  elif [[ "$dir" == "~/"* ]]; then
+    # ${dir:2}, not ${dir#~/}: an unquoted ~ in a strip pattern is itself
+    # tilde-expanded, so the prefix would never match.
+    if [[ -n "${HOME:-}" ]]; then
+      dir="$HOME/${dir:2}"
+    else
+      echo "→ artifact home rejected (~ used but HOME is not set): $dir" >&2
+      dir=""
+    fi
+  elif [[ "$dir" == "~"* ]]; then
+    echo "→ artifact home rejected (~user expansion is not supported): $dir" >&2
+    dir=""
+  fi
+  if [[ -z "$dir" ]]; then
+    : # already rejected above
+  elif [[ "$dir" == /* ]]; then
+    (umask 077 && mkdir -p -- "$dir") 2>/dev/null \
+      || { echo "→ artifact home not creatable: $dir" >&2; dir=""; }
+  else
+    rel="$(normalize_relative_home "$dir")"
+    if [[ -z "$rel" ]]; then
+      echo "→ artifact home rejected (names the reviewed repo root, not a subdirectory): $dir" >&2
+      dir=""
+    elif reason=$(vet_relative_home "$rel"); then
+      dir="$CWD/$rel"
+      # Captured at the only moment it can be: whether the leaf existed before
+      # this run's mkdir. Gates the .gitignore seeding below.
+      [[ -d "$dir" ]] || home_created=true
+      if ! (umask 077 && mkdir -p -- "$dir") 2>/dev/null; then
+        echo "→ artifact home not creatable: $dir" >&2
+        dir=""
+      else
+        # The one rule: what was created is exactly the named path under the
+        # reviewed checkout's physical root. Defense in depth behind the
+        # pre-creation vet, which already refuses every escape the tests can
+        # construct — only the accept-control (a --cwd reached through a
+        # symlink) exercises this branch.
+        phys_root="$(cd -- "$CWD" 2>/dev/null && pwd -P)" || phys_root=""
+        phys_dir="$(cd -- "$dir" 2>/dev/null && pwd -P)" || phys_dir=""
+        if [[ -z "$phys_root" || "$phys_dir" != "$phys_root/$rel" ]]; then
+          echo "→ artifact home rejected (resolves outside the reviewed repo): $dir -> ${phys_dir:-?}" >&2
+          dir=""
+        elif $home_created; then
+          seed_artifact_home_ignore "$dir"
+        fi
+      fi
+    else
+      echo "→ artifact home rejected ($reason): $CWD/$rel" >&2
+      dir=""
+    fi
+  fi
+  # `mkdir -p` succeeds on a directory that already exists and denies writes, so
+  # resolving a home is not the same as being able to create in one. Every
+  # consumer allocates with mktemp and reports its own fallback, so the refusal
+  # lands there — at allocation, before any model call is placed against it.
+  ARTIFACT_HOME="$dir"
+}
+
+# The home resolved but will not hold a file — it ran out of space, its
+# permissions changed, or it was never writable and `mkdir -p` said nothing
+# because it already existed. Stated once and then forgotten, so every later allocation
+# goes straight to the fallback rather than retrying the same refusal and
+# repeating the line. One wording for both consumers: an operator reading this
+# has one condition to act on, not two spellings of it.
+artifact_home_unusable() {
+  echo "→ artifact home unusable, falling back to system temp: $ARTIFACT_HOME" >&2
+  ARTIFACT_HOME=""
+}
+
+artifact_file() {
+  local kind="$1"
+  artifact_home
+  ARTIFACT_PATH=""
+  if [[ -n "$ARTIFACT_HOME" ]]; then
+    # No `--` here, and none needed: every branch of the resolution leaves the
+    # home ABSOLUTE (the `/*` case by definition, `~` via $HOME, the relative
+    # case via the canonicalized $CWD), so the template can never begin with
+    # `-`. That also avoids relying on `--` in mktemp, whose support for it is
+    # not uniform across the BSD/macOS target.
+    ARTIFACT_PATH=$(mktemp "$ARTIFACT_HOME/${MODE}-${TARGET_CLI}-${kind}.XXXXXX" 2>/dev/null) || {
+      artifact_home_unusable
+      ARTIFACT_PATH=""
+    }
+  fi
+  if [[ -z "$ARTIFACT_PATH" ]]; then
+    # System temp is the last resort, and it can refuse too (a read-only or
+    # full TMPDIR). An unguarded mktemp would then die under `set -e` and the
+    # run would exit 1 without ever reporting the provider cause it was on its
+    # way to report — losing both the record AND its documented 4/5 exit class.
+    # A record is a diagnostic: leaving ARTIFACT_PATH empty lets the caller say
+    # so inline and keep the classification.
+    ARTIFACT_PATH=$(mktemp 2>/dev/null) || ARTIFACT_PATH=""
+    if [[ -n "$ARTIFACT_PATH" ]]; then
+      echo "→ record kept in system temp instead: $ARTIFACT_PATH" >&2
+    else
+      echo "→ no writable location for the record — reporting the cause inline instead" >&2
+    fi
+  fi
+}
+
+# write_owned <path> <content> — the one write that carries that policy. A path
+# this run owns is unlinked and then CREATED, never written through whatever is
+# found at the name: umask governs creation only, so a plain redirection would
+# truncate a survivor and keep that survivor's mode, and would follow a symlink
+# planted at the name into a file of somebody else's. A sidecar sits at a name
+# the caller chose and anyone can derive, and the window between the clear
+# before the spawn and this write is as long as a model call.
+#
+# noclobber is what makes the create exclusive — O_EXCL refuses an existing
+# file AND refuses to follow a symlink — so the review reaches a path this run
+# made, at a mode this run chose, or it does not get written at all. Refusing
+# is the right end of that: a caller reading a review out of a file someone
+# else controls is worse than a caller told the record could not be stored,
+# which every caller of this already handles.
+#
+# rm's own failure is not fatal on its own; the exclusive create is what
+# decides, and its cause is reported by the caller. The exclusivity is a second
+# layer everywhere it can be reached: the --output family is cleared before a
+# lane spawns, and a stdout lane artifact is created at a name that did not
+# exist. So no test drives it alone; the fixtures that put an inode back at an
+# artifact path prove the PAIR.
+write_owned() {
+  if $SCRATCH_OUTPUT; then
+    rm -f -- "$1" 2>/dev/null || true
+    ( set -C && umask 077 && printf '%s\n' "$2" > "$1" ) || return 1
+  else
+    printf '%s\n' "$2" > "$1"
+  fi
+}
+
+# Write a record, or report that it could not be stored. Never fails the run:
+# a record is a diagnostic, and losing it must not change the exit class the
+# caller is on its way to. Echoes the stored path, empty when nothing was
+# stored.
+store_record() {
+  local path="$1" content="$2" err
+  [[ -n "$path" ]] || return 0
+  # The write's own message is the actionable half — a directory at the path, a
+  # read-only filesystem, an exclusive create that lost its race all read the
+  # same from outside. Suppressing it left the caller saying only that the
+  # record went nowhere, which is the wrong-cause shape this file has fixed
+  # twice already. Captured and named here; still never fatal, because a record
+  # is a diagnostic and losing it must not change the caller's exit class.
+  if ! err=$(write_owned "$path" "$content" 2>&1); then
+    [[ -z "$err" ]] || echo "→ record could not be written to $path: $err" >&2
+    return 0
+  fi
+  printf '%s' "$path"
+}
+
+# --- Review scope derivation (review mode) ------------------------------------
+# kendex#652: the external model must never be asked to guess its own scope. A
+# no-scope session can answer with a schema-valid `verdict: "pass"` while
+# admitting it reviewed nothing. Derive branch + diff range + changed-file list
+# from the worktree BEFORE invoking the CLI, embed them in the prompt, and fail
+# loudly when the range yields no diff — an empty-scope review is an error, not
+# a pass.
+
+REVIEW_BRANCH=""
+REVIEW_RANGE=""
+REVIEW_CHANGED_FILES=""
+REVIEW_DIFFSTAT=""
+REVIEW_HEAD_SHA=""
+
+derive_review_scope() {
+  local cwd="$1"
+  local range="$2"
+
+  if [[ -z "$range" ]]; then
+    local base_branch
+    base_branch=${WORKTREE_DEFAULT_BRANCH:-$(git -C "$cwd" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || true)}
+    [[ -n "$base_branch" ]] || base_branch=main
+    range="origin/${base_branch}...HEAD"
+  fi
+
+  # Pin the scope to an immutable commit at derivation time: a symbolic HEAD
+  # endpoint re-resolves per invocation, so a commit landing mid-review would
+  # let lanes inspect different diffs and the artifact claim a head the model
+  # never reviewed. reviewed_head is stamped from the RANGE'S endpoint (the
+  # commit actually reviewed) — never from a post-review rev-parse, and never
+  # from worktree HEAD when an explicit historical range was requested.
+  local head_now
+  head_now=$(git -C "$cwd" rev-parse HEAD 2>/dev/null || echo "")
+  if [[ -n "$head_now" && "$range" == *HEAD* ]]; then
+    range="${range//HEAD/$head_now}"
+  fi
+  local endpoint="${range##*..}"
+  [[ -n "$endpoint" ]] || endpoint="$head_now"
+  REVIEW_HEAD_SHA=$(git -C "$cwd" rev-parse "$endpoint" 2>/dev/null || echo "")
+  REVIEW_RANGE="$range"
+
+  REVIEW_BRANCH=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+
+  local git_err diff_files
+  git_err=$(mktemp)
+  # shellcheck disable=SC2086
+  # core.quotePath=false keeps non-ASCII path bytes literal — the default
+  # C-quoting ("services/\303\251/…") would break the nested-AGENTS ancestor
+  # walk and misname files in the prompt's changed-file list.
+  # shellcheck disable=SC2086
+  if ! diff_files=$(git -C "$cwd" -c core.quotePath=false diff --name-only $range 2>"$git_err"); then
+    jq -n --arg range "$range" --arg cwd "$cwd" --arg detail "$(head -5 "$git_err")" \
+      '{error: "Cannot derive review scope: git diff failed for range \($range)", cwd: $cwd, detail: $detail}' >&2
+    rm -f -- "$git_err"
+    exit "$EXIT_NO_SCOPE"
+  fi
+  rm -f -- "$git_err"
+
+  if [[ -z "$diff_files" ]]; then
+    jq -n --arg range "$range" --arg cwd "$cwd" --arg branch "$REVIEW_BRANCH" \
+      '{error: "No review scope: git diff \($range) is empty — nothing to review", cwd: $cwd, branch: $branch}' >&2
+    exit "$EXIT_NO_SCOPE"
+  fi
+
+  REVIEW_CHANGED_FILES="$diff_files"
+  # shellcheck disable=SC2086
+  REVIEW_DIFFSTAT=$(git -C "$cwd" diff --shortstat $range 2>/dev/null || echo "")
+}
+
+# --- Repo instruction collection (review mode) --------------------------------
+# VST-124: GitHub review bots read the repo's own instruction files
+# (.github/instructions/*, copilot-instructions, review-bots.md) and enforce
+# them; the local review must see the same rules or repo-rule findings are
+# structurally impossible. Globs resolve inside the reviewed repo ($CWD). A
+# set-but-empty SECOND_OPINION_REVIEW_INSTRUCTIONS disables the block; unset
+# uses the defaults. Each file is capped so one oversized instruction file
+# cannot drown the diff in the prompt.
+
+REVIEW_INSTRUCTIONS_DEFAULT="AGENTS.md review-bots.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
+REVIEW_INSTRUCTIONS_FILE_CAP=65536
+
+# Emit one instruction file (containment-checked, deduped, capped). Relies on
+# the caller's dynamically-scoped `matched`, `phys_root`, and CWD. Symlinked
+# files and paths whose parent directory physically resolves outside the
+# reviewed repo are skipped loudly, never followed.
+emit_instruction_file() {
+  local f="$1" phys_dir size
+  [[ -n "$f" && -f "$CWD/$f" ]] || return 0
+  if [[ ! -r "$CWD/$f" ]]; then
+    # Skip loudly, never abort: under set -e an unguarded read failure here
+    # (permissions, TOCTOU disappearance) would kill the whole review.
+    echo "→ skipping unreadable instruction file: $f" >&2
+    return 0
+  fi
+  if [[ -L "$CWD/$f" ]]; then
+    echo "→ skipping symlinked instruction file (must be a regular file inside the repo): $f" >&2
+    return 0
+  fi
+  # path_dir, not dirname: `f` comes from the REVIEWED repo, which this code
+  # treats as untrusted, so it may begin with `-` — and dirname cannot take
+  # `--` portably (see path_dir).
+  phys_dir="$(cd -- "$CWD/$(path_dir "$f")" 2>/dev/null && pwd -P)" || return 0
+  if [[ "$phys_dir" != "$phys_root" && "$phys_dir" != "$phys_root"/* ]]; then
+    echo "→ skipping instruction file outside the reviewed repo: $f -> $phys_dir" >&2
+    return 0
+  fi
+  case "$matched" in *$'\n'"$f"$'\n'*) return 0 ;; esac
+  matched="${matched}${f}"$'\n'
+  printf -- '--- %s ---\n' "$f"
+  head -c "$REVIEW_INSTRUCTIONS_FILE_CAP" "$CWD/$f" 2>/dev/null || true
+  # Size from metadata (GNU/BSD stat), no second read of the bytes.
+  size=$(stat -c%s "$CWD/$f" 2>/dev/null || stat -f%z "$CWD/$f" 2>/dev/null || echo 0)
+  if [[ "$size" -gt "$REVIEW_INSTRUCTIONS_FILE_CAP" ]]; then
+    printf '\n[truncated at %s bytes]\n' "$REVIEW_INSTRUCTIONS_FILE_CAP"
+  else
+    printf '\n'
+  fi
+}
+
+collect_review_instructions() {
+  local patterns="${SECOND_OPINION_REVIEW_INSTRUCTIONS-$REVIEW_INSTRUCTIONS_DEFAULT}"
+  patterns="${patterns//,/ }"
+  local pattern f matched=$'\n'
+  # Split the pattern list with pathname expansion OFF: an unquoted $patterns
+  # word-split would glob-expand each pattern against the script's own cwd —
+  # the wrong repo — consuming patterns that happen to match there. Only
+  # compgen -G below, inside $CWD, may expand them.
+  set -f
+  # shellcheck disable=SC2206
+  local -a pattern_list=($patterns)
+  set +f
+  # Containment root: the reviewed repo's PHYSICAL path (see
+  # emit_instruction_file for the checks each match must pass).
+  local phys_root
+  phys_root="$(cd -- "$CWD" && pwd -P)" || return 0
+  for pattern in ${pattern_list[@]+"${pattern_list[@]}"}; do
+    # compgen -G expands the glob without leaking non-matches (a bare unmatched
+    # pattern would otherwise pass through as a literal word). One path per
+    # line, so spaces in names survive; newline-in-name is not supported.
+    while IFS= read -r f; do
+      emit_instruction_file "$f"
+    done < <(cd -- "$CWD" && compgen -G "$pattern" 2>/dev/null || true)
+  done
+
+  # Scoped instructions: when the pattern list carries the literal AGENTS.md
+  # entry, nested AGENTS.md files GOVERNING THE CHANGED PATHS apply too — a
+  # monorepo's services/api/AGENTS.md rules the api diff even though the
+  # root-level glob never sees it (GitHub bots apply nested agent files the
+  # same way). Walk each changed file's ancestor directories; dedupe and
+  # containment come from emit_instruction_file.
+  local want_agents="" p
+  for p in ${pattern_list[@]+"${pattern_list[@]}"}; do
+    [[ "$p" == "AGENTS.md" ]] && want_agents=1
+  done
+  if [[ -n "$want_agents" && -n "${REVIEW_CHANGED_FILES:-}" ]]; then
+    # Path-byte fidelity: the walk consumes the newline-separated changed-file
+    # list (core.quotePath=false keeps non-ASCII literal). Control characters
+    # in a pathname stay C-quoted regardless of that setting, so such a path
+    # fails the -f check downstream and its AGENTS.md is OMITTED — fail-closed,
+    # same documented posture as newline-in-name on the glob side. Not worth
+    # a -z/NUL rebuild of the scope pipeline for hostile filenames in a repo
+    # the reviewer chose to review.
+    local changed_file dir chain_i
+    while IFS= read -r changed_file; do
+      [[ -n "$changed_file" ]] || continue
+      # Emit parents BEFORE children (root → leaf): agent-file convention is
+      # that deeper files override shallower ones, and prompt recency weights
+      # later content — so the more-specific file must appear last. Collect
+      # the ancestor chain walking up, then emit it in reverse.
+      local -a agents_chain=()
+      dir="$(path_dir "$changed_file")"
+      while [[ "$dir" != "." && "$dir" != "/" ]]; do
+        agents_chain+=("$dir/AGENTS.md")
+        dir="$(path_dir "$dir")"
+      done
+      for ((chain_i = ${#agents_chain[@]} - 1; chain_i >= 0; chain_i--)); do
+        emit_instruction_file "${agents_chain[$chain_i]}"
+      done
+    done <<< "$REVIEW_CHANGED_FILES"
+  fi
+}
+
+# --- Prompt construction (review mode) ----------------------------------------
+
+build_review_prompt() {
+  local diff_cmd="git diff $REVIEW_RANGE"
+
+  # Read the schema from the sibling schemas/ directory
+  local schema_file="$SCRIPT_DIR/../schemas/review-finding-prompt.md"
+  local schema
+  if [[ -f "$schema_file" ]]; then
+    # Replace placeholder tokens with runtime values
+    schema=$(sed "s/external-TARGET/external-${TARGET_CLI}/g; s/ISO_8601/$(date -u +%Y-%m-%dT%H:%M:%SZ)/g" "$schema_file")
+  else
+    echo "Error: schema file not found: $schema_file" >&2
+    exit 1
+  fi
+
+  local instructions
+  instructions="$(collect_review_instructions)"
+
+  cat <<PROMPT
+You are a code reviewer providing a cross-model second opinion, standing in for a holistic GitHub review bot. Find real problems in the code changes.
+
+Review scope (derived from the worktree by the calling wrapper — this is authoritative; do not ask for scope):
+- Branch: ${REVIEW_BRANCH:-unknown}
+- Diff range: $REVIEW_RANGE
+- Diffstat: ${REVIEW_DIFFSTAT:-n/a}
+- Changed files:
+$REVIEW_CHANGED_FILES
+
+Run this command to see the changes:
+  $diff_cmd
+
+Then read changed files that need more context to understand the diff.
+
+Review the diff through ALL of these lenses — every lens is in scope and none may be skipped:
+- Correctness: bugs, logic errors, race conditions and concurrency issues, resource leaks, error-handling gaps (silent failures, swallowed errors), API contract violations, performance problems in hot paths.
+- Security and fail-open behavior: injection, auth bypass, data exposure; error paths that silently skip, weaken, or default-pass a check instead of failing loudly.
+- Adversarial inputs: hostile or edge-case inputs — empty or oversized values, filenames containing newlines or glob characters, encoding tricks — that bypass validation, filters, or glob patterns.
+- Portability: Bash 3.2 compatibility (macOS system bash — no associative arrays, no \${var^^}), GNU vs BSD tool differences, platform-specific assumptions.
+- Repo-rule adherence: violations of the repository instruction files included below, when present.
+- Docs-vs-code drift: documentation, comments, help text, or examples that this diff makes stale or contradicts.
+- Test adequacy: changed behavior with no covering test, tests that can no longer fail, missing edge-case coverage for the classes above.
+
+Skip only pure style/formatting preferences and minor naming opinions.
+PROMPT
+
+  if [[ -n "$instructions" ]]; then
+    cat <<PROMPT
+
+Repository review instructions — these files define this repo's own review rules; report violations under the repo-rule adherence lens:
+
+$instructions
+PROMPT
+  fi
+
+  printf '\n%s\n' "$schema"
+}
+
+# --- Read prompt (challenge/audit/quick modes) --------------------------------
+
+read_prompt() {
+  if [[ -n "$PROMPT_FILE" ]]; then
+    [[ -f "$PROMPT_FILE" ]] || { echo "Error: prompt file not found: $PROMPT_FILE" >&2; exit 1; }
+    # Redirection, not a path operand: --prompt is caller input and may begin
+    # with `-`. A redirection has no option parsing, so this needs no `--` and
+    # no assumption about which cat is installed.
+    cat < "$PROMPT_FILE"
+  elif [[ -n "$INLINE_PROMPT" ]]; then
+    printf '%s\n' "$INLINE_PROMPT"
+  elif [[ ! -t 0 ]]; then
+    cat
+  else
+    echo "Error: $MODE mode requires --prompt <file>, inline text, or piped stdin" >&2
+    exit 1
+  fi
+}
+
+# --- Multi-lane review orchestration ------------------------------------------
+# With SECOND_OPINION_COUNT >= 2, review mode runs the selected lanes on the
+# SAME derived scope (in parallel — GH bots run concurrently too) and unions
+# their findings, deduplicated by normalized location (file + backticked
+# symbol; the schema forbids line numbers). Each lane is a recursive
+# single-target invocation of this script, so every lane keeps the full
+# single-lane contract: scope embedding, one-shot retry, no-review/incomplete
+# gates, and its own sidecar family under <output>.<target>.json*.
+#
+# Failure semantics: one failed lane must not fail the run (a quota-capped lane
+# would block every review) but must never narrow coverage silently either —
+# the failed lane and its exit code are recorded in qa_metadata.lanes and
+# coverage becomes "degraded". When EVERY lane fails there is no external
+# verdict, so the run joins the no-verdict class: exit 4 when at least one lane
+# answered unusably (its own exit 4), else exit 5.
+if $MULTI_LANE; then
+  # Derive scope once, up front: exits 3 before any lane spawns when the diff
+  # is empty, and pins the SAME resolved range for every lane.
+  derive_review_scope "$CWD" "$RANGE"
+
+  # Lane scratch has one owner and one rule: LANE_TMP_DIR is the only directory
+  # this run creates in shared temp space, and it holds nothing but the per-lane
+  # stderr captures — so removing it, by the cleanup below at exit or by an
+  # outsider mid-run, can only ever cost a log replay. A lane's REVIEW is never
+  # in temp space at all: with --output it is the durable sibling
+  # <output>.<lane>.json, without one it is a named file in the artifact home
+  # this tool owns. And the parent holds each lane's review in memory from the
+  # moment that lane is reaped, so nothing it still needs is on disk after the
+  # reap either.
+  LANE_TMP_DIR=$(mktemp -d)
+  LANE_TMP_FILES=()
+  LANE_PIDS=()
+  # On any exit — including INT/TERM — kill still-running lane children before
+  # cleanup: an interrupted parent must not leave external model CLIs running
+  # (and billing) in the background, writing orphaned sidecars.
+  cleanup_lanes() {
+    local pid art
+    for pid in ${LANE_PIDS[@]+"${LANE_PIDS[@]}"}; do
+      kill "$pid" 2>/dev/null || true
+    done
+    if [[ ${#LANE_PIDS[@]} -gt 0 ]]; then
+      wait ${LANE_PIDS[@]+"${LANE_PIDS[@]}"} 2>/dev/null || true
+    fi
+    # Never let cleanup decide the run's exit status: rm still fails on an
+    # entry it cannot unlink (something under a directory the run cannot write,
+    # a foreign-owned file in a sticky /tmp), and inside this EXIT trap that
+    # failure would both override a delivered two-lane union with a non-zero
+    # status and skip everything below it. Every command in this trap is
+    # guarded for that reason.
+    rm -rf -- "$LANE_TMP_DIR" || true
+    # Stdout-mode lane artifacts plus each child's own sidecar family
+    # (<art>.noreview.json, <art>.raw.txt, …): the per-lane name is this run's
+    # alone, so the glob is unambiguous, and a glob that matches nothing is a
+    # no-op for rm -f.
+    for art in ${LANE_TMP_FILES[@]+"${LANE_TMP_FILES[@]}"}; do
+      rm -f -- "$art" "$art".* || true
+    done
+  }
+  trap 'cleanup_lanes' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  # Parameter expansion, not basename: BSD basename's `--` handling is not
+  # something this branch can verify, and the shell needs no utility here —
+  # the same reasoning that gave this file path_dir instead of dirname.
+  SELF="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}"
+  LANE_OUTS=()
+  LANE_ERRS=()
+  # A lane artifact and the sidecar family a child writes beside it hold the
+  # model's raw review of the reviewed repository, and both are this tool's
+  # files rather than the caller's. The child creates them owner-only, told so
+  # per artifact (see the child's marker below) instead of through a umask on
+  # the lane process — a process umask is inherited by the external model CLI
+  # too and would silently fix the mode of its own session and cache state.
+  #
+  # Clearing before the spawn is the other half: owner-only applies to files the
+  # child CREATES, and writing through a surviving inode keeps that inode's old
+  # mode, so a family that reappeared at 0644 would stay world-readable through
+  # every later run against the same path. With --output the pre-flight pass has
+  # already cleared every roster name's family, so this normally removes
+  # nothing. Unremovable means the artifact family cannot be guaranteed clean,
+  # which is worth failing on before any model spend — through the same named
+  # cause as the pre-flight pass, not a bare rm error.
+  for lane in "${REVIEW_LANES[@]}"; do
+    if [[ -n "$OUTPUT_PATH" ]]; then
+      lane_out="${OUTPUT_PATH}.${lane}.json"
+      clear_output_family "$lane_out" "${ALL_RECORD_SUFFIXES[@]}"
+    else
+      artifact_home
+      # CREATED here, not merely named: mktemp makes the artifact exclusively
+      # and owner-only, under a prefix that still says which lane it belongs to.
+      # The review leaves shared temp space, and the path is neither derivable
+      # by another process nor shared with a run carrying the same pid in
+      # another namespace — so nothing stale can sit at a name that did not
+      # exist a moment ago, and there is nothing to clear before the child
+      # writes it.
+      lane_out=""
+      if [[ -n "$ARTIFACT_HOME" ]]; then
+        # The one place the home is put to the test, and the reason it is tested
+        # here: this runs before the lane spawns, so a home that cannot hold the
+        # artifact is found before the model call rather than by the child that
+        # already paid for one. Said once — forgetting the home keeps every
+        # later lane from retrying it and from repeating the line.
+        lane_out=$(mktemp "$ARTIFACT_HOME/${MODE}-lane-${lane}.XXXXXX" 2>/dev/null) || {
+          artifact_home_unusable
+          lane_out=""
+        }
+      fi
+      # Placement can never decide whether the review happens, so a lane with no
+      # home falls back to a temp file — named on stderr above, so an operator
+      # knows that lane traded the home's durability for a temp one.
+      [[ -n "$lane_out" ]] || lane_out=$(mktemp)
+      LANE_TMP_FILES+=("$lane_out")
+    fi
+    lane_err="$LANE_TMP_DIR/lane-${lane}.stderr"
+    # The capture exists only so the lane's log can be replayed, so it must
+    # never be able to stop the lane from running. A redirection named on the
+    # launch itself is performed by the forked child BEFORE the command runs:
+    # if the scratch directory has gone by then — the same actor this whole
+    # change is about, and every lane after the first is exposed for as long as
+    # the fan-out takes — the child dies without ever reviewing, and scratch
+    # loss costs a VERDICT rather than a log.
+    #
+    # So the lane opens the capture itself, in its own process, with a fallback
+    # that cannot fail, and hands the result to the review as an already-open
+    # descriptor: duplicating an open fd cannot fail no matter what happens to
+    # the directory afterwards. fd 4 parks the real stderr for the duration of
+    # the attempt so bash's own open error does not reach the operator
+    # unattributed; the loss is reported in the same shape as the other capture
+    # losses instead.
+    (
+      # The child must start from the CALLER'S environment, exactly as the
+      # parent did — nothing more, nothing less.
+      #
+      # More: the settings loader EXPORTS a project-file value, so a child would
+      # otherwise find it already in its environment and read it as
+      # caller-supplied, promoting a value the parent resolved as detected (or
+      # as agreeing with detection) into a DECLARED one, which carries the
+      # roster-spelling guard and refuses the very lanes the parent selected.
+      #
+      # Less: an exported EMPTY value is how an operator suppresses a committed
+      # declaration for one session. It is not a declaration, so it is not
+      # "session-scoped" in the identity sense — but dropping it would let the
+      # child load the project file the parent had overridden and refuse on it.
+      #
+      # So the test is presence in the caller's environment, not the shape of
+      # the resolved identity: keep whatever the caller set, drop whatever only
+      # the loader put there, and the child re-derives as the parent did.
+      if ! $CURRENT_MODEL_IN_CALLER_ENV; then
+        unset SECOND_OPINION_CURRENT_MODEL
+      fi
+      # The capture carries the lane's own log, so it is owner-only too —
+      # restrictive for the open, restored before the exec so the external CLI
+      # this child runs starts from the caller's umask like any other program.
+      lane_umask_prev=$(umask)
+      umask 077
+      exec 4>&2 2>/dev/null
+      if exec 3>"$lane_err"; then
+        exec 2>&4 4>&-
+      else
+        exec 3>/dev/null 2>&4 4>&-
+        echo "→ lane stderr capture could not be opened — log replay lost: $lane" >&2
+      fi
+      umask "$lane_umask_prev"
+      # `=` form throughout: a split-form option now refuses a flag-shaped
+      # value, and every one of these is derived from caller input that may
+      # legitimately begin with '-' (--output above all). The child would
+      # otherwise reject its own lane path.
+      # --scratch-output: the artifact this child is handed is the tool's, not
+      # the caller's, so it and its sidecars are written owner-only. Told per
+      # invocation, so the restriction reaches those writes and nothing else
+      # the lane creates.
+      exec "$SELF" review --target="$lane" --range="$REVIEW_RANGE" --cwd="$CWD" \
+        --timeout="$TIMEOUT" --output="$lane_out" --scratch-output >/dev/null 2>&3 3>&-
+    ) &
+    LANE_PIDS+=($!)
+    LANE_OUTS+=("$lane_out")
+    LANE_ERRS+=("$lane_err")
+  done
+
+  # Gate every lane artifact on the shape the union merge actually consumes.
+  # A zero exit and a parse are not enough: the merge adds `{source: …}` to
+  # each finding, iterates questions, lowercases locations and concatenates
+  # summaries, so a top-level-complete artifact carrying `blockers: ["bad"]`
+  # parses fine and then aborts the merge under `set -e` — no union at all,
+  # even though the other lane returned a perfectly good review. Rejecting it
+  # here keeps that lane's failure local (exit 4, coverage degraded) and lets
+  # the healthy lanes publish. Slurped, so a stream of several JSON values is
+  # refused too rather than smuggling extra lanes into the merge.
+  LANE_WRAP_JQ='
+    def bad(m): error("invalid review artifact: " + m);
+    def check(k):
+      if (.[k] | type) != "array" then bad(k + " is not an array")
+      elif any(.[k][]; type != "object") then bad(k + " holds a non-object entry")
+      elif any(.[k][]; .location != null and (.location | type) != "string")
+        then bad(k + " holds a non-string location")
+      else . end;
+    if length == 0 then bad("artifact holds no JSON value at all")
+    elif length > 1 then bad("artifact holds " + (length | tostring) + " JSON values, expected one")
+    else .[0] end
+    | if type != "object" then bad("artifact is not a JSON object")
+      elif (.questions | type) != "array" then bad("questions is not an array")
+      elif .summary != null and (.summary | type) != "string" then bad("summary is not a string")
+      else check("blockers") | check("suggestions") end
+    | {target: $target, review: .}'
+
+  LANES_FAILED_JSON="[]"
+  LANE_WRAPS=()
+  ANY_LANE_EXIT4=false
+  for i in "${!LANE_PIDS[@]}"; do
+    lane="${REVIEW_LANES[$i]}"
+    lane_rc=0
+    wait "${LANE_PIDS[$i]}" || lane_rc=$?
+    # Replay the lane's stderr with a lane prefix so parallel logs stay
+    # attributable in sequential order. The stderr capture is scratch: when it
+    # is gone (VST-221 — the reviewed repo's own agent CLI, a sandbox, or a tmp
+    # reaper can clear scratch while lanes run) the log is lost and nothing
+    # else is. Branch on the read ITSELF rather than a prior -r test: a capture
+    # removed between the test and the read would otherwise emit the bare
+    # "can't read" error this branch exists to replace. The one message covers
+    # removal before and during the read, states the observed condition instead
+    # of an inferred cause, and never colours the lane's own verdict.
+    #
+    # Redirection order below is load-bearing: fd1 must be duplicated from the
+    # REAL stderr BEFORE fd2 is silenced. Written the other way round
+    # (2>/dev/null first) `>&2` dupes fd1 from the already-silenced fd2 and the
+    # whole replay — an operator's only view of a lane's cause text, and how
+    # exit 5 is diagnosed — goes to /dev/null on the success path, where no
+    # verdict assertion would ever notice. The `jq … 2>&1 >/dev/null` capture
+    # further down wants the opposite order and is correct as written.
+    if ! sed "s/^/[${lane}] /" "${LANE_ERRS[$i]}" >&2 2>/dev/null; then
+      echo "→ lane stderr replay unavailable (scratch capture unreadable): $lane" >&2
+    fi
+    lane_ok=false
+    # Read the artifact ONCE, into memory (VST-221). Everything downstream —
+    # the wrap, and the cause reported when the wrap is refused — works on
+    # those same bytes, so a test-then-read pair can no longer straddle the
+    # mid-run clearing this fix is about, and the reported cause is always the
+    # one that actually rejected the lane rather than whatever a later re-read
+    # happens to find (an artifact removed a moment after being rejected as
+    # malformed would otherwise be explained as "No such file or directory").
+    # Which failure class a lane lands in is decided by what it WROTE, so the
+    # test is the artifact's size on disk. A shell string cannot stand in for
+    # that: command substitution cannot hold NUL bytes, so an artifact holding
+    # only a NUL would read back as the empty string and be called
+    # never-answered even though the lane did produce a byte — and the contract
+    # is that the line between the classes is whether any bytes exist at all.
+    # Testing before reading cannot revive the older hazard: an artifact that
+    # vanishes between the two lands in answered-unusably, because the gate
+    # then has nothing to parse, and never in never-answered.
+    lane_raw=""
+    if [[ $lane_rc -eq 0 && -s "${LANE_OUTS[$i]}" ]]; then
+      # Read through a redirection, not a path operand: the lane artifact's
+      # name carries the caller's --output value, which may begin with '-' and
+      # would otherwise be parsed as options — the lane would then look like it
+      # exited 0 having produced nothing. A redirection has no such parsing,
+      # and needs no `--` marker to be portable. The sentinel keeps the gate's
+      # input faithful to the file, which command substitution would otherwise
+      # shorten by every trailing newline.
+      #
+      # NUL is translated rather than read, because a shell string is the one
+      # thing that cannot carry it: bash drops NUL bytes from a command
+      # substitution, so an artifact jq refuses on disk — valid JSON with a NUL
+      # appended, say — would reach the gate as the clean prefix and be counted
+      # a healthy lane, coverage reading "full" over bytes no reader would
+      # accept. 0x01 stands in for it because jq refuses every control
+      # character below 0x20 in exactly the positions it refuses NUL, bare or
+      # inside a string, so the gate's verdict is the verdict it would reach on
+      # the file itself. The group's stderr goes nowhere because the only
+      # writer to it is tr, already silenced.
+      #
+      # A failed read is poisoned with that same byte rather than checked: the
+      # sentinel makes `printf X` the last command, so the substitution's own
+      # status is always 0 and tr's is unrecoverable from it. Without the
+      # poison a read that died partway — the file unlinked under it, or an I/O
+      # error — would hand the gate a prefix that can parse clean on its own,
+      # and an artifact nobody managed to read would be merged as a healthy
+      # lane. Appending the byte makes the truncation something jq refuses, so
+      # a read that did not finish can only ever land in answered-unusably.
+      { lane_raw=$(tr '\000' '\001' 2>/dev/null < "${LANE_OUTS[$i]}" || printf '\001'; printf X); } 2>/dev/null
+      lane_raw="${lane_raw%X}"
+      # A zero exit and readable content are not proof of a usable artifact —
+      # it must survive LANE_WRAP_JQ, or one bad lane takes the whole merge
+      # down with it. The wrapped review is held IN MEMORY from here on: the
+      # union merge must not depend on a scratch file surviving between this
+      # reap and the final write, or losing scratch would report healthy lanes
+      # as unusable and drop a verdict both models actually delivered.
+      #
+      # The wrap must also be NON-EMPTY: jq exits 0 printing nothing for input
+      # that holds no JSON value at all, which would push an empty element into
+      # the merge — a lane counted as healthy that contributes no findings,
+      # dropping a real blocker while coverage still reads "full".
+      if lane_wrap=$(printf '%s\n' "$lane_raw" | jq -c -s --arg target "$lane" "$LANE_WRAP_JQ" 2>/dev/null) \
+         && [[ -n "$lane_wrap" ]]; then
+        LANE_WRAPS+=("$lane_wrap")
+        lane_ok=true
+      else
+        # Say WHY it is unusable — jq's own message names a truncated artifact,
+        # a malformed one, or the shape the merge could not have consumed. In
+        # stdout mode the artifact is gone at exit, so this line is the only
+        # evidence left. `2>&1 >/dev/null` is the opposite order from the sed
+        # replay above on purpose: here fd2 must reach the pipe before fd1 is
+        # discarded.
+        lane_reason=$(printf '%s\n' "$lane_raw" | jq -s --arg target "$lane" "$LANE_WRAP_JQ" 2>&1 >/dev/null | head -1) || true
+        [[ -n "$lane_reason" ]] || lane_reason="no JSON value in artifact"
+        echo "→ lane produced an unusable artifact: $lane ($lane_reason)" >&2
+        lane_rc="$EXIT_NO_REVIEW"
+      fi
+    elif [[ $lane_rc -eq 0 ]]; then
+      # Clean exit, nothing usable on disk: the lane never delivered an answer.
+      # That is the lane-level class (5), not the response-level one (4) — and
+      # it must never be reported as the child's bare "exit 0", which reads as
+      # a lane that both succeeded and failed.
+      echo "→ lane exited 0 without a usable artifact: $lane" >&2
+      lane_rc="$EXIT_CLI_FAILED"
+    fi
+    if ! $lane_ok; then
+      # Exit-code contract: 4 = the lane ANSWERED but unusably. A lane's own
+      # exit 1 after the availability check is a response-level defect too
+      # (invalid JSON even after the retry exits 1) — only never-answered
+      # classes (5, 124) leave ANY_LANE_EXIT4 unset.
+      [[ $lane_rc -eq "$EXIT_NO_REVIEW" || $lane_rc -eq 1 ]] && ANY_LANE_EXIT4=true
+      echo "→ lane failed: $lane (exit $lane_rc)" >&2
+      LANES_FAILED_JSON=$(jq -n --argjson prev "$LANES_FAILED_JSON" \
+        --arg target "$lane" --argjson code "$lane_rc" \
+        '$prev + [{target: $target, status: "failed", exit_code: $code}]')
+    fi
+  done
+
+  if [[ ${#LANE_WRAPS[@]} -eq 0 ]]; then
+    jq -n --argjson lanes "$LANES_FAILED_JSON" \
+      '{error: "every review lane failed — no external verdict", lanes: $lanes}' >&2
+    if $ANY_LANE_EXIT4; then exit "$EXIT_NO_REVIEW"; else exit "$EXIT_CLI_FAILED"; fi
+  fi
+
+  # Union merge. Dedupe key: normalized location (lowercased, backticks and
+  # whitespace runs collapsed) PLUS the finding's occurrence index among
+  # same-location findings within its own lane — so one lane reporting two
+  # distinct bugs at a location keeps both (they get #0/#1), while the same
+  # bug reported by two lanes (each lane's #0) still merges. A finding with an
+  # empty location never deduplicates (its key is made unique by input
+  # position). Duplicates collapse to the first of each group with all
+  # contributing lanes listed in `sources`; a suggestion is dropped only when
+  # a blocker holds its exact key (the stricter class wins for the same slot).
+  # reviewed_head is the scope-derivation pin, for per-push budget accounting.
+  STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  REVIEWED_HEAD="$REVIEW_HEAD_SHA"
+  MERGED=$(printf '%s\n' "${LANE_WRAPS[@]}" | jq -s --argjson failed "$LANES_FAILED_JSON" --arg ts "$STAMP" --arg head "$REVIEWED_HEAD" \
+      --argjson requested "$REQUESTED_COUNT" --argjson selected "$SELECTED_COUNT" '
+    def norm: ((.location // "") | ascii_downcase | gsub("`"; "") | gsub("\\s+"; " ") | ltrimstr(" ") | rtrimstr(" "));
+    def with_occ: reduce .[] as $f ({seen: {}, out: []};
+      ($f | norm) as $n
+      | (.seen[$n] // 0) as $c
+      | {seen: (.seen + {($n): ($c + 1)}), out: (.out + [$f + {_occ: $c}])})
+      | .out;
+    def keyed: to_entries | map(.value + {_k: ((.value | norm) as $l
+      | if $l == "" then "__nokey_" + (.key | tostring)
+        else $l + "#" + ((.value._occ // 0) | tostring) end)});
+    def collapse: group_by(._k) | map(.[0] + {sources: (map(.source) | unique)});
+    . as $lanes
+    | ($lanes | map(.target)) as $targets
+    | ([ $lanes[] | .target as $t | (.review.blockers    | map(. + {source: $t}) | with_occ)[] ] | keyed) as $abk
+    | ([ $lanes[] | .target as $t | (.review.suggestions | map(. + {source: $t}) | with_occ)[] ] | keyed) as $ask
+    | ($abk | collapse) as $bk
+    | ($bk | map(._k)) as $bkeys
+    | ($ask | map(select(._k as $k | ($bkeys | index($k)) == null)) | collapse) as $sk
+    | ($bk | map(del(._k, ._occ, .source)) | to_entries | map(.value + {id: (.key + 1)})) as $blockers
+    | ($sk | map(del(._k, ._occ, .source)) | to_entries | map(.value + {id: (.key + 1)})) as $suggestions
+    | {
+        agent: ("external-union(" + ($targets | join("+")) + ")"),
+        timestamp: $ts,
+        verdict: (if ($blockers | length) > 0 then "action_required" else "pass" end),
+        summary: ("Union of " + ($lanes | length | tostring) + " lane reviews ("
+                  + ($targets | join(", ")) + "): "
+                  + ($lanes | map(.target + ": " + (.review.summary // "")) | join(" | "))),
+        blockers: $blockers,
+        suggestions: $suggestions,
+        questions: ([ $lanes[] | .review.questions[] ] | unique),
+        qa_metadata: ({
+          union: true,
+          coverage: (if ($failed | length) > 0 or $selected < $requested then "degraded" else "full" end),
+          requested_count: $requested,
+          selected_count: $selected,
+          lanes: (($lanes | map({target: .target, status: "ok",
+                                 agent: (.review.agent // ("external-" + .target)),
+                                 verdict: .review.verdict,
+                                 blockers: (.review.blockers | length),
+                                 suggestions: (.review.suggestions | length)}))
+                  + $failed),
+          dedupe: {blockers_in: ($abk | length), blockers_out: ($blockers | length),
+                   suggestions_in: ($ask | length), suggestions_out: ($suggestions | length)}
+        } + (if $head == "" then {} else {reviewed_head: $head} end))
+      }
+  ')
+
+  if [[ -n "$OUTPUT_PATH" ]]; then
+    printf '%s\n' "$MERGED" > "$OUTPUT_PATH"
+    # Count what the artifact CARRIES, not what went into the merge: a count
+    # taken from the input array describes the artifact without being bound to
+    # it, and the two can disagree without either being wrong on its own terms.
+    # A re-query that fails says so, with jq's message: the merge just produced
+    # this JSON, so a shape it cannot read back is an internal inconsistency,
+    # and a bare "?" would hide the only evidence of it.
+    if union_lanes=$(printf '%s\n' "$MERGED" | jq '[.qa_metadata.lanes[] | select(.status == "ok")] | length' 2>&1); then
+      echo "→ Written: $OUTPUT_PATH (union of $union_lanes lanes)" >&2
+    else
+      echo "→ Written: $OUTPUT_PATH (lane count unavailable: $union_lanes)" >&2
+    fi
+    echo "$OUTPUT_PATH"
+  else
+    printf '%s\n' "$MERGED"
+  fi
+  exit 0
+fi
+
+# --- Build final prompt -------------------------------------------------------
+
+PROMPT=""
+case "$MODE" in
+  review)
+    # Derive scope at top level (not in the $() subshell) so its exit
+    # EXIT_NO_SCOPE aborts the run instead of being captured.
+    derive_review_scope "$CWD" "$RANGE"
+    PROMPT=$(build_review_prompt)
+    ;;
+  challenge) PROMPT=$(read_prompt) ;;
+  audit)     PROMPT=$(read_prompt) ;;
+  quick)     PROMPT=$(read_prompt) ;;
+esac
+
+# Guard: empty prompt (stdin was closed with no data)
+if [[ -z "$PROMPT" ]]; then
+  echo "Error: empty prompt — provide --prompt <file> or pipe content via stdin" >&2
+  exit 1
+fi
+
+# Write prompt to temp file — use printf to avoid echo interpreting leading dashes
+PROMPT_TMP=$(mktemp)
+# Guarded for the same reason as cleanup_lanes: an EXIT trap whose last command
+# fails REPLACES the run's exit status, so a temp directory that turned
+# read-only under the run would rewrite a documented 4/5 into rm's status.
+trap 'rm -f -- "$PROMPT_TMP" || true' EXIT
+printf '%s\n' "$PROMPT" > "$PROMPT_TMP"
+
+STDERR_TMP=$(mktemp)
+# RETRY_PROMPT_TMP is created only when extraction fails and a retry runs; keep
+# it in the cleanup trap. Sidecar files written by preserve_raw_response and
+# preserve_raw_and_fail are deliberately NOT tracked here — they are the durable
+# record of a lost or reformatted response.
+RETRY_PROMPT_TMP=""
+trap 'rm -f -- "$PROMPT_TMP" "$STDERR_TMP" "$RETRY_PROMPT_TMP" || true' EXIT
+
+# --- Invoke external CLI ------------------------------------------------------
+
+RESULT=""
+EXIT_CODE=0
+
+# Invoke the resolved target CLI with a prompt file on stdin. The command line
+# comes from target_cmd (env override or built-in default). Echoes the CLI's
+# stdout on our stdout and returns its exit code (124 on timeout). Reused for
+# the retry on JSON-extraction failure, so it stays side-effect-free beyond
+# writing the CLI's stderr to STDERR_TMP.
+run_target_cli() {
+  local prompt_file="$1"
+  local rc=0 cmd
+  cmd="$(target_cmd "$TARGET_CLI")"
+  if [[ -z "$cmd" ]]; then
+    echo "{\"error\": \"Unknown target: $TARGET_CLI — set $(target_cmd_var "$TARGET_CLI")\"}" >&2
+    return 2
+  fi
+  echo "→ cmd: timeout -k 30 ${TIMEOUT}s $cmd" >&2
+  # shellcheck disable=SC2086
+  (cd -- "$CWD" && timeout -k 30 "$TIMEOUT" $cmd < "$prompt_file" 2>"$STDERR_TMP") || rc=$?
+  return "$rc"
+}
+
+# kendex#809: a failed external-CLI invocation on the primary call — non-zero
+# exit (quota/auth/network), timeout, or a zero exit that returned nothing
+# usable — produces no external verdict, exactly like the no-scope/no-review
+# gates. Left as a bare exit-0 it fails invisibly precisely when the lane is
+# down, so it must join the no-verdict class: preserve whatever partial output
+# exists as <output>.failed.json (mirroring the .noreview/.incomplete sidecars),
+# emit an error JSON on stderr that carries the sidecar path AND the CLI's own
+# error text (so an operator sees "usage limit", not a bare code), then exit
+# EXIT_CLI_FAILED. Only review/audit modes carry the no-verdict contract, so
+# only they call this; challenge/quick keep the generic exit 1. Independent of
+# TARGET_CLI — both lanes route through run_target_cli and STDERR_TMP.
+preserve_cli_failure_and_fail() {
+  local reason="$1"          # human-readable cause (e.g. "exited with code 2")
+  local partial="${2:-}"     # captured stdout, may be empty
+  local sidecar cause="" cause_source=""
+
+  # The CLI's own stderr is the authoritative cause (e.g. the quota message).
+  # Some CLIs report the failure on stdout with an empty stderr — the Claude
+  # quota-limit message is the concrete case — which left the cause block empty
+  # and made a capped lane read as broken. Fall back to the tail of captured
+  # stdout so the reason surfaces whichever stream carried it.
+  if [[ -s "$STDERR_TMP" ]]; then
+    cause=$(head -20 "$STDERR_TMP")
+    cause_source="${TARGET_CLI} stderr"
+  elif [[ -n "$partial" ]]; then
+    cause=$(printf '%s\n' "$partial" | tail -20)
+    cause_source="${TARGET_CLI} stdout"
+  fi
+
+  if [[ -n "$OUTPUT_PATH" ]]; then
+    mkdir -p -- "$(path_dir "$OUTPUT_PATH")"
+    sidecar="${OUTPUT_PATH}.failed.json"
+  else
+    artifact_file failed; sidecar="$ARTIFACT_PATH"
+  fi
+  sidecar=$(store_record "$sidecar" "$(jq -n --arg target "$TARGET_CLI" --arg reason "$reason" \
+        --arg cause "$cause" --arg cause_source "$cause_source" --arg stdout "$partial" \
+    '{error: "external CLI failed before producing a review", target: $target, reason: $reason, cause: $cause, cause_source: $cause_source, partial_stdout: $stdout}')")
+
+  jq -n --arg target "$TARGET_CLI" --arg reason "$reason" --arg sidecar "$sidecar" \
+    '{error: "\($target) \($reason) — refusing to write a review artifact", response: $sidecar}' >&2
+  echo "→ external CLI failed: $TARGET_CLI $reason" >&2
+  if [[ -n "$cause" ]]; then
+    echo "--- cause (${cause_source}) ---" >&2
+    printf '%s\n' "$cause" >&2
+  fi
+  if [[ -n "$sidecar" ]]; then
+    echo "→ failed invocation preserved: $sidecar" >&2
+  else
+    echo "→ failed invocation could not be preserved anywhere — the cause above is the whole record" >&2
+  fi
+  exit "$EXIT_CLI_FAILED"
+}
+
+# review/audit carry the no-verdict contract (exits 3/4/5); challenge/quick do not.
+REVIEW_LIKE=false
+[[ "$MODE" == "review" || "$MODE" == "audit" ]] && REVIEW_LIKE=true
+
+RESULT=$(run_target_cli "$PROMPT_TMP") || EXIT_CODE=$?
+
+if [[ $EXIT_CODE -eq 124 ]]; then
+  $REVIEW_LIKE && preserve_cli_failure_and_fail "timed out after ${TIMEOUT}s" "$RESULT"
+  echo "{\"error\": \"Timeout after ${TIMEOUT}s\", \"target\": \"$TARGET_CLI\"}" >&2
+  exit 1
+elif [[ $EXIT_CODE -ne 0 ]]; then
+  $REVIEW_LIKE && preserve_cli_failure_and_fail "exited with code $EXIT_CODE" "$RESULT"
+  echo "{\"error\": \"$TARGET_CLI exited with code $EXIT_CODE\", \"target\": \"$TARGET_CLI\"}" >&2
+  if [[ -s "$STDERR_TMP" ]]; then
+    echo "--- stderr ---" >&2
+    head -20 "$STDERR_TMP" >&2
+  fi
+  exit 1
+fi
+
+echo "→ Response received (${#RESULT} bytes)" >&2
+
+if [[ ${#RESULT} -eq 0 ]]; then
+  $REVIEW_LIKE && preserve_cli_failure_and_fail "returned an empty response on a zero exit — check CLI auth and configuration" ""
+  echo "{\"error\": \"$TARGET_CLI returned empty response — check CLI auth and configuration\", \"target\": \"$TARGET_CLI\"}" >&2
+  if [[ -s "$STDERR_TMP" ]]; then
+    echo "--- stderr ---" >&2
+    head -20 "$STDERR_TMP" >&2
+  fi
+  exit 1
+fi
+
+# --- Extract JSON (review/audit modes) ----------------------------------------
+
+extract_json() {
+  local input="$1"
+
+  # Whole output is valid JSON
+  if printf '%s' "$input" | jq -e . >/dev/null 2>&1; then
+    printf '%s' "$input" | jq .
+    return 0
+  fi
+
+  # Extract from first ```json ... ``` code fence (stop at first closing fence)
+  local fenced
+  fenced=$(printf '%s' "$input" | sed -n '/^```json/{n; :a; /^```$/q; p; n; ba}')
+  if [[ -n "$fenced" ]] && printf '%s' "$fenced" | jq -e . >/dev/null 2>&1; then
+    printf '%s' "$fenced" | jq .
+    return 0
+  fi
+
+  # Extract from first ``` ... ``` fence (no language tag)
+  fenced=$(printf '%s' "$input" | sed -n '/^```$/{n; :a; /^```$/q; p; n; ba}')
+  if [[ -n "$fenced" ]] && printf '%s' "$fenced" | jq -e . >/dev/null 2>&1; then
+    printf '%s' "$fenced" | jq .
+    return 0
+  fi
+
+  # Last resort: extract from first { to last } (trim trailing prose)
+  local from_brace
+  from_brace=$(printf '%s' "$input" | sed -n '/^{/,$ p')
+  if [[ -n "$from_brace" ]]; then
+    # Single-line JSON (common): try first line alone
+    local first_line
+    first_line=$(printf '%s\n' "$from_brace" | head -1)
+    if printf '%s' "$first_line" | jq -e . >/dev/null 2>&1; then
+      printf '%s' "$first_line" | jq .
+      return 0
+    fi
+    # Multiline JSON: truncate at last line starting with }
+    local last_brace_line trimmed
+    last_brace_line=$(printf '%s\n' "$from_brace" | grep -n '^}' | tail -1 | cut -d: -f1)
+    if [[ -n "$last_brace_line" ]]; then
+      trimmed=$(printf '%s\n' "$from_brace" | head -n "$last_brace_line")
+      if printf '%s' "$trimmed" | jq -e . >/dev/null 2>&1; then
+        printf '%s' "$trimmed" | jq .
+        return 0
+      fi
+    fi
+  fi
+
+  return 1
+}
+
+# --- Retry + raw-preservation helpers (review/audit) --------------------------
+
+# Build the follow-up prompt for the one-shot retry: the FULL original request,
+# the raw first response, and the canonical JSON schema with an instruction to
+# serialize now. The retry runs in a fresh session (--no-session-persistence /
+# --ephemeral), so it must carry the complete original prompt — scope block
+# included — or the model has nothing to review and can only produce a
+# context-free verdict (kendex#672). The schema file is the shared source of
+# the JSON structure for both review and audit, so re-reading it here works
+# regardless of which mode produced the first response. The optional second
+# arg names the defect in the first response (default: no parseable JSON) so
+# an incomplete-schema retry (kendex#678) tells the model exactly what was
+# missing instead of claiming the JSON did not parse.
+build_retry_prompt() {
+  local raw="$1"
+  local problem="${2:-did not contain a parseable JSON object}"
+  local schema_file="$SCRIPT_DIR/../schemas/review-finding-prompt.md"
+  local schema=""
+  if [[ -f "$schema_file" ]]; then
+    schema=$(sed "s/external-TARGET/external-${TARGET_CLI}/g; s/ISO_8601/$(date -u +%Y-%m-%dT%H:%M:%SZ)/g" "$schema_file")
+  fi
+  cat <<RETRY
+Your previous response to the request below ${problem}. This is a single fresh session with no prior turns and no session history — there is no earlier message and nothing was "delivered above" or "previously". Complete the request below and output the COMPLETE JSON object in THIS response. If your previous response already contains your findings, serialize them without changing them; otherwise perform the request now using the scope it specifies. Output ONLY the JSON object — no prose before or after.
+
+--- Original request ---
+${PROMPT}
+--- End of original request ---
+
+--- Your previous response ---
+${raw}
+--- End of your previous response ---
+
+Emit exactly this JSON structure:
+${schema}
+RETRY
+}
+
+# kendex#940: persist the raw first response the moment a retry is attempted —
+# BEFORE the retry outcome is known. A successful reformat retry replaces
+# RESULT wholesale, so without this sidecar the only record of what the model
+# actually said is discarded exactly when the retry "succeeds", making a
+# dropped/softened/merged finding unauditable. Sets RAW_PRESERVED_PATH;
+# preserve_raw_and_fail reuses it so the both-failed path never duplicates the
+# content.
+RAW_PRESERVED_PATH=""
+preserve_raw_response() {
+  local raw="$1"
+  if [[ -n "$OUTPUT_PATH" ]]; then
+    mkdir -p -- "$(path_dir "$OUTPUT_PATH")"
+    RAW_PRESERVED_PATH="${OUTPUT_PATH}.raw.txt"
+  else
+    artifact_file raw; RAW_PRESERVED_PATH="$ARTIFACT_PATH"
+  fi
+  RAW_PRESERVED_PATH=$(store_record "$RAW_PRESERVED_PATH" "$raw")
+  [[ -n "$RAW_PRESERVED_PATH" ]] \
+    || echo "→ raw first response could not be stored anywhere" >&2
+}
+
+# Persist the raw (and optional retry) response so a lost review is auditable,
+# emit an error JSON that carries the sidecar path(s), then exit 1.
+preserve_raw_and_fail() {
+  local raw="$1"
+  local retry="${2:-}"
+  local raw_path retry_path=""
+
+  # The raw first response was already written when the retry was attempted
+  # (kendex#940) — reuse that sidecar instead of writing it a second time.
+  if [[ -n "$RAW_PRESERVED_PATH" ]]; then
+    raw_path="$RAW_PRESERVED_PATH"
+  elif [[ -n "$OUTPUT_PATH" ]]; then
+    mkdir -p -- "$(path_dir "$OUTPUT_PATH")"
+    raw_path=$(store_record "${OUTPUT_PATH}.raw.txt" "$raw")
+  else
+    artifact_file raw; raw_path=$(store_record "$ARTIFACT_PATH" "$raw")
+  fi
+  if [[ -n "$retry" ]]; then
+    if [[ -n "$OUTPUT_PATH" ]]; then
+      retry_path=$(store_record "${OUTPUT_PATH}.retry.txt" "$retry")
+    else
+      artifact_file retry; retry_path=$(store_record "$ARTIFACT_PATH" "$retry")
+    fi
+  fi
+
+  if [[ -n "$retry_path" ]]; then
+    jq -n --arg target "$TARGET_CLI" --argjson len "${#raw}" \
+      --arg rawpath "$raw_path" --arg retrypath "$retry_path" \
+      '{error: "Failed to extract JSON from \($target) response after retry", raw_length: $len, raw_response: $rawpath, retry_response: $retrypath}' >&2
+    echo "→ retry response preserved: $retry_path" >&2
+  else
+    jq -n --arg target "$TARGET_CLI" --argjson len "${#raw}" --arg rawpath "$raw_path" \
+      '{error: "Failed to extract JSON from \($target) response after retry", raw_length: $len, raw_response: $rawpath}' >&2
+  fi
+  if [[ -n "$raw_path" ]]; then
+    echo "→ raw response preserved: $raw_path" >&2
+  else
+    echo "→ raw response could not be preserved anywhere — the excerpt below is the whole record" >&2
+  fi
+  echo "--- First 30 lines of raw response ---" >&2
+  printf '%s\n' "$raw" | head -30 >&2
+  exit 1
+}
+
+# --- No-review self-report gate (review/audit) --------------------------------
+# kendex#652: a schema-valid response whose qa_metadata admits no review
+# happened (review_performed=false or a no-scope/no-review reason) must never
+# become the --output artifact, regardless of its verdict.
+
+response_reports_no_review() {
+  printf '%s' "$1" | jq -e '
+    (.qa_metadata? // {}) as $qa
+    | (($qa | type) == "object")
+      and (($qa.review_performed == false)
+           or ((($qa.reason // "") | tostring)
+               | test("no[ _-]?(scope|review)|not[ _-]?reviewed"; "i")))
+  ' >/dev/null 2>&1
+}
+
+# kendex#672: the schema REQUIRES a qa_metadata object ({} for a performed
+# review), so a response with no qa_metadata key cannot attest that any review
+# happened — non-conforming, structurally detected, no prose parsing. Catches
+# in particular a retried response that dropped the field along with the rest
+# of its context. (orch review-artifact-check stays tolerant of absent
+# qa_metadata for internal reviewers; this gate is producer-side only.)
+response_missing_qa_metadata() {
+  ! printf '%s' "$1" | jq -e '(.qa_metadata? | type) == "object"' >/dev/null 2>&1
+}
+
+# kendex#678: extraction can yield truncated-but-valid JSON — verdict and
+# summary survive while the finding arrays are silently dropped, so the
+# artifact looks reviewable but the actual blockers/suggestions are lost. The
+# schema requires verdict plus all three arrays (empty [] is fine), so anything
+# less is structurally incomplete: an incomplete FIRST response goes through
+# the one-shot retry (full original context, kendex#672); a still-incomplete
+# retried response is rejected. qa_metadata is deliberately NOT part of this
+# predicate — its absence rejects without a retry (kendex#672 contract).
+response_incomplete_schema() {
+  ! printf '%s' "$1" | jq -e '
+    ((.verdict? | type) == "string")
+    and ((.blockers? | type) == "array")
+    and ((.suggestions? | type) == "array")
+    and ((.questions? | type) == "array")
+  ' >/dev/null 2>&1
+}
+
+# Persist the rejected response as a sidecar (durable record), emit an error
+# JSON carrying its path, and exit EXIT_NO_REVIEW. OUTPUT_PATH itself is never
+# written, so no pass artifact can exist for a review that did not verifiably
+# happen. The optional second arg overrides the error message (default: the
+# qa_metadata self-report); the optional third arg overrides the sidecar
+# suffix (default "noreview" — "incomplete" for the kendex#678 schema gate).
+preserve_no_review_and_fail() {
+  local json="$1"
+  local errmsg="${2:-}"
+  local suffix="${3:-noreview}"
+  local sidecar reason
+
+  if [[ -z "$errmsg" ]]; then
+    reason=$(printf '%s' "$json" | jq -r '.qa_metadata.reason? // "review_performed=false"' 2>/dev/null) || reason="review_performed=false"
+    errmsg="self-reported that no review was performed ($reason)"
+  fi
+
+  if [[ -n "$OUTPUT_PATH" ]]; then
+    mkdir -p -- "$(path_dir "$OUTPUT_PATH")"
+    sidecar="${OUTPUT_PATH}.${suffix}.json"
+  else
+    artifact_file "$suffix"; sidecar="$ARTIFACT_PATH"
+  fi
+  sidecar=$(store_record "$sidecar" "$json")
+
+  jq -n --arg target "$TARGET_CLI" --arg errmsg "$errmsg" --arg sidecar "$sidecar" \
+    '{error: "\($target) \($errmsg) — refusing to write a review artifact", response: $sidecar}' >&2
+  if [[ -n "$sidecar" ]]; then
+    echo "→ rejected response preserved: $sidecar" >&2
+  else
+    echo "→ rejected response could not be preserved anywhere — the error above is the whole record" >&2
+  fi
+  exit "$EXIT_NO_REVIEW"
+}
+
+if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
+  # Two retryable defects in the first response share the one-shot retry: no
+  # parseable JSON at all (kendex#509 — prose claiming the JSON was "already
+  # delivered above", impossible with --no-session-persistence / --ephemeral),
+  # and parseable-but-truncated JSON that lost the required finding arrays
+  # (kendex#678). The retry resends the full original request (kendex#672), so
+  # a truncated extraction gets one chance to re-serialize completely instead
+  # of being written as a findings-less artifact.
+  RETRY_WHY=""
+  RETRY_PROBLEM=""
+  # Byte counts of the raw responses, recorded into the artifact's qa_metadata
+  # (kendex#940) so a reformat that shrank the review is visible in the
+  # artifact itself. Measured on the untouched CLI output, before extraction.
+  RAW_RESPONSE_BYTES=${#RESULT}
+  RETRY_RESPONSE_BYTES=""
+  if JSON=$(extract_json "$RESULT"); then
+    if response_incomplete_schema "$JSON"; then
+      RETRY_WHY="first response JSON is structurally incomplete"
+      RETRY_PROBLEM="contained a JSON object that is missing required schema fields — verdict and the blockers, suggestions, and questions arrays are all mandatory (use [] for an empty array)"
+    else
+      RESULT="$JSON"
+    fi
+  else
+    RETRY_WHY="extract_json failed on first response"
+  fi
+
+  if [[ -n "$RETRY_WHY" ]]; then
+    echo "→ $RETRY_WHY; retrying once with captured response" >&2
+    # Persist the raw first response now, before the retry outcome is known
+    # (kendex#940) — a successful reformat must not erase the original.
+    preserve_raw_response "$RESULT"
+    RETRY_PROMPT_TMP=$(mktemp)
+    if [[ -n "$RETRY_PROBLEM" ]]; then
+      build_retry_prompt "$RESULT" "$RETRY_PROBLEM" > "$RETRY_PROMPT_TMP"
+    else
+      build_retry_prompt "$RESULT" > "$RETRY_PROMPT_TMP"
+    fi
+
+    RETRY_RESULT=""
+    RETRY_EXIT=0
+    RETRY_RESULT=$(run_target_cli "$RETRY_PROMPT_TMP") || RETRY_EXIT=$?
+    RETRY_RESPONSE_BYTES=${#RETRY_RESULT}
+
+    if [[ $RETRY_EXIT -eq 124 ]]; then
+      echo "→ retry timed out after ${TIMEOUT}s" >&2
+      preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
+    elif [[ $RETRY_EXIT -ne 0 ]]; then
+      echo "→ retry exited with code $RETRY_EXIT" >&2
+      preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
+    elif [[ ${#RETRY_RESULT} -eq 0 ]]; then
+      echo "→ retry returned an empty response" >&2
+      preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
+    elif JSON=$(extract_json "$RETRY_RESULT"); then
+      # Same completeness discipline on the retried response: a retry that is
+      # still missing the required arrays must not become the artifact either
+      # (kendex#678) — preserve it and fail with the distinct no-review code.
+      if response_incomplete_schema "$JSON"; then
+        echo "→ retry response JSON is still structurally incomplete" >&2
+        preserve_no_review_and_fail "$JSON" \
+          "returned structurally incomplete JSON after retry — verdict and the blockers/suggestions/questions arrays are required (incomplete_schema)" \
+          incomplete
+      fi
+      echo "→ retry recovered valid JSON (${#JSON} bytes)" >&2
+      [[ -n "$RAW_PRESERVED_PATH" ]] \
+        && echo "→ raw first response preserved: $RAW_PRESERVED_PATH" >&2 || true
+      RESULT="$JSON"
+    else
+      echo "→ retry response still not parseable" >&2
+      preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
+    fi
+  fi
+
+  # Reject a self-reported no-review before the artifact can be written — a
+  # "pass" from a model that admits it reviewed nothing is a false pass. These
+  # gates run on whichever response became RESULT: first or retried.
+  if response_reports_no_review "$RESULT"; then
+    preserve_no_review_and_fail "$RESULT"
+  fi
+  if response_missing_qa_metadata "$RESULT"; then
+    preserve_no_review_and_fail "$RESULT" \
+      "returned non-conforming JSON with no qa_metadata object (missing_qa_metadata)"
+  fi
+
+  # Stamp the authoritative timestamp ourselves. The reviewing model serializes
+  # a `timestamp` field, but a model-supplied value is unverifiable — it can emit
+  # a stale or fabricated time (kendex#629). Overwrite it with the wrapper's own
+  # UTC wall clock so the artifact's content timestamp is trustworthy and matches
+  # its filesystem mtime. The schema keeps ISO_8601 as a hint; this is the
+  # authoritative value. RESULT is already jq-validated JSON here, so the rewrite
+  # succeeds; if jq unexpectedly fails, keep the extracted JSON unchanged.
+  # Also record the raw response byte counts in qa_metadata (kendex#940) —
+  # retry_response_bytes only when a retry actually ran — so a reformat that
+  # shrank the review is visible in the artifact, next to the .raw.txt sidecar.
+  # reviewed_head (review mode, VST-124): record the head commit the review
+  # covered so callers can budget review passes per pushed head instead of per
+  # submission — a new head is a new round.
+  STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  REVIEWED_HEAD=""
+  if [[ "$MODE" == "review" ]]; then
+    # Pinned at scope derivation, before the CLI ran — never re-sampled from a
+    # mutable HEAD after the review finished.
+    REVIEWED_HEAD="$REVIEW_HEAD_SHA"
+  fi
+  # requested/selected opinion counts (review mode): a review asked for more
+  # breadth than the roster could supply reads as degraded coverage, in the
+  # artifact and not only on stderr.
+  # agent is OURS to assert, not the provider's to supply. The consumer side
+  # will only remove a scanned sibling that carries an `external-…` marker, and
+  # a provider is free to return a missing or foreign `agent` that still passes
+  # the schema gate — leaving an artifact this skill genuinely wrote unmarked,
+  # and so unreclaimable once its target leaves the roster. Overwriting here
+  # makes "we wrote it" and "it carries our marker" the same statement.
+  if STAMPED=$(printf '%s' "$RESULT" | jq --arg ts "$STAMP" --arg head "$REVIEWED_HEAD" \
+      --argjson raw_bytes "$RAW_RESPONSE_BYTES" \
+      --argjson retry_bytes "${RETRY_RESPONSE_BYTES:-null}" \
+      --argjson requested "$REQUESTED_COUNT" --argjson selected "$SELECTED_COUNT" \
+      --arg mode "$MODE" --arg agent "external-${TARGET_CLI}" \
+      '.agent = $agent
+       | .timestamp = $ts
+       | (if $head == "" then . else .qa_metadata.reviewed_head = $head end)
+       | .qa_metadata.raw_response_bytes = $raw_bytes
+       | (if $retry_bytes == null then .
+          else .qa_metadata.retry_response_bytes = $retry_bytes end)
+       | if $mode != "review" then . else
+           .qa_metadata.requested_count = $requested
+           | .qa_metadata.selected_count = $selected
+           | (if $selected < $requested then .qa_metadata.coverage = "degraded" else . end)
+         end' 2>/dev/null); then
+    RESULT="$STAMPED"
+  fi
+fi
+
+# --- Output -------------------------------------------------------------------
+
+if [[ -n "$OUTPUT_PATH" ]]; then
+  mkdir -p -- "$(path_dir "$OUTPUT_PATH")"
+  write_owned "$OUTPUT_PATH" "$RESULT"
+  echo "→ Written: $OUTPUT_PATH" >&2
+  echo "$OUTPUT_PATH"
+else
+  printf '%s\n' "$RESULT"
+fi

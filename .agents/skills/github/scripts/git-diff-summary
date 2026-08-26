@@ -1,0 +1,961 @@
+#!/bin/bash
+# Git diff domain summary - group changed files by domain with stats and risk flags
+# Usage: git-diff-summary [base-branch]
+#        git-diff-summary main
+#        git-diff-summary --staged
+
+set -euo pipefail
+
+show_help() {
+    cat << 'EOF'
+Git Diff Domain Summary
+
+Groups changed files by domain (auto-detected from top-level directories)
+with stats and risk flags. Designed for review routing decisions.
+
+Usage: git-diff-summary [-C path] [base-branch]
+
+Arguments:
+  base-branch    Compare against this branch (default: the remote default
+                 branch, e.g. origin/main; falls back to local main when
+                 no remote-tracking ref exists)
+  -C path        Run as if started in <path> (worktree support)
+  --staged       Show only staged changes
+  --head         Show uncommitted changes vs HEAD
+
+Output: JSON with scope (production|support), domain groupings, stats, and risk flags
+
+Risk flags:
+  unsafe_code_added, repr_c_struct_changed, extern_c_changed,
+  atomics_modified
+                 Rust-specific flags; each scans ADDED lines in .rs diffs
+                 only (unsafe blocks, #[repr(C)] structs, extern "C" items,
+                 atomics use)
+  panic_path_added
+                 panic patterns (panic!/unwrap()) added to production source
+  test_panic_path_added
+                 the same panic patterns added in a test surface instead —
+                 #[cfg(test)] modules, tests/ dirs, *_tests.rs, or files
+                 reachable only through a #[cfg(test)]-gated mod declaration
+                 in their declaring module, #[path] siblings included.
+                 Informational: re-review scoping treats this flag as
+                 non-risk.
+EOF
+}
+
+# Default base for review scope. A stale local main must not widen scope to
+# unrelated commits, so prefer the already-fetched remote-tracking
+# ref of the repo's default branch. No network: never fetches, so offline/CI
+# calls keep working. Falls back to local main when the repo has no remote.
+resolve_default_base() {
+    local head_ref
+    head_ref=$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null || true)
+    if [ -n "$head_ref" ] && git rev-parse --verify --quiet "$head_ref" >/dev/null; then
+        echo "${head_ref#refs/remotes/}"
+        return
+    fi
+    local candidate
+    for candidate in origin/main origin/master; do
+        if git rev-parse --verify --quiet "refs/remotes/$candidate" >/dev/null; then
+            echo "$candidate"
+            return
+        fi
+    done
+    echo "main"
+}
+
+# --- declaration-site test scoping ----------------------------
+# A .rs file with no file-local test markers is still test-only when its gate
+# lives at the declaration site in the declaring module:
+#     #[cfg(test)]
+#     #[path = "scan_fixtures.rs"]
+#     mod scan_fixtures;
+# File-local heuristics cannot see that, so classification also reads the
+# modules that could declare the file on the diff's new side: a file whose
+# every found declaration is #[cfg(test)]-gated is test scope; any ungated
+# declaration or `include!` of the file, or none found, keeps the file-local
+# classification. Any read failure during scanning also keeps it (fail
+# closed: an unreadable declaring module could have held an ungated route).
+#
+# Residual limitations: production routes the scanner cannot see can still
+# let a gated declaration win. Crate roots are only recognized by the bin/
+# directory convention (candidates under a bin/ segment are skipped), not
+# via Cargo.toml `path =` wiring; include! calls whose argument is not a
+# direct string literal (concat!/env!/consts — even concatenations of
+# literals) emit no record; #[path]/include! declarations living in a
+# directory that is neither the candidate's own nor one of its ancestors
+# are not consulted; declarations inside any braced body — inline
+# modules, macro definitions and invocations, and non-module item bodies
+# (fn/impl/struct/...) — are skipped outright (no records — never a
+# mis-resolved one), which also makes block-level #[path] modules and
+# includes inside bodies invisible; and declarations produced by macro
+# EXPANSION (invoking a macro_rules! or proc macro) are invisible by
+# construction. Every one of these fails toward NO record for the shape, so
+# a file that is production-reachable only through one of them while also
+# carrying a #[cfg(test)]-gated declaration still classifies as test —
+# that is the declared trade-off.
+#
+# Deliberately unmodeled SPELLING SEMANTICS, direction stated: string
+# ESCAPES in path/include literals are recorded as their source spelling,
+# not decoded ("cand\x2ers" does not match cand.rs); cfg_attr-conditional
+# path attributes are consumed as ordinary attributes (the declaration
+# resolves by its alias); a local macro_rules! shadowing `include` is
+# still read as the built-in. Each can, in a deliberately crafted
+# dual-declaration file, hide a production route and downgrade — but each
+# requires the AUTHOR writing pathological spellings of their own code,
+# and this scanner is review-flag hygiene, not an adversarial control: an
+# author evading their own review flags has simpler routes than escape
+# obfuscation, and the spellings themselves are what a human review
+# flags. Byte/C string literals (b"", br#""#, c"", cr#""#) are lexed for
+# masking but never qualify as path/include VALUES — they are not valid
+# in those positions in Rust.
+
+# Mode of a path's new-side entry, empty when it has none. Reads main()'s
+# diff_ref.
+new_side_mode() {
+    case "$diff_ref" in
+        --staged|HEAD) git ls-files -s -- "$1" 2>/dev/null ;;
+        *)             git ls-tree HEAD -- "$1" 2>/dev/null ;;
+    esac | awk 'NR == 1 { print $1 }'
+}
+
+# Emits the new-side content of a file: HEAD for a base...HEAD diff, the
+# index for --staged, the worktree for --head. Reads main()'s diff_ref.
+# Exit 0 with content when readable, 2 when the file does not exist on the
+# new side, 1 on a read failure — callers must fail closed on 1.
+new_side_content() {
+    # A symlink entry (mode 120000) stores its TARGET PATH as the blob, so
+    # reading it yields link text instead of Rust — an empty parse that
+    # would silently drop every declaration the linked module holds while
+    # rustc compiles through the link and honours them. Reported unreadable
+    # so consulting candidates fail closed, never scanned as a module that
+    # happens to declare nothing.
+    if [ "$(new_side_mode "$1")" = 120000 ]; then return 1; fi
+    case "$diff_ref" in
+        --staged)
+            git ls-files --error-unmatch -- "$1" >/dev/null 2>&1 || return 2
+            git show ":$1" 2>/dev/null || return 1
+            ;;
+        HEAD)
+            # Tracked-only, like the sibling listing: an untracked file in
+            # the worktree (e.g. the 2018-style parent path) must not carry
+            # declarations that reclassify a tracked change.
+            git ls-files --error-unmatch -- "$1" >/dev/null 2>&1 || return 2
+            # Before -e, which follows the link: a DANGLING symlink is
+            # unreadable, not absent, and absent emits no record at all.
+            if [ -L "$1" ]; then return 1; fi
+            [ -e "$1" ] || return 2
+            cat "$1" 2>/dev/null || return 1
+            ;;
+        *)
+            git cat-file -e "HEAD:$1" 2>/dev/null || return 2
+            git show "HEAD:$1" 2>/dev/null || return 1
+            ;;
+    esac
+}
+
+# New-side tracked .rs files directly inside a directory (no recursion).
+# --head reads the index too: git diff HEAD never surfaces untracked files,
+# and an untracked declaration must not reclassify a tracked change.
+new_side_rs_siblings() {
+    case "$diff_ref" in
+        --staged|HEAD) git ls-files -- "$1" 2>/dev/null ;;
+        *)             git ls-tree --name-only HEAD -- "$1/" 2>/dev/null ;;
+    esac | awk -v d="$1" '
+        !/\.rs$/ { next }
+        d == "." { if ($0 !~ /\//) print; next }
+        { p = d "/" }
+        index($0, p) == 1 && substr($0, length(p) + 1) !~ /\// { print }
+    '
+}
+
+# Emit one candidate-agnostic record per finding in the declaring module on
+# stdin, so a file is parsed once no matter how many candidates consult it:
+#   G<TAB><target>   route with #[cfg(test)] among its attributes
+#   U<TAB><target>   route without the gate
+# A route is a mod declaration or an include! of the target file; both
+# carry their attribute gate (#[cfg(test)] include!("x.rs") is a gated
+# route, an unattributed include an ungated production one).
+# <target> is the repo-relative file the declaration resolves to, lexically
+# normalized (`.`/`..` segments folded) so equivalent spellings compare
+# equal. A bare `mod name;` emits both of its legal forms, name.rs and
+# name/mod.rs. moddir is where bare `mod name;` declarations land: for
+# mod-rs files (mod.rs, lib.rs, main.rs) their own directory; for any other
+# file its directory plus its stem as a subdirectory. fdir is the file's
+# own directory: per the Rust reference, #[path] values on modules NOT
+# inside inline module blocks resolve there, and the std docs anchor
+# include! literals there too. Inline module blocks (mod name { ... })
+# resolve into the inline chain instead, which this scanner does not
+# model — everything inside them is skipped by brace depth, emitting no
+# records at all.
+scan_decl_records() {
+    awk -v moddir="$1" -v fdir="$2" '
+        function join(d, b) { return d == "." ? b : d "/" b }
+        # Lexical cleanup only — no symlink resolution. A path that escapes
+        # the repo root normalizes to "" and can never match a candidate.
+        function normpath(p,   parts, n, i, top, stack, out) {
+            n = split(p, parts, "/")
+            top = 0
+            for (i = 1; i <= n; i++) {
+                if (parts[i] == "" || parts[i] == ".") continue
+                if (parts[i] == "..") { if (top > 0) top--; else return "" }
+                else stack[++top] = parts[i]
+            }
+            out = ""
+            for (i = 1; i <= top; i++) out = out (i > 1 ? "/" : "") stack[i]
+            return out
+        }
+        function mkhashes(k,   h) { h = ""; while (k-- > 0) h = h "#"; return h }
+        # Length of the attribute item opening the masked buffer, through its
+        # matching ]. An attribute body is a token tree that may nest bracket
+        # groups (#[cfg_attr(any(), allow([dead_code]))]), so the close is
+        # found by delimiter depth, not by the first ] — stopping early would
+        # leave attribute tokens to swallow the declaration that follows.
+        # Quoted brackets are inert: the scan runs on the mask. 0 when the
+        # attribute is not closed in this buffer yet (it continues next line).
+        # Offset of the first item boundary in the masked buffer: a ; { or }
+        # at token-group depth 0. Inside a ( ) or [ ] group none of them ends
+        # the item — the length in an array type ([u8; 4]) is not a statement
+        # end, and a brace there opens a block EXPRESSION, not an item body.
+        # Splitting at either would drop the pending attribute gate and
+        # record what follows as an ungated production route. 0 when the item
+        # has no boundary in this buffer yet.
+        function item_boundary(ms,   i, n, c, pd, bd) {
+            n = length(ms); pd = 0; bd = 0
+            for (i = 1; i <= n; i++) {
+                c = substr(ms, i, 1)
+                if (c == "(") pd++
+                else if (c == ")") { if (pd > 0) pd-- }
+                else if (c == "[") bd++
+                else if (c == "]") { if (bd > 0) bd-- }
+                else if (pd == 0 && bd == 0 && (c == ";" || c == "{" || c == "}")) return i
+            }
+            return 0
+        }
+        function attr_len(ms,   i, n, c, depth) {
+            n = length(ms); depth = 0
+            for (i = index(ms, "["); i > 0 && i <= n; i++) {
+                c = substr(ms, i, 1)
+                if (c == "[") depth++
+                else if (c == "]" && --depth == 0) return i
+            }
+            return 0
+        }
+        # Lex one line into two SAME-LENGTH strings: ml_orig (comment bytes
+        # blanked to spaces, literals intact) and ml_mask (literal interiors
+        # additionally blanked to "."). Item/brace/boundary matching runs on
+        # the mask, so quoted braces, quoted //, and quoted /* are inert;
+        # value extraction reads the same offsets from ml_orig. Handles
+        # nested block comments, // precedence, "..." with escapes, r"..."
+        # and r#*"..."#* raw strings (both may span lines), and char
+        # literals vs lifetimes (a quote not forming a char literal is kept).
+        function mask_line(s,   n, i, c, c2, o, m, j, seg, k, hs) {
+            n = length(s); o = ""; m = ""; i = 1
+            # Fast path: nothing that opens a comment, string, or char
+            # literal, and no open cross-line state.
+            if (cdepth == 0 && instr == 0 && s !~ /["\047\/]/) {
+                ml_orig = s; ml_mask = s; return
+            }
+            while (i <= n) {
+                c = substr(s, i, 1)
+                c2 = substr(s, i, 2)
+                if (cdepth > 0) {
+                    if (c2 == "*/") { cdepth--; o = o "  "; m = m "  "; i += 2 }
+                    else if (c2 == "/*") { cdepth++; o = o "  "; m = m "  "; i += 2 }
+                    else { o = o " "; m = m " "; i++ }
+                } else if (instr == 1) {
+                    if (c == "\\" && i < n) { o = o substr(s, i, 2); m = m ".."; i += 2 }
+                    else if (c == "\"") { instr = 0; o = o c; m = m c; i++ }
+                    else { o = o c; m = m "."; i++ }
+                } else if (instr == 2) {
+                    if (c == "\"" && substr(s, i + 1, rawh) == rawhs) {
+                        o = o substr(s, i, rawh + 1); m = m substr(s, i, rawh + 1)
+                        i += rawh + 1; instr = 0
+                    } else { o = o c; m = m "."; i++ }
+                } else if (c2 == "//") {
+                    while (i <= n) { o = o " "; m = m " "; i++ }
+                } else if (c2 == "/*") {
+                    cdepth = 1; o = o "  "; m = m "  "; i += 2
+                } else if (c == "\"") {
+                    instr = 1; o = o c; m = m c; i++
+                } else if (c ~ /[bc]/ && (i == 1 || substr(s, i - 1, 1) !~ /[A-Za-z0-9_]/) \
+                           && match(substr(s, i), /^[bc]r#*"/)) {
+                    # byte/C raw string: same raw machinery, prefix br or cr
+                    rawh = RLENGTH - 3
+                    rawhs = mkhashes(rawh)
+                    o = o substr(s, i, RLENGTH); m = m substr(s, i, RLENGTH)
+                    i += RLENGTH; instr = 2
+                } else if (c ~ /[bc]/ && (i == 1 || substr(s, i - 1, 1) !~ /[A-Za-z0-9_]/) \
+                           && substr(s, i + 1, 1) ~ /["\047]/) {
+                    # byte/C string or byte char: consume the prefix, let
+                    # the quote branch on the next pass open the literal
+                    o = o c; m = m c; i++
+                } else if (c == "r" && (i == 1 || substr(s, i - 1, 1) !~ /[A-Za-z0-9_]/) \
+                           && match(substr(s, i), /^r#*"/)) {
+                    rawh = RLENGTH - 2
+                    # closing-hash sequence computed once per raw string,
+                    # not per character (raw strings can span lines, so
+                    # rawh/rawhs persist across mask_line calls)
+                    rawhs = mkhashes(rawh)
+                    o = o substr(s, i, RLENGTH); m = m substr(s, i, RLENGTH)
+                    i += RLENGTH; instr = 2
+                } else if (c == "\047") {
+                    if (substr(s, i + 1, 1) == "\\") {
+                        # escaped char literal: consume to its closing quote
+                        j = i + 3
+                        while (j <= n && substr(s, j, 1) != "\047") j++
+                        if (j > n) j = n
+                        seg = j - i + 1
+                        o = o substr(s, i, seg)
+                        m = m "\047"
+                        for (k = 2; k < seg; k++) m = m "."
+                        if (seg >= 2) m = m "\047"
+                        i = j + 1
+                    } else if (substr(s, i + 2, 1) == "\047") {
+                        # plain char literal (may hold { } ; / ")
+                        o = o substr(s, i, 3); m = m "\047.\047"; i += 3
+                    } else {
+                        # lifetime: keep the quote, no literal opened
+                        o = o c; m = m c; i++
+                    }
+                } else { o = o c; m = m c; i++ }
+            }
+            ml_orig = o; ml_mask = m
+        }
+        # The direct string-literal argument of an include! call, read from
+        # the original at the offsets located on the mask; "" when the
+        # argument is anything else. The literal must BE the whole argument
+        # (raw hashes and a rustc-accepted trailing comma allowed); a
+        # computed expression (concat!/env!/const) yields nothing — even one
+        # whose parts are all literals — per the fail-closed rule for shapes
+        # the scanner cannot evaluate. Byte/C-prefixed literals never match:
+        # they are not valid in this position.
+        function include_value(ms, os) {
+            if (match(ms, /^[[:space:]]*(r#*)?"[^"]*"#*[[:space:]]*,?[[:space:]]*$/) \
+                && match(ms, /"[^"]*"/))
+                return substr(os, RSTART + 1, RLENGTH - 2)
+            return ""
+        }
+        # include! routes in one consumed chunk (mc masked, oc original),
+        # emitted with the chunk item attribute gate (inc_gated). The chunk
+        # is walked as TOKENS: the argument tree of every macro invocation
+        # is jumped over whole, because Rust expands nothing inside the
+        # tokens of another macro — an include! nested there (stringify!
+        # (include!("cand.rs"))) is not a route and must fabricate no
+        # record. Only an include! reached at chunk level emits. A tree left
+        # unclosed by the chunk boundary stops the walk (no record).
+        function emit_includes(mc, oc, inc_gated,   n, ip, mrest, mlen, mname, dopen, dclose, dstart, dend, depth, val) {
+            n = length(mc); ip = 1
+            while (ip <= n) {
+                if (ip > 1 && substr(mc, ip - 1, 1) ~ /[A-Za-z0-9_]/) { ip++; continue }
+                mrest = substr(mc, ip)
+                if (!match(mrest, /^(r#)?([A-Za-z_]|[^\001-\177])([A-Za-z0-9_]|[^\001-\177])*([[:space:]]*::[[:space:]]*(r#)?([A-Za-z_]|[^\001-\177])([A-Za-z0-9_]|[^\001-\177])*)*[[:space:]]*![[:space:]]*[([{]/)) {
+                    ip++; continue
+                }
+                mlen = RLENGTH
+                mname = substr(mrest, 1, mlen)
+                dopen = substr(mrest, mlen, 1)
+                dclose = (dopen == "{") ? "}" : (dopen == "(" ? ")" : "]")
+                sub(/[[:space:]]*![[:space:]]*[([{]$/, "", mname)
+                sub(/^.*::[[:space:]]*/, "", mname)
+                sub(/^r#/, "", mname)
+                dstart = ip + mlen - 1
+                depth = 1; dend = dstart + 1
+                while (dend <= n && depth > 0) {
+                    if (substr(mc, dend, 1) == dopen) depth++
+                    else if (substr(mc, dend, 1) == dclose) depth--
+                    dend++
+                }
+                if (depth > 0) return
+                if (mname == "include") {
+                    val = include_value(substr(mc, dstart + 1, dend - dstart - 2), \
+                                        substr(oc, dstart + 1, dend - dstart - 2))
+                    if (val != "")
+                        printf "%s\t%s\n", (inc_gated ? "G" : "U"), normpath(join(fdir, val))
+                }
+                ip = dend
+            }
+        }
+        # Lines are NOT items: source is accumulated into a cross-line
+        # buffer and consumed one ITEM at a time (attribute, file-module
+        # declaration, inline-module block, other statement), so several
+        # items on one line and one item across several lines both parse.
+        # An incomplete tail (open attribute, unterminated statement,
+        # unclosed inline block) stays in the buffer for the next line.
+        {
+            # Crate shebang: Rust permits #! followed by anything but [ as
+            # the FIRST LINE only — a preamble, not an item. Dropped here,
+            # or the generic-item branch would consume it together with
+            # the next declaration through its semicolon.
+            if (NR == 1 && $0 ~ /^#!/ && $0 !~ /^#![[:space:]]*\[/) next
+            mask_line($0)
+            if (buf == "") { buf = ml_orig; mbuf = ml_mask }
+            else { buf = buf " " ml_orig; mbuf = mbuf " " ml_mask }
+            for (;;) {
+                # Inside a skip region (inline module block or macro_rules!
+                # definition body): Rust resolves inline-module contents
+                # into the inline chain and macro token trees only exist
+                # after expansion — neither is a top-level item stream this
+                # scanner can faithfully parse, so it must produce NO
+                # record, never a mis-resolved one. Consume by delimiter
+                # depth on the MASK (quoted delimiters are invisible),
+                # emit nothing.
+                if (skip_depth > 0) {
+                    blen = length(mbuf); bi = 1
+                    while (bi <= blen && skip_depth > 0) {
+                        bc = substr(mbuf, bi, 1)
+                        if (bc == skip_open) skip_depth++
+                        else if (bc == skip_close) skip_depth--
+                        bi++
+                    }
+                    buf = substr(buf, bi); mbuf = substr(mbuf, bi)
+                    if (skip_depth > 0) { buf = ""; mbuf = ""; break }
+                    continue
+                }
+                if (match(mbuf, /^[[:space:]]+/)) {
+                    buf = substr(buf, RLENGTH + 1); mbuf = substr(mbuf, RLENGTH + 1)
+                }
+                if (mbuf == "") break
+                # Inner attribute item (#![...]): binds to the ENCLOSING
+                # module, not to what follows — consumed on its own,
+                # contributing nothing to the pending outer-attribute gate
+                # state, so the next declaration still scans.
+                if (mbuf ~ /^#[[:space:]]*![[:space:]]*\[/) {
+                    alen = attr_len(mbuf)
+                    if (alen > 0) {
+                        buf = substr(buf, alen + 1); mbuf = substr(mbuf, alen + 1)
+                        continue
+                    }
+                    break
+                }
+                # Attribute item. An opened-but-unclosed one waits for the
+                # next line (rustc accepts attributes split across lines).
+                if (mbuf ~ /^#[[:space:]]*\[/) {
+                    alen = attr_len(mbuf)
+                    if (alen > 0) {
+                        mattr = substr(mbuf, 1, alen)
+                        oattr = substr(buf, 1, alen)
+                        # rustc accepts whitespace between attribute tokens
+                        # and a trailing comma after the predicate (both
+                        # verified: #[cfg ( test )] and #[cfg(test,)]).
+                        if (mattr ~ /^#[[:space:]]*\[[[:space:]]*cfg[[:space:]]*\([[:space:]]*test[[:space:]]*,?[[:space:]]*\)[[:space:]]*\]/) gated = 1
+                        # Plain and raw string values, including hash-raw:
+                        # the literal is located on the mask (its interior
+                        # can hide no quote) and read from the original.
+                        if (mattr ~ /^#[[:space:]]*\[[[:space:]]*path[[:space:]]*=[[:space:]]*(r#*)?"/ \
+                            && match(mattr, /"[^"]*"/))
+                            pathattr = substr(oattr, RSTART + 1, RLENGTH - 2)
+                        buf = substr(buf, alen + 1); mbuf = substr(mbuf, alen + 1)
+                        continue
+                    }
+                    break
+                }
+                # File-module declaration item (raw identifiers accepted:
+                # `mod r#type;` declares module type -> type.rs).
+                if (match(mbuf, /^(pub([[:space:]]*[(][^)]*[)][[:space:]]*|[[:space:]]+))?mod[[:space:]]+(r#)?([A-Za-z_]|[^\001-\177])([A-Za-z0-9_]|[^\001-\177])*[[:space:]]*;/)) {
+                    name = substr(mbuf, 1, RLENGTH)
+                    buf = substr(buf, RLENGTH + 1); mbuf = substr(mbuf, RLENGTH + 1)
+                    sub(/^pub([[:space:]]*[(][^)]*[)][[:space:]]*|[[:space:]]+)/, "", name)
+                    sub(/^mod[[:space:]]+/, "", name)
+                    sub(/^r#/, "", name)
+                    sub(/[[:space:]]*;.*$/, "", name)
+                    kind = (gated ? "G" : "U")
+                    if (pathattr != "")
+                        printf "%s\t%s\n", kind, normpath(join(fdir, pathattr))
+                    else {
+                        # Both legal forms of a bare declaration: name.rs
+                        # and the directory form name/mod.rs.
+                        printf "%s\t%s\n", kind, normpath(join(moddir, name ".rs"))
+                        printf "%s\t%s\n", kind, normpath(join(moddir, name "/mod.rs"))
+                    }
+                    gated = 0; pathattr = ""
+                    continue
+                }
+                # Inline-module opener: enter the skip region (its own
+                # attributes, gated or not, apply to the skipped block).
+                if (match(mbuf, /^(pub([[:space:]]*[(][^)]*[)][[:space:]]*|[[:space:]]+))?mod[[:space:]]+(r#)?([A-Za-z_]|[^\001-\177])([A-Za-z0-9_]|[^\001-\177])*[[:space:]]*\{/)) {
+                    buf = substr(buf, RLENGTH + 1); mbuf = substr(mbuf, RLENGTH + 1)
+                    skip_open = "{"; skip_close = "}"; skip_depth = 1
+                    gated = 0; pathattr = ""
+                    continue
+                }
+                # macro_rules! definition opener: the body is a token tree,
+                # not items — skip it whole. Bodies may use any delimiter
+                # pair; the opener determines which one is depth-tracked.
+                if (match(mbuf, /^macro_rules[[:space:]]*![[:space:]]*(r#)?([A-Za-z_]|[^\001-\177])([A-Za-z0-9_]|[^\001-\177])*[[:space:]]*[([{]/)) {
+                    skip_open = substr(mbuf, RLENGTH, 1)
+                    skip_close = (skip_open == "{") ? "}" : (skip_open == "(" ? ")" : "]")
+                    skip_depth = 1
+                    buf = substr(buf, RLENGTH + 1); mbuf = substr(mbuf, RLENGTH + 1)
+                    gated = 0; pathattr = ""
+                    continue
+                }
+                # Macro INVOCATION opener (ident!, path::to::ident! or the
+                # absolutely-qualified ::path::to::ident!, plus any
+                # delimiter): the token tree only becomes items after
+                # expansion, which the scanner does not evaluate — skip it
+                # whole so item-like tokens (`discard! { mod cand; }`)
+                # fabricate nothing. include! is the one macro the scanner
+                # DOES evaluate; it falls through to the chunk scan.
+                if (match(mbuf, /^(::[[:space:]]*)?(r#)?([A-Za-z_]|[^\001-\177])([A-Za-z0-9_]|[^\001-\177])*([[:space:]]*::[[:space:]]*(r#)?([A-Za-z_]|[^\001-\177])([A-Za-z0-9_]|[^\001-\177])*)*[[:space:]]*![[:space:]]*[([{]/)) {
+                    mname = substr(mbuf, 1, RLENGTH)
+                    mdelim = substr(mbuf, RLENGTH, 1)
+                    sub(/[[:space:]]*![[:space:]]*[([{]$/, "", mname)
+                    sub(/^.*::[[:space:]]*/, "", mname)
+                    sub(/^r#/, "", mname)
+                    if (mname != "include") {
+                        skip_open = mdelim
+                        skip_close = (mdelim == "{") ? "}" : (mdelim == "(" ? ")" : "]")
+                        skip_depth = 1
+                        buf = substr(buf, RLENGTH + 1); mbuf = substr(mbuf, RLENGTH + 1)
+                        gated = 0; pathattr = ""
+                        continue
+                    }
+                    # include! handled HERE for every delimiter form: the
+                    # generic boundary would cut a brace-form argument at
+                    # the opening brace and then skip it as a body, losing
+                    # the route. Find the matching close at depth 0 on the
+                    # mask; a direct string-literal argument emits with
+                    # the pending gate, anything else is a computed
+                    # argument (declared no-record) consumed silently. No
+                    # close in the buffer yet means the call continues on
+                    # a later line: wait for it.
+                    idelim = RLENGTH
+                    iclose = (mdelim == "{") ? "}" : (mdelim == "(" ? ")" : "]")
+                    idepth = 1; ipos = idelim + 1; blen2 = length(mbuf)
+                    while (ipos <= blen2 && idepth > 0) {
+                        ic = substr(mbuf, ipos, 1)
+                        if (ic == mdelim) idepth++
+                        else if (ic == iclose) idepth--
+                        ipos++
+                    }
+                    if (idepth > 0) break
+                    ival = include_value(substr(mbuf, idelim + 1, ipos - idelim - 2), \
+                                         substr(buf, idelim + 1, ipos - idelim - 2))
+                    if (ival != "")
+                        printf "%s\t%s\n", (gated ? "G" : "U"), normpath(join(fdir, ival))
+                    buf = substr(buf, ipos); mbuf = substr(mbuf, ipos)
+                    if (mbuf ~ /^[[:space:]]*;/) {
+                        sub(/^[[:space:]]*;/, "", buf); sub(/^[[:space:]]*;/, "", mbuf)
+                    }
+                    gated = 0; pathattr = ""
+                    continue
+                }
+                # Any other item: consume to the next boundary (; { or })
+                # on the mask, scanning the chunk for include! routes. A
+                # multiline include! completes when its statement boundary
+                # arrives. Without a boundary the item continues on the
+                # next line. A { boundary opens the body of a non-module
+                # item (fn/impl/struct/...): a body is not a top-level
+                # item stream — block-level #[path] modules resolve by
+                # block-chain rules and includes there compile in the
+                # enclosing cfg context — so it is a skip region like the
+                # others, emitting nothing (declared limitation).
+                bpos = item_boundary(mbuf)
+                if (bpos > 0) {
+                    bchar = substr(mbuf, bpos, 1)
+                    mchunk = substr(mbuf, 1, bpos)
+                    ochunk = substr(buf, 1, bpos)
+                    buf = substr(buf, bpos + 1); mbuf = substr(mbuf, bpos + 1)
+                    emit_includes(mchunk, ochunk, gated)
+                    gated = 0; pathattr = ""
+                    if (bchar == "{") {
+                        skip_open = "{"; skip_close = "}"; skip_depth = 1
+                    }
+                    continue
+                }
+                break
+            }
+        }
+    '
+}
+
+# Scan caches (Bash 3.2-safe string accumulators, no associative arrays):
+# DECL_CACHE holds one `<file><TAB><filedir><TAB><record...>` line per
+# scanned finding (kind ERR marks an unreadable file); SCANNED_DIRS is a
+# newline-delimited membership set checked by exact line match, so paths
+# never meet glob interpretation. Scan state is tracked per DIRECTORY —
+# each directory's files are read once, and membership is consulted a
+# handful of times per candidate instead of once per file.
+DECL_CACHE=""
+SCANNED_DIRS=""
+
+set_contains() {
+    printf '%s' "$2" | grep -Fxq -- "$1"
+}
+
+# Scan one declaring module, appending its records to DECL_CACHE. Called
+# only from scan_dir_declaring_files, which guarantees once-per-file.
+scan_declaring_file() {
+    local fdir fbase fstem moddir rc content records
+    fdir=${1%/*}
+    [ "$1" = "${1#*/}" ] && fdir="."
+    fbase=${1##*/}
+    fstem=${fbase%.rs}
+    case "$fbase" in
+        mod.rs|lib.rs|main.rs) moddir="$fdir" ;;
+        *) if [ "$fdir" = "." ]; then moddir="$fstem"; else moddir="$fdir/$fstem"; fi ;;
+    esac
+    rc=0
+    content=$(new_side_content "$1") || rc=$?
+    # Absent on the new side: nothing to record. Unreadable: an ERR record —
+    # every candidate consulting this file must fail closed.
+    if [ "$rc" -eq 2 ]; then return 0; fi
+    if [ "$rc" -ne 0 ]; then
+        DECL_CACHE="$DECL_CACHE$1"$'\t'"$fdir"$'\t'ERR$'\n'
+        return 0
+    fi
+    # A UTF-8 BOM is an encoding preamble rustc accepts ahead of everything
+    # else (including a shebang), not part of the first item. Stripped
+    # byte-exactly here so the anchored item matchers see the real first
+    # token instead of falling through to the generic-item branch.
+    content=${content#$'\xef\xbb\xbf'}
+    records=$(printf '%s\n' "$content" | scan_decl_records "$moddir" "$fdir" \
+        | awk -v f="$1" -v d="$fdir" '{print f "\t" d "\t" $0}')
+    [ -n "$records" ] && DECL_CACHE="$DECL_CACHE$records"$'\n'
+    return 0
+}
+
+# Scan every tracked .rs file directly inside a directory, once per
+# directory; the per-candidate evaluator filters the records afterwards
+# (including dropping the candidate's own).
+scan_dir_declaring_files() {
+    set_contains "$1" "$SCANNED_DIRS" && return 0
+    SCANNED_DIRS="$SCANNED_DIRS$1"$'\n'
+    local f
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        scan_declaring_file "$f"
+    done < <(new_side_rs_siblings "$1")
+}
+
+# scan_diff <out-var> <label> <git-diff-arg>...
+# `git diff <git-diff-arg>...` for a scan named <label>, failing closed and
+# loud when git fails (an unreadable tracked file in the diff, exit 128): a
+# bare death under pipefail, an empty diff, or a placeholder stat would each
+# read downstream as "nothing found". Stdout lands in <out-var>; git's stderr
+# is kept out of it (a warning must not shift hunk line numbers) and quoted
+# in the diagnostic.
+scan_diff() {
+    local __out_var="$1" __label="$2"; shift 2
+    local __err __rc=0 __out
+    __err=$(mktemp -t git-diff-summary-err.XXXXXX)
+    __out=$(git diff "$@" 2>"$__err") || __rc=$?
+    if [ "$__rc" -ne 0 ]; then
+        printf 'git-diff-summary: git diff failed (exit %d) while scanning %s (git diff %s): %s\n' \
+            "$__rc" "$__label" "$(printf '%s' "$*" | head -c 300)" \
+            "$(tr '\n' ' ' <"$__err" | head -c 300)" >&2
+        rm -f -- "$__err"
+        exit 1
+    fi
+    rm -f -- "$__err"
+    printf -v "$__out_var" '%s' "$__out"
+}
+
+is_cfg_test_declared() {
+    local candidate="$1"
+    local basefile dir d relevant_dirs routes
+    case "$candidate" in */*) ;; *) return 1 ;; esac
+    # A bin/ segment marks crate roots: reachable by the build without any
+    # mod declaration, so a gated declaration does not make them test-only.
+    case "$candidate" in bin/*|*/bin/*) return 1 ;; esac
+    basefile=${candidate##*/}
+    # lib.rs/main.rs are crate roots — reachable without a declaration. A
+    # mod.rs is NOT skipped: the directory form of `mod name;` legitimately
+    # resolves to name/mod.rs, and its declaration site can carry the gate.
+    case "$basefile" in lib.rs|main.rs) return 1 ;; esac
+    dir=${candidate%/*}
+    # Declaring modules are consulted from the candidate's own directory and
+    # every ancestor directory up to the repo root: same-dir siblings, the
+    # 2018-style parent file, and crate roots declaring nested files through
+    # an out-of-directory #[path]. Non-ancestor declarers are the stated
+    # header limitation.
+    relevant_dirs="$dir"
+    d="$dir"
+    while [ "$d" != "${d%/*}" ]; do
+        d="${d%/*}"
+        relevant_dirs="$relevant_dirs"$'\n'"$d"
+    done
+    [ "$d" != "." ] && relevant_dirs="$relevant_dirs"$'\n'"."
+    while IFS= read -r d; do
+        [ -n "$d" ] || continue
+        scan_dir_declaring_files "$d"
+    done < <(printf '%s\n' "$relevant_dirs")
+    # Evaluate the cached records. Declarations and includes match on their
+    # RESOLVED target, so a route discovered by any scan is genuine no
+    # matter which candidate prompted it; ERR (unreadable module) fails this
+    # candidate closed only when the file sits in its consulted set.
+    routes=$(printf '%s\n' "$DECL_CACHE" | awk -F'\t' \
+        -v cand="$candidate" -v dirs="$relevant_dirs" '
+        BEGIN { n = split(dirs, a, "\n"); for (i = 1; i <= n; i++) rd[a[i]] = 1 }
+        $1 == cand { next }
+        $3 == "ERR" { if ($2 in rd) print "err"; next }
+        $4 != cand { next }
+        $3 == "G" { print "gated"; next }
+        $3 == "U" { print "ungated" }
+    ')
+    case "$routes" in *err*) return 1 ;; esac
+    case "$routes" in *ungated*) return 1 ;; esac
+    case "$routes" in *gated*) return 0 ;; esac
+    return 1
+}
+
+main() {
+    local base=""
+    local diff_args=""
+    local git_dir=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --help|-h) show_help; exit 0 ;;
+            --staged) diff_args="--staged"; shift ;;
+            --head) diff_args="HEAD"; shift ;;
+            -C) git_dir="$2"; shift 2 ;;
+            *) base="$1"; shift ;;
+        esac
+    done
+
+    # Use -C path if provided, otherwise repo root
+    if [ -n "$git_dir" ]; then
+        cd "$git_dir"
+    else
+        cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    fi
+
+    # Determine diff command (base resolution must run inside the target repo)
+    local diff_ref
+    if [ -n "$diff_args" ]; then
+        diff_ref="$diff_args"
+    else
+        if [ -z "$base" ]; then
+            base=$(resolve_default_base)
+        fi
+        diff_ref="${base}...HEAD"
+    fi
+
+    # Get file list with status (A/M/D/R). An unreadable diff — a base ref that
+    # does not exist, a broken repository — must not be reported as the empty
+    # summary below: that reads downstream as "nothing changed, no risk".
+    local files diff_rc=0
+    files=$(git diff --name-status "$diff_ref" 2>&1) || diff_rc=$?
+    if [ "$diff_rc" -ne 0 ]; then
+        printf 'git-diff-summary: git diff %s failed: %s\n' \
+            "$diff_ref" "$(printf '%s' "$files" | tr '\n' ' ' | head -c 300)" >&2
+        exit 1
+    fi
+
+    if [ -z "$files" ]; then
+        echo '{"files_changed": 0, "scope": "support", "domains": {}, "risk_flags": []}'
+        exit 0
+    fi
+
+    # Get stats
+    local stat_out="" stats
+    scan_diff stat_out "stats" --stat --stat-count=999 "$diff_ref"
+    stats=$(printf '%s\n' "$stat_out" | tail -1)
+
+    # Detect risk flags via grep (avoids passing huge diffs through jq)
+    local risk_flags="[]"
+    local flags=()
+    local rust_diff_added=""
+    scan_diff rust_diff_added "risk flags" "$diff_ref" -- '*.rs'
+    rust_diff_added=$(printf '%s\n' "$rust_diff_added" | grep -E '^\+' || true)
+
+    if echo "$rust_diff_added" | grep -qE '^\+.*unsafe '; then flags+=("unsafe_code_added"); fi
+    if echo "$rust_diff_added" | grep -qE '^\+.*#\[repr\(C\)\]'; then flags+=("repr_c_struct_changed"); fi
+    if echo "$rust_diff_added" | grep -qE '^\+.*extern "C"'; then flags+=("extern_c_changed"); fi
+    if echo "$rust_diff_added" | grep -qE '^\+.*(Atomic|atomic::)'; then flags+=("atomics_modified"); fi
+
+    # panic/unwrap in production source is the `panic_path_added` risk flag.
+    # The same patterns whose enclosing context is a test surface — tests/
+    # dirs, *_tests.rs files, or #[cfg(test)] modules inside production files —
+    # are the distinct informational `test_panic_path_added` flag instead: a
+    # test assertion is not a production panic path.
+    # Changed .rs files that carry no file-local test markers but are reached
+    # only through #[cfg(test)]-gated declarations are test scope.
+    local cfg_test_declared="" rs_candidate
+    while IFS= read -r rs_candidate; do
+        [ -n "$rs_candidate" ] || continue
+        if is_cfg_test_declared "$rs_candidate"; then
+            cfg_test_declared="$cfg_test_declared$rs_candidate"$'\n'
+        fi
+    done < <(echo "$files" | awk -F'\t' '{print $NF}' \
+        | grep -E '\.rs$' \
+        | grep -vE '(/tests?/|/benches/|/fixtures/|_tests?\.rs$)' || true)
+
+    local prod_paths
+    prod_paths=$(echo "$files" | awk -F'\t' '{print $NF}' \
+        | grep -E '(^|/)src/|(^|/)lib/' \
+        | grep -vE '(/tests/|/benches/|/test/|/fixtures/|_tests?\.rs$|\.test\.[jt]sx?$|\.spec\.[jt]sx?$)' || true)
+    if [ -n "$cfg_test_declared" ] && [ -n "$prod_paths" ]; then
+        prod_paths=$(grep -Fxv -f <(printf '%s' "$cfg_test_declared") <<<"$prod_paths" || true)
+    fi
+    local prod_panic=0 test_panic=0
+    # Pathspecs are passed as a quoted array — word splitting must not shred
+    # paths containing whitespace into bogus pathspecs.
+    local p
+    local prod_path_args=()
+    while IFS= read -r p; do
+        [ -n "$p" ] && prod_path_args+=("$p")
+    done <<<"$prod_paths"
+    if [ ${#prod_path_args[@]} -gt 0 ]; then
+        # path<TAB>new-side line number of each added panic-pattern line
+        local prod_diff="" panic_lines
+        scan_diff prod_diff "panic paths" "$diff_ref" -- "${prod_path_args[@]}"
+        panic_lines=$(printf '%s\n' "$prod_diff" | awk '
+            /^diff --git / { path = ""; inhunk = 0 }
+            /^\+\+\+ b\//  { path = substr($0, 7); next }
+            /^@@/ {
+                split($0, parts, "+"); split(parts[2], nums, /[, ]/)
+                lineno = nums[1] + 0; inhunk = 1; next
+            }
+            !inhunk || path == "" { next }
+            /^-/ { next }
+            /^\+/ {
+                if ($0 ~ /panic!|unwrap\(\)/) print path "\t" lineno
+                lineno++; next
+            }
+            { lineno++ }
+        ')
+        local panic_file file_lines file_content counts pcount tcount
+        while IFS= read -r panic_file; do
+            [ -n "$panic_file" ] || continue
+            file_lines=$(echo "$panic_lines" | awk -F'\t' -v f="$panic_file" '$1 == f {print $2}' | paste -sd, -)
+            # New-side content of the file: HEAD for a base...HEAD diff, the
+            # index for --staged, the worktree for --head.
+            case "$diff_ref" in
+                --staged) file_content=$(git show ":$panic_file" 2>/dev/null || true) ;;
+                HEAD)     file_content=$(cat "$panic_file" 2>/dev/null || true) ;;
+                *)        file_content=$(git show "HEAD:$panic_file" 2>/dev/null || true) ;;
+            esac
+            # Split the panic lines into production vs #[cfg(test)] context by
+            # brace-tracking the block a #[cfg(test)] attribute opens.
+            counts=$(printf '%s\n' "$file_content" | awk -v targets="$file_lines" '
+                BEGIN { n = split(targets, t, ","); for (i = 1; i <= n; i++) want[t[i] + 0] = 1 }
+                {
+                    opens = gsub(/{/, "{"); closes = gsub(/}/, "}")
+                    intest = 0
+                    if (depth > 0) {
+                        intest = 1
+                        depth += opens - closes
+                        if (depth < 0) depth = 0
+                    } else if (pending) {
+                        if (opens > 0) {
+                            pending = 0; intest = 1
+                            depth = opens - closes
+                            if (depth < 0) depth = 0
+                        } else if ($0 !~ /^[[:space:]]*(#\[|\/\/)/ && $0 !~ /^[[:space:]]*$/) {
+                            # braceless item (e.g. a use) consumed the attribute
+                            pending = 0; intest = 1
+                        }
+                    } else if ($0 ~ /#\[cfg\(test\)\]/) {
+                        intest = 1
+                        if (opens > 0) {
+                            depth = opens - closes
+                            if (depth < 0) depth = 0
+                        } else { pending = 1 }
+                    }
+                    if (want[NR]) { if (intest) tcount++; else pcount++ }
+                }
+                END { printf "%d %d\n", pcount + 0, tcount + 0 }
+            ')
+            read -r pcount tcount <<< "$counts"
+            if [ "$pcount" -gt 0 ]; then prod_panic=1; fi
+            if [ "$tcount" -gt 0 ]; then test_panic=1; fi
+        done < <(echo "$panic_lines" | cut -f1 | sort -u)
+    fi
+    if [ "$prod_panic" -eq 1 ]; then flags+=("panic_path_added"); fi
+
+    # Whole-file test surfaces (tests/ dirs, *_tests.rs) carry the same
+    # informational flag so the addition stays visible without routing as risk.
+    local test_paths
+    test_paths=$(echo "$files" | awk -F'\t' '{print $NF}' \
+        | grep -E '(^|/)tests?/|_tests?\.rs$' || true)
+    test_paths=$(printf '%s\n%s' "$test_paths" "$cfg_test_declared" | grep -v '^$' | sort -u || true)
+    local test_path_args=()
+    while IFS= read -r p; do
+        [ -n "$p" ] && test_path_args+=("$p")
+    done <<<"$test_paths"
+    if [ ${#test_path_args[@]} -gt 0 ]; then
+        local test_diff=""
+        scan_diff test_diff "test panic paths" "$diff_ref" -- "${test_path_args[@]}"
+        test_diff=$(printf '%s\n' "$test_diff" | grep -E '^\+' || true)
+        if echo "$test_diff" | grep -qE '^\+.*(panic!|unwrap\(\))'; then test_panic=1; fi
+    fi
+    if [ "$test_panic" -eq 1 ]; then flags+=("test_panic_path_added"); fi
+
+    if [ ${#flags[@]} -gt 0 ]; then
+        risk_flags=$(printf '"%s"\n' "${flags[@]}" | jq -s '.')
+    fi
+
+    # Classify files into domains and build output.
+    # Domain = top-level directory name. Standard infrastructure dirs are grouped.
+    local cfg_test_json
+    cfg_test_json=$(printf '%s' "$cfg_test_declared" | jq -Rs 'split("\n") | map(select(length > 0))')
+    echo "$files" | jq -Rs --arg stats "$stats" --argjson risk_flags "$risk_flags" \
+        --argjson cfg_test_declared "$cfg_test_json" '
+        # Parse file list
+        split("\n") | map(select(length > 0)) | map(
+            capture("^(?<status>[AMDRC])[0-9]*\t(?<path>.+)$") // null
+        ) | map(select(. != null)) |
+        # Rename rows carry "old<TAB>new": keep the DESTINATION — it is what
+        # exists on the new side and what scope classification keys on.
+        map(.path = (.path | split("\t") | last)) |
+
+        # Classify each file into domain + scope
+        map(. + {
+            domain: (
+                if .path | test("^docs/")
+                    then "docs"
+                elif .path | test("^(tools|scripts|\\.github|\\.ci|\\.circleci|\\.gitlab|infra|deploy|terraform|pulumi)/")
+                    then "infra"
+                else
+                    (.path | split("/")[0] // "root")
+                end
+            ),
+            file_scope: (
+                if (.path as $p | $cfg_test_declared | index($p)) != null
+                    then "test"
+                elif .path | test("(/tests?/|/benches?/|/fixtures/|_tests?\\.rs$|\\.test\\.[jt]sx?$|\\.spec\\.[jt]sx?$)")
+                    then "test"
+                elif .path | test("^docs/")
+                    then "docs"
+                elif .path | test("^(tools|scripts|\\.github|\\.ci|\\.circleci|\\.gitlab|infra|deploy|terraform|pulumi)/")
+                    then "infra"
+                else "production"
+                end
+            )
+        }) |
+
+        # Capture scope before grouping (production if any prod file touched)
+        . as $all_files |
+
+        # Group by domain
+        group_by(.domain) | map({
+            key: .[0].domain,
+            value: {
+                files: [.[] | .path],
+                count: length,
+                added: [.[] | select(.status == "A")] | length,
+                modified: [.[] | select(.status == "M")] | length,
+                deleted: [.[] | select(.status == "D")] | length
+            }
+        }) | from_entries |
+
+        # Parse stats line
+        . as $domains |
+        ($stats | capture("(?<files>[0-9]+) files? changed(, (?<ins>[0-9]+) insertions?\\(\\+\\))?(, (?<del>[0-9]+) deletions?\\(-\\))?") //
+            {files: "0", ins: "0", del: "0"}) as $s |
+
+        {
+            files_changed: ($s.files | tonumber),
+            insertions: (($s.ins // "0") | tonumber),
+            deletions: (($s.del // "0") | tonumber),
+            scope: (if ($all_files | any(.file_scope == "production")) then "production" else "support" end),
+            domains: $domains,
+            risk_flags: $risk_flags
+        }
+    '
+}
+
+main "$@"

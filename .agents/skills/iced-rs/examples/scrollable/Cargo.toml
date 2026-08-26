@@ -1,0 +1,10 @@
+[package]
+name = "scrollable"
+version = "0.1.0"
+authors = ["Clark Moody <clark@clarkmoody.com>"]
+edition = "2024"
+publish = false
+
+[dependencies]
+iced.workspace = true
+iced.features = ["debug"]

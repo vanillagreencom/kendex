@@ -1,0 +1,69 @@
+{
+  "enabledPlugins": {},
+  "permissions": {
+    "allow": [
+      "Bash(tmux capture-pane *)",
+      "Bash(tmux list-windows *)",
+      "Bash(tmux list-panes *)",
+      "Bash(tmux list-sessions*)",
+      "Bash(tmux display-message *)",
+      "Bash(.agents/skills/orch/scripts/workflow-state *)",
+      "Bash(.agents/skills/orch/scripts/dev-artifact-check *)",
+      "Bash(.agents/skills/orch/scripts/review-artifact-check *)",
+      "Bash(.agents/skills/orch/scripts/dev-round-write *)",
+      "Bash(.agents/skills/orch/scripts/git-context *)",
+      "Bash(.agents/skills/orch/scripts/orch-env *)",
+      "Bash(.agents/skills/orch/scripts/pr-view-json *)",
+      "Bash(.agents/skills/orch/scripts/resolve-base-branch *)",
+      "Bash(.agents/skills/orch/scripts/lanes *)",
+      "Bash(.agents/skills/github/scripts/github.sh pr-threads *)",
+      "Bash(.agents/skills/github/scripts/github.sh pr-view *)",
+      "Bash(.agents/skills/github/scripts/github.sh pr-list *)",
+      "Bash(.agents/skills/linear/scripts/linear.sh cache *)",
+      "Bash(skills/orch/tests/run-all.sh *)",
+      "Bash(bash skills/orch/tests/run-all.sh *)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-bare-cd.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-commit-check.sh\"",
+            "timeout": 1800
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-lint.sh\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/task-completed-check.sh\"",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}

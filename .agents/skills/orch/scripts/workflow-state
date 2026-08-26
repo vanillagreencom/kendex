@@ -1,0 +1,484 @@
+#!/usr/bin/env bash
+# Workflow state file management for multi-agent orch
+# Usage: workflow-state <command> <issue_id> [args...]
+
+set -euo pipefail
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/kendex-env.sh
+source "$SCRIPT_DIR/lib/kendex-env.sh"
+kendex_load_project_env "$PROJECT_ROOT"
+
+STATE_DIR="${ORCH_STATE_DIR:-tmp}"
+STATE_PREFIX="workflow-state"
+
+get_state_file() {
+    local issue_id="$1"
+    echo "${STATE_DIR}/${STATE_PREFIX}-${issue_id}.json"
+}
+
+# Resolve the state file for a key. GitHub-issue orchestration stores state
+# under the normalized `issue-N` key, so a bare numeric tracker number aliases
+# to the normalized file when only that file exists. The exact-key file wins
+# when it exists; if files exist under BOTH keys the target is ambiguous —
+# error out rather than guess. Non-numeric keys resolve to the exact file only.
+# Used by every subcommand except `init` (init always creates the exact key).
+resolve_state_file() {
+    local issue_id="$1"
+    local exact
+    exact=$(get_state_file "$issue_id")
+
+    if [[ "$issue_id" =~ ^[0-9]+$ ]]; then
+        local normalized
+        normalized=$(get_state_file "issue-${issue_id}")
+        if [[ -f "$exact" && -f "$normalized" ]]; then
+            echo "Error: ambiguous state key '$issue_id': both $exact and $normalized exist" >&2
+            echo "Remove or merge one file, then retry with the intended key" >&2
+            exit 2
+        fi
+        if [[ ! -f "$exact" && -f "$normalized" ]]; then
+            echo "$normalized"
+            return 0
+        fi
+    fi
+
+    echo "$exact"
+}
+
+ensure_state_exists() {
+    local state_file="$1"
+    if [[ ! -f "$state_file" ]]; then
+        echo "Error: State file not found: $state_file" >&2
+        echo "Run 'workflow-state init <issue_id>' first" >&2
+        exit 1
+    fi
+}
+
+# Atomic update: flock + write to temp, validate, move
+# Uses flock to serialize concurrent writes and prevent state corruption.
+atomic_update() {
+    local state_file="$1"
+    local jq_expr="$2"
+    local lock_file="${state_file}.lock"
+    local tmp_file="${state_file}.tmp"
+
+    (
+        flock -w 10 200 || { echo "Error: could not acquire lock on $lock_file" >&2; exit 1; }
+
+        if ! jq "$jq_expr" "$state_file" > "$tmp_file" 2>&1; then
+            echo "Error: jq expression failed: $jq_expr" >&2
+            rm -f "$tmp_file"
+            exit 1
+        fi
+
+        # Validate output is valid JSON
+        if ! jq empty "$tmp_file" 2>/dev/null; then
+            echo "Error: jq produced invalid JSON" >&2
+            rm -f "$tmp_file"
+            exit 1
+        fi
+
+        mv "$tmp_file" "$state_file"
+    ) 200>"$lock_file"
+}
+
+cmd_init() {
+    local issue_id="$1"
+    shift
+
+    local agent="" worktree="" branch="" team_name="" qa_labels="[]" sub_issues="[]"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --agent) agent="$2"; shift 2 ;;
+            --worktree) worktree="$2"; shift 2 ;;
+            --branch) branch="$2"; shift 2 ;;
+            --team) team_name="$2"; shift 2 ;;
+            --qa-labels) qa_labels="$2"; shift 2 ;;
+            --sub-issues) sub_issues="$2"; shift 2 ;;
+            *) echo "Unknown option: $1" >&2; exit 1 ;;
+        esac
+    done
+
+    mkdir -p "$STATE_DIR"
+    local state_file
+    state_file=$(get_state_file "$issue_id")
+
+    # Build JSON safely with jq --arg to handle special characters
+    jq -n \
+      --arg issue_id "$issue_id" \
+      --arg agent "$agent" \
+      --arg worktree "$worktree" \
+      --arg branch "$branch" \
+      --arg team_name "$team_name" \
+      --argjson sub_issues "$sub_issues" \
+      --argjson qa_labels "$qa_labels" \
+      '{
+        issue_id: $issue_id,
+        sub_issues: $sub_issues,
+        agent: $agent,
+        worktree: $worktree,
+        branch: $branch,
+        team_name: $team_name,
+        qa_labels: $qa_labels,
+        child_sessions: {},
+        review_agents: [],
+        review_agent_ids: {},
+        review_agent_runtime_types: {},
+        pre_delegate_sha: null,
+        skip_qa: false,
+        cycles: 0,
+        json_paths: [],
+        fixed_items: [],
+        escalated_items: [],
+        audit_issues_created: [],
+        pr_review_baseline: null,
+        pr_comment_review: {
+          iterations: 0,
+          fixes: [],
+          issues_created: [],
+          skipped: []
+        }
+      }' > "$state_file"
+
+    echo "$state_file"
+}
+
+cmd_get() {
+    local issue_id="$1"
+    local jq_path="${2:-.}"
+
+    local state_file
+    state_file=$(resolve_state_file "$issue_id")
+    ensure_state_exists "$state_file"
+
+    jq -r "$jq_path" "$state_file"
+}
+
+cmd_update() {
+    local issue_id="$1"
+    local jq_expr="$2"
+
+    local state_file
+    state_file=$(resolve_state_file "$issue_id")
+    ensure_state_exists "$state_file"
+
+    atomic_update "$state_file" "$jq_expr"
+}
+
+# Atomic read-modify-write-report: the expression must evaluate to
+# {state: <new full state>, report: <any>}. The write of .state and the
+# capture of .report happen under the same lock, so the printed report is
+# the evidence of exactly the transition this call performed — a follow-up
+# `get` could instead observe another writer's interleaved change.
+cmd_update_report() {
+    local issue_id="$1"
+    local jq_expr="$2"
+
+    local state_file
+    state_file=$(resolve_state_file "$issue_id")
+    ensure_state_exists "$state_file"
+
+    local lock_file="${state_file}.lock"
+    local tmp_file="${state_file}.tmp"
+
+    # The report prints from INSIDE the locked section — no shared report
+    # file exists to race on, so concurrent calls for the same issue each
+    # return exactly their own transition's evidence.
+    (
+        flock -w 10 200 || { echo "Error: could not acquire lock on $lock_file" >&2; exit 1; }
+
+        local combined
+        if ! combined=$(jq -c "$jq_expr" "$state_file" 2>&1); then
+            echo "Error: jq expression failed: $jq_expr" >&2
+            exit 1
+        fi
+        # Exactly ONE {state, report} object: a stream of several would write
+        # multiple top-level documents into the state file.
+        if ! jq -e -s 'length == 1 and (.[0].state | type == "object") and (.[0] | has("report"))' >/dev/null 2>&1 <<<"$combined"; then
+            echo "Error: update-report expression must produce exactly one {state: <object>, report: <any>}" >&2
+            exit 1
+        fi
+        jq -c '.state' <<<"$combined" > "$tmp_file"
+        mv "$tmp_file" "$state_file"
+        jq -c '.report' <<<"$combined"
+    ) 200>"$lock_file"
+}
+
+cmd_append() {
+    local issue_id="$1"
+    local field="$2"
+    local value="$3"
+
+    local state_file
+    state_file=$(resolve_state_file "$issue_id")
+    ensure_state_exists "$state_file"
+
+    # Handle nested fields (e.g., pr_comment_review.fixes)
+    if [[ "$value" == "{"* ]] || [[ "$value" == "["* ]]; then
+        # JSON object or array - use as-is
+        atomic_update "$state_file" ".${field} += [${value}]"
+    else
+        # String value - use --arg for safe quoting (handles embedded quotes)
+        local tmp_file="${state_file}.tmp"
+        local lock_file="${state_file}.lock"
+        (
+            flock -w 10 200 || { echo "Error: could not acquire lock" >&2; exit 1; }
+            jq --arg v "$value" ".${field} += [\$v]" "$state_file" > "$tmp_file" 2>&1 || { rm -f "$tmp_file"; exit 1; }
+            jq empty "$tmp_file" 2>/dev/null || { echo "Error: invalid JSON" >&2; rm -f "$tmp_file"; exit 1; }
+            mv "$tmp_file" "$state_file"
+        ) 200>"$lock_file"
+    fi
+}
+
+cmd_increment() {
+    local issue_id="$1"
+    local field="$2"
+
+    local state_file
+    state_file=$(resolve_state_file "$issue_id")
+    ensure_state_exists "$state_file"
+
+    atomic_update "$state_file" ".${field} += 1"
+}
+
+cmd_set() {
+    local issue_id="$1"
+    local field="$2"
+    local value="$3"
+
+    local state_file
+    state_file=$(resolve_state_file "$issue_id")
+    ensure_state_exists "$state_file"
+
+    # review-pr § 4 writes `rereview_panel` to re-enter § 2; past
+    # REVIEW_MAX_CYCLES the loop is over (the pass AT the cap is the allowed
+    # verification pass), so the write refuses, deciding under the one lock.
+    if [[ "$field" == "rereview_panel" && "$value" == "{"* ]]; then
+        local cap report
+        cap=$("$(dirname "${BASH_SOURCE[0]}")/orch-env" REVIEW_MAX_CYCLES 4) || { echo "workflow-state: could not resolve REVIEW_MAX_CYCLES; rereview_panel not set" >&2; return 1; }
+        report=$(cmd_update_report "$issue_id" "(.cycles // 0) as \$n | if \$n > $cap then {state: ., report: {refused: true, cycles: \$n}} else {state: (.rereview_panel = $value), report: {refused: false}} end") || return 1
+        if [[ "$(jq -r '.refused' <<<"$report")" == "true" ]]; then
+            echo "workflow-state: cycles is past the cap ($(jq -r '.cycles' <<<"$report") > REVIEW_MAX_CYCLES=$cap): the verification pass at the cap already ran — no further re-review cycle; go to review-pr § 5 (verdict pass) and report the outstanding items" >&2
+            return 1
+        fi
+        return 0
+    fi
+
+    if [[ "$value" == "{"* ]] || [[ "$value" == "["* ]] || [[ "$value" == "null" ]] || [[ "$value" == "true" ]] || [[ "$value" == "false" ]] || [[ "$value" =~ ^[0-9]+$ ]]; then
+        # JSON object, array, null, boolean, or number - use as-is
+        atomic_update "$state_file" ".${field} = ${value}"
+    else
+        # String value - use --arg for safe quoting (handles embedded quotes)
+        local tmp_file="${state_file}.tmp"
+        local lock_file="${state_file}.lock"
+        (
+            flock -w 10 200 || { echo "Error: could not acquire lock" >&2; exit 1; }
+            jq --arg v "$value" ".${field} = \$v" "$state_file" > "$tmp_file" 2>&1 || { rm -f "$tmp_file"; exit 1; }
+            jq empty "$tmp_file" 2>/dev/null || { echo "Error: invalid JSON" >&2; rm -f "$tmp_file"; exit 1; }
+            mv "$tmp_file" "$state_file"
+        ) 200>"$lock_file"
+    fi
+}
+
+cmd_set_git_head() {
+    local issue_id="$1"
+    local field="$2"
+    local worktree="${3:-.}"
+    local value
+
+    value="$(git -C "$worktree" rev-parse HEAD)"
+    cmd_set "$issue_id" "$field" "$value"
+}
+
+cmd_set_now() {
+    local issue_id="$1"
+    local field="$2"
+    local value
+
+    value="$(date +%s)"
+    cmd_set "$issue_id" "$field" "$value"
+}
+
+# Generate a unique per-delegation round token, store it at <field>, and print
+# it. The token binds a dev completion artifact to exactly the delegation that
+# produced it (kendex#776): the writer names its file dev-return-<issue>-<RID>.json
+# and embeds "round_id": RID, and dev-artifact-check resolves that exact path and
+# rejects any receipt whose internal round_id differs. This deterministic identity
+# replaces the earlier mtime>=dev_delegated_at freshness heuristic, which proved
+# only WHEN bytes were written, not WHICH delegation wrote them.
+#
+# The token is a nanosecond-resolution timestamp (`date +%s%N`) plus a random
+# suffix, so even rapid same-second (indeed same-millisecond) re-stamps get
+# distinct tokens — unlike a concatenated `$RANDOM$RANDOM`, which is not injective
+# (e.g. "1"+"20" == "12"+"0"). Both components stay within the path-safe grammar.
+cmd_new_round_id() {
+    local issue_id="$1"
+    local field="$2"
+    local value
+
+    value="$(date +%s%N)-$RANDOM"
+    cmd_set "$issue_id" "$field" "$value"
+    echo "$value"
+}
+
+cmd_path() {
+    local issue_id="$1"
+    resolve_state_file "$issue_id"
+}
+
+cmd_exists() {
+    local json=false
+
+    if [[ "${1:-}" == "--json" ]]; then
+        json=true
+        shift
+    fi
+
+    local issue_id="${1:-}"
+    if [[ -z "$issue_id" ]]; then
+        echo "Error: exists requires an issue_id" >&2
+        exit 2
+    fi
+
+    local state_file
+    state_file=$(resolve_state_file "$issue_id")
+
+    if [[ "$json" == true ]]; then
+        local exists=false
+        [[ -f "$state_file" ]] && exists=true
+        jq -n \
+          --arg issue_id "$issue_id" \
+          --arg path "$state_file" \
+          --argjson exists "$exists" \
+          '{issue_id: $issue_id, path: $path, exists: $exists}'
+        return 0
+    fi
+
+    [[ -f "$state_file" ]]
+}
+
+cmd_help() {
+    cat << 'EOF'
+Usage: workflow-state [--state-dir <path>] <command> <issue_id> [args...]
+
+Global options (before the subcommand):
+  --state-dir <path>            Override state directory for all subcommands.
+                                Takes precedence over ORCH_STATE_DIR. Prefer this
+                                flag over the ORCH_STATE_DIR=… env prefix from
+                                worktree sessions: a plain flag is classifier-safe
+                                under Codex approval=never.
+
+Commands:
+  init <issue_id> [options]     Create new state file
+    --agent <name>              Primary agent
+    --worktree <path>           Worktree path
+    --branch <name>             Branch name
+    --team <name>               Team name (optional)
+    --qa-labels <json_array>    QA labels (default: [])
+    --sub-issues <json_array>   Sub-issue IDs (default: [])
+
+  get <issue_id> [jq_path]      Read value (default: entire state)
+  update <issue_id> <jq_expr>   Run arbitrary jq expression
+  update-report <issue_id> <jq_expr>
+                                Atomic read-modify-write-report: the jq expr
+                                runs against the current state under the same
+                                lock as update and must produce
+                                {state: <new full state>, report: <any>} —
+                                .state is written back, .report printed
+                                compactly. Use when a caller needs a decision
+                                and its evidence from the SAME locked step
+                                (a separate get after update can interleave
+                                with another writer)
+  append <issue_id> <field> <value>   Append to array field
+  increment <issue_id> <field>  Increment numeric field
+  set <issue_id> <field> <value>  Set field value ({/[ prefix, null/true/false,
+                                or all digits parse as JSON; anything else is
+                                stored as a raw string — pass strings bare,
+                                never pre-quoted '"..."')
+  set-git-head <issue_id> <field> [worktree]  Set field to current HEAD SHA
+  set-now <issue_id> <field>     Set field to current epoch seconds
+  new-round-id <issue_id> <field>  Generate a unique per-delegation round token,
+                                store it at <field>, and print it (binds a dev
+                                completion artifact to its delegation — kendex#776)
+  path <issue_id>               Print state file path
+  exists [--json] <issue_id>    Exit 0 if exists, 1 if not; --json prints status and exits 0
+
+Keys:
+  GitHub-issue orchestration stores state under the normalized key issue-<N>.
+  Every command except init accepts the bare tracker number as an alias: when
+  only <state-dir>/workflow-state-issue-<N>.json exists, a numeric <issue_id>
+  resolves to that file. The exact-key file wins when it exists; if files
+  exist under BOTH keys the command errors (exit 2) instead of guessing.
+  init always creates the exact key given — pass the normalized key to init.
+
+Examples:
+  workflow-state init PROJ-123 --agent rust --worktree /tmp/wt
+  workflow-state exists --json PROJ-123
+  workflow-state get PROJ-123 .cycles
+  workflow-state increment PROJ-123 cycles
+  workflow-state increment PROJ-123 pr_comment_review.iterations
+  workflow-state append PROJ-123 json_paths "review.json"
+  workflow-state append PROJ-123 fixed_items '{"description":"Fix","commit":"abc"}'
+  workflow-state set PROJ-123 pr_review.mode review
+  workflow-state set PROJ-123 pr_review_baseline '{"last_threads":["PRRT_kwDOABC123"]}'
+  workflow-state set-git-head PROJ-123 pre_delegate_sha /tmp/wt
+  workflow-state set-now PROJ-123 review_delegated_at
+  workflow-state new-round-id PROJ-123 dev_round_id
+  workflow-state update PROJ-123 '.fixed_items | map(select(.source == "qa-review"))'
+  workflow-state --state-dir /path/to/tmp append PROJ-123 fixed_items '{"description":"Fix"}'
+
+Environment:
+  ORCH_STATE_DIR    Override state directory (default: tmp). Fallback for
+                    --state-dir; the flag wins when both are set.
+
+Dependencies:
+  jq               JSON processing
+  flock             File locking (util-linux)
+EOF
+}
+
+# Global options may precede the subcommand. --state-dir <path> (or
+# --state-dir=<path>) overrides the state directory for EVERY subcommand and
+# takes precedence over ORCH_STATE_DIR (which stays supported as a fallback).
+# Prefer this flag from worktree sessions: a plain flag is classifier-safe under
+# Codex approval=never, whereas an `ORCH_STATE_DIR=… workflow-state …`
+# env-assignment prefix is rejected as a flagged command shape.
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --state-dir)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: --state-dir requires a path argument" >&2
+                exit 2
+            fi
+            STATE_DIR="$2"
+            shift 2
+            ;;
+        --state-dir=*)
+            STATE_DIR="${1#--state-dir=}"
+            shift
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+# Main dispatch
+case "${1:-help}" in
+    init)      shift; cmd_init "$@" ;;
+    get)       shift; cmd_get "$@" ;;
+    update)    shift; cmd_update "$@" ;;
+    update-report) shift; cmd_update_report "$@" ;;
+    append)    shift; cmd_append "$@" ;;
+    increment) shift; cmd_increment "$@" ;;
+    set)       shift; cmd_set "$@" ;;
+    set-git-head) shift; cmd_set_git_head "$@" ;;
+    set-now)   shift; cmd_set_now "$@" ;;
+    new-round-id) shift; cmd_new_round_id "$@" ;;
+    path)      shift; cmd_path "$@" ;;
+    exists)    shift; cmd_exists "$@" ;;
+    help|--help|-h) cmd_help ;;
+    *) echo "Unknown command: $1" >&2; cmd_help >&2; exit 1 ;;
+esac

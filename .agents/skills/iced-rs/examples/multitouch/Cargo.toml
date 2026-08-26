@@ -1,0 +1,13 @@
+[package]
+name = "multitouch"
+version = "0.1.0"
+authors = ["Artur Sapek <artur@kraken.com>"]
+edition = "2024"
+publish = false
+
+[dependencies]
+iced.workspace = true
+iced.features = ["debug", "canvas", "tokio"]
+
+tracing-subscriber = "0.3"
+voronator = "0.2"

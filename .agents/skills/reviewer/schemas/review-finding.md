@@ -1,0 +1,131 @@
+# Review Finding Schema
+
+Canonical JSON output shape for every review/QA verdict. Artifact path: `[worktree-path]/tmp/review-{agent}-YYYYMMDD-HHMMSS.json`, where `{agent}` is the FULL agent name including its `reviewer-` prefix (`reviewer-security` → `review-reviewer-security-20260720-141530.json`). Codebase reviews insert `-codebase` before the timestamp.
+
+Write the artifact with the harness file-write/edit tool (Codex: `apply_patch`) — never shell redirection, heredocs, `tee`, or command substitution. Self-validate with orch's `review-artifact-check` before returning (reviewer SKILL.md § Output Contract).
+
+## Schema
+
+```json
+{
+  "agent": "agent-name",
+  "timestamp": "2026-01-14T03:30:00Z",
+  "verdict": "pass|action_required",
+  "summary": "1-2 sentence summary",
+  "blockers": [
+    {
+      "id": 1,
+      "title": "Concise issue title (5-10 words)",
+      "location": "src/auth/token.rs (`refresh_token`)",
+      "description": "What the issue is",
+      "recommendation": "How to fix it",
+      "priority": 1,
+      "estimate": 2
+    }
+  ],
+  "suggestions": [
+    {
+      "id": 1,
+      "title": "Concise issue title (5-10 words)",
+      "location": "src/ipc/ring_buffer.rs (`RingBuffer::grow`)",
+      "description": "What could be improved (2-3 sentences for category:issue)",
+      "recommendation": "How to improve it (bullet-list for category:issue)",
+      "priority": 3,
+      "estimate": 2,
+      "category": "fix|issue",
+      "impact": "category:issue only — who hits this, on what real path"
+    }
+  ],
+  "questions": [
+    {
+      "id": 1,
+      "location": "src/auth/token.rs",
+      "question": "Why is this async?",
+      "draft_response": "Performance optimization for...",
+      "source": "@reviewer",
+      "source_id": "PRRT_kwDO...",
+      "source_type": "inline"
+    }
+  ],
+  "qa_metadata": {}
+}
+```
+
+## Verdict
+
+`action_required` when `blockers[]` is non-empty; `pass` when it is empty (suggestions may exist).
+
+## Arrays
+
+- `blockers[]`: block PR merge — dev must fix (may escalate to issues if unfixable)
+- `suggestions[]`: non-blocking improvements, categorized by the review agent
+- `questions[]`: PR-comment triage only — questions needing a response
+
+## Item Fields (blockers/suggestions)
+
+Every item requires all of these; one missing field rejects the whole artifact.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `id` | Yes | Sequential number within its array |
+| `title` | Yes | Concise title (5-10 words) — used if the item becomes a tracked issue |
+| `location` | Yes | One string: stable path plus symbol, no line numbers — line/hunk evidence belongs in `description` |
+| `description` | Yes | Problem statement |
+| `recommendation` | Yes | Actionable fix/improvement steps |
+| `priority` | Yes | Integer 1-4 (P1 Urgent, P2 High, P3 Normal, P4 Low). There is no P5 — a finding below P4 is not worth reporting |
+| `estimate` | Yes | 1-5 points (1=hours, 2=half-day, 3=day, 4=2-3 days, 5=week+) |
+| `category` | Suggestions only | `fix` (apply in this PR) or `issue` (track separately) — the orchestrator routes on this field |
+
+`category: "issue"` items become tracked issue candidates: `description` 2-3 sentences; `recommendation` as bullet-list requirements; `impact` (required) one line naming who hits this on what real path. An impact that needs "could", "might", or "in theory" is not an issue — note it in the review summary instead.
+
+## Question Fields (PR comment triage only)
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `id` | Yes | Sequential number |
+| `location` | Yes | File path (or "general") |
+| `question` | Yes | The question being asked |
+| `draft_response` | Yes | Suggested response to post |
+| `source` | Yes | Comment author |
+| `source_id` | Yes | Thread or comment ID for reply routing |
+| `source_type` | Yes | `inline` or `pr-level` |
+
+## qa_metadata
+
+Per-agent QA payload (`workflows/qa-review.md`); `{}` when there is none. A reviewer that could not actually perform its review must set `{"review_performed": false, "reason": "<snake_case_reason>"}` instead of a bare pass — `review-artifact-check` rejects such artifacts (`no_review`) regardless of verdict.
+
+## Measurement Claims
+
+`.summary` and `.qa_metadata` state your OWN measurements; only those two are scanned. Your
+mutation-stability pairing citation (reviewer SKILL.md § Mutation-Stability Pairing) belongs in `.summary`;
+the same numbers written only into a blocker or suggestion are not checked. `review-artifact-check`
+rejects the artifact (`zero_sample`) when a mutation/stability citation's SAMPLE COUNT — the
+denominator, or the thread count — is zero, or when `qa_metadata.perf_qa` carries no `percentiles`
+value above zero. A zero RESULT is not a zero sample: `stability: 0/10` is ten measured runs and
+stays valid.
+
+Numbers you are QUOTING — a fixture, a log line, another tool's zeroed run — belong in the
+`blockers[]`/`suggestions[]` item they are evidence for; those arrays are never scanned.
+
+When YOUR OWN instrument produced nothing, keep the evidence and set the **top-level**
+`measurement_failed` to a string naming the instrument and what it did:
+
+```json
+{"agent": "reviewer-test", "verdict": "action_required",
+ "measurement_failed": "cargo-mutants selected 0 mutants for the changed file"}
+```
+
+It must be substantive: at least 20 characters and 3 words, and never a null token (`n/a`,
+`none`, `unknown`, ...) or bare punctuation — those are rejected as `invalid_declaration`. The
+declaration replaces the gate for that artifact, turns the check's reason into
+`valid_undermeasured`, and is echoed back on the result. Omitting the numbers is never the way past this gate.
+
+Declaring a `qa_metadata` object also commits the artifact to usable findings: `review-artifact-check` rejects it (`incomplete`) when `blockers[]`/`suggestions[]` are missing or not arrays, or when a present item omits a required field above (`questions[]` is exempt). Artifacts without `qa_metadata` keep the tolerant existence + `verdict` validation. Full rejection semantics: `review-artifact-check --help`.
+
+Example per-agent payloads:
+
+| Agent | qa_metadata key | Required fields |
+|-------|-----------------|-----------------|
+| safety audit | `safety` | `tool_results`, `unsafe_block_count`, `violations[]` |
+| performance QA | `perf_qa` | `percentiles`, `regression_pct`, `regressions[]`, `platform`, `baseline_sha` |
+| architecture review | `arch_review` | `dimension_scores`, `overall_score`, `pass` |

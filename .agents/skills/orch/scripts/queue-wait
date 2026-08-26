@@ -1,0 +1,1027 @@
+#!/usr/bin/env bash
+# Wait for a merge-queue / auto-merge outcome on a PR — the merge-pr queue
+# watch as one command, and the only place the cross-poll WAS_QUEUED memory
+# lives. The authoritative contract — verdicts, progress signal, probes,
+# late-findings guard, JSON output, environment, auth, exit codes — is
+# print_usage below: run with --help.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+# shellcheck source=lib/gh-auth.sh
+source "$SCRIPT_DIR/lib/gh-auth.sh"
+
+print_usage() {
+  cat <<'USAGE'
+Usage: queue-wait <PR#> [poll_interval] [max_wait] [--json] [--no-check-probe]
+                  [--no-guard]
+
+Wait for a merge-queue / auto-merge outcome on a PR. Every exit path emits
+a final result on stdout — a "Merge queue: ..." line, or a JSON object with
+--json — so callers can route merged vs ejected vs disarmed vs still-queued
+deterministically (kendex#819). It is the merge-pr queue watch as one
+simple command (accepted by the Codex approval=never classifier where a
+sleep-poll loop is rejected) and the only place WAS_QUEUED lives: whether
+ANY earlier poll observed the PR queued or armed. Separate tool calls carry
+no memory, so an orchestrator re-entering per poll cannot tell "ejected
+from the queue" from "never entered it"; this script can. It is NOT a CI
+waiter: ci-wait owns check state and approval-wait owns the review gate.
+
+  <PR#>          pull request number (required)
+  poll_interval  seconds between polls (default 30)
+  max_wait       total budget in seconds, an upper bound (default 2400 —
+                 40 min, sized to measured merge-group suites up to
+                 ~25 min); poll_interval must be <= max_wait
+  --json         emit the machine-readable result object on stdout
+  --no-check-probe  skip the failed-required-check ci-wait delegation
+  --no-guard     skip the late-findings guard (no dequeue on unresolved
+                 review threads while queued)
+
+Each poll reads both signals the merge-pr routing table consumes:
+`gh pr view <PR> --json state,mergedAt` plus the GraphQL isInMergeQueue /
+mergeQueueEntry { state position headCommit { oid } } / autoMergeRequest
+fields (gh pr view exposes no queue-membership field), and — when the
+entry exposes its head commit — one paginated REST check-runs read on that
+commit for the progress signal. `gh pr view --json mergeable` is never
+polled: it stays UNKNOWN after a merge and would loop forever.
+
+Verdicts (the merge-pr § 5 step 1 routing table):
+  merged      state == "MERGED". The only exit-0 verdict.
+  ejected     an earlier poll saw the PR IN the merge queue, and it is now
+              out (isInMergeQueue false, mergeQueueEntry null) while still
+              OPEN: the merge-group run failed and GitHub removed it.
+  disarmed    the PR was armed (autoMergeRequest) but never entered the
+              queue, and the arming is gone — or, while armed and not
+              enqueued, a required check has failed (see the probe below).
+  dequeued    the late-findings guard saw an unresolved review thread while
+              the PR was queued or armed and pulled the arming (cause
+              late_findings). A failed pull instead reports cause
+              late_findings_dequeue_failed with the PR still queued.
+  closed      the PR was closed without merging.
+  queued      poll bound reached with the PR still queued/armed. Reported
+              as status "timeout": the merge stays armed and fires on its
+              own, so this is NOT a failure of the merge — and never a
+              success either. Carries cause still_progressing or stalled.
+              Never re-arm a still_progressing merge.
+  not_queued  no poll ever observed the PR queued or armed, and the arming
+              grace expired. The merge was never armed; nothing will fire.
+
+Progress signal (VST-249): across polls the script tracks the entry tuple
+(mergeQueueEntry.state, position, headCommit.oid) and the completed
+check-run count on that head commit. progressing is true when the tuple or
+the completed count changed within the last 3 polls, OR the last
+successful check-run read still shows a not-completed run
+(in_progress/queued/waiting/requested/pending) — a 15-minute shard
+completes nothing for many polls and is still running. Stalled means
+measurable, unchanged in the window, and nothing running. null means
+progress was never observable: no head commit exposed, or every check-run
+read failed — a failed read is unknown, never zero (absorbed, warned after
+3 consecutive failures, never compared), so a read failure can neither
+fabricate nor erase movement.
+
+Ejection/disarm verdicts are confirmed across QUEUE_WAIT_CONFIRM_POLLS
+consecutive polls (default 2) before they terminate the wait, so a single
+eventually-consistent blip in the GraphQL view cannot trigger a spurious
+recovery cycle. A candidate observed at least once still wins at the
+deadline — a real ejection is never downgraded to "still queued".
+
+Failed-required-check probe (--no-check-probe to disable): detection of
+the failed-required-check disarm cause is delegated to
+`ci-wait <PR> 15 30 --json` (verdict "fail") rather than reimplemented —
+ci-wait owns superseded-run correlation and check-state semantics. The
+probe runs ONLY on the armed-but-not-enqueued shape (a merge-queue repo
+gets ejection detection from membership for free), at most once every
+QUEUE_WAIT_PROBE_INTERVAL seconds so a queue poll never inherits a full CI
+wait. ci-wait may re-run a transiently failed workflow once as part of its
+own contract; --no-check-probe suppresses that side effect too.
+
+Late-findings guard (--no-guard to disable): reviewers post findings
+asynchronously, and the merge queue never re-checks thread resolution once
+a PR is queued (kendex#1289) — a finding landing after enqueue merges
+unless something dequeues. approval-wait gates unresolved threads to zero
+before enqueue, so ANY unresolved review thread observed while the PR is
+queued or armed is late by construction — pre-existing or new, no
+baseline; a thread resolved while queued is fine. Each guard probe reads
+the same reviewThreads surface approval-wait uses, rate-limited by
+QUEUE_WAIT_PROBE_INTERVAL on its own clock, and one final probe runs
+before a still-queued deadline return so the timeout can never skip the
+last chance. On trigger the guard disarms auto-merge FIRST (an armed PR
+re-enqueues itself when requirements go green, racing a bare dequeue) and
+then dequeues via GraphQL dequeuePullRequest — whose input field is named
+`id` but takes the PULL REQUEST node id, unlike enqueue's `pullRequestId`.
+Each mutation response is verified: an `errors` key in the body, or a
+missing mutation payload, is a failure even on HTTP success. Full success
+exits 1 with verdict "dequeued", cause "late_findings" — the caller
+triages the threads (resolving or replying to every one) before any
+re-enqueue. Any failed half is loud, never swallowed: cause
+"late_findings_dequeue_failed", exit 1, the failed mutation(s) named and
+the PR stated still queued. Thread reads fail closed: a query failure, a
+null or malformed reviewThreads, a non-boolean isResolved, a hasNextPage
+with a missing or non-advancing cursor, or a walk needing more than 20
+pages is "no evidence", never "no threads" — the guard keeps waiting,
+retries at the next probe, and warns after 3 consecutive failures without
+ever fabricating a dequeue or a quiet.
+
+JSON output (always when --json):
+  {
+    "status": "complete" | "timeout" | "error",
+    "verdict": "merged" | "ejected" | "disarmed" | "dequeued" | "closed"
+               | "queued" | "not_queued" | "unknown",
+    "elapsed_seconds": <int>,
+    "polls": <int>,
+    "pr_state": <string>,          # OPEN | MERGED | CLOSED | "" (never read)
+    "merged_at": <string>,
+    "in_merge_queue": <bool>,      # last poll
+    "merge_queue_state": <string>, # mergeQueueEntry.state, "" when no entry
+    "auto_merge_enabled": <bool>,  # last poll
+    "was_queued": <bool>,          # ANY poll saw queued OR armed
+    "was_in_merge_queue": <bool>,  # ANY poll saw actual queue membership
+    "progressing": <bool|null>,    # see Progress signal above
+    "cause": <string>,             # only when known: merge_group_failed |
+                                   # check_failed | auto_merge_cleared |
+                                   # never_armed | closed_without_merge |
+                                   # late_findings |
+                                   # late_findings_dequeue_failed |
+                                   # still_progressing | stalled (queued)
+    "unresolved_count": <int>,     # only once the guard has read threads
+    "last_poll_age_seconds": <int>, # only once a poll has completed
+    "transient_api_errors": <int>, # only when > 0
+    "error": <string>              # only when status == "error"
+  }
+
+Auth: resolved through lib/gh-auth.sh, shared with approval-wait and
+ci-wait (kendex#19) — env-first: already-resolved GH_TOKEN/GITHUB_TOKEN/
+GH_BOT_TOKEN parent-process values win before local files are read, `op
+read` runs only for the final selected op:// reference, each candidate
+source is probed at most once, and a selected env token is validated with
+`gh api user`. Full ladder: orch DEVELOPMENT.md.
+
+Environment (orch-env ladder: parent env > .env.local > kendex.settings.toml /
+  .kendex/settings.toml [env] > .env > default):
+  QUEUE_WAIT_ARM_GRACE      seconds to keep polling before reporting
+                "not_queued" when no poll has yet seen the PR queued or
+                armed (default 120). Enqueue registration lags the merge
+                call; past the window the explicit never-armed diagnostic
+                fires instead of burning the budget on a never-armed merge.
+  QUEUE_WAIT_CONFIRM_POLLS  consecutive polls that must agree before an
+                ejection/disarm terminates the wait (default 2).
+  QUEUE_WAIT_PROBE_INTERVAL minimum seconds between delegated ci-wait
+                probes and between late-findings guard probes, each on its
+                own clock (default 120).
+
+Exit codes:
+  0  merged
+  1  ejected, disarmed, dequeued, closed, still-queued at the deadline,
+     never armed, or a non-auth error
+  2  usage error: missing PR#, unknown flag, or non-integer argument
+     (matches ci-wait)
+  3  GitHub auth/CLI error (matches ci-wait and approval-wait)
+USAGE
+}
+
+# --- arg parse (before auth so error paths can honor --json) ---
+JSON_OUTPUT=false
+CHECK_PROBE=true
+GUARD=true
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) print_usage; exit 0 ;;
+    --json) JSON_OUTPUT=true; shift ;;
+    --no-check-probe) CHECK_PROBE=false; shift ;;
+    --check-probe) CHECK_PROBE=true; shift ;;
+    --no-guard) GUARD=false; shift ;;
+    --guard) GUARD=true; shift ;;
+    -*)
+      # An unrecognized flag must never fall through into a positional slot:
+      # it would be consumed as a PR#/interval and die later with a diagnostic
+      # naming an argument the caller never typed (kendex#981, same as ci-wait).
+      echo "queue-wait: unknown option '$1'" >&2
+      print_usage >&2
+      exit 2
+      ;;
+    *) POSITIONAL+=("$1"); shift ;;
+  esac
+done
+
+if [[ "${#POSITIONAL[@]}" -lt 1 ]]; then
+  echo "queue-wait: missing required <PR#> argument" >&2
+  print_usage >&2
+  exit 2
+fi
+PR_NUM="${POSITIONAL[0]}"
+POLL_INTERVAL="${POSITIONAL[1]:-30}"
+MAX_WAIT="${POSITIONAL[2]:-2400}"
+START_TIME="$(date +%s)"
+elapsed=0
+
+if ! [[ "$PR_NUM" =~ ^[0-9]+$ ]]; then
+  echo "queue-wait: PR number must be numeric (got '$PR_NUM')" >&2
+  exit 2
+fi
+
+if ! [[ "$POLL_INTERVAL" =~ ^[0-9]+$ ]] || [ "$POLL_INTERVAL" -lt 1 ]; then
+  echo "queue-wait: poll_interval must be a positive integer (got '$POLL_INTERVAL')" >&2
+  exit 2
+fi
+
+if ! [[ "$MAX_WAIT" =~ ^[0-9]+$ ]] || [ "$MAX_WAIT" -lt 1 ]; then
+  echo "queue-wait: max_wait must be a positive integer (got '$MAX_WAIT')" >&2
+  exit 2
+fi
+
+# poll_interval > max_wait can only ever poll once and then sleep past the
+# stated budget. There is no legitimate use, and the two-argument form reads
+# as "wait up to <max_wait>", so catch the swapped-argument shape here.
+if [ "$POLL_INTERVAL" -gt "$MAX_WAIT" ]; then
+  echo "queue-wait: poll_interval (${POLL_INTERVAL}s) exceeds max_wait (${MAX_WAIT}s) — that polls once and overshoots the budget. Arg order is: queue-wait <PR#> [poll_interval] [max_wait]." >&2
+  exit 2
+fi
+
+ARM_GRACE="$("$SCRIPT_DIR/orch-env" QUEUE_WAIT_ARM_GRACE 120)"
+CONFIRM_POLLS="$("$SCRIPT_DIR/orch-env" QUEUE_WAIT_CONFIRM_POLLS 2)"
+PROBE_INTERVAL="$("$SCRIPT_DIR/orch-env" QUEUE_WAIT_PROBE_INTERVAL 120)"
+[[ "$CONFIRM_POLLS" -ge 1 ]] 2>/dev/null || CONFIRM_POLLS=1
+
+update_elapsed() {
+  local now
+  now="$(date +%s)"
+  elapsed=$((now - START_TIME))
+}
+
+# Sleep up to $1 seconds, but never past the remaining budget, so max_wait is a
+# real upper bound instead of "budget plus one poll interval". Refreshes elapsed.
+sleep_within_budget() {
+  local want="$1" remaining
+  update_elapsed
+  remaining=$((MAX_WAIT - elapsed))
+  if [ "$remaining" -le 0 ]; then
+    return 0
+  fi
+  [ "$want" -gt "$remaining" ] && want="$remaining"
+  sleep "$want"
+  update_elapsed
+}
+
+# Last observation seen by the poll loop, so timeout/error results still
+# report the queue state that was outstanding.
+polls=0
+# Wall-clock of the most recent complete poll, so a verdict can report how old
+# its observation is — a one-poll "still queued" is low-confidence, not live.
+last_poll_time=""
+last_pr_state=""
+last_merged_at=""
+last_in_queue="false"
+last_queue_state=""
+last_auto_merge="false"
+last_cause=""
+last_pr_node_id=""
+last_unresolved_count=""
+# The cross-poll memory that makes this script necessary (kendex#819).
+#   was_queued     - ANY poll observed the PR queued OR armed; the routing
+#                    table's WAS_QUEUED.
+#   was_in_queue   - ANY poll observed actual merge-queue membership. Splits
+#                    an ejection (left the queue) from a plain auto-merge
+#                    disarm (never entered it), which WAS_QUEUED alone cannot.
+was_queued="false"
+was_in_queue="false"
+# Live shape from the most recent parsed poll; also read by the final guard
+# probe after the loop, so initialize before any poll runs.
+in_queue_now=false
+armed_now=false
+# Progress signal (VST-249). The entry tuple and completed check-run count of
+# the previous successful poll, the not-completed (running/queued) check-run
+# count from the last successful read ("" when never read), the poll number
+# of the last observed change ("" when none), and whether progress was ever
+# measurable — a check-run read succeeded, or a change was seen. Without
+# evidence the verdict says null, never false: "unobservable" is not
+# "stalled".
+PROGRESS_WINDOW_POLLS=3
+prev_progress_tuple=""
+prev_check_count=""
+prev_head_oid=""
+last_running_count=""
+progress_have_prev=false
+progress_last_change_poll=""
+progress_evidence=false
+checkrun_fetch_failures=0
+CHECKRUN_FETCH_WARN_POLLS=3
+
+# Transient-failure bookkeeping, mirroring approval-wait (kendex#748): every
+# gh call in the poll loop writes stderr to GH_ERR_FILE so a failure can be
+# classified before it terminates the wait. retry_interval doubles per
+# consecutive transient failure (capped) and resets after a successful poll.
+transient_api_errors=0
+GH_ERR_FILE="$(mktemp)"
+trap 'rm -f "$GH_ERR_FILE"' EXIT
+retry_interval="$POLL_INTERVAL"
+RETRY_INTERVAL_CAP=$((POLL_INTERVAL * 8))
+
+# Progress verdict for the JSON `progressing` field: "true" when the last
+# observed change is within the last PROGRESS_WINDOW_POLLS polls OR the last
+# check-run read still shows a not-completed run (a suite mid-flight
+# completes nothing for many polls and is still progress); "false" when
+# progress was measurable, nothing moved in the window, and nothing is
+# running; "null" when it was never measurable.
+progressing_value() {
+  if [ -n "$progress_last_change_poll" ] \
+     && [ $((polls - progress_last_change_poll)) -lt "$PROGRESS_WINDOW_POLLS" ]; then
+    printf 'true'
+  elif [ -n "$last_running_count" ] && [ "$last_running_count" -gt 0 ]; then
+    printf 'true'
+  elif [ "$progress_evidence" = true ]; then
+    printf 'false'
+  else
+    printf 'null'
+  fi
+}
+
+# Emit the final machine-readable result on stdout. Every exit path routes
+# through here (or emit_error) so the script can never finish silently.
+emit_result() {
+  local status="$1" verdict="$2" error_msg="${3:-}"
+  update_elapsed
+  local poll_age="" progressing
+  [ -n "$last_poll_time" ] && poll_age=$(( $(date +%s) - last_poll_time ))
+  progressing="$(progressing_value)"
+  # The still-queued verdict carries its progress cause; every other verdict
+  # keeps its own cause untouched.
+  if [ "$verdict" = "queued" ]; then
+    if [ "$progressing" = "true" ]; then
+      last_cause="still_progressing"
+    else
+      last_cause="stalled"
+    fi
+  fi
+  if $JSON_OUTPUT; then
+    jq -n \
+      --arg s "$status" \
+      --arg v "$verdict" \
+      --argjson elapsed "$elapsed" \
+      --argjson polls "$polls" \
+      --arg pr_state "$last_pr_state" \
+      --arg merged_at "$last_merged_at" \
+      --argjson in_queue "$last_in_queue" \
+      --arg queue_state "$last_queue_state" \
+      --argjson auto_merge "$last_auto_merge" \
+      --argjson was_queued "$was_queued" \
+      --argjson was_in_queue "$was_in_queue" \
+      --argjson progressing "$progressing" \
+      --arg cause "$last_cause" \
+      --arg unresolved "$last_unresolved_count" \
+      --argjson transient "$transient_api_errors" \
+      --arg poll_age "$poll_age" \
+      --arg error "$error_msg" \
+      '{
+        status: $s,
+        verdict: $v,
+        elapsed_seconds: $elapsed,
+        polls: $polls,
+        pr_state: $pr_state,
+        merged_at: $merged_at,
+        in_merge_queue: $in_queue,
+        merge_queue_state: $queue_state,
+        auto_merge_enabled: $auto_merge,
+        was_queued: $was_queued,
+        was_in_merge_queue: $was_in_queue,
+        progressing: $progressing
+      } + (if $cause == "" then {} else {cause: $cause} end)
+        + (if $unresolved == "" then {} else {unresolved_count: ($unresolved|tonumber)} end)
+        + (if $transient > 0 then {transient_api_errors: $transient} else {} end)
+        + (if $poll_age == "" then {} else {last_poll_age_seconds: ($poll_age|tonumber)} end)
+        + (if $error == "" then {} else {error: $error} end)'
+    return 0
+  fi
+  case "$verdict" in
+    merged)
+      echo "Merge queue: merged (PR #$PR_NUM${last_merged_at:+ at $last_merged_at})"
+      ;;
+    ejected)
+      echo "Merge queue: ejected — PR #$PR_NUM left the merge queue after ${elapsed}s without merging; the merge-group run failed. Fix CI and re-arm."
+      ;;
+    disarmed)
+      echo "Merge queue: disarmed — auto-merge is no longer armed on PR #$PR_NUM after ${elapsed}s${last_cause:+ (cause: $last_cause)}. Fix CI and re-arm."
+      ;;
+    dequeued)
+      if [[ "$last_cause" == "late_findings_dequeue_failed" ]]; then
+        echo "Merge queue: DEQUEUE FAILED — unresolved review thread(s) on PR #$PR_NUM while queued (${last_unresolved_count:-?} unresolved), but a guard mutation failed: the PR may be STILL QUEUED or armed and the merge may still fire. Dequeue/disarm manually, then triage the threads."
+      else
+        echo "Merge queue: dequeued — unresolved review thread(s) on PR #$PR_NUM while queued (${last_unresolved_count:-?} unresolved). Triage the review comments, then re-arm."
+      fi
+      ;;
+    closed)
+      echo "Merge queue: closed — PR #$PR_NUM was closed without merging"
+      ;;
+    queued)
+      local progress_note
+      case "$progressing" in
+        true)  progress_note="still progressing: queue-entry or check-run movement within the last ${PROGRESS_WINDOW_POLLS} polls, or a check-run still running${last_running_count:+ (${last_running_count} not completed)}" ;;
+        false) progress_note="STALLED: no queue-entry or check-run movement in the last ${PROGRESS_WINDOW_POLLS} polls and no check-run running" ;;
+        *)     progress_note="progress unobservable: no merge-group head commit exposed or its check-runs unreadable" ;;
+      esac
+      if [ "${polls:-0}" -le 1 ]; then
+        echo "Merge queue: still queued after ${elapsed}s — LOW CONFIDENCE: a single poll${poll_age:+, last observed ${poll_age}s ago}. Widen max_wait or shorten poll_interval for a live read. The merge stays armed and fires when checks and protection clear (${progress_note})"
+      else
+        echo "Merge queue: still queued after ${elapsed}s (${polls} polls${poll_age:+, last polled ${poll_age}s ago}) — the merge stays armed and fires when checks and protection clear (${progress_note})"
+      fi
+      ;;
+    not_queued)
+      echo "Merge queue: not queued after ${elapsed}s — no poll ever saw PR #$PR_NUM queued or armed; the merge is not armed and will not fire"
+      ;;
+    *)
+      echo "Merge queue error: $error_msg"
+      ;;
+  esac
+}
+
+emit_error() {
+  emit_result "error" "unknown" "$1"
+}
+
+if ! command -v gh >/dev/null 2>&1; then
+  emit_error "gh CLI not found on PATH"
+  echo "queue-wait: gh CLI not found on PATH" >&2
+  exit 3
+fi
+
+AUTH_READY=false
+KEYRING_PROBED=false
+
+if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
+  auth_status=0
+  if orch_github_auth_status; then
+    AUTH_READY=true
+  else
+    auth_status=$?
+    if [[ "$auth_status" -ne 124 && "${KENDEX_GITHUB_SELECTED_TOKEN_SOURCE:-}" != "GH_BOT_TOKEN" ]]; then
+      KEYRING_PROBED=true
+      if orch_github_keyring_auth_status; then
+        echo "Warning: GH_TOKEN/GITHUB_TOKEN failed gh auth; unsetting them and using gh keyring auth." >&2
+        unset GH_TOKEN GITHUB_TOKEN
+        export KENDEX_GITHUB_AUTH_FALLBACK="keyring"
+        AUTH_READY=true
+      else
+        unset GH_TOKEN GITHUB_TOKEN
+      fi
+    else
+      unset GH_TOKEN GITHUB_TOKEN
+    fi
+  fi
+fi
+
+if [[ "$AUTH_READY" != "true" && -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
+  orch_load_env_bot_token "$PROJECT_ROOT" || true
+fi
+
+if [[ "$AUTH_READY" != "true" ]]; then
+  if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
+    if orch_github_auth_status; then
+      AUTH_READY=true
+    fi
+  elif [[ "$KEYRING_PROBED" != "true" ]]; then
+    KEYRING_PROBED=true
+    if orch_github_auth_status; then
+      export KENDEX_GITHUB_AUTH_FALLBACK="keyring"
+      AUTH_READY=true
+    fi
+  fi
+fi
+
+if [[ "$AUTH_READY" != "true" ]]; then
+  emit_error "no working GitHub auth path"
+  {
+    echo "queue-wait: no working GitHub auth path."
+    echo "Tried: env GH_TOKEN/GITHUB_TOKEN, gh keyring, project GH_BOT_TOKEN."
+    echo "Run: gh auth login   (or set a valid GH_BOT_TOKEN in .env.local)."
+  } >&2
+  exit 3
+fi
+
+# --- Resolve repo explicitly so gh calls don't depend on local auth/inference ---
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)
+if [ -z "$REPO" ]; then
+  origin_url=$(git -C "$PROJECT_ROOT" remote get-url origin 2>/dev/null || true)
+  # Capture owner/repo greedily, then strip a trailing ".git" explicitly — the
+  # same portable form ci-wait uses (kendex#476).
+  REPO=$(echo "$origin_url" | sed -nE 's#^.*github\.com[:/]+([^/]+/[^/]+)$#\1#p')
+  REPO="${REPO%.git}"
+fi
+if [ -z "$REPO" ]; then
+  emit_error "could not resolve GitHub repo (gh repo view and git remote both failed)"
+  echo "Could not resolve GitHub repo (gh repo view and git remote both failed)" >&2
+  exit 1
+fi
+REPO_OWNER="${REPO%%/*}"
+REPO_NAME="${REPO#*/}"
+if [ -z "$REPO_OWNER" ] || [ -z "$REPO_NAME" ] || [ "$REPO_OWNER" = "$REPO" ]; then
+  emit_error "could not split '$REPO' into owner/repo for the merge-queue query"
+  echo "Could not split '$REPO' into owner/repo" >&2
+  exit 1
+fi
+
+# mergeQueueEntry.position and .headCommit are schema-verified fields
+# (`__type(name:"MergeQueueEntry")`); headCommit is the merge-group commit
+# whose check-runs are the progress signal.
+QUEUE_QUERY='query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { id isInMergeQueue mergeQueueEntry { state position headCommit { oid } } autoMergeRequest { enabledAt } } } }'
+
+# Classify a failed gh call whose stderr sits in GH_ERR_FILE — identical
+# policy to approval-wait (kendex#748). Transient means the service or
+# transport hiccuped and the wait budget should absorb it; anything else
+# (HTTP 404, 401/403, malformed arguments) stays terminal.
+gh_failure_is_transient() {
+  local gh_status="$1" err_text
+  [ "$gh_status" -eq 124 ] && return 0
+  err_text="$(cat "$GH_ERR_FILE" 2>/dev/null || true)"
+  case "$err_text" in
+    *"HTTP 5"*) return 0 ;;
+    *[Tt]imeout*|*"timed out"*|*"context deadline exceeded"*) return 0 ;;
+    *"connection refused"*|*"connection reset"*|*"network is unreachable"*) return 0 ;;
+    *"no such host"*|*"could not resolve"*|*[Tt]"emporary failure"*) return 0 ;;
+    *"unexpected EOF"*|*"TLS handshake"*) return 0 ;;
+    *"HTTP 429"*|*"rate limit"*|*"abuse detection"*) return 0 ;;
+  esac
+  return 1
+}
+
+# Absorb one transient GitHub failure: count and log it, then sleep the
+# backed-off interval so the caller can `continue` the poll loop. When the
+# budget is already spent the failure becomes terminal instead.
+transient_retry() {
+  local what="$1" detail
+  detail="$(head -c 200 "$GH_ERR_FILE" 2>/dev/null | tr '\n' ' ')"
+  transient_api_errors=$((transient_api_errors + 1))
+  echo "queue-wait: transient GitHub error #$transient_api_errors: $what${detail:+ ($detail)}" >&2
+  update_elapsed
+  if [ "$elapsed" -ge "$MAX_WAIT" ]; then
+    emit_error "$what"
+    echo "$what" >&2
+    exit 1
+  fi
+  echo "queue-wait: retrying in ${retry_interval}s" >&2
+  sleep_within_budget "$retry_interval"
+  retry_interval=$((retry_interval * 2))
+  if [ "$retry_interval" -gt "$RETRY_INTERVAL_CAP" ]; then
+    retry_interval="$RETRY_INTERVAL_CAP"
+  fi
+}
+
+# Delegate the "required check failed" half of the § 5 step 1 disarm row to
+# ci-wait instead of reimplementing check-state analysis. Only verdict "fail"
+# counts; pending/pass/error are inconclusive and keep the queue wait running.
+last_probe_at=0
+probe_failed_check() {
+  local out verdict
+  set +e
+  out=$("$SCRIPT_DIR/ci-wait" "$PR_NUM" 15 30 --json 2>>"$GH_ERR_FILE")
+  set -e
+  verdict=$(jq -r '.verdict // ""' 2>/dev/null <<<"$out" || true)
+  [[ "$verdict" == "fail" ]]
+}
+
+# --- Late-findings guard (kendex#1289) --------------------------------------
+# Same reviewThreads surface approval-wait reads.
+THREADS_QUERY='query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes { isResolved }
+      }
+    }
+  }
+}'
+
+# Count unresolved review threads with a strict, fail-closed read (the
+# review-predicate posture: anything unverifiable is "no evidence", never
+# "no threads"). Prints the count; returns nonzero on a query failure, a
+# null/malformed reviewThreads, a non-boolean isResolved, a hasNextPage with
+# a missing or non-advancing cursor, or a pagination walk needing more than
+# GUARD_MAX_THREAD_PAGES pages.
+GUARD_MAX_THREAD_PAGES=20
+
+count_unresolved_threads() {
+  local cursor="" total=0 pages=0 threads_json threads_status
+  local page_result page_count page_next page_cursor
+  while true; do
+    pages=$((pages + 1))
+    [ "$pages" -le "$GUARD_MAX_THREAD_PAGES" ] || return 1
+    set +e
+    if [ -n "$cursor" ]; then
+      threads_json=$(gh api graphql \
+        -f query="$THREADS_QUERY" \
+        -F owner="$REPO_OWNER" -F repo="$REPO_NAME" -F number="$PR_NUM" \
+        -F cursor="$cursor" 2>>"$GH_ERR_FILE")
+    else
+      threads_json=$(gh api graphql \
+        -f query="$THREADS_QUERY" \
+        -F owner="$REPO_OWNER" -F repo="$REPO_NAME" -F number="$PR_NUM" 2>>"$GH_ERR_FILE")
+    fi
+    threads_status=$?
+    set -e
+    [ "$threads_status" -eq 0 ] || return 1
+    # One strict pass per page: count only when every shape assumption holds.
+    # A top-level `errors` array means the response is PARTIAL, however
+    # well-shaped the data beside it looks — counting it would undercount the
+    # blockers this guard exists to see, so it is a failed read like any other.
+    # An `errors` field that is present but NOT an array is a malformed body,
+    # never an empty error set: `{}` and `""` both measure zero length, which
+    # would have read as "no errors" and counted the partial data beside them.
+    page_result=$(jq -r '
+      if (type != "object") then .
+        elif (has("errors") and ((.errors | type) != "array"))
+          then error("malformed graphql errors")
+        elif ((.errors? // []) | length) > 0
+          then error("graphql errors")
+        else . end
+      | (.data // .) as $d
+      | ($d.repository.pullRequest.reviewThreads?) as $rt
+      | if ($rt | type) != "object" then error("bad reviewThreads")
+        elif ($rt.nodes | type) != "array" then error("bad nodes")
+        elif ([$rt.nodes[] | (.isResolved | type)] | all(. == "boolean") | not)
+          then error("bad isResolved")
+        elif ($rt.pageInfo.hasNextPage | type) != "boolean" then error("bad pageInfo")
+        else
+          ([$rt.nodes[] | select(.isResolved == false)] | length | tostring)
+          + " " + ($rt.pageInfo.hasNextPage | tostring)
+          + " " + ($rt.pageInfo.endCursor // "")
+        end' <<<"$threads_json" 2>/dev/null) || return 1
+    read -r page_count page_next page_cursor <<<"$page_result"
+    total=$((total + page_count))
+    if [ "$page_next" = "true" ]; then
+      # More pages promised: a missing or non-advancing cursor means the
+      # walk cannot verify the remainder — fail closed now.
+      [ -n "$page_cursor" ] || return 1
+      [ "$page_cursor" != "$cursor" ] || return 1
+      cursor="$page_cursor"
+    else
+      printf '%s\n' "$total"
+      return 0
+    fi
+  done
+}
+
+# Run one guard mutation and verify its response: HTTP success is not
+# enough — a body carrying an `errors` key, or missing the mutation's own
+# payload, is a failure.
+run_guard_mutation() {
+  local what="$1" mutation resp status reason
+  case "$what" in
+    dequeuePullRequest)
+      mutation='mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { mergeQueueEntry { id } } }' ;;
+    disablePullRequestAutoMerge)
+      mutation='mutation($id: ID!) { disablePullRequestAutoMerge(input: {pullRequestId: $id}) { clientMutationId } }' ;;
+  esac
+  set +e
+  resp=$(gh api graphql -f query="$mutation" -F id="$last_pr_node_id" 2>"$GH_ERR_FILE")
+  status=$?
+  set -e
+  if [ "$status" -eq 0 ] \
+     && jq -e --arg m "$what" 'type == "object" and (has("errors") | not) and (.data[$m] != null)' >/dev/null 2>&1 <<<"$resp"; then
+    return 0
+  fi
+  reason=$(jq -r '[.errors[]?.message] | join("; ")' <<<"$resp" 2>/dev/null || true)
+  [ -n "$reason" ] || reason="$(head -c 200 "$GH_ERR_FILE" 2>/dev/null | tr '\n' ' ')"
+  echo "queue-wait: $what failed for PR #$PR_NUM${reason:+: $reason}" >&2
+  return 1
+}
+
+# Pull the arming on late findings. Disarm BEFORE dequeuing: an armed PR
+# re-enqueues itself the moment requirements go green, so a bare dequeue can
+# be raced straight back into the queue mid-triage. dequeuePullRequest's
+# input field is named `id` but takes the PULL REQUEST node id
+# (schema-verified), not the mergeQueueEntry id; enqueue's is
+# `pullRequestId`. Exits 1 either way — a partial or full mutation failure
+# is loud, naming the failed half, with the PR stated still queued.
+guard_fire() {
+  local count="$1" failed=""
+  echo "queue-wait: late-findings guard: $count unresolved review thread(s) on PR #$PR_NUM while queued/armed — disarming and dequeuing" >&2
+  if [ -z "$last_pr_node_id" ]; then
+    failed="no PR node id from the queue query"
+  else
+    if [[ "$last_auto_merge" == "true" ]] && ! run_guard_mutation disablePullRequestAutoMerge; then
+      failed="disablePullRequestAutoMerge"
+    fi
+    if [[ "$in_queue_now" == true ]] && ! run_guard_mutation dequeuePullRequest; then
+      failed="${failed:+$failed and }dequeuePullRequest"
+    fi
+  fi
+  if [ -n "$failed" ]; then
+    last_cause="late_findings_dequeue_failed"
+    emit_result "error" "dequeued" "guard mutation failed ($failed) for PR #$PR_NUM — the PR may be STILL QUEUED or armed with $count unresolved thread(s) and the merge may still fire; dequeue/disarm manually, then triage"
+    echo "queue-wait: guard mutation FAILED ($failed) for PR #$PR_NUM — still queued/armed past unresolved review findings" >&2
+    exit 1
+  fi
+  last_cause="late_findings"
+  emit_result "complete" "dequeued"
+  exit 1
+}
+
+# One rate-limited guard probe. ANY unresolved thread observed while
+# queued/armed fires guard_fire — no baseline, because an unresolved thread in
+# the queue is unsafe whenever it appeared, and enqueue does not prove threads
+# were zero (approval mode emits `approved` on the verdict alone).
+# Failed reads are absorbed rather than treated as a trigger: dequeuing on no
+# evidence would churn the queue on every transient API error. Blindness is
+# loud instead — every GUARD_FETCH_WARN_POLLS consecutive failures warn again,
+# so a long blind window keeps saying so rather than warning once.
+guard_fetch_failures=0
+GUARD_FETCH_WARN_POLLS=3
+guard_last_at=-1
+
+guard_probe() {
+  local count
+  if ! count=$(count_unresolved_threads); then
+    guard_fetch_failures=$((guard_fetch_failures + 1))
+    if [ $((guard_fetch_failures % GUARD_FETCH_WARN_POLLS)) -eq 0 ]; then
+      echo "queue-wait: late-findings guard: thread fetch failed $guard_fetch_failures consecutive probes — no thread evidence while PR #$PR_NUM sits queued/armed; still retrying" >&2
+    fi
+    return 0
+  fi
+  guard_fetch_failures=0
+  last_unresolved_count="$count"
+  [ "$count" -eq 0 ] || guard_fire "$count"
+}
+
+# --- Progress signal (VST-249) ---------------------------------------------
+# Check-run counts on the merge-queue head commit from ONE paginated read:
+# prints "<completed> <running>" — running being every not-completed status
+# (in_progress, queued, waiting, requested, pending) — and returns 0 only
+# when every page is a readable check_runs array; a query failure, an
+# unreadable page, or a non-integer result returns nonzero and the caller
+# records "unknown" — never zero.
+read_check_run_counts() {
+  local sha="$1" body status
+  set +e
+  body=$(gh api "repos/$REPO/commits/$sha/check-runs" --paginate 2>>"$GH_ERR_FILE" \
+    | jq -r 'if length == 0 or (all(.[]; (.check_runs | type) == "array") | not)
+             then error("bad check_runs")
+             else ([.[].check_runs[] | select(.status == "completed")] | length | tostring)
+                  + " " + ([.[].check_runs[] | select(.status != "completed")] | length | tostring)
+             end' -s 2>/dev/null)
+  status=$?
+  set -e
+  [ "$status" -eq 0 ] || return 1
+  [[ "$body" =~ ^[0-9]+\ [0-9]+$ ]] || return 1
+  printf '%s\n' "$body"
+}
+
+# Compare this poll's entry tuple (state|position|head oid) and, when both
+# sides are known, its completed check-run count against the last successful
+# read on the same head; record the running count from the same read. A
+# change stamps progress_last_change_poll; a successful read is evidence that
+# progress was measurable at all.
+observe_progress() {
+  local tuple="$1" head_oid="$2" counts count="" running="" changed=false
+  # Both counts are per commit: a new merge-group head (or no entry)
+  # invalidates the previous read until this head is read successfully, so a
+  # cross-commit count comparison can never register as movement.
+  [ "$head_oid" = "$prev_head_oid" ] || { last_running_count=""; prev_check_count=""; }
+  if [ -n "$head_oid" ]; then
+    if counts=$(read_check_run_counts "$head_oid"); then
+      read -r count running <<<"$counts"
+      checkrun_fetch_failures=0
+      last_running_count="$running"
+      progress_evidence=true
+    else
+      count=""
+      checkrun_fetch_failures=$((checkrun_fetch_failures + 1))
+      if [ "$checkrun_fetch_failures" -eq "$CHECKRUN_FETCH_WARN_POLLS" ]; then
+        echo "queue-wait: progress signal: check-run read failed $checkrun_fetch_failures consecutive polls for commit $head_oid in $REPO — check-run movement unknown (never counted as zero); still retrying" >&2
+      fi
+    fi
+  fi
+  if [ "$progress_have_prev" = true ]; then
+    [ "$tuple" != "$prev_progress_tuple" ] && changed=true
+    if [ -n "$count" ] && [ -n "$prev_check_count" ]; then
+      [ "$count" != "$prev_check_count" ] && changed=true
+    fi
+  fi
+  if [ "$changed" = true ]; then
+    progress_evidence=true
+    progress_last_change_poll="$polls"
+  fi
+  prev_progress_tuple="$tuple"
+  # The baseline is the last SUCCESSFUL count on this head: an unknown poll
+  # neither replaces it (a read failure cannot erase movement — a count that
+  # advanced across the failed poll still compares as a change on the next
+  # successful read) nor fabricates one (an unknown count is never compared).
+  [ -z "$count" ] || prev_check_count="$count"
+  prev_head_oid="$head_oid"
+  progress_have_prev=true
+}
+
+# Ejection/disarm confirmation across consecutive polls.
+candidate_verdict=""
+candidate_cause=""
+candidate_count=0
+
+note_candidate() {
+  local verdict="$1" cause="$2"
+  if [[ "$candidate_verdict" == "$verdict" ]]; then
+    candidate_count=$((candidate_count + 1))
+  else
+    candidate_verdict="$verdict"
+    candidate_cause="$cause"
+    candidate_count=1
+  fi
+}
+
+clear_candidate() {
+  candidate_verdict=""
+  candidate_cause=""
+  candidate_count=0
+}
+
+# Consecutive polls whose GraphQL body could not be read as a pull request.
+# A single unreadable body is absorbed; a persistent one is an error, never a
+# silent "still queued".
+malformed_polls=0
+MAX_MALFORMED_POLLS=3
+
+update_elapsed
+# Always poll at least once: if startup (auth, repo lookup) already spent the
+# budget, a plain `elapsed < MAX_WAIT` guard would exit having never looked and
+# report not_queued/0 polls for a PR it never checked. After the first poll the
+# deadline governs normally.
+while [ "$polls" -eq 0 ] || [ "$elapsed" -lt "$MAX_WAIT" ]; do
+  polls=$((polls + 1))
+
+  # --- Signal 1: PR state. Read first, so a merge that landed between polls
+  # is reported as merged even if the queue view has not caught up yet. ---
+  set +e
+  view_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json state,mergedAt 2>"$GH_ERR_FILE")
+  view_status=$?
+  set -e
+  if [ "$view_status" -ne 0 ] || ! jq -e '.state? // empty' >/dev/null 2>&1 <<<"$view_json"; then
+    if gh_failure_is_transient "$view_status"; then
+      transient_retry "gh pr view failed for PR #$PR_NUM in $REPO"
+      continue
+    fi
+    emit_error "gh pr view failed for PR #$PR_NUM in $REPO"
+    echo "gh pr view failed for PR #$PR_NUM in $REPO:" >&2
+    cat "$GH_ERR_FILE" >&2
+    exit 1
+  fi
+  last_pr_state=$(jq -r '.state // ""' <<<"$view_json")
+  last_merged_at=$(jq -r '.mergedAt // ""' <<<"$view_json")
+
+  case "$last_pr_state" in
+    MERGED)
+      emit_result "complete" "merged"
+      exit 0
+      ;;
+    CLOSED)
+      last_cause="closed_without_merge"
+      emit_result "complete" "closed"
+      exit 1
+      ;;
+  esac
+
+  # --- Signal 2: merge-queue membership. `gh pr view --json` exposes no
+  # queue field, so this must come from GraphQL. ---
+  set +e
+  queue_json=$(gh api graphql \
+    -f query="$QUEUE_QUERY" \
+    -F owner="$REPO_OWNER" \
+    -F repo="$REPO_NAME" \
+    -F number="$PR_NUM" 2>"$GH_ERR_FILE")
+  queue_status=$?
+  set -e
+  if [ "$queue_status" -ne 0 ] && gh_failure_is_transient "$queue_status"; then
+    transient_retry "merge-queue query failed for PR #$PR_NUM in $REPO"
+    continue
+  fi
+  if jq -e '(.errors? | type) == "array" and ((.errors | length) > 0)' >/dev/null 2>&1 <<<"$queue_json"; then
+    gql_error=$(jq -r '[.errors[].message] | join("; ")' <<<"$queue_json")
+    emit_error "merge-queue query rejected by GitHub: $gql_error"
+    echo "queue-wait: merge-queue GraphQL query rejected: $gql_error" >&2
+    exit 1
+  fi
+  if [ "$queue_status" -ne 0 ] \
+     || ! jq -e '.data.repository.pullRequest? // empty' >/dev/null 2>&1 <<<"$queue_json"; then
+    # An unreadable body is not a routing signal — never let it read as
+    # "not queued" and trigger a spurious ejection.
+    malformed_polls=$((malformed_polls + 1))
+    if [ "$malformed_polls" -ge "$MAX_MALFORMED_POLLS" ]; then
+      emit_error "merge-queue query returned no readable pull request for PR #$PR_NUM in $REPO after $malformed_polls polls"
+      echo "queue-wait: merge-queue query returned no readable pull request for PR #$PR_NUM in $REPO:" >&2
+      cat "$GH_ERR_FILE" >&2
+      exit 1
+    fi
+    echo "queue-wait: unreadable merge-queue response (#$malformed_polls); retrying" >&2
+    sleep_within_budget "$POLL_INTERVAL"
+    continue
+  fi
+  malformed_polls=0
+  retry_interval="$POLL_INTERVAL"
+  last_poll_time="$(date +%s)"
+
+  last_pr_node_id=$(jq -r '.data.repository.pullRequest.id // ""' <<<"$queue_json")
+  last_in_queue=$(jq -r '.data.repository.pullRequest.isInMergeQueue == true' <<<"$queue_json")
+  last_queue_state=$(jq -r '.data.repository.pullRequest.mergeQueueEntry.state // ""' <<<"$queue_json")
+  has_entry=$(jq -r '.data.repository.pullRequest.mergeQueueEntry != null' <<<"$queue_json")
+  last_auto_merge=$(jq -r '.data.repository.pullRequest.autoMergeRequest != null' <<<"$queue_json")
+  entry_position=$(jq -r '.data.repository.pullRequest.mergeQueueEntry.position // ""' <<<"$queue_json")
+  entry_head_oid=$(jq -r '.data.repository.pullRequest.mergeQueueEntry.headCommit.oid // ""' <<<"$queue_json")
+
+  in_queue_now=false
+  [[ "$last_in_queue" == "true" || "$has_entry" == "true" ]] && in_queue_now=true
+  armed_now=false
+  [[ "$in_queue_now" == true || "$last_auto_merge" == "true" ]] && armed_now=true
+
+  # Progress signal: compare this poll's entry tuple and check-run count
+  # against the previous poll before routing, so the deadline verdict can
+  # say whether the queue is still moving.
+  observe_progress "${last_queue_state}|${entry_position}|${entry_head_oid}" "$entry_head_oid"
+
+  # WAS_QUEUED and its membership half — the state a re-entering orchestrator
+  # cannot keep, and the reason this loop lives in a script.
+  if [[ "$armed_now" == true ]]; then
+    was_queued="true"
+  fi
+  if [[ "$in_queue_now" == true ]]; then
+    was_in_queue="true"
+  fi
+
+  # --- Route (merge-pr § 5 step 1 table) ---
+  if [[ "$was_in_queue" == "true" && "$in_queue_now" == false ]]; then
+    # Left the merge queue while still OPEN: the merge-group run failed and
+    # GitHub removed this PR. True regardless of autoMergeRequest, which
+    # GitHub may leave set on an ejected PR.
+    note_candidate "ejected" "merge_group_failed"
+  elif [[ "$was_queued" == "true" && "$armed_now" == false ]]; then
+    # Armed via auto-merge, never enqueued, and the arming is gone.
+    note_candidate "disarmed" "auto_merge_cleared"
+  else
+    clear_candidate
+  fi
+
+  if [[ -n "$candidate_verdict" && "$candidate_count" -ge "$CONFIRM_POLLS" ]]; then
+    last_cause="$candidate_cause"
+    emit_result "complete" "$candidate_verdict"
+    exit 1
+  fi
+
+  if [[ "$armed_now" == true ]]; then
+    # Late-findings guard first: a new unresolved thread outranks a CI probe,
+    # because the queue merges past it on its own. Same rate limit as the
+    # ci-wait probe, on its own clock.
+    if $GUARD; then
+      update_elapsed
+      if [ "$guard_last_at" -lt 0 ] || [ $((elapsed - guard_last_at)) -ge "$PROBE_INTERVAL" ]; then
+        guard_last_at="$elapsed"
+        guard_probe
+      fi
+    fi
+    # Armed but not enqueued is the plain auto-merge shape: membership can
+    # never report its failure, so consult ci-wait for the failed-required-
+    # check disarm cause. Rate-limited, and skipped entirely for a PR sitting
+    # in the queue (ejection covers that repo shape).
+    if $CHECK_PROBE && [[ "$in_queue_now" == false && "$last_auto_merge" == "true" ]]; then
+      update_elapsed
+      if [ "$last_probe_at" -eq 0 ] || [ $((elapsed - last_probe_at)) -ge "$PROBE_INTERVAL" ]; then
+        last_probe_at="$elapsed"
+        if probe_failed_check; then
+          last_cause="check_failed"
+          emit_result "complete" "disarmed"
+          exit 1
+        fi
+      fi
+    fi
+  elif [[ "$was_queued" == "false" ]]; then
+    # Never armed. Enqueue registration lags the merge call, so allow a grace
+    # window; past it, say so rather than idling out the whole budget on a
+    # merge that is not armed and will never fire.
+    update_elapsed
+    if [ "$elapsed" -ge "$ARM_GRACE" ]; then
+      last_cause="never_armed"
+      emit_result "timeout" "not_queued"
+      exit 1
+    fi
+  fi
+
+  sleep_within_budget "$POLL_INTERVAL"
+done
+
+# Deadline reached. A candidate ejection/disarm seen at least once outranks
+# "still queued" — an unconfirmed real ejection must not be reported as a
+# merge that is still on its way.
+if [[ -n "$candidate_verdict" ]]; then
+  last_cause="$candidate_cause"
+  emit_result "complete" "$candidate_verdict"
+  exit 1
+fi
+if [[ "$was_queued" == "false" ]]; then
+  last_cause="never_armed"
+  emit_result "timeout" "not_queued"
+  exit 1
+fi
+# Last-chance guard probe before reporting "still queued": the deadline must
+# not skip a late finding that landed since the final poll. guard_probe exits
+# via guard_fire on a trigger; a failed read falls through to the timeout.
+if $GUARD && [[ "$armed_now" == true ]]; then
+  guard_probe
+fi
+emit_result "timeout" "queued"
+exit 1

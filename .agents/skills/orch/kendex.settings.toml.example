@@ -1,0 +1,90 @@
+[env]
+
+# ORCH — PR review gate, CI waits, reviewer fan-out, and handoff lanes.
+# Project-scope `kendex add` / `kendex refresh` merge these defaults into
+# <project>/kendex.settings.toml (never overwriting existing keys). Comments
+# here are one-line intent + landmines; full key reference: orch README.md /
+# DEVELOPMENT.md.
+
+# Reviewer merge gate: "approval" needs a GitHub approval; "review" needs a
+# non-author review of the current head plus zero unresolved threads (for
+# bots that comment but never approve); "off" only where no reviewer exists.
+PR_REVIEW_GATE = "approval"
+
+# The review-gate ENGINE's one-switch disable, consumed by orch even where
+# the review-gate skill is not installed. Only the exact value "off"
+# narrows; anything else leaves PR_REVIEW_GATE authoritative.
+REVIEW_GATE_MODE = "enforce"
+
+# Total review-wait budget in seconds before the on-timeout policy applies;
+# an explicit max_wait argument always wins.
+PR_REVIEW_WAIT_SECS = "900"
+
+# Seconds of reviewer silence on a head before the one nudge; a push resets
+# the clock. "0" disables.
+PR_REVIEW_NUDGE_SECS = "600"
+
+# Comment posted as the nudge — whatever summons this repo's review bot.
+# Empty = GitHub's native re-review request.
+PR_REVIEW_NUDGE = ""
+
+# Check-run or commit-status name a trusted review bot publishes on
+# analyzed heads; a
+# success counts as review-received. SECURITY: matched by NAME and anyone
+# can publish under any name — name only the trusted bot's check. Empty =
+# review objects only.
+PR_REVIEW_CHECK = ""
+
+# Reviewer logins (comma/space separated, ONE line — the loader reads a
+# value per line) that must EACH review the current head with zero open
+# threads before the gate opens. Empty = off. On timeout, "proceed" needs
+# EVERY listed reviewer silent — a partial quorum is engagement.
+PR_REVIEW_QUORUM = ""
+
+# When the review signal never arrives: "block" reports a timeout;
+# "proceed" records a reviewer-down override and moves on, but only with
+# zero unresolved threads — a real comment is never bypassed.
+PR_REVIEW_ON_TIMEOUT = "block"
+
+# Seconds ci-wait keeps polling before failing when no CI checks registered
+# yet; raise for approval-gated CI with slow dispatch.
+CI_WAIT_NO_CHECKS_GRACE = "180"
+
+# Max automated ci-fix rounds per PR before a human takes over.
+CI_FIX_MAX_CYCLES = "6"
+
+# Max re-review cycles per issue before the verdict pass; the re-review
+# re-entry refuses once cycles is past it.
+REVIEW_MAX_CYCLES = "4"
+
+# Total concurrent agent-session budget, counting the primary; "0" =
+# unlimited. Reviews run in waves when the reviewer set exceeds free slots.
+# On the Codex runtime, set the cap `spawn-adapter slots` reports.
+REVIEWER_SLOT_BUDGET = "0"
+
+# "ask" presents workflow decision points; "auto-recommended" executes the
+# recommended option and logs it. Findings disposition is by rule in every
+# mode; some decisions always ask; merge is governed by ORCH_MERGE_AUTONOMY.
+ORCH_DECISION_MODE = "ask"
+
+# "ask" presents the merge decision; "auto" merges once every gate is green.
+# MERGE_READY = false never auto-merges.
+ORCH_MERGE_AUTONOMY = "ask"
+
+# Seconds per brief-delivery verification pass on tmux handoff lanes.
+ORCH_TMUX_VERIFY_SECS = "15"
+
+# Rename auto-discovered launch lanes (`<config-dir>=<alias>` pairs); the
+# inventory is always discovered — this only renames it. ORCH_LANE_DIRS
+# covers layouts discovery cannot reach.
+# ORCH_LANE_ALIASES = "eclaude=work,mclaude=overflow"
+
+# Path globs that add the needs-perf-test QA signal to review routing.
+# QA_PERF_PATHS = "src/hot/* engine/src/*"
+
+# Max concurrent lanes the overseer keeps in flight.
+ORCH_OVERSEER_LANES = "3"
+
+# Hours before an In Progress / In Review item counts as started-stale in
+# reconcile-work-items sweeps.
+# RECONCILE_STALE_HOURS = "24"

@@ -1,0 +1,32 @@
+{
+  "hooks": {
+    "tool_call": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/.pi/kendex/hooks/block-bare-cd.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/.pi/kendex/hooks/pre-commit-check.sh\"",
+            "timeout": 1800
+          }
+        ]
+      }
+    ],
+    "tool_result": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/.pi/kendex/hooks/post-edit-lint.sh\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

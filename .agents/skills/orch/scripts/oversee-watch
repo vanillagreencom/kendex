@@ -1,0 +1,546 @@
+#!/usr/bin/env bash
+# oversee-watch — block until the fleet needs the overseer, then report ONE
+# event and exit. The overseer handles the event and re-runs this command.
+#
+# Each pass, in order:
+#   1. pr-watch   the review-gate reducer over every open PR (when installed;
+#                 absent → one stderr note at start, step skipped). An event
+#                 when a `<pr> <kind>` line is NEW against the previous pass —
+#                 and on pass 1, against the baseline this fleet's previous
+#                 run persisted (one state file per repo + --since under
+#                 $OVERSEE_WATCH_STATE_DIR), so attention that arrives between
+#                 two runs is still an event. No state file (the fleet's first
+#                 run) → attention present at start is a baseline (noted once
+#                 on stderr), never a preempting event, so a PR that sits at
+#                 threads-open for an hour cannot starve the lane checks.
+#                 The latest reducer output is appended to every event.
+#   2. merged     an --item's PR (head branch = the item id, lowercased, in
+#                 this repo — never a fork's same-named branch; one --head
+#                 query per item — no listing window to miss) merged at or
+#                 after --since
+#   3. window-gone a listed tmux lane window no longer exists
+#   4. lane-exited a listed lane's window is alive but its pane's current
+#                 command is a bare shell on two consecutive passes — the
+#                 harness under it exited (session limit, crash, quit) and
+#                 the slot is free
+#   5. usage-limit a listed lane whose harness has not exited (its pane's
+#                 current command is not a bare shell) shows the account's
+#                 limit banner — one pass, and the claimed config dir when a
+#                 live lane claim names the window
+#   6. question   a listed lane's pane shows a question/selection prompt
+#   7. idle-after-return a listed lane whose harness has not exited sits at
+#                 its input prompt with no work in flight on two consecutive
+#                 passes
+#   8. heartbeat  after --max-loops passes with no event
+#
+# Output on the first event: `EVENT <kind> ...` on stdout — one line, except
+# `merged`, which prints one `EVENT merged` line per merged item so the
+# overseer advances every finished lane in one wake — followed by supporting
+# lines (the pane tail, or the open PR list for a heartbeat), then the latest
+# pr-watch attention lines when there are any.
+# Silence on stdout never means "fine": every exit path prints an EVENT line
+# or a stderr error.
+#
+# Usage: oversee-watch [--interval SECS] [--max-loops N] [--since ISO8601]
+#                      [--item ISSUE_ID]... [--repo OWNER/REPO] [LANE_WINDOW...]
+#
+# Exit codes:
+#   0  an EVENT line was printed
+#   2  usage error, or a global failure (gh not authenticated, repo
+#      unresolvable, PR listing failed, pr-watch failed with no per-PR lines,
+#      the pr-watch state directory or file unusable, lanes given outside tmux)
+#
+# Environment:
+#   OVERSEE_WATCH_PR_WATCH   path to the pr-watch reducer (default:
+#                            $PROJECT_ROOT/.agents/skills/review-gate/scripts/pr-watch.sh)
+#   OVERSEE_WATCH_STATE_DIR  directory holding the persisted pr-watch baseline,
+#                            one file per fleet, rewritten after every pass,
+#                            and open-terminal's lane claims under claims/
+#                            (default: $PROJECT_ROOT/tmp/oversee-watch); a
+#                            directory that cannot be created or written is a
+#                            hard failure, never a silent fallback
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+SKILLS_DIR="$PROJECT_ROOT/.agents/skills"
+# shellcheck source=lib/kendex-env.sh
+source "$SCRIPT_DIR/lib/kendex-env.sh"
+kendex_load_project_env "$PROJECT_ROOT"
+# shellcheck source=lib/gh-auth.sh
+source "$SCRIPT_DIR/lib/gh-auth.sh"
+# shellcheck source=lib/lane-claims.sh
+source "$SCRIPT_DIR/lib/lane-claims.sh"
+
+PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}"
+PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
+
+# Every pane predicate lives here, one line each, matched with `grep -E`
+# against the whole pane capture.
+QUESTION_RE='❯ [0-9]+\. |Do you want to|Enter to select|Esc to cancel'
+# The account is spent. Both harnesses: Claude Code opens the banner with
+# "You've hit your <bucket> limit" / "You've reached your…" and points at
+# /usage-credits; Codex prints "Usage limit reached" and its out-of-credits
+# wording. `.` stands in for the apostrophe, which is ASCII in the binaries
+# and typographic once rendered.
+USAGE_LIMIT_RE='You.(ve|re) (hit|reached) your [a-z ]*limit|[Uu]sage limit reached|hit usage limits|out of (usage )?credits|/usage-credits'
+# A turn in flight: the interrupt hint (both harnesses), the hint shown while
+# a foreground shell runs, or the streaming token counter of the status line.
+WORKING_RE='to interrupt|to run in background|↓ [0-9][0-9.]*[kKmM]? tokens'
+# A ready input prompt: Claude Code's composer line, Codex's submit hint.
+# Present while working too, so it decides idleness only with WORKING_RE out.
+IDLE_PROMPT_RE='^❯|to submit message'
+
+INTERVAL=240
+MAX_LOOPS=25
+SINCE=""
+REPO=""
+ITEMS=()
+LANES=()
+
+usage() {
+  cat <<'USAGE'
+Usage: oversee-watch [--interval SECS] [--max-loops N] [--since ISO8601]
+                     [--item ISSUE_ID]... [--repo OWNER/REPO] [LANE_WINDOW...]
+
+Blocks until the fleet needs the overseer, prints one event — an `EVENT
+<kind> ...` line, or for `merged` one `EVENT merged` line per merged item —
+plus supporting lines, and exits 0. Re-run it after handling the event, with
+the lanes still live: drop a merged item and a dead lane's window, keep
+--since as the fleet's start.
+
+Events, checked in this order every pass:
+  EVENT pr-watch rc=N        the review-gate reducer reported a `<pr> <kind>`
+                             attention line that is NEW against the previous
+                             pass — on pass 1, against the baseline this
+                             fleet's previous run persisted, so attention that
+                             arrived between two runs is an event (its output
+                             follows). On the fleet's first run, attention
+                             already present is a baseline (one stderr note),
+                             so it can never preempt the checks below;
+                             skipped with a stderr note when pr-watch.sh is
+                             not installed
+  EVENT merged <PR> <branch> an --item's PR merged at or after --since (one
+                             line per PR; the item's head branch is its id,
+                             lowercased, in this repo — a fork's PR on the
+                             same branch name is not the item's)
+  EVENT window-gone <lane>   a listed tmux window no longer exists
+  EVENT lane-exited <lane>   the window is alive but the pane's current
+                             command is a bare shell (bash/zsh/fish/sh/dash,
+                             login spellings too) on two consecutive passes:
+                             the harness under it exited — session limit,
+                             crash, quit — and the lane's slot is free (last
+                             40 non-empty pane lines follow, carrying why)
+  EVENT usage-limit <lane> [<config-dir>]
+                             the harness has not exited (the pane's current
+                             command is not a bare shell) and the pane shows
+                             the account's limit banner
+                             (`You've hit your … limit`, `/usage-credits`,
+                             `Usage limit reached`, out of credits): the
+                             account is spent and every lane on it follows.
+                             One pass — a banner is terminal for that
+                             account window, not a transient. The config dir
+                             is appended when a live lane claim names this
+                             window (last 40 non-empty pane lines follow)
+  EVENT question <lane>      the lane's pane shows a question/selection
+                             prompt (last 40 non-empty pane lines follow)
+  EVENT idle-after-return <lane>
+                             the harness has not exited and its pane sits at
+                             the input prompt (`❯` composer, Codex's submit
+                             hint) with no work in flight (no interrupt hint,
+                             no background-shell hint, no streaming token
+                             counter) on two consecutive passes: the round is
+                             over and the lane is waiting on the overseer
+                             (last 40 non-empty pane lines follow)
+  EVENT heartbeat            --max-loops passes with no event (open PR list
+                             follows: number, head branch, title)
+
+Every event is followed by the latest pr-watch attention lines when there are
+any (`pr-watch rc=N` header), so the overseer sees the reducer's state on
+each wake even when it is not the event.
+
+Options:
+  --interval SECS     seconds between passes (default 240)
+  --max-loops N       passes before a heartbeat (default 25)
+  --since ISO8601     merged-at floor for `merged`, UTC with a `Z` suffix,
+                      e.g. 2026-08-15T12:00:00Z (default: none). Pass the
+                      fleet's start time on every run — the same value each
+                      time, never "now" — so a merge landing between two runs
+                      is still reported by the next one
+  --item ISSUE_ID     a live item (issue-N or PROJ-123); repeatable. `merged`
+                      fires only for these items' PRs; none given → the
+                      merged check is skipped with a stderr note
+  --repo OWNER/REPO   repository (default: gh repo view)
+  LANE_WINDOW...      tmux window names to watch; requires $TMUX
+
+Exit codes:
+  0  an EVENT line was printed
+  2  usage error, or a global failure: gh not authenticated, repo
+     unresolvable, PR listing failed, pr-watch failed with no per-PR lines,
+     the pr-watch state directory or file unusable, lanes given outside tmux
+
+Environment:
+  OVERSEE_WATCH_PR_WATCH   path to pr-watch.sh (default: the review-gate
+                           skill's install under .agents/skills)
+  OVERSEE_WATCH_STATE_DIR  directory holding the persisted pr-watch baseline,
+                           one file per fleet (repo + --since), rewritten
+                           after every pass, and open-terminal's lane claims
+                           under claims/ (default: PROJECT_ROOT/tmp/
+                           oversee-watch); a directory that cannot be created
+                           or written exits 2
+USAGE
+}
+
+die() { echo "oversee-watch: $*" >&2; exit 2; }
+need_val() { [[ $# -ge 2 && -n "${2:-}" ]] || die "$1 requires a value"; }
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --interval) need_val "$@"; INTERVAL="$2"; shift 2 ;;
+    --interval=*) INTERVAL="${1#--interval=}"; shift ;;
+    --max-loops) need_val "$@"; MAX_LOOPS="$2"; shift 2 ;;
+    --max-loops=*) MAX_LOOPS="${1#--max-loops=}"; shift ;;
+    --since) need_val "$@"; SINCE="$2"; shift 2 ;;
+    --since=*) SINCE="${1#--since=}"; shift ;;
+    --item) need_val "$@"; ITEMS+=("$2"); shift 2 ;;
+    --item=*) ITEMS+=("${1#--item=}"); shift ;;
+    --repo) need_val "$@"; REPO="$2"; shift 2 ;;
+    --repo=*) REPO="${1#--repo=}"; shift ;;
+    --help|-h) usage; exit 0 ;;
+    -*) usage >&2; die "unknown option '$1'" ;;
+    *) LANES+=("$1"); shift ;;
+  esac
+done
+
+[[ "$INTERVAL" =~ ^[0-9]+$ ]] || die "--interval must be a non-negative integer (got '$INTERVAL')"
+[[ "$MAX_LOOPS" =~ ^[0-9]+$ && "$MAX_LOOPS" -ge 1 ]] || die "--max-loops must be a positive integer (got '$MAX_LOOPS')"
+if [[ ${#LANES[@]} -gt 0 && -z "${TMUX:-}" ]]; then
+  die "lane windows given (${LANES[*]}) but not inside tmux; drop the lanes or run from the tmux session that owns them"
+fi
+
+# ISO8601 (UTC, Z suffix) → epoch, GNU date first, then BSD/macOS. -u is
+# load-bearing so the timestamp is not shifted by the local zone.
+to_epoch() {
+  date -u -d "$1" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$1" +%s 2>/dev/null
+}
+
+# No floor by default: the floor must not move between runs, and a run has no
+# way to know when the previous one stopped looking.
+SINCE_EPOCH=0
+if [[ -n "$SINCE" ]]; then
+  SINCE_EPOCH="$(to_epoch "$SINCE")" || die "--since '$SINCE' is not an ISO8601 timestamp (UTC, Z suffix)"
+fi
+
+# The item's head branch is its id lowercased (worktree create's branch name);
+# one branch per line, for the jq membership test.
+ITEM_BRANCHES=""
+for item in ${ITEMS[@]+"${ITEMS[@]}"}; do
+  [[ "$item" =~ ^[A-Za-z0-9._-]+$ ]] || die "--item '$item' is not an issue id (issue-N or PROJ-123)"
+  ITEM_BRANCHES+="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"$'\n'
+done
+
+command -v gh >/dev/null 2>&1 || die "gh CLI not found on PATH"
+command -v jq >/dev/null 2>&1 || die "jq not found on PATH"
+
+WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$WORK_DIR"' EXIT
+
+# Auth ladder (gates.md § Waiter auth ladder): a stale env token yields to the
+# keyring; when neither works, the env token is dropped so the project's
+# GH_BOT_TOKEN can be selected — the last candidate. Never proceed
+# unauthenticated: an unauthenticated `gh pr list` would report an empty
+# fleet, not a failure.
+orch_sanitize_gh_env
+if ! orch_github_auth_status; then
+  unset GH_TOKEN GITHUB_TOKEN
+  { orch_load_env_bot_token "$PROJECT_ROOT" && orch_github_auth_status; } \
+    || die "no working GitHub auth path (tried env GH_TOKEN/GITHUB_TOKEN, gh keyring, project GH_BOT_TOKEN). Run: gh auth login"
+fi
+
+if [[ -z "$REPO" ]]; then
+  REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
+  [[ -n "$REPO" ]] || die "could not resolve the repository (gh repo view failed); pass --repo OWNER/REPO"
+fi
+# GitHub logins are case-insensitive and --repo's casing is the caller's.
+REPO_OWNER="$(printf '%s' "${REPO%%/*}" | tr '[:upper:]' '[:lower:]')"
+
+if [[ -x "$PR_WATCH" ]]; then
+  :
+else
+  echo "oversee-watch: pr-watch.sh not found at $PR_WATCH; skipping the review-gate reducer (merged/window/question checks still run)" >&2
+  PR_WATCH=""
+fi
+if [[ -z "$ITEM_BRANCHES" ]]; then
+  echo "oversee-watch: no --item given; skipping the merged check (pr-watch/window/question checks still run)" >&2
+fi
+
+# The latest pr-watch result, appended to every event's output.
+PW_RC=0
+PW_OUT=""
+PW_ERR=""
+# `<pr>\t<kind>` keys present on the previous pass (the rising-edge baseline).
+PW_SEEN=""
+PW_PASSES=0
+PW_STATE_FILE=""
+PW_HAD_STATE=0
+
+# The overseer exits this watch on every event and re-runs it, so the baseline
+# outlives the process: one file per fleet, keyed on the repo and the --since
+# value every run of that fleet passes. Loaded as pass 1's baseline, rewritten
+# after every pass.
+pw_slug() { printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_'; }
+
+pw_save_state() {
+  [[ -n "$PW_STATE_FILE" ]] || return 0
+  local tmp="$PW_STATE_FILE.$$.tmp"
+  { printf '%s' "$1" > "$tmp" && mv -f "$tmp" "$PW_STATE_FILE"; } \
+    || die "could not write the pr-watch state file $PW_STATE_FILE (set OVERSEE_WATCH_STATE_DIR)"
+}
+
+if [[ -n "$PR_WATCH" ]]; then
+  mkdir -p "$PW_STATE_DIR" \
+    || die "could not create the pr-watch state directory $PW_STATE_DIR (set OVERSEE_WATCH_STATE_DIR)"
+  [[ -w "$PW_STATE_DIR" ]] \
+    || die "the pr-watch state directory $PW_STATE_DIR is not writable (set OVERSEE_WATCH_STATE_DIR)"
+  PW_STATE_FILE="$PW_STATE_DIR/$(pw_slug "$REPO")__$(pw_slug "${SINCE:-none}")"
+  if [[ -f "$PW_STATE_FILE" ]]; then
+    PW_SEEN="$(cat "$PW_STATE_FILE" 2>/dev/null)" \
+      || die "cannot read the pr-watch state file: $PW_STATE_FILE (set OVERSEE_WATCH_STATE_DIR)"
+    PW_HAD_STATE=1
+  fi
+fi
+
+pr_watch_context() {
+  [[ "$PW_RC" -ne 0 ]] || return 0
+  echo "pr-watch rc=$PW_RC"
+  [[ -z "$PW_OUT" ]] || printf '%s\n' "$PW_OUT"
+  [[ -z "$PW_ERR" ]] || printf '%s\n' "$PW_ERR"
+}
+
+# Every step exits on its first event; the loop body only reaches `sleep`
+# when nothing needs the overseer.
+check_pr_watch() {
+  [[ -n "$PR_WATCH" ]] || return 0
+  local errf="$WORK_DIR/pr-watch.err" keys new_keys="" key
+  PW_RC=0
+  PW_OUT="$(GH_REPO="$REPO" "$PR_WATCH" 2>"$errf")" || PW_RC=$?
+  PW_ERR="$(cat "$errf")"
+  PW_PASSES=$((PW_PASSES + 1))
+  if [[ "$PW_RC" -eq 0 ]]; then
+    PW_SEEN=""
+    pw_save_state ""
+    return 0
+  fi
+  # Non-zero with no per-PR lines is pr-watch's GLOBAL failure shape
+  # (pr-watch.sh --help): it reports on stderr only, and nothing here can be
+  # trusted.
+  [[ -n "$PW_OUT" ]] || die "pr-watch failed (rc=$PW_RC) with no per-PR lines: ${PW_ERR:-<no stderr>}"
+  keys="$(awk -F'\t' 'NF >= 3 { print $1 "\t" $3 }' <<<"$PW_OUT")"
+  while IFS= read -r key; do
+    [[ -n "$key" ]] || continue
+    grep -qxF -- "$key" <<<"$PW_SEEN" || new_keys+="$key"$'\n'
+  done <<<"$keys"
+  # Rising edge against the previous pass only: a line that clears and later
+  # recurs is news again. Pass 1 compares against the persisted baseline.
+  PW_SEEN="$keys"
+  pw_save_state "$keys"
+  [[ -n "$new_keys" ]] || return 0
+  if [[ "$PW_PASSES" -eq 1 && "$PW_HAD_STATE" -eq 0 ]]; then
+    echo "oversee-watch: pr-watch attention present at start (rc=$PW_RC, $(grep -c . <<<"$new_keys") line(s)) — the fleet's baseline, reported with the next event; only NEW lines become events" >&2
+    return 0
+  fi
+  echo "EVENT pr-watch rc=$PW_RC"
+  printf '%s\n' "$PW_OUT"
+  [[ -z "$PW_ERR" ]] || printf '%s\n' "$PW_ERR"
+  exit 0
+}
+
+check_merged() {
+  [[ -n "$ITEM_BRANCHES" ]] || return 0
+  # One --head query per live item: an item count bounded by the lane cap,
+  # and no listing window a busy repo can push an item's merge out of.
+  local errf="$WORK_DIR/merged.err" branch list hit hits=""
+  while IFS= read -r branch; do
+    [[ -n "$branch" ]] || continue
+    list="$(gh pr list --repo "$REPO" --head "$branch" --state merged --limit 10 --json number,headRefName,headRepositoryOwner,mergedAt 2>"$errf")" \
+      || die "gh pr list --state merged failed for $REPO (--head $branch): $(cat "$errf")"
+    # --head matches by branch NAME, so a fork's PR on the same name lands in
+    # this list; only a head in this repo can be a lane's own PR.
+    hit="$(jq -r --arg branch "$branch" --arg owner "$REPO_OWNER" --argjson since "$SINCE_EPOCH" '
+      [ .[]
+        | select(.headRefName | ascii_downcase == $branch)
+        | select(((.headRepositoryOwner.login // "") | ascii_downcase) == $owner)
+        | select(.mergedAt != null)
+        | select((.mergedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) >= $since)
+        | "EVENT merged \(.number) \(.headRefName)" ]
+      | .[]' <<<"$list" 2>"$errf")" \
+      || die "could not parse gh pr list output for $REPO ($branch): $(cat "$errf")"
+    [[ -z "$hit" ]] || hits+="$hit"$'\n'
+  done <<<"$ITEM_BRANCHES"
+  hits="${hits%$'\n'}"
+  [[ -n "$hits" ]] || return 0
+  printf '%s\n' "$hits"
+  pr_watch_context
+  exit 0
+}
+
+# The last 40 non-empty pane lines. `|| true`: an all-blank pane is a grep
+# miss, and under pipefail that would abort the script mid-event.
+pane_tail() { grep -v '^[[:space:]]*$' <<<"$1" | tail -40 || true; }
+
+# A login shell reports itself as `-bash`; strip the dash before matching.
+is_bare_shell() {
+  case "${1#-}" in
+    bash|zsh|fish|sh|dash) return 0 ;;
+  esac
+  return 1
+}
+
+# Watch-list positions whose pane held a bare shell on the previous pass.
+LANE_SHELL_SEEN=""
+# Watch-list positions that sat at an idle harness prompt on the previous pass.
+LANE_IDLE_SEEN=""
+
+# The pass's snapshot of one lane: its pane's current command, and the file
+# holding its pane capture. Every check reads the same observation, keyed on
+# the lane's position in the watch list — a tmux window name can carry any
+# character, and two names that differ only outside a filename-safe set would
+# otherwise share one snapshot and classify each other's screens.
+lane_cmd() { awk -F'\t' -v i="$2" '$1 == i { print $2 }' <<<"$1"; }
+lane_pane_file() { printf '%s/pane.%s' "$WORK_DIR" "$1"; }
+
+check_lanes() {
+  [[ ${#LANES[@]} -gt 0 ]] || return 0
+  local existing lane pane cmd i cmds="" shell_now="" idle_now="" claims="" claimed pane_key
+  existing="$(tmux list-windows -F '#W' 2>&1)" || die "tmux list-windows failed: $existing"
+  for lane in "${LANES[@]}"; do
+    if ! grep -qxF -- "$lane" <<<"$existing"; then
+      echo "EVENT window-gone $lane"
+      pr_watch_context
+      exit 0
+    fi
+  done
+  # One command read and one pane capture per lane per pass: a lane's kind is
+  # decided from a single observation, never from two screens taken apart.
+  i=0
+  for lane in "${LANES[@]}"; do
+    i=$((i + 1))
+    if ! cmd="$(tmux display-message -p -t "$lane" '#{pane_current_command}' 2>/dev/null)" || [[ -z "$cmd" ]]; then
+      echo "EVENT window-gone $lane"
+      pr_watch_context
+      exit 0
+    fi
+    if ! tmux capture-pane -t "$lane" -p >"$(lane_pane_file "$i")" 2>/dev/null; then
+      echo "EVENT window-gone $lane"
+      pr_watch_context
+      exit 0
+    fi
+    cmds+="$i"$'\t'"$cmd"$'\n'
+  done
+  # A lane window outlives its harness: open-terminal runs claude/codex inside
+  # a shell, so a session that hit its limit, crashed, or quit leaves the
+  # shell in the foreground — a window that exists, a pane that matches no
+  # question prompt, and a slot held until someone looks. A bare shell as the
+  # pane's current command IS that lane, finished; the pane tail carries why.
+  # Two consecutive passes: a live harness can hold a shell in the foreground
+  # for one poll, and relaunching a working lane costs more than one interval.
+  i=0
+  for lane in "${LANES[@]}"; do
+    i=$((i + 1))
+    if is_bare_shell "$(lane_cmd "$cmds" "$i")"; then
+      shell_now+="$i"$'\n'
+      if grep -qxF -- "$i" <<<"$LANE_SHELL_SEEN"; then
+        echo "EVENT lane-exited $lane"
+        pane="$(cat -- "$(lane_pane_file "$i")")"
+        [[ -z "$pane" ]] || pane_tail "$pane"
+        pr_watch_context
+        exit 0
+      fi
+    fi
+  done
+  LANE_SHELL_SEEN="$shell_now"
+  # The harness is still running and the account is spent: every lane on that
+  # account dies with it, so the config dir is the actionable part and a live
+  # claim is where it is recorded. Before `question` — a limit banner can sit
+  # above a stale prompt, and the account is the news. One pass: a banner is
+  # terminal for that account window, not a screen a poll can catch mid-draw.
+  i=0
+  for lane in "${LANES[@]}"; do
+    i=$((i + 1))
+    if is_bare_shell "$(lane_cmd "$cmds" "$i")"; then continue; fi
+    pane="$(cat -- "$(lane_pane_file "$i")")"
+    if grep -Eq -- "$USAGE_LIMIT_RE" <<<"$pane"; then
+      # The detail is a nicety; a claim store this process cannot read must
+      # not take down the event that carries the pane tail.
+      claims="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")" || true)"
+      # Claims are kept for every live tmux server, and a window NAME is
+      # unique only within a session: the account is resolved on the pane
+      # actually captured here — `<server pid> <pane id>`, the same key the
+      # claim's liveness uses — so no other lane can answer for it.
+      pane_key="$(tmux display-message -p -t "$lane" '#{pid} #{pane_id}' 2>/dev/null || true)"
+      claimed="$(lane_claims_config_dir "$claims" "${pane_key%% *}" "${pane_key##* }")"
+      if [[ -z "$claimed" && -n "$claims" ]]; then
+        echo "oversee-watch: no live lane claim for the pane behind '$lane'; the usage-limit event names no account" >&2
+      fi
+      echo "EVENT usage-limit $lane${claimed:+ $claimed}"
+      [[ -z "$pane" ]] || pane_tail "$pane"
+      pr_watch_context
+      exit 0
+    fi
+  done
+  # A pane keeps its last screen after the harness exits, so a stale prompt
+  # under a bare shell is not a question anyone can answer — and reporting it
+  # every pass would starve the lane-exited its second pass earns.
+  i=0
+  for lane in "${LANES[@]}"; do
+    i=$((i + 1))
+    if is_bare_shell "$(lane_cmd "$cmds" "$i")"; then continue; fi
+    pane="$(cat -- "$(lane_pane_file "$i")")"
+    if grep -Eq -- "$QUESTION_RE" <<<"$pane"; then
+      echo "EVENT question $lane"
+      pane_tail "$pane"
+      pr_watch_context
+      exit 0
+    fi
+  done
+  # The round is over and nobody is driving: the harness is up, at its input
+  # prompt, with nothing in flight. Two consecutive passes, because the screen
+  # between a finished tool call and the next one reads the same.
+  i=0
+  for lane in "${LANES[@]}"; do
+    i=$((i + 1))
+    if is_bare_shell "$(lane_cmd "$cmds" "$i")"; then continue; fi
+    pane="$(cat -- "$(lane_pane_file "$i")")"
+    if grep -Eq -- "$WORKING_RE" <<<"$pane"; then continue; fi
+    if ! grep -Eq -- "$IDLE_PROMPT_RE" <<<"$pane"; then continue; fi
+    idle_now+="$i"$'\n'
+    if grep -qxF -- "$i" <<<"$LANE_IDLE_SEEN"; then
+      echo "EVENT idle-after-return $lane"
+      pane_tail "$pane"
+      pr_watch_context
+      exit 0
+    fi
+  done
+  LANE_IDLE_SEEN="$idle_now"
+}
+
+heartbeat() {
+  local errf="$WORK_DIR/open.err" open
+  open="$(gh pr list --repo "$REPO" --state open --limit 50 --json number,headRefName,title \
+    --jq '.[] | "\(.number)\t\(.headRefName)\t\(.title)"' 2>"$errf")" \
+    || die "gh pr list --state open failed for $REPO: $(cat "$errf")"
+  echo "EVENT heartbeat loops=$MAX_LOOPS interval=${INTERVAL}s since=${SINCE:-none}"
+  [[ -z "$open" ]] || printf '%s\n' "$open"
+  pr_watch_context
+  exit 0
+}
+
+loop=0
+while :; do
+  loop=$((loop + 1))
+  check_pr_watch
+  check_merged
+  check_lanes
+  [[ "$loop" -lt "$MAX_LOOPS" ]] || heartbeat
+  sleep "$INTERVAL"
+done

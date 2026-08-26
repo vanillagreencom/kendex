@@ -1,0 +1,482 @@
+#!/usr/bin/env bash
+# Deterministically validate a dev agent's on-disk completion artifact for
+# dev-start / dev-fix / review-pr-comments acceptance. The live return message can
+# be lost when a long tools/validate-class command exceeds the harness Bash tool
+# timeout mid-tail and ends the turn (kendex#770), so the artifact — written after
+# commit/labels/summary via `dev-return-write` — is the durable completion record.
+#
+# IDENTITY IS BY ROUND ID, NOT MTIME (kendex#776). Each delegation stamps a unique
+# round token (`workflow-state new-round-id [ISSUE] dev_round_id`) that is embedded
+# in the delegation. `dev-return-write` names its file
+# [WORKTREE]/tmp/dev-return-[ISSUE_ID]-[ROUND_ID].json and writes "round_id":
+# ROUND_ID inside. This check resolves that exact path and requires the internal
+# `.round_id` to equal the expected token — clock-independent, and immune to the
+# same-second re-stamp / late-rewriting-old-round / cross-group / cross-workflow
+# receipt confusion that an `mtime >= delegated_at` heuristic at a single reused
+# path allowed. The mtime freshness gate is gone entirely.
+#
+# Artifact schema (written by `dev-return-write`; canonical:
+# skills/orch/schemas/dev-return.md):
+#   { "schema_version": 1, "round_id": "…", "kind": "implement"|"fix"|"analysis",
+#     "issue": "…", "branch": "…", "commit": "…", "validate": "pass"|"FAILING: …",
+#     "validate_note": "…"|null (optional free-text qualifier — kendex#884),
+#     "qa_labels": […], "summary_posted": bool, "summary": "…"|null,
+#     "bundled": bool, "items": [{"n": <number>, "decision": "Applied"|"Skipped"|"Blocked", "reasoning": "…"}] }
+#
+# kind "analysis" (kendex#952) is a read-only round — investigate + recommend,
+# no implementation — recognized as complete-without-code. Its gates INVERT the
+# commit/validate rule: the artifact must carry NO commit, validate, or
+# validate_note key at all (their presence is a validation claim on a round that
+# ran none → invalid), and its summary must be a non-empty string (the
+# recommendation/evidence is the round's deliverable → else incomplete).
+#
+# The scalars prove the agent finished its tail; the items gates prove a fix or
+# bundled artifact carries its per-item results. In round mode, when the
+# worktree is a git repo and the artifact carries a .commit, the recorded SHA is
+# additionally checked against that repo (kendex#994): a SHA that names no
+# object fails with reason=commit_unresolvable (a hand-fabricated SHA — same
+# short prefix as HEAD, invented tail — passes every schema gate yet proves
+# nothing), and a commit that resolves but is not an ancestor of HEAD is
+# surfaced as the NON-FATAL warning=commit_unreachable (a legitimate rebase
+# orphans the SHAs of previously accepted rounds, so this is a signal for the
+# orchestrator, not a failure). Exact-commit binding (.commit == the observed
+# HEAD) and tracker corroboration stay in the orch workflow.
+
+set -euo pipefail
+
+PROG="dev-artifact-check"
+# Path-safe token grammar for --issue / --round-id (no '/', '..', whitespace).
+ID_GRAMMAR='^[A-Za-z0-9._-]+$'
+# --expect-items is a comma-separated list of item numbers.
+EXPECT_GRAMMAR='^[0-9]+(,[0-9]+)*$'
+
+# The per-harness backgrounding paragraph under --wait is an intentional twin
+# of review-artifact-check's: each --help is self-contained, so edit both.
+usage() {
+  cat << 'EOF'
+Usage:
+  dev-artifact-check --worktree WT --issue ISSUE --round-id RID \
+    [--expect-items N,N,... | --expect-items-from-round] [--wait SECS] [--interval SECS]
+  dev-artifact-check --file <json_path> [--round-id RID] [--expect-items N,N,...] \
+    [--wait SECS] [--interval SECS]
+
+--wait SECS: blocking mode — poll every --interval seconds (default 5) until the
+verdict leaves "wait" (an artifact landed: accept or retry) or SECS elapse (the
+last result, verdict "wait", is printed). Run it as the armed round watchdog: it
+returns the moment the receipt is written, independent of any return-message
+delivery, and a deadline return is the escalation trigger. Backgrounding per
+harness: Claude Code runs it as a background shell (the exit wake IS the
+event); Pi runs it under bg_task, which emits no exit wake, so pair it with
+the per-wake check; Codex and OpenCode run it via scheduled re-entry, or fall
+back to the per-wake check alone.
+
+Round mode (the production path): resolves WT/tmp/dev-return-ISSUE-RID.json,
+requires it exists, its internal .round_id == RID, then the scalar/kind, commit
+object (against WT's git repo, kendex#994), and items gates.
+File mode: validates one explicit JSON file (round_id checked only when --round-id
+is supplied). It is a test/parity affordance — round-trip checks and known-path
+artifacts — with no production caller; the orch workflows always use round mode.
+There is one identity model (round id); the mtime freshness gate and the old
+legacy positional mode are gone (kendex#776).
+
+--expect-items (fix rounds): the delegated review-item NUMBERS as a comma-
+separated set (e.g. 1,2,3,4,5,6) — never a count. items[] must cover
+EXACTLY that set — each expected n present once, no unknown/duplicate n, every
+decision ∈ {Applied,Skipped,Blocked}, every reasoning non-empty. Without it, a
+fix/bundled artifact only needs a non-empty, well-formed items[].
+
+--expect-items-from-round (round mode only; excludes --expect-items): derive
+the expected set from the round record WT/tmp/dev-round-ISSUE-RID.json that
+dev-round-write persisted at delegation — the on-disk source of truth for the
+delegated item set, instead of a number list typed from the orchestrator's
+context. The record's internal .round_id must equal RID and its items[] must
+be a non-empty array of numeric .n; a missing, mismatched, or malformed record
+means the expected set cannot be established, so the check refuses to run
+(exit 2) rather than silently degrading to the weaker fallback gate.
+
+Prints JSON: {ok: bool, verdict: "accept"|"wait"|"retry", path: string|null,
+              reason: "valid"|"missing"|"invalid"|"commit_unresolvable"|"incomplete",
+              warning: "commit_unreachable"|null,
+              hint: usage diagnosis (count-vs-set --expect-items misuse)|null}
+
+Gates ordered: missing → (round_id mismatch → invalid) → scalars → invalid →
+commit object → commit_unresolvable → items → incomplete → valid.
+
+Exit status reflects artifact validity only: a valid artifact whose recorded
+validation is failing exits 0 with verdict "retry". Acceptance keys on the
+verdict field, never the exit code.
+
+reason meanings when ok=false:
+  missing     artifact file does not exist at the resolved path
+  invalid     round_id != expected, OR not parseable JSON, OR a required field is
+              wrong-typed/empty: .kind ∈ {implement,fix,analysis}; .issue/.branch
+              non-empty strings; .round_id non-empty string; .schema_version a
+              number. implement/fix additionally require .commit/.validate
+              non-empty strings; kind analysis requires the INVERSE — no .commit,
+              .validate, or .validate_note key present at all (an analysis round
+              produces no commit and runs no validation, so their presence is a
+              fabricated claim — kendex#952)
+  commit_unresolvable
+              the artifact's .commit names no object in the worktree's repo
+              (kendex#994) — e.g. a hand-reconstructed SHA with a fabricated
+              tail. Round mode only, and only when the worktree is a git repo;
+              --file mode has no repo to check against and skips this gate.
+  incomplete  items[] fails the applicable rule — exact-set (with --expect-items)
+              or non-empty-well-formed (kind fix OR bundled==true). kind implement
+              without bundled keeps allowing items: []. kind analysis is
+              incomplete when .summary is not a non-empty string (the
+              recommendation is the round's deliverable).
+
+warning=commit_unreachable (NON-FATAL, ok stays true): the .commit resolves as a
+commit object but is not an ancestor of the current HEAD — the signature of a
+receipt orphaned by a later rebase (kendex#994). Expected after a legitimate
+rebase; the orchestrator decides what it means for the round.
+
+Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error.
+EOF
+}
+
+die() {
+  printf '%s: %s\n' "$PROG" "$1" >&2
+  exit 2
+}
+
+need() {
+  # $1 = flag name, $2 = current argc ($#). A value option needs at least 2 args.
+  (( $2 >= 2 )) || die "$1 requires a value"
+}
+
+# Validate a path-forming token (--issue / --round-id): non-empty, matches the
+# path-safe grammar, and contains no '..'. Shared verbatim with dev-return-write.
+check_id_token() {
+  # $1 = flag name, $2 = value.
+  [[ -n "$2" ]] || die "$1 is required (non-empty)"
+  [[ "$2" =~ $ID_GRAMMAR && "$2" != *..* ]] \
+    || die "$1 '$2' must match ${ID_GRAMMAR} with no '..' (path-safe: no '/' or whitespace)"
+}
+
+# `validate` and `validate_note` are surfaced here, not just stored in the file:
+# this output IS what the orchestrator reads to accept a completion, so a
+# qualified result recorded in the artifact and never echoed would be as lost as
+# one that was never recorded (kendex#884). Both are null when the artifact is
+# missing or unparseable.
+emit() {
+  local ok="$1" path="$2" reason="$3" warning="${4:-}" hint="${5:-}" validate=null validate_note=null
+  if [[ -n "$path" && -f "$path" ]]; then
+    validate="$(jq -c 'if (.validate? | type) == "string" then .validate else null end' "$path" 2>/dev/null || printf 'null')"
+    validate_note="$(jq -c 'if (.validate_note? | type) == "string" then .validate_note else null end' "$path" 2>/dev/null || printf 'null')"
+  fi
+  # verdict is the one-word acceptance answer the orchestrator acts on:
+  #   accept — artifact valid for this round (warnings ride along)
+  #   wait   — no artifact for this round yet; the round is still running
+  #   retry  — an artifact exists but fails identity/schema/commit gates
+  # A validate value other than "pass" downgrades accept to retry: the agent
+  # finished its tail but the round's validation is failing.
+  local verdict
+  if [[ "$ok" == "true" ]]; then
+    verdict="accept"
+    if [[ "$validate" != null && "$validate" != '"pass"' ]]; then verdict="retry"; fi
+  elif [[ "$reason" == "missing" ]]; then
+    verdict="wait"
+  else
+    verdict="retry"
+  fi
+  jq -n --argjson ok "$ok" --arg path "$path" --arg reason "$reason" --arg warning "$warning" \
+    --arg hint "$hint" --arg verdict "$verdict" \
+    --argjson validate "${validate:-null}" --argjson validate_note "${validate_note:-null}" \
+    '{ok: $ok, verdict: $verdict, path: (if $path == "" then null else $path end), reason: $reason,
+      warning: (if $warning == "" then null else $warning end),
+      hint: (if $hint == "" then null else $hint end),
+      validate: $validate, validate_note: $validate_note}'
+}
+
+# The artifact's internal round_id must equal the expected token. Guards against
+# a copied/renamed file dropped at the round-scoped path.
+round_id_matches() {
+  jq -e --arg want "$2" '
+    ((.round_id? | type) == "string") and (.round_id == $want)
+  ' "$1" >/dev/null 2>&1
+}
+
+# Type-strict required scalars: .kind ∈ {implement,fix,analysis}; .issue/.branch
+# non-empty STRINGS (arrays/objects/bools/numbers fail, not just ""); .round_id a
+# non-empty string; .schema_version a number. implement/fix additionally require
+# .commit/.validate non-empty strings; analysis requires the INVERSE — no
+# .commit/.validate/.validate_note key present (a validation claim on a round
+# that ran none is a fabrication, kendex#952). A truncated or half-written
+# receipt fails this gate → reason=invalid.
+has_required_fields() {
+  jq -e '
+    (.kind? // "") as $k
+    | ($k == "implement" or $k == "fix" or $k == "analysis")
+      and ((.issue? | type) == "string") and (.issue != "")
+      and ((.branch? | type) == "string") and (.branch != "")
+      and ((.round_id? | type) == "string") and (.round_id != "")
+      and ((.schema_version? | type) == "number")
+      and (if $k == "analysis"
+           then ((has("commit") | not) and (has("validate") | not)
+                 and (has("validate_note") | not))
+           else ((.commit? | type) == "string") and (.commit != "")
+             and ((.validate? | type) == "string") and (.validate != "")
+             and ((.validate_note? | type) as $t | $t == "null" or $t == null
+                  or ($t == "string" and (.validate_note != "")))
+           end)
+  ' "$1" >/dev/null 2>&1
+}
+
+# kendex#678 parity fallback (no --expect-items): an artifact of kind "fix" OR with
+# bundled == true must carry a non-empty .items array whose every element is an
+# object with a numeric .n, a decision ∈ {Applied,Skipped,Blocked}, and a non-empty
+# .reasoning. kind "implement" without bundled is unaffected (items: [] allowed).
+# Returns 0 (true) when fix/bundled-shaped but items are missing/empty/malformed.
+fix_or_bundled_incomplete() {
+  jq -e '
+    ((((.kind? // "") == "fix") or (.bundled? == true))) as $needs_items
+    | $needs_items
+      and (((.items? | type) != "array")
+           or ((.items | length) == 0)
+           or (any(.items[];
+                 (type != "object")
+                 or ((.n? | type) != "number")
+                 or ((.decision? | type) != "string")
+                 or ((.decision as $d | ["Applied","Skipped","Blocked"] | index($d)) == null)
+                 or ((.reasoning? | type) != "string")
+                 or (.reasoning == ""))))
+  ' "$1" >/dev/null 2>&1
+}
+
+# Exact item-set completeness for a fix round (--expect-items N,N,...). items[] must
+# cover EXACTLY the expected set: every element well-formed, and the multiset of
+# .n equals the expected set (each present once, no unknown/duplicate). A 1-item
+# artifact must not satisfy a 10-item delegation. Returns 0 (true) when items[]
+# covers the set exactly.
+items_exact_ok() {
+  jq -e --arg expect "$2" '
+    ($expect | split(",") | map(tonumber)) as $want
+    | ((.items? | type) == "array")
+      and (all(.items[];
+            (type == "object")
+            and ((.n | type) == "number")
+            and ((.decision as $d | ["Applied","Skipped","Blocked"] | index($d)) != null)
+            and ((.reasoning | type) == "string") and (.reasoning != "")))
+      and (([ .items[].n ] | sort) == ($want | sort))
+  ' "$1" >/dev/null 2>&1
+}
+
+# kind "analysis" completeness (kendex#952): the recommendation/evidence rides in
+# .summary and IS the round's deliverable, so an analysis artifact whose summary
+# is missing, wrong-typed, or empty proves only that the round ended — not what
+# it concluded. Returns 0 (true) when analysis-shaped but summary is unusable.
+analysis_incomplete() {
+  jq -e '
+    ((.kind? // "") == "analysis")
+      and (((.summary? | type) != "string") or (.summary == ""))
+  ' "$1" >/dev/null 2>&1
+}
+
+# Shared gate: existence → (round_id match, when expected) → required scalars
+# (invalid) → commit object (commit_unresolvable, kendex#994) → items/summary
+# (incomplete) → valid. Emits {ok, path, reason, warning}, returns 0 iff valid.
+# want_round "" skips the round_id match (--file mode without --round-id).
+# expect_items "" uses the fix/bundled fallback instead of the exact-set rule.
+# repo "" skips the commit checks (--file mode); so does a worktree that is not
+# a git repo — production worktrees always are, and a check that cannot run
+# proves nothing either way.
+validate_artifact() {
+  local file="$1" want_round="$2" expect_items="$3" repo="${4:-}" warning=""
+  if [[ ! -f "$file" ]]; then
+    emit false "" "missing"
+    return 1
+  fi
+  if [[ -n "$want_round" ]] && ! round_id_matches "$file" "$want_round"; then
+    emit false "$file" "invalid"
+    return 1
+  fi
+  if ! has_required_fields "$file"; then
+    emit false "$file" "invalid"
+    return 1
+  fi
+  # kendex#994: a .commit that passed the scalar gate must name a real commit
+  # object in the worktree's repo — a fabricated SHA (same short prefix as HEAD,
+  # invented tail) reads as evidence while proving nothing. Resolvable but not
+  # an ancestor of HEAD is the orphaned-by-rebase signature: non-fatal warning,
+  # because a legitimate rebase produces it on every previously accepted round.
+  local commit=""
+  if [[ -n "$repo" ]] && git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; then
+    commit="$(jq -r 'if (.commit? | type) == "string" then .commit else "" end' "$file" 2>/dev/null || true)"
+  fi
+  if [[ -n "$commit" ]]; then
+    if [[ "$(git -C "$repo" cat-file -t "$commit" 2>/dev/null)" != "commit" ]]; then
+      printf '%s: artifact commit %s: no such object in the repo at %s\n' "$PROG" "$commit" "$repo" >&2
+      emit false "$file" "commit_unresolvable"
+      return 1
+    fi
+    if ! git -C "$repo" merge-base --is-ancestor "$commit" HEAD >/dev/null 2>&1; then
+      warning="commit_unreachable"
+      printf '%s: artifact commit %s resolves but is not an ancestor of HEAD in %s (orphaned by a rebase?)\n' "$PROG" "$commit" "$repo" >&2
+    fi
+  fi
+  if [[ -n "$expect_items" ]]; then
+    if ! items_exact_ok "$file" "$expect_items"; then
+      # Count-vs-set misuse reads as "the dev agent skipped items" and points
+      # at the wrong party. The unambiguous signature: a bare integer N > 1
+      # while the artifact's item numbers are EXACTLY 1..N — a legitimate
+      # singleton re-fix (--expect-items 2) or a shifted set never matches.
+      # The hint rides in its own field; `warning` keeps its documented
+      # commit_unreachable|null contract. It diagnoses a TYPED count only: a
+      # set derived from the round record (--expect-items-from-round) cannot
+      # be that misuse, so it never hints even when the shapes coincide.
+      if [[ "$expect_from_round" != "true" && "$expect_items" =~ ^[0-9]+$ ]] && [ "$expect_items" -gt 1 ] \
+        && jq -e --argjson n "$expect_items" \
+          '((.items? | type) == "array")
+             and (all(.items[];
+                   (type == "object")
+                   and ((.n | type) == "number")
+                   and ((.decision as $d | ["Applied","Skipped","Blocked"] | index($d)) != null)
+                   and ((.reasoning | type) == "string") and (.reasoning != "")))
+             and (([ .items[].n ] | sort) == [range(1; $n + 1)])' \
+          "$file" >/dev/null 2>&1; then
+        emit false "$file" "incomplete" "" \
+          "if this delegation covered $expect_items items, then '$expect_items' was a COUNT — --expect-items takes the delegated item NUMBERS (e.g. 1,2,...,$expect_items); if it genuinely delegated only item #$expect_items, the artifact carries extra items 1..$expect_items"
+        return 1
+      fi
+      emit false "$file" "incomplete"
+      return 1
+    fi
+  elif fix_or_bundled_incomplete "$file"; then
+    emit false "$file" "incomplete"
+    return 1
+  fi
+  if analysis_incomplete "$file"; then
+    emit false "$file" "incomplete"
+    return 1
+  fi
+  emit true "$file" "valid" "$warning"
+  return 0
+}
+
+# --- Mode dispatch: --file (explicit path) or round mode (--worktree/--issue/
+# --round-id). Each sets `file`, `want_round`, and `expect_items`; the shared tail
+# validates --expect-items once and runs the check. -h/--help prints usage. ---
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+file=""
+want_round=""
+expect_items=""
+expect_from_round=false
+repo=""
+wait_secs=0
+interval=5
+
+if [[ "${1:-}" == "--file" ]]; then
+  shift
+  file="${1:-}"
+  [[ -n "$file" && "$file" != --* ]] || die "--file requires a non-empty path"
+  shift
+  while (( $# > 0 )); do
+    case "$1" in
+      --round-id)     need "$1" $#; want_round="$2"; shift 2 ;;
+      --expect-items) need "$1" $#; expect_items="$2"; shift 2 ;;
+      --expect-items-from-round)
+        die "--expect-items-from-round requires round mode (there is no worktree/issue/round to resolve a round record from)" ;;
+      --wait)         need "$1" $#; wait_secs="$2"; shift 2 ;;
+      --interval)     need "$1" $#; interval="$2"; shift 2 ;;
+      *) die "unknown --file argument: $1" ;;
+    esac
+  done
+elif [[ "${1:-}" == --* ]]; then
+  worktree=""
+  issue=""
+  round_id=""
+  while (( $# > 0 )); do
+    case "$1" in
+      --worktree)     need "$1" $#; worktree="$2"; shift 2 ;;
+      --issue)        need "$1" $#; issue="$2"; shift 2 ;;
+      --round-id)     need "$1" $#; round_id="$2"; shift 2 ;;
+      --expect-items) need "$1" $#; expect_items="$2"; shift 2 ;;
+      --expect-items-from-round) expect_from_round=true; shift ;;
+      --wait)         need "$1" $#; wait_secs="$2"; shift 2 ;;
+      --interval)     need "$1" $#; interval="$2"; shift 2 ;;
+      *) die "unknown argument: $1" ;;
+    esac
+  done
+  [[ -n "$worktree" ]] || die "--worktree is required"
+  [[ -d "$worktree" ]] || die "--worktree path '$worktree' is not a directory"
+  check_id_token --issue "$issue"
+  check_id_token --round-id "$round_id"
+  want_round="$round_id"
+  repo="$worktree"
+  file="$worktree/tmp/dev-return-$issue-$round_id.json"
+
+  # Derive the expected item set from the persisted round record (kendex#1230).
+  # A record that cannot supply the set — missing, unparseable, wrong internal
+  # token, or malformed items — is a usage/environment failure (exit 2), never
+  # a silent downgrade to the weaker fix/bundled fallback gate.
+  if [[ "$expect_from_round" == "true" ]]; then
+    [[ -z "$expect_items" ]] \
+      || die "--expect-items and --expect-items-from-round are mutually exclusive: one expected-set source"
+    round_record="$worktree/tmp/dev-round-$issue-$round_id.json"
+    [[ -f "$round_record" ]] \
+      || die "round record $round_record not found — was dev-round-write run when the round was stamped?"
+    jq empty "$round_record" >/dev/null 2>&1 \
+      || die "round record $round_record is not parseable JSON"
+    jq -e --arg want "$round_id" '
+      ((.round_id? | type) == "string") and (.round_id == $want)
+    ' "$round_record" >/dev/null 2>&1 \
+      || die "round record $round_record does not carry internal round_id '$round_id' — not this round's record"
+    # Full record schema, not just the token: a record dev-round-write could
+    # not have written (wrong issue, missing schema_version, ill-typed or
+    # empty items/text) is no source of truth for the expected set.
+    jq -e --arg issue "$issue" '
+      ((.schema_version? | type) == "number")
+      and ((.issue? | type) == "string") and (.issue == $issue)
+      and ((.items? | type) == "array") and ((.items | length) > 0)
+      and all(.items[];
+            (type == "object")
+            and ((.n? | type) == "number") and (.n == (.n | floor)) and (.n >= 0)
+            and ((.text? | type) == "string")
+            and ((.text | gsub("[[:space:]]"; "")) != ""))
+      and (([.items[].n] | length) == ([.items[].n] | unique | length))
+    ' "$round_record" >/dev/null 2>&1 \
+      || die "round record $round_record fails the dev-round schema (schema_version number, issue '$issue', non-empty items[] of unique integer n + non-empty text) — see skills/orch/schemas/dev-round.md"
+    expect_items="$(jq -r '[.items[].n | tostring] | join(",")' "$round_record")"
+  fi
+else
+  # Neither --file nor round mode → usage error. One identity model (round id);
+  # the legacy positional mode was removed with its only caller.
+  usage >&2
+  exit 2
+fi
+
+# Shared tail: --expect-items grammar (both modes), then validate — once, or,
+# with --wait, repeatedly until the verdict leaves "wait" or the deadline lands.
+if [[ -n "$expect_items" && ! "$expect_items" =~ $EXPECT_GRAMMAR ]]; then
+  die "--expect-items must be comma-separated item numbers, got '$expect_items'"
+fi
+[[ "$wait_secs" =~ ^[0-9]+$ ]] || die "--wait must be a non-negative integer (seconds), got '$wait_secs'"
+[[ "$interval" =~ ^[1-9][0-9]*$ ]] || die "--interval must be a positive integer (seconds), got '$interval'"
+if (( wait_secs > 0 )); then
+  # Blocking watchdog: only "wait" (no artifact yet) keeps polling; the first
+  # accept/retry verdict returns immediately, so an armed background invocation
+  # wakes the orchestrator the moment the receipt lands instead of at a fixed
+  # deadline — and never depends on the agent's return message being delivered.
+  deadline=$(( $(date +%s) + wait_secs ))
+  while :; do
+    rc=0
+    out="$(validate_artifact "$file" "$want_round" "$expect_items" "$repo")" || rc=$?
+    verdict="$(jq -r '.verdict // "wait"' <<<"$out" 2>/dev/null || printf 'wait')"
+    if [[ "$verdict" != "wait" ]] || (( $(date +%s) >= deadline )); then
+      printf '%s\n' "$out"
+      exit "$rc"
+    fi
+    remaining=$(( deadline - $(date +%s) ))
+    sleep_for="$interval"
+    if (( remaining < interval )); then sleep_for="$remaining"; fi
+    if (( sleep_for < 1 )); then sleep_for=1; fi
+    sleep "$sleep_for"
+  done
+fi
+if validate_artifact "$file" "$want_round" "$expect_items" "$repo"; then exit 0; else exit 1; fi

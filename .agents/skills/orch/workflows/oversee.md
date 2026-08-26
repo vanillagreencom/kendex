@@ -1,0 +1,90 @@
+# Oversee
+
+Standing fleet mode: burn down unblocked work items by launching one orch session per item and shepherding every PR to merge. The overseer launches, watches, unblocks, and merges — it never implements or reviews. It runs unattended: a blocked lane is the overseer's to unblock, not the user's to notice.
+
+## 1. Resolve The Launch Surface
+
+Once per session, first match wins:
+
+1. `$TMUX` set → tmux lanes: launch each item with `open-terminal` (`lanes pick` chooses the account lane; launch flags sized per item — `handoff.md` § 2).
+2. The harness ships session or thread launching (Codex threads, Claude Code agent teams, a desktop app's session tool or bundled skill) → use it: one managed session per item, carrying the same brief `open-terminal` would render.
+3. Neither → no parallel surface. Say so once and work the queue sequentially in this session: `start [ISSUE_ID]` per item, § 2 selection between items.
+
+## 2. Select Work
+
+Unblocked, non-terminal items from the tracker, gated exactly as `start.md` gates them (ancestor chain, blocker union, container rules). A GitHub item labeled `blocked` is not a candidate. An item whose `worktree create` exits 75 belongs to another session: skip it; its siblings still launch. On the tmux surface that claim IS `open-terminal`'s own worktree create — never pre-create the worktree. A surface that creates its own worktree environment (Codex app threads) records the claim in workflow-state before launch. Oversee runs as at most one session per repo. Read the lane cap and keep at most that many items in flight:
+
+```bash
+.agents/skills/orch/scripts/orch-env ORCH_OVERSEER_LANES 3
+```
+
+## 3. Launch
+
+Per item, mint the brief `/orch start [ISSUE_ID]` (or `/orch start github [OWNER/REPO]#[N]`) plus the terminal condition: the item is complete only when its PR is MERGED and its worktree cleaned up — an opened PR is not done. The brief also carries question routing: "If your harness can message other sessions (a session list plus a send-message tool), push any blocking question to the overseer session that launched you the moment it arises — the user may not be watching this session — and still raise it locally through your normal question tool. Without such messaging, just ask normally; the overseer's watch will find it." `/orch` slash syntax does nothing in Codex: a Codex CLI lane uses the form open-terminal renders — `Read .agents/skills/orch/SKILL.md and execute the orch start workflow for [ITEM]` — and a Codex Desktop thread uses `$orch start [ITEM]` (`handoff.md` § 2), each still carrying the terminal condition. Size launch flags to the item, read `[NOW]` for the lane record below, then launch on the § 1 surface.
+
+Record the lane. Read `[NOW]` as `date -u +%Y-%m-%dT%H:%M:%SZ` before the launch it timestamps, never after; the first lane's value is the fleet start that § 4 passes as `--since`. First use only — when `exists` reports false, run `init` (init overwrites: never re-init a live lane log):
+
+```bash
+.agents/skills/orch/scripts/workflow-state exists --json oversee
+```
+```bash
+.agents/skills/orch/scripts/workflow-state init oversee
+```
+```bash
+.agents/skills/orch/scripts/workflow-state append oversee lanes '{"issue":"[ISSUE_ID]","surface":"[SURFACE]","launched_at":"[NOW]"}'
+```
+
+## 4. Watch And Advance
+
+One blocking command, passed the fleet's start as `--since` (the first lane's `launched_at` — the same value on every run, never "now"), `--item` for every live item, and every live lane's tmux window name (none on a non-tmux surface). It exits on the first event that needs the overseer and prints one event: an `EVENT` line, or for `merged` one `EVENT merged` line per merged item — handle every line. Re-run it after handling each event with the live set updated — a merged item and a dead lane's window drop out. Never hand-roll a monitor. It runs `pr-watch.sh` when the review-gate skill is installed and skips that step otherwise (`gate-stale` is then invisible — [references/gates.md](../references/gates.md) § Multi-PR watching); only a new `<pr> <kind>` line is itself an event; attention standing since the fleet's first run is context appended to the next event.
+
+```bash
+.agents/skills/orch/scripts/oversee-watch --interval 240 --since [FLEET_SINCE] --item [ISSUE_ID]... [LANE_WINDOW...]
+```
+
+### Judgement at every event
+
+The overseer owns fleet judgement, not just liveness; every § 4 event is
+handled under these rules:
+
+- **Triage what lanes file.** Read every issue a lane creates — the
+  `heartbeat` triage pass below surfaces them. A hypothetical,
+  an unreproduced edge case, or a feature no issue's Done-when carries is
+  canceled with a comment naming what it failed; genuine defects stay.
+  Cancel only where the fleet brief grants triage authority and the lane's
+  authorship is beyond doubt; any uncertainty means comment the
+  recommendation and leave the issue open — elsewhere the
+  project-management skill's approval gate stays the rule.
+- **Cut scope blowups.** A PR whose diff outgrows its issue's Done-when goes
+  back to the contract: keep the oversized work on a branch, land the
+  contract. Machinery no issue ordered — a new subsystem, scanner, or lexer —
+  is cut, never reviewed into shape.
+- **End spirals.** A round whose finding shares a root cause with one
+  already answered ends the patch sequence: structural fix when it shrinks
+  the diff, else land narrow with `Tracked: [ID]` — for work the diff does
+  not arm only; a defect the diff introduces is fixed, never tracked
+  (SKILL.md § Review must converge). Bots drip-feeding one class get the
+  class exhausted in one audit pass, then dispositions without pushes.
+- **Fix the source.** The same finding class on a third PR is a mechanism
+  gap: file it and route the smallest deterministic check (a guard lane, a
+  preflight rule, a refusing script) or one sentence in the owning skill
+  through a lane as its own item — the overseer still implements nothing.
+  Deterministic beats prose where it stays simple; complex or brittle
+  machinery is worse than either.
+- **Decide without the user.** SKILL.md's ask gates stand unchanged — scope
+  expansion, recorded decisions, and merge autonomy still ask. Any other
+  reversible call takes the option that costs nothing, recorded in the fleet
+  log; destructive actions and product direction wait for a human.
+
+
+- `merged` → mark the lane done, launch the next unblocked item. When the fleet's LAST item merges, run the `heartbeat` triage pass before closing out, whatever the tracker; items living in Linear also get `.agents/skills/orch/scripts/reconcile-work-items` (a GitHub-item fleet skips that with a note). Report both with the close-out.
+- `lane-exited` → the window is alive but the harness under it is gone (its pane tail says why). A lane stopped by a harness session limit ("You've hit your session limit · resets HH:MM") is not dead: resume it under another auth lane (`lanes pick`; a Claude session resumed under a different `CLAUDE_CONFIG_DIR` needs its session files copied there), or wait for the shown reset and send the lane a one-line continuation nudge. Any other exit is the `window-gone` rule below.
+- `usage-limit` → read the pane tail first and confirm the banner is the harness's own, not text the lane printed while working; a lane still working is left alone. Confirmed: move the item to another account lane (kill the window, then re-run the § 3 launch with `--relaunch --lane auto:[HARNESS]` — bare `auto` needs `--harness`), or wait for the reset the banner names and send the lane a one-line continuation nudge. Never launch onto the spent account again until its reset.
+- `idle-after-return` → read its pane tail, then send the next instruction, or — when its PR is merged and its worktree is gone — close the lane and launch the next item.
+- `window-gone`, or any lane whose session ended with no merged PR → inspect its worktree and PR state, re-launch once with the same brief and `open-terminal --relaunch` (without the flag the existing worktree reads as another session's claim and the item is skipped); a second death is surfaced to the user, not retried.
+- `question` → answer it when available evidence already decides it: repo state, the issue body, a stated convention — including scope-narrowing calls and a lane's own well-argued recommendation. Relay to the user only what changes the product for a user or spends the owner's standing (retiring a reviewer, filing outside the repo, closing as won't-do). Either way, send the answer back to the lane. On a surface with neither messaging nor an inspectable pane, prolonged lane silence is itself the needs-attention signal — inspect the session through that surface's own status tools.
+- `pr-watch` → act on its attention lines; `heartbeat` → the triage pass: `.agents/skills/linear/scripts/linear.sh issues list --team [TEAM] --created-since [Nd covering the fleet start] --max` (or the tracker's equivalent), drop IDs already recorded in the fleet state's `triaged`, and judge only issues a fleet lane filed — the candidate set is each lane item's created-issue records in workflow state (`audit_issues_created`, `pr_comment_review.issues_created`) plus each lane PR body's Created Issues section; the created-since listing backstops trackers without that state. Anything outside the set is left alone. Record each verdict with `workflow-state append oversee triaged '{"issue": "[ID]", "verdict": "[kept|canceled]", "reason": "[ONE_LINE]"}'`, then re-run.
+
+## 5. Stop
+
+Queue empty, or the user stops it. Report one line per lane: merged SHAs, still-open PRs, items skipped as owned or blocked.

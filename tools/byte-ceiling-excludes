@@ -1,0 +1,13 @@
+# byte-ceiling exclusion list — pattern<TAB>reason (gitignore-style against the
+# repo-relative path; ** crosses /).
+#
+# Named INDIVIDUALLY, never by a tree wildcard. The ceiling exists to keep a
+# large artifact from arriving unnoticed, and `.agents/**` would retire it over
+# the whole render — including a future rendered file nobody has looked at. Each
+# row below is a file someone has looked at, and its source counterpart under
+# skills/ is what a reviewer reads.
+
+.agents/skills/iced-rs/examples/combo_box/combobox.gif	rendered copy of skills/iced-rs/examples/combo_box/combobox.gif — a vendored upstream iced example recording
+.agents/skills/iced-rs/examples/custom_shader/textures/ice_cube_normal_map.png	rendered copy of the vendored upstream iced example texture
+.agents/skills/iced-rs/examples/scrollable/screenshot.png	rendered copy of the vendored upstream iced example screenshot
+.agents/skills/worktree/scripts/worktree	rendered copy of skills/worktree/scripts/worktree — one program, 4,788 lines of shell; the source carries its own size argument

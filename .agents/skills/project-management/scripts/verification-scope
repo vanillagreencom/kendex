@@ -1,0 +1,300 @@
+#!/usr/bin/env bash
+# Resolve repository-aware paths for tpm-audit code and deliverable checks.
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: verification-scope [--worktree PATH] [--base-ref REF]
+                          [--changed-file PATH]... [--docs-only]
+
+Resolve repository-aware paths for tpm-audit code and deliverable checks.
+Prefer --changed-file for PR-provided paths or --base-ref for a branch diff.
+Without either, tracked source roots are discovered across the repository.
+
+Output: one JSON object on stdout with these fields:
+  worktree                    Absolute repository root the paths resolve
+                              against
+  mode                        "changed" (explicit or diffed paths),
+                              "repository" (discovered source roots), or
+                              "docs-only" (--docs-only, or every changed
+                              path is documentation)
+  basis                       How the scope was derived
+  base_ref                    The diff base, or null without --base-ref
+  changed_files[]             Repository-relative changed paths
+  source_roots[]              Discovered tracked source roots
+  verification_paths[]        The paths to verify against: source_roots in
+                              "repository" mode, the changed paths otherwise
+  code_verification_required  false only in "docs-only" mode
+
+Returned paths are repository-relative; resolve them against the returned
+absolute worktree before any search or read.
+EOF
+}
+
+fail() {
+  echo "verification-scope: $*" >&2
+  exit 1
+}
+
+worktree="."
+base_ref=""
+force_docs_only=false
+declare -a explicit_paths=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --worktree)
+      [[ $# -ge 2 ]] || fail "--worktree requires a path"
+      worktree="$2"
+      shift 2
+      ;;
+    --base-ref)
+      [[ $# -ge 2 ]] || fail "--base-ref requires a ref"
+      base_ref="$2"
+      shift 2
+      ;;
+    --changed-file)
+      [[ $# -ge 2 ]] || fail "--changed-file requires a repository-relative path"
+      explicit_paths+=("$2")
+      shift 2
+      ;;
+    --docs-only)
+      force_docs_only=true
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      fail "unknown argument: $1"
+      ;;
+  esac
+done
+
+[[ -d "$worktree" ]] || fail "worktree does not exist: $worktree"
+repo_root="$(git -C "$worktree" rev-parse --show-toplevel 2>/dev/null)" \
+  || fail "worktree is not inside a Git repository: $worktree"
+repo_root="$(cd "$repo_root" && pwd -P)"
+
+if [[ -n "$base_ref" && ${#explicit_paths[@]} -gt 0 ]]; then
+  fail "use either --base-ref or --changed-file, not both"
+fi
+
+declare -a candidates=()
+basis="tracked-files"
+producer_output=""
+
+cleanup() {
+  if [[ -n "$producer_output" ]]; then
+    rm -f "$producer_output"
+  fi
+}
+trap cleanup EXIT
+
+capture_git_paths() {
+  local diagnostic="$1"
+  shift
+
+  if [[ -n "$producer_output" ]]; then
+    rm -f "$producer_output"
+  fi
+  producer_output="$(mktemp "${TMPDIR:-/tmp}/verification-scope.XXXXXX")" \
+    || fail "could not create temporary file for Git output"
+  if ! git -C "$repo_root" "$@" >"$producer_output"; then
+    fail "$diagnostic"
+  fi
+}
+
+normalize_path() {
+  local path="$1"
+  while [[ "$path" == ./* ]]; do
+    path="${path#./}"
+  done
+  if [[ "$path" == "$repo_root"/* ]]; then
+    path="${path#"$repo_root"/}"
+  elif [[ "$path" == /* ]]; then
+    fail "path is outside the worktree: $path"
+  fi
+  [[ -n "$path" ]] || fail "empty changed path"
+  case "$path" in
+    ..|../*|*/..|*/../*)
+      fail "path escapes the worktree: $path"
+      ;;
+  esac
+  printf '%s\n' "$path"
+}
+
+if [[ ${#explicit_paths[@]} -gt 0 ]]; then
+  basis="changed-files"
+  for path in "${explicit_paths[@]}"; do
+    candidates+=("$(normalize_path "$path")")
+  done
+elif [[ -n "$base_ref" ]]; then
+  basis="base-ref"
+  git -C "$repo_root" rev-parse --verify --quiet "${base_ref}^{commit}" >/dev/null \
+    || fail "base ref is not a commit: $base_ref"
+  capture_git_paths \
+    "git diff failed for base ref '$base_ref'; verify the ref and that it shares history with HEAD" \
+    diff --name-only -z "${base_ref}...HEAD" --
+  while IFS= read -r -d '' path; do
+    candidates+=("$path")
+  done <"$producer_output"
+fi
+
+is_doc_path() {
+  local path="$1"
+  case "$path" in
+    docs/*|doc/*|documentation/*|*.md|*.mdx|*.rst|*.adoc|*.txt)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+is_source_file() {
+  local path="$1"
+  if [[ -f "$repo_root/$path" && -x "$repo_root/$path" ]]; then
+    return 0
+  fi
+  case "$path" in
+    *.c|*.cc|*.cpp|*.cxx|*.h|*.hh|*.hpp|*.hxx|*.cs|*.go|*.java|*.js|*.jsx|*.kt|*.kts|*.lua|*.php|*.py|*.rb|*.rs|*.scala|*.sh|*.swift|*.ts|*.tsx|*.vue|*.svelte|*.zig)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+source_root_for_path() {
+  local path="$1"
+  if [[ "$path" == src/* ]]; then
+    printf 'src\n'
+  elif [[ "$path" == */src/* ]]; then
+    printf '%s/src\n' "${path%%/src/*}"
+  elif [[ "$path" == */scripts/* ]]; then
+    printf '%s/scripts\n' "${path%%/scripts/*}"
+  elif [[ "$path" == */extensions/* ]]; then
+    printf '%s/extensions\n' "${path%%/extensions/*}"
+  elif [[ "$path" == */tests/* ]]; then
+    printf '%s/tests\n' "${path%%/tests/*}"
+  elif [[ "$path" == */test/* ]]; then
+    printf '%s/test\n' "${path%%/test/*}"
+  elif [[ "$path" == */hooks/* ]]; then
+    printf '%s/hooks\n' "${path%%/hooks/*}"
+  elif [[ "$path" == */bin/* ]]; then
+    printf '%s/bin\n' "${path%%/bin/*}"
+  else
+    dirname "$path"
+  fi
+}
+
+# Dedup with a linear scan over an indexed array: associative arrays are
+# Bash 4+ and this skill must run under macOS system Bash 3.2.
+unique_candidates=()
+for path in ${candidates[@]+"${candidates[@]}"}; do
+  duplicate=false
+  for existing in ${unique_candidates[@]+"${unique_candidates[@]}"}; do
+    if [[ "$existing" == "$path" ]]; then
+      duplicate=true
+      break
+    fi
+  done
+  [[ "$duplicate" == true ]] || unique_candidates+=("$path")
+done
+candidates=(${unique_candidates[@]+"${unique_candidates[@]}"})
+
+mode="repository"
+if [[ "$force_docs_only" == true ]]; then
+  for path in "${candidates[@]}"; do
+    is_doc_path "$path" \
+      || fail "--docs-only path is not documentation: $path"
+  done
+  mode="docs-only"
+elif [[ ${#candidates[@]} -gt 0 ]]; then
+  mode="docs-only"
+  for path in "${candidates[@]}"; do
+    if ! is_doc_path "$path"; then
+      mode="changed"
+      break
+    fi
+  done
+fi
+
+source_roots=()
+
+add_source_root() {
+  local root="$1" existing
+  [[ -n "$root" && "$root" != "." ]] || root="."
+  for existing in ${source_roots[@]+"${source_roots[@]}"}; do
+    [[ "$existing" == "$root" ]] && return 0
+  done
+  source_roots+=("$root")
+}
+
+if [[ "$mode" == "repository" ]]; then
+  capture_git_paths \
+    "git ls-files failed while discovering tracked source roots" \
+    ls-files -z
+  while IFS= read -r -d '' path; do
+    if is_source_file "$path"; then
+      add_source_root "$(source_root_for_path "$path")"
+    fi
+  done <"$producer_output"
+elif [[ "$mode" == "changed" ]]; then
+  for path in "${candidates[@]}"; do
+    if is_source_file "$path"; then
+      add_source_root "$(source_root_for_path "$path")"
+    fi
+  done
+fi
+
+if [[ "$mode" == "repository" && ${#source_roots[@]} -eq 0 ]]; then
+  fail "no tracked source roots found; pass changed paths or --docs-only for a documentation-only audit"
+fi
+
+declare -a verification_paths=()
+if [[ "$mode" == "repository" ]]; then
+  verification_paths=("${source_roots[@]}")
+else
+  verification_paths=("${candidates[@]}")
+fi
+
+json_array() {
+  if [[ $# -eq 0 ]]; then
+    printf '[]'
+  else
+    printf '%s\0' "$@" | jq -Rs 'split("\u0000")[:-1]'
+  fi
+}
+
+changed_json="$(json_array "${candidates[@]}")"
+roots_json="$(json_array "${source_roots[@]}")"
+paths_json="$(json_array "${verification_paths[@]}")"
+code_verification_required=true
+if [[ "$mode" == "docs-only" ]]; then
+  code_verification_required=false
+fi
+
+jq -n \
+  --arg worktree "$repo_root" \
+  --arg mode "$mode" \
+  --arg basis "$basis" \
+  --arg base_ref "$base_ref" \
+  --argjson changed_files "$changed_json" \
+  --argjson source_roots "$roots_json" \
+  --argjson verification_paths "$paths_json" \
+  --argjson code_verification_required "$code_verification_required" \
+  '{
+    worktree: $worktree,
+    mode: $mode,
+    basis: $basis,
+    base_ref: (if $base_ref == "" then null else $base_ref end),
+    changed_files: $changed_files,
+    source_roots: $source_roots,
+    verification_paths: $verification_paths,
+    code_verification_required: $code_verification_required
+  }'

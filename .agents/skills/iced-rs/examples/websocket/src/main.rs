@@ -1,0 +1,126 @@
+mod echo;
+
+use iced::widget::{button, center, column, operation, row, scrollable, text, text_input};
+use iced::{Center, Element, Fill, Subscription, Task, color};
+
+pub fn main() -> iced::Result {
+    iced::application(WebSocket::new, WebSocket::update, WebSocket::view)
+        .subscription(WebSocket::subscription)
+        .run()
+}
+
+struct WebSocket {
+    messages: Vec<echo::Message>,
+    new_message: String,
+    state: State,
+}
+
+#[derive(Debug, Clone)]
+enum Message {
+    NewMessageChanged(String),
+    Send(echo::Message),
+    Echo(echo::Event),
+}
+
+impl WebSocket {
+    fn new() -> (Self, Task<Message>) {
+        (
+            Self {
+                messages: Vec::new(),
+                new_message: String::new(),
+                state: State::Disconnected,
+            },
+            Task::batch([
+                Task::future(echo::server::run()).discard(),
+                operation::focus_next(),
+            ]),
+        )
+    }
+
+    fn update(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::NewMessageChanged(new_message) => {
+                self.new_message = new_message;
+
+                Task::none()
+            }
+            Message::Send(message) => match &mut self.state {
+                State::Connected(connection) => {
+                    self.new_message.clear();
+
+                    connection.send(message);
+
+                    Task::none()
+                }
+                State::Disconnected => Task::none(),
+            },
+            Message::Echo(event) => match event {
+                echo::Event::Connected(connection) => {
+                    self.state = State::Connected(connection);
+
+                    self.messages.push(echo::Message::connected());
+
+                    Task::none()
+                }
+                echo::Event::Disconnected => {
+                    self.state = State::Disconnected;
+
+                    self.messages.push(echo::Message::disconnected());
+
+                    Task::none()
+                }
+                echo::Event::MessageReceived(message) => {
+                    self.messages.push(message);
+
+                    operation::snap_to_end(MESSAGE_LOG)
+                }
+            },
+        }
+    }
+
+    fn subscription(&self) -> Subscription<Message> {
+        Subscription::run(echo::connect).map(Message::Echo)
+    }
+
+    fn view(&self) -> Element<'_, Message> {
+        let message_log: Element<_> = if self.messages.is_empty() {
+            center(text("Your messages will appear here...").color(color!(0x888888))).into()
+        } else {
+            scrollable(column(self.messages.iter().map(text).map(Element::from)).spacing(10))
+                .id(MESSAGE_LOG)
+                .height(Fill)
+                .spacing(10)
+                .into()
+        };
+
+        let new_message_input = {
+            let mut input = text_input("Type a message...", &self.new_message)
+                .on_input(Message::NewMessageChanged)
+                .padding(10);
+
+            let mut button = button(text("Send").height(40).align_y(Center)).padding([0, 20]);
+
+            if matches!(self.state, State::Connected(_))
+                && let Some(message) = echo::Message::new(&self.new_message)
+            {
+                input = input.on_submit(Message::Send(message.clone()));
+                button = button.on_press(Message::Send(message));
+            }
+
+            row![input, button].spacing(10).align_y(Center)
+        };
+
+        column![message_log, new_message_input]
+            .height(Fill)
+            .padding(20)
+            .spacing(10)
+            .into()
+    }
+}
+
+enum State {
+    Disconnected,
+    Connected(echo::Connection),
+}
+
+const MESSAGE_LOG: &str = "message_log";

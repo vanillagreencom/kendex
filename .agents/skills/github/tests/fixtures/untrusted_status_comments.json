@@ -1,0 +1,9 @@
+[
+  {
+    "id": 5001,
+    "user": {"login": "linear-code[bot]"},
+    "body": "Status: Approved\n\nThis is an issue linkback bot, not a review bot.",
+    "created_at": "2026-06-02T08:18:35Z",
+    "updated_at": "2026-06-02T08:18:35Z"
+  }
+]

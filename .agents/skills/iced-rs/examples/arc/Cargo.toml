@@ -1,0 +1,10 @@
+[package]
+name = "arc"
+version = "0.1.0"
+authors = ["ThatsNoMoon <git@thatsnomoon.dev>"]
+edition = "2024"
+publish = false
+
+[dependencies]
+iced.workspace = true
+iced.features = ["canvas", "tokio", "debug"]

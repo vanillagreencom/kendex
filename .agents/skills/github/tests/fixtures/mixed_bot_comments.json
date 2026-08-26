@@ -1,0 +1,16 @@
+[
+  {
+    "id": 3001,
+    "user": {"login": "linear-code[bot]"},
+    "body": "<!-- linear-linkback -->\n<details>\n<summary>CC-496</summary>\n\n## Summary\nIssue linkback only.",
+    "created_at": "2026-06-02T08:18:14Z",
+    "updated_at": "2026-06-02T08:18:31Z"
+  },
+  {
+    "id": 3002,
+    "user": {"login": "claude[bot]"},
+    "body": "**Claude finished @vg-claude's task in 1m 44s** —— [View job](https://github.com/example/actions/runs/1)\n\n---\n### Review Summary\n✅ Approved — 0 inline comments posted",
+    "created_at": "2026-06-02T08:18:35Z",
+    "updated_at": "2026-06-02T08:20:33Z"
+  }
+]

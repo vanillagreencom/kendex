@@ -1,0 +1,30 @@
+[package]
+name = "integration"
+version = "0.1.0"
+authors = ["Héctor Ramón Jiménez <hector0193@gmail.com>"]
+edition = "2024"
+publish = false
+
+[dependencies]
+iced_winit.workspace = true
+
+iced_wgpu.workspace = true
+iced_wgpu.default-features = true
+
+iced_widget.workspace = true
+iced_widget.features = ["wgpu"]
+
+futures.workspace = true
+futures.features = ["thread-pool"]
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tracing-subscriber = "0.3"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+iced_wgpu.workspace = true
+iced_wgpu.features = ["webgl"]
+
+console_error_panic_hook = "0.1"
+console_log = "1.0"
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["Element", "HtmlCanvasElement", "Window", "Document"] }

@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# mutation-stability — prove a test can fail, then prove it is stable.
+#
+# Copies WORKTREE at SHA into a fresh temp dir (git archive; the shared tree
+# is never touched), runs TEST there as a control (must pass), applies MUTATE
+# (a shell command run inside the copy), reruns TEST (must now fail = mutant
+# killed), then runs TEST N more times on a clean copy at elevated
+# parallelism and prints the one summary line reviewers report:
+#
+#   mutation: killed 1/1; stability: N/N at T threads
+#
+# Exit: 0 killed and stable; 1 mutant survived or a stability run failed;
+# 2 control failure (test red before mutation, bad args, archive failure).
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+usage: mutation-stability --worktree PATH --sha SHA --test CMD --mutate CMD
+                          [--stability N] [--threads T] [--keep]
+
+  --test CMD       run via bash -c inside the copy; exit 0 = pass
+  --mutate CMD     run via bash -c inside the copy before the kill check
+  --stability N    clean-copy repeat runs (default 10; minimum 1)
+  --threads T      exported to TEST as THREADS and RUST_TEST_THREADS
+                   (default 2x nproc); a runner that takes a flag must be
+                   given it in TEST, e.g. --test 'cargo test -- --test-threads $THREADS' 
+  --keep           print the temp dirs instead of deleting them
+USAGE
+}
+
+WORKTREE="" SHA="" TEST="" MUTATE="" N=10 THREADS="" KEEP=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --worktree|--sha|--test|--mutate|--stability|--threads)
+      [ $# -ge 2 ] || { echo "$1 needs a value" >&2; usage >&2; exit 2; }
+      case "$1" in
+        --worktree) WORKTREE="$2" ;;
+        --sha) SHA="$2" ;;
+        --test) TEST="$2" ;;
+        --mutate) MUTATE="$2" ;;
+        --stability) N="$2" ;;
+        --threads) THREADS="$2" ;;
+      esac
+      shift ;;
+    --keep) KEEP=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+  shift
+done
+[ -n "$WORKTREE" ] && [ -n "$SHA" ] && [ -n "$TEST" ] && [ -n "$MUTATE" ] || {
+  usage >&2; exit 2
+}
+case "$N" in *[!0-9]*|'') echo "--stability wants a number" >&2; exit 2 ;; esac
+[ "$N" -ge 1 ] || { echo "--stability 0 is zero samples — instrument failure by the reviewer contract" >&2; exit 2; }
+[ -n "$THREADS" ] || THREADS=$((2 * $(nproc 2>/dev/null || echo 4)))
+case "$THREADS" in *[!0-9]*|''|0) echo "--threads wants a positive integer" >&2; exit 2 ;; esac
+
+ROOT=$(mktemp -d "${TMPDIR:-/tmp}/mutation-stability.XXXXXX") || exit 2
+[ "$KEEP" = 1 ] || trap 'rm -rf "$ROOT"' EXIT
+
+extract() { # extract SHA into $1
+  mkdir -p "$1" || return 1
+  git -C "$WORKTREE" archive "$SHA" | tar -x -C "$1"
+}
+
+run_test() { # run TEST in dir $1 with threads $2
+  (cd "$1" && THREADS="$2" RUST_TEST_THREADS="$2" bash -c "$TEST") >/dev/null 2>&1
+}
+
+extract "$ROOT/mutant" || { echo "control: git archive failed for $SHA" >&2; exit 2; }
+
+if ! run_test "$ROOT/mutant" "$THREADS"; then
+  echo "control: test fails before any mutation — not a usable instrument" >&2
+  [ "$KEEP" = 1 ] && echo "kept: $ROOT" >&2
+  exit 2
+fi
+
+(cd "$ROOT/mutant" && bash -c "$MUTATE") || { echo "mutate command failed" >&2; exit 2; }
+
+KILLED=1
+if run_test "$ROOT/mutant" "$THREADS"; then KILLED=0; fi
+
+PASSES=0
+extract "$ROOT/clean" || { echo "control: second archive failed" >&2; exit 2; }
+i=0
+while [ "$i" -lt "$N" ]; do
+  if run_test "$ROOT/clean" "$THREADS"; then PASSES=$((PASSES + 1)); fi
+  i=$((i + 1))
+done
+
+echo "mutation: killed $KILLED/1; stability: $PASSES/$N at $THREADS threads"
+if [ "$KEEP" = 1 ]; then echo "kept: $ROOT" >&2; fi
+[ "$KILLED" = 1 ] && [ "$PASSES" = "$N" ]
