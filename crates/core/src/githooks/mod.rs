@@ -35,6 +35,11 @@ mod refusals;
 mod uninstall;
 pub use entrypoints::{HOOKS, entrypoint, old_entrypoint};
 
+/// git's own wording for the one failure that means "no repository here".
+/// Matched as a phrase rather than by exit status: 128 is git's catch-all,
+/// and a dubious-ownership refusal or a broken config carries it too.
+const NOT_A_REPOSITORY: [&str; 2] = ["not a git repository", "not a working tree"];
+
 pub const HOOKS_DIR: &str = "kendex-hooks";
 /// The directory name the vstack-named binary wrote. Installs made under
 /// it stay there — their receipts and `core.hooksPath` name it — until
@@ -109,25 +114,38 @@ impl Repo {
     /// taken. Only the first is `Ok(None)`.
     pub fn probe(dir: &Path) -> Result<Option<Repo>> {
         let output = Hardened::git(&["rev-parse", "--is-inside-work-tree"], Some(dir)).run()?;
-        match output.status.code() {
-            Some(0) => {}
-            // git's own "not a repository" exit. Every other status is a
-            // failure to measure, and says so.
-            Some(128) => return Ok(None),
-            other => {
-                return Err(err(format!(
-                    "could not tell whether {} is a work tree (git exited {other:?}): {}",
-                    dir.display(),
-                    String::from_utf8_lossy(&output.stderr).trim()
-                )));
-            }
+        let answer = String::from_utf8_lossy(&output.stdout);
+        if output.status.success() {
+            // Inside a repository. `false` means a git directory reached
+            // directly, or a bare one — no work tree, so no gate is
+            // expected. Anything else is an answer this cannot read.
+            return match answer.trim() {
+                "true" => Repo::at(dir).map(Some),
+                "false" => Ok(None),
+                other => Err(err(format!(
+                    "git answered '{other}' when asked whether {} is a work tree",
+                    dir.display()
+                ))),
+            };
         }
-        // Inside a repository but not a checkout — a bare one, or a git dir
-        // reached directly. Nothing is armed there and nothing is expected.
-        if String::from_utf8_lossy(&output.stdout).trim() != "true" {
-            return Ok(None);
+        // A failure is only "no repository" when git says so in as many
+        // words. Exit 128 covers far more than that — a malformed config,
+        // a repository whose ownership git refuses, an unreadable object
+        // store — and every one of those is a check that could not be
+        // taken. Calling them "nothing here" would read as a pass.
+        let complaint = String::from_utf8_lossy(&output.stderr);
+        match NOT_A_REPOSITORY
+            .iter()
+            .any(|phrase| complaint.contains(phrase))
+        {
+            true => Ok(None),
+            false => Err(err(format!(
+                "could not tell whether {} is a work tree (git exited {:?}): {}",
+                dir.display(),
+                output.status.code(),
+                complaint.trim()
+            ))),
         }
-        Repo::at(dir).map(Some)
     }
 
     fn scope(&self) -> Scope {
@@ -271,6 +289,35 @@ pub fn uninstall(env: &Env, dir: &Path) -> Result<HooksReport> {
 }
 
 const NOTHING_INSTALLED: &str = "no kendex hooks are installed in this repository";
+
+/// The hooks directory git actually reads, its own answer. Under a
+/// `core.hooksPath` redirect this is the redirected directory; without one
+/// it is the repository's default. Asked rather than derived, because those
+/// two cases are exactly what a check about hooks has to tell apart.
+pub fn effective_hooks_dir(worktree: &Path) -> Result<PathBuf> {
+    let output = Hardened::git(&["rev-parse", "--git-path", "hooks"], Some(worktree)).run()?;
+    if !output.status.success() {
+        return Err(err(format!(
+            "could not resolve the hooks directory of {}",
+            worktree.display()
+        )));
+    }
+    let answer = String::from_utf8_lossy(&output.stdout);
+    let path = PathBuf::from(answer.trim());
+    // git answers relative to where it was asked when the path is inside
+    // the repository it was asked from.
+    Ok(match path.is_absolute() {
+        true => path,
+        false => worktree.join(path),
+    })
+}
+
+/// The repository's default hooks directory, whether or not git reads it.
+/// What an install writes to while a redirect is still in place, and what
+/// goes live the moment that redirect is removed.
+pub fn default_hooks_dir(repo: &Repo) -> PathBuf {
+    repo.common_dir.join("hooks")
+}
 
 /// The `core.hooksPath` a worktree actually resolves, git's own answer.
 pub fn effective_hooks_path(worktree: &Path) -> Result<Option<String>> {

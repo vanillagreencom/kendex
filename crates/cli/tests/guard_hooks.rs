@@ -461,10 +461,12 @@ fn arming_refuses_while_another_worktrees_lease_holds_the_old_install() {
         "{}",
         said(&out)
     );
-    assert!(
-        !root.join(".git/hooks/kendex-guards").exists(),
-        "nothing armed"
-    );
+    // The shims were staged into the default hooks directory, where git
+    // does not look while the redirect stands — dormant, not live. What
+    // matters is that the old gate is untouched and still the one gating.
+    assert!(root.join(".git/hooks/kendex-guards").is_file(), "staged");
+    let redirect = git(home, &root, &["config", "--get", "core.hooksPath"]);
+    assert_eq!(redirect.status.code(), Some(0), "the redirect still stands");
     assert!(
         retired.join("pre-commit").is_file(),
         "the old gate survived"
@@ -568,4 +570,173 @@ fn check_is_silent_outside_a_repository_and_loud_when_it_cannot_look() {
 
     let out = run(home, &plain, "kendex", &["check"]);
     assert!(!said(&out).contains("commit hooks"), "{}", said(&out));
+}
+
+/// The migration has no ungated moment. The package's shims are written
+/// into the default hooks directory while the retired install is still live
+/// and gating; the takeback that removes the redirect brings them up in the
+/// same step. Between those two points the repository is gated by the old
+/// gate, and a commit proves it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_migration_never_leaves_the_repository_ungated() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    let retired = retire(home, &root);
+    install_package(&root, &["growth-guards"]);
+
+    let out = run(home, &root, "kendex", &["guard", "install"]);
+    assert!(out.status.success(), "{}", said(&out));
+    assert!(!retired.exists(), "the retired directory is gone");
+    assert!(root.join(".git/hooks/kendex-guards").is_file(), "armed");
+
+    // And the shims that were staged mid-migration are the live ones now.
+    std::fs::write(root.join("b.rs"), "// TODO: not yet\n").unwrap();
+    git_ok(home, &root, &["add", "-A"]);
+    let blocked = git(home, &root, &["commit", "-m", "feat: adds a marker"]);
+    assert!(!blocked.status.success(), "{}", said(&blocked));
+    assert!(said(&blocked).contains("todo-ban"), "{}", said(&blocked));
+}
+
+/// A package whose installer cannot run fails the sanity probe, before
+/// anything is written and long before the old gate is touched. The
+/// retired install is still armed and still gating afterwards.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_broken_installer_fails_before_the_old_gate_is_touched() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    let retired = retire(home, &root);
+    install_package(&root, &["growth-guards"]);
+    // A syntax error: the file is executable and its interpreter runs, so
+    // only actually running it catches this.
+    let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
+    std::fs::write(&installer, "#!/usr/bin/env bash\nif then fi\n").unwrap();
+
+    let out = run(home, &root, "kendex", &["guard", "install"]);
+    assert_eq!(out.status.code(), Some(2), "{}", said(&out));
+    assert!(
+        retired.join("pre-commit").is_file(),
+        "the old gate survived"
+    );
+    assert!(
+        !root.join(".git/hooks/kendex-guards").exists(),
+        "nothing was written"
+    );
+    let redirect = git(home, &root, &["config", "--get", "core.hooksPath"]);
+    assert_eq!(redirect.status.code(), Some(0), "the redirect still stands");
+}
+
+/// A repository git refuses to read is a check that could not be taken, not
+/// an absent one. Dubious ownership is git's own exit 128, the same status a
+/// missing repository gives, so only git's wording tells them apart.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_repository_git_refuses_is_could_not_check_not_silence() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    install_package(&root, &["growth-guards"]);
+    // A config git cannot parse: exit 128 with a complaint that is not
+    // "not a git repository".
+    std::fs::write(root.join(".git/config"), "[core\nbroken\n").unwrap();
+
+    let out = run(home, &root, "kendex", &["check"]);
+    assert_eq!(out.status.code(), Some(2), "{}", said(&out));
+    assert!(!said(&out).is_empty(), "the failure is reported");
+}
+
+/// The resolver mirrors the generated helper: the main checkout is searched
+/// before this work tree, so a linked worktree carrying no copy of the
+/// package is gated by the main checkout's — and must not read as a
+/// repository with stale shims and no package.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_linked_worktree_is_served_by_the_main_checkouts_copy() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = armed_repo(home);
+    git_ok(home, &root, &["worktree", "add", "--quiet", "../linked"]);
+    let linked = home.join("linked");
+    assert!(
+        !linked.join(".agents/skills/growth-guards").exists(),
+        "the linked worktree carries no copy of its own"
+    );
+
+    // The chain runs there, resolved from the main checkout.
+    std::fs::write(linked.join("b.rs"), "// TODO: not yet\n").unwrap();
+    git_ok(home, &linked, &["add", "-A"]);
+    let blocked = git(home, &linked, &["commit", "-m", "feat: adds a marker"]);
+    assert!(!blocked.status.success(), "{}", said(&blocked));
+    assert!(said(&blocked).contains("todo-ban"), "{}", said(&blocked));
+
+    // And the check reports it armed rather than stale.
+    let out = run(home, &linked, "kendex", &["check"]);
+    assert!(
+        !said(&out).contains("still carries"),
+        "the shared shims are not stale: {}",
+        said(&out)
+    );
+}
+
+/// A tool directory holding a broken copy must not shadow a working one
+/// beside it: the helper takes the first root whose script is executable,
+/// and so does this.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_broken_copy_does_not_shadow_a_working_one() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    install_package(&root, &["growth-guards"]);
+    // `.agents/skills` is searched before `skills`, so put the broken copy
+    // there and the working one after it.
+    std::fs::rename(
+        root.join(".agents/skills/growth-guards"),
+        root.join("skills-tmp"),
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("skills")).unwrap();
+    std::fs::rename(root.join("skills-tmp"), root.join("skills/growth-guards")).unwrap();
+    let broken = root.join(".agents/skills/growth-guards/scripts");
+    std::fs::create_dir_all(&broken).unwrap();
+    for lane in ["pre-commit", "install-git-hooks"] {
+        let path = broken.join(lane);
+        std::fs::write(&path, "#!/bin/sh\nexit 9\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+
+    std::fs::write(root.join("b.rs"), "// TODO: not yet\n").unwrap();
+    git_ok(home, &root, &["add", "-A"]);
+    let out = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    assert!(said(&out).contains("todo-ban"), "{}", said(&out));
+}
+
+/// Shims are judged where git actually reads. Under a redirect that is the
+/// redirected directory; the repository's default one holds shims that are
+/// dormant now and live the moment the redirect goes, and both are said.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn dormant_shims_behind_a_redirect_are_named_as_dormant() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = armed_repo(home);
+    // Redirect git away from the armed default directory, then take the
+    // package away so nothing can answer for the shims left behind.
+    let elsewhere = home.join("their-hooks");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    git_ok(
+        home,
+        &root,
+        &["config", "core.hooksPath", &elsewhere.display().to_string()],
+    );
+    std::fs::remove_dir_all(root.join(".agents/skills/growth-guards")).unwrap();
+
+    let out = run(home, &root, "kendex", &["check"]);
+    assert_eq!(out.status.code(), Some(2), "{}", said(&out));
+    assert!(said(&out).contains("dormant"), "{}", said(&out));
 }
