@@ -6,17 +6,30 @@
 //! plain lines a script parses, and a framed, grouped terminal session
 //! for a person — without a verb knowing which it is talking to.
 //!
-//! Plain is what anything but a terminal gets, byte for byte what the
-//! same call printed before this module existed. Both streams have to be
-//! a terminal for the framed rendering: a redirected stdout is somebody
-//! reading the bytes, whatever stderr is attached to. `KENDEX_UI` takes
-//! `plain` or `pretty` and overrides the detection.
+//! **A verb is framed only once it opens a frame.** [`intro`] arms the
+//! framed rendering; until then every line is plain, terminal or not. A
+//! verb that has not been given a frame therefore prints plain lines
+//! rather than block glyphs hanging off a gutter that was never drawn,
+//! and the frame cannot be left half-open by a call site forgetting to
+//! start one.
+//!
+//! Plain is byte for byte what the same call printed before this module
+//! existed. Framing needs a terminal on both streams: a redirected stdout
+//! is somebody reading the bytes, whatever stderr is attached to.
+//! `KENDEX_UI` takes `plain` or `pretty` and overrides the detection.
+//!
+//! **A line said right before a wait has to be drawn first.** A block is
+//! held open until something follows it, so a verb that says where it is
+//! going and then blocks would say it after coming back. [`spinner`]
+//! draws what is open before it starts, which is why every wait long
+//! enough to notice is wrapped in one.
 
 mod prompt;
 
 pub use prompt::{confirm, spinner};
 
 use std::io::{IsTerminal, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 /// How lines reach the reader.
@@ -28,25 +41,59 @@ pub enum Mode {
     Pretty,
 }
 
-/// Read once: a mode that changed mid-run would frame half a session.
-/// The theme is settled here too, so a verb that draws a block without
-/// opening a frame draws it in the same one as everything else.
-pub fn mode() -> Mode {
-    static MODE: OnceLock<Mode> = OnceLock::new();
-    *MODE.get_or_init(|| {
-        let chosen = match std::env::var("KENDEX_UI").as_deref() {
-            Ok("plain") => Mode::Plain,
-            Ok("pretty") => Mode::Pretty,
-            _ => match std::io::stdout().is_terminal() && std::io::stderr().is_terminal() {
-                true => Mode::Pretty,
-                false => Mode::Plain,
-            },
-        };
-        if chosen == Mode::Pretty {
-            cliclack::set_theme(Kendex);
+/// Whether this run could frame at all: a terminal on both streams, or an
+/// override saying so. Read once — a mode that changed mid-run would
+/// frame half a session.
+fn capable() -> bool {
+    static CAPABLE: OnceLock<bool> = OnceLock::new();
+    *CAPABLE.get_or_init(|| {
+        let asked = std::env::var("KENDEX_UI");
+        if let Ok(value) = &asked
+            && wanted(value).is_none()
+        {
+            // Silently falling back would leave a machine framed or plain
+            // for a reason nobody could see in the output.
+            write_line(&format!(
+                "warning: KENDEX_UI={value} is not plain, pretty or auto — detecting instead"
+            ));
         }
-        chosen
+        asked
+            .ok()
+            .and_then(|value| wanted(&value))
+            .unwrap_or_else(|| {
+                both_terminals(
+                    std::io::stdout().is_terminal(),
+                    std::io::stderr().is_terminal(),
+                )
+            })
     })
+}
+
+/// Framing needs a terminal on both streams. A redirected stdout is
+/// somebody reading the bytes, whatever stderr is attached to, and a
+/// redirected stderr is where the framing itself would land.
+fn both_terminals(stdout: bool, stderr: bool) -> bool {
+    stdout && stderr
+}
+
+/// What `KENDEX_UI` asked for, if it asked for anything this run knows.
+/// `auto` and anything unrecognised leave the answer to the detection.
+fn wanted(value: &str) -> Option<bool> {
+    match value {
+        "plain" => Some(false),
+        "pretty" => Some(true),
+        _ => None,
+    }
+}
+
+/// Set by [`intro`], and the only thing that turns framing on.
+static FRAMED: AtomicBool = AtomicBool::new(false);
+
+pub fn mode() -> Mode {
+    match capable() && FRAMED.load(Ordering::Relaxed) {
+        true => Mode::Pretty,
+        false => Mode::Plain,
+    }
 }
 
 /// Which symbol a block opens with. Plain mode has no use for it: the
@@ -72,6 +119,9 @@ struct Pending {
     /// walled off by its own blank rule, is the wall this module exists
     /// to stop printing.
     lines: Vec<String>,
+    /// Whether any of those lines is detail rather than another headline.
+    /// A block something was written under has said what it groups.
+    detailed: bool,
     /// The next step under each part of a closing ledger.
     steps: Vec<String>,
     tone: Tone,
@@ -79,14 +129,9 @@ struct Pending {
 }
 
 impl Pending {
-    /// Whether another headline of this tone belongs in this block. A
-    /// block anything is written under has said what it groups, and the
-    /// next headline starts its own.
+    /// Whether another headline of this tone belongs in this block.
     fn takes(&self, tone: Tone, ledger: bool) -> bool {
-        !self.ledger
-            && !ledger
-            && self.tone == tone
-            && self.lines.iter().all(|line| !line.starts_with(' '))
+        !self.ledger && !ledger && !self.detailed && self.tone == tone
     }
 }
 
@@ -149,11 +194,15 @@ fn tell(tone: Tone, line: &str) {
     open(tone, line, false, &[]);
 }
 
-/// The headline of the session, printed before anything it frames.
+/// Open the frame. Nothing is framed until this runs, so a verb that
+/// wants the framed rendering asks for it once, at its start.
 pub fn intro(title: &str) {
-    if mode() == Mode::Pretty {
-        let _ = cliclack::intro(title);
+    if !capable() {
+        return;
     }
+    cliclack::set_theme(Kendex);
+    FRAMED.store(true, Ordering::Relaxed);
+    let _ = cliclack::intro(title);
 }
 
 /// The frame, with the blank rule between blocks taken out. A run's
@@ -198,16 +247,9 @@ pub fn finish() {
     if mode() == Mode::Plain {
         return;
     }
-    let Some(block) = pending().take() else {
-        return;
-    };
-    if !block.ledger {
-        return draw(&block);
+    if let Some(block) = pending().take() {
+        draw(&block, true);
     }
-    let _ = match block.steps.is_empty() {
-        true => cliclack::outro(&block.head),
-        false => cliclack::outro_note(&block.head, block.steps.join("\n")),
-    };
 }
 
 fn open(tone: Tone, head: &str, ledger: bool, steps: &[String]) {
@@ -225,6 +267,7 @@ fn open(tone: Tone, head: &str, ledger: bool, steps: &[String]) {
     *pending() = Some(Pending {
         head: head.to_owned(),
         lines: Vec::new(),
+        detailed: false,
         steps: steps.to_vec(),
         tone,
         ledger,
@@ -238,39 +281,81 @@ fn attach(detail: &str) -> bool {
     match pending().as_mut() {
         Some(block) => {
             block.lines.push(format!("  {detail}"));
+            block.detailed = true;
             true
         }
         None => false,
     }
 }
 
-fn flush() {
+/// Draw what is open, so that whatever comes next — a prompt, a wait, a
+/// line on the other stream — does not land above it.
+pub fn flush() {
     if mode() == Mode::Plain {
         return;
     }
     if let Some(block) = pending().take() {
-        draw(&block);
+        draw(&block, false);
     }
 }
 
 /// One block, drawn. Detail keeps the two spaces it was written with, so
-/// the hierarchy the caller wrote survives the framing.
-fn draw(block: &Pending) {
+/// the hierarchy the caller wrote survives the framing. `last` closes the
+/// frame, which only a ledger does: a run that ends on anything else ends
+/// without a closing line rather than inventing one.
+fn draw(block: &Pending, last: bool) {
     let mut text = block.head.clone();
     for line in &block.lines {
         text.push('\n');
         text.push_str(line);
     }
-    let _ = match block.tone {
-        Tone::Step => cliclack::log::step(&text),
-        Tone::Info => cliclack::log::info(&text),
-        Tone::Warn => cliclack::log::warning(&text),
-        Tone::Error => cliclack::log::error(&text),
-        // A ledger that something followed is still the run's outcome,
-        // and its next steps still belong in a box under it.
-        Tone::Done => match block.steps.is_empty() {
-            true => cliclack::log::success(&text),
-            false => cliclack::note(&text, block.steps.join("\n")),
+    // A ledger's next steps are detail of its head, wherever it is drawn.
+    // The closing line has no gutter to hang them from — the frame ends on
+    // it — so they are indented past its own symbol instead, which puts
+    // them exactly where the plain rendering puts them: under the head.
+    let under = match block.ledger && last {
+        true => "\n     ",
+        false => "\n  ",
+    };
+    for step in &block.steps {
+        text.push_str(under);
+        text.push_str(step);
+    }
+    let _ = match block.ledger && last {
+        true => cliclack::outro(&text),
+        false => match block.tone {
+            Tone::Step => cliclack::log::step(&text),
+            Tone::Info => cliclack::log::info(&text),
+            Tone::Warn => cliclack::log::warning(&text),
+            Tone::Error => cliclack::log::error(&text),
+            Tone::Done => cliclack::log::success(&text),
         },
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The override answers for exactly two values. Everything else,
+    /// `auto` and a typo alike, leaves the streams to decide.
+    #[test]
+    fn only_plain_and_pretty_override_the_detection() {
+        assert_eq!(wanted("plain"), Some(false));
+        assert_eq!(wanted("pretty"), Some(true));
+        for ignored in ["auto", "", "Pretty", "1", "true", "plane"] {
+            assert_eq!(wanted(ignored), None, "{ignored:?} was read as an answer");
+        }
+    }
+
+    /// One redirected stream is enough to make a run plain: a pipe on
+    /// stdout is somebody parsing the bytes, and a pipe on stderr is
+    /// where the framing itself would have gone.
+    #[test]
+    fn one_redirected_stream_is_enough_to_stay_plain() {
+        assert!(both_terminals(true, true));
+        assert!(!both_terminals(true, false), "a piped stderr still framed");
+        assert!(!both_terminals(false, true), "a piped stdout still framed");
+        assert!(!both_terminals(false, false));
+    }
 }

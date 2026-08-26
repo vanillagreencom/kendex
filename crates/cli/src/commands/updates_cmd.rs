@@ -3,7 +3,7 @@ use clap::{Args, Subcommand};
 use kendex_core::env::Env;
 
 use super::pin::parse_kind;
-use super::{CliResult, resolve_scopes, say};
+use super::{CliResult, resolve_scopes, say, scope_label};
 use crate::scope::ScopeFilter;
 
 mod apply_one;
@@ -122,7 +122,7 @@ pub fn run(env: &Env, args: UpdatesArgs) -> CliResult {
         // reads as a duplicate.
         say(&format!(
             "{}  {} {}  {} -> {}{notes}",
-            row.scope.label(),
+            scope_label(&row.scope),
             row.kind.name(),
             row.name,
             row.current

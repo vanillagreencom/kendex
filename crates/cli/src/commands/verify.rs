@@ -5,7 +5,7 @@ use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
 
 use super::engine_common::print_unmanaged;
-use super::{fail, resolve_scopes, say};
+use super::{fail, resolve_scopes, say, scope_label};
 use crate::scope::ScopeFilter;
 use crate::ui;
 
@@ -33,10 +33,14 @@ pub fn run(
         // never costs the run: a manifest this build cannot plan against
         // is worth a line, not a failure, and the exit code answers about
         // drift alone. A scope that does have installs fails loudly.
-        let report = match (audit(env, &scope), lock.entries.is_empty()) {
+        let audited = {
+            let _reading = ui::spinner(&format!("checking {}", scope_label(&scope)));
+            audit(env, &scope)
+        };
+        let report = match (audited, lock.entries.is_empty()) {
             (Ok(report), _) => report,
             (Err(error), true) => {
-                fail(&format!("! {} not checked: {error}", scope.label()));
+                fail(&format!("! {} not checked: {error}", scope_label(&scope)));
                 continue;
             }
             (Err(error), false) => return Err(error.into()),
@@ -106,8 +110,10 @@ fn say_row(
                 || n.contains("not found in source")
                 || n.contains("unreadable"))
     });
+    // A locked name came out of a manifest a person wrote and a catalog
+    // kendex did not: escaped here, at the one place it is printed.
     let kind = entry.kind.name();
-    let name = &entry.name;
+    let name = kendex_core::names::shown(&entry.name);
     let harness = entry.harness.name();
     let bad = match problem {
         Some(row) => {
@@ -138,7 +144,10 @@ fn say_row(
                 .harness
                 .is_none_or(|harness| harness == entry.harness)
     }) {
-        say(&format!("  ! {}", warning.message));
+        say(&format!(
+            "  ! {}",
+            kendex_core::names::shown(&warning.message)
+        ));
     }
     bad
 }

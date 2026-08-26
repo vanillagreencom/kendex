@@ -4,61 +4,65 @@
 //! their revision matches the snapshot; the steps refuse before anything
 //! changes otherwise.
 
-use std::io::{IsTerminal as _, Write as _};
-
 use kendex_core::engine::ops::{self, AddRequest};
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
+use kendex_core::names::shown;
 use kendex_core::registry::{CurlFetch, collections};
 use kendex_core::source_ops::{self, SourceAction};
 
-use super::engine_common::{apply_report, print_report, print_safety};
+use super::engine_common::{apply_report, ask_before_writing, print_report, print_safety};
 use super::{CliResult, say};
 
 pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -> CliResult {
     let collection = collections::resolve(&CurlFetch, id)?;
     let steps = source_ops::collection_steps(env, scope, &collection)?;
+    // Every part of this listing came down a wire: the collection's own
+    // name, the repositories it points at, and the members it claims.
     say(&format!(
         "collection '{}': {} package(s) across {} repositor{}",
-        collection.name,
+        shown(&collection.name),
         collection.members.len(),
         steps.len(),
         if steps.len() == 1 { "y" } else { "ies" }
     ));
     for step in &steps {
         let action = match &step.action {
-            SourceAction::Reuse { name } => format!("using existing subscription '{name}'"),
+            SourceAction::Reuse { name } => {
+                format!("using existing subscription '{}'", shown(name))
+            }
             SourceAction::Subscribe { .. } => match &step.commit {
                 Some(commit) => format!("subscribe at {}", &commit[..commit.len().min(7)]),
                 None => "subscribe (follows its default branch)".to_owned(),
             },
         };
-        let members: Vec<&str> = step
+        let members: Vec<String> = step
             .agents
             .iter()
             .chain(&step.skills)
             .chain(&step.hooks)
             .chain(&step.commands)
             .chain(&step.mcp_servers)
-            .map(String::as_str)
+            .map(|name| shown(name))
             .collect();
         say(&format!(
             "  {}  [{action}]  {}",
-            step.repo,
+            shown(&step.repo),
             members.join(", ")
         ));
     }
-    if !yes {
-        if !std::io::stdin().is_terminal() {
-            return Err("refusing to apply without --yes in a non-interactive session".into());
-        }
-        let _ = write!(std::io::stderr(), "install all of it? [y/N] ");
-        let mut answer = String::new();
-        std::io::stdin().read_line(&mut answer)?;
-        if !matches!(answer.trim(), "y" | "Y" | "yes") {
-            return Err("apply cancelled".into());
-        }
-    }
+    ask_before_writing(
+        &format!(
+            "install all {} package{}?",
+            collection.members.len(),
+            if collection.members.len() == 1 {
+                ""
+            } else {
+                "s"
+            }
+        ),
+        yes,
+    )?;
     // Every repository is fetched and every member proven present before
     // the first mutation — a collection whose third repository is broken
     // must refuse up front, not leave the first two half-installed.
@@ -108,8 +112,8 @@ fn install_step(
             apply_report(env, &subscribed.report)?;
             say(&format!(
                 "{}: subscribed to '{}'",
-                scope.label(),
-                subscribed.name
+                scope_label(scope),
+                shown(&subscribed.name)
             ));
             subscribed.name
         }

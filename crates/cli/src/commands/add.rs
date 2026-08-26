@@ -6,7 +6,7 @@ use kendex_core::model::Scope;
 use kendex_core::manifest::Method;
 
 use super::engine_common::{confirm_and_apply, parse_harnesses, print_report};
-use super::ledger::{say_ledger, wrote};
+use super::ledger::{Wrote, say_ledger};
 use super::{CliResult, harness_picker, resolve_scopes, warn};
 use crate::scope::ScopeFilter;
 use crate::ui;
@@ -138,7 +138,11 @@ pub fn run(env: &Env, args: AddArgs) -> CliResult {
     )?;
     request.harnesses = request.harnesses.or(chosen.harnesses);
     request.method = chosen.method;
-    let report = match ops::add(env, &scope, &request) {
+    let planned = {
+        let _planning = ui::spinner("planning the install");
+        ops::add(env, &scope, &request)
+    };
+    let report = match planned {
         Err(kendex_core::error::CoreError::SourcePending { .. }) => {
             let manifest = ops::manifest_for_mutation(env, &scope)?;
             let synced = {
@@ -148,6 +152,7 @@ pub fn run(env: &Env, args: AddArgs) -> CliResult {
             for warning in synced {
                 warn(&format!("warning: {warning}"));
             }
+            let _planning = ui::spinner("planning the install");
             ops::add(env, &scope, &request)?
         }
         other => other?,
@@ -158,13 +163,19 @@ pub fn run(env: &Env, args: AddArgs) -> CliResult {
     // one this install just put on disk.
     let shown_to_them = super::repo_effects::disclose(env, &scope, &report.repo_effects)?;
     super::repo_effects::walkthrough(&scope, &shown_to_them, args.allow_repo_effects)?;
-    // "done" answered whether the process ended, never what it installed.
+    // "done" answered whether the process ended, never what it did. The
+    // verb is the one that was typed, because the count is of changes and
+    // not of packages: a run whose only change is the declaration added
+    // something, and did not install anything.
     let count = (!report.plan.is_empty()).then_some(applied);
     say_ledger(
         &scope,
-        wrote("installed", count, blocked.len()),
+        Wrote {
+            verb: "added",
+            count,
+        },
         &blocked,
-        &report,
+        &report.safety,
     );
     Ok(())
 }

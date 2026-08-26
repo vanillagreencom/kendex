@@ -21,8 +21,12 @@ pub fn run(
     quiet: bool,
 ) -> Result<ExitCode, Box<dyn std::error::Error>> {
     let scopes = resolve_scopes(env, filter)?;
-    let mut checked = report::check(env, &scopes);
-    fold_commit_hooks(env, &mut checked, &scopes);
+    let checked = {
+        let _reading = ui::spinner("reading the snapshot");
+        let mut checked = report::check(env, &scopes);
+        fold_commit_hooks(env, &mut checked, &scopes);
+        checked
+    };
 
     // Freshness is earned in the background, never waited on. The spawn is
     // detached with no stdio; a busy or failing refresh writes stamps and
@@ -170,19 +174,40 @@ fn render_text(checked: &CheckReport, quiet: bool) {
     if quiet {
         return;
     }
-    let items: usize = checked
-        .sections
+    ui::ledger(&verdict(&text), &[]);
+}
+
+/// How the run ended, describing the report the reader was actually
+/// shown. The renderer drops lines to fit its budgets, so a count taken
+/// from the report rather than from the rendering claims items that never
+/// reached the page; and the pointer to the lines above is named only
+/// where EVERY counted line carries a remedy, since a pointer printed as
+/// the answer to the whole count is a claim about all of it.
+fn verdict(rendered: &str) -> String {
+    let items: Vec<&str> = rendered
+        .lines()
+        .filter(|line| line.starts_with("  ") && !line.starts_with("  … and "))
+        .collect();
+    if items.is_empty() {
+        return "all clear — every install matches its source".to_owned();
+    }
+    let every = items
         .iter()
-        .map(|section| section.lines.len())
-        .sum();
-    // No next step under the count: each line above already carries its
-    // own remedy, and one command named for all of them would settle some.
-    ui::ledger(
-        &match items {
-            0 => "all clear — every install matches its source".to_owned(),
-            1 => "1 item needs attention — its line above says what to run".to_owned(),
-            n => format!("{n} items need attention — each line above says what to run"),
+        .all(|line| line.contains(" — fix: ") || line.contains(" — see: "));
+    format!(
+        "{} item{} need{} attention{}",
+        items.len(),
+        match items.len() {
+            1 => "",
+            _ => "s",
         },
-        &[],
-    );
+        match items.len() {
+            1 => "s",
+            _ => "",
+        },
+        match every {
+            true => " — each line above says what to run",
+            false => " — see the lines above",
+        }
+    )
 }

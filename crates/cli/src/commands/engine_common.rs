@@ -26,7 +26,7 @@ pub fn parse_harnesses(values: &[String]) -> Result<Vec<HarnessId>, String> {
 /// plan still prints these.
 pub fn print_notes(report: &EngineReport) {
     for line in &report.notes {
-        note(&format!("note: {line}"));
+        note(&format!("note: {}", kendex_core::names::shown(line)));
     }
 }
 
@@ -34,15 +34,18 @@ pub fn print_notes(report: &EngineReport) {
 /// refused — one derivation, so a closing count and the conflict lines it
 /// sends the reader to are one reading of one set of rows.
 pub fn print_report(env: &Env, report: &EngineReport) -> Vec<super::offers::Blocked> {
+    use kendex_core::names::shown;
     print_notes(report);
     for warning in &report.warnings {
+        // Names and remediation text come off a catalog kendex did not
+        // write; a harness display name is kendex's own string.
         let target = match warning.harness {
-            Some(harness) => format!("{} ({})", warning.name, harness.display_name()),
-            None => warning.name.clone(),
+            Some(harness) => format!("{} ({})", shown(&warning.name), harness.display_name()),
+            None => shown(&warning.name),
         };
-        warn(&format!("warning: {target}: {}", warning.message));
+        warn(&format!("warning: {target}: {}", shown(&warning.message)));
         if let Some(fix) = &warning.remediation {
-            say(&format!("  fix: {fix}"));
+            say(&format!("  fix: {}", shown(fix)));
         }
     }
     print_safety(report);
@@ -60,8 +63,10 @@ pub fn print_report(env: &Env, report: &EngineReport) -> Vec<super::offers::Bloc
     // The op list is what the confirm below is an answer to: a reader
     // asked to approve a count was never shown what it covers.
     say(&format!("plan: {} change{}", ops, plural(ops)));
+    // An op's sentence is kendex's own words around a name it read off a
+    // catalog, and core hands it over raw: escaped here, once.
     for op in &report.plan.ops {
-        say(&format!("  - {}", op.description));
+        say(&format!("  - {}", shown(&op.description)));
     }
     blocked
 }
@@ -86,7 +91,9 @@ pub fn print_unmanaged(drift: &[DriftRow]) {
     if rows.is_empty() {
         return;
     }
-    say(&format!(
+    // A footnote, not one more verdict: said in its own voice so it does
+    // not join the block of rows above it.
+    note(&format!(
         "not managed: {} item{} kendex did not install and does not touch",
         rows.len(),
         if rows.len() == 1 { "" } else { "s" }
@@ -228,17 +235,11 @@ pub fn confirm_and_apply(
     if report.plan.is_empty() {
         return Ok(0);
     }
-    if !yes {
-        if !std::io::stdin().is_terminal() {
-            return Err("refusing to apply without --yes in a non-interactive session".into());
-        }
-        // The count is the consequence: an answer given to a bare "apply?"
-        // is an answer to the verb's name rather than to what it writes.
-        let ops = report.plan.ops.len();
-        if !ui::confirm(&format!("apply {ops} change{}?", plural(ops)))? {
-            return Err("apply cancelled".into());
-        }
-    }
+    // The count is the consequence: an answer given to a bare "apply?" is
+    // an answer to the verb's name rather than to what it writes.
+    let ops = report.plan.ops.len();
+    ask_before_writing(&format!("apply {ops} change{}?", plural(ops)), yes)?;
+    let _writing = ui::spinner("writing");
     apply_report(env, report)
 }
 
@@ -255,6 +256,22 @@ pub fn confirm_and_apply(
 pub fn apply_report(env: &Env, report: &EngineReport) -> Result<usize, Box<dyn std::error::Error>> {
     super::repo_effects::undo(&report.plan.scope, report)?;
     Ok(kendex_core::apply::execute(env, &report.plan, None)?.applied)
+}
+
+/// The answer every verb needs before it writes, asked one way. `--yes`
+/// skips it; a run with nobody to ask refuses before its first write
+/// rather than guessing, and says which flag would have answered it.
+pub fn ask_before_writing(question: &str, yes: bool) -> CliResult {
+    if yes {
+        return Ok(());
+    }
+    if !std::io::stdin().is_terminal() {
+        return Err("refusing to apply without --yes in a non-interactive session".into());
+    }
+    match ui::confirm(question)? {
+        true => Ok(()),
+        false => Err("apply cancelled".into()),
+    }
 }
 
 /// A refresh failure per v1: any per-item failure or a locked item missing

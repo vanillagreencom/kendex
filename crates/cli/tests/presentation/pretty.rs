@@ -16,10 +16,7 @@ fn the_session_is_framed_from_the_verb_to_the_outcome() {
         pretty.starts_with("┌  kendex refresh\n"),
         "the frame opens on the verb: {pretty}"
     );
-    let escaped: Vec<&str> = pretty
-        .lines()
-        .filter(|line| !line.is_empty() && !FRAMING.contains(&line.chars().next().unwrap_or(' ')))
-        .collect();
+    let escaped = escaped_the_frame(&pretty);
     assert!(
         escaped.is_empty(),
         "lines reached the terminal outside the frame: {escaped:?}\n{pretty}"
@@ -38,23 +35,28 @@ fn the_frame_closes_on_the_ledger() {
         .unwrap_or_default();
     let closing = pretty
         .lines()
-        .skip_while(|line| !line.starts_with('├'))
+        .skip_while(|line| !line.starts_with('└'))
         .collect::<Vec<_>>()
-        .join(" ");
+        .join("\n");
     assert!(
-        !closing.is_empty() && unframed(&closing).contains(&flat(ledger)),
+        !closing.is_empty() && unframed(&closing).contains(&squashed(ledger)),
         "the frame closed on something other than the ledger: {pretty}"
     );
+    // Nothing after the close but its own steps: a block drawn under the
+    // closing line is a run that went on past the line saying it ended.
     assert!(
-        pretty.trim_end().ends_with('╯'),
-        "the frame was left open: {pretty}"
+        closing
+            .lines()
+            .skip(1)
+            .all(|line| line.starts_with("     ")),
+        "the run said something after it closed: {pretty}"
     );
     for step in [
         "skipped — kendex apply --replace-unmanaged, or the kendex adopt line under each conflict above",
         "flagged — the safety lines above",
     ] {
         assert!(
-            unframed(&closing).contains(step),
+            unframed(&closing).contains(&squashed(step)),
             "the ledger dropped a next step: {pretty}"
         );
     }
@@ -69,10 +71,40 @@ fn the_frame_carries_every_line_the_plain_run_said() {
     let carried = unframed(&pretty);
     for line in plain.lines().filter(|line| !line.trim().is_empty()) {
         assert!(
-            carried.contains(&flat(line)),
+            carried.contains(&squashed(line)),
             "the framed session dropped {line:?}:\n{pretty}"
         );
     }
+}
+
+/// And in the order it said them. Flattening the session into one string
+/// would let a block drawn after the thing it explains pass, which is the
+/// defect the buffering makes possible.
+#[test]
+fn the_frame_says_them_in_the_order_the_plain_run_did() {
+    let (plain, pretty) = both(&REFRESH);
+    // Up to the closing box, whose head the terminal's width wraps across
+    // lines; that the box carries the ledger is its own assertion above.
+    let framed: Vec<String> = unframed_lines(&pretty)
+        .into_iter()
+        .take_while(|line| !line.contains(": refreshed "))
+        .collect();
+    let mut at = 0usize;
+    for line in plain
+        .lines()
+        .filter(|line| !line.trim().is_empty() && !line.contains(": refreshed "))
+        .take_while(|line| !line.starts_with("  skipped — "))
+    {
+        let wanted = squashed(line);
+        let found = framed[at..]
+            .iter()
+            .position(|drawn| squashed(drawn).contains(&wanted));
+        match found {
+            Some(step) => at += step,
+            None => panic!("{line:?} was drawn out of order or not at all:\n{pretty}"),
+        }
+    }
+    assert!(at > 0, "nothing was matched at all: {pretty}");
 }
 
 /// One conflict said once, one way out said once, one ledger — the same
@@ -89,7 +121,7 @@ fn nothing_is_said_twice_inside_the_frame() {
         ": refreshed 3 changes",
     ] {
         assert_eq!(
-            carried.matches(once).count(),
+            carried.matches(&squashed(once)).count(),
             1,
             "{once:?} was said more than once: {pretty}"
         );
@@ -127,16 +159,21 @@ fn detail_is_drawn_under_its_headline() {
 fn the_frame_costs_the_run_a_fixed_number_of_lines() {
     let (plain, pretty) = both(&REFRESH);
     let count = |text: &str| text.lines().filter(|line| !line.trim().is_empty()).count();
-    let overhead = count(&pretty).saturating_sub(count(&plain));
-    assert!(
-        overhead <= FRAME_LINES,
-        "the frame cost {overhead} lines over the plain run's {}: {pretty}",
-        count(&plain)
+    let plain_lines = count(&plain);
+    let framed = count(&pretty);
+    // Two-sided: a frame costing nothing means it was never drawn, and a
+    // frame costing more than its own furniture is growing per item — or
+    // wrapping, which a deep enough temp directory would make it do.
+    assert_eq!(
+        framed.saturating_sub(plain_lines),
+        FRAME_LINES,
+        "the frame cost {framed} lines against the plain run's {plain_lines}: {pretty}"
     );
 }
 
-/// The opening line, the rule under it, and the box the ledger closes in.
-const FRAME_LINES: usize = 6;
+/// The opening line and the rule under it. The closing line is the
+/// ledger's own, and costs the run nothing.
+const FRAME_LINES: usize = 2;
 
 /// A run of one-line verdicts is one block, not one block each. Twenty
 /// installations checked is the case this is for: a rule drawn between

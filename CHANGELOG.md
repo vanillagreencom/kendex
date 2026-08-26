@@ -10,9 +10,11 @@ an outside contributor.
 
 ### Added
 
-- CLI output on a terminal is framed and grouped, and every mutating command
-  closes on what it wrote, skipped and flagged. Redirected output keeps the
-  plain lines scripts parse; `KENDEX_UI=plain|pretty` forces either.
+- CLI output on a terminal is framed and grouped, and refresh, apply, add and
+  remove close on what they wrote, skipped and flagged. stdout is unchanged;
+  apply, add, check, remove and verify reshaped a closing line on stderr.
+- `KENDEX_UI=plain` keeps CLI output unframed on a terminal, and `pretty`
+  frames it where the framing would not be detected.
 - `preflight` fails an edit, deletion or rename of a migration the merge base
   carries, defaulting to the `V*__*.sql` shape refinery and Flyway refuse to run
   against once its checksum moves. `PREFLIGHT_MIGRATION_GLOBS` sets other paths.

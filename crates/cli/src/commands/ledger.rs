@@ -14,18 +14,18 @@
 
 use std::collections::BTreeSet;
 
-use kendex_core::engine::EngineReport;
+use kendex_core::engine::ItemSafety;
 use kendex_core::model::{ItemKind, Scope};
 
 use super::offers::{Blocked, scope_flag};
+use super::scope_label;
 use crate::ui;
 
 /// Items the safety block above carries a finding against. Counted from
 /// the rows that block was printed from, so the number and the lines it
 /// sends the reader to are one reading of one set of bytes.
-fn flagged(report: &EngineReport) -> usize {
-    report
-        .safety
+fn flagged(scored: &[ItemSafety]) -> usize {
+    scored
         .iter()
         .filter(|row| !row.advisory.findings.is_empty())
         .map(|row| (row.kind, row.name.clone()))
@@ -37,7 +37,7 @@ fn flagged(report: &EngineReport) -> usize {
 /// to do — which is a current scope only where nothing was refused
 /// either, since a plan empty *because* every write was refused is not a
 /// scope that is up to date.
-pub fn wrote(verb: &str, count: Option<usize>, skipped: usize) -> String {
+fn wrote(verb: &str, count: Option<usize>, skipped: usize) -> String {
     match (count, skipped) {
         (None, 0) => "up to date".to_owned(),
         (None, _) => format!("{verb} 0 changes"),
@@ -45,17 +45,26 @@ pub fn wrote(verb: &str, count: Option<usize>, skipped: usize) -> String {
     }
 }
 
+/// What a run wrote, said in its own verb, for a verb whose count is
+/// never in doubt.
+pub struct Wrote<'a> {
+    pub verb: &'a str,
+    /// `None` where the plan had nothing to do.
+    pub count: Option<usize>,
+}
+
 /// The closing line of one scope's run, and the next step for each
 /// outcome it carries. Zero parts are left off: a clean run says what it
 /// did and stops.
 ///
-/// Both parts are read off blocks the caller has already printed — the
-/// conflict lines and the safety lines — and each points the reader back
-/// at them. A verb that prints neither has no parts to report and closes
-/// on its head through [`ui::ledger`] instead: a flagged count over a
-/// block nobody printed sends the reader to lines that are not there.
-pub fn say_ledger(scope: &Scope, head: String, blocked: &[Blocked], report: &EngineReport) {
-    let (line, steps) = ledger(scope, head, blocked, report);
+/// Both parts are read off blocks the caller has already printed and
+/// point the reader back at them, which is why the caller hands over the
+/// very rows it printed rather than a report to re-read: a flagged count
+/// over a block nobody printed sends the reader to lines that are not
+/// there. A verb that printed neither passes both empty and closes on its
+/// head alone.
+pub fn say_ledger(scope: &Scope, wrote: Wrote<'_>, blocked: &[Blocked], scored: &[ItemSafety]) {
+    let (line, steps) = ledger(scope, wrote, blocked, scored);
     ui::ledger(&line, &steps);
 }
 
@@ -63,20 +72,20 @@ pub fn say_ledger(scope: &Scope, head: String, blocked: &[Blocked], report: &Eng
 /// carries no next step: the conflict lines above it are where the ways
 /// out are printed, and a closing line naming one of them again is the
 /// same sentence twice on one screen.
-pub fn say_preview(scope: &Scope, head: String, blocked: &[Blocked], report: &EngineReport) {
-    let (line, _) = ledger(scope, head, blocked, report);
+pub fn say_preview(scope: &Scope, wrote: Wrote<'_>, blocked: &[Blocked], scored: &[ItemSafety]) {
+    let (line, _) = ledger(scope, wrote, blocked, scored);
     ui::ledger(&line, &[]);
 }
 
 fn ledger(
     scope: &Scope,
-    head: String,
+    said: Wrote<'_>,
     blocked: &[Blocked],
-    report: &EngineReport,
+    scored: &[ItemSafety],
 ) -> (String, Vec<String>) {
     let skipped = blocked.len();
-    let flagged = flagged(report);
-    let mut parts = vec![head];
+    let flagged = flagged(scored);
+    let mut parts = vec![wrote(said.verb, said.count, skipped)];
     let mut steps: Vec<String> = Vec::new();
     if skipped > 0 {
         parts.push(format!(
@@ -94,7 +103,10 @@ fn ledger(
         // own advisory block, and this run's is the one printed above.
         steps.push("flagged — the safety lines above".to_owned());
     }
-    (format!("{}: {}", scope.label(), parts.join(" · ")), steps)
+    (
+        format!("{}: {}", scope_label(scope), parts.join(" · ")),
+        steps,
+    )
 }
 
 /// The next step for the skipped part. A command is named only where it

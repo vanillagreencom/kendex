@@ -4,8 +4,7 @@ use kendex_core::apply::Op;
 use kendex_core::engine::{EngineReport, ops};
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
-
-use super::ledger::wrote;
+use super::ledger::{Wrote, say_ledger};
 use super::{CliResult, note, resolve_scopes, say, warn};
 use crate::scope::ScopeFilter;
 use crate::ui;
@@ -30,11 +29,14 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
     ui::intro("kendex remove");
     let mut removed_any = false;
     for scope in resolve_scopes(env, filter)? {
-        let planned = match mode {
-            Removal::Disown { sweep } => {
-                ops::remove(env, &scope, &names, None, sweep.unwrap_or(false))
+        let planned = {
+            let _planning = ui::spinner(&format!("planning {}", scope.label()));
+            match mode {
+                Removal::Disown { sweep } => {
+                    ops::remove(env, &scope, &names, None, sweep.unwrap_or(false))
+                }
+                Removal::KeepDeclaration => ops::uninstall(env, &scope, &names),
             }
-            Removal::KeepDeclaration => ops::uninstall(env, &scope, &names),
         };
         let report = match planned {
             Ok(report) => report,
@@ -58,8 +60,14 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
         }
         removed_any = true;
         say_split(&report, mode);
-        let applied = super::engine_common::apply_report(env, &report)?;
-        say("removed:");
+        let applied = {
+            let _removing = ui::spinner("removing");
+            super::engine_common::apply_report(env, &report)?
+        };
+        // What the run did, not what the verb is called: a removal whose
+        // plan reconciles a declaration writes as well as trashes, and a
+        // list of writes under the word "removed" says the wrong thing.
+        say("changes:");
         for op in &report.plan.ops {
             say(&format!("  - {}", op.description));
         }
@@ -69,10 +77,16 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
                 scope.label()
             ));
         }
-        // A removal refuses nothing and prints no scores: its ledger is
-        // the count alone, in the one shape every verb closes on.
-        ui::ledger(
-            &format!("{}: {}", scope.label(), wrote("removed", Some(applied), 0)),
+        // A removal refuses nothing and prints no scores, so it hands
+        // over neither: the ledger's parts are read off blocks the caller
+        // printed, and this one closes on its count alone.
+        say_ledger(
+            &scope,
+            Wrote {
+                verb: "removed",
+                count: Some(applied),
+            },
+            &[],
             &[],
         );
     }
