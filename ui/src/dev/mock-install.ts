@@ -19,8 +19,12 @@ const INSTALL_TARGETS = [
 ] as const;
 
 export const installHandlers: Record<string, Handler> = {
-  install_targets: () =>
-    INSTALL_TARGETS.map((harness) => ({
+  install_targets: ({ kinds }: { kinds: ItemKind[] }) =>
+    INSTALL_TARGETS.filter(
+      // Cursor takes only skills; the mock machine mirrors that so the
+      // picker's own filtering is visible in the dev app.
+      (harness) => harness !== "cursor" || kinds.includes("skill"),
+    ).map((harness) => ({
       harness,
       detected: true,
       sharesTheUniversalTree: harness !== "claude",

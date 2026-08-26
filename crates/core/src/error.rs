@@ -84,15 +84,14 @@ pub enum CoreError {
 
     // Keeping the files hands one copy to kendex, and there is one place
     // to put it. Two tools holding different files under one name is a
-    // choice, not a merge: saying which to keep is the reader's, and
-    // picking one for them would put the other in the trash unasked.
-    // A take-over named per item answers for that item whole: a name that
-    // reaches nothing, or an item with a place the take-over cannot
-    // settle, stops the run rather than answering a question already gone.
-    // Adoption takes what kendex did not write; a position it did write is
-    // already looked after. Keeping it would move an installation into the
-    // local source and rewrite the declaration around it, so a
-    // catalog-tracked item would quietly become a fork of itself.
+    // choice, not a merge: which to keep is the reader's to say, and
+    // picking for them would put the other in the trash unasked.
+    // A take-over named per item answers for that item whole: a name
+    // reaching nothing, or a place the take-over cannot settle, stops the
+    // run rather than answering a question already gone. Adoption takes
+    // what kendex did not write; a position it did write is already looked
+    // after, and keeping it would turn a catalog-tracked item into a fork
+    // of itself.
     // One item is on or off, not both. Taking one spelling while the other
     // stays leaves a file a later switch reads as kendex's own and writes
     // over, so the reader settles it first.
@@ -199,30 +198,31 @@ pub enum CoreError {
     #[error("'{name}' not found in source '{source_name}'")]
     ItemNotInSource { name: String, source_name: String },
 
-    /// A skill tree carrying both `SKILL.md` and `SKILL.md.disabled` has
-    /// two claims on one source file; a fork would keep one and lose the
-    /// other, so it keeps neither until the tree says which is meant.
+    /// A tree carrying both `SKILL.md` and `SKILL.md.disabled` has two
+    /// claims on one file; a fork keeps neither until it is told which.
     #[error(
         "'{name}' has both SKILL.md and SKILL.md.disabled — remove one before keeping it as your own"
     )]
     ForkAmbiguous { name: String },
 
     /// An install-beside or fork rename refused before anything was
-    /// written: the copy cannot answer to the requested name, for the
-    /// reason in `problem`'s own words.
+    /// written: the copy cannot answer to the requested name.
     #[error("`{name}` can't be your copy's name: {problem}")]
     ForkNameUnusable { name: String, problem: String },
 
     /// Adoption refused before writing anything: a name kendex would not
-    /// install is refused rather than followed out of the harness directory
-    /// and the local source, and a hook entry doing something a declaration
-    /// has no field for is refused rather than quietly reshaped.
+    /// install, or a hook entry doing something a declaration has no field
+    /// for, is refused rather than followed or quietly reshaped.
     #[error("`{name}` can't name an item to keep: {problem}")]
     AdoptNameUnusable { name: String, problem: String },
 
-    /// Case 4 of naming a catalog: a qualifier that names no subscription
-    /// refuses, listing what is subscribed — never a guess, never a
-    /// download.
+    /// An install that would land nowhere: success has to mean bytes
+    /// reached disk, so it is refused before the manifest is touched.
+    #[error("nothing would be installed — {reason}")]
+    InstallsNowhere { reason: String },
+
+    /// Case 4 of naming a catalog: a qualifier naming no subscription
+    /// refuses, listing what is subscribed — never a guess.
     #[error(
         "no subscription called '{name}' in this scope — subscribed: {}",
         if subscribed.is_empty() { "none".to_owned() } else { subscribed.join(", ") }

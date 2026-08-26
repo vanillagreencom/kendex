@@ -23,18 +23,12 @@ pub struct Chosen {
     pub method: Option<Method>,
 }
 
-/// Every tool that can be installed to at this scope — the picker's rows,
-/// and what `--all-harnesses` means.
-pub fn installable_at(scope: &Scope) -> Vec<HarnessId> {
-    HarnessId::ALL
-        .into_iter()
-        .filter(|harness| {
-            kendex_core::harness::installable(*harness)
-                && ItemKind::ALL
-                    .iter()
-                    .any(|kind| kendex_core::harness::installs_here(*harness, *kind, scope))
-        })
-        .collect()
+/// Every tool that can take at least one of the kinds this request asks
+/// for, at this scope — the picker's rows, and what `--all-harnesses`
+/// means. The same filter the install itself reads, so the picker cannot
+/// offer a choice the install would refuse.
+pub fn installable_at(scope: &Scope, kinds: &[ItemKind]) -> Vec<HarnessId> {
+    kendex_core::engine::ops::targets_for(kinds, scope)
 }
 
 /// The choice, or nothing where the caller already made it in flags or has
@@ -43,6 +37,7 @@ pub fn installable_at(scope: &Scope) -> Vec<HarnessId> {
 pub fn ask(
     env: &Env,
     scope: &Scope,
+    kinds: &[ItemKind],
     already_chosen: bool,
     method: Option<Method>,
     yes: bool,
@@ -53,7 +48,7 @@ pub fn ask(
             method,
         });
     }
-    let rows = installable_at(scope);
+    let rows = installable_at(scope, kinds);
     if rows.is_empty() {
         return Ok(Chosen {
             harnesses: None,
@@ -79,6 +74,11 @@ pub fn ask(
     }
     say("  numbers to toggle, `all` for every tool, empty to accept");
     let picked = read_selection(&rows, &detected)?;
+    // An install to nothing is refused by the engine either way; caught
+    // here it costs a re-read instead of the whole command.
+    if picked.is_empty() {
+        return Err("no tool was chosen — pick at least one, or accept the default".to_owned());
+    }
     let method = match method {
         Some(method) => Some(method),
         None => Some(read_method()?),

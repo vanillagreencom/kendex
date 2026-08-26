@@ -93,23 +93,7 @@ pub fn run(env: &Env, args: AddArgs) -> CliResult {
         }
     }
 
-    // Flags settle it where they were given; otherwise a terminal is asked
-    // and a session without one keeps the scope's own defaults.
-    let mut harnesses = match (args.all_harnesses, args.harness.is_empty()) {
-        (true, _) => Some(harness_picker::installable_at(&scope)),
-        (false, false) => Some(parse_harnesses(&args.harness)?),
-        (false, true) => None,
-    };
-    let mut method = match (args.copy, args.method.as_deref()) {
-        (true, _) | (_, Some("copy")) => Some(Method::Copy),
-        (_, Some("symlink")) => Some(Method::Symlink),
-        _ => None,
-    };
-    let chosen = harness_picker::ask(env, &scope, harnesses.is_some(), method, args.yes)?;
-    harnesses = harnesses.or(chosen.harnesses);
-    method = chosen.method;
-
-    let request = AddRequest {
+    let mut request = AddRequest {
         source: args.source,
         agents,
         skills,
@@ -118,13 +102,38 @@ pub fn run(env: &Env, args: AddArgs) -> CliResult {
         mcp_servers,
         pi_extensions,
         all: args.all,
-        harnesses,
-        method,
+        harnesses: None,
+        method: None,
         no_auto_skills: args.no_auto_skills,
         optional: split(&args.optional),
         bundles,
         hold: args.hold,
     };
+    // Flags settle the targets where they were given; otherwise a terminal
+    // is asked and a session without one keeps the scope's own defaults.
+    // What the request would declare decides which tools can take it, so
+    // the picker and `--all-harnesses` offer only those.
+    let kinds = ops::requested_kinds(&request);
+    request.harnesses = match (args.all_harnesses, args.harness.is_empty()) {
+        (true, _) => Some(harness_picker::installable_at(&scope, &kinds)),
+        (false, false) => Some(parse_harnesses(&args.harness)?),
+        (false, true) => None,
+    };
+    request.method = match (args.copy, args.method.as_deref()) {
+        (true, _) | (_, Some("copy")) => Some(Method::Copy),
+        (_, Some("symlink")) => Some(Method::Symlink),
+        _ => None,
+    };
+    let chosen = harness_picker::ask(
+        env,
+        &scope,
+        &kinds,
+        request.harnesses.is_some(),
+        request.method,
+        args.yes,
+    )?;
+    request.harnesses = request.harnesses.or(chosen.harnesses);
+    request.method = chosen.method;
     let report = match ops::add(env, &scope, &request) {
         Err(kendex_core::error::CoreError::SourcePending { .. }) => {
             let manifest = ops::manifest_for_mutation(env, &scope)?;

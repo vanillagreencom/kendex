@@ -20,41 +20,92 @@ use super::Found;
 /// that drops half of what it did would run differently after the next
 /// apply, with nothing said — so it is refused, naming what it carries.
 pub(super) fn declaration(name: &str, found: &[Found]) -> Result<CustomHook> {
-    let first = &found[0];
     let unusable = |problem: String| CoreError::AdoptNameUnusable {
         name: crate::names::shown(name),
         problem,
     };
-    if let Some(carried) = beyond_a_declaration(&first.registration, first.format) {
-        return Err(unusable(format!(
-            "its registration carries `{carried}`, which a kendex declaration cannot express"
-        )));
-    }
-    let event = fleet_event(first.harness, &first.registration.event)
-        .ok_or_else(|| {
+    // Every entry, not the first: one declaration renders back into all of
+    // them, so anything only one of them carries would be dropped from that
+    // one and invented for the rest.
+    let mut said: Vec<(HarnessId, Said)> = Vec::new();
+    for entry in found {
+        if let Some(carried) = beyond_a_declaration(&entry.registration, entry.format) {
+            return Err(unusable(format!(
+                "{}'s registration carries `{carried}`, which a kendex declaration cannot express",
+                entry.harness.display_name()
+            )));
+        }
+        let event = fleet_event(entry.harness, &entry.registration.event).ok_or_else(|| {
             unusable(format!(
                 "`{}` is not an event kendex declares hooks against",
-                crate::names::shown(&first.registration.event)
+                crate::names::shown(&entry.registration.event)
             ))
-        })?
-        .to_owned();
+        })?;
+        said.push((entry.harness, Said::of(entry, event)));
+    }
+    if let Some((harness, differs)) = said
+        .iter()
+        .find(|(_, held)| *held != said[0].1)
+        .map(|(harness, held)| (*harness, held.differs_from(&said[0].1)))
+    {
+        return Err(unusable(format!(
+            "{} and {} register different {differs} under that name — kendex keeps one declaration, so settle which is meant first",
+            said[0].0.display_name(),
+            harness.display_name()
+        )));
+    }
+    let first = &found[0];
+    let event = said[0].1.event.to_owned();
     Ok(CustomHook {
         // Left to the deterministic derivation the manifest already uses
         // for a hand-written entry, so a plan over this file and the
         // editor's write-back agree on what it is called.
         name: None,
         event,
-        matcher: match first.registration.matcher.as_str() {
-            ANY_MATCHER => None,
-            held => Some(held.to_owned()),
-        },
+        matcher: said[0].1.matcher.clone(),
         command: first.registration.command.clone(),
         description: Some(format!("adopted from {}", first.harness.display_name())),
-        timeout: timeout_seconds(first),
+        timeout: said[0].1.timeout,
         harnesses: Some(found.iter().map(|f| f.harness.name().to_owned()).collect()),
         enabled: true,
         agents: HookAgents::One("all".to_owned()),
     })
+}
+
+/// Everything one registration would put into a declaration, in the words
+/// a declaration is written in. Two tools whose entries say the same thing
+/// in their own dialects compare equal here; two that say different things
+/// do not, whichever spelling they used.
+#[derive(PartialEq, Eq)]
+struct Said {
+    event: &'static str,
+    matcher: Option<String>,
+    command: String,
+    timeout: Option<u32>,
+}
+
+impl Said {
+    fn of(entry: &Found, event: &'static str) -> Said {
+        Said {
+            event,
+            matcher: match entry.registration.matcher.as_str() {
+                ANY_MATCHER => None,
+                held => Some(held.to_owned()),
+            },
+            command: entry.registration.command.clone(),
+            timeout: timeout_seconds(entry),
+        }
+    }
+
+    /// Which part two readings disagree on, for the refusal to name.
+    fn differs_from(&self, other: &Said) -> &'static str {
+        match self {
+            _ if self.event != other.event => "events",
+            _ if self.matcher != other.matcher => "matchers",
+            _ if self.command != other.command => "commands",
+            _ => "timeouts",
+        }
+    }
 }
 
 /// The fleet event a name read out of a tool's own registry answers to. Two

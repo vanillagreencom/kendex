@@ -141,6 +141,82 @@ fn a_hook_running_a_script_outside_the_project_keeps_its_command() {
     assert!(world.home.join("outside.sh").is_file());
 }
 
+/// A path handed to a program kendex does not know is a file the hook
+/// reads, not the hook itself. Moving it would break the very thing
+/// adoption is preserving, so the registration is taken where it stands.
+#[test]
+fn a_path_that_is_only_an_argument_is_left_where_it_is() {
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    crate::write(&world.at("policy/rules.json"), "{}\n");
+    crate::write(
+        &world.at(".claude/settings.json"),
+        r#"{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "some-linter --config policy/rules.json"}]}]}}"#,
+    );
+
+    world.run(&["adopt", "hook", "PreToolUse:Bash:rules"]);
+
+    assert!(world.at("policy/rules.json").is_file());
+    assert!(!world.at(".agents/hooks").exists());
+    assert!(
+        world.manifest().contains("policy/rules.json"),
+        "{}",
+        world.manifest()
+    );
+}
+
+/// An interpreter's script argument is the hook, and it moves.
+#[test]
+fn an_interpreters_script_argument_moves() {
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    crate::write(&world.at(".claude/hooks/guard.sh"), "#!/bin/sh\nexit 0\n");
+    crate::write(
+        &world.at(".claude/settings.json"),
+        r#"{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "bash .claude/hooks/guard.sh --strict"}]}]}}"#,
+    );
+
+    world.run(&["adopt", "hook", "PreToolUse:Bash:guard"]);
+
+    assert!(world.at(".agents/hooks/guard.sh").is_file());
+    let manifest = world.manifest();
+    assert!(
+        manifest.contains("bash .agents/hooks/guard.sh --strict"),
+        "{manifest}"
+    );
+}
+
+/// One declaration renders back into every tool's registry, so two tools
+/// saying different things under one name have to be settled first.
+#[test]
+fn tools_disagreeing_under_one_name_are_refused() {
+    let world = World::new(&["claude", "codex"]);
+    world.declare_catalog();
+    crate::write(&world.at(".claude/hooks/guard.sh"), "#!/bin/sh\nexit 0\n");
+    crate::write(
+        &world.at(".claude/settings.json"),
+        r#"{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ".claude/hooks/guard.sh", "timeout": 10}]}]}}"#,
+    );
+    crate::write(
+        &world.at(".codex/hooks.json"),
+        r#"{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ".claude/hooks/guard.sh", "timeout": 90}]}]}}"#,
+    );
+
+    let refused = world.try_run(&[
+        "adopt",
+        "hook",
+        "PreToolUse:Bash:guard",
+        "--harness",
+        "claude",
+        "--harness",
+        "codex",
+    ]);
+    let text = said(&refused);
+    assert!(!refused.status.success(), "{text}");
+    assert!(text.contains("timeouts"), "{text}");
+    assert!(world.at(".claude/hooks/guard.sh").is_file());
+}
+
 /// An entry doing something a declaration has no field for would come back
 /// as a plain command hook, running differently with nothing said.
 #[test]
@@ -221,8 +297,12 @@ fn registering_a_project_reports_what_it_could_manage() {
     // Runnable as printed: the tool the row is about, and the project it is
     // in — `adopt` acts on the current project and defaults to Claude Code.
     assert!(said.contains("--harness claude"), "{said}");
+    // Shell-quoted, so a project path holding a space is still one path.
     assert!(
-        said.contains(&world.project.display().to_string()),
+        said.contains(&format!("'{}'", world.project.display())),
         "{said}"
     );
+    // One line per item, however many tools read it: adoption takes the
+    // folder for all of them in a single pass.
+    assert_eq!(said.matches("kendex adopt").count(), 1, "{said}");
 }

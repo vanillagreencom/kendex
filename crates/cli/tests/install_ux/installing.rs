@@ -110,6 +110,62 @@ fn all_harnesses_targets_every_tool_that_installs_here() {
     }
 }
 
+/// Success has to mean bytes landed somewhere. An emptied selection, and a
+/// selection of tools that take none of what is being installed, are both
+/// refused before the manifest is touched.
+#[test]
+fn an_install_that_would_land_nowhere_is_refused() {
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+
+    let nowhere = world.try_run(&["add", "cat", "--skill", "deploy", "--harness", "", "-y"]);
+    let said = crate::said(&nowhere);
+    assert!(!nowhere.status.success(), "{said}");
+    assert!(said.contains("nothing would be installed"), "{said}");
+
+    // Cursor takes skills but no MCP servers, so naming it for one is a
+    // request that would plan nothing.
+    let wrong = world.try_run(&[
+        "add",
+        "cat",
+        "--mcp-server",
+        "gh",
+        "--harness",
+        "cursor",
+        "-y",
+    ]);
+    let said = crate::said(&wrong);
+    assert!(!wrong.status.success(), "{said}");
+    assert!(said.contains("nothing would be installed"), "{said}");
+
+    // Nothing was written on the way past either refusal.
+    assert!(!world.manifest().contains("deploy"), "{}", world.manifest());
+    assert!(!world.at(".kendex-lock.json").exists());
+}
+
+/// A copy delivery is a tree only that tool reads, so Cursor's goes in
+/// `.cursor/skills` — never into the shared tree it also reads, which every
+/// other tool would then pick up as a second copy.
+#[test]
+fn a_copy_delivery_for_cursor_writes_its_own_directory() {
+    let world = World::new(&["cursor"]);
+    world.declare_catalog();
+    world.run(&[
+        "add",
+        "cat",
+        "--skill",
+        "deploy",
+        "--harness",
+        "cursor",
+        "--method",
+        "copy",
+        "-y",
+    ]);
+
+    assert!(world.at(".cursor/skills/deploy/SKILL.md").is_file());
+    assert!(!world.at(".agents/skills/deploy").exists());
+}
+
 /// The delivery is made even when the tool's own directory does not exist
 /// yet — the bug class the Vercel installer shipped, where a successful
 /// install left the tool seeing nothing.
@@ -167,6 +223,27 @@ fn the_install_ledger_is_the_only_thing_kendex_ignores() {
     // no second copy of it.
     world.run(&["refresh", "-y"]);
     assert_eq!(read(&world.at(".gitignore")), ignore);
+}
+
+/// git reads its ignore rules last-match-wins, so a negation below an
+/// ignore leaves the lock tracked and the block still has to be written.
+#[test]
+fn a_negation_below_the_ignore_is_not_coverage() {
+    let world = World::new(&["claude"]);
+    crate::write(
+        &world.at(".gitignore"),
+        "/.kendex-lock.json\n!/.kendex-lock.json\n",
+    );
+    world.declare_catalog();
+    world.run(&["add", "cat", "--skill", "deploy", "-y"]);
+
+    let ignore = read(&world.at(".gitignore"));
+    let rules: Vec<&str> = ignore
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect();
+    assert_eq!(rules.last(), Some(&"/.kendex-lock.json"), "{ignore}");
 }
 
 /// The pre-rename line ignores a file that is no longer the ledger, so it

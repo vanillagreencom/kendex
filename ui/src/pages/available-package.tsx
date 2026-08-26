@@ -142,10 +142,17 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
               <DestinationSelect
                 browsing={scope}
                 value={target}
-                onChange={setDestination}
+                onChange={(next) => {
+                  // Which tools can take this is a fact about the
+                  // destination, so a choice made against another one is
+                  // not an answer here.
+                  setChoice({ harnesses: null, method: null });
+                  setDestination(next);
+                }}
               />
               <HarnessSelect
                 scope={target}
+                kinds={[kind]}
                 value={choice}
                 onChange={setChoice}
               />

@@ -25,12 +25,13 @@ pub const DISCOVERY_VERSION: u32 = 1;
 /// harness's project skills directory, pinned to the adapters by test
 /// (`.codex/skills` is kept although codex itself reads `.agents/skills`,
 /// because repositories in the wild ship it).
-const SKILL_ROOTS: [&str; 8] = [
+const SKILL_ROOTS: [&str; 9] = [
     "skills",
     "skills/.curated",
     ".claude/skills",
     ".agents/skills",
     ".codex/skills",
+    ".cursor/skills",
     ".opencode/skills",
     ".gemini/skills",
     ".github/skills",

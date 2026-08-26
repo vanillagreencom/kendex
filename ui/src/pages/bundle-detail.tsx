@@ -102,6 +102,16 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
     );
     if (items.length > 0) installItems(items);
   };
+  // Which tools the picker may offer follows what is actually ticked; with
+  // nothing ticked the set is every kind, which is what the whole bundle
+  // would carry.
+  const selectedKinds = [
+    ...new Set(
+      (detail?.members ?? [])
+        .filter((m) => selected.has(memberKey(m.kind, m.name)))
+        .map((m) => m.kind),
+    ),
+  ];
 
   return (
     <div className="flex h-full flex-col">
@@ -172,10 +182,17 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
                     <DestinationSelect
                       browsing={scope}
                       value={target}
-                      onChange={setDestination}
+                      onChange={(next) => {
+                        // Which tools can take this is a fact about the
+                        // destination, so a choice made against another one
+                        // is not an answer here.
+                        setChoice({ harnesses: null, method: null });
+                        setDestination(next);
+                      }}
                     />
                     <HarnessSelect
                       scope={target}
+                      kinds={selectedKinds}
                       value={choice}
                       onChange={setChoice}
                     />

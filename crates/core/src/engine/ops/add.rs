@@ -73,6 +73,13 @@ pub fn add_seeded(
     if let Some(name) = request.pi_extensions.first() {
         return Err(CoreError::PiExtensionDirect { name: name.clone() });
     }
+    // Before a byte of the manifest moves: a request whose tools can take
+    // none of what it asks for would plan nothing, apply nothing, and
+    // report success. `None` is not that — it is the scope's own defaults,
+    // which the pass below brings up to date.
+    if let Some(reason) = lands_nowhere(request, scope) {
+        return Err(CoreError::InstallsNowhere { reason });
+    }
     let mut manifest = manifest_for_mutation(env, scope)?;
     if let Some((name, decl)) = seed {
         manifest.sources.insert(name, decl);
@@ -273,10 +280,13 @@ fn add_from(
 }
 
 mod bundles;
+mod lands;
 mod optional;
 mod pick;
 mod place;
 use bundles::{declare_bundle, require_free, subsume};
+use lands::lands_nowhere;
+pub use lands::{requested_kinds, targets_for};
 use optional::optional_choices;
 
 // Writing one item's declaration into the manifest: the invariant-4

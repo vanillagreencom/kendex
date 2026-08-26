@@ -64,11 +64,10 @@ pub(super) fn plan_posture(
     Ok(())
 }
 
-/// The file with kendex's line in it, or nothing where a line already
-/// covers the lock — including one the person wrote themselves, in any of
-/// the spellings git reads as the same file.
+/// The file with kendex's line in it, or nothing where the rules already
+/// keep the lock out.
 fn with_lock_ignored(text: &str) -> Option<String> {
-    if text.lines().any(covers_lock) {
+    if already_ignored(text) {
         return None;
     }
     let mut out = String::from(text);
@@ -87,14 +86,33 @@ fn with_lock_ignored(text: &str) -> Option<String> {
     Some(out)
 }
 
-/// Whether this rule already keeps the lock out. Only the current spelling
-/// counts: a scope carrying the pre-rename `/.vstack-lock.json` ignores a
-/// file that is no longer the ledger, and reading it as coverage would
-/// commit the one this build writes. The rename migration rewrites that
-/// line on its own pass; this one only ever adds what is missing.
-fn covers_lock(line: &str) -> bool {
-    let line = line.trim();
-    line == LOCK_LINE || line == LOCK_LINE.trim_start_matches('/')
+/// Whether this file's rules leave the lock ignored. git reads them
+/// last-match-wins, so a `!/.kendex-lock.json` further down undoes an
+/// ignore above it — reading the first match, or any match, would call a
+/// file covered that git tracks. Only rules naming the lock exactly are
+/// read: a rule this cannot evaluate leaves the answer "not ignored", and
+/// the line kendex adds lands last, where it wins.
+fn already_ignored(text: &str) -> bool {
+    let mut ignored = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (negated, rule) = match line.strip_prefix('!') {
+            Some(rest) => (true, rest.trim()),
+            None => (false, line),
+        };
+        if names_the_lock(rule) {
+            ignored = !negated;
+        }
+    }
+    ignored
+}
+
+/// Whether this rule, negation stripped, names the lock file itself.
+fn names_the_lock(rule: &str) -> bool {
+    rule == LOCK_LINE || rule == LOCK_LINE.trim_start_matches('/')
 }
 
 /// Which of the committed trees this file's rules ignore. Plain path rules
@@ -142,6 +160,26 @@ mod tests {
     fn a_hand_written_line_counts_as_covered() {
         assert_eq!(with_lock_ignored(".kendex-lock.json\n"), None);
         assert_eq!(with_lock_ignored("  /.kendex-lock.json  \n"), None);
+    }
+
+    /// git reads its rules last-match-wins, so a negation below an ignore
+    /// leaves the lock tracked and the block still has to be added — and
+    /// an ignore below a negation is coverage.
+    #[test]
+    fn the_last_matching_rule_is_the_one_that_counts() {
+        assert!(
+            with_lock_ignored("/.kendex-lock.json\n!/.kendex-lock.json\n").is_some(),
+            "a negation below the ignore leaves the lock tracked"
+        );
+        assert_eq!(
+            with_lock_ignored("!.kendex-lock.json\n/.kendex-lock.json\n"),
+            None,
+            "an ignore below the negation covers it again"
+        );
+        assert!(
+            with_lock_ignored("!.kendex-lock.json\n").is_some(),
+            "a negation on its own leaves it tracked"
+        );
     }
 
     /// The pre-rename line ignores a file that is no longer the ledger, so

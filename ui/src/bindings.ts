@@ -171,12 +171,15 @@ export const commands = {
 	 */
 	marketplaceInstall: (scope: Scope, source: string, items: InstallItem[], bundle: string | null, destination: { scope: "global" } | { scope: "project"; root: string } | null, hold: boolean, harnesses: HarnessId[] | null, method: "symlink" | "copy" | null) => typedError<AvailablePackage[], string>(__TAURI_INVOKE("marketplace_install", { scope, source, items, bundle, destination, hold, harnesses, method })),
 	/**
-	 *  Where an install could land, for the picker the install flow draws.
-	 *  Detection is read now rather than taken from the scope's manifest: a
-	 *  tool added since the scope was set up has to be offerable, and one
-	 *  removed since must not read as present.
+	 *  Where an install of these kinds could land, for the picker the install
+	 *  flow draws. Two filters, both read from core: which tools can take the
+	 *  kinds being installed at this scope — the same one the install itself
+	 *  refuses by, so the picker cannot offer a choice the install turns down —
+	 *  and which are on this machine. Detection is read now rather than taken
+	 *  from the scope's manifest: a tool added since the scope was set up has
+	 *  to be offerable, and one removed since must not read as present.
 	 */
-	installTargets: (scope: Scope) => typedError<InstallTarget[], string>(__TAURI_INVOKE("install_targets", { scope })),
+	installTargets: (scope: Scope, kinds: ItemKind[]) => typedError<InstallTarget[], string>(__TAURI_INVOKE("install_targets", { scope, kinds })),
 	/**
 	 *  Subscribe a scope to a marketplace: `owner/repo[@rev]`, a git URL, a
 	 *  GitHub tree URL, a skills.sh package URL, or a local folder.

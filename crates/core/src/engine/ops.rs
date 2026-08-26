@@ -8,7 +8,7 @@ use crate::manifest::{self, Manifest};
 use crate::model::{HarnessId, ItemKind, Scope};
 
 mod add;
-pub use add::{AddRequest, add, add_seeded};
+pub use add::{AddRequest, add, add_seeded, requested_kinds, targets_for};
 
 /// Every kind a manifest declares by name. Plugins are excluded: they carry
 /// only an enabled flag, in their own table.

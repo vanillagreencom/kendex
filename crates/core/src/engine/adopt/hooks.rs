@@ -60,24 +60,17 @@ pub(super) fn adopt_hook(
 ) -> Result<Plan> {
     let mut manifest = crate::engine::ops::manifest_for_mutation(env, scope)?;
     let found = find(env, scope, name, harnesses)?;
-    // One hook, one script. Tools running different commands under one name
-    // are different hooks, and only the person can say which to keep.
-    let command = found[0].registration.command.clone();
-    if let Some(other) = found.iter().find(|f| f.registration.command != command) {
-        return Err(CoreError::AdoptedCopiesDiffer {
-            name: name.to_owned(),
-            first: found[0].harness.display_name().to_owned(),
-            second: other.harness.display_name().to_owned(),
-        });
-    }
+    // One declaration renders back into every tool's registry, so every
+    // entry has to say the same thing — read in the words a declaration is
+    // written in, not in each tool's own spelling.
+    let declared = declaration(name, &found)?;
+    let command = declared.command.clone();
     if owned_here(env, scope, &command)? {
         return Err(CoreError::AlreadyManaged {
             name: name.to_owned(),
             path: crate::names::shown(&command),
         });
     }
-    let declared = declaration(name, &found)?;
-
     let mut ops = Vec::new();
     let moved = script_move(scope, &command, &mut ops)?;
     if moved.is_some() {
@@ -249,33 +242,59 @@ fn script_move(scope: &Scope, command: &str, ops: &mut Vec<PlannedOp>) -> Result
     )))
 }
 
-/// The token in a command that names a file inside this project, with the
-/// path it resolves to. Only a plain relative path to a real file counts: a
-/// word that merely looks like a path is somebody's argument, and an
-/// absolute or `..`-shaped one names a file the move would drag in from
-/// outside the project — the same rule every other path adoption derives.
+/// The command's script operand and the path it resolves to, or nothing
+/// where the command has no shape this can be sure about.
+///
+/// Two shapes are safe to move: a command that *is* the script
+/// (`./hooks/guard.sh --strict`), and a known interpreter's script argument
+/// (`bash hooks/guard.sh`, `python3 tools/check.py`). Anything else — a
+/// flag's value, a path handed to a program this does not know — is a file
+/// the hook reads, not the hook itself, and moving it would break the very
+/// thing adoption is preserving. Such a hook is adopted where it stands:
+/// the command is declared exactly as written, and nothing moves.
 fn script_token<'a>(root: &Path, command: &'a str) -> Option<(&'a str, PathBuf)> {
-    command.split_whitespace().find_map(|token| {
-        // Quoted or bare, the same rule — but a quoted token cannot be
-        // swapped by text without leaving its quotes behind, so it is left
-        // alone rather than half-rewritten.
-        if token.trim_matches(['"', '\'']) != token {
-            return None;
-        }
-        let bare = token.trim_start_matches("./");
-        if !(bare.contains('/') || bare.contains('.')) {
-            return None;
-        }
-        // Refused on the text, before any join. `..` and an absolute prefix
-        // both name a file outside the project, and a `..` that climbs out
-        // and back in resolves to a path inside the root — so a check made
-        // after resolving is a check that passes on the way in.
-        if !inside(bare) {
-            return None;
-        }
-        let path = root.join(bare);
-        path.is_file().then_some((token, path))
-    })
+    let mut tokens = command.split_whitespace();
+    let first = tokens.next()?;
+    let candidate = match interpreter(first) {
+        // The first argument after an interpreter is the script it runs.
+        // A flag there (`bash -c '…'`) is a program spelled inline, which
+        // has no file to move.
+        true => tokens.next().filter(|next| !next.starts_with('-'))?,
+        false => first,
+    };
+    let path = resolved(root, candidate)?;
+    path.is_file().then_some((candidate, path))
+}
+
+/// Whether this token names an interpreter whose next argument is a script.
+/// A short list on purpose: a program not on it may take its arguments in
+/// any order, and guessing would move a file the hook only reads.
+fn interpreter(token: &str) -> bool {
+    let stem = Path::new(token)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    matches!(
+        stem.as_str(),
+        "bash" | "sh" | "zsh" | "python" | "python3" | "node" | "deno" | "bun"
+    )
+}
+
+/// Where a token points inside this project, or nothing where it points
+/// outside it. Quoted text is left alone — it cannot be swapped by text
+/// without leaving its quotes behind — and the containment is decided on
+/// the text before any join: a `..` that climbs out and back in resolves to
+/// a path inside the root, so a check made after resolving is a check that
+/// passes on the way in.
+fn resolved(root: &Path, token: &str) -> Option<PathBuf> {
+    if token.trim_matches(['"', '\'']) != token {
+        return None;
+    }
+    let bare = token.trim_start_matches("./");
+    if !(bare.contains('/') || bare.contains('.')) {
+        return None;
+    }
+    inside(bare).then(|| root.join(bare))
 }
 
 /// Whether this text is a plain relative path — every component an ordinary

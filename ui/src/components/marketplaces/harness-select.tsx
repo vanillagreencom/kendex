@@ -3,6 +3,7 @@ import {
   commands,
   type HarnessId,
   type InstallTarget,
+  type ItemKind,
   type Scope,
 } from "@/bindings";
 import { Button } from "@/components/ui/button";
@@ -38,30 +39,43 @@ export function isInstallable(choice: Choice): boolean {
  * the CLI's picker puts at a terminal. */
 export function HarnessSelect({
   scope,
+  kinds,
   value,
   onChange,
 }: {
   scope: Scope;
+  /** The kinds this install would declare. Only tools that can take one of
+   * them are offered — the same filter the install itself refuses by. */
+  kinds: ItemKind[];
   value: Choice;
   onChange: (choice: Choice) => void;
 }) {
   const [targets, setTargets] = useState<InstallTarget[]>([]);
+  const wanted = kinds.join(",");
 
   useEffect(() => {
     let live = true;
-    void commands.installTargets(scope).then((r) => {
-      if (live && r.status === "ok") setTargets(r.data);
-    });
+    void commands
+      .installTargets(scope, wanted.split(",") as ItemKind[])
+      .then((r) => {
+        if (live && r.status === "ok") setTargets(r.data);
+      });
     return () => {
       live = false;
     };
-  }, [scope]);
+  }, [scope, wanted]);
 
   // Untouched, the picker shows what this machine has and sends nothing:
   // detection is re-read at install time, so the engine's own answer and
-  // the one drawn here are the same answer, taken a moment apart.
+  // the one drawn here are the same answer, taken a moment apart. A tool
+  // this destination cannot install to is dropped from the display — the
+  // rows come from the same filter the install refuses by, so a selection
+  // made before the destination changed cannot survive as a row.
+  const offered = new Set(targets.map((t) => t.harness));
   const detected = targets.filter((t) => t.detected).map((t) => t.harness);
-  const chosen = value.harnesses ?? detected;
+  const chosen = (value.harnesses ?? detected).filter((held) =>
+    offered.has(held),
+  );
   const toggle = (harness: HarnessId) =>
     onChange({
       ...value,

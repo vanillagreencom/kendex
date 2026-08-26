@@ -28,23 +28,24 @@ pub struct InstallTarget {
     pub shares_the_universal_tree: bool,
 }
 
-/// Where an install could land, for the picker the install flow draws.
-/// Detection is read now rather than taken from the scope's manifest: a
-/// tool added since the scope was set up has to be offerable, and one
-/// removed since must not read as present.
+/// Where an install of these kinds could land, for the picker the install
+/// flow draws. Two filters, both read from core: which tools can take the
+/// kinds being installed at this scope — the same one the install itself
+/// refuses by, so the picker cannot offer a choice the install turns down —
+/// and which are on this machine. Detection is read now rather than taken
+/// from the scope's manifest: a tool added since the scope was set up has
+/// to be offerable, and one removed since must not read as present.
 #[tauri::command(async)]
 #[specta::specta]
-pub fn install_targets(scope: Scope) -> Result<Vec<InstallTarget>, String> {
+pub fn install_targets(scope: Scope, kinds: Vec<ItemKind>) -> Result<Vec<InstallTarget>, String> {
     let env = env()?;
     let detected = kendex_core::engine::ops::detected_harnesses(&env);
-    Ok(HarnessId::ALL
+    let kinds = match kinds.is_empty() {
+        true => ItemKind::ALL.to_vec(),
+        false => kinds,
+    };
+    Ok(kendex_core::engine::ops::targets_for(&kinds, &scope)
         .into_iter()
-        .filter(|harness| {
-            kendex_core::harness::installable(*harness)
-                && ItemKind::ALL
-                    .iter()
-                    .any(|kind| kendex_core::harness::installs_here(*harness, *kind, &scope))
-        })
         .map(|harness| InstallTarget {
             harness,
             detected: detected.contains(&harness),
