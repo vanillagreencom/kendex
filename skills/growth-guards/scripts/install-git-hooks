@@ -396,6 +396,8 @@ install_hook() { # HOOK
 
 uninstall_hook() { # HOOK — drop our line; drop the file when only ours was in it
   local hook="$1" path="$HOOKS_DIR/$1" tmp="" status=0 body=0 sentinel_status=0 created=0
+  local line=""
+  line="$(call_line "$hook")"
   [ -e "$path" ] || [ -L "$path" ] || return 0
   if [ -L "$path" ]; then
     # Only a target that actually carries our line is a problem: leaving it
@@ -415,7 +417,7 @@ uninstall_hook() { # HOOK — drop our line; drop the file when only ours was in
   # managed hook whose content is unknown must not be assumed clean — left
   # behind with the helper gone it blocks every commit.
   sentinel_status=0
-  grep -qF -- "$HOOK_SENTINEL" "$path" 2>/dev/null || sentinel_status=$?
+  grep -qxF -- "$line" "$path" 2>/dev/null || sentinel_status=$?
   if [ "$sentinel_status" -gt 1 ]; then
     hook_warn "could not read $path to check for the guard line; it was left in place"
     return 0
@@ -428,8 +430,14 @@ uninstall_hook() { # HOOK — drop our line; drop the file when only ours was in
     hook_warn "could not create a temporary file beside $path; its guard line was left in place"
     return 0
   }
-  # grep -v exits 1 when it prints nothing; only >= 2 means the read failed.
-  grep -vF -- "$HOOK_SENTINEL" "$path" >"$tmp" || status=$?
+  # The BYTE-EXACT line this installer writes, and no other. Filtering on
+  # the sentinel alone deletes a consumer's own line that happens to carry
+  # it — a comment quoting it, a hook of their own ending in the same
+  # marker — and a removal that eats somebody else's line is worse than one
+  # that leaves ours behind. grep -v exits 1 when it prints nothing; only
+  # >= 2 means the read failed. Both of ours go: the delegating line and,
+  # where this installer created the file, the marker it left beside it.
+  grep -vxF -e "$line" -e "$CREATED_MARKER" "$path" >"$tmp" || status=$?
   if [ "$status" -gt 1 ]; then
     rm -f -- "$tmp"
     hook_warn "could not read $path; its guard line was left in place"

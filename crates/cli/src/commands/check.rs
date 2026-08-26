@@ -83,9 +83,13 @@ fn fold_commit_hooks(env: &Env, checked: &mut CheckReport, scopes: &[kendex_core
 /// ships the files. Wording only: nothing here decides what may run.
 fn installed_here(env: &Env, scope: &kendex_core::model::Scope) -> bool {
     kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope)).is_ok_and(|lock| {
+        // Enabled, not merely recorded: a declaration switched off is
+        // someone saying they do not want this gate here, and reporting it
+        // as unarmed drift every session start argues with them about a
+        // choice they already made.
         lock.entries
             .values()
-            .any(|entry| entry.name == kendex_core::guard::SKILL)
+            .any(|entry| entry.name == kendex_core::guard::SKILL && entry.enabled)
     })
 }
 

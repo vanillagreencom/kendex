@@ -150,7 +150,15 @@ fn check_reads_the_hooks_and_runs_nothing() {
     let root = repo(home);
     install_package(home, &root, &["growth-guards"]);
 
-    // A checker that would prove it ran, if anything ran it.
+    // Unarmed, with the package installed: reported, read natively.
+    let out = run(home, &root, "kendex", &["check"]);
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    assert!(said(&out).contains("not armed"), "{}", said(&out));
+
+    // Armed for real, then the installer swapped for one that proves
+    // whether anything ran it. Armed is the interesting case: that is when
+    // a check tempted to ask the package would ask.
+    arm_by_hand(&root);
     let marker = home.join("checker-ran");
     let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
     std::fs::write(
@@ -160,14 +168,6 @@ fn check_reads_the_hooks_and_runs_nothing() {
     .unwrap();
     std::fs::set_permissions(&installer, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-    // Unarmed, with the package installed: reported, and read natively.
-    let out = run(home, &root, "kendex", &["check"]);
-    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
-    assert!(said(&out).contains("not armed"), "{}", said(&out));
-    assert!(!marker.exists(), "check ran the repository's script");
-
-    // Armed: nothing to report, and still nothing executed.
-    arm_by_hand(&root);
     let out = run(home, &root, "kendex", &["check"]);
     assert!(!said(&out).contains("commit hooks"), "{}", said(&out));
     assert!(!marker.exists(), "check ran the repository's script");
@@ -211,6 +211,11 @@ fn only_a_hook_git_would_run_counts_as_armed() {
         said(&out)
     );
 
+    // The real shapes. The planted helper and hook are not ones the
+    // installer will overwrite — it refuses a helper it did not write — so
+    // they go first.
+    std::fs::remove_file(hooks.join("kendex-guards")).unwrap();
+    std::fs::remove_file(&hook).unwrap();
     arm_by_hand(&root);
     let out = run(home, &root, "kendex", &["check"]);
     assert!(
@@ -225,38 +230,35 @@ fn only_a_hook_git_would_run_counts_as_armed() {
     let out = run(home, &root, "kendex", &["check"]);
     assert_eq!(out.status.code(), Some(1), "{}", said(&out));
     assert!(
-        said(&out).contains("missing pre-commit"),
+        said(&out).contains("pre-commit is not executable"),
         "the unexecutable lane is the one named: {}",
         said(&out)
     );
 }
 
-/// Shims of the shape the installer writes, put in place directly: a helper
-/// and a `pre-commit` that delegates to it. For scenarios that need an
-/// armed repository without running an installer to arm it.
+/// Arm through the package's own installer.
+///
+/// Not a hand-written approximation: the check compares against the exact
+/// bytes that installer writes, so a fixture that guesses at them is
+/// testing the guess. This is the same call `kendex guard install` makes.
 #[allow(clippy::unwrap_used)]
 fn arm_by_hand(root: &std::path::Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let hooks = root.join(".git/hooks");
-    std::fs::create_dir_all(&hooks).unwrap();
-    let helper = hooks.join("kendex-guards");
-    std::fs::write(
-        &helper,
-        "#!/bin/sh\n# kendex growth-guards git hooks\nexit 0\n",
-    )
-    .unwrap();
-    // Executable, as the installer writes it: the delegating line tests -x
-    // before it hands off, so a helper git cannot run is not armed.
-    std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
-    for lane in ["pre-commit", "commit-msg"] {
-        let hook = hooks.join(lane);
-        std::fs::write(
-            &hook,
-            format!(
-                "#!/bin/sh\nkendex_gg_h=\"$(git rev-parse --git-path hooks)/kendex-guards\"; \"$kendex_gg_h\" {lane} || exit $?; # kendex-guards-hook\n"
-            ),
-        )
+    let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
+    let out = std::process::Command::new(&installer)
+        .args(["--repo", &root.to_string_lossy()])
+        // Run from the fixture: git's own environment reaches this child,
+        // and a test binary invoked from another checkout would otherwise
+        // hand it that repository.
+        .current_dir(root)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .output()
         .unwrap();
-        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    assert!(
+        out.status.success(),
+        "install-git-hooks: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
 }

@@ -85,7 +85,10 @@ impl Installed {
 /// nothing and the search below decides — the same outcome the helper
 /// reaches when the baked path holds no executable script.
 fn baked_scripts(repo: &super::Repo) -> Option<PathBuf> {
-    let helper = repo.effective_hooks_dir().ok()?.join(super::shims::HELPER);
+    let helper = repo
+        .effective_hooks_dir()
+        .ok()?
+        .join(super::grammar::HELPER);
     let text = std::fs::read_to_string(helper).ok()?;
     let quoted = text
         .lines()

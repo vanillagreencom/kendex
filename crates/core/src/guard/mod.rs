@@ -22,13 +22,25 @@ use std::time::Duration;
 use crate::error::{CoreError, Result};
 use crate::process::Hardened;
 
+mod grammar;
 mod repo;
 mod resolve;
-pub(super) mod shims;
+mod shims;
 pub use repo::Repo;
+
+/// The helper body and delegating line kendex expects, for the test that
+/// keeps this crate's copy of them from drifting from the installer that
+/// writes them. Not part of any verb's surface.
+pub fn expected_helper_body(scripts_dir: &str) -> String {
+    grammar::helper_body(scripts_dir)
+}
+
+/// See [`expected_helper_body`].
+pub fn expected_call_line(hook: &str) -> String {
+    grammar::call_line(hook)
+}
 pub use resolve::Installed;
 use resolve::bind;
-use shims::{missing_shims, stale_shims};
 
 /// The package that owns the checks and the git shims.
 pub const SKILL: &str = "growth-guards";
@@ -157,7 +169,8 @@ pub fn uninstall(dir: &Path) -> Result<GuardReport> {
         Err(error) => {
             lines.push(error.to_string());
             if let Ok(Some(repo)) = repo::Repo::probe(dir)
-                && let Some(stale) = stale_shims(&repo)?
+                && let Ok(live) = repo.effective_hooks_dir()
+                && let Some(stale) = shims::orphaned_shims(&live)?
             {
                 lines.push(stale);
             }
@@ -202,62 +215,58 @@ pub fn armed(dir: &Path, installed_here: bool) -> Result<Option<GuardReport>> {
         return Ok(None);
     };
     let live = repo.effective_hooks_dir()?;
-    let package = Installed::resolve(&repo, INSTALLER);
 
-    // Armed and whole: nothing to report.
-    let missing = missing_shims(&live)?;
-    if missing.is_none() {
-        // Unless there is no package left to run them, which is the one
-        // state where armed hooks are the problem rather than the answer.
-        return Ok(match package.is_none() {
-            true => stale_shims(&repo)?.map(|line| GuardReport {
+    // Without the package there is nothing to compare the helper's bytes
+    // against, and nothing to run the lanes either. Shims left behind fail
+    // every commit closed, which is worth saying; a broken install that
+    // armed nothing is worth saying too.
+    let Some(package) = Installed::resolve(&repo, INSTALLER) else {
+        if let Some(line) = shims::orphaned_shims(&live)? {
+            return Ok(Some(GuardReport {
                 lines: vec![line],
                 code: 2,
-            }),
-            false => None,
-        });
-    }
+            }));
+        }
+        if let Some(dir) = Installed::present(&repo) {
+            return Ok(Some(GuardReport {
+                lines: vec![format!(
+                    "the {SKILL} skill at {} carries no runnable {INSTALLER} — commit hooks cannot be armed until it is reinstalled (`kendex refresh`)",
+                    dir.display()
+                )],
+                code: 2,
+            }));
+        }
+        return Ok(None);
+    };
 
-    // Partly armed: some of what the installer writes is there and some is
-    // not, so a commit runs a hook that cannot reach what it delegates to.
-    if stale_shims(&repo)?.is_some() {
-        return Ok(Some(GuardReport {
+    // The closed grammar decides, and it has three answers. Armed is
+    // silence. Unarmed is drift worth reporting, but only where somebody
+    // installed the package here and expects it to gate their commits — a
+    // checkout that merely carries the files, as every clone of a
+    // repository committing its harness render does, is not missing an
+    // arming nobody asked for. Anything outside the grammar is said out
+    // loud whatever the install record says: an unverifiable gate is not a
+    // clean one.
+    let scripts = package.dir.join("scripts");
+    let (shape, reasons) = shims::directory_shape(&live, &scripts);
+    Ok(match shape {
+        shims::Shape::Armed => None,
+        shims::Shape::Unknown => Some(GuardReport {
             lines: vec![format!(
-                "commit hooks in {} are not intact ({}) — run `kendex guard install` to repair them",
-                live.display(),
-                missing.unwrap_or_default()
-            )],
-            code: 1,
-        }));
-    }
-
-    // Nothing armed. A package whose directory is here but whose installer
-    // cannot be run is a broken install, not an absent one: nothing is
-    // blocked, but nothing can arm it either, and a clean verdict would
-    // send a reader off believing the gate is one command away.
-    if package.is_none()
-        && let Some(dir) = Installed::present(&repo)
-    {
-        return Ok(Some(GuardReport {
-            lines: vec![format!(
-                "the {SKILL} skill at {} carries no runnable {INSTALLER} — commit hooks cannot be armed until it is reinstalled (`kendex refresh`)",
-                dir.display()
+                "commit hooks in {} cannot be verified ({reasons}) — inspect them by hand, or `kendex guard install` rewrites them",
+                live.display()
             )],
             code: 2,
-        }));
-    }
-    // Worth saying only where somebody installed the package here and is
-    // expecting it to gate their commits.
-    if package.is_none() || !installed_here {
-        return Ok(None);
-    }
-    Ok(Some(GuardReport {
-        lines: vec![format!(
-            "commit hooks are not armed in {} — `kendex guard install` arms them",
-            live.display()
-        )],
-        code: 1,
-    }))
+        }),
+        shims::Shape::Unarmed if installed_here => Some(GuardReport {
+            lines: vec![format!(
+                "commit hooks are not armed in {} ({reasons}) — `kendex guard install` arms them",
+                live.display()
+            )],
+            code: 1,
+        }),
+        shims::Shape::Unarmed => None,
+    })
 }
 
 fn installer(repo: &repo::Repo, installed: &Installed, args: &[&str]) -> Result<GuardReport> {

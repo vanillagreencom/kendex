@@ -146,9 +146,9 @@ kendex adopt skill handmade                             # manage an existing ite
 kendex apply --plan                                     # preview the full reconcile
 ```
 
-Coming from v1: `kendex import` migrates manifests and locks in place
-(originals go to the trash first), then `kendex refresh` regenerates
-everything.
+Coming from v1: nothing is migrated. Install kendex fresh, then remove the
+old artifacts by hand — the `kendex-hooks`/`vstack-hooks` directory, the
+`core.hooksPath` pointing at it, and v1 guard settings.
 
 ## Engine rules
 
