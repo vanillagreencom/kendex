@@ -118,7 +118,7 @@ if [ -z "$CHAIN_SCRIPT" ]; then
   done
 fi
 if [ -z "$CHAIN_SCRIPT" ]; then
-  echo "pre-commit-check: no git pre-commit hook will run for this commit and no growth-guards skill is installed under $PWD, so nothing can check it — install it (kendex add skill/growth-guards) and arm the hooks (kendex guard install), or remove this hook" >&2
+  echo "pre-commit-check: no git pre-commit hook will run for this commit and no growth-guards skill is installed under $PWD, so nothing can check it — install it (kendex add --skill growth-guards) and arm the hooks (kendex guard install), or remove this hook" >&2
   exit 2
 fi
 # The frontmatter timeout budgets a cold clippy build on top of the other

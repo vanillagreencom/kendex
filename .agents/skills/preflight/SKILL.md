@@ -71,10 +71,11 @@ own validation command. The default and `--base` scopes include every
 non-ignored untracked file as a new file; `--staged` sees only the index.
 
 Commit-time (optional): run `preflight --staged` from the repository's own
-git pre-commit hook, or from an executable the guard chain's machine-local
-extension point (`GROWTH_GUARDS_PRE_COMMIT_LOCAL`) names — the extension
-takes no arguments and is never configured from a committed file, so it
-needs a wrapper that adds `--staged`.
+git pre-commit hook, or from the repo-root-relative executable the guard
+chain's `GROWTH_GUARDS_PRE_COMMIT_LOCAL` names — resolved from the
+repository's own settings, and run with no arguments, so it needs a wrapper
+that adds `--staged`. The growth-guards chain also runs an installed
+`preflight --staged` itself, with no wiring.
 
 CI (optional): `preflight --base origin/<default>` on the PR head. The
 installed skill must be COMMITTED to the repo — CI checkouts see only
