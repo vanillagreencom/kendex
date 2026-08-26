@@ -74,6 +74,7 @@ fn shims_in(hooks: &Path) -> Result<Option<String>> {
     if !found.is_empty() && hooks.join(HELPER).exists() {
         found.push(HELPER.to_owned());
     }
+
     Ok((!found.is_empty()).then(|| found.join(", ")))
 }
 
@@ -85,9 +86,20 @@ fn delegates(path: &Path) -> Result<bool> {
     let Some(text) = crate::fs::read_if_exists(path)? else {
         return Ok(false);
     };
-    Ok(text
-        .lines()
-        .any(|line| line.trim_end().ends_with(SENTINEL) && line.contains(HELPER)))
+    Ok(text.lines().any(is_delegating_line))
+}
+
+/// Whether one line hands off to the helper, rather than talking about it.
+///
+/// Three things have to hold together. The line is in command position — a
+/// comment mentioning the marker, a README line quoted into a hook, a
+/// disabled line someone commented out, are all talk. It names the helper,
+/// which is what it hands off to. And the marker ends it, which is the
+/// shape the installer writes and the shape it rewrites when it repairs.
+/// Any one of the three alone is satisfied by prose.
+fn is_delegating_line(line: &str) -> bool {
+    let line = line.trim();
+    !line.starts_with('#') && line.ends_with(SENTINEL) && line.contains(HELPER)
 }
 
 fn is_executable(path: &Path) -> bool {
@@ -107,7 +119,11 @@ fn is_executable(path: &Path) -> bool {
 /// carries the helper and both lanes delegate.
 pub(super) fn missing_shims(hooks: &Path) -> Result<Option<String>> {
     let mut missing = Vec::new();
-    if !hooks.join(HELPER).exists() {
+    // Executable, not merely present: the delegating line tests `-x` before
+    // it hands off and blocks the commit when that fails, so a helper git
+    // cannot run is a repository where every commit fails — the opposite of
+    // armed, however present the file is.
+    if !is_executable(&hooks.join(HELPER)) {
         missing.push(HELPER.to_owned());
     }
     for lane in LANES {

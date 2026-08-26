@@ -114,16 +114,8 @@ an outside contributor.
 - `kendex guard install` arms the growth-guards shims in `.git/hooks` instead
   of setting `core.hooksPath`, so an armed repository gates commits with no
   kendex binary present.
-- A repository on the old arming crosses over with no ungated moment: the new
-  shims are written dormant, then the old install is taken back, which brings
-  them live. A failure before that leaves the old gate armed.
-- growth-guards' `install-git-hooks` takes `--into-default-hooks`, writing the
-  shims dormant under a `core.hooksPath` redirect instead of standing down —
-  for replacing another hook installation without a gap.
 - `kendex check` reports whether a project's commit hooks are armed, and
   names shims a removed package left behind, which block every commit.
-- The `pre-commit-check` hook runs the package's own chain where nothing is
-  armed, needing no binary the retired engine required at every commit.
 - New install channels: `curl -fsSL https://kendex.ai/install.sh | sh`,
   Homebrew (`kendex`, `kendex-cli`), and the AUR (`kendex-bin`, `kendex`,
   `kendex-git`).

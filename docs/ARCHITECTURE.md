@@ -403,16 +403,16 @@ lives in one capability table read by core and UI.
   the new key once (mirror, checkouts, fetch stamp); report routing accepts
   both repo spellings as kendex-owned.
 - **Commits walk through the guards whatever tool makes them.** The checks
-  are the growth-guards package's shell scripts, committed with the
-  repository under `.agents/skills` — size-ratchet, todo-ban, byte-ceiling,
-  suppression-ban, conflict-markers, commit-msg, and preflight's staged
-  lanes. git's own `.git/hooks` shims run them: no kendex binary is in the
-  path at commit time, and since git clones no hooks directory, a clone
-  carries the scripts and one `guard install` arms them. kendex implements
-  no check — `guard install`/`guard uninstall` run the package's installer,
-  `check` relays `--check`, `guard run <hook>` execs its script with git's
-  redirects passed through untouched — the one child not scrubbed, because
-  it is a hook body and `GIT_INDEX_FILE` names the snapshot being judged.
+  are the growth-guards package's shell scripts, committed under
+  `.agents/skills` — size-ratchet, todo-ban, byte-ceiling, suppression-ban,
+  conflict-markers, commit-msg, and preflight's staged lanes. git's own `.git/hooks` shims run them: no kendex binary is in the
+  path at commit time, and since git clones no hooks, a clone carries the
+  scripts and one `guard install` arms them. kendex implements
+  no check — `guard install`/`guard uninstall` run the installer and `guard
+  run <hook>` execs its script with git's redirects passed through, the one
+  child not scrubbed because it is a hook body naming the snapshot judged.
+  `check` executes nothing: it reads the hook files, where a lane is armed
+  only if a hook git runs carries the delegating line and the helper runs.
   So there is one implementation of every verdict and one policy dialect:
   the flat `GROWTH_GUARDS_*` / `SIZE_RATCHET_*` keys, baselines and
   excludes the scripts read from the commit. Every enabled check runs

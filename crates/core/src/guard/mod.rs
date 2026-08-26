@@ -130,20 +130,6 @@ fn relay(output: &std::process::Output) -> GuardReport {
     GuardReport { lines, code }
 }
 
-/// Arm the shims, with no moment where neither gate stands.
-///
-/// A repository carrying the retired `kendex-hooks` directory has to cross
-/// over, and the two arrangements are compatible in exactly one direction:
-/// the package writes into the repository's default hooks directory, which
-/// `core.hooksPath` makes git ignore. So the new shims can be written while
-/// the old gate is still live and gating — dormant, waiting — and the
-/// takeback that removes the redirect is the single step that brings them
-/// up as it takes the old one down.
-///
-/// The order follows: a sanity probe, then arm, then verify the files are
-/// there, then take the old install back, then ask the installer for its
-/// verdict. Every failure before the takeback leaves the retired gate
-/// exactly as it was, fully armed.
 /// Arm the shims: the package's own installer, in this repository.
 ///
 /// A `core.hooksPath` pointing somewhere else is the installer's to report
@@ -245,8 +231,23 @@ pub fn armed(dir: &Path, installed_here: bool) -> Result<Option<GuardReport>> {
         }));
     }
 
-    // Nothing armed. Worth saying only where somebody installed the
-    // package here and is expecting it to gate their commits.
+    // Nothing armed. A package whose directory is here but whose installer
+    // cannot be run is a broken install, not an absent one: nothing is
+    // blocked, but nothing can arm it either, and a clean verdict would
+    // send a reader off believing the gate is one command away.
+    if package.is_none()
+        && let Some(dir) = Installed::present(&repo)
+    {
+        return Ok(Some(GuardReport {
+            lines: vec![format!(
+                "the {SKILL} skill at {} carries no runnable {INSTALLER} — commit hooks cannot be armed until it is reinstalled (`kendex refresh`)",
+                dir.display()
+            )],
+            code: 2,
+        }));
+    }
+    // Worth saying only where somebody installed the package here and is
+    // expecting it to gate their commits.
     if package.is_none() || !installed_here {
         return Ok(None);
     }

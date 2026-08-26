@@ -239,11 +239,15 @@ fn arm_by_hand(root: &std::path::Path) {
     use std::os::unix::fs::PermissionsExt;
     let hooks = root.join(".git/hooks");
     std::fs::create_dir_all(&hooks).unwrap();
+    let helper = hooks.join("kendex-guards");
     std::fs::write(
-        hooks.join("kendex-guards"),
+        &helper,
         "#!/bin/sh\n# kendex growth-guards git hooks\nexit 0\n",
     )
     .unwrap();
+    // Executable, as the installer writes it: the delegating line tests -x
+    // before it hands off, so a helper git cannot run is not armed.
+    std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
     for lane in ["pre-commit", "commit-msg"] {
         let hook = hooks.join(lane);
         std::fs::write(
