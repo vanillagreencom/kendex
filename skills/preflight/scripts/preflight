@@ -841,7 +841,7 @@ while IFS= read -r f; do
   case "$f" in
     .agents/* | .claude/skills/* | .claude/agents/* | .claude/hooks/* | \
       .cursor/rules/* | .opencode/skills/* | .opencode/agents/* | .opencode/instructions/* | \
-      .codex/agents/* | .codex/hooks/* | .pi/agents/* | .pi/packages/*)
+      .codex/agents/* | .codex/hooks/* | .pi/agents/* | .pi/packages/* | .pi/kendex/*)
       vendored_mirror=1
       ;;
   esac
@@ -1039,7 +1039,7 @@ while IFS= read -r f; do
       esac
     fi
 
-    if [ "$own_rules" = 0 ] && printf '%s' "$content" | grep -Eq -- "$TODO_RE" && ! printf '%s' "$content" | grep -Eq -- "$ISSUE_RE"; then
+    if [ "$own_rules" = 0 ] && [ "$vendored_mirror" = 0 ] && printf '%s' "$content" | grep -Eq -- "$TODO_RE" && ! printf '%s' "$content" | grep -Eq -- "$ISSUE_RE"; then
       emit "$f" "$n" todo-links "TODO:/FIXME( marker without an issue reference (#123, ABC-123, or a URL)"
     fi
 

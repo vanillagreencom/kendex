@@ -10,6 +10,9 @@ an outside contributor.
 
 ### Fixed
 
+- Preflight no longer flags upstream `TODO` markers in vendored harness
+  mirrors, and recognizes `.pi/kendex/` as a managed mirror like the other
+  harness trees — repos committing their rendered harness files can pass.
 - Simultaneous app and CLI account calls share one token refresh, so they no
   longer invalidate the sign-in by rotating the same refresh token twice.
 - Registry refresh timeouts and rate limits no longer sign the machine out;
