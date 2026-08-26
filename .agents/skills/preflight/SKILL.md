@@ -72,7 +72,7 @@ non-ignored untracked file as a new file; `--staged` sees only the index.
 
 Commit-time (optional): run `preflight --staged` from the repository's own
 git pre-commit hook, or from an executable the guard chain's machine-local
-extension point (`KENDEX_GUARD_PRE_COMMIT_LOCAL`) names — the extension
+extension point (`GROWTH_GUARDS_PRE_COMMIT_LOCAL`) names — the extension
 takes no arguments and is never configured from a committed file, so it
 needs a wrapper that adds `--staged`.
 
