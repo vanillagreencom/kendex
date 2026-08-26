@@ -1,0 +1,135 @@
+//! Taking over what somebody already had: a skill sitting in a tool's own
+//! directory, and a hook they registered by hand.
+
+use crate::{World, link_text, read, said};
+
+const HAND_MADE: &str =
+    "---\nname: release\ndescription: cut a release\n---\nThe way we have always done it.\n";
+
+/// The natural path a person actually has their skill at. Adoption moves
+/// the real directory into the shared home and leaves a link behind, so
+/// the tool that had it keeps reading the same path.
+#[test]
+fn adopting_a_claude_skill_moves_it_into_the_shared_home() {
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    crate::write(&world.at(".claude/skills/release/SKILL.md"), HAND_MADE);
+    crate::write(&world.at(".claude/skills/release/notes.md"), "Notes.\n");
+
+    world.run(&["adopt", "skill", "release"]);
+
+    let shared = world.at(".agents/skills/release");
+    assert!(shared.is_dir() && !shared.is_symlink());
+    assert!(read(&shared.join("SKILL.md")).contains("always done it"));
+    assert!(read(&shared.join("notes.md")).contains("Notes."));
+
+    let natural = world.at(".claude/skills/release");
+    assert_eq!(link_text(&natural), "../../.agents/skills/release");
+    assert!(read(&natural.join("SKILL.md")).contains("always done it"));
+
+    // No hidden capture directory: the shared tree is the content itself.
+    assert!(!world.at(".kendex-local/skills/release").exists());
+    assert!(
+        world.manifest().contains("[skills.release]"),
+        "{}",
+        world.manifest()
+    );
+}
+
+/// Once adopted, refresh keeps the structure and the links without
+/// rewriting the content the person owns.
+#[test]
+fn refresh_maintains_an_adopted_skill_without_touching_its_content() {
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    crate::write(&world.at(".claude/skills/release/SKILL.md"), HAND_MADE);
+    world.run(&["adopt", "skill", "release"]);
+
+    let shared = world.at(".agents/skills/release/SKILL.md");
+    crate::write(&shared, &HAND_MADE.replace("always", "usually"));
+    world.run(&["refresh", "-y"]);
+    assert!(
+        read(&shared).contains("usually"),
+        "refresh overwrote the content"
+    );
+    assert!(world.at(".claude/skills/release").is_symlink());
+    assert!(world.try_run(&["verify"]).status.success());
+}
+
+/// An adopted skill is committed like an installed one, so the teammate who
+/// clones gets it too.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_adopted_skill_clones() {
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    crate::write(&world.at(".claude/skills/release/SKILL.md"), HAND_MADE);
+    world.run(&["adopt", "skill", "release"]);
+    world.commit_all("adopt release");
+
+    let clone = world.tmp.path().join("elsewhere/adopted");
+    std::fs::create_dir_all(clone.parent().unwrap()).unwrap();
+    crate::git(
+        &world.project,
+        &["clone", "--quiet", ".", &clone.display().to_string()],
+    );
+    assert!(read(&clone.join(".claude/skills/release/SKILL.md")).contains("always done it"));
+}
+
+/// A hook the person registered themselves: the script moves to the
+/// canonical home, kendex's registration replaces theirs, and the other
+/// entries in the same file are untouched.
+#[test]
+fn adopting_a_hook_rewrites_only_its_own_registration() {
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    crate::write(
+        &world.at(".claude/settings.json"),
+        r#"{
+  "env": {"KEEP": "1"},
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Bash", "hooks": [{"type": "command", "command": ".claude/hooks/guard.sh"}]},
+      {"matcher": "Edit", "hooks": [{"type": "command", "command": "./other-tool.sh"}]}
+    ]
+  }
+}
+"#,
+    );
+    crate::write(
+        &world.at(".claude/hooks/guard.sh"),
+        "#!/bin/sh\necho guard\n",
+    );
+
+    let listed = said(&world.try_run(&["verify"]));
+    assert!(
+        listed.contains("guard"),
+        "the hook was never offered:\n{listed}"
+    );
+
+    world.run(&["adopt", "hook", "PreToolUse:Bash:guard"]);
+
+    let manifest = world.manifest();
+    assert!(manifest.contains("[[custom-hooks]]"), "{manifest}");
+    assert!(manifest.contains("PreToolUse"), "{manifest}");
+
+    let settings = read(&world.at(".claude/settings.json"));
+    assert!(settings.contains("./other-tool.sh"), "{settings}");
+    assert!(settings.contains("KEEP"), "{settings}");
+    assert!(settings.contains("guard"), "{settings}");
+    assert!(world.at(".agents/hooks/guard.sh").is_file());
+}
+
+/// Registering a project says what it found rather than waiting to be
+/// asked, so nothing has to be discovered by browsing.
+#[test]
+fn registering_a_project_reports_what_it_could_manage() {
+    let world = World::new(&["claude"]);
+    crate::write(&world.at(".claude/skills/release/SKILL.md"), HAND_MADE);
+    let said = crate::run(
+        &world.home,
+        &world.project,
+        &["project", "add", &world.project.display().to_string()],
+    );
+    assert!(said.contains("release"), "{said}");
+}

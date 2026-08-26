@@ -1,8 +1,7 @@
 .github/workflows/review-gate-writer.yml	652
-crates/core/src/engine/adopt.rs	715
 crates/core/src/engine/desired_agent.rs	458
 crates/core/src/engine/detach.rs	603
-crates/core/src/engine/ops/add.rs	539
+crates/core/src/engine/ops/add.rs	410
 crates/core/src/engine/pi_hooks_move/migrated.rs	540
 crates/core/src/engine/pi_hooks_move/mod.rs	508
 crates/core/src/engine/pi_hooks_move/preflight.rs	765
@@ -137,5 +136,5 @@ skills/size-ratchet/scripts/size-ratchet	1026
 skills/worktree/scripts/worktree	4788
 skills/worktree/scripts/worktree-session-guard	1197
 skills/worktree/tests/worktree_session_guard.sh	1282
-ui/src/stores/marketplaces.ts	327
+ui/src/stores/marketplaces.ts	283
 ui/src/stores/settings.ts	529

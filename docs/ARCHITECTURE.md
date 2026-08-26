@@ -91,10 +91,10 @@ lives in one capability table read by core and UI.
    - **Adopt** keeps the files and rewrites the declaration around them —
      every tool the item is blocked for in one plan; tools holding
      different copies under one name refuse. Keeping declares the tools
-     that had files (the one holding a shared folder plus the ones linking
-     at it) and never narrows an existing declaration. Adopt works only at
-     a tool's own position, and only for kinds it can take — not a folder
-     where one file goes or vice versa.
+     that had files and never narrows a declaration. A plain project skill
+     moves to `.agents/skills/<name>` under source `in-place` — the tree is
+     the content of record; a hook's script moves to `.agents/hooks`, its
+     registration rewritten. Kinds and shapes it cannot take are refused.
    - **Take-over** (`--replace-unmanaged` scope-wide, or the per-item
      `replace_unmanaged_names` behind the app's `replace_unmanaged_item`)
      keeps the declaration and moves the files to the trash first, bound
@@ -772,12 +772,12 @@ lives in one capability table read by core and UI.
   deduplicated by content hash. Harnesses reading the same physical
   directory form a surface group carrying one variant, validated against
   every member's loader; a variant whose bytes match the shared tree
-  collapses onto it through a link, a divergent one gets its own tree,
-  and the move runs both ways, each planned as a removal plus a write.
-  No harness caps a SKILL.md body, so a skill renders to one tree every
-  harness links. A refusal is per surface and takes down only what the
-  refusing installation alone holds. Name rules and transports live in
-  `harness/caps.rs`, never as renderer literals. A surface is
+  collapses onto it through a relative — committable — link, a divergent
+  one gets its own tree, and the move runs both ways as a removal plus a
+  write. No harness caps a SKILL.md body, and every harness but Claude Code
+  reads a project's `.agents/skills`, so one tree serves them all; a copy
+  delivery writes each harness's own directory. A refusal is per surface.
+  Name rules live in `harness/caps.rs`, never as literals. A surface is
   one file per item, one directory per item, one structured file, or a
   directory of structured documents (Copilot loads every `*.json` in its
   hooks directory); where the entries inside are the items, a document
@@ -813,8 +813,8 @@ lives in one capability table read by core and UI.
   any other hook.
 - Non-interactive is a mode, not a fallback. Every CLI verb completes
   without a TTY: selection flags suppress prompts, and a verb needing input
-  on a non-TTY fails before its first write, naming the flag. The CLI has
-  no pickers.
+  on a non-TTY fails before its first write, naming the flag. `add` picks
+  harnesses and delivery at a TTY; its flags say the same without one.
 - **Two scores, never averaged; both advisory.** Safety answers "is this
   dangerous"; quality answers "is this well made". Neither holds anything
   back: severity is named in words, never color-only, and install, update
