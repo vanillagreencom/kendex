@@ -32,6 +32,16 @@ pub(crate) fn event(fleet: &str) -> Option<&'static str> {
     }
 }
 
+/// The fleet event a name read out of Copilot's own registry answers to —
+/// the inverse of [`event`], for reading a registration back. Copilot also
+/// accepts a PascalCase spelling of each name, so both are recognised.
+pub(crate) fn fleet_event(native: &str) -> Option<&'static str> {
+    crate::hook::EVENTS
+        .iter()
+        .map(|held| held.name)
+        .find(|fleet| event(fleet).is_some_and(|own| own.eq_ignore_ascii_case(native)))
+}
+
 /// The same hook said in Copilot's words: its own event name and its matcher
 /// in its own tool names. `timeoutSec` is the seconds the source already
 /// declares, so the timeout travels as written. `None` when Copilot has no

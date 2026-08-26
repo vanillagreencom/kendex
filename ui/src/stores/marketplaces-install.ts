@@ -16,16 +16,20 @@ import {
 } from "./marketplaces-shared";
 
 /** One install: what to put where, and — when the picker was used — which
- * tools it lands on and how the files get there. An absent `delivery`
- * leaves the scope's own install defaults to decide, which the engine
- * brings up to date against this machine as it plans. */
+ * tools it lands on and how the files get there. Each half of `delivery` is
+ * sent only when it was actually chosen; a `null` leaves the scope's own
+ * install defaults to decide, which the engine brings up to date against
+ * this machine as it plans. */
 export interface InstallRequest {
   scope: Scope;
   source: string;
   items: InstallItem[];
   bundle?: string | null;
   destination?: Scope | null;
-  delivery?: { harnesses: HarnessId[] | null; method: "symlink" | "copy" };
+  delivery?: {
+    harnesses: HarnessId[] | null;
+    method: "symlink" | "copy" | null;
+  };
 }
 
 /** What this action writes back into the store. */

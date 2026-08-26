@@ -42,7 +42,16 @@ pub(super) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
             }
         }
         ItemKind::Skill => {
-            if let Some(dir) = native_dir(env, scope, entry.harness, ItemKind::Skill) {
+            // The directory this entry's method actually wrote. A tool that
+            // reads the shared tree as well as one of its own has two, and
+            // reading the wrong one leaves a copy install's real tree
+            // unremovable and protects a path nothing wrote.
+            let copies = entry.method == crate::manifest::Method::Copy;
+            let dir = match copies {
+                true => super::desired::own_dir(env, scope, entry.harness, ItemKind::Skill),
+                false => native_dir(env, scope, entry.harness, ItemKind::Skill),
+            };
+            if let Some(dir) = dir {
                 files.push(dir.join(crate::harness::rendered_name(entry.harness, &entry.name)));
             }
             // Only a shared install has a shared tree. A copy install put
@@ -50,7 +59,7 @@ pub(super) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
             // tree, so claiming it here would call somebody else's content
             // ours — and what protects unmanaged bytes is exactly not being
             // called ours.
-            if entry.method != crate::manifest::Method::Copy {
+            if !copies {
                 let canonical = super::desired::skill_canonical(env, scope, &entry.name);
                 if !files.contains(&canonical) {
                     files.push(canonical);

@@ -16,7 +16,6 @@ use crate::model::Scope;
 /// The line kendex owns, anchored to the project root so a same-named file
 /// deeper in the tree is somebody else's business.
 const LOCK_LINE: &str = "/.kendex-lock.json";
-const LEGACY_LOCK_LINE: &str = "/.vstack-lock.json";
 /// What the block says about itself, so a reader who never ran kendex knows
 /// which tool put the line there and why the trees beside it are not in it.
 const HEADING: &str = "# kendex: this machine's install ledger — the .agents trees and the";
@@ -88,11 +87,14 @@ fn with_lock_ignored(text: &str) -> Option<String> {
     Some(out)
 }
 
+/// Whether this rule already keeps the lock out. Only the current spelling
+/// counts: a scope carrying the pre-rename `/.vstack-lock.json` ignores a
+/// file that is no longer the ledger, and reading it as coverage would
+/// commit the one this build writes. The rename migration rewrites that
+/// line on its own pass; this one only ever adds what is missing.
 fn covers_lock(line: &str) -> bool {
     let line = line.trim();
-    [LOCK_LINE, LEGACY_LOCK_LINE]
-        .iter()
-        .any(|owned| line == *owned || line == owned.trim_start_matches('/'))
+    line == LOCK_LINE || line == LOCK_LINE.trim_start_matches('/')
 }
 
 /// Which of the committed trees this file's rules ignore. Plain path rules
@@ -139,7 +141,16 @@ mod tests {
     #[test]
     fn a_hand_written_line_counts_as_covered() {
         assert_eq!(with_lock_ignored(".kendex-lock.json\n"), None);
-        assert_eq!(with_lock_ignored("  /.vstack-lock.json  \n"), None);
+        assert_eq!(with_lock_ignored("  /.kendex-lock.json  \n"), None);
+    }
+
+    /// The pre-rename line ignores a file that is no longer the ledger, so
+    /// it is not coverage — the current one is still added under it.
+    #[test]
+    fn the_old_spelling_is_not_coverage() {
+        let out = with_lock_ignored("/.vstack-lock.json\n").expect("added");
+        assert!(out.contains(LOCK_LINE), "{out}");
+        assert!(out.contains("/.vstack-lock.json"), "{out}");
     }
 
     #[test]

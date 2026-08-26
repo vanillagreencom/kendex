@@ -8,6 +8,7 @@ import { DestinationSelect } from "@/components/marketplaces/destination-select"
 import {
   type Choice,
   HarnessSelect,
+  isInstallable,
 } from "@/components/marketplaces/harness-select";
 import { RepoAction } from "@/components/marketplaces/repo-action";
 import { useCatalog } from "@/components/marketplaces/use-catalog";
@@ -50,7 +51,7 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
   const [destination, setDestination] = useState<Scope | null>(null);
   const [choice, setChoice] = useState<Choice>({
     harnesses: null,
-    method: "symlink",
+    method: null,
   });
 
   useEffect(() => {
@@ -180,7 +181,9 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
                     />
                     <Button
                       variant="outline"
-                      disabled={busy || selected.size === 0}
+                      disabled={
+                        busy || selected.size === 0 || !isInstallable(choice)
+                      }
                       onClick={installSelected}
                     >
                       Install {selected.size} selected

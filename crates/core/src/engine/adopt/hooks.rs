@@ -12,27 +12,40 @@
 //! Only the entry being adopted is ever removed, and only when its command
 //! changed — a script that stays where it is keeps its entry, which the
 //! next apply simply claims.
+//!
+//! Where a registration is read from is the harness's own declared surfaces,
+//! the same ones the scan reads: a Copilot hook lives in whichever
+//! `.github/hooks/*.json` its author put it in and a Claude one may be in
+//! `settings.local.json`, so adoption looks where the row it is answering
+//! came from rather than where kendex would have written.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::apply::{Op, Plan, PlannedOp, Pre};
 use crate::configedit::ConfigEdit;
+use crate::engine::targets::HookFormat;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-use crate::manifest::{self, CustomHook, HookAgents};
+use crate::harness::{Reader, Surface};
+use crate::manifest::{self, CustomHook};
 use crate::model::{HarnessId, ItemKind, Scope};
 use crate::scan::hooks::{ANY_MATCHER, Registration};
+
+mod declare;
+use declare::declaration;
 
 /// Where an adopted hook's script lives: beside the shared skills tree, in
 /// the same committed `.agents` home, so a clone carries the script the
 /// registrations point at.
 const HOME: &str = ".agents/hooks";
 
-/// One tool's copy of the registration being adopted.
+/// One tool's copy of the registration being adopted, and the file it was
+/// actually read from.
 struct Found {
     harness: HarnessId,
     registry: PathBuf,
+    format: HookFormat,
     registration: Registration,
 }
 
@@ -63,34 +76,16 @@ pub(super) fn adopt_hook(
             path: crate::names::shown(&command),
         });
     }
+    let declared = declaration(name, &found)?;
 
     let mut ops = Vec::new();
     let moved = script_move(scope, &command, &mut ops)?;
-    let command = moved.clone().unwrap_or_else(|| command.clone());
     if moved.is_some() {
-        ops.extend(drop_old_entries(&found));
+        ops.extend(drop_old_entries(&found)?);
     }
-
-    let event = found[0].registration.event.clone();
-    let matcher = match found[0].registration.matcher.as_str() {
-        ANY_MATCHER => None,
-        held => Some(held.to_owned()),
-    };
-    let mut wanted: Vec<HarnessId> = found.iter().map(|f| f.harness).collect();
-    wanted.dedup();
     manifest.custom_hooks.push(CustomHook {
-        // Left to the deterministic derivation the manifest already uses
-        // for a hand-written entry, so a plan over this file and the
-        // editor's write-back agree on what it is called.
-        name: None,
-        event,
-        matcher,
-        command,
-        description: Some(format!("adopted from {}", found[0].harness.display_name())),
-        timeout: None,
-        harnesses: Some(wanted.iter().map(|h| h.name().to_owned()).collect()),
-        enabled: true,
-        agents: HookAgents::One("all".to_owned()),
+        command: moved.unwrap_or(command),
+        ..declared
     });
     let manifest_path = manifest::manifest_path(env, scope);
     ops.push(PlannedOp {
@@ -107,26 +102,27 @@ pub(super) fn adopt_hook(
     })
 }
 
-/// Every named tool's copy of the registration this name identifies. A tool
-/// with nothing under that name is named in the refusal rather than
-/// silently dropped: the offer said it had one.
+/// Every named tool's copy of the registration this name identifies, read
+/// from the files that tool actually keeps hooks in. A tool with nothing
+/// under that name is skipped; none of them having one is the refusal.
 fn find(env: &Env, scope: &Scope, name: &str, harnesses: &[HarnessId]) -> Result<Vec<Found>> {
     let mut found = Vec::new();
     for &harness in harnesses {
-        let Some(registry) = registry_of(env, scope, harness) else {
-            continue;
-        };
-        let Some(registration) = read(&registry, harness)
-            .into_iter()
-            .find(|entry| entry.name() == name)
-        else {
-            continue;
-        };
-        found.push(Found {
-            harness,
-            registry,
-            registration,
-        });
+        for (registry, format) in registries(env, scope, harness) {
+            let Some(registration) = read(&registry, format)
+                .into_iter()
+                .find(|entry| entry.name() == name)
+            else {
+                continue;
+            };
+            found.push(Found {
+                harness,
+                registry,
+                format,
+                registration,
+            });
+            break;
+        }
     }
     if found.is_empty() {
         return Err(CoreError::ItemNotInSource {
@@ -137,28 +133,64 @@ fn find(env: &Env, scope: &Scope, name: &str, harnesses: &[HarnessId]) -> Result
     Ok(found)
 }
 
-/// Every registration in one tool's registry, read the way that tool
-/// stores them.
-fn read(registry: &Path, harness: HarnessId) -> Vec<Registration> {
-    match harness {
-        HarnessId::Copilot => crate::scan::copilot::registrations_text(
-            &crate::fs::read_if_exists(registry)
-                .ok()
-                .flatten()
-                .unwrap_or_default(),
-        )
-        .unwrap_or_default(),
-        _ => crate::scan::hooks::read_registrations(registry).unwrap_or_default(),
+/// Every registration in one file, read the way that file is written.
+fn read(registry: &Path, format: HookFormat) -> Vec<Registration> {
+    match format {
+        HookFormat::Copilot => crate::fs::read_if_exists(registry)
+            .ok()
+            .flatten()
+            .and_then(|text| crate::scan::copilot::registrations_text(&text).ok())
+            .unwrap_or_default(),
+        HookFormat::Nested => crate::scan::hooks::read_registrations(registry).unwrap_or_default(),
     }
 }
 
-/// The file this tool keeps its hook entries in.
-fn registry_of(env: &Env, scope: &Scope, harness: HarnessId) -> Option<PathBuf> {
-    match crate::engine::targets::hook_target(env, scope, harness, "adopted")? {
-        crate::engine::targets::HookTarget::Script { registry, .. } => Some(registry),
-        // A tool whose hooks are prose has no registry entry to take over:
-        // the instruction file it renders is kendex's own, written from the
-        // declaration this adoption is about to make.
+/// The files this tool keeps hook entries in at this scope, taken from the
+/// adapter's own surface declarations — the same list the scan reads, so a
+/// row a scan produced can always be found again here. A structured
+/// directory contributes every document in it; a surface holding no entries
+/// (opencode's instruction files) contributes none.
+fn registries(env: &Env, scope: &Scope, harness: HarnessId) -> Vec<(PathBuf, HookFormat)> {
+    let adapter = crate::harness::adapter(harness);
+    let surfaces = match scope {
+        Scope::Global => {
+            adapter.global_surfaces(ItemKind::Hook, &adapter.default_global_root(env), env)
+        }
+        Scope::Project { root } => adapter.project_surfaces(ItemKind::Hook, root, env),
+    };
+    let mut found = Vec::new();
+    for surface in surfaces {
+        match surface {
+            Surface::Structured { path, reader } => {
+                found.extend(format_of(&reader).map(|format| (path, format)));
+            }
+            Surface::StructuredDir { dir, ext, reader } => {
+                let Some(format) = format_of(&reader) else {
+                    continue;
+                };
+                let Ok(entries) = std::fs::read_dir(&dir) else {
+                    continue;
+                };
+                let mut documents: Vec<PathBuf> = entries
+                    .flatten()
+                    .map(|entry| entry.path())
+                    .filter(|path| path.extension().is_some_and(|held| held == ext))
+                    .collect();
+                documents.sort();
+                found.extend(documents.into_iter().map(|path| (path, format)));
+            }
+            Surface::FileDir { .. } | Surface::SubdirPerItem { .. } => {}
+        }
+    }
+    found
+}
+
+/// Which registry shape a reader speaks, or nothing for a reader that holds
+/// no hook entries at all.
+fn format_of(reader: &Reader) -> Option<HookFormat> {
+    match reader {
+        Reader::HooksObject => Some(HookFormat::Nested),
+        Reader::CopilotHooks => Some(HookFormat::Copilot),
         _ => None,
     }
 }
@@ -200,11 +232,12 @@ fn script_move(scope: &Scope, command: &str, ops: &mut Vec<PlannedOp>) -> Result
         });
     }
     ops.push(PlannedOp {
-        description: format!("move {} into {HOME}", token),
+        description: format!("move {token} into {HOME}"),
+        // The entries as they sit: `hash_tree` follows links, so a script
+        // swapped for a link to the same bytes between plan and apply would
+        // move the wrong object.
         op: Op::Rename {
-            from_pre: Pre::HashIs {
-                hash: crate::hash::hash_tree(&path)?,
-            },
+            from_pre: Pre::tree_as_is(&path)?,
             to_pre: Pre::Absent,
             from: path,
             to: home,
@@ -217,40 +250,62 @@ fn script_move(scope: &Scope, command: &str, ops: &mut Vec<PlannedOp>) -> Result
 }
 
 /// The token in a command that names a file inside this project, with the
-/// path it resolves to. Only a real file counts: a word that merely looks
-/// like a path is somebody's argument, and moving it would break the hook
-/// this is meant to preserve.
+/// path it resolves to. Only a plain relative path to a real file counts: a
+/// word that merely looks like a path is somebody's argument, and an
+/// absolute or `..`-shaped one names a file the move would drag in from
+/// outside the project — the same rule every other path adoption derives.
 fn script_token<'a>(root: &Path, command: &'a str) -> Option<(&'a str, PathBuf)> {
     command.split_whitespace().find_map(|token| {
-        let bare = token.trim_matches('"').trim_matches('\'');
-        if bare != token || !(bare.contains('/') || bare.contains('.')) {
-            // Quoted or bare, the same rule — but a quoted token cannot be
-            // swapped by text without leaving its quotes behind, so it is
-            // left alone rather than half-rewritten.
+        // Quoted or bare, the same rule — but a quoted token cannot be
+        // swapped by text without leaving its quotes behind, so it is left
+        // alone rather than half-rewritten.
+        if token.trim_matches(['"', '\'']) != token {
             return None;
         }
-        let path = root.join(bare.trim_start_matches("./"));
-        (path.is_file() && path.starts_with(root)).then_some((token, path))
+        let bare = token.trim_start_matches("./");
+        if !(bare.contains('/') || bare.contains('.')) {
+            return None;
+        }
+        // Refused on the text, before any join. `..` and an absolute prefix
+        // both name a file outside the project, and a `..` that climbs out
+        // and back in resolves to a path inside the root — so a check made
+        // after resolving is a check that passes on the way in.
+        if !inside(bare) {
+            return None;
+        }
+        let path = root.join(bare);
+        path.is_file().then_some((token, path))
     })
+}
+
+/// Whether this text is a plain relative path — every component an ordinary
+/// name, no root, no prefix, no `..`. Only such a path stays under the root
+/// it is joined onto.
+fn inside(text: &str) -> bool {
+    let path = Path::new(text);
+    !path.is_absolute()
+        && path
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
 }
 
 /// Drop the entry each tool held under the old command. Grouped per file so
 /// two tools sharing a registry edit it once — two edits to one file in one
 /// plan is what the collector exists to prevent.
-fn drop_old_entries(found: &[Found]) -> Vec<PlannedOp> {
+fn drop_old_entries(found: &[Found]) -> Result<Vec<PlannedOp>> {
     let mut per_file: BTreeMap<PathBuf, Vec<ConfigEdit>> = BTreeMap::new();
     for entry in found {
         let matcher = match entry.registration.matcher.as_str() {
             ANY_MATCHER => None,
             held => Some(held.to_owned()),
         };
-        let edit = match entry.harness {
-            HarnessId::Copilot => ConfigEdit::RemoveCopilotHook {
+        let edit = match entry.format {
+            HookFormat::Copilot => ConfigEdit::RemoveCopilotHook {
                 event: Some(entry.registration.event.clone()),
                 matcher,
                 command: entry.registration.command.clone(),
             },
-            _ => ConfigEdit::RemoveHook {
+            HookFormat::Nested => ConfigEdit::RemoveHook {
                 event: Some(entry.registration.event.clone()),
                 matcher,
                 command: entry.registration.command.clone(),
@@ -263,11 +318,11 @@ fn drop_old_entries(found: &[Found]) -> Vec<PlannedOp> {
     }
     per_file
         .into_iter()
-        .filter_map(|(path, edits)| {
-            Some(PlannedOp {
+        .map(|(path, edits)| {
+            Ok(PlannedOp {
                 description: format!("drop the old registration in {}", path.display()),
                 op: Op::EditFile {
-                    pre: Pre::observed(&path).ok()?,
+                    pre: Pre::observed(&path)?,
                     path,
                     edits,
                 },

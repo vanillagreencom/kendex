@@ -170,7 +170,15 @@ pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Res
     if name == INPLACE_SOURCE_NAME {
         // Adoption creates this tree; a scope that has none yet reads as
         // missing rather than as an empty catalog everything resolves from.
-        let root = inplace_source_root(scope).unwrap_or_default();
+        // A scope with no shared tree at all — global — has no root to
+        // report, and an empty path would resolve against the working
+        // directory, so it reports the one it would have had.
+        let Some(root) = inplace_source_root(scope) else {
+            return Ok(SourceState::Missing {
+                name: name.to_owned(),
+                path: PathBuf::from(crate::manifest::INPLACE_SOURCE_DIR),
+            });
+        };
         if !root.is_dir() {
             return Ok(SourceState::Missing {
                 name: name.to_owned(),

@@ -120,6 +120,92 @@ fn adopting_a_hook_rewrites_only_its_own_registration() {
     assert!(world.at(".agents/hooks/guard.sh").is_file());
 }
 
+/// A command that runs something from outside the project is left exactly
+/// as it was: moving it would drag a file the project does not own into the
+/// tree the project commits.
+#[test]
+fn a_hook_running_a_script_outside_the_project_keeps_its_command() {
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    crate::write(&world.home.join("outside.sh"), "#!/bin/sh\nexit 0\n");
+    crate::write(
+        &world.at(".claude/settings.json"),
+        r#"{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "../../outside.sh"}]}]}}"#,
+    );
+
+    world.run(&["adopt", "hook", "PreToolUse:Bash:outside"]);
+
+    let manifest = world.manifest();
+    assert!(manifest.contains("../../outside.sh"), "{manifest}");
+    assert!(!world.at(".agents/hooks").exists());
+    assert!(world.home.join("outside.sh").is_file());
+}
+
+/// An entry doing something a declaration has no field for would come back
+/// as a plain command hook, running differently with nothing said.
+#[test]
+fn a_hook_a_declaration_cannot_express_is_refused() {
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    crate::write(
+        &world.at(".claude/settings.json"),
+        r#"{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ".claude/hooks/guard.sh", "env": {"TOKEN": "x"}}]}]}}"#,
+    );
+    crate::write(&world.at(".claude/hooks/guard.sh"), "#!/bin/sh\nexit 0\n");
+
+    let refused = world.try_run(&["adopt", "hook", "PreToolUse:Bash:guard"]);
+    assert!(!refused.status.success());
+    let text = said(&refused);
+    assert!(text.contains("env"), "{text}");
+    assert!(world.at(".claude/hooks/guard.sh").is_file());
+}
+
+/// A timeout is part of what the hook does, so it travels with it.
+#[test]
+fn an_adopted_hook_keeps_its_timeout() {
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    crate::write(
+        &world.at(".claude/settings.json"),
+        r#"{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ".claude/hooks/guard.sh", "timeout": 45}]}]}}"#,
+    );
+    crate::write(&world.at(".claude/hooks/guard.sh"), "#!/bin/sh\nexit 0\n");
+
+    world.run(&["adopt", "hook", "PreToolUse:Bash:guard"]);
+    assert!(
+        world.manifest().contains("timeout = 45"),
+        "{}",
+        world.manifest()
+    );
+}
+
+/// Copilot keeps its hooks in whichever document under `.github/hooks` their
+/// author put them in, under its own event spelling. Adoption reads the file
+/// the row came from, and the declaration says the event kendex declares
+/// hooks against.
+#[test]
+fn a_copilot_hook_is_found_in_its_own_document_and_named_in_fleet_words() {
+    let world = World::new(&["copilot"]);
+    world.declare_catalog();
+    crate::write(
+        &world.at(".github/hooks/mine.json"),
+        r#"{"version": 1, "hooks": {"preToolUse": [{"type": "command", "command": ".github/hooks/guard.sh", "matcher": "shell"}]}}"#,
+    );
+    crate::write(&world.at(".github/hooks/guard.sh"), "#!/bin/sh\nexit 0\n");
+
+    world.run(&[
+        "adopt",
+        "hook",
+        "preToolUse:shell:guard",
+        "--harness",
+        "copilot",
+    ]);
+
+    let manifest = world.manifest();
+    assert!(manifest.contains("event = \"PreToolUse\""), "{manifest}");
+    assert!(world.at(".agents/hooks/guard.sh").is_file());
+}
+
 /// Registering a project says what it found rather than waiting to be
 /// asked, so nothing has to be discovered by browsing.
 #[test]
@@ -132,4 +218,11 @@ fn registering_a_project_reports_what_it_could_manage() {
         &["project", "add", &world.project.display().to_string()],
     );
     assert!(said.contains("release"), "{said}");
+    // Runnable as printed: the tool the row is about, and the project it is
+    // in — `adopt` acts on the current project and defaults to Claude Code.
+    assert!(said.contains("--harness claude"), "{said}");
+    assert!(
+        said.contains(&world.project.display().to_string()),
+        "{said}"
+    );
 }

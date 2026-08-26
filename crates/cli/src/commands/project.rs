@@ -100,13 +100,18 @@ fn offer_to_manage(env: &Env, root: &std::path::Path) {
         if rows.len() == 1 { "is" } else { "are" }
     ));
     for row in &rows {
+        // Runnable as printed, from wherever this was typed: `adopt` acts on
+        // the current project and defaults to Claude Code, and a row for
+        // another tool followed as-is would refuse or take the wrong copy.
         out(&format!(
-            "  - {} {} [{}]  kendex adopt {} {}",
+            "  - {} {} [{}]  (cd {} && kendex adopt {} {} --harness {})",
             row.kind.name(),
             kendex_core::names::shown(&row.name),
             row.harness.display_name(),
+            kendex_core::names::shown(&root.display().to_string()),
             row.kind.name(),
             kendex_core::names::shown(&row.name),
+            row.harness.name(),
         ));
     }
 }

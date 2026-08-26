@@ -121,15 +121,14 @@ pub(super) fn relocate_ops(
                 },
             });
         }
-        // A move, not a copy: the bytes the plan showed are the bytes that
-        // land, and a directory that changed under the plan fails the
-        // precondition instead of being moved unread.
+        // A move, not a copy: the entries the plan showed are the entries
+        // that land, bound as they sit — `hash_tree` follows links, so a
+        // directory swapped for a link to the same bytes between plan and
+        // apply would move the wrong object.
         ops.push(PlannedOp {
             description: format!("move {name} into the shared .agents tree"),
             op: Op::Rename {
-                from_pre: Pre::HashIs {
-                    hash: crate::hash::hash_tree(from)?,
-                },
+                from_pre: Pre::tree_as_is(from)?,
                 to_pre: Pre::Absent,
                 from: from.clone(),
                 to: home.to_path_buf(),
@@ -140,11 +139,14 @@ pub(super) fn relocate_ops(
         if Some(path) == from || path == home {
             continue;
         }
+        // Bound to what `look` proved equal to the copy being kept. `Any`
+        // would trash whatever arrived at that position after the plan was
+        // read — including content nobody compared with anything.
         ops.push(PlannedOp {
             description: format!("trash the second copy at {}", path.display()),
             op: Op::Trash {
                 path: path.clone(),
-                pre: Pre::Any,
+                pre: Pre::tree_as_is(path)?,
             },
         });
     }

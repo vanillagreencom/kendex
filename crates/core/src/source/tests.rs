@@ -353,3 +353,30 @@ fn a_pi_extension_is_found_literal_or_by_registered_name() {
         None
     );
 }
+
+/// Global scope has no shared `.agents` tree for an item to be its own
+/// source in. The reserved name still resolves — as missing, naming the
+/// directory it would have been — never as an empty root resolving against
+/// whatever the process's working directory happens to be.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_in_place_source_is_missing_at_global_scope() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let state = resolve(
+        &env,
+        &Scope::Global,
+        crate::manifest::INPLACE_SOURCE_NAME,
+        &Manifest::default(),
+    )
+    .unwrap();
+    match state {
+        SourceState::Missing { path, .. } => {
+            assert_eq!(
+                path,
+                std::path::Path::new(crate::manifest::INPLACE_SOURCE_DIR)
+            );
+        }
+        other => panic!("expected the in-place source to read as missing: {other:?}"),
+    }
+}

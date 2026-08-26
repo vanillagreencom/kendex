@@ -79,10 +79,20 @@ pub(super) fn shared_target(
         return Err(refuse());
     }
     // Capturing into the folder being captured would recurse — unless the
-    // two are the same place, which is a skill already sitting in the
-    // shared tree with tools linking at it. That is the finished shape, not
-    // a refusal.
-    if local_item != target && local_item.starts_with(&target) {
+    // two are exactly the same place, which is a skill already sitting where
+    // adoption would put it, with tools linking at it. That is the finished
+    // shape, not a refusal.
+    //
+    // Anywhere *else* inside the destination's own tree stays refused, the
+    // in-place home included: a link at `foo` pointing into
+    // `.agents/skills/bar` would have adoption move `bar` under the name
+    // `foo`, taking a second skill's content with it.
+    let home = local_item.canonicalize();
+    let is_home = home.as_deref().unwrap_or(local_item) == target;
+    if !is_home
+        && (local_item.starts_with(&target)
+            || destination_tree(local_item).is_some_and(|tree| target.starts_with(tree)))
+    {
         return Err(refuse());
     }
 
@@ -114,6 +124,14 @@ pub(super) fn shared_target(
         links,
         harnesses,
     })
+}
+
+/// The tree the destination itself lives in — `.agents/skills` for a skill
+/// adopted in place, the local source's `skills` directory otherwise. A link
+/// pointing anywhere inside it names content that already has a home of its
+/// own, which is never this item's to move.
+fn destination_tree(local_item: &Path) -> Option<&Path> {
+    local_item.parent()
 }
 
 /// What adoption would take over at this position, or nothing where the

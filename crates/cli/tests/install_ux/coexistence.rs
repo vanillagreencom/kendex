@@ -74,6 +74,21 @@ fn a_foreign_hook_registration_is_left_alone() {
     assert_eq!(before.contains("kendex"), after.contains("kendex"));
 }
 
+/// A copy install put its tree in each tool's own directory, so that is
+/// what removal has to take back — reading the shared tree's path instead
+/// would leave the copy behind with nothing recording it.
+#[test]
+fn removing_a_copy_install_takes_back_the_per_tool_trees() {
+    let world = World::new(&["claude", "codex"]);
+    world.declare_catalog();
+    world.run(&["add", "cat", "--skill", "deploy", "--method", "copy", "-y"]);
+    assert!(world.at(".claude/skills/deploy/SKILL.md").is_file());
+
+    world.run(&["remove", "deploy"]);
+    assert!(!world.at(".claude/skills/deploy").exists());
+    assert!(!world.at(".agents/skills/deploy").exists());
+}
+
 /// Removing an item takes back exactly what the install wrote.
 #[test]
 fn removing_an_item_leaves_the_project_as_it_was() {

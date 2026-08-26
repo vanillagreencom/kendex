@@ -65,6 +65,33 @@ fn an_explicit_harness_list_is_the_install_and_is_persisted() {
     assert!(world.at(".agents/skills/deploy").is_dir());
 }
 
+/// An explicit choice answers the question detection would have asked, so
+/// it must not widen the scope's own defaults under it — every other item
+/// there would redeploy to a tool nobody named on this run.
+#[test]
+fn an_explicit_choice_does_not_widen_the_scope_defaults() {
+    let world = World::new(&["claude", "codex", "gemini"]);
+    world.declare_catalog();
+    world.run(&[
+        "add",
+        "cat",
+        "--skill",
+        "deploy",
+        "--harness",
+        "claude",
+        "-y",
+    ]);
+
+    let manifest = world.manifest();
+    let defaults = manifest
+        .lines()
+        .find(|line| line.starts_with("harnesses = "))
+        .unwrap_or_default();
+    assert!(!defaults.contains("codex"), "{manifest}");
+    assert!(!defaults.contains("gemini"), "{manifest}");
+    assert!(!world.at(".codex").exists());
+}
+
 /// Every supported tool at once, whether or not it is on this machine.
 #[test]
 fn all_harnesses_targets_every_tool_that_installs_here() {
@@ -140,6 +167,20 @@ fn the_install_ledger_is_the_only_thing_kendex_ignores() {
     // no second copy of it.
     world.run(&["refresh", "-y"]);
     assert_eq!(read(&world.at(".gitignore")), ignore);
+}
+
+/// The pre-rename line ignores a file that is no longer the ledger, so it
+/// is not coverage — the current one is written under it.
+#[test]
+fn the_old_lock_line_does_not_count_as_ignoring_the_new_one() {
+    let world = World::new(&["claude"]);
+    crate::write(&world.at(".gitignore"), "/.vstack-lock.json\n");
+    world.declare_catalog();
+    world.run(&["add", "cat", "--skill", "deploy", "-y"]);
+
+    let ignore = read(&world.at(".gitignore"));
+    assert!(ignore.contains("/.vstack-lock.json"), "{ignore}");
+    assert!(ignore.contains("/.kendex-lock.json"), "{ignore}");
 }
 
 /// An install that cannot be shared is worth saying out loud rather than

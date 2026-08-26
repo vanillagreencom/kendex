@@ -32,6 +32,18 @@ pub(crate) fn event(fleet: &str) -> Option<&'static str> {
     }
 }
 
+/// The fleet event a name read out of Gemini's own registry answers to — the
+/// inverse of [`event`], for reading a registration back. Where two fleet
+/// names map onto one of Gemini's, the first is the one that comes back;
+/// they mean the same event, and a hook declared under either registers the
+/// same entry.
+pub(crate) fn fleet_event(native: &str) -> Option<&'static str> {
+    crate::hook::EVENTS
+        .iter()
+        .map(|held| held.name)
+        .find(|fleet| event(fleet) == Some(native))
+}
+
 /// The same hook said in Gemini's words: its own event name, its matcher in
 /// its own tool names, and the timeout in the milliseconds its loader reads
 /// rather than the seconds the source declares (hooks reference — `timeout`

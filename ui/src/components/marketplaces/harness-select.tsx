@@ -17,10 +17,20 @@ import { harnessName } from "@/lib/labels";
 
 export type Delivery = "symlink" | "copy";
 
-/** What the picker settled: the tools to install to, and how the files get
- * there. `null` tools means "leave it to the scope's own defaults" — the
- * state before anyone has touched the picker. */
-export type Choice = { harnesses: HarnessId[] | null; method: Delivery };
+/** What the picker settled. Both halves start `null`, meaning "leave it to
+ * the scope's own defaults" — the state before anyone touched the picker,
+ * and the only state in which the install sends neither. */
+export type Choice = {
+  harnesses: HarnessId[] | null;
+  method: Delivery | null;
+};
+
+/** Whether this choice can be installed. An empty tool list is a choice to
+ * install nowhere, which would report success over a plan that wrote
+ * nothing; the untouched picker is not that — it is no choice at all. */
+export function isInstallable(choice: Choice): boolean {
+  return choice.harnesses === null || choice.harnesses.length > 0;
+}
 
 /** Where an install lands: the shared `.agents` home is always part of it,
  * the tools on this machine come pre-checked, every tool kendex can install
@@ -61,7 +71,7 @@ export function HarnessSelect({
     });
   const label =
     chosen.length === 0
-      ? "No tools"
+      ? "No tools — pick at least one"
       : chosen.length === targets.length
         ? "All tools"
         : chosen.length === 1
@@ -133,7 +143,7 @@ export function HarnessSelect({
           <div className="flex flex-col gap-2">
             <Label className="flex items-center gap-2 font-normal">
               <Checkbox
-                checked={value.method === "symlink"}
+                checked={(value.method ?? "symlink") === "symlink"}
                 onCheckedChange={() =>
                   onChange({ ...value, method: "symlink" })
                 }

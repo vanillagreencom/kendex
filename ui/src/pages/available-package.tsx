@@ -7,6 +7,7 @@ import { DestinationSelect } from "@/components/marketplaces/destination-select"
 import {
   type Choice,
   HarnessSelect,
+  isInstallable,
 } from "@/components/marketplaces/harness-select";
 import { RepoAction } from "@/components/marketplaces/repo-action";
 import { useCatalog } from "@/components/marketplaces/use-catalog";
@@ -49,7 +50,7 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
   const [destination, setDestination] = useState<Scope | null>(null);
   const [choice, setChoice] = useState<Choice>({
     harnesses: null,
-    method: "symlink",
+    method: null,
   });
 
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -148,7 +149,10 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
                 value={choice}
                 onChange={setChoice}
               />
-              <Button disabled={busy || !view} onClick={doInstall}>
+              <Button
+                disabled={busy || !view || !isInstallable(choice)}
+                onClick={doInstall}
+              >
                 {busy ? "Installing…" : "Install"}
               </Button>
             </>
