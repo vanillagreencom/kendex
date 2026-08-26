@@ -236,6 +236,48 @@ fn only_a_hook_git_would_run_counts_as_armed() {
     );
 }
 
+/// The interpreter decides whether a hook's body runs at all, so it is
+/// judged by full path and nothing else.
+///
+/// `#!/bin/sh -n` reads the guard line and executes none of it: a hook that
+/// looks perfectly armed and gates no commit. `#!/usr/bin/env bash`
+/// resolves through PATH, so what runs is whatever PATH says today. Neither
+/// is unarmed — they may gate fine — so both are cannot-tell.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_interpreter_this_cannot_vouch_for_is_cannot_tell() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    install_package(home, &root, &["growth-guards"]);
+    arm_by_hand(&root);
+
+    // Armed: nothing to report.
+    let out = run(home, &root, "kendex", &["check"]);
+    assert!(!said(&out).contains("commit hooks"), "{}", said(&out));
+
+    let hook = root.join(".git/hooks/pre-commit");
+    let armed = std::fs::read_to_string(&hook).unwrap();
+    for shebang in ["#!/bin/sh -n", "#!/usr/bin/env bash", "#!/opt/weird/sh"] {
+        let rest: Vec<&str> = armed.lines().skip(1).collect();
+        std::fs::write(&hook, format!("{shebang}\n{}\n", rest.join("\n"))).unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let out = run(home, &root, "kendex", &["check"]);
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{shebang} should be cannot-tell: {}",
+            said(&out)
+        );
+        assert!(
+            said(&out).contains("cannot be verified"),
+            "{shebang}: {}",
+            said(&out)
+        );
+    }
+}
+
 /// Arm through the package's own installer.
 ///
 /// Not a hand-written approximation: the check compares against the exact

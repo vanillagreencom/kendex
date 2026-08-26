@@ -52,25 +52,67 @@ fn finding(shape: Shape, reason: impl Into<String>) -> Finding {
     }
 }
 
-/// A POSIX-shell shebang, in the shapes the installer accepts.
+/// Whether line 1 is a shell script's shebang at all — the installer's own
+/// first gate, and deliberately the permissive one: a dir prefix, an
+/// optional `env`, a shell name, then whitespace or end of line. Failing it
+/// means git runs something that is not a shell, so the guard line cannot
+/// run whatever else is true.
 fn is_shell_shebang(line: &str) -> bool {
     let Some(rest) = line.strip_prefix("#!") else {
         return false;
     };
-    let rest = rest.trim_start();
     let mut words = rest.split_whitespace();
-    let Some(first) = words.next() else {
-        return false;
-    };
     let program = |word: &str| word.rsplit('/').next().unwrap_or(word).to_owned();
-    let named = match program(first).as_str() {
-        "env" => words.next().map(program),
-        other => Some(other.to_owned()),
+    let named = match words.next().map(program).as_deref() {
+        Some("env") => words.next().map(program),
+        other => other.map(str::to_owned),
     };
     matches!(
         named.as_deref(),
         Some("sh" | "bash" | "dash" | "ksh" | "zsh")
     )
+}
+
+/// The interpreters this check will vouch for: a full path, exactly, and
+/// nothing after it.
+const TRUSTED_INTERPRETERS: [&str; 10] = [
+    "/bin/sh",
+    "/bin/bash",
+    "/bin/dash",
+    "/bin/ksh",
+    "/bin/zsh",
+    "/usr/bin/sh",
+    "/usr/bin/bash",
+    "/usr/bin/dash",
+    "/usr/bin/ksh",
+    "/usr/bin/zsh",
+];
+
+/// Whether the shebang names an interpreter whose behaviour this check can
+/// vouch for. The package's checker applies exactly this rule, and the
+/// strictness is the point three times over.
+///
+/// The whole remainder of the line has to be one of those paths, so **any**
+/// option disqualifies it: `#!/bin/sh -n` reads the guard line and executes
+/// nothing, which would make an armed-looking hook gate no commit at all.
+/// No basename matching, because `#!/usr/bin/env bash` resolves through
+/// PATH and what runs is whatever PATH says today. And on the list is not
+/// on the disk — `/bin/dash` and `/bin/ksh` are absent from plenty of
+/// hosts, and git answers "cannot exec" for every commit rather than
+/// running the hook — so the file has to be there and be executable.
+///
+/// Failing this is *cannot tell*, never unarmed: the hook may gate
+/// perfectly well under an interpreter this does not know.
+fn is_trusted_interpreter(line: &str) -> bool {
+    let Some(rest) = line.strip_prefix("#!") else {
+        return false;
+    };
+    let path = rest.trim();
+    if !TRUSTED_INTERPRETERS.contains(&path) {
+        return false;
+    }
+    let path = Path::new(path);
+    path.is_file() && is_executable(path)
 }
 
 fn is_executable(path: &Path) -> bool {
@@ -112,6 +154,14 @@ pub(super) fn lane_shape(hooks: &Path, lane: &str) -> Finding {
         return finding(
             Shape::Unarmed,
             format!("{lane} is not a POSIX-shell script, so the guard line cannot run"),
+        );
+    }
+    // The interpreter decides whether the body runs at all, so it is judged
+    // before anything in the body is read.
+    if !is_trusted_interpreter(shebang) {
+        return finding(
+            Shape::Unknown,
+            format!("{lane} runs under an interpreter this cannot vouch for ({shebang})"),
         );
     }
     let expected = call_line(lane);
