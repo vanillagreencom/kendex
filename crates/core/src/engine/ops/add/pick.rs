@@ -14,7 +14,10 @@ pub(super) fn ensure_source(manifest: &mut Manifest, requested: Option<&str>) ->
     let Some(requested) = requested else {
         return default_source(manifest);
     };
-    if requested == LOCAL_SOURCE_NAME || manifest.sources.contains_key(requested) {
+    if requested == LOCAL_SOURCE_NAME
+        || requested == crate::manifest::INPLACE_SOURCE_NAME
+        || manifest.sources.contains_key(requested)
+    {
         return Ok(requested.to_owned());
     }
     let decl = match crate::source_ref::parse_typed(requested)? {

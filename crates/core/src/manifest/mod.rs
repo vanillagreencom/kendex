@@ -38,6 +38,14 @@ pub const LEGACY_SOURCE_NAME: &str = "vstack";
 pub const LEGACY_SOURCE_REPO: &str = "vanillagreencom/vstack";
 /// The reserved source name for content adopted into this scope.
 pub const LOCAL_SOURCE_NAME: &str = "local";
+/// The reserved source name for content whose record of truth is the shared
+/// `.agents` tree itself. An item declared from it is not rendered from a
+/// copy kept somewhere else: the installed tree *is* the source, so a
+/// refresh keeps the links and the layout right and never rewrites a byte
+/// the person owns.
+pub const INPLACE_SOURCE_NAME: &str = "in-place";
+/// The directory that source reads, inside a project.
+pub const INPLACE_SOURCE_DIR: &str = ".agents";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
 #[serde(rename_all = "kebab-case")]

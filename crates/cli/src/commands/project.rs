@@ -41,6 +41,7 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
         } => {
             settings::register_project(env, &path)?;
             out(&format!("registered {}", path.display()));
+            offer_to_manage(env, &path);
             match drift_hook {
                 true => {
                     let scope = kendex_core::model::Scope::Project { root: path.clone() };
@@ -78,4 +79,34 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
         }
     }
     Ok(())
+}
+
+/// What a freshly registered project already holds that nothing manages.
+/// Said at registration rather than left for a later visit: content nobody
+/// knows is there is content nobody chooses about, and the offer names the
+/// command that takes it.
+fn offer_to_manage(env: &Env, root: &std::path::Path) {
+    let scope = kendex_core::model::Scope::Project {
+        root: root.to_path_buf(),
+    };
+    let rows = kendex_core::engine::unmanaged_here(env, &scope);
+    if rows.is_empty() {
+        return;
+    }
+    out(&format!(
+        "{} item{} here {} not managed yet:",
+        rows.len(),
+        if rows.len() == 1 { "" } else { "s" },
+        if rows.len() == 1 { "is" } else { "are" }
+    ));
+    for row in &rows {
+        out(&format!(
+            "  - {} {} [{}]  kendex adopt {} {}",
+            row.kind.name(),
+            kendex_core::names::shown(&row.name),
+            row.harness.display_name(),
+            row.kind.name(),
+            kendex_core::names::shown(&row.name),
+        ));
+    }
 }

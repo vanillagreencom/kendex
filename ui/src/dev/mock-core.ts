@@ -82,6 +82,9 @@ export const coreHandlers: Record<string, Handler> = {
     return store.state.settings;
   },
   install_drift_hook: () => null,
+  // A freshly registered project in the dev app has nothing waiting: the
+  // fixture scopes are already declared.
+  project_offers: () => [],
   unregister_project: ({ path }: { path: string }) => {
     store.state.settings.projects = (
       store.state.settings.projects ?? []

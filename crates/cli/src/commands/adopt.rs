@@ -16,7 +16,10 @@ pub fn run(
     let kind = match kind.as_str() {
         "agent" | "agents" | "a" => ItemKind::Agent,
         "skill" | "skills" | "s" => ItemKind::Skill,
-        other => return Err(format!("cannot adopt kind '{other}' yet (agent | skill)").into()),
+        "hook" | "hooks" | "h" => ItemKind::Hook,
+        other => {
+            return Err(format!("cannot adopt kind '{other}' yet (agent | skill | hook)").into());
+        }
     };
     // Several tools at once, because one folder can be all of theirs: taken
     // one command at a time, each tool's copy lands in the local source on
@@ -44,10 +47,6 @@ pub fn run(
     let report = audit(env, &scope)?;
     print_safety(&report);
     kendex_core::apply::execute(env, &report.plan, None)?;
-    say(&format!(
-        "adopted {} '{}' into the local source",
-        kind.name(),
-        name
-    ));
+    say(&format!("adopted {} '{}'", kind.name(), name));
     Ok(())
 }

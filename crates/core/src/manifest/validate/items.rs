@@ -108,6 +108,7 @@ pub(super) fn validate_items(table: &Table, findings: &mut Vec<Finding>) {
                 }),
                 Some(source) => {
                     if source != crate::manifest::LOCAL_SOURCE_NAME
+                        && source != crate::manifest::INPLACE_SOURCE_NAME
                         && !source_names.iter().any(|s| s == source)
                     {
                         findings.push(Finding {

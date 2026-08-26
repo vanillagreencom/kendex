@@ -64,6 +64,11 @@ an outside contributor.
 - Installing asks where it goes: the app and `kendex add` at a terminal offer
   every supported tool with the ones you have pre-checked, plus symlink or
   copy delivery. `--harness`, `--all-harnesses`, `--method` do it flag-only.
+- `kendex adopt hook <event>:<matcher>:<script>` manages a hook you
+  registered yourself: the script moves into `.agents/hooks` and kendex takes
+  over that one registration, leaving every other entry in the file alone.
+- Registering a project reports what it already holds that nothing manages,
+  instead of leaving it to be found on a later visit to the Library.
 - The app backend checks for new kendex releases at most once every six hours
   and stores the last result plus preferences for the upcoming notice controls.
 - Moving an existing repo onto kendex works now: `kendex adopt` keeps files
@@ -93,6 +98,9 @@ an outside contributor.
   `--method copy`, which gives every tool a real tree of its own.
 - kendex keeps `.kendex-lock.json` out of git — the one line it writes to a
   project's `.gitignore` — and says so when your own rules ignore `.agents`.
+- Managing a project skill moves it to `.agents/skills/<name>` and leaves the
+  path its tool read as a link. That tree is the content of record, so
+  refresh maintains links and layout and never rewrites what you wrote.
 - `kendex update` reads schema 1 feeds (including legacy feeds with no schema). Current stays a no-op; older refuses unless `--force`.
   A newer feed, or a forced current/older feed, with no target binary exits 0 with release notes and changes nothing.
 - Updates: a package you edited can't be updated over; its row offers

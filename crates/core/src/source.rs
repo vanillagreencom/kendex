@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-use crate::manifest::{LOCAL_SOURCE_NAME, Manifest, SourceDecl};
+use crate::manifest::{INPLACE_SOURCE_NAME, LOCAL_SOURCE_NAME, Manifest, SourceDecl};
 use crate::model::{ItemKind, Scope};
 mod about;
 pub mod browse;
@@ -156,7 +156,34 @@ fn path_root(env: &Env, scope: &Scope, path: &str) -> PathBuf {
     }
 }
 
+/// Where the in-place source reads, or nothing at a scope that has no
+/// shared tree of its own. Global installs keep a private store, so there
+/// is no project `.agents` for an item to be its own source in.
+pub fn inplace_source_root(scope: &Scope) -> Option<PathBuf> {
+    match scope {
+        Scope::Project { root } => Some(root.join(crate::manifest::INPLACE_SOURCE_DIR)),
+        Scope::Global => None,
+    }
+}
+
 pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Result<SourceState> {
+    if name == INPLACE_SOURCE_NAME {
+        // Adoption creates this tree; a scope that has none yet reads as
+        // missing rather than as an empty catalog everything resolves from.
+        let root = inplace_source_root(scope).unwrap_or_default();
+        if !root.is_dir() {
+            return Ok(SourceState::Missing {
+                name: name.to_owned(),
+                path: root,
+            });
+        }
+        return Ok(SourceState::Ready(ResolvedSource {
+            name: name.to_owned(),
+            root,
+            provenance: INPLACE_SOURCE_NAME.to_owned(),
+            commit: None,
+        }));
+    }
     if name == LOCAL_SOURCE_NAME {
         // Adopt creates this root; until then the reserved source has no
         // content and reads as missing, never as an open-able Ready root.
@@ -271,7 +298,7 @@ pub fn resolve_at(
     let Some(rev) = rev else {
         return resolve(env, scope, name, manifest);
     };
-    if name == LOCAL_SOURCE_NAME {
+    if name == LOCAL_SOURCE_NAME || name == INPLACE_SOURCE_NAME {
         return Err(CoreError::ItemRevUnsupported {
             source_name: name.to_owned(),
         });

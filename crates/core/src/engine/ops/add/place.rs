@@ -105,7 +105,10 @@ pub(super) fn place(
 /// it never declares a repository. One that names no subscription refuses,
 /// listing what is subscribed (case 4).
 fn subscription(manifest: &Manifest, name: &str) -> Result<String> {
-    if name == LOCAL_SOURCE_NAME || manifest.sources.contains_key(name) {
+    if name == LOCAL_SOURCE_NAME
+        || name == crate::manifest::INPLACE_SOURCE_NAME
+        || manifest.sources.contains_key(name)
+    {
         return Ok(name.to_owned());
     }
     Err(CoreError::UnknownMarketplace {

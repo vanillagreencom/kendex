@@ -25,7 +25,18 @@ pub(super) fn desired_custom_hooks(
     for (hook, name) in manifest.custom_hooks.iter().zip(names) {
         let spec = HookSpec::custom(hook, name.clone());
         state.processed.insert((ItemKind::Hook, name.clone()));
-        for harness in &manifest.install.harnesses {
+        // The entry's own list outranks the scope defaults, the same way a
+        // declared item's does: a hook adopted from one tool names that
+        // tool, and a scope whose defaults have not caught up must still
+        // deliver it there.
+        let listed: Option<Vec<HarnessId>> = spec.harnesses.as_ref().map(|list| {
+            list.iter()
+                .filter_map(|name| HarnessId::parse(name))
+                .collect()
+        });
+        let targets =
+            super::desired::harnesses_for(listed.as_deref(), manifest, ItemKind::Hook, scope);
+        for harness in &targets {
             let harness = *harness;
             if !spec.applies_to(harness) {
                 continue;

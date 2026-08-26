@@ -81,7 +81,7 @@ enum Command {
     /// Record an observed item into the manifest (content moves to the
     /// local source)
     Adopt {
-        /// agent | skill
+        /// agent | skill | hook
         kind: String,
         name: String,
         /// The tool whose files to keep; repeat it to keep one item for

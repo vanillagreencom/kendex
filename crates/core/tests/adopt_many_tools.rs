@@ -48,15 +48,15 @@ fn every_tool_the_item_sits_at_is_kept_in_one_pass() {
     .unwrap();
     kendex_core::apply::execute(&env, &plan, None).unwrap();
 
-    // Every position is cleared, not only the first. Asserted before the
-    // follow-up apply: the render puts the same bytes back, so a position
-    // left behind would look settled a moment later.
-    for dir in [".claude/skills/handmade", ".agents/skills/handmade"] {
-        assert!(
-            !project.join(dir).exists(),
-            "{dir} was left where it was, with nothing recording it"
-        );
-    }
+    // The tool-owned position is cleared, and the shared tree holds the one
+    // real directory the move put there. Asserted before the follow-up
+    // apply: the render restores the links, so a position left behind would
+    // look settled a moment later.
+    assert!(
+        !project.join(".claude/skills/handmade").exists(),
+        "the tool's own copy was left where it was, with nothing recording it"
+    );
+    assert!(project.join(".agents/skills/handmade/SKILL.md").is_file());
 
     let report = audit(&env, &scope).unwrap();
     kendex_core::apply::execute(&env, &report.plan, None).unwrap();
@@ -111,7 +111,7 @@ fn one_folder_read_through_a_link_is_not_two_different_copies() {
     .unwrap();
     kendex_core::apply::execute(&env, &plan, None).unwrap();
     assert!(
-        fs::read_to_string(project.join(".kendex-local/skills/handmade/SKILL.md"))
+        fs::read_to_string(project.join(".agents/skills/handmade/SKILL.md"))
             .unwrap()
             .contains("Shared by hand.")
     );

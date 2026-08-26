@@ -1,3 +1,5 @@
+use std::fs;
+
 use super::*;
 use crate::engine::audit;
 use crate::env::FakeOs;
@@ -27,12 +29,10 @@ fn adopting_a_handmade_skill_moves_merges_and_round_trips() {
     .unwrap();
     crate::apply::execute(&env, &plan, None).unwrap();
 
-    // Content lives in the local source; the original is trashed.
-    assert!(
-        project
-            .join(".kendex-local/skills/handmade/SKILL.md")
-            .is_file()
-    );
+    // The real directory moved into the shared tree — the content of
+    // record, not a copy of it — and nothing was left where it was.
+    assert!(project.join(".agents/skills/handmade/SKILL.md").is_file());
+    assert!(!project.join(".kendex-local").exists());
     assert!(!project.join(".claude/skills/handmade").exists());
 
     // Follow-up apply renders the managed replacement, drift-clean.
@@ -46,17 +46,17 @@ fn adopting_a_handmade_skill_moves_merges_and_round_trips() {
     assert_eq!(after.drift, vec![]);
 }
 
-/// The local source already had a copy: it is trashed, never overwritten
-/// in place, so nothing adoption replaces is gone for good.
+/// The shared tree already held something under that name: it is trashed,
+/// never written over, so nothing adoption replaces is gone for good.
 #[test]
-fn an_earlier_local_copy_goes_to_the_trash_not_under_the_new_one() {
+fn an_earlier_copy_at_the_home_goes_to_the_trash_not_under_the_new_one() {
     let tmp = tempfile::tempdir().unwrap();
     let env = Env::fake(tmp.path(), FakeOs::Linux);
     let project = tmp.path().join("app");
     let scope = Scope::Project {
         root: project.clone(),
     };
-    let earlier = project.join(".kendex-local/skills/handmade");
+    let earlier = project.join(".agents/skills/handmade");
     fs::create_dir_all(&earlier).unwrap();
     fs::write(earlier.join("SKILL.md"), "earlier").unwrap();
     fs::write(earlier.join("notes.md"), "kept only here").unwrap();
@@ -188,12 +188,10 @@ fn a_shared_skill_folder_adopts_the_target_and_keeps_every_tool_reading() {
     .unwrap();
     crate::apply::execute(&env, &plan, None).unwrap();
 
-    // Content captured; the folder and every link that read it cleared.
-    assert!(
-        project
-            .join(".kendex-local/skills/browser/SKILL.md")
-            .is_file()
-    );
+    // The folder moved into the shared tree and every link that read it was
+    // cleared, so nothing is left pointing at where it used to be.
+    assert!(project.join(".agents/skills/browser/SKILL.md").is_file());
+    assert!(!project.join(".kendex-local").exists());
     assert!(!shared.exists());
     assert!(!project.join(".claude/skills/browser").is_symlink());
     assert!(!project.join(".agents/skills/browser").is_symlink());
@@ -433,7 +431,9 @@ fn a_namespaced_skill_is_adopted_at_its_rendered_position() {
     .unwrap();
     crate::apply::execute(&env, &plan, None).unwrap();
 
-    // The namespace is a directory only in the local source.
+    // A namespaced name keeps the capture: the shared tree would store it
+    // under a flattened leaf the name cannot be looked up by, so it is not
+    // a tree that can be its own source.
     assert!(
         project
             .join(".kendex-local/skills/data-science/eda/SKILL.md")
@@ -491,12 +491,11 @@ fn a_refused_name_has_no_position_to_offer() {
     assert!(position(&env, &scope, ItemKind::Skill, "../notes", HarnessId::Claude).is_none());
 }
 
-/// A legal name still spells a path. With `.kendex-local/skills` a link
-/// at somebody else's folder, the destination sits outside the sealed
-/// source, and the capture's trash-then-write pair would land on a tree
-/// adoption was never pointed at.
+/// A legal name still spells a path. With `.agents/skills` a link at
+/// somebody else's folder, the home sits outside the sealed tree, and the
+/// move would land on a directory adoption was never pointed at.
 #[test]
-fn a_symlinked_local_source_directory_refuses_the_capture() {
+fn a_symlinked_shared_skills_directory_refuses_the_move() {
     let tmp = tempfile::tempdir().unwrap();
     let env = Env::fake(tmp.path(), FakeOs::Linux);
     let project = tmp.path().join("app");
@@ -506,8 +505,8 @@ fn a_symlinked_local_source_directory_refuses_the_capture() {
     let outside = tmp.path().join("elsewhere");
     fs::create_dir_all(outside.join("handmade")).unwrap();
     fs::write(outside.join("handmade/keepsake.md"), "somebody else's").unwrap();
-    fs::create_dir_all(project.join(".kendex-local")).unwrap();
-    std::os::unix::fs::symlink(&outside, project.join(".kendex-local/skills")).unwrap();
+    fs::create_dir_all(project.join(".agents")).unwrap();
+    std::os::unix::fs::symlink(&outside, project.join(".agents/skills")).unwrap();
     fs::create_dir_all(project.join(".claude/skills/handmade")).unwrap();
     fs::write(project.join(".claude/skills/handmade/SKILL.md"), "mine").unwrap();
 
@@ -646,8 +645,8 @@ fn a_destination_the_capture_refuses_is_never_offered() {
     };
     let outside = tmp.path().join("elsewhere");
     fs::create_dir_all(outside.join("handmade")).unwrap();
-    fs::create_dir_all(project.join(".kendex-local")).unwrap();
-    std::os::unix::fs::symlink(&outside, project.join(".kendex-local/skills")).unwrap();
+    fs::create_dir_all(project.join(".agents")).unwrap();
+    std::os::unix::fs::symlink(&outside, project.join(".agents/skills")).unwrap();
     fs::create_dir_all(project.join(".claude/skills/handmade")).unwrap();
     fs::write(project.join(".claude/skills/handmade/SKILL.md"), "mine").unwrap();
 

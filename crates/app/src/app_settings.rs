@@ -10,6 +10,7 @@
 
 use kendex_core::base::Base;
 use kendex_core::discover;
+use kendex_core::engine::DriftRow;
 use kendex_core::env::Env;
 use kendex_core::settings::{self, AppSettings};
 use serde::Serialize;
@@ -111,6 +112,20 @@ fn register_project_at(env: &Env, path: &str) -> Result<SettingsRead, String> {
 #[specta::specta]
 pub fn register_project(path: String) -> Result<SettingsRead, String> {
     register_project_at(&env()?, &path)
+}
+
+/// What a project already holds that nothing manages, for the offer the
+/// registration flow puts on screen. Read after the project is registered
+/// rather than folded into that call: registering must not fail because a
+/// scan did, and the offer is a second step the person answers.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn project_offers(root: String) -> Result<Vec<DriftRow>, String> {
+    let env = env()?;
+    let scope = kendex_core::model::Scope::Project {
+        root: crate::paths::expand_tilde(env.real_home(), &root),
+    };
+    Ok(kendex_core::engine::unmanaged_here(&env, &scope))
 }
 
 #[tauri::command(async)]
