@@ -278,12 +278,33 @@ pub fn armed(dir: &Path) -> Result<Option<GuardReport>> {
         return Ok(None);
     };
     let Some(installed) = Installed::resolve(&repo, INSTALLER) else {
-        // No installer to ask, but shims may still be armed and failing
-        // closed on every commit. That is a state to report, not silence.
-        return Ok(stale_shims(&repo)?.map(|line| GuardReport {
-            lines: vec![line],
-            code: 2,
-        }));
+        // Nothing here can answer for the shims. Three different states
+        // arrive at this line and only one of them is silence.
+        let stale = stale_shims(&repo)?;
+        // Shims with no installer: they are armed and failing closed on
+        // every commit, which is the loudest of the three.
+        if let Some(line) = stale {
+            return Ok(Some(GuardReport {
+                lines: vec![line],
+                code: 2,
+            }));
+        }
+        // A package that is here but whose installer is missing or not
+        // executable is a broken install. Nothing is armed yet, so nothing
+        // is blocked — but the next `guard install` cannot run either, and
+        // a clean verdict would send a reader off believing the gate is a
+        // command away.
+        if let Some(dir) = Installed::present(&repo) {
+            return Ok(Some(GuardReport {
+                lines: vec![format!(
+                    "the {SKILL} skill at {} carries no runnable {INSTALLER} — commit hooks cannot be armed or reported on until it is reinstalled (`kendex refresh`)",
+                    dir.display()
+                )],
+                code: 2,
+            }));
+        }
+        // No package and no shims: no gate is expected here.
+        return Ok(None);
     };
     installer(&repo, &installed, &["--check"]).map(Some)
 }

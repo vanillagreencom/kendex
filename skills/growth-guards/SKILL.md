@@ -59,9 +59,8 @@ repo-root-relative executable named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL`.
 closed on a guard that could not run; `git commit --no-verify` is the bypass.
 `kendex guard install` runs the installer, `kendex guard uninstall` runs
 `--uninstall`, and `kendex check` folds in `--check`. Those are the only
-verbs that invoke it: `kendex add` / `refresh` / `remove` do not, so disarm
-before removing this skill. That wiring arrives with the repo-effects
-declaration (KEN-663 part 2). The `--check` verdicts:
+verbs that invoke it, so disarm before removing this skill: shims whose
+scripts are gone block every commit. The `--check` verdicts:
 (0 armed — in `.git/hooks` or a `core.hooksPath` directory hand-wired to this
 skill's `pre-commit` and `commit-msg`; 1 drifted, absent, or dormant behind a
 `core.hooksPath` that redirects away from the shims; 2 could not determine —

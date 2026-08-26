@@ -89,15 +89,34 @@ case "$COMMON" in "") ;; /*) ;; *) COMMON="$PWD/$COMMON" ;; esac
 MAIN="${COMMON%/*}"
 TOP=$(git rev-parse --show-toplevel 2>/dev/null) || TOP=""
 CHAIN_SCRIPT=""
-for root in "$MAIN" "$TOP"; do
-  [ -n "$root" ] || continue
-  for base in .agents/skills .claude/skills .cursor/rules .opencode/skills skills; do
-    if [ -x "$root/$base/growth-guards/scripts/pre-commit" ]; then
-      CHAIN_SCRIPT="$root/$base/growth-guards/scripts/pre-commit"
-      break 2
-    fi
+# The helper's own first choice, before any search: the scripts directory
+# baked into it by whichever install armed this repository. That copy need
+# not be one the roots below reach, and it is the one an armed shim runs, so
+# a fallback that skipped it could judge a commit by a different copy than
+# the hook would.
+HELPER=$(git rev-parse --git-path hooks 2>/dev/null)/kendex-guards
+if [ -r "$HELPER" ]; then
+  BAKED=$(sed -n "s/^installed_scripts='\(.*\)'$/\1/p" "$HELPER" | head -1)
+  # The installer writes a POSIX single-quote escape for an apostrophe in
+  # the path; decode it the same way it was built.
+  SQ="'"
+  ENC="$SQ\\$SQ$SQ"
+  # The pattern is quoted: unquoted, bash reads its backslash as a glob
+  # escape and the replacement silently matches nothing.
+  BAKED="${BAKED//"$ENC"/$SQ}"
+  [ -n "$BAKED" ] && [ -x "$BAKED/pre-commit" ] && CHAIN_SCRIPT="$BAKED/pre-commit"
+fi
+if [ -z "$CHAIN_SCRIPT" ]; then
+  for root in "$MAIN" "$TOP"; do
+    [ -n "$root" ] || continue
+    for base in .agents/skills .claude/skills .cursor/rules .opencode/skills skills; do
+      if [ -x "$root/$base/growth-guards/scripts/pre-commit" ]; then
+        CHAIN_SCRIPT="$root/$base/growth-guards/scripts/pre-commit"
+        break 2
+      fi
+    done
   done
-done
+fi
 if [ -z "$CHAIN_SCRIPT" ]; then
   echo "pre-commit-check: no git pre-commit hook will run for this commit and no growth-guards skill is installed under $PWD, so nothing can check it — install it (kendex add skill/growth-guards) and arm the hooks (kendex guard install), or remove this hook" >&2
   exit 2

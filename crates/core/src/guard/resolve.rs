@@ -79,21 +79,33 @@ impl Installed {
 /// The scripts directory the installed helper runs first, read out of the
 /// helper itself.
 ///
-/// The installer bakes it in as a single-quoted assignment on its own line,
-/// so it is read back the same way. A helper that is absent, unreadable, or
-/// shaped differently than this installer writes yields nothing and the
-/// search below decides — the same outcome the helper reaches when the
-/// baked path holds no executable script.
+/// The installer bakes it in as a single-quoted shell assignment on its own
+/// line, so it is read back the same way. A helper that is absent,
+/// unreadable, or shaped differently than this installer writes yields
+/// nothing and the search below decides — the same outcome the helper
+/// reaches when the baked path holds no executable script.
 fn baked_scripts(repo: &crate::githooks::Repo) -> Option<PathBuf> {
     let helper = crate::githooks::effective_hooks_dir(&repo.worktree)
         .ok()?
         .join(super::shims::HELPER);
     let text = std::fs::read_to_string(helper).ok()?;
-    let value = text
+    let quoted = text
         .lines()
         .find_map(|line| line.strip_prefix("installed_scripts='"))?
         .strip_suffix('\'')?;
+    let value = unquote(quoted);
     (!value.is_empty()).then(|| PathBuf::from(value))
+}
+
+/// The shell single-quoting the installer writes, undone.
+///
+/// Single quotes cannot nest, so an apostrophe in the path is written as
+/// `'\''` — close, escaped quote, reopen. Reading that back literally gives
+/// a path that does not exist, and the helper would run the copy this could
+/// not find: `/home/o'brien/repo` and `/home/o'\''brien/repo` are different
+/// directories, and only one of them is anyone's.
+fn unquote(quoted: &str) -> String {
+    quoted.replace("'\\''", "'")
 }
 
 /// The roots the helper searches, in its order: the main checkout, then this
@@ -151,4 +163,24 @@ pub(super) fn bind(dir: &Path, relative: &str) -> Result<(crate::githooks::Repo,
         });
     };
     Ok((repo, installed))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unquote;
+
+    /// The installer builds the escape as `'` + `\` + `'` + `'`; reading it
+    /// back has to undo exactly that and leave every other character alone.
+    #[test]
+    fn an_apostrophe_in_the_path_survives_the_round_trip() {
+        assert_eq!(unquote("/home/plain/repo"), "/home/plain/repo");
+        assert_eq!(unquote("/home/o'\\''brien/repo"), "/home/o'brien/repo");
+        assert_eq!(
+            unquote("/a'\\''b/c'\\''d"),
+            "/a'b/c'd",
+            "every occurrence, not just the first"
+        );
+        // A lone backslash is a directory name, not an escape.
+        assert_eq!(unquote("/home/back\\slash"), "/home/back\\slash");
+    }
 }

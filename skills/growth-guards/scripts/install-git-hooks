@@ -1111,4 +1111,11 @@ if [ "$FAILED" -eq 1 ]; then
   echo "growth-guards git hooks: incomplete — see the warnings above ($HOOKS_DIR)"
   exit 1
 fi
+# Written under a redirect, the shims are in place and git is not reading
+# them. Claiming they are armed would be a claim --check contradicts, so the
+# migration branch says what is true: staged, live when the redirect goes.
+if [ "$HOOKS_PATH_SET" -eq 1 ]; then
+  echo "growth-guards git hooks: pre-commit and commit-msg staged in $HOOKS_DIR — dormant while core.hooksPath ('$CUSTOM_HOOKS') redirects git away, armed the moment it is unset"
+  exit 0
+fi
 echo "growth-guards git hooks: pre-commit and commit-msg armed in $HOOKS_DIR"

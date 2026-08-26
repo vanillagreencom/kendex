@@ -364,6 +364,40 @@ run_hook "$TMP_ROOT/linked-wt" "$(payload 'git commit -m test')" CHAIN_EXIT=1
 assert_eq "$rc" "2" "a work tree carrying its own copy still runs a chain"
 
 echo
+echo "the helper's baked scripts directory comes first"
+
+# The helper the installer writes execs its baked installed_scripts before
+# searching anywhere, so this lane tries it first too. Otherwise a repository
+# armed from a layout the search cannot reach would be judged by one copy at
+# commit time and another here. The path carries an apostrophe, which the
+# installer writes shell-escaped and this lane has to decode.
+SQ="'"
+BAKED_ROOT="$TMP_ROOT/baked${SQ}quote"
+mkdir -p "$BAKED_ROOT"
+git -C "$BAKED_ROOT" init -q
+mkdir -p "$BAKED_ROOT/vendor/gg/scripts"
+cat >"$BAKED_ROOT/vendor/gg/scripts/pre-commit" <<'EOF'
+#!/usr/bin/env bash
+echo "baked chain ran" >>"$CHAIN_LOG"
+echo "chain ran" >>"$CHAIN_LOG"
+exit "${CHAIN_EXIT:-0}"
+EOF
+chmod +x "$BAKED_ROOT/vendor/gg/scripts/pre-commit"
+# A helper with no delegating lines beside it: the repository is unarmed, so
+# the fallback runs, and the helper is there only to name the copy. Escaped
+# exactly as the installer escapes it.
+ESCAPED="${BAKED_ROOT//$SQ/$SQ\\$SQ$SQ}"
+{
+  echo "#!/bin/sh"
+  echo "installed_scripts=${SQ}${ESCAPED}/vendor/gg/scripts${SQ}"
+} >"$BAKED_ROOT/.git/hooks/kendex-guards"
+chmod +x "$BAKED_ROOT/.git/hooks/kendex-guards"
+
+run_hook "$BAKED_ROOT" "$(payload 'git commit -m test')" CHAIN_EXIT=1
+assert_eq "$rc" "2" "the baked copy gates the commit"
+assert_contains "$log" "baked chain ran" "and it is the baked copy that ran"
+
+echo
 echo "fail closed without the package"
 
 run_hook "$NO_PACKAGE" "$(payload 'git commit -m test')"
