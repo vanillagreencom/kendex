@@ -99,6 +99,55 @@ fn install_package(root: &Path, skills: &[&str]) {
             &root.join(".agents/skills").join(skill),
         );
     }
+    // A project that installed the package declares it, and that
+    // declaration is what lets a read verb run the package's own checker.
+    // Copying the files without it would be an undeclared copy — a
+    // different scenario, covered on its own.
+    declare(root, skills);
+}
+
+/// The manifest a `kendex add` of these skills would have written.
+#[allow(clippy::unwrap_used)]
+pub fn declare(root: &Path, skills: &[&str]) {
+    let mut text = String::from("schema = 6\n\n[sources.local]\npath = \".\"\n");
+    for skill in skills {
+        text.push_str(&format!(
+            "\n[skills.{skill}]\nsource = \"local\"\nenabled = true\n"
+        ));
+    }
+    let path = root.join("kendex.toml");
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    match existing.is_empty() {
+        true => std::fs::write(&path, text).unwrap(),
+        // A second call adds its skills to what the first wrote.
+        false => {
+            let mut merged = existing;
+            for skill in skills {
+                if !merged.contains(&format!("[skills.{skill}]")) {
+                    merged.push_str(&format!(
+                        "\n[skills.{skill}]\nsource = \"local\"\nenabled = true\n"
+                    ));
+                }
+            }
+            std::fs::write(&path, merged).unwrap();
+        }
+    }
+}
+
+/// The same files with nothing declaring them — a copy that arrived with a
+/// clone rather than through an install.
+#[allow(clippy::unwrap_used)]
+pub fn install_package_undeclared(root: &Path, skills: &[&str]) {
+    let source = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../skills")
+        .canonicalize()
+        .unwrap();
+    for skill in skills {
+        copy_tree(
+            &source.join(skill),
+            &root.join(".agents/skills").join(skill),
+        );
+    }
 }
 
 #[allow(clippy::unwrap_used)]

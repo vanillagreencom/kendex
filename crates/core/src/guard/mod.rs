@@ -196,6 +196,18 @@ pub fn install(env: &Env, dir: &Path) -> Result<GuardReport> {
     }
 
     if retired {
+        // Asked before anything is removed: a global or included
+        // `core.hooksPath` surfaces the moment the local one goes, and git
+        // would keep reading somewhere else with the staged shims dormant
+        // and the old gate gone. Refuse with that diagnosis and leave both
+        // in place — the shims stay staged, ready for whenever the outer
+        // value is dealt with.
+        if let Some((value, origin)) = crate::githooks::hooks_path_beneath_local(&repo)? {
+            lines.push(format!(
+                "core.hooksPath is also set to {value} in {origin}, which would surface the moment this repository's own value is unset and keep git reading there — the retired install was left in place and the shims above stay dormant; unset that value, then rerun"
+            ));
+            return Ok(GuardReport { lines, code: 2 });
+        }
         let taken = crate::githooks::uninstall(env, dir)?;
         lines.push(
             "took back the retired kendex-hooks directory; the package's shims are now live"
@@ -269,7 +281,20 @@ pub fn uninstall(env: &Env, dir: &Path) -> Result<GuardReport> {
 /// package is not installed here, so no shim can fire and none is expected.
 /// A package that IS installed and whose installer cannot be run is an
 /// error, never a quiet pass — that is a broken install, not a clean one.
-pub fn armed(dir: &Path) -> Result<Option<GuardReport>> {
+/// Whether this scope opted into the package, which decides whether a read
+/// verb may run its scripts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Consent {
+    /// The project's own manifest records the package as installed. The
+    /// person asked for it, so asking it to report on itself is running
+    /// what they installed.
+    Recorded,
+    /// A copy in the checkout that nothing here declared. Reading a report
+    /// out of a repository must not execute code it happens to carry.
+    Unrecorded,
+}
+
+pub fn armed(dir: &Path, consent: Consent) -> Result<Option<GuardReport>> {
     // Only "this is not a work tree" is a missing verdict. Anything else —
     // git absent, metadata unreadable, a probe that failed — is a check
     // that could not be taken, and reporting it as "nothing to say" would
@@ -277,6 +302,24 @@ pub fn armed(dir: &Path) -> Result<Option<GuardReport>> {
     let Some(repo) = crate::githooks::Repo::probe(dir)? else {
         return Ok(None);
     };
+    // A checkout is other people's data until someone installs from it. A
+    // clone carries `.agents/skills`, so an undeclared copy of this package
+    // is ordinary content — and `kendex check` is a read: running a script
+    // out of it would mean cloning a repository and reading its status
+    // executed code its author chose. The shims are inspected instead, as
+    // files, and what is found is reported as unmanaged.
+    //
+    // The armed git hooks are a different matter and stay a different
+    // matter: those run because someone armed them here, which is consent
+    // in the only form that counts.
+    if consent == Consent::Unrecorded {
+        return Ok(stale_shims(&repo)?.map(|line| GuardReport {
+            lines: vec![format!(
+                "{line} — no {SKILL} package is declared in this project, so kendex did not run its checker; `kendex add {SKILL}` adopts it, `kendex guard uninstall` removes the shims"
+            )],
+            code: 2,
+        }));
+    }
     let Some(installed) = Installed::resolve(&repo, INSTALLER) else {
         // Nothing here can answer for the shims. Three different states
         // arrive at this line and only one of them is silence.

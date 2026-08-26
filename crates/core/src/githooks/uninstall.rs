@@ -186,11 +186,17 @@ fn plan_orphan_cleanup(repo: &Repo) -> Result<(Vec<PlannedOp>, Vec<String>)> {
                 hooks_dir.display()
             ));
         } else if hooks_path.is_some() {
-            lines.push(format!(
-                "{} carries no receipt and holds file(s) kendex cannot prove it wrote ({}) — left in place; move them into git's own hooks directory (or delete them)",
+            // The directory holds a hook kendex did not write, and
+            // `core.hooksPath` is what makes git run it. Unsetting the value
+            // and leaving the file would disconnect someone's hook without
+            // deleting it — it stays on disk looking installed and never
+            // runs again, which is the worst of both. Neither half happens:
+            // the whole takeback refuses and names the files.
+            return Err(err(format!(
+                "{} carries no kendex receipt and holds file(s) kendex cannot prove it wrote ({}) — unsetting core.hooksPath around them would silently stop them running; move them into git's own hooks directory (or delete them) and rerun",
                 hooks_dir.display(),
                 foreign.join(", ")
-            ));
+            )));
         } else {
             return Err(err(format!(
                 "{} carries no kendex receipt and core.hooksPath does not name it — nothing here is provably kendex's; move the directory aside if it is not yours",

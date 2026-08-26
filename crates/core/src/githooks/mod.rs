@@ -198,6 +198,26 @@ impl Repo {
         self.common_dir.join("config")
     }
 
+    /// Whether a `--show-origin` line names a config file a takeback can
+    /// clear: this repository's own, shared or per-worktree.
+    ///
+    /// git answers the origin relative to where it was asked (`file:.git/
+    /// config` from the work tree), so the spelling is resolved against the
+    /// work tree before it is compared. Everything under the common dir
+    /// counts — `config` and every `worktrees/*/config.worktree` — because
+    /// all of them go with the repository. Anything else, global or
+    /// included from elsewhere, outlives it.
+    pub(super) fn owns_config(&self, origin: &str) -> bool {
+        let raw = origin.strip_prefix("file:").unwrap_or(origin);
+        let path = std::path::Path::new(raw);
+        let path = match path.is_absolute() {
+            true => path.to_path_buf(),
+            false => self.worktree.join(path),
+        };
+        let resolved = path.canonicalize().unwrap_or(path);
+        resolved.starts_with(&self.common_dir)
+    }
+
     /// Every live worktree git's own registry lists, canonicalized. A
     /// worktree whose directory is gone stays in the registry as
     /// `prunable` until someone prunes; it is dead for every purpose here
@@ -317,6 +337,43 @@ pub fn effective_hooks_dir(worktree: &Path) -> Result<PathBuf> {
 /// goes live the moment that redirect is removed.
 pub fn default_hooks_dir(repo: &Repo) -> PathBuf {
     repo.common_dir.join("hooks")
+}
+
+/// What `core.hooksPath` would resolve to once this repository's own value
+/// is gone — a value and the file it came from, or `None` when nothing
+/// else sets one.
+///
+/// A takeback unsets the repository-local value to let git read
+/// `.git/hooks` again, and that does not always follow: a global value, or
+/// one an `include.path` pulls in, surfaces as soon as the local one goes.
+/// Removing the old gate would then leave the new shims dormant with
+/// nothing gating, so this is asked before anything is removed. Precedence
+/// is git's own — `--get-all` answers lowest source first, so the last
+/// surviving entry wins.
+pub fn hooks_path_beneath_local(repo: &Repo) -> Result<Option<(String, String)>> {
+    let output = Hardened::git(
+        &["config", "--show-origin", "--get-all", "core.hooksPath"],
+        Some(&repo.worktree),
+    )
+    .run()?;
+    match output.status.code() {
+        Some(0) => {}
+        // No value anywhere.
+        Some(1) => return Ok(None),
+        other => {
+            return Err(err(format!(
+                "could not read where core.hooksPath comes from (git exited {other:?}): {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )));
+        }
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    Ok(text
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .filter(|(origin, _)| !repo.owns_config(origin))
+        .map(|(origin, value)| (value.to_owned(), origin.to_owned()))
+        .next_back())
 }
 
 /// The `core.hooksPath` a worktree actually resolves, git's own answer.

@@ -3,7 +3,8 @@
 //! says about a repository in each state.
 
 use crate::{
-    armed_repo, git, git_ok, install_package, repo, retire, retire_with_leases, run, run_with, said,
+    armed_repo, git, git_ok, install_package, install_package_undeclared, repo, retire,
+    retire_with_leases, run, run_with, said,
 };
 
 /// Disarming removes only the helper and the package's own marked line;
@@ -354,4 +355,133 @@ fn staging_under_a_redirect_reports_dormant_not_armed() {
         said(&out)
     );
     assert!(root.join(".git/hooks/kendex-guards").is_file(), "staged");
+}
+
+/// Reading a repository's status must not run code the repository carries.
+///
+/// A clone brings `.agents/skills` with it, so an undeclared copy of the
+/// package is ordinary content until someone installs from it. `kendex
+/// check` inspects the shims as files there and says the state is
+/// unmanaged; the checker script is never executed. The armed git hooks are
+/// a different matter, and stay one: those run because someone armed them.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn check_does_not_run_an_undeclared_packages_checker() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = armed_repo(home);
+
+    // Undeclare the package, leaving its files and its shims exactly as
+    // they are, and make the checker prove whether it was run.
+    std::fs::remove_file(root.join("kendex.toml")).unwrap();
+    let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
+    let marker = home.join("checker-ran");
+    std::fs::write(
+        &installer,
+        format!("#!/usr/bin/env bash\ntouch {}\nexit 0\n", marker.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&installer, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let out = run(home, &root, "kendex", &["check"]);
+    assert!(
+        !marker.exists(),
+        "the undeclared checker was executed: {}",
+        said(&out)
+    );
+    assert!(said(&out).contains("commit hooks"), "{}", said(&out));
+    assert!(
+        said(&out).contains("no growth-guards package is declared"),
+        "{}",
+        said(&out)
+    );
+
+    // Declaring it is the consent, and then the checker does run.
+    crate::declare(&root, &["growth-guards"]);
+    run(home, &root, "kendex", &["check"]);
+    assert!(marker.exists(), "a declared package's checker runs");
+}
+
+/// A repository with nothing of the package's in it says nothing, declared
+/// or not — there is no shim to inspect and no gate expected.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn check_is_silent_about_an_undeclared_package_that_armed_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    install_package_undeclared(&root, &["growth-guards"]);
+
+    let out = run(home, &root, "kendex", &["check"]);
+    assert!(!said(&out).contains("commit hooks"), "{}", said(&out));
+}
+
+/// Unsetting this repository's `core.hooksPath` does not always let git read
+/// `.git/hooks`: a global one surfaces the moment the local one goes. Taking
+/// the old gate away then leaves the staged shims dormant with nothing
+/// gating, so the takeback refuses and names where the other value lives.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn arming_refuses_when_a_hooks_path_would_surface_from_outside() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    let retired = retire(home, &root);
+    install_package(&root, &["growth-guards"]);
+    // A global value, which outlives any takeback of this repository's own.
+    let theirs = home.join("global-hooks");
+    std::fs::create_dir_all(&theirs).unwrap();
+    git_ok(
+        home,
+        &root,
+        &[
+            "config",
+            "--global",
+            "core.hooksPath",
+            &theirs.display().to_string(),
+        ],
+    );
+
+    let out = run(home, &root, "kendex", &["guard", "install"]);
+    assert_eq!(out.status.code(), Some(2), "{}", said(&out));
+    assert!(said(&out).contains("would surface"), "{}", said(&out));
+    assert!(
+        retired.join("pre-commit").is_file(),
+        "the old gate survived"
+    );
+    // The shims are staged and stay staged; nothing claimed they went live.
+    assert!(root.join(".git/hooks/kendex-guards").is_file(), "staged");
+    assert!(
+        !said(&out).contains("now live"),
+        "no claim of going live: {}",
+        said(&out)
+    );
+}
+
+/// A receiptless retired directory holding someone else's hook is not
+/// kendex's to disconnect. Unsetting `core.hooksPath` around it would leave
+/// that file on disk, looking installed, never running again — so the whole
+/// takeback refuses and names it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_foreign_hook_in_the_retired_directory_refuses_the_takeback() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    let retired = retire(home, &root);
+    std::fs::remove_file(retired.join("receipt.json")).unwrap();
+    std::fs::write(retired.join("post-commit"), "#!/bin/sh\necho theirs\n").unwrap();
+    install_package(&root, &["growth-guards"]);
+
+    let out = run(home, &root, "kendex", &["guard", "install"]);
+    assert_eq!(out.status.code(), Some(2), "{}", said(&out));
+    assert!(said(&out).contains("post-commit"), "{}", said(&out));
+    assert!(retired.join("post-commit").is_file(), "left in place");
+    let redirect = git(home, &root, &["config", "--get", "core.hooksPath"]);
+    assert_eq!(
+        redirect.status.code(),
+        Some(0),
+        "their hook still runs: the redirect was not cleared around it"
+    );
 }

@@ -200,23 +200,25 @@ fn a_receiptless_directory_of_our_own_bytes_is_ours_by_content() {
     assert_eq!(config_value(&w.repo, "core.hooksPath"), None);
 }
 
-/// A file kendex cannot prove it wrote is never removed around. The config
-/// value is ours by name so it is unset, the directory stays, and the
-/// foreign file is named so the reader can move it.
+/// A file kendex cannot prove it wrote is never removed, and never
+/// disconnected either. `core.hooksPath` is what makes git run it, so
+/// unsetting the value around it would leave that hook on disk looking
+/// installed and never running again — the worst of both. The whole
+/// takeback refuses instead, naming the file.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_foreign_file_survives_the_takeback_and_is_named() {
+fn a_foreign_file_in_a_receiptless_directory_refuses_the_takeback() {
     let w = world();
     let hooks_dir = arm(&w.repo, Generation::Kendex, false, &[]);
     std::fs::write(hooks_dir.join("theirs"), "#!/bin/sh\n").unwrap();
 
-    let report = githooks::uninstall(&w.env, &w.repo).unwrap();
+    let error = githooks::uninstall(&w.env, &w.repo).unwrap_err();
+    assert!(error.to_string().contains("theirs"), "{error}");
+    assert!(hooks_dir.join("theirs").is_file(), "left in place");
     assert!(
-        report.lines.iter().any(|l| l.contains("theirs")),
-        "{report:?}"
+        config_value(&w.repo, "core.hooksPath").is_some(),
+        "their hook still runs"
     );
-    assert!(hooks_dir.join("theirs").is_file());
-    assert_eq!(config_value(&w.repo, "core.hooksPath"), None);
 }
 
 /// With a receipt, a foreign file refuses the whole removal: unsetting
