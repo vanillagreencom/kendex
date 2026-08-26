@@ -22,6 +22,7 @@ use std::time::Duration;
 use crate::error::{CoreError, Result};
 use crate::process::Hardened;
 
+mod entrypoint;
 mod grammar;
 mod repo;
 mod resolve;
@@ -248,7 +249,8 @@ pub fn armed(dir: &Path, installed_here: bool) -> Result<Option<GuardReport>> {
     // loud whatever the install record says: an unverifiable gate is not a
     // clean one.
     let scripts = package.dir.join("scripts");
-    let (shape, reasons) = shims::directory_shape(&live, &scripts);
+    let is_default_dir = live == repo.default_hooks_dir();
+    let (shape, reasons) = shims::directory_shape(&live, &scripts, is_default_dir);
     Ok(match shape {
         shims::Shape::Armed => None,
         shims::Shape::Unknown => Some(GuardReport {

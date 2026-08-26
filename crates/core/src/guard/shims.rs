@@ -23,7 +23,7 @@ use std::path::Path;
 
 use crate::error::Result;
 
-use super::grammar::{HELPER, call_line, helper_body};
+use super::grammar::{HELPER, SENTINEL, call_line, helper_body};
 use super::{LANES, SKILL};
 
 /// What one artifact is, in the closed grammar's terms.
@@ -115,7 +115,7 @@ fn is_trusted_interpreter(line: &str) -> bool {
     path.is_file() && is_executable(path)
 }
 
-fn is_executable(path: &Path) -> bool {
+pub(super) fn is_executable(path: &Path) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -128,49 +128,105 @@ fn is_executable(path: &Path) -> bool {
     }
 }
 
-/// One hook lane, judged against the grammar.
-pub(super) fn lane_shape(hooks: &Path, lane: &str) -> Finding {
+/// One hook lane, judged against both documented shapes.
+///
+/// Returns the finding and whether that lane depends on the helper. The
+/// delegating line resolves its helper through `git rev-parse --git-path
+/// hooks`, so a hook carrying it needs the helper in whichever directory
+/// git reads; a hand-wired hook that execs the script directly does not.
+pub(super) fn lane_shape(
+    hooks: &Path,
+    lane: &str,
+    scripts_dir: &Path,
+    is_default_dir: bool,
+) -> (Finding, bool) {
     let path = hooks.join(lane);
     // A symlink is followed on purpose: git runs whatever the path resolves
     // to, so a link to a well-formed shim is armed and a dangling one is not.
     if !path.exists() {
-        return finding(Shape::Unarmed, format!("{lane} is missing"));
+        return (finding(Shape::Unarmed, format!("{lane} is missing")), true);
     }
     if !path.is_file() {
-        return finding(Shape::Unarmed, format!("{lane} is not a file git can run"));
+        return (
+            finding(Shape::Unarmed, format!("{lane} is not a file git can run")),
+            true,
+        );
     }
     let Ok(text) = std::fs::read_to_string(&path) else {
-        return finding(Shape::Unknown, format!("{lane} could not be read"));
+        return (
+            finding(Shape::Unknown, format!("{lane} could not be read")),
+            true,
+        );
     };
-    let mut lines = text.lines();
-    let shebang = lines.next().unwrap_or_default();
+    let shebang = text.lines().next().unwrap_or_default();
     if shebang.chars().any(char::is_control) {
-        return finding(
-            Shape::Unarmed,
-            format!("{lane} has a control character in its shebang, so git cannot exec it"),
+        return (
+            finding(
+                Shape::Unarmed,
+                format!("{lane} has a control character in its shebang, so git cannot exec it"),
+            ),
+            true,
         );
     }
     if !is_shell_shebang(shebang) {
-        return finding(
-            Shape::Unarmed,
-            format!("{lane} is not a POSIX-shell script, so the guard line cannot run"),
+        return (
+            finding(
+                Shape::Unarmed,
+                format!("{lane} is not a POSIX-shell script, so the guard line cannot run"),
+            ),
+            true,
         );
     }
     // The interpreter decides whether the body runs at all, so it is judged
     // before anything in the body is read.
     if !is_trusted_interpreter(shebang) {
-        return finding(
-            Shape::Unknown,
-            format!("{lane} runs under an interpreter this cannot vouch for ({shebang})"),
+        return (
+            finding(
+                Shape::Unknown,
+                format!("{lane} runs under an interpreter this cannot vouch for ({shebang})"),
+            ),
+            true,
         );
     }
+    if !is_executable(&path) {
+        return (
+            finding(
+                Shape::Unarmed,
+                format!("{lane} is not executable, so git ignores it"),
+            ),
+            true,
+        );
+    }
+
+    // First shape: the delegating line the installer writes, at line 2.
     let expected = call_line(lane);
-    if lines.next().unwrap_or_default() != expected {
-        // The line may be further down and gating perfectly well. Where
-        // exactly is beyond what a data-only read establishes, so this is
-        // unverifiable rather than a "not gated" verdict about a repository
-        // that is gated.
-        return match text.lines().any(|line| line == expected) {
+    if text.lines().nth(1).unwrap_or_default() == expected {
+        return (finding(Shape::Armed, format!("{lane} is armed")), true);
+    }
+
+    // Second shape, and only where git is reading a directory the installer
+    // does not write: a hand-wired hook running the entry point directly.
+    // In the repository's own hooks directory the installer would have
+    // written its line, so its absence there is drift rather than another
+    // arrangement.
+    if !is_default_dir {
+        let shape = super::entrypoint::shape(&path, lane, scripts_dir);
+        let reason = match shape {
+            Shape::Armed => format!("{lane} runs this install's {lane} directly"),
+            Shape::Unarmed => format!("{lane} does not run this install's {lane}"),
+            Shape::Unknown => format!(
+                "{lane} is wired to something this cannot verify — it recognises a single command that is this install's {lane}, optionally through exec"
+            ),
+        };
+        return (finding(shape, reason), false);
+    }
+
+    // The line may be further down and gating perfectly well. Where exactly
+    // is beyond what a data-only read establishes, so this is unverifiable
+    // rather than a "not gated" verdict about a repository that is gated.
+    let found_elsewhere = text.lines().any(|line| line == expected);
+    (
+        match found_elsewhere {
             true => finding(
                 Shape::Unknown,
                 format!(
@@ -181,15 +237,9 @@ pub(super) fn lane_shape(hooks: &Path, lane: &str) -> Finding {
                 Shape::Unarmed,
                 format!("{lane} does not carry the guard line at line 2"),
             ),
-        };
-    }
-    match is_executable(&path) {
-        true => finding(Shape::Armed, format!("{lane} is armed")),
-        false => finding(
-            Shape::Unarmed,
-            format!("{lane} is not executable, so git ignores it"),
-        ),
-    }
+        },
+        true,
+    )
 }
 
 /// The helper, judged by its bytes.
@@ -238,9 +288,24 @@ pub(super) fn helper_shape(hooks: &Path, scripts_dir: &Path) -> Finding {
 /// Definitive drift outranks something unmeasured: "a shim is provably
 /// gone" already answers the question, while unmeasured-only stays cannot
 /// tell.
-pub(super) fn directory_shape(hooks: &Path, scripts_dir: &Path) -> (Shape, String) {
-    let mut findings = vec![helper_shape(hooks, scripts_dir)];
-    findings.extend(LANES.iter().map(|lane| lane_shape(hooks, lane)));
+pub(super) fn directory_shape(
+    hooks: &Path,
+    scripts_dir: &Path,
+    is_default_dir: bool,
+) -> (Shape, String) {
+    let lanes: Vec<(Finding, bool)> = LANES
+        .iter()
+        .map(|lane| lane_shape(hooks, lane, scripts_dir, is_default_dir))
+        .collect();
+    // The helper matters only where some lane reaches for it. Hooks that run
+    // the entry point directly need none, and demanding one would call a
+    // correctly wired directory unarmed.
+    let needs_helper = lanes.iter().any(|(_, needs)| *needs);
+    let mut findings: Vec<&Finding> = lanes.iter().map(|(f, _)| f).collect();
+    let helper = needs_helper.then(|| helper_shape(hooks, scripts_dir));
+    if let Some(helper) = &helper {
+        findings.push(helper);
+    }
     let reasons: Vec<&str> = findings
         .iter()
         .filter(|f| f.shape != Shape::Armed)
@@ -259,15 +324,20 @@ pub(super) fn directory_shape(hooks: &Path, scripts_dir: &Path) -> (Shape, Strin
 /// Shims left in a hooks directory with no package to run them, or `None`
 /// where the directory holds none of ours.
 ///
-/// Read without a package to compare the helper's bytes against, so the
-/// helper is judged only by its marker being absent or present — the one
-/// case where that is all there is. What matters here is the lanes: a hook
-/// carrying the delegating line at line 2 fails every commit closed once
-/// the scripts it delegates to are gone.
+/// Ownership, not currency — and the two are deliberately different
+/// questions. A hook whose delegating line came from an OLDER installer
+/// spelling is not *armed* by the current grammar, but it is still ours and
+/// it still fails every commit closed once the scripts it delegates to are
+/// gone. Asking the shape question here would leave exactly that repository
+/// unreported: blocked, and told nothing about why.
+///
+/// So ownership is any historic marker, which is what the sentinel is for,
+/// and it is the one place a substring read is the right answer.
 pub(super) fn orphaned_shims(hooks: &Path) -> Result<Option<String>> {
     let mut found = Vec::new();
     for lane in LANES {
-        if lane_shape(hooks, lane).shape != Shape::Unarmed {
+        let path = hooks.join(lane);
+        if crate::fs::read_if_exists(&path)?.is_some_and(|text| text.contains(SENTINEL)) {
             found.push(lane.to_owned());
         }
     }

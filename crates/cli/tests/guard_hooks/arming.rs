@@ -2,7 +2,7 @@
 //! verbs, the migration off the retired arming, and what `kendex check`
 //! says about a repository in each state.
 
-use crate::{armed_repo, install_package, install_package_undeclared, repo, run, said};
+use crate::{armed_repo, git_ok, install_package, install_package_undeclared, repo, run, said};
 
 /// Disarming removes only the helper and the package's own marked line;
 /// the hook someone else wrote survives it.
@@ -276,6 +276,113 @@ fn an_interpreter_this_cannot_vouch_for_is_cannot_tell() {
             said(&out)
         );
     }
+}
+
+/// A hand-wired hook under a `core.hooksPath` directory is the second
+/// armed shape, and the check knows it.
+///
+/// The installer stands down there — it writes `.git/hooks`, which git is
+/// not reading — and tells people to wire that directory's hooks at these
+/// scripts themselves. Those hooks gate commits and carry no delegating
+/// line, so a check that knew only the first shape would call every one of
+/// them unarmed.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_hand_wired_hook_that_runs_the_scripts_is_armed() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    install_package(home, &root, &["growth-guards"]);
+    let scripts = root.join(".agents/skills/growth-guards/scripts");
+
+    let elsewhere = home.join("their-hooks");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    git_ok(
+        home,
+        &root,
+        &["config", "core.hooksPath", &elsewhere.display().to_string()],
+    );
+
+    let wire = |lane: &str, tail: &str| {
+        let path = elsewhere.join(lane);
+        std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\n# wired by hand\nexec \"{}/{lane}\"{tail}\n",
+                scripts.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    wire("pre-commit", "");
+    wire("commit-msg", " \"$1\"");
+
+    // Armed, and no helper is demanded: these hooks reach for none.
+    let out = run(home, &root, "kendex", &["check"]);
+    assert!(
+        !said(&out).contains("commit hooks"),
+        "a hand-wired directory is armed: {}",
+        said(&out)
+    );
+
+    // The argument list is part of the shape: pre-commit takes none and
+    // exits 2 on any, so wiring it with one breaks the gate rather than
+    // weakening it — and that is cannot-tell, not armed.
+    wire("pre-commit", " \"$1\"");
+    let out = run(home, &root, "kendex", &["check"]);
+    assert_eq!(out.status.code(), Some(2), "{}", said(&out));
+    assert!(said(&out).contains("cannot be verified"), "{}", said(&out));
+
+    // A second command in the file means its reachability is a guess.
+    let path = elsewhere.join("pre-commit");
+    std::fs::write(
+        &path,
+        format!(
+            "#!/bin/sh\nset -e\nexec \"{}/pre-commit\"\n",
+            scripts.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let out = run(home, &root, "kendex", &["check"]);
+    assert_eq!(out.status.code(), Some(2), "{}", said(&out));
+}
+
+/// Ownership is not currency. A shim written by an older installer spelling
+/// is not armed by the current grammar, but it is still ours — and once the
+/// scripts it delegates to are gone it fails every commit closed, which is
+/// the one thing a reader most needs told.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn shims_from_an_older_spelling_are_still_reported_as_ours() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    install_package(home, &root, &["growth-guards"]);
+    arm_by_hand(&root);
+
+    // An older delegating line: the marker is the same, the command is
+    // spelled differently, and the package is then removed.
+    let hook = root.join(".git/hooks/pre-commit");
+    std::fs::write(
+        &hook,
+        "#!/bin/sh\n\"$(git rev-parse --git-path hooks)/kendex-guards\" pre-commit || exit $?; # kendex-guards-hook\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::remove_dir_all(root.join(".agents/skills/growth-guards")).unwrap();
+
+    let out = run(home, &root, "kendex", &["check"]);
+    assert_eq!(out.status.code(), Some(2), "{}", said(&out));
+    assert!(
+        said(&out).contains("carries the package's shims"),
+        "an older spelling is still ours: {}",
+        said(&out)
+    );
+    assert!(said(&out).contains("pre-commit"), "{}", said(&out));
 }
 
 /// Arm through the package's own installer.
