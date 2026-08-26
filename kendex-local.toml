@@ -313,6 +313,15 @@ harnesses = [
 ]
 enabled = true
 
+[skills.size-ratchet]
+source = "."
+harnesses = [
+    "claude",
+    "codex",
+    "pi",
+]
+enabled = true
+
 [skills.worktree]
 source = "."
 harnesses = [
