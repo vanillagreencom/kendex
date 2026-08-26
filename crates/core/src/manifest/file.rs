@@ -15,8 +15,8 @@ use super::{
     validate,
 };
 
-/// What sits at a manifest path. A schema-less file is a v1 manifest: v2
-/// never mutates it — hard "migration required" error until the importer.
+/// What sits at a manifest path. A schema-less file is a v1 manifest:
+/// nothing converts it, and every write path refuses it by name.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ManifestFile {
     Absent,

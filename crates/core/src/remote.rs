@@ -7,11 +7,11 @@ use crate::manifest::{Manifest, SourceDecl};
 pub mod history;
 pub mod store;
 
-/// The cache key a declared repo string resolves under. Both spellings of
-/// the moved default derive the new repository's key, so however a
-/// manifest or lock still spells it there is one mirror, one set of
-/// checkouts, and one lock — never a fetch under one key racing an
-/// adoption holding the other.
+/// The cache key a declared repo string resolves under. Keyed off the
+/// clone URL, not `source_ref::repo_identity`: the URL is what carries the
+/// host and the `KENDEX_GIT_BASE` rebase, so two hosts serving one
+/// `owner/repo` keep separate mirrors. Spellings that differ only in case
+/// or URL shape therefore key apart and each fetch their own copy.
 pub fn cache_key(env: &Env, repo: &str) -> String {
     store::repo_key(&clone_url(env, repo))
 }

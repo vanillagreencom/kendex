@@ -1,7 +1,14 @@
-//! One string per repository, whatever a declaration spells it as. Every
-//! side that compares subscriptions — the Community directory, update
-//! grouping, the mirror store's key — reads through here, never a raw
-//! declaration.
+//! One string per repository, whatever a declaration spells it as.
+//! Subscription dedup, the default-source pick, update grouping and the
+//! Community directory's row matching compare what these return rather
+//! than raw declarations, so `.git`, case and URL shape never split one
+//! repository in two.
+//!
+//! The mirror store is not one of them: it keys off the clone URL
+//! (`remote::store::repo_key`), which answers a different question —
+//! identity folds every GitHub spelling onto one name, while the cache
+//! has to keep two hosts serving the same `owner/repo` apart and to
+//! follow the `KENDEX_GIT_BASE` rebase identity never sees.
 
 /// The `owner/repo` a GitHub reference names, in every shape a manifest
 /// can carry: the shorthand kendex seeds, an `https`/`http` URL with or

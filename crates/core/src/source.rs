@@ -274,9 +274,8 @@ fn last_resolved(
 ) -> Option<(PathBuf, String)> {
     let lock = crate::lock::load(&crate::lock::lock_path(env, scope)).ok()?;
     let recorded = lock.sources.get(name)?;
-    // The lock read here is the on-disk one: during the repository move it
-    // still spells the old repository while the manifest being planned
-    // spells the new — the same repository, so the record still counts.
+    // Exact strings: the record counts only for the repository it was
+    // written against, spelled the way the declaration spells it.
     if recorded.repo != repo || recorded.rev != decl.rev {
         return None;
     }
