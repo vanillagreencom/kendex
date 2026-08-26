@@ -130,20 +130,38 @@ impl Hardened {
         Hardened::new("curl", owned(args))
     }
 
-    /// A script the growth-guards package ships, run from the repository
+    /// A hook body the growth-guards package ships, run from the repository
     /// root as the commit gate.
     ///
-    /// The one call site here that deliberately keeps git's redirect
-    /// variables. Everything else scrubs them, because an inherited
-    /// `GIT_DIR` would send a command at the wrong repository; but this
-    /// child *is* a git hook body. Git exported those variables for it —
-    /// `GIT_INDEX_FILE` naming the temporary index of the commit being made
-    /// — and a chain that could not see them would judge the wrong
-    /// snapshot, passing a commit nobody checked. The program is never a
-    /// name a committed file chose: it is the installed package's own
-    /// script, at a path this crate derived.
+    /// The one child here that deliberately keeps git's redirect variables.
+    /// Everything else scrubs them, because an inherited `GIT_DIR` would
+    /// send a command at the wrong repository; but this child *is* a git
+    /// hook body. Git exported those variables for it — `GIT_INDEX_FILE`
+    /// naming the temporary index of the commit being made — and a chain
+    /// that could not see them would judge the wrong snapshot, passing a
+    /// commit nobody checked. Its stdin stays the caller's for the same
+    /// reason: the commit-msg lane reads a message from a pipe when git
+    /// hands it no file, and `/dev/null` there is an empty message. The
+    /// program is never a name a committed file chose: it is the installed
+    /// package's own script, at a path this crate derived.
+    pub fn guard_hook(program: &Path, args: &[&str], cwd: &Path) -> Hardened {
+        let mut hardened = Hardened::new(&program.to_string_lossy(), owned(args));
+        hardened.command.stdin(Stdio::inherit());
+        hardened.command.current_dir(cwd);
+        hardened
+    }
+
+    /// A management script the growth-guards package ships — arming,
+    /// disarming, or reporting on the shims.
+    ///
+    /// Not a hook body, so it gets the ordinary scrub. These run git
+    /// themselves against the repository they were pointed at, and an
+    /// inherited `GIT_DIR` or `GIT_INDEX_FILE` would outrank that and send
+    /// them at a different repository — writing hooks into one repo while
+    /// reporting about another.
     pub fn guard_script(program: &Path, args: &[&str], cwd: &Path) -> Hardened {
         let mut hardened = Hardened::new(&program.to_string_lossy(), owned(args));
+        hardened.scrub_git_redirects();
         hardened.command.current_dir(cwd);
         hardened
     }

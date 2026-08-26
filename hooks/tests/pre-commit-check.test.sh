@@ -338,6 +338,32 @@ run_hook "$UNARMED" '{"tool_input":{"command":"git -C \"/tmp/my repo\" commit -m
 assert_eq "$rc" "2" "the quoted-path commit still reaches the fallback gate"
 
 echo
+echo "a linked worktree is gated by the main checkout's copy"
+
+# Linked worktrees share one hooks directory but need not carry their own
+# skills, so the shim searches the MAIN checkout first. A fallback that
+# looked only at this work tree would find nothing and refuse a commit the
+# armed shim would have checked.
+LINKED_MAIN="$TMP_ROOT/linked-main"
+mkdir -p "$LINKED_MAIN"
+git -C "$LINKED_MAIN" init -q
+git -C "$LINKED_MAIN" -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
+install_stub_chain "$LINKED_MAIN"
+git -C "$LINKED_MAIN" worktree add -q "$TMP_ROOT/linked-wt" 2>/dev/null
+# The linked work tree carries no copy of its own.
+rm -rf "$TMP_ROOT/linked-wt/.agents"
+
+run_hook "$TMP_ROOT/linked-wt" "$(payload 'git commit -m test')" CHAIN_EXIT=1
+assert_eq "$rc" "2" "the linked worktree reaches the main checkout's chain"
+assert_contains "$log" "chain ran" "and it is the main checkout's script that ran"
+
+# A linked work tree with its own copy uses that one, not the main
+# checkout's: a re-vendored copy gates the tree it sits in.
+install_stub_chain "$TMP_ROOT/linked-wt"
+run_hook "$TMP_ROOT/linked-wt" "$(payload 'git commit -m test')" CHAIN_EXIT=1
+assert_eq "$rc" "2" "a work tree carrying its own copy still runs a chain"
+
+echo
 echo "fail closed without the package"
 
 run_hook "$NO_PACKAGE" "$(payload 'git commit -m test')"

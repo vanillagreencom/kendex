@@ -1,10 +1,17 @@
-//! The delegated guard script keeps every git redirect its parent carried.
+//! What the two delegated-script constructors do with git's environment.
 //!
-//! This is the one child this crate launches that must NOT be scrubbed. It
-//! is a git hook body: `git commit` exports `GIT_INDEX_FILE` naming the
-//! temporary index of the commit being made, and a chain that could not see
-//! it would judge the wrong snapshot and pass a commit nobody checked. The
-//! inverse of every other call site, so it is pinned as its own scenario.
+//! `guard_hook` is the one child this crate launches that must NOT be
+//! scrubbed. It is a git hook body: `git commit` exports `GIT_INDEX_FILE`
+//! naming the temporary index of the commit being made, and a chain that
+//! could not see it would judge the wrong snapshot and pass a commit nobody
+//! checked.
+//!
+//! `guard_script` is its opposite and runs the package's management scripts
+//! — arming, disarming, reporting. Those run git themselves against the
+//! repository they were pointed at, and an inherited redirect outranks that
+//! on the command line: it would write hooks into one repository while
+//! reporting about another. The two are pinned side by side, because the
+//! only thing separating them is which constructor a call site picked.
 #![cfg(unix)]
 
 use kendex_core::process::Hardened;
@@ -17,12 +24,12 @@ const INNER: &str = "KENDEX_TEST_GUARD_ENV_INNER";
 /// inner run's verdict.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_guard_script_sees_the_index_git_named() {
+fn a_guard_hook_sees_the_index_git_named() {
     if std::env::var_os(INNER).is_none() {
         let status = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "a_guard_script_sees_the_index_git_named",
+                "a_guard_hook_sees_the_index_git_named",
                 "--nocapture",
             ])
             .env(INNER, "1")
@@ -47,7 +54,7 @@ fn a_guard_script_sees_the_index_git_named() {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-    let output = Hardened::guard_script(&script, &[], tmp.path())
+    let output = Hardened::guard_hook(&script, &[], tmp.path())
         .run()
         .unwrap();
     assert!(output.status.success());
@@ -59,7 +66,22 @@ fn a_guard_script_sees_the_index_git_named() {
     ] {
         assert!(
             env.contains(variable),
-            "{variable} did not reach the script:\n{env}"
+            "{variable} did not reach the hook body:\n{env}"
+        );
+    }
+
+    // The management scripts are not hook bodies and get the scrub, so an
+    // inherited redirect cannot send an installer at another repository.
+    std::fs::remove_file(tmp.path().join("env.log")).unwrap();
+    let output = Hardened::guard_script(&script, &[], tmp.path())
+        .run()
+        .unwrap();
+    assert!(output.status.success());
+    let env = std::fs::read_to_string(tmp.path().join("env.log")).unwrap();
+    for variable in ["GIT_DIR=", "GIT_WORK_TREE=", "GIT_INDEX_FILE="] {
+        assert!(
+            !env.contains(variable),
+            "{variable} reached the management script:\n{env}"
         );
     }
 }
@@ -68,7 +90,7 @@ fn a_guard_script_sees_the_index_git_named() {
 /// package's exit status relayed rather than reinterpreted.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_guard_script_relays_its_verdict() {
+fn a_guard_hook_relays_its_verdict() {
     let tmp = tempfile::tempdir().unwrap();
     let script = tmp.path().join("pre-commit");
     std::fs::write(
@@ -79,7 +101,7 @@ fn a_guard_script_relays_its_verdict() {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-    let output = Hardened::guard_script(&script, &[], tmp.path())
+    let output = Hardened::guard_hook(&script, &[], tmp.path())
         .run()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));

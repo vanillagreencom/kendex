@@ -76,20 +76,28 @@ if [ -x "$HOOKS_DIR/pre-commit" ]; then
 fi
 elsewhere_notice
 
-# The chain is the growth-guards package's own script, found where the
-# armed shim would have found it. No binary is consulted: the scripts are
-# committed with the repository, so this lane gates a checkout on a machine
-# that never installed kendex — the same property the armed shim has.
+# The chain is the growth-guards package's own script, found the way the
+# armed shim finds it: the MAIN checkout first, then this work tree. Linked
+# worktrees share one hooks directory but need not carry their own copy of
+# the skills, so a linked worktree with no copy is gated by the main
+# checkout's — and searching only this tree would find nothing and refuse a
+# commit the armed shim would have checked. No binary is consulted: the
+# scripts are committed with the repository, so this lane gates a checkout
+# on a machine that never installed kendex, exactly as the shim does.
+COMMON=$(git rev-parse --git-common-dir 2>/dev/null) || COMMON=""
+case "$COMMON" in "") ;; /*) ;; *) COMMON="$PWD/$COMMON" ;; esac
+MAIN="${COMMON%/*}"
 TOP=$(git rev-parse --show-toplevel 2>/dev/null) || TOP=""
 CHAIN_SCRIPT=""
-if [ -n "$TOP" ]; then
+for root in "$MAIN" "$TOP"; do
+  [ -n "$root" ] || continue
   for base in .agents/skills .claude/skills .cursor/rules .opencode/skills skills; do
-    if [ -x "$TOP/$base/growth-guards/scripts/pre-commit" ]; then
-      CHAIN_SCRIPT="$TOP/$base/growth-guards/scripts/pre-commit"
-      break
+    if [ -x "$root/$base/growth-guards/scripts/pre-commit" ]; then
+      CHAIN_SCRIPT="$root/$base/growth-guards/scripts/pre-commit"
+      break 2
     fi
   done
-fi
+done
 if [ -z "$CHAIN_SCRIPT" ]; then
   echo "pre-commit-check: no git pre-commit hook will run for this commit and no growth-guards skill is installed under $PWD, so nothing can check it — install it (kendex add skill/growth-guards) and arm the hooks (kendex guard install), or remove this hook" >&2
   exit 2

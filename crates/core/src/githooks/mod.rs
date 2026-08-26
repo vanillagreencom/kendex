@@ -99,6 +99,37 @@ impl Repo {
         })
     }
 
+    /// The repository at `dir`, or `None` where there is none.
+    ///
+    /// [`Repo::at`] answers one question with two meanings: a directory
+    /// outside any repository and a git that could not run both arrive as
+    /// the same error. A caller deciding whether a verdict is *owed* needs
+    /// them apart — "no repository here, so no gate is expected" is a clean
+    /// answer, while "git would not run" is a check that could not be
+    /// taken. Only the first is `Ok(None)`.
+    pub fn probe(dir: &Path) -> Result<Option<Repo>> {
+        let output = Hardened::git(&["rev-parse", "--is-inside-work-tree"], Some(dir)).run()?;
+        match output.status.code() {
+            Some(0) => {}
+            // git's own "not a repository" exit. Every other status is a
+            // failure to measure, and says so.
+            Some(128) => return Ok(None),
+            other => {
+                return Err(err(format!(
+                    "could not tell whether {} is a work tree (git exited {other:?}): {}",
+                    dir.display(),
+                    String::from_utf8_lossy(&output.stderr).trim()
+                )));
+            }
+        }
+        // Inside a repository but not a checkout — a bare one, or a git dir
+        // reached directly. Nothing is armed there and nothing is expected.
+        if String::from_utf8_lossy(&output.stdout).trim() != "true" {
+            return Ok(None);
+        }
+        Repo::at(dir).map(Some)
+    }
+
     fn scope(&self) -> Scope {
         Scope::Project {
             root: self.worktree.clone(),

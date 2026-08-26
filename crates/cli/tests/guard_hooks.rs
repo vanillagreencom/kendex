@@ -127,6 +127,43 @@ fn repo(home: &Path) -> PathBuf {
     root
 }
 
+/// A repository under the retired arming: a kendex-hooks directory of the
+/// entrypoints that generation wrote, with core.hooksPath pointing at it.
+#[allow(clippy::unwrap_used)]
+fn retire(home: &Path, root: &Path) -> PathBuf {
+    retire_with_leases(home, root, &[root])
+}
+
+#[allow(clippy::unwrap_used)]
+fn retire_with_leases(home: &Path, root: &Path, leases: &[&Path]) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let retired = root.join(".git/kendex-hooks");
+    std::fs::create_dir_all(&retired).unwrap();
+    for hook in ["pre-commit", "commit-msg"] {
+        let path = retired.join(hook);
+        std::fs::write(&path, kendex_core::githooks::entrypoint(hook)).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let receipt = kendex_core::githooks::Receipt {
+        schema: 1,
+        hooks_path: retired.display().to_string(),
+        files: ["pre-commit", "commit-msg", "receipt.json"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        leases: leases.iter().map(|p| p.display().to_string()).collect(),
+    };
+    let mut text = serde_json::to_string_pretty(&receipt).unwrap();
+    text.push('\n');
+    std::fs::write(retired.join("receipt.json"), text).unwrap();
+    git_ok(
+        home,
+        root,
+        &["config", "core.hooksPath", &retired.display().to_string()],
+    );
+    retired
+}
+
 /// A repository with the package installed and its shims armed.
 #[allow(clippy::unwrap_used)]
 fn armed_repo(home: &Path) -> PathBuf {
@@ -267,19 +304,7 @@ fn arming_takes_back_the_retired_hooks_directory_first() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    let retired = root.join(".git/kendex-hooks");
-    std::fs::create_dir_all(&retired).unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    for hook in ["pre-commit", "commit-msg"] {
-        let path = retired.join(hook);
-        std::fs::write(&path, kendex_core::githooks::entrypoint(hook)).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    git_ok(
-        home,
-        &root,
-        &["config", "core.hooksPath", &retired.display().to_string()],
-    );
+    let retired = retire(home, &root);
 
     install_package(&root, &["growth-guards"]);
     let install = run(home, &root, "kendex", &["guard", "install"]);
@@ -381,4 +406,166 @@ fn check_reports_whether_the_shims_are_armed() {
         "an armed repo has nothing to report: {}",
         said(&armed)
     );
+}
+
+/// The gate is never removed on the promise of a replacement. With the
+/// package gone, arming refuses and the retired install is still there
+/// gating commits — a broken package must not leave a repository ungated.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn arming_without_a_working_package_leaves_the_old_gate_standing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    let retired = retire(home, &root);
+
+    // No package at all.
+    let out = run(home, &root, "kendex", &["guard", "install"]);
+    assert_eq!(out.status.code(), Some(2), "{}", said(&out));
+    assert!(
+        retired.join("pre-commit").is_file(),
+        "the old gate survived"
+    );
+
+    // A package whose installer cannot run is the same answer.
+    install_package(&root, &["growth-guards"]);
+    let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
+    std::fs::write(&installer, "#!/nonexistent/interpreter\n").unwrap();
+    let out = run(home, &root, "kendex", &["guard", "install"]);
+    assert_eq!(out.status.code(), Some(2), "{}", said(&out));
+    assert!(
+        retired.join("pre-commit").is_file(),
+        "the old gate survived"
+    );
+}
+
+/// A retired install another worktree still leases stays armed when this
+/// worktree releases its own, so `core.hooksPath` survives and the package
+/// installer would stand down having armed nothing. Refuse and name the
+/// blocker rather than reporting an arming that did not happen.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn arming_refuses_while_another_worktrees_lease_holds_the_old_install() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    git_ok(home, &root, &["worktree", "add", "--quiet", "../linked"]);
+    let linked = home.join("linked");
+    let retired = retire_with_leases(home, &root, &[&root, &linked]);
+    install_package(&root, &["growth-guards"]);
+
+    let out = run(home, &root, "kendex", &["guard", "install"]);
+    assert_eq!(out.status.code(), Some(2), "{}", said(&out));
+    assert!(
+        said(&out).contains("another worktree's lease"),
+        "{}",
+        said(&out)
+    );
+    assert!(
+        !root.join(".git/hooks/kendex-guards").exists(),
+        "nothing armed"
+    );
+    assert!(
+        retired.join("pre-commit").is_file(),
+        "the old gate survived"
+    );
+}
+
+/// Disarming with the package already gone is exit 2, not a clean removal:
+/// its shims may still be there, failing closed on every commit.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn disarming_without_the_package_is_a_refusal_that_names_the_shims() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = armed_repo(home);
+    std::fs::remove_dir_all(root.join(".agents/skills/growth-guards")).unwrap();
+
+    let out = run(home, &root, "kendex", &["guard", "uninstall"]);
+    assert_eq!(out.status.code(), Some(2), "{}", said(&out));
+    assert!(said(&out).contains("kendex-guards"), "{}", said(&out));
+}
+
+/// `kendex check` sees the same stale shims: a repository whose package was
+/// removed before disarming blocks every commit, and a check that called
+/// that clean would be the one report nobody could act on.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn check_names_shims_left_without_a_package() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = armed_repo(home);
+    std::fs::remove_dir_all(root.join(".agents/skills/growth-guards")).unwrap();
+
+    let out = run(home, &root, "kendex", &["check"]);
+    assert_eq!(out.status.code(), Some(2), "{}", said(&out));
+    assert!(said(&out).contains("commit hooks"), "{}", said(&out));
+    assert!(said(&out).contains("still carries"), "{}", said(&out));
+}
+
+/// The commit-msg lane takes the relative path git hands a hook, resolved
+/// against where the caller stood — not rebased on the repository root,
+/// where that name is a file that does not exist.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_message_lane_resolves_a_relative_path_against_the_caller() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    install_package(&root, &["growth-guards"]);
+    let sub = root.join("sub");
+    std::fs::create_dir_all(&sub).unwrap();
+    std::fs::write(sub.join("MSG"), "not conventional at all\n").unwrap();
+
+    let out = run(home, &sub, "kendex", &["guard", "run", "commit-msg", "MSG"]);
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    assert!(said(&out).contains("commit-msg"), "{}", said(&out));
+}
+
+/// With no file, the message arrives on stdin. A hardened child pointed at
+/// /dev/null would read an empty message and fail every piped commit.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_message_lane_reads_a_piped_message() {
+    use std::io::Write;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    install_package(&root, &["growth-guards"]);
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_kendex"))
+        .args(["guard", "run", "commit-msg"])
+        .current_dir(&root)
+        .env_clear()
+        .env("HOME", home)
+        .env("KENDEX_REAL_HOME", "1")
+        .env("PATH", path_with_binary())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"feat: piped and conventional\n")
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+}
+
+/// Outside any repository there is no verdict to give. A git that could not
+/// run is a different answer: the check says so rather than reading as
+/// clean.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn check_is_silent_outside_a_repository_and_loud_when_it_cannot_look() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let plain = home.join("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+
+    let out = run(home, &plain, "kendex", &["check"]);
+    assert!(!said(&out).contains("commit hooks"), "{}", said(&out));
 }

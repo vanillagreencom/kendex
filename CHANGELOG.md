@@ -103,9 +103,10 @@ an outside contributor.
 - `kendex guard install` arms the growth-guards shims in `.git/hooks` instead
   of setting `core.hooksPath`, so an armed repository gates commits with no
   kendex binary present; a repo still on the old arming is taken back first.
-- `kendex check` reports whether a project's commit hooks are armed, and the
-  `pre-commit-check` hook runs the package's own chain where none is —
-  neither needs the binary the retired engine required at every commit.
+- `kendex check` reports whether a project's commit hooks are armed, and
+  names shims a removed package left behind, which block every commit.
+- The `pre-commit-check` hook runs the package's own chain where nothing is
+  armed, needing no binary the retired engine required at every commit.
 - New install channels: `curl -fsSL https://kendex.ai/install.sh | sh`,
   Homebrew (`kendex`, `kendex-cli`), and the AUR (`kendex-bin`, `kendex`,
   `kendex-git`).
