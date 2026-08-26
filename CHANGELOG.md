@@ -16,6 +16,8 @@ an outside contributor.
 - `kendex check` no longer runs a repository's own guard scripts unless this
   machine installed that package and the script still matches what it
   installed: reading a clone's status runs none of its code.
+- `kendex check` reads a repository's hook files itself instead of running
+  its guard scripts, so reading a clone's status executes none of its code.
 - Agents no longer promise a `{{KENDEX_FAILURE_REF}}` that nothing defines:
   the failure-routing line now points at `kendex report --help`.
 - OpenCode, Gemini, and Copilot agent renders list required skills at
@@ -60,6 +62,9 @@ an outside contributor.
 
 ### Removed
 
+- **Breaking:** vstack-era installs are not migrated — install kendex fresh
+  and remove the old artifacts by hand: the `kendex-hooks`/`vstack-hooks`
+  directory, its `core.hooksPath`, and v1 guard settings.
 - **Breaking:** the growth-guards package's scripts are the only check
   engine: `kendex guard` keeps `run`, `install` and `uninstall`, and drops
   the per-check verbs, `repair`, and `import-v1`.

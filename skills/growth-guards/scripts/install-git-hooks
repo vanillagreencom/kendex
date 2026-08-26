@@ -38,18 +38,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   cat <<'EOF'
-usage: install-git-hooks [--repo PATH] [--into-default-hooks]
-                         [--uninstall | --check]
+usage: install-git-hooks [--repo PATH] [--uninstall | --check]
 
 Installs (or repairs) the .git/hooks/pre-commit and .git/hooks/commit-msg
 shims that run the growth-guards chain. Idempotent: re-running is a no-op
 when the install is current. --repo defaults to the current directory.
-
---into-default-hooks writes the shims into the repository's default hooks
-directory even while core.hooksPath redirects git elsewhere. They land
-dormant and go live when the redirect is removed — for a caller replacing
-another hook installation, which needs the new gate in place before the old
-one goes. Without it, an install under core.hooksPath is a reported skip.
 
 --uninstall drops the helper and our marked line from each hook, deleting a
 hook file this installer created outright and leaving every other line of a
@@ -91,13 +84,6 @@ hook_warn() { # MESSAGE
 
 REPO="."
 MODE="install"
-# Write into the repository's default hooks directory even while
-# core.hooksPath redirects git elsewhere. The shims land dormant and go live
-# the moment the redirect is removed, which is what lets a caller staging a
-# migration put the new gate in place BEFORE taking the old one away — no
-# moment with neither armed. Without this the install stands down, because
-# writing hooks git ignores is otherwise only misleading.
-INTO_DEFAULT=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --uninstall | --check)
@@ -112,7 +98,6 @@ while [ $# -gt 0 ]; do
       REPO="$1"
       ;;
     --repo=*) REPO="${1#--repo=}" ;;
-    --into-default-hooks) INTO_DEFAULT=1 ;;
     -h | --help)
       usage
       exit 0
@@ -149,10 +134,9 @@ HOOKS_PATH_SET=0
 if CUSTOM_HOOKS="$(git -C "$REPO_ABS" config --get core.hooksPath 2>/dev/null)"; then
   HOOKS_PATH_SET=1
 fi
-if [ "$HOOKS_PATH_SET" -eq 1 ] && [ "$MODE" = "install" ] && [ "$INTO_DEFAULT" -eq 0 ]; then
+if [ "$HOOKS_PATH_SET" -eq 1 ] && [ "$MODE" = "install" ]; then
   warn "core.hooksPath is set ('$CUSTOM_HOOKS'); git ignores .git/hooks, so the guard shims were NOT installed"
   echo "  Have that directory's pre-commit run $SCRIPT_DIR/pre-commit, and its commit-msg run $SCRIPT_DIR/commit-msg \"\$1\"." >&2
-  echo "  Or pass --into-default-hooks to write them dormant, ready for when the redirect goes." >&2
   echo "growth-guards git hooks: skipped — core.hooksPath is set ($CUSTOM_HOOKS)"
   exit 0
 fi
@@ -1141,12 +1125,5 @@ install_hook commit-msg
 if [ "$FAILED" -eq 1 ]; then
   echo "growth-guards git hooks: incomplete — see the warnings above ($HOOKS_DIR)"
   exit 1
-fi
-# Written under a redirect, the shims are in place and git is not reading
-# them. Claiming they are armed would be a claim --check contradicts, so the
-# migration branch says what is true: staged, live when the redirect goes.
-if [ "$HOOKS_PATH_SET" -eq 1 ]; then
-  echo "growth-guards git hooks: pre-commit and commit-msg staged in $HOOKS_DIR — dormant while core.hooksPath ('$CUSTOM_HOOKS') redirects git away, armed the moment it is unset"
-  exit 0
 fi
 echo "growth-guards git hooks: pre-commit and commit-msg armed in $HOOKS_DIR"

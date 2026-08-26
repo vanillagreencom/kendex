@@ -94,8 +94,7 @@ marker or exact line at its position, POSIX-sh shebang, executable). `1`:
 some shim is drifted or absent. `2`: the question could not be answered (an
 unreadable hooks directory, a hook file that cannot be read); failure to
 measure is never a pass, and definitive drift outranks an unmeasured
-component. The one stdout line carries every component finding, and `kendex
-check` folds it in for projects with the skill installed.
+component. The one stdout line carries every component finding, and `kendex check` reads the hook files natively instead of running this.
 
 Under `core.hooksPath` the redirected directory is what `--check` probes,
 because it is the only one git reads. The target is resolved with `git

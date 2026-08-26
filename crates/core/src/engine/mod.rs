@@ -28,7 +28,6 @@ mod expansion;
 mod file_plan;
 pub mod fork;
 mod gemini;
-mod guard_consent;
 mod holds;
 mod item_plan;
 mod item_record;
@@ -133,9 +132,6 @@ fn plan_scope_once(
     let safety = scoring::run(scope, &state);
     let mut drift = Vec::new();
     let mut ops: Vec<PlannedOp> = Vec::new();
-    // The machine's own record of this install, planned with everything
-    // else the install writes so it lands and rolls back with them.
-    guard_consent::plan(env, scope, &state, &mut ops)?;
     let mut new_lock = fresh_lock(&manifest, lock, &state);
     let mut written = written::Written::default();
     let mut config_edits = config_edits::ConfigEditPlan::default();

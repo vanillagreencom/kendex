@@ -384,10 +384,9 @@ lives in one capability table read by core and UI.
   Managed-block markers, report tags and the opencode hook-file prefix
   write the new spelling and read both. Env vars are `KENDEX_*`; the
   guard's are the growth-guards package's own (`GROWTH_GUARDS_*`,
-  `SIZE_RATCHET_*`), read by the scripts rather than by this binary; the
-  receiptless by-content proof of a retired hooks directory accepts both
-  generations of entrypoint bytes. Old-name fallback reads retire at 3.0.
-  The global
+  `SIZE_RATCHET_*`), read by the scripts rather than by this binary. An
+  install made under the old name is not migrated: it is reinstalled.
+  Old-name fallback reads retire at 3.0. The global
   `vstack2` config/cache/data dirs move under `kendex` once, on first
   launch of either shell, under a scope-style lock, never overwriting what
   the new dirs hold and never following symlinks; a collision is reported;
@@ -430,29 +429,16 @@ lives in one capability table read by core and UI.
   a commit aimed elsewhere is not gated by it (a stderr notice says so) and
   it never parses the target — and a payload it cannot read is a refusal,
   as is a working directory carrying no package to run.
-- **The retired hooks directory is taken back, provably.** Two generations
-  armed commits by writing `<git-common-dir>/kendex-hooks/` (or
-  `vstack-hooks/`) and pointing `core.hooksPath` at it. Nothing writes one
-  now — that value redirects the whole directory and stands the package's
-  installer down — so `guard install` takes an old install back before it
-  arms, and says so. Removal is receipt-scoped with compare-and-swap on
-  both sides: exact files written, exact config value set, one lease per
-  worktree, the last release disarming and reaping leases absent from
-  git's registry; `core.hooksPath` is unset only while its value still
-  equals the receipt's, and a value naming either generation's path is
-  kendex's by name even with its directory gone. Without a receipt,
-  ownership is proven by content: a directory holding nothing but kendex's
-  own entrypoints byte for byte (either generation) is kendex's, while
-  anything else in it stays, named, because unsetting the config value
-  around a surviving user hook would silently disable it. The live
-  directory resolves in one order: what `core.hooksPath` names when it
-  names either generation's path, else the one holding a receipt, else the
-  old name while it is the sole directory present. Hook state is
-  repository-common: mutations take a common-dir lock after the scope lock
-  (fixed order), build their plan once both are held, and journal into a
-  common-dir journal every common-lock holder and the app's launch pass
-  recover. A worktree git lists as prunable: lease reaped, config never
-  asked for.
+- **kendex carries no migration machinery.** Breaking changes are a
+  changelog entry and a fresh install, never compatibility code: a path
+  kept for a population nobody measured is machinery that has to be
+  correct forever for nobody. Earlier generations armed commits through a
+  hooks directory inside the git directory with `core.hooksPath` pointed at
+  it, and converted v1 settings on demand; neither is detected, undone, or
+  converted here. `guard install` runs the package's installer, which
+  stands down and reports when `core.hooksPath` sends git anywhere but the
+  repository's own hooks directory — whoever set that value undoes it, and
+  the changelog says which artifacts an old install left behind.
 - **A registration is reconciled, not added to.** What a hook registered
   is recorded (`engine::item_record`); a catalog moving it to another
   event retires the recorded entry where the document still has it,

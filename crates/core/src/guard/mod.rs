@@ -19,13 +19,13 @@
 use std::path::Path;
 use std::time::Duration;
 
-use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::process::Hardened;
 
-pub mod consent;
+mod repo;
 mod resolve;
 pub(super) mod shims;
+pub use repo::Repo;
 pub use resolve::Installed;
 use resolve::bind;
 use shims::{missing_shims, stale_shims};
@@ -68,12 +68,6 @@ pub(crate) fn guard_err(check: &str, message: impl Into<String>) -> CoreError {
 pub struct GuardReport {
     pub lines: Vec<String>,
     pub code: u8,
-}
-
-impl GuardReport {
-    fn spoken(lines: Vec<String>) -> GuardReport {
-        GuardReport { lines, code: 0 }
-    }
 }
 
 /// The hook lanes the package carries. Each name is both the git hook and
@@ -150,102 +144,19 @@ fn relay(output: &std::process::Output) -> GuardReport {
 /// there, then take the old install back, then ask the installer for its
 /// verdict. Every failure before the takeback leaves the retired gate
 /// exactly as it was, fully armed.
-pub fn install(env: &Env, dir: &Path) -> Result<GuardReport> {
+/// Arm the shims: the package's own installer, in this repository.
+///
+/// A `core.hooksPath` pointing somewhere else is the installer's to report
+/// — it stands down and says so, because shims git never reads would only
+/// mislead. kendex knows nothing about where such a redirect came from.
+pub fn install(dir: &Path) -> Result<GuardReport> {
     let (repo, installed) = bind(dir, INSTALLER)?;
-    let mut lines = Vec::new();
-    // Cheapest possible proof that the installer runs at all — a broken
-    // interpreter or a syntax error fails here, before anything is written
-    // and long before the old gate is touched. `--help` writes nothing and
-    // must exit 0; anything else is a package this cannot arm with.
-    let probe = installer(&repo, &installed, &["--help"])?;
-    if probe.code != 0 {
-        lines.extend(probe.lines);
-        lines.push(format!(
-            "{} could not run — nothing was changed",
-            installed.script.display()
-        ));
-        return Ok(GuardReport { lines, code: 2 });
-    }
-
-    let retired = crate::githooks::installed(dir)?;
-    // Under a live redirect the installer stands down by default, because
-    // shims git ignores are otherwise only misleading. Here they are the
-    // point: staged now, live the moment the redirect goes.
-    let args: &[&str] = match retired {
-        true => &["--into-default-hooks"],
-        false => &[],
-    };
-    let report = installer(&repo, &installed, args)?;
-    lines.extend(report.lines);
-    if report.code != 0 {
-        return Ok(GuardReport {
-            lines,
-            code: report.code,
-        });
-    }
-    // Proven on disk before the old gate goes: the helper and both marked
-    // hooks are in the directory that becomes live. The installer's own
-    // `--check` cannot answer this yet — it judges where git reads, which
-    // is still the retired directory.
-    let staged = crate::githooks::default_hooks_dir(&repo);
-    if let Some(missing) = missing_shims(&staged)? {
-        lines.push(format!(
-            "{} is not armed after the install above ({missing}) — the retired install was left in place",
-            staged.display()
-        ));
-        return Ok(GuardReport { lines, code: 2 });
-    }
-
-    if retired {
-        // Asked before anything is removed: a global or included
-        // `core.hooksPath` surfaces the moment the local one goes, and git
-        // would keep reading somewhere else with the staged shims dormant
-        // and the old gate gone. Refuse with that diagnosis and leave both
-        // in place — the shims stay staged, ready for whenever the outer
-        // value is dealt with.
-        if let Some((value, origin)) = crate::githooks::hooks_path_beneath_local(&repo)? {
-            lines.push(format!(
-                "core.hooksPath is also set to {value} in {origin}, which would surface the moment this repository's own value is unset and keep git reading there — the retired install was left in place and the shims above stay dormant; unset that value, then rerun"
-            ));
-            return Ok(GuardReport { lines, code: 2 });
-        }
-        let taken = crate::githooks::uninstall(env, dir)?;
-        lines.extend(taken.lines);
-        // Removal is lease-counted: a receipt another worktree still holds
-        // releases this worktree's lease and leaves the redirect standing,
-        // so the staged shims are still dormant. Say so — the repository is
-        // gated, by the old gate, and this command did not finish.
-        if let Some(path) = crate::githooks::effective_hooks_path(&repo.worktree)? {
-            lines.push(format!(
-                "core.hooksPath still resolves to {path} — another worktree's lease keeps the retired install armed, so the shims written above stay dormant; run `kendex guard uninstall` in those worktrees, then rerun"
-            ));
-            return Ok(GuardReport { lines, code: 2 });
-        }
-        // Said only here, after the effective value has been read back: a
-        // line claiming the shims went live has to come after the check
-        // that can contradict it, or the two disagree in one report.
-        lines.push(
-            "took back the retired kendex-hooks directory; the package's shims are now live"
-                .to_owned(),
-        );
-    }
-
-    // The installer's own verdict, asked once git reads where the shims
-    // are: a repository this command calls armed has to be one the checker
-    // calls armed too.
-    let verdict = installer(&repo, &installed, &["--check"])?;
-    if verdict.code != 0 {
-        lines.extend(verdict.lines);
-        lines.push("the shims are not armed after the install above".to_owned());
-        return Ok(GuardReport { lines, code: 2 });
-    }
-    Ok(GuardReport::spoken(lines))
+    installer(&repo, &installed, &[])
 }
 
 /// Disarm: the package removes its helper and its own marked line, and
-/// nothing else. Any retired `kendex-hooks` install goes with it, so one
-/// command leaves a repository with none of ours in it either generation.
-pub fn uninstall(env: &Env, dir: &Path) -> Result<GuardReport> {
+/// nothing else.
+pub fn uninstall(dir: &Path) -> Result<GuardReport> {
     let mut lines = Vec::new();
     let code = match bind(dir, INSTALLER) {
         Ok((repo, installed)) => {
@@ -259,7 +170,7 @@ pub fn uninstall(env: &Env, dir: &Path) -> Result<GuardReport> {
         // leave a repository nobody can commit to looking disarmed.
         Err(error) => {
             lines.push(error.to_string());
-            if let Ok(Some(repo)) = crate::githooks::Repo::probe(dir)
+            if let Ok(Some(repo)) = repo::Repo::probe(dir)
                 && let Some(stale) = stale_shims(&repo)?
             {
                 lines.push(stale);
@@ -270,111 +181,85 @@ pub fn uninstall(env: &Env, dir: &Path) -> Result<GuardReport> {
             2
         }
     };
-    if crate::githooks::installed(dir)? {
-        let taken = crate::githooks::uninstall(env, dir)?;
-        lines.extend(taken.lines);
-    }
     Ok(GuardReport { lines, code })
 }
 
-/// Whether the shims are armed, in the package's own words. The installer
-/// answers this, so the thing that writes the shims and the thing that
-/// reports on them cannot disagree about what "armed" means.
+/// Whether commits here are gated, read off the hook files themselves.
 ///
-/// `Ok(None)` where no verdict is owed: this is not a work tree, or the
-/// package is not installed here, so no shim can fire and none is expected.
-/// A package that IS installed and whose installer cannot be run is an
-/// error, never a quiet pass — that is a broken install, not a clean one.
-/// Whether someone installed this package **on this machine**, which is
-/// what decides whether a read verb may run its scripts.
+/// This one never executes anything. `kendex check` is a read, and a
+/// checkout is other people's data: running a script out of one would mean
+/// that cloning a repository and asking after its status ran code its
+/// author chose. Everything it needs is on disk — whether the hooks git
+/// runs delegate to the package, and whether the helper they reach for is
+/// there — so it reads that and says so.
 ///
-/// Nothing inside the repository can answer this. A repository that commits
-/// its harness render ships the scripts and the manifest declaring them,
-/// and a `.kendex-lock.json` can be force-added past its ignore rule and
-/// travel with a clone too — anything a `git clone` carries, a hostile
-/// author can write. The answer comes from [`consent`], kept under kendex's
-/// own data directory and keyed by canonical project path.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Consent {
-    /// This machine's record vouches for the exact script about to run.
-    Installed,
-    /// The repository claims the package and this machine has no record of
-    /// installing it — an ordinary state for a fresh clone, and not consent.
-    DeclaredOnly,
-    /// Nothing here claims the package at all.
-    Unrecorded,
-}
-
-pub fn armed(env: &Env, dir: &Path, claimed: Consent) -> Result<Option<GuardReport>> {
+/// The package's own `--check` still exists and still speaks its full
+/// vocabulary; a person can run it, and the explicit `guard` verbs do. The
+/// difference is that those are invocations, and an invocation is consent.
+///
+/// `installed_here` says whether this project's own install record carries
+/// the package. It decides wording, never permission — nothing is executed
+/// either way. A checkout that merely carries the files, as every clone of
+/// a repository committing its harness render does, is not missing an
+/// arming nobody asked for, and saying so at every session start would be
+/// noise on repositories that never opted in.
+///
+/// `Ok(None)` where nothing is owed: not a work tree, or a repository with
+/// no shims and nothing expecting any. A verdict that could not be taken is
+/// exit 2, never a silent pass.
+pub fn armed(dir: &Path, installed_here: bool) -> Result<Option<GuardReport>> {
     // Only "this is not a work tree" is a missing verdict. Anything else —
     // git absent, metadata unreadable, a probe that failed — is a check
     // that could not be taken, and reporting it as "nothing to say" would
     // read as a pass.
-    let Some(repo) = crate::githooks::Repo::probe(dir)? else {
+    let Some(repo) = repo::Repo::probe(dir)? else {
         return Ok(None);
     };
+    let live = repo.effective_hooks_dir()?;
+    let package = Installed::resolve(&repo, INSTALLER);
 
-    // Everything below the execution gate is file inspection, so it runs
-    // whatever the consent: reading what is on disk is what a read verb is
-    // for, and these states have to be reported from any repository.
-    let Some(installed) = Installed::resolve(&repo, INSTALLER) else {
-        // Shims with no installer are armed and failing closed on every
-        // commit — the loudest of these states.
-        if let Some(line) = stale_shims(&repo)? {
-            return Ok(Some(GuardReport {
+    // Armed and whole: nothing to report.
+    let missing = missing_shims(&live)?;
+    if missing.is_none() {
+        // Unless there is no package left to run them, which is the one
+        // state where armed hooks are the problem rather than the answer.
+        return Ok(match package.is_none() {
+            true => stale_shims(&repo)?.map(|line| GuardReport {
                 lines: vec![line],
                 code: 2,
-            }));
-        }
-        // A package that is here but carries no runnable installer is a
-        // broken install. Nothing is armed, so nothing is blocked — but the
-        // next `guard install` cannot run either, and a clean verdict would
-        // send a reader off believing the gate is a command away.
-        if let Some(dir) = Installed::present(&repo) {
-            return Ok(Some(GuardReport {
-                lines: vec![format!(
-                    "the {SKILL} skill at {} carries no runnable {INSTALLER} — commit hooks cannot be armed or reported on until it is reinstalled (`kendex refresh`)",
-                    dir.display()
-                )],
-                code: 2,
-            }));
-        }
-        // No package and no shims: no gate is expected here.
-        return Ok(None);
-    };
+            }),
+            false => None,
+        });
+    }
 
-    // Running the package's own checker is the one thing that needs
-    // permission, and nothing inside the repository can grant it. The
-    // machine-scoped record is checked against the very script that would
-    // run — its kind, that it was enabled, and its bytes' hash — so a
-    // package swapped after the fact or a script edited since is not
-    // vouched for.
-    //
-    // The armed git hooks stay a different matter: those run because
-    // someone armed them here, which is consent in the only form that
-    // counts.
-    if !consent::vouches_for(env, &repo.worktree, &installed.script) {
-        let advice = match claimed {
-            Consent::Unrecorded => {
-                format!("no {SKILL} package is installed here (`kendex add {SKILL}`)")
-            }
-            _ => format!(
-                "{SKILL} is claimed here but this machine has no record of installing it (`kendex refresh`)"
-            ),
-        };
-        return Ok(stale_shims(&repo)?.map(|line| GuardReport {
-            lines: vec![format!("{advice}; kendex did not run its checker. {line}")],
-            code: 2,
+    // Partly armed: some of what the installer writes is there and some is
+    // not, so a commit runs a hook that cannot reach what it delegates to.
+    if stale_shims(&repo)?.is_some() {
+        return Ok(Some(GuardReport {
+            lines: vec![format!(
+                "commit hooks in {} are not intact ({}) — run `kendex guard install` to repair them",
+                live.display(),
+                missing.unwrap_or_default()
+            )],
+            code: 1,
         }));
     }
-    installer(&repo, &installed, &["--check"]).map(Some)
+
+    // Nothing armed. Worth saying only where somebody installed the
+    // package here and is expecting it to gate their commits.
+    if package.is_none() || !installed_here {
+        return Ok(None);
+    }
+    Ok(Some(GuardReport {
+        lines: vec![format!(
+            "commit hooks are not armed in {} — `kendex guard install` arms them",
+            live.display()
+        )],
+        code: 1,
+    }))
 }
 
-fn installer(
-    repo: &crate::githooks::Repo,
-    installed: &Installed,
-    args: &[&str],
-) -> Result<GuardReport> {
+fn installer(repo: &repo::Repo, installed: &Installed, args: &[&str]) -> Result<GuardReport> {
     let root = repo.worktree.display().to_string();
     let mut argv = vec!["--repo", root.as_str()];
     argv.extend_from_slice(args);

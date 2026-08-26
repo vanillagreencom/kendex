@@ -38,7 +38,7 @@ impl Installed {
     /// skills, so one is routinely gated by the main checkout's copy. And a
     /// tool directory holding a partial or non-executable copy must not
     /// shadow a working one beside it.
-    pub fn resolve(repo: &crate::githooks::Repo, relative: &str) -> Option<Installed> {
+    pub fn resolve(repo: &super::Repo, relative: &str) -> Option<Installed> {
         // The helper bakes the scripts DIRECTORY and execs a bare lane name
         // inside it, so the baked branch joins the file name rather than the
         // package-relative path the search below uses.
@@ -66,7 +66,7 @@ impl Installed {
     /// Whether any copy of the package is here at all, for a message that
     /// tells "no package installed" from "a package whose scripts are
     /// broken" — two different things to do something about.
-    pub fn present(repo: &crate::githooks::Repo) -> Option<PathBuf> {
+    pub fn present(repo: &super::Repo) -> Option<PathBuf> {
         search_roots(repo).into_iter().find_map(|root| {
             SKILL_ROOTS
                 .iter()
@@ -84,10 +84,8 @@ impl Installed {
 /// unreadable, or shaped differently than this installer writes yields
 /// nothing and the search below decides — the same outcome the helper
 /// reaches when the baked path holds no executable script.
-fn baked_scripts(repo: &crate::githooks::Repo) -> Option<PathBuf> {
-    let helper = crate::githooks::effective_hooks_dir(&repo.worktree)
-        .ok()?
-        .join(super::shims::HELPER);
+fn baked_scripts(repo: &super::Repo) -> Option<PathBuf> {
+    let helper = repo.effective_hooks_dir().ok()?.join(super::shims::HELPER);
     let text = std::fs::read_to_string(helper).ok()?;
     let quoted = text
         .lines()
@@ -111,7 +109,7 @@ fn unquote(quoted: &str) -> String {
 /// The roots the helper searches, in its order: the main checkout, then this
 /// work tree. They are the same directory in an ordinary clone, and the
 /// duplicate costs one `is_executable` call.
-fn search_roots(repo: &crate::githooks::Repo) -> Vec<PathBuf> {
+fn search_roots(repo: &super::Repo) -> Vec<PathBuf> {
     let main = repo
         .common_dir
         .parent()
@@ -139,8 +137,8 @@ fn is_executable(path: &Path) -> bool {
 /// The repository the caller is standing in, and the package it carries.
 /// Both refusals name what to do next, because this is reached from a
 /// commit hook as often as from a terminal.
-pub(super) fn bind(dir: &Path, relative: &str) -> Result<(crate::githooks::Repo, Installed)> {
-    let repo = crate::githooks::Repo::at(dir)?;
+pub(super) fn bind(dir: &Path, relative: &str) -> Result<(super::Repo, Installed)> {
+    let repo = super::Repo::at(dir)?;
     let Some(installed) = Installed::resolve(&repo, relative) else {
         // A package that is here but cannot run is a broken install, and
         // says so; one that is not here at all is a different sentence.
@@ -155,7 +153,7 @@ pub(super) fn bind(dir: &Path, relative: &str) -> Result<(crate::githooks::Repo,
             None => guard_err(
                 "hooks",
                 format!(
-                    "no {SKILL} skill under {} ({}) — the checks live in that package; install it with `kendex add {SKILL}`",
+                    "no {SKILL} skill under {} ({}) — the checks live in that package; install it with `kendex add --skill {SKILL}`",
                     repo.worktree.display(),
                     SKILL_ROOTS.join(" ")
                 ),

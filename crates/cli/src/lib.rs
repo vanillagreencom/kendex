@@ -149,14 +149,6 @@ enum Command {
     Guard(commands::guard_cmd::GuardCommand),
     /// File an issue about an installed asset, routed by ownership
     Report(ReportFlags),
-    /// Migrate v1 manifests and locks to v2 (originals go to the trash)
-    Import {
-        #[arg(short = 'g', long)]
-        global: bool,
-        /// project | global | all (default all)
-        #[arg(long)]
-        scope: Option<String>,
-    },
     /// Declare, toggle, and refresh sources
     #[command(subcommand)]
     Source(commands::source_cmd::SourceCommand),
@@ -316,12 +308,8 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             let filter = ScopeFilter::resolve(scope.as_deref(), false, ScopeFilter::All)?;
             commands::update_pi::run(&env, filter, check)?;
         }
-        Command::Guard(guard_command) => return commands::guard_cmd::run(&env, guard_command),
+        Command::Guard(guard_command) => return commands::guard_cmd::run(guard_command),
         Command::Report(flags) => commands::report::run(&env, flags.into_args())?,
-        Command::Import { global, scope } => {
-            let filter = ScopeFilter::resolve(scope.as_deref(), global, ScopeFilter::All)?;
-            commands::import::run(&env, filter)?;
-        }
         Command::Source(source_command) => {
             let filter = ScopeFilter::resolve(None, false, ScopeFilter::Project)?;
             commands::source_cmd::run(&env, source_command, filter)?;

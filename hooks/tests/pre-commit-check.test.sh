@@ -404,7 +404,7 @@ run_hook "$NO_PACKAGE" "$(payload 'git commit -m test')"
 assert_eq "$rc" "2" "no armed hook and no package refuses the commit"
 assert_contains "$err" "no growth-guards skill is installed" \
   "the refusal names what is missing"
-assert_contains "$err" "kendex add skill/growth-guards" "and how to get it"
+assert_contains "$err" "kendex add --skill growth-guards" "and how to get it"
 
 echo
 echo "no kendex binary anywhere"

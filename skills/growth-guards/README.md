@@ -38,8 +38,8 @@ hook keeps its content and exit status; repeat runs are no-ops and repairs.
 `--uninstall` drops only the helper and our line. `--check` writes nothing:
 `0` armed — in `.git/hooks` or a `core.hooksPath` directory hand-wired to this
 skill's hooks — `1` drifted/absent/dormant, `2` could not determine, never a
-silent pass. `kendex guard install` runs the installer, `kendex guard
-uninstall` runs `--uninstall`, and `kendex check` folds in `--check`.
+silent pass. `kendex guard install` runs the installer and `kendex guard
+uninstall` runs `--uninstall`.
 
 `pre-commit` judges ONE commit snapshot: `size-ratchet --staged` and
 `preflight --staged` when the committing work tree or this install
@@ -63,9 +63,11 @@ git, on a machine that has never installed kendex. That is the whole reason
 the checks are shell and travel with the repository.
 
 **kendex only arms and reports.** `kendex guard install` runs the installer
-above; `kendex guard uninstall` runs `--uninstall`; `kendex check` relays
-`--check`. It implements no check of its own, so there is exactly one
-definition of every verdict — this skill's.
+above; `kendex guard uninstall` runs `--uninstall`; `kendex check` reads the hook files
+itself — armed, not armed, or could not tell — and runs nothing out of a
+checkout, because reading a repository's status must not execute its code.
+kendex implements no check of its own; the verdicts a commit is judged by
+are all this skill's.
 
 **The `pre-commit-check` harness hook is a stand-in, not a second opinion.**
 Where a git pre-commit hook is armed, it steps aside: git will run the gate

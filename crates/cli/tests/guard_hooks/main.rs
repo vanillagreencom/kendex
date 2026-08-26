@@ -184,43 +184,6 @@ fn repo(home: &Path) -> PathBuf {
     root
 }
 
-/// A repository under the retired arming: a kendex-hooks directory of the
-/// entrypoints that generation wrote, with core.hooksPath pointing at it.
-#[allow(clippy::unwrap_used)]
-fn retire(home: &Path, root: &Path) -> PathBuf {
-    retire_with_leases(home, root, &[root])
-}
-
-#[allow(clippy::unwrap_used)]
-fn retire_with_leases(home: &Path, root: &Path, leases: &[&Path]) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-    let retired = root.join(".git/kendex-hooks");
-    std::fs::create_dir_all(&retired).unwrap();
-    for hook in ["pre-commit", "commit-msg"] {
-        let path = retired.join(hook);
-        std::fs::write(&path, kendex_core::githooks::entrypoint(hook)).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    let receipt = kendex_core::githooks::Receipt {
-        schema: 1,
-        hooks_path: retired.display().to_string(),
-        files: ["pre-commit", "commit-msg", "receipt.json"]
-            .into_iter()
-            .map(str::to_owned)
-            .collect(),
-        leases: leases.iter().map(|p| p.display().to_string()).collect(),
-    };
-    let mut text = serde_json::to_string_pretty(&receipt).unwrap();
-    text.push('\n');
-    std::fs::write(retired.join("receipt.json"), text).unwrap();
-    git_ok(
-        home,
-        root,
-        &["config", "core.hooksPath", &retired.display().to_string()],
-    );
-    retired
-}
-
 /// A repository with the package installed and its shims armed.
 #[allow(clippy::unwrap_used)]
 fn armed_repo(home: &Path) -> PathBuf {

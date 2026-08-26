@@ -41,23 +41,19 @@ pub fn run(
     Ok(ExitCode::from(checked.status.exit_code()))
 }
 
-/// Whether commits are actually gated, from the growth-guards installer's
-/// own `--check`. It is the one thing this report cannot read off a stat:
-/// the shims live in `.git/hooks`, which no lock tracks, and a repository
-/// whose shims drifted looks identical on disk to one that never armed any.
+/// Whether commits here are actually gated. The one thing this report
+/// cannot read off a stat: the shims live in `.git/hooks`, which no lock
+/// tracks, and a repository whose shims drifted looks identical on disk to
+/// one that never armed any.
 ///
-/// Asking the installer means running a script out of the checkout, so it is
-/// asked only where this machine's install record carries the package. Not
-/// the manifest: a repository that commits its harness render ships both
-/// the scripts and the declaration, so a clone would satisfy any gate its
-/// author could also write. The install record is the one artifact a clone
-/// cannot bring with it. Everywhere else the shims are inspected as files:
-/// cloning a repository and reading its status must not run its code.
+/// Read natively, never executed. A checkout is other people's data, and
+/// this is a read: cloning a repository and asking after its status must
+/// not run code its author chose. The package's own checker speaks a richer
+/// vocabulary and a person can still run it — but running it is an
+/// invocation, and this is not one.
 ///
-/// Only project scopes have a work tree to ask about, and a scope with
-/// nothing of the package's in it gets no line at all — no shim can fire
-/// there and none is expected. A verdict that could not be taken is `could
-/// not check`, never a silent pass.
+/// Only project scopes have a work tree to ask about. A verdict that could
+/// not be taken is `could not check`, never a silent pass.
 fn fold_commit_hooks(env: &Env, checked: &mut CheckReport, scopes: &[kendex_core::model::Scope]) {
     use kendex_core::drift::report::Class;
     use kendex_core::model::Scope;
@@ -65,8 +61,8 @@ fn fold_commit_hooks(env: &Env, checked: &mut CheckReport, scopes: &[kendex_core
         let Scope::Project { root } = scope.canonical() else {
             continue;
         };
-        let claimed = claimed_here(env, scope);
-        let (class, text) = match kendex_core::guard::armed(env, &root, claimed) {
+        let installed_here = installed_here(env, scope);
+        let (class, text) = match kendex_core::guard::armed(&root, installed_here) {
             Ok(None) => continue,
             Ok(Some(verdict)) if verdict.code == 0 => continue,
             Ok(Some(verdict)) => (
@@ -82,24 +78,15 @@ fn fold_commit_hooks(env: &Env, checked: &mut CheckReport, scopes: &[kendex_core
     }
 }
 
-/// What the repository *claims* about the guard package — for the wording
-/// alone, never for permission.
-///
-/// Whether anything may be executed is settled by the machine-scoped
-/// record, which `guard::armed` checks against the script itself. This only
-/// separates "the repository claims this package" from "nothing here claims
-/// it", because those deserve different sentences. Both are read-only.
-fn claimed_here(env: &Env, scope: &kendex_core::model::Scope) -> kendex_core::guard::Consent {
-    use kendex_core::guard::Consent;
-    let claimed = matches!(
-        kendex_core::manifest::load(&kendex_core::manifest::manifest_path(env, scope)),
-        Ok(kendex_core::manifest::ManifestFile::Current(manifest))
-            if manifest.skills.contains_key(kendex_core::guard::SKILL)
-    );
-    match claimed {
-        true => Consent::DeclaredOnly,
-        false => Consent::Unrecorded,
-    }
+/// Whether this project's install record carries the guard package — the
+/// difference between "your hooks are not armed" and a clone that simply
+/// ships the files. Wording only: nothing here decides what may run.
+fn installed_here(env: &Env, scope: &kendex_core::model::Scope) -> bool {
+    kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope)).is_ok_and(|lock| {
+        lock.entries
+            .values()
+            .any(|entry| entry.name == kendex_core::guard::SKILL)
+    })
 }
 
 fn render_text(checked: &CheckReport, quiet: bool) {

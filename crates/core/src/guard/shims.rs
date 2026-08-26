@@ -28,9 +28,9 @@ const SENTINEL: &str = "# kendex-guards-hook";
 /// default directory is where a shim sits dormant behind a redirect — not
 /// blocking anything yet, and live the moment the redirect goes, which is a
 /// different sentence and needs saying too.
-pub(super) fn stale_shims(repo: &crate::githooks::Repo) -> Result<Option<String>> {
-    let live = crate::githooks::effective_hooks_dir(&repo.worktree)?;
-    let default = crate::githooks::default_hooks_dir(repo);
+pub(super) fn stale_shims(repo: &super::Repo) -> Result<Option<String>> {
+    let live = repo.effective_hooks_dir()?;
+    let default = repo.default_hooks_dir();
     let mut said = Vec::new();
     if let Some(found) = shims_in(&live)? {
         said.push(format!(
@@ -51,31 +51,67 @@ pub(super) fn stale_shims(repo: &crate::githooks::Repo) -> Result<Option<String>
     Ok((!said.is_empty()).then(|| said.join("; ")))
 }
 
-/// The package's shims present in one directory, named.
+/// The package's shims present in one directory, named — counting only
+/// what git would actually run.
+///
+/// Two things this deliberately does not count. The helper on its own is
+/// inert: git runs hooks by name, and nothing is named `kendex-guards`, so
+/// a leftover helper blocks no commit. And a file merely *containing* the
+/// sentinel is not a hook — a comment quoting it, a README, a test fixture
+/// — so the line has to be a delegating line: the sentinel ending a line
+/// that invokes the helper. A hook without its execute bit is skipped by
+/// git in silence, so it is not blocking anything either.
 fn shims_in(hooks: &Path) -> Result<Option<String>> {
     let mut found = Vec::new();
-    if hooks.join(HELPER).exists() {
-        found.push(HELPER.to_owned());
-    }
     for lane in LANES {
         let path = hooks.join(lane);
-        if crate::fs::read_if_exists(&path)?.is_some_and(|text| text.contains(SENTINEL)) {
+        if delegates(&path)? {
             found.push(lane.to_owned());
         }
+    }
+    // The helper is named only alongside a hook that reaches for it, where
+    // it is the thing a reader has to remove as well.
+    if !found.is_empty() && hooks.join(HELPER).exists() {
+        found.push(HELPER.to_owned());
     }
     Ok((!found.is_empty()).then(|| found.join(", ")))
 }
 
+/// Whether this file is a hook git will run that hands off to the package.
+fn delegates(path: &Path) -> Result<bool> {
+    if !is_executable(path) {
+        return Ok(false);
+    }
+    let Some(text) = crate::fs::read_if_exists(path)? else {
+        return Ok(false);
+    };
+    Ok(text
+        .lines()
+        .any(|line| line.trim_end().ends_with(SENTINEL) && line.contains(HELPER)))
+}
+
+fn is_executable(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path)
+            .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        path.is_file()
+    }
+}
+
 /// What a hooks directory is missing to count as armed, or `None` when it
-/// carries the helper and both marked lanes.
+/// carries the helper and both lanes delegate.
 pub(super) fn missing_shims(hooks: &Path) -> Result<Option<String>> {
     let mut missing = Vec::new();
     if !hooks.join(HELPER).exists() {
         missing.push(HELPER.to_owned());
     }
     for lane in LANES {
-        let path = hooks.join(lane);
-        if !crate::fs::read_if_exists(&path)?.is_some_and(|text| text.contains(SENTINEL)) {
+        if !delegates(&hooks.join(lane))? {
             missing.push(lane.to_owned());
         }
     }

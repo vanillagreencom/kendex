@@ -2,7 +2,6 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Subcommand;
-use kendex_core::env::Env;
 use kendex_core::guard::{self, GuardReport};
 
 use super::out;
@@ -39,7 +38,7 @@ fn refused(error: &kendex_core::error::CoreError) -> ExitCode {
     ExitCode::from(2)
 }
 
-pub fn run(env: &Env, command: GuardCommand) -> Result<ExitCode, Box<dyn std::error::Error>> {
+pub fn run(command: GuardCommand) -> Result<ExitCode, Box<dyn std::error::Error>> {
     let cwd = std::env::current_dir()?;
     Ok(match command {
         GuardCommand::Run { hook, message_file } => {
@@ -48,11 +47,11 @@ pub fn run(env: &Env, command: GuardCommand) -> Result<ExitCode, Box<dyn std::er
                 Err(error) => refused(&error),
             }
         }
-        GuardCommand::Install => match guard::install(env, &cwd) {
+        GuardCommand::Install => match guard::install(&cwd) {
             Ok(done) => report(&done),
             Err(error) => refused(&error),
         },
-        GuardCommand::Uninstall => match guard::uninstall(env, &cwd) {
+        GuardCommand::Uninstall => match guard::uninstall(&cwd) {
             Ok(done) => report(&done),
             Err(error) => refused(&error),
         },
