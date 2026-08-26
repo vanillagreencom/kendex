@@ -69,7 +69,7 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
     // as prose the agent's own instructions carry (matrix §2).
     let skill_root = match agent.scope {
         Scope::Global => "~/.copilot/skills",
-        Scope::Project { .. } => ".github/skills",
+        Scope::Project { .. } => ".agents/skills",
     };
     if let Some(skills) = skills_prose(agent, skill_root) {
         body.push_str(&format!("\n{skills}"));
@@ -132,7 +132,7 @@ mod tests {
             "{}",
             rendered.text
         );
-        assert!(rendered.text.contains("- dev: .github/skills/dev/SKILL.md"));
+        assert!(rendered.text.contains("- dev: .agents/skills/dev/SKILL.md"));
     }
 
     #[test]

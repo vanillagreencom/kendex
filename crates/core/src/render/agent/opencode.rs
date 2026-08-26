@@ -163,7 +163,7 @@ fn body(agent: &EffectiveAgent, warnings: &mut Vec<crate::render::RenderWarning>
     out.push('\n');
     let skill_root = match agent.scope {
         Scope::Global => "~/.config/opencode/skills",
-        Scope::Project { .. } => ".opencode/skills",
+        Scope::Project { .. } => ".agents/skills",
     };
     if let Some(skills) = skills_prose(agent, skill_root) {
         out.push_str(&format!("\n{skills}"));
@@ -376,7 +376,7 @@ mod tests {
         agent.skills = vec!["dev".into()];
         agent.additional_instructions = Some("end here".into());
         let text = generate(&agent).text;
-        assert!(text.contains("- dev: .opencode/skills/dev/SKILL.md"));
+        assert!(text.contains("- dev: .agents/skills/dev/SKILL.md"));
         assert!(text.trim_end().ends_with("end here"));
     }
 }

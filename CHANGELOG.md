@@ -10,6 +10,11 @@ an outside contributor.
 
 ### Fixed
 
+- Agents no longer promise a `{{KENDEX_FAILURE_REF}}` that nothing defines:
+  the failure-routing line now points at `kendex report --help`.
+- OpenCode, Gemini, and Copilot agent renders list required skills at
+  `.agents/skills/…` — the tree those tools read — instead of per-tool
+  directories a default install no longer writes.
 - Preflight no longer flags upstream `TODO` markers in vendored harness
   mirrors, and recognizes `.pi/kendex/` as a managed mirror like the other
   harness trees — repos committing their rendered harness files can pass.

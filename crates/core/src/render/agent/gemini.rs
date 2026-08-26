@@ -75,7 +75,7 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
     // both travel as prose the system prompt carries (matrix §1).
     let skill_root = match agent.scope {
         Scope::Global => "~/.gemini/skills",
-        Scope::Project { .. } => ".gemini/skills",
+        Scope::Project { .. } => ".agents/skills",
     };
     if let Some(skills) = skills_prose(agent, skill_root) {
         body.push_str(&format!("\n{skills}"));
@@ -132,7 +132,7 @@ mod tests {
             "---\nname: rust\ndescription: \"Rust \\\"systems\\\" engineer\"\nkind: local\nmodel: gemini-3-pro-preview\n---\n"
         ));
         assert!(rendered.text.contains("Use the grep_search tool."));
-        assert!(rendered.text.contains("- dev: .gemini/skills/dev/SKILL.md"));
+        assert!(rendered.text.contains("- dev: .agents/skills/dev/SKILL.md"));
         assert!(rendered.warnings.iter().any(|w| w.message.contains("Grep")));
     }
 

@@ -14,7 +14,7 @@ tags: [review, docs]
 
 The method is verification, not proofreading — **open the implementation behind every checkable claim in the changed docs.** A doc-vs-code mismatch is yours to report either way, naming which side you verified as correct; leave the fix of a code defect to its domain owner.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Full routing, attribution, and filing rules: `{{KENDEX_FAILURE_REF}}`.
+> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
 
 ## Probes
 
