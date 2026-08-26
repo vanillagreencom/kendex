@@ -145,7 +145,7 @@ fi
 # The commit-guard implementation bans the marker shapes below, so it must
 # name them — in its patterns, its messages, and its fixtures. Only these
 # shape scans skip it; every other rule still applies there.
-guard_impl='^crates/core/src/guard/|^crates/cli/src/commands/guard_cmd\.rs|^crates/(core|cli)/tests/guard_'
+guard_impl='^crates/core/src/guard/|^crates/cli/src/commands/guard_cmd\.rs|^crates/(core|cli)/tests/guard_|^crates/cli/tests/install_ux/guarding\.rs'
 
 hits=$(scan 'TODO|FIXME|HACK' | grep -vE "$guard_impl")
 [ -n "$hits" ] && {

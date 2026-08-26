@@ -57,6 +57,12 @@ an outside contributor.
 
 ### Removed
 
+- **Breaking:** the growth-guards package's scripts are the only check
+  engine: `kendex guard` keeps `run`, `install` and `uninstall`, and drops
+  the per-check verbs, `repair`, and `import-v1`.
+- **Breaking:** `[guards]` tables in `kendex.settings.toml` are gone —
+  delete them and keep the `GROWTH_GUARDS_*` / `SIZE_RATCHET_*` keys the
+  package reads. Repos that never converted need no change.
 - `KENDEX_DRIFT_HOOK_AVAILABLE` and the pi-hooks `sessionDriftAvailable` setting
   are gone: both passed `--no-available`, a flag `kendex check` never had, so
   turning them off broke every session start.
@@ -94,6 +100,12 @@ an outside contributor.
 - Marketplaces › Community: browse a listed marketplace's packages, READMEs,
   files, and safety findings before subscribing; subscribing continues from
   the same page.
+- `kendex guard install` arms the growth-guards shims in `.git/hooks` instead
+  of setting `core.hooksPath`, so an armed repository gates commits with no
+  kendex binary present; a repo still on the old arming is taken back first.
+- `kendex check` reports whether a project's commit hooks are armed, and the
+  `pre-commit-check` hook runs the package's own chain where none is —
+  neither needs the binary the retired engine required at every commit.
 - New install channels: `curl -fsSL https://kendex.ai/install.sh | sh`,
   Homebrew (`kendex`, `kendex-cli`), and the AUR (`kendex-bin`, `kendex`,
   `kendex-git`).

@@ -15,6 +15,7 @@
 mod adopting;
 mod cloning;
 mod coexistence;
+mod guarding;
 mod installing;
 
 use std::fs;

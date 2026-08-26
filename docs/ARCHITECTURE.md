@@ -383,11 +383,11 @@ lives in one capability table read by core and UI.
   naming both. Old-name settings files and templates keep being read.
   Managed-block markers, report tags and the opencode hook-file prefix
   write the new spelling and read both. Env vars are `KENDEX_*`; the
-  guard's (`VSTACK_GUARDS_<CHECK>_<KEY>`, `VSTACK_GUARD_PRE_COMMIT_LOCAL`)
-  are read as a fallback while the `vstack` alias binary ships — one
-  release cycle; `kendex guard repair` rewrites entrypoints under receipt,
-  and the receiptless by-content proof accepts both generations of
-  entrypoint bytes. Old-name fallback reads retire at 3.0. The global
+  guard's are the growth-guards package's own (`GROWTH_GUARDS_*`,
+  `SIZE_RATCHET_*`), read by the scripts rather than by this binary; the
+  receiptless by-content proof of a retired hooks directory accepts both
+  generations of entrypoint bytes. Old-name fallback reads retire at 3.0.
+  The global
   `vstack2` config/cache/data dirs move under `kendex` once, on first
   launch of either shell, under a scope-style lock, never overwriting what
   the new dirs hold and never following symlinks; a collision is reported;
@@ -403,74 +403,56 @@ lives in one capability table read by core and UI.
   (found by repo). The remote store renames the old spelling's cache under
   the new key once (mirror, checkouts, fetch stamp); report routing accepts
   both repo spellings as kendex-owned.
-- **Commits walk through the guards whatever tool makes them.** The guard
-  family (`core/guard/`) — size-ratchet, todo-ban, byte-ceiling,
-  suppression-ban, commit-msg, and the lint lanes rust-fmt, rust-clippy and
-  biome — judges the index git names for the commit (`GIT_INDEX_FILE`,
-  captured once and threaded through a validated context; the one
-  sanctioned redirect past invariant 13). Policy is read from the commit:
-  the `[guards]` tables in `kendex.settings.toml`, baselines, and excludes
-  all resolve from the staged copy — a file staged for deletion, or never
-  staged, governs as absent. The process environment is the only
-  machine-local override; the chain's local extension point is configured
-  machine-locally only, never from a committed file. Unmerged entries and
-  intent-to-add are refused loudly; paths travel NUL-delimited end to end;
-  a name the configuration format cannot carry is a refusal. Every enabled
-  check runs before the verdict; exit 1 (violations) and 2 (could not run)
-  both block. Baseline TSVs read as-is; legacy env-style settings convert
-  once through `guard import-v1`; imported excludes keep v1's legacy-glob
-  dialect, marked as such; a pattern outside the documented dialect is a
-  refusal. The lint lanes take the staged list from that index but run the
-  project's toolchain (cargo, biome — well-known names or the project's
-  untracked `node_modules/.bin`, never a committed command) over the
-  working tree, scoped per staged file's owning `Cargo.toml`, and see none
-  of the git redirects a hook's parent exports. Which repository a commit
-  targets is git's question, answered where the target has an armed hook:
-  the `pre-commit-check` PreToolUse hook only word-matches for a commit,
-  defers to the armed git pre-commit hook of its own working directory, and
-  runs the chain in that directory only where none is armed there;
-  sidestepping an armed one (`--no-verify`, `-n`) or injecting git config
-  (`-c`, `--config-env`, `GIT_CONFIG_*`) is refused — git would skip
-  commit-msg too, unjudgeable here. It gates its working directory only: a
-  commit aimed elsewhere from an unarmed or non-repository directory is not
-  gated by it (a stderr notice says so), and it never parses the target. A
-  payload whose command the hook cannot read is a refusal, and the chain's
-  own refusals (unconverted v1 settings, a lint tool that could not run)
-  block through it.
-- **kendex owns its hooks directory — provably.** The guards reach git
-  through `<git-common-dir>/kendex-hooks/`, two entrypoints whose call
-  surface (`kendex guard run <hook>`) is a stable contract, with
-  `core.hooksPath` pointed at them in the repo's shared local config.
-  Ownership is a recorded receipt: exact files written, exact config value
-  set, one lease per worktree that enabled the install; uninstall releases
-  its own lease and disarms only when the last one goes, reaping leases
-  git's registry does not list. `guard repair` rewrites only receipt-listed
-  files whose bytes are provably ours (either generation's entrypoint) and
-  never moves directories (a `vstack-hooks` directory stays). The live
+- **Commits walk through the guards whatever tool makes them.** The checks
+  are the growth-guards package's shell scripts, committed with the
+  repository under `.agents/skills` — size-ratchet, todo-ban, byte-ceiling,
+  suppression-ban, conflict-markers, commit-msg, and preflight's staged
+  lanes. git's own `.git/hooks` shims run them, so the gate needs no kendex
+  binary at commit time and a fresh clone gates commits on a machine that
+  never installed one. kendex implements no check: `guard install` and
+  `guard uninstall` run the package's installer, `check` relays its
+  `--check`, and `guard run <hook>` execs the package's script with git's
+  redirects passed through untouched — the one child not scrubbed, because
+  it is a hook body and `GIT_INDEX_FILE` names the snapshot being judged.
+  So there is one implementation of every verdict and one policy dialect:
+  the flat `GROWTH_GUARDS_*` / `SIZE_RATCHET_*` keys, baselines and
+  excludes the scripts read from the commit. Every enabled check runs
+  before the verdict; exit 1 (violations) and 2 (could not run) both block,
+  and a measurement that fails is exit 2 rather than a silent pass. Which
+  repository a commit targets is git's question, answered where the target
+  has an armed hook: the `pre-commit-check` PreToolUse hook only
+  word-matches for a commit, defers to the armed git pre-commit hook of its
+  own working directory, and runs the package's `scripts/pre-commit` there
+  — resolved as the shim resolves it, no binary consulted — only where none
+  is armed. Sidestepping an armed one (`--no-verify`, `-n`) or injecting git
+  config (`-c`, `--config-env`, `GIT_CONFIG_*`) is refused: git would skip
+  commit-msg too, unjudgeable here. It gates its working directory only —
+  a commit aimed elsewhere is not gated by it (a stderr notice says so) and
+  it never parses the target — and a payload it cannot read is a refusal,
+  as is a working directory carrying no package to run.
+- **The retired hooks directory is taken back, provably.** Two generations
+  armed commits by writing `<git-common-dir>/kendex-hooks/` (or
+  `vstack-hooks/`) and pointing `core.hooksPath` at it. Nothing writes one
+  now — that value redirects the whole directory and stands the package's
+  installer down — so `guard install` takes an old install back before it
+  arms, and says so. Removal is receipt-scoped with compare-and-swap on
+  both sides: exact files written, exact config value set, one lease per
+  worktree, the last release disarming and reaping leases absent from
+  git's registry; `core.hooksPath` is unset only while its value still
+  equals the receipt's, and a value naming either generation's path is
+  kendex's by name even with its directory gone. Without a receipt,
+  ownership is proven by content: a directory holding nothing but kendex's
+  own entrypoints byte for byte (either generation) is kendex's, while
+  anything else in it stays, named, because unsetting the config value
+  around a surviving user hook would silently disable it. The live
   directory resolves in one order: what `core.hooksPath` names when it
   names either generation's path, else the one holding a receipt, else the
-  old name only while it is the sole directory present. Uninstall deletes
-  only receipt-listed files and unsets `core.hooksPath` only while its
-  value equals the receipt's (compare-and-swap both sides); a value naming
-  either generation's path is ours by name even with its directory gone.
-  Refusals — kendex never edits a hook file it did not create: a
-  pre-existing or symlinked directory, a hand-edited entrypoint, a receipt
-  naming a different directory at repair, a worktree resolving a foreign
-  effective `hooksPath`, v1's shim, foreign files at uninstall. A refused
-  repo can still call `kendex guard run` from its own hook orchestration.
-  Hook state is repository-common: mutations take a common-dir lock after
-  the scope lock (fixed order), build their plan once both are held, and
-  journal into a common-dir journal that every common-lock holder and the
-  app's launch pass recover; the one transaction engine runs scope and
-  common applies alike. A missing binary at commit time fails closed,
-  naming the one-commit bypass and the two-step manual removal — no
-  vendored runner — and the entrypoints refuse v1's shim at commit time.
-  Without a receipt, ownership is proven by content: the config value is
-  kendex's by name, and a receiptless directory holding nothing but
-  kendex's own entrypoints byte for byte (either generation) is kendex's —
-  repaired by install, taken back by uninstall — while anything else in it
-  stays, named. A worktree git lists as prunable: lease reaped, config
-  never asked for.
+  old name while it is the sole directory present. Hook state is
+  repository-common: mutations take a common-dir lock after the scope lock
+  (fixed order), build their plan once both are held, and journal into a
+  common-dir journal every common-lock holder and the app's launch pass
+  recover. A worktree git lists as prunable: lease reaped, config never
+  asked for.
 - **A registration is reconciled, not added to.** What a hook registered
   is recorded (`engine::item_record`); a catalog moving it to another
   event retires the recorded entry where the document still has it,

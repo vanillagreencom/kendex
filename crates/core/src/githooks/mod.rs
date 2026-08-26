@@ -1,30 +1,30 @@
-//! A hooks directory kendex owns — provably, not declaratively.
+//! Taking back the retired hooks directory kendex used to own.
 //!
-//! Install writes `<git-common-dir>/kendex-hooks/` with two entrypoints
-//! and a receipt recording the exact files written and the exact
-//! `core.hooksPath` value set. Repair rewrites only receipt-listed files;
-//! uninstall deletes only receipt-listed files, removes the directory only
-//! if empty after, and unsets `core.hooksPath` only while its current
-//! value still equals the receipt's — compare-and-swap on both sides.
-//! kendex never edits a hook file it did not create: a pre-existing or
-//! symlinked `kendex-hooks` directory is a refusal, and so are foreign
-//! files found there at uninstall, because unsetting `core.hooksPath`
-//! around a surviving user hook would silently disable it.
+//! Two generations of this binary armed commits by writing
+//! `<git-common-dir>/kendex-hooks/` (or `vstack-hooks/`) and pointing
+//! `core.hooksPath` at it. That arming is retired: the checks live in the
+//! growth-guards package, and the package's installer writes `.git/hooks`
+//! shims instead, deliberately never touching `core.hooksPath` — which
+//! redirects the whole directory and disables the repository's own hooks.
+//! A `core.hooksPath` set here also makes the package's installer stand
+//! down, so a repository cannot cross to the surviving arming until this
+//! one is undone.
 //!
-//! Repos armed by the vstack-named binary keep their `vstack-hooks`
-//! directory: the receipt and `core.hooksPath` both name it, and moving
-//! it is a different mutation than owning it. Every verb resolves the
-//! live directory the same way — the one `core.hooksPath` names when it
-//! names either generation's path, else the one holding a receipt, else
-//! the old name only while it is the sole directory present — and works
-//! there in place.
+//! What survives is the removal, for one release: `kendex guard install`
+//! and `kendex guard uninstall` take an old install back before they do
+//! anything else. Removal stays receipt-scoped with compare-and-swap on
+//! both sides — a user-changed hooksPath survives, a user-added file is a
+//! refusal rather than a half-removal — and where the receipt is gone,
+//! ownership is proven by content: a directory holding nothing but
+//! byte-identical copies of either generation's entrypoints is ours by
+//! construction, and anything else in it stays exactly where it is. The
+//! entrypoint text is kept for that comparison alone; nothing writes it.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::apply::{Op, PlannedOp, Pre};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::model::Scope;
@@ -32,10 +32,8 @@ use crate::process::Hardened;
 
 mod entrypoints;
 mod refusals;
-mod repair;
 mod uninstall;
 pub use entrypoints::{HOOKS, entrypoint, old_entrypoint};
-pub use repair::repair;
 
 pub const HOOKS_DIR: &str = "kendex-hooks";
 /// The directory name the vstack-named binary wrote. Installs made under
@@ -208,74 +206,13 @@ pub struct HooksReport {
     pub lines: Vec<String>,
 }
 
-/// Install (or repair) the owned hooks directory for the repository at
-/// `dir`, recording this worktree's lease. The plan — refusals included
-/// (see [`refusals`]) — is built under the common lock, so the directory
-/// shape the refusals observe is the shape the writes land in.
-pub fn install(env: &Env, dir: &Path) -> Result<HooksReport> {
+/// Whether this repository still carries an install of the retired
+/// generation — a receipt, or something orphaned that is provably ours.
+/// The guard verbs ask before taking anything back, so a repository that
+/// never had one is never told about a directory it does not have.
+pub fn installed(dir: &Path) -> Result<bool> {
     let repo = Repo::at(dir)?;
-    let (_, hooks_path) =
-        crate::apply::execute_common(env, &repo.scope(), &repo.common_dir, || plan_install(&repo))?;
-    Ok(HooksReport {
-        lines: vec![format!(
-            "commit checks installed: core.hooksPath -> {hooks_path} (covers every linked worktree)"
-        )],
-    })
-}
-
-fn plan_install(repo: &Repo) -> Result<(Vec<PlannedOp>, String)> {
-    let receipt = load_receipt(repo)?;
-    refusals::check_install(repo, receipt.as_ref())?;
-
-    let hooks_dir = repo.hooks_dir()?;
-    let hooks_path = hooks_dir.display().to_string();
-    let mut leases = receipt.map(|r| r.leases).unwrap_or_default();
-    leases.insert(repo.worktree.display().to_string());
-    let updated = Receipt {
-        schema: 1,
-        hooks_path: hooks_path.clone(),
-        files: HOOKS
-            .iter()
-            .map(|name| (*name).to_owned())
-            .chain(std::iter::once(RECEIPT_FILE.to_owned()))
-            .collect(),
-        leases,
-    };
-
-    let mut ops = Vec::new();
-    for name in HOOKS {
-        let path = hooks_dir.join(name);
-        ops.push(PlannedOp {
-            description: format!("write the {name} entrypoint"),
-            op: Op::WriteExecutable {
-                pre: Pre::observed(&path)?,
-                path,
-                bytes: entrypoint(name).into_bytes(),
-            },
-        });
-    }
-    let receipt_path = repo.receipt_path()?;
-    ops.push(PlannedOp {
-        description: "record the ownership receipt".into(),
-        op: Op::WriteFile {
-            pre: Pre::observed(&receipt_path)?,
-            path: receipt_path,
-            bytes: render_receipt(&updated)?,
-        },
-    });
-    let current = crate::apply::read_git_config(&repo.config_file(), "core.hooksPath")?;
-    if current.as_deref() != Some(hooks_path.as_str()) {
-        ops.push(PlannedOp {
-            description: "point core.hooksPath at the owned directory".into(),
-            op: Op::GitConfigSwap {
-                file: repo.config_file(),
-                key: "core.hooksPath".into(),
-                expected: current,
-                value: Some(hooks_path.clone()),
-            },
-        });
-    }
-    Ok((ops, hooks_path))
+    Ok(load_receipt(&repo)?.is_some() || uninstall::orphaned(&repo)?)
 }
 
 /// Release this worktree's lease; disarm only when the last one goes —

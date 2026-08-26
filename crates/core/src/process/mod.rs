@@ -130,25 +130,20 @@ impl Hardened {
         Hardened::new("curl", owned(args))
     }
 
-    /// The machine-locally configured guard extension: an executable the
-    /// user pointed the pre-commit chain at, run from the repository root
-    /// under the standard hardening (no stdin, captured output, a
-    /// timeout). Never configured from a committed file.
-    pub fn local_guard(program: &Path, cwd: &Path) -> Hardened {
-        Hardened::lint_tool(program, &[], cwd)
-    }
-
-    /// A lint tool the commit-time guards invoke — cargo, biome — run from
-    /// the repository root under the standard hardening. The program is
-    /// either a bare well-known name resolved on PATH or a path the guard
-    /// itself derived; never a command a committed file named. Under a git
-    /// hook the parent carries git's redirect exports (a temporary index
-    /// among them); a build script or formatter reading those would judge
-    /// the wrong repository, so the child sees none of them — the one
-    /// sanctioned redirect is threaded through `index_file` explicitly.
-    pub fn lint_tool(program: &Path, args: &[&str], cwd: &Path) -> Hardened {
+    /// A script the growth-guards package ships, run from the repository
+    /// root as the commit gate.
+    ///
+    /// The one call site here that deliberately keeps git's redirect
+    /// variables. Everything else scrubs them, because an inherited
+    /// `GIT_DIR` would send a command at the wrong repository; but this
+    /// child *is* a git hook body. Git exported those variables for it —
+    /// `GIT_INDEX_FILE` naming the temporary index of the commit being made
+    /// — and a chain that could not see them would judge the wrong
+    /// snapshot, passing a commit nobody checked. The program is never a
+    /// name a committed file chose: it is the installed package's own
+    /// script, at a path this crate derived.
+    pub fn guard_script(program: &Path, args: &[&str], cwd: &Path) -> Hardened {
         let mut hardened = Hardened::new(&program.to_string_lossy(), owned(args));
-        hardened.scrub_git_redirects();
         hardened.command.current_dir(cwd);
         hardened
     }
@@ -160,17 +155,6 @@ impl Hardened {
 
     pub fn max_output(mut self, bytes: usize) -> Hardened {
         self.max_output = Some(bytes);
-        self
-    }
-
-    /// The one sanctioned redirect: a commit-time guard must judge the
-    /// index git actually named in `GIT_INDEX_FILE` — during `git commit`
-    /// that is a temporary index, and scrubbing it would silently judge
-    /// the wrong one. The value never arrives straight from the process
-    /// environment: the guard context captured and canonicalized it once,
-    /// and threads it here explicitly.
-    pub fn index_file(mut self, path: &Path) -> Hardened {
-        self.command.env("GIT_INDEX_FILE", path);
         self
     }
 

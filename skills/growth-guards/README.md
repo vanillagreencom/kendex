@@ -38,7 +38,8 @@ hook keeps its content and exit status; repeat runs are no-ops and repairs.
 `--uninstall` drops only the helper and our line. `--check` writes nothing:
 `0` armed — in `.git/hooks` or a `core.hooksPath` directory hand-wired to this
 skill's hooks — `1` drifted/absent/dormant, `2` could not determine, never a
-silent pass. `kendex add`/`refresh` arm, `remove` disarms, `check` folds it in.
+silent pass. `kendex guard install` runs the installer, `kendex guard
+uninstall` runs `--uninstall`, and `kendex check` folds in `--check`.
 
 `pre-commit` judges ONE commit snapshot: `size-ratchet --staged` and
 `preflight --staged` when the committing work tree or this install
@@ -47,6 +48,37 @@ repo-root-relative executable named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL`
 (empty means none). `commit-msg` runs this family's message gate. Both
 shims BLOCK and fail closed — `1` carries the check's remediation text,
 `2` a guard that could not run; `git commit --no-verify` is the bypass.
+
+## Who gates a commit
+
+Two layers, and only one of them is authoritative.
+
+**The git hooks are the gate.** They run for every committer — a person at a
+terminal, any AI harness, a script, an editor's commit button — because git
+runs them, not because anything asked. They need no kendex binary: the shim
+execs this skill's committed scripts, so a fresh clone of a repository that
+carries `.agents/skills` gates commits on a machine that has never installed
+kendex. That is the whole reason the checks are shell and travel with the
+repository.
+
+**kendex only arms and reports.** `kendex guard install` runs the installer
+above; `kendex guard uninstall` runs `--uninstall`; `kendex check` relays
+`--check`. It implements no check of its own, so there is exactly one
+definition of every verdict — this skill's.
+
+**The `pre-commit-check` harness hook is a stand-in, not a second opinion.**
+Where a git pre-commit hook is armed, it steps aside: git will run the gate
+itself, and validating twice would only double the wait. It does two things
+the git hook cannot. It refuses a command that would sidestep an armed hook
+(`--` + `no-verify`, `-n`, or injected git configuration), because git would
+skip the message gate too and no fallback can check a message it never sees.
+And where nothing is armed, it runs this skill's `scripts/pre-commit` itself,
+found the same way the shim finds it, so an unarmed repository is not an
+ungated one. It gates its own working directory and no other.
+
+Order, then: git hooks where they exist, the harness hook standing in where
+they do not, and a refusal where neither can judge. No layer ever passes a
+commit another layer would have blocked.
 
 ## todo-ban
 

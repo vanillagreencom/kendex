@@ -3,7 +3,7 @@
 # name: pre-commit-check
 # event: PreToolUse
 # matcher: Bash
-# description: On a git commit, defer to the working directory's armed git pre-commit hook (kendex guard install arms one); where none is armed there, run the kendex guard pre-commit chain — format, lint, and commit guards — from the working directory as the fallback gate. Where one is armed, a command that sidesteps it with git's no-verify flag, -n, or a core.hooksPath override is refused: git would skip the commit-msg hook too, and no fallback here can check the message. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
+# description: On a git commit, defer to the working directory's armed git pre-commit hook (kendex guard install arms one); where none is armed there, run the growth-guards package's own pre-commit chain from the working directory as the fallback gate — the same script the armed shim runs, found the same way. Where one is armed, a command that sidesteps it with git's no-verify flag, -n, or a core.hooksPath override is refused: git would skip the commit-msg hook too, and no fallback here can check the message. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
 # safety: Prevents committing unchecked code from the working directory when it has no armed git pre-commit hook, and refuses a command that bypasses an armed hook (no-verify, -n) or injects git configuration that could (any -c, --config-env, or GIT_CONFIG_* word — core.hooksPath and include.path among them) rather than half-checking it; a commit aimed at another repository is that repository's armed hook's to gate.
 # timeout: 1800
 # ---
@@ -76,14 +76,28 @@ if [ -x "$HOOKS_DIR/pre-commit" ]; then
 fi
 elsewhere_notice
 
-if ! command -v kendex >/dev/null 2>&1; then
-  echo "pre-commit-check: no git pre-commit hook will run for this commit and the kendex binary is not on PATH, so nothing can check it — install kendex, or remove this hook" >&2
+# The chain is the growth-guards package's own script, found where the
+# armed shim would have found it. No binary is consulted: the scripts are
+# committed with the repository, so this lane gates a checkout on a machine
+# that never installed kendex — the same property the armed shim has.
+TOP=$(git rev-parse --show-toplevel 2>/dev/null) || TOP=""
+CHAIN_SCRIPT=""
+if [ -n "$TOP" ]; then
+  for base in .agents/skills .claude/skills .cursor/rules .opencode/skills skills; do
+    if [ -x "$TOP/$base/growth-guards/scripts/pre-commit" ]; then
+      CHAIN_SCRIPT="$TOP/$base/growth-guards/scripts/pre-commit"
+      break
+    fi
+  done
+fi
+if [ -z "$CHAIN_SCRIPT" ]; then
+  echo "pre-commit-check: no git pre-commit hook will run for this commit and no growth-guards skill is installed under $PWD, so nothing can check it — install it (kendex add skill/growth-guards) and arm the hooks (kendex guard install), or remove this hook" >&2
   exit 2
 fi
 # The frontmatter timeout budgets a cold clippy build on top of the other
 # lanes; the harness cancelling this hook at that budget is the one way
 # left past the gate, so the budget stays above what the chain can take.
-CHAIN=$(kendex guard run pre-commit 2>&1) || {
+CHAIN=$("$CHAIN_SCRIPT" 2>&1) || {
   printf '%s\n' "$CHAIN" >&2
   echo "pre-commit-check: commit blocked by the failures above (no git pre-commit hook runs for this commit; kendex guard install arms one, which git runs unless the command bypasses it)" >&2
   exit 2

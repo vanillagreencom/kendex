@@ -227,6 +227,36 @@ impl Sections {
     }
 }
 
+/// Fold in a verdict this module will not take itself. [`check`] launches
+/// no subprocess: it runs at every session start. The commit-hook verdict
+/// costs one and belongs to the package owning the shims, so the command
+/// layer takes it and hands the answer here. The section lands last and the
+/// status rises to meet it: a check reporting "all clear" while nothing
+/// gates commits is worse than no check.
+pub fn fold(report: &mut CheckReport, title: &str, class: Class, text: String) {
+    let line = Line {
+        class,
+        text: shown(&text),
+        remedy: None,
+    };
+    match report
+        .sections
+        .iter_mut()
+        .find(|section| section.title == title)
+    {
+        Some(section) => section.lines.push(line),
+        None => report.sections.push(Section {
+            title: title.to_owned(),
+            lines: vec![line],
+        }),
+    }
+    let raised = match class {
+        Class::Drift | Class::Unevaluated => CheckStatus::Drift,
+        Class::Unknown => CheckStatus::Unknown,
+    };
+    report.status = report.status.max(raised);
+}
+
 /// Foreign text on its way into the report: control characters become
 /// spaces, credentials become fingerprints, length is bounded.
 fn shown(raw: &str) -> String {

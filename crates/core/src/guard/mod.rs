@@ -1,49 +1,52 @@
-//! The commit-time guard family, native: size-ratchet, todo-ban,
-//! byte-ceiling, suppression-ban, commit-msg — v1's semantics carried, the
-//! machinery rebuilt on the index git names for the commit — plus the
-//! lint lanes (rust-fmt, rust-clippy, biome), which read the staged list
-//! from that index and run the project's toolchain over the working tree.
+//! Commit-time guards — delegated, never reimplemented.
 //!
-//! Family contract: a check returns an [`Outcome`] (0 clean, otherwise its
-//! violations) or an error — configuration wrong, or a measurement that
-//! could not be taken — which is exit 2, never a silent pass. The chain
-//! runs every enabled check before the verdict so one commit attempt
-//! reports every blocker; exit 1 and 2 both block.
+//! The checks live in the growth-guards package, written in shell, and they
+//! travel with the repository under `.agents/skills/`. That is the whole
+//! portability property: git runs the shims, the shims run the committed
+//! scripts, and no kendex binary is anywhere in the path at commit time. A
+//! teammate who cloned the repo and has never heard of kendex still commits
+//! through the same gate.
+//!
+//! So kendex implements no check. These verbs find the installed copy of the
+//! package and hand it the work: arming the shims, disarming them, asking
+//! whether they are armed, and standing in as the gate where no git hook has
+//! been armed at all.
+//!
+//! Exit taxonomy, the family contract the package defines and this module
+//! relays unchanged: 0 clean, 1 violations, 2 the check could not run. Both
+//! nonzero verdicts block a commit.
 
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use crate::env::Env;
 use crate::error::{CoreError, Result};
+use crate::process::Hardened;
 
-pub mod baseline;
-pub mod byte_ceiling;
-pub mod commit_msg;
-mod ctx;
-pub mod import;
-pub mod lint;
-pub mod patterns;
-pub mod settings;
-pub mod size_ratchet;
-pub mod suppression_ban;
+/// The package that owns the checks and the git shims.
+pub const SKILL: &str = "growth-guards";
 
-pub use ctx::GuardCtx;
-use settings::Policy;
+/// Where an installed skill can sit, in the order the package's own hook
+/// helper searches them. Kept identical to that list on purpose: a repo
+/// where the shim finds a script and kendex finds a different one would gate
+/// commits one way and report them another.
+const SKILL_ROOTS: [&str; 5] = [
+    ".agents/skills",
+    ".claude/skills",
+    ".cursor/rules",
+    ".opencode/skills",
+    "skills",
+];
 
-/// One check's verdict: what it printed, and how many violations it found.
-#[derive(Debug, Default)]
-pub struct Outcome {
-    pub violations: usize,
-    pub lines: Vec<String>,
-}
+/// The installer the package ships, relative to its own directory.
+const INSTALLER: &str = "scripts/install-git-hooks";
 
-impl Outcome {
-    pub(crate) fn say(&mut self, line: impl Into<String>) {
-        self.lines.push(line.into());
-    }
-
-    pub(crate) fn violation(&mut self, line: impl Into<String>, remedy: &str) {
-        self.lines.push(line.into());
-        self.lines.push(format!("  remedies: {remedy}"));
-        self.violations += 1;
-    }
-}
+/// Room for the whole chain, which ends in whatever the repository pointed
+/// `GROWTH_GUARDS_PRE_COMMIT_LOCAL` at — a cold clippy build, in this repo.
+/// It matches the `pre-commit-check` hook's own budget so that kendex is
+/// never the thing that kills a run the harness was still willing to wait
+/// for. Arming and reporting are fast and keep the ordinary timeout.
+const CHAIN_TIMEOUT: Duration = Duration::from_secs(1800);
 
 pub(crate) fn guard_err(check: &str, message: impl Into<String>) -> CoreError {
     CoreError::Guard {
@@ -52,267 +55,215 @@ pub(crate) fn guard_err(check: &str, message: impl Into<String>) -> CoreError {
     }
 }
 
-/// One banned shape a lane scans for.
-pub(crate) struct Lane<'a> {
-    pub(crate) label: &'a str,
-    pub(crate) ere: &'a str,
-    pub(crate) remedy: &'a str,
-    pub(crate) pathspecs: &'a [&'a str],
-}
-
-/// One banned shape, scanned over index content in one pass: `-n -z`
-/// records are `path NUL line NUL content NL`, so a path carrying `:` or
-/// even a newline cannot garble parsing. Binary files are skipped.
-pub(crate) fn grep_lane(
-    ctx: &GuardCtx,
-    check: &str,
-    lane: &Lane<'_>,
-    excludes: &patterns::Excludes,
-    out: &mut Outcome,
-) -> Result<()> {
-    let Lane {
-        label,
-        ere,
-        remedy,
-        pathspecs,
-    } = lane;
-    let mut args = vec!["grep", "--cached", "-nIzE", ere, "--"];
-    args.extend_from_slice(pathspecs);
-    let raw = ctx.git_grep(check, &args)?;
-    let mut rest = raw.as_slice();
-    while !rest.is_empty() {
-        let (path, after) = ctx::split_at_nul(check, rest)?;
-        let (line, after) = ctx::split_at_nul(check, after)?;
-        let (content, tail) = ctx::split_at_newline(after);
-        rest = tail;
-        let Ok(file) = std::str::from_utf8(path) else {
-            return Err(guard_err(
-                check,
-                format!(
-                    "a file containing a banned {label} has a non-UTF-8 path: {:?}",
-                    String::from_utf8_lossy(path)
-                ),
-            ));
-        };
-        if excludes.is_excluded(file) {
-            continue;
-        }
-        // A CRLF file's line keeps its `\r`; the report is text, not bytes.
-        let content = content.strip_suffix(b"\r").unwrap_or(content);
-        out.violation(
-            format!(
-                "{check} FAIL {label}: {file}:{}:{}",
-                String::from_utf8_lossy(line),
-                String::from_utf8_lossy(content)
-            ),
-            remedy,
-        );
-    }
-    Ok(())
-}
-
-/// The chain's fold: every step runs, then one verdict. `Err` from a step
-/// is "could not complete" — folded, reported, and blocking.
-#[derive(Debug, Default)]
-pub struct ChainReport {
+/// What a delegated run said and how it ended. `code` is the package's own
+/// exit status, relayed rather than reinterpreted.
+#[derive(Debug)]
+pub struct GuardReport {
     pub lines: Vec<String>,
-    pub violations: usize,
-    pub errors: usize,
+    pub code: u8,
 }
 
-impl ChainReport {
-    pub fn exit_code(&self) -> u8 {
-        match (self.errors, self.violations) {
-            (0, 0) => 0,
-            (0, _) => 1,
-            _ => 2,
-        }
-    }
-
-    fn fold(&mut self, label: &str, step: Result<Outcome>) {
-        self.lines.push(format!("=== {label}"));
-        match step {
-            Ok(outcome) => {
-                self.lines.extend(outcome.lines);
-                self.violations += outcome.violations;
-            }
-            Err(error) => {
-                self.errors += 1;
-                self.lines
-                    .push(format!("{label}: did not complete — {error}"));
-            }
-        }
+impl GuardReport {
+    fn spoken(lines: Vec<String>) -> GuardReport {
+        GuardReport { lines, code: 0 }
     }
 }
 
-impl ChainReport {
-    /// The policy every lane starts from; a policy that cannot be loaded
-    /// is the lane's one error, and the lane ends there.
-    fn load_policy(&mut self, ctx: &GuardCtx, lane: &str) -> Option<Policy> {
-        match Policy::load(ctx, lane) {
-            Ok(policy) => Some(policy),
-            Err(error) => {
-                self.errors += 1;
-                self.lines.push(format!("{lane}: {error}"));
-                None
-            }
-        }
+/// The hook lanes the package carries. Each name is both the git hook and
+/// the script that runs it.
+pub const LANES: [&str; 2] = ["pre-commit", "commit-msg"];
+
+/// An installed copy of the package, found in one repository.
+pub struct Installed {
+    /// The skill directory itself, for messages that name where it was found.
+    pub dir: PathBuf,
+}
+
+impl Installed {
+    /// The package as this work tree carries it. The search walks the same
+    /// roots the shim walks, and stops at the first that exists — a present
+    /// skill whose scripts are missing is a broken install, not a reason to
+    /// keep looking, so that case surfaces later as a refusal naming the
+    /// path rather than as "not installed".
+    pub fn find(root: &Path) -> Option<Installed> {
+        SKILL_ROOTS
+            .iter()
+            .map(|base| root.join(base).join(SKILL))
+            .find(|dir| dir.exists() || dir.is_symlink())
+            .map(|dir| Installed { dir })
     }
 
-    /// One check under its enabled switch, folded.
-    fn step(&mut self, policy: &Policy, name: &str, run: impl FnOnce(&Policy) -> Result<Outcome>) {
-        match policy.enabled(name) {
-            Ok(false) => self.lines.push(format!("=== {name}: disabled — skipped")),
-            Ok(true) => self.fold(name, run(policy)),
-            Err(error) => self.fold(name, Err(error)),
-        }
-    }
-
-    /// The lane's closing line: one verdict after every check has spoken.
-    fn conclude(&mut self, lane: &str) {
-        let verdict = match (self.errors, self.violations) {
-            (0, 0) => format!("{lane}: OK — clean"),
-            (0, violations) => {
+    fn script(&self, relative: &str) -> Result<PathBuf> {
+        let path = self.dir.join(relative);
+        match is_executable(&path) {
+            true => Ok(path),
+            false => Err(guard_err(
+                "hooks",
                 format!(
-                    "{lane}: {violations} violation(s) — commit blocked; see the failures above"
-                )
-            }
-            _ => {
-                format!("{lane}: a guard could not complete — commit blocked; fix the errors above")
-            }
-        };
-        self.lines.push(verdict);
-    }
-}
-
-/// The staged-scope chain the pre-commit hook runs: every enabled check,
-/// then the machine-local extension point, then one verdict. The extension
-/// point is configured machine-locally only — the environment — never from
-/// a committed file, where a branch switch could point it at a tracked
-/// malicious executable (settled decision 6).
-pub fn run_pre_commit(ctx: &GuardCtx) -> ChainReport {
-    let mut report = ChainReport::default();
-    let Some(policy) = report.load_policy(ctx, "pre-commit") else {
-        return report;
-    };
-    report.step(&policy, "size-ratchet", |policy| {
-        size_ratchet::run(ctx, policy, size_ratchet::Mode::Check)
-    });
-    report.step(&policy, "todo-ban", |policy| todo_ban(ctx, policy));
-    report.step(&policy, "byte-ceiling", |policy| {
-        byte_ceiling::run(ctx, policy)
-    });
-    report.step(&policy, "suppression-ban", |policy| {
-        suppression_ban::run(ctx, policy, false)
-    });
-    let before_fmt = (report.violations, report.errors);
-    report.step(&policy, "rust-fmt", |_| lint::run_fmt(ctx));
-    // Clippy after a failed fmt lane would only restate an already-blocked
-    // commit at the price of a full build.
-    match (report.violations, report.errors) == before_fmt {
-        true => report.step(&policy, "rust-clippy", |_| lint::run_clippy(ctx)),
-        false => report
-            .lines
-            .push("=== rust-clippy: skipped — rust-fmt already blocked the commit".to_owned()),
-    }
-    report.step(&policy, "biome", |_| lint::run_biome(ctx));
-    // The old spelling stays readable: machine-local chain hooks are set
-    // once and forgotten. The current name wins when both are set.
-    if let Ok(local) = std::env::var("KENDEX_GUARD_PRE_COMMIT_LOCAL")
-        .or_else(|_| std::env::var("VSTACK_GUARD_PRE_COMMIT_LOCAL"))
-        && !local.trim().is_empty()
-    {
-        report.fold("repo-local", run_local_entry(ctx, &local));
-    }
-    report.conclude("pre-commit");
-    report
-}
-
-/// The commit-msg hook lane: the conventional-commit gate over the message
-/// git handed the hook, under the same enabled switch and with the same
-/// closing verdict as every other lane.
-pub fn run_commit_msg(ctx: &GuardCtx, message: &str) -> ChainReport {
-    let mut report = ChainReport::default();
-    let Some(policy) = report.load_policy(ctx, "commit-msg") else {
-        return report;
-    };
-    report.step(&policy, "commit-msg", |policy| {
-        commit_msg::run(policy, message)
-    });
-    report.conclude("commit-msg");
-    report
-}
-
-/// The machine-local extension: an executable path, run from the repo
-/// root, judged on the family contract (0 clean, 1 violations, else could
-/// not complete).
-fn run_local_entry(ctx: &GuardCtx, entry: &str) -> Result<Outcome> {
-    let path = std::path::Path::new(entry);
-    let absolute = match path.is_absolute() {
-        true => path.to_path_buf(),
-        false => ctx.root.join(path),
-    };
-    let mut command = crate::process::Hardened::local_guard(&absolute, &ctx.root);
-    if let Some(index) = &ctx.index_file {
-        command = command.index_file(index);
-    }
-    let output = command
-        .run()
-        .map_err(|error| guard_err("repo-local", error.to_string()))?;
-    let mut outcome = Outcome::default();
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        outcome.say(line);
-    }
-    match output.status.code() {
-        Some(0) => Ok(outcome),
-        Some(1) => {
-            outcome.violations += 1;
-            Ok(outcome)
+                    "the {SKILL} skill is installed at {} but {} is missing or not executable — reinstall it with `kendex refresh`",
+                    self.dir.display(),
+                    path.display()
+                ),
+            )),
         }
-        other => Err(guard_err(
-            "repo-local",
-            format!(
-                "{} exited {:?}: {}",
-                absolute.display(),
-                other,
-                String::from_utf8_lossy(&output.stderr).trim()
-            ),
-        )),
     }
 }
 
-/// todo-ban — flat ban on work markers (TODO, FIXME, HACK, XXX in
-/// comment-marker shapes) in tracked files, scanned from the index. Prose
-/// that quotes or names a marker word does not fire.
-pub fn todo_ban(ctx: &GuardCtx, policy: &Policy) -> Result<Outcome> {
-    const CHECK: &str = "todo-ban";
-    const MARKER_ERE: &str = r"(^|[[:space:]])(TODO|FIXME|HACK|XXX)[:(]|(^|[[:space:]])(//|#|;|<!--|/\*)[[:space:]]*(TODO|FIXME|HACK|XXX)([:(]|[[:space:]]|$)";
-    let excludes_path = settings::config_path(
-        CHECK,
-        &policy.string(CHECK, "excludes", "tools/todo-ban-excludes")?,
-    )?;
-    let excludes = patterns::load_excludes(ctx, CHECK, &excludes_path)?;
-    let mut out = Outcome::default();
-    let remedy = format!(
-        "do the work now, or move it to the tracker and delete the marker; vendored/generated trees belong in {excludes_path} with a reason"
-    );
-    grep_lane(
-        ctx,
-        CHECK,
-        &Lane {
-            label: "work marker",
-            ere: MARKER_ERE,
-            remedy: &remedy,
-            pathspecs: &[],
-        },
-        &excludes,
-        &mut out,
-    )?;
-    match out.violations {
-        0 => out.say("todo-ban: OK — no work markers in tracked files"),
-        n => out.say(format!(
-            "todo-ban: {n} work marker(s) — excludes {excludes_path}"
+fn is_executable(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path)
+            .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        path.is_file()
+    }
+}
+
+/// The repository the caller is standing in, and the package it carries.
+/// Both refusals name what to do next, because this is reached from a
+/// commit hook as often as from a terminal.
+fn bind(dir: &Path) -> Result<(crate::githooks::Repo, Installed)> {
+    let repo = crate::githooks::Repo::at(dir)?;
+    let Some(installed) = Installed::find(&repo.worktree) else {
+        return Err(guard_err(
+            "hooks",
+            format!(
+                "no {SKILL} skill under {} ({}) — the checks live in that package; install it with `kendex add {SKILL}`",
+                repo.worktree.display(),
+                SKILL_ROOTS.join(" ")
+            ),
+        ));
+    };
+    Ok((repo, installed))
+}
+
+/// Run one hook lane: the package's own script, in the repository, with the
+/// environment passed through untouched.
+///
+/// Untouched is the point. Every other process this crate launches has git's
+/// redirect variables scrubbed, because an inherited `GIT_DIR` would send it
+/// at the wrong repository. This one *is* a hook body — git set those
+/// variables for it, `GIT_INDEX_FILE` naming the temporary index of the
+/// commit being made, and scrubbing them would make the chain judge the
+/// wrong snapshot.
+pub fn run_hook(dir: &Path, hook: &str, message_file: Option<&Path>) -> Result<GuardReport> {
+    if !LANES.contains(&hook) {
+        return Err(guard_err(
+            "hooks",
+            format!("unknown hook '{hook}' ({})", LANES.join(" | ")),
+        ));
+    }
+    let (repo, installed) = bind(dir)?;
+    let script = installed.script(&format!("scripts/{hook}"))?;
+    let mut args: Vec<&str> = Vec::new();
+    let message = message_file.map(|path| path.to_string_lossy().into_owned());
+    if let Some(message) = &message {
+        args.push(message);
+    }
+    let output = Hardened::guard_script(&script, &args, &repo.worktree)
+        .timeout(CHAIN_TIMEOUT)
+        .run()
+        .map_err(|error| guard_err(hook, error.to_string()))?;
+    Ok(relay(&output))
+}
+
+/// The package's words and its verdict, both kept. A guard's report is the
+/// remediation text a committer acts on, so it travels whole; a status the
+/// platform cannot name is "could not run", never a pass.
+fn relay(output: &std::process::Output) -> GuardReport {
+    let mut lines: Vec<String> = Vec::new();
+    for stream in [&output.stdout, &output.stderr] {
+        lines.extend(String::from_utf8_lossy(stream).lines().map(str::to_owned));
+    }
+    let code = match output.status.code() {
+        Some(code) => u8::try_from(code).unwrap_or(2),
+        None => 2,
+    };
+    GuardReport { lines, code }
+}
+
+/// Arm the shims. A repository still carrying the retired `kendex-hooks`
+/// directory is taken back first: that generation pointed `core.hooksPath`
+/// at itself, and the package's installer refuses to write into `.git/hooks`
+/// while anything redirects git away from it. Doing the takeback here means
+/// one command moves a repository across the generations, and says so.
+pub fn install(env: &Env, dir: &Path) -> Result<GuardReport> {
+    let mut lines = Vec::new();
+    if crate::githooks::installed(dir)? {
+        let taken = crate::githooks::uninstall(env, dir)?;
+        lines.push(
+            "took back the retired kendex-hooks directory before arming the package's shims"
+                .to_owned(),
+        );
+        lines.extend(taken.lines);
+    }
+    let (repo, installed) = bind(dir)?;
+    let report = installer(&repo, &installed, &[])?;
+    lines.extend(report.lines);
+    match report.code {
+        0 => Ok(GuardReport::spoken(lines)),
+        code => Ok(GuardReport { lines, code }),
+    }
+}
+
+/// Disarm: the package removes its helper and its own marked line, and
+/// nothing else. Any retired `kendex-hooks` install goes with it, so one
+/// command leaves a repository with none of ours in it either generation.
+pub fn uninstall(env: &Env, dir: &Path) -> Result<GuardReport> {
+    let mut lines = Vec::new();
+    let mut code = 0;
+    match bind(dir) {
+        Ok((repo, installed)) => {
+            let report = installer(&repo, &installed, &["--uninstall"])?;
+            lines.extend(report.lines);
+            code = report.code;
+        }
+        // The skill is gone but its shims may not be, and a shim whose
+        // script is missing blocks every commit. Say so rather than
+        // reporting a clean removal that did not happen.
+        Err(error) => lines.push(format!(
+            "{error} — any shims left in .git/hooks must be removed by hand"
         )),
     }
-    Ok(out)
+    if crate::githooks::installed(dir)? {
+        let taken = crate::githooks::uninstall(env, dir)?;
+        lines.extend(taken.lines);
+    }
+    Ok(GuardReport { lines, code })
+}
+
+/// Whether the shims are armed, in the package's own words. The installer
+/// answers this, so the thing that writes the shims and the thing that
+/// reports on them cannot disagree about what "armed" means.
+///
+/// `Ok(None)` where no verdict is owed: this is not a work tree, or the
+/// package is not installed here, so no shim can fire and none is expected.
+/// A package that IS installed and whose installer cannot be run is an
+/// error, never a quiet pass — that is a broken install, not a clean one.
+pub fn armed(dir: &Path) -> Result<Option<GuardReport>> {
+    let Ok(repo) = crate::githooks::Repo::at(dir) else {
+        return Ok(None);
+    };
+    let Some(installed) = Installed::find(&repo.worktree) else {
+        return Ok(None);
+    };
+    installer(&repo, &installed, &["--check"]).map(Some)
+}
+
+fn installer(
+    repo: &crate::githooks::Repo,
+    installed: &Installed,
+    args: &[&str],
+) -> Result<GuardReport> {
+    let script = installed.script(INSTALLER)?;
+    let root = repo.worktree.display().to_string();
+    let mut argv = vec!["--repo", root.as_str()];
+    argv.extend_from_slice(args);
+    let output = Hardened::guard_script(&script, &argv, &repo.worktree)
+        .run()
+        .map_err(|error| guard_err("hooks", error.to_string()))?;
+    Ok(relay(&output))
 }

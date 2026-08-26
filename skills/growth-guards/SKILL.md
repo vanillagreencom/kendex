@@ -57,8 +57,8 @@ any other failure blocks); the batch over staged content; then the
 repo-root-relative executable named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL`.
 `commit-msg` runs the message gate. Both BLOCK on the exit contract, fail
 closed on a guard that could not run; `git commit --no-verify` is the bypass.
-`kendex add` and `kendex refresh` run the installer, `kendex remove
-growth-guards` runs `--uninstall` first, and `kendex check` folds in `--check`
+`kendex guard install` runs the installer, `kendex guard uninstall` runs
+`--uninstall`, and `kendex check` folds in `--check`
 (0 armed — in `.git/hooks` or a `core.hooksPath` directory hand-wired to this
 skill's `pre-commit` and `commit-msg`; 1 drifted, absent, or dormant behind a
 `core.hooksPath` that redirects away from the shims; 2 could not determine —
@@ -66,6 +66,13 @@ unreadable hooks directory or an unrecognized hand-wired hook). Repeat runs
 are no-ops and repairs; `core.hooksPath` is never set; existing hooks keep
 their content and exit status. Full install and refusal behaviour:
 [DEVELOPMENT.md](DEVELOPMENT.md).
+
+The git hooks are the authoritative gate: they run for every committer, and
+they need no kendex binary — the shim execs this skill's committed scripts.
+kendex arms and reports, and implements no check of its own. The
+`pre-commit-check` harness hook stands aside where a git hook is armed,
+refuses commands that would sidestep one, and runs `scripts/pre-commit`
+itself only where nothing is armed. Layering and reasoning: [README](README.md).
 
 ## Configuration
 
