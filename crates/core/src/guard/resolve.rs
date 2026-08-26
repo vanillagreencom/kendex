@@ -25,15 +25,32 @@ impl Installed {
     /// helper resolves it, because the two must never disagree about which
     /// copy governs a repository.
     ///
-    /// The helper's rule, in its order: the MAIN checkout first, then this
-    /// work tree, and inside each the skill roots in turn — taking the
-    /// first root whose *script is executable*, not the first directory
-    /// that exists. Both halves matter. Linked worktrees share one hooks
-    /// directory but need not carry their own skills, so a linked worktree
-    /// is routinely gated by the main checkout's copy; and a tool directory
-    /// holding a partial or non-executable copy must not shadow a working
-    /// one beside it.
+    /// The helper's rule, in its order. First the scripts directory baked
+    /// into the helper by whichever install wrote it — that is the copy an
+    /// armed repository actually runs, and it need not be one the search
+    /// below would reach. Only then the MAIN checkout and this work tree,
+    /// and inside each the skill roots in turn, taking the first root whose
+    /// *script is executable* rather than the first directory that exists.
+    ///
+    /// Every part of that ordering decides a real case. The baked path is
+    /// what a repository armed from an unusual layout runs. Linked
+    /// worktrees share one hooks directory but need not carry their own
+    /// skills, so one is routinely gated by the main checkout's copy. And a
+    /// tool directory holding a partial or non-executable copy must not
+    /// shadow a working one beside it.
     pub fn resolve(repo: &crate::githooks::Repo, relative: &str) -> Option<Installed> {
+        // The helper bakes the scripts DIRECTORY and execs a bare lane name
+        // inside it, so the baked branch joins the file name rather than the
+        // package-relative path the search below uses.
+        if let Some(scripts) = baked_scripts(repo)
+            && let Some(name) = Path::new(relative).file_name()
+        {
+            let script = scripts.join(name);
+            if is_executable(&script) {
+                let dir = scripts.parent().unwrap_or(&scripts).to_path_buf();
+                return Some(Installed { dir, script });
+            }
+        }
         for root in search_roots(repo) {
             for base in SKILL_ROOTS {
                 let dir = root.join(base).join(SKILL);
@@ -57,6 +74,26 @@ impl Installed {
                 .find(|dir| dir.exists() || dir.is_symlink())
         })
     }
+}
+
+/// The scripts directory the installed helper runs first, read out of the
+/// helper itself.
+///
+/// The installer bakes it in as a single-quoted assignment on its own line,
+/// so it is read back the same way. A helper that is absent, unreadable, or
+/// shaped differently than this installer writes yields nothing and the
+/// search below decides — the same outcome the helper reaches when the
+/// baked path holds no executable script.
+fn baked_scripts(repo: &crate::githooks::Repo) -> Option<PathBuf> {
+    let helper = crate::githooks::effective_hooks_dir(&repo.worktree)
+        .ok()?
+        .join(super::shims::HELPER);
+    let text = std::fs::read_to_string(helper).ok()?;
+    let value = text
+        .lines()
+        .find_map(|line| line.strip_prefix("installed_scripts='"))?
+        .strip_suffix('\'')?;
+    (!value.is_empty()).then(|| PathBuf::from(value))
 }
 
 /// The roots the helper searches, in its order: the main checkout, then this

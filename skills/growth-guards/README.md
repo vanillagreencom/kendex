@@ -55,11 +55,12 @@ Two layers, and only one of them is authoritative.
 
 **The git hooks are the gate.** They run for every committer — a person at a
 terminal, any AI harness, a script, an editor's commit button — because git
-runs them, not because anything asked. They need no kendex binary: the shim
-execs this skill's committed scripts, so a fresh clone of a repository that
-carries `.agents/skills` gates commits on a machine that has never installed
-kendex. That is the whole reason the checks are shell and travel with the
-repository.
+runs them, not because anything asked. They need no kendex binary at commit time: the shim
+execs this skill's committed scripts. Git never clones `.git/hooks`, so a
+fresh clone carries the scripts but no shims — one `kendex guard install`
+arms them, and from then on every commit is gated by committed shell and
+git, on a machine that has never installed kendex. That is the whole reason
+the checks are shell and travel with the repository.
 
 **kendex only arms and reports.** `kendex guard install` runs the installer
 above; `kendex guard uninstall` runs `--uninstall`; `kendex check` relays

@@ -15,7 +15,7 @@ use super::{LANES, SKILL};
 /// The helper the package's installer writes, and the marker it puts on the
 /// delegating line — the two ways a repository can still be armed after the
 /// package that armed it is gone.
-const HELPER: &str = "kendex-guards";
+pub(super) const HELPER: &str = "kendex-guards";
 const SENTINEL: &str = "# kendex-guards-hook";
 
 /// A line naming shims left behind with no package to run them, or `None`

@@ -24,7 +24,7 @@ use crate::error::{CoreError, Result};
 use crate::process::Hardened;
 
 mod resolve;
-mod shims;
+pub(super) mod shims;
 pub use resolve::Installed;
 use resolve::bind;
 use shims::{missing_shims, stale_shims};

@@ -200,7 +200,7 @@ esac
 # exit 1 verdict. Both block the commit.
 fail() {
   echo "kendex-guards: $*" >&2
-  echo "  The commit is blocked because a guard could not run. Reinstall the shims with 'kendex refresh', or bypass this commit with 'git commit --no-verify'." >&2
+  echo "  The commit is blocked because a guard could not run. Re-arm the shims with 'kendex guard install', or bypass this commit with 'git commit --no-verify'." >&2
   exit 2
 }
 
@@ -257,6 +257,12 @@ write_helper() { # PATH
 # in an explicit `exit` would leave an appended guard unreachable. Ours runs,
 # blocks on any nonzero, then falls through to whatever the hook already did —
 # whose own exit status still decides.
+#
+# These bytes are compared exactly to decide whether a hook is current, so
+# changing them marks every already-armed repository drifted until it is
+# re-armed. The remedy the line names is left alone for that reason while
+# `kendex refresh` is wired to this installer (KEN-663 part 2), rather than
+# churned to another spelling and back.
 call_line() { # HOOK
   local hook="$1" args=""
   [ "$hook" = "pre-commit" ] || args=' "$@"'
@@ -1037,14 +1043,14 @@ if [ "$MODE" = "check" ]; then
     if [ "$VERDICT" -eq 0 ]; then
       echo "growth-guards git hooks: dormant — core.hooksPath ('$CUSTOM_HOOKS') redirects git away from $HOOKS_DIR, so commits are NOT gated; wire that directory's hooks to $SCRIPT_DIR, or unset core.hooksPath"
     else
-      echo "growth-guards git hooks: NOT armed — core.hooksPath ('$CUSTOM_HOOKS') redirects git away from $HOOKS_DIR, and the shims there are not intact either ($CHECK_REASONS); wire that directory's hooks to $SCRIPT_DIR, or unset core.hooksPath and run 'kendex refresh'"
+      echo "growth-guards git hooks: NOT armed — core.hooksPath ('$CUSTOM_HOOKS') redirects git away from $HOOKS_DIR, and the shims there are not intact either ($CHECK_REASONS); wire that directory's hooks to $SCRIPT_DIR, or unset core.hooksPath and run 'kendex guard install'"
     fi
     exit 1
   fi
   check_hooks_dir "$HOOKS_DIR" || VERDICT=$?
   case "$VERDICT" in
     0) echo "growth-guards git hooks: armed — pre-commit and commit-msg gate commits in $HOOKS_DIR" ;;
-    1) echo "growth-guards git hooks: NOT armed — $CHECK_REASONS ($HOOKS_DIR); run 'kendex refresh' (or this installer) to re-arm" ;;
+    1) echo "growth-guards git hooks: NOT armed — $CHECK_REASONS ($HOOKS_DIR); run 'kendex guard install' (or this installer) to re-arm" ;;
     *) echo "growth-guards git hooks: could not determine whether the shims are armed — $CHECK_REASONS" ;;
   esac
   exit "$VERDICT"

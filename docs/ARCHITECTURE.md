@@ -407,11 +407,11 @@ lives in one capability table read by core and UI.
   are the growth-guards package's shell scripts, committed with the
   repository under `.agents/skills` — size-ratchet, todo-ban, byte-ceiling,
   suppression-ban, conflict-markers, commit-msg, and preflight's staged
-  lanes. git's own `.git/hooks` shims run them, so the gate needs no kendex
-  binary at commit time and a fresh clone gates commits on a machine that
-  never installed one. kendex implements no check: `guard install` and
-  `guard uninstall` run the package's installer, `check` relays its
-  `--check`, and `guard run <hook>` execs the package's script with git's
+  lanes. git's own `.git/hooks` shims run them: no kendex binary is in the
+  path at commit time, and since git clones no hooks directory, a clone
+  carries the scripts and one `guard install` arms them. kendex implements
+  no check — `guard install`/`guard uninstall` run the package's installer,
+  `check` relays `--check`, `guard run <hook>` execs its script with git's
   redirects passed through untouched — the one child not scrubbed, because
   it is a hook body and `GIT_INDEX_FILE` names the snapshot being judged.
   So there is one implementation of every verdict and one policy dialect:

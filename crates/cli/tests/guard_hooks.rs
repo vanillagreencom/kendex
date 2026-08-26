@@ -740,3 +740,44 @@ fn dormant_shims_behind_a_redirect_are_named_as_dormant() {
     assert_eq!(out.status.code(), Some(2), "{}", said(&out));
     assert!(said(&out).contains("dormant"), "{}", said(&out));
 }
+
+/// The helper runs the scripts directory baked into it before searching
+/// anywhere, so kendex resolves that copy first too. A repository armed
+/// from a layout the search would not reach must have both sides agreeing
+/// about which copy governs it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_copy_baked_into_the_helper_is_the_one_that_governs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = armed_repo(home);
+
+    // Move the package somewhere the skill-root search never looks, and
+    // point the helper at it — what the installer does when it arms from a
+    // layout of its own.
+    let elsewhere = root.join("vendor/gg");
+    std::fs::create_dir_all(elsewhere.parent().unwrap()).unwrap();
+    std::fs::rename(root.join(".agents/skills/growth-guards"), &elsewhere).unwrap();
+    let helper_path = root.join(".git/hooks/kendex-guards");
+    let helper = std::fs::read_to_string(&helper_path).unwrap();
+    let rewritten: String = helper
+        .lines()
+        .map(|line| match line.starts_with("installed_scripts='") {
+            true => format!("installed_scripts='{}/scripts'", elsewhere.display()),
+            false => line.to_owned(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&helper_path, format!("{rewritten}\n")).unwrap();
+
+    // The shim runs it: a real commit is gated by the moved copy.
+    std::fs::write(root.join("b.rs"), "// TODO: not yet\n").unwrap();
+    git_ok(home, &root, &["add", "-A"]);
+    let blocked = git(home, &root, &["commit", "-m", "feat: adds a marker"]);
+    assert!(!blocked.status.success(), "{}", said(&blocked));
+
+    // And kendex finds the same copy rather than reporting no package.
+    let out = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    assert!(said(&out).contains("todo-ban"), "{}", said(&out));
+}

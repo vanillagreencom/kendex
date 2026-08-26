@@ -279,34 +279,35 @@ SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md review-bots.md .github/instructi
 
 # SIZE RATCHET
 
-# A [guards.size-ratchet] table like every other check. The v1
-# SIZE_RATCHET_* keys are refused at commit until `kendex guard import-v1`
-# converts them once — do not add them here.
-# [guards.size-ratchet]
+# The size-ratchet skill's keys, read by its own scripts. They live under
+# [env] like every other key here.
 
 # Line threshold for paths matching no class below. Files already over it
 # are frozen in the baseline TSV and may only shrink.
-# threshold = 400
+# SIZE_RATCHET_THRESHOLD = "400"
 
-# Per-path-class thresholds, first match wins; patterns are gitignore-style
-# (`*` stops at `/`, `**` crosses). A malformed entry is a config error,
-# never a silent fallback.
-# classes = [
-#   { pattern = "**/tests/**", threshold = 800 },
-#   { pattern = "**/*.test.*", threshold = 800 },
-# ]
+# Per-path-class thresholds, first match wins, separated by `;`. Patterns
+# are shell globs against the full repo-relative path (`*` crosses `/`). A
+# malformed entry is a config error, never a silent fallback.
+# SIZE_RATCHET_CLASSES = "*/tests/*=800;*.test.*=800"
 
 # Relocate the baseline TSV / exclusion list (repo-root-relative).
-# baseline = "tools/size-ratchet-baseline.tsv"
-# excludes = "tools/size-ratchet-excludes"
+# SIZE_RATCHET_BASELINE = "tools/size-ratchet-baseline.tsv"
+# SIZE_RATCHET_EXCLUDES = "tools/size-ratchet-excludes"
 
 # PRE-COMMIT HOOK
 
-# The commit checks run as `kendex guard run pre-commit`; each lane is a
-# [guards.<name>] table. Turn the clippy lane off for this repository
-# here, or for this machine only with KENDEX_GUARDS_RUST_CLIPPY_ENABLED=false.
-# [guards.rust-clippy]
-# enabled = false
+# The commit checks are the growth-guards package's own shell scripts, run
+# by the git shims `kendex guard install` arms. Which checks the batch runs
+# is one key; every other GROWTH_GUARDS_* key ships a working default and
+# the full list is in that skill's SKILL.md.
+# GROWTH_GUARDS_CHECKS = "todo-ban byte-ceiling suppression-ban conflict-markers"
+
+# A repo-root-relative executable the chain runs last — where this
+# repository's own toolchain gate goes (format, lint, whatever it owns).
+# It follows the family exit contract: 0 clean, 1 violations, anything else
+# "could not complete". Empty means none.
+# GROWTH_GUARDS_PRE_COMMIT_LOCAL = ""
 
 # DEBUG / OVERRIDE HOOKS
 
