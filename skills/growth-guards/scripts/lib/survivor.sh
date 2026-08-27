@@ -18,7 +18,7 @@ other_worktree_still_installed() {
   local repo_phys="" main_root="" gitdir="" root="" root_phys="" base="" dir="" phys="" entry=""
   local tracked_status=0
   local own_gitdir="" own_phys="" common_phys="" guess_gitdir="" guess_phys="" parent=""
-  local roots=() rels=() rel="" baked=()
+  local roots=() rels=() rel="" baked=() one="" seen=0
   gg_path repo_phys gg_physical "$REPO_ABS" || return 2
   # The helper is shared and records every project that has armed it. An
   # uninstall from any one of them has to look for survivors under all of
@@ -28,10 +28,16 @@ other_worktree_still_installed() {
   if [ -f "$HOOKS_DIR/$HELPER_NAME" ]; then
     gg_baked_project_rels baked "$HOOKS_DIR/$HELPER_NAME" || return 2
     for rel in ${baked[@]+"${baked[@]}"}; do
-      case " ${rels[*]} " in
-        *" $rel "*) ;;
-        *) rels+=("$rel") ;;
-      esac
+      # Element by element. Joining the array and testing for a substring
+      # made one recorded project hide another: a project named `a b/`
+      # contains ` b/ `, so a real `b/` read as already present and was
+      # never searched — a survivor missed by the machinery meant to find
+      # it. A project name is a string that may contain the separator.
+      seen=0
+      for one in ${rels[@]+"${rels[@]}"}; do
+        [ "$one" = "$rel" ] && seen=1
+      done
+      [ "$seen" -eq 1 ] || rels+=("$rel")
     done
   fi
   # This checkout IS the main work tree exactly when its own git directory is
@@ -111,9 +117,6 @@ other_worktree_still_installed() {
       continue
     fi
     gg_path root_phys gg_physical "$root" || return 2
-    if [ "$root_phys" = "$repo_phys" ]; then
-      continue
-    fi
     for rel in ${rels[@]+"${rels[@]}"}; do
     for base in $GG_SKILL_ROOTS; do
       # Under the project, wherever the project sits in that work tree —
@@ -125,9 +128,20 @@ other_worktree_still_installed() {
         continue
       fi
       gg_path phys gg_physical "$dir" || continue
-      case "$phys" in
-        "$repo_phys" | "$repo_phys"/*) continue ;;
-      esac
+      # The install being removed: the caller's own project, inside the
+      # repository being uninstalled. PHYSICALLY inside — another work tree
+      # may reach the very same directory through a symlink, and that is
+      # the same install, not a survivor of it.
+      #
+      # Excluding the whole work tree instead skipped a SECOND armed project
+      # in the same checkout, so two nested projects were never survivors of
+      # each other and disarming either took the shims the other was still
+      # committing through.
+      if [ "$rel" = "$PROJECT_REL" ]; then
+        case "$phys" in
+          "$repo_phys" | "$repo_phys"/*) continue ;;
+        esac
+      fi
       # A copy git tracks is this repository's own content, checked out
       # again. Every work tree of a repository that commits its skills
       # carries one, so treating those as separate installs would find a

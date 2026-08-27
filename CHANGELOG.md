@@ -16,8 +16,9 @@ an outside contributor.
 
 ### Fixed
 
-- A project directory whose name contains a tab, a glob character or a quote
-  is recorded and recognised correctly by the commit-hook installer.
+- A project directory whose name contains a tab, a space, a glob character or
+  a quote is recorded and recognised correctly by the commit-hook installer,
+  and never masks another project's name.
 
 - Disarming from one project keeps the commit hooks when any other project
   that armed them is still installed, not only the most recent one.
@@ -25,7 +26,8 @@ an outside contributor.
   reading as no linked work trees and removing the shared hooks.
 
 - Disarming from one project no longer removes commit hooks another project
-  in a different work tree armed and is still committing through.
+  armed and is still committing through, whether that project sits in a
+  different work tree or elsewhere in the same checkout.
 
 - A `core.hooksPath` whose value ends in a newline no longer makes `--check`
   inspect a different directory and report the repository as armed.

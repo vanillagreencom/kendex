@@ -759,5 +759,85 @@ OUT="$("$INST" --repo "$NLR" --uninstall 2>&1)" || RC=$?
   && bad "the shims survived their own uninstall" "out=$OUT" \
   || ok "with the shims gone"
 
+echo "=== two armed projects in ONE checkout survive each other ==="
+# The scan skipped the current work tree outright — right when one work tree
+# meant one install, and wrong once a checkout can hold several projects.
+# Two nested projects were never survivors of each other, so disarming
+# either took the shims the other was still committing through.
+R96="$TMP/two-projects"
+mkdir -p "$R96/apps/a/.agents/skills" "$R96/apps/b/.agents/skills"
+git -C "$R96" init -q
+git -C "$R96" config user.email t@t
+git -C "$R96" config user.name t
+printf '.agents/\napps/\n' >"$R96/.gitignore"
+printf 'hello\n' >"$R96/a.txt"
+git -C "$R96" add .gitignore a.txt
+git -C "$R96" commit -q -m "feat: base"
+cp -R "$SKILL_DIR" "$R96/apps/a/.agents/skills/growth-guards"
+cp -R "$SKILL_DIR" "$R96/apps/b/.agents/skills/growth-guards"
+
+for one in a b; do
+  OUT=""; RC=0
+  OUT="$("$R96/apps/$one/.agents/skills/growth-guards/scripts/install-git-hooks" \
+    --repo "$R96" 2>&1)" || RC=$?
+  [ "$RC" -eq 0 ] && ok "project $one arms the shared shims" || bad "arm $one" "rc=$RC out=$OUT"
+done
+
+# a leaves. b is still installed in the SAME checkout, so the shims stay.
+OUT=""; RC=0
+OUT="$("$R96/apps/a/.agents/skills/growth-guards/scripts/install-git-hooks" \
+  --repo "$R96" --uninstall 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "the first project uninstalls cleanly" || bad "a uninstall" "rc=$RC out=$OUT"
+[ -f "$R96/.git/hooks/kendex-guards" ] \
+  && ok "and the second project in the same checkout keeps them" \
+  || bad "the shims went while another project in this checkout holds them" "out=$OUT"
+
+# The control: with b gone too, the last project out disarms. Otherwise the
+# rule above would just be a repository nobody can ever disarm.
+rm -rf "$R96/apps/b"
+OUT=""; RC=0
+OUT="$("$R96/apps/a/.agents/skills/growth-guards/scripts/install-git-hooks" \
+  --repo "$R96" --uninstall 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "must-fail control: the last project out disarms" \
+  || bad "final uninstall" "rc=$RC out=$OUT"
+[ -e "$R96/.git/hooks/kendex-guards" ] \
+  && bad "the shims survived with no project left" "out=$OUT" \
+  || ok "and the shims are gone"
+
+echo "=== one recorded project cannot hide another ==="
+# The recorded projects were deduplicated by joining them into one string
+# and testing for a substring. A project named `a b/` contains ` b/ `, so a
+# real `b/` read as already recorded and was never searched — the survivor
+# check missing exactly the install it exists to find.
+R94="$TMP/hiding"
+mkdir -p "$R94"
+git -C "$R94" init -q
+git -C "$R94" config user.email t@t
+git -C "$R94" config user.name t
+printf '.agents/\na b/\nb/\n' >"$R94/.gitignore"
+printf 'hello\n' >"$R94/a.txt"
+git -C "$R94" add .gitignore a.txt
+git -C "$R94" commit -q -m "feat: base"
+
+# `a b/` arms first, so it is the entry that swallows the second.
+mkdir -p "$R94/a b/.agents/skills" "$R94/b/.agents/skills"
+cp -R "$SKILL_DIR" "$R94/a b/.agents/skills/growth-guards"
+cp -R "$SKILL_DIR" "$R94/b/.agents/skills/growth-guards"
+OUT=""; RC=0
+OUT="$("$R94/a b/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$R94" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "the space-named project arms" || bad "space-named arm" "rc=$RC out=$OUT"
+OUT=""; RC=0
+OUT="$("$R94/b/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$R94" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "and the one its name contains arms too" || bad "b arm" "rc=$RC out=$OUT"
+
+# `a b/` leaves. It is the entry that swallowed the other, so `b/` is the
+# survivor that goes unsearched and the shims it holds are taken.
+OUT=""; RC=0
+OUT="$("$R94/a b/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$R94" --uninstall 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "the space-named project uninstalls cleanly" || bad "a b uninstall" "rc=$RC out=$OUT"
+[ -f "$R94/.git/hooks/kendex-guards" ] \
+  && ok "and the project its name contains keeps the shims" \
+  || bad "one recorded project hid another and the shims went" "out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
