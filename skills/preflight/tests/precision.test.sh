@@ -514,6 +514,51 @@ fires "the reworded attribution line fires" "docs/history.md:3: [reviewer-attrib
 fires "the reworked mktemp line fires" "scripts/old.sh:3: [fail-open] unchecked mktemp"
 fires "the reworked dead-citation line fires" "scripts/pointer.sh:3: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
 
+echo "=== a sourced library carries no mode of its own ==="
+seed sourcedlib
+mkdir -p "$R/scripts/lib"
+cat >"$R/scripts/lib/common.sh" <<'EOF'
+#!/usr/bin/env bash
+# Sourced by the scripts beside it: the caller's shell owns the mode.
+repo_root() {
+  git rev-parse --show-toplevel
+}
+EOF
+run_pf
+clean "a new sourced lib without a strict-mode preamble is not a finding"
+
+echo "=== control: the same bytes executed, and real fail-open shapes inside a lib, still fail ==="
+cp "$R/scripts/lib/common.sh" "$R/scripts/common.sh"
+cp "$R/scripts/lib/common.sh" "$R/scripts/lib/runnable.sh"
+chmod +x "$R/scripts/lib/runnable.sh"
+printf 'grep -q x -- "$0" || true\nD="$(mktemp -d)"\n' >>"$R/scripts/lib/common.sh"
+run_pf
+fires "the same bytes outside a lib tree still fail" "scripts/common.sh:0: [fail-open] new shell file without strict mode"
+fires "an executable file in a lib tree is a program and still fails" "scripts/lib/runnable.sh:0: [fail-open] new shell file without strict mode"
+fires "a swallowed status inside a sourced lib still fails" "scripts/lib/common.sh:6: [fail-open] grep || true swallows exit 2"
+fires "an unchecked mktemp inside a sourced lib still fails" "scripts/lib/common.sh:7: [fail-open] unchecked mktemp"
+
+echo "=== staged scope reads the bit the index carries ==="
+seed stagedlib
+mkdir -p "$R/scripts/lib"
+cat >"$R/scripts/lib/common.sh" <<'EOF'
+#!/usr/bin/env bash
+# Sourced by the scripts beside it: the caller's shell owns the mode.
+repo_root() {
+  git rev-parse --show-toplevel
+}
+EOF
+cp "$R/scripts/lib/common.sh" "$R/scripts/lib/runnable.sh"
+chmod +x "$R/scripts/lib/runnable.sh"
+git -C "$R" add -A
+run_pf --staged
+fires "an executable lib in the index still fails" "scripts/lib/runnable.sh:0: [fail-open] new shell file without strict mode"
+case "$OUT" in
+  *"scripts/lib/common.sh"*"new shell file without strict mode"*)
+    bad "a staged sourced lib is not a finding" "$OUT" ;;
+  *) ok "a staged sourced lib is not a finding" ;;
+esac
+
 echo "=== a deleted file is not a finding ==="
 seed deleted
 git -C "$R" rm -q docs/legacy.md scripts/old.sh

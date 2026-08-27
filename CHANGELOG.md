@@ -179,6 +179,9 @@ an outside contributor.
   Library's "Customized in" mark instead of only packages with settings.
 - macOS builds are Developer ID signed and notarized: installing from any
   channel no longer ends in "kendex is damaged" or an `xattr -cr` workaround.
+- `preflight`'s fail-open lane no longer asks a non-executable file under
+  `scripts/lib/` for a `set -euo pipefail` preamble; nothing runs it, and
+  sourcing it would set the caller's mode. An executable one keeps the check.
 
 ### Removed
 

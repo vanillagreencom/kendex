@@ -831,6 +831,23 @@ while IFS= read -r f; do
   esac
   is_new=0
   if [ "$MODE" = "all" ] || grep -qxF -- "$f" "$TMP/newfiles.list"; then is_new=1; fi
+  # A file under a scripts/lib/ tree with no executable bit cannot be run or
+  # exec'd, so it is sourced: it runs in the caller's shell, where a strict-mode
+  # preamble would switch errexit, nounset and pipefail on for the caller
+  # instead of protecting the lib. The preamble check stands down for those.
+  # An executable file in the same tree is a program and keeps it, and every
+  # other fail-open shape a lib carries is judged either way. The bit is read
+  # where the content is: the index under staged scope, the work tree otherwise.
+  sourced_lib=0
+  case "/$f" in
+    */scripts/lib/*)
+      if [ "$MODE" = "staged" ]; then
+        case "$(git ls-files -s -- "$f" 2>/dev/null)" in 100644\ *) sourced_lib=1 ;; esac
+      elif [ ! -x "$cpath" ]; then
+        sourced_lib=1
+      fi
+      ;;
+  esac
   # Installed-artifact subtrees hold vendored tooling a refresh rewrites
   # wholesale: the prose is upstream's claims and the code its authoring
   # choices, so the citation lane and the lanes judging how a file is
@@ -911,7 +928,7 @@ while IFS= read -r f; do
     # A brand-new script that never turns on errexit, nounset and pipefail
     # fails open at its first unchecked command. Test trees and fixtures set
     # their own rules.
-    if [ "$own_rules" = 0 ] && [ "$vendored_mirror" = 0 ] && [ "$is_new" = 1 ]; then
+    if [ "$own_rules" = 0 ] && [ "$vendored_mirror" = 0 ] && [ "$sourced_lib" = 0 ] && [ "$is_new" = 1 ]; then
       if [ "$has_ee" = 0 ] || ! file_matches "$cpath" "$NOUNSET_RE" || ! file_matches "$cpath" "$PIPEFAIL_RE"; then
         emit "$f" 0 fail-open "new shell file without strict mode (set -euo pipefail)"
       fi
