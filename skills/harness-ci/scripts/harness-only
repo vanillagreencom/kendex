@@ -164,24 +164,27 @@ printf '%s\n' "$changed" | sed -e 's/^/harness-only: changed: /' >&2
 in_place_skills=""
 if [ -f "$repo/kendex.toml" ]; then
   # The line parser reads the spellings kendex writes and the common hand
-  # edits; completeness is not load-bearing. Every line that carries a
-  # quoted in-place token is counted, and any the name extraction cannot
-  # account for degrades to the coarse carve: every .agents/skills path
-  # reads as project source. Over-matching is the safe direction — lanes
-  # run. No legal TOML spelling can answer harness_only=true wrongly.
+  # edits; completeness is not load-bearing. Every line that could take
+  # part in spelling the value — a bare in-place mention, a \u/\U escape
+  # anywhere, a multiline source string — is counted, and any the name
+  # extraction cannot account for degrades to the coarse carve: every
+  # .agents/skills path reads as project source. Over-matching is the safe
+  # direction — lanes run. No legal TOML spelling of the value can answer
+  # harness_only=true wrongly; the exotic ones cost lanes that run.
   sq="'"
   in_place_skills="$(awk -v q="$sq" '
     BEGIN {
       d = "\""
       v = "(" d "in-place" d "|" d d d "in-place" d d d "|" q "in-place" q "|" q q q "in-place" q q q ")"
       src = "source[ \t]*=[ \t]*" v
-      tok = "(" d "in-place" d "|" q "in-place" q ")"
+      esc = "\\\\[uU]"
+      mlsrc = "source[ \t]*=[ \t]*(" d d d "|" q q q ")"
     }
     {
       line = $0
       sub(/\r$/, "", line)
       sub(/^[ \t]+/, "", line)
-      if (line ~ tok) coarse += 1
+      if (line ~ /in-place/ || line ~ esc || line ~ mlsrc) coarse += 1
     }
     line ~ /^\[[ \t]*skills[ \t]*\][ \t]*(#.*)?$/ { in_skills = 1; name = ""; next }
     line ~ /^\[[ \t]*skills[ \t]*\./ {

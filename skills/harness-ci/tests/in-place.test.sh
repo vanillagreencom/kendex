@@ -136,4 +136,19 @@ git -C "$coarse" clean -qfd -e kendex.toml
 commit_paths "$coarse" "sibling" .agents/skills/other/SKILL.md
 assert_verdict "the coarse carve covers every skill path" false --repo "$coarse" --event push --base "$coarsebase" --head HEAD
 
+# The escape and split-string avenues land in the coarse net too: neither
+# line spells in-place, both decode to it.
+for exotic in 'source = "in\u002Dplace"' 'split'; do
+  ex="$(new_repo "exotic-$RANDOM")"
+  if [ "$exotic" = split ]; then
+    printf 'schema = 6\n[skills.mine]\nsource = """in\\\n-place"""\n' >"$ex/kendex.toml"
+  else
+    printf 'schema = 6\n[skills.mine]\n%s\n' "$exotic" >"$ex/kendex.toml"
+  fi
+  commit_paths "$ex" "baseline" README.md
+  exbase="$(git -C "$ex" rev-parse HEAD)"
+  commit_paths "$ex" "edit" .agents/skills/mine/SKILL.md
+  assert_verdict "an escaped or split spelling degrades to the carve ($exotic)" false --repo "$ex" --event push --base "$exbase" --head HEAD
+done
+
 report in-place
