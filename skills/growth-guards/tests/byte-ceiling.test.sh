@@ -48,7 +48,7 @@ new_repo staged
 mkbytes small.bin 1
 git -C "$R" add -A
 run_bc
-[ "$RC" -eq 0 ] && case "$OUT" in *"1 staged addition(s) checked"*) true ;; *) false ;; esac \
+[ "$RC" -eq 0 ] && case "$OUT" in *"1 staged file(s) checked"*) true ;; *) false ;; esac \
   && ok "a 1 KB addition at ceiling 1 KB passes (at-ceiling is not over)" \
   || bad "at-ceiling addition passes" "rc=$RC out=$OUT"
 
@@ -75,17 +75,28 @@ run_bc_default
 [ "$RC" -eq 0 ] && ok "a 100 KB addition passes under the default (control)" \
   || bad "100 KB passes under the default" "rc=$RC out=$OUT"
 
-echo "=== diff-scoping: modification and rename are not additions ==="
+echo "=== diff-scoping: a change over the ceiling fails; a rename does not ==="
 new_repo grown
-mkbytes seed.bin 3
+mkbytes seed.bin 1
 git -C "$R" add -A
-git -C "$R" commit -qm "seed: legacy file over any future ceiling"
+git -C "$R" commit -qm "seed: a file under the ceiling"
 mkbytes seed.bin 5
 git -C "$R" add -A
 run_bc
-[ "$RC" -eq 0 ] && case "$OUT" in *"0 staged addition(s)"*) true ;; *) false ;; esac \
-  && ok "growing an existing tracked file is not an addition (staged mode)" \
-  || bad "modification is not an addition" "rc=$RC out=$OUT"
+[ "$RC" -eq 1 ] && case "$OUT" in *"seed.bin"*"5120 bytes"*) true ;; *) false ;; esac \
+  && ok "editing a tracked file past the ceiling fails (the staged lane reads A and M)" \
+  || bad "a change over the ceiling fails" "rc=$RC out=$OUT"
+mkbytes seed.bin 1
+git -C "$R" add -A
+run_bc
+[ "$RC" -eq 0 ] && ok "control: the same file edited back under the ceiling passes" \
+  || bad "control: back under the ceiling passes" "rc=$RC out=$OUT"
+mkbytes seed.bin 5
+git -C "$R" add -A
+git -C "$R" commit -qm "grow it past the ceiling"
+run_bc
+[ "$RC" -eq 0 ] && ok "a committed oversized file is not re-judged while nothing stages it" \
+  || bad "a committed oversized file is not re-judged while nothing stages it" "rc=$RC out=$OUT"
 git -C "$R" mv seed.bin moved.bin
 run_bc
 [ "$RC" -eq 0 ] && ok "renaming an existing large file is not an addition (rename detection pinned on)" \

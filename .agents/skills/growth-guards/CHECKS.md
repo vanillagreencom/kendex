@@ -13,12 +13,15 @@ track it and delete the marker; vendored trees go in excludes with a reason.
 
 ## byte-ceiling
 
-Newly added tracked files over the ceiling (default 200 KB, KB = 1024
+Tracked files a change puts over the ceiling (default 200 KB, KB = 1024
 bytes) fail. Growth-oriented like size-ratchet — default modes gate no
-legacy file, so adoption needs no cleanup first. Lockfiles are exempt
-built-in by exact basename; declared asset trees go in excludes with a reason.
+legacy file a change leaves alone, so adoption needs no cleanup first.
+Lockfiles are exempt built-in by exact basename; declared asset trees go in
+excludes with a reason.
 
-- `--staged` (default) — files added in the staged diff (pre-commit).
+- `--staged` (default) — files added or changed in the staged diff
+  (pre-commit). Editing a tracked file past the ceiling puts the same bytes
+  in history as adding one, so the staged lane judges both.
 - `--base REF` — files added since the merge-base with REF (CI on a PR).
 - `--all` — every tracked file (audits; pair with excludes rows).
 

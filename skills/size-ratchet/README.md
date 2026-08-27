@@ -5,8 +5,8 @@ over the line threshold; files already over it are frozen in a baseline at
 their current counts and may only shrink. Growth is never automated away:
 the single path to a bigger number is a human editing the baseline row in a
 reviewed diff, with the justification on the record. Flags and exit codes:
-`size-ratchet --help`; verdict details: [Semantics](#semantics) below;
-`DEVELOPMENT.md` covers internals.
+`size-ratchet --help`; verdicts: [Semantics](#semantics); internals:
+`DEVELOPMENT.md`.
 
 ## Usage
 
@@ -32,6 +32,7 @@ reviewed diff, with the justification on the record. Flags and exit codes:
      count, a row for a file now at/under its threshold, or a row for a
      file that left the tracked set (deleted, or newly excluded). The
      ratchet must move down; stale slack is a failure, not headroom.
+  4. **A test row added or raised** — [DEVELOPMENT.md](DEVELOPMENT.md#test-rows-are-never-raised).
 - **`--staged`** counts index blobs for every tracked file rather than
   preferring the worktree copy: what the commit records is the blob. Use it
   in a pre-commit hook; CI, which checks out a clean tree, does not need it.
@@ -116,5 +117,4 @@ to the default path. All relative paths are repo-root-relative; the script
 
 ## Requirements
 
-`git`, `awk`, and the usual POSIX userland. Bash 3.2 compatible (macOS
-system bash).
+`git`, `awk`, the usual POSIX userland. Bash 3.2 compatible (macOS bash).

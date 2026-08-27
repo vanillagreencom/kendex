@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# byte-ceiling — newly added tracked files over the byte ceiling fail
-# (default 200 KB). Growth-oriented like size-ratchet: only what a change
-# ADDS is gated by the default modes, so adoption needs no cleanup first.
+# byte-ceiling — tracked files a change puts over the byte ceiling fail
+# (default 200 KB). Growth-oriented like size-ratchet: what a change TOUCHES
+# is gated by the default modes, so adoption needs no cleanup first.
 #
 # Modes (mutually exclusive):
-#   --staged (default)  files added in the staged diff (pre-commit shim)
+#   --staged (default)  files added or changed in the staged diff (the
+#                       pre-commit shim). A tracked file edited past the
+#                       ceiling arrives the same way a new one does, so the
+#                       staged lane judges both.
 #   --base REF          files added since merge-base with REF (CI on a PR)
 #   --all               every tracked file (full sweep)
 #
@@ -28,10 +31,10 @@ usage() {
   cat <<'EOF'
 usage: byte-ceiling [--staged | --base REF | --all] [--excludes FILE]
 
-Newly added tracked files over the byte ceiling fail. --staged (default)
-checks the staged additions; --base REF checks files added since the
-merge-base with REF; --all sweeps every tracked file. Lockfiles are exempt
-built-in; declared asset trees live in the excludes list.
+Tracked files a change puts over the byte ceiling fail. --staged (default)
+checks the staged additions and changes; --base REF checks files added since
+the merge-base with REF; --all sweeps every tracked file. Lockfiles are
+exempt built-in; declared asset trees live in the excludes list.
 
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > .env > default):
@@ -108,12 +111,14 @@ emit_candidate() { # SHA PATH
 
 case "$MODE" in
   staged)
-    # An add/add conflict is classified U, which --diff-filter=A drops: the
-    # addition disappears from the record set and the run reports "0 staged
-    # addition(s) checked", so a file of any size passes the ceiling. The
+    # M as well as A: editing a tracked file past the ceiling puts the same
+    # bytes in history as adding one, and a lane that reads only additions
+    # passes it. An add/add conflict is classified U, which the filter drops:
+    # the addition disappears from the record set and the run reports "0
+    # staged file(s) checked", so a file of any size passes the ceiling. The
     # index modes refuse an unresolved merge rather than measure around it.
     gg_require_merged_index
-    git -c diff.renames=true diff --cached --raw --no-abbrev -z --diff-filter=A >"$GG_TMP/raw.z" || gg_collection_error "git diff --cached failed collecting staged additions"
+    git -c diff.renames=true diff --cached --raw --no-abbrev -z --diff-filter=AM >"$GG_TMP/raw.z" || gg_collection_error "git diff --cached failed collecting staged additions and changes"
     ;;
   base)
     git rev-parse --verify --quiet "$BASE_REF^{commit}" >/dev/null || gg_config_error "--base ref '$BASE_REF' does not name a commit"
@@ -140,8 +145,8 @@ esac
 
 if [ "$MODE" != "all" ]; then
   # --raw -z records alternate "meta NUL path NUL"; meta is
-  # ":srcmode dstmode srcsha dstsha status". Only status A survives the
-  # diff-filter, so each record carries exactly one path.
+  # ":srcmode dstmode srcsha dstsha status". Only A and M survive the
+  # diff-filter, and neither renames a path, so each record carries one.
   while IFS= read -r -d '' meta && IFS= read -r -d '' f; do
     set -- $meta
     dstmode="$2"
@@ -151,7 +156,7 @@ if [ "$MODE" != "all" ]; then
     esac
     case "$dstsha" in
       *[!0]*) ;;
-      *) gg_collection_error "added file '$f' has no destination blob in the diff record — cannot measure it" ;;
+      *) gg_collection_error "'$f' has no destination blob in the diff record — cannot measure it" ;;
     esac
     emit_candidate "$dstsha" "$f"
   done <"$GG_TMP/raw.z"
@@ -173,7 +178,7 @@ while IFS= read -r -d '' sha && IFS= read -r -d '' f; do
 done <"$GG_TMP/candidates.z"
 
 case "$MODE" in
-  staged) SCOPE_DESC="staged addition(s)" ;;
+  staged) SCOPE_DESC="staged file(s)" ;;
   base) SCOPE_DESC="file(s) added since $BASE_REF" ;;
   all) SCOPE_DESC="tracked file(s) (full sweep)" ;;
 esac

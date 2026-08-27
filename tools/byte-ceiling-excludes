@@ -11,3 +11,19 @@
 .agents/skills/iced-rs/examples/custom_shader/textures/ice_cube_normal_map.png	rendered copy of the vendored upstream iced example texture
 .agents/skills/iced-rs/examples/scrollable/screenshot.png	rendered copy of the vendored upstream iced example screenshot
 .agents/skills/worktree/scripts/worktree	rendered copy of skills/worktree/scripts/worktree — one program, 4,788 lines of shell; the source carries its own size argument
+
+# The sources of the renders above, and the repo's other declared assets.
+# The staged lane judges a file a commit CHANGES, not only one it adds, so
+# every oversized file this repo still edits needs its own row.
+docs/img/tour.gif	the README tour recording — binary media, replaced whole when the tour changes
+pi-extensions/pi-agents-tmux/assets/agents-tmux-demo.gif	extension demo recording — binary media
+pi-extensions/pi-agents-tmux/assets/agents-tmux-demo.mp4	the same demo as video — binary media
+pi-extensions/pi-background-tasks/assets/dashboard.png	extension screenshot — binary media
+pi-extensions/pi-claude-bridge/bundle/index.js	esbuild output — built from src/ by `npm run build`, reproduced by CI
+pi-extensions/pi-qol/assets/context-usage.png	extension screenshot — binary media
+pi-extensions/pi-qol/assets/session-search.gif	extension demo recording — binary media
+pi-extensions/pi-tool-renderer/assets/edit-diff.png	extension screenshot — binary media
+skills/iced-rs/examples/combo_box/combobox.gif	vendored upstream iced example recording — binary media
+skills/iced-rs/examples/custom_shader/textures/ice_cube_normal_map.png	vendored upstream iced example texture — binary media
+skills/iced-rs/examples/scrollable/screenshot.png	vendored upstream iced example screenshot — binary media
+skills/worktree/scripts/worktree	one program, 4,788 lines of shell — the source of the rendered copy above, and it carries its own size argument

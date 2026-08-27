@@ -58,6 +58,9 @@ correct in exactly two cases, both for hand-written files:
    real size. Shrink or delete the emptied rows in the same diff.
 
 Never raise for tests, docs, comments, or lines a review round asked
-for — those either fit, split at a real seam, or do not belong. Generated
+for — those either fit, split at a real seam, or do not belong. **The gate
+enforces the test half itself**: a baseline row for a test-class path that
+is absent from HEAD's baseline, or lower there, fails whatever the commit
+declares. Rows already at HEAD are grandfathered. Generated
 and vendored content is never raised either: it is excluded (the
 exclusion list, `pattern<TAB>reason`) and leaves the counted set.

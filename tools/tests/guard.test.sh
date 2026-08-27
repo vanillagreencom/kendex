@@ -11,6 +11,11 @@ set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GUARD="$(cd "$TEST_DIR/.." && pwd)/guard"
+REPO="$(cd "$TEST_DIR/../.." && pwd)"
+RATCHET="$REPO/.agents/skills/size-ratchet/scripts/size-ratchet"
+# The repo's own classes line, read where it lives: the seam pinned below is
+# between two judges reading one policy, so the test may not restate it.
+CLASSES="$(sed -n 's/^SIZE_RATCHET_CLASSES = "\(.*\)"$/\1/p' "$REPO/kendex.settings.toml")"
 TMP="$(mktemp -d)"
 mkdir -p "$TMP/nohooks"
 trap 'rm -rf "$TMP"' EXIT
@@ -46,6 +51,12 @@ run_guard() { # [VAR=VALUE...] — sets OUT and RC
   OUT=""
   RC=0
   OUT="$(cd "$R" && env "$@" "$GUARD" 2>&1)" || RC=$?
+}
+
+run_ratchet() { # sets OUT and RC — the repo's classes, nothing else
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && env SIZE_RATCHET_CLASSES="$CLASSES" "$RATCHET" 2>&1)" || RC=$?
 }
 
 TAB="$(printf '\t')"
@@ -122,6 +133,29 @@ if [ "$(id -u)" -ne 0 ]; then
     && ok "an unreadable CHANGELOG fails closed, naming the check that could not run" \
     || bad "an unreadable CHANGELOG fails closed, naming the check that could not run" "rc=$RC out=$OUT"
 fi
+
+echo "=== a test row RATCHET_RAISE declares is still refused by the ratchet ==="
+# Guard judges the declaration; the ratchet judges the row. A test is never
+# raised, so the declaration does not carry it — and the seam only holds if
+# the two are asked in the same repo state.
+mkfile crates/big.rs 450
+mkfile ui/x.test.ts 800
+baseline "crates/big.rs${TAB}450"
+git -C "$R" add -A
+run_ratchet
+[ "$RC" -eq 0 ] && ok "control: a test exactly at its class threshold needs no row" \
+  || bad "control: a test exactly at its class threshold needs no row" "rc=$RC out=$OUT"
+mkfile ui/x.test.ts 801
+baseline "crates/big.rs${TAB}450" "ui/x.test.ts${TAB}801"
+git -C "$R" add -A
+run_guard RATCHET_RAISE=1
+[ "$RC" -eq 0 ] && ok "guard takes the declaration for both new rows" \
+  || bad "guard takes the declaration for both new rows" "rc=$RC out=$OUT"
+run_ratchet
+[ "$RC" -eq 1 ] && case "$OUT" in *"test baseline row added: ui/x.test.ts"*) true ;; *) false ;; esac \
+  && ok "the ratchet refuses the test row the declaration would have carried" \
+  || bad "the ratchet refuses the test row the declaration would have carried" "rc=$RC out=$OUT"
+case "$OUT" in *"crates/big.rs"*) bad "the non-test row raised in the same diff is not refused" "$OUT" ;; *) ok "the non-test row raised in the same diff is not refused" ;; esac
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -234,5 +234,56 @@ git -C "$R" add -A
 run_sr --baseline custom-baseline.tsv
 [ "$RC" -eq 0 ] && ok "--baseline points the check at a custom path" || bad "--baseline points the check at a custom path" "rc=$RC out=$OUT"
 
+echo "=== a test row is frozen where HEAD froze it, never added or raised ==="
+BASE="tools/size-ratchet-baseline.tsv"
+commit_baselined() { # NAME PATH LINES ROWLINES — fixture whose HEAD carries the row
+  new_repo "$1"
+  mkdir -p "$R/tools"
+  mkfile "$2" "$3"
+  printf '%s\t%s\n' "$2" "$4" >"$R/$BASE"
+  git -C "$R" add -A
+  git -C "$R" commit -q -m "seed: a baselined offender"
+}
+commit_baselined testhead x.test.txt 15 15
+run_sr
+[ "$RC" -eq 0 ] && ok "a test row already at HEAD is grandfathered" \
+  || bad "a test row already at HEAD is grandfathered" "rc=$RC out=$OUT"
+mkfile x.test.txt 20
+printf 'x.test.txt\t20\n' >"$R/$BASE"
+git -C "$R" add -A
+run_sr
+[ "$RC" -eq 1 ] && case "$OUT" in *"test baseline row raised: x.test.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
+  && ok "raising a test row fails, naming both counts" \
+  || bad "raising a test row fails, naming both counts" "rc=$RC out=$OUT"
+case "$OUT" in *"a test is never raised"*) ok "the raise diagnostic offers the split remedy alone" ;; *) bad "the raise diagnostic offers the split remedy alone" "$OUT" ;; esac
+# HEAD carries a baseline, but no row for this path: adding one is the same
+# refusal routed around.
+commit_baselined testnew other.txt 15 15
+mkfile y.test.txt 15
+printf 'other.txt\t15\ny.test.txt\t15\n' >"$R/$BASE"
+git -C "$R" add -A
+run_sr
+[ "$RC" -eq 1 ] && case "$OUT" in *"test baseline row added: y.test.txt — 15 lines > threshold 10"*) true ;; *) false ;; esac \
+  && ok "adding a test row fails, naming the count and threshold" \
+  || bad "adding a test row fails, naming the count and threshold" "rc=$RC out=$OUT"
+# The control that keeps this gate test-class only.
+commit_baselined nontest plain.txt 15 15
+mkfile plain.txt 20
+printf 'plain.txt\t20\n' >"$R/$BASE"
+git -C "$R" add -A
+run_sr
+[ "$RC" -eq 0 ] && ok "control: raising a NON-test row is not this gate's business" \
+  || bad "control: raising a NON-test row is not this gate's business" "rc=$RC out=$OUT"
+# A row for a test at or under its threshold is stale, and stale is the one
+# thing to say about it.
+commit_baselined stale z.test.txt 15 15
+mkfile z.test.txt 5
+git -C "$R" add -A
+run_sr
+[ "$RC" -eq 1 ] && case "$OUT" in *"stale baseline row: z.test.txt"*) true ;; *) false ;; esac \
+  && ok "a test row under the threshold is stale" \
+  || bad "a test row under the threshold is stale" "rc=$RC out=$OUT"
+case "$OUT" in *"test baseline row"*) bad "one root cause is reported once" "$OUT" ;; *) ok "one root cause is reported once" ;; esac
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -732,6 +732,14 @@ report() { # VIOLATIONS-FILE — human diagnostics on stdout
         echo "size-ratchet FAIL stale baseline row: $path — no longer in the tracked, non-excluded set, the row ($b) must go"
         echo "  remedy: run size-ratchet --update to drop the row"
         ;;
+      TESTNEW)
+        echo "size-ratchet FAIL test baseline row added: $path — $n lines > threshold $PT ($why), and the row freezing it is not at HEAD"
+        echo "  remedy: split at a concept seam (a test is never raised)"
+        ;;
+      TESTRAISE)
+        echo "size-ratchet FAIL test baseline row raised: $path — row $b -> $n lines, threshold $PT ($why)"
+        echo "  remedy: split at a concept seam (a test is never raised)"
+        ;;
     esac
   done <"$1"
 }
@@ -1015,8 +1023,63 @@ if [ "$MODE" = "seed" ]; then
   echo "size-ratchet --seed: first baseline written at $BASELINE_FILE ($rows row(s)) — commit it; rows only move down from here"
 fi
 
+# --- test-class rows are frozen where HEAD froze them ------------------------
+# A test is split, never raised: its class threshold is already generous, and
+# a longer one has stopped being one test. A baseline row is the only way past
+# a threshold, so a row a change ADDS or RAISES for a test path is that
+# refusal routed around, and this gate closes it whatever the commit declares.
+# Rows already at HEAD are grandfathered: the gate judges the change, not the
+# history it inherited.
+is_test_class() { # PATH
+  case "$1" in
+    */tests/* | */test/* | */__tests__/* | */tests.rs | *test_util.rs | *.test.*) return 0 ;;
+  esac
+  return 1
+}
+
+# HEAD's copy of the baseline, or "" when HEAD carries none — an unborn HEAD,
+# a first seed, a baseline this change introduces. A git failure is never
+# "absent": read_head_file_mode refuses on one.
+HEAD_BASELINE=""
+read_head_baseline() {
+  HEAD_BASELINE=""
+  read_head_file_mode "$BASELINE_FILE"
+  [ -n "$HEAD_FILE_MODE" ] || return 0
+  case "$HEAD_FILE_MODE" in
+    100*) ;;
+    *) return 0 ;; # not a regular file at HEAD; there is no row set to compare
+  esac
+  git show "HEAD:$BASELINE_FILE" >"$TMP/baseline.head" || collection_error "could not read $BASELINE_FILE from HEAD — refusing to judge test rows against a baseline it could not read"
+  HEAD_BASELINE="$TMP/baseline.head"
+}
+
+# Violation rows in evaluate()'s shape: KIND<TAB>path<TAB>lines<TAB>previous.
+# Only a row doing work is judged — one whose file is over its threshold. A
+# row for a file at or under it is already STALE, and naming it twice would
+# report one root cause as two.
+test_rows_frozen() { # CURRENT-BASELINE — violations on stdout
+  [ -n "$HEAD_BASELINE" ] || return 0
+  local p n
+  : >"$TMP/baseline.tests" || collection_error "could not initialize the test-row scratch file"
+  while IFS="$TAB" read -r p n; do
+    [ -n "$p" ] || continue
+    is_test_class "$p" || continue
+    printf '%s\t%s\n' "$p" "$n" >>"$TMP/baseline.tests" || collection_error "could not record the test row for '$p'"
+  done <"$1"
+  awk -F'\t' -v OFS='\t' -v countsfile="$TMP/counts.tsv" -v headfile="$HEAD_BASELINE" '
+    FILENAME == countsfile { now[$1] = $2 + 0; thr[$1] = $3 + 0; next }
+    FILENAME == headfile   { was[$1] = $2 + 0; had[$1] = 1; next }
+    !($1 in now) { next }
+    now[$1] <= thr[$1] { next }
+    !($1 in had)          { print "TESTNEW",   $1, $2, "-" }
+    ($1 in had) && $2 + 0 > was[$1] { print "TESTRAISE", $1, $2, was[$1] }
+  ' "$TMP/counts.tsv" "$HEAD_BASELINE" "$TMP/baseline.tests"
+}
+
 # --- verdict -------------------------------------------------------------------
 evaluate "$TMP/baseline.tsv" >"$TMP/violations.tsv" || collection_error "could not evaluate the baseline against the collected counts"
+read_head_baseline
+test_rows_frozen "$TMP/baseline.tsv" >>"$TMP/violations.tsv" || collection_error "could not judge the test rows against HEAD's baseline"
 violations="$(count_nonempty_lines "$TMP/violations.tsv")"
 report "$TMP/violations.tsv" || collection_error "could not read the violations scratch file to report them"
 if [ "$violations" -gt 0 ]; then

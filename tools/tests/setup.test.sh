@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Pins what tools/setup arms: the growth-guards installer writes both shims,
-# and this repo's own commit-msg rule is appended below the line the
-# installer writes, once. Then it commits through the armed hooks in both
-# directions — the package's conventional-header verdict and this repo's
-# changelog verdict have to be reachable from a real commit, or the chain is
-# wired to nothing. The refusing direction runs first in every pair.
+# and this repo's own commit-msg rule is spliced in below the line the
+# installer writes, once, above whatever else the hook runs. Then it commits
+# through the armed hooks in both directions — the package's
+# conventional-header verdict and this repo's changelog verdict have to be
+# reachable from a real commit, or the chain is wired to nothing. The
+# refusing direction runs first in every pair.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,20 +19,23 @@ FAIL=0
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
-R="$TMP/repo"
-mkdir -p "$R/.agents/skills/growth-guards" "$R/tools" "$R/crates"
-cp -R "$REPO/.agents/skills/growth-guards/scripts" "$R/.agents/skills/growth-guards/scripts"
-cp "$TOOLS/setup" "$TOOLS/commit-msg" "$R/tools/"
-printf '#!/usr/bin/env bash\necho "repo-local lane ran"\n' >"$R/tools/guard"
-chmod +x "$R/tools/guard"
-printf '[env]\nGROWTH_GUARDS_PRE_COMMIT_LOCAL = "tools/guard"\n' >"$R/kendex.settings.toml"
-printf '# fixture\n' >"$R/README.md"
-git -C "$R" init -q
-git -C "$R" symbolic-ref HEAD refs/heads/main
-git -C "$R" config user.email test@example.com
-git -C "$R" config user.name test
+new_fixture() { # NAME — a clone-shaped repo carrying the package and these tools
+  R="$TMP/$1"
+  mkdir -p "$R/.agents/skills/growth-guards" "$R/tools" "$R/crates"
+  cp -R "$REPO/.agents/skills/growth-guards/scripts" "$R/.agents/skills/growth-guards/scripts"
+  cp "$TOOLS/setup" "$TOOLS/commit-msg" "$R/tools/"
+  printf '#!/usr/bin/env bash\necho "repo-local lane ran"\n' >"$R/tools/guard"
+  chmod +x "$R/tools/guard"
+  printf '[env]\nGROWTH_GUARDS_PRE_COMMIT_LOCAL = "tools/guard"\n' >"$R/kendex.settings.toml"
+  printf '# fixture\n' >"$R/README.md"
+  git -C "$R" init -q
+  git -C "$R" symbolic-ref HEAD refs/heads/main
+  git -C "$R" config user.email test@example.com
+  git -C "$R" config user.name test
+  HOOKS="$R/.git/hooks"
+}
 
-HOOKS="$R/.git/hooks"
+new_fixture repo
 SENTINEL="# kendex-guards-hook"
 LANE='exec "$(git rev-parse --show-toplevel)/tools/commit-msg" "$@"'
 
@@ -115,6 +119,59 @@ RC=0
 OUT="$(git -C "$R" commit -m "docs: $(printf 'x%.0s' $(seq 1 66))" 2>&1)" || RC=$?
 [ "$RC" -eq 0 ] && ok "a 72-character subject passes" \
   || bad "a 72-character subject passes" "rc=$RC out=$OUT"
+
+echo "=== the lane goes above the hook's own body, not after it ==="
+new_fixture own-hook
+# A consumer hook that returns early. Appended below it, the repo lane would
+# never run. Written with no final newline, which the splice must preserve.
+printf '#!/bin/sh\necho "consumer hook ran"\nexit 0' >"$HOOKS/commit-msg"
+chmod +x "$HOOKS/commit-msg"
+RC=0
+OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "setup arms a repo that already had its own commit-msg hook" \
+  || bad "setup arms a repo that already had its own commit-msg hook" "rc=$RC out=$OUT"
+SENT_AT="$(grep -n -F -- "$SENTINEL" "$HOOKS/commit-msg" | head -1 | cut -d: -f1)"
+[ -n "$SENT_AT" ] && [ "$(sed -n "$((SENT_AT + 1))p" "$HOOKS/commit-msg")" = "$LANE" ] \
+  && ok "the repo lane is the line right after the delegate" \
+  || bad "the repo lane is the line right after the delegate" "$(cat "$HOOKS/commit-msg")"
+[ "$(tail -1 "$HOOKS/commit-msg")" = "exit 0" ] \
+  && ok "the consumer's body is still last" \
+  || bad "the consumer's body is still last" "$(cat "$HOOKS/commit-msg")"
+[ -n "$(tail -c 1 "$HOOKS/commit-msg")" ] \
+  && ok "the missing final newline is preserved" \
+  || bad "the missing final newline is preserved" "the splice added one"
+printf 'fn main() {}\n' >"$R/crates/a.rs"
+git -C "$R" add -A
+RC=0
+OUT="$(git -C "$R" commit -m "feat: a crate change" 2>&1)" || RC=$?
+[ "$RC" -ne 0 ] && case "$OUT" in *"without a CHANGELOG.md entry"*) true ;; *) false ;; esac \
+  && ok "the changelog rule still runs, though the hook body exits before the end" \
+  || bad "the changelog rule still runs, though the hook body exits before the end" "rc=$RC out=$OUT"
+
+echo "=== a clone armed by the old setup names both hooks to delete ==="
+new_fixture legacy
+for pair in pre-commit:guard commit-msg:commit-msg; do
+  printf '#!/usr/bin/env bash\nexec "$(git rev-parse --show-toplevel)/tools/%s" "$@"\n' \
+    "${pair##*:}" >"$HOOKS/${pair%%:*}"
+  chmod +x "$HOOKS/${pair%%:*}"
+done
+RC=0
+OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
+[ "$RC" -ne 0 ] \
+  && case "$OUT" in *".git/hooks/pre-commit AND .git/hooks/commit-msg"*) true ;; *) false ;; esac \
+  && ok "setup stops and names both legacy hooks, not just pre-commit" \
+  || bad "setup stops and names both legacy hooks, not just pre-commit" "rc=$RC out=$OUT"
+rm -f "$HOOKS/pre-commit"
+RC=0
+OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
+[ "$RC" -ne 0 ] && ok "deleting pre-commit alone is not enough" \
+  || bad "deleting pre-commit alone is not enough" "rc=$RC out=$OUT"
+rm -f "$HOOKS/commit-msg"
+RC=0
+OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && grep -qxF "$LANE" "$HOOKS/commit-msg" \
+  && ok "deleting both arms the clone" \
+  || bad "deleting both arms the clone" "rc=$RC out=$OUT"
 
 echo "=== setup never claims armed where git reads hooks elsewhere ==="
 E="$TMP/elsewhere"

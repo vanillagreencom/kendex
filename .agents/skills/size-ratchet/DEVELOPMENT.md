@@ -110,3 +110,17 @@ declared, run the check and turn each reported `new offender` line into a
 [Seeding a first baseline](README.md#seeding-a-first-baseline)), then commit
 that baseline together with the settings change. Declaring
 `SIZE_RATCHET_THRESHOLD` explicitly keeps the previous number instead.
+
+## Test rows are never raised
+
+A test splits; it is never raised, and a hand-edited baseline row is the
+only way past a threshold. So a row for a test-class path — `*/tests/*`,
+`*/test/*`, `*/__tests__/*`, `*/tests.rs`, `*test_util.rs`, `*.test.*` —
+that HEAD's baseline does not carry, or carries lower, fails: `test
+baseline row added` and `test baseline row raised`.
+
+Rows already at HEAD are grandfathered, because the gate judges the change
+and not the history it inherited. A HEAD with no baseline (an unborn HEAD,
+a first `--seed`, a baseline this change introduces) has nothing to compare
+and the rule stays quiet. A row whose file is at or under its threshold is
+reported as stale instead, so one root cause reads as one verdict.
