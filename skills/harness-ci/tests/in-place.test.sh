@@ -105,4 +105,13 @@ for dotted_skill in inline deep; do
   assert_verdict "a top-level dotted $dotted_skill declaration" false --repo "$dotted" --event push --base "$dottedbase" --head HEAD
 done
 
+# A CRLF manifest is legal TOML; the carriage return must not defeat the
+# anchored matches.
+crlf="$(new_repo crlf)"
+printf 'schema = 6\r\n\r\n[skills.mine]\r\nsource = "in-place"\r\n' >"$crlf/kendex.toml"
+commit_paths "$crlf" "baseline" README.md
+crlfbase="$(git -C "$crlf" rev-parse HEAD)"
+commit_paths "$crlf" "edit" .agents/skills/mine/SKILL.md
+assert_verdict "a CRLF manifest still carves" false --repo "$crlf" --event push --base "$crlfbase" --head HEAD
+
 report in-place
