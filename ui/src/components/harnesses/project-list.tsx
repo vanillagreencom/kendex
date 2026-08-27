@@ -23,6 +23,9 @@ export function ProjectList() {
   useAuditOnMount();
   const result = useScanStore((s) => s.result);
   const views = useAuditStore((s) => s.views);
+  // `checkError`, not the store's shared `error`: item actions write the
+  // shared field too, and a failed adopt is not a failed audit.
+  const checkError = useAuditStore((s) => s.checkError);
   const goToLibrary = useNavStore((s) => s.goToLibrary);
   const goToUnmanaged = useNavStore((s) => s.goToUnmanaged);
   // What kendex is not looking after at one place. This is the only surface
@@ -30,10 +33,11 @@ export function ProjectList() {
   // at, and the flow that offers to take it on behind the click.
   // Null where the place could not be read; zero where the audit simply has
   // not reached it yet, which says nothing and will resolve on its own.
-  const notManaged = (scope: Scope): number | null => {
-    const view = views.find((v) => sameScope(v.scope, scope));
-    return view ? unmanagedCount(view) : 0;
-  };
+  const notManaged = (scope: Scope): number | null =>
+    unmanagedCount(
+      views.find((v) => sameScope(v.scope, scope)),
+      checkError,
+    );
   const { settings, registerProject, unregisterProject, discoverProjects } =
     useSettingsStore();
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);

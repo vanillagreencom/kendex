@@ -17,11 +17,25 @@ import { type MergedDriftRow, mergeDriftRows } from "@/lib/drift-merge";
  *  genuinely unknown, and an empty list is a claim: it would read as
  *  "nothing unmanaged here", and every row the app would have offered to
  *  adopt writes to the filesystem. Null so no caller can spend it as a
- *  number without deciding what to say. */
-export function unmanagedIn(view: AuditView): MergedDriftRow[] | null {
-  if (view.error) return null;
+ *  number without deciding what to say.
+ *
+ *  A reading fails two ways and both land here, because both leave the same
+ *  rows standing from the last audit that worked: one place refuses to be
+ *  read and its own view carries the error, or the whole check fails and
+ *  the store keeps every view it had. Taking both in one argument each is
+ *  what stops a caller reading one channel and missing the other. An
+ *  undefined view is neither: the audit has not reached this place yet,
+ *  which is an empty answer rather than an unknown one. */
+export function unmanagedIn(
+  view: AuditView | undefined,
+  checkError: string | null,
+): MergedDriftRow[] | null {
+  if (checkError !== null || view?.error) return null;
+  if (!view) return [];
   return mergeDriftRows(view.drift.filter((row) => row.state === "unmanaged"));
 }
 
-export const unmanagedCount = (view: AuditView): number | null =>
-  unmanagedIn(view)?.length ?? null;
+export const unmanagedCount = (
+  view: AuditView | undefined,
+  checkError: string | null,
+): number | null => unmanagedIn(view, checkError)?.length ?? null;

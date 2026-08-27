@@ -12,6 +12,7 @@ import type {
   ItemKind,
   Scope,
 } from "@/bindings";
+import { worstSeverityRank } from "@/lib/copy-safety";
 import { sameScope } from "@/lib/scope";
 
 /** What makes two findings the same finding. The severity is in it because
@@ -34,7 +35,13 @@ export const findingKey = (finding: Finding): string =>
  *  findings that earned it. Two tools reading different bytes under one name
  *  is a real state, and the worse of the two is the one worth showing — but
  *  it is shown entire, because a score from one reading over findings from
- *  another is a number nothing on screen accounts for. */
+ *  another is a number nothing on screen accounts for.
+ *
+ *  Two rows can score the same and still not be equally bad: the score is
+ *  100 less what the findings cost, so one critical costs what a handful of
+ *  lighter hits do, and every reading at the floor scores 0 whatever put it
+ *  there. Severity breaks the tie, or the row the backend happened to
+ *  return first would decide which findings a reader ever sees. */
 export function installedSafety(
   views: AuditView[],
   kind: ItemKind,
@@ -46,8 +53,7 @@ export function installedSafety(
     .flatMap((view) => view.safety)
     .filter((row) => row.kind === kind && row.name === name);
   const worst = rows.reduce<(typeof rows)[number] | null>(
-    (lowest, row) =>
-      lowest === null || row.safety.score < lowest.safety.score ? row : lowest,
+    (lowest, row) => (lowest === null || worseThan(row, lowest) ? row : lowest),
     null,
   );
   if (worst === null) return null;
@@ -58,6 +64,18 @@ export function installedSafety(
     findings: dedupe(worst.findings, findingKey),
     skipped: dedupe(worst.skipped, (skip) => `${skip.rule}:${skip.reason}`),
   };
+}
+
+/** Lower score first, and on a tie the harsher finding. Strictly worse, so
+ *  two rows that match on both leave the earlier one standing. */
+function worseThan(
+  row: { safety: { score: number }; findings: Finding[] },
+  standing: { safety: { score: number }; findings: Finding[] },
+): boolean {
+  if (row.safety.score !== standing.safety.score) {
+    return row.safety.score < standing.safety.score;
+  }
+  return worstSeverityRank(row.findings) > worstSeverityRank(standing.findings);
 }
 
 function dedupe<T>(rows: T[], key: (row: T) => string): T[] {
