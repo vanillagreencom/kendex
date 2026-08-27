@@ -52,10 +52,18 @@ invoking repo's own resolved settings.
 
 `validate-workflow.sh` compares the adopted copy against the shipped template
 line by line, over every line that is not a comment or blank. Two deltas are
-allowed and nothing else: the `check_run` opt-in's two trigger lines, and — in
-the catalog repository only — the `skills/` script path in place of the
-vendored `.agents/skills/` one. Any other difference is one failure naming the
+allowed and nothing else. Any other difference is one failure naming the
 first divergent line, and the remedy never varies: re-copy the template.
+
+- **The script path**, which is not interchangeable: each repo kind has ONE
+  correct spelling. Only the EXPECTED side is normalized, so the catalog
+  requires `skills/` and a consumer requires the vendored `.agents/skills/`,
+  and each rejects the other's. Rewriting both sides would make either pass
+  anywhere.
+- **The `check_run` opt-in**, which is two lines or none. A trigger without
+  its `types:` child fires on every activity type or is refused outright, and
+  the child without its trigger lands under whatever precedes it, so the two
+  are required adjacent and in order.
 
 It re-derives nothing, and that is the design rather than an economy. Deriving
 the contract — this job's permissions, that expression's terms, these activity

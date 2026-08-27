@@ -382,6 +382,73 @@ printf '%s\n' '  second-relay:
 commit "$dir"
 expect_fail "an appended job is a divergence" "$dir" "has diverged from the shipped template"
 
+# The script-path spelling is not interchangeable: each repo kind has ONE
+# correct spelling, and normalizing both sides would make either pass in
+# either place. A consumer runs the vendored copy.
+sandbox
+dir="$DIR"
+mutate "$dir" "s#\.agents/skills/review-gate/#skills/review-gate/#g"
+expect_fail "a CONSUMER copy on the catalog's script path diverges" "$dir" "has diverged from the shipped template"
+
+# ...and the catalog runs the tracked originals. Same skill, same template,
+# a repository shaped the way the catalog is.
+catalog_sandbox() { # sets DIR to a repo whose skill lives at skills/review-gate
+  SANDBOX_N=$((SANDBOX_N + 1))
+  DIR="$TMP/catalog.$SANDBOX_N"
+  mkdir -p "$DIR/skills" "$DIR/.github/workflows" "$DIR/docs"
+  cp -R "$SKILL_DIR" "$DIR/skills/review-gate"
+  sed 's#\.agents/skills/review-gate/#skills/review-gate/#g' \
+    "$SKILL_DIR/templates/review-gate-writer.yml" >"$DIR/.github/workflows/review-gate-writer.yml"
+  printf '[env]\nREVIEW_GATE_CONTEXT = "Review gate"\n' >"$DIR/kendex.settings.toml"
+  printf 'sandbox\n' >"$DIR/docs/guide.md"
+  (
+    cd "$DIR"
+    git init -q .
+    git config user.name "review-gate tests"
+    git config user.email "tests@example.invalid"
+    git add -A
+    git commit -q -m "catalog sandbox"
+  )
+}
+
+CATALOG_REL="./skills/review-gate/scripts/validate-workflow.sh"
+
+catalog_sandbox
+crc=0
+cout="$(cd "$DIR" && "$CATALOG_REL" 2>&1)" || crc=$?
+[ "$crc" -eq 0 ] && ok "a CATALOG copy on the tracked script path passes" ||
+  bad "a CATALOG copy on the tracked script path passes (rc=$crc)" "$cout"
+
+catalog_sandbox
+sed -i.bak 's#skills/review-gate/scripts/#.agents/skills/review-gate/scripts/#g' \
+  "$DIR/.github/workflows/review-gate-writer.yml"
+rm -f "$DIR/.github/workflows/review-gate-writer.yml.bak"
+(cd "$DIR" && git add -A && git commit -q -m "revert to the vendored spelling")
+crc=0
+cout="$(cd "$DIR" && "$CATALOG_REL" 2>&1)" || crc=$?
+if [ "$crc" -eq 1 ] && printf '%s' "$cout" | grep -q '^FAIL'; then
+  ok "a CATALOG copy reverted to the vendored script path diverges"
+else
+  bad "a CATALOG copy reverted to the vendored script path diverges (rc=$crc)" "$cout"
+fi
+
+# The opt-in is TWO lines or none. One without the other is a trigger firing
+# on every activity type, or a types: mapping under whatever precedes it.
+sandbox
+dir="$DIR"
+mutate "$dir" "s|^  #   check_run:$|  check_run:|"
+expect_fail "the opt-in's trigger line alone is a partial opt-in" "$dir" "PARTIAL check_run opt-in"
+
+sandbox
+dir="$DIR"
+mutate "$dir" "s|^  #     types: \[created, completed\]$|    types: [created, completed]|"
+expect_fail "the opt-in's types line alone is a partial opt-in" "$dir" "PARTIAL check_run opt-in"
+
+sandbox
+dir="$DIR"
+mutate "$dir" "s|^  workflow_dispatch: {}$|  check_run:\n  workflow_dispatch: {}\n    types: [created, completed]|"
+expect_fail "the opt-in's two lines must be adjacent" "$dir" "PARTIAL check_run opt-in"
+
 # The BOUNDARY, stated rather than left to be discovered: comments are
 # compared out. A copy whose prose was reworded is still the template.
 sandbox

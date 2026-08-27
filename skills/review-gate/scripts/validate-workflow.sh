@@ -28,9 +28,11 @@ The template is copied VERBATIM — it carries no per-repo values — so the
 check is equality, line by line, over every line that is not a comment or
 blank. Two deltas are legitimate and allowed:
 
-  * the two `check_run` opt-in lines uncommented, and
-  * in the catalog repository only, the `skills/` script path in place of
-    the vendored `.agents/skills/` one.
+  * the two `check_run` opt-in lines uncommented — both, adjacent, or
+    neither, since a trigger without its `types:` child fires on every
+    activity type and the child alone lands under whatever precedes it; and
+  * the script path each repo kind actually runs: `skills/` in the catalog,
+    the vendored `.agents/skills/` in a consumer. Each rejects the other's.
 
 Anything else is one failure naming the first divergent line. The remedy is
 always the same: re-copy the template. Nothing here re-derives what the
@@ -145,23 +147,44 @@ code_lines() { # FILE — the file's code lines, trailing space stripped
 code_lines "$TEMPLATE" >"$TMP/template.code"
 code_lines "$adopted" >"$TMP/adopted.code"
 
+# The EXPECTED side only. Rewriting both sides makes the two spellings
+# interchangeable, which is the opposite of the contract: each repo kind has
+# one correct spelling and the other one is wrong there. The catalog runs the
+# tracked originals, so its template is rewritten to `skills/` and an adopted
+# copy still on `.agents/` diverges; a consumer's expected spelling is the
+# vendored path the template already ships, so nothing is rewritten and a
+# copy on `skills/` diverges.
 if [ "$IS_CATALOG" -eq 1 ]; then
-  sed -i.bak 's#\.agents/skills/review-gate/#skills/review-gate/#g' "$TMP/template.code" "$TMP/adopted.code"
-  rm -f "$TMP/template.code.bak" "$TMP/adopted.code.bak"
+  sed -i.bak 's#\.agents/skills/review-gate/#skills/review-gate/#g' "$TMP/template.code"
+  rm -f "$TMP/template.code.bak"
 fi
 
-# The opt-in's two lines are the one ADDITION a copy may carry. They are
-# removed from the adopted side before the comparison rather than special-
-# cased inside it, so the comparison itself stays a plain equality.
+# The opt-in's two lines are the one ADDITION a copy may carry, and they are
+# ONE addition: uncommenting the trigger without its `types:` child leaves
+# GitHub either firing on every activity type or refusing the trigger, and
+# uncommenting the child alone leaves a `types:` under whatever precedes it.
+# Both lines, adjacent and in order, or neither. They are removed from the
+# adopted side before the comparison rather than special-cased inside it, so
+# the comparison itself stays a plain equality.
+first_match_line() { # FILE LITERAL — line number of the first exact match, or empty
+  local out rc=0
+  out="$(grep -nxF -- "$2" "$1")" || rc=$?
+  [ "$rc" -le 1 ] || die "could not read $1 while looking for the opt-in (grep exit $rc)"
+  [ "$rc" -eq 0 ] || return 0
+  out="${out%%$'\n'*}"
+  printf '%s' "${out%%:*}"
+}
+
 CHECK_RUN_ENABLED=0
-cr_rc=0
-grep -qxF '  check_run:' "$TMP/adopted.code" || cr_rc=$?
-[ "$cr_rc" -le 1 ] || die "could not read $TMP/adopted.code while looking for the opt-in (grep exit $cr_rc)"
-if [ "$cr_rc" -eq 0 ]; then
+cr_n="$(first_match_line "$TMP/adopted.code" '  check_run:')"
+ty_n="$(first_match_line "$TMP/adopted.code" '    types: [created, completed]')"
+if [ -n "$cr_n" ] && [ -n "$ty_n" ] && [ "$ty_n" = "$((cr_n + 1))" ]; then
   CHECK_RUN_ENABLED=1
   sed -e '/^  check_run:$/d' -e '/^    types: \[created, completed\]$/d' \
     "$TMP/adopted.code" >"$TMP/adopted.trimmed"
   mv "$TMP/adopted.trimmed" "$TMP/adopted.code"
+elif [ -n "$cr_n" ] || [ -n "$ty_n" ]; then
+  bad "$adopted carries a PARTIAL check_run opt-in — the trigger line and its \`types: [created, completed]\` child opt in together or not at all: a trigger without the child fires on every activity type or is refused outright, and the child without its trigger lands under whatever precedes it. Uncomment both template lines, adjacent, or neither"
 fi
 
 # diff exits 0 same, 1 differing, and anything higher is trouble reading the
