@@ -10,7 +10,32 @@
 set -euo pipefail
 
 INPUT=$(cat)
-COMMAND=$(echo "$INPUT" | grep -o '"command"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"command"[[:space:]]*:[[:space:]]*"//;s/"$//' 2>/dev/null || true)
+
+# Decode the command the way the sibling guards do. The value carries JSON
+# escapes, and a parser that stops at the first quote truncates
+# `cd "$repo" && ls` to `cd \`, which the heuristic below then reads as a
+# bare cd and refuses — the opposite of what this hook is for.
+if command -v jq >/dev/null 2>&1; then
+  # A payload that does not parse is refused, not skipped: an unreadable
+  # command cannot be proven scoped, and this guard is fail-closed by design.
+  if ! COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // .command // empty' 2>/dev/null); then
+    echo "block-bare-cd: hook payload is not valid JSON; refusing rather than skipping the guard" >&2
+    exit 2
+  fi
+else
+  # Escape-aware fallback: the value may carry \" and \\ inside it.
+  COMMAND=$(printf '%s' "$INPUT" | grep -o '"command"[[:space:]]*:[[:space:]]*"\([^"\\]\|\\.\)*"' | head -1 \
+    | sed 's/^"command"[[:space:]]*:[[:space:]]*"//;s/"$//;s/\\"/"/g;s/\\\\/\\/g' 2>/dev/null || true)
+  # Same fail-closed contract as the jq branch: a payload that names a
+  # command the fallback could not decode is refused, not skipped. A
+  # decoded-empty command ("command":"") still passes.
+  if [ -z "$COMMAND" ] \
+    && printf '%s' "$INPUT" | grep -q '"command"' \
+    && ! printf '%s' "$INPUT" | grep -Eq '"command"[[:space:]]*:[[:space:]]*""'; then
+    echo "block-bare-cd: could not decode the command from the hook payload; refusing rather than skipping the guard" >&2
+    exit 2
+  fi
+fi
 
 # Fast exit if no cd in command. A bare `cd` goes to $HOME, the change this
 # hook exists to stop, so end of line counts the same as a following space.
