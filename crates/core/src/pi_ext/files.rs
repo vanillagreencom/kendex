@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-use crate::fs::{copy_tree, remove_any};
+use crate::fs::move_any;
 use crate::hash::hash_files;
 
 /// Never copied or hashed: dependency trees and build output are recreated
@@ -114,15 +114,13 @@ pub(super) fn trash(env: &Env, path: &Path) -> Result<()> {
     let stamp = crate::clock::timestamp().replace(':', "-");
     let mut dest = dir.join(format!("{stamp}-{base}"));
     let mut counter = 1;
-    while dest.exists() {
+    // A link, not what it points at: a name held by a link whose target is
+    // gone reads as free, and the move onto it then fails.
+    while dest.exists() || dest.is_symlink() {
         dest = dir.join(format!("{stamp}-{counter}-{base}"));
         counter += 1;
     }
-    if std::fs::rename(path, &dest).is_ok() {
-        return Ok(());
-    }
-    copy_tree(path, &dest)?;
-    remove_any(path)
+    move_any(path, &dest)
 }
 
 #[cfg(test)]

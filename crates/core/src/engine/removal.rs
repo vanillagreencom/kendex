@@ -129,8 +129,8 @@ pub(super) fn removal_ops(
 /// Which paths a Trash op may still take. Several lock entries name one
 /// physical tree — codex and pi read the same skill directory — so a removal
 /// must not move a tree another installation still wants, and must not move
-/// the same tree twice: the second op finds nothing there and fails the
-/// whole apply.
+/// the same tree twice: one tree is one op and one line in the preview, not
+/// a second op with nothing left to do.
 pub(super) struct TrashGuard {
     keep: BTreeSet<PathBuf>,
     trashed: BTreeSet<PathBuf>,

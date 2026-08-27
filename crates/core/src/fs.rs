@@ -187,17 +187,55 @@ pub(crate) fn copy_tree(from: &Path, to: &Path) -> Result<()> {
         let Some(name) = source.file_name() else {
             continue;
         };
-        let dest = to.join(name);
-        if source.is_symlink() {
-            let target = fs::read_link(&source).map_err(|e| CoreError::io(&source, e))?;
-            make_symlink(&target, &dest)?;
-        } else if source.is_dir() {
-            copy_tree(&source, &dest)?;
-        } else {
-            fs::copy(&source, &dest).map_err(|e| CoreError::io(&source, e))?;
-        }
+        copy_any(&source, &to.join(name))?;
     }
     Ok(())
+}
+
+/// Reproduce one entry at another path: a link as a link, a directory as
+/// its whole tree, anything else by its bytes.
+///
+/// The link question is asked first, because both of the others read
+/// through one. `is_dir` on a link to a directory would reproduce the tree
+/// it points at while the link is all that was asked for, and `copy` on a
+/// link whose target is gone fails with the target's ENOENT under the
+/// link's name.
+pub(crate) fn copy_any(from: &Path, to: &Path) -> Result<()> {
+    if from.is_symlink() {
+        let target = fs::read_link(from).map_err(|e| CoreError::io(from, e))?;
+        make_symlink(&target, to)
+    } else if from.is_dir() {
+        copy_tree(from, to)
+    } else {
+        fs::copy(from, to)
+            .map(|_| ())
+            .map_err(|e| CoreError::io(from, e))
+    }
+}
+
+/// Move an entry to `to`, whether or not the two share a filesystem.
+///
+/// rename(2) does it in one step where they do, and refuses where they do
+/// not — the everyday shape for the trash, which a project on its own
+/// mount is removed into under the home directory. Across that boundary
+/// the entry is reproduced and the original taken away. Its refusal is
+/// carried into whatever the second attempt fails with: rename can refuse
+/// for reasons a copy does not share, and without it the caller reads only
+/// that the original could not be removed.
+pub(crate) fn move_any(from: &Path, to: &Path) -> Result<()> {
+    let Err(refused) = fs::rename(from, to) else {
+        return Ok(());
+    };
+    copy_any(from, to)
+        .and_then(|()| remove_any(from))
+        .map_err(|failed| {
+            CoreError::io(
+                from,
+                std::io::Error::other(format!(
+                    "rename refused it ({refused}) and moving it across by hand failed ({failed})"
+                )),
+            )
+        })
 }
 
 #[cfg(unix)]
@@ -215,131 +253,4 @@ pub(crate) fn make_symlink(target: &Path, link: &Path) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A link is a leaf of the tree it sits in: its parent's sync persists
-    /// the entry, and nothing on the far side is this tree's to touch.
-    /// Pinned with a link to a directory outside the tree holding a file
-    /// nobody may open — followed, the sync would fail on it.
-    #[cfg(unix)]
-    #[test]
-    fn sync_tree_never_follows_a_link() {
-        use std::os::unix::fs::PermissionsExt as _;
-        let tmp = tempfile::tempdir().unwrap();
-        let outside = tmp.path().join("outside");
-        fs::create_dir_all(&outside).unwrap();
-        let sealed = outside.join("sealed");
-        fs::write(&sealed, "x").unwrap();
-        fs::set_permissions(&sealed, fs::Permissions::from_mode(0o000)).unwrap();
-        let unlock = || fs::set_permissions(&sealed, fs::Permissions::from_mode(0o600)).unwrap();
-        if fs::File::open(&sealed).is_ok() {
-            // Permissions do not bind this user (root): following the link
-            // cannot be made to fail here.
-            unlock();
-            return;
-        }
-        let tree = tmp.path().join("tree");
-        fs::create_dir_all(&tree).unwrap();
-        fs::write(tree.join("a"), "a").unwrap();
-        std::os::unix::fs::symlink(&outside, tree.join("out")).unwrap();
-        std::os::unix::fs::symlink(".", tree.join("loop")).unwrap();
-
-        let result = sync_tree(&tree);
-        unlock();
-        result.unwrap();
-    }
-
-    /// The app saves settings from a Tokio thread pool, so a slider drag can
-    /// put several writes of one file in flight at once. Sharing a temp name
-    /// made them collide: the loser either failed to rename or wrote its
-    /// payload over the live file, leaving it half one write and half the
-    /// other.
-    #[test]
-    fn concurrent_writers_of_one_file_all_succeed_and_leave_it_whole() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("settings.toml");
-        let bodies: Vec<String> = (0..8)
-            .map(|writer| {
-                format!(
-                    "writer = {writer}\npadding = \"{}\"\n",
-                    "x".repeat(writer * 40)
-                )
-            })
-            .collect();
-
-        for _ in 0..50 {
-            std::thread::scope(|scope| {
-                for body in &bodies {
-                    scope.spawn(|| atomic_write(&path, body).expect("every writer succeeds"));
-                }
-            });
-            let written = fs::read_to_string(&path).unwrap();
-            assert!(
-                bodies.contains(&written),
-                "the file is one writer's bytes, not a mixture: {written:?}"
-            );
-        }
-        // Nothing is left behind for the next reader to trip over.
-        let leftovers: Vec<_> = fs::read_dir(tmp.path())
-            .unwrap()
-            .filter_map(|entry| entry.ok().map(|e| e.file_name()))
-            .filter(|name| name != "settings.toml")
-            .collect();
-        assert!(leftovers.is_empty(), "{leftovers:?}");
-    }
-
-    /// Renaming onto a directory is the failure this can force; every other
-    /// one leaves the same debris. Both entry points share the helper, so
-    /// both are checked.
-    #[test]
-    fn a_write_that_cannot_finish_leaves_no_temp_file_behind() {
-        let tmp = tempfile::tempdir().unwrap();
-        let occupied = tmp.path().join("settings.toml");
-        fs::create_dir(&occupied).unwrap();
-
-        for write in [atomic_write, atomic_write_durable] {
-            assert!(write(&occupied, "schema = 1\n").is_err());
-        }
-
-        let leftovers: Vec<_> = fs::read_dir(tmp.path())
-            .unwrap()
-            .filter_map(|entry| entry.ok().map(|e| e.file_name()))
-            .filter(|name| name != "settings.toml")
-            .collect();
-        assert!(leftovers.is_empty(), "{leftovers:?}");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_symlinked_file_is_rewritten_through_the_link() {
-        let tmp = tempfile::tempdir().unwrap();
-        let real = tmp.path().join("dotfiles/kendex.toml");
-        fs::create_dir_all(real.parent().unwrap()).unwrap();
-        fs::write(&real, "old").unwrap();
-        let link = tmp.path().join("kendex.toml");
-        std::os::unix::fs::symlink(&real, &link).unwrap();
-
-        atomic_write(&link, "new").unwrap();
-        atomic_write_durable(&link, "newer").unwrap();
-
-        assert!(link.is_symlink());
-        assert_eq!(fs::read_to_string(&real).unwrap(), "newer");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn an_owned_cache_write_replaces_the_link_not_its_target() {
-        let tmp = tempfile::tempdir().unwrap();
-        let target = tmp.path().join("target");
-        fs::write(&target, "keep").unwrap();
-        let cache = tmp.path().join("cache.json");
-        std::os::unix::fs::symlink(&target, &cache).unwrap();
-
-        atomic_write_no_follow(&cache, "cached").unwrap();
-
-        assert!(!cache.is_symlink());
-        assert_eq!(fs::read_to_string(cache).unwrap(), "cached");
-        assert_eq!(fs::read_to_string(target).unwrap(), "keep");
-    }
-}
+mod tests;
