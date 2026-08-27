@@ -386,7 +386,7 @@ lives in one capability table read by core and UI.
   guard's are the growth-guards package's own (`GROWTH_GUARDS_*`,
   `SIZE_RATCHET_*`), read by the scripts rather than by this binary. An
   install made under the old name is not migrated: it is reinstalled.
-  Old-name fallback reads retire at 3.0. The global
+  Old-name fallback reads are read-only and stay. The global
   `vstack2` config/cache/data dirs move under `kendex` once, on first
   launch of either shell, under a scope-style lock, never overwriting what
   the new dirs hold and never following symlinks; a collision is reported;
@@ -411,8 +411,8 @@ lives in one capability table read by core and UI.
   no check — `guard install`/`guard uninstall` run the installer and `guard
   run <hook>` execs its script with git's redirects passed through, the one
   child not scrubbed because it is a hook body naming the snapshot judged.
-  `guard check` asks the package too. `kendex check` executes nothing and
-  reads one thing: our marker in both hook files, or not armed.
+  `guard check` asks the package too. `kendex check` executes nothing: our
+  marker in both hook files, both executable, hooksPath unset, or not armed.
   So there is one implementation of every verdict and one policy dialect:
   the flat `GROWTH_GUARDS_*` / `SIZE_RATCHET_*` keys, baselines and
   excludes the scripts read from the commit. Every enabled check runs

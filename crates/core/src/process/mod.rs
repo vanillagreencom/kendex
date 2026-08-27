@@ -13,7 +13,7 @@
 //! line outranks config, so operations inside a cache pin `--git-dir` and
 //! `--work-tree` explicitly and the hostile setting is ignored.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::{self, Read};
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
@@ -66,6 +66,13 @@ pub struct Hardened {
 }
 
 impl Hardened {
+    /// One environment variable on the child, for a caller that reads its
+    /// output rather than merely relaying it.
+    pub fn env(mut self, key: &str, value: &str) -> Hardened {
+        self.command.env(key, value);
+        self
+    }
+
     pub fn timeout(mut self, timeout: Duration) -> Hardened {
         self.timeout = timeout;
         self
@@ -159,7 +166,19 @@ impl Hardened {
     }
 
     fn new(program: &str, args: Vec<OsString>) -> Hardened {
-        let label = std::iter::once(program.to_owned())
+        Hardened::spawning(OsStr::new(program), args)
+    }
+
+    /// The same, for a program that is a path rather than a name.
+    ///
+    /// A path is bytes on Unix, not text: `to_string_lossy` on the way to
+    /// `Command` substitutes U+FFFD for anything not UTF-8, and the child
+    /// is then spawned against a filename that does not exist. It failed
+    /// closed, but with a diagnostic naming a path nobody has — the label
+    /// still goes through `to_string_lossy`, because a label is for reading
+    /// and only the program has to survive intact.
+    fn spawning(program: &OsStr, args: Vec<OsString>) -> Hardened {
+        let label = std::iter::once(program.to_string_lossy().into_owned())
             .chain(args.iter().map(|arg| arg.to_string_lossy().into_owned()))
             .collect::<Vec<_>>()
             .join(" ");

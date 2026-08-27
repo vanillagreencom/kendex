@@ -68,8 +68,10 @@ fn fold_commit_hooks(env: &Env, checked: &mut CheckReport, scopes: &[kendex_core
             continue;
         }
         let (class, text) = match kendex_core::guard::armed(&root) {
-            Ok(true) => continue,
-            Ok(false) => (
+            // Armed, or no repository at all: neither is something a
+            // reader can act on, and the second has no remedy to offer.
+            Ok(None | Some(true)) => continue,
+            Ok(Some(false)) => (
                 Class::Drift,
                 format!(
                     "commit hooks are not armed in {} — `kendex guard install` arms them, and `kendex guard check` says more",

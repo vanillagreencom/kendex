@@ -127,7 +127,7 @@ resolve_roots
 
 # Installing where git does not read would write files nothing runs. Removal
 # still runs: shims in $HOOKS_DIR revive the moment the setting goes away.
-classify_hooks_path
+classify_hooks_path_or_stop
 
 if [ "$HOOKS_PATH_ELSEWHERE" -eq 1 ] && [ "$MODE" = "install" ]; then
   if hooks_path_off; then

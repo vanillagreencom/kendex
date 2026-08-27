@@ -17,6 +17,11 @@ use super::guard_err;
 /// git's own wording for the one failure that means "no repository here".
 /// Matched as a phrase rather than by exit status: 128 is git's catch-all,
 /// and a dubious-ownership refusal or a broken config carries it too.
+///
+/// Which is why the children below are run under `LC_ALL=C`. git translates
+/// its diagnostics, so under another locale these phrases match nothing and
+/// every "there is no repository here" becomes "could not tell" — a report
+/// nobody can act on, in every scope, for anyone not working in English.
 const NOT_A_REPOSITORY: [&str; 2] = ["not a git repository", "not a working tree"];
 
 /// One repository, resolved: the worktree that invoked us and the common
@@ -33,12 +38,21 @@ pub struct Repo {
     pub started_at: PathBuf,
 }
 
+/// A git child whose stderr this module reads as English.
+///
+/// Only these: the guard verbs relay the package's own words untouched, and
+/// a person running them in their own locale should get their own locale
+/// back. What must not vary is a phrase kendex itself matches on.
+fn english(hardened: Hardened) -> Hardened {
+    hardened.env("LC_ALL", "C")
+}
+
 impl Repo {
     pub fn at(dir: &Path) -> Result<Repo> {
-        let output = Hardened::git(
+        let output = english(Hardened::git(
             &["rev-parse", "--show-toplevel", "--git-common-dir"],
             Some(dir),
-        )
+        ))
         .run()?;
         if !output.status.success() {
             return Err(guard_err("hooks", "not inside a git repository"));
@@ -89,7 +103,11 @@ impl Repo {
     /// answer, while "git would not run" is a check that could not be
     /// taken. Only the first is `Ok(None)`.
     pub fn probe(dir: &Path) -> Result<Option<Repo>> {
-        let output = Hardened::git(&["rev-parse", "--is-inside-work-tree"], Some(dir)).run()?;
+        let output = english(Hardened::git(
+            &["rev-parse", "--is-inside-work-tree"],
+            Some(dir),
+        ))
+        .run()?;
         let answer = String::from_utf8_lossy(&output.stdout);
         if output.status.success() {
             return match answer.trim() {
@@ -143,15 +161,27 @@ impl Repo {
     /// that used to live here and drifted from the package's every time it
     /// was touched. Set at all is answered "not armed", which is safe for
     /// all of them; the package's own `--check` is what says more.
+    /// Exit 1 is git for "not set", and it is the ONLY answer that means
+    /// unredirected. Everything else is a repository whose configuration
+    /// could not be read — a broken `.git/config` exits 128 — and folding
+    /// that into "not redirected" sends the caller on to measure the
+    /// default hooks directory and report a clean armed verdict about a
+    /// repository whose effective hooks path was never determined. Could
+    /// not measure is its own answer, and it is the one this returns.
     pub fn hooks_redirected(&self) -> Result<bool> {
         let output =
             Hardened::git(&["config", "--get", "core.hooksPath"], Some(&self.worktree)).run()?;
         match output.status.code() {
             Some(0) => Ok(true),
-            // Exit 1 is git for "not set", which is the only unredirected
-            // answer. Anything else is a repository this cannot read, and
-            // an unreadable one is not a repository known to be armed.
-            _ => Ok(false),
+            Some(1) => Ok(false),
+            other => Err(guard_err(
+                "hooks",
+                format!(
+                    "could not read core.hooksPath in {} (git exited {other:?}): {}",
+                    self.worktree.display(),
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+            )),
         }
     }
 }

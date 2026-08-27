@@ -55,19 +55,80 @@ fn check_reports_whether_the_shims_are_armed() {
     );
 }
 
-/// Outside any repository there is no verdict to give. A git that could not
-/// run is a different answer: the check says so rather than reading as
-/// clean.
+/// Outside any repository there is no verdict to give.
+///
+/// The project has to DECLARE the package for this to mean anything: a
+/// scope that does not is skipped before the question is asked, so a
+/// fixture without a lock passes whatever the answer would have been. That
+/// is what this test used to do.
+///
+/// And there is nothing to say here. "Not armed, run `kendex guard
+/// install`" is advice that cannot be taken — the installer exits 2 outside
+/// a work tree — so a scope with no repository would carry it every
+/// session, for ever.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn check_is_silent_outside_a_repository_and_loud_when_it_cannot_look() {
+fn a_declared_project_outside_a_repository_has_no_hook_verdict() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
-    let plain = home.join("plain");
-    std::fs::create_dir_all(&plain).unwrap();
+    let root = repo(home);
+    install_package(home, &root, &["growth-guards"]);
 
-    let out = run(home, &plain, "kendex", &["check"]);
-    assert!(!said(&out).contains("commit hooks"), "{}", said(&out));
+    // Same project, minus the repository: the declaration stays, so the
+    // fold is reached and has to decide what to say about it.
+    std::fs::remove_dir_all(root.join(".git")).unwrap();
+
+    let out = said(&run(home, &root, "kendex", &["check"]));
+    assert!(
+        !out.contains("commit hooks"),
+        "a project with no repository was told to arm hooks: {out}"
+    );
+}
+
+/// A repository whose configuration cannot be read is a check that could
+/// not be taken, and never a clean one.
+///
+/// What this reaches is the probe: git answers 128 for a broken
+/// `.git/config` and says nothing about repositories, so `Repo::probe`
+/// reports could-not-tell before the hooks path is ever asked for.
+///
+/// `hooks_redirected`'s own refusal to read any non-1 status as "unset" is
+/// defence behind that, and deliberately not pinned here: every way to
+/// break the config breaks the probe first, so an isolated trigger would
+/// have to be a race. It is written to fail closed because the cost of
+/// being wrong is a clean armed verdict about a repository whose effective
+/// hooks path was never established.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_configuration_git_cannot_read_is_not_an_armed_repository() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    install_package(home, &root, &["growth-guards"]);
+    let armed = run(home, &root, "kendex", &["guard", "install"]);
+    assert!(armed.status.success(), "{}", said(&armed));
+
+    // The control: armed is the silent verdict.
+    let clean = said(&run(home, &root, "kendex", &["check"]));
+    assert!(!clean.contains("commit hooks"), "{clean}");
+
+    // Now git cannot read the file that says where hooks come from. The
+    // shims are untouched and still carry their marker, so nothing but the
+    // unreadable config separates this from the run above.
+    let config = root.join(".git/config");
+    let saved = std::fs::read_to_string(&config).unwrap();
+    std::fs::write(&config, "[core\n").unwrap();
+    let out = said(&run(home, &root, "kendex", &["check"]));
+    std::fs::write(&config, saved).unwrap();
+
+    assert!(
+        out.contains("commit hooks"),
+        "an unreadable configuration read as armed: {out}"
+    );
+    assert!(
+        !out.contains("guard install"),
+        "could-not-read was reported as drift with a remedy: {out}"
+    );
 }
 
 /// A repository git refuses to read is a check that could not be taken, not
@@ -231,5 +292,38 @@ fn a_hook_git_will_not_run_is_not_armed() {
     assert!(
         out.contains("commit hooks"),
         "a hook git will not run still read armed: {out}"
+    );
+}
+
+/// The search roots kendex walks are the ones the installer walks.
+///
+/// Two lists of the same directories in two languages, and the last pair of
+/// those drifted for nine review rounds. This one survives because the
+/// verbs have to find the copy an armed repository runs: a kendex that
+/// looked somewhere the installer does not would report on a package no
+/// commit ever reaches.
+///
+/// Token equality, not a parse. The shell list is one space-separated
+/// string by construction, and comparing them as sets would pass a pair
+/// that searched the same places in a different order.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_search_roots_match_the_installers_own_list() {
+    let installer = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../skills/growth-guards/scripts/install-git-hooks")
+        .canonicalize()
+        .unwrap();
+    let text = std::fs::read_to_string(&installer).unwrap();
+    let line = text
+        .lines()
+        .find_map(|line| line.strip_prefix("SKILL_ROOTS=\""))
+        .and_then(|rest| rest.strip_suffix('"'))
+        .expect("the installer declares SKILL_ROOTS as one quoted string");
+    let theirs: Vec<&str> = line.split_whitespace().collect();
+    assert_eq!(
+        theirs,
+        kendex_core::guard::SEARCH_ROOTS,
+        "the installer searches {theirs:?} and kendex searches {:?}",
+        kendex_core::guard::SEARCH_ROOTS
     );
 }

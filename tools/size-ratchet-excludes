@@ -1,4 +1,3 @@
-# kendex-guard-dialect: legacy-glob
 # size-ratchet exclusion list — binary, generated, and append-only log content
 # only. Hand-written source is never excluded; oversized source is frozen in
 # size-ratchet-baseline.tsv.

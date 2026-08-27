@@ -56,6 +56,16 @@ These are known, deliberate trade-offs. Raising them again is noise:
   Quoted flags, `flag=` assignments, aliases, and other spellings the shell
   would have to expand are outside its contract; the installed git hook is
   the guarantee in an armed repo.
+- **The guard arming marker plus execute bit is a consent record, not an
+  integrity check.** It answers "did this package arm this repository",
+  which is what `kendex check` and the PreToolUse lane need. It does not
+  answer whether a hook body still reaches the scripts — an executable hook
+  whose delegating line is commented out reads armed, and that is accepted:
+  `.git/hooks` is never cloned, so reaching that state takes local write
+  access, and anyone with it bypasses any predicate by writing a passing
+  hook outright. Integrity lives in `kendex guard check`, which runs the
+  package's own `--check`. Settled by KEN-670; marker-trust findings are
+  not a finding surface.
 - **Windows-only resolution paths (PATHEXT, `.cmd` shims) are out of
   scope until a Windows report exists.**
 

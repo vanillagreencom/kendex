@@ -20,6 +20,7 @@
 //! relays unchanged: 0 clean, 1 violations, 2 the check could not run. Both
 //! nonzero verdicts block a commit.
 
+use std::ffi::OsString;
 use std::path::Path;
 use std::time::Duration;
 
@@ -30,6 +31,9 @@ mod repo;
 mod resolve;
 pub use repo::Repo;
 pub use resolve::Installed;
+/// The tool directories the verbs search, in order — the installer's own
+/// list, pinned against it by `guard_hooks::the_search_roots_match…`.
+pub use resolve::SKILL_ROOTS as SEARCH_ROOTS;
 use resolve::{bind, is_executable};
 
 /// The package that owns the checks and the git shims.
@@ -48,10 +52,11 @@ pub const MARKER: &str = "# kendex-guards-hook";
 const INSTALLER: &str = "scripts/install-git-hooks";
 
 /// Room for the whole chain, which ends in whatever the repository pointed
-/// `GROWTH_GUARDS_PRE_COMMIT_LOCAL` at — a cold clippy build, in this repo.
-/// It matches the `pre-commit-check` hook's own budget so that kendex is
-/// never the thing that kills a run the harness was still willing to wait
-/// for. Arming and reporting are fast and keep the ordinary timeout.
+/// `GROWTH_GUARDS_PRE_COMMIT_LOCAL` at — a cold clippy build, in this repo,
+/// and no bound kendex can derive. Half an hour is chosen to be longer than
+/// any commit gate a person would sit through, so the timeout only ever
+/// catches a chain that has hung. Arming and reporting are fast and keep
+/// the ordinary timeout.
 const CHAIN_TIMEOUT: Duration = Duration::from_secs(1800);
 
 pub(crate) fn guard_err(check: &str, message: impl Into<String>) -> CoreError {
@@ -99,14 +104,13 @@ pub fn run_hook(dir: &Path, hook: &str, message_file: Option<&Path>) -> Result<G
             std::env::current_dir()
                 .map_err(|error| guard_err(hook, error.to_string()))?
                 .join(path)
-                .to_string_lossy()
-                .into_owned(),
+                .into_os_string(),
         ),
-        Some(path) => Some(path.to_string_lossy().into_owned()),
+        Some(path) => Some(path.as_os_str().to_owned()),
         None => None,
     };
-    let args: Vec<&str> = message.as_deref().into_iter().collect();
-    let output = Hardened::guard_hook(&installed.script, &args, &repo.worktree)
+    let args: Vec<OsString> = message.into_iter().collect();
+    let output = Hardened::guard_hook(&installed.script, args, &repo.worktree)
         .timeout(CHAIN_TIMEOUT)
         .run()
         .map_err(|error| guard_err(hook, error.to_string()))?;
@@ -159,10 +163,15 @@ pub fn check(dir: &Path) -> Result<GuardReport> {
 /// verdict relayed unchanged.
 fn installer(dir: &Path, args: &[&str]) -> Result<GuardReport> {
     let (repo, installed) = bind(dir, INSTALLER)?;
-    let worktree = repo.worktree.to_string_lossy().into_owned();
-    let mut argv = vec!["--repo", &worktree];
-    argv.extend_from_slice(args);
-    let output = Hardened::guard_script(&installed.script, &argv, &repo.worktree)
+    // `--repo` is a path, so it travels as one: a work tree whose name is
+    // not UTF-8 would otherwise reach the installer as replacement
+    // characters and be reported as a repository that does not exist.
+    let mut argv = vec![
+        OsString::from("--repo"),
+        repo.worktree.as_os_str().to_owned(),
+    ];
+    argv.extend(args.iter().map(OsString::from));
+    let output = Hardened::guard_script(&installed.script, argv, &repo.worktree)
         .run()
         .map_err(|error| guard_err("hooks", error.to_string()))?;
     Ok(relay(&output))
@@ -184,29 +193,35 @@ fn installer(dir: &Path, args: &[&str]) -> Result<GuardReport> {
 /// this package puts in them, which is why reading it is not the grammar
 /// this module deliberately no longer has.
 ///
-/// A `core.hooksPath` set to anything at all means the answer is no — not because such a repository is
-/// necessarily ungated, but because deciding whether it is takes the grammar
-/// this module deliberately no longer has. Every uncertainty lands on "not
-/// armed", whose remedy is a command that is safe to run twice.
+/// A `core.hooksPath` set to anything at all means the answer is no — not
+/// because such a repository is necessarily ungated, but because deciding
+/// whether it is takes the grammar this module deliberately no longer has.
+/// Every uncertainty inside a repository lands on "not armed", whose remedy
+/// is a command that is safe to run twice.
 ///
-/// A person who wants the full vocabulary runs `kendex guard --check`, which
+/// `None` is the state that is not a verdict: there is no repository here at
+/// all, so there is nothing to arm and no drift to report. Folding it into
+/// "not armed" told a scope with no work tree to run `kendex guard install`,
+/// which exits 2 there — advice that cannot be taken, every session.
+///
+/// A person who wants the full vocabulary runs `kendex guard check`, which
 /// asks the package. That is an invocation, and an invocation is consent.
-pub fn armed(dir: &Path) -> Result<bool> {
+pub fn armed(dir: &Path) -> Result<Option<bool>> {
     let Some(repo) = Repo::probe(dir)? else {
-        return Ok(false);
+        return Ok(None);
     };
     if repo.hooks_redirected()? {
-        return Ok(false);
+        return Ok(Some(false));
     }
     let hooks = repo.default_hooks_dir();
     for lane in LANES {
         let path = hooks.join(lane);
         let Some(text) = crate::fs::read_if_exists(&path)? else {
-            return Ok(false);
+            return Ok(Some(false));
         };
         if !text.contains(MARKER) || !is_executable(&path) {
-            return Ok(false);
+            return Ok(Some(false));
         }
     }
-    Ok(true)
+    Ok(Some(true))
 }

@@ -84,27 +84,30 @@ impl Hardened {
     /// One of the package's shell scripts, spawned the way the platform can
     /// actually run it.
     ///
-    /// Every script this crate spawns from the package is POSIX shell with a
-    /// `#!` line. On Unix the kernel reads that line, so the path is the
+    /// Every script this crate spawns from the package is bash with a `#!`
+    /// line. On Unix the kernel reads that line, so the path is the
     /// program. Windows has no such rule — `CreateProcess` would try to
     /// execute the text — so there the interpreter is the program and the
     /// script is its first argument, which is what git itself does when it
     /// runs a hook on Windows, through the `sh` that ships with Git for
-    /// Windows. A `sh` that is not on PATH fails as a spawn error naming
-    /// it, which is a legible answer; guessing at a shell would not be.
+    /// Windows — which IS bash, which is why naming it is correct rather
+    /// than a hope about POSIX compatibility. A `sh` that is not on PATH
+    /// fails as a spawn error naming it, which is a legible answer;
+    /// guessing at a shell would not be.
     ///
-    /// The scripts differ in which shell they ask for, so this is only
-    /// correct because every one of them is POSIX-sh compatible — the
-    /// package's own bash-3.2 suite is what keeps that true.
-    fn shell_script(program: &Path, args: &[&str]) -> Hardened {
+    /// The scripts ask for bash, and Git for Windows' `sh` IS bash — that
+    /// is why naming `sh` there is correct rather than a hope about POSIX
+    /// compatibility. The package's own bash-3.2 suite keeps them inside
+    /// what that build accepts.
+    fn shell_script(program: &Path, args: Vec<OsString>) -> Hardened {
         #[cfg(unix)]
         {
-            Hardened::new(&program.to_string_lossy(), owned(args))
+            Hardened::spawning(program.as_os_str(), args)
         }
         #[cfg(not(unix))]
         {
             let mut argv = vec![program.as_os_str().to_owned()];
-            argv.extend(owned(args));
+            argv.extend(args);
             Hardened::new("sh", argv)
         }
     }
@@ -123,7 +126,7 @@ impl Hardened {
     /// hands it no file, and `/dev/null` there is an empty message. The
     /// program is never a name a committed file chose: it is the installed
     /// package's own script, at a path this crate derived.
-    pub fn guard_hook(program: &Path, args: &[&str], cwd: &Path) -> Hardened {
+    pub fn guard_hook(program: &Path, args: Vec<OsString>, cwd: &Path) -> Hardened {
         let mut hardened = Hardened::shell_script(program, args);
         hardened.command.stdin(Stdio::inherit());
         hardened.command.current_dir(cwd);
@@ -138,7 +141,7 @@ impl Hardened {
     /// inherited `GIT_DIR` or `GIT_INDEX_FILE` would outrank that and send
     /// them at a different repository — writing hooks into one repo while
     /// reporting about another.
-    pub fn guard_script(program: &Path, args: &[&str], cwd: &Path) -> Hardened {
+    pub fn guard_script(program: &Path, args: Vec<OsString>, cwd: &Path) -> Hardened {
         let mut hardened = Hardened::shell_script(program, args);
         hardened.scrub_git_redirects();
         hardened.command.current_dir(cwd);

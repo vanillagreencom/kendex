@@ -87,8 +87,17 @@ HOOKS_DIR=$(git rev-parse --git-path hooks 2>/dev/null) || {
 # armed. A `core.hooksPath` set to anything at all is not armed, because
 # deciding otherwise is the taxonomy that kept being wrong — and this lane
 # would rather check a commit twice than wave one through.
+# Exit 1 is git for "not set", and it is the only answer that means
+# unredirected. A git that failed for any other reason — a broken config
+# exits 128 — prints nothing either, so testing the OUTPUT read a
+# repository nobody could measure as one with hooks where this lane
+# expects them. Status decides, and anything unmeasured is not armed,
+# which refuses the commit rather than standing aside for a gate that was
+# never established.
+HOOKS_PATH_STATUS=0
+git config --get core.hooksPath >/dev/null 2>&1 || HOOKS_PATH_STATUS=$?
 ARMED=""
-if [ "$(git config --get core.hooksPath 2>/dev/null; printf x)" = "x" ] \
+if [ "$HOOKS_PATH_STATUS" -eq 1 ] \
   && [ -x "$HOOKS_DIR/pre-commit" ] && [ -x "$HOOKS_DIR/commit-msg" ] \
   && grep -qF -- "$MARKER" "$HOOKS_DIR/pre-commit" 2>/dev/null \
   && grep -qF -- "$MARKER" "$HOOKS_DIR/commit-msg" 2>/dev/null; then

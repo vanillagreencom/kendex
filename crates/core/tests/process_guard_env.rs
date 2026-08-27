@@ -54,7 +54,7 @@ fn a_guard_hook_sees_the_index_git_named() {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-    let output = Hardened::guard_hook(&script, &[], tmp.path())
+    let output = Hardened::guard_hook(&script, Vec::new(), tmp.path())
         .run()
         .unwrap();
     assert!(output.status.success());
@@ -73,7 +73,7 @@ fn a_guard_hook_sees_the_index_git_named() {
     // The management scripts are not hook bodies and get the scrub, so an
     // inherited redirect cannot send an installer at another repository.
     std::fs::remove_file(tmp.path().join("env.log")).unwrap();
-    let output = Hardened::guard_script(&script, &[], tmp.path())
+    let output = Hardened::guard_script(&script, Vec::new(), tmp.path())
         .run()
         .unwrap();
     assert!(output.status.success());
@@ -101,7 +101,7 @@ fn a_guard_hook_relays_its_verdict() {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-    let output = Hardened::guard_hook(&script, &[], tmp.path())
+    let output = Hardened::guard_hook(&script, Vec::new(), tmp.path())
         .run()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));

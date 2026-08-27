@@ -29,9 +29,9 @@ an outside contributor.
   skips such a hook silently, so the harness gate stood aside for a gate
   that ran nothing and the commit went through unchecked.
 
-- An install whose `pre-commit` or `commit-msg` script is missing or not
-  executable reads as not armed rather than armed, in the package's own
-  `--check` as well as in `kendex check` — that state blocks every commit.
+- The growth-guards `--check` reads an install whose `pre-commit` or
+  `commit-msg` script is missing or not executable as not armed — that state
+  blocks every commit.
 - The `pre-commit-check` hook stands aside only when both git hooks are
   armed; with `commit-msg` missing it no longer waives the message gate.
 - The guard verbs run the package's scripts through `sh` on Windows, where
@@ -43,22 +43,15 @@ an outside contributor.
 - The `pre-commit-check` hook no longer stands aside for a repository-root
   file git never runs when `core.hooksPath` is set: any value at all reads
   as not armed.
-- `kendex check` reports an install whose `pre-commit` or `commit-msg` script
-  is missing or not executable, which blocks every commit, instead of
-  reporting it armed.
 - A hook of your own that quotes a guard marker in a comment is left alone:
   it is no longer refused, rewritten, or reported as a stale guard shim.
 - A blocked commit is told to run `kendex guard install`, which restores the
   helper, instead of `kendex refresh`, which does not.
 
 - `kendex check` reads a repository's hook files instead of running its guard
-  scripts, so a clone's status executes none of its code. It answers armed,
-  not armed, or cannot tell over both documented hook shapes, and never guesses.
+  scripts, so asking after a clone's status executes none of its code.
 - The guard verbs find the package under the project's own root, so a kendex
   project below the git top level is no longer reported as having none.
-- `kendex check` reports an empty `core.hooksPath` as hooks switched off,
-  naming the unset that fixes it, instead of reading the repository root as
-  a hooks directory.
 - **Breaking:** the `pre-commit-check` hook refuses a commit where no git
   hook is armed, naming `kendex guard install`, instead of running the
   repository's own guard scripts — arm the hooks to keep commits gated.
@@ -106,9 +99,9 @@ an outside contributor.
 
 ### Removed
 
-- **Breaking:** vstack-era installs are not migrated — install kendex fresh
-  and remove the old artifacts by hand: the `kendex-hooks`/`vstack-hooks`
-  directory, its `core.hooksPath`, and v1 guard settings.
+- **Breaking:** vstack-era installs are not migrated — install fresh and
+  remove the old artifacts by hand: the `vstack-hooks` directory (or
+  `kendex-hooks`, from an earlier 5.x), its `core.hooksPath`, v1 settings.
 - **Breaking:** the growth-guards package's scripts are the only check
   engine: `kendex guard` keeps `run`, `install` and `uninstall`, and drops
   the per-check verbs, `repair`, and `import-v1`.
@@ -155,8 +148,7 @@ an outside contributor.
 - `kendex guard install` arms the growth-guards shims in `.git/hooks` instead
   of setting `core.hooksPath`, so an armed repository gates commits with no
   kendex binary present.
-- `kendex check` reports whether a project's commit hooks are armed, and
-  names shims a removed package left behind, which block every commit.
+- `kendex check` reports whether a project's commit hooks are armed.
 - New install channels: `curl -fsSL https://kendex.ai/install.sh | sh`,
   Homebrew (`kendex`, `kendex-cli`), and the AUR (`kendex-bin`, `kendex`,
   `kendex-git`).

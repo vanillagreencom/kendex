@@ -25,12 +25,26 @@ set -euo pipefail
 #
 # The empty value is still told apart from a path, in the MESSAGE only:
 # unsetting it and wiring a directory are different things to be told to do.
-classify_hooks_path() {
+# Exit 1 is git for "not set", and it is the only answer that means
+# unredirected. `&&` treated every other status the same way — a broken
+# .git/config exits 128 — so a repository whose configuration could not be
+# read was classified "hooks are where I expect", and --check could print
+# armed while git took its hooks from a redirect nobody managed to see.
+#
+# Returns 2 for that state. Its callers stop: --check exits 2 (could not
+# determine), and a mode that writes dies rather than arming a directory it
+# has not established git reads.
+classify_hooks_path() { # -> 0 classified, 2 could not read the config
+  local status=0
   CUSTOM_HOOKS=""
   HOOKS_PATH_SET=0
   HOOKS_PATH_ELSEWHERE=0
-  CUSTOM_HOOKS="$(git -C "$REPO_ABS" config --get core.hooksPath 2>/dev/null)" \
-    && HOOKS_PATH_SET=1
+  CUSTOM_HOOKS="$(git -C "$REPO_ABS" config --get core.hooksPath 2>/dev/null)" || status=$?
+  case "$status" in
+    0) HOOKS_PATH_SET=1 ;;
+    1) ;;
+    *) return 2 ;;
+  esac
   HOOKS_PATH_ELSEWHERE="$HOOKS_PATH_SET"
   return 0
 }
@@ -56,6 +70,23 @@ resolve_roots() {
   COMMON_RESOLVED="$(cd -- "$COMMON_DIR" 2>/dev/null && pwd -P)" \
     && COMMON_DIR="$COMMON_RESOLVED"
   HOOKS_DIR="$COMMON_DIR/hooks"
+}
+
+# The classification, and what every mode does when it cannot be made.
+#
+# Never a pass and never a write: whether git reads hooks from the directory
+# this installer writes is exactly what could not be established, so --check
+# says so and a mode that writes dies rather than arming a directory it has
+# not shown git reads.
+classify_hooks_path_or_stop() {
+  local status=0
+  classify_hooks_path || status=$?
+  [ "$status" -eq 0 ] && return 0
+  if [ "$MODE" = "check" ]; then
+    echo "growth-guards git hooks: could not determine whether the shims are armed — core.hooksPath could not be read in $REPO_ABS"
+    exit 2
+  fi
+  die "could not read core.hooksPath in $REPO_ABS"
 }
 
 # core.hooksPath set to the empty string switches git hooks off outright.

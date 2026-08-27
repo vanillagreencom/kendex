@@ -57,12 +57,12 @@ any other failure blocks); the batch over staged content; then the
 repo-root-relative executable named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL`.
 `commit-msg` runs the message gate. Both BLOCK on the exit contract, fail
 closed on a guard that could not run; `git commit --no-verify` is the bypass.
-`kendex guard install` runs the installer and `kendex guard uninstall` runs
-`--uninstall`. Those are the only verbs that invoke it, so disarm before
-removing this skill: shims whose scripts are gone block every commit.
-`kendex check` reads the hook files itself and reports armed, not armed, or
-could not tell — it runs nothing out of a checkout. The `--check` verdicts
-below are the fuller vocabulary, for a person running it:
+The `kendex guard` verbs invoke this installer: `install`, `uninstall`
+(`--uninstall`) and `check` (`--check`). Disarm before removing this skill:
+shims whose scripts are gone block every commit. `kendex check` invokes
+nothing — it reads the hook files for this package's marker and the execute
+bit git needs, and says armed or not armed. The `--check` verdicts below are
+the fuller vocabulary, for a person or a verb that asks for it:
 (0 armed — in `.git/hooks` or a `core.hooksPath` directory hand-wired to this
 skill's `pre-commit` and `commit-msg`; 1 drifted, absent, or dormant behind a
 `core.hooksPath` that redirects away from the shims; 2 could not determine —

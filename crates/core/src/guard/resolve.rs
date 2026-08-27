@@ -16,7 +16,7 @@ use super::{SKILL, guard_err};
 /// helper searches them. Kept identical to that list on purpose: a repo
 /// where the shim finds a script and kendex finds a different one would gate
 /// commits one way and report them another.
-const SKILL_ROOTS: [&str; 5] = [
+pub const SKILL_ROOTS: [&str; 5] = [
     ".agents/skills",
     ".claude/skills",
     ".cursor/rules",
@@ -33,14 +33,21 @@ pub struct Installed {
 }
 
 impl Installed {
-    /// Resolve one of the package's scripts exactly as the generated hook
-    /// helper resolves it, because the two must never disagree about which
-    /// copy governs a repository.
+    /// Resolve one of the package's scripts the way an armed repository
+    /// runs them, as closely as a caller standing outside `.git/hooks` can.
     ///
-    /// The helper's rule, in its order: the project root the caller stood
-    /// in, then the MAIN checkout, then this work tree — and inside each the
-    /// skill roots in turn, taking the first whose *script is executable*
-    /// rather than the first directory that exists.
+    /// Not identically, and the difference is deliberate. The helper starts
+    /// from the scripts directory baked into it at install; this cannot,
+    /// because reading what a hook file says to run is the layer this crate
+    /// removed. So it starts from the project root the caller stood in —
+    /// where a kendex install renders — then the MAIN checkout, then this
+    /// work tree, and inside each the skill roots in turn, taking the first
+    /// whose *script is executable* rather than the first directory that
+    /// exists.
+    ///
+    /// Where the two diverge, they diverge safely: this finds a copy the
+    /// caller declared, and the verbs run that one. A repository armed from
+    /// somewhere else is the package's `--check` to describe.
     ///
     /// Every part of that ordering decides a real case. Linked worktrees
     /// share one hooks directory but need not carry their own skills, so one
