@@ -16,7 +16,7 @@ One pass, in order; the first verdict stands.
 3. **Related?** The test is semantic — about the problem or the change — not file membership. An out-of-diff file documenting the mechanism being fixed is related; a nearby improvement unrelated to the problem is not. Unrelated → `issue` regardless of size.
 4. **Size?** Small enough to apply here → `fix`. Needs delegation, tracking, history, or new files → `issue`.
 
-Uncertain about category, prefer `fix` (if related); uncertain about relevance, prefer `issue`; if neither fits, omit. A finding that lives in a PR review thread ends as exactly one reply — `Fixed in <sha>`, `Declined: <reason>`, or `Tracked: <ID>` (the merge gate rejects a tracking claim naming no issue); local and pre-PR reviews record the same verdicts in the review artifact instead. A human reply in a PR review thread carrying a track-word (track/tracked/tracking/tracks) and no issue id trips the gate, prose included — the gate scans only those replies; write "committed" for git-tracked files.
+Uncertain about category, prefer `fix` (if related); uncertain about relevance, prefer `issue`; if neither fits, omit. A finding that lives in a PR review thread ends as exactly one reply — `Fixed in <sha>`, `Declined: <reason>`, or `Tracked: <ID>` (the merge gate rejects a tracking claim naming no issue); local and pre-PR reviews record the same verdicts in the review artifact instead. Under thread enforcement, any human comment in a PR review thread carrying a track-word (track/tracked/tracking/tracks) and no issue id trips the gate, prose included — write "committed" for git-tracked files.
 
 | Signal | Category |
 |--------|----------|
